@@ -62,9 +62,6 @@ pub struct ProveCmd {
     #[clap(short = 'c', long, value_name="KEY=VALUE", num_args(1..))]
     pub custom_commits: Vec<String>,
 
-    #[clap(short = 'r', long, default_value_t = false)]
-    pub preallocate: bool,
-
     #[clap(short = 'm', long, default_value_t = false)]
     pub minimal_memory: bool,
 
@@ -119,7 +116,7 @@ impl ProveCmd {
 
         let verify_constraints = debug_info.std_mode.name == ModeName::Debug;
 
-        let mut gpu_params = ParamsGPU::new(self.preallocate);
+        let mut gpu_params = ParamsGPU::new();
 
         if self.max_streams.is_some() {
             gpu_params.with_max_number_streams(self.max_streams.unwrap());

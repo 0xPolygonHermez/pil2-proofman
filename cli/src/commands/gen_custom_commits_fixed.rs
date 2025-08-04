@@ -79,7 +79,7 @@ impl GenCustomCommitsFixedCmd {
         tracing::info!("{}", format!("{} GenCustomCommitsFixed", format!("{: >12}", "Command").bright_green().bold()));
         tracing::info!("");
 
-        let sctx = Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, false));
+        let sctx = Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false));
 
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));
 

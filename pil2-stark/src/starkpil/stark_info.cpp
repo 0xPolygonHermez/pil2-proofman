@@ -5,14 +5,13 @@
 #include "exit_process.hpp"
 #include "expressions_pack.hpp"
 
-StarkInfo::StarkInfo(string file, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_, bool preallocate_)
+StarkInfo::StarkInfo(string file, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_)
 {
 
     recursive = recursive_;
     verify_constraints = verify_constraints_;
     verify = verify_;
     gpu = gpu_;
-    preallocate = preallocate_;
 
     // Load contents from json file
     json starkInfoJson;
@@ -362,16 +361,14 @@ void StarkInfo::setMapOffsets() {
 
     uint64_t numNodes = getNumNodesMT(NExtended);
 
-    if(!preallocate) {
-        mapOffsets[std::make_pair("const", true)] = mapTotalN;
-        MerkleTreeGL mt(starkStruct.merkleTreeArity, true, NExtended, nConstants);
-        uint64_t constTreeSize = (2 + (NExtended * nConstants) + numNodes);
-        mapTotalN += constTreeSize;
+    mapOffsets[std::make_pair("const", true)] = mapTotalN;
+    MerkleTreeGL mt(starkStruct.merkleTreeArity, true, NExtended, nConstants);
+    uint64_t constTreeSize = (2 + (NExtended * nConstants) + numNodes);
+    mapTotalN += constTreeSize;
 
-        if(!gpu) {
-            mapOffsets[std::make_pair("const", false)] = mapTotalN;
-            mapTotalN += N * nConstants;
-        }
+    if(!gpu) {
+        mapOffsets[std::make_pair("const", false)] = mapTotalN;
+        mapTotalN += N * nConstants;
     }
 
     if(gpu) {
@@ -456,7 +453,7 @@ void StarkInfo::setMapOffsets() {
         offsetTraces += N * mapSectionsN["cm" + to_string(stage)]; 
     }
     
-    if(!preallocate && gpu) {
+    if(gpu) {
         mapOffsets[std::make_pair("const", false)] = offsetTraces;
         offsetTraces += N * nConstants;
     }

@@ -47,7 +47,6 @@ use transcript::FFITranscript;
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::{check_tree_paths_vadcop, gen_recursive_proof_size, initialize_fixed_pols_tree};
 use crate::{verify_basic_proof, verify_final_proof, verify_global_constraints_proof};
-use crate::MaxSizes;
 use crate::{verify_constraints_proof, print_summary_info, get_recursive_buffer_sizes};
 use crate::{
     gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof, generate_vadcop_final_proof,
@@ -159,10 +158,9 @@ where
         aggregation: bool,
         final_snark: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let setups_aggregation =
-            Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, false, final_snark));
+        let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, final_snark));
 
-        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, false);
+        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false);
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
@@ -747,7 +745,6 @@ where
             verify_constraints,
             aggregation,
             final_snark,
-            &gpu_params,
             verbose_mode,
             mpi_universe,
         )?;
@@ -761,7 +758,7 @@ where
             if aggregation { get_recursive_buffer_sizes(&pctx, &setups_vadcop)? } else { (0, 0) };
 
         if !verify_constraints {
-            initialize_fixed_pols_tree(&pctx, &sctx, &setups_vadcop, &d_buffers, aggregation, &gpu_params);
+            initialize_fixed_pols_tree(&pctx, &sctx, &setups_vadcop, &d_buffers, aggregation);
         }
 
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));
@@ -822,7 +819,6 @@ where
             verify_constraints,
             aggregation,
             final_snark,
-            &gpu_params,
             verbose_mode,
         )?;
 
@@ -835,7 +831,7 @@ where
             if aggregation { get_recursive_buffer_sizes(&pctx, &setups_vadcop)? } else { (0, 0) };
 
         if !verify_constraints {
-            initialize_fixed_pols_tree(&pctx, &sctx, &setups_vadcop, &d_buffers, aggregation, &gpu_params);
+            initialize_fixed_pols_tree(&pctx, &sctx, &setups_vadcop, &d_buffers, aggregation);
         }
 
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));
@@ -1234,7 +1230,6 @@ where
                         &self.d_buffers,
                         Some(stream_id),
                         options.save_proofs,
-                        self.gpu_params.preallocate,
                     );
                     let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(instance_id as usize);
                     if is_shared_buffer {
@@ -1278,7 +1273,6 @@ where
             let compressor_rx = compressor_witness_rx.clone();
             let rec2_rx = rec2_witness_rx.clone();
             let rec1_rx = rec1_witness_rx.clone();
-            let preallocate = self.gpu_params.preallocate;
 
             let memory_handler_clone = self.memory_handler.clone();
 
@@ -1305,7 +1299,6 @@ where
                             &d_buffers_clone,
                             stream_id,
                             options.save_proofs,
-                            preallocate,
                         );
                         let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
                         if is_shared_buffer {
@@ -1880,23 +1873,7 @@ where
 
         pctx.dctx_barrier(); // important: all processes synchronize before allocation GPU memory
 
-        let total_const_area = match gpu_params.preallocate {
-            true => sctx.total_const_size as u64,
-            false => 0,
-        };
-
-        let total_const_area_aggregation = match aggregation && gpu_params.preallocate {
-            true => setups_vadcop.total_const_size as u64,
-            false => 0,
-        };
-
-        let mut max_size_buffer = (free_memory_gpu / 8.0).floor() as u64; //measured in GL elements
-        if gpu_params.preallocate {
-            max_size_buffer -= sctx.total_const_size as u64;
-            if aggregation {
-                max_size_buffer -= setups_vadcop.total_const_size as u64;
-            }
-        }
+        let max_size_buffer = (free_memory_gpu / 8.0).floor() as u64; //measured in GL elements
 
         let n_streams_per_gpu = match cfg!(feature = "gpu") {
             true => {
@@ -1930,11 +1907,8 @@ where
             + n_recursive_streams_per_gpu * setups_vadcop.max_prover_recursive_buffer_size)
             as u64;
 
-        let max_sizes = MaxSizes { total_const_area, max_aux_trace_area, total_const_area_aggregation };
-
-        let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
         let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
-            max_sizes_ptr,
+            max_aux_trace_area as u32,
             pctx.dctx_get_node_rank() as u32,
             pctx.dctx_get_node_n_processes() as u32,
         )));
@@ -1969,7 +1943,6 @@ where
         d_buffers: &DeviceBuffer,
         stream_id_: Option<usize>,
         save_proof: bool,
-        gpu_preallocate: bool,
     ) {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
         timer_start_info!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -1985,7 +1958,7 @@ where
             steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
             steps_params.p_const_pols = const_pols.as_ptr() as *mut u8;
             steps_params.p_const_tree = const_tree.as_ptr() as *mut u8;
-        } else if !gpu_preallocate {
+        } else {
             steps_params.p_const_pols = std::ptr::null_mut();
             steps_params.p_const_tree = std::ptr::null_mut();
         }
@@ -2035,7 +2008,6 @@ where
         verify_constraints: bool,
         aggregation: bool,
         final_snark: bool,
-        gpu_params: &ParamsGPU,
         verbose_mode: VerboseMode,
         mpi_universe: Option<Universe>,
     ) -> Result<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>), Box<dyn std::error::Error>> {
@@ -2049,8 +2021,7 @@ where
         );
         timer_start_info!(INITIALIZING_PROOFMAN);
 
-        let sctx: Arc<SetupCtx<F>> =
-            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, verify_constraints, gpu_params.preallocate));
+        let sctx: Arc<SetupCtx<F>> = Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, verify_constraints));
         pctx.set_weights(&sctx);
 
         let pctx = Arc::new(pctx);
@@ -2058,13 +2029,8 @@ where
             check_tree_paths(&pctx, &sctx)?;
         }
 
-        let setups_vadcop = Arc::new(SetupsVadcop::new(
-            &pctx.global_info,
-            verify_constraints,
-            aggregation,
-            final_snark,
-            gpu_params.preallocate,
-        ));
+        let setups_vadcop =
+            Arc::new(SetupsVadcop::new(&pctx.global_info, verify_constraints, aggregation, final_snark));
 
         if aggregation {
             check_tree_paths_vadcop(&pctx, &setups_vadcop, final_snark)?;
@@ -2085,15 +2051,13 @@ where
         verify_constraints: bool,
         aggregation: bool,
         final_snark: bool,
-        gpu_params: &ParamsGPU,
         verbose_mode: VerboseMode,
     ) -> Result<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>), Box<dyn std::error::Error>> {
         let mut pctx =
             ProofCtx::create_ctx(proving_key_path, custom_commits_fixed, aggregation, final_snark, verbose_mode);
         timer_start_info!(INITIALIZING_PROOFMAN);
 
-        let sctx: Arc<SetupCtx<F>> =
-            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, verify_constraints, gpu_params.preallocate));
+        let sctx: Arc<SetupCtx<F>> = Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, verify_constraints));
         pctx.set_weights(&sctx);
 
         let pctx = Arc::new(pctx);
@@ -2102,13 +2066,8 @@ where
         }
         Self::initialize_publics_custom_commits(&sctx, &pctx)?;
 
-        let setups_vadcop = Arc::new(SetupsVadcop::new(
-            &pctx.global_info,
-            verify_constraints,
-            aggregation,
-            final_snark,
-            gpu_params.preallocate,
-        ));
+        let setups_vadcop =
+            Arc::new(SetupsVadcop::new(&pctx.global_info, verify_constraints, aggregation, final_snark));
 
         if aggregation {
             check_tree_paths_vadcop(&pctx, &setups_vadcop, final_snark)?;

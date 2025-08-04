@@ -24,7 +24,7 @@ impl GetConstraintsCmd {
         tracing::info!("");
 
         let global_info = GlobalInfo::new(&self.proving_key);
-        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&global_info, &ProofType::Basic, false, false);
+        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&global_info, &ProofType::Basic, false);
 
         for airgroup_id in 0..global_info.air_groups.len() {
             for air_id in 0..global_info.airs[airgroup_id].len() {

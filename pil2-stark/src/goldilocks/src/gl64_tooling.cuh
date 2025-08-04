@@ -48,11 +48,6 @@ struct AirInstanceInfo {
     uint64_t airgroupId;
     uint64_t airId;
 
-    uint64_t const_pols_offset;
-    uint64_t const_tree_offset;
-
-    bool stored = false;
-
     ExpressionsGPU *expressions_gpu;
     int64_t *opening_points;
 
@@ -259,8 +254,6 @@ struct StreamData{
 };
 struct DeviceCommitBuffers
 {
-    gl64_t **d_constPols;
-    gl64_t **d_constPolsAggregation;
     gl64_t **d_aux_trace;
     bool recursive;
     uint64_t max_size_proof;

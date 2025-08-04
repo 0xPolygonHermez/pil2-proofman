@@ -95,9 +95,9 @@ void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintN
 
 // StarkInfo
 // ========================================================================================
-void *stark_info_new(char *filename, bool recursive, bool verify_constraints, bool verify, bool gpu, bool preallocate)
+void *stark_info_new(char *filename, bool recursive, bool verify_constraints, bool verify, bool gpu)
 {
-    auto starkInfo = new StarkInfo(filename, recursive, verify_constraints, verify, gpu, preallocate);
+    auto starkInfo = new StarkInfo(filename, recursive, verify_constraints, verify, gpu);
 
     return starkInfo;
 }
@@ -537,7 +537,7 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {}
 
 // Recursive proof
 // ================================================================================= 
-void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size)
+void *gen_device_buffers(uint32_t max_aux_trace_area, uint32_t node_rank, uint32_t node_size)
 {
     DeviceCommitBuffersCPU *d_buffers = new DeviceCommitBuffersCPU();
     return (void *)d_buffers;
@@ -558,8 +558,6 @@ void free_device_buffers(void *d_buffers_) {
 }
 
 void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_) {}
-
-void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType) {}
 
 uint64_t gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType) {
     json globalInfo;

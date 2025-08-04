@@ -124,7 +124,6 @@ impl ProofOptions {
 
 #[derive(Clone)]
 pub struct ParamsGPU {
-    pub preallocate: bool,
     pub max_number_streams: usize,
     pub number_threads_pools_witness: usize,
     pub max_witness_stored: usize,
@@ -132,18 +131,13 @@ pub struct ParamsGPU {
 
 impl Default for ParamsGPU {
     fn default() -> Self {
-        Self {
-            preallocate: false,
-            max_number_streams: usize::MAX,
-            number_threads_pools_witness: 4,
-            max_witness_stored: 4,
-        }
+        Self { max_number_streams: usize::MAX, number_threads_pools_witness: 4, max_witness_stored: 4 }
     }
 }
 
 impl ParamsGPU {
-    pub fn new(preallocate: bool) -> Self {
-        Self { preallocate, ..Self::default() }
+    pub fn new() -> Self {
+        Self { ..Self::default() }
     }
 
     pub fn with_max_number_streams(&mut self, max_number_streams: usize) {

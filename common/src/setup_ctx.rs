@@ -28,23 +28,15 @@ unsafe impl<F: PrimeField64> Send for SetupsVadcop<F> {}
 unsafe impl<F: PrimeField64> Sync for SetupsVadcop<F> {}
 
 impl<F: PrimeField64> SetupsVadcop<F> {
-    pub fn new(
-        global_info: &GlobalInfo,
-        verify_constraints: bool,
-        aggregation: bool,
-        final_snark: bool,
-        preallocate: bool,
-    ) -> Self {
+    pub fn new(global_info: &GlobalInfo, verify_constraints: bool, aggregation: bool, final_snark: bool) -> Self {
         if aggregation {
-            let sctx_compressor = SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints, preallocate);
-            let sctx_recursive1 = SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints, preallocate);
-            let sctx_recursive2 = SetupCtx::new(global_info, &ProofType::Recursive2, verify_constraints, preallocate);
-            let setup_vadcop_final =
-                Setup::new(global_info, 0, 0, &ProofType::VadcopFinal, verify_constraints, preallocate);
+            let sctx_compressor = SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints);
+            let sctx_recursive1 = SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints);
+            let sctx_recursive2 = SetupCtx::new(global_info, &ProofType::Recursive2, verify_constraints);
+            let setup_vadcop_final = Setup::new(global_info, 0, 0, &ProofType::VadcopFinal, verify_constraints);
             let mut setup_recursivef = None;
             if final_snark {
-                setup_recursivef =
-                    Some(Setup::new(global_info, 0, 0, &ProofType::RecursiveF, verify_constraints, false));
+                setup_recursivef = Some(Setup::new(global_info, 0, 0, &ProofType::RecursiveF, verify_constraints));
             }
 
             let total_const_size = sctx_compressor.total_const_size
@@ -158,7 +150,7 @@ impl<F: PrimeField64> Drop for SetupRepository<F> {
 }
 
 impl<F: PrimeField64> SetupRepository<F> {
-    pub fn new(global_info: &GlobalInfo, setup_type: &ProofType, verify_constraints: bool, preallocate: bool) -> Self {
+    pub fn new(global_info: &GlobalInfo, setup_type: &ProofType, verify_constraints: bool) -> Self {
         let mut setups = HashMap::new();
 
         let global_bin = match setup_type == &ProofType::Basic {
@@ -186,8 +178,7 @@ impl<F: PrimeField64> SetupRepository<F> {
         if setup_type != &ProofType::VadcopFinal {
             for (airgroup_id, air_group) in global_info.airs.iter().enumerate() {
                 for (air_id, _) in air_group.iter().enumerate() {
-                    let setup =
-                        Setup::new(global_info, airgroup_id, air_id, setup_type, verify_constraints, preallocate);
+                    let setup = Setup::new(global_info, airgroup_id, air_id, setup_type, verify_constraints);
                     if setup_type != &ProofType::Compressor || global_info.get_air_has_compressor(airgroup_id, air_id) {
                         if max_const_tree_size < setup.const_tree_size {
                             max_const_tree_size = setup.const_tree_size;
@@ -225,7 +216,7 @@ impl<F: PrimeField64> SetupRepository<F> {
                 }
             }
         } else {
-            setups.insert((0, 0), Setup::new(global_info, 0, 0, setup_type, verify_constraints, preallocate));
+            setups.insert((0, 0), Setup::new(global_info, 0, 0, setup_type, verify_constraints));
         }
 
         Self {
@@ -260,8 +251,8 @@ pub struct SetupCtx<F: PrimeField64> {
 }
 
 impl<F: PrimeField64> SetupCtx<F> {
-    pub fn new(global_info: &GlobalInfo, setup_type: &ProofType, verify_constraints: bool, preallocate: bool) -> Self {
-        let setup_repository = SetupRepository::new(global_info, setup_type, verify_constraints, preallocate);
+    pub fn new(global_info: &GlobalInfo, setup_type: &ProofType, verify_constraints: bool) -> Self {
+        let setup_repository = SetupRepository::new(global_info, setup_type, verify_constraints);
         let max_const_tree_size = setup_repository.max_const_tree_size;
         let max_const_size = setup_repository.max_const_size;
         let max_prover_buffer_size = setup_repository.max_prover_buffer_size;

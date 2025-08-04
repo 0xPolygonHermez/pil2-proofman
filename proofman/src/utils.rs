@@ -8,9 +8,8 @@ use colored::*;
 
 use std::error::Error;
 
-use proofman_common::{format_bytes, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop, ParamsGPU};
+use proofman_common::{format_bytes, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop};
 use proofman_util::DeviceBuffer;
-use proofman_starks_lib_c::load_device_const_pols_c;
 use proofman_starks_lib_c::custom_commit_size_c;
 use proofman_starks_lib_c::load_device_setup_c;
 
@@ -328,11 +327,9 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
     setups: &SetupsVadcop<F>,
     d_buffers: &DeviceBuffer,
     aggregation: bool,
-    gpu_params: &ParamsGPU,
 ) {
     let gpu = cfg!(feature = "gpu");
     if gpu {
-        let mut offset = 0;
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id);
@@ -346,29 +343,10 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                     d_buffers.get_ptr(),
                     setup.verkey.as_ptr() as *mut u8,
                 );
-                if gpu_params.preallocate {
-                    let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
-                    let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
-                    tracing::info!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
-                    load_device_const_pols_c(
-                        airgroup_id as u64,
-                        air_id as u64,
-                        offset,
-                        d_buffers.get_ptr(),
-                        &const_pols_path,
-                        setup.const_pols_size as u64,
-                        &const_pols_tree_path,
-                        setup.const_tree_size as u64,
-                        proof_type,
-                    );
-                    offset += setup.const_pols_size as u64;
-                    offset += setup.const_tree_size as u64;
-                }
             }
         }
     }
 
-    let mut _offset_aggregation = 0;
     if aggregation {
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
@@ -385,24 +363,6 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                             d_buffers.get_ptr(),
                             setup.verkey.as_ptr() as *mut u8,
                         );
-                        if gpu_params.preallocate {
-                            let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
-                            let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
-                            tracing::info!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
-                            load_device_const_pols_c(
-                                airgroup_id as u64,
-                                air_id as u64,
-                                _offset_aggregation,
-                                d_buffers.get_ptr(),
-                                &const_pols_path,
-                                setup.const_pols_size as u64,
-                                &const_pols_tree_path,
-                                setup.const_tree_size as u64,
-                                proof_type,
-                            );
-                            _offset_aggregation += setup.const_pols_size as u64;
-                            _offset_aggregation += setup.const_tree_size as u64;
-                        }
                     }
                 }
             }
@@ -422,24 +382,6 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                         d_buffers.get_ptr(),
                         setup.verkey.as_ptr() as *mut u8,
                     );
-                    if gpu_params.preallocate {
-                        let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
-                        let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
-                        tracing::info!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
-                        load_device_const_pols_c(
-                            airgroup_id as u64,
-                            air_id as u64,
-                            _offset_aggregation,
-                            d_buffers.get_ptr(),
-                            &const_pols_path,
-                            setup.const_pols_size as u64,
-                            &const_pols_tree_path,
-                            setup.const_tree_size as u64,
-                            proof_type,
-                        );
-                        _offset_aggregation += setup.const_pols_size as u64;
-                        _offset_aggregation += setup.const_tree_size as u64;
-                    }
                 }
             }
         }
@@ -458,24 +400,6 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                     d_buffers.get_ptr(),
                     setup.verkey.as_ptr() as *mut u8,
                 );
-                if gpu_params.preallocate {
-                    let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
-                    let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
-                    tracing::info!(airgroup_id, air_id = 0, proof_type, "Loading const pols in GPU");
-                    load_device_const_pols_c(
-                        airgroup_id as u64,
-                        0_u64,
-                        _offset_aggregation,
-                        d_buffers.get_ptr(),
-                        &const_pols_path,
-                        setup.const_pols_size as u64,
-                        &const_pols_tree_path,
-                        setup.const_tree_size as u64,
-                        proof_type,
-                    );
-                    _offset_aggregation += setup.const_pols_size as u64;
-                    _offset_aggregation += setup.const_tree_size as u64;
-                }
             }
         }
 
@@ -491,24 +415,6 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                 d_buffers.get_ptr(),
                 setup_vadcop_final.verkey.as_ptr() as *mut u8,
             );
-            if gpu_params.preallocate {
-                let const_pols_path = setup_vadcop_final.setup_path.to_string_lossy().to_string() + ".const";
-                let const_pols_tree_path = setup_vadcop_final.setup_path.display().to_string() + ".consttree";
-                tracing::info!(airgroup_id = 0, air_id = 0, proof_type, "Loading const pols in GPU");
-                load_device_const_pols_c(
-                    0_u64,
-                    0_u64,
-                    _offset_aggregation,
-                    d_buffers.get_ptr(),
-                    &const_pols_path,
-                    setup_vadcop_final.const_pols_size as u64,
-                    &const_pols_tree_path,
-                    setup_vadcop_final.const_tree_size as u64,
-                    proof_type,
-                );
-                _offset_aggregation += setup_vadcop_final.const_pols_size as u64;
-                _offset_aggregation += setup_vadcop_final.const_tree_size as u64;
-            }
         }
     }
 }
