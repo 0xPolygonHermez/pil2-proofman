@@ -408,9 +408,9 @@ where
         let max_witness_stored = self.gpu_params.max_witness_stored.min(my_instances_sorted_no_all.len());
 
         let max_num_threads = configured_num_threads(self.pctx.dctx_get_node_n_processes());
-
-        let n_threads_witness = self.gpu_params.number_threads_pools_witness.max(max_num_threads / max_witness_stored);
-
+         
+         let n_threads_witness = self.gpu_params.number_threads_pools_witness;
+        
         let memory_handler =
             Arc::new(MemoryHandler::new(self.gpu_params.max_witness_stored, self.sctx.max_witness_trace_size));
 
@@ -970,7 +970,7 @@ where
         timer_stop_and_log_info!(PREPARING_CONTRIBUTIONS);
 
         let n_threads_witness = match cfg!(feature = "gpu") {
-            true => self.gpu_params.number_threads_pools_witness.max(max_num_threads / max_witness_stored),
+            true => self.gpu_params.number_threads_pools_witness,
             false => max_num_threads,
         };
 
