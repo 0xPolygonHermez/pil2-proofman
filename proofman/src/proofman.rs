@@ -776,8 +776,6 @@ where
 
         let memory_handler = Arc::new(MemoryHandler::new(max_witness_stored, sctx.max_witness_trace_size));
 
-        pctx.dctx_barrier();
-
         Ok(Self {
             pctx,
             sctx,
@@ -851,8 +849,6 @@ where
 
         let memory_handler = Arc::new(MemoryHandler::new(max_witness_stored, sctx.max_witness_trace_size));
 
-        pctx.dctx_barrier();
-
         Ok(Self {
             pctx,
             sctx,
@@ -877,7 +873,6 @@ where
         witness_lib.register_witness(&self.wcm);
         self.wcm.set_init_witness(true, library);
         timer_stop_and_log_info!(REGISTERING_WITNESS);
-        self.pctx.dctx_barrier();
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1612,7 +1607,7 @@ where
             self.d_buffers.get_ptr(),
             false,
         )?;
-        self.pctx.dctx.read().unwrap().barrier();
+        self.pctx.dctx_barrier();
         timer_stop_and_log_info!(GENERATING_OUTER_COMPRESSED_PROOFS);
 
         let mut proof_id = None;
@@ -1765,18 +1760,8 @@ where
         });
 
         if !minimal_memory {
-            let n_threads_collect = max_num_threads / 2;
-
-            for _ in 0..n_threads_collect {
-                rx_threads.recv().unwrap();
-            }
-
             timer_start_info!(PRE_CALCULATE_WC);
-            self.wcm.pre_calculate_witness(1, instances, n_threads_collect, memory_handler.as_ref());
-
-            for _ in 0..n_threads_collect {
-                tx_threads.send(()).unwrap();
-            }
+            self.wcm.pre_calculate_witness(1, instances, max_num_threads, memory_handler.as_ref());
             timer_stop_and_log_info!(PRE_CALCULATE_WC);
         } else {
             for &instance_id in instances.iter() {
@@ -1898,8 +1883,6 @@ where
         };
 
         free_memory_gpu /= n_partitions as f64;
-
-        pctx.dctx_barrier(); // important: all processes synchronize before allocation GPU memory
 
         let total_const_area = match gpu_params.preallocate {
             true => sctx.total_const_size as u64,
