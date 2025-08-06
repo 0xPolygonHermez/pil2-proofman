@@ -179,6 +179,7 @@ pub struct ProofCtx<F: PrimeField64> {
     pub final_snark: bool,
     pub proof_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
+    pub witness_tx_priority: RwLock<Option<crossbeam_channel::Sender<usize>>>,
 }
 
 pub const MAX_INSTANCES: u64 = 10000;
@@ -227,6 +228,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             aggregation,
             final_snark,
             witness_tx: RwLock::new(None),
+            witness_tx_priority: RwLock::new(None),
             proof_tx: RwLock::new(None),
         }
     }
@@ -291,11 +293,21 @@ impl<F: PrimeField64> ProofCtx<F> {
         *self.proof_tx.write().unwrap() = proof_tx;
     }
 
+    pub fn set_witness_tx_priority(&self, witness_tx_priority: Option<crossbeam_channel::Sender<usize>>) {
+        *self.witness_tx_priority.write().unwrap() = witness_tx_priority;
+    }
+
     pub fn set_witness_tx(&self, witness_tx: Option<crossbeam_channel::Sender<usize>>) {
         *self.witness_tx.write().unwrap() = witness_tx;
     }
 
-    pub fn set_witness_ready(&self, global_id: usize) {
+    pub fn set_witness_ready(&self, global_id: usize, priority: bool) {
+        if priority {
+            if let Some(witness_tx_priority) = &*self.witness_tx_priority.read().unwrap() {
+                witness_tx_priority.send(global_id).unwrap();
+                return;
+            }
+        }
         if let Some(witness_tx) = &*self.witness_tx.read().unwrap() {
             witness_tx.send(global_id).unwrap();
         }

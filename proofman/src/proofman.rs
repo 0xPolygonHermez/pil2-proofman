@@ -406,17 +406,12 @@ where
         let instances_mine = my_instances.len();
         let instances_mine_no_tables = my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).count();
 
-        let max_witness_stored = self.gpu_params.max_witness_stored.min(instances_mine_no_tables);
-
         let max_num_threads = configured_num_threads(self.pctx.dctx_get_node_n_processes());
          
          let n_threads_witness = self.gpu_params.number_threads_pools_witness;
         
         let memory_handler =
             Arc::new(MemoryHandler::new(self.gpu_params.max_witness_stored, self.sctx.max_witness_trace_size));
-
-        let my_instances_sorted_no_all =
-            my_instances.iter().filter(|idx| !self.pctx.dctx_is_instance_all(**idx)).copied().collect::<Vec<_>>();
 
         self.calculate_witness(
             &my_instances_sorted_no_all,
@@ -1014,7 +1009,7 @@ where
                         }
                     }
                     Err(crossbeam_channel::TryRecvError::Empty) => {
-                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        std::thread::sleep(std::time::Duration::from_micros(100));
                         continue;
                     }
                     Err(crossbeam_channel::TryRecvError::Disconnected) => {
@@ -1335,7 +1330,7 @@ where
                     if proofs_finished_clone.load(Ordering::Relaxed) {
                         return;
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    std::thread::sleep(std::time::Duration::from_micros(100));
                     continue;
                 }
 
@@ -1702,7 +1697,9 @@ where
         }
 
         let (witness_tx, witness_rx): (Sender<usize>, Receiver<usize>) = unbounded();
+        let (witness_tx_priority, witness_rx_priority): (Sender<usize>, Receiver<usize>) = unbounded();
         self.pctx.set_witness_tx(Some(witness_tx.clone()));
+        self.pctx.set_witness_tx_priority(Some(witness_tx_priority.clone()));
 
         let witness_done = Arc::new(Counter::new_with_threshold(instances.len()));
         let witness_done_clone = witness_done.clone();
@@ -1714,10 +1711,36 @@ where
         let witness_handles = Arc::new(Mutex::new(Vec::new()));
         let witness_handles_clone = witness_handles.clone();
         let witness_handler = std::thread::spawn(move || {
-            while let Ok(instance_id) = witness_rx.recv() {
+            loop {
                 if minimal_memory {
                     continue;
                 }
+                
+                let instance_id = match witness_rx_priority.try_recv() {
+                    Ok(id) => id,
+                    Err(crossbeam_channel::TryRecvError::Empty) => {
+                        match witness_rx.try_recv() {
+                            Ok(id) => id,
+                            Err(crossbeam_channel::TryRecvError::Empty) => {
+                                std::thread::sleep(std::time::Duration::from_micros(100));
+                                continue;
+                            }
+                            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                                match witness_rx_priority.try_recv() {
+                                    Ok(id) => id,
+                                    Err(_) => break,
+                                }
+                            }
+                        }
+                    }
+                    Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                        match witness_rx.recv() {
+                            Ok(id) => id,
+                            Err(_) => break,
+                        }
+                    }
+                };
+
                 let (airgroup_id, air_id) = pctx_clone.dctx_get_instance_info(instance_id);
 
                 let tx_threads_clone: Sender<()> = tx_threads_clone.clone();
@@ -1841,7 +1864,9 @@ where
             .wait_until_threshold_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
 
         self.pctx.set_witness_tx(None);
+        self.pctx.set_witness_tx_priority(None);
         drop(witness_tx);
+        drop(witness_tx_priority);
         witness_handler.join().unwrap();
         if stats || cfg!(feature = "gpu") {
             let handles_to_join = witness_handles.lock().unwrap().drain(..).collect::<Vec<_>>();
