@@ -28,19 +28,31 @@ fn main() {
         run_command("git", &["submodule", "update", "--recursive"], &pil2_stark_path);
     }
 
-    // Check if the C++ library exists before recompiling
-    if !lib_file.exists() {
-        if cfg!(feature = "gpu") {
-            eprintln!("`libstarksgpu.a` not found! Compiling...");
-            run_command("make", &["clean"], &pil2_stark_path);
-            run_command("make", &["-j", "starks_lib_gpu"], &pil2_stark_path);
-        } else {
-            eprintln!("`libstarks.a` not found! Compiling...");
-            run_command("make", &["clean"], &pil2_stark_path);
-            run_command("make", &["-j", "starks_lib"], &pil2_stark_path);
+    // Check if the `no_cpp_compilation` feature is enabled
+    if cfg!(feature = "no_cpp_compilation") {
+        println!("Skipping C++ compilation because `no_cpp_compilation` feature is enabled.");
+        if !lib_file.exists() {
+            eprintln!("Warning: Library `{}` not found. Make sure to compile it manually.", lib_file.display());
+            eprintln!(
+                "Run: cd pil2-stark && make {}",
+                if cfg!(feature = "gpu") { "starks_lib_gpu" } else { "starks_lib" }
+            );
         }
     } else {
-        println!("C++ library already compiled, skipping rebuild.");
+        // Check if the C++ library exists before recompiling
+        if !lib_file.exists() {
+            if cfg!(feature = "gpu") {
+                eprintln!("`libstarksgpu.a` not found! Compiling...");
+                run_command("make", &["clean"], &pil2_stark_path);
+                run_command("make", &["-j", "starks_lib_gpu"], &pil2_stark_path);
+            } else {
+                eprintln!("`libstarks.a` not found! Compiling...");
+                run_command("make", &["clean"], &pil2_stark_path);
+                run_command("make", &["-j", "starks_lib"], &pil2_stark_path);
+            }
+        } else {
+            println!("C++ library already compiled, skipping rebuild.");
+        }
     }
 
     // Absolute path to the library
@@ -55,7 +67,10 @@ fn main() {
     }
 
     // Ensure Rust triggers a rebuild if the C++ source code changes
-    track_file_changes(&pil2_stark_path);
+    // Skip this if no_cpp_compilation is enabled
+    if !cfg!(feature = "no_cpp_compilation") {
+        track_file_changes(&pil2_stark_path);
+    }
 
     // Add platform-specific library search paths
     if cfg!(target_os = "macos") {
