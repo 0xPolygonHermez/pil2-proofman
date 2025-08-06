@@ -1035,11 +1035,11 @@ __global__  void computeFRIExpression(uint64_t domainSize, uint64_t nOpeningPoin
             // printArgs(res, 3, false, d_x + i, 1, false, i, 2, nOp, debug);
             Goldilocks3GPU::mul_31_gpu_no_const(res, res, d_x + i);
             // printArgs(res, 3, false, accum, 3, false, i, 2, nOp++, debug);
-            Goldilocks3GPU::mul_gpu_no_const(accum, accum, res);
-            // printFRI(accum, i, debug);
-            if(o == 0) {
-                Goldilocks3GPU::copy_gpu(fri_pol, accum, false);
-            } else {
+
+            gl64_t *out = o == 0 ? fri_pol : accum;
+            Goldilocks3GPU::mul_gpu_no_const(out, accum, res);
+            // printFRI(out, i, debug);
+            if(o != 0) {
                 // printArgs(fri_pol, 3, false, accum, 3, false, i, 2, nOp++, debug);
                 Goldilocks3GPU::mul_gpu_b_const(fri_pol, fri_pol, vf1);
                 // printFRI(fri_pol, i, debug);
