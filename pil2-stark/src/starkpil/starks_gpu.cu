@@ -749,11 +749,22 @@ void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, Ste
         domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
         domainExtended = false;
     }
-    Dest destStruct(NULL, domainSize, 0, expressionId);
-    destStruct.addParams(expressionId, setupCtx.expressionsBin.expressionsInfo[expressionId].destDim, inverse);
-    destStruct.dest_gpu = dest_gpu;
-    countId++;
-    expressionsCtx->calculateExpressions_gpu(d_params, destStruct, domainSize, domainExtended, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, debug);
+    
+    if (expressionId == setupCtx.starkInfo.cExpId) {
+        for (uint64_t i = 0; i < setupCtx.expressionsBin.constraintsInfoDebug.size(); i++) {
+            Dest destStruct(NULL, domainSize, 0);
+            destStruct.addParams(i, setupCtx.expressionsBin.constraintsInfoDebug[i].destDim, false);
+            destStruct.dest_gpu = dest_gpu;
+            countId++;
+            expressionsCtx->calculateExpressions_gpu(d_params, destStruct, domainSize, domainExtended, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, debug, true);
+        }
+    } else {
+        Dest destStruct(NULL, domainSize, 0, expressionId);
+        destStruct.addParams(expressionId, setupCtx.expressionsBin.expressionsInfo[expressionId].destDim, inverse);
+        destStruct.dest_gpu = dest_gpu;
+        countId++;
+        expressionsCtx->calculateExpressions_gpu(d_params, destStruct, domainSize, domainExtended, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, debug);
+    }
 
 }
 

@@ -9,6 +9,7 @@
 
 #ifdef __USE_CUDA__
 #include "gen_recursive_proof.cuh"
+#include "verify_constraints.cuh"
 #include "gen_proof.cuh"
 #include "gen_commit.cuh"
 #include "poseidon2_goldilocks.cu"
@@ -632,6 +633,11 @@ void set_device_mpi(uint32_t mpi_node_rank){
 
 void set_device(uint32_t gpuId){
     cudaSetDevice(gpuId);
+}
+
+void verify_constraints(void *pSetupCtx, void* stepsParams, void* constraintsInfo, void *d_buffers)
+{
+    verifyConstraintsGPU(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, (ConstraintInfo *)constraintsInfo, (DeviceCommitBuffers *)d_buffers);
 }
 
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, bool recursive){

@@ -68,6 +68,16 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
     CHECKCUDAERR(cudaMemcpy(h_deviceArgs.ops, parserArgs.ops, setupCtx.expressionsBin.nOpsTotal * sizeof(uint8_t), cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(h_deviceArgs.args, parserArgs.args, setupCtx.expressionsBin.nArgsTotal * sizeof(uint16_t), cudaMemcpyHostToDevice));
 
+    ParserArgs parserArgsConstraints = setupCtx.expressionsBin.expressionsBinArgsConstraints;
+    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.numbersConstraints, parserArgsConstraints.nNumbers * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMemcpy(h_deviceArgs.numbersConstraints, (Goldilocks::Element *)parserArgsConstraints.numbers, parserArgsConstraints.nNumbers * sizeof(Goldilocks::Element),cudaMemcpyHostToDevice));
+
+    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.opsConstraints, setupCtx.expressionsBin.nOpsDebug * sizeof(uint8_t)));   
+    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.argsConstraints, setupCtx.expressionsBin.nArgsDebug * sizeof(uint16_t))); 
+    CHECKCUDAERR(cudaMemcpy(h_deviceArgs.opsConstraints, parserArgsConstraints.ops, setupCtx.expressionsBin.nOpsDebug * sizeof(uint8_t), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(h_deviceArgs.argsConstraints, parserArgsConstraints.args, setupCtx.expressionsBin.nArgsDebug * sizeof(uint16_t), cudaMemcpyHostToDevice));
+
+
     CHECKCUDAERR(cudaMalloc(&d_deviceArgs, sizeof(DeviceArguments)));
     CHECKCUDAERR(cudaMemcpy(d_deviceArgs, &h_deviceArgs, sizeof(DeviceArguments), cudaMemcpyHostToDevice));
 };
@@ -85,11 +95,14 @@ ExpressionsGPU::~ExpressionsGPU()
     CHECKCUDAERR(cudaFree(h_deviceArgs.numbers));
     CHECKCUDAERR(cudaFree(h_deviceArgs.ops));
     CHECKCUDAERR(cudaFree(h_deviceArgs.args));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.numbersConstraints));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.opsConstraints));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.argsConstraints));
 
     CHECKCUDAERR(cudaFree(d_deviceArgs));
 }
 
-void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool debug)
+void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool debug, bool constraints)
 {
     ExpsArguments h_expsArgs;
 
@@ -116,7 +129,9 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
 
     for (uint64_t k = 0; k < dest.params.size(); ++k)
     {
-        ParserParams &parserParams = setupCtx.expressionsBin.expressionsInfo[dest.params[k].expId];
+        ParserParams &parserParams = constraints 
+            ? setupCtx.expressionsBin.constraintsInfoDebug[dest.params[k].expId]
+            : setupCtx.expressionsBin.expressionsInfo[dest.params[k].expId];
         if (parserParams.nTemp1*h_expsArgs.nRowsPack > h_expsArgs.maxTemp1Size) {
             h_expsArgs.maxTemp1Size = parserParams.nTemp1*h_expsArgs.nRowsPack;
         }
@@ -139,7 +154,9 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     DestParamsGPU* h_dest_params = new DestParamsGPU[h_expsArgs.dest_nParams];
     for (uint64_t j = 0; j < h_expsArgs.dest_nParams; ++j){
 
-        ParserParams &parserParams = setupCtx.expressionsBin.expressionsInfo[dest.params[j].expId];
+        ParserParams &parserParams = constraints 
+            ? setupCtx.expressionsBin.constraintsInfoDebug[dest.params[j].expId]
+            : setupCtx.expressionsBin.expressionsInfo[dest.params[j].expId];
         h_dest_params[j].dim = dest.params[j].dim;
         h_dest_params[j].stage = dest.params[j].stage;
         h_dest_params[j].stagePos = dest.params[j].stagePos;
@@ -154,13 +171,9 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
         h_dest_params[j].argsOffset =parserParams.argsOffset;
     }
 
-    // CHECKCUDAERR(cudaMemcpyAsync(d_destParams, h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
-
     memcpy(pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU));
     CHECKCUDAERR(cudaMemcpyAsync(d_destParams, pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
     delete[] h_dest_params;
-
-    // CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, &h_expsArgs, sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
 
     memcpy(pinned_exps_args + countId * sizeof(ExpsArguments), &h_expsArgs, sizeof(ExpsArguments));
     CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, pinned_exps_args + countId * sizeof(ExpsArguments), sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
@@ -173,7 +186,7 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     size_t sharedMem = (bufferCommitSize  + 9) * sizeof(Goldilocks::Element *) + 2 * nthreads_ * FIELD_EXTENSION * sizeof(Goldilocks::Element);
 
     TimerStartCategoryGPU(timer, EXPRESSIONS);
-    computeExpressions_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams, debug);
+    computeExpressions_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams, debug, constraints);
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 }
 
@@ -526,7 +539,7 @@ __device__ __forceinline__ void printRes(Goldilocks::Element *res, uint32_t dimR
         }
     }
 }
-__global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, const bool debug)
+__global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, const bool debug, const bool constraints)
 {
 
     int chunk_idx = blockIdx.x;
@@ -540,7 +553,7 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
         expressions_params[bufferCommitsSize + 0] = (&d_params->aux_trace[d_expsArgs->offsetTmp1 + blockIdx.x * d_expsArgs->maxTemp1Size]);
         expressions_params[bufferCommitsSize + 1] = (&d_params->aux_trace[d_expsArgs->offsetTmp3 + blockIdx.x * d_expsArgs->maxTemp3Size]);
         expressions_params[bufferCommitsSize + 2] = d_params->publicInputs;
-        expressions_params[bufferCommitsSize + 3] = d_deviceArgs->numbers;
+        expressions_params[bufferCommitsSize + 3] = constraints ? d_deviceArgs->numbersConstraints : d_deviceArgs->numbers;
         expressions_params[bufferCommitsSize + 4] = d_params->airValues;
         expressions_params[bufferCommitsSize + 5] = d_params->proofValues;
         expressions_params[bufferCommitsSize + 6] = d_params->airgroupValues;
@@ -560,8 +573,8 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
             if(caseNoOperations__(d_params, d_deviceArgs, d_expsArgs, d_destParams, destVals, k, i, debug)){
                 continue;
             }
-            uint8_t *ops = &d_deviceArgs->ops[d_destParams[k].opsOffset];
-            uint16_t *args = &d_deviceArgs->args[d_destParams[k].argsOffset];
+            uint8_t *ops = constraints ? &d_deviceArgs->opsConstraints[d_destParams[k].opsOffset] : &d_deviceArgs->ops[d_destParams[k].opsOffset];
+            uint16_t *args = constraints ? &d_deviceArgs->argsConstraints[d_destParams[k].argsOffset] : &d_deviceArgs->args[d_destParams[k].argsOffset];
             Goldilocks::Element *valueA = (Goldilocks::Element *)( expressions_params + bufferCommitsSize + 9);
             Goldilocks::Element *valueB =  valueA + blockDim.x * FIELD_EXTENSION;
 

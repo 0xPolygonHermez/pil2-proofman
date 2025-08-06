@@ -32,9 +32,13 @@ struct DeviceArguments
     uint8_t *ops;
     uint16_t *args;
     Goldilocks::Element *numbers;
+
+    uint8_t *opsConstraints;
+    uint16_t *argsConstraints;
+    Goldilocks::Element *numbersConstraints;
 };
 
-__global__  void computeExpressions_(StepsParams *h_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, bool debug);
+__global__  void computeExpressions_(StepsParams *h_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, bool debug, bool constraints);
 
 class ExpressionsGPU : public ExpressionsCtx
 {
@@ -49,7 +53,7 @@ public:
     ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack = 128, uint32_t nBlocks = 4096);
     ~ExpressionsGPU();
 
-    void calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool debug = false);
+    void calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool debug = false, bool constraints = false);
     
 };
 #endif
