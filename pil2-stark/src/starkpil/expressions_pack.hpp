@@ -9,7 +9,7 @@
 class ExpressionsPack : public ExpressionsCtx {
 public:
     ExpressionsPack(SetupCtx& setupCtx, ProverHelpers* proverHelpers, uint64_t nrowsPack = NROWS_PACK) : ExpressionsCtx(setupCtx, proverHelpers) {
-        nrowsPack_ = std::min(nrowsPack, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits));
+        nrowsPack = std::min(nrowsPack, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits));
     };
 
     inline Goldilocks::Element* load(uint64_t nrowsPack, Goldilocks::Element *value, StepsParams& params, Goldilocks::Element** expressions_params, uint16_t* args, uint64_t *mapOffsetsExps, uint64_t* mapOffsetsCustomExps, int64_t* nextStridesExps, uint64_t i_args, uint64_t row, uint64_t dim, uint64_t domainSize, bool domainExtended, bool isCyclic, bool debug) {
@@ -241,10 +241,10 @@ public:
 
     inline void storePolynomial(uint64_t nrowsPack, Dest &dest, Goldilocks::Element* destVals, uint64_t row, uint64_t isConstant) {
         if(dest.dim == 1) {
-            uint64_t offset = dest.offset != 0 ? dest.offset : 1;
+            uint64_t offset = dest.stride != 0 ? dest.stride : 1;
             Goldilocks::copy_pack(nrowsPack, &dest.dest[row*offset], uint64_t(offset), &destVals[0], isConstant);
         } else {
-            uint64_t offset = dest.offset != 0 ? dest.offset : FIELD_EXTENSION;
+            uint64_t offset = dest.stride != 0 ? dest.stride : FIELD_EXTENSION;
             Goldilocks::copy_pack(nrowsPack, &dest.dest[row*offset], uint64_t(offset), &destVals[0], isConstant);
             Goldilocks::copy_pack(nrowsPack, &dest.dest[row*offset + 1], uint64_t(offset), &destVals[nrowsPack], isConstant);
             Goldilocks::copy_pack(nrowsPack, &dest.dest[row*offset + 2], uint64_t(offset), &destVals[2*nrowsPack], isConstant);
@@ -311,16 +311,16 @@ public:
 
 
     void calculateExpressions(StepsParams& params, Dest &dest, uint64_t domainSize, bool domainExtended, bool compilation_time, bool verify_constraints = false, bool debug = false) override {
-        uint64_t nrowsPack = std::min(nrowsPack_, domainSize);
+        uint64_t nrowsPack = std::min(nrowsPack, domainSize);
 
         uint64_t *mapOffsetsExps = domainExtended ? mapOffsetsExtended : mapOffsets;
         uint64_t *mapOffsetsCustomExps = domainExtended ? mapOffsetsCustomFixedExtended : mapOffsetsCustomFixed;
         int64_t *nextStridesExps = domainExtended ? nextStridesExtended : nextStrides;
 
-        uint64_t k_min = domainExtended 
+        uint64_t minRow = domainExtended 
             ? uint64_t((minRowExtended + nrowsPack - 1) / nrowsPack) * nrowsPack
             : uint64_t((minRow + nrowsPack - 1) / nrowsPack) * nrowsPack;
-        uint64_t k_max = domainExtended
+        uint64_t maxRow = domainExtended
             ? uint64_t(maxRowExtended / nrowsPack)*nrowsPack
             : uint64_t(maxRow / nrowsPack)*nrowsPack;
 
@@ -351,7 +351,7 @@ public:
         Goldilocks::Element *values_ = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("values", false)]];
     #pragma omp parallel for
         for (uint64_t i = 0; i < domainSize; i+= nrowsPack) {
-            bool isCyclic = i < k_min || i >= k_max;
+            bool isCyclic = i < minRow || i >= maxRow;
             uint64_t expressions_params_size = bufferCommitsSize + 9;
             Goldilocks::Element* expressions_params[expressions_params_size];
             expressions_params[bufferCommitsSize + 2] = params.publicInputs;

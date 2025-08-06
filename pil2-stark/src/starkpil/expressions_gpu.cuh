@@ -13,13 +13,13 @@ struct DeviceArguments
     uint64_t nBlocks;
     uint32_t nStages;
     uint32_t nCustomCommits;
-    uint32_t bufferCommitSize;
+    uint32_t bufferCommitsSize;
     
     uint64_t xn_offset;
     uint64_t x_offset;
     uint64_t zi_offset;
 
-    uint64_t *mapOffsets;  //rick: passar a uint32_t
+    uint64_t *mapOffsets;
     uint64_t *mapOffsetsExtended;
     uint64_t *nextStrides;
     uint64_t *nextStridesExtended;
@@ -39,9 +39,7 @@ __global__  void computeExpressions_(StepsParams *h_params, DeviceArguments *d_d
 class ExpressionsGPU : public ExpressionsCtx
 {
 public:
-    uint32_t nRowsPack;
     uint32_t nBlocks;
-    uint64_t bufferCommitSize;
    
     DeviceArguments *d_deviceArgs;
     DeviceArguments h_deviceArgs;

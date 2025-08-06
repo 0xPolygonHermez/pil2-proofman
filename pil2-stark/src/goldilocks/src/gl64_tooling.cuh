@@ -157,22 +157,27 @@ struct StreamData{
     cudaStream_t stream;
     uint32_t gpuId;
     uint32_t slotId;
-    StepsParams *pinned_params;
+
+    //pinned buffers for witnesses and proofs
+    uint64_t pinned_size = 256 * 1024 * 1024; //size of pinned memory for witnesses and proofs, it can be adjusted as needed
     Goldilocks::Element *pinned_buffer;
     Goldilocks::Element *pinned_buffer_proof;
+    
+    //pinned buffers for expressions
+    StepsParams *pinned_params;
     Goldilocks::Element *pinned_buffer_exps_params;
     Goldilocks::Element *pinned_buffer_exps_args;
-
-    uint64_t pinned_size = 256 * 1024 * 1024; //256MB, this is the size of pinned memory for consts, it can be changed if needed
 
     //runtime data
     uint32_t status; //0: unused, 1: loading, 2: full
     cudaEvent_t end_event;
     TimerGPU timer;
 
+    //transcripts
     TranscriptGL_GPU *transcript;
     TranscriptGL_GPU *transcript_helper;
 
+    //expressions data
     StepsParams *params;
     ExpsArguments *d_expsArgs;
     DestParamsGPU *d_destParams;

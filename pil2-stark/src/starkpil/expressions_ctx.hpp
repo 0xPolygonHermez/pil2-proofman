@@ -29,8 +29,8 @@ struct ExpsArguments
     uint64_t *mapOffsetsExps;
     uint64_t *mapOffsetsCustomExps;
     uint64_t *nextStridesExps;
-    uint64_t k_min;
-    uint64_t k_max;
+    uint64_t minRow;
+    uint64_t maxRow;
     uint64_t maxTemp1Size;
     uint64_t maxTemp3Size;
     uint64_t offsetTmp1;
@@ -41,7 +41,7 @@ struct ExpsArguments
 
     Goldilocks::Element *dest_gpu = nullptr;
     uint64_t dest_domainSize;
-    uint64_t dest_offset = 0;
+    uint64_t dest_stride = 0;
     uint64_t dest_dim = 1;
     uint32_t dest_nParams;
 };
@@ -80,12 +80,12 @@ struct Dest {
     Goldilocks::Element *dest = nullptr;
     Goldilocks::Element *dest_gpu = nullptr;
     int64_t expId = -1;
-    uint64_t offset = 0;
+    uint64_t stride = 0;
     uint64_t dim = 1;
     uint64_t domainSize;
     std::vector<Params> params;
 
-    Dest(Goldilocks::Element *dest_, uint64_t domainSize_, uint64_t offset_ = 0, int64_t expId_ = -1) : dest(dest_), expId(expId_), offset(offset_), domainSize(domainSize_) {}
+    Dest(Goldilocks::Element *dest_, uint64_t domainSize_, uint64_t stride_ = 0, int64_t expId_ = -1) : dest(dest_), expId(expId_), stride(stride_), domainSize(domainSize_) {}
 
     void addParams(uint64_t expId, uint64_t dimExp, bool inverse_ = false, bool batch_ = true) {
         params.push_back(Params(expId, dimExp, inverse_, batch_));
@@ -121,7 +121,7 @@ public:
     ProverHelpers *proverHelpers;
 
     Goldilocks::Element *xis;
-    int64_t *nextStrides;
+    int64_t *nextStrides; // next strides for each opening point
     int64_t *nextStridesExtended;
     uint64_t *mapOffsets;
     uint64_t *mapOffsetsExtended;
@@ -130,8 +130,8 @@ public:
     uint64_t *mapOffsetsCustomFixedExtended;
     uint64_t *mapSectionsNCustomFixed;
     uint64_t mapOffsetFriPol;
-    uint64_t nrowsPack_;
-    uint64_t minRow;
+    uint64_t nrowsPack;
+    uint64_t minRow; // min and max rows where expressions can be evaluated without circular dependencies
     uint64_t maxRow;
     uint64_t minRowExtended;
     uint64_t maxRowExtended;
@@ -151,8 +151,7 @@ public:
         mapSectionsN = new uint64_t[1 + setupCtx.starkInfo.nStages + 1];
         mapSectionsNCustomFixed = new uint64_t[setupCtx.starkInfo.customCommits.size()];
 
-        int64_t extend = (1 << (setupCtx.starkInfo.starkStruct.nBitsExt - setupCtx.starkInfo.starkStruct.nBits));
-
+        int64_t bitsExtend = (1 << (setupCtx.starkInfo.starkStruct.nBitsExt - setupCtx.starkInfo.starkStruct.nBits));
         uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
         uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
@@ -163,7 +162,7 @@ public:
 
         for(uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i) {
             nextStrides[i] = setupCtx.starkInfo.verify ? 0 : setupCtx.starkInfo.openingPoints[i];
-            nextStridesExtended[i] = setupCtx.starkInfo.verify ? 0 : setupCtx.starkInfo.openingPoints[i] * extend;
+            nextStridesExtended[i] = setupCtx.starkInfo.verify ? 0 : setupCtx.starkInfo.openingPoints[i] * bitsExtend;
             if(setupCtx.starkInfo.openingPoints[i] < 0) {
                 minRow = std::max(minRow, uint64_t(std::abs(nextStrides[i])));
                 minRowExtended = std::max(minRowExtended, uint64_t(std::abs(nextStridesExtended[i])));
@@ -173,9 +172,9 @@ public:
             }
         }
 
+        mapSectionsN[0] = setupCtx.starkInfo.mapSectionsN["const"];
         mapOffsets[0] = setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)];
         mapOffsetsExtended[0] = setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)];
-        mapSectionsN[0] = setupCtx.starkInfo.mapSectionsN["const"];
 
         mapOffsetFriPol = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
         
