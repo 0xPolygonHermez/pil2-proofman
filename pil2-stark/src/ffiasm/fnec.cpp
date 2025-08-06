@@ -67,7 +67,7 @@ char *Fnec_element2str(PFnecElement pE) {
     if (!(pE->type & Fnec_LONG)) {
         if (pE->shortVal>=0) {
             char *r = new char[32];
-            sprintf(r, "%d", pE->shortVal);
+            snprintf(r, 32, "%d", pE->shortVal);
             return r;
         } else {
             mpz_init_set_si(r, pE->shortVal);
@@ -162,16 +162,19 @@ void Fnec_div(PFnecElement r, PFnecElement a, PFnecElement b) {
     Fnec_mul(r, a, &tmp);
 }
 
+#ifdef __USE_ASSEMBLY__
 void Fnec_fail() {
     assert(false);
 }
-
+#endif
 
 RawFnec::RawFnec() {
+#ifdef __USE_ASSEMBLY__
     Fnec_init();
     set(fZero, 0);
     set(fOne, 1);
     neg(fNegOne, fOne);
+#endif
 }
 
 RawFnec::~RawFnec() {

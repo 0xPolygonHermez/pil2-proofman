@@ -75,7 +75,7 @@ namespace BinFileUtils
             throw std::system_error(errno, std::generic_category(), "fstat");
 
         size = sb.st_size;
-        void *addrmm = mmap(NULL, size, PROT_READ, MAP_PRIVATE | MAP_POPULATE, fd, 0);
+        void *addrmm = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
         if (addrmm == MAP_FAILED) {
             close(fd);
             throw std::system_error(errno, std::generic_category(), "mmap");
