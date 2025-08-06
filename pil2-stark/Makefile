@@ -5,7 +5,32 @@ ifneq ($(UNAME_S),Darwin)
     include src/goldilocks/CudaArch.mk
 endif
 
-NVCC := /usr/local/cuda/bin/nvcc
+# CUDA detection - check multiple possible locations
+ifeq ($(UNAME_S),Linux)
+    # Check if nvcc is available in PATH first
+    NVCC_CHECK := $(shell which nvcc 2>/dev/null)
+    ifneq ($(NVCC_CHECK),)
+        NVCC := nvcc
+        $(info Found nvcc in PATH: $(NVCC_CHECK))
+    else
+        # Check if CUDA is installed in standard location
+        ifneq ($(wildcard /usr/local/cuda/bin/nvcc),)
+            NVCC := /usr/local/cuda/bin/nvcc
+            $(info Found nvcc at: /usr/local/cuda/bin/nvcc)
+        else
+            # Check other common CUDA locations
+            ifneq ($(wildcard /opt/cuda/bin/nvcc),)
+                NVCC := /opt/cuda/bin/nvcc
+                $(info Found nvcc at: /opt/cuda/bin/nvcc)
+            else
+                NVCC :=
+                $(warning CUDA not found, GPU targets will be disabled)
+            endif
+        endif
+    endif
+else
+    NVCC :=
+endif
 
 TARGET_BCT := bctree
 TARGET_BIN_FILE := binfile
@@ -26,7 +51,7 @@ WITNESS_LIB := ./witness_lib
 CXX := g++
 AS := nasm
 ASFLAGS := -f elf64
-NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 -arch=$(CUDA_ARCH) -DGL64_PARTIALLY_REDUCED
+NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 -arch=$(CUDA_ARCH) -DGL64_PARTIALLY_REDUCED -D__AVX2__
 
 # Use the following flag to solve amxtileintrin.h incompatibility
 # NVCCFLAGS += --compiler-bindir=/usr/bin/g++-10
@@ -87,12 +112,12 @@ endif
 # Define source files based on platform
 ifeq ($(UNAME_S),Darwin)
     # macOS - exclude assembly files (.asm)
-    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/poseidon_opt ./src/rapidsnark/* ./src/ffiasm ./src/utils -name *.cpp -or -name *.c -or -name *.cc)
+    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/poseidon_opt ./src/rapidsnark/* ./src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.cc")
 else
     # Linux - include all files including assembly
-    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/poseidon_opt ./src/rapidsnark/*  ./src/ffiasm ./src/utils -name *.cpp -or -name *.c -or -name *.asm -or -name *.cc)
+    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/poseidon_opt ./src/rapidsnark/*  ./src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
 endif
-SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/poseidon_opt ./src/rapidsnark/*  ./src/ffiasm ./src/utils -name *.cpp -or -name *.c -or -name *.asm -or -name *.cc -or -name *.cu)
+SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/poseidon_opt ./src/rapidsnark/*  ./src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc" -or -name "*.cu")
 OBJS_STARKS_LIB := $(SRCS_STARKS_LIB:%=$(BUILD_DIR)/%.o)
 OBJS_STARKS_LIB_GPU := $(SRCS_STARKS_LIB_GPU:%=$(BUILD_DIR_GPU)/%.o)
 DEPS_STARKS_LIB := $(OBJS_STARKS_LIB:.o=.d)
@@ -101,23 +126,23 @@ DEPS_STARKS_LIB_GPU := $(OBJS_STARKS_LIB_GPU:.o=.d)
 # Define BCT source files based on platform
 ifeq ($(UNAME_S),Darwin)
     # macOS - exclude assembly files and merkleTreeBN128.cpp
-    SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.* ./src/poseidon_opt/poseidon_opt.cpp ./src/ffiasm ./src/utils/* -name *.cpp -or -name *.c -or -name *.cc)
+    SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.* ./src/poseidon_opt/poseidon_opt.cpp ./src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c"-or -name "*.cc")
 else
     # Linux - include all files including assembly
-    SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeBN128.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.*  ./src/poseidon_opt/poseidon_opt.cpp ./src/ffiasm ./src/utils/* -name *.cpp -or -name *.c -or -name *.asm -or -name *.cc)
+    SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeBN128.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.*  ./src/poseidon_opt/poseidon_opt.cpp ./src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
 endif
 OBJS_BCT := $(SRCS_BCT:%=$(BUILD_DIR)/%.o)
 DEPS_BCT := $(OBJS_BCT:.o=.d)
 
-SRCS_BINFILE := $(shell find ./src/binfile/main.cpp ./src/goldilocks/src ./src/starkpil ./src/rapidsnark/logger.* ./src/rapidsnark/binfile_utils.* ./src/rapidsnark/binfile_writer.* ./src/poseidon_opt/poseidon_opt.cpp ./src/ffiasm ./src/utils/* -name *.cpp -or -name *.c -or -name *.cc)
+SRCS_BINFILE := $(shell find ./src/binfile/main.cpp ./src/goldilocks/src ./src/starkpil ./src/rapidsnark/logger.* ./src/rapidsnark/binfile_utils.* ./src/rapidsnark/binfile_writer.* ./src/poseidon_opt/poseidon_opt.cpp ./src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
 OBJS_BINFILE := $(SRCS_BINFILE:%=$(BUILD_DIR)/%.o)
 DEPS_BINFILE := $(OBJS_BINFILE:.o=.d)
 
-SRCS_SETUP := $(shell find $(SETUP_DIRS) ! -path "./src/sm/*" ! -path "./src/main_sm/*" -name *.cpp)
-SRCS_SETUP += $(shell find src/XKCP -name *.cpp)
+SRCS_SETUP := $(shell find $(SETUP_DIRS) ! -path "./src/sm/*" ! -path "./src/main_sm/*" -name "*.cpp")
+SRCS_SETUP += $(shell find src/XKCP -name "*.cpp")
 SRCS_SETUP += $(shell find src/fflonk_setup -name fflonk_setup.cpp)
 SRCS_SETUP += $(addprefix $(SETUP_DPNDS_DIR)/, alt_bn128.cpp fr.cpp fq.cpp fnec.cpp fec.cpp misc.cpp naf.cpp splitparstr.cpp)
-SRCS_SETUP += $(shell find $(SETUP_DPNDS_DIR) -name *.asm)
+SRCS_SETUP += $(shell find $(SETUP_DPNDS_DIR) -name "*.asm")
 OBJS_SETUP := $(patsubst %,$(BUILD_DIR)/%.o,$(SRCS_SETUP))
 OBJS_SETUP := $(filter-out $(BUILD_DIR)/src/main.cpp.o, $(OBJS_SETUP)) # Exclude main.cpp from test build
 OBJS_SETUP := $(filter-out $(BUILD_DIR)/src/main_test.cpp.o, $(OBJS_SETUP)) # Exclude main.cpp from test build
