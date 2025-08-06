@@ -42,15 +42,44 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
         quote! { pub #ident: #ty, }
     });
 
+    fn default_expr(ty: &syn::Type) -> proc_macro2::TokenStream {
+        match ty {
+            syn::Type::Array(array) => {
+                let len = &array.len;
+                let inner = default_expr(&array.elem);
+                quote! { [#inner; #len] }
+            }
+            _ => {
+                quote! { <#ty as Default>::default() }
+            }
+        }
+    }
+
+    let default_field_exprs = fields.named.iter().map(|field| {
+        let ident = field.ident.as_ref().unwrap();
+        let init = default_expr(&field.ty);
+        quote! { #ident: #init }
+    });
+
     let row_struct = quote! {
         #[repr(C)]
-        #[derive(Debug, Clone, Copy, Default)]
+        #[derive(Debug, Clone, Copy)]
         pub struct #row_struct_name<#generics> {
             #(#field_definitions)*
         }
 
         impl<#generics: Copy> #row_struct_name<#generics> {
             pub const ROW_SIZE: usize = #row_size;
+        }
+
+        impl<#generics: Default + Copy> Default for #row_struct_name<#generics> {
+            fn default() -> Self {
+                Self {
+                    #(
+                        #default_field_exprs
+                    ),*
+                }
+            }
         }
     };
 

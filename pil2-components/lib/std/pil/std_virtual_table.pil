@@ -122,12 +122,17 @@ function pack_tables() {
         }
     }
 
-    println("Ordering:");
-    println("=========");
+    int ordered_uids[vt.num_tables];
+    int ordered_acc_heights[vt.num_tables];
+    int ordered_acc_height = 0;
     for (int i = 0; i < vt.num_tables; i++) {
-        println(`Table UID ${vt.uids[ordered_tables[i]]}: width = ${vt.widths[ordered_tables[i]]}, height = 2^${log2(vt.heights[ordered_tables[i]])}`);
+        const int idx = ordered_tables[i];
+        const int height = vt.heights[idx];
+        ordered_uids[i] = vt.uids[idx];
+        ordered_acc_heights[i] = ordered_acc_height;
+        ordered_acc_height += height;
     }
-    println("=========");
+    @virtual_table_data{uids: ordered_uids, acc_heights: ordered_acc_heights};
 
     int max_bits = 0;
     if (MAX_VIRTUAL_BITS == -1) {
@@ -222,7 +227,7 @@ function pack_tables() {
         }
         const int witness_area = (num_groups + 3 + 3 * (num_groups / 2));
         const int area = num_rows * (fixed_area + witness_area);
-        println(`Height: 2^${i}, Wasted area: ${wasted_area}, Fixed area: ${num_rows*fixed_area}, Witness area: ${num_rows*witness_area}, Area: ${area}, #Groups: ${num_groups}`);
+        // println(`Height: 2^${i}, Wasted area: ${wasted_area}, Fixed area: ${num_rows*fixed_area}, Witness area: ${num_rows*witness_area}, Area: ${area}, #Groups: ${num_groups}`);
 
         if ((i == min_bits) || (area < min_area)) {
             // If this is the first iteration or the area is smaller than the minimum found,
@@ -251,34 +256,53 @@ airtemplate VirtualTable(const int N, const int uids[][], const int table_ids[][
         sum_widths += widths[i];
     }
 
-    println(`Virtual table instantiated with N: 2^${log2(N)}, #Fixed: ${num_groups + sum_widths}, #Witness: ${num_groups}`);
+    // println(`Virtual table instantiated with N: 2^${log2(N)}, #Fixed: ${num_groups + sum_widths}, #Witness: ${num_groups}`);
 
     col fixed UID[num_groups];
     col fixed column[sum_widths];
     col witness multiplicity[num_groups];
 
+    @virtual_table_data{num_groups: num_groups};
+
     // Prove the groups
     int col_offset = 0;
+    int row_start = 0;
     for (int i = 0; i < num_groups; i++) {
         const int group_len = lens[i];
         const int group_width = widths[i];
+        // println(`Proving group ${i} with #UIDs: ${group_len}, Width: ${group_width}`);
+        int row_offset = 0;
         for (int j = 0; j < group_len; j++) {
             const int table_id = table_ids[i][j];
             const int height = vt.heights[table_id];
             const int width = vt.widths[table_id];
             const int uid = uids[i][j];
 
-            const int h = (height < N) ? height : N; // Ensure the height does not exceed N
+            // Ensure the height does not exceed N
+            const int height_remaining = height - row_start;
+            const int N_remaining = N - row_offset;
+            const int h = (height_remaining <= N_remaining) ? height_remaining : N_remaining;
 
             // Fill the UID column
-            Tables.fill(uid, UID[i], 0, h);
+            // println(`Filling UID[${j}]: ${uid}`);
+            Tables.fill(uid, UID[i], row_offset, h);
 
             // Fill the table columns
             for (int k = 0; k < width; k++) {
-                Tables.copy(vt.columns[table_id][k], 0, column[col_offset + k], 0, h);
+                // println(`Filling column ${col_offset + k}`);
+                Tables.copy(vt.columns[table_id][k], row_start, column[col_offset + k], row_offset, h);
+            }
+
+            // Update the row offset
+            row_offset += h;
+
+            // Update the row start
+            if (height_remaining <= N_remaining) {
+                row_start = 0;
+            } else {
+                row_start += h;
             }
         }
-        col_offset += group_width;
 
         int uids_to_prove[group_len];
         for (int j = 0; j < group_len; j++) {
@@ -287,12 +311,27 @@ airtemplate VirtualTable(const int N, const int uids[][], const int table_ids[][
 
         expr cols_to_prove[group_width];
         for (int j = 0; j < group_width; j++) {
-            cols_to_prove[j] = column[j];
+            cols_to_prove[j] = column[col_offset + j];
         }
 
-        println(`Proving group ${i} with uids:`, uids_to_prove);
+        // println(`Proving group ${i} with uids:`, uids_to_prove);
 
         // Perform the proving
         lookup_proves_dynamic(opids: uids_to_prove, busid: UID[i], expressions: cols_to_prove, mul: multiplicity[i]);
+
+        // Update the column offset
+        col_offset += group_width;
     }
+
+    // save the airgroup id and air id of the table for latter use
+    container proof.std.virtual_table {
+        int airgroup_id = AIRGROUP_ID;
+        int air_id = AIR_ID;
+    }
+    on final proof issue_virtual_table_data_global();
+}
+
+private function issue_virtual_table_data_global() {
+    use proof.std.virtual_table;
+    @virtual_table_data_global{airgroup_id: airgroup_id, air_id: air_id};
 }

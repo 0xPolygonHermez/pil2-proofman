@@ -618,8 +618,8 @@ pub fn add_publics_aggregation<F: PrimeField64>(
 }
 
 pub fn register_std<F: PrimeField64>(wcm: &WitnessManager<F>, std: &Std<F>) {
-    wcm.register_component_std(std.std_prod.clone());
-    wcm.register_component_std(std.std_sum.clone());
+    wcm.register_component_std(std.prod_bus.clone());
+    wcm.register_component_std(std.sum_bus.clone());
     wcm.register_component_std(std.range_check.clone());
 
     if std.range_check.u8air.is_some() {
@@ -633,6 +633,8 @@ pub fn register_std<F: PrimeField64>(wcm: &WitnessManager<F>, std: &Std<F>) {
     if std.range_check.specified_ranges_air.is_some() {
         wcm.register_component_std(std.range_check.specified_ranges_air.clone().unwrap());
     }
+
+    wcm.register_component_std(std.virtual_table.clone());
 }
 
 pub fn register_std_dev<F: PrimeField64>(
@@ -642,8 +644,8 @@ pub fn register_std_dev<F: PrimeField64>(
     register_u16: bool,
     register_specified_ranges: bool,
 ) {
-    wcm.register_component_std(std.std_prod.clone());
-    wcm.register_component_std(std.std_sum.clone());
+    wcm.register_component_std(std.prod_bus.clone());
+    wcm.register_component_std(std.sum_bus.clone());
     wcm.register_component_std(std.range_check.clone());
 
     if register_u8 && std.range_check.u8air.is_some() {
@@ -657,4 +659,6 @@ pub fn register_std_dev<F: PrimeField64>(
     if register_specified_ranges && std.range_check.specified_ranges_air.is_some() {
         wcm.register_component_std(std.range_check.specified_ranges_air.clone().unwrap());
     }
+
+    wcm.register_component_std(std.virtual_table.clone());
 }
