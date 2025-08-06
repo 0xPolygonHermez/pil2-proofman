@@ -54,7 +54,7 @@ ASFLAGS := -f elf64
 NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 -arch=$(CUDA_ARCH) -DGL64_PARTIALLY_REDUCED -D__AVX2__
 
 # Use the following flag to solve amxtileintrin.h incompatibility
-# NVCCFLAGS += --compiler-bindir=/usr/bin/g++-10
+NVCCFLAGS += --compiler-bindir=/usr/bin/g++-10
 
 # Debugging flags
 # NVCCFLAGS += -G -lineinfo -Xptxas=-v
@@ -78,7 +78,6 @@ ifeq ($(UNAME_S),Darwin)
     NVCC :=
 else ifeq ($(UNAME_S),Linux)
     CXX      = g++
-    NVCC := /usr/local/cuda/bin/nvcc
     include src/goldilocks/CudaArch.mk
     CPPFLAGS = -I/usr/include -I/usr/local/include -MMD -MP $(INC_FLAGS)
     CXXFLAGS = -std=c++17 -Wall -pthread -Wno-unused-label -fPIC -fopenmp
