@@ -24,14 +24,14 @@ pub struct InstanceInfo {
     pub airgroup_id: usize,
     pub air_id: usize,
     pub all: bool,
-    pub min_threads_witness: usize,
+    pub threads_witness: usize,
     pub n_chunks: usize,
     pub range: (usize, usize),
 }
 
 impl InstanceInfo {
-    pub fn new(airgroup_id: usize, air_id: usize, all: bool, min_threads_witness: usize) -> Self {
-        Self { airgroup_id, air_id, all, min_threads_witness, n_chunks: 1, range: (0, 0) }
+    pub fn new(airgroup_id: usize, air_id: usize, all: bool, threads_witness: usize) -> Self {
+        Self { airgroup_id, air_id, all, threads_witness, n_chunks: 1, range: (0, 0) }
     }
 }
 
@@ -313,15 +313,9 @@ impl DistributionCtx {
     }
 
     #[inline]
-    pub fn add_instance(
-        &mut self,
-        airgroup_id: usize,
-        air_id: usize,
-        min_threads_witness: usize,
-        weight: u64,
-    ) -> usize {
+    pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, threads_witness: usize, weight: u64) -> usize {
         let idx = self.instances.len();
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, min_threads_witness));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, threads_witness));
         self.n_instances += 1;
         let new_owner = (idx % self.n_processes as usize) as i32;
         let count = self.owners_count[new_owner as usize] as usize;
@@ -340,11 +334,11 @@ impl DistributionCtx {
         airgroup_id: usize,
         air_id: usize,
         owner_idx: usize,
-        min_threads_witness: usize,
+        threads_witness: usize,
         weight: u64,
     ) -> usize {
         let idx = self.instances.len();
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, min_threads_witness));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, threads_witness));
         self.n_instances += 1;
         let count = self.owners_count[owner_idx] as usize;
         self.instances_owner.push((owner_idx as i32, count, weight));
@@ -361,10 +355,10 @@ impl DistributionCtx {
         &mut self,
         airgroup_id: usize,
         air_id: usize,
-        min_threads_witness: usize,
+        threads_witness: usize,
         weight: u64,
     ) -> usize {
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, min_threads_witness));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, threads_witness));
         self.instances_owner.push((-1, 0, weight));
         self.n_instances += 1;
         self.n_instances - 1
