@@ -32,7 +32,7 @@ pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
         _buffer_pool: &dyn BufferPool<F>,
     ) {
         for instance_id in instance_ids {
-            pctx.set_witness_ready(*instance_id);
+            pctx.set_witness_ready(*instance_id, false);
         }
     }
 
