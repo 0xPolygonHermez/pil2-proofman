@@ -407,9 +407,7 @@ where
         let instances_mine_no_tables = my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).count();
 
         let max_num_threads = configured_num_threads(self.pctx.dctx_get_node_n_processes());
-         
-         let n_threads_witness = self.gpu_params.number_threads_pools_witness;
-        
+
         let memory_handler =
             Arc::new(MemoryHandler::new(self.gpu_params.max_witness_stored, self.sctx.max_witness_trace_size));
 
@@ -417,7 +415,6 @@ where
             &my_instances_sorted_no_all,
             memory_handler.clone(),
             max_num_threads,
-            n_threads_witness,
             options.minimal_memory,
             true,
         );
@@ -965,11 +962,6 @@ where
 
         timer_stop_and_log_info!(PREPARING_CONTRIBUTIONS);
 
-        let n_threads_witness = match cfg!(feature = "gpu") {
-            true => self.gpu_params.number_threads_pools_witness,
-            false => max_num_threads,
-        };
-
         let mut handle_contributions = Vec::new();
         for _ in 0..n_streams {
             let pctx_clone = self.pctx.clone();
@@ -1024,7 +1016,6 @@ where
             &my_instances_sorted_no_all,
             self.memory_handler.clone(),
             max_num_threads,
-            n_threads_witness,
             options.minimal_memory,
             false,
         );
@@ -1444,6 +1435,8 @@ where
             let instance_info = &instances[instance_id];
             let (airgroup_id, air_id) = (instance_info.airgroup_id, instance_info.air_id);
 
+            let n_threads_witness = instance_info.threads_witness.min(max_num_threads);
+
             let threads_to_use_collect = (instance_info.n_chunks / 16).min(max_num_threads / 4).max(n_threads_witness);
 
             if !is_stored {
@@ -1684,7 +1677,6 @@ where
         instances: &[usize],
         memory_handler: Arc<MemoryHandler<F>>,
         max_num_threads: usize,
-        n_threads_witness: usize,
         minimal_memory: bool,
         stats: bool,
     ) {
@@ -1710,75 +1702,63 @@ where
         let memory_handler_clone = memory_handler.clone();
         let witness_handles = Arc::new(Mutex::new(Vec::new()));
         let witness_handles_clone = witness_handles.clone();
-        let witness_handler = std::thread::spawn(move || {
-            loop {
-                if minimal_memory {
-                    continue;
-                }
-                
-                let instance_id = match witness_rx_priority.try_recv() {
+        let witness_handler = std::thread::spawn(move || loop {
+            if minimal_memory {
+                continue;
+            }
+
+            let instance_id = match witness_rx_priority.try_recv() {
+                Ok(id) => id,
+                Err(crossbeam_channel::TryRecvError::Empty) => match witness_rx.try_recv() {
                     Ok(id) => id,
                     Err(crossbeam_channel::TryRecvError::Empty) => {
-                        match witness_rx.try_recv() {
-                            Ok(id) => id,
-                            Err(crossbeam_channel::TryRecvError::Empty) => {
-                                std::thread::sleep(std::time::Duration::from_micros(100));
-                                continue;
-                            }
-                            Err(crossbeam_channel::TryRecvError::Disconnected) => {
-                                match witness_rx_priority.try_recv() {
-                                    Ok(id) => id,
-                                    Err(_) => break,
-                                }
-                            }
-                        }
+                        std::thread::sleep(std::time::Duration::from_micros(100));
+                        continue;
                     }
-                    Err(crossbeam_channel::TryRecvError::Disconnected) => {
-                        match witness_rx.recv() {
-                            Ok(id) => id,
-                            Err(_) => break,
-                        }
-                    }
-                };
+                    Err(crossbeam_channel::TryRecvError::Disconnected) => match witness_rx_priority.try_recv() {
+                        Ok(id) => id,
+                        Err(_) => break,
+                    },
+                },
+                Err(crossbeam_channel::TryRecvError::Disconnected) => match witness_rx.recv() {
+                    Ok(id) => id,
+                    Err(_) => break,
+                },
+            };
 
-                let (airgroup_id, air_id) = pctx_clone.dctx_get_instance_info(instance_id);
+            let (airgroup_id, air_id) = pctx_clone.dctx_get_instance_info(instance_id);
 
-                let tx_threads_clone: Sender<()> = tx_threads_clone.clone();
-                let wcm = wcm_clone.clone();
-                let memory_handler_clone = memory_handler_clone.clone();
+            let n_threads_witness = pctx_clone.dctx_instance_threads_witness(instance_id);
 
-                let witness_done_clone = witness_done_clone.clone();
+            let tx_threads_clone: Sender<()> = tx_threads_clone.clone();
+            let wcm = wcm_clone.clone();
+            let memory_handler_clone = memory_handler_clone.clone();
+
+            let witness_done_clone = witness_done_clone.clone();
+            for _ in 0..n_threads_witness {
+                rx_threads_clone.recv().unwrap();
+            }
+
+            let pctx_clone = pctx_clone.clone();
+            let handle = std::thread::spawn(move || {
+                timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
                 for _ in 0..n_threads_witness {
-                    rx_threads_clone.recv().unwrap();
+                    tx_threads_clone.send(()).unwrap();
                 }
-
-                let pctx_clone = pctx_clone.clone();
-                let handle = std::thread::spawn(move || {
-                    timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                    wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
-                    for _ in 0..n_threads_witness {
-                        tx_threads_clone.send(()).unwrap();
+                timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                witness_done_clone.increment();
+                if stats {
+                    let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
+                    if is_shared_buffer {
+                        memory_handler_clone.release_buffer(witness_buffer);
                     }
-                    timer_stop_and_log_info!(
-                        GENERATING_WC,
-                        "GENERATING_WC_{} [{}:{}]",
-                        instance_id,
-                        airgroup_id,
-                        air_id
-                    );
-                    witness_done_clone.increment();
-                    if stats {
-                        let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
-                        if is_shared_buffer {
-                            memory_handler_clone.release_buffer(witness_buffer);
-                        }
-                    }
-                });
-                if !stats && cfg!(not(feature = "gpu")) {
-                    handle.join().unwrap();
-                } else {
-                    witness_handles_clone.lock().unwrap().push(handle);
                 }
+            });
+            if !stats && cfg!(not(feature = "gpu")) {
+                handle.join().unwrap();
+            } else {
+                witness_handles_clone.lock().unwrap().push(handle);
             }
         });
 
@@ -1788,6 +1768,8 @@ where
             timer_stop_and_log_info!(PRE_CALCULATE_WC);
         } else {
             for &instance_id in instances.iter() {
+                let n_threads_witness = self.pctx.dctx_instance_threads_witness(instance_id);
+
                 let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id);
                 let threads_to_use_collect = match cfg!(feature = "gpu") || stats {
                     true => (self.pctx.dctx_get_instance_chunks(instance_id) / 16)

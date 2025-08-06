@@ -434,6 +434,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances[global_idx].table
     }
 
+    pub fn dctx_instance_threads_witness(&self, global_idx: usize) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        dctx.instances[global_idx].threads_witness
+    }
+
     pub fn dctx_find_air_instance_id(&self, global_idx: usize) -> usize {
         let dctx = self.dctx.read().unwrap();
         dctx.find_air_instance_id(global_idx)
@@ -449,10 +454,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.set_chunks(global_idx, chunks);
     }
 
-    pub fn add_instance_assign(&self, airgroup_id: usize, air_id: usize, min_threads_witness: usize) -> usize {
+    pub fn add_instance_assign(&self, airgroup_id: usize, air_id: usize, threads_witness: usize) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance(airgroup_id, air_id, min_threads_witness, weight)
+        dctx.add_instance(airgroup_id, air_id, threads_witness, weight)
     }
 
     pub fn add_instance_rank(
@@ -460,17 +465,17 @@ impl<F: PrimeField64> ProofCtx<F> {
         airgroup_id: usize,
         air_id: usize,
         owner_idx: usize,
-        min_threads_witness: usize,
+        threads_witness: usize,
     ) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_assign_rank(airgroup_id, air_id, owner_idx, min_threads_witness, weight)
+        dctx.add_instance_assign_rank(airgroup_id, air_id, owner_idx, threads_witness, weight)
     }
 
-    pub fn add_instance(&self, airgroup_id: usize, air_id: usize, min_threads_witness: usize) -> usize {
+    pub fn add_instance(&self, airgroup_id: usize, air_id: usize, threads_witness: usize) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign(airgroup_id, air_id, min_threads_witness, weight)
+        dctx.add_instance_no_assign(airgroup_id, air_id, threads_witness, weight)
     }
 
     pub fn add_table(&self, airgroup_id: usize, air_id: usize) -> usize {
@@ -493,11 +498,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         &self,
         airgroup_id: usize,
         air_id: usize,
-        min_threads_witness: usize,
+        threads_witness: usize,
         weight: u64,
     ) -> usize {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.add_instance_no_assign(airgroup_id, air_id, min_threads_witness, weight)
+        dctx.add_instance_no_assign(airgroup_id, air_id, threads_witness, weight)
     }
 
     pub fn dctx_assign_instances(&self, minimal_memory: bool) {
