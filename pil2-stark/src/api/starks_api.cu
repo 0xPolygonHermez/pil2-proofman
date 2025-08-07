@@ -596,9 +596,23 @@ void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
 
 }
 
-uint64_t check_device_memory() {
-    
-    set_device(0); //We assume that all the GPUs have the same characteristics, we only check the GPU 0
+uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size) {
+    int deviceCount;
+    cudaGetDeviceCount(&deviceCount);
+
+    uint32_t device_id;
+
+    if (deviceCount >= node_size) {
+        // Each process gets multiple GPUs
+        uint32_t n_gpus_per_process = deviceCount / node_size;
+        device_id = node_rank * n_gpus_per_process;
+    } else {
+        // Each GPU is shared by multiple processes
+        device_id = node_rank % deviceCount;
+    }
+
+    cudaSetDevice(device_id);
+
     uint64_t freeMem, totalMem;
     cudaError_t err = cudaMemGetInfo(&freeMem, &totalMem);
     if (err != cudaSuccess) {
@@ -606,8 +620,10 @@ uint64_t check_device_memory() {
         return 0;
     }
 
-    zklog.trace("Free memory GPU: " +  to_string(freeMem / (1024.0 * 1024.0)) + " MB");
-    zklog.trace("Total memory GPU: " + to_string(totalMem / (1024.0 * 1024.0)) + " MB");
+    zklog.trace("Process rank " + std::to_string(node_rank) + 
+                " sees GPU " + std::to_string(device_id));
+    zklog.trace("Free memory GPU: " + std::to_string(freeMem / (1024.0 * 1024.0)) + " MB");
+    zklog.trace("Total memory GPU: " + std::to_string(totalMem / (1024.0 * 1024.0)) + " MB");
 
     return freeMem;
 }

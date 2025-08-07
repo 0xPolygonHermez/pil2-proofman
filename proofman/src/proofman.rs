@@ -2213,7 +2213,10 @@ where
         gpu_params: &ParamsGPU,
     ) -> (Arc<DeviceBuffer>, u64, u64) {
         let mut free_memory_gpu = match cfg!(feature = "gpu") {
-            true => check_device_memory_c() as f64 * 0.98,
+            true => {
+                check_device_memory_c(pctx.dctx_get_node_rank() as u32, pctx.dctx_get_node_n_processes() as u32) as f64
+                    * 0.98
+            }
             false => 0.0,
         };
 

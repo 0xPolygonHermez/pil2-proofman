@@ -513,7 +513,10 @@ extern "C" {
         maxRecursiveProofsPerGPU: u64,
     ) -> u64;
     
-    pub fn check_device_memory() -> u64;
+    pub fn check_device_memory(
+        node_rank: u32,
+        node_size: u32,
+    ) -> u64;
     
     pub fn get_num_gpus() -> u64;
 
