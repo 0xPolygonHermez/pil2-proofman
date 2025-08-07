@@ -2004,12 +2004,8 @@ where
             });
             if cfg!(not(feature = "gpu")) {
                 handle.join().unwrap();
-            }
-        }
-
-        for &instance_id in my_instances_sorted.iter() {
-            if cfg!(not(feature = "gpu")) {
-                launch_callback_c(instance_id as u64, "basic");
+            } else {
+                handle_recursives.push(handle);
             }
         }
 
@@ -2380,6 +2376,10 @@ where
             &const_pols_path,
             &const_pols_tree_path,
         );
+
+        if cfg!(not(feature = "gpu")) {
+            launch_callback_c(instance_id as u64, "basic");
+        }
 
         timer_stop_and_log_info!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
     }
