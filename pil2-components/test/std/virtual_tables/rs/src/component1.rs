@@ -30,8 +30,7 @@ where
         buffer_pool: &dyn BufferPool<F>,
     ) {
         if stage == 1 {
-            let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
-            let mut rng = StdRng::seed_from_u64(seed);
+            let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 
             let mut trace = Component1Trace::new_from_vec(buffer_pool.take_buffer());
             let num_rows = trace.num_rows();
