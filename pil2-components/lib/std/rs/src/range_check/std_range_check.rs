@@ -10,7 +10,9 @@ use proofman_hints::{
 };
 
 use crate::{
-    extract_field_element_as_usize, get_global_hint_field_constant_as, get_hint_field_constant_as, get_hint_field_constant_as_field, validate_binary_field, AirComponent, SpecifiedRanges, StdVirtualTable, U16Air, U8Air
+    extract_field_element_as_usize, get_global_hint_field_constant_as, get_hint_field_constant_as,
+    get_hint_field_constant_as_field, validate_binary_field, AirComponent, SpecifiedRanges, StdVirtualTable, U16Air,
+    U8Air,
 };
 
 #[derive(Debug, Clone)]
@@ -97,7 +99,14 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             }
         }
 
-        return Arc::new(Self { _phantom: std::marker::PhantomData, ranges, u8air, u16air, specified_ranges_air, virtual_table });
+        return Arc::new(Self {
+            _phantom: std::marker::PhantomData,
+            ranges,
+            u8air,
+            u16air,
+            specified_ranges_air,
+            virtual_table,
+        });
 
         // Helper function to instantiate AIRs
         fn create_air<T, F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, hints: &[u64]) -> Option<Arc<T>>

@@ -83,10 +83,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             calculated: AtomicBool::new(false),
         };
 
-        return Arc::new(Self {
-            _phantom: std::marker::PhantomData,
-            virtual_table_air: Some(Arc::new(virtual_table_air)),
-        });
+        Arc::new(Self { _phantom: std::marker::PhantomData, virtual_table_air: Some(Arc::new(virtual_table_air)) })
     }
 
     pub fn get_id(&self, id: usize) -> usize {

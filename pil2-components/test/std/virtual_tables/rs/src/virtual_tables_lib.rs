@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use pil_std_lib::Std;
 use witness::{witness_library, WitnessLibrary, WitnessManager};
 
@@ -10,7 +8,7 @@ use rand::{
     Rng,
 };
 
-use crate::{Component1, Component2, Component3, Component4, Component5, Component6, /*Component7, Table7*/};
+use crate::{Component1, Component2, Component3, Component4, Component5, Component6 /*Component7, Table7*/};
 use proofman::register_std;
 
 witness_library!(WitnessLib, Goldilocks);
@@ -19,7 +17,7 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib
 where
     StandardUniform: Distribution<F>,
 {
-    fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
+    fn register_witness(&mut self, wcm: &WitnessManager<F>) {
         let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
 
         let std = Std::new(wcm.get_pctx(), wcm.get_sctx());

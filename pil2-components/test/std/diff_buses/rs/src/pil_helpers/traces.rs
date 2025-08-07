@@ -16,7 +16,7 @@ use rayon::prelude::*;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "aa4c038e68d5e522c7b6117b97fcd29e571a4d207c7778f400111256ed20548b";
+pub const PILOUT_HASH: &str = "5603b3e47def8ed8a647902c9a9071f9e561cb9409bc12fa5aabed65c70160b5";
 
 //AIRGROUP CONSTANTS
 
@@ -56,13 +56,13 @@ trace!(BothBusesTrace<F> {
 },  0, 2, 16 );
 
 values!(ProdBusAirGroupValues<F> {
- _gprod_result: FieldExtension<F>, _gsum_result: FieldExtension<F>,
+ gprod_result: FieldExtension<F>, gsum_result: FieldExtension<F>,
 });
 
 values!(SumBusAirGroupValues<F> {
- _gprod_result: FieldExtension<F>, _gsum_result: FieldExtension<F>,
+ gprod_result: FieldExtension<F>, gsum_result: FieldExtension<F>,
 });
 
 values!(BothBusesAirGroupValues<F> {
- _gprod_result: FieldExtension<F>, _gsum_result: FieldExtension<F>,
+ gprod_result: FieldExtension<F>, gsum_result: FieldExtension<F>,
 });

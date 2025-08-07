@@ -8,7 +8,7 @@ airtemplate ArraySize(const int N = 2**2) {
     col witness a[501];
 
     for (int i = 0; i < 501; i++) {
-        lookup_assumes(i, expressions: [a[i]], name: PIOP_NAME_ISOLATED);
+        lookup_assumes(i, expressions: [a[i]], surname: PIOP_SURNAME_ISOLATED);
     }
 }
 

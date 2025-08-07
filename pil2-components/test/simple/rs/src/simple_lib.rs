@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use pil_std_lib::Std;
 use witness::{witness_library, WitnessLibrary, WitnessManager};
 
