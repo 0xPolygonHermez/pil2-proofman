@@ -67,6 +67,7 @@ test_pipeline "lookup" "./pil2-components/test/std/lookup" "lookup"
 test_pipeline "one_instance" "./pil2-components/test/std/one_instance" "one_instance"
 test_pipeline "permutation" "./pil2-components/test/std/permutation" "permutation"
 test_pipeline "build" "./pil2-components/test/std/range_check" "range_check"
+test_pipeline "virtual_tables" "./pil2-components/test/std/special" "virtual_tables"
 
 test_pipeline "array_size" "./pil2-components/test/std/special" "array_size" "true"
 test_pipeline "direct_optimizations" "./pil2-components/test/std/special" "direct_optimizations" "true"
@@ -74,6 +75,5 @@ test_pipeline "expr_optimizations" "./pil2-components/test/std/special" "expr_op
 test_pipeline "intermediate_prods" "./pil2-components/test/std/special" "intermediate_prods" "true"
 test_pipeline "intermediate_sums" "./pil2-components/test/std/special" "intermediate_sums" "true"
 test_pipeline "table" "./pil2-components/test/std/special" "table" "true"
-test_pipeline "virtual_tables" "./pil2-components/test/std/special" "virtual_tables" "true"
 
 echo "✅ All tests completed."

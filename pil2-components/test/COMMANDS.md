@@ -224,6 +224,34 @@ rm -rf ./pil2-components/test/std/range_check/build/ \
 ```
 
 ------------------------------------
+VIRTUAL TABLES
+
+```bash
+rm -rf ./pil2-components/test/std/virtual_tables/build/ \
+&& mkdir -p ./pil2-components/test/std/virtual_tables/build/ \
+&& node ../pil2-compiler/src/pil.js ./pil2-components/test/std/virtual_tables/virtual_tables.pil \
+     -I ./pil2-components/lib/std/pil \
+     -o ./pil2-components/test/std/virtual_tables/build/build.pilout \
+&& node ../pil2-proofman-js/src/main_setup.js \
+     -a ./pil2-components/test/std/virtual_tables/build/build.pilout \
+     -b ./pil2-components/test/std/virtual_tables/build \
+&& cargo run  --bin proofman-cli check-setup \
+     --proving-key ./pil2-components/test/std/virtual_tables/build/provingKey \
+&& cargo run  --bin proofman-cli pil-helpers \
+     --pilout ./pil2-components/test/std/virtual_tables/build/build.pilout \
+     --path ./pil2-components/test/std/virtual_tables/rs/src -o \
+&& cargo build  \
+&& cargo run  --bin proofman-cli verify-constraints \
+     --witness-lib ./target/debug/libvirtual_tables.so \
+     --proving-key ./pil2-components/test/std/virtual_tables/build/provingKey \
+&& cargo run  --bin proofman-cli prove \
+     --witness-lib ./target/debug/libvirtual_tables.so \
+     --proving-key ./pil2-components/test/std/virtual_tables/build/provingKey \
+     --verify-proofs \
+     --output-dir ./pil2-components/test/std/virtual_tables/build/proofs
+```
+
+------------------------------------
 SPECIAL
 
 ```bash
@@ -247,9 +275,6 @@ rm -rf ./pil2-components/test/std/special/build/ \
 && node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/table.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./pil2-components/test/std/special/build/table.pilout \
-&& node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/virtual_tables.pil \
-     -I ./pil2-components/lib/std/pil \
-     -o ./pil2-components/test/std/special/build/virtual_tables.pilout \
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./pil2-components/test/std/special/build/array_size.pilout \
      -b ./pil2-components/test/std/special/build \
@@ -269,8 +294,5 @@ rm -rf ./pil2-components/test/std/special/build/ \
      -b ./pil2-components/test/std/special/build \
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./pil2-components/test/std/special/build/table.pilout \
-     -b ./pil2-components/test/std/special/build
-&& node ../pil2-proofman-js/src/main_setup.js \
-     -a ./pil2-components/test/std/special/build/virtual_tables.pilout \
      -b ./pil2-components/test/std/special/build
 ```

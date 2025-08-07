@@ -30,6 +30,10 @@ impl<F: Field> ExtensionField<F> {
         Self { value: field_to_array(F::NEG_ONE) }
     }
 
+    pub fn is_zero(&self) -> bool {
+        self.value.iter().all(|&x| x.is_zero())
+    }
+
     #[inline(always)]
     pub fn square(&self) -> Self {
         Self { value: cubic_square(&self.value).to_vec().try_into().unwrap() }

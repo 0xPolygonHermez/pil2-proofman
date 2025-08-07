@@ -41,7 +41,7 @@ where
 
             // Get the range check IDs
             let range1 = self.std_lib.get_virtual_table_id(VirtualTableIdInput::FromParams {
-                min: 0,
+                min: 5,
                 max: (1 << 8) - 1,
                 predefined: Some(true),
             });
@@ -71,7 +71,7 @@ where
                 let row = Table4::calculate_table_row(val);
                 self.std_lib.inc_virtual_row(id, row, 1);
 
-                let val1 = rng.random_range(0..=(1 << 8) - 1);
+                let val1 = rng.random_range(5..=(1 << 8) - 1);
                 let val2 = rng.random_range(0..=(1 << 16) - 1);
                 let val3 = rng.random_range(0..=(1 << 6) - 1);
                 trace[i].b[0] = F::from_u64(val1);
