@@ -116,7 +116,7 @@ function set_std_bus_type(const int bus_type) {
 
 // FIX: dynamic arrays not ready yet
 // Set the array size across the library
-int ARRAY_SIZE = 500;
+int ARRAY_SIZE = 750;
 
 function set_array_size(const int limit) {
     ARRAY_SIZE = limit;

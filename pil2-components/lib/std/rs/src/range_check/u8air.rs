@@ -60,6 +60,10 @@ impl U8Air {
         value as u64
     }
 
+    pub fn get_global_rows(values: &[u8]) -> Vec<u64> {
+        values.iter().map(|&v| Self::get_global_row(v)).collect()
+    }
+
     #[inline(always)]
     pub fn update_input(&self, value: u8, multiplicity: u64) {
         if self.calculated.load(Ordering::Relaxed) {
@@ -76,7 +80,7 @@ impl U8Air {
         self.multiplicities[range_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
     }
 
-    pub fn update_inputs(&self, values: Vec<u32>) {
+    pub fn update_inputs(&self, values: Vec<u64>) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }

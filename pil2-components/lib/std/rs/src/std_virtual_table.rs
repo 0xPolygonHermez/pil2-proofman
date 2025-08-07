@@ -90,8 +90,16 @@ impl<F: PrimeField64> StdVirtualTable<F> {
         self.virtual_table_air.as_ref().unwrap().get_id(id)
     }
 
-    pub fn update_multiplicity(&self, id: usize, row: u64, multiplicity: u64) {
-        self.virtual_table_air.as_ref().unwrap().update_multiplicity(id, row, multiplicity);
+    pub fn inc_virtual_row(&self, id: usize, row: u64, multiplicity: u64) {
+        self.virtual_table_air.as_ref().unwrap().inc_virtual_row(id, row, multiplicity);
+    }
+
+    pub fn inc_virtual_rows(&self, id: usize, rows: Vec<u64>, multiplicities: Vec<u64>) {
+        self.virtual_table_air.as_ref().unwrap().inc_virtual_rows(id, rows, multiplicities);
+    }
+
+    pub fn inc_virtual_rows_same_mul(&self, id: usize, rows: Vec<u64>, multiplicity: u64) {
+        self.virtual_table_air.as_ref().unwrap().inc_virtual_rows_same_mul(id, rows, multiplicity);
     }
 }
 
@@ -108,7 +116,7 @@ impl VirtualTableAir {
     }
 
     /// Processes a slice of input data and updates the multiplicity table.
-    pub fn update_multiplicity(&self, id: usize, row: u64, multiplicity: u64) {
+    pub fn inc_virtual_row(&self, id: usize, row: u64, multiplicity: u64) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
@@ -129,16 +137,43 @@ impl VirtualTableAir {
         self.multiplicities[sub_table_idx as usize][row_idx as usize].fetch_add(multiplicity, Ordering::Relaxed);
     }
 
-    /// Processes a slice of input data and updates the multiplicity table.
-    pub fn update_multiplicities(&self, id: usize, rows: Vec<u64>, multiplicity: u64) {
+    pub fn inc_virtual_rows(&self, id: usize, rows: Vec<u64>, multiplicities: Vec<u64>) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
 
-        for row in rows.iter() {
-            // Get the table offset
-            let table_offset = self.uids[id].1; // Acc height of the table
+        // Get the table offset
+        let table_offset = self.uids[id].1; // Acc height of the table
 
+        for (&row, &multiplicity) in rows.iter().zip(multiplicities.iter()) {
+            if multiplicity == 0 {
+                continue;
+            }
+
+            // Get the offset
+            let offset = table_offset + row;
+
+            // Map it to the appropriate multiplicity
+            let sub_table_idx = offset >> self.shift;
+
+            // Get the row index
+            let row_idx = offset & self.mask;
+
+            // Update the multiplicity
+            self.multiplicities[sub_table_idx as usize][row_idx as usize].fetch_add(multiplicity, Ordering::Relaxed);
+        }
+    }
+
+    /// Processes a slice of input data and updates the multiplicity table.
+    pub fn inc_virtual_rows_same_mul(&self, id: usize, rows: Vec<u64>, multiplicity: u64) {
+        if self.calculated.load(Ordering::Relaxed) {
+            return;
+        }
+
+        // Get the table offset
+        let table_offset = self.uids[id].1; // Acc height of the table
+
+        for row in rows.iter() {
             // Get the offset
             let offset = table_offset + row;
 

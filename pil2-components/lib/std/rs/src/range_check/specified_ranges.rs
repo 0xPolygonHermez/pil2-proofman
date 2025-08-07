@@ -109,6 +109,10 @@ impl SpecifiedRanges {
         (value - range_min) as u64
     }
 
+    pub fn get_global_rows(range_min: i64, values: &[i64]) -> Vec<u64> {
+        values.iter().map(|&v| Self::get_global_row(range_min, v)).collect()
+    }
+
     #[inline(always)]
     pub fn update_input(&self, id: usize, value: i64, multiplicity: u64) {
         if self.calculated.load(Ordering::Relaxed) {
@@ -131,7 +135,7 @@ impl SpecifiedRanges {
         self.multiplicities[base_offset + range_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
     }
 
-    pub fn update_inputs(&self, id: usize, values: Vec<u32>) {
+    pub fn update_inputs(&self, id: usize, values: Vec<u64>) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }

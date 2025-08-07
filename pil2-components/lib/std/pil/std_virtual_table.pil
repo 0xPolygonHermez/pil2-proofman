@@ -153,8 +153,9 @@ function pack_tables() {
     //       This can be too much for array limit, so we limit the number of groups to ARRAY_SIZE
     //       We can remove this limitation in a future if we consider more strategies for packing.
     const int min_rows = 1 << min_bits;
-    if (((vt.total_height + min_rows - 1) / min_rows) > ARRAY_SIZE) {
-        error(`The total height of the virtual tables is too large. Consider setting more virtual bits set_max_virtual_bits().`);
+    const int min_groups = (vt.total_height + min_rows - 1) / min_rows;
+    if (min_groups > ARRAY_SIZE) {
+        error(`The number of bits=${min_bits} set in the virtual table generates too many groups=${min_groups} > max_groups=${ARRAY_SIZE}. Consider setting more virtual bits via set_max_virtual_bits()`);
     }
     int min_area;
     int bits_best_pack;
