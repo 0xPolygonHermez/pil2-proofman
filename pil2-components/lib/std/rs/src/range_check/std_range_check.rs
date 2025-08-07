@@ -10,14 +10,14 @@ use proofman_hints::{
 };
 
 use crate::{
-    extract_field_element_as_usize, get_global_hint_field_constant_as, get_hint_field_constant_as_field,
-    get_hint_field_constant_as, validate_binary_field, AirComponent, SpecifiedRanges, U16Air, U8Air,
+    extract_field_element_as_usize, get_global_hint_field_constant_as, get_hint_field_constant_as, get_hint_field_constant_as_field, validate_binary_field, AirComponent, SpecifiedRanges, StdVirtualTable, U16Air, U8Air
 };
 
 #[derive(Debug, Clone)]
 pub struct StdRange {
     pub opid: u64,
     rc_type: StdRangeType,
+    is_virtual: bool,
     pub data: RangeData,
 }
 
@@ -43,10 +43,11 @@ pub struct StdRangeCheck<F: PrimeField64> {
     pub u8air: Option<Arc<U8Air>>,
     pub u16air: Option<Arc<U16Air>>,
     pub specified_ranges_air: Option<Arc<SpecifiedRanges>>,
+    virtual_table: Arc<StdVirtualTable<F>>,
 }
 
 impl<F: PrimeField64> StdRangeCheck<F> {
-    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: &SetupCtx<F>) -> Arc<Self> {
+    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: &SetupCtx<F>, virtual_table: Arc<StdVirtualTable<F>>) -> Arc<Self> {
         // Find which range check related AIRs need to be instantiated
         let u8air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u8air");
         let u16air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u16air");
@@ -69,6 +70,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             StdRange {
                 opid: 0,
                 rc_type: StdRangeType::U8Air,
+                is_virtual: false,
                 data: RangeData { min: 0, max: 0, predefined: false },
             };
             num_specified_ranges + 4
@@ -95,7 +97,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             }
         }
 
-        return Arc::new(Self { _phantom: std::marker::PhantomData, ranges, u8air, u16air, specified_ranges_air });
+        return Arc::new(Self { _phantom: std::marker::PhantomData, ranges, u8air, u16air, specified_ranges_air, virtual_table });
 
         // Helper function to instantiate AIRs
         fn create_air<T, F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, hints: &[u64]) -> Option<Arc<T>>
@@ -109,6 +111,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             let air_id = get_global_hint_field_constant_as(sctx, hints[0], "air_id");
             if (airgroup_id as u64 == F::NEG_ONE.as_canonical_u64()) || (air_id as u64 == F::NEG_ONE.as_canonical_u64())
             {
+                // The AIR is virtual, so we do not instantiate it
                 return None;
             }
 
@@ -196,6 +199,16 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     panic!();
                 };
 
+                let is_virtual = get_hint_field_constant_as_field::<F>(
+                    sctx,
+                    airgroup_id,
+                    air_id,
+                    hint as usize,
+                    "is_virtual",
+                    HintFieldOptions::default(),
+                );
+
+                let is_virtual = validate_binary_field(is_virtual, "Is virtual");
                 let predefined = validate_binary_field(predefined, "Predefined");
                 let min_neg = validate_binary_field(min_neg, "Min neg");
                 let max_neg = validate_binary_field(max_neg, "Max neg");
@@ -237,23 +250,8 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     _ => panic!("Invalid range check type: {rc_type}"),
                 };
 
-                ranges[idx] = StdRange { opid, rc_type, data };
+                ranges[idx] = StdRange { opid, rc_type, is_virtual, data };
             }
-        }
-    }
-
-    pub fn get_range_opid(&self, min: i64, max: i64, predefined: Option<bool>) -> u64 {
-        // Default predefined value in STD is false
-        let predefined = predefined.unwrap_or(false);
-
-        // Find the range with the given [min,max] values, return its opid
-        let received_range_data = RangeData { min, max, predefined };
-        if let Some(range) = self.ranges.iter().find(|r| r.data == received_range_data) {
-            range.opid
-        } else {
-            // If the range was not computed in the setup phase, error
-            tracing::error!("Range not found: [min,max] = [{min},{max}] (predefined: {predefined})");
-            panic!();
         }
     }
 
@@ -272,55 +270,6 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         }
     }
 
-    pub fn get_range_id_by_opid(&self, opid: u64) -> usize {
-        // Find the range with the given opid, return its id
-        if let Some(i) = self.ranges.iter().position(|r| r.opid == opid) {
-            i
-        } else {
-            tracing::error!("Range with opid {} not found", opid);
-            panic!();
-        }
-    }
-
-    pub fn get_rows(&self, id: usize, value: i64) -> Vec<u64> {
-        // Find the range with the given id
-        let range_item = &self.ranges[id];
-
-        // Check that the value is contained within the range
-        #[cfg(all(debug_assertions, feature = "verify-rc-values"))]
-        check_value_in_range(range_item, value);
-
-        // Get the row of the corresponding AIR
-        let mut rows = Vec::with_capacity(2);
-        match range_item.rc_type {
-            StdRangeType::U8Air => {
-                rows.push(U8Air::get_global_row(value as u8));
-            }
-            StdRangeType::U16Air => {
-                rows.push(U16Air::get_global_row(value as u16));
-            }
-            StdRangeType::U8AirDouble => {
-                let range_data = &range_item.data;
-                let lower_value = (value - range_data.min) as u8;
-                let upper_value = (range_data.max - value) as u8;
-                rows.push(U8Air::get_global_row(lower_value));
-                rows.push(U8Air::get_global_row(upper_value));
-            }
-            StdRangeType::U16AirDouble => {
-                let range_data = &range_item.data;
-                let lower_value = (value - range_data.min) as u16;
-                let upper_value = (range_data.max - value) as u16;
-                rows.push(U16Air::get_global_row(lower_value));
-                rows.push(U16Air::get_global_row(upper_value));
-            }
-            StdRangeType::SpecifiedRanges => {
-                rows.push(SpecifiedRanges::get_global_row(range_item.data.min, value));
-            }
-        }
-
-        rows
-    }
-
     pub fn assign_value(&self, id: usize, value: i64, multiplicity: u64) {
         // Find the range with the given id
         let range_item = &self.ranges[id];
@@ -334,12 +283,26 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             StdRangeType::U8Air => {
                 // Here, we can safely assume that value ∊ [0,2⁸-1]
                 // Therefore, we can safely cast value to u8
-                self.u8air.as_ref().unwrap().update_input(value as u8, multiplicity);
+                if range_item.is_virtual {
+                    let row = vec![U8Air::get_global_row(value as u8)];
+                    let virtual_table = self.virtual_table.virtual_table_air.as_ref().unwrap();
+                    let vt_id = virtual_table.get_id(range_item.opid as usize); // TODO: This should be done only once! Idea: Relate the virtual id with the range check id in compile time
+                    virtual_table.update_multiplicities(vt_id, row, multiplicity);
+                } else {
+                    self.u8air.as_ref().unwrap().update_input(value as u8, multiplicity);
+                }
             }
             StdRangeType::U16Air => {
                 // Here, we can safely assume that value ∊ [0,2¹⁶-1]
                 // Therefore, we can safely cast value to u16
-                self.u16air.as_ref().unwrap().update_input(value as u16, multiplicity);
+                if range_item.is_virtual {
+                    let row = vec![U16Air::get_global_row(value as u16)];
+                    let virtual_table = self.virtual_table.virtual_table_air.as_ref().unwrap();
+                    let vt_id = virtual_table.get_id(range_item.opid as usize);
+                    virtual_table.update_multiplicities(vt_id, row, multiplicity);
+                } else {
+                    self.u16air.as_ref().unwrap().update_input(value as u16, multiplicity);
+                }
             }
             StdRangeType::U8AirDouble => {
                 // Here, we can safely assume that value ∊ [0,2⁸-1], min >= 0 and max <= 2⁸-1
@@ -347,9 +310,16 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 let range_data = &range_item.data;
                 let lower_value = (value - range_data.min) as u8;
                 let upper_value = (range_data.max - value) as u8;
-                let u8_air = self.u8air.as_ref().unwrap();
-                u8_air.update_input(lower_value, multiplicity);
-                u8_air.update_input(upper_value, multiplicity);
+                if range_item.is_virtual {
+                    let rows = vec![U8Air::get_global_row(lower_value), U8Air::get_global_row(upper_value)];
+                    let virtual_table = self.virtual_table.virtual_table_air.as_ref().unwrap();
+                    let vt_id = virtual_table.get_id(range_item.opid as usize);
+                    virtual_table.update_multiplicities(vt_id, rows, multiplicity);
+                } else {
+                    let u8_air = self.u8air.as_ref().unwrap();
+                    u8_air.update_input(lower_value, multiplicity);
+                    u8_air.update_input(upper_value, multiplicity);
+                }
             }
             StdRangeType::U16AirDouble => {
                 // Here, we can safely assume that value ∊ [0,2¹⁶-1], min >= 0 and max <= 2¹⁶-1
@@ -357,12 +327,26 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 let range_data = &range_item.data;
                 let lower_value = (value - range_data.min) as u16;
                 let upper_value = (range_data.max - value) as u16;
-                let u16_air = self.u16air.as_ref().unwrap();
-                u16_air.update_input(lower_value, multiplicity);
-                u16_air.update_input(upper_value, multiplicity);
+                if range_item.is_virtual {
+                    let rows = vec![U16Air::get_global_row(lower_value), U16Air::get_global_row(upper_value)];
+                    let virtual_table = self.virtual_table.virtual_table_air.as_ref().unwrap();
+                    let vt_id = virtual_table.get_id(range_item.opid as usize);
+                    virtual_table.update_multiplicities(vt_id, rows, multiplicity);
+                } else {
+                    let u16_air = self.u16air.as_ref().unwrap();
+                    u16_air.update_input(lower_value, multiplicity);
+                    u16_air.update_input(upper_value, multiplicity);
+                }
             }
             StdRangeType::SpecifiedRanges => {
-                self.specified_ranges_air.as_ref().unwrap().update_input(id, value, multiplicity);
+                if range_item.is_virtual {
+                    let row = vec![SpecifiedRanges::get_global_row(range_item.data.min, value)];
+                    let virtual_table = self.virtual_table.virtual_table_air.as_ref().unwrap();
+                    let vt_id = virtual_table.get_id(range_item.opid as usize);
+                    virtual_table.update_multiplicities(vt_id, row, multiplicity);
+                } else {
+                    self.specified_ranges_air.as_ref().unwrap().update_input(id, value, multiplicity);
+                }
             }
         }
     }

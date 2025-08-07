@@ -32,7 +32,8 @@ airtemplate Table(const int N, const int t, const int opid) {
         }
     }
 
-    lookup_proves(opid, A);
+    col witness multiplicity;
+    lookup_proves(opid, A, mul: multiplicity);
 }
 
 airgroup VirtualTables {
@@ -57,6 +58,6 @@ airgroup VirtualTables {
     Component(N: 2**10, t: 2, opid: 6) alias Component6;
     virtual Table(N: 2**10, t: 2, opid: 6) alias Table6;
 
-    // Component(N: 2**4, t: 3, opid: 2) alias Component7;
-    // Table(N: 2**4, t: 3, opid: 2) alias Table7;
+    Component(N: 2**9, t: 9, opid: 7) alias Component7;
+    Table(N: 2**9, t: 9, opid: 7) alias Table7;
 }

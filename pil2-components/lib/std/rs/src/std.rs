@@ -31,18 +31,22 @@ impl<F: PrimeField64> Std<F> {
         // Instantiate the components
         let prod_bus = StdProd::new();
         let sum_bus = StdSum::new();
-        let range_check = StdRangeCheck::new(pctx.clone(), &sctx);
         let virtual_table = StdVirtualTable::new(pctx.clone(), &sctx);
+        let range_check = StdRangeCheck::new(pctx.clone(), &sctx, virtual_table.clone());
 
         Arc::new(Self { mode, prod_bus, sum_bus, range_check, virtual_table })
     }
 
-    // Gets the range id for the range check.
+    /// Gets the range id for a given range subject to the range check
     pub fn get_range_id(&self, min: i64, max: i64, predefined: Option<bool>) -> usize {
         self.range_check.get_range_id(min, max, predefined)
     }
 
-    // Processes the inputs for the range check.
+    /// Gets the virtual table ID for a given ID
+    pub fn get_virtual_table_id(&self, id: usize) -> usize {
+        self.virtual_table.get_id(id)
+    }
+
     pub fn range_check(&self, id: usize, val: i64, multiplicity: u64) {
         self.range_check.assign_value(id, val, multiplicity);
     }
@@ -51,33 +55,8 @@ impl<F: PrimeField64> Std<F> {
         self.range_check.assign_values(id, values);
     }
 
-    pub fn range_check_virtual(&self, id: usize, val: i64, multiplicity: u64) {
-        // Get the uid
-        let uid = self.virtual_table.virtual_table_air.as_ref().unwrap().get_uid(id);
-
-        // Get the range check id
-        let rc_id = self.range_check.get_range_id_by_opid(uid as u64);
-
-        // Get the row
-        let rows = self.range_check.get_rows(rc_id, val);
-
-        // Update the virtual table
-        self.virtual_table.virtual_table_air.as_ref().unwrap().update_multiplicities(id, rows, multiplicity);
-    }
-
-    pub fn get_virtual_table_id(&self, input: VirtualTableIdInput) -> usize {
-        let id = match input {
-            VirtualTableIdInput::Id(id) => id,
-            VirtualTableIdInput::FromParams { min, max, predefined } => {
-                self.range_check.get_range_opid(min, max, predefined) as usize
-            }
-        };
-
-        self.virtual_table.virtual_table_air.as_ref().unwrap().get_id(id)
-    }
-
     pub fn inc_virtual_row(&self, id: usize, row: u64, multiplicity: u64) {
-        self.virtual_table.virtual_table_air.as_ref().unwrap().update_multiplicity(id, row, multiplicity);
+        self.virtual_table.update_multiplicity(id, row, multiplicity);
     }
 
     // pub fn inc_virtual_rows(&self, id: usize, rows: Vec<u64>) {

@@ -1,6 +1,6 @@
-use std::sync::Arc;
+use std::sync::{atomic::{AtomicU64, Ordering}, Arc};
 
-use witness::{define_wc_with_std, execute, WitnessComponent};
+use witness::{execute, WitnessComponent};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
@@ -10,15 +10,29 @@ use rand::{
     Rng, SeedableRng,
 };
 
-use crate::{Component6Trace, Table6};
+use crate::{Component7Trace, Table7};
 
-define_wc_with_std!(Component6, "Component6");
+pub struct Component7 {
+    instance_ids: std::sync::RwLock<Vec<usize>>,
+    seed: AtomicU64,
+    table7: Arc<Table7>,
+}
 
-impl<F: PrimeField64> WitnessComponent<F> for Component6<F>
+impl Component7 {
+    pub fn new(table7: Arc<Table7>) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self { instance_ids: std::sync::RwLock::new(Vec::new()), seed: AtomicU64::new(0), table7 })
+    }
+
+    pub fn set_seed(&self, seed: u64) {
+        self.seed.store(seed, Ordering::Relaxed);
+    }
+}
+
+impl<F: PrimeField64> WitnessComponent<F> for Component7
 where
     StandardUniform: Distribution<F>,
 {
-    execute!(Component6Trace, 1);
+    execute!(Component7Trace, 1);
 
     fn calculate_witness(
         &self,
@@ -33,13 +47,10 @@ where
             let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
             let mut rng = StdRng::seed_from_u64(seed);
 
-            let mut trace = Component6Trace::new_from_vec(buffer_pool.take_buffer());
+            let mut trace = Component7Trace::new_from_vec(buffer_pool.take_buffer());
             let num_rows = trace.num_rows();
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
-
-            // Get the virtual table ID
-            let id = self.std_lib.get_virtual_table_id(6);
 
             // Assumes
             let t = trace[0].a.len();
@@ -50,10 +61,10 @@ where
                 }
 
                 // Get the row
-                let row = Table6::calculate_table_row(val);
+                let row = Table7::calculate_table_row(val);
 
                 // Update the virtual table rows
-                self.std_lib.inc_virtual_row(id, row, 1);
+                self.table7.update_multiplicity(row, 1);
             }
 
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));

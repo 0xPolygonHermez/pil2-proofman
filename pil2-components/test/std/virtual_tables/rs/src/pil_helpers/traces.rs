@@ -16,7 +16,7 @@ use rayon::prelude::*;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "af09cd9c89473ec51f36c50ac349fbf8381e10be89b44383ad9c75f0c6298d82";
+pub const PILOUT_HASH: &str = "20170714faea08a3cfc69c4e756bbe293ab23fd9a58604df0793f01d5e5bd0a2";
 
 //AIRGROUP CONSTANTS
 
@@ -36,7 +36,11 @@ pub const COMPONENT_5_AIR_IDS: &[usize] = &[4];
 
 pub const COMPONENT_6_AIR_IDS: &[usize] = &[5];
 
-pub const VIRTUAL_TABLE_AIR_IDS: &[usize] = &[6];
+pub const COMPONENT_7_AIR_IDS: &[usize] = &[6];
+
+pub const TABLE_7_AIR_IDS: &[usize] = &[7];
+
+pub const VIRTUAL_TABLE_AIR_IDS: &[usize] = &[8];
 
   
 trace!(Component1Fixed<F> {
@@ -87,13 +91,29 @@ trace!(Component6Trace<F> {
  a: [F; 2],
 },  0, 5, 1024 );
 
+trace!(Component7Fixed<F> {
+ __L1__: F,
+},  0, 6, 512 );
+
+trace!(Component7Trace<F> {
+ a: [F; 9],
+},  0, 6, 512 );
+
+trace!(Table7Fixed<F> {
+ A: [F; 9], __L1__: F,
+},  0, 7, 512 );
+
+trace!(Table7Trace<F> {
+ multiplicity: F,
+},  0, 7, 512 );
+
 trace!(VirtualTableFixed<F> {
  UID: [F; 3], column: [F; 8], __L1__: F,
-},  0, 6, 32768 );
+},  0, 8, 32768 );
 
 trace!(VirtualTableTrace<F> {
  multiplicity: [F; 3],
-},  0, 6, 32768 );
+},  0, 8, 32768 );
 
 values!(Component1AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
@@ -116,6 +136,14 @@ values!(Component5AirGroupValues<F> {
 });
 
 values!(Component6AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(Component7AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(Table7AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 

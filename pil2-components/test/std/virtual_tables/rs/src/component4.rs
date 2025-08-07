@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use pil_std_lib::VirtualTableIdInput;
 use witness::{define_wc_with_std, execute, WitnessComponent};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
@@ -40,24 +39,12 @@ where
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
             // Get the range check IDs
-            let range1 = self.std_lib.get_virtual_table_id(VirtualTableIdInput::FromParams {
-                min: 5,
-                max: (1 << 8) - 1,
-                predefined: Some(true),
-            });
-            let range2 = self.std_lib.get_virtual_table_id(VirtualTableIdInput::FromParams {
-                min: 0,
-                max: (1 << 16) - 1,
-                predefined: Some(true),
-            });
-            let range3 = self.std_lib.get_virtual_table_id(VirtualTableIdInput::FromParams {
-                min: 0,
-                max: (1 << 6) - 1,
-                predefined: Some(false),
-            });
+            let range1 = self.std_lib.get_range_id(5, (1 << 8) - 1, Some(true));
+            let range2 = self.std_lib.get_range_id(0, (1 << 16) - 1, Some(true));
+            let range3 = self.std_lib.get_range_id(0, (1 << 6) - 1, Some(false));
 
             // Get the virtual table ID
-            let id = self.std_lib.get_virtual_table_id(VirtualTableIdInput::Id(4));
+            let id = self.std_lib.get_virtual_table_id(4);
 
             // Assumes
             let t = trace[0].a.len();
@@ -79,9 +66,9 @@ where
                 trace[i].b[2] = F::from_u64(val3);
 
                 // Perform the range checks
-                self.std_lib.range_check_virtual(range1, val1 as i64, 1);
-                self.std_lib.range_check_virtual(range2, val2 as i64, 1);
-                self.std_lib.range_check_virtual(range3, val3 as i64, 1);
+                self.std_lib.range_check(range1, val1 as i64, 1);
+                self.std_lib.range_check(range2, val2 as i64, 1);
+                self.std_lib.range_check(range3, val3 as i64, 1);
             }
 
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));

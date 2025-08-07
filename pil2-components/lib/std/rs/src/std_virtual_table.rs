@@ -88,6 +88,14 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             virtual_table_air: Some(Arc::new(virtual_table_air)),
         });
     }
+
+    pub fn get_id(&self, id: usize) -> usize {
+        self.virtual_table_air.as_ref().unwrap().get_id(id)
+    }
+
+    pub fn update_multiplicity(&self, id: usize, row: u64, multiplicity: u64) {
+        self.virtual_table_air.as_ref().unwrap().update_multiplicity(id, row, multiplicity);
+    }
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for StdVirtualTable<F> {}
@@ -100,10 +108,6 @@ impl VirtualTableAir {
             tracing::error!("ID {} not found in the virtual table", id);
             panic!();
         }
-    }
-
-    pub fn get_uid(&self, id: usize) -> usize {
-        self.uids[id].0
     }
 
     /// Processes a slice of input data and updates the multiplicity table.
@@ -150,14 +154,6 @@ impl VirtualTableAir {
             // Update the multiplicity
             self.multiplicities[sub_table_idx as usize][row_idx as usize].fetch_add(multiplicity, Ordering::Relaxed);
         }
-    }
-
-    pub fn airgroup_id(&self) -> usize {
-        self.airgroup_id
-    }
-
-    pub fn air_id(&self) -> usize {
-        self.air_id
     }
 }
 

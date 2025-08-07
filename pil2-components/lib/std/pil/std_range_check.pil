@@ -323,7 +323,7 @@ function range_check(const expr expression, const int min, const int max, const 
 
             @range_def{opid: opid, predefined: predefined, min: min, max: max, 
                        min_neg: 0, max_neg: 0, 
-                       type: is_u8 ? "U8" : "U16"}; 
+                       type: is_u8 ? "U8" : "U16", is_virtual: is_u8 ? U8_TABLE_VIRTUAL : U16_TABLE_VIRTUAL}; 
 
             airgroup.std.rc.u8_used = airgroup.std.rc.u8_used || is_u8;
             airgroup.std.rc.u16_used = airgroup.std.rc.u16_used || !is_u8;
@@ -334,7 +334,7 @@ function range_check(const expr expression, const int min, const int max, const 
 
             @range_def{opid: opid, predefined: predefined, min: min, max: max, 
                        min_neg: 0, max_neg: 0, 
-                       type: is_u8 ? "U8Double" : "U16Double"}; 
+                       type: is_u8 ? "U8Double" : "U16Double", is_virtual: is_u8 ? U8_TABLE_VIRTUAL : U16_TABLE_VIRTUAL}; 
 
             airgroup.std.rc.u8_used = airgroup.std.rc.u8_used || is_u8;
             airgroup.std.rc.u16_used = airgroup.std.rc.u16_used || !is_u8;
@@ -346,7 +346,7 @@ function range_check(const expr expression, const int min, const int max, const 
     } else {
         @range_def{opid: opid, predefined: predefined, min: min, max: max, 
                    min_neg: (min < 0), max_neg: (max < 0), 
-                   type: "Specified"};
+                   type: "Specified", is_virtual: SPECIFIED_TABLE_VIRTUAL};
 
         lookup_assumes(opid, [expression], sel, PIOP_NAME_RANGE_CHECK);
     }
@@ -420,10 +420,10 @@ function multi_range_check(const expr expression, const int min1, const int max1
 
     @range_def{opid: opid1, predefined: predefined, min: min1, max: max1, 
                min_neg: (min1 < 0), max_neg: (max1 < 0), 
-               type: "Specified"};
+               type: "Specified", is_virtual: SPECIFIED_TABLE_VIRTUAL};
     @range_def{opid: opid2, predefined: predefined, min: min2, max: max2, 
                min_neg: (min2 < 0), max_neg: (max2 < 0), 
-               type: "Specified"};
+               type: "Specified", is_virtual: SPECIFIED_TABLE_VIRTUAL};
 
     // Define the assume
     lookup_assumes_dynamic([opid1, opid2], range_sel*(opid1-opid2) + opid2, [expression], sel, PIOP_NAME_RANGE_CHECK);
@@ -467,7 +467,7 @@ function range_check_id(const int min, const int max, const int predefined = 0):
 
     @range_def{opid: opid, predefined: predefined, min: min, max: max, 
                min_neg: (min < 0), max_neg: (max < 0), 
-               type: "Specified"};
+               type: "Specified", is_virtual: SPECIFIED_TABLE_VIRTUAL};
 
     // Save the opid for use in the dynamic range check
     rcid.opids_id[rcid.opids_count_id] = opid;

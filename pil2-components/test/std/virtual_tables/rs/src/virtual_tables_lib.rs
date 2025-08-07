@@ -10,7 +10,7 @@ use rand::{
     Rng,
 };
 
-use crate::{Component1, Component2, Component3, Component4, Component5, Component6};
+use crate::{Component1, Component2, Component3, Component4, Component5, Component6, /*Component7, Table7*/};
 use proofman::register_std;
 
 witness_library!(WitnessLib, Goldilocks);
@@ -31,12 +31,15 @@ where
         let component4 = Component4::new(std.clone());
         let component5 = Component5::new(std.clone());
         let component6 = Component6::new(std.clone());
+        // let table7 = Table7::new();
+        // let component7 = Component7::new(table7.clone());
         component1.set_seed(seed);
         component2.set_seed(seed);
         component3.set_seed(seed);
         component4.set_seed(seed);
         component5.set_seed(seed);
         component6.set_seed(seed);
+        // component7.set_seed(seed);
 
         wcm.register_component(component1);
         wcm.register_component(component2);
@@ -44,5 +47,7 @@ where
         wcm.register_component(component4);
         wcm.register_component(component5);
         wcm.register_component(component6);
+        // wcm.register_component(table7);
+        // wcm.register_component(component7);
     }
 }

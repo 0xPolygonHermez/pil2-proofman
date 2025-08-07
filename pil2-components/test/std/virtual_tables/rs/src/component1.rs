@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use pil_std_lib::VirtualTableIdInput;
 use witness::{define_wc_with_std, execute, WitnessComponent};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
@@ -40,7 +39,7 @@ where
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
             // Get the virtual table ID
-            let id = self.std_lib.get_virtual_table_id(VirtualTableIdInput::Id(1));
+            let id = self.std_lib.get_virtual_table_id(1);
 
             // Assumes
             let t = trace[0].a.len();
