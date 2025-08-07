@@ -3,7 +3,9 @@
 
 #include "poseidon2_goldilocks_constants.hpp"
 #include "goldilocks_base_field.hpp"
+#ifdef __AVX2__
 #include <immintrin.h>
+#endif
 #define RATE 8
 #define CAPACITY 4
 #define HASH_SIZE 4
@@ -23,7 +25,7 @@ private:
     inline void static prodadd_(Goldilocks::Element *x, const Goldilocks::Element D[SPONGE_WIDTH], const Goldilocks::Element &sum);
     inline void static matmul_m4_(Goldilocks::Element *x);
     inline void static matmul_external_(Goldilocks::Element *x);
-
+#ifdef __AVX2__
     inline void static add_avx(__m256i &st0, __m256i &st1, __m256i &st2, const Goldilocks::Element C[SPONGE_WIDTH]);
     inline void static pow7_avx(__m256i &st0, __m256i &st1, __m256i &st2);
     inline void static add_avx_a(__m256i &st0, __m256i &st1, __m256i &st2, const Goldilocks::Element C[SPONGE_WIDTH]);
@@ -33,6 +35,7 @@ private:
     inline void static matmul_m4_batch_avx(__m256i &st0, __m256i &st1, __m256i &st2, __m256i &st3);
     inline void static pow7add_avx(__m256i *x, const Goldilocks::Element C_[SPONGE_WIDTH]);
     inline void static element_pow7_avx(__m256i &x);
+#endif
 #ifdef __AVX512__
     // inline void static pow7_avx512(__m512i &st0, __m512i &st1, __m512i &st2);
     // inline void static add_avx512(__m512i &st0, __m512i &st1, __m512i &st2, const Goldilocks::Element C[SPONGE_WIDTH]);
@@ -45,11 +48,8 @@ private:
 #endif
 
 public:
-    // Wrapper:
-    void static merkletree(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, int nThreads = 0, uint64_t dim = 1);
-    void static merkletree_batch(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t batch_size, int nThreads = 0, uint64_t dim = 1);
-
-    // Non-vectorized:
+    
+// Non-vectorized:
     void static hash_full_result_seq(Goldilocks::Element *, const Goldilocks::Element *);
     void static linear_hash_seq(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
     void static merkletree_seq(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads = 0, uint64_t dim = 1);
@@ -57,17 +57,18 @@ public:
     void static merkletree_batch_seq(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, uint64_t batch_size, int nThreads = 0, uint64_t dim = 1);
 
     // Vectorized AVX:
+#ifdef __AVX2__
     // Note, the functions that do not have the _avx suffix are the default ones to
     // be used in the prover, they implement avx vectorixation though.
-    void static hash_full_result_batch(Goldilocks::Element *, const Goldilocks::Element *);
-    void static hash_batch(Goldilocks::Element (&state)[4 * CAPACITY], const Goldilocks::Element (&input)[4 * SPONGE_WIDTH]);
-    void static linear_hash_batch(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
+    void static hash_full_result_batch_avx(Goldilocks::Element *, const Goldilocks::Element *);
+    void static hash_batch_avx(Goldilocks::Element (&state)[4 * CAPACITY], const Goldilocks::Element (&input)[4 * SPONGE_WIDTH]);
+    void static linear_hash_batch_avx(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
     void static merkletree_batch_avx(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads = 0, uint64_t dim = 1);
-    void static hash_full_result(Goldilocks::Element *, const Goldilocks::Element *);
-    void static hash(Goldilocks::Element (&state)[CAPACITY], const Goldilocks::Element (&input)[SPONGE_WIDTH]);
-    void static linear_hash(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
+    void static hash_full_result_avx(Goldilocks::Element *, const Goldilocks::Element *);
+    void static hash_avx(Goldilocks::Element (&state)[CAPACITY], const Goldilocks::Element (&input)[SPONGE_WIDTH]);
+    void static linear_hash_avx(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
     void static merkletree_avx(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads = 0, uint64_t dim = 1);
-
+#endif
 #ifdef __AVX512__
     // Vectorized AVX512:
     void static hash_full_result_batch_avx512(Goldilocks::Element *, const Goldilocks::Element *);
@@ -79,25 +80,36 @@ public:
     // void static linear_hash_avx512(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
     // void static merkletree_avx512(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads = 0, uint64_t dim = 1);
 #endif
+
+    // Wrapper:
+    inline void static merkletree(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity,int nThreads = 0, uint64_t dim = 1);
+    inline void static merkletree_batch(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t batch_size, int nThreads = 0, uint64_t dim = 1);
 };
 
 // WRAPPERS
 
-inline void Poseidon2Goldilocks::merkletree(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, int nThreads, uint64_t dim)
+inline void Poseidon2Goldilocks::merkletree(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity,int nThreads, uint64_t dim)
 {
-// #ifdef __AVX512__
-//     merkletree_avx512(tree, input, num_cols, num_rows, nThreads, dim);
-// #else
-    merkletree_avx(tree, input, num_cols, num_rows, nThreads, dim);
-// #endif
+//#ifdef __AVX512__
+    // needs to be tested
+    // merkletree_avx512(tree, input, num_cols, num_rows, nThreads, dim);
+#if defined(__AVX2__) || defined(__AVX512__)
+    merkletree_avx(tree, input, num_cols, num_rows, arity, nThreads, dim);
+#else
+    merkletree_seq(tree, input, num_cols, num_rows, arity, nThreads, dim);
+#endif
+    
 }
 inline void Poseidon2Goldilocks::merkletree_batch(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t batch_size, int nThreads, uint64_t dim)
 {
-// #ifdef __AVX512__
-//     merkletree_batch_avx512(tree, input, num_cols, num_rows, batch_size, nThreads, dim);
-// #else
+//#ifdef __AVX512__
+    // needs to be tested
+    //merkletree_batch_avx512(tree, input, num_cols, num_rows, batch_size, nThreads, dim);
+#if defined(__AVX2__) || defined(__AVX512__)
     merkletree_batch_avx(tree, input, num_cols, num_rows, batch_size, nThreads, dim);
-// #endif
+#else
+    merkletree_batch_seq(tree, input, num_cols, num_rows, batch_size, nThreads, dim);
+#endif
 }
 
 inline void Poseidon2Goldilocks::pow7(Goldilocks::Element &x)

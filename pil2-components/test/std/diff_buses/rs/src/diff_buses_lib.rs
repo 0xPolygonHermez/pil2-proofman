@@ -15,7 +15,7 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib
 where
     StandardUniform: Distribution<F>,
 {
-    fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
+    fn register_witness(&mut self, wcm: &WitnessManager<F>) {
         Std::new(wcm.get_pctx(), wcm.get_sctx());
         let prod_bus = ProdBus::new();
         let sum_bus = SumBus::new();

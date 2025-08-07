@@ -1146,8 +1146,8 @@ pub fn gen_device_streams_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn check_device_memory_c() -> u64 {
-    unsafe { check_device_memory() }
+pub fn check_device_memory_c(node_rank: u32, node_size: u32) -> u64 {
+    unsafe { check_device_memory(node_rank, node_size) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1921,7 +1921,7 @@ pub fn gen_device_streams_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn check_device_memory_c() -> u64 {
+pub fn check_device_memory_c(_node_rank: u32, _node_size: u32) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "check_device_memory: This is a mock call because there is no linked library");
     0
 }

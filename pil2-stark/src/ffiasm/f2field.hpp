@@ -24,7 +24,7 @@ private:
 
     void initField(typename BaseField::Element &anr);
 public:
-
+    F2Field(){};
     F2Field(typename BaseField::Element &anr);
     F2Field(std::string nrs);
 

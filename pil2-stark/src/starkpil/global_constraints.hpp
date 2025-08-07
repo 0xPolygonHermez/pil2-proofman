@@ -47,33 +47,21 @@ void calculateGlobalExpression(json& globalInfo, Goldilocks::Element* dest, Gold
     for (uint64_t kk = 0; kk < parserParams.nOps; ++kk) {
         switch (ops[kk]) {
             case 0: {
-                // COPY dim1 to dim1
-                Goldilocks::copy_pack(1, &expressions_params[0][args[i_args]], &expressions_params[args[i_args + 1]][args[i_args + 2]]);
-                i_args += 3;
-                break;
-            }
-            case 1: {
                 // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
                 Goldilocks::op_pack(1, args[i_args], &expressions_params[0][args[i_args + 1]], &expressions_params[args[i_args + 2]][args[i_args + 3]], &expressions_params[args[i_args + 4]][args[i_args + 5]]);
                 i_args += 6;
                 break;
             }
-            case 2: {
+            case 1: {
                 // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
                 Goldilocks3::op_31_pack(1, args[i_args], &expressions_params[4][args[i_args + 1]], &expressions_params[args[i_args + 2]][args[i_args + 3]], &expressions_params[args[i_args + 4]][args[i_args + 5]]);
                 i_args += 6;
                 break;
             }
-            case 3: {
+            case 2: {
                 // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
                 Goldilocks3::op_pack(1, args[i_args], &expressions_params[4][args[i_args + 1]], &expressions_params[args[i_args + 2]][args[i_args + 3]], &expressions_params[args[i_args + 4]][args[i_args + 5]]);
                 i_args += 6;
-                break;
-            }
-            case 4: {
-                // COPY dim3 to dim3
-                Goldilocks3::copy_pack(1, &expressions_params[4][args[i_args]], &expressions_params[args[i_args + 1]][args[i_args + 2]]);
-                i_args += 3;
                 break;
             }
         }

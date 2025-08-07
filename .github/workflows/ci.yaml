@@ -152,7 +152,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-proofman-js
-          ref: pre-develop-0.11.0
+          ref: feature/new_recursion
           path: pil2-proofman-js
 
       - name: Install pil2-proofman-js dependencies
@@ -163,7 +163,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-compiler
-          ref: develop
+          ref: develop-0.7.0
           path: pil2-compiler
 
       - name: Install pil2-compiler dependencies
@@ -187,11 +187,11 @@ jobs:
 
       - name: Compile PIL Fibonacci Square
         run: |
-          node --max-old-space-size=65536 pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil -I ./pil2-components/lib/std/pil -o ./examples/fibonacci-square/pil/build.pilout
+          node --max-old-space-size=65536 pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil -I ./pil2-components/lib/std/pil -o ./examples/fibonacci-square/pil/build.pilout -u ./examples/fibonacci-square/build/fixed -O fixed-to-file
 
       - name: Generate setup Fibonacci Square
         run: |
-          node --max-old-space-size=65536 pil2-proofman-js/src/main_setup.js -a ./examples/fibonacci-square/pil/build.pilout -b ./examples/fibonacci-square/build -r
+          node --max-old-space-size=65536 pil2-proofman-js/src/main_setup.js -a ./examples/fibonacci-square/pil/build.pilout -b ./examples/fibonacci-square/build -r -t ./pil2-components/lib/std/pil -u ./examples/fibonacci-square/build/fixed
 
       - name: Generate PIL Helpers Fibonacci Square
         run: |
@@ -230,6 +230,102 @@ jobs:
       #   run: | 
       #     mpirun --bind-to none -np 3 -x OMP_NUM_THREADS=80 target/debug/proofman-cli  prove --witness-lib ./target/debug/libfibonacci_square.so --public-inputs examples/fibonacci-square/src/inputs.json --proving-key examples/fibonacci-square/build/provingKey/ --output-dir examples/fibonacci-square/build/proofs -a
 
+  test-c36:
+    name: Test C36
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: "18"
+      - name: Install npm
+        run: npm install -g npm
+      - name: Check npm version
+        run: npm --version
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install z3-solver
+        run: |
+          python -m pip install z3-solver
+
+      - name: Check out circom
+        uses: actions/checkout@v4
+        with:
+          repository: iden3/circom
+          path: circom-repo
+
+
+      - name: Build and install Circom
+        working-directory: circom-repo
+        run: |
+          cargo build --release --workspace
+          cargo install --path circom
+
+      - name: Check out pil2-proofman-js
+        uses: actions/checkout@v4
+        with:
+          repository: 0xPolygonHermez/pil2-proofman-js
+          ref: feature/new_recursion
+          path: pil2-proofman-js
+
+      - name: Install pil2-proofman-js dependencies
+        working-directory: pil2-proofman-js
+        run: npm install
+
+      - name: Check out pil2-compiler
+        uses: actions/checkout@v4
+        with:
+          repository: 0xPolygonHermez/pil2-compiler
+          ref: develop-0.7.0
+          path: pil2-compiler
+
+      - name: Install pil2-compiler dependencies
+        working-directory: pil2-compiler
+        run: npm install
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev nasm libsodium-dev cmake
+          sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
+
+      - name: Compile PIL C36
+        run: |
+          node pil2-proofman-js/src/main_setup_recursive.js -b ./examples/test-recursive-c36/build -c ./examples/test-recursive-c36/test.circom -n test -t ./pil2-components/lib/std/pil
+
+      - name: Cargo build
+        run: RUST_BACKTRACE=1 cargo build -v
+
+      - name: Cargo check-setup
+        run: cargo run --bin proofman-cli check-setup --proving-key examples/test-recursive-c36/build/provingKey
+      
+      - name: Verify constraints C36
+        run: |
+          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libtest_c36.so --proving-key examples/test-recursive-c36/build/provingKey
+
+      - name: Generate proof C36
+        run: |
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libtest_c36.so --proving-key examples/test-recursive-c36/build/provingKey/ --output-dir examples/test-recursive-c36/build/proofs -y 
+
+      - name: Clean proof dir
+        run: |
+          rm -rf examples/test-recursive-c36/build/proofs
+
   test-std:
     name: Test STD
     runs-on: ubuntu-latest
@@ -266,7 +362,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-proofman-js
-          ref: pre-develop-0.11.0
+          ref: feature/new_recursion
           path: pil2-proofman-js
 
       - name: Install pil2-proofman-js dependencies
@@ -277,7 +373,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-compiler
-          ref: develop
+          ref: develop-0.7.0
           path: pil2-compiler
 
       - name: Install pil2-compiler dependencies

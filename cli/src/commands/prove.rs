@@ -171,6 +171,7 @@ impl ProveCmd {
                 )?,
             };
         } else {
+            proofman.set_barrier();
             let (_, vadcop_final_proof) = match self.field {
                 Field::Goldilocks => proofman.generate_proof(
                     self.witness_lib.clone(),

@@ -375,7 +375,7 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     }
 
 
-    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, skipRecalculation, timer, stream);
+    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, skipRecalculation, timer, stream, false);
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
     return streamId;
@@ -469,8 +469,7 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
 
-    gl64_t *d_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId] + d_buffers->streamsData[streamId].offset;
-    gl64_t *d_aux_trace = d_trace + N * nCols;
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId] + d_buffers->streamsData[streamId].offset;
    
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
@@ -492,10 +491,11 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
     uint64_t blockSize = d_buffers->streamsData[streamId].pinned_size;
     uint64_t copySize = sizeTrace;
     uint64_t nBlocks = (copySize + blockSize - 1) / blockSize;
+    uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
     for (uint64_t i = 0; i < nBlocks; ++i) {
         uint64_t copySizeBlock = std::min(blockSize, copySize - i * blockSize);
         memcpy(pinned_buffer, (uint8_t *)trace + i * blockSize, copySizeBlock);
-        CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)d_trace + i*blockSize, pinned_buffer, copySizeBlock, cudaMemcpyHostToDevice, stream));
+        CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)(d_aux_trace + offsetStage1) + i*blockSize, pinned_buffer, copySizeBlock, cudaMemcpyHostToDevice, stream));
         cudaStreamSynchronize(stream);
     }
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
@@ -537,7 +537,7 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
         }
     }
 
-    genRecursiveProof_gpu<Goldilocks::Element>(*setupCtx, d_trace, d_aux_trace, d_const_pols, d_const_tree, streamId, d_buffers, air_instance_info, instanceId, timer, stream);
+    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, false, timer, stream, true);
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
     return streamId;
@@ -596,9 +596,23 @@ void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
 
 }
 
-uint64_t check_device_memory() {
-    
-    set_device(0); //We assume that all the GPUs have the same characteristics, we only check the GPU 0
+uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size) {
+    int deviceCount;
+    cudaGetDeviceCount(&deviceCount);
+
+    uint32_t device_id;
+
+    if (deviceCount >= node_size) {
+        // Each process gets multiple GPUs
+        uint32_t n_gpus_per_process = deviceCount / node_size;
+        device_id = node_rank * n_gpus_per_process;
+    } else {
+        // Each GPU is shared by multiple processes
+        device_id = node_rank % deviceCount;
+    }
+
+    cudaSetDevice(device_id);
+
     uint64_t freeMem, totalMem;
     cudaError_t err = cudaMemGetInfo(&freeMem, &totalMem);
     if (err != cudaSuccess) {
@@ -606,8 +620,10 @@ uint64_t check_device_memory() {
         return 0;
     }
 
-    zklog.trace("Free memory GPU: " +  to_string(freeMem / (1024.0 * 1024.0)) + " MB");
-    zklog.trace("Total memory GPU: " + to_string(totalMem / (1024.0 * 1024.0)) + " MB");
+    zklog.trace("Process rank " + std::to_string(node_rank) + 
+                " sees GPU " + std::to_string(device_id));
+    zklog.trace("Free memory GPU: " + std::to_string(freeMem / (1024.0 * 1024.0)) + " MB");
+    zklog.trace("Total memory GPU: " + std::to_string(totalMem / (1024.0 * 1024.0)) + " MB");
 
     return freeMem;
 }
