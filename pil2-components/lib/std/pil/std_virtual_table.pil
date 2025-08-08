@@ -20,14 +20,10 @@ function collect_virtual_table(const int uid, const expr table[]) {
     }
 
     // We assume that all columns in a table have the same number of rows
-    // and that the number of rows is a power of two.
-    // TODO: Both conditions can be relaxed in the future.
     const int num_rows = Tables.num_rows(table[0]);
     if (num_rows == 0) {
         error(`Table (AIRGROUP, AIR, num_rows) = (${AIRGROUP_ID}, ${AIR_ID}, ${num_rows}) is empty`);
-    } else if ((num_rows & (num_rows - 1)) != 0) {
-        error(`Table (AIRGROUP, AIR, num_rows) = (${AIRGROUP_ID}, ${AIR_ID}, ${num_rows}) has a non-power-of-two number of rows: ${num_rows}`);
-    }
+    } 
     for (int i = 1; i < w; i++) {
         if (Tables.num_rows(table[i]) != num_rows) {
             error(`Table (AIRGROUP, AIR, num_rows) = (${AIRGROUP_ID}, ${AIR_ID}, ${num_rows}) has inconsistent number of rows`);

@@ -5,6 +5,7 @@ mod component4;
 mod component5;
 mod component6;
 // mod component7; // TODO
+mod component8;
 mod pil_helpers;
 mod table1;
 mod table2;
@@ -13,6 +14,7 @@ mod table4;
 mod table5;
 mod table6;
 // mod table7; // TODO
+mod table8;
 mod virtual_tables_lib;
 
 pub use component1::*;
@@ -22,6 +24,7 @@ pub use component4::*;
 pub use component5::*;
 pub use component6::*;
 // pub use component7::*;
+pub use component8::*;
 pub use pil_helpers::*;
 pub use table1::*;
 pub use table2::*;
@@ -30,4 +33,5 @@ pub use table4::*;
 pub use table5::*;
 pub use table6::*;
 // pub use table7::*;
+pub use table8::*;
 pub use virtual_tables_lib::*;
