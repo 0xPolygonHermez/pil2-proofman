@@ -1056,16 +1056,16 @@ __global__  void computeFRIExpression(uint64_t domainSize, uint64_t nOpeningPoin
     }
 }
 
-void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstanceInfo *air_instance_info) {
+void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstanceInfo *air_instance_info, cudaStream_t stream) {
     Goldilocks::Element *dest = (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]);
 
     uint64_t domainSize = (1 << setupCtx.starkInfo.starkStruct.nBitsExt);
     uint32_t nthreads_ = 128;
-    uint32_t nblocks_ = (domainSize + nthreads_-1)/ nthreads_;
+    uint32_t nblocks_ = std::min((uint32_t)4096, (uint32_t)((domainSize + nthreads_-1)/ nthreads_));
     size_t sharedMem = nthreads_ * 3 * FIELD_EXTENSION * sizeof(Goldilocks::Element);
     dim3 nThreads(nthreads_);    
     dim3 nBlocks(nblocks_);
-    computeFRIExpression<<<nBlocks, nThreads, sharedMem>>>(
+    computeFRIExpression<<<nBlocks, nThreads, sharedMem, stream>>>(
         domainSize, 
         setupCtx.starkInfo.openingPoints.size(), 
         (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)],
