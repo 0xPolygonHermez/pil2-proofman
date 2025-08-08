@@ -91,7 +91,7 @@ impl<F: PrimeField64> StdSum<F> {
                 HintFieldOptions::default(),
             );
 
-            let proves = get_hint_field(sctx, pctx, instance_id, hint as usize, "proves", HintFieldOptions::default());
+            let _type = get_hint_field(sctx, pctx, instance_id, hint as usize, "type", HintFieldOptions::default());
 
             let mul = get_hint_field(sctx, pctx, instance_id, hint as usize, "selector", HintFieldOptions::default());
 
@@ -138,7 +138,7 @@ impl<F: PrimeField64> StdSum<F> {
                     air_id,
                     air_instance_id,
                     opid,
-                    &proves,
+                    &_type,
                     &mul,
                     &expressions,
                     0,
@@ -172,7 +172,7 @@ impl<F: PrimeField64> StdSum<F> {
                         air_id,
                         air_instance_id,
                         opid,
-                        &proves,
+                        &_type,
                         &mul,
                         &expressions,
                         j,
@@ -193,7 +193,7 @@ impl<F: PrimeField64> StdSum<F> {
             air_id: usize,
             instance_id: usize,
             opid: F,
-            proves: &HintFieldValue<F>,
+            _type: &HintFieldValue<F>,
             mul: &HintFieldValue<F>,
             expressions: &HintFieldValuesVec<F>,
             row: usize,
@@ -207,7 +207,7 @@ impl<F: PrimeField64> StdSum<F> {
                 return;
             }
 
-            let proves = match get_row_field_value(proves, row, "proves") {
+            let _type = match get_row_field_value(_type, row, "type") {
                 p if p.is_zero() || p == F::NEG_ONE => {
                     // If it's an "assume", negate its value
                     if p == F::NEG_ONE {
@@ -216,11 +216,11 @@ impl<F: PrimeField64> StdSum<F> {
                     false
                 }
                 p if p.is_one() => true,
-                _ => panic!("Proves hint must be either 0, 1, or -1"),
+                _ => panic!("Type hint must be either 0, 1, or -1"),
             };
 
             if fast_mode {
-                update_debug_data_fast(debug_data_fast, opid, expressions.get(row), proves, mul, is_global);
+                update_debug_data_fast(debug_data_fast, opid, expressions.get(row), _type, mul, is_global);
             } else {
                 update_debug_data(
                     debug_data,
@@ -232,7 +232,7 @@ impl<F: PrimeField64> StdSum<F> {
                     air_id,
                     instance_id,
                     row,
-                    proves,
+                    _type,
                     mul,
                     is_global,
                 );

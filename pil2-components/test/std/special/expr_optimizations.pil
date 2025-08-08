@@ -1,5 +1,5 @@
 
-airtemplate Test(const int N = 2**2) {
+airtemplate ExprOpts(const int N = 2**2) {
     col witness colu;
     expr sel = 1;
     sel * (colu - 1) + 1 === 0; // (1)
@@ -7,6 +7,6 @@ airtemplate Test(const int N = 2**2) {
     // but it is simplifed to `colu - 1 + 1 === 0` instead.
 }
 
-airgroup Test {
-    Test();
+airgroup ExprOpts {
+    ExprOpts();
 }

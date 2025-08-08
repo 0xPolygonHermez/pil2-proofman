@@ -12,7 +12,11 @@ require "std_prod.pil";
  */
 
 const int DEFAULT_DIRECT_NAME = PIOP_NAME_DIRECT;
+const int DEFAULT_DIRECT_SURNAME = PIOP_SURNAME_DEFAULT;
 const int DEFAULT_DIRECT_BUS_TYPE = PIOP_BUS_SUM;
+
+const int DIRECT_TYPE_AIR = 0;
+const int DIRECT_TYPE_GLOBAL = 1;
 
 /**
  * Performs a local direct update to the bus.
@@ -27,22 +31,22 @@ const int DEFAULT_DIRECT_BUS_TYPE = PIOP_BUS_SUM;
  * @param name        An optional name for the PIOP consuming the direct update operation. 
  *                    This is useful for debugging and tracing operations.
  */
-function direct_update(const int opid, const expr expressions[], const expr sel = 1, const int proves = 1, const int bus_type = PIOP_BUS_DEFAULT, const int name = PIOP_NAME_DEFAULT) {
+function direct_update(const int opid, const expr expressions[], const expr sel = 1, const int proves = 1, const int bus_type = PIOP_BUS_DEFAULT, const int name = PIOP_NAME_DEFAULT, const int surname = PIOP_SURNAME_DEFAULT) {
     direct_initial_checks(expressions, sel);
 
     if (AIR_ID == -1) {
         error("A direct update has to be performed inside an air");
     }
 
-    direct_to_bus(opid, expressions, sel, proves, bus_type, name, PIOP_DIRECT_TYPE_AIR);
+    direct_to_bus(opid, expressions, sel, proves, bus_type, name, surname, DIRECT_TYPE_AIR);
 }
 
-function direct_update_assumes(const int opid, const expr expressions[], const expr sel = 1, const int bus_type = PIOP_BUS_DEFAULT, const int name = PIOP_NAME_DEFAULT) {
-    direct_update(opid, expressions, sel, 0, bus_type, name);
+function direct_update_assumes(const int opid, const expr expressions[], const expr sel = 1, const int bus_type = PIOP_BUS_DEFAULT, const int name = PIOP_NAME_DEFAULT, const int surname = PIOP_SURNAME_DEFAULT) {
+    direct_update(opid, expressions, sel, 0, bus_type, name, surname);
 }
 
-function direct_update_proves(const int opid, const expr expressions[], const expr sel = 1, const int bus_type = PIOP_BUS_DEFAULT, const int name = PIOP_NAME_DEFAULT) {
-    direct_update(opid, expressions, sel, 1, bus_type, name);
+function direct_update_proves(const int opid, const expr expressions[], const expr sel = 1, const int bus_type = PIOP_BUS_DEFAULT, const int name = PIOP_NAME_DEFAULT, const int surname = PIOP_SURNAME_DEFAULT) {
+    direct_update(opid, expressions, sel, 1, bus_type, name, surname);
 }
 
 /**
@@ -58,18 +62,18 @@ function direct_update_proves(const int opid, const expr expressions[], const ex
  * @param name        An optional name for the PIOP consuming the direct update operation. 
  *                    This is useful for debugging and tracing operations.
  */
-function direct_global_update(const int opid, const expr expressions[], const expr sel = 1, const int proves = 1, const int bus_type = PIOP_BUS_DEFAULT, const int name = PIOP_NAME_DEFAULT) {
+function direct_global_update(const int opid, const expr expressions[], const expr sel = 1, const int proves = 1, const int bus_type = PIOP_BUS_DEFAULT, const int name = PIOP_NAME_DEFAULT, const int surname = PIOP_SURNAME_DEFAULT) {
     direct_initial_checks(expressions, sel);
 
-    direct_to_bus(opid, expressions, sel, proves, bus_type, name, PIOP_DIRECT_TYPE_GLOBAL);
+    direct_to_bus(opid, expressions, sel, proves, bus_type, name, surname, DIRECT_TYPE_GLOBAL);
 }
 
-function direct_global_update_assumes(const int opid, const expr expressions[], const expr sel = 1, const int bus_type = PIOP_BUS_DEFAULT, const int name = PIOP_NAME_DEFAULT) {
-    direct_global_update(opid, expressions, sel, 0, bus_type, name);
+function direct_global_update_assumes(const int opid, const expr expressions[], const expr sel = 1, const int bus_type = PIOP_BUS_DEFAULT, const int name = PIOP_NAME_DEFAULT, const int surname = PIOP_SURNAME_DEFAULT) {
+    direct_global_update(opid, expressions, sel, 0, bus_type, name, surname);
 }
 
-function direct_global_update_proves(const int opid, const expr expressions[], const expr sel = 1, const int bus_type = PIOP_BUS_DEFAULT, const int name = PIOP_NAME_DEFAULT) {
-    direct_global_update(opid, expressions, sel, 1, bus_type, name);
+function direct_global_update_proves(const int opid, const expr expressions[], const expr sel = 1, const int bus_type = PIOP_BUS_DEFAULT, const int name = PIOP_NAME_DEFAULT, const int surname = PIOP_SURNAME_DEFAULT) {
+    direct_global_update(opid, expressions, sel, 1, bus_type, name, surname);
 }
 
 private function direct_initial_checks(const expr expressions[], const expr sel) {
@@ -88,23 +92,37 @@ private function direct_initial_checks(const expr expressions[], const expr sel)
     }
 }
 
-private function direct_to_bus(const int opid, const expr expressions[], const expr sel, const int proves, const int bus_type, const int name, const int direct_type) {
+private function direct_to_bus(const int opid, const expr expressions[], const expr sel, const int proves, const int bus_type, const int name, const int surname, const int direct_type) {
     if (name == PIOP_NAME_DEFAULT) name = DEFAULT_DIRECT_NAME;
-
+    if (surname == PIOP_SURNAME_DEFAULT) surname = DEFAULT_DIRECT_SURNAME;
     if (bus_type == PIOP_BUS_DEFAULT) bus_type = DEFAULT_DIRECT_BUS_TYPE;
 
     switch (bus_type) {
         case PIOP_BUS_SUM:
+            int update_type;
+            if (direct_type == DIRECT_TYPE_AIR) {
+                update_type = SUM_UPDATE_TYPE_LOCAL_AIRVAL;
+            } else if (direct_type == DIRECT_TYPE_GLOBAL) {
+                update_type = SUM_UPDATE_TYPE_GLOBAL;
+            }
+
             if (proves) {
-                sum_proves(name, [opid], opid, expressions, sel, direct_type);
+                sum(name, surname, SUM_TYPE_PROVES, [opid], opid, expressions, sel, update_type);
             } else {
-                sum_assumes(name, [opid], opid, expressions, sel, direct_type);
+                sum(name, surname, SUM_TYPE_ASSUMES, [opid], opid, expressions, sel, update_type);
             }
         case PIOP_BUS_PROD:
+            int update_type;
+            if (direct_type == DIRECT_TYPE_AIR) {
+                update_type = PROD_UPDATE_TYPE_LOCAL_AIRVAL;
+            } else if (direct_type == DIRECT_TYPE_GLOBAL) {
+                update_type = PROD_UPDATE_TYPE_GLOBAL;
+            }
+
             if (proves) {
-                prod_proves(name, opid, expressions, sel, direct_type);
+                prod(name, surname, PROD_TYPE_PROVES, opid, expressions, sel, update_type);
             } else {
-                prod_assumes(name, opid, expressions, sel, direct_type);
+                prod(name, surname, PROD_TYPE_ASSUMES, opid, expressions, sel, update_type);
             }
         default:
             error(`Unknown bus type: ${bus_type} for opid: ${opid}`);

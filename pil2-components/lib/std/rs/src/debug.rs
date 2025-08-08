@@ -129,7 +129,9 @@ pub fn update_debug_data<F: PrimeField64>(
 ) {
     let bus_opid = debug_data.entry(opid).or_default();
 
-    let bus_val = bus_opid.entry(val).or_insert_with(|| BusValue {
+    // Normalize the vector before inserting
+    let norm_val = normalize_val(&val);
+    let bus_val = bus_opid.entry(norm_val).or_insert_with(|| BusValue {
         shared_data: SharedData { direct_was_called: false, num_proves: F::ZERO, num_assumes: F::ZERO },
         grouped_data: AirGroupMap::new(),
     });
@@ -164,6 +166,19 @@ pub fn update_debug_data<F: PrimeField64>(
         bus_val.shared_data.num_assumes += times;
         grouped_data.row_assumes.push(row);
     }
+}
+
+fn normalize_val<F: PrimeField64>(val: &[HintFieldOutput<F>]) -> Vec<HintFieldOutput<F>> {
+    let is_zero = |v: &HintFieldOutput<F>| match v {
+        HintFieldOutput::Field(x) => *x == F::ZERO,
+        HintFieldOutput::FieldExtended(ext) => ext.is_zero(),
+    };
+
+    // Find the index of the last non-zero entry
+    let last_non_zero = val.iter().rposition(|v| !is_zero(v)).unwrap_or(0);
+
+    // Keep everything from index 0 to last_non_zero
+    val[..=last_non_zero].to_vec()
 }
 
 pub fn check_invalid_opids<F: PrimeField64>(_pctx: &ProofCtx<F>, debugs_data_fasts: &mut [DebugDataFast<F>]) -> Vec<F> {
@@ -221,6 +236,7 @@ pub fn check_invalid_opids<F: PrimeField64>(_pctx: &ProofCtx<F>, debugs_data_fas
 
     invalid_opids
 }
+
 pub fn print_debug_info<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     max_values_to_print: usize,

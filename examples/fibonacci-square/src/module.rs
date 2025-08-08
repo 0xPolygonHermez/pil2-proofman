@@ -39,7 +39,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
             let mut b = F::as_canonical_u64(&publics.in2);
 
             //range_check(colu: mod - x_mod, min: 1, max: 2**8-1);
-            let range = self.std_lib.get_range(1, (1 << 8) - 1, None);
+            let range = self.std_lib.get_range_id(1, (1 << 8) - 1, None);
 
             let mut modules = Vec::new();
             for _ in 1..self.fibonacci_rows {
@@ -87,12 +87,12 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
                 air_values.last_segment = F::from_bool(j == num_instances - 1);
 
                 x_mods.par_iter().for_each(|x_mod| {
-                    self.std_lib.range_check((module - x_mod) as i64, 1, range);
+                    self.std_lib.range_check(range, (module - x_mod) as i64, 1);
                 });
 
                 // Trivial range check for the remaining rows
                 for _ in modules_slice.len()..trace.num_rows() {
-                    self.std_lib.range_check(module as i64, 1, range);
+                    self.std_lib.range_check(range, module as i64, 1);
                 }
 
                 let air_instance =

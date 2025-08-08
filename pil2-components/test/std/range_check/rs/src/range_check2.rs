@@ -38,9 +38,9 @@ where
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
-            let range1 = self.std_lib.get_range(0, (1 << 8) - 1, Some(false));
-            let range2 = self.std_lib.get_range(0, (1 << 9) - 1, Some(false));
-            let range3 = self.std_lib.get_range(0, (1 << 10) - 1, Some(false));
+            let range1 = self.std_lib.get_range_id(0, (1 << 8) - 1, Some(false));
+            let range2 = self.std_lib.get_range_id(0, (1 << 9) - 1, Some(false));
+            let range3 = self.std_lib.get_range_id(0, (1 << 10) - 1, Some(false));
 
             for i in 0..num_rows {
                 let val1 = rng.random_range(0..=(1 << 8) - 1);
@@ -50,9 +50,9 @@ where
                 trace[i].b2 = F::from_u16(val2);
                 trace[i].b3 = F::from_u16(val3);
 
-                self.std_lib.range_check(val1 as i64, 1, range1);
-                self.std_lib.range_check(val2 as i64, 1, range2);
-                self.std_lib.range_check(val3 as i64, 1, range3);
+                self.std_lib.range_check(range1, val1 as i64, 1);
+                self.std_lib.range_check(range2, val2 as i64, 1);
+                self.std_lib.range_check(range3, val3 as i64, 1);
             }
 
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));

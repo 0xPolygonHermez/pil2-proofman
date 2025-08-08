@@ -27,9 +27,16 @@ require "std_prod.pil";
  */
 
 const int DEFAULT_PERMUTATION_NAME = PIOP_NAME_PERMUTATION;
-
-// Note: This constant allows you to choose whether the permutation is proven via a product or sum check.
+const int DEFAULT_PERMUTATION_SURNAME = PIOP_SURNAME_DEFAULT;
 int DEFAULT_PERMUTATION_BUS_TYPE = PIOP_BUS_SUM;
+
+function set_permutation_bus_type(const int bus_type) {
+    if (bus_type != PIOP_BUS_SUM && bus_type != PIOP_BUS_PROD) {
+        error(`Unknown bus type: ${bus_type}`);
+    }
+
+    DEFAULT_PERMUTATION_BUS_TYPE = bus_type;
+}
 
 /**
  * Performs the "assumes" part of a permutation check.
@@ -42,16 +49,16 @@ int DEFAULT_PERMUTATION_BUS_TYPE = PIOP_BUS_SUM;
  * @param name        An optional name for the PIOP consuming the permutation check. 
  *                    This is useful for debugging and tracing operations.
  */
-function permutation_assumes(const int opid, const expr expressions[], const expr sel = 1, int bus_type = PIOP_BUS_DEFAULT, int name = PIOP_NAME_DEFAULT) {
+function permutation_assumes(const int opid, const expr expressions[], const expr sel = 1, int bus_type = PIOP_BUS_DEFAULT, int name = PIOP_NAME_DEFAULT, int surname = PIOP_SURNAME_DEFAULT) {
     if (name == PIOP_NAME_DEFAULT) name = DEFAULT_PERMUTATION_NAME;
-
+    if (surname == PIOP_SURNAME_DEFAULT) surname = DEFAULT_PERMUTATION_SURNAME;
     if (bus_type == PIOP_BUS_DEFAULT) bus_type = DEFAULT_PERMUTATION_BUS_TYPE;
 
     switch (bus_type) {
         case PIOP_BUS_SUM:
-            sum_assumes(name, [opid], opid, expressions, sel);
+            sum(name, surname, SUM_TYPE_ASSUMES, [opid], opid, expressions, sel);
         case PIOP_BUS_PROD:
-            prod_assumes(name, opid, expressions, sel);
+            prod(name, surname, PROD_TYPE_ASSUMES, opid, expressions, sel);
         default:
             error(`Unknown bus type: ${bus_type}`);
     }
@@ -68,16 +75,16 @@ function permutation_assumes(const int opid, const expr expressions[], const exp
  * @param name        An optional name for the PIOP consuming the permutation check. 
  *                    This is useful for debugging and tracing operations.
  */
-function permutation_proves(const int opid, const expr expressions[], const expr sel = 1, int bus_type = PIOP_BUS_DEFAULT, int name = PIOP_NAME_DEFAULT) {
+function permutation_proves(const int opid, const expr expressions[], const expr sel = 1, int bus_type = PIOP_BUS_DEFAULT, int name = PIOP_NAME_DEFAULT, int surname = PIOP_SURNAME_DEFAULT) {
     if (name == PIOP_NAME_DEFAULT) name = DEFAULT_PERMUTATION_NAME;
-
+    if (surname == PIOP_SURNAME_DEFAULT) surname = DEFAULT_PERMUTATION_SURNAME;
     if (bus_type == PIOP_BUS_DEFAULT) bus_type = DEFAULT_PERMUTATION_BUS_TYPE;
 
     switch (bus_type) {
         case PIOP_BUS_SUM:
-            sum_proves(name, [opid], opid, expressions, sel);
+            sum(name, surname, SUM_TYPE_PROVES, [opid], opid, expressions, sel);
         case PIOP_BUS_PROD:
-            prod_proves(name, opid, expressions, sel);
+            prod(name, surname, PROD_TYPE_PROVES, opid, expressions, sel);
         default:
             error(`Unknown bus type: ${bus_type}`);
     }
@@ -94,16 +101,16 @@ function permutation_proves(const int opid, const expr expressions[], const expr
  * @param name        An optional name for the PIOP consuming the permutation check. 
  *                    This is useful for debugging and tracing operations.
  */
-function permutation(const int opid, const expr expressions[], const expr sel = 1, int bus_type = PIOP_BUS_DEFAULT, int name = PIOP_NAME_DEFAULT) {
+function permutation(const int opid, const expr expressions[], const expr sel = 1, int bus_type = PIOP_BUS_DEFAULT, int name = PIOP_NAME_DEFAULT, int surname = PIOP_SURNAME_DEFAULT) {
     if (name == PIOP_NAME_DEFAULT) name = DEFAULT_PERMUTATION_NAME;
-
+    if (surname == PIOP_SURNAME_DEFAULT) surname = DEFAULT_PERMUTATION_SURNAME;
     if (bus_type == PIOP_BUS_DEFAULT) bus_type = DEFAULT_PERMUTATION_BUS_TYPE;
 
     switch (bus_type) {
         case PIOP_BUS_SUM:
-            sum(name, 2, [opid], opid, expressions, sel);
+            sum(name, surname, SUM_TYPE_FREE, [opid], opid, expressions, sel);
         case PIOP_BUS_PROD:
-            prod(name, 2, opid, expressions, sel);
+            prod(name, surname, PROD_TYPE_FREE, opid, expressions, sel);
         default:
             error(`Unknown bus type: ${bus_type}`);
     }

@@ -31,9 +31,7 @@ pub struct U16Air {
 }
 
 impl<F: PrimeField64> AirComponent<F> for U16Air {
-    fn new(pctx: &ProofCtx<F>, _sctx: &SetupCtx<F>, airgroup_id: Option<usize>, air_id: Option<usize>) -> Arc<Self> {
-        let airgroup_id = airgroup_id.expect("Airgroup ID must be provided");
-        let air_id = air_id.expect("Air ID must be provided");
+    fn new(pctx: &ProofCtx<F>, _sctx: &SetupCtx<F>, airgroup_id: usize, air_id: usize) -> Arc<Self> {
         let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
 
         // Get and store the ranges
@@ -59,6 +57,14 @@ impl<F: PrimeField64> AirComponent<F> for U16Air {
 }
 
 impl U16Air {
+    pub const fn get_global_row(value: u16) -> u64 {
+        value as u64
+    }
+
+    pub fn get_global_rows(values: &[u16]) -> Vec<u64> {
+        values.iter().map(|&v| Self::get_global_row(v)).collect()
+    }
+
     #[inline(always)]
     pub fn update_input(&self, value: u16, multiplicity: u64) {
         if self.calculated.load(Ordering::Relaxed) {
@@ -75,7 +81,7 @@ impl U16Air {
         self.multiplicities[range_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
     }
 
-    pub fn update_inputs(&self, values: Vec<u32>) {
+    pub fn update_inputs(&self, values: Vec<u64>) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
@@ -92,7 +98,7 @@ impl U16Air {
             let row_idx = value & self.mask;
 
             // Update the multiplicity
-            self.multiplicities[range_idx][row_idx].fetch_add(*multiplicity as u64, Ordering::Relaxed);
+            self.multiplicities[range_idx][row_idx].fetch_add(*multiplicity, Ordering::Relaxed);
         }
     }
 

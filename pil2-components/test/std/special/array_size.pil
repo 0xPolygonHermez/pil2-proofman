@@ -1,14 +1,14 @@
 require "std_constants.pil"
 require "std_lookup.pil"
 
-// The array size is 500 by default, but one can use `set_array_limit` to change it.
-set_array_size(501);
+// You can use `set_array_limit` to change the size of the array across the library
+set_array_size(ARRAY_SIZE + 1);
 
 airtemplate ArraySize(const int N = 2**2) {
-    col witness a[501];
+    col witness a[ARRAY_SIZE];
 
-    for (int i = 0; i < 501; i++) {
-        lookup_assumes(i, expressions: [a[i]], name: PIOP_NAME_ISOLATED);
+    for (int i = 0; i < ARRAY_SIZE; i++) {
+        lookup_assumes(i, expressions: [a[i]], surname: PIOP_SURNAME_ISOLATED);
     }
 }
 
