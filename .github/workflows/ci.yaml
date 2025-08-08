@@ -421,7 +421,7 @@ jobs:
 
       - name: Modify Cargo.toml std virtual-tables
         run: |
-          sed -i 's/# *"pil2-components\/test\/simple\/rs"/"pil2-components\/test\/std\/virtual_tables\/rs"/' ./Cargo.toml
+          sed -i 's/# *"pil2-components\/test\/std\/virtual_tables\/rs"/"pil2-components\/test\/std\/virtual_tables\/rs"/' ./Cargo.toml
 
       - name: Modify Cargo.toml std simple
         run: |
