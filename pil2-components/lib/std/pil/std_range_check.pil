@@ -772,7 +772,6 @@ private function declare_specified_air() {
     container proof.std.specified {
         int airgroup_id = -1;
         int air_id = -1;
-        int opids_count = proof.std.rc.spec_opids_count;
     }
 
     // Compute the smallest power of 2 that is greater than or equal to the maximum range length
@@ -823,12 +822,12 @@ private function issue_u16_data_global() {
 
 private function issue_specified_data_global() {
     use proof.std.specified;
-    @specified_ranges{airgroup_id: airgroup_id, air_id: air_id, opids_count: opids_count};
+    @specified_ranges{airgroup_id: airgroup_id, air_id: air_id};
 }
 
 private function issue_rc_users_global() {
     use proof.std.rc;
-    @std_rc_users{num_users: air_count, airgroup_ids: airgroup_ids, air_ids: air_ids};
+    @std_rc_users{num_users: air_count, airgroup_ids: airgroup_ids, air_ids: air_ids, opids_count: opids_count, spec_opids_count: spec_opids_count};
 }
 
 private function print_range_stats() {
