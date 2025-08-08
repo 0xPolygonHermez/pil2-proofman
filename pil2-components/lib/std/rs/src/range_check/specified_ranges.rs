@@ -154,7 +154,7 @@ impl SpecifiedRanges {
             let row_idx = offset & self.mask;
 
             // Update the multiplicity
-            self.multiplicities[base_offset + range_idx][row_idx].fetch_add(*multiplicity as u64, Ordering::Relaxed);
+            self.multiplicities[base_offset + range_idx][row_idx].fetch_add(*multiplicity, Ordering::Relaxed);
         }
     }
 

@@ -14,6 +14,7 @@ test_pipeline() {
     PIL_FILE="$BASE/$NAME.pil"
     SRC="$BASE/rs/src"
     PROVING_KEY="$BUILD/provingKey"
+    FIXED="$BUILD/fixed"
     PILOUT_FILE="$BUILD/$NAME.pilout"
     LIB="./target/debug/lib${SO_NAME}.so"
     LOG="$BUILD/$NAME.log"
@@ -22,16 +23,19 @@ test_pipeline() {
 
     # Start clean
     if [ "$SETUP_ONLY" != "true" ]; then
-        rm -rf "$BUILD" && mkdir "$BUILD"
+        rm -rf "$BUILD"
     fi
+    mkdir -p "$BUILD"
 
     {
         node --max-old-space-size=65536 ../pil2-compiler/src/pil.js "$PIL_FILE" \
             --include ./pil2-components/lib/std/pil \
+            --option fixed-to-file --outputdir "$FIXED" \
             --output "$PILOUT_FILE"
 
-        node --max-old-space-size=65536 ../pil2-proofman-js/src/main_setup.js \
+        node --max-old-space-size=65536 --stack-size=1500 ../pil2-proofman-js/src/main_setup.js \
             --airout "$PILOUT_FILE" \
+            --fixed "$FIXED" \
             --builddir "$BUILD"
 
         if [ "$SETUP_ONLY" != "true" ]; then

@@ -16,7 +16,7 @@ use rayon::prelude::*;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "5603b3e47def8ed8a647902c9a9071f9e561cb9409bc12fa5aabed65c70160b5";
+pub const PILOUT_HASH: &str = "6b052203d925b9e38e7a0f349419cc61fc87b5ecb4eae8e1d1062aa3adb9ce10";
 
 //AIRGROUP CONSTANTS
 

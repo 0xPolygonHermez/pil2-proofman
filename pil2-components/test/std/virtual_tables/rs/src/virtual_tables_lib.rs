@@ -21,7 +21,7 @@ where
         let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
 
         let std = Std::new(wcm.get_pctx(), wcm.get_sctx());
-        register_std(&wcm, &std);
+        register_std(wcm, &std);
 
         let component1 = Component1::new(std.clone());
         let component2 = Component2::new(std.clone());

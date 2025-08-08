@@ -97,7 +97,7 @@ impl U8Air {
             let row_idx = value & self.mask;
 
             // Update the multiplicity
-            self.multiplicities[range_idx][row_idx].fetch_add(*multiplicity as u64, Ordering::Relaxed);
+            self.multiplicities[range_idx][row_idx].fetch_add(*multiplicity, Ordering::Relaxed);
         }
     }
 
