@@ -275,6 +275,22 @@ struct DeviceCommitBuffers
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;
 };
 
+void copy_to_device_in_chunks(
+    DeviceCommitBuffers* d_buffers,
+    const void* src,
+    void* dst,
+    uint64_t total_size,
+    uint64_t streamId
+    );
+
+
+void load_and_copy_to_device_in_chunks(
+    DeviceCommitBuffers* d_buffers,
+    const char* bufferPath,
+    void* dst,
+    uint64_t total_size,
+    uint64_t streamId
+    );
 
 #endif
 
