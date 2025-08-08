@@ -36,10 +36,29 @@ airtemplate Table(const int N, const int t, const int opid) {
     lookup_proves(opid, A, mul: multiplicity);
 }
 
+airtemplate TablePadded(const int N, const int opid) {
+    const int P2_2 = 1 << 2;
+    const int P2_4 = 1 << 4;
+    const int MASK_2 = P2_2 - 1;
+    const int TOTAL_SIZE = P2_2*P2_2*3;
+    assert(N >= TOTAL_SIZE);
+
+    const int PADDING_VALUES = N - TOTAL_SIZE;
+    println(`With N=${N} there are ${PADDING_VALUES} padding values`);
+
+    col fixed A = [0..MASK_2]...;
+    col fixed B = [0:P2_2..MASK_2:P2_2]...;
+    col fixed C = [0:P2_4, 1:P2_4, 2:P2_4]...;
+
+    col witness multiplicity;
+    lookup_proves(opid, [A, B, C], mul: multiplicity);
+}
+
 airgroup VirtualTables {
     set_range_check_tables_virtual(); // Enable virtual tables for range checks
     set_max_virtual_bits(15); // Set the maximum bits for virtual tables
 
+    // Virtual tables
     Component(N: 2**5, t: 5, opid: 1) alias Component1;
     virtual Table(N: 2**5, t: 5, opid: 1) alias Table1;
 
@@ -58,6 +77,11 @@ airgroup VirtualTables {
     Component(N: 2**10, t: 2, opid: 6) alias Component6;
     virtual Table(N: 2**10, t: 2, opid: 6) alias Table6;
 
+    // Standard tables
     Component(N: 2**9, t: 9, opid: 7) alias Component7;
     Table(N: 2**9, t: 9, opid: 7) alias Table7;
+
+    // Non power-of-two virtual tables
+    Component(N: 2**10, t: 3, opid: 8) alias Component8;
+    virtual TablePadded(N: 48, opid: 8) alias Table8;
 }

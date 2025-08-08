@@ -94,7 +94,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
         self.virtual_table_air.as_ref().unwrap().inc_virtual_row(id, row, multiplicity);
     }
 
-    pub fn inc_virtual_rows(&self, id: usize, rows: Vec<u64>, multiplicities: Vec<u64>) {
+    pub fn inc_virtual_rows(&self, id: usize, rows: Vec<u64>, multiplicities: Vec<u32>) {
         self.virtual_table_air.as_ref().unwrap().inc_virtual_rows(id, rows, multiplicities);
     }
 
@@ -137,7 +137,7 @@ impl VirtualTableAir {
         self.multiplicities[sub_table_idx as usize][row_idx as usize].fetch_add(multiplicity, Ordering::Relaxed);
     }
 
-    pub fn inc_virtual_rows(&self, id: usize, rows: Vec<u64>, multiplicities: Vec<u64>) {
+    pub fn inc_virtual_rows(&self, id: usize, rows: Vec<u64>, multiplicities: Vec<u32>) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
@@ -160,7 +160,7 @@ impl VirtualTableAir {
             let row_idx = offset & self.mask;
 
             // Update the multiplicity
-            self.multiplicities[sub_table_idx as usize][row_idx as usize].fetch_add(multiplicity, Ordering::Relaxed);
+            self.multiplicities[sub_table_idx as usize][row_idx as usize].fetch_add(multiplicity as u64, Ordering::Relaxed);
         }
     }
 

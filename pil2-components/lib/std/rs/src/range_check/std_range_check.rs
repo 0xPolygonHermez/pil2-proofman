@@ -388,7 +388,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         }
     }
 
-    pub fn assign_values(&self, id: usize, values: Vec<u64>) {
+    pub fn assign_values(&self, id: usize, values: Vec<u32>) {
         // Find the range with the given id
         let range_item = &self.ranges[id];
 

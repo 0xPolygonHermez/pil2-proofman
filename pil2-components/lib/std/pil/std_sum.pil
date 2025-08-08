@@ -42,7 +42,7 @@ function sum_set_airvals_im_reduce_factor(const int factor) {
     SUM_AIRVALS_IM_REDUCE_FACTOR = factor;
 }
 
-function sum(const int name, const int surname, const int type, const int opids[], const expr busid, const expr expressions[], const expr mul = 1, const int update_type = SUM_UPDATE_TYPE_LOCAL_DEFAULT) {
+function sum(const int name = PIOP_NAME_DEFAULT, const int surname = PIOP_SURNAME_DEFAULT, const int type, const int opids[], const expr busid, const expr expressions[], const expr mul = 1, const int update_type = SUM_UPDATE_TYPE_LOCAL_DEFAULT) {
     if (VIRTUAL == 1) {
         error("Cannot use the sum bus in a virtual table context.");
     }
