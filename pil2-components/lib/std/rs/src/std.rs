@@ -51,7 +51,7 @@ impl<F: PrimeField64> Std<F> {
         self.range_check.assign_value(id, val, multiplicity);
     }
 
-    pub fn range_checks(&self, id: usize, values: Vec<u64>) {
+    pub fn range_checks(&self, id: usize, values: Vec<u32>) {
         self.range_check.assign_values(id, values);
     }
 
@@ -59,7 +59,7 @@ impl<F: PrimeField64> Std<F> {
         self.virtual_table.inc_virtual_row(id, row, multiplicity);
     }
 
-    pub fn inc_virtual_rows(&self, id: usize, rows: Vec<u64>, multiplicities: Vec<u64>) {
+    pub fn inc_virtual_rows(&self, id: usize, rows: Vec<u64>, multiplicities: Vec<u32>) {
         #[cfg(all(debug_assertions, feature = "verify-rc-values"))]
         assert_eq!(rows.len(), multiplicities.len(), "Rows and multiplicities must have the same length");
 

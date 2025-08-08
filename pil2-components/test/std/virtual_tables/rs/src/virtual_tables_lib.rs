@@ -8,7 +8,10 @@ use rand::{
     Rng,
 };
 
-use crate::{Component1, Component2, Component3, Component4, Component5, Component6 /*Component7, Table7*/, Component8};
+use crate::{
+    Component1, Component2, Component3, Component4, Component5, Component6, /*Component7, Table7*/
+    Component8,
+};
 use proofman::register_std;
 
 witness_library!(WitnessLib, Goldilocks);
