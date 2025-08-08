@@ -5,7 +5,7 @@ use proofman_starks_lib_c::*;
 use std::path::Path;
 use num_traits::ToPrimitive;
 
-use proofman_common::{load_const_pols, load_const_pols_tree, Proof, ProofCtx, ProofType, Setup, SetupsVadcop};
+use proofman_common::{load_const_pols, load_const_pols_tree, MpiCtx, Proof, ProofCtx, ProofType, Setup, SetupsVadcop};
 
 use std::os::raw::{c_void, c_char};
 
@@ -316,8 +316,9 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 #[allow(clippy::too_many_arguments)]
 pub fn aggregate_recursive2_proofs<F: PrimeField64>(
     pctx: &ProofCtx<F>,
+    mpi_ctx: &MpiCtx,
     setups: &SetupsVadcop<F>,
-    proofs: Vec<Vec<Proof<F>>>,
+    proofs: Vec<Vec<u64>>,
     trace: &[F],
     prover_buffer: &[F],
     const_pols: &[F],
@@ -326,10 +327,9 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
     d_buffers: *mut c_void,
     save_proofs: bool,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
-    let mut dctx = pctx.dctx.write().unwrap();
-    let n_processes = dctx.n_processes as usize;
-    let rank = dctx.rank as usize;
-    let airgroup_instances_alive = &dctx.airgroup_instances_alives;
+    let n_processes = pctx.dctx_get_n_processes();
+    let rank = pctx.dctx_get_rank();
+    let airgroup_instances_alive = &pctx.dctx_get_airgroup_instances_alive();
     let n_airgroups = pctx.global_info.air_groups.len();
     let mut alives = vec![0; n_airgroups];
     let mut airgroup_proofs: Vec<Vec<Option<Vec<u64>>>> = Vec::with_capacity(n_airgroups);
@@ -351,9 +351,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
         airgroup_proofs.push(vec![None; alives[airgroup]]);
 
         if !proofs[airgroup].is_empty() {
-            for i in 0..proofs[airgroup].len() {
-                airgroup_proofs[airgroup][current_pos + i] = Some(proofs[airgroup][i].proof.clone());
-            }
+            airgroup_proofs[airgroup][current_pos] = Some(proofs[airgroup].clone());
         } else if rank == 0 {
             airgroup_proofs[airgroup][0] = Some(vec![0; setup.proof_size as usize + publics_aggregation]);
         }
@@ -361,8 +359,8 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
 
     // agregation loop
     loop {
-        dctx.barrier();
-        dctx.distribute_recursive2_proofs(&alives, &mut airgroup_proofs);
+        mpi_ctx.barrier();
+        mpi_ctx.distribute_recursive2_proofs(&alives, &mut airgroup_proofs);
         let mut pending_agregations = false;
         for airgroup in 0..n_airgroups {
             //create a vector of sice indices length
@@ -457,7 +455,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
     }
 
     let mut updated_proof: Vec<u64> = Vec::new();
-    if dctx.rank == 0 {
+    if pctx.dctx_get_rank() == 0 {
         let publics_circom_size =
             pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3;
 
