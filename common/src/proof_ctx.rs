@@ -1,13 +1,11 @@
 use std::os::raw::c_void;
-use std::sync::atomic::AtomicU64;
 use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 
 use fields::PrimeField64;
 use transcript::FFITranscript;
-
-#[cfg(distributed)]
-use mpi::environment::Universe;
+use crate::MpiCtx;
+use std::sync::Arc;
 
 use crate::{
     initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PreCalculate, SetupCtx, StdMode,
@@ -177,52 +175,6 @@ pub struct ProofCtx<F: PrimeField64> {
 pub const MAX_INSTANCES: u64 = 10000;
 
 impl<F: PrimeField64> ProofCtx<F> {
-    #[cfg(distributed)]
-    pub fn create_ctx(
-        proving_key_path: PathBuf,
-        custom_commits_fixed: HashMap<String, PathBuf>,
-        aggregation: bool,
-        final_snark: bool,
-        verbose_mode: VerboseMode,
-        mpi_universe: Option<Universe>,
-    ) -> Self {
-        tracing::info!("Creating proof context");
-
-        let dctx = DistributionCtx::with_universe(mpi_universe);
-
-        let rank = if dctx.n_processes > 1 { Some(dctx.rank) } else { None };
-        initialize_logger(verbose_mode, rank);
-        let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
-        let n_publics = global_info.n_publics;
-        let n_proof_values = global_info
-            .proof_values_map
-            .as_ref()
-            .map(|map| map.iter().filter(|entry| entry.stage == 1).count())
-            .unwrap_or(0);
-        let n_challenges = global_info.n_challenges.iter().sum::<usize>();
-
-        let weights = HashMap::new();
-
-        let air_instances: Vec<RwLock<AirInstance<F>>> =
-            (0..MAX_INSTANCES).map(|_| RwLock::new(AirInstance::<F>::default())).collect();
-
-        Self {
-            global_info,
-            public_inputs: Values::new(n_publics),
-            proof_values: Values::new(n_proof_values),
-            challenges: Values::new(n_challenges * 3),
-            global_challenge: Values::new(3),
-            air_instances,
-            dctx: RwLock::new(dctx),
-            debug_info: RwLock::new(DebugInfo::default()),
-            custom_commits_fixed,
-            weights,
-            aggregation,
-            final_snark,
-        }
-    }
-
-    #[cfg(not(distributed))]
     pub fn create_ctx(
         proving_key_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
@@ -234,8 +186,7 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         let dctx = DistributionCtx::new();
 
-        let rank = if dctx.n_processes > 1 { Some(dctx.rank) } else { None };
-        initialize_logger(verbose_mode, rank);
+        initialize_logger(verbose_mode, None);
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
         let n_publics = global_info.n_publics;
         let n_proof_values = global_info
@@ -329,34 +280,29 @@ impl<F: PrimeField64> ProofCtx<F> {
         !self.air_instances[global_idx].read().unwrap().trace.is_empty()
     }
 
-    pub fn dctx_barrier(&self) {
-        let dctx = self.dctx.read().unwrap();
-        dctx.barrier();
-    }
-
-    pub fn dctx_is_min_rank_owner(&self, airgroup_id: usize, air_id: usize) -> bool {
-        let dctx = self.dctx.read().unwrap();
-        dctx.is_min_rank_owner(airgroup_id, air_id)
+    pub fn add_mpi_ctx(&self, mpi_ctx: Arc<MpiCtx>) {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.add_mpi_ctx(mpi_ctx);
     }
 
     pub fn dctx_get_rank(&self) -> usize {
         let dctx = self.dctx.read().unwrap();
-        dctx.rank as usize
+        dctx.rank.unwrap() as usize
     }
 
     pub fn dctx_get_node_rank(&self) -> usize {
         let dctx = self.dctx.read().unwrap();
-        dctx.node_rank as usize
+        dctx.node_rank.unwrap() as usize
     }
 
     pub fn dctx_get_node_n_processes(&self) -> usize {
         let dctx = self.dctx.read().unwrap();
-        dctx.node_n_processes as usize
+        dctx.node_n_processes.unwrap() as usize
     }
 
     pub fn dctx_get_n_processes(&self) -> usize {
         let dctx = self.dctx.read().unwrap();
-        dctx.n_processes as usize
+        dctx.n_processes.unwrap()
     }
 
     pub fn dctx_get_instances(&self) -> Vec<InstanceInfo> {
@@ -367,16 +313,6 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn dctx_get_my_instances(&self) -> Vec<usize> {
         let dctx = self.dctx.read().unwrap();
         dctx.my_instances.clone()
-    }
-
-    pub fn dctx_get_my_groups(&self) -> Vec<Vec<usize>> {
-        let dctx = self.dctx.read().unwrap();
-        dctx.my_groups.clone()
-    }
-
-    pub fn dctx_get_my_air_groups(&self) -> Vec<Vec<usize>> {
-        let dctx = self.dctx.read().unwrap();
-        dctx.my_air_groups.clone()
     }
 
     pub fn dctx_get_instance_info(&self, global_idx: usize) -> (usize, usize) {
@@ -477,9 +413,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances.len()
     }
 
-    pub fn dctx_distribute_roots(&self, roots: Vec<u64>) -> Vec<u64> {
+    pub fn dctx_get_airgroup_instances_alive(&self) -> Vec<Vec<usize>> {
         let dctx = self.dctx.read().unwrap();
-        dctx.distribute_roots(roots)
+        dctx.airgroup_instances_alives.clone()
     }
 
     pub fn dctx_add_instance_no_assign(
@@ -504,36 +440,15 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.load_balance_info()
     }
 
+    pub fn dctx_set_rank(&self, n_processes: usize, rank: i32, node_n_processes: i32, node_rank: i32) {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.add_rank(n_processes, rank, node_n_processes, node_rank);
+    }
+
     pub fn dctx_set_balance_distribution(&self, balance: bool) {
         let mut dctx = self.dctx.write().unwrap();
         dctx.set_balance_distribution(balance);
     }
-
-    pub fn dctx_distribute_multiplicity(&self, multiplicity: &[AtomicU64], global_idx: usize) {
-        let dctx = self.dctx.read().unwrap();
-        let owner = dctx.owner(global_idx);
-        dctx.distribute_multiplicity(multiplicity, owner);
-    }
-
-    pub fn dctx_distribute_publics(&self, publics: Vec<u64>) {
-        let dctx = self.dctx.read().unwrap();
-        let publics_to_set = dctx.distribute_publics(publics);
-        for idx in (0..publics_to_set.len()).step_by(2) {
-            self.set_public_value(publics_to_set[idx + 1], publics_to_set[idx] as usize);
-        }
-    }
-
-    pub fn dctx_distribute_multiplicities(&self, multiplicities: &[Vec<AtomicU64>], global_idx: usize) {
-        let dctx = self.dctx.read().unwrap();
-        let owner = dctx.owner(global_idx);
-        dctx.distribute_multiplicities(multiplicities, owner);
-    }
-
-    pub fn dctx_distribute_airgroupvalues(&self, airgroup_values: Vec<Vec<u64>>) -> Vec<Vec<F>> {
-        let dctx = self.dctx.read().unwrap();
-        dctx.distribute_airgroupvalues(airgroup_values, &self.global_info)
-    }
-
     pub fn dctx_close(&self) {
         let mut dctx = self.dctx.write().unwrap();
         dctx.close(self.global_info.air_groups.len());
@@ -699,5 +614,18 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn free_instance_traces(&self, instance_id: usize) -> (bool, Vec<F>) {
         self.air_instances[instance_id].write().unwrap().clear_traces()
+    }
+
+    pub fn dctx_distribute_multiplicities(
+        &self,
+        multiplicities: &[Vec<std::sync::atomic::AtomicU64>],
+        instance_id: usize,
+    ) {
+        let dctx = self.dctx.read().unwrap();
+        if let Some(mpi_ctx) = &dctx.mpi_ctx {
+            mpi_ctx.distribute_multiplicities(multiplicities, instance_id as i32);
+        } else {
+            tracing::warn!("MPI context not set, cannot distribute multiplicities");
+        }
     }
 }
