@@ -72,6 +72,7 @@ pub struct Setup<F: PrimeField64> {
     pub verkey: Vec<F>,
     pub exec_data: RwLock<Option<Vec<u64>>>,
     pub n_cols: u64,
+    pub single_instance: bool,
 }
 
 impl<F: PrimeField64> Drop for Setup<F> {
@@ -103,6 +104,7 @@ impl<F: PrimeField64> Setup<F> {
         setup_type: &ProofType,
         verify_constraints: bool,
         preallocate: bool,
+        single_instance: bool,
     ) -> Self {
         let setup_path = match setup_type {
             ProofType::VadcopFinal => global_info.get_setup_path("vadcop_final"),
@@ -239,6 +241,7 @@ impl<F: PrimeField64> Setup<F> {
             setup_type: setup_type.clone(),
             air_name: global_info.airs[airgroup_id][air_id].name.clone(),
             n_cols,
+            single_instance,
         }
     }
 

@@ -160,9 +160,9 @@ where
         final_snark: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let setups_aggregation =
-            Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, false, final_snark));
+            Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, false, &ParamsGPU::new(false)));
 
-        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, false);
+        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &ParamsGPU::new(false));
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
@@ -1794,10 +1794,15 @@ where
         }
 
         my_instances_sorted.sort_by_key(|&id| {
-            let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(id);
+            let setup = self.sctx.get_setup(instances[id].airgroup_id, instances[id].air_id);
             (
+                if setup.single_instance { 1 } else { 0 },
                 if self.pctx.is_air_instance_stored(id) { 0 } else { 1 },
-                if self.pctx.global_info.get_air_has_compressor(airgroup_id, air_id) { 0 } else { 1 },
+                if self.pctx.global_info.get_air_has_compressor(instances[id].airgroup_id, instances[id].air_id) {
+                    0
+                } else {
+                    1
+                },
             )
         });
 
@@ -2408,7 +2413,7 @@ where
         timer_start_info!(INITIALIZING_PROOFMAN);
 
         let sctx: Arc<SetupCtx<F>> =
-            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, verify_constraints, gpu_params.preallocate));
+            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, verify_constraints, gpu_params));
         pctx.set_weights(&sctx);
 
         let pctx = Arc::new(pctx);
@@ -2416,13 +2421,8 @@ where
             check_tree_paths(&pctx, &sctx)?;
         }
 
-        let setups_vadcop = Arc::new(SetupsVadcop::new(
-            &pctx.global_info,
-            verify_constraints,
-            aggregation,
-            final_snark,
-            gpu_params.preallocate,
-        ));
+        let setups_vadcop =
+            Arc::new(SetupsVadcop::new(&pctx.global_info, verify_constraints, aggregation, final_snark, gpu_params));
 
         if aggregation {
             check_tree_paths_vadcop(&pctx, &setups_vadcop, final_snark)?;
@@ -2451,7 +2451,7 @@ where
         timer_start_info!(INITIALIZING_PROOFMAN);
 
         let sctx: Arc<SetupCtx<F>> =
-            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, verify_constraints, gpu_params.preallocate));
+            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, verify_constraints, gpu_params));
         pctx.set_weights(&sctx);
 
         let pctx = Arc::new(pctx);
@@ -2737,13 +2737,19 @@ where
             setup.stark_info.stark_struct.n_bits_ext,
             *setup.stark_info.map_sections_n.get("cm1").unwrap(),
             instance_id as u64,
+            airgroup_id as u64,
+            air_id as u64,
             root_ptr,
             pctx.get_air_instance_trace_ptr(instance_id),
             aux_trace_contribution_ptr,
             d_buffers.get_ptr(),
             (&setup.p_setup).into(),
         );
-        streams.lock().unwrap()[stream_id as usize] = Some(instance_id as u64);
+        if !setup.single_instance {
+            streams.lock().unwrap()[stream_id as usize] = Some(instance_id as u64);
+        } else {
+            streams.lock().unwrap()[stream_id as usize] = None;
+        }
 
         let n_airvalues = setup
             .stark_info

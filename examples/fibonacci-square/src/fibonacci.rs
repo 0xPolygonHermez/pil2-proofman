@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use proofman_common::{BufferPool, write_custom_commit_trace, AirInstance, FromTrace, ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, write_custom_commit_trace, AirInstance, FromTrace, ProofCtx, SetupCtx, PreCalculate};
 use witness::WitnessComponent;
 use std::path::PathBuf;
 use fields::PrimeField64;
@@ -19,9 +19,12 @@ impl FibonacciSquare {
 
 impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
     fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
-        let instance_ids =
-            vec![pctx
-                .add_instance_all(FibonacciSquareTrace::<usize>::AIRGROUP_ID, FibonacciSquareTrace::<usize>::AIR_ID)];
+        let instance_ids = vec![pctx.add_instance(
+            FibonacciSquareTrace::<usize>::AIRGROUP_ID,
+            FibonacciSquareTrace::<usize>::AIR_ID,
+            PreCalculate::None,
+            1,
+        )];
         *self.instance_ids.write().unwrap() = instance_ids.clone();
         instance_ids
     }
