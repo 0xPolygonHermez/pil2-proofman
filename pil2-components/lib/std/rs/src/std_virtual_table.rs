@@ -216,7 +216,8 @@ impl VirtualTableAir {
             let row_idx = offset & self.mask;
 
             // Update the multiplicity
-            self.multiplicities[sub_table_idx as usize][row_idx as usize].fetch_add(multiplicity, Ordering::Relaxed);
+            self.multiplicities[sub_table_idx as usize][row_idx as usize]
+                .fetch_add(multiplicity, Ordering::Relaxed);
         }
     }
 }
