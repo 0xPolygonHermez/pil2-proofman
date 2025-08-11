@@ -217,7 +217,7 @@ impl VirtualTableAir {
 
             // Update the multiplicity
             self.multiplicities[sub_table_idx as usize][row_idx as usize]
-                .fetch_add(multiplicity as u64, Ordering::Relaxed);
+                .fetch_add(multiplicity, Ordering::Relaxed);
         }
     }
 }
