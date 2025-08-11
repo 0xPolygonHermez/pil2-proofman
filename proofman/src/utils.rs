@@ -63,7 +63,7 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
 
     let mut memory_tables = 0 as f64;
     for (instance_id, &instance_info) in instances.iter().enumerate() {
-        let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
+        let (airgroup_id, air_id, is_table) = (instance_info.airgroup_id, instance_info.air_id, instance_info.table);
         if !print[instance_id] {
             continue;
         }
@@ -79,7 +79,7 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
             let memory_instance = setup.prover_buffer_size as f64 * 8.0;
             let memory_fixed =
                 (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))) as f64 * 8.0;
-            if all {
+            if is_table {
                 memory_tables += memory_trace;
             }
             let total_cols: u64 = setup
