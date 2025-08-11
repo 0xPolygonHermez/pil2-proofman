@@ -64,7 +64,9 @@ struct AirInstanceInfo {
 
     Goldilocks::Element *verkeyRoot;
 
-    AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId) {
+    uint64_t nStreams = 1;
+
+    AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_, uint64_t nStreams_): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId), nStreams(nStreams_) {
         int64_t *d_openingPoints;
         CHECKCUDAERR(cudaMalloc(&d_openingPoints, setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t)));
         CHECKCUDAERR(cudaMemcpy(d_openingPoints, setupCtx->starkInfo.openingPoints.data(), setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t), cudaMemcpyHostToDevice));
@@ -190,7 +192,8 @@ struct StreamData{
     uint64_t offset;
     
     bool recursive;
-
+    bool extraStream;
+    
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint64_t offset_, bool recursive_){
         uint64_t maxExps = 1000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);
@@ -207,7 +210,7 @@ struct StreamData{
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_args, maxExps * sizeof(ExpsArguments)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, sizeof(StepsParams)));
 
-       
+        extraStream = false;
         root = nullptr;
         pSetupCtx = nullptr;
         proofBuffer = nullptr;
@@ -240,6 +243,8 @@ struct StreamData{
         cudaEventDestroy(end_event);
         cudaEventCreate(&end_event);
         status = 3;
+
+        extraStream = false;
 
         root = nullptr;
         pSetupCtx = nullptr;

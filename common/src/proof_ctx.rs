@@ -128,6 +128,7 @@ pub struct ParamsGPU {
     pub max_number_streams: usize,
     pub number_threads_pools_witness: usize,
     pub max_witness_stored: usize,
+    pub single_instances: Vec<(usize, usize)>, // (airgroup_id, air_id)
 }
 
 impl Default for ParamsGPU {
@@ -137,6 +138,7 @@ impl Default for ParamsGPU {
             max_number_streams: usize::MAX,
             number_threads_pools_witness: 4,
             max_witness_stored: 32,
+            single_instances: Vec::new(),
         }
     }
 }
@@ -155,6 +157,9 @@ impl ParamsGPU {
     }
     pub fn with_max_witness_stored(&mut self, max_witness_stored: usize) {
         self.max_witness_stored = max_witness_stored;
+    }
+    pub fn with_single_instance(&mut self, single_instance: (usize, usize)) {
+        self.single_instances.push(single_instance);
     }
 }
 

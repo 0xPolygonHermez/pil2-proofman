@@ -234,6 +234,8 @@ extern "C" {
         nBitsExt: u64,
         nCols: u64,
         instanceId: u64,
+        airgroupId: u64,
+        airId: u64,
         root: *mut ::std::os::raw::c_void,
         trace: *mut ::std::os::raw::c_void,
         auxTrace: *mut ::std::os::raw::c_void,
@@ -502,6 +504,7 @@ extern "C" {
         pSetupCtx_: *mut ::std::os::raw::c_void,
         d_buffers_: *mut ::std::os::raw::c_void,
         verkeyRoot_: *mut ::std::os::raw::c_void,
+        n_streams: u64,
     );
     
     pub fn gen_device_streams(

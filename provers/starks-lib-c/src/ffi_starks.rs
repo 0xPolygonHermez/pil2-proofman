@@ -552,6 +552,8 @@ pub fn commit_witness_c(
     n_bits_ext: u64,
     n_cols: u64,
     instance_id: u64,
+    airgroup_id: u64,
+    air_id: u64,
     root: *mut u8,
     witness: *mut u8,
     aux_trace: *mut u8,
@@ -565,6 +567,8 @@ pub fn commit_witness_c(
             n_bits_ext,
             n_cols,
             instance_id,
+            airgroup_id,
+            air_id,
             root as *mut std::os::raw::c_void,
             witness as *mut std::os::raw::c_void,
             aux_trace as *mut std::os::raw::c_void,
@@ -1170,6 +1174,7 @@ pub fn load_device_setup_c(
     p_setup: *mut ::std::os::raw::c_void,
     d_buffers: *mut ::std::os::raw::c_void,
     verkey_root: *mut u8,
+    n_streams: u64,
 ) {
     let proof_type_name = CString::new(proof_type).unwrap();
     let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1182,6 +1187,7 @@ pub fn load_device_setup_c(
             p_setup,
             d_buffers,
             verkey_root as *mut std::os::raw::c_void,
+            n_streams,
         );
     }
 }
@@ -1548,6 +1554,8 @@ pub fn commit_witness_c(
     _n_bits_ext: u64,
     _n_cols: u64,
     _instance_id: u64,
+    _airgroup_id: u64,
+    _air_id: u64,
     _root: *mut u8,
     _witness: *mut u8,
     _aux_trace: *mut u8,
@@ -1946,6 +1954,7 @@ pub fn load_device_setup_c(
     _p_setup: *mut ::std::os::raw::c_void,
     _d_buffers: *mut ::std::os::raw::c_void,
     _verkey_root: *mut u8,
+    _n_streams: u64,
 ) {
     trace!("{}: ··· {}", "ffi     ", "load_device_setup: This is a mock call because there is no linked library");
 }
