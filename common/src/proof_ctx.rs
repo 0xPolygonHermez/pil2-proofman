@@ -374,16 +374,6 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.my_instances.clone()
     }
 
-    pub fn dctx_get_my_groups(&self) -> Vec<Vec<usize>> {
-        let dctx = self.dctx.read().unwrap();
-        dctx.my_groups.clone()
-    }
-
-    pub fn dctx_get_my_air_groups(&self) -> Vec<Vec<usize>> {
-        let dctx = self.dctx.read().unwrap();
-        dctx.my_air_groups.clone()
-    }
-
     pub fn dctx_get_instance_info(&self, global_idx: usize) -> (usize, usize) {
         let dctx = self.dctx.read().unwrap();
         dctx.get_instance_info(global_idx)
@@ -399,9 +389,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.is_my_instance(global_idx)
     }
 
-    pub fn dctx_is_instance_all(&self, global_idx: usize) -> bool {
+    pub fn dctx_is_table(&self, global_idx: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
-        dctx.instances[global_idx].all
+        dctx.instances[global_idx].table
     }
 
     pub fn dctx_instance_precalculate(&self, global_idx: usize) -> bool {
@@ -424,9 +414,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.find_air_instance_id(global_idx)
     }
 
-    pub fn dctx_find_instance(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
+    pub fn dctx_find_instance_mine(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
         let dctx = self.dctx.read().unwrap();
-        dctx.find_instance(airgroup_id, air_id)
+        dctx.find_instance_mine(airgroup_id, air_id)
     }
 
     pub fn dctx_set_chunks(&self, global_idx: usize, chunks: Vec<usize>) {
@@ -471,10 +461,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_instance_no_assign(airgroup_id, air_id, pre_calculate, min_threads_witness, weight)
     }
 
-    pub fn add_instance_all(&self, airgroup_id: usize, air_id: usize) -> usize {
+    pub fn add_table(&self, airgroup_id: usize, air_id: usize) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign_all(airgroup_id, air_id, weight)
+        dctx.add_instance_no_assign_table(airgroup_id, air_id, weight)
     }
 
     pub fn dctx_get_n_instances(&self) -> usize {
@@ -482,9 +472,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances.len()
     }
 
-    pub fn dctx_distribute_roots(&self, roots: Vec<u64>) -> Vec<u64> {
+    pub fn dctx_distribute_roots(&self, values: [u64; 10]) -> Vec<u64> {
         let dctx = self.dctx.read().unwrap();
-        dctx.distribute_roots(roots)
+        dctx.distribute_roots(values)
     }
 
     pub fn dctx_add_instance_no_assign(

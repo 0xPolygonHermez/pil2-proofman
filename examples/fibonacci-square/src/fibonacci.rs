@@ -5,7 +5,7 @@ use witness::WitnessComponent;
 use std::path::PathBuf;
 use fields::PrimeField64;
 
-use crate::{BuildProofValues, BuildPublicValues, FibonacciSquareAirValues, FibonacciSquareRomTrace, FibonacciSquareTrace};
+use crate::{BuildPublicValues, FibonacciSquareAirValues, FibonacciSquareRomTrace, FibonacciSquareTrace};
 
 pub struct FibonacciSquare {
     instance_ids: RwLock<Vec<usize>>,
@@ -64,10 +64,6 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
             }
 
             publics.out = trace[trace.num_rows() - 1].b;
-
-            let mut proof_values = BuildProofValues::from_vec_guard(pctx.get_proof_values());
-            proof_values.value1 = F::from_u64(5);
-            proof_values.value2 = F::from_u64(125);
 
             if pctx.dctx_is_my_instance(instance_id) {
                 let mut air_values = FibonacciSquareAirValues::<F>::new();

@@ -13,7 +13,6 @@ use rayon::{
 use witness::WitnessComponent;
 use proofman_common::{AirInstance, BufferPool, ProofCtx, SetupCtx, TraceInfo};
 use std::sync::atomic::Ordering;
-use rayon::prelude::*;
 use crate::AirComponent;
 
 const P2_16: usize = 65536;
@@ -113,10 +112,10 @@ impl U16Air {
 
 impl<F: PrimeField64> WitnessComponent<F> for U16Air {
     fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
-        let (instance_found, mut instance_id) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
+        let (instance_found, mut instance_id) = pctx.dctx_find_instance_mine(self.airgroup_id, self.air_id);
 
         if !instance_found {
-            instance_id = pctx.add_instance_all(self.airgroup_id, self.air_id);
+            instance_id = pctx.add_table(self.airgroup_id, self.air_id);
         }
 
         self.calculated.store(false, Ordering::Relaxed);
@@ -140,28 +139,28 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
                 return;
             }
 
-            pctx.dctx_distribute_multiplicities(&self.multiplicities, instance_id);
-
             self.calculated.store(true, Ordering::Relaxed);
 
-            if pctx.dctx_is_my_instance(instance_id) {
-                let buffer_size = self.num_cols * self.num_rows;
-                let mut buffer = create_buffer_fast::<F>(buffer_size);
-                buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
-                    for (col, vec) in self.multiplicities.iter().enumerate() {
-                        chunk[col] = F::from_u64(vec[row].swap(0, Ordering::Relaxed));
-                    }
-                });
+            // pctx.dctx_distribute_multiplicities(&self.multiplicities, instance_id);
 
-                let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer, false));
-                pctx.add_air_instance(air_instance, instance_id);
-            } else {
-                self.multiplicities.par_iter().for_each(|vec| {
-                    for vec_row in vec.iter() {
-                        vec_row.swap(0, Ordering::Relaxed);
-                    }
-                });
-            }
+            // if pctx.dctx_is_my_instance(instance_id) {
+            let buffer_size = self.num_cols * self.num_rows;
+            let mut buffer = create_buffer_fast::<F>(buffer_size);
+            buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
+                for (col, vec) in self.multiplicities.iter().enumerate() {
+                    chunk[col] = F::from_u64(vec[row].swap(0, Ordering::Relaxed));
+                }
+            });
+
+            let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer, false));
+            pctx.add_air_instance(air_instance, instance_id);
+            // } else {
+            //     self.multiplicities.par_iter().for_each(|vec| {
+            //         for vec_row in vec.iter() {
+            //             vec_row.swap(0, Ordering::Relaxed);
+            //         }
+            //     });
+            // }
         }
     }
 }
