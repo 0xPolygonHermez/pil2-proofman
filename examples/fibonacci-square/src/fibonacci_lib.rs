@@ -5,7 +5,7 @@ use fields::PrimeField64;
 use fields::Goldilocks;
 use proofman::register_std;
 
-use crate::{BuildPublics, BuildPublicValues, FibonacciSquare, Module, FibonacciSquareTrace};
+use crate::{BuildPublics, BuildPublicValues, BuildProofValues, FibonacciSquare, Module, FibonacciSquareTrace};
 
 witness_library!(WitnessLib, Goldilocks);
 
@@ -27,5 +27,19 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
         publics.module = F::from_u64(public_inputs.module);
         publics.in1 = F::from_u64(public_inputs.in1);
         publics.in2 = F::from_u64(public_inputs.in2);
+
+        let mut a = public_inputs.in1;
+        let mut b = public_inputs.in2;
+        for _ in 1..FibonacciSquareTrace::<usize>::NUM_ROWS {
+            let tmp = b;
+            let result = (a.pow(2) + b.pow(2)) % public_inputs.module;
+            (a, b) = (tmp, result);
+        }
+
+        publics.out = F::from_u64(b);
+
+        let mut proof_values = BuildProofValues::from_vec_guard(wcm.get_pctx().get_proof_values());
+        proof_values.value1 = F::from_u64(5);
+        proof_values.value2 = F::from_u64(125);
     }
 }

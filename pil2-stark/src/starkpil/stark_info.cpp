@@ -362,14 +362,20 @@ void StarkInfo::setMapOffsets() {
 
     uint64_t numNodes = getNumNodesMT(NExtended);
 
-    if(!preallocate) {
+    if(!preallocate) {    
         mapOffsets[std::make_pair("const", true)] = mapTotalN;
         MerkleTreeGL mt(starkStruct.merkleTreeArity, true, NExtended, nConstants);
         uint64_t constTreeSize = (2 + (NExtended * nConstants) + numNodes);
         mapTotalN += constTreeSize;
 
-        mapOffsets[std::make_pair("const", false)] = mapTotalN;
-        mapTotalN += N * nConstants;
+        if (!recursive &&  (N * nConstants * 8.0 / (1024 * 1024)) >= 512) {
+            overwriteFixed = true;
+        }
+        
+        if(!overwriteFixed) {
+            mapOffsets[std::make_pair("const", false)] = mapTotalN;
+            mapTotalN += N * nConstants;
+        }
     }
 
     if(gpu) {
@@ -379,14 +385,17 @@ void StarkInfo::setMapOffsets() {
         mapOffsets[std::make_pair("publics", false)] = mapTotalN;
         mapTotalN += nPublics;
 
+        mapOffsets[std::make_pair("proofvalues", false)] = mapTotalN;
+        mapTotalN += proofValuesSize;
+
         mapOffsets[std::make_pair("airgroupvalues", false)] = mapTotalN;
         mapTotalN += airgroupValuesSize;
 
         mapOffsets[std::make_pair("airvalues", false)] = mapTotalN;
         mapTotalN += airValuesSize;
 
-        mapOffsets[std::make_pair("proofvalues", false)] = mapTotalN;
-        mapTotalN += proofValuesSize;
+        mapOffsets[std::make_pair("challenge", false)] = mapTotalN;
+        mapTotalN += HASH_SIZE;
 
         mapOffsets[std::make_pair("evals", false)] = mapTotalN;
         mapTotalN += evMap.size() * FIELD_EXTENSION;
@@ -399,9 +408,6 @@ void StarkInfo::setMapOffsets() {
 
         mapOffsets[std::make_pair("fri_queries", false)] = mapTotalN;
         mapTotalN += starkStruct.nQueries;
-
-        mapOffsets[std::make_pair("challenge", false)] = mapTotalN;
-        mapTotalN += HASH_SIZE;
 
         maxTreeWidth = 0;
         for (auto it = mapSectionsN.begin(); it != mapSectionsN.end(); it++) 
