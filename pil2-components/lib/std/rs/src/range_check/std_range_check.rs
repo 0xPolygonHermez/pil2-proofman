@@ -339,7 +339,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     // Increment the virtual row
                     self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_rows_same_mul(
                         range_item.virtual_id,
-                        rows,
+                        &rows,
                         multiplicity,
                     );
                 } else {
@@ -361,7 +361,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     // Increment the virtual rows
                     self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_rows_same_mul(
                         range_item.virtual_id,
-                        rows,
+                        &rows,
                         multiplicity,
                     );
                 } else {
@@ -411,8 +411,8 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     // Increment the virtual rows
                     self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_rows(
                         range_item.virtual_id,
-                        rows,
-                        values,
+                        &rows,
+                        &values,
                     );
                 } else {
                     self.u8air.as_ref().unwrap().update_inputs(values);
@@ -429,8 +429,8 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     // Increment the virtual rows
                     self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_rows(
                         range_item.virtual_id,
-                        rows,
-                        values,
+                        &rows,
+                        &values,
                     );
                 } else {
                     self.u16air.as_ref().unwrap().update_inputs(values);
@@ -445,8 +445,8 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     // Increment the virtual rows
                     self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_rows(
                         range_item.virtual_id,
-                        rows,
-                        values,
+                        &rows,
+                        &values,
                     );
                 } else {
                     self.specified_ranges_air.as_ref().unwrap().update_inputs(id, values);

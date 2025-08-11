@@ -6,6 +6,7 @@ use proofman_common::{ProofCtx, SetupCtx, StdMode};
 
 use crate::{StdProd, StdRangeCheck, StdSum, StdVirtualTable};
 
+
 pub struct Std<F: PrimeField64> {
     // STD mode
     pub mode: RwLock<StdMode>,
@@ -59,14 +60,19 @@ impl<F: PrimeField64> Std<F> {
         self.virtual_table.inc_virtual_row(id, row, multiplicity);
     }
 
-    pub fn inc_virtual_rows(&self, id: usize, rows: Vec<u64>, multiplicities: Vec<u32>) {
+    pub fn inc_virtual_rows(&self, id: usize, rows: &[u64], multiplicities: &[u32]) {
         #[cfg(all(debug_assertions, feature = "verify-rc-values"))]
         assert_eq!(rows.len(), multiplicities.len(), "Rows and multiplicities must have the same length");
 
         self.virtual_table.inc_virtual_rows(id, rows, multiplicities);
     }
 
-    pub fn inc_virtual_rows_same_mul(&self, id: usize, rows: Vec<u64>, multiplicity: u64) {
+    pub fn inc_virtual_rows_same_mul(&self, id: usize, rows: &[u64], multiplicity: u64) {
         self.virtual_table.inc_virtual_rows_same_mul(id, rows, multiplicity);
+    }
+
+    /// Processes a range [0, N] of values and increments the virtual table rows accordingly
+    pub fn inc_virtual_rows_ranged(&self, id: usize, ranged_values: &[u64]) {
+        self.virtual_table.inc_virtual_rows_ranged(id, ranged_values);
     }
 }
