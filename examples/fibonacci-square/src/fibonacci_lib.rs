@@ -32,7 +32,7 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
         let mut b = public_inputs.in2;
         for _ in 1..FibonacciSquareTrace::<usize>::NUM_ROWS {
             let tmp = b;
-            let result = (a.pow(2) + b.pow(2)) % public_inputs.module;
+            let result = if public_inputs.module == 0 { 0 } else { (a.pow(2) + b.pow(2)) % public_inputs.module };
             (a, b) = (tmp, result);
         }
 
