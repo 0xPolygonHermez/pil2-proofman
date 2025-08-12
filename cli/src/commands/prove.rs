@@ -1,6 +1,6 @@
 // extern crate env_logger;
 use clap::Parser;
-use proofman_common::{json_to_debug_instances_map, DebugInfo, MpiCtx};
+use proofman_common::{json_to_debug_instances_map, DebugInfo};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use colored::Colorize;
@@ -141,8 +141,6 @@ impl ProveCmd {
             gpu_params,
             self.verbose.into(),
         )?;
-
-        proofman.set_mpi_ctx(MpiCtx::new());
 
         if debug_info.std_mode.name == ModeName::Debug {
             match self.field {

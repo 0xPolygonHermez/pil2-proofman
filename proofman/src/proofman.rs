@@ -88,7 +88,7 @@ pub struct ProofMan<F: PrimeField64> {
     n_recursive_streams_per_gpu: u64,
     memory_handler: Arc<MemoryHandler<F>>,
     n_gpus: u64,
-    mpi_ctx: Arc<RwLock<Option<MpiCtx>>>,
+    mpi_ctx: MpiCtx,
     values_contributions: Arc<Vec<RwLock<Vec<F>>>>,
     roots_contributions: Arc<Vec<RwLock<[F; 4]>>>,
     streams: Arc<Mutex<Vec<Option<u64>>>>,
@@ -106,15 +106,15 @@ pub enum ProvePhase {
 
 #[derive(Debug)]
 pub enum ProvePhaseInputs {
-    Contributions(Option<PathBuf>),
+    Contributions(Option<PathBuf>, i32, i32),
     Internal(Vec<[u64; 10]>),
-    Full(Option<PathBuf>),
+    Full(Option<PathBuf>, i32, i32),
 }
 
 #[derive(Debug)]
 pub enum ProvePhaseResult {
     Contributions([u64; 10]),
-    Internal(Option<Vec<Vec<u64>>>),
+    Internal(Vec<Option<Vec<u64>>>),
     Full(Option<String>, Option<Vec<u64>>),
 }
 
@@ -127,21 +127,12 @@ impl<F: PrimeField64> ProofMan<F>
 where
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
-    pub fn get_rank(&self) -> Option<i32> {
-        if self.pctx.dctx_get_n_processes() > 1 {
-            Some(self.pctx.dctx_get_rank() as i32)
-        } else {
-            None
-        }
-    }
-
     pub fn set_barrier(&self) {
-        self.mpi_ctx.read().unwrap().as_ref().unwrap().barrier();
+        self.mpi_ctx.barrier();
     }
 
-    pub fn set_mpi_ctx(&self, mpi_ctx: MpiCtx) {
-        self.pctx.dctx_set_rank(mpi_ctx.n_processes as usize, mpi_ctx.rank);
-        *self.mpi_ctx.write().unwrap() = Some(mpi_ctx);
+    pub fn get_mpi_ctx(&self) -> &MpiCtx {
+        &self.mpi_ctx
     }
 
     pub fn check_setup(
@@ -222,7 +213,7 @@ where
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, self.get_rank())?;
+        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
@@ -343,7 +334,7 @@ where
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, self.get_rank())?;
+        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
@@ -372,13 +363,13 @@ where
         self.exec(options.minimal_memory)?;
 
         let mut my_instances_sorted = self.pctx.dctx_get_my_instances();
-        let mut rng = StdRng::seed_from_u64(self.pctx.dctx_get_rank() as u64);
+        let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
         my_instances_sorted.shuffle(&mut rng);
 
         let my_instances_sorted_no_tables =
             my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
 
-        let max_num_threads = configured_num_threads(self.gpu_params.node_processes);
+        let max_num_threads = configured_num_threads(self.mpi_ctx.node_n_processes as usize);
 
         let memory_handler =
             Arc::new(MemoryHandler::new(self.gpu_params.max_witness_stored, self.sctx.max_witness_trace_size));
@@ -431,7 +422,7 @@ where
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, self.get_rank())?;
+        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
@@ -477,7 +468,7 @@ where
         let valid_constraints = AtomicBool::new(true);
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
-        let max_num_threads = configured_num_threads(self.gpu_params.node_processes);
+        let max_num_threads = configured_num_threads(self.mpi_ctx.node_n_processes as usize);
 
         for &instance_id in my_instances.iter() {
             let instance_info = instances[instance_id];
@@ -549,7 +540,7 @@ where
         if check_global_constraints && !test_mode {
             let airgroup_values_air_instances = airgroup_values_air_instances.lock().unwrap();
             let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances);
-            let airgroupvalues = self.mpi_ctx.read().unwrap().as_ref().unwrap().distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
+            let airgroupvalues = self.mpi_ctx.distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
 
             if self.pctx.dctx_get_rank() == 0 {
                 let valid_global_constraints =
@@ -644,7 +635,7 @@ where
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, self.get_rank())?;
+        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
@@ -663,7 +654,7 @@ where
             return Err("Proofman has not been initialized in final snark mode".into());
         }
 
-        let phase_inputs = ProvePhaseInputs::Full(input_data_path);
+        let phase_inputs = ProvePhaseInputs::Full(input_data_path, self.mpi_ctx.n_processes, self.mpi_ctx.rank);
 
         self._generate_proof(phase_inputs, options, ProvePhase::Full)
     }
@@ -727,8 +718,10 @@ where
 
         timer_start_info!(INIT_PROOFMAN);
 
+        let mpi_ctx = MpiCtx::new();
+
         let (d_buffers, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
-            Self::prepare_gpu(&sctx, &setups_vadcop, aggregation, &gpu_params);
+            Self::prepare_gpu(&sctx, &setups_vadcop, aggregation, &gpu_params, &mpi_ctx);
 
         let (trace_size, prover_buffer_size) =
             if aggregation { get_recursive_buffer_sizes(&pctx, &setups_vadcop)? } else { (0, 0) };
@@ -787,7 +780,7 @@ where
             n_recursive_streams_per_gpu,
             n_gpus,
             memory_handler,
-            mpi_ctx: Arc::new(RwLock::new(None)),
+            mpi_ctx,
             values_contributions,
             roots_contributions,
             streams,
@@ -815,14 +808,18 @@ where
         timer_start_info!(GENERATING_VADCOP_PROOF);
         timer_start_info!(GENERATING_PROOFS);
 
-        let max_num_threads = configured_num_threads(self.gpu_params.node_processes);
+        let max_num_threads = configured_num_threads(self.mpi_ctx.node_n_processes as usize);
+        println!("MPI CTX RANK {} of {}",
+                 self.mpi_ctx.rank, self.mpi_ctx.node_n_processes);
 
+        println!("SPECIFIED RANK {:?}", phase_inputs);
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
-            let input_data_path = match phase_inputs {
-                ProvePhaseInputs::Full(ref path) => path,
-                ProvePhaseInputs::Contributions(ref path) => path,
-                _ => &None,
+            let (input_data_path, n_processes, rank) = match phase_inputs {
+                ProvePhaseInputs::Full(ref path, n_processes, rank) => (path, n_processes, rank),
+                ProvePhaseInputs::Contributions(ref path, n_processes, rank) => (path, n_processes, rank),
+                _ => panic!("Invalid phase inputs for contributions"),
             };
+            self.pctx.dctx_set_rank(n_processes as usize, rank);
             self.wcm.set_input_data_path(input_data_path.clone());
             self.exec(options.minimal_memory)?;
 
@@ -852,7 +849,7 @@ where
                 false => 1,
             };
 
-            let max_num_threads = configured_num_threads(self.gpu_params.node_processes);
+            let max_num_threads = configured_num_threads(self.mpi_ctx.node_n_processes as usize);
             let n_proof_threads = match cfg!(feature = "gpu") {
                 true => self.n_gpus,
                 false => 1,
@@ -952,15 +949,27 @@ where
             let internal_contribution = self.calculate_internal_contributions();
 
             timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
-            if phase == ProvePhase::Contributions {
-                return Ok(ProvePhaseResult::Contributions(internal_contribution));
-            }
 
-            let all_partial_contributions = self.mpi_ctx.read().unwrap().as_ref().unwrap().distribute_roots(internal_contribution);
-            all_partial_contributions
+            let all_internal_partial_contributions = self.mpi_ctx.distribute_roots(internal_contribution);
+            let all_internal_partial_contributions_split: Vec<Vec<F>> = all_internal_partial_contributions
                 .chunks(10)
-                .map(|chunk| chunk.try_into().expect("Each chunk should be exactly 10 elements"))
-                .collect::<Vec<[u64; 10]>>()
+                .map(|chunk| chunk.iter().map(|&x| F::from_u64(x)).collect())
+                .collect();
+
+            let internal_contribution = self.aggregate_contributions(&all_internal_partial_contributions_split);
+
+            // Map internal contribution to [u64; 10]
+            let internal_contribution_u64: [u64; 10] = internal_contribution
+                .iter()
+                .map(|&x| x.as_canonical_u64())
+                .collect::<Vec<u64>>()
+                .try_into()
+                .expect("Expected exactly 10 elements");
+
+            if phase == ProvePhase::Contributions {
+                return Ok(ProvePhaseResult::Contributions(internal_contribution_u64));
+            }
+            vec![internal_contribution_u64]
         } else {
             match phase_inputs {
                 ProvePhaseInputs::Internal(ref contributions) => contributions.clone(),
@@ -1424,10 +1433,6 @@ where
             .map(|lock| lock.read().unwrap().first().expect("Expected at least one proof").proof.clone())
             .collect();
 
-        if phase == ProvePhase::Internal {
-            return Ok(ProvePhaseResult::Internal(Some(recursive2_proofs_data)));
-        }
-
         let mut proof_id = None;
         let mut vadcop_final_proof = None;
         if options.aggregation {
@@ -1435,9 +1440,9 @@ where
             let trace = create_buffer_fast::<F>(self.trace_size);
             let prover_buffer = create_buffer_fast::<F>(self.prover_buffer_size);
 
-            let agg_recursive2_proof = aggregate_recursive2_proofs(
+            let agg_recursive2_proofs = aggregate_recursive2_proofs(
                 &self.pctx,
-                &self.mpi_ctx.read().unwrap().as_ref().unwrap(),
+                &self.mpi_ctx,
                 &self.setups,
                 recursive2_proofs_data,
                 &trace,
@@ -1450,11 +1455,15 @@ where
             )?;
             timer_stop_and_log_info!(GENERATING_OUTER_COMPRESSED_PROOFS);
 
+            if phase == ProvePhase::Internal {
+                return Ok(ProvePhaseResult::Internal(agg_recursive2_proofs));
+            }
+
             if self.pctx.dctx_get_rank() == 0 {
                 let vadcop_proof_final = generate_vadcop_final_proof(
                     &self.pctx,
                     &self.setups,
-                    &agg_recursive2_proof,
+                    &agg_recursive2_proofs,
                     &trace,
                     &prover_buffer,
                     &options.output_dir_path,
@@ -1555,7 +1564,7 @@ where
         if phase == ProvePhase::Full {
             Ok(ProvePhaseResult::Full(proof_id, vadcop_final_proof))
         } else {
-            Ok(ProvePhaseResult::Internal(None))
+            Ok(ProvePhaseResult::Internal(Vec::new()))
         }
     }
 
@@ -1600,7 +1609,7 @@ where
         timer_stop_and_log_info!(VERIFYING_PROOFS);
 
         let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances);
-        let airgroupvalues = self.mpi_ctx.read().unwrap().as_ref().unwrap().distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
+        let airgroupvalues = self.mpi_ctx.distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
 
         if !test_mode && self.pctx.dctx_get_rank() == 0 {
             let valid_global_constraints =
@@ -1612,7 +1621,7 @@ where
 
         if valid_proofs {
             tracing::info!("··· {}", "\u{2713} All proofs were successfully verified".bright_green().bold());
-            return Ok(ProvePhaseResult::Internal(None));
+            return Ok(ProvePhaseResult::Internal(Vec::new()));
         } else {
             return Err("Basic proofs were not verified".into());
         }
@@ -1839,17 +1848,17 @@ where
         setups_vadcop: &SetupsVadcop<F>,
         aggregation: bool,
         gpu_params: &ParamsGPU,
+        mpi_ctx: &MpiCtx,
     ) -> (Arc<DeviceBuffer>, u64, u64, u64) {
         let mut free_memory_gpu = match cfg!(feature = "gpu") {
             true => {
-                check_device_memory_c(gpu_params.node_rank as u32, gpu_params.node_processes as u32) as f64
-                    * 0.98
+                check_device_memory_c(mpi_ctx.node_rank as u32, mpi_ctx.node_n_processes as usize as u32) as f64 * 0.98
             }
             false => 0.0,
         };
 
         let n_gpus = get_num_gpus_c();
-        let n_processes_node = gpu_params.node_processes as u64;
+        let n_processes_node = mpi_ctx.node_n_processes as usize as u64;
 
         let n_partitions = match cfg!(feature = "gpu") {
             true => {
@@ -1919,8 +1928,8 @@ where
         let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
         let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
             max_sizes_ptr,
-            gpu_params.node_rank as u32,
-            gpu_params.node_processes as u32,
+            mpi_ctx.node_rank as u32,
+            mpi_ctx.node_n_processes as usize as u32,
         )));
 
         let max_pinned_proof_size = match aggregation {

@@ -1,6 +1,6 @@
 // extern crate env_logger;
 use clap::Parser;
-use proofman_common::{json_to_debug_instances_map, DebugInfo, MpiCtx};
+use proofman_common::{json_to_debug_instances_map, DebugInfo};
 use std::{collections::HashMap, path::PathBuf};
 use colored::Colorize;
 use crate::commands::field::Field;
@@ -79,8 +79,6 @@ impl VerifyConstraintsCmd {
             ParamsGPU::default(),
             self.verbose.into(),
         )?;
-
-        proofman.set_mpi_ctx(MpiCtx::new());
 
         match self.field {
             Field::Goldilocks => proofman.verify_proof_constraints(

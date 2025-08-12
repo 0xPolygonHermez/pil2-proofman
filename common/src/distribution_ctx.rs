@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-use crate::MpiCtx;
-use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceInfo {
@@ -31,7 +29,6 @@ pub struct DistributionCtx {
     pub balance_distribution: bool,
     pub n_processes: Option<usize>,
     pub rank: Option<i32>,
-    pub mpi_ctx: Option<Arc<MpiCtx>>,
 }
 
 impl std::fmt::Debug for DistributionCtx {
@@ -65,7 +62,6 @@ impl DistributionCtx {
             balance_distribution: true,
             n_processes: None,
             rank: None,
-            mpi_ctx: None,
         }
     }
 
@@ -74,10 +70,6 @@ impl DistributionCtx {
         self.rank = Some(rank);
         self.owners_count = vec![0; n_processes];
         self.owners_weight = vec![0; n_processes];
-    }
-
-    pub fn add_mpi_ctx(&mut self, mpi_ctx: Arc<MpiCtx>) {
-        self.mpi_ctx = Some(mpi_ctx);
     }
 
     pub fn reset(&mut self) {

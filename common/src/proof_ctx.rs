@@ -4,8 +4,6 @@ use std::path::PathBuf;
 
 use fields::PrimeField64;
 use transcript::FFITranscript;
-use crate::MpiCtx;
-use std::sync::Arc;
 
 use crate::{
     initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode, StepsParams,
@@ -127,8 +125,6 @@ pub struct ParamsGPU {
     pub number_threads_pools_witness: usize,
     pub max_witness_stored: usize,
     pub single_instances: Vec<(usize, usize)>, // (airgroup_id, air_id)
-    pub node_processes: usize,
-    pub node_rank: usize,
 }
 
 impl Default for ParamsGPU {
@@ -139,8 +135,6 @@ impl Default for ParamsGPU {
             number_threads_pools_witness: 4,
             max_witness_stored: 4,
             single_instances: Vec::new(),
-            node_rank: 0,
-            node_processes: 1,
         }
     }
 }
@@ -162,12 +156,6 @@ impl ParamsGPU {
     }
     pub fn with_single_instance(&mut self, single_instance: (usize, usize)) {
         self.single_instances.push(single_instance);
-    }
-    pub fn with_node_rank(&mut self, node_rank: usize) {
-        self.node_rank = node_rank;
-    }
-    pub fn with_node_processes(&mut self, node_processes: usize) {
-        self.node_processes = node_processes;
     }
 }
 
@@ -326,11 +314,6 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn is_air_instance_stored(&self, global_idx: usize) -> bool {
         !self.air_instances[global_idx].read().unwrap().trace.is_empty()
-    }
-
-    pub fn add_mpi_ctx(&self, mpi_ctx: Arc<MpiCtx>) {
-        let mut dctx = self.dctx.write().unwrap();
-        dctx.add_mpi_ctx(mpi_ctx);
     }
 
     pub fn dctx_get_rank(&self) -> usize {
@@ -633,18 +616,5 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn free_instance_traces(&self, instance_id: usize) -> (bool, Vec<F>) {
         self.air_instances[instance_id].write().unwrap().clear_traces()
-    }
-
-    pub fn dctx_distribute_multiplicities(
-        &self,
-        multiplicities: &[Vec<std::sync::atomic::AtomicU64>],
-        instance_id: usize,
-    ) {
-        let dctx = self.dctx.read().unwrap();
-        if let Some(mpi_ctx) = &dctx.mpi_ctx {
-            mpi_ctx.distribute_multiplicities(multiplicities, instance_id as i32);
-        } else {
-            tracing::warn!("MPI context not set, cannot distribute multiplicities");
-        }
     }
 }

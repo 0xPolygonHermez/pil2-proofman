@@ -152,9 +152,6 @@ impl<F: PrimeField64> WitnessComponent<F> for U8Air {
 
             self.calculated.store(true, Ordering::Relaxed);
 
-            // pctx.dctx_distribute_multiplicities(&self.multiplicities, instance_id);
-
-            // if pctx.dctx_is_my_instance(instance_id) {
             let buffer_size = self.num_cols * self.num_rows;
             let mut buffer = create_buffer_fast::<F>(buffer_size);
             buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
@@ -165,13 +162,6 @@ impl<F: PrimeField64> WitnessComponent<F> for U8Air {
 
             let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer, false));
             pctx.add_air_instance(air_instance, instance_id);
-            // } else {
-            //     self.multiplicities.par_iter().for_each(|vec| {
-            //         for vec_row in vec.iter() {
-            //             vec_row.swap(0, Ordering::Relaxed);
-            //         }
-            //     });
-            // }
         }
     }
 }
