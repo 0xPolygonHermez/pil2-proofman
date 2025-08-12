@@ -48,6 +48,8 @@ extern "C" {
     ) -> *mut ::std::os::raw::c_void;
     
     pub fn get_proof_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+
+    pub fn get_proof_pinned_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
     
     pub fn set_memory_expressions(pStarkInfo: *mut ::std::os::raw::c_void, nTmp1: u64, nTmp3: u64);
     

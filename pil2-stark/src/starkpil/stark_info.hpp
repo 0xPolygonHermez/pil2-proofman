@@ -206,6 +206,8 @@ public:
 
     void getProofSize();
 
+    uint64_t getPinnedProofSize();
+
     uint64_t getNumNodesMT(uint64_t height);
 
     /* Returns a polynomial specified by its ID */

@@ -11,7 +11,7 @@ use proofman_starks_lib_c::set_memory_expressions_c;
 use proofman_starks_lib_c::{
     expressions_bin_new_c, stark_info_new_c, stark_info_free_c, expressions_bin_free_c, get_map_totaln_c,
     get_map_totaln_custom_commits_fixed_c, get_proof_size_c, get_max_n_tmp1_c, get_max_n_tmp3_c, get_const_tree_size_c,
-    load_const_pols_c, load_const_tree_c, read_exec_file_c,
+    load_const_pols_c, load_const_tree_c, read_exec_file_c, get_proof_pinned_size_c,
 };
 use proofman_util::create_buffer_fast;
 
@@ -63,6 +63,7 @@ pub struct Setup<F: PrimeField64> {
     pub prover_buffer_size: u64,
     pub custom_commits_fixed_buffer_size: u64,
     pub proof_size: u64,
+    pub pinned_proof_size: u64,
     pub setup_path: PathBuf,
     pub setup_type: ProofType,
     pub size_witness: RwLock<Option<u64>>,
@@ -129,6 +130,7 @@ impl<F: PrimeField64> Setup<F> {
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
             proof_size,
+            pinned_proof_size,
             n_cols,
         ) = if setup_type == &ProofType::Compressor && !global_info.get_air_has_compressor(airgroup_id, air_id) {
             // If the condition is met, use None for each pointer
@@ -139,6 +141,7 @@ impl<F: PrimeField64> Setup<F> {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                0,
                 0,
                 0,
                 0,
@@ -168,7 +171,7 @@ impl<F: PrimeField64> Setup<F> {
             let prover_buffer_size = get_map_totaln_c(p_stark_info);
             let custom_commits_fixed_buffer_size = get_map_totaln_custom_commits_fixed_c(p_stark_info);
             let proof_size = get_proof_size_c(p_stark_info);
-
+            let pinned_proof_size = get_proof_pinned_size_c(p_stark_info);
             let const_pols_size = (stark_info.n_constants * (1 << stark_info.stark_struct.n_bits)) as usize;
 
             let const_tree_size = get_const_tree_size_c(p_stark_info) as usize;
@@ -198,6 +201,7 @@ impl<F: PrimeField64> Setup<F> {
                     prover_buffer_size,
                     custom_commits_fixed_buffer_size,
                     proof_size,
+                    pinned_proof_size,
                     n_cols,
                 )
             } else {
@@ -215,6 +219,7 @@ impl<F: PrimeField64> Setup<F> {
                     prover_buffer_size,
                     custom_commits_fixed_buffer_size,
                     proof_size,
+                    pinned_proof_size,
                     n_cols,
                 )
             }
@@ -233,6 +238,7 @@ impl<F: PrimeField64> Setup<F> {
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
             proof_size,
+            pinned_proof_size,
             size_witness: RwLock::new(None),
             circom_circuit: RwLock::new(None),
             circom_library: RwLock::new(None),

@@ -147,6 +147,11 @@ pub fn get_proof_size_c(p_stark_info: *mut c_void) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn get_proof_pinned_size_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_proof_pinned_size(p_stark_info) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn set_memory_expressions_c(p_stark_info: *mut c_void, n_tmp1: u64, n_tmp3: u64) {
     unsafe {
         set_memory_expressions(p_stark_info, n_tmp1, n_tmp3);
@@ -1133,7 +1138,7 @@ pub fn gen_device_streams_c(
     d_buffers: *mut ::std::os::raw::c_void,
     max_size_buffer: u64,
     max_size_buffer_aggregation: u64,
-    max_proof_size: u64,
+    max_pinned_proof_size: u64,
     max_number_proofs_per_gpu: u64,
     max_number_recursive_proofs_per_gpu: u64,
 ) -> u64 {
@@ -1142,7 +1147,7 @@ pub fn gen_device_streams_c(
             d_buffers,
             max_size_buffer,
             max_size_buffer_aggregation,
-            max_proof_size,
+            max_pinned_proof_size,
             max_number_proofs_per_gpu,
             max_number_recursive_proofs_per_gpu,
         )
@@ -1303,6 +1308,12 @@ pub fn get_const_offset_c(_p_stark_info: *mut c_void) -> u64 {
 #[cfg(feature = "no_lib_link")]
 pub fn get_proof_size_c(_p_stark_info: *mut c_void) -> u64 {
     trace!("··· {}", "get_proof_size: This is a mock call because there is no linked library");
+    100000000
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_proof_pinned_size_c(_p_stark_info: *mut c_void) -> u64 {
+    trace!("··· {}", "get_pinned_proof_size: This is a mock call because there is no linked library");
     100000000
 }
 
@@ -1920,7 +1931,7 @@ pub fn gen_device_streams_c(
     _d_buffers: *mut ::std::os::raw::c_void,
     _max_size_buffer: u64,
     _max_size_buffer_aggregation: u64,
-    _max_proof_size: u64,
+    _max_pinned_proof_size: u64,
     _max_number_proofs_per_gpu: u64,
     _max_number_recursive_proofs_per_gpu: u64,
 ) -> u64 {

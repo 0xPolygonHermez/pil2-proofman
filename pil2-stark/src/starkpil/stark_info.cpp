@@ -337,6 +337,29 @@ void StarkInfo::getProofSize() {
     proofSize += (1 << starkStruct.steps[starkStruct.steps.size()-1].nBits) * FIELD_EXTENSION;
 }
 
+uint64_t StarkInfo::getPinnedProofSize() {
+    uint64_t pinnedProofSize = 0;
+
+    pinnedProofSize += (nStages + 1) * 4; // Roots
+    pinnedProofSize += customCommits.size() * 4; // Custom commits roots
+    pinnedProofSize += (starkStruct.steps.size() - 1) * 4; // Steps roots
+
+    uint64_t nTrees = nStages + customCommits.size() + 2;
+    uint64_t nTreesFRI = starkStruct.steps.size() - 1;
+    uint64_t queriesProofSize = (nTrees + nTreesFRI) * maxProofBuffSize * starkStruct.nQueries;
+
+    pinnedProofSize += queriesProofSize;
+
+    pinnedProofSize += evMap.size() * FIELD_EXTENSION; // Evals
+
+    pinnedProofSize += airgroupValuesSize;
+    pinnedProofSize += airValuesSize;
+
+    uint64_t finalPolDegree = 1 << starkStruct.steps[starkStruct.steps.size() - 1].nBits;
+    pinnedProofSize += finalPolDegree * FIELD_EXTENSION; // Final polynomial values
+    return pinnedProofSize;
+}
+
 void StarkInfo::setMapOffsets() {
     uint64_t N = (1 << starkStruct.nBits);
     uint64_t NExtended = (1 << starkStruct.nBitsExt);
