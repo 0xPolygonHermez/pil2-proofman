@@ -87,6 +87,7 @@ pub struct ProofMan<F: PrimeField64> {
     aggregation: bool,
     final_snark: bool,
     n_streams_per_gpu: u64,
+    n_recursive_streams_per_gpu: u64,
     memory_handler: Arc<MemoryHandler<F>>,
     n_gpus: u64,
 }
@@ -745,7 +746,7 @@ where
 
         timer_start_info!(INIT_PROOFMAN);
 
-        let (d_buffers, n_streams_per_gpu, n_gpus) =
+        let (d_buffers, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
             Self::prepare_gpu(&pctx, &sctx, &setups_vadcop, aggregation, &gpu_params);
 
         let (trace_size, prover_buffer_size) =
@@ -779,6 +780,7 @@ where
             final_snark,
             verify_constraints,
             n_streams_per_gpu,
+            n_recursive_streams_per_gpu,
             n_gpus,
             memory_handler,
         })
@@ -817,7 +819,7 @@ where
 
         timer_start_info!(INIT_PROOFMAN);
 
-        let (d_buffers, n_streams_per_gpu, n_gpus) =
+        let (d_buffers, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
             Self::prepare_gpu(&pctx, &sctx, &setups_vadcop, aggregation, &gpu_params);
 
         let (trace_size, prover_buffer_size) =
@@ -851,6 +853,7 @@ where
             final_snark,
             verify_constraints,
             n_streams_per_gpu,
+            n_recursive_streams_per_gpu,
             n_gpus,
             memory_handler,
         })
@@ -950,7 +953,7 @@ where
             false => 1,
         };
 
-        let n_streams = self.n_streams_per_gpu * n_proof_threads;
+        let n_streams = (self.n_streams_per_gpu + self.n_recursive_streams_per_gpu) * n_proof_threads;
         let streams = Arc::new(Mutex::new(vec![None; n_streams as usize]));
 
         let witnesses_done = Arc::new(AtomicUsize::new(0));
@@ -1870,7 +1873,7 @@ where
         setups_vadcop: &SetupsVadcop<F>,
         aggregation: bool,
         gpu_params: &ParamsGPU,
-    ) -> (Arc<DeviceBuffer>, u64, u64) {
+    ) -> (Arc<DeviceBuffer>, u64, u64, u64) {
         let mut free_memory_gpu = match cfg!(feature = "gpu") {
             true => {
                 check_device_memory_c(pctx.dctx_get_node_rank() as u32, pctx.dctx_get_node_n_processes() as u32) as f64
@@ -1968,7 +1971,7 @@ where
             n_recursive_streams_per_gpu as u64,
         );
 
-        (d_buffers, n_streams_per_gpu as u64, n_gpus)
+        (d_buffers, n_streams_per_gpu as u64, n_recursive_streams_per_gpu as u64, n_gpus)
     }
 
     #[allow(clippy::too_many_arguments)]
