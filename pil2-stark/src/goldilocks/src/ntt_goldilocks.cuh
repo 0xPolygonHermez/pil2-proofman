@@ -122,6 +122,11 @@ class NTT_Goldilocks_GPU : public NTT_Goldilocks {
 public:
     using NTT_Goldilocks::NTT_Goldilocks;
 
+    NTT_Goldilocks_GPU(uint64_t maxLogDomainSize_, uint32_t nGPUs_input = 0, uint32_t* gpu_ids = nullptr)
+       : NTT_Goldilocks() {
+        init_twiddle_factors(maxLogDomainSize_, nGPUs_input, gpu_ids);
+    }
+
     void LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t* d_dst_ntt, uint64_t offset_dst_ntt,
                                     gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits,
                                     u_int64_t n_bits_ext, u_int64_t ncols, gl64_t* d_aux_trace,
@@ -135,6 +140,21 @@ public:
     void INTT_inplace(uint64_t data_offset, u_int64_t n_bits, u_int64_t ncols,
                       gl64_t* d_aux_trace, uint64_t offset_helper,
                       gl64_t* d_data, cudaStream_t stream);
+
+    static void init_twiddle_factors(uint64_t maxLogDomainSize_, uint32_t nGPUs_input = 0, uint32_t* gpu_ids = nullptr);
+    
+    // IMPORTANT: Memory management is manual. Call free_twiddle_factors() explicitly 
+    // at application shutdown to release GPU memory. Twiddle factors persist across 
+    // instance creation/destruction to avoid recomputation overhead.
+    static void free_twiddle_factors();
+
+private:
+    
+    static uint64_t maxLogDomainSize;
+    static uint32_t nGPUs_available;
+    static gl64_t **d_fwd_twiddle_factors;
+    static gl64_t **d_inv_twiddle_factors;
+
 };
 
 #endif

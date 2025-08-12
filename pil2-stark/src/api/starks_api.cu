@@ -148,6 +148,9 @@ uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint
         }
     }
 
+    //Generate static twiddles for the NTT
+    NTT_Goldilocks_GPU::init_twiddle_factors(24, (int) d_buffers->n_gpus, d_buffers->my_gpu_ids); //TODO: max size not harcoded
+
     return d_buffers->n_gpus;
 }
 
