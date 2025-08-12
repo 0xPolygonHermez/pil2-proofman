@@ -88,7 +88,7 @@ pub struct ProofMan<F: PrimeField64> {
     n_recursive_streams_per_gpu: u64,
     memory_handler: Arc<MemoryHandler<F>>,
     n_gpus: u64,
-    mpi_ctx: Arc<MpiCtx>,
+    mpi_ctx: Arc<RwLock<Option<MpiCtx>>>,
     values_contributions: Arc<Vec<RwLock<Vec<F>>>>,
     roots_contributions: Arc<Vec<RwLock<[F; 4]>>>,
     streams: Arc<Mutex<Vec<Option<u64>>>>,
@@ -136,7 +136,12 @@ where
     }
 
     pub fn set_barrier(&self) {
-        self.mpi_ctx.barrier();
+        self.mpi_ctx.read().unwrap().as_ref().unwrap().barrier();
+    }
+
+    pub fn set_mpi_ctx(&self, mpi_ctx: MpiCtx) {
+        self.pctx.dctx_set_rank(mpi_ctx.n_processes as usize, mpi_ctx.rank);
+        *self.mpi_ctx.write().unwrap() = Some(mpi_ctx);
     }
 
     pub fn check_setup(
@@ -373,7 +378,7 @@ where
         let my_instances_sorted_no_tables =
             my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
 
-        let max_num_threads = configured_num_threads(self.pctx.dctx_get_node_n_processes());
+        let max_num_threads = configured_num_threads(self.gpu_params.node_processes);
 
         let memory_handler =
             Arc::new(MemoryHandler::new(self.gpu_params.max_witness_stored, self.sctx.max_witness_trace_size));
@@ -472,7 +477,7 @@ where
         let valid_constraints = AtomicBool::new(true);
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
-        let max_num_threads = configured_num_threads(self.pctx.dctx_get_node_n_processes());
+        let max_num_threads = configured_num_threads(self.gpu_params.node_processes);
 
         for &instance_id in my_instances.iter() {
             let instance_info = instances[instance_id];
@@ -544,7 +549,7 @@ where
         if check_global_constraints && !test_mode {
             let airgroup_values_air_instances = airgroup_values_air_instances.lock().unwrap();
             let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances);
-            let airgroupvalues = self.mpi_ctx.distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
+            let airgroupvalues = self.mpi_ctx.read().unwrap().as_ref().unwrap().distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
 
             if self.pctx.dctx_get_rank() == 0 {
                 let valid_global_constraints =
@@ -722,11 +727,8 @@ where
 
         timer_start_info!(INIT_PROOFMAN);
 
-        let mpi_ctx = Arc::new(MpiCtx::new());
-        pctx.dctx_set_rank(mpi_ctx.n_processes as usize, mpi_ctx.rank, mpi_ctx.node_n_processes, mpi_ctx.node_rank);
-
         let (d_buffers, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
-            Self::prepare_gpu(&pctx, &sctx, &setups_vadcop, aggregation, &gpu_params);
+            Self::prepare_gpu(&sctx, &setups_vadcop, aggregation, &gpu_params);
 
         let (trace_size, prover_buffer_size) =
             if aggregation { get_recursive_buffer_sizes(&pctx, &setups_vadcop)? } else { (0, 0) };
@@ -785,7 +787,7 @@ where
             n_recursive_streams_per_gpu,
             n_gpus,
             memory_handler,
-            mpi_ctx,
+            mpi_ctx: Arc::new(RwLock::new(None)),
             values_contributions,
             roots_contributions,
             streams,
@@ -813,7 +815,7 @@ where
         timer_start_info!(GENERATING_VADCOP_PROOF);
         timer_start_info!(GENERATING_PROOFS);
 
-        let max_num_threads = configured_num_threads(self.pctx.dctx_get_node_n_processes());
+        let max_num_threads = configured_num_threads(self.gpu_params.node_processes);
 
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
             let input_data_path = match phase_inputs {
@@ -850,7 +852,7 @@ where
                 false => 1,
             };
 
-            let max_num_threads = configured_num_threads(self.pctx.dctx_get_node_n_processes());
+            let max_num_threads = configured_num_threads(self.gpu_params.node_processes);
             let n_proof_threads = match cfg!(feature = "gpu") {
                 true => self.n_gpus,
                 false => 1,
@@ -954,7 +956,7 @@ where
                 return Ok(ProvePhaseResult::Contributions(internal_contribution));
             }
 
-            let all_partial_contributions = self.mpi_ctx.distribute_roots(internal_contribution);
+            let all_partial_contributions = self.mpi_ctx.read().unwrap().as_ref().unwrap().distribute_roots(internal_contribution);
             all_partial_contributions
                 .chunks(10)
                 .map(|chunk| chunk.try_into().expect("Each chunk should be exactly 10 elements"))
@@ -1435,7 +1437,7 @@ where
 
             let agg_recursive2_proof = aggregate_recursive2_proofs(
                 &self.pctx,
-                &self.mpi_ctx,
+                &self.mpi_ctx.read().unwrap().as_ref().unwrap(),
                 &self.setups,
                 recursive2_proofs_data,
                 &trace,
@@ -1446,7 +1448,6 @@ where
                 self.d_buffers.get_ptr(),
                 false,
             )?;
-            self.mpi_ctx.barrier();
             timer_stop_and_log_info!(GENERATING_OUTER_COMPRESSED_PROOFS);
 
             if self.pctx.dctx_get_rank() == 0 {
@@ -1599,7 +1600,7 @@ where
         timer_stop_and_log_info!(VERIFYING_PROOFS);
 
         let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances);
-        let airgroupvalues = self.mpi_ctx.distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
+        let airgroupvalues = self.mpi_ctx.read().unwrap().as_ref().unwrap().distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
 
         if !test_mode && self.pctx.dctx_get_rank() == 0 {
             let valid_global_constraints =
@@ -1834,7 +1835,6 @@ where
     }
 
     fn prepare_gpu(
-        pctx: &ProofCtx<F>,
         sctx: &SetupCtx<F>,
         setups_vadcop: &SetupsVadcop<F>,
         aggregation: bool,
@@ -1842,14 +1842,14 @@ where
     ) -> (Arc<DeviceBuffer>, u64, u64, u64) {
         let mut free_memory_gpu = match cfg!(feature = "gpu") {
             true => {
-                check_device_memory_c(pctx.dctx_get_node_rank() as u32, pctx.dctx_get_node_n_processes() as u32) as f64
+                check_device_memory_c(gpu_params.node_rank as u32, gpu_params.node_processes as u32) as f64
                     * 0.98
             }
             false => 0.0,
         };
 
         let n_gpus = get_num_gpus_c();
-        let n_processes_node = pctx.dctx_get_node_n_processes() as u64;
+        let n_processes_node = gpu_params.node_processes as u64;
 
         let n_partitions = match cfg!(feature = "gpu") {
             true => {
@@ -1919,8 +1919,8 @@ where
         let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
         let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
             max_sizes_ptr,
-            pctx.dctx_get_node_rank() as u32,
-            pctx.dctx_get_node_n_processes() as u32,
+            gpu_params.node_rank as u32,
+            gpu_params.node_processes as u32,
         )));
 
         let max_pinned_proof_size = match aggregation {

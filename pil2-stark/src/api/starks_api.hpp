@@ -151,7 +151,6 @@ extern "C" {
     // =================================================================================
     void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size);
     void free_device_buffers(void *d_buffers);
-    void set_device_mpi(uint32_t mpi_node_rank);
     void set_device(uint32_t gpu_id);
     void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType);
     void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, uint64_t nStreams);

@@ -577,18 +577,6 @@ uint64_t get_num_gpus() {
     return deviceCount;
 }
 
-// Function to set the CUDA device based on the MPI rank
-void set_device_mpi(uint32_t mpi_node_rank){
-    int deviceCount;
-    cudaGetDeviceCount(&deviceCount);
-    if (deviceCount == 0) {
-        std::cerr << "No CUDA devices found." << std::endl;
-        exit(1);
-    }
-    int device = mpi_node_rank % deviceCount;
-    cudaSetDevice(device);
-}
-
 void set_device(uint32_t gpuId){
     cudaSetDevice(gpuId);
 }

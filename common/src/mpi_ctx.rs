@@ -55,6 +55,18 @@ impl MpiCtx {
         }
     }
 
+    #[cfg(distributed)]
+    pub fn new_with_universe(universe: Universe) -> Self {
+        let world = universe.world();
+        let rank = world.rank();
+        let n_processes = world.size();
+        let local_comm = world.split_shared(rank);
+        let node_rank = local_comm.rank();
+        let node_n_processes = local_comm.size();
+
+        MpiCtx { rank, n_processes, universe, world, node_rank, node_n_processes }
+    }
+
     #[inline]
     pub fn barrier(&self) {
         #[cfg(distributed)]

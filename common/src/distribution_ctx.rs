@@ -31,8 +31,6 @@ pub struct DistributionCtx {
     pub balance_distribution: bool,
     pub n_processes: Option<usize>,
     pub rank: Option<i32>,
-    pub node_rank: Option<i32>,
-    pub node_n_processes: Option<i32>,
     pub mpi_ctx: Option<Arc<MpiCtx>>,
 }
 
@@ -48,9 +46,7 @@ impl std::fmt::Debug for DistributionCtx {
             .field("airgroup_instances_alives", &self.airgroup_instances_alives)
             .field("balance_distribution", &self.balance_distribution)
             .field("n_processes", &self.n_processes)
-            .field("rank", &self.rank)
-            .field("node_rank", &self.node_rank)
-            .field("node_n_processes", &self.node_n_processes);
+            .field("rank", &self.rank);
 
         dbg.finish()
     }
@@ -69,17 +65,13 @@ impl DistributionCtx {
             balance_distribution: true,
             n_processes: None,
             rank: None,
-            node_rank: None,
-            node_n_processes: None,
             mpi_ctx: None,
         }
     }
 
-    pub fn add_rank(&mut self, n_processes: usize, rank: i32, node_n_processes: i32, node_rank: i32) {
+    pub fn add_rank(&mut self, n_processes: usize, rank: i32) {
         self.n_processes = Some(n_processes);
         self.rank = Some(rank);
-        self.node_rank = Some(node_rank);
-        self.node_n_processes = Some(node_n_processes);
         self.owners_count = vec![0; n_processes];
         self.owners_weight = vec![0; n_processes];
     }

@@ -127,6 +127,8 @@ pub struct ParamsGPU {
     pub number_threads_pools_witness: usize,
     pub max_witness_stored: usize,
     pub single_instances: Vec<(usize, usize)>, // (airgroup_id, air_id)
+    pub node_processes: usize,
+    pub node_rank: usize,
 }
 
 impl Default for ParamsGPU {
@@ -137,6 +139,8 @@ impl Default for ParamsGPU {
             number_threads_pools_witness: 4,
             max_witness_stored: 4,
             single_instances: Vec::new(),
+            node_rank: 0,
+            node_processes: 1,
         }
     }
 }
@@ -158,6 +162,12 @@ impl ParamsGPU {
     }
     pub fn with_single_instance(&mut self, single_instance: (usize, usize)) {
         self.single_instances.push(single_instance);
+    }
+    pub fn with_node_rank(&mut self, node_rank: usize) {
+        self.node_rank = node_rank;
+    }
+    pub fn with_node_processes(&mut self, node_processes: usize) {
+        self.node_processes = node_processes;
     }
 }
 
@@ -328,16 +338,6 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.rank.unwrap() as usize
     }
 
-    pub fn dctx_get_node_rank(&self) -> usize {
-        let dctx = self.dctx.read().unwrap();
-        dctx.node_rank.unwrap() as usize
-    }
-
-    pub fn dctx_get_node_n_processes(&self) -> usize {
-        let dctx = self.dctx.read().unwrap();
-        dctx.node_n_processes.unwrap() as usize
-    }
-
     pub fn dctx_get_n_processes(&self) -> usize {
         let dctx = self.dctx.read().unwrap();
         dctx.n_processes.unwrap()
@@ -459,9 +459,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.load_balance_info()
     }
 
-    pub fn dctx_set_rank(&self, n_processes: usize, rank: i32, node_n_processes: i32, node_rank: i32) {
+    pub fn dctx_set_rank(&self, n_processes: usize, rank: i32) {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.add_rank(n_processes, rank, node_n_processes, node_rank);
+        dctx.add_rank(n_processes, rank);
     }
 
     pub fn dctx_set_balance_distribution(&self, balance: bool) {
