@@ -276,6 +276,7 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     d_buffers->streamsData[streamId].instanceId = instanceId;
     d_buffers->streamsData[streamId].proofType = "basic";
     
+    d_buffers->streamsData[streamId].streamsUsed = 1;
     for(uint64_t i = 1; i < nStreams; i++) {
         d_buffers->streamsData[streamId + i].extraStream = true;
     }
@@ -372,7 +373,7 @@ void get_stream_proofs(void *d_buffers_){
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     std::lock_guard<std::mutex> lock(d_buffers->mutex_slot_selection);
     for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
-        if (d_buffers->streamsData[i].status == 0 || d_buffers->streamsData[i].status == 3) continue;
+        if (d_buffers->streamsData[i].status == 0 || d_buffers->streamsData[i].status == 3 || (d_buffers->streamsData[i].status == 1 && d_buffers->streamsData[i].extraStream)) continue;
         set_device(d_buffers->streamsData[i].gpuId);
         CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[i].stream));
         if(d_buffers->streamsData[i].root != nullptr) {
@@ -380,15 +381,12 @@ void get_stream_proofs(void *d_buffers_){
         }else{
             get_proof(d_buffers, i);
         }
-        auto key = std::make_pair(d_buffers->streamsData[i].airgroupId, d_buffers->streamsData[i].airId);
-        auto proofType = d_buffers->streamsData[i].proofType;
-        uint32_t gpuLocalId = d_buffers->gpus_g2l[d_buffers->streamsData[i].gpuId];
-        uint64_t nStreams = d_buffers->air_instances[key][proofType][gpuLocalId]->nStreams;
-        for (uint64_t j = 0; j < nStreams; j++) {
-            if (i + j < d_buffers->n_total_streams) {
+        if (d_buffers->streamsData[i].streamsUsed > 1) {
+            for (uint64_t j = 1; j < d_buffers->streamsData[i].streamsUsed; j++) {
                 d_buffers->streamsData[i + j].reset();
             }
         }
+        d_buffers->streamsData[i].reset();
     }
 }
 
@@ -403,15 +401,12 @@ void get_stream_proofs_non_blocking(void *d_buffers_){
             }else{
                 get_proof(d_buffers, i);
             }
-            auto key = std::make_pair(d_buffers->streamsData[i].airgroupId, d_buffers->streamsData[i].airId);
-            auto proofType = d_buffers->streamsData[i].proofType;
-            uint32_t gpuLocalId = d_buffers->gpus_g2l[d_buffers->streamsData[i].gpuId];
-            uint64_t nStreams = d_buffers->air_instances[key][proofType][gpuLocalId]->nStreams;
-            for (uint64_t j = 0; j < nStreams; j++) {
-                if (i + j < d_buffers->n_total_streams) {
+            if (d_buffers->streamsData[i].streamsUsed > 1) {
+                for (uint64_t j = 1; j < d_buffers->streamsData[i].streamsUsed; j++) {
                     d_buffers->streamsData[i + j].reset();
                 }
             }
+            d_buffers->streamsData[i].reset();
         }
     }
 }
@@ -425,16 +420,13 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {
         }else{
             get_proof(d_buffers, streamId);
         }
-    
-    auto key = std::make_pair(d_buffers->streamsData[streamId].airgroupId, d_buffers->streamsData[streamId].airId);
-    auto proofType = d_buffers->streamsData[streamId].proofType;
-    uint32_t gpuLocalId = d_buffers->gpus_g2l[d_buffers->streamsData[streamId].gpuId];
-    uint64_t nStreams = d_buffers->air_instances[key][proofType][gpuLocalId]->nStreams;
-    for (uint64_t i = 0; i < nStreams; i++) {
-        if (streamId + i < d_buffers->n_total_streams) {
-            d_buffers->streamsData[streamId + i].reset();
+
+    if (d_buffers->streamsData[streamId].streamsUsed > 1) {
+        for (uint64_t j = 1; j < d_buffers->streamsData[streamId].streamsUsed; j++) {
+            d_buffers->streamsData[streamId + j].reset();
         }
     }
+    d_buffers->streamsData[streamId].reset();
     
 }
 
@@ -505,7 +497,7 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
 
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    uint32_t streamId = selectStream(d_buffers); // false for commit operations (basic streams)
+    uint32_t streamId = selectStream(d_buffers);
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
     uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
 
@@ -519,7 +511,7 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
 
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
     TimerGPU &timer = d_buffers->streamsData[streamId].timer;
-
+    
     auto key = std::make_pair(airgroupId, airId);
     std::string proofType = "basic";
     uint64_t nStreams = d_buffers->air_instances[key][proofType][gpuLocalId]->nStreams;
