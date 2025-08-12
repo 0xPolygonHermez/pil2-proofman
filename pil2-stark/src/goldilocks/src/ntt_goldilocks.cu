@@ -40,7 +40,7 @@ __global__ void eval_r_small_size(gl64_t *r, uint32_t log_domain_size);
 __global__ void eval_r_first_step(gl64_t *r, uint32_t log_domain_size);
 __global__ void eval_r_second_step(gl64_t *r, uint32_t log_domain_size);
 void eval_r(gl64_t *r, uint32_t log_domain_size, cudaStream_t stream);
-void ntt_cuda( gl64_t *data, gl64_t **d_r, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize);
+void ntt_cuda( gl64_t *data, gl64_t **d_r, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, gl64_t *d_helper_ntt, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize);
 
 __global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, Goldilocks::Element shiftIn, uint64_t N, uint64_t qDeg, uint64_t qDim)
 {
@@ -87,7 +87,7 @@ void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t 
     gl64_t *d_helper_ntt = d_aux_trace + offset_helper;
 
     // Intt
-    ntt_cuda(d_q, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, qDim, true, false, stream, maxLogDomainSize);
+    ntt_cuda(d_q, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, d_helper_ntt, n_bits_ext, qDim, true, false, stream, maxLogDomainSize);
 
 
     dim3 threads(128, 1, 1);
@@ -96,7 +96,7 @@ void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t 
     CHECKCUDAERR(cudaMemsetAsync(d_cmQ + N * qDeg * qDim, 0, (NExtended - N) * qDeg * qDim * sizeof(gl64_t), stream));
 
 
-    ntt_cuda(d_cmQ, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, ncols, false, false, stream, maxLogDomainSize);
+    ntt_cuda(d_cmQ, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, d_helper_ntt, n_bits_ext, ncols, false, false, stream, maxLogDomainSize);
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
     Poseidon2GoldilocksGPU::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_cmQ, ncols, NExtended, stream);
@@ -125,8 +125,8 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
     CHECKCUDAERR(cudaMemcpyAsync(d_dst_ntt_, d_src_ntt_, size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice, stream));
     CHECKCUDAERR(cudaMemsetAsync(d_dst_ntt_ + size * ncols, 0, (ext_size - size) * ncols * sizeof(gl64_t), stream));
 
-    ntt_cuda(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, ncols, true, true, stream, maxLogDomainSize);
-    ntt_cuda(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, ncols, false, false, stream, maxLogDomainSize);
+    ntt_cuda(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, d_helper_ntt, n_bits, ncols, true, true, stream, maxLogDomainSize);
+    ntt_cuda(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, d_helper_ntt, n_bits_ext, ncols, false, false, stream, maxLogDomainSize);
 
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
@@ -148,7 +148,7 @@ void NTT_Goldilocks_GPU::INTT_inplace(uint64_t data_offset, u_int64_t n_bits, u_
 
     gl64_t *dst_src = d_data == nullptr ? d_aux_trace + data_offset : d_data;
     gl64_t *d_helper_ntt = d_aux_trace + offset_helper;
-    ntt_cuda(dst_src, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, ncols, true, false, stream, maxLogDomainSize);
+    ntt_cuda(dst_src, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, d_helper_ntt, n_bits, ncols, true, false, stream, maxLogDomainSize);
 }
 
 // Static member definitions
@@ -600,7 +600,7 @@ void eval_r(gl64_t *r, uint32_t log_domain_size, cudaStream_t stream)
     }
 }
 
-void ntt_cuda( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize)
+void ntt_cuda( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, gl64_t *d_helper_ntt, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize)
 {   
 
     uint32_t domain_size = 1 << log_domain_size;
