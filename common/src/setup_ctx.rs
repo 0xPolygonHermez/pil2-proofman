@@ -21,7 +21,7 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub max_prover_trace_size: usize,
     pub max_prover_buffer_size: usize,
     pub max_prover_recursive_buffer_size: usize,
-    pub max_proof_size: usize,
+    pub max_pinned_proof_size: usize,
     pub total_const_size: usize,
 }
 
@@ -90,10 +90,10 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 + sctx_recursive1.max_prover_trace_size)
                 .max(sctx_recursive2.max_prover_buffer_size + sctx_recursive2.max_prover_trace_size);
 
-            let max_proof_size = sctx_compressor
-                .max_proof_size
-                .max(sctx_recursive1.max_proof_size)
-                .max(sctx_recursive2.max_proof_size)
+            let max_pinned_proof_size = sctx_compressor
+                .max_pinned_proof_size
+                .max(sctx_recursive1.max_pinned_proof_size)
+                .max(sctx_recursive2.max_pinned_proof_size)
                 .max(setup_vadcop_final.proof_size as usize);
             SetupsVadcop {
                 sctx_compressor: Some(sctx_compressor),
@@ -106,7 +106,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_prover_trace_size,
                 max_prover_buffer_size,
                 max_prover_recursive_buffer_size,
-                max_proof_size,
+                max_pinned_proof_size,
                 total_const_size,
             }
         } else {
@@ -122,7 +122,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_prover_trace_size: 0,
                 max_prover_buffer_size: 0,
                 max_prover_recursive_buffer_size: 0,
-                max_proof_size: 0,
+                max_pinned_proof_size: 0,
             }
         }
     }
@@ -147,7 +147,7 @@ pub struct SetupRepository<F: PrimeField64> {
     max_prover_buffer_size: usize,
     max_prover_trace_size: usize,
     max_witness_trace_size: usize,
-    max_proof_size: usize,
+    max_pinned_proof_size: usize,
     total_const_size: usize,
     global_bin: Option<*mut c_void>,
     global_info_file: String,
@@ -190,7 +190,7 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut max_prover_buffer_size = 0;
         let mut max_prover_trace_size = 0;
         let mut max_witness_trace_size = 0;
-        let mut max_proof_size = 0;
+        let mut max_pinned_proof_size = 0;
         let mut total_const_size = 0;
 
         // Initialize Hashmap for each airgroup_id, air_id
@@ -234,7 +234,7 @@ impl<F: PrimeField64> SetupRepository<F> {
                         max_witness_trace_size = max_witness_trace_size.max(trace_size as usize);
 
                         total_const_size += setup.const_pols_size + setup.const_tree_size;
-                        max_proof_size = max_proof_size.max(2 * setup.proof_size);
+                        max_pinned_proof_size = max_pinned_proof_size.max(setup.pinned_proof_size);
                     }
                     setups.insert((airgroup_id, air_id), setup);
                     if setup_type == &ProofType::Recursive2 {
@@ -258,7 +258,7 @@ impl<F: PrimeField64> SetupRepository<F> {
             max_prover_buffer_size: max_prover_buffer_size as usize,
             max_prover_trace_size,
             max_witness_trace_size,
-            max_proof_size: max_proof_size as usize,
+            max_pinned_proof_size: max_pinned_proof_size as usize,
             total_const_size,
         }
     }
@@ -273,7 +273,7 @@ pub struct SetupCtx<F: PrimeField64> {
     pub max_prover_buffer_size: usize,
     pub max_prover_trace_size: usize,
     pub max_witness_trace_size: usize,
-    pub max_proof_size: usize,
+    pub max_pinned_proof_size: usize,
     pub total_const_size: usize,
     setup_type: ProofType,
 }
@@ -291,7 +291,7 @@ impl<F: PrimeField64> SetupCtx<F> {
         let max_prover_buffer_size = setup_repository.max_prover_buffer_size;
         let max_prover_trace_size = setup_repository.max_prover_trace_size;
         let max_witness_trace_size = setup_repository.max_witness_trace_size;
-        let max_proof_size = setup_repository.max_proof_size;
+        let max_pinned_proof_size = setup_repository.max_pinned_proof_size;
         let total_const_size = setup_repository.total_const_size;
         SetupCtx {
             setup_repository,
@@ -300,7 +300,7 @@ impl<F: PrimeField64> SetupCtx<F> {
             max_prover_buffer_size,
             max_prover_trace_size,
             max_witness_trace_size,
-            max_proof_size,
+            max_pinned_proof_size,
             total_const_size,
             setup_type: setup_type.clone(),
         }

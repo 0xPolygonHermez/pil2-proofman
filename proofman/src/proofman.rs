@@ -1578,6 +1578,11 @@ where
         for instance_id in my_instances_tables.iter() {
             self.wcm.pre_calculate_witness(1, &[*instance_id], max_num_threads, self.memory_handler.as_ref());
             self.wcm.calculate_witness(1, &[*instance_id], max_num_threads, self.memory_handler.as_ref());
+        }
+
+        timer_stop_and_log_info!(CALCULATING_TABLES);
+
+        for instance_id in my_instances_tables.iter() {
             Self::get_contribution_air(
                 &self.pctx,
                 &self.sctx,
@@ -1589,8 +1594,6 @@ where
                 &streams,
             );
         }
-
-        timer_stop_and_log_info!(CALCULATING_TABLES);
 
         // ensure all threads have finishes, this ensures all contributions have been launched
         if cfg!(feature = "gpu") {
@@ -1630,9 +1633,18 @@ where
             Arc::new((0..n_airgroups).map(|_| RwLock::new(Vec::new())).collect());
         let recursive2_proofs_ongoing: Arc<RwLock<Vec<Option<Proof<F>>>>> = Arc::new(RwLock::new(Vec::new()));
 
-        let vec_streams: Vec<Option<u64>> = {
+        let vec_streams: Vec<(u64, u64)> = {
             let mut guard = streams.lock().unwrap();
-            std::mem::take(&mut *guard)
+            let taken = std::mem::take(&mut *guard);
+
+            let mut result = Vec::new();
+            for (idx, maybe_id) in taken.into_iter().enumerate() {
+                if let Some(id) = maybe_id {
+                    result.push((idx as u64, id));
+                }
+            }
+
+            result
         };
 
         let mut n_airgroup_proofs = vec![0; n_airgroups];
@@ -1761,13 +1773,12 @@ where
 
         let processed_ids = Mutex::new(Vec::new());
 
-        if cfg!(feature = "gpu") {
-            vec_streams
+        if cfg!(feature = "gpu") && !vec_streams.is_empty() {
+            let processed: Vec<u64> = vec_streams
                 .par_iter()
-                .enumerate()
-                .filter_map(|(stream_id, instance)| instance.map(|id| (stream_id, id)))
-                .for_each(|(stream_id, instance_id)| {
+                .map(|&(stream_id, instance_id)| {
                     proofs_pending.increment();
+
                     Self::gen_proof(
                         &proofs,
                         &self.pctx,
@@ -1778,16 +1789,21 @@ where
                         &const_pols,
                         &const_tree,
                         &self.d_buffers,
-                        Some(stream_id),
+                        Some(stream_id as usize), // or u64 if your API expects that
                         options.save_proofs,
                         self.gpu_params.preallocate,
                     );
+
                     let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(instance_id as usize);
                     if is_shared_buffer {
                         self.memory_handler.release_buffer(witness_buffer);
                     }
-                    processed_ids.lock().unwrap().push(instance_id);
-                });
+
+                    instance_id
+                })
+                .collect();
+
+            processed_ids.lock().unwrap().extend(processed);
         }
 
         let mut my_instances_calculated = vec![false; instances.len()];
@@ -1843,7 +1859,8 @@ where
                 if witness.is_err() {
                     // Check if proof received
                     if let Ok(instance_id) = proofs_rx.try_recv() {
-                        let stream_id = stream_clone.iter().position(|&stream| stream == Some(instance_id as u64));
+                        let stream_id: Option<usize> =
+                            stream_clone.iter().position(|&(_, id)| id == instance_id as u64);
                         Self::gen_proof(
                             &proofs_clone,
                             &pctx_clone,
@@ -1966,8 +1983,8 @@ where
             let proofs_tx_clone = proofs_tx.clone();
             let wcm = self.wcm.clone();
             let proofs_pending_clone = proofs_pending.clone();
-            let is_stored =
-                self.pctx.is_air_instance_stored(instance_id) || vec_streams.contains(&Some(instance_id as u64));
+            let is_stored = self.pctx.is_air_instance_stored(instance_id)
+                || vec_streams.iter().any(|&(_, id)| id == instance_id as u64);
 
             my_instances_calculated[instance_id] = true;
 
@@ -2300,16 +2317,16 @@ where
             pctx.dctx_get_node_n_processes() as u32,
         )));
 
-        let max_proof_size = match aggregation {
-            true => sctx.max_proof_size.max(setups_vadcop.max_proof_size) as u64,
-            false => sctx.max_proof_size as u64,
+        let max_pinned_proof_size = match aggregation {
+            true => sctx.max_pinned_proof_size.max(setups_vadcop.max_pinned_proof_size) as u64,
+            false => sctx.max_pinned_proof_size as u64,
         };
 
         let n_gpus: u64 = gen_device_streams_c(
             d_buffers.get_ptr(),
             sctx.max_prover_buffer_size as u64,
             setups_vadcop.max_prover_recursive_buffer_size as u64,
-            max_proof_size,
+            max_pinned_proof_size,
             n_streams_per_gpu as u64,
             n_recursive_streams_per_gpu as u64,
         );
