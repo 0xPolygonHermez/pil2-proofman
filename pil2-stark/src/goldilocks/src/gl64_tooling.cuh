@@ -193,6 +193,7 @@ struct StreamData{
     
     bool recursive;
     bool extraStream;
+    uint64_t streamsUsed;
     
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint64_t offset_, bool recursive_){
         uint64_t maxExps = 1000; // TODO: CALCULATE IT PROPERLY!
@@ -211,6 +212,7 @@ struct StreamData{
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, sizeof(StepsParams)));
 
         extraStream = false;
+        streamsUsed = 1;
         root = nullptr;
         pSetupCtx = nullptr;
         proofBuffer = nullptr;
@@ -245,6 +247,7 @@ struct StreamData{
         status = 3;
 
         extraStream = false;
+        streamsUsed = 1;
 
         root = nullptr;
         pSetupCtx = nullptr;
