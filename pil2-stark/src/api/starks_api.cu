@@ -276,7 +276,7 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     d_buffers->streamsData[streamId].instanceId = instanceId;
     d_buffers->streamsData[streamId].proofType = "basic";
     
-    d_buffers->streamsData[streamId].streamsUsed = 1;
+    d_buffers->streamsData[streamId].streamsUsed = nStreams;
     for(uint64_t i = 1; i < nStreams; i++) {
         d_buffers->streamsData[streamId + i].extraStream = true;
     }
@@ -346,11 +346,6 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
 }
 
 void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
-
-    if(d_buffers->streamsData[streamId].extraStream == true) {
-        return;
-    }
-
     SetupCtx *setupCtx = (SetupCtx*) d_buffers->streamsData[streamId].pSetupCtx;
     uint64_t airgroupId = d_buffers->streamsData[streamId].airgroupId;
     uint64_t airId = d_buffers->streamsData[streamId].airId;
@@ -381,12 +376,14 @@ void get_stream_proofs(void *d_buffers_){
         }else{
             get_proof(d_buffers, i);
         }
-        if (d_buffers->streamsData[i].streamsUsed > 1) {
-            for (uint64_t j = 1; j < d_buffers->streamsData[i].streamsUsed; j++) {
+        uint64_t streamsUsed = d_buffers->streamsData[i].streamsUsed;
+        d_buffers->streamsData[i].reset();
+        if (streamsUsed > 1) {
+            for (uint64_t j = 1; j < streamsUsed; j++) {
                 d_buffers->streamsData[i + j].reset();
             }
         }
-        d_buffers->streamsData[i].reset();
+        
     }
 }
 
@@ -401,12 +398,14 @@ void get_stream_proofs_non_blocking(void *d_buffers_){
             }else{
                 get_proof(d_buffers, i);
             }
-            if (d_buffers->streamsData[i].streamsUsed > 1) {
-                for (uint64_t j = 1; j < d_buffers->streamsData[i].streamsUsed; j++) {
+            uint64_t streamsUsed = d_buffers->streamsData[i].streamsUsed;
+            d_buffers->streamsData[i].reset();
+            if (streamsUsed > 1) {
+                for (uint64_t j = 1; j < streamsUsed; j++) {
                     d_buffers->streamsData[i + j].reset();
                 }
             }
-            d_buffers->streamsData[i].reset();
+            
         }
     }
 }
@@ -421,13 +420,13 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {
             get_proof(d_buffers, streamId);
         }
 
-    if (d_buffers->streamsData[streamId].streamsUsed > 1) {
-        for (uint64_t j = 1; j < d_buffers->streamsData[streamId].streamsUsed; j++) {
+    uint64_t streamsUsed = d_buffers->streamsData[streamId].streamsUsed;
+    d_buffers->streamsData[streamId].reset();
+    if (streamsUsed > 1) {
+        for (uint64_t j = 1; j < streamsUsed; j++) {
             d_buffers->streamsData[streamId + j].reset();
         }
-    }
-    d_buffers->streamsData[streamId].reset();
-    
+    }    
 }
 
 uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType)
@@ -645,9 +644,15 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t nStreams, bool re
         } else {
             for (uint32_t i = 0; i <= d_buffers->n_total_streams - nStreams; i++) {
                 if (d_buffers->streamsData[i].gpuId != d_buffers->streamsData[i + 1].gpuId || d_buffers->streamsData[i].recursive || d_buffers->streamsData[i + 1].recursive) continue;
-                bool stream1Finished = d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3 || (d_buffers->streamsData[i].status==2 && cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess);
-                bool stream2Finished = d_buffers->streamsData[i + 1].status==0 || d_buffers->streamsData[i + 1].status==3 || (d_buffers->streamsData[i + 1].status==2 && cudaEventQuery(d_buffers->streamsData[i + 1].end_event) == cudaSuccess);
-                if (stream1Finished && stream2Finished) {
+                bool validStreamId = true;
+                for (uint64_t j = 0; j < nStreams; j++) {
+                    bool streamFinished = d_buffers->streamsData[i + j].status==0 || d_buffers->streamsData[i + j].status==3 || (d_buffers->streamsData[i + j].status==2 && cudaEventQuery(d_buffers->streamsData[i + j].end_event) == cudaSuccess);
+                    if (!streamFinished) {
+                        validStreamId = false;
+                        break;
+                    }
+                }
+                if (validStreamId) {
                     selectedStreamId = i;
                     someFree = true;
                     break;
@@ -670,29 +675,34 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t nStreams, bool re
             }
         }
         selectedStreamId = streamId;
+    } else {
+        for (uint64_t j = 1; j < d_buffers->streamsData[selectedStreamId].streamsUsed; j++) {
+            if (d_buffers->streamsData[selectedStreamId + j].extraStream) {
+                d_buffers->streamsData[selectedStreamId + j].reset();
+            }
+        }
     }
 
-    // Reserve the selected stream(s)
-    for (uint64_t i = 0; i < nStreams; i++) {
-        reserveStream(d_buffers, selectedStreamId + i);
-    }
+    reserveStream(d_buffers, selectedStreamId, nStreams);
     
     return selectedStreamId;
 }
 
 void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId, uint64_t nStreams){
     set_device(d_buffers->streamsData[streamId].gpuId);
-    if(d_buffers->streamsData[streamId].status==2 && cudaEventQuery(d_buffers->streamsData[streamId].end_event) == cudaSuccess) {
+    for (uint64_t j = 0; j < nStreams; j++) {
+        if(d_buffers->streamsData[streamId + j].status==2 && cudaEventQuery(d_buffers->streamsData[streamId + j].end_event) == cudaSuccess) {
 
-        if(d_buffers->streamsData[streamId].root != nullptr) {
-            get_commit_root(d_buffers, streamId);
-        }else{
-            get_proof(d_buffers, streamId);
+            if(d_buffers->streamsData[streamId + j].root != nullptr) {
+                get_commit_root(d_buffers, streamId + j);
+            }else{
+                get_proof(d_buffers, streamId + j);
+            }
         }
+        d_buffers->streamsData[streamId + j].reset();
+        d_buffers->streamsData[streamId + j].status = 1;
     }
-    
-    d_buffers->streamsData[streamId].reset();
-    d_buffers->streamsData[streamId].status = 1;
+   
 }
 
 void closeStreamTimer(TimerGPU &timer, bool isProve) {
