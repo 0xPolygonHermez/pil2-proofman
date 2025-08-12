@@ -56,7 +56,8 @@ airtemplate TablePadded(const int N, const int opid) {
 
 airgroup VirtualTables {
     set_range_check_tables_virtual(); // Enable virtual tables for range checks
-    set_max_virtual_bits(15); // Set the maximum bits for virtual tables
+    set_max_virtual_bits(16); // Set the maximum bits for virtual tables
+    set_max_num_virtual_tables(3); // Set the maximum number of virtual tables
 
     // Virtual tables
     Component(N: 2**5, t: 5, opid: 1) alias Component1;

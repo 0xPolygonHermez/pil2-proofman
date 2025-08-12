@@ -634,8 +634,10 @@ pub fn register_std<F: PrimeField64>(wcm: &WitnessManager<F>, std: &Std<F>) {
     }
 
     wcm.register_component_std(std.virtual_table.clone());
-    if std.virtual_table.virtual_table_air.is_some() {
-        wcm.register_component_std(std.virtual_table.virtual_table_air.clone().unwrap());
+    if std.virtual_table.virtual_table_airs.is_some() {
+        for air in std.virtual_table.virtual_table_airs.clone().unwrap() {
+            wcm.register_component_std(air);
+        }
     }
 }
 

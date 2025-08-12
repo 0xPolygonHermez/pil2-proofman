@@ -6,7 +6,6 @@ use proofman_common::{ProofCtx, SetupCtx, StdMode};
 
 use crate::{StdProd, StdRangeCheck, StdSum, StdVirtualTable};
 
-
 pub struct Std<F: PrimeField64> {
     // STD mode
     pub mode: RwLock<StdMode>,
@@ -43,9 +42,9 @@ impl<F: PrimeField64> Std<F> {
         self.range_check.get_range_id(min, max, predefined)
     }
 
-    /// Gets the virtual table ID for a given ID
-    pub fn get_virtual_table_id(&self, id: usize) -> usize {
-        self.virtual_table.get_id(id)
+    /// Gets the virtual table ID for a given UID
+    pub fn get_virtual_table_id(&self, uid: usize) -> usize {
+        self.virtual_table.get_global_id_from_uid(uid)
     }
 
     pub fn range_check(&self, id: usize, val: i64, multiplicity: u64) {

@@ -4,8 +4,7 @@ use fields::PrimeField64;
 
 use proofman_common::{ProofCtx, SetupCtx};
 use proofman_hints::{
-    get_hint_field_constant_gc, get_hint_field_constant, get_hint_field_constant_a, HintFieldOptions, HintFieldOutput,
-    HintFieldValue,
+    get_hint_field_constant, get_hint_field_constant_a, get_hint_field_constant_gc, get_hint_field_gc_constant_a, HintFieldOptions, HintFieldOutput, HintFieldValue
 };
 
 pub const STD_MODE_DEFAULT: usize = 0;
@@ -29,6 +28,33 @@ where
     let biguint_value = field_value.as_canonical_u64();
 
     biguint_value.try_into().unwrap_or_else(|_| panic!("Cannot convert value to {}", std::any::type_name::<T>()))
+}
+
+pub fn get_global_hint_field_constant_a_as<T, F>(
+    sctx: &SetupCtx<F>,
+    hint_id: u64,
+    field_name: &str,
+) -> Vec<T>
+where
+    T: TryFrom<u64>,
+    F: PrimeField64,
+{
+    let hint_fields = get_hint_field_gc_constant_a(sctx, hint_id, field_name, false);
+
+    let mut return_values = Vec::new();
+    for (i, hint_field) in hint_fields.values.iter().enumerate() {
+        match hint_field {
+            HintFieldValue::Field(value) => {
+                let converted = T::try_from(value.as_canonical_u64()).unwrap_or_else(|_| {
+                    panic!("Cannot convert value at position {i} to {}", std::any::type_name::<T>())
+                });
+                return_values.push(converted);
+            }
+            _ => panic!("Hint '{hint_id}' for field '{field_name}' at position '{i}' must be a field element"),
+        }
+    }
+
+    return_values
 }
 
 pub fn get_hint_field_constant_as_field<F: PrimeField64>(
