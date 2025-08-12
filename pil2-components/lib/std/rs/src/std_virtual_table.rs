@@ -107,7 +107,18 @@ impl<F: PrimeField64> StdVirtualTable<F> {
     }
 }
 
-impl<F: PrimeField64> WitnessComponent<F> for StdVirtualTable<F> {}
+impl<F: PrimeField64> WitnessComponent<F> for StdVirtualTable<F> {
+    fn pre_calculate_witness(
+        &self,
+        _stage: u32,
+        _pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        _instance_ids: &[usize],
+        _n_cores: usize,
+        _buffer_pool: &dyn BufferPool<F>,
+    ) {
+    }
+}
 
 impl VirtualTableAir {
     pub fn get_id(&self, id: usize) -> usize {
@@ -233,6 +244,17 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         self.instance_id.store(instance_id as u64, Ordering::SeqCst);
 
         Vec::new()
+    }
+
+    fn pre_calculate_witness(
+        &self,
+        _stage: u32,
+        _pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        _instance_ids: &[usize],
+        _n_cores: usize,
+        _buffer_pool: &dyn BufferPool<F>,
+    ) {
     }
 
     fn calculate_witness(
