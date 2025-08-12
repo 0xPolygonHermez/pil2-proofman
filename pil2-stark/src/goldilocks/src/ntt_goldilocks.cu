@@ -84,6 +84,7 @@ void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t 
     gl64_t *d_q = d_aux_trace + offset_q;
     gl64_t *d_cmQ = d_aux_trace + offset_cmQ;
 
+    gl64_t *d_helper_ntt = d_aux_trace + offset_helper;
 
     // Intt
     ntt_cuda(d_q, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, qDim, true, false, stream, maxLogDomainSize);
@@ -119,7 +120,7 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
     uint64_t ext_size = 1 << n_bits_ext;    
     gl64_t *d_dst_ntt_ = &d_dst_ntt[offset_dst_ntt];
     gl64_t *d_src_ntt_ = &d_src_ntt[offset_src_ntt];
-
+    gl64_t *d_helper_ntt = d_aux_trace + offset_helper;
 
     CHECKCUDAERR(cudaMemcpyAsync(d_dst_ntt_, d_src_ntt_, size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice, stream));
     CHECKCUDAERR(cudaMemsetAsync(d_dst_ntt_ + size * ncols, 0, (ext_size - size) * ncols * sizeof(gl64_t), stream));
@@ -146,6 +147,7 @@ void NTT_Goldilocks_GPU::INTT_inplace(uint64_t data_offset, u_int64_t n_bits, u_
     }
 
     gl64_t *dst_src = d_data == nullptr ? d_aux_trace + data_offset : d_data;
+    gl64_t *d_helper_ntt = d_aux_trace + offset_helper;
     ntt_cuda(dst_src, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, ncols, true, false, stream, maxLogDomainSize);
 }
 
