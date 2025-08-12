@@ -117,7 +117,6 @@ impl<F: PrimeField64> WitnessManager<F> {
                 .filter(|id| {
                     ids_hash_set.contains(id)
                         && (self.pctx.dctx_is_my_instance(**id) || self.pctx.dctx_is_instance_all(**id))
-                        && self.pctx.dctx_instance_precalculate(**id)
                 })
                 .cloned()
                 .collect();
