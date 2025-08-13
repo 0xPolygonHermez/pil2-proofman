@@ -16,7 +16,7 @@ use rayon::prelude::*;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "768dd13bfff3a05a37e5db62af22481eafe009ccc981e0d9b25f3024ea112dce";
+pub const PILOUT_HASH: &str = "d8c460714dbad0684c6b91c775d20e560dabbc758b6887354c1e75ca7af98c46";
 
 //AIRGROUP CONSTANTS
 
@@ -42,7 +42,13 @@ pub const TABLE_7_AIR_IDS: &[usize] = &[7];
 
 pub const COMPONENT_8_AIR_IDS: &[usize] = &[8];
 
-pub const VIRTUAL_TABLE_AIR_IDS: &[usize] = &[9];
+pub const COMPONENT_9_AIR_IDS: &[usize] = &[9];
+
+pub const VIRTUAL_TABLE_0_AIR_IDS: &[usize] = &[10];
+
+pub const VIRTUAL_TABLE_1_AIR_IDS: &[usize] = &[11];
+
+pub const VIRTUAL_TABLE_2_AIR_IDS: &[usize] = &[12];
 
   
 trace!(Component1Fixed<F> {
@@ -117,13 +123,37 @@ trace!(Component8Trace<F> {
  a: [F; 3],
 },  0, 8, 1024 );
 
-trace!(VirtualTableFixed<F> {
- UID: [F; 3], column: [F; 8], __L1__: F,
-},  0, 9, 32768 );
+trace!(Component9Fixed<F> {
+ __L1__: F,
+},  0, 9, 1048576 );
 
-trace!(VirtualTableTrace<F> {
- multiplicity: [F; 3],
-},  0, 9, 32768 );
+trace!(Component9Trace<F> {
+ a: [F; 4],
+},  0, 9, 1048576 );
+
+trace!(VirtualTable0Fixed<F> {
+ UID: [F; 32], column: [F; 128], __L1__: F,
+},  0, 10, 32768 );
+
+trace!(VirtualTable0Trace<F> {
+ multiplicity: [F; 32],
+},  0, 10, 32768 );
+
+trace!(VirtualTable1Fixed<F> {
+ UID: [F; 2], column: [F; 2], __L1__: F,
+},  0, 11, 32768 );
+
+trace!(VirtualTable1Trace<F> {
+ multiplicity: [F; 2],
+},  0, 11, 32768 );
+
+trace!(VirtualTable2Fixed<F> {
+ UID: [F; 1], column: [F; 6], __L1__: F,
+},  0, 12, 32768 );
+
+trace!(VirtualTable2Trace<F> {
+ multiplicity: [F; 1],
+},  0, 12, 32768 );
 
 values!(Component1AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
@@ -161,6 +191,18 @@ values!(Component8AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
-values!(VirtualTableAirGroupValues<F> {
+values!(Component9AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(VirtualTable0AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(VirtualTable1AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(VirtualTable2AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });

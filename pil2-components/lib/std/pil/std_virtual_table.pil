@@ -26,6 +26,32 @@ function set_max_num_virtual_tables(const int num) {
     MAX_NUM_VIRTUAL_TABLES = num;
 }
 
+int isolated_uids[ARRAY_SIZE];
+int isolated_uids_len = 0;
+
+function set_virtual_table_isolated(const int uid) {
+    if (AIR_ID == -1) {
+        error(`set_virtual_table_isolated() can only be called inside an AIR. TABLE_ID: ${uid}`);
+    }
+
+    if (VIRTUAL == 0) {
+        error(`set_virtual_table_isolated() cannot by called from a non-virtual table. TABLE_ID: ${uid}, AIRGROUP_ID: ${AIRGROUP_ID}, AIR_ID: ${AIR_ID}`);
+    }
+
+    if (isolated_uids_len >= ARRAY_SIZE) {
+        error("Exceeded maximum number of isolated UIDs");
+    }
+
+    for (int i = 0; i < isolated_uids_len; i++) {
+        if (isolated_uids[i] == uid) {
+            error(`Table ${uid} is already set to be isolated`);
+        }
+    }
+
+    isolated_uids[isolated_uids_len] = uid;
+    isolated_uids_len++;
+}
+
 function collect_virtual_table(const int uid, const expr table[]) {
     // Check whether the inputs are valid
     const int w = length(table);
@@ -50,6 +76,7 @@ function collect_virtual_table(const int uid, const expr table[]) {
         int widths[ARRAY_SIZE];
         int heights[ARRAY_SIZE];
         int uids[ARRAY_SIZE];
+        int isolated[ARRAY_SIZE];
         int num_tables = 0;
         int total_height = 0;
     }
@@ -106,14 +133,67 @@ function collect_virtual_table(const int uid, const expr table[]) {
 function pack_tables() {
     use airgroup.std.virtual_table alias vt;
 
-    // Order the tables by width in ascending order and then by height in descending order
-    int ordered_tables[vt.num_tables];
-    for (int i = 0; i < vt.num_tables; i++) {
-        ordered_tables[i] = i;
+    // Mark isolated tables
+    for (int i = 0; i < isolated_uids_len; i++) {
+        const int uid = isolated_uids[i];
+        // Find the table with this uid and mark it as isolated
+        for (int j = 0; j < vt.num_tables; j++) {
+            if (vt.uids[j] == uid) {
+                vt.isolated[j] = 1;
+                break;
+            }
+        }
     }
 
-    for (int i = 0; i < vt.num_tables - 1; i++) {
-        for (int j = i + 1; j < vt.num_tables; j++) {
+    // Separate tables into isolated and non-isolated
+    int non_isolated_tables[vt.num_tables];
+    int isolated_tables[vt.num_tables];
+    int non_isolated_count = 0;
+    int isolated_count = 0;
+    int non_isolated_total_height = 0;
+    int isolated_total_height = 0;
+    for (int i = 0; i < vt.num_tables; i++) {
+        if (vt.isolated[i] == 1) {
+            isolated_tables[isolated_count] = i;
+            isolated_count++;
+            isolated_total_height += vt.heights[i];
+        } else {
+            non_isolated_tables[non_isolated_count] = i;
+            non_isolated_count++;
+            non_isolated_total_height += vt.heights[i];
+        }
+    }
+
+    // Compute the maximum and minimum bits for the non-isolated virtual tables
+    int max_bits;
+    if (MAX_VIRTUAL_BITS == -1) {
+        // Take the bits that makes the total height fit
+        max_bits = 0;
+        while ((1 << max_bits) < non_isolated_total_height) {
+            max_bits++;
+        }
+    } else {
+        // Use the specified bits
+        max_bits = MAX_VIRTUAL_BITS;
+    }
+    // TODO: For now we assume that min_bits == max_bits and therefore the height of the table to be 2**max_bits
+    //       We can remove this limitation in a future, when area computation gets more precise
+    const int min_bits = max_bits;
+
+    // If the number of rows already fit the total height, then compute a single table
+    const int num_rows = 1 << max_bits;
+    if (num_rows >= non_isolated_total_height) {
+        MAX_NUM_VIRTUAL_TABLES = 1;
+    }
+
+    // Order the tables by width in ascending order and then by height in descending order
+    int ordered_tables[non_isolated_count];
+    for (int i = 0; i < non_isolated_count; i++) {
+        ordered_tables[i] = non_isolated_tables[i];
+    }
+
+    for (int i = 0; i < non_isolated_count - 1; i++) {
+        for (int j = i + 1; j < non_isolated_count; j++) {
             const int idx_i = ordered_tables[i];
             const int idx_j = ordered_tables[j];
 
@@ -132,31 +212,9 @@ function pack_tables() {
         }
     }
 
-    // Compute the maximum and minimum bits for the table
-    int max_bits;
-    if (MAX_VIRTUAL_BITS == -1) {
-        // Take the bits that makes the total height fit
-        max_bits = 0;
-        while ((1 << max_bits) < vt.total_height) {
-            max_bits++;
-        }
-    } else {
-        // Use the specified bits
-        max_bits = MAX_VIRTUAL_BITS;
-    }
-    // TODO: For now we assume that min_bits == max_bits and therefore the height of the table to be 2**max_bits
-    //       We can remove this limitation in a future, when area computation gets more precise
-    const int min_bits = max_bits;
-
-    // If the number of rows already fit the total height, then compute a single table
-    const int num_rows = 1 << max_bits;
-    if (num_rows >= vt.total_height) {
-        MAX_NUM_VIRTUAL_TABLES = 1;
-    }
-
     // Divide the ordered tables by MAX_NUM_VIRTUAL_TABLES of approximately equal height
     // Note: A table is never placed into two or more AIRs
-    int ordered_tables_air[MAX_NUM_VIRTUAL_TABLES][vt.num_tables];
+    int ordered_tables_air[MAX_NUM_VIRTUAL_TABLES][non_isolated_count];
     int ordered_tables_air_height[MAX_NUM_VIRTUAL_TABLES];
     int ordered_tables_air_len[MAX_NUM_VIRTUAL_TABLES];
     for (int i = 0; i < MAX_NUM_VIRTUAL_TABLES; i++) {
@@ -164,17 +222,17 @@ function pack_tables() {
         ordered_tables_air_len[i] = 0;
     }
 
-    const int max_height_by_vt = (vt.total_height + MAX_NUM_VIRTUAL_TABLES - 1) / MAX_NUM_VIRTUAL_TABLES;
+    const int max_height_by_vt = (non_isolated_total_height + MAX_NUM_VIRTUAL_TABLES - 1) / MAX_NUM_VIRTUAL_TABLES;
     int table_offset = 0;
-    int num_virtual_tables = MAX_NUM_VIRTUAL_TABLES;
+    int num_non_isolated_virtual_tables = MAX_NUM_VIRTUAL_TABLES;
     for (int i = 0; i < MAX_NUM_VIRTUAL_TABLES; i++) {
-        if (table_offset >= vt.num_tables) {
-            num_virtual_tables = i;
+        if (table_offset >= non_isolated_count) {
+            num_non_isolated_virtual_tables = i;
             break;
         }
 
         int col_offset = 0;
-        for (int j = table_offset; j < vt.num_tables; j++) {
+        for (int j = table_offset; j < non_isolated_count; j++) {
             const int idx = ordered_tables[j];
             if ((col_offset > 0) && (ordered_tables_air_height[i] + vt.heights[idx] > max_height_by_vt)) {
                 break;
@@ -189,42 +247,85 @@ function pack_tables() {
         table_offset += col_offset;
     }
 
-    for (int i = 0; i < num_virtual_tables; i++) {
-        const int total_height = ordered_tables_air_height[i];
-        const int num_tables = ordered_tables_air_len[i];
+    const int num_virtual_tables = num_non_isolated_virtual_tables + isolated_count;
+    container proof.std.virtual_table {
+        int airgroup_ids[num_virtual_tables];
+        int air_ids[num_virtual_tables];
+    }
+
+    // Instantiate the isolated tables (each gets its own virtual table)
+    for (int i = 0; i < isolated_count; i++) {
+        const int table_idx = isolated_tables[i];
+        const int height = vt.heights[table_idx];
+        const int width = vt.widths[table_idx];
+        const int uid = vt.uids[table_idx];
+
+        // Compute required bits for this isolated table
+        int bits;
+        if (MAX_VIRTUAL_BITS == -1) {
+            bits = 0;
+            while ((1 << bits) < height) {
+                bits++;
+            }
+        } else {
+            bits = MAX_VIRTUAL_BITS;
+        }
+
+        const int num_rows = 1 << bits;
+        const int num_groups = (height + num_rows - 1) / num_rows;
+
+        // Create arrays for the VirtualTable template
+        int uids_pack[num_groups][1];
+        int tables_pack[num_groups][1];
+        int widths_pack[num_groups];
+        int lens_pack[num_groups];
+        for (int j = 0; j < num_groups; j++) {
+            uids_pack[j][0] = uid;
+            tables_pack[j][0] = table_idx;
+            widths_pack[j] = width;
+            lens_pack[j] = 1;
+        }
+
+        VirtualTable(num_rows, [table_idx], 1, height, uids_pack, tables_pack, widths_pack, lens_pack, num_groups, i, 1) alias `VirtualTable${i}`;
+    }
+
+    // Instantiate the non-isolated tables
+    for (int i = 0; i < num_non_isolated_virtual_tables; i++) {
+        const int total_height_air = ordered_tables_air_height[i];
+        const int num_tables_air = ordered_tables_air_len[i];
 
         // Proceed with the packing
-        // TODO: In the worst case N = 1, which creates a packing with total_height number of groups
+        // TODO: In the worst case N = 1, which creates a packing with total_height_air number of groups
         //       This can be too much for array limit, so we limit the number of groups to ARRAY_SIZE
         //       We can remove this limitation in a future if we consider more strategies for packing.
         const int min_rows = 1 << min_bits;
-        const int min_groups = (total_height + min_rows - 1) / min_rows;
-        if (min_groups > ARRAY_SIZE) {
-            error(`The number of bits=${min_bits} set in the virtual table generates too many groups=${min_groups} > max_groups=${ARRAY_SIZE}. Consider setting more virtual bits via set_max_virtual_bits()`);
+        const int max_num_groups = (total_height_air + min_rows - 1) / min_rows;
+        if (max_num_groups > ARRAY_SIZE) {
+            error(`The number of bits=${min_bits} set in the virtual table generates too many groups=${max_num_groups} > max_num_groups=${ARRAY_SIZE}. Consider setting more virtual bits via set_max_virtual_bits()`);
         }
         int min_area;
         int bits_best_pack;
-        int uids_best_pack[ARRAY_SIZE][num_tables];
-        int tables_best_pack[ARRAY_SIZE][num_tables];
-        int widths_best_pack[ARRAY_SIZE];
-        int lens_best_pack[ARRAY_SIZE];
-        int num_groups_best_pack = 0;
+        int uids_best_pack[max_num_groups][num_tables_air];
+        int tables_best_pack[max_num_groups][num_tables_air];
+        int widths_best_pack[max_num_groups];
+        int lens_best_pack[max_num_groups];
+        int num_groups_best_pack;
         // TODO: Try all heights from 2^min_bits to 2^max_bits and choose the best one
         //       For this to be applied, the area formula needs to consider the prover costs
         for (int j = min_bits; j <= max_bits; j++) {
             // Compute the number of rows and the number of groups
             const int num_rows = 1 << j;
-            const int num_groups = (total_height + num_rows - 1) / num_rows;
+            const int num_groups = (total_height_air + num_rows - 1) / num_rows;
 
             // Compute the packing
-            int uids_pack[num_groups][num_tables];
-            int tables_pack[num_groups][num_tables];
+            int uids_pack[num_groups][num_tables_air];
+            int tables_pack[num_groups][num_tables_air];
             int widths_pack[num_groups];
             int lens_pack[num_groups];
             int used_area[num_groups];
             int available_height = num_rows;
             int offset = 0;
-            for (int k = 0; k < num_tables; k++) {
+            for (int k = 0; k < num_tables_air; k++) {
                 const int table_id = ordered_tables_air[i][k];
                 const int width = vt.widths[table_id];
                 int height = vt.heights[table_id];
@@ -261,7 +362,7 @@ function pack_tables() {
 
             // If the last table is partially filled, we need to add a complete new table
             if (available_height < num_rows) {
-                widths_pack[offset] = vt.widths[ordered_tables_air[i][num_tables - 1]];
+                widths_pack[offset] = vt.widths[ordered_tables_air[i][num_tables_air - 1]];
             }
 
             // Compute the area of the packing
@@ -292,35 +393,42 @@ function pack_tables() {
 
         // Compute the length of the virtual table
         const int num_rows = 1 << bits_best_pack;
-        VirtualTable(num_rows, uids_best_pack, tables_best_pack, widths_best_pack, lens_best_pack, num_groups_best_pack, i) alias `VirtualTable${i}`;
+        const int air_idx = isolated_count + i;
+        VirtualTable(num_rows, ordered_tables_air[i], num_tables_air, total_height_air, uids_best_pack, tables_best_pack, widths_best_pack, lens_best_pack, num_groups_best_pack, air_idx, 0) alias `VirtualTable${air_idx}`;
     }
+
+    on final proof issue_virtual_table_data_global();
 }
 
-airtemplate VirtualTable(const int N, const int uids[][], const int table_ids[][], const int widths[], const int lens[], const int num_groups, const int air_idx) {       
-    // Issue information useful for hints
-    int ordered_uids[num_tables];
-    int ordered_acc_heights[num_tables];
-    int ordered_acc_height = 0;
-    for (int j = 0; j < num_tables; j++) {
-        const int idx = ordered_tables_air[i][j];
-        const int height = vt.heights[idx];
-        ordered_uids[j] = vt.uids[idx];
-        ordered_acc_heights[j] = ordered_acc_height;
-        ordered_acc_height += height;
-    }
-    @virtual_table_data{uids: ordered_uids, acc_heights: ordered_acc_heights, num_groups: num_groups};
-
+airtemplate VirtualTable(const int N, const int tables[], const int num_tables, const int total_height, const int uids[][], const int table_ids[][], const int widths[], const int lens[], const int num_groups, const int air_idx, const int isolated) {
     // Compute the number of fixed and witness columns
     int sum_widths = 0;
     for (int i = 0; i < num_groups; i++) {
         sum_widths += widths[i];
     }
 
-    // println(`Virtual table instantiated with N: 2^${log2(N)}, #Fixed: ${num_groups + sum_widths}, #Witness: ${num_groups}`);
-
     col fixed UID[num_groups];
     col fixed column[sum_widths];
     col witness multiplicity[num_groups];
+
+    // Issue hint information
+    int flatten_uids[num_tables];
+    int acc_heights[num_tables];
+    int acc_total_height = 0;
+    const string is_isolated = (isolated == 1) ? "isolated" : "non-isolated";
+    println(`VirtualTable${air_idx} [${is_isolated}] instantiated with: N=2^${log2(N)}, #Fixed=${num_groups + sum_widths}, #Witness=${num_groups}, Total Height=${total_height}, Total Divisions=${num_groups}.`);
+    println("Table composition:");
+    for (int i = 0; i < num_tables; i++) {
+        const int idx = tables[i];
+        const int uid = vt.uids[idx];
+        const int height = vt.heights[idx];
+        const int width = vt.widths[idx];
+        flatten_uids[i] = uid;
+        acc_heights[i] = acc_total_height;
+        acc_total_height += height;
+        println(`   - Table ${uid} with height=${height} and width=${width}`);
+    }
+    @virtual_table_data{uids: flatten_uids, acc_heights: acc_heights, num_muls: num_groups};
 
     // Prove the groups
     int col_offset = 0;
@@ -382,14 +490,8 @@ airtemplate VirtualTable(const int N, const int uids[][], const int table_ids[][
     }
 
     // save the airgroup id and air id of the table for latter use
-    container proof.std.virtual_table {
-        int airgroup_ids[num_virtual_tables];
-        int air_ids[num_virtual_tables];
-    }
     proof.std.virtual_table.airgroup_ids[air_idx] = AIRGROUP_ID;
     proof.std.virtual_table.air_ids[air_idx] = AIR_ID;
-
-    on final proof issue_virtual_table_data_global();
 }
 
 private function issue_virtual_table_data_global() {

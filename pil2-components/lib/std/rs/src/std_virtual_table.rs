@@ -67,8 +67,8 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 get_hint_field_constant_a_as::<usize, F>(sctx, airgroup_id, air_id, hint_id, "uids", hint_opt.clone());
             let acc_heights =
                 get_hint_field_constant_a_as::<u64, F>(sctx, airgroup_id, air_id, hint_id, "acc_heights", hint_opt.clone());
-            let num_groups =
-                get_hint_field_constant_as::<usize, F>(sctx, airgroup_id, air_id, hint_id, "num_groups", hint_opt.clone());
+            let num_muls =
+                get_hint_field_constant_as::<usize, F>(sctx, airgroup_id, air_id, hint_id, "num_muls", hint_opt.clone());
 
             // Map each uid to an ordered set of indexes
             let num_uids = uids.len();
@@ -79,7 +79,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             }
 
             let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
-            let multiplicities = (0..num_groups as usize)
+            let multiplicities = (0..num_muls as usize)
                 .into_par_iter()
                 .map(|_| (0..num_rows).into_par_iter().map(|_| AtomicU64::new(0)).collect())
                 .collect();
@@ -90,7 +90,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 shift: num_rows.trailing_zeros() as u64,
                 mask: (num_rows - 1) as u64,
                 num_rows,
-                num_cols: num_groups as usize,
+                num_cols: num_muls as usize,
                 acc_heights,
                 multiplicities,
                 instance_id: AtomicU64::new(0),

@@ -26,14 +26,16 @@ airtemplate ComponentRC(const int N, const int t, const int opid) {
 
 airtemplate Table(const int N, const int t, const int opid) {
     col fixed A[t];
-    for (int i = 0; i < N; i++) {
-        for (int j = 0; j < t; j++) {
-            A[j][i] = (N - 1) - i;
-        }
+    for (int i = 0; i < t; i++) {
+        A[i] = [(N-1)..0...]; // [(N-1)..0];
     }
 
     col witness multiplicity;
     lookup_proves(opid, A, mul: multiplicity);
+
+    if (VIRTUAL == 1 && opid == 9) {
+        set_virtual_table_isolated(opid); // Set this table as virtually isolated
+    }
 }
 
 airtemplate TablePadded(const int N, const int opid) {
@@ -56,7 +58,7 @@ airtemplate TablePadded(const int N, const int opid) {
 
 airgroup VirtualTables {
     set_range_check_tables_virtual(); // Enable virtual tables for range checks
-    set_max_virtual_bits(16); // Set the maximum bits for virtual tables
+    set_max_virtual_bits(15); // Set the maximum bits for virtual tables
     set_max_num_virtual_tables(3); // Set the maximum number of virtual tables
 
     // Virtual tables
@@ -85,4 +87,8 @@ airgroup VirtualTables {
     // Non power-of-two virtual tables
     Component(N: 2**10, t: 3, opid: 8) alias Component8;
     virtual TablePadded(N: 48, opid: 8) alias Table8;
+
+    // Big table
+    Component(N: 2**20, t: 4, opid: 9) alias Component9;
+    virtual Table(N: 2**20, t: 4, opid: 9) alias Table9;
 }

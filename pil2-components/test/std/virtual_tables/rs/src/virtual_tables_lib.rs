@@ -10,7 +10,7 @@ use rand::{
 
 use crate::{
     Component1, Component2, Component3, Component4, Component5, Component6, /*Component7, Table7*/
-    Component8,
+    Component8, Component9
 };
 use proofman::register_std;
 
@@ -35,6 +35,7 @@ where
         // let table7 = Table7::new();
         // let component7 = Component7::new(table7.clone());
         let component8 = Component8::new(std.clone());
+        let component9 = Component9::new(std.clone());
         component1.set_seed(seed);
         component2.set_seed(seed);
         component3.set_seed(seed);
@@ -43,6 +44,7 @@ where
         component6.set_seed(seed);
         // component7.set_seed(seed);
         component8.set_seed(seed);
+        component9.set_seed(seed);
 
         wcm.register_component(component1);
         wcm.register_component(component2);
@@ -53,5 +55,6 @@ where
         // wcm.register_component(table7);
         // wcm.register_component(component7);
         wcm.register_component(component8);
+        wcm.register_component(component9);
     }
 }
