@@ -51,7 +51,7 @@ impl<F: PrimeField64> Std<F> {
         self.range_check.assign_value(id, val, multiplicity);
     }
 
-    pub fn range_checks(&self, id: usize, values: Vec<u64>) {
+    pub fn range_checks(&self, id: usize, values: Vec<u32>) {
         self.range_check.assign_values(id, values);
     }
 
@@ -59,14 +59,19 @@ impl<F: PrimeField64> Std<F> {
         self.virtual_table.inc_virtual_row(id, row, multiplicity);
     }
 
-    pub fn inc_virtual_rows(&self, id: usize, rows: Vec<u64>, multiplicities: Vec<u64>) {
+    pub fn inc_virtual_rows(&self, id: usize, rows: &[u64], multiplicities: &[u32]) {
         #[cfg(all(debug_assertions, feature = "verify-rc-values"))]
         assert_eq!(rows.len(), multiplicities.len(), "Rows and multiplicities must have the same length");
 
         self.virtual_table.inc_virtual_rows(id, rows, multiplicities);
     }
 
-    pub fn inc_virtual_rows_same_mul(&self, id: usize, rows: Vec<u64>, multiplicity: u64) {
+    pub fn inc_virtual_rows_same_mul(&self, id: usize, rows: &[u64], multiplicity: u64) {
         self.virtual_table.inc_virtual_rows_same_mul(id, rows, multiplicity);
+    }
+
+    /// Processes a range [0, N] of values and increments the virtual table rows accordingly
+    pub fn inc_virtual_rows_ranged(&self, id: usize, ranged_values: &[u64]) {
+        self.virtual_table.inc_virtual_rows_ranged(id, ranged_values);
     }
 }

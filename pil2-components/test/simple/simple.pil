@@ -3,7 +3,7 @@ require "std_lookup.pil";
 require "std_range_check.pil";
 
 set_max_u8_bits(7);
-set_max_u16_bits(15);
+set_max_u16_bits(14);
 set_max_specified_bits(6);
 
 airtemplate SimpleLeft(const int N = 2**3) {

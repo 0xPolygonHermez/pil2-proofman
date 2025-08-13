@@ -81,7 +81,7 @@ impl U16Air {
         self.multiplicities[range_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
     }
 
-    pub fn update_inputs(&self, values: Vec<u64>) {
+    pub fn update_inputs(&self, values: Vec<u32>) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
@@ -98,7 +98,7 @@ impl U16Air {
             let row_idx = value & self.mask;
 
             // Update the multiplicity
-            self.multiplicities[range_idx][row_idx].fetch_add(*multiplicity, Ordering::Relaxed);
+            self.multiplicities[range_idx][row_idx].fetch_add(*multiplicity as u64, Ordering::Relaxed);
         }
     }
 

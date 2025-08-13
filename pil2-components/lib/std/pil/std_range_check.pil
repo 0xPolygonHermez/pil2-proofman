@@ -1,6 +1,11 @@
 require "std_constants.pil";
 require "std_lookup.pil";
 
+// TODO: Integrate the division table function here
+
+// TODO: Improve specified_ranges division, so that it does not create a new multiplicity
+// for each opid, but instead fills the N up until the end
+
 /*
  * Module for performing selected range checks over expressions of any degree.
  * This module provides three independent user interfaces:
@@ -80,8 +85,8 @@ function set_max_u8_bits(const int bits) {
         println("[Warning] set_max_u8_bits() has no effect when the U8 table has been set virtual.");
     }
 
-    if (bits < 0 || bits > 8) {
-        error(`The u8 bits should be between 0 and 8, got ${bits} instead`);
+    if (bits < 1 || bits > 8) {
+        error(`The u8 bits should be between 1 and 8, got ${bits} instead`);
     }
 
     MAX_U8_BITS = bits;
@@ -92,8 +97,8 @@ function set_max_u16_bits(const int bits) {
         println("[Warning] set_max_u16_bits() has no effect when the U16 table has been set virtual.");
     }
 
-    if (bits < 0 || bits > 16) {
-        error(`The u16 bits should be between 0 and 16, got ${bits} instead`);
+    if (bits < 1 || bits > 16) {
+        error(`The u16 bits should be between 1 and 16, got ${bits} instead`);
     }
 
     MAX_U16_BITS = bits;
@@ -104,8 +109,8 @@ function set_max_specified_bits(const int bits) {
         println("[Warning] set_max_specified_bits() has no effect when the specified table has been set virtual.");
     }
 
-    if (bits < 0) {
-        error(`The specified bits should be greater than or equal to 0, got ${bits} instead`);
+    if (bits < 1) {
+        error(`The specified bits should be greater than or equal to 1, got ${bits} instead`);
     }
 
     MAX_SPECIFIED_BITS = bits;
@@ -155,33 +160,16 @@ private function get_opid(const int min, const int max, const int predefined): i
 }
 
 airtemplate U8Air(const int N = 2**8) {
-    const int range_size = P2_8;
-    const int col_num = (range_size + N - 1) / N;
-    int mins[col_num];
-    int maxs[col_num];
-    // Divide by taking a col [0,MASK_8] to n cols [0,N-1], [N,2N-1], ..., [(n-1)N,MASK_8]
-    for (int i = 0; i < col_num; i++) {
-        mins[i] = i * N;
-        maxs[i] = (i == col_num - 1) ? MASK_8 : (i + 1) * N - 1;
-    }
-
+    // Divide the range [0,MASK_8] into P2_8/N ranges [0,N-1], [N,2N-1], ..., [P2_8-N,MASK_8]
+    const int col_num = P2_8 / N;
     col fixed RANGE[col_num];
-
     col witness mul[col_num];
     for (int i = 0; i < col_num; i++) {
-        const int min = mins[i];
-        const int max = maxs[i];
+        const int min = i * N;
+        const int max = (i + 1) * N - 1;
 
-        // Sanity check
-        if (N < max - min + 1) {
-            error(`The range [min,max]=[${min},${max}] is too big, the maximum range length is ${N}`);
-        }
+        RANGE[i] = [min..max-1,max...];
 
-        if (min == max) {
-            RANGE[i] = [min...];
-        } else {
-            RANGE[i] = [min..max-1,max...];
-        }
         lookup_proves(U8AIR_OPID, [RANGE[i]], mul[i], PIOP_NAME_RANGE_CHECK);
     }
 
@@ -192,33 +180,16 @@ airtemplate U8Air(const int N = 2**8) {
 }
 
 airtemplate U16Air(const int N = 2**16) {
-    const int range_size = P2_16;
-    const int col_num = (range_size + N - 1) / N;
-    int mins[col_num];
-    int maxs[col_num];
-    // Divide by taking a col [0,MASK_16] to n cols [0,N-1], [N,2N-1], ..., [(n-1)N,MASK_16]
-    for (int i = 0; i < col_num; i++) {
-        mins[i] = i * N;
-        maxs[i] = (i == col_num - 1) ? MASK_16 : (i + 1) * N - 1;
-    }
-
+    // Divide the range [0,MASK_16] to P2_16/N ranges [0,N-1], [N,2N-1], ..., [P2_16-N,MASK_16]
+    const int col_num = P2_16 / N;
     col fixed RANGE[col_num];
-
     col witness mul[col_num];
     for (int i = 0; i < col_num; i++) {
-        const int min = mins[i];
-        const int max = maxs[i];
+        const int min = i * N;
+        const int max = (i + 1) * N - 1;
 
-        // Sanity check
-        if (N < max - min + 1) {
-            error(`The range [min,max]=[${min},${max}] is too big, the maximum range length is ${N}`);
-        }
+        RANGE[i] = [min..max-1,max...];
 
-        if (min == max) {
-            RANGE[i] = [min...];
-        } else {
-            RANGE[i] = [min..max-1,max...];
-        }
         lookup_proves(U16AIR_OPID, [RANGE[i]], mul[i], PIOP_NAME_RANGE_CHECK);
     }
 
@@ -229,55 +200,46 @@ airtemplate U16Air(const int N = 2**16) {
 }
 
 airtemplate SpecifiedRanges(const int N, const int opids[], const int opids_count, const int init_mins[], const int init_maxs[]) {
+    // Compute the number of columns needed
     int col_num = 0;
     int opids_len[opids_count];
-    int mins[ARRAY_SIZE];
-    int maxs[ARRAY_SIZE];
     int init_mins_neg[opids_count];
     for (int i = 0; i < opids_count; i++) {
+        // Divide the range [min,max] to n ranges [min,min+N-1], [min+N,min+2N-1], ..., [min+(n-1)N,max]
         const int min = init_mins[i];
-        init_mins_neg[i] = (min < 0) ? 1 : 0;
         const int max = init_maxs[i];
-
         const int range_size = max - min + 1;
         const int divisions = (range_size + N - 1) / N;
         opids_len[i] = divisions;
-        // Divide by taking a col [a,b] to n cols [a,a+N-1], [a+N,a+2N-1], ..., [a+(n-1)N,b]
-        for (int j = 0; j < divisions; j++) {
-            mins[col_num + j] = min + j * N;
-            maxs[col_num + j] = (j == divisions - 1) ? max : min + (j + 1) * N - 1;
-        }
         col_num += divisions;
+
+        // Since everything is mapped back to a field element, I need to know whether the range is negative
+        init_mins_neg[i] = (min < 0) ? 1 : 0;
     }
 
     @specified_ranges_data{col_num: col_num, mins: init_mins, mins_neg: init_mins_neg, opids_count: opids_count, opids_len: opids_len};
 
     col fixed RANGE[col_num];
-
     col witness mul[col_num];
     int offset = 0;
     for (int i = 0; i < opids_count; i++) {
         const int opid = opids[i];
-        const int opid_len = opids_len[i];
+        const int min = init_mins[i];
+        const int max = init_maxs[i];
 
+        const int opid_len = opids_len[i];
         for (int j = 0; j < opid_len; j++) {
             const int idx = offset + j;
-            const int min = mins[idx];
-            const int max = maxs[idx];
-
-            // Sanity check
-            if (N < max - min + 1) {
-                error(`The range [min,max]=[${min},${max}] is too big, the maximum range length is ${N}`);
-            }
+            const int min_part = min + j * N;
+            const int max_part = (j == opid_len - 1) ? max : min + (j + 1) * N - 1;
 
             if (min == max) {
-                RANGE[idx] = [min...];
+                RANGE[idx] = [min_part...];
             } else {
-                RANGE[idx] = [min..max-1,max...];
+                RANGE[idx] = [min_part..max_part-1,max_part...];
             }
             lookup_proves(opid, [RANGE[idx]], mul[idx], PIOP_NAME_RANGE_CHECK);
         }
-
         offset += opid_len;
     }
 
@@ -682,13 +644,7 @@ private function declare_u8_air() {
         int air_id = -1;
     }
 
-    int u8_air_n = 2**8;
-    if (MAX_U8_BITS >= 0 && MAX_U8_BITS <= 8) {
-        u8_air_n = 2**MAX_U8_BITS;
-    } else {
-        error(`The u8 bits should be between 0 and 8, got ${MAX_U8_BITS} instead`);
-    }
-
+    const int u8_air_n = 2**MAX_U8_BITS;
     if (num_u8_airgroup == 1){
         // If the U8Air is needed only once, we instantiate it in the (single) callable airgroup
         if (U8_TABLE_VIRTUAL == 1) {
@@ -728,13 +684,7 @@ private function declare_u16_air() {
         int air_id = -1;
     }
 
-    int u16_air_n = 2**16;
-    if (MAX_U16_BITS >= 0 && MAX_U16_BITS <= 16) {
-        u16_air_n = 2**MAX_U16_BITS;
-    } else {
-        error(`The u16 bits should be between 0 and 16, got ${MAX_U16_BITS} instead`);
-    }
-
+    const int u16_air_n = 2**MAX_U16_BITS;
     if (num_u16_airgroup == 1){
         // If the U16Air is needed only once, we instantiate it in the (single) callable airgroup
         if (U16_TABLE_VIRTUAL == 1) {
