@@ -573,11 +573,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         challenges_guard[index + 2] = challenge[2];
     }
 
-    pub fn get_publics(&self) -> std::sync::RwLockWriteGuard<Vec<F>> {
+    pub fn get_publics(&self) -> std::sync::RwLockWriteGuard<'_, Vec<F>> {
         self.public_inputs.values.write().unwrap()
     }
 
-    pub fn get_proof_values(&self) -> std::sync::RwLockWriteGuard<Vec<F>> {
+    pub fn get_proof_values(&self) -> std::sync::RwLockWriteGuard<'_, Vec<F>> {
         self.proof_values.values.write().unwrap()
     }
 
@@ -613,7 +613,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         guard.as_ptr() as *mut u8
     }
 
-    pub fn get_challenges(&self) -> std::sync::RwLockWriteGuard<Vec<F>> {
+    pub fn get_challenges(&self) -> std::sync::RwLockWriteGuard<'_, Vec<F>> {
         self.challenges.values.write().unwrap()
     }
 
@@ -622,7 +622,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         guard.as_ptr() as *mut u8
     }
 
-    pub fn get_global_challenge(&self) -> std::sync::RwLockWriteGuard<Vec<F>> {
+    pub fn get_global_challenge(&self) -> std::sync::RwLockWriteGuard<'_, Vec<F>> {
         self.global_challenge.values.write().unwrap()
     }
 
