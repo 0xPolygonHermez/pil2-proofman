@@ -1,8 +1,6 @@
 require "std_constants.pil";
 require "std_lookup.pil";
 
-// TODO: Integrate the division table function here
-
 // TODO: Improve specified_ranges division, so that it does not create a new multiplicity
 // for each opid, but instead fills the N up until the end
 

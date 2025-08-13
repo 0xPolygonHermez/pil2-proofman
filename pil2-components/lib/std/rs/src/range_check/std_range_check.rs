@@ -185,7 +185,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             let is_virtual = hint_data.is_virtual;
             let virtual_id = if is_virtual {
                 // Get the virtual table ID
-                virtual_table.get_id(hint_data.opid as usize)
+                virtual_table.get_global_id_from_uid(hint_data.opid as usize)
             } else {
                 0
             };
@@ -300,7 +300,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let row = U8Air::get_global_row(value as u8);
 
                     // Increment the virtual row
-                    self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_row(
+                    self.virtual_table.inc_virtual_row(
                         range_item.virtual_id,
                         row,
                         multiplicity,
@@ -317,7 +317,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let row = U16Air::get_global_row(value as u16);
 
                     // Increment the virtual row
-                    self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_row(
+                    self.virtual_table.inc_virtual_row(
                         range_item.virtual_id,
                         row,
                         multiplicity,
@@ -337,7 +337,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let rows = vec![U8Air::get_global_row(lower_value), U8Air::get_global_row(upper_value)];
 
                     // Increment the virtual row
-                    self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_rows_same_mul(
+                    self.virtual_table.inc_virtual_rows_same_mul(
                         range_item.virtual_id,
                         &rows,
                         multiplicity,
@@ -359,7 +359,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let rows = vec![U16Air::get_global_row(lower_value), U16Air::get_global_row(upper_value)];
 
                     // Increment the virtual rows
-                    self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_rows_same_mul(
+                    self.virtual_table.inc_virtual_rows_same_mul(
                         range_item.virtual_id,
                         &rows,
                         multiplicity,
@@ -376,7 +376,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let row = SpecifiedRanges::get_global_row(range_item.data.min, value);
 
                     // Increment the virtual rows
-                    self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_row(
+                    self.virtual_table.inc_virtual_row(
                         range_item.virtual_id,
                         row,
                         multiplicity,
@@ -409,7 +409,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let rows = U8Air::get_global_rows(&vals);
 
                     // Increment the virtual rows
-                    self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_rows(
+                    self.virtual_table.inc_virtual_rows(
                         range_item.virtual_id,
                         &rows,
                         &values,
@@ -427,7 +427,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let rows = U16Air::get_global_rows(&vals);
 
                     // Increment the virtual rows
-                    self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_rows(
+                    self.virtual_table.inc_virtual_rows(
                         range_item.virtual_id,
                         &rows,
                         &values,
@@ -443,7 +443,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let rows = SpecifiedRanges::get_global_rows(range_item.data.min, &vals);
 
                     // Increment the virtual rows
-                    self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_rows(
+                    self.virtual_table.inc_virtual_rows(
                         range_item.virtual_id,
                         &rows,
                         &values,
