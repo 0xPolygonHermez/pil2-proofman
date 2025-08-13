@@ -6,7 +6,6 @@ use proofman_common::{ProofCtx, SetupCtx, StdMode};
 
 use crate::{StdProd, StdRangeCheck, StdSum, StdVirtualTable};
 
-
 pub struct Std<F: PrimeField64> {
     // STD mode
     pub mode: RwLock<StdMode>,
