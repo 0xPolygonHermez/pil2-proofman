@@ -152,7 +152,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-proofman-js
-          ref: feature/new_recursion
+          ref: pre-develop-0.11.0
           path: pil2-proofman-js
 
       - name: Install pil2-proofman-js dependencies
@@ -279,7 +279,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-proofman-js
-          ref: feature/new_recursion
+          ref: pre-develop-0.11.0
           path: pil2-proofman-js
 
       - name: Install pil2-proofman-js dependencies
@@ -362,7 +362,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-proofman-js
-          ref: feature/new_recursion
+          ref: pre-develop-0.11.0
           path: pil2-proofman-js
 
       - name: Install pil2-proofman-js dependencies
@@ -418,6 +418,10 @@ jobs:
       - name: Modify Cargo.toml std one-instance
         run: |
           sed -i 's/# *"pil2-components\/test\/std\/one_instance\/rs"/"pil2-components\/test\/std\/one_instance\/rs"/' ./Cargo.toml
+
+      - name: Modify Cargo.toml std virtual-tables
+        run: |
+          sed -i 's/# *"pil2-components\/test\/std\/virtual_tables\/rs"/"pil2-components\/test\/std\/virtual_tables\/rs"/' ./Cargo.toml
 
       - name: Modify Cargo.toml std simple
         run: |
@@ -535,6 +539,22 @@ jobs:
         run: |
           cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/std/one_instance/build/one_instance.pilout --path ./pil2-components/test/std/one_instance/rs/src -o
 
+      - name: Create dir build virtual-tables
+        run: |
+          mkdir -p ./pil2-components/test/std/virtual_tables/build/
+
+      - name: Compile PIL virtual-tables
+        run: |
+          node pil2-compiler/src/pil.js ./pil2-components/test/std/virtual_tables/virtual_tables.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/virtual_tables/build/build.pilout
+
+      - name: Generate setup virtual-tables
+        run: |
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/virtual_tables/build/build.pilout -b ./pil2-components/test/std/virtual_tables/build
+
+      - name: Generate PIL Helpers virtual-tables
+        run: |
+          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/std/virtual_tables/build/build.pilout --path ./pil2-components/test/std/virtual_tables/rs/src -o
+
       - name: Create dir build simple
         run: |
           mkdir -p ./pil2-components/test/simple/build/
@@ -571,6 +591,9 @@ jobs:
 
       - name: Cargo check-setup one-instance
         run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/one_instance/build/provingKey
+
+      - name: Cargo check-setup virtual_tables
+        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/virtual_tables/build/provingKey
 
       - name: Cargo check-setup simple
         run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/simple/build/provingKey
@@ -625,6 +648,14 @@ jobs:
       - name: Generate proof one-instance
         run: |
           cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libone_instance.so --proving-key ./pil2-components/test/std/one_instance/build/provingKey --output-dir ./pil2-components/test/std/one_instance/build -y
+
+      - name: Verify constraints virtual-tables
+        run: |
+          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libvirtual_tables.so --proving-key ./pil2-components/test/std/virtual_tables/build/provingKey
+
+      - name: Generate proof virtual-tables
+        run: |
+          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libvirtual_tables.so --proving-key ./pil2-components/test/std/virtual_tables/build/provingKey --output-dir ./pil2-components/test/std/virtual_tables/build -y
 
       - name: Verify constraints simple
         run: |

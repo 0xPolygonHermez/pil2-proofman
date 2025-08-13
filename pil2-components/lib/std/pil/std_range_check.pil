@@ -1,6 +1,11 @@
 require "std_constants.pil";
 require "std_lookup.pil";
 
+// TODO: Integrate the division table function here
+
+// TODO: Improve specified_ranges division, so that it does not create a new multiplicity
+// for each opid, but instead fills the N up until the end
+
 /*
  * Module for performing selected range checks over expressions of any degree.
  * This module provides three independent user interfaces:
@@ -48,36 +53,82 @@ require "std_lookup.pil";
 
 const int MAX_RANGE_LEN = (PRIME - 1) / 2;
 
+int U8_TABLE_VIRTUAL = 0;
+int U16_TABLE_VIRTUAL = 0;
+int SPECIFIED_TABLE_VIRTUAL = 0;
+
+function set_u8_table_virtual() {
+    U8_TABLE_VIRTUAL = 1;
+}
+
+function set_u16_table_virtual() {
+    U16_TABLE_VIRTUAL = 1;
+}
+
+function set_specified_table_virtual() {
+    SPECIFIED_TABLE_VIRTUAL = 1;
+}
+
+function set_range_check_tables_virtual() {
+    set_u8_table_virtual();
+    set_u16_table_virtual();
+    set_specified_table_virtual();
+}
+
 int MAX_U8_BITS = 8;
 int MAX_U16_BITS = 16;
 int MAX_SPECIFIED_BITS = -1; // -1 indicates that the bits is specified on demand
                              // and is set to be the maximum of all specified ranges
 
 function set_max_u8_bits(const int bits) {
-    if (bits < 0 || bits > 8) {
-        error(`The u8 bits should be between 0 and 8, got ${bits} instead`);
+    if (U8_TABLE_VIRTUAL == 1) {
+        println("[Warning] set_max_u8_bits() has no effect when the U8 table has been set virtual.");
+    }
+
+    if (bits < 1 || bits > 8) {
+        error(`The u8 bits should be between 1 and 8, got ${bits} instead`);
     }
 
     MAX_U8_BITS = bits;
 }
 
 function set_max_u16_bits(const int bits) {
-    if (bits < 0 || bits > 16) {
-        error(`The u16 bits should be between 0 and 16, got ${bits} instead`);
+    if (U16_TABLE_VIRTUAL == 1) {
+        println("[Warning] set_max_u16_bits() has no effect when the U16 table has been set virtual.");
+    }
+
+    if (bits < 1 || bits > 16) {
+        error(`The u16 bits should be between 1 and 16, got ${bits} instead`);
     }
 
     MAX_U16_BITS = bits;
 }
 
 function set_max_specified_bits(const int bits) {
-    if (bits < 0) {
-        error(`The specified bits should be greater than or equal to 0, got ${bits} instead`);
+    if (SPECIFIED_TABLE_VIRTUAL == 1) {
+        println("[Warning] set_max_specified_bits() has no effect when the specified table has been set virtual.");
+    }
+
+    if (bits < 1) {
+        error(`The specified bits should be greater than or equal to 1, got ${bits} instead`);
     }
 
     MAX_SPECIFIED_BITS = bits;
 }
 
 function set_max_std_tables_bits(const int bits) {
+    if (U8_TABLE_VIRTUAL == 1) {
+        println("[Warning] set_max_std_tables_bits() has no effect on the U8 table since it has been set virtual.");
+    }
+
+    if (U16_TABLE_VIRTUAL == 1) {
+        println("[Warning] set_max_std_tables_bits() has no effect on the U16 table since it has been set virtual.");
+    }
+
+    if (SPECIFIED_TABLE_VIRTUAL == 1) {
+        println("[Warning] set_max_std_tables_bits() has no effect on the specified table since it has been set virtual.");
+    }
+
     if (bits < 0) {
         error(`The input bits should be greater than or equal to 0, got ${bits} instead`);
     }
@@ -90,7 +141,7 @@ function set_max_std_tables_bits(const int bits) {
 const int U8AIR_OPID = 100;
 const int U16AIR_OPID = 101;
 
-int last_assigned_opid = 101;
+int last_assigned_opid = U16AIR_OPID;
 private function next_available_opid(): int {
     last_assigned_opid++;
     return last_assigned_opid;
@@ -109,133 +160,92 @@ private function get_opid(const int min, const int max, const int predefined): i
 }
 
 airtemplate U8Air(const int N = 2**8) {
-    // save the airgroup id and air id of the table for latter use
-    proof.std.u8.airgroup_id = AIRGROUP_ID;
-    proof.std.u8.air_id = AIR_ID;
-
-    const int range_size = P2_8;
-    const int col_num = (range_size + N - 1) / N;
-    int mins[col_num];
-    int maxs[col_num];
-    // Divide by taking a col [0,MASK_8] to n cols [0,N-1], [N,2N-1], ..., [(n-1)N,MASK_8]
-    for (int i = 0; i < col_num; i++) {
-        mins[i] = i * N;
-        maxs[i] = (i == col_num - 1) ? MASK_8 : (i + 1) * N - 1;
-    }
-
+    // Divide the range [0,MASK_8] into P2_8/N ranges [0,N-1], [N,2N-1], ..., [P2_8-N,MASK_8]
+    const int col_num = P2_8 / N;
     col fixed RANGE[col_num];
-
     col witness mul[col_num];
     for (int i = 0; i < col_num; i++) {
-        const int min = mins[i];
-        const int max = maxs[i];
+        const int min = i * N;
+        const int max = (i + 1) * N - 1;
 
-        // Sanity check
-        if (N < max - min + 1) {
-            error(`The range [min,max]=[${min},${max}] is too big, the maximum range length is ${N}`);
-        }
+        RANGE[i] = [min..max-1,max...];
 
-        if (min == max) {
-            RANGE[i] = [min...];
-        } else {
-            RANGE[i] = [min..max-1,max...];
-        }
         lookup_proves(U8AIR_OPID, [RANGE[i]], mul[i], PIOP_NAME_RANGE_CHECK);
+    }
+
+    if (U8_TABLE_VIRTUAL == 0) {
+        proof.std.u8.airgroup_id = AIRGROUP_ID;
+        proof.std.u8.air_id = AIR_ID;
     }
 }
 
 airtemplate U16Air(const int N = 2**16) {
-    // save the airgroup id and air id of the table for latter use
-    proof.std.u16.airgroup_id = AIRGROUP_ID;
-    proof.std.u16.air_id = AIR_ID;
-
-    const int range_size = P2_16;
-    const int col_num = (range_size + N - 1) / N;
-    int mins[col_num];
-    int maxs[col_num];
-    // Divide by taking a col [0,MASK_16] to n cols [0,N-1], [N,2N-1], ..., [(n-1)N,MASK_16]
-    for (int i = 0; i < col_num; i++) {
-        mins[i] = i * N;
-        maxs[i] = (i == col_num - 1) ? MASK_16 : (i + 1) * N - 1;
-    }
-
+    // Divide the range [0,MASK_16] to P2_16/N ranges [0,N-1], [N,2N-1], ..., [P2_16-N,MASK_16]
+    const int col_num = P2_16 / N;
     col fixed RANGE[col_num];
-
     col witness mul[col_num];
     for (int i = 0; i < col_num; i++) {
-        const int min = mins[i];
-        const int max = maxs[i];
+        const int min = i * N;
+        const int max = (i + 1) * N - 1;
 
-        // Sanity check
-        if (N < max - min + 1) {
-            error(`The range [min,max]=[${min},${max}] is too big, the maximum range length is ${N}`);
-        }
+        RANGE[i] = [min..max-1,max...];
 
-        if (min == max) {
-            RANGE[i] = [min...];
-        } else {
-            RANGE[i] = [min..max-1,max...];
-        }
         lookup_proves(U16AIR_OPID, [RANGE[i]], mul[i], PIOP_NAME_RANGE_CHECK);
+    }
+
+    if (U16_TABLE_VIRTUAL == 0) {
+        proof.std.u16.airgroup_id = AIRGROUP_ID;
+        proof.std.u16.air_id = AIR_ID;
     }
 }
 
 airtemplate SpecifiedRanges(const int N, const int opids[], const int opids_count, const int init_mins[], const int init_maxs[]) {
-    // save relevant information for global hints
-    proof.std.specified.airgroup_id = AIRGROUP_ID;
-    proof.std.specified.air_id = AIR_ID;
-    proof.std.specified.opids_count = opids_count;
-
+    // Compute the number of columns needed
     int col_num = 0;
     int opids_len[opids_count];
-    int mins[ARRAY_SIZE];
-    int maxs[ARRAY_SIZE];
     int init_mins_neg[opids_count];
     for (int i = 0; i < opids_count; i++) {
+        // Divide the range [min,max] to n ranges [min,min+N-1], [min+N,min+2N-1], ..., [min+(n-1)N,max]
         const int min = init_mins[i];
-        init_mins_neg[i] = (min < 0) ? 1 : 0;
         const int max = init_maxs[i];
-
         const int range_size = max - min + 1;
         const int divisions = (range_size + N - 1) / N;
         opids_len[i] = divisions;
-        // Divide by taking a col [a,b] to n cols [a,a+N-1], [a+N,a+2N-1], ..., [a+(n-1)N,b]
-        for (int j = 0; j < divisions; j++) {
-            mins[col_num + j] = min + j * N;
-            maxs[col_num + j] = (j == divisions - 1) ? max : min + (j + 1) * N - 1;
-        }
         col_num += divisions;
+
+        // Since everything is mapped back to a field element, I need to know whether the range is negative
+        init_mins_neg[i] = (min < 0) ? 1 : 0;
     }
 
     @specified_ranges_data{col_num: col_num, mins: init_mins, mins_neg: init_mins_neg, opids_count: opids_count, opids_len: opids_len};
 
     col fixed RANGE[col_num];
-
     col witness mul[col_num];
     int offset = 0;
     for (int i = 0; i < opids_count; i++) {
         const int opid = opids[i];
-        const int opid_len = opids_len[i];
+        const int min = init_mins[i];
+        const int max = init_maxs[i];
 
+        const int opid_len = opids_len[i];
         for (int j = 0; j < opid_len; j++) {
             const int idx = offset + j;
-            const int min = mins[idx];
-            const int max = maxs[idx];
-
-            // Sanity check
-            if (N < max - min + 1) {
-                error(`The range [min,max]=[${min},${max}] is too big, the maximum range length is ${N}`);
-            }
+            const int min_part = min + j * N;
+            const int max_part = (j == opid_len - 1) ? max : min + (j + 1) * N - 1;
 
             if (min == max) {
-                RANGE[idx] = [min...];
+                RANGE[idx] = [min_part...];
             } else {
-                RANGE[idx] = [min..max-1,max...];
+                RANGE[idx] = [min_part..max_part-1,max_part...];
             }
             lookup_proves(opid, [RANGE[idx]], mul[idx], PIOP_NAME_RANGE_CHECK);
         }
-
         offset += opid_len;
+    }
+
+    if (SPECIFIED_TABLE_VIRTUAL == 0) {
+        proof.std.specified.airgroup_id = AIRGROUP_ID;
+        proof.std.specified.air_id = AIR_ID;
     }
 }
 
@@ -256,10 +266,10 @@ airtemplate SpecifiedRanges(const int N, const int opids[], const int opids_coun
 function range_check(const expr expression, const int min, const int max, const expr sel = 1, const int predefined = 0) {
     range_validator(min, max);
 
-    const int opid = opid_process(min, max, predefined);
-
     // Check if the range can be absorbed into the predefined ranges
     const int absorb = predefined && min >= 0 && max <= MASK_16;
+
+    const int opid = opid_process(min, max, predefined, absorb);
 
     if (predefined && !absorb) {
         println(`The range [${min},${max}] cannot be absorbed into any predefined range. The range will be treated as a specified range.`);
@@ -275,7 +285,7 @@ function range_check(const expr expression, const int min, const int max, const 
 
             @range_def{opid: opid, predefined: predefined, min: min, max: max, 
                        min_neg: 0, max_neg: 0, 
-                       type: is_u8 ? "U8" : "U16"}; 
+                       type: is_u8 ? "U8" : "U16", is_virtual: is_u8 ? U8_TABLE_VIRTUAL : U16_TABLE_VIRTUAL}; 
 
             airgroup.std.rc.u8_used = airgroup.std.rc.u8_used || is_u8;
             airgroup.std.rc.u16_used = airgroup.std.rc.u16_used || !is_u8;
@@ -286,7 +296,7 @@ function range_check(const expr expression, const int min, const int max, const 
 
             @range_def{opid: opid, predefined: predefined, min: min, max: max, 
                        min_neg: 0, max_neg: 0, 
-                       type: is_u8 ? "U8Double" : "U16Double"}; 
+                       type: is_u8 ? "U8Double" : "U16Double", is_virtual: is_u8 ? U8_TABLE_VIRTUAL : U16_TABLE_VIRTUAL}; 
 
             airgroup.std.rc.u8_used = airgroup.std.rc.u8_used || is_u8;
             airgroup.std.rc.u16_used = airgroup.std.rc.u16_used || !is_u8;
@@ -298,7 +308,7 @@ function range_check(const expr expression, const int min, const int max, const 
     } else {
         @range_def{opid: opid, predefined: predefined, min: min, max: max, 
                    min_neg: (min < 0), max_neg: (max < 0), 
-                   type: "Specified"};
+                   type: "Specified", is_virtual: SPECIFIED_TABLE_VIRTUAL};
 
         lookup_assumes(opid, [expression], sel, PIOP_NAME_RANGE_CHECK);
     }
@@ -367,15 +377,15 @@ function multi_range_check(const expr expression, const int min1, const int max1
     range_validator(min1, max1);
     range_validator(min2, max2);
 
-    const int opid1 = opid_process(min1, max1, predefined);
-    const int opid2 = opid_process(min2, max2, predefined);
+    const int opid1 = opid_process(min1, max1, predefined, absorb: 0);
+    const int opid2 = opid_process(min2, max2, predefined, absorb: 0);
 
     @range_def{opid: opid1, predefined: predefined, min: min1, max: max1, 
                min_neg: (min1 < 0), max_neg: (max1 < 0), 
-               type: "Specified"};
+               type: "Specified", is_virtual: SPECIFIED_TABLE_VIRTUAL};
     @range_def{opid: opid2, predefined: predefined, min: min2, max: max2, 
                min_neg: (min2 < 0), max_neg: (max2 < 0), 
-               type: "Specified"};
+               type: "Specified", is_virtual: SPECIFIED_TABLE_VIRTUAL};
 
     // Define the assume
     lookup_assumes_dynamic([opid1, opid2], range_sel*(opid1-opid2) + opid2, [expression], sel, PIOP_NAME_RANGE_CHECK);
@@ -415,11 +425,11 @@ function range_check_id(const int min, const int max, const int predefined = 0):
         int called = 0;
     }
 
-    const int opid = opid_process(min, max, predefined);
+    const int opid = opid_process(min, max, predefined, absorb: 0);
 
     @range_def{opid: opid, predefined: predefined, min: min, max: max, 
                min_neg: (min < 0), max_neg: (max < 0), 
-               type: "Specified"};
+               type: "Specified", is_virtual: SPECIFIED_TABLE_VIRTUAL};
 
     // Save the opid for use in the dynamic range check
     rcid.opids_id[rcid.opids_count_id] = opid;
@@ -484,33 +494,9 @@ private function range_validator(const int min, const int max) {
     } else if (min <= -PRIME) {
         error(`The minimum value of the range cannot be less than the negative field order ${-PRIME}`);
     }
-
-    // Save the range for stats
-    container proof.std.rc.stats alias rcstats {
-        int mins[ARRAY_SIZE];
-        int maxs[ARRAY_SIZE];
-        int reps[ARRAY_SIZE];
-        int count = 0;
-    }
-
-    // If the range has already been introduced, we increment the repetitions
-    for (int i = 0; i < rcstats.count; i++) {
-        if (rcstats.mins[i] == min && rcstats.maxs[i] == max) {
-            rcstats.reps[i]++;
-            return;
-        }
-    }
-
-    // Otherwise, we save the range
-    rcstats.mins[rcstats.count] = min;
-    rcstats.maxs[rcstats.count] = max;
-    rcstats.reps[rcstats.count] = 1;
-    rcstats.count++;
-
-    on final proof print_range_stats();
 }
 
-private function opid_process(const int min, const int max, const int predefined): int {
+private function opid_process(const int min, const int max, const int predefined, const int absorb): int {
     container proof.std.rc alias rcproof {
         // Number of times U8, U16 and specified ranges air are used
         int num_u8_airgroup = 0;
@@ -523,13 +509,20 @@ private function opid_process(const int min, const int max, const int predefined
         int max_spec_airgroup_id = 0;
 
         // Specified ranges data
-        // FIX: dynamic arrays not ready
-        int opids_count = 0;
+        int spec_N = 1;
+        int spec_opids[ARRAY_SIZE];
+        int spec_mins[ARRAY_SIZE];
+        int spec_maxs[ARRAY_SIZE];
+        int spec_opids_count = 0;
+
+        // Ranges data
         int opids[ARRAY_SIZE];
-        int predefineds[ARRAY_SIZE];
+        int predefined[ARRAY_SIZE];
+        int absorbed[ARRAY_SIZE];
         int mins[ARRAY_SIZE];
         int maxs[ARRAY_SIZE];
-        int specified_N = 0;
+        int reps[ARRAY_SIZE];
+        int opids_count = 0;
 
         // Global hints data
         int air_count = 0;
@@ -559,34 +552,47 @@ private function opid_process(const int min, const int max, const int predefined
     }
 
     // Generate global hints
-    on final proof rc_issue_global_hints(); 
+    on final proof issue_rc_users_global(); 
+    on final proof print_range_stats();
 
-    // If the range has already been introduced, we reuse the same opid
     for (int i = 0; i < rcproof.opids_count; i++) {
-        if (predefined == rcproof.predefineds[i] && min == rcproof.mins[i] && max == rcproof.maxs[i]) {
-            return rcproof.opids[i];
+        if (min == rcproof.mins[i] && max == rcproof.maxs[i]) {
+            if ((predefined == rcproof.predefined[i]) || (absorb == rcproof.absorbed[i])) {
+                // If the range has already been introduced, increment the repetitions
+                // and return the same opid
+                rcproof.reps[i]++;
+                return rcproof.opids[i];
+            }
         }
     }
 
     // Otherwise, we get the corresponding opid
     const int opid = get_opid(min, max, predefined);
 
+    // Save range data
+    rcproof.opids[rcproof.opids_count] = opid;
+    rcproof.predefined[rcproof.opids_count] = predefined;
+    rcproof.absorbed[rcproof.opids_count] = absorb;
+    rcproof.mins[rcproof.opids_count] = min;
+    rcproof.maxs[rcproof.opids_count] = max;
+    rcproof.reps[rcproof.opids_count] = 1;
+    rcproof.opids_count++;
+
     // Exit if the range does not belong to the specified ranges air
     if (opid == U8AIR_OPID || opid == U16AIR_OPID) {
         return opid;
     }
 
-    // Save range data for later use in the specified ranges air
-    rcproof.predefineds[rcproof.opids_count] = predefined;
-    rcproof.mins[rcproof.opids_count] = min;
-    rcproof.maxs[rcproof.opids_count] = max;
-    rcproof.opids[rcproof.opids_count] = opid;
-    rcproof.opids_count++;
+    // Save specified ranges data
+    rcproof.spec_opids[rcproof.spec_opids_count] = opid;
+    rcproof.spec_mins[rcproof.spec_opids_count] = min;
+    rcproof.spec_maxs[rcproof.spec_opids_count] = max;
+    rcproof.spec_opids_count++;
 
-    // If the range is bigger than the current specified_N, we update it
+    // If the range is bigger than the current spec_N, we update it
     const int range_size = max - min + 1;
-    if (range_size > rcproof.specified_N) {
-        rcproof.specified_N = range_size;
+    if (range_size > rcproof.spec_N) {
+        rcproof.spec_N = range_size;
     }
 
     return opid;
@@ -599,6 +605,8 @@ private function define_proves(const int absorb) {
             if (proof.std.rc.max_u8_airgroup_id < AIRGROUP_ID) {
                 proof.std.rc.max_u8_airgroup_id = AIRGROUP_ID;
             }
+
+            on final(2) airgroup declare_u8_air();
         }
 
         // If the U16 was used, update the max airgroup id
@@ -606,96 +614,100 @@ private function define_proves(const int absorb) {
             if (proof.std.rc.max_u16_airgroup_id < AIRGROUP_ID) {
                 proof.std.rc.max_u16_airgroup_id = AIRGROUP_ID;
             }
-        }
 
-        on final airgroup declare_predefined_airs();
-        on final proof create_predefined_metadata();
+            on final(2) airgroup declare_u16_air();
+        }
     } else {
         // If the specified range is used, update the max airgroup id
         if (proof.std.rc.max_spec_airgroup_id < AIRGROUP_ID) {
             proof.std.rc.max_spec_airgroup_id = AIRGROUP_ID;
         }
 
-        on final airgroup declare_specified_air();
-        on final proof create_specified_metadata();
+        on final(2) airgroup declare_specified_air();
     }
 }
 
-private function declare_predefined_airs() {
+private function declare_u8_air() {
     use proof.std.rc;
 
-    // If the U8 was used in the airgroup, update the number of U8 airgroups
-    if (airgroup.std.rc.u8_used) {
-        num_u8_airgroup++;
-    }
+    // Update the number of U8 airgroups
+    num_u8_airgroup++;
 
-    // If the U16 was used in the airgroup, update the number of U16 airgroups
-    if (airgroup.std.rc.u16_used) {
-        num_u16_airgroup++;
-    }
-
-    // The U8 and U16 airs are only needed once, so we wait for the last airgroup that uses them
-    if (AIRGROUP_ID != max_u8_airgroup_id && AIRGROUP_ID != max_u16_airgroup_id) {
+    // The U8 air is only needed once, so we wait for the last airgroup that uses it
+    if (AIRGROUP_ID != max_u8_airgroup_id) {
         return;
     }
 
-    if (AIRGROUP_ID == max_u8_airgroup_id && num_u8_airgroup > 0) {
-        // container used to store the airgroup id and air id of the table
-        container proof.std.u8 {
-            int airgroup_id = 0;
-            int air_id = 0;
-        }
+    // save the airgroup id and air id of the table for latter use
+    container proof.std.u8 {
+        int airgroup_id = -1;
+        int air_id = -1;
+    }
 
-        int u8_air_n = 2**8;
-        if (MAX_U8_BITS >= 0 && MAX_U8_BITS <= 8) {
-            u8_air_n = 2**MAX_U8_BITS;
+    const int u8_air_n = 2**MAX_U8_BITS;
+    if (num_u8_airgroup == 1){
+        // If the U8Air is needed only once, we instantiate it in the (single) callable airgroup
+        if (U8_TABLE_VIRTUAL == 1) {
+            virtual U8Air(N: u8_air_n);
         } else {
-            error(`The u8 bits should be between 0 and 8, got ${MAX_U8_BITS} instead`);
-        }
-
-        if (num_u8_airgroup == 1){
-            // If the U8Air is needed only once, we instantiate it in the (single) callable airgroup
             U8Air(N: u8_air_n);
-        } else {
-            // If the U8Air is needed more than once, we instantiate it in its own airgroup
-            airgroup U8Air {
+        }
+    } else {
+        // TODO: Discuss if this makes sense
+        // If the U8Air is needed more than once, we instantiate it in its own airgroup
+        airgroup U8Air {
+            if (U8_TABLE_VIRTUAL == 1) {
+                virtual U8Air(N: u8_air_n);
+            } else {
                 U8Air(N: u8_air_n);
             }
         }
     }
 
-    if (AIRGROUP_ID == max_u16_airgroup_id && num_u16_airgroup > 0) {
-        container proof.std.u16 {
-            int airgroup_id = 0;
-            int air_id = 0;
-        }
+    on final proof issue_u8_data_global();
+}
 
-        int u16_air_n = 2**16;
-        if (MAX_U16_BITS >= 0 && MAX_U16_BITS <= 16) {
-            u16_air_n = 2**MAX_U16_BITS;
-        } else {
-            error(`The u16 bits should be between 0 and 16, got ${MAX_U16_BITS} instead`);
-        }
+private function declare_u16_air() {
+    use proof.std.rc;
 
-        if (num_u16_airgroup == 1){
-            // If the U16Air is needed only once, we instantiate it in the (single) callable airgroup
+    // Uupdate the number of U16 airgroups
+    num_u16_airgroup++;
+
+    // The U16 air is only needed once, so we wait for the last airgroup that uses it
+    if (AIRGROUP_ID != max_u16_airgroup_id) {
+        return;
+    }
+
+    // save the airgroup id and air id of the table for latter use
+    container proof.std.u16 {
+        int airgroup_id = -1;
+        int air_id = -1;
+    }
+
+    const int u16_air_n = 2**MAX_U16_BITS;
+    if (num_u16_airgroup == 1){
+        // If the U16Air is needed only once, we instantiate it in the (single) callable airgroup
+        if (U16_TABLE_VIRTUAL == 1) {
+            virtual U16Air(N: u16_air_n);
+        }
+        else {
             U16Air(N: u16_air_n);
-        } else {
-            // If the U16Air is needed more than once, we instantiate it in its own airgroup
-            airgroup U16Air {
+        }
+    } else {
+        // If the U16Air is needed more than once, we instantiate it in its own airgroup
+        airgroup U16Air {
+            if (U16_TABLE_VIRTUAL == 1) {
+                virtual U16Air(N: u16_air_n);
+            } else {
                 U16Air(N: u16_air_n);
             }
         }
     }
+
+    on final proof issue_u16_data_global();
 }
 
 private function declare_specified_air() {
-    container proof.std.specified {
-        int airgroup_id = 0;
-        int air_id = 0;
-        int opids_count = 0;
-    }
-
     use proof.std.rc;
 
     // Update the number of specified ranges airgroups
@@ -706,11 +718,17 @@ private function declare_specified_air() {
         return;
     }
 
+    // save relevant information for global hints
+    container proof.std.specified {
+        int airgroup_id = -1;
+        int air_id = -1;
+    }
+
     // Compute the smallest power of 2 that is greater than or equal to the maximum range length
     int next_pow2 = 1;
     if (MAX_SPECIFIED_BITS == -1) {
-        next_pow2 = 2**(log2(specified_N));
-        if (next_pow2 < specified_N) {
+        next_pow2 = 2**(log2(spec_N));
+        if (next_pow2 < spec_N) {
             next_pow2 *= 2;
         }
     } else if (MAX_SPECIFIED_BITS > -1) {
@@ -721,39 +739,54 @@ private function declare_specified_air() {
 
     if (num_spec_airgroup == 1) {
         // If the SpecifiedRanges is needed only once, we instantiate it in the (single) callable airgroup
-        SpecifiedRanges(next_pow2, opids, opids_count, mins, maxs);
+        if (SPECIFIED_TABLE_VIRTUAL == 1) {
+            virtual SpecifiedRanges(next_pow2, spec_opids, spec_opids_count, spec_mins, spec_maxs);
+        }
+        else {
+            SpecifiedRanges(next_pow2, spec_opids, spec_opids_count, spec_mins, spec_maxs);
+        }
     } else {
         // If the SpecifiedRanges is needed more than once, we instantiate it in its own airgroup
         airgroup SpecifiedRanges {
-            SpecifiedRanges(next_pow2, opids, opids_count, mins, maxs);
+            if (SPECIFIED_TABLE_VIRTUAL == 1) {
+                virtual SpecifiedRanges(next_pow2, spec_opids, spec_opids_count, spec_mins, spec_maxs);
+            }
+            else {
+                SpecifiedRanges(next_pow2, spec_opids, spec_opids_count, spec_mins, spec_maxs);
+            }
         }
     }
+
+    on final proof issue_specified_data_global();
 }
 
-private function create_predefined_metadata() {
-    if (proof.std.rc.num_u8_airgroup > 0) {
-        @u8air{airgroup_id: proof.std.u8.airgroup_id, air_id: proof.std.u8.air_id};
-    }
-
-    if (proof.std.rc.num_u16_airgroup > 0) {
-        @u16air{airgroup_id: proof.std.u16.airgroup_id, air_id: proof.std.u16.air_id};
-    }
+private function issue_u8_data_global() {
+    use proof.std.u8;
+    @u8air{airgroup_id: airgroup_id, air_id: air_id};
 }
 
-private function create_specified_metadata() {
-    @specified_ranges{airgroup_id: proof.std.specified.airgroup_id, air_id: proof.std.specified.air_id, opids_count: proof.std.specified.opids_count};
+private function issue_u16_data_global() {
+    use proof.std.u16;
+    @u16air{airgroup_id: airgroup_id, air_id: air_id};
 }
 
-private function rc_issue_global_hints() {
+private function issue_specified_data_global() {
+    use proof.std.specified;
+    @specified_ranges{airgroup_id: airgroup_id, air_id: air_id};
+}
+
+private function issue_rc_users_global() {
     use proof.std.rc;
-    @std_rc_users{num_users: air_count, airgroup_ids: airgroup_ids, air_ids: air_ids};
+    @std_rc_users{num_users: air_count, airgroup_ids: airgroup_ids, air_ids: air_ids, opids_count: opids_count, spec_opids_count: spec_opids_count};
 }
 
 private function print_range_stats() {
-    use proof.std.rc.stats;
+    use proof.std.rc;
 
     println("Range check stats:");
-    for (int i = 0; i < count; i++) {
-        println(` - [${mins[i]},${maxs[i]}]: ${reps[i]} times`);
+    for (int i = 0; i < opids_count; i++) {
+        const int num_reps = reps[i];
+        const string num_reps_str = (num_reps == 1) ? "time" : "times";
+        println(` - [${mins[i]}, ${maxs[i]}]: ${num_reps} ${num_reps_str}`);
     }
 }

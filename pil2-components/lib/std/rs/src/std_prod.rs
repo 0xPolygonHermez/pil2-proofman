@@ -105,7 +105,7 @@ impl<F: PrimeField64> StdProd<F> {
                 HintFieldOptions::default(),
             );
 
-            let proves = get_hint_field(sctx, pctx, instance_id, hint as usize, "proves", HintFieldOptions::default());
+            let _type = get_hint_field(sctx, pctx, instance_id, hint as usize, "type", HintFieldOptions::default());
 
             let sel = get_hint_field(sctx, pctx, instance_id, hint as usize, "selector", HintFieldOptions::default());
 
@@ -139,7 +139,7 @@ impl<F: PrimeField64> StdProd<F> {
                     air_id,
                     air_instance_id,
                     opid,
-                    &proves,
+                    &_type,
                     &sel,
                     &expressions,
                     0,
@@ -159,7 +159,7 @@ impl<F: PrimeField64> StdProd<F> {
                         air_id,
                         air_instance_id,
                         opid,
-                        &proves,
+                        &_type,
                         &sel,
                         &expressions,
                         j,
@@ -179,7 +179,7 @@ impl<F: PrimeField64> StdProd<F> {
                 air_id: usize,
                 air_instance_id: usize,
                 opid: F,
-                proves: &HintFieldValue<F>,
+                _type: &HintFieldValue<F>,
                 sel: &HintFieldValue<F>,
                 expressions: &HintFieldValuesVec<F>,
                 row: usize,
@@ -193,7 +193,7 @@ impl<F: PrimeField64> StdProd<F> {
                     return;
                 }
 
-                let proves = match get_row_field_value(proves, row, "proves") {
+                let _type = match get_row_field_value(_type, row, "type") {
                     p if p.is_zero() || p == F::NEG_ONE => {
                         // If it's an "assume", negate its value
                         if p == F::NEG_ONE {
@@ -202,11 +202,11 @@ impl<F: PrimeField64> StdProd<F> {
                         false
                     }
                     p if p.is_one() => true,
-                    _ => panic!("Proves hint must be either 0, 1, or -1"),
+                    _ => panic!("Type hint must be either 0, 1, or -1"),
                 };
 
                 if fast_mode {
-                    update_debug_data_fast(debug_data_fast, opid, expressions.get(row), proves, sel, is_global);
+                    update_debug_data_fast(debug_data_fast, opid, expressions.get(row), _type, sel, is_global);
                 } else {
                     update_debug_data(
                         debug_data,
@@ -218,7 +218,7 @@ impl<F: PrimeField64> StdProd<F> {
                         air_id,
                         air_instance_id,
                         row,
-                        proves,
+                        _type,
                         sel,
                         is_global,
                     );

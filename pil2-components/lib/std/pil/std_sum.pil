@@ -7,6 +7,10 @@ const int SUM_TYPE_ASSUMES = 0;
 const int SUM_TYPE_PROVES = 1;
 const int SUM_TYPE_FREE = 2;
 
+const int SUM_UPDATE_TYPE_LOCAL_DEFAULT = 0;
+const int SUM_UPDATE_TYPE_LOCAL_AIRVAL = 1;
+const int SUM_UPDATE_TYPE_GLOBAL = 2;
+
 // Control how the expressions are grouped
 int SUM_EXPRESSIONS_IM_NON_REDUCED = 0; // Set to -1 to non-reduce all the terms
 
@@ -38,40 +42,39 @@ function sum_set_airvals_im_reduce_factor(const int factor) {
     SUM_AIRVALS_IM_REDUCE_FACTOR = factor;
 }
 
-function sum(const int name, const int type, const int opids[], const expr busid, const expr expressions[], const expr mul = 1, const int direct_type = PIOP_DIRECT_TYPE_DEFAULT) {
+function sum(const int name = PIOP_NAME_DEFAULT, const int surname = PIOP_SURNAME_DEFAULT, const int type, const int opids[], const expr busid, const expr expressions[], const expr mul = 1, const int update_type = SUM_UPDATE_TYPE_LOCAL_DEFAULT) {
+    if (VIRTUAL == 1) {
+        error("Cannot use the sum bus in a virtual table context.");
+    }
+
     assert(type == SUM_TYPE_ASSUMES || type == SUM_TYPE_PROVES || type == SUM_TYPE_FREE);
-    update_piop_sum(name, type, opids, busid, mul, expressions, direct_type);
-}
-
-function sum_assumes(const int name, const int opids[], const expr busid, const expr expressions[], const expr sel = 1, const int direct_type = PIOP_DIRECT_TYPE_DEFAULT) {
-    sum(name, 0, opids, busid, expressions, sel, direct_type);
-}
-
-function sum_proves(const int name, const int opids[], const expr busid, const expr expressions[], const expr mul = 1, const int direct_type = PIOP_DIRECT_TYPE_DEFAULT) {
-    sum(name, 1, opids, busid, expressions, mul, direct_type);
+    assert(update_type == SUM_UPDATE_TYPE_LOCAL_DEFAULT || update_type == SUM_UPDATE_TYPE_LOCAL_AIRVAL || update_type == SUM_UPDATE_TYPE_GLOBAL);
+    update_piop_sum(name, surname, type, opids, busid, mul, expressions, update_type);
 }
 
 /**
  * It updates the sum check constraints.
  *
  * @param name        The name of the PIOP consuming the sum check
+ * @param surname     The surname of the PIOP consuming the sum check
  * @param type        The type of the PIOP
  * @param opids       The vector of opids of the PIOP
  * @param busid       The ID that uniquely identifies the PIOP in the bus
  * @param sel         The selector of the PIOP
  * @param expressions The vector of expressions of the PIOP
- * @param direct_type Defines wheter the update has to be done at the global, air or default level
+ * @param update_type Defines wheter the update has to be done at the air cols, air vals or global vals
  */
-private function update_piop_sum(const int name, const int type, const int opids[], const expr busid, const expr sel, const expr expressions[], const int direct_type = PIOP_DIRECT_TYPE_DEFAULT) {
+private function update_piop_sum(const int name, const int surname, const int type, const int opids[], const expr busid, const expr sel, const expr expressions[], const int update_type) {
     const string name_str = get_piop_name(name);
+    const string surname_str = get_piop_surname(surname);
     const int exprs_num = length(expressions);
     if (exprs_num < 1) {
-        error(`The number of expressions of ${name_str} #${opids} must be at least 1`);
+        error(`The number of expressions of ${name_str} ${surname_str} #${opids} must be at least 1`);
     }
 
-    init_proof_containers_sum(name, opids);
+    init_proof_containers_sum(name, surname, opids);
 
-    if (direct_type == PIOP_DIRECT_TYPE_AIR || direct_type == PIOP_DIRECT_TYPE_DEFAULT) {
+    if (update_type == SUM_UPDATE_TYPE_LOCAL_DEFAULT || update_type == SUM_UPDATE_TYPE_LOCAL_AIRVAL) {
         init_air_containers_sum();
     }
 
@@ -90,23 +93,23 @@ private function update_piop_sum(const int name, const int type, const int opids
     } else {
         type_hint = type;
     }
-    @gsum_debug_data{name_piop: get_piop_name(name), name_expr: name_expr, busid: busid, is_global: direct_type == PIOP_DIRECT_TYPE_GLOBAL,
+    @gsum_debug_data{name_piop: name_str, name_expr: name_expr, busid: busid, is_global: update_type == SUM_UPDATE_TYPE_GLOBAL,
                           type: type_hint, selector: sel, expressions: expressions, deg_expr: degree(sum_expr), deg_sel: degree(sel)};
 
-    initial_checks_sum(name_str, type, opids, exprs_num, direct_type);
+    initial_checks_sum(name, surname, type, opids, exprs_num);
 
     // selected vector to simple expression reduction
     expr exprs_compressed = compress_exprs(busid, expressions);
 
-    switch (direct_type) {
-        case PIOP_DIRECT_TYPE_GLOBAL:
+    switch (update_type) {
+        case SUM_UPDATE_TYPE_GLOBAL:
             if (STD_MODE == STD_MODE_ONE_INSTANCE) {
                 error("Updating the global constraint is not allowed in one instance mode");
             }
 
             gsum_update_global_constraint_data(type, sel, exprs_compressed);
-        case PIOP_DIRECT_TYPE_AIR, PIOP_DIRECT_TYPE_DEFAULT:
-            gsum_update_air_constraint_data(type, sel, exprs_compressed, direct_type);
+        case SUM_UPDATE_TYPE_LOCAL_DEFAULT, SUM_UPDATE_TYPE_LOCAL_AIRVAL:
+            gsum_update_air_constraint_data(type, sel, exprs_compressed, update_type);
 
             // Update constraints at the air level
             on final air piop_gsum_air();
@@ -116,7 +119,7 @@ private function update_piop_sum(const int name, const int type, const int opids
                 on final airgroup piop_gsum_airgroup();
             }
         default:
-            error(`Invalid direct_type: ${direct_type}`);
+            error(`Invalid update type: ${update_type}`);
     }
 
     // Update the constraints at the proof level
@@ -131,7 +134,7 @@ private function update_piop_sum(const int name, const int type, const int opids
     on final proof piop_gsum_issue_global_hints(); 
 }
 
-private function init_proof_containers_sum(const int name, const int opids[]) {
+private function init_proof_containers_sum(const int name, const int surname, const int opids[]) {
     container proof.std.gsum {
         // Used for final checks
         int opids_count = 0;
@@ -159,6 +162,7 @@ private function init_proof_containers_sum(const int name, const int opids[]) {
     for (int i = 0; i < length(opids); i++) {
         container proof.std.gsum.`id${opids[i]}` {
             int name = name;
+            int surname = surname;
             int expressions;
             int proves = 0;
             int assumes = 0;
@@ -180,20 +184,22 @@ private function init_air_containers_sum() {
     }
 }
 
-private function initial_checks_sum(const string name, const int type, const int opids[], const int exprs_num, const int direct_type) {
+private function initial_checks_sum(const int name, const int surname, const int type, const int opids[], const int exprs_num) {
     for (int i = 0; i < length(opids); i++) {
-        // Assumes and proves of the same opid must have the same number of expressions
+        // First time we see an opid
         if (proof.std.gsum.`id${opids[i]}`.expressions == 0) {
-            // The first time we see this opid, we store the number of expressions
+            // Store the number of expressions
             proof.std.gsum.`id${opids[i]}`.expressions = exprs_num;
 
-            // Store the opid to check at the end that all the opids have been completed
+            // Store the opid
             proof.std.gsum.opids[proof.std.gsum.opids_count] = opids[i];
             proof.std.gsum.opids_count++;
-        } else if (exprs_num != proof.std.gsum.`id${opids[i]}`.expressions) {
+        } else if ((surname != PIOP_SURNAME_DYNAMIC) && (exprs_num != proof.std.gsum.`id${opids[i]}`.expressions)) {
             // If this is not the first time we see this opid, we check that the number of expressions is the same
+            const string name = get_piop_name(name);
+            const string surname = get_piop_surname(surname);
             const int expected_exprs = proof.std.gsum.`id${opids[i]}`.expressions;
-            error(`The number of expressions of ${name} #${opids[i]} must be ${expected_exprs} but was ${exprs_num}`);
+            error(`The number of expressions of ${name} ${surname} #${opids[i]} must be ${expected_exprs} but was ${exprs_num}`);
         }
 
         // The same opid can appear in different airs, so we keep track of the number of proves and assumes
@@ -227,10 +233,10 @@ private function gsum_update_global_constraint_data(const int type, const expr s
     direct_gsum_nargs++;
 }
 
-private function gsum_update_air_constraint_data(const int type, const expr sel, const expr exprs, const int direct_type) {
+private function gsum_update_air_constraint_data(const int type, const expr sel, const expr exprs, const int update_type) {
     use air.std.gsum;
 
-    if (direct_type == PIOP_DIRECT_TYPE_AIR) {
+    if (update_type == SUM_UPDATE_TYPE_LOCAL_AIRVAL) {
         if ((type == SUM_TYPE_PROVES) || (type == SUM_TYPE_FREE)) {
             direct_gsum_s[direct_gsum_nargs] = sel;
         } else {
@@ -608,15 +614,16 @@ private function check_opids_were_completed_sum() {
         use proof.std.gsum.`id${opid}`;
 
         // If the PIOP is isolated, avoid any check
-        if (name == PIOP_NAME_ISOLATED) continue;
+        if (surname == PIOP_SURNAME_ISOLATED) continue;
 
         const string name_str = get_piop_name(name);
+        const string surname_str = get_piop_surname(surname);
 
-        // At least one assume and one prove must be defined
+        // At least one assume and one prove must has been defined
         if (assumes == 0) {
-            error(`${name_str} #${opid} defined without assume`);
+            error(`${name_str} ${surname_str} #${opid} defined without assume`);
         } else if (proves == 0) {
-            error(`${name_str} #${opid} defined without proves`);
+            error(`${name_str} ${surname_str} #${opid} defined without proves`);
         }
     }
 }

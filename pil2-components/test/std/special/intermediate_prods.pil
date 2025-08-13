@@ -34,7 +34,7 @@ airtemplate ImDummy(const int N = 2**8, const int deg_sel_a, const int deg_expr_
 
         // Perform the assumes
         for (int i = 0; i < M_a; i++) {
-            prod_assumes(PIOP_NAME_ISOLATED, 0, [ASSUMES[i]], SEL_A[i])
+            prod(surname: PIOP_SURNAME_ISOLATED, type: PROD_TYPE_ASSUMES, opid: 0, expressions: [ASSUMES[i]], sel: SEL_A[i])
         }
     }
 
@@ -49,7 +49,7 @@ airtemplate ImDummy(const int N = 2**8, const int deg_sel_a, const int deg_expr_
 
         // Perform the proves
         for (int i = 0; i < M_p; i++) {
-            prod_proves(PIOP_NAME_ISOLATED, 0, [PROVES[i]], SEL_P[i])
+            prod(surname: PIOP_SURNAME_ISOLATED, type: PROD_TYPE_PROVES, opid: 0, expressions: [PROVES[i]], sel: SEL_P[i])
         }
     }
 }
@@ -71,7 +71,7 @@ airtemplate ImCustom(const int N = 2**8, const int deg_sel_a, const int deg_expr
 
         // Perform the assumes
         for (int i = 0; i < M_a; i++) {
-            prod_assumes(PIOP_NAME_ISOLATED, 0, [ASSUMES[i]], SEL_A[i])
+            prod(surname: PIOP_SURNAME_ISOLATED, type: PROD_TYPE_ASSUMES, opid: 0, expressions: [ASSUMES[i]], sel: SEL_A[i])
         }
     }
 
@@ -86,7 +86,7 @@ airtemplate ImCustom(const int N = 2**8, const int deg_sel_a, const int deg_expr
 
         // Perform the proves
         for (int i = 0; i < M_p; i++) {
-            prod_proves(PIOP_NAME_ISOLATED, 0, [PROVES[i]], SEL_P[i])
+            prod(surname: PIOP_SURNAME_ISOLATED, type: PROD_TYPE_PROVES, opid: 0, expressions: [PROVES[i]], sel: SEL_P[i])
         }
     }
 }

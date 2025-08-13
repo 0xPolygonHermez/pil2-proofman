@@ -11,7 +11,7 @@ airtemplate Example(const int N = 2**10) {
 
     a[0] * a[1] * b[0] === 3;
 
-    lookup_assumes(OP_ID, [...a], sel[0], name: PIOP_NAME_ISOLATED);
+    lookup_assumes(OP_ID, [...a], sel[0], surname: PIOP_SURNAME_ISOLATED);
 }
 
 airtemplate Table(const int N = 2**10) {    
@@ -20,7 +20,7 @@ airtemplate Table(const int N = 2**10) {
     col fixed A = [0..255]...;
     col fixed B = [0..255]...;
 
-    lookup_proves(TABLE_ID, [A, B], multiplicity, name: PIOP_NAME_ISOLATED);
+    lookup_proves(TABLE_ID, [A, B], multiplicity, surname: PIOP_SURNAME_ISOLATED);
 }
 
 airgroup Table {

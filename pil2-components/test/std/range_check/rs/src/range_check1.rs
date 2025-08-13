@@ -38,10 +38,10 @@ where
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
-            let range1 = self.std_lib.get_range(0, (1 << 8) - 1, Some(false));
-            let range2 = self.std_lib.get_range(0, (1 << 4) - 1, Some(false));
-            let range3 = self.std_lib.get_range(60, (1 << 16) - 1, Some(false));
-            let range4 = self.std_lib.get_range(8228, 17400, Some(false));
+            let range1 = self.std_lib.get_range_id(0, (1 << 8) - 1, Some(false));
+            let range2 = self.std_lib.get_range_id(0, (1 << 4) - 1, Some(false));
+            let range3 = self.std_lib.get_range_id(60, (1 << 16) - 1, Some(false));
+            let range4 = self.std_lib.get_range_id(8228, 17400, Some(false));
 
             for i in 0..num_rows {
                 trace[i].a1 = F::ZERO;
@@ -65,8 +65,8 @@ where
                     trace[i].a1 = F::from_u16(val1);
                     trace[i].a3 = F::from_u32(val2);
 
-                    self.std_lib.range_check(val1 as i64, 1, range1);
-                    self.std_lib.range_check(val2 as i64, 1, range3);
+                    self.std_lib.range_check(range1, val1 as i64, 1);
+                    self.std_lib.range_check(range3, val2 as i64, 1);
                 }
 
                 if selected2 {
@@ -75,15 +75,15 @@ where
                     trace[i].a2 = F::from_u8(val1);
                     trace[i].a4 = F::from_u16(val2);
 
-                    self.std_lib.range_check(val1 as i64, 1, range2);
-                    self.std_lib.range_check(val2 as i64, 1, range4);
+                    self.std_lib.range_check(range2, val1 as i64, 1);
+                    self.std_lib.range_check(range4, val2 as i64, 1);
                 }
 
                 if selected3 {
                     let val = rng.random_range(0..=(1 << 8) - 1);
                     trace[i].a5 = F::from_u16(val);
 
-                    self.std_lib.range_check(val as i64, 1, range1);
+                    self.std_lib.range_check(range1, val as i64, 1);
                 }
             }
 

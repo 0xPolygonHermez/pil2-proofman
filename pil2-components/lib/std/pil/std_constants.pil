@@ -34,7 +34,6 @@ Available PIOPs:
  Range Check |  3   | name as "Range Check"
  Connection  |  4   | name as "Connection"
  Direct      |  5   | name used for direct updates of the proof constraint
- Isolated    |  6   | name used for isolated components which avoids checks with other components
 */
 
 const int PIOP_NAME_DEFAULT = 0;
@@ -43,10 +42,11 @@ const int PIOP_NAME_LOOKUP = 2;
 const int PIOP_NAME_RANGE_CHECK = 3;
 const int PIOP_NAME_CONNECTION = 4;
 const int PIOP_NAME_DIRECT = 5;
-const int PIOP_NAME_ISOLATED = 6;
 
 function get_piop_name(const int name): string {
     switch (name) {
+        case PIOP_NAME_DEFAULT:
+            return "";
         case PIOP_NAME_PERMUTATION:
             return "Permutation";
         case PIOP_NAME_LOOKUP:
@@ -57,8 +57,33 @@ function get_piop_name(const int name): string {
             return "Connection";
         case PIOP_NAME_DIRECT:
             return "Direct";
-        case PIOP_NAME_ISOLATED:
+        default:
+            error(`Unknown name code: ${name}`);
+    }
+}
+
+/*
+Available PIOPs types:
+
+    name     | code | note
+-------------|------|----------------------------------------------------------------------------
+ Default     |  0   | default name set by the library
+ Isolated    |  1   | name used for isolated components which avoids checks with other components
+ Dynamic     |  2   | name used for dynamic components which adapts to changes
+*/
+
+const int PIOP_SURNAME_DEFAULT = 0;
+const int PIOP_SURNAME_ISOLATED = 1;
+const int PIOP_SURNAME_DYNAMIC = 2;
+
+function get_piop_surname(const int name): string {
+    switch (name) {
+        case PIOP_SURNAME_DEFAULT:
+            return "";
+        case PIOP_SURNAME_ISOLATED:
             return "Isolated";
+        case PIOP_SURNAME_DYNAMIC:
+            return "Dynamic";
         default:
             error(`Unknown name code: ${name}`);
     }
@@ -78,42 +103,20 @@ const int PIOP_BUS_DEFAULT = 0;
 const int PIOP_BUS_SUM = 1;
 const int PIOP_BUS_PROD = 2;
 
-private function validate_bus_type(const int bus_type) {
+int PIOP_BUS_TYPE = PIOP_BUS_DEFAULT;
+
+function set_std_bus_type(const int bus_type) {
     if (bus_type != PIOP_BUS_SUM && bus_type != PIOP_BUS_PROD) {
         error(`Unknown bus type: ${bus_type}`);
     }
+
+    // Set the bus type
+    PIOP_BUS_TYPE = bus_type;
 }
-
-function set_std_bus_type(const int bus_type) {
-    validate_bus_type(bus_type);
-
-    // Set the bus type for the std components that allow for different bus types
-    set_permutation_bus_type(bus_type);
-}
-
-function set_permutation_bus_type(const int bus_type) {
-    validate_bus_type(bus_type);
-
-    DEFAULT_PERMUTATION_BUS_TYPE = bus_type;
-}
-
-/*
-Available direct types:
-
-    name    | code | note
-------------|------|----------------------------------------------------------------------------
- Default    |  0   | default constraint behavior set by the library
- AIR        |  1   | update the air constraint directly
- Global     |  2   | update the global constraint directly
-*/
-
-const int PIOP_DIRECT_TYPE_DEFAULT = 0;
-const int PIOP_DIRECT_TYPE_AIR = 1;
-const int PIOP_DIRECT_TYPE_GLOBAL = 2;
 
 // FIX: dynamic arrays not ready yet
 // Set the array size across the library
-int ARRAY_SIZE = 500;
+int ARRAY_SIZE = 750;
 
 function set_array_size(const int limit) {
     ARRAY_SIZE = limit;

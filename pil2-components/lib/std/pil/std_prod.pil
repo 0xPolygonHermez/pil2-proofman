@@ -7,6 +7,10 @@ const int PROD_TYPE_FREE = 2;
 const int PROD_TYPE_REDUCED_ASSUMES = 3;
 const int PROD_TYPE_REDUCED_PROVES = 4;
 
+const int PROD_UPDATE_TYPE_LOCAL_DEFAULT = 0;
+const int PROD_UPDATE_TYPE_LOCAL_AIRVAL = 1;
+const int PROD_UPDATE_TYPE_GLOBAL = 2;
+
 const int two_inv = 1/2;
 
 // Control how the expressions are grouped
@@ -20,39 +24,38 @@ function prod_set_expressions_im_non_reduced(const int num) {
     PROD_EXPRESSIONS_IM_NON_REDUCED = num;
 }
 
-function prod(const int name, const int type, const int opid, const expr expressions[], const expr sel = 1, const int direct_type = PIOP_DIRECT_TYPE_DEFAULT) {
+function prod(const int name = PIOP_NAME_DEFAULT, const int surname = PIOP_SURNAME_DEFAULT, const int type, const int opid, const expr expressions[], const expr sel = 1, const int update_type = PROD_UPDATE_TYPE_LOCAL_DEFAULT) {
+    if (VIRTUAL == 1) {
+        error("Cannot use the prod bus in a virtual table context.");
+    }
+
     assert(type == PROD_TYPE_ASSUMES || type == PROD_TYPE_PROVES || type == PROD_TYPE_FREE);
-    update_piop_prod(name, type, opid, sel, expressions, direct_type);
-}
-
-function prod_assumes(const int name, const int opid, const expr expressions[], const expr sel = 1, const int direct_type = PIOP_DIRECT_TYPE_DEFAULT) {
-    prod(name, PROD_TYPE_ASSUMES, opid, expressions, sel, direct_type);
-}
-
-function prod_proves(const int name, const int opid, const expr expressions[], const expr sel = 1, const int direct_type = PIOP_DIRECT_TYPE_DEFAULT) {
-    prod(name, PROD_TYPE_PROVES, opid, expressions, sel, direct_type);
+    assert(update_type == PROD_UPDATE_TYPE_LOCAL_DEFAULT || update_type == PROD_UPDATE_TYPE_LOCAL_AIRVAL || update_type == PROD_UPDATE_TYPE_GLOBAL);
+    update_piop_prod(name, surname, type, opid, sel, expressions, update_type);
 }
 
 /**
  * It updates the product check constraints.
  *
  * @param name        The name of the PIOP consuming the product check
+ * @param surname     The surname of the PIOP consuming the product check
  * @param type        The type of the PIOP
  * @param opid        The ID that uniquely identifies the PIOP in the bus
  * @param sel         The selector of the PIOP
  * @param expressions The vector of expressions of the PIOP
- * @param direct_type Defines wheter the update has to be done at the global, air or default level
+ * @param update_type Defines wheter the update has to be done at the air cols, air vals or global vals
  */
-private function update_piop_prod(const int name, const int type, const int opid, const expr sel, const expr expressions[], const int direct_type = PIOP_DIRECT_TYPE_DEFAULT) {
+private function update_piop_prod(const int name, const int surname, const int type, const int opid, const expr sel, const expr expressions[], const int update_type) {
     const string name_str = get_piop_name(name);
+    const string surname_str = get_piop_surname(surname);
     const int exprs_num = length(expressions);
     if (exprs_num < 1) {
-        error(`The number of expressions of ${name_str} #${opid} must be at least 1`);
+        error(`The number of expressions of ${name_str} ${surname_str} #${opid} must be at least 1`);
     }
 
-    init_proof_containers_prod(name, opid);
+    init_proof_containers_prod(name, surname, opid);
 
-    if (direct_type == PIOP_DIRECT_TYPE_AIR || direct_type == PIOP_DIRECT_TYPE_DEFAULT) {
+    if (update_type == PROD_UPDATE_TYPE_LOCAL_DEFAULT || update_type == PROD_UPDATE_TYPE_LOCAL_AIRVAL) {
         init_air_containers_prod(name);
     }
 
@@ -71,23 +74,23 @@ private function update_piop_prod(const int name, const int type, const int opid
     } else {
         type_hint = type;
     }
-    @gprod_debug_data{name_piop: name_str, name_expr: name_expr, busid: opid, is_global: direct_type == PIOP_DIRECT_TYPE_GLOBAL,
+    @gprod_debug_data{name_piop: name_str, name_expr: name_expr, busid: opid, is_global: update_type == PROD_UPDATE_TYPE_GLOBAL,
                            type: type_hint, selector: sel, expressions: expressions, deg_expr: degree(sum_expr), deg_sel: degree(sel)};
 
-    initial_checks_prod(name_str, type, opid, exprs_num, direct_type);
+    initial_checks_prod(name, surname, type, opid, exprs_num);
 
     // selected vector to simple expression reduction
     expr exprs_compressed = compress_exprs(opid, expressions);
 
-    switch (direct_type) {
-        case PIOP_DIRECT_TYPE_GLOBAL:
+    switch (update_type) {
+        case PROD_UPDATE_TYPE_GLOBAL:
             if (STD_MODE == STD_MODE_ONE_INSTANCE) {
                 error("Updating the global constraint is not allowed in one instance mode");
             }
 
             gprod_update_global_constraint_data(type, sel, exprs_compressed);
-        case PIOP_DIRECT_TYPE_AIR, PIOP_DIRECT_TYPE_DEFAULT:
-            gprod_update_air_constraint_data(type, sel, exprs_compressed, direct_type);
+        case PROD_UPDATE_TYPE_LOCAL_DEFAULT, PROD_UPDATE_TYPE_LOCAL_AIRVAL:
+            gprod_update_air_constraint_data(type, sel, exprs_compressed, update_type);
 
             // Update the constraints at the air level
             on final air piop_gprod_air();
@@ -97,7 +100,7 @@ private function update_piop_prod(const int name, const int type, const int opid
                 on final airgroup piop_gprod_airgroup();
             }
         default:
-            error(`Invalid direct_type: ${direct_type}`);
+            error(`Invalid update type: ${update_type}`);
     }
 
     // Update the constraints at the proof level
@@ -112,7 +115,7 @@ private function update_piop_prod(const int name, const int type, const int opid
     on final proof piop_gprod_issue_global_hints(); 
 }
 
-private function init_proof_containers_prod(const int name, const int opid) {
+private function init_proof_containers_prod(const int name, const int surname, const int opid) {
     container proof.std.gprod {
         // Used for final checks
         int opids_count = 0;
@@ -140,6 +143,7 @@ private function init_proof_containers_prod(const int name, const int opid) {
     // It must be defined at the proof level because the same opid can appear in different airs
     container proof.std.gprod.`id${opid}` {
         int name = name;
+        int surname = surname;
         int expressions;
         int proves = 0;
         int assumes = 0;
@@ -163,19 +167,21 @@ private function init_air_containers_prod(const int name) {
     }
 }
 
-private function initial_checks_prod(const string name, const int type, const int opid, const int exprs_num, const int direct_type) {
-    // Assumes and proves of the same opid must have the same number of expressions
+private function initial_checks_prod(const int name, const int surname, const int type, const int opid, const int exprs_num) {
+    // First time we see an opid
     if (proof.std.gprod.`id${opid}`.expressions == 0) {
-        // The first time we see this opid, we store the number of expressions
+        // Store the number of expressions
         proof.std.gprod.`id${opid}`.expressions = exprs_num;
 
-        // Store the opid to check at the end that all the opids have been completed
+        // Store the opid
         proof.std.gprod.opids[proof.std.gprod.opids_count] = opid;
         proof.std.gprod.opids_count++;
     } else if (exprs_num != proof.std.gprod.`id${opid}`.expressions) {
         // If this is not the first time we see this opid, we check that the number of expressions is the same
+        const string name = get_piop_name(name);
+        const string surname = get_piop_surname(surname);
         const int expected_exprs = proof.std.gprod.`id${opid}`.expressions;
-        error(`The number of expressions of ${name} #${opid} must be ${expected_exprs} but was ${exprs_num}`);
+        error(`The number of expressions of ${name} ${surname} #${opid} must be ${expected_exprs} but was ${exprs_num}`);
     }
 
     // The same opid can appear in different airs, so we keep track of the number of proves and assumes
@@ -205,10 +211,10 @@ private function gprod_update_global_constraint_data(const int type, const expr 
     direct_gprod_nargs++;
 }
 
-private function gprod_update_air_constraint_data(const int type, const expr sel, const expr exprs, const int direct_type) {
+private function gprod_update_air_constraint_data(const int type, const expr sel, const expr exprs, const int update_type) {
     use air.std.gprod;
 
-    if (direct_type == PIOP_DIRECT_TYPE_AIR) {
+    if (update_type == PROD_UPDATE_TYPE_LOCAL_AIRVAL) {
         direct_gprod_type[direct_gprod_nargs] = type;
         direct_gprod_s[direct_gprod_nargs] = sel;
         direct_gprod_e[direct_gprod_nargs] = exprs;
@@ -875,15 +881,16 @@ private function check_opids_were_completed_prod() {
         use proof.std.gprod.`id${opid}`;
 
         // If the PIOP is isolated, avoid any check
-        if (name == PIOP_NAME_ISOLATED) continue;
+        if (surname == PIOP_SURNAME_ISOLATED) continue;
 
         const string name_str = get_piop_name(name);
+        const string surname_str = get_piop_surname(surname);
 
-        // At least one assume and one prove must be defined
+        // At least one assume and one prove must has been defined
         if (assumes == 0) {
-            error(`${name_str} #${opid} defined without assume`);
+            error(`${name_str} ${surname_str} #${opid} defined without assume`);
         } else if (proves == 0) {
-            error(`${name_str} #${opid} defined without proves`);
+            error(`${name_str} ${surname_str} #${opid} defined without proves`);
         }
     }
 }

@@ -13,7 +13,7 @@ use witness::WitnessComponent;
 use proofman_common::{AirInstance, BufferPool, ProofCtx, SetupCtx, TraceInfo};
 use proofman_hints::{get_hint_field_constant_a, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
 
-use crate::{get_hint_field_constant_as_u64, validate_binary_field, AirComponent};
+use crate::{get_hint_field_constant_as, validate_binary_field, AirComponent};
 
 #[derive(Debug, Clone)]
 pub struct SpecifiedRange {
@@ -35,9 +35,7 @@ pub struct SpecifiedRanges {
 }
 
 impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
-    fn new(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, airgroup_id: Option<usize>, air_id: Option<usize>) -> Arc<Self> {
-        let airgroup_id = airgroup_id.expect("Airgroup ID must be provided");
-        let air_id = air_id.expect("Air ID must be provided");
+    fn new(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, airgroup_id: usize, air_id: usize) -> Arc<Self> {
         let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
 
         let setup = sctx.get_setup(airgroup_id, air_id);
@@ -46,14 +44,14 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
 
         // Get the relevant data
         let col_num =
-            get_hint_field_constant_as_u64::<F>(sctx, airgroup_id, air_id, hint_id, "col_num", hint_opt.clone());
+            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint_id, "col_num", hint_opt.clone());
 
         let mins = get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "mins", hint_opt.clone()).values;
         let mins_neg =
             get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "mins_neg", hint_opt.clone()).values;
 
         let opids_count =
-            get_hint_field_constant_as_u64::<F>(sctx, airgroup_id, air_id, hint_id, "opids_count", hint_opt.clone());
+            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint_id, "opids_count", hint_opt.clone());
         let opids_len =
             get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "opids_len", hint_opt).values;
 
@@ -107,6 +105,14 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
 }
 
 impl SpecifiedRanges {
+    pub fn get_global_row(range_min: i64, value: i64) -> u64 {
+        (value - range_min) as u64
+    }
+
+    pub fn get_global_rows(range_min: i64, values: &[i64]) -> Vec<u64> {
+        values.iter().map(|&v| Self::get_global_row(range_min, v)).collect()
+    }
+
     #[inline(always)]
     pub fn update_input(&self, id: usize, value: i64, multiplicity: u64) {
         if self.calculated.load(Ordering::Relaxed) {
