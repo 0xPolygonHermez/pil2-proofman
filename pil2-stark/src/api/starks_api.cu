@@ -235,6 +235,66 @@ void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initia
     delete[] constTree;
 }
 
+void copy_to_device_in_chunks(
+    DeviceCommitBuffers* d_buffers,
+    const void* src,
+    void* dst,
+    uint64_t total_size,
+    uint64_t streamId
+    ){
+
+    uint64_t block_size = d_buffers->streamsData[streamId].pinned_size;
+    Goldilocks::Element *pinned_buffer = d_buffers->streamsData[streamId].pinned_buffer;
+    cudaStream_t stream = d_buffers->streamsData[streamId].stream;
+
+    uint64_t nBlocks = (total_size + block_size - 1) / block_size;
+
+    for (uint64_t i = 0; i < nBlocks; ++i) {
+        uint64_t copySizeBlock = std::min(block_size, total_size - i * block_size);
+
+        std::memcpy(pinned_buffer, (const uint8_t*)src + i * block_size, copySizeBlock);
+
+        CHECKCUDAERR(cudaMemcpyAsync(
+            (uint8_t*)dst + i * block_size,
+            pinned_buffer,
+            copySizeBlock,
+            cudaMemcpyHostToDevice,
+            stream));
+
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
+    }
+}
+
+void load_and_copy_to_device_in_chunks(
+    DeviceCommitBuffers* d_buffers,
+    const char* bufferPath,
+    void* dst,
+    uint64_t total_size,
+    uint64_t streamId
+    ){
+
+    uint64_t block_size = d_buffers->streamsData[streamId].pinned_size;
+    Goldilocks::Element *pinned_buffer = d_buffers->streamsData[streamId].pinned_buffer;
+    cudaStream_t stream = d_buffers->streamsData[streamId].stream;
+
+    uint64_t nBlocks = (total_size + block_size - 1) / block_size;
+
+    for (uint64_t i = 0; i < nBlocks; ++i) {
+        uint64_t copySizeBlock = std::min(block_size, total_size - i * block_size);
+
+        loadFileParallel_block(pinned_buffer, bufferPath, block_size, true, i);
+
+        CHECKCUDAERR(cudaMemcpyAsync(
+            (uint8_t*)dst + i * block_size,
+            pinned_buffer,
+            copySizeBlock,
+            cudaMemcpyHostToDevice,
+            stream));
+
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
+    }
+}
+
 uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool skipRecalculation, uint64_t streamId_, char *constPolsPath,  char *constTreePath) {
 
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
@@ -287,60 +347,35 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     uint64_t nBlocks = 0;
 
     if (!skipRecalculation) {
-        copySize = N * nCols * sizeof(Goldilocks::Element);
-        nBlocks = (copySize + blockSize - 1) / blockSize;
-        for (uint64_t i = 0; i < nBlocks; ++i) {
-            uint64_t copySizeBlock = std::min(blockSize, copySize - i * blockSize);
-            memcpy(pinned_buffer, (uint8_t *)params->trace + i * blockSize, copySizeBlock);
-            CHECKCUDAERR(cudaMemcpyAsync((uint8_t*) (d_aux_trace + offsetStage1) + i*blockSize, pinned_buffer, copySizeBlock, cudaMemcpyHostToDevice, stream));
-            cudaStreamSynchronize(stream);
-        }        
+        copy_to_device_in_chunks(d_buffers, params->trace, (uint8_t*)(d_aux_trace + offsetStage1), N * nCols * sizeof(Goldilocks::Element), streamId);
     }
     
-    copySize = setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element);
-    nBlocks = (copySize + blockSize - 1) / blockSize;
-    for (uint64_t i = 0; i < nBlocks; ++i) {
-        uint64_t copySizeBlock = std::min(blockSize, copySize - i * blockSize);
-        memcpy(pinned_buffer, (uint8_t *)params->publicInputs + i * blockSize, copySizeBlock);
-        CHECKCUDAERR(cudaMemcpyAsync((uint8_t*) (d_aux_trace + offsetPublicInputs) + i*blockSize, pinned_buffer, copySizeBlock, cudaMemcpyHostToDevice, stream));
-        cudaStreamSynchronize(stream);
-    }
-    
+    size_t totalCopySize = 0;
+    totalCopySize += setupCtx->starkInfo.nPublics;
+    totalCopySize += setupCtx->starkInfo.proofValuesSize;
+    totalCopySize += setupCtx->starkInfo.airgroupValuesSize;
+    totalCopySize += setupCtx->starkInfo.airValuesSize;
+    totalCopySize += FIELD_EXTENSION;
+
+    Goldilocks::Element aux_values[totalCopySize];
+    uint64_t offset = 0;
+    memcpy(aux_values + offset, params->publicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
+    offset += setupCtx->starkInfo.nPublics;
     if (setupCtx->starkInfo.proofValuesSize > 0) {
-        copySize = setupCtx->starkInfo.proofValuesSize * sizeof(Goldilocks::Element);
-        nBlocks = (copySize + blockSize - 1) / blockSize;
-        for (uint64_t i = 0; i < nBlocks; ++i) {
-            uint64_t copySizeBlock = std::min(blockSize, copySize - i * blockSize);
-            memcpy(pinned_buffer, (uint8_t *)params->proofValues + i * blockSize, copySizeBlock);
-            CHECKCUDAERR(cudaMemcpyAsync((uint8_t*) (d_aux_trace + offsetProofValues) + i*blockSize, pinned_buffer, copySizeBlock, cudaMemcpyHostToDevice, stream));
-            cudaStreamSynchronize(stream);
-        }
+        memcpy(aux_values + offset, params->proofValues, setupCtx->starkInfo.proofValuesSize * sizeof(Goldilocks::Element));
+        offset += setupCtx->starkInfo.proofValuesSize;
     }
     if (setupCtx->starkInfo.airgroupValuesSize > 0) {
-        copySize = setupCtx->starkInfo.airgroupValuesSize * sizeof(Goldilocks::Element);
-        nBlocks = (copySize + blockSize - 1) / blockSize;
-        for (uint64_t i = 0; i < nBlocks; ++i) {
-            uint64_t copySizeBlock = std::min(blockSize, copySize - i * blockSize);
-            memcpy(pinned_buffer, (uint8_t *)params->airgroupValues + i * blockSize, copySizeBlock);
-            CHECKCUDAERR(cudaMemcpyAsync((uint8_t*) (d_aux_trace + offsetAirgroupValues) + i*blockSize, pinned_buffer, copySizeBlock, cudaMemcpyHostToDevice, stream));
-            cudaStreamSynchronize(stream);
-        }
+        memcpy(aux_values + offset, params->airgroupValues, setupCtx->starkInfo.airgroupValuesSize * sizeof(Goldilocks::Element));
+        offset += setupCtx->starkInfo.airgroupValuesSize;
     }
     if (setupCtx->starkInfo.airValuesSize > 0) {
-        copySize = setupCtx->starkInfo.airValuesSize * sizeof(Goldilocks::Element);
-        nBlocks = (copySize + blockSize - 1) / blockSize;
-        for (uint64_t i = 0; i < nBlocks; ++i) {
-            uint64_t copySizeBlock = std::min(blockSize, copySize - i * blockSize);
-            memcpy(pinned_buffer, (uint8_t *)params->airValues + i * blockSize, copySizeBlock);
-            CHECKCUDAERR(cudaMemcpyAsync((uint8_t*) (d_aux_trace + offsetAirValues) + i*blockSize, pinned_buffer, copySizeBlock, cudaMemcpyHostToDevice, stream));
-            cudaStreamSynchronize(stream);
-        }
+        memcpy(aux_values + offset, params->airValues, setupCtx->starkInfo.airValuesSize * sizeof(Goldilocks::Element));
+        offset += setupCtx->starkInfo.airValuesSize;
     }
-    copySize = FIELD_EXTENSION * sizeof(Goldilocks::Element);
-    memcpy(pinned_buffer, (uint8_t *)globalChallenge, copySize);
-    CHECKCUDAERR(cudaMemcpyAsync(d_aux_trace + offsetChallenge, pinned_buffer, copySize, cudaMemcpyHostToDevice, stream));
-    cudaStreamSynchronize(stream);
-    
+    memcpy(aux_values + offset, (Goldilocks::Element *)globalChallenge, FIELD_EXTENSION * sizeof(Goldilocks::Element));
+
+    copy_to_device_in_chunks(d_buffers, aux_values, (uint8_t*)(d_aux_trace + offsetPublicInputs), totalCopySize * sizeof(Goldilocks::Element), streamId);
 
     gl64_t *d_const_pols;
     gl64_t *d_const_tree;
@@ -351,27 +386,13 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
 
         uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
         d_const_pols = d_aux_trace + offsetConstPols;
-        uint64_t block_size = d_buffers->streamsData[streamId].pinned_size;
-        uint64_t nBlocks = (sizeConstPols + block_size - 1) / block_size;
-        Goldilocks::Element *pinned_buffer = d_buffers->streamsData[streamId].pinned_buffer;
-        for(uint64_t i=0; i<nBlocks; ++i) {
-            loadFileParallel_block(pinned_buffer, constPolsPath, block_size, true, i);
-            uint64_t copy_size = std::min((uint64_t)block_size, sizeConstPols - (uint64_t)i * block_size);
-            CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)d_const_pols + (uint64_t)i * block_size, pinned_buffer, copy_size, cudaMemcpyHostToDevice, stream)); 
-            cudaStreamSynchronize(stream);
-        }
+
+        load_and_copy_to_device_in_chunks(d_buffers, constPolsPath, (uint8_t*)d_const_pols, sizeConstPols, streamId);
 
         uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
         d_const_tree = d_aux_trace + offsetConstTree;
-
-        nBlocks = (sizeConstTree + block_size - 1) / block_size;
-        for(uint64_t i=0; i<nBlocks; ++i) {
-            loadFileParallel_block(pinned_buffer, constTreePath, block_size, true, i);
-            uint64_t copy_size_tree = std::min((uint64_t)block_size, sizeConstTree - (uint64_t)i * block_size);
-            CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)d_const_tree + (uint64_t)i * block_size, pinned_buffer, copy_size_tree, cudaMemcpyHostToDevice, stream)); 
-            cudaStreamSynchronize(stream);
-        }
-
+        
+        load_and_copy_to_device_in_chunks(d_buffers, constTreePath, (uint8_t*)d_const_tree, sizeConstTree, streamId);
     }
 
 
@@ -487,26 +508,11 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
     d_buffers->streamsData[streamId].instanceId = instanceId;
     d_buffers->streamsData[streamId].proofType = string(proofType);
 
-    Goldilocks::Element *pinned_buffer = d_buffers->streamsData[streamId].pinned_buffer;
-    uint64_t blockSize = d_buffers->streamsData[streamId].pinned_size;
-    uint64_t copySize = sizeTrace;
-    uint64_t nBlocks = (copySize + blockSize - 1) / blockSize;
     uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
-    for (uint64_t i = 0; i < nBlocks; ++i) {
-        uint64_t copySizeBlock = std::min(blockSize, copySize - i * blockSize);
-        memcpy(pinned_buffer, (uint8_t *)trace + i * blockSize, copySizeBlock);
-        CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)(d_aux_trace + offsetStage1) + i*blockSize, pinned_buffer, copySizeBlock, cudaMemcpyHostToDevice, stream));
-        cudaStreamSynchronize(stream);
-    }
+    copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1), sizeTrace, streamId);
+    
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
-    copySize = setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element);
-    nBlocks = (copySize + blockSize - 1) / blockSize;
-    for (uint64_t i = 0; i < nBlocks; ++i) {
-        uint64_t copySizeBlock = std::min(blockSize, copySize - i * blockSize);
-        memcpy(pinned_buffer, (uint8_t *)pPublicInputs + i * blockSize, copySizeBlock);
-        CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)(d_aux_trace + offsetPublicInputs) + i*blockSize, pinned_buffer, copySizeBlock, cudaMemcpyHostToDevice, stream));
-        cudaStreamSynchronize(stream);
-    }
+    copy_to_device_in_chunks(d_buffers, pPublicInputs, (uint8_t*)(d_aux_trace + offsetPublicInputs), setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element), streamId);
     
     gl64_t *d_const_pols;
     gl64_t *d_const_tree;
@@ -516,25 +522,11 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
     } else {
         uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
         d_const_pols = d_aux_trace + offsetConstPols;
-        uint64_t block_size = d_buffers->streamsData[streamId].pinned_size;
-        uint64_t nBlocks = (sizeConstPols + block_size - 1) / block_size;
-        Goldilocks::Element *pinned_buffer = d_buffers->streamsData[streamId].pinned_buffer;
-        for(uint64_t i=0; i<nBlocks; ++i) {
-            loadFileParallel_block(pinned_buffer, constPolsPath, block_size, true, i);
-            uint64_t copy_size = std::min((uint64_t)block_size, sizeConstPols - (uint64_t)i * block_size);
-            CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)d_const_pols + (uint64_t)i * block_size, pinned_buffer, copy_size, cudaMemcpyHostToDevice, stream)); 
-            cudaStreamSynchronize(stream);
-        }
+        load_and_copy_to_device_in_chunks(d_buffers, constPolsPath, (uint8_t*)d_const_pols, sizeConstPols, streamId);
 
         uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
         d_const_tree = d_aux_trace + offsetConstTree;
-        nBlocks = (sizeConstTree + block_size - 1) / block_size;
-        for(uint64_t i=0; i<nBlocks; ++i) {
-            loadFileParallel_block(pinned_buffer, constTreePath, block_size, true, i);
-            uint64_t copy_size_tree = std::min((uint64_t)block_size, sizeConstTree - (uint64_t)i * block_size);
-            CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)d_const_tree + (uint64_t)i * block_size, pinned_buffer, copy_size_tree, cudaMemcpyHostToDevice, stream)); 
-            cudaStreamSynchronize(stream);
-        }
+        load_and_copy_to_device_in_chunks(d_buffers, constTreePath, (uint8_t*)d_const_tree, sizeConstTree, streamId);
     }
 
     genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, false, timer, stream, true);
