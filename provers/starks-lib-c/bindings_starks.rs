@@ -48,6 +48,8 @@ extern "C" {
     ) -> *mut ::std::os::raw::c_void;
     
     pub fn get_proof_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+
+    pub fn get_proof_pinned_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
     
     pub fn set_memory_expressions(pStarkInfo: *mut ::std::os::raw::c_void, nTmp1: u64, nTmp3: u64);
     
@@ -234,6 +236,8 @@ extern "C" {
         nBitsExt: u64,
         nCols: u64,
         instanceId: u64,
+        airgroupId: u64,
+        airId: u64,
         root: *mut ::std::os::raw::c_void,
         trace: *mut ::std::os::raw::c_void,
         auxTrace: *mut ::std::os::raw::c_void,
@@ -502,6 +506,7 @@ extern "C" {
         pSetupCtx_: *mut ::std::os::raw::c_void,
         d_buffers_: *mut ::std::os::raw::c_void,
         verkeyRoot_: *mut ::std::os::raw::c_void,
+        n_streams: u64,
     );
     
     pub fn gen_device_streams(

@@ -29,7 +29,6 @@ ifeq ($(UNAME_S),Linux)
         endif
     endif
 else
-    $(error Unsupported GPU compilation in macOS)
     NVCC :=
 endif
 

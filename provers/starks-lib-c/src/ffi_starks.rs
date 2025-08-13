@@ -147,6 +147,11 @@ pub fn get_proof_size_c(p_stark_info: *mut c_void) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn get_proof_pinned_size_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_proof_pinned_size(p_stark_info) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn set_memory_expressions_c(p_stark_info: *mut c_void, n_tmp1: u64, n_tmp3: u64) {
     unsafe {
         set_memory_expressions(p_stark_info, n_tmp1, n_tmp3);
@@ -552,6 +557,8 @@ pub fn commit_witness_c(
     n_bits_ext: u64,
     n_cols: u64,
     instance_id: u64,
+    airgroup_id: u64,
+    air_id: u64,
     root: *mut u8,
     witness: *mut u8,
     aux_trace: *mut u8,
@@ -565,6 +572,8 @@ pub fn commit_witness_c(
             n_bits_ext,
             n_cols,
             instance_id,
+            airgroup_id,
+            air_id,
             root as *mut std::os::raw::c_void,
             witness as *mut std::os::raw::c_void,
             aux_trace as *mut std::os::raw::c_void,
@@ -1129,7 +1138,7 @@ pub fn gen_device_streams_c(
     d_buffers: *mut ::std::os::raw::c_void,
     max_size_buffer: u64,
     max_size_buffer_aggregation: u64,
-    max_proof_size: u64,
+    max_pinned_proof_size: u64,
     max_number_proofs_per_gpu: u64,
     max_number_recursive_proofs_per_gpu: u64,
 ) -> u64 {
@@ -1138,7 +1147,7 @@ pub fn gen_device_streams_c(
             d_buffers,
             max_size_buffer,
             max_size_buffer_aggregation,
-            max_proof_size,
+            max_pinned_proof_size,
             max_number_proofs_per_gpu,
             max_number_recursive_proofs_per_gpu,
         )
@@ -1170,6 +1179,7 @@ pub fn load_device_setup_c(
     p_setup: *mut ::std::os::raw::c_void,
     d_buffers: *mut ::std::os::raw::c_void,
     verkey_root: *mut u8,
+    n_streams: u64,
 ) {
     let proof_type_name = CString::new(proof_type).unwrap();
     let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1182,6 +1192,7 @@ pub fn load_device_setup_c(
             p_setup,
             d_buffers,
             verkey_root as *mut std::os::raw::c_void,
+            n_streams,
         );
     }
 }
@@ -1297,6 +1308,12 @@ pub fn get_const_offset_c(_p_stark_info: *mut c_void) -> u64 {
 #[cfg(feature = "no_lib_link")]
 pub fn get_proof_size_c(_p_stark_info: *mut c_void) -> u64 {
     trace!("··· {}", "get_proof_size: This is a mock call because there is no linked library");
+    100000000
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_proof_pinned_size_c(_p_stark_info: *mut c_void) -> u64 {
+    trace!("··· {}", "get_pinned_proof_size: This is a mock call because there is no linked library");
     100000000
 }
 
@@ -1548,6 +1565,8 @@ pub fn commit_witness_c(
     _n_bits_ext: u64,
     _n_cols: u64,
     _instance_id: u64,
+    _airgroup_id: u64,
+    _air_id: u64,
     _root: *mut u8,
     _witness: *mut u8,
     _aux_trace: *mut u8,
@@ -1912,7 +1931,7 @@ pub fn gen_device_streams_c(
     _d_buffers: *mut ::std::os::raw::c_void,
     _max_size_buffer: u64,
     _max_size_buffer_aggregation: u64,
-    _max_proof_size: u64,
+    _max_pinned_proof_size: u64,
     _max_number_proofs_per_gpu: u64,
     _max_number_recursive_proofs_per_gpu: u64,
 ) -> u64 {
@@ -1946,6 +1965,7 @@ pub fn load_device_setup_c(
     _p_setup: *mut ::std::os::raw::c_void,
     _d_buffers: *mut ::std::os::raw::c_void,
     _verkey_root: *mut u8,
+    _n_streams: u64,
 ) {
     trace!("{}: ··· {}", "ffi     ", "load_device_setup: This is a mock call because there is no linked library");
 }

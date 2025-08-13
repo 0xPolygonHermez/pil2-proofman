@@ -64,7 +64,9 @@ struct AirInstanceInfo {
 
     Goldilocks::Element *verkeyRoot;
 
-    AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId) {
+    uint64_t nStreams = 1;
+
+    AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_, uint64_t nStreams_): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId), nStreams(nStreams_) {
         int64_t *d_openingPoints;
         CHECKCUDAERR(cudaMalloc(&d_openingPoints, setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t)));
         CHECKCUDAERR(cudaMemcpy(d_openingPoints, setupCtx->starkInfo.openingPoints.data(), setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t), cudaMemcpyHostToDevice));
@@ -190,7 +192,9 @@ struct StreamData{
     uint64_t offset;
     
     bool recursive;
-
+    bool extraStream;
+    uint64_t streamsUsed;
+    
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint64_t offset_, bool recursive_){
         uint64_t maxExps = 1000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);
@@ -207,7 +211,8 @@ struct StreamData{
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_args, maxExps * sizeof(ExpsArguments)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, sizeof(StepsParams)));
 
-       
+        extraStream = false;
+        streamsUsed = 1;
         root = nullptr;
         pSetupCtx = nullptr;
         proofBuffer = nullptr;
@@ -240,6 +245,9 @@ struct StreamData{
         cudaEventDestroy(end_event);
         cudaEventCreate(&end_event);
         status = 3;
+
+        extraStream = false;
+        streamsUsed = 1;
 
         root = nullptr;
         pSetupCtx = nullptr;
@@ -275,6 +283,22 @@ struct DeviceCommitBuffers
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;
 };
 
+void copy_to_device_in_chunks(
+    DeviceCommitBuffers* d_buffers,
+    const void* src,
+    void* dst,
+    uint64_t total_size,
+    uint64_t streamId
+    );
+
+
+void load_and_copy_to_device_in_chunks(
+    DeviceCommitBuffers* d_buffers,
+    const char* bufferPath,
+    void* dst,
+    uint64_t total_size,
+    uint64_t streamId
+    );
 
 #endif
 
