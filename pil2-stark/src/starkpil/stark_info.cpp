@@ -510,7 +510,7 @@ void StarkInfo::setMapOffsets() {
     } else {
         uint64_t maxTotalNStageQ = mapOffsets[std::make_pair("q", true)] + NExtended * FIELD_EXTENSION;
         mapOffsets[std::make_pair("extra_helper_fft", false)] = maxTotalNStageQ;
-        maxTotalNStageQ += NExtended * FIELD_EXTENSION + qDeg;
+        maxTotalNStageQ += NExtended * 4 + qDeg;
         maxTotalN = std::max(maxTotalN, maxTotalNStageQ);
     }    
     
