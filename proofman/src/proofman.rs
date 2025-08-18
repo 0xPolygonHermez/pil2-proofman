@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicUsize;
 use proofman_common::{
     MAX_INSTANCES, calculate_fixed_tree, configured_num_threads, load_const_pols, skip_prover_instance, CurveType,
     DebugInfo, MemoryHandler, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx, SetupsVadcop, VerboseMode,
-    MpiCtx,
+    MpiCtx, initialize_logger,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -706,6 +706,10 @@ where
             return Err(format!("Proving key parameter must be a folder: {proving_key_path:?}").into());
         }
 
+        let mpi_ctx = MpiCtx::new();
+
+        initialize_logger(verbose_mode, Some(mpi_ctx.rank));
+
         let (pctx, sctx, setups_vadcop) = Self::initialize_proofman(
             proving_key_path,
             custom_commits_fixed,
@@ -717,8 +721,6 @@ where
         )?;
 
         timer_start_info!(INIT_PROOFMAN);
-
-        let mpi_ctx = MpiCtx::new();
 
         let (d_buffers, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
             Self::prepare_gpu(&sctx, &setups_vadcop, aggregation, &gpu_params, &mpi_ctx);
@@ -809,8 +811,7 @@ where
         timer_start_info!(GENERATING_PROOFS);
 
         let max_num_threads = configured_num_threads(self.mpi_ctx.node_n_processes as usize);
-        println!("MPI CTX RANK {} of {}",
-                 self.mpi_ctx.rank, self.mpi_ctx.node_n_processes);
+        println!("MPI CTX RANK {} of {}", self.mpi_ctx.rank, self.mpi_ctx.node_n_processes);
 
         println!("SPECIFIED RANK {:?}", phase_inputs);
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
@@ -1621,9 +1622,9 @@ where
 
         if valid_proofs {
             tracing::info!("··· {}", "\u{2713} All proofs were successfully verified".bright_green().bold());
-            return Ok(ProvePhaseResult::Internal(Vec::new()));
+            Ok(ProvePhaseResult::Internal(Vec::new()))
         } else {
-            return Err("Basic proofs were not verified".into());
+            Err("Basic proofs were not verified".into())
         }
     }
 

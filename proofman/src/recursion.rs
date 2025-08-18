@@ -489,7 +489,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         add_publics_circom(&mut updated_proof, 0, pctx, "", false);
 
         for proofs in recursive2_proofs {
-            updated_proof[publics_circom_size..].copy_from_slice(&proofs.as_ref().unwrap());
+            updated_proof[publics_circom_size..].copy_from_slice(proofs.as_ref().unwrap());
         }
     }
 
