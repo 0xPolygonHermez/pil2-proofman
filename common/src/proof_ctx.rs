@@ -275,6 +275,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             aggregation,
             final_snark,
             witness_tx: RwLock::new(None),
+            witness_tx_priority: RwLock::new(None),
             proof_tx: RwLock::new(None),
         }
     }
