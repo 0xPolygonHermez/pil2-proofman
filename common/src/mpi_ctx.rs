@@ -8,9 +8,6 @@ use mpi::datatype::PartitionMut;
 use mpi::environment::Universe;
 #[cfg(distributed)]
 use mpi::topology::Communicator;
-use std::sync::atomic::AtomicU64;
-#[cfg(distributed)]
-use std::sync::atomic::Ordering;
 
 use fields::PrimeField64;
 #[cfg(distributed)]
@@ -192,96 +189,6 @@ impl MpiCtx {
         #[cfg(not(distributed))]
         {
             publics
-        }
-    }
-
-    pub fn distribute_multiplicity(&self, _multiplicity: &[AtomicU64], _owner: i32) {
-        #[cfg(distributed)]
-        {
-            //assert that I can operate with u32
-            assert!(_multiplicity.len() < u32::MAX as usize);
-
-            if _owner != self.rank {
-                //pack multiplicities in a sparce vector
-                let mut packed_multiplicity = Vec::new();
-                packed_multiplicity.push(0u32); //this will be the counter
-                for (idx, mul) in _multiplicity.iter().enumerate() {
-                    let m = mul.load(Ordering::Relaxed);
-                    if m != 0 {
-                        assert!(m < u32::MAX as u64);
-                        packed_multiplicity.push(idx as u32);
-                        packed_multiplicity.push(m as u32);
-                        packed_multiplicity[0] += 2;
-                    }
-                }
-                self.world.process_at_rank(_owner).send(&packed_multiplicity[..]);
-            } else {
-                let mut packed_multiplicity: Vec<u32> = vec![0; _multiplicity.len() * 2 + 1];
-                for i in 0..self.n_processes {
-                    if i != _owner {
-                        self.world.process_at_rank(i).receive_into(&mut packed_multiplicity);
-                        for j in (1..packed_multiplicity[0]).step_by(2) {
-                            let idx = packed_multiplicity[j as usize] as usize;
-                            let m = packed_multiplicity[j as usize + 1] as u64;
-                            _multiplicity[idx].fetch_add(m, Ordering::Relaxed);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn distribute_multiplicities(&self, _multiplicities: &[Vec<AtomicU64>], _owner: i32) {
-        #[cfg(distributed)]
-        {
-            // Ensure that each multiplicity vector can be operated with u32
-            let mut buff_size = 0;
-            for multiplicity in _multiplicities.iter() {
-                assert!(multiplicity.len() < u32::MAX as usize);
-                buff_size += multiplicity.len() + 1;
-            }
-
-            let n_columns = _multiplicities.len();
-            if _owner != self.rank {
-                // Pack multiplicities in a sparse vector
-                let mut packed_multiplicities = vec![0u32; n_columns];
-                for (col_idx, multiplicity) in _multiplicities.iter().enumerate() {
-                    for (idx, mul) in multiplicity.iter().enumerate() {
-                        let m = mul.load(Ordering::Relaxed);
-                        if m != 0 {
-                            assert!(m < u32::MAX as u64);
-                            packed_multiplicities[col_idx] += 1;
-                            packed_multiplicities.push(idx as u32);
-                            packed_multiplicities.push(m as u32);
-                        }
-                    }
-                }
-                self.world.process_at_rank(_owner).send(&packed_multiplicities[..]);
-            } else {
-                let mut packed_multiplicities: Vec<u32> = vec![0; buff_size * 2];
-                for i in 0..self.n_processes {
-                    if i != _owner {
-                        self.world.process_at_rank(i).receive_into(&mut packed_multiplicities);
-
-                        // Read counters
-                        let mut counters = vec![0usize; n_columns];
-                        for col_idx in 0..n_columns {
-                            counters[col_idx] = packed_multiplicities[col_idx] as usize;
-                        }
-
-                        // Unpack multiplicities
-                        let mut idx = n_columns;
-                        for col_idx in 0..n_columns {
-                            for _ in 0..counters[col_idx] {
-                                let row_idx = packed_multiplicities[idx] as usize;
-                                let m = packed_multiplicities[idx + 1] as u64;
-                                _multiplicities[col_idx][row_idx].fetch_add(m, Ordering::Relaxed);
-                                idx += 2;
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 

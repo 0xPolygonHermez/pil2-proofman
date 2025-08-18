@@ -25,10 +25,9 @@ pub struct DistributionCtx {
     pub instances_owner: Vec<(i32, usize, u64)>, //owner_rank, owner_instance_idx, weight
     pub owners_count: Vec<i32>,
     pub owners_weight: Vec<u64>,
-    pub airgroup_instances_alives: Vec<Vec<usize>>,
     pub balance_distribution: bool,
     pub n_processes: Option<usize>,
-    pub rank: Option<i32>,
+    pub rank: Option<Vec<i32>>,
 }
 
 impl std::fmt::Debug for DistributionCtx {
@@ -40,7 +39,6 @@ impl std::fmt::Debug for DistributionCtx {
             .field("instances_owner", &self.instances_owner)
             .field("owners_count", &self.owners_count)
             .field("owners_weight", &self.owners_weight)
-            .field("airgroup_instances_alives", &self.airgroup_instances_alives)
             .field("balance_distribution", &self.balance_distribution)
             .field("n_processes", &self.n_processes)
             .field("rank", &self.rank);
@@ -58,7 +56,6 @@ impl DistributionCtx {
             instances_owner: Vec::new(),
             owners_count: Vec::new(),
             owners_weight: Vec::new(),
-            airgroup_instances_alives: Vec::new(),
             balance_distribution: true,
             n_processes: None,
             rank: None,
@@ -67,7 +64,7 @@ impl DistributionCtx {
 
     pub fn add_rank(&mut self, n_processes: usize, rank: i32) {
         self.n_processes = Some(n_processes);
-        self.rank = Some(rank);
+        self.rank = Some(vec![rank]);
         self.owners_count = vec![0; n_processes];
         self.owners_weight = vec![0; n_processes];
     }
@@ -78,13 +75,12 @@ impl DistributionCtx {
         self.instances.clear();
         self.instances_owner.clear();
 
-        self.airgroup_instances_alives.clear();
         self.balance_distribution = true;
     }
 
     #[inline]
     pub fn is_my_instance(&self, global_idx: usize) -> bool {
-        self.owner(global_idx) == self.rank.unwrap()
+        self.rank.as_ref().unwrap().contains(&self.owner(global_idx))
     }
 
     #[inline]
@@ -171,7 +167,7 @@ impl DistributionCtx {
         self.instances_owner.push((new_owner, count, weight));
         self.owners_count[new_owner as usize] += 1;
         self.owners_weight[new_owner as usize] += weight;
-        if new_owner == self.rank.unwrap() {
+        if self.rank.as_ref().unwrap().contains(&new_owner) {
             self.my_instances.push(idx);
         }
         idx
@@ -193,7 +189,7 @@ impl DistributionCtx {
         self.instances_owner.push((owner_idx as i32, count, weight));
         self.owners_count[owner_idx] += 1;
         self.owners_weight[owner_idx] += weight;
-        if owner_idx as i32 == self.rank.unwrap() {
+        if self.rank.as_ref().unwrap().contains(&(owner_idx as i32)) {
             self.my_instances.push(idx);
         }
         idx
@@ -215,15 +211,14 @@ impl DistributionCtx {
 
     pub fn add_instance_no_assign_table(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
         let mut idx = 0;
-        for rank in 0..self.n_processes.unwrap() {
+        for new_owner in 0..self.n_processes.unwrap() {
             self.n_instances += 1;
             self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, 1));
-            let new_owner = rank;
             let count = self.owners_count[new_owner] as usize;
             self.instances_owner.push((new_owner as i32, count, weight));
             self.owners_count[new_owner] += 1;
             self.owners_weight[new_owner] += weight;
-            if new_owner == self.rank.unwrap() as usize {
+            if self.rank.as_ref().unwrap().contains(&(new_owner as i32)) {
                 self.my_instances.push(self.instances.len() - 1);
                 idx = self.instances.len() - 1;
             }
@@ -260,7 +255,7 @@ impl DistributionCtx {
                     self.instances_owner[*idx].1 = self.owners_count[owner_idx] as usize;
                     self.owners_count[owner_idx] += 1;
                     self.owners_weight[owner_idx] += self.instances_owner[*idx].2;
-                    if owner_idx == self.rank.unwrap() as usize {
+                    if self.rank.as_ref().unwrap().contains(&(owner_idx as i32)) {
                         self.my_instances.push(*idx);
                     }
                     owner_idx = (owner_idx + 1) % self.n_processes.unwrap();
@@ -295,7 +290,7 @@ impl DistributionCtx {
                 self.instances_owner[idx].1 = self.owners_count[min_weight_idx] as usize;
                 self.owners_count[min_weight_idx] += 1;
                 self.owners_weight[min_weight_idx] += self.instances_owner[idx].2;
-                if min_weight_idx == self.rank.unwrap() as usize {
+                if self.rank.as_ref().unwrap().contains(&(min_weight_idx as i32)) {
                     self.my_instances.push(idx);
                 }
             }
@@ -324,7 +319,7 @@ impl DistributionCtx {
                     self.instances_owner[idx].1 = self.owners_count[owner_idx] as usize;
                     self.owners_count[owner_idx] += 1;
                     self.owners_weight[owner_idx] += self.instances_owner[idx].2;
-                    if owner_idx == self.rank.unwrap() as usize {
+                    if self.rank.as_ref().unwrap().contains(&(owner_idx as i32)) {
                         self.my_instances.push(idx);
                     }
                     owner_idx = (owner_idx + 1) % self.n_processes.unwrap();
@@ -351,14 +346,5 @@ impl DistributionCtx {
         average_weight /= self.n_processes.unwrap() as f64;
         let max_deviation = max_weight as f64 / average_weight;
         (average_weight, max_weight, min_weight, max_deviation)
-    }
-
-    pub fn close(&mut self, n_airgroups: usize) {
-        //Calculate for each airgroup how many processes have instances of that airgroup alive
-        self.airgroup_instances_alives = vec![vec![0; self.n_processes.unwrap()]; n_airgroups];
-        for (idx, &instance_info) in self.instances.iter().enumerate() {
-            let owner = self.instances_owner[idx].0;
-            self.airgroup_instances_alives[instance_info.airgroup_id][owner as usize] = 1;
-        }
     }
 }

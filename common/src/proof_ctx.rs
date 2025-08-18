@@ -318,7 +318,17 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn dctx_get_rank(&self) -> usize {
         let dctx = self.dctx.read().unwrap();
-        dctx.rank.unwrap() as usize
+        dctx.rank.as_ref().unwrap()[0] as usize
+    }
+
+    pub fn dctx_get_ranks(&self) -> Vec<i32> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.rank.as_ref().unwrap().clone()
+    }
+
+    pub fn dctx_is_rank_zero(&self) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.rank.as_ref().unwrap().contains(&(0 as i32))
     }
 
     pub fn dctx_get_n_processes(&self) -> usize {
@@ -416,11 +426,6 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances.len()
     }
 
-    pub fn dctx_get_airgroup_instances_alive(&self) -> Vec<Vec<usize>> {
-        let dctx = self.dctx.read().unwrap();
-        dctx.airgroup_instances_alives.clone()
-    }
-
     pub fn dctx_add_instance_no_assign(
         &self,
         airgroup_id: usize,
@@ -450,10 +455,6 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn dctx_set_balance_distribution(&self, balance: bool) {
         let mut dctx = self.dctx.write().unwrap();
         dctx.set_balance_distribution(balance);
-    }
-    pub fn dctx_close(&self) {
-        let mut dctx = self.dctx.write().unwrap();
-        dctx.close(self.global_info.air_groups.len());
     }
 
     pub fn get_proof_values_ptr(&self) -> *mut u8 {

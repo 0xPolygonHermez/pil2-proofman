@@ -542,7 +542,7 @@ where
             let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances);
             let airgroupvalues = self.mpi_ctx.distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
 
-            if self.pctx.dctx_get_rank() == 0 {
+            if self.pctx.dctx_is_rank_zero() {
                 let valid_global_constraints =
                     verify_global_constraints_proof(&self.pctx, &self.sctx, debug_info, airgroupvalues);
 
@@ -811,9 +811,7 @@ where
         timer_start_info!(GENERATING_PROOFS);
 
         let max_num_threads = configured_num_threads(self.mpi_ctx.node_n_processes as usize);
-        println!("MPI CTX RANK {} of {}", self.mpi_ctx.rank, self.mpi_ctx.node_n_processes);
 
-        println!("SPECIFIED RANK {:?}", phase_inputs);
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
             let (input_data_path, n_processes, rank) = match phase_inputs {
                 ProvePhaseInputs::Full(ref path, n_processes, rank) => (path, n_processes, rank),
@@ -1460,7 +1458,7 @@ where
                 return Ok(ProvePhaseResult::Internal(agg_recursive2_proofs));
             }
 
-            if self.pctx.dctx_get_rank() == 0 {
+            if self.pctx.dctx_is_rank_zero() {
                 let vadcop_proof_final = generate_vadcop_final_proof(
                     &self.pctx,
                     &self.setups,
@@ -1511,7 +1509,7 @@ where
 
         if options.verify_proofs {
             if options.aggregation {
-                if self.pctx.dctx_get_rank() == 0 {
+                if self.pctx.dctx_is_rank_zero() {
                     let setup_path = self.pctx.global_info.get_setup_path("vadcop_final");
                     let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
                     let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
@@ -1538,7 +1536,7 @@ where
         } else {
             tracing::info!(
                 "··· {}",
-                "\u{2713} All proofs were successfully generated. Verification Skipped".bright_yellow().bold()
+                "All proofs were successfully generated. Verification Skipped".bright_yellow().bold()
             );
         }
 
@@ -1612,7 +1610,7 @@ where
         let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances);
         let airgroupvalues = self.mpi_ctx.distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
 
-        if !test_mode && self.pctx.dctx_get_rank() == 0 {
+        if !test_mode && self.pctx.dctx_is_rank_zero() {
             let valid_global_constraints =
                 verify_global_constraints_proof(&self.pctx, &self.sctx, &DebugInfo::default(), airgroupvalues);
             if valid_global_constraints.is_err() {
@@ -1641,7 +1639,6 @@ where
         self.wcm.execute();
 
         self.pctx.dctx_assign_instances(minimal_memory);
-        self.pctx.dctx_close();
 
         print_summary_info(&self.pctx, &self.sctx);
 

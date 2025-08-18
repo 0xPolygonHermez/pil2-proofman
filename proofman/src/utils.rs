@@ -18,7 +18,7 @@ use pil_std_lib::Std;
 use witness::WitnessManager;
 
 pub fn print_summary_info<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) {
-    let mpi_rank = pctx.dctx_get_rank();
+    let mpi_rank = pctx.dctx_get_ranks();
     let n_processes = pctx.dctx_get_n_processes();
 
     if n_processes > 1 {
@@ -32,7 +32,7 @@ pub fn print_summary_info<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F
         );
     }
 
-    if mpi_rank == 0 {
+    if mpi_rank.contains(&(0 as i32)) {
         print_summary(pctx, sctx, true);
     }
 

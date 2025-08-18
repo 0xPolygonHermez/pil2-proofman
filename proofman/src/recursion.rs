@@ -327,9 +327,8 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
     d_buffers: *mut c_void,
     save_proofs: bool,
 ) -> Result<Vec<Option<Vec<u64>>>, Box<dyn std::error::Error>> {
-    let n_processes = pctx.dctx_get_n_processes();
-    let rank = pctx.dctx_get_rank();
-    let airgroup_instances_alive = &pctx.dctx_get_airgroup_instances_alive();
+    let n_processes = mpi_ctx.n_processes as usize;
+    let rank = mpi_ctx.rank as usize;
     let n_airgroups = pctx.global_info.air_groups.len();
     let mut alives = vec![0; n_airgroups];
     let mut airgroup_proofs: Vec<Vec<Option<Vec<u64>>>> = Vec::with_capacity(n_airgroups);
@@ -341,9 +340,9 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
         let mut current_pos = 0;
         for p in 0..n_processes {
             if p < rank {
-                current_pos += airgroup_instances_alive[airgroup][p];
+                current_pos += 1;
             }
-            alives[airgroup] += airgroup_instances_alive[airgroup][p];
+            alives[airgroup] += 1;
         }
         let setup = setups.get_setup(airgroup, 0, &ProofType::Recursive2);
         let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup].len() + 10;
@@ -476,7 +475,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     save_proof: bool,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
     let mut updated_proof: Vec<u64> = Vec::new();
-    if pctx.dctx_get_rank() == 0 {
+    if pctx.dctx_is_rank_zero() {
         let publics_circom_size =
             pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3;
 
