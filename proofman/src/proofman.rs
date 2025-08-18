@@ -398,13 +398,12 @@ where
 
         timer_stop_and_log_info!(EXECUTE);
 
-        let my_instances = self.pctx.dctx_get_my_instances();
         let mut my_instances_sorted = self.pctx.dctx_get_my_instances();
         let mut rng = StdRng::seed_from_u64(self.pctx.dctx_get_rank() as u64);
         my_instances_sorted.shuffle(&mut rng);
 
-        let instances_mine = my_instances.len();
-        let instances_mine_no_tables = my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).count();
+        let my_instances_sorted_no_tables =
+            my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
 
         let max_num_threads = configured_num_threads(self.pctx.dctx_get_node_n_processes());
 
@@ -412,7 +411,7 @@ where
             Arc::new(MemoryHandler::new(self.gpu_params.max_witness_stored, self.sctx.max_witness_trace_size));
 
         self.calculate_witness(
-            &my_instances_sorted_no_all,
+            &my_instances_sorted_no_tables,
             memory_handler.clone(),
             max_num_threads,
             options.minimal_memory,
@@ -922,8 +921,10 @@ where
         let mut my_instances_sorted = self.pctx.dctx_get_my_instances();
         my_instances_sorted.shuffle(&mut rng);
 
-        let instances_mine = my_instances.len();
-        let instances_mine_no_tables = my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).count();
+        let my_instances_sorted_no_tables =
+            my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+
+        let instances_mine_no_tables = my_instances_sorted_no_tables.len();
 
         let values_contributions: Arc<Vec<Mutex<Vec<F>>>> =
             Arc::new((0..instances.len()).map(|_| Mutex::new(Vec::<F>::new())).collect());
@@ -988,9 +989,9 @@ where
                             &streams_clone,
                         );
 
-                        if !pctx_clone.dctx_is_instance_all(instance_id) {
+                        if !pctx_clone.dctx_is_table(instance_id) {
                             witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
-                            if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire))
+                            if (instances_mine_no_tables - witnesses_done_clone.load(Ordering::Acquire))
                                 >= max_witness_stored
                             {
                                 let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
@@ -1013,7 +1014,7 @@ where
         }
 
         self.calculate_witness(
-            &my_instances_sorted_no_all,
+            &my_instances_sorted_no_tables,
             self.memory_handler.clone(),
             max_num_threads,
             options.minimal_memory,
@@ -2362,7 +2363,7 @@ where
         instance_id: usize,
         aux_trace_contribution_ptr: *mut u8,
         d_buffers: &DeviceBuffer,
-        streams: Arc<Mutex<Vec<Option<u64>>>>,
+        streams: &Mutex<Vec<Option<u64>>>,
     ) {
         let n_field_elements = 4;
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);

@@ -23,14 +23,14 @@ pub struct InstanceInfo {
     pub airgroup_id: usize,
     pub air_id: usize,
     pub table: bool,
-    pub min_threads_witness: usize,
+    pub threads_witness: usize,
     pub n_chunks: usize,
     pub range: (usize, usize),
 }
 
 impl InstanceInfo {
-    pub fn new(airgroup_id: usize, air_id: usize, table: bool, min_threads_witness: usize) -> Self {
-        Self { airgroup_id, air_id, table, min_threads_witness, n_chunks: 1, range: (0, 0) }
+    pub fn new(airgroup_id: usize, air_id: usize, table: bool, threads_witness: usize) -> Self {
+        Self { airgroup_id, air_id, table, threads_witness, n_chunks: 1, range: (0, 0) }
     }
 }
 
@@ -330,7 +330,7 @@ impl DistributionCtx {
         let mut idx = 0;
         for rank in 0..self.n_processes {
             self.n_instances += 1;
-            self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, PreCalculate::None, 1));
+            self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, 1));
             let new_owner = rank;
             let count = self.owners_count[new_owner as usize] as usize;
             self.instances_owner.push((new_owner, count, weight));
