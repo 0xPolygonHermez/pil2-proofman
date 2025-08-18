@@ -2482,13 +2482,8 @@ where
         }
         Self::initialize_publics_custom_commits(&sctx, &pctx)?;
 
-        let setups_vadcop = Arc::new(SetupsVadcop::new(
-            &pctx.global_info,
-            verify_constraints,
-            aggregation,
-            final_snark,
-            gpu_params,
-        ));
+        let setups_vadcop =
+            Arc::new(SetupsVadcop::new(&pctx.global_info, verify_constraints, aggregation, final_snark, gpu_params));
 
         if aggregation {
             check_tree_paths_vadcop(&pctx, &setups_vadcop, final_snark)?;
