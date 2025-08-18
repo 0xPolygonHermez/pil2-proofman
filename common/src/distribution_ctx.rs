@@ -501,7 +501,7 @@ impl DistributionCtx {
         }
         #[cfg(not(distributed))]
         {
-            roots
+            values.to_vec()
         }
     }
 

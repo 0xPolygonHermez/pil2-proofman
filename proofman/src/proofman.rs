@@ -2487,7 +2487,7 @@ where
             verify_constraints,
             aggregation,
             final_snark,
-            gpu_params.preallocate,
+            gpu_params,
         ));
 
         if aggregation {
