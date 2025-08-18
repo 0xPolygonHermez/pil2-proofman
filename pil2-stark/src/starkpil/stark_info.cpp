@@ -573,9 +573,8 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
             maxNBlocks = omp_get_max_threads();
         } else {
             if(recursive) {
-                uint64_t NExtended = (1 << starkStruct.nBitsExt);
                 nrowsPack = 32;
-                maxNBlocks = NExtended / nrowsPack;
+                maxNBlocks = 8192;
             } else {
                 nrowsPack = 256;
                 maxNBlocks = 1024;
