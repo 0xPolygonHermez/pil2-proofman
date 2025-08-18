@@ -180,6 +180,8 @@ public:
     bool gpu = false;
     bool preallocate = false;
 
+    bool overwriteFixed = false;
+
     uint64_t mapTotalN;
     uint64_t mapTotalNCustomCommitsFixed;
     
@@ -203,6 +205,8 @@ public:
     void setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3);
 
     void getProofSize();
+
+    uint64_t getPinnedProofSize();
 
     uint64_t getNumNodesMT(uint64_t height);
 
