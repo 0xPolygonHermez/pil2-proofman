@@ -26,7 +26,6 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
 use csv::Writer;
-use std::ops::Range;
 
 use rand::{SeedableRng, seq::SliceRandom};
 use rand::rngs::StdRng;
@@ -109,11 +108,11 @@ pub enum ProvePhase {
 pub struct ProofInfo {
     pub input_data_path: Option<PathBuf>,
     pub total_compute_units: usize,
-    pub compute_units: Vec<Range<u32>>,
+    pub compute_units: Vec<u32>,
 }
 
 impl ProofInfo {
-    pub fn new(input_data_path: Option<PathBuf>, total_compute_units: usize, compute_units: Vec<Range<u32>>) -> Self {
+    pub fn new(input_data_path: Option<PathBuf>, total_compute_units: usize, compute_units: Vec<u32>) -> Self {
         Self { input_data_path, total_compute_units, compute_units }
     }
 }
@@ -671,7 +670,7 @@ where
         let phase_inputs = ProvePhaseInputs::Full(ProofInfo::new(
             input_data_path,
             self.mpi_ctx.n_processes as usize,
-            vec![Range { start: self.mpi_ctx.rank as u32, end: (self.mpi_ctx.rank + 1) as u32 }],
+            vec![self.mpi_ctx.rank as u32],
         ));
         self._generate_proof(phase_inputs, options, ProvePhase::Full)
     }
@@ -838,7 +837,7 @@ where
 
             let mut units: Vec<u32> = Vec::new();
             for range in &proof_info.compute_units {
-                units.extend(range.clone().collect::<Vec<u32>>());
+                units.push(*range);
             }
             // TODO: HANDLE CLUSTERS
             self.pctx.dctx_set_compute_units(proof_info.total_compute_units, units);
