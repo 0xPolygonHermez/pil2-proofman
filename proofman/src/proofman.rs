@@ -109,11 +109,19 @@ pub struct ProofInfo {
     pub input_data_path: Option<PathBuf>,
     pub total_compute_units: usize,
     pub compute_units: Vec<u32>,
+    pub total_processes: usize,
+    pub initial_process_id: usize,
 }
 
 impl ProofInfo {
-    pub fn new(input_data_path: Option<PathBuf>, total_compute_units: usize, compute_units: Vec<u32>) -> Self {
-        Self { input_data_path, total_compute_units, compute_units }
+    pub fn new(
+        input_data_path: Option<PathBuf>,
+        total_compute_units: usize,
+        compute_units: Vec<u32>,
+        total_processes: usize,
+        initial_process_id: usize,
+    ) -> Self {
+        Self { input_data_path, total_compute_units, compute_units, total_processes, initial_process_id }
     }
 }
 
@@ -671,6 +679,8 @@ where
             input_data_path,
             self.mpi_ctx.n_processes as usize,
             vec![self.mpi_ctx.rank as u32],
+            self.mpi_ctx.n_processes as usize,
+            self.mpi_ctx.rank as usize,
         ));
         self._generate_proof(phase_inputs, options, ProvePhase::Full)
     }
@@ -839,8 +849,14 @@ where
             for range in &proof_info.compute_units {
                 units.push(*range);
             }
-            // TODO: HANDLE CLUSTERS
-            self.pctx.dctx_set_compute_units(proof_info.total_compute_units, units);
+
+            self.pctx.dctx_set_compute_units(
+                self.mpi_ctx.rank as usize,
+                proof_info.total_compute_units,
+                units,
+                proof_info.total_processes,
+                proof_info.initial_process_id,
+            );
             self.wcm.set_input_data_path(proof_info.input_data_path.clone());
             self.exec(options.minimal_memory)?;
 

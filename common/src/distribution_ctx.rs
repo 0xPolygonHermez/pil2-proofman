@@ -26,8 +26,11 @@ pub struct DistributionCtx {
     pub owners_count: Vec<u32>,
     pub owners_weight: Vec<u64>,
     pub balance_distribution: bool,
+    pub rank: Option<usize>,
     pub total_compute_units: Option<usize>,
     pub compute_units: Option<Vec<u32>>,
+    pub total_processes: Option<usize>,
+    pub process_id: Option<usize>,
 }
 
 impl std::fmt::Debug for DistributionCtx {
@@ -59,14 +62,27 @@ impl DistributionCtx {
             balance_distribution: true,
             total_compute_units: None,
             compute_units: None,
+            total_processes: None,
+            process_id: None,
+            rank: None,
         }
     }
 
-    pub fn add_compute_units(&mut self, total_compute_units: usize, compute_units: Vec<u32>) {
+    pub fn add_compute_units(
+        &mut self,
+        rank: usize,
+        total_compute_units: usize,
+        compute_units: Vec<u32>,
+        total_processes: usize,
+        process_id: usize,
+    ) {
         self.total_compute_units = Some(total_compute_units);
         self.compute_units = Some(compute_units);
         self.owners_count = vec![0; total_compute_units];
         self.owners_weight = vec![0; total_compute_units];
+        self.total_processes = Some(total_processes);
+        self.process_id = Some(process_id);
+        self.rank = Some(rank);
     }
 
     pub fn reset(&mut self) {
@@ -211,14 +227,14 @@ impl DistributionCtx {
 
     pub fn add_instance_no_assign_table(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
         let mut idx = 0;
-        for new_owner in 0..self.total_compute_units.unwrap() {
+        for new_owner in 0..self.total_processes.unwrap() {
             self.n_instances += 1;
             self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, 1));
             let count = self.owners_count[new_owner] as usize;
             self.instances_owner.push((new_owner as u32, count, weight));
             self.owners_count[new_owner] += 1;
             self.owners_weight[new_owner] += weight;
-            if self.compute_units.as_ref().unwrap().contains(&(new_owner as u32)) {
+            if self.process_id.unwrap() == new_owner {
                 self.my_instances.push(self.instances.len() - 1);
                 idx = self.instances.len() - 1;
             }
