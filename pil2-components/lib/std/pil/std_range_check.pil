@@ -5,6 +5,10 @@ require "std_lookup.pil";
 // for each opid, but instead fills the N up until the end
 // Problem: I need to create an additional fixed because multiple OPIDS will coexist in the same slice
 
+
+// TODO: Function that isolates particular ranges, instead of parameter.
+// Everything is in a single table by default.
+
 /*
  * Module for performing selected range checks over expressions of any degree.
  * This module provides three independent user interfaces:
@@ -224,6 +228,9 @@ airtemplate SpecifiedRanges(const int N, const int opids[], const int opids_coun
     }
 }
 
+// airtemplate RangeCheckTable() {
+// }
+
 /**
  * Performs a range check on a expression within a specified range.
  *
@@ -252,6 +259,11 @@ function range_check(const expr expression, const int min, const int max, const 
         println(` -  U8: [0, ${MASK_8}]`);
         println(` - U16: [0, ${MASK_16}]`);
     }
+
+    // TODOOOO
+    // If the range already exists or it is included in an already existing range, reuse
+    // lookup_assumes(opid, [expression], sel, PIOP_NAME_RANGE_CHECK);
+
 
     // Define the range check assumes
     if (absorb) {
