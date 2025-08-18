@@ -1858,6 +1858,8 @@ where
             false => 0.0,
         };
 
+        mpi_ctx.barrier();
+
         let n_gpus = get_num_gpus_c();
         let n_processes_node = mpi_ctx.node_n_processes as usize as u64;
 
@@ -1904,6 +1906,14 @@ where
             }
             false => 1,
         };
+
+        if sctx.max_single_buffer_size > n_streams_per_gpu * sctx.max_prover_buffer_size {
+            panic!(
+                "Not enough GPU memory to run the proof. At least: {} are required but only {} is available.",
+                sctx.max_single_buffer_size / sctx.max_prover_buffer_size,
+                n_streams_per_gpu
+            );
+        }
 
         let mut gpu_available_memory = match cfg!(feature = "gpu") {
             true => max_size_buffer as i64 - (n_streams_per_gpu * sctx.max_prover_buffer_size) as i64,
