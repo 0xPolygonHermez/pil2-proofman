@@ -197,7 +197,8 @@ impl<F: PrimeField64> SetupRepository<F> {
         if setup_type != &ProofType::VadcopFinal {
             for (airgroup_id, air_group) in global_info.airs.iter().enumerate() {
                 for (air_id, _) in air_group.iter().enumerate() {
-                    let single_instance = cfg!(feature = "gpu") && gpu_params.max_number_streams > 1
+                    let single_instance = cfg!(feature = "gpu")
+                        && gpu_params.max_number_streams > 1
                         && gpu_params.single_instances.contains(&(airgroup_id, air_id))
                         && setup_type == &ProofType::Basic;
                     let setup = Setup::new(
