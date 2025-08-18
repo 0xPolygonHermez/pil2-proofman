@@ -3,6 +3,7 @@ require "std_lookup.pil";
 
 // TODO: Improve specified_ranges division, so that it does not create a new multiplicity
 // for each opid, but instead fills the N up until the end
+// Problem: I need to create an additional fixed because multiple OPIDS will coexist in the same slice
 
 /*
  * Module for performing selected range checks over expressions of any degree.
@@ -79,10 +80,6 @@ int MAX_SPECIFIED_BITS = -1; // -1 indicates that the bits is specified on deman
                              // and is set to be the maximum of all specified ranges
 
 function set_max_u8_bits(const int bits) {
-    if (U8_TABLE_VIRTUAL == 1) {
-        println("[Warning] set_max_u8_bits() has no effect when the U8 table has been set virtual.");
-    }
-
     if (bits < 1 || bits > 8) {
         error(`The u8 bits should be between 1 and 8, got ${bits} instead`);
     }
@@ -91,10 +88,6 @@ function set_max_u8_bits(const int bits) {
 }
 
 function set_max_u16_bits(const int bits) {
-    if (U16_TABLE_VIRTUAL == 1) {
-        println("[Warning] set_max_u16_bits() has no effect when the U16 table has been set virtual.");
-    }
-
     if (bits < 1 || bits > 16) {
         error(`The u16 bits should be between 1 and 16, got ${bits} instead`);
     }
@@ -103,10 +96,6 @@ function set_max_u16_bits(const int bits) {
 }
 
 function set_max_specified_bits(const int bits) {
-    if (SPECIFIED_TABLE_VIRTUAL == 1) {
-        println("[Warning] set_max_specified_bits() has no effect when the specified table has been set virtual.");
-    }
-
     if (bits < 1) {
         error(`The specified bits should be greater than or equal to 1, got ${bits} instead`);
     }
@@ -115,20 +104,8 @@ function set_max_specified_bits(const int bits) {
 }
 
 function set_max_std_tables_bits(const int bits) {
-    if (U8_TABLE_VIRTUAL == 1) {
-        println("[Warning] set_max_std_tables_bits() has no effect on the U8 table since it has been set virtual.");
-    }
-
-    if (U16_TABLE_VIRTUAL == 1) {
-        println("[Warning] set_max_std_tables_bits() has no effect on the U16 table since it has been set virtual.");
-    }
-
-    if (SPECIFIED_TABLE_VIRTUAL == 1) {
-        println("[Warning] set_max_std_tables_bits() has no effect on the specified table since it has been set virtual.");
-    }
-
-    if (bits < 0) {
-        error(`The input bits should be greater than or equal to 0, got ${bits} instead`);
+    if (bits < 1) {
+        error(`The input bits should be greater than or equal to 1, got ${bits} instead`);
     }
 
     set_max_u8_bits(bits > 8 ? 8 : bits);
