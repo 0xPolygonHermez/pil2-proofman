@@ -1,6 +1,8 @@
 require "std_constants.pil";
 require "std_lookup.pil";
 
+// TODO: Improve table_id naming redundancy
+
 int MAX_VIRTUAL_BITS = -1; // -1 indicates that the bits is specified on demand
                            // and is set to be the maximum of all specified ranges
 
@@ -12,43 +14,84 @@ function set_max_virtual_bits(const int bits) {
     MAX_VIRTUAL_BITS = bits;
 }
 
-function collect_virtual_table(const int uid, const expr table[]) {
-    // Check whether the inputs are valid
+const int MAX_VIRTUAL_TABLE_WIDTH = 64;
+const int MAX_VIRTUAL_TABLE_IDS = 16;
+
+function collect_virtual_table(const int bus_id, const int table_id, const expr table[]) {
+    // Check the width
     const int w = length(table);
     if (w == 0) {
-        error(`Table (AIRGROUP, AIR, num_rows) = (${AIRGROUP_ID}, ${AIR_ID}, ${num_rows}) is empty`);
+        error(`Table #${table_id} on (AIRGROUP, AIR) = (${AIRGROUP_ID}, ${AIR_ID}) is empty`);
+    } else if (w > MAX_VIRTUAL_TABLE_WIDTH) {
+        error(`Table #${table_id} on (AIRGROUP, AIR) = (${AIRGROUP_ID}, ${AIR_ID}) exceeds maximum width`);
     }
 
-    // We assume that all columns in a table have the same number of rows
-    const int num_rows = Tables.num_rows(table[0]);
-    if (num_rows == 0) {
-        error(`Table (AIRGROUP, AIR, num_rows) = (${AIRGROUP_ID}, ${AIR_ID}, ${num_rows}) is empty`);
+    // Check the height
+    const int h = Tables.num_rows(table[0]);
+    if (h == 0) {
+        error(`Table #${table_id} on (AIRGROUP, AIR) = (${AIRGROUP_ID}, ${AIR_ID}) is empty`);
     } 
     for (int i = 1; i < w; i++) {
-        if (Tables.num_rows(table[i]) != num_rows) {
-            error(`Table (AIRGROUP, AIR, num_rows) = (${AIRGROUP_ID}, ${AIR_ID}, ${num_rows}) has inconsistent number of rows`);
+        if (Tables.num_rows(table[i]) != h) {
+            error(`Table #${table_id} on (AIRGROUP, AIR) = (${AIRGROUP_ID}, ${AIR_ID}) has inconsistent number of rows`);
         }
     }
 
-    // The first time, initialize the tables container
     container airgroup.std.virtual_table alias vt {
-        expr columns[ARRAY_SIZE][32];
-        int widths[ARRAY_SIZE];
-        int heights[ARRAY_SIZE];
-        int uids[ARRAY_SIZE];
+        expr columns[ARRAY_SIZE][MAX_VIRTUAL_TABLE_IDS][MAX_VIRTUAL_TABLE_WIDTH];
+        int bus_id[ARRAY_SIZE];
+        int table_ids[ARRAY_SIZE][MAX_VIRTUAL_TABLE_IDS]; // One bus_id can be associated with multiple table_ids
+        int inner_height[ARRAY_SIZE][MAX_VIRTUAL_TABLE_IDS];
+        int num_table_ids[ARRAY_SIZE];
+        int width[ARRAY_SIZE];
+        int height[ARRAY_SIZE];
         int num_tables = 0;
         int total_height = 0;
     }
 
-    // Update the tables container
-    for (int i = 0; i < w; i++) {
-        vt.columns[vt.num_tables][i] = table[i];
+    int bus_id_pos = -1;
+    for (int i = 0; i < vt.num_tables; i++) {
+        if (vt.bus_id[i] == bus_id) {
+            bus_id_pos = i;
+            break;
+        }
     }
-    vt.widths[vt.num_tables] = w;
-    vt.heights[vt.num_tables] = num_rows;
-    vt.total_height += num_rows;
-    vt.uids[vt.num_tables] = uid;
-    vt.num_tables++;
+
+    if (bus_id_pos == -1) {
+        // The first time, we need to allocate a new entry
+        for (int i = 0; i < w; i++) {
+            vt.columns[vt.num_tables][0][i] = table[i];
+        }
+        vt.bus_id[vt.num_tables] = bus_id;
+        vt.table_ids[vt.num_tables][0] = table_id;
+        vt.inner_height[vt.num_tables][0] = h;
+        vt.num_table_ids[vt.num_tables] = 1;
+        vt.width[vt.num_tables] = w;
+        vt.height[vt.num_tables] = h;
+        vt.total_height += h;
+        vt.num_tables++;
+    } else {
+        // Otherwise, update
+
+        // If the table_id was already processed or is inconsistent, error
+        const int num_table_ids = vt.num_table_ids[bus_id_pos];
+        for (int i = 0; i < num_table_ids; i++) {
+            if (vt.table_ids[bus_id_pos][i] == table_id) {
+                error(`Table #${table_id} on (AIRGROUP, AIR) = (${AIRGROUP_ID}, ${AIR_ID}) was already processed`);
+            } else if (vt.width[bus_id_pos] != w) {
+                error(`Table #${table_id} on (AIRGROUP, AIR) = (${AIRGROUP_ID}, ${AIR_ID}) has inconsistent width: expected ${vt.width[bus_id_pos]}, got ${w}`);
+            }
+        }
+
+        for (int i = 0; i < w; i++) {
+            vt.columns[bus_id_pos][num_table_ids][i] = table[i];
+        }
+        vt.table_ids[bus_id_pos][num_table_ids] = table_id;
+        vt.inner_height[bus_id_pos][num_table_ids] = h;
+        vt.num_table_ids[bus_id_pos]++;
+        vt.height[bus_id_pos] += h;
+        vt.total_height += h;
+    }
 
     // At the end, pack the tables
     on final(1) airgroup pack_tables();
@@ -103,11 +146,11 @@ function pack_tables() {
             const int idx_i = ordered_tables[i];
             const int idx_j = ordered_tables[j];
 
-            const int width_i = vt.widths[idx_i];
-            const int width_j = vt.widths[idx_j];
+            const int width_i = vt.width[idx_i];
+            const int width_j = vt.width[idx_j];
 
-            const int height_i = vt.heights[idx_i];
-            const int height_j = vt.heights[idx_j];
+            const int height_i = vt.height[idx_i];
+            const int height_j = vt.height[idx_j];
 
             // Swap
             if ((width_i > width_j) || ((width_i == width_j) && (height_i < height_j))) {
@@ -118,17 +161,27 @@ function pack_tables() {
         }
     }
 
-    int ordered_uids[vt.num_tables];
-    int ordered_acc_heights[vt.num_tables];
+    // Hint the ordering for efficient witness computation
+    int total_num_table_ids = 0;
+    for (int i = 0; i < vt.num_tables; i++) {
+        total_num_table_ids += vt.num_table_ids[i];
+    }
+
+    int ordered_table_ids[total_num_table_ids];
+    int ordered_acc_heights[total_num_table_ids];
     int ordered_acc_height = 0;
+    int offset = 0;
     for (int i = 0; i < vt.num_tables; i++) {
         const int idx = ordered_tables[i];
-        const int height = vt.heights[idx];
-        ordered_uids[i] = vt.uids[idx];
-        ordered_acc_heights[i] = ordered_acc_height;
-        ordered_acc_height += height;
+        const int num_table_ids = vt.num_table_ids[idx];
+        for (int j = 0; j < num_table_ids; j++) {
+            ordered_table_ids[offset + j] = vt.table_ids[idx][j];
+            ordered_acc_heights[offset + j] = ordered_acc_height;
+            ordered_acc_height += vt.inner_height[idx][j];
+        }
+        offset += num_table_ids;
     }
-    @virtual_table_data{uids: ordered_uids, acc_heights: ordered_acc_heights};
+    @virtual_table_data{table_ids: ordered_table_ids, acc_heights: ordered_acc_heights};
 
     int max_bits = 0;
     if (MAX_VIRTUAL_BITS == -1) {
@@ -177,8 +230,8 @@ function pack_tables() {
         int offset = 0;
         for (int j = 0; j < vt.num_tables; j++) {
             const int table_id = ordered_tables[j];
-            const int width = vt.widths[table_id];
-            int height = vt.heights[table_id];
+            const int width = vt.width[table_id];
+            int height = vt.height[table_id];
 
             while (height > 0) {
                 if (height <= available_height) {
@@ -195,7 +248,7 @@ function pack_tables() {
 
                 // Update the uids and the number of tables in the current group
                 tables_pack[offset][lens_pack[offset]] = table_id;
-                uids_pack[offset][lens_pack[offset]] = vt.uids[table_id];
+                uids_pack[offset][lens_pack[offset]] = vt.bus_id[table_id];
                 lens_pack[offset]++;
 
                 if (available_height == 0) {
@@ -212,7 +265,7 @@ function pack_tables() {
 
         // If the last table is partially filled, we need to add a complete new table
         if (available_height < num_rows) {
-            widths_pack[offset] = vt.widths[ordered_tables[vt.num_tables - 1]];
+            widths_pack[offset] = vt.width[ordered_tables[vt.num_tables - 1]];
         }
 
         // Compute the area of the packing
@@ -271,33 +324,37 @@ airtemplate VirtualTable(const int N, const int uids[][], const int table_ids[][
         int row_offset = 0;
         for (int j = 0; j < group_len; j++) {
             const int table_id = table_ids[i][j];
-            const int height = vt.heights[table_id];
-            const int width = vt.widths[table_id];
+            const int num_table_ids = vt.num_table_ids[table_id];
+            const int width = vt.width[table_id];
             const int uid = uids[i][j];
 
-            // Ensure the height does not exceed N
-            const int height_remaining = height - row_start;
-            const int N_remaining = N - row_offset;
-            const int h = (height_remaining <= N_remaining) ? height_remaining : N_remaining;
-
-            // Fill the UID column
-            // println(`Filling UID[${j}]: ${uid}`);
-            Tables.fill(uid, UID[i], row_offset, h);
-
             // Fill the table columns
-            for (int k = 0; k < width; k++) {
-                // println(`Filling column ${col_offset + k}`);
-                Tables.copy(vt.columns[table_id][k], row_start, column[col_offset + k], row_offset, h);
-            }
+            for (int k = 0; k < num_table_ids; k++) {
+                const int height = vt.inner_height[table_id][k];
 
-            // Update the row offset
-            row_offset += h;
+                // Ensure the height does not exceed N
+                const int height_remaining = height - row_start;
+                const int N_remaining = N - row_offset;
+                const int h = (height_remaining <= N_remaining) ? height_remaining : N_remaining;
 
-            // Update the row start
-            if (height_remaining <= N_remaining) {
-                row_start = 0;
-            } else {
-                row_start += h;
+                // Fill the UID column
+                // println(`Filling UID[${j}]: ${uid}`);
+                Tables.fill(uid, UID[i], row_offset, h);
+
+                for (int l = 0; l < width; l++) {
+                    // println(`Filling column ${col_offset + l}`);
+                    Tables.copy(vt.columns[table_id][k][l], row_start, column[col_offset + l], row_offset, h);
+                }
+
+                // Update the row offset
+                row_offset += h;
+
+                // Update the row start
+                if (height_remaining <= N_remaining) {
+                    row_start = 0;
+                } else {
+                    row_start += h;
+                }
             }
         }
 

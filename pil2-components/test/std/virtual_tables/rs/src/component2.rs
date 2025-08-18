@@ -10,7 +10,7 @@ use rand::{
     Rng, SeedableRng,
 };
 
-use crate::{Component2Trace, Table2};
+use crate::{Component2Trace, Table2_1, Table2_2};
 
 define_wc_with_std!(Component2, "Component2");
 
@@ -38,18 +38,27 @@ where
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
             // Get the virtual table ID
-            let id = self.std_lib.get_virtual_table_id(2);
+            let id_1 = self.std_lib.get_virtual_table_id(60);
+            let id_2 = self.std_lib.get_virtual_table_id(61);
 
             // Assumes
             let t = trace[0].a.len();
             for i in 0..num_rows {
-                let val = rng.random_range(0..num_rows) as u64;
+                let (val, row, id) = if i % 2 == 0 {
+                    let val = rng.random_range(0..Table2_1::N) as u64;
+                    // Get the row
+                    let row = Table2_1::calculate_table_row(val);
+                    (val, row, id_1)
+                } else {
+                    let val = rng.random_range(Table2_2::N..(2*Table2_2::N)) as u64;
+                    // Get the row
+                    let row = Table2_2::calculate_table_row(val);
+                    (val, row, id_2)
+                };
+
                 for j in 0..t {
                     trace[i].a[j] = F::from_u64(val);
                 }
-
-                // Get the row
-                let row = Table2::calculate_table_row(val);
 
                 // Update the virtual table rows
                 self.std_lib.inc_virtual_row(id, row, 1);
