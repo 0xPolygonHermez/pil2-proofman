@@ -483,11 +483,6 @@ void StarkInfo::setMapOffsets() {
         offsetTraces += N * mapSectionsN["cm" + to_string(stage)]; 
     }
     
-    if(!preallocate && gpu) {
-        mapOffsets[std::make_pair("const", false)] = offsetTraces;
-        offsetTraces += N * nConstants;
-    }
-
     mapTotalN = std::max(mapTotalN, offsetTraces);
 
     if(!gpu) {
