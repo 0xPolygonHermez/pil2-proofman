@@ -8,7 +8,7 @@ use colored::*;
 
 use std::error::Error;
 
-use proofman_common::{format_bytes, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop, ParamsGPU};
+use proofman_common::{format_bytes, MpiCtx, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop, ParamsGPU};
 use proofman_util::DeviceBuffer;
 use proofman_starks_lib_c::load_device_const_pols_c;
 use proofman_starks_lib_c::custom_commit_size_c;
@@ -17,11 +17,12 @@ use proofman_starks_lib_c::load_device_setup_c;
 use pil_std_lib::Std;
 use witness::WitnessManager;
 
-pub fn print_summary_info<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) {
-    let mpi_rank = pctx.dctx_get_ranks();
-    let n_processes = pctx.dctx_get_n_processes();
+pub fn print_summary_info<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, mpi_ctx: &MpiCtx) {
+    if mpi_ctx.rank == 0 {
+        print_summary(pctx, sctx, true);
+    }
 
-    if n_processes > 1 {
+    if mpi_ctx.n_processes > 1 {
         let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info();
         tracing::info!(
             "Load balance. Average: {} max: {} min: {} deviation: {}",
@@ -30,13 +31,7 @@ pub fn print_summary_info<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F
             min_weight,
             max_deviation
         );
-    }
 
-    if mpi_rank.contains(&(0 as i32)) {
-        print_summary(pctx, sctx, true);
-    }
-
-    if n_processes > 1 {
         print_summary(pctx, sctx, false);
     }
 }

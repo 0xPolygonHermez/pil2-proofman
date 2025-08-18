@@ -232,10 +232,8 @@ impl<F: PrimeField64> SetupRepository<F> {
                                 max_prover_buffer_size = setup.prover_buffer_size;
                             }
                             max_prover_trace_size = max_prover_trace_size.max(total_prover_trace_size);
-                        } else {
-                            if max_single_buffer_size < setup.prover_buffer_size {
-                                max_single_buffer_size = setup.prover_buffer_size;
-                            }
+                        } else if max_single_buffer_size < setup.prover_buffer_size {
+                            max_single_buffer_size = setup.prover_buffer_size;
                         }
                         max_witness_trace_size = max_witness_trace_size.max(trace_size as usize);
 

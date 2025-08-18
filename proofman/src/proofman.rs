@@ -26,6 +26,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
 use csv::Writer;
+use std::ops::Range;
 
 use rand::{SeedableRng, seq::SliceRandom};
 use rand::rngs::StdRng;
@@ -104,11 +105,24 @@ pub enum ProvePhase {
     Full,
 }
 
+#[derive(Debug, Clone)]
+pub struct ProofInfo {
+    pub input_data_path: Option<PathBuf>,
+    pub total_compute_units: usize,
+    pub compute_units: Vec<Range<u32>>,
+}
+
+impl ProofInfo {
+    pub fn new(input_data_path: Option<PathBuf>, total_compute_units: usize, compute_units: Vec<Range<u32>>) -> Self {
+        Self { input_data_path, total_compute_units, compute_units }
+    }
+}
+
 #[derive(Debug)]
 pub enum ProvePhaseInputs {
-    Contributions(Option<PathBuf>, i32, i32),
+    Contributions(ProofInfo),
     Internal(Vec<[u64; 10]>),
-    Full(Option<PathBuf>, i32, i32),
+    Full(ProofInfo),
 }
 
 #[derive(Debug)]
@@ -542,7 +556,7 @@ where
             let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances);
             let airgroupvalues = self.mpi_ctx.distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
 
-            if self.pctx.dctx_is_rank_zero() {
+            if self.mpi_ctx.rank == 0 {
                 let valid_global_constraints =
                     verify_global_constraints_proof(&self.pctx, &self.sctx, debug_info, airgroupvalues);
 
@@ -654,8 +668,11 @@ where
             return Err("Proofman has not been initialized in final snark mode".into());
         }
 
-        let phase_inputs = ProvePhaseInputs::Full(input_data_path, self.mpi_ctx.n_processes, self.mpi_ctx.rank);
-
+        let phase_inputs = ProvePhaseInputs::Full(ProofInfo::new(
+            input_data_path,
+            self.mpi_ctx.n_processes as usize,
+            vec![Range { start: self.mpi_ctx.rank as u32, end: (self.mpi_ctx.rank + 1) as u32 }],
+        ));
         self._generate_proof(phase_inputs, options, ProvePhase::Full)
     }
 
@@ -813,13 +830,19 @@ where
         let max_num_threads = configured_num_threads(self.mpi_ctx.node_n_processes as usize);
 
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
-            let (input_data_path, n_processes, rank) = match phase_inputs {
-                ProvePhaseInputs::Full(ref path, n_processes, rank) => (path, n_processes, rank),
-                ProvePhaseInputs::Contributions(ref path, n_processes, rank) => (path, n_processes, rank),
+            let proof_info = match phase_inputs {
+                ProvePhaseInputs::Full(proof_info) => proof_info,
+                ProvePhaseInputs::Contributions(proof_info) => proof_info,
                 _ => panic!("Invalid phase inputs for contributions"),
             };
-            self.pctx.dctx_set_rank(n_processes as usize, rank);
-            self.wcm.set_input_data_path(input_data_path.clone());
+
+            let mut units: Vec<u32> = Vec::new();
+            for range in &proof_info.compute_units {
+                units.extend(range.clone().collect::<Vec<u32>>());
+            }
+            // TODO: HANDLE CLUSTERS
+            self.pctx.dctx_set_compute_units(proof_info.total_compute_units, units);
+            self.wcm.set_input_data_path(proof_info.input_data_path.clone());
             self.exec(options.minimal_memory)?;
 
             if !options.test_mode {
@@ -835,7 +858,7 @@ where
                 my_instances.iter().filter(|idx| self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
 
             let mut my_instances_sorted = self.pctx.dctx_get_my_instances();
-            let mut rng = StdRng::seed_from_u64(self.pctx.dctx_get_rank() as u64);
+            let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
             my_instances_sorted.shuffle(&mut rng);
 
             let my_instances_sorted_no_tables =
@@ -984,7 +1007,7 @@ where
 
         let instances = self.pctx.dctx_get_instances();
         let mut my_instances_sorted = self.pctx.dctx_get_my_instances();
-        let mut rng = StdRng::seed_from_u64(self.pctx.dctx_get_rank() as u64);
+        let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
         my_instances_sorted.shuffle(&mut rng);
 
         let mut proofs: Vec<RwLock<Proof<F>>> = Vec::new();
@@ -1427,14 +1450,14 @@ where
 
         timer_stop_and_log_info!(GENERATING_PROOFS);
 
-        let recursive2_proofs_data: Vec<Vec<u64>> = recursive2_proofs
-            .iter()
-            .map(|lock| lock.read().unwrap().first().expect("Expected at least one proof").proof.clone())
-            .collect();
-
         let mut proof_id = None;
         let mut vadcop_final_proof = None;
         if options.aggregation {
+            let recursive2_proofs_data: Vec<Vec<u64>> = recursive2_proofs
+                .iter()
+                .map(|lock| lock.read().unwrap().first().expect("Expected at least one proof").proof.clone())
+                .collect();
+
             timer_start_info!(GENERATING_OUTER_COMPRESSED_PROOFS);
             let trace = create_buffer_fast::<F>(self.trace_size);
             let prover_buffer = create_buffer_fast::<F>(self.prover_buffer_size);
@@ -1458,7 +1481,7 @@ where
                 return Ok(ProvePhaseResult::Internal(agg_recursive2_proofs));
             }
 
-            if self.pctx.dctx_is_rank_zero() {
+            if self.mpi_ctx.rank == 0 {
                 let vadcop_proof_final = generate_vadcop_final_proof(
                     &self.pctx,
                     &self.setups,
@@ -1509,7 +1532,7 @@ where
 
         if options.verify_proofs {
             if options.aggregation {
-                if self.pctx.dctx_is_rank_zero() {
+                if self.mpi_ctx.rank == 0 {
                     let setup_path = self.pctx.global_info.get_setup_path("vadcop_final");
                     let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
                     let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
@@ -1575,7 +1598,7 @@ where
         timer_start_info!(VERIFYING_PROOFS);
         let mut valid_proofs = true;
 
-        let mut rng = StdRng::seed_from_u64(self.pctx.dctx_get_rank() as u64);
+        let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
         let mut my_instances_sorted = self.pctx.dctx_get_my_instances();
         my_instances_sorted.shuffle(&mut rng);
         let my_instances_sorted = self.pctx.dctx_get_my_instances();
@@ -1610,7 +1633,7 @@ where
         let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances);
         let airgroupvalues = self.mpi_ctx.distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
 
-        if !test_mode && self.pctx.dctx_is_rank_zero() {
+        if !test_mode && self.mpi_ctx.rank == 0 {
             let valid_global_constraints =
                 verify_global_constraints_proof(&self.pctx, &self.sctx, &DebugInfo::default(), airgroupvalues);
             if valid_global_constraints.is_err() {
@@ -1640,7 +1663,7 @@ where
 
         self.pctx.dctx_assign_instances(minimal_memory);
 
-        print_summary_info(&self.pctx, &self.sctx);
+        print_summary_info(&self.pctx, &self.sctx, &self.mpi_ctx);
 
         timer_stop_and_log_info!(EXECUTE);
         Ok(())

@@ -22,12 +22,12 @@ pub struct DistributionCtx {
     pub n_instances: usize,
     pub my_instances: Vec<usize>,
     pub instances: Vec<InstanceInfo>,
-    pub instances_owner: Vec<(i32, usize, u64)>, //owner_rank, owner_instance_idx, weight
-    pub owners_count: Vec<i32>,
+    pub instances_owner: Vec<(u32, usize, u64)>, //owner_rank, owner_instance_idx, weight
+    pub owners_count: Vec<u32>,
     pub owners_weight: Vec<u64>,
     pub balance_distribution: bool,
-    pub n_processes: Option<usize>,
-    pub rank: Option<Vec<i32>>,
+    pub total_compute_units: Option<usize>,
+    pub compute_units: Option<Vec<u32>>,
 }
 
 impl std::fmt::Debug for DistributionCtx {
@@ -40,8 +40,8 @@ impl std::fmt::Debug for DistributionCtx {
             .field("owners_count", &self.owners_count)
             .field("owners_weight", &self.owners_weight)
             .field("balance_distribution", &self.balance_distribution)
-            .field("n_processes", &self.n_processes)
-            .field("rank", &self.rank);
+            .field("total_compute_units", &self.total_compute_units)
+            .field("compute_units", &self.compute_units);
 
         dbg.finish()
     }
@@ -57,16 +57,16 @@ impl DistributionCtx {
             owners_count: Vec::new(),
             owners_weight: Vec::new(),
             balance_distribution: true,
-            n_processes: None,
-            rank: None,
+            total_compute_units: None,
+            compute_units: None,
         }
     }
 
-    pub fn add_rank(&mut self, n_processes: usize, rank: i32) {
-        self.n_processes = Some(n_processes);
-        self.rank = Some(vec![rank]);
-        self.owners_count = vec![0; n_processes];
-        self.owners_weight = vec![0; n_processes];
+    pub fn add_compute_units(&mut self, total_compute_units: usize, compute_units: Vec<u32>) {
+        self.total_compute_units = Some(total_compute_units);
+        self.compute_units = Some(compute_units);
+        self.owners_count = vec![0; total_compute_units];
+        self.owners_weight = vec![0; total_compute_units];
     }
 
     pub fn reset(&mut self) {
@@ -80,11 +80,11 @@ impl DistributionCtx {
 
     #[inline]
     pub fn is_my_instance(&self, global_idx: usize) -> bool {
-        self.rank.as_ref().unwrap().contains(&self.owner(global_idx))
+        self.compute_units.as_ref().unwrap().contains(&self.owner(global_idx))
     }
 
     #[inline]
-    pub fn owner(&self, global_idx: usize) -> i32 {
+    pub fn owner(&self, global_idx: usize) -> u32 {
         self.instances_owner[global_idx].0
     }
 
@@ -162,12 +162,12 @@ impl DistributionCtx {
         let idx = self.instances.len();
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, threads_witness));
         self.n_instances += 1;
-        let new_owner = (idx % self.n_processes.unwrap()) as i32;
+        let new_owner = (idx % self.total_compute_units.unwrap()) as u32;
         let count = self.owners_count[new_owner as usize] as usize;
         self.instances_owner.push((new_owner, count, weight));
         self.owners_count[new_owner as usize] += 1;
         self.owners_weight[new_owner as usize] += weight;
-        if self.rank.as_ref().unwrap().contains(&new_owner) {
+        if self.compute_units.as_ref().unwrap().contains(&new_owner) {
             self.my_instances.push(idx);
         }
         idx
@@ -186,10 +186,10 @@ impl DistributionCtx {
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, threads_witness));
         self.n_instances += 1;
         let count = self.owners_count[owner_idx] as usize;
-        self.instances_owner.push((owner_idx as i32, count, weight));
+        self.instances_owner.push((owner_idx as u32, count, weight));
         self.owners_count[owner_idx] += 1;
         self.owners_weight[owner_idx] += weight;
-        if self.rank.as_ref().unwrap().contains(&(owner_idx as i32)) {
+        if self.compute_units.as_ref().unwrap().contains(&(owner_idx as u32)) {
             self.my_instances.push(idx);
         }
         idx
@@ -204,21 +204,21 @@ impl DistributionCtx {
         weight: u64,
     ) -> usize {
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, threads_witness));
-        self.instances_owner.push((-1, 0, weight));
+        self.instances_owner.push((u32::MAX, 0, weight));
         self.n_instances += 1;
         self.n_instances - 1
     }
 
     pub fn add_instance_no_assign_table(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
         let mut idx = 0;
-        for new_owner in 0..self.n_processes.unwrap() {
+        for new_owner in 0..self.total_compute_units.unwrap() {
             self.n_instances += 1;
             self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, 1));
             let count = self.owners_count[new_owner] as usize;
-            self.instances_owner.push((new_owner as i32, count, weight));
+            self.instances_owner.push((new_owner as u32, count, weight));
             self.owners_count[new_owner] += 1;
             self.owners_weight[new_owner] += weight;
-            if self.rank.as_ref().unwrap().contains(&(new_owner as i32)) {
+            if self.compute_units.as_ref().unwrap().contains(&(new_owner as u32)) {
                 self.my_instances.push(self.instances.len() - 1);
                 idx = self.instances.len() - 1;
             }
@@ -240,7 +240,7 @@ impl DistributionCtx {
                 // Sort unassigned instances according to wc_weights
                 let mut unassigned_instances = Vec::new();
                 for (idx, &(owner, _, _)) in self.instances_owner.iter().enumerate() {
-                    if owner == -1 {
+                    if owner == u32::MAX {
                         unassigned_instances.push((idx, self.instances[idx].n_chunks));
                     }
                 }
@@ -251,21 +251,21 @@ impl DistributionCtx {
                 // Assign half of the unassigned instances in round-robin fashion
                 let mut owner_idx = 0;
                 for (idx, _) in unassigned_instances.iter().take(unassigned_instances.len() / 2) {
-                    self.instances_owner[*idx].0 = owner_idx as i32;
+                    self.instances_owner[*idx].0 = owner_idx as u32;
                     self.instances_owner[*idx].1 = self.owners_count[owner_idx] as usize;
                     self.owners_count[owner_idx] += 1;
                     self.owners_weight[owner_idx] += self.instances_owner[*idx].2;
-                    if self.rank.as_ref().unwrap().contains(&(owner_idx as i32)) {
+                    if self.compute_units.as_ref().unwrap().contains(&(owner_idx as u32)) {
                         self.my_instances.push(*idx);
                     }
-                    owner_idx = (owner_idx + 1) % self.n_processes.unwrap();
+                    owner_idx = (owner_idx + 1) % self.total_compute_units.unwrap();
                 }
             }
 
             // Sort the unassigned instances by proof weight
             let mut unassigned_instances = Vec::new();
             for (idx, &(owner, _, weight)) in self.instances_owner.iter().enumerate() {
-                if owner == -1 {
+                if owner == u32::MAX {
                     unassigned_instances.push((idx, weight));
                 }
             }
@@ -286,18 +286,18 @@ impl DistributionCtx {
                         min_weight_idx = i;
                     }
                 }
-                self.instances_owner[idx].0 = min_weight_idx as i32;
+                self.instances_owner[idx].0 = min_weight_idx as u32;
                 self.instances_owner[idx].1 = self.owners_count[min_weight_idx] as usize;
                 self.owners_count[min_weight_idx] += 1;
                 self.owners_weight[min_weight_idx] += self.instances_owner[idx].2;
-                if self.rank.as_ref().unwrap().contains(&(min_weight_idx as i32)) {
+                if self.compute_units.as_ref().unwrap().contains(&(min_weight_idx as u32)) {
                     self.my_instances.push(idx);
                 }
             }
         } else {
             let mut air_info = HashMap::new();
             for (idx, &(owner, _, _)) in self.instances_owner.iter().enumerate() {
-                if owner == -1 {
+                if owner == u32::MAX {
                     let (airgroup_id, air_id) = self.get_instance_info(idx);
                     air_info.entry((airgroup_id, air_id)).or_insert_with(Vec::new).push(idx);
                 }
@@ -315,14 +315,14 @@ impl DistributionCtx {
 
             for (_, instance_indices) in grouped_instances {
                 for &idx in &instance_indices {
-                    self.instances_owner[idx].0 = owner_idx as i32;
+                    self.instances_owner[idx].0 = owner_idx as u32;
                     self.instances_owner[idx].1 = self.owners_count[owner_idx] as usize;
                     self.owners_count[owner_idx] += 1;
                     self.owners_weight[owner_idx] += self.instances_owner[idx].2;
-                    if self.rank.as_ref().unwrap().contains(&(owner_idx as i32)) {
+                    if self.compute_units.as_ref().unwrap().contains(&(owner_idx as u32)) {
                         self.my_instances.push(idx);
                     }
-                    owner_idx = (owner_idx + 1) % self.n_processes.unwrap();
+                    owner_idx = (owner_idx + 1) % self.total_compute_units.unwrap();
                 }
             }
         }
@@ -334,7 +334,7 @@ impl DistributionCtx {
         let mut average_weight = 0.0;
         let mut max_weight = 0;
         let mut min_weight = u64::MAX;
-        for i in 0..self.n_processes.unwrap() {
+        for i in 0..self.total_compute_units.unwrap() {
             average_weight += self.owners_weight[i] as f64;
             if self.owners_weight[i] > max_weight {
                 max_weight = self.owners_weight[i];
@@ -343,7 +343,7 @@ impl DistributionCtx {
                 min_weight = self.owners_weight[i];
             }
         }
-        average_weight /= self.n_processes.unwrap() as f64;
+        average_weight /= self.total_compute_units.unwrap() as f64;
         let max_deviation = max_weight as f64 / average_weight;
         (average_weight, max_weight, min_weight, max_deviation)
     }

@@ -316,26 +316,6 @@ impl<F: PrimeField64> ProofCtx<F> {
         !self.air_instances[global_idx].read().unwrap().trace.is_empty()
     }
 
-    pub fn dctx_get_rank(&self) -> usize {
-        let dctx = self.dctx.read().unwrap();
-        dctx.rank.as_ref().unwrap()[0] as usize
-    }
-
-    pub fn dctx_get_ranks(&self) -> Vec<i32> {
-        let dctx = self.dctx.read().unwrap();
-        dctx.rank.as_ref().unwrap().clone()
-    }
-
-    pub fn dctx_is_rank_zero(&self) -> bool {
-        let dctx = self.dctx.read().unwrap();
-        dctx.rank.as_ref().unwrap().contains(&(0 as i32))
-    }
-
-    pub fn dctx_get_n_processes(&self) -> usize {
-        let dctx = self.dctx.read().unwrap();
-        dctx.n_processes.unwrap()
-    }
-
     pub fn dctx_get_instances(&self) -> Vec<InstanceInfo> {
         let dctx = self.dctx.read().unwrap();
         dctx.instances.clone()
@@ -447,9 +427,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.load_balance_info()
     }
 
-    pub fn dctx_set_rank(&self, n_processes: usize, rank: i32) {
+    pub fn dctx_set_compute_units(&self, total_compute_units: usize, units: Vec<u32>) {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.add_rank(n_processes, rank);
+        dctx.add_compute_units(total_compute_units, units);
     }
 
     pub fn dctx_set_balance_distribution(&self, balance: bool) {

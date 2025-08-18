@@ -474,22 +474,19 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     d_buffers: *mut c_void,
     save_proof: bool,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
-    let mut updated_proof: Vec<u64> = Vec::new();
-    if pctx.dctx_is_rank_zero() {
-        let publics_circom_size =
-            pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3;
+    let publics_circom_size =
+        pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3;
 
-        let mut updated_proof_size = publics_circom_size;
-        for proofs in recursive2_proofs {
-            updated_proof_size += proofs.as_ref().unwrap().len();
-        }
+    let mut updated_proof_size = publics_circom_size;
+    for proofs in recursive2_proofs {
+        updated_proof_size += proofs.as_ref().unwrap().len();
+    }
 
-        updated_proof = vec![0; updated_proof_size];
-        add_publics_circom(&mut updated_proof, 0, pctx, "", false);
+    let mut updated_proof = vec![0; updated_proof_size];
+    add_publics_circom(&mut updated_proof, 0, pctx, "", false);
 
-        for proofs in recursive2_proofs {
-            updated_proof[publics_circom_size..].copy_from_slice(proofs.as_ref().unwrap());
-        }
+    for proofs in recursive2_proofs {
+        updated_proof[publics_circom_size..].copy_from_slice(proofs.as_ref().unwrap());
     }
 
     let setup = setups.setup_vadcop_final.as_ref().unwrap();
