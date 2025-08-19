@@ -64,10 +64,6 @@ function lookup_proves(const int opid, const expr expressions[], const expr mul 
     if (surname == PIOP_SURNAME_DEFAULT) surname = DEFAULT_LOOKUP_SURNAME;
 
     if (VIRTUAL == 1) {
-        if (table_id == -1) {
-            table_id = opid;
-        }
-
         collect_virtual_table(opid, table_id, expressions);
     } else {
         sum(name, surname, SUM_TYPE_PROVES, [opid], opid, expressions, mul);
