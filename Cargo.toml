@@ -20,6 +20,7 @@ members = [
     "transcript",
     "witness",
     "util",
+    "verifier",
     # "pil2-components/lib/std/rs",
     # "pil2-components/test/std/direct_update/rs",
     # "pil2-components/test/std/diff_buses/rs",

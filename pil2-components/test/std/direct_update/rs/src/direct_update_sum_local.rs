@@ -4,20 +4,13 @@ use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
-use rand::{
-    distr::{StandardUniform, Distribution},
-    Rng, SeedableRng,
-    rngs::StdRng,
-};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::{DirectUpdateSumLocalTrace, DirectUpdatePublicValues, DirectUpdateProofValues, DirectUpdateSumLocalAirValues};
 
 define_wc!(DirectUpdateSumLocal, "DUPL    ");
 
-impl<F: PrimeField64> WitnessComponent<F> for DirectUpdateSumLocal
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for DirectUpdateSumLocal {
     execute!(DirectUpdateSumLocalTrace, 1);
 
     fn calculate_witness(

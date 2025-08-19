@@ -4,20 +4,13 @@ use witness::{define_wc_with_std, execute, WitnessComponent};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
-use rand::{
-    distr::{Distribution, StandardUniform},
-    rngs::StdRng,
-    Rng, SeedableRng,
-};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 
 use crate::{Component2Trace, Table2_1, Table2_2, Table2_3};
 
 define_wc_with_std!(Component2, "Component2");
 
-impl<F: PrimeField64> WitnessComponent<F> for Component2<F>
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for Component2<F> {
     execute!(Component2Trace, 1);
 
     fn calculate_witness(

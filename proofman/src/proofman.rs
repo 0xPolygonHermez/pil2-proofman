@@ -47,7 +47,7 @@ use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::{check_tree_paths_vadcop, gen_recursive_proof_size, initialize_fixed_pols_tree};
-use crate::{verify_basic_proof, verify_final_proof, verify_global_constraints_proof};
+use proofman_verifier::{verify_constraints_proof, verify_basic_proof, verify_final_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
 use crate::{verify_constraints_proof, print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
 use crate::{

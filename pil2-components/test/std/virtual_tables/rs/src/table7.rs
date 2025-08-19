@@ -5,7 +5,6 @@ use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
 use rand::{
-    distr::{Distribution, StandardUniform},
     rngs::StdRng,
     Rng, SeedableRng,
 };
@@ -42,8 +41,7 @@ impl Table7 {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for Table7
-where
-    StandardUniform: Distribution<F>,
+
 {
     execute!(Table7Trace, 1);
 

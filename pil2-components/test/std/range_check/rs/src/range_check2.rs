@@ -6,20 +6,13 @@ use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 use proofman_common::BufferPool;
 
 use fields::PrimeField64;
-use rand::{
-    distr::{StandardUniform, Distribution},
-    Rng, SeedableRng,
-    rngs::StdRng,
-};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::RangeCheck2Trace;
 
 define_wc_with_std!(RangeCheck2, "RngChck2");
 
-impl<F: PrimeField64> WitnessComponent<F> for RangeCheck2<F>
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for RangeCheck2<F> {
     execute!(RangeCheck2Trace, 1);
 
     fn calculate_witness(

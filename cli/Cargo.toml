@@ -16,6 +16,7 @@ pilout = { path = "../pilout" }
 proofman-util = { path = "../util" }
 proofman = { path = "../proofman" }
 proofman-common = { path = "../common" }
+proofman-verifier = { path = "../verifier" }
 witness = { path = "../witness" }
 fields = { path = "../fields" }
 

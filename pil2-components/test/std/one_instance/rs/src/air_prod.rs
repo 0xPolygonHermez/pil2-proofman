@@ -4,20 +4,13 @@ use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
-use rand::{
-    distr::{Distribution, StandardUniform},
-    rngs::StdRng,
-    Rng, SeedableRng,
-};
+use rand::{rng, rngs::StdRng, Rng, SeedableRng};
 
 use crate::AirProdTrace;
 
 define_wc!(AirProd, "AirProd ");
 
-impl<F: PrimeField64> WitnessComponent<F> for AirProd
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for AirProd {
     execute!(AirProdTrace, 1);
 
     fn calculate_witness(
@@ -30,7 +23,7 @@ where
         buffer_pool: &dyn BufferPool<F>,
     ) {
         if stage == 1 {
-            let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
+            let seed = if cfg!(feature = "debug") { 0 } else { rng().random::<u64>() };
             let mut rng = StdRng::seed_from_u64(seed);
 
             let mut trace = AirProdTrace::new_from_vec(buffer_pool.take_buffer());
@@ -39,7 +32,7 @@ where
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
             for i in 0..num_rows {
-                let r = rng.random();
+                let r = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
                 trace[i].a = r;
                 trace[i].b = r;
                 trace[i].c = F::ZERO;

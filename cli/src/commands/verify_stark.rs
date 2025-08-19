@@ -1,6 +1,6 @@
 // extern crate env_logger;
 use clap::Parser;
-use proofman::verify_final_proof;
+use proofman_verifier::verify_final_proof;
 use proofman_common::{initialize_logger, VerboseMode};
 use std::fs::File;
 use std::io::Read;
