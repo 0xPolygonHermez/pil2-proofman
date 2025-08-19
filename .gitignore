@@ -7,5 +7,3 @@ run.sh
 vendor
 .cargo
 MyLogFile.log
-.vscode/settings.json
-.vscode/c_cpp_properties.json
