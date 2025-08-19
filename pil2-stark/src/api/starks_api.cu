@@ -121,7 +121,7 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
     }
 }
 
-uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t maxProofsPerGPU, uint64_t maxRecursiveProofsPerGPU) {
+uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t maxProofsPerGPU, uint64_t maxRecursiveProofsPerGPU, uint64_t max_n_bits_ext) {
     
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     d_buffers->max_size_proof = maxProofSize;
@@ -151,7 +151,7 @@ uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint
     }
 
     //Generate static twiddles for the NTT
-    NTT_Goldilocks_GPU::init_twiddle_factors_and_r(24, (int) d_buffers->n_gpus, d_buffers->my_gpu_ids); //TODO: max size not harcoded
+    NTT_Goldilocks_GPU::init_twiddle_factors_and_r(max_n_bits_ext, (int) d_buffers->n_gpus, d_buffers->my_gpu_ids);
 
     return d_buffers->n_gpus;
 }
