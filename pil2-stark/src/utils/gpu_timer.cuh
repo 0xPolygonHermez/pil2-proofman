@@ -172,14 +172,14 @@ public:
 
         std::ostringstream oss;
         for (const auto& [category, total_sec] : category_times) {
-           oss << std::fixed << std::setprecision(3) << total_sec << "s (" << (total_sec / time_total) * 100.0 << "%)";
+           oss << std::fixed << std::setprecision(2) << total_sec << "s (" << (total_sec / time_total) * 100.0 << "%)";
             zklog.trace("        " + category + std::string(15 - std::min<size_t>(15, category.size()), ' ') + ":  " + oss.str());
             oss.str("");
             oss.clear();
         }
 
         double other_time = std::max(0.0, time_total - accounted_time);
-        oss << std::fixed << std::setprecision(3) << other_time << "s (" << (other_time / time_total) * 100.0 << "%)";
+        oss << std::fixed << std::setprecision(2) << other_time << "s (" << (other_time / time_total) * 100.0 << "%)";
         zklog.trace("        OTHER" + std::string(15 - 5, ' ') + ":  " + oss.str());
     }
 

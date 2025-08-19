@@ -107,8 +107,6 @@ void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU *expressionsC
 
 void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, StepsParams* d_params, Goldilocks::Element* dest_gpu, uint64_t expressionId, bool inverse, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU& timer, cudaStream_t stream, bool debug = false);
 
-void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstanceInfo *air_instance_info, cudaStream_t stream);
-
 void calculateHash(TranscriptGL_GPU *d_transcript, Goldilocks::Element* hash, SetupCtx &setupCtx, Goldilocks::Element* buffer, uint64_t nElements, cudaStream_t stream);
 
 void setProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, Goldilocks::Element *proof_buffer_pinned, cudaStream_t stream);
