@@ -3,20 +3,13 @@ use std::sync::Arc;
 use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 use fields::PrimeField64;
-use rand::{
-    distr::{StandardUniform, Distribution},
-    Rng, SeedableRng,
-    rngs::StdRng,
-};
+use rand::{rng, Rng, SeedableRng, rngs::StdRng};
 
 use crate::Permutation1_7Trace;
 
 define_wc!(Permutation1_7, "Perm1_7 ");
 
-impl<F: PrimeField64> WitnessComponent<F> for Permutation1_7
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for Permutation1_7 {
     execute!(Permutation1_7Trace, 1);
 
     fn calculate_witness(
@@ -29,7 +22,7 @@ where
         buffer_pool: &dyn BufferPool<F>,
     ) {
         if stage == 1 {
-            let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
+            let seed = if cfg!(feature = "debug") { 0 } else { rng().random::<u64>() };
             let mut rng = StdRng::seed_from_u64(seed);
             let mut trace = Permutation1_7Trace::new_from_vec(buffer_pool.take_buffer());
             let num_rows = trace.num_rows();
@@ -41,14 +34,14 @@ where
 
             // Assumes
             for i in 0..num_rows {
-                trace[i].a1 = rng.random();
-                trace[i].b1 = rng.random();
+                trace[i].a1 = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                trace[i].b1 = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
 
                 trace[i].a2 = F::from_u8(200);
                 trace[i].b2 = F::from_u8(201);
 
-                trace[i].a3 = rng.random();
-                trace[i].b3 = rng.random();
+                trace[i].a3 = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                trace[i].b3 = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
 
                 trace[i].a4 = F::from_u8(100);
                 trace[i].b4 = F::from_u8(101);

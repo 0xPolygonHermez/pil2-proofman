@@ -4,20 +4,13 @@ use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
-use rand::{
-    distr::{StandardUniform, Distribution},
-    Rng, SeedableRng,
-    rngs::StdRng,
-};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::{DirectUpdateProdGlobalTrace, DirectUpdatePublicValues, DirectUpdateProofValues};
 
 define_wc!(DirectUpdateProdGlobal, "DUPG    ");
 
-impl<F: PrimeField64> WitnessComponent<F> for DirectUpdateProdGlobal
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for DirectUpdateProdGlobal {
     execute!(DirectUpdateProdGlobalTrace, 1);
 
     fn calculate_witness(
