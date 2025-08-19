@@ -4,20 +4,13 @@ use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
-use rand::{
-    distr::{StandardUniform, Distribution},
-    Rng, SeedableRng,
-    rngs::StdRng,
-};
+use rand::{rng, Rng, SeedableRng, rngs::StdRng};
 
 use crate::Connection1Trace;
 
 define_wc!(Connection1, "Connct_1");
 
-impl<F: PrimeField64> WitnessComponent<F> for Connection1
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for Connection1 {
     execute!(Connection1Trace, 1);
 
     fn calculate_witness(
@@ -30,7 +23,7 @@ where
         buffer_pool: &dyn BufferPool<F>,
     ) {
         if stage == 1 {
-            let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
+            let seed = if cfg!(feature = "debug") { 0 } else { rng().random::<u64>() };
             let mut rng = StdRng::seed_from_u64(seed);
 
             let mut trace = Connection1Trace::new_from_vec(buffer_pool.take_buffer());
@@ -39,9 +32,9 @@ where
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
             for i in 0..num_rows {
-                trace[i].a = rng.random();
-                trace[i].b = rng.random();
-                trace[i].c = rng.random();
+                trace[i].a = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                trace[i].b = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                trace[i].c = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
             }
 
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));

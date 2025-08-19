@@ -7,8 +7,8 @@ use proofman_starks_lib_c::{
 use std::collections::HashMap;
 use std::ffi::c_void;
 
-use fields::PrimeField64;
-use proofman_common::{ExtensionField, ProofCtx, SetupCtx, StepsParams};
+use fields::{CubicExtensionField, PrimeField64};
+use proofman_common::{ProofCtx, SetupCtx, StepsParams};
 
 use std::ops::{Add, Div, Mul, Sub, AddAssign, DivAssign, MulAssign, SubAssign};
 
@@ -176,9 +176,9 @@ impl HintFieldOptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HintFieldValue<F: PrimeField64> {
     Field(F),
-    FieldExtended(ExtensionField<F>),
+    FieldExtended(CubicExtensionField<F>),
     Column(Vec<F>),
-    ColumnExtended(Vec<ExtensionField<F>>),
+    ColumnExtended(Vec<CubicExtensionField<F>>),
     String(String),
 }
 
@@ -238,7 +238,7 @@ impl<F: PrimeField64> Display for HintFieldValuesVec<F> {
 // Define an enum to represent the possible return types
 pub enum HintFieldOutput<F: Clone + Copy + Display> {
     Field(F),
-    FieldExtended(ExtensionField<F>),
+    FieldExtended(CubicExtensionField<F>),
 }
 
 impl<F: Clone + Copy + Display> Display for HintFieldOutput<F> {
@@ -296,11 +296,11 @@ impl<F: PrimeField64> Add<F> for HintFieldOutput<F> {
     }
 }
 
-impl<F: PrimeField64> Add<ExtensionField<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> Add<CubicExtensionField<F>> for HintFieldOutput<F> {
     type Output = Self;
 
     #[inline]
-    fn add(self, rhs: ExtensionField<F>) -> Self {
+    fn add(self, rhs: CubicExtensionField<F>) -> Self {
         match self {
             HintFieldOutput::Field(a) => HintFieldOutput::FieldExtended(rhs + a),
             HintFieldOutput::FieldExtended(a) => HintFieldOutput::FieldExtended(a + rhs),
@@ -341,9 +341,9 @@ impl<F: PrimeField64> AddAssign<F> for HintFieldOutput<F> {
     }
 }
 
-impl<F: PrimeField64> AddAssign<ExtensionField<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> AddAssign<CubicExtensionField<F>> for HintFieldOutput<F> {
     #[inline]
-    fn add_assign(&mut self, rhs: ExtensionField<F>) {
+    fn add_assign(&mut self, rhs: CubicExtensionField<F>) {
         *self = match *self {
             HintFieldOutput::Field(a) => HintFieldOutput::FieldExtended(rhs + a),
             HintFieldOutput::FieldExtended(a) => HintFieldOutput::FieldExtended(a + rhs),
@@ -379,14 +379,14 @@ impl<F: PrimeField64> Sub<F> for HintFieldOutput<F> {
     }
 }
 
-impl<F: PrimeField64> Sub<ExtensionField<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> Sub<CubicExtensionField<F>> for HintFieldOutput<F> {
     type Output = Self;
 
     #[inline]
-    fn sub(self, rhs: ExtensionField<F>) -> Self {
+    fn sub(self, rhs: CubicExtensionField<F>) -> Self {
         match self {
             HintFieldOutput::Field(a) => {
-                HintFieldOutput::FieldExtended(ExtensionField { value: [a, F::ZERO, F::ZERO] } - rhs)
+                HintFieldOutput::FieldExtended(CubicExtensionField { value: [a, F::ZERO, F::ZERO] } - rhs)
             }
             HintFieldOutput::FieldExtended(a) => HintFieldOutput::FieldExtended(a - rhs),
         }
@@ -404,7 +404,7 @@ impl<F: PrimeField64> Sub for HintFieldOutput<F> {
 
             // Field * FieldExtended
             (HintFieldOutput::Field(a), HintFieldOutput::FieldExtended(b)) => {
-                HintFieldOutput::FieldExtended(ExtensionField { value: [a, F::ZERO, F::ZERO] } - b)
+                HintFieldOutput::FieldExtended(CubicExtensionField { value: [a, F::ZERO, F::ZERO] } - b)
             }
 
             // FieldExtended * Field
@@ -428,12 +428,12 @@ impl<F: PrimeField64> SubAssign<F> for HintFieldOutput<F> {
     }
 }
 
-impl<F: PrimeField64> SubAssign<ExtensionField<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> SubAssign<CubicExtensionField<F>> for HintFieldOutput<F> {
     #[inline]
-    fn sub_assign(&mut self, rhs: ExtensionField<F>) {
+    fn sub_assign(&mut self, rhs: CubicExtensionField<F>) {
         *self = match *self {
             HintFieldOutput::Field(a) => {
-                HintFieldOutput::FieldExtended(ExtensionField { value: [a, F::ZERO, F::ZERO] } - rhs)
+                HintFieldOutput::FieldExtended(CubicExtensionField { value: [a, F::ZERO, F::ZERO] } - rhs)
             }
             HintFieldOutput::FieldExtended(a) => HintFieldOutput::FieldExtended(a - rhs),
         }
@@ -450,7 +450,7 @@ impl<F: PrimeField64> SubAssign<HintFieldOutput<F>> for HintFieldOutput<F> {
             },
             HintFieldOutput::FieldExtended(b) => match self {
                 HintFieldOutput::Field(a) => {
-                    *self = HintFieldOutput::FieldExtended(ExtensionField { value: [*a, F::ZERO, F::ZERO] } - b)
+                    *self = HintFieldOutput::FieldExtended(CubicExtensionField { value: [*a, F::ZERO, F::ZERO] } - b)
                 }
                 HintFieldOutput::FieldExtended(a) => *self = HintFieldOutput::FieldExtended(*a - b),
             },
@@ -470,11 +470,11 @@ impl<F: PrimeField64> Mul<F> for HintFieldOutput<F> {
     }
 }
 
-impl<F: PrimeField64> Mul<ExtensionField<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> Mul<CubicExtensionField<F>> for HintFieldOutput<F> {
     type Output = Self;
 
     #[inline]
-    fn mul(self, rhs: ExtensionField<F>) -> Self {
+    fn mul(self, rhs: CubicExtensionField<F>) -> Self {
         match self {
             HintFieldOutput::Field(a) => HintFieldOutput::FieldExtended(rhs * a),
             HintFieldOutput::FieldExtended(a) => HintFieldOutput::FieldExtended(a * rhs),
@@ -515,9 +515,9 @@ impl<F: PrimeField64> MulAssign<F> for HintFieldOutput<F> {
     }
 }
 
-impl<F: PrimeField64> MulAssign<ExtensionField<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> MulAssign<CubicExtensionField<F>> for HintFieldOutput<F> {
     #[inline]
-    fn mul_assign(&mut self, rhs: ExtensionField<F>) {
+    fn mul_assign(&mut self, rhs: CubicExtensionField<F>) {
         *self = match *self {
             HintFieldOutput::Field(a) => HintFieldOutput::FieldExtended(rhs * a),
             HintFieldOutput::FieldExtended(a) => HintFieldOutput::FieldExtended(a * rhs),
@@ -553,11 +553,11 @@ impl<F: PrimeField64> Div<F> for HintFieldOutput<F> {
     }
 }
 
-impl<F: PrimeField64> Div<ExtensionField<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> Div<CubicExtensionField<F>> for HintFieldOutput<F> {
     type Output = Self;
 
     #[inline]
-    fn div(self, rhs: ExtensionField<F>) -> Self {
+    fn div(self, rhs: CubicExtensionField<F>) -> Self {
         match self {
             HintFieldOutput::Field(a) => HintFieldOutput::FieldExtended(rhs.inverse() * a),
             HintFieldOutput::FieldExtended(a) => HintFieldOutput::FieldExtended(a / rhs),
@@ -602,9 +602,9 @@ impl<F: PrimeField64> DivAssign<F> for HintFieldOutput<F> {
     }
 }
 
-impl<F: PrimeField64> DivAssign<ExtensionField<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> DivAssign<CubicExtensionField<F>> for HintFieldOutput<F> {
     #[inline]
-    fn div_assign(&mut self, rhs: ExtensionField<F>) {
+    fn div_assign(&mut self, rhs: CubicExtensionField<F>) {
         *self = match *self {
             HintFieldOutput::Field(a) => HintFieldOutput::FieldExtended(rhs.inverse() * a),
             HintFieldOutput::FieldExtended(a) => HintFieldOutput::FieldExtended(a / rhs),
@@ -639,7 +639,7 @@ impl<F: PrimeField64> HintFieldValue<F> {
         };
     }
 
-    pub fn add_e(&mut self, index: usize, value: ExtensionField<F>) {
+    pub fn add_e(&mut self, index: usize, value: CubicExtensionField<F>) {
         match self {
             HintFieldValue::FieldExtended(v) => *v += value,
             HintFieldValue::ColumnExtended(vec) => vec[index] += value,
@@ -659,7 +659,7 @@ impl<F: PrimeField64> HintFieldValue<F> {
         };
     }
 
-    pub fn sub_e(&mut self, index: usize, value: ExtensionField<F>) {
+    pub fn sub_e(&mut self, index: usize, value: CubicExtensionField<F>) {
         match self {
             HintFieldValue::FieldExtended(v) => *v -= value,
             HintFieldValue::ColumnExtended(vec) => vec[index] -= value,
@@ -679,7 +679,7 @@ impl<F: PrimeField64> HintFieldValue<F> {
         };
     }
 
-    pub fn mul_e(&mut self, index: usize, value: ExtensionField<F>) {
+    pub fn mul_e(&mut self, index: usize, value: CubicExtensionField<F>) {
         match self {
             HintFieldValue::FieldExtended(v) => *v *= value,
             HintFieldValue::ColumnExtended(vec) => vec[index] *= value,
@@ -699,7 +699,7 @@ impl<F: PrimeField64> HintFieldValue<F> {
         };
     }
 
-    pub fn div_e(&mut self, index: usize, value: ExtensionField<F>) {
+    pub fn div_e(&mut self, index: usize, value: CubicExtensionField<F>) {
         match self {
             HintFieldValue::FieldExtended(v) => *v *= value.inverse(),
             HintFieldValue::ColumnExtended(vec) => vec[index] *= value.inverse(),
@@ -715,13 +715,13 @@ impl HintCol {
             HintFieldType::Field => HintFieldValue::Field(hint_field.values[0]),
             HintFieldType::FieldExtended => {
                 let array = [hint_field.values[0], hint_field.values[1], hint_field.values[2]];
-                HintFieldValue::FieldExtended(ExtensionField { value: array })
+                HintFieldValue::FieldExtended(CubicExtensionField { value: array })
             }
             HintFieldType::Column => HintFieldValue::Column(hint_field.values.to_vec()),
             HintFieldType::ColumnExtended => {
                 let mut extended_vec = Vec::with_capacity(hint_field.size as usize / 3);
                 for chunk in hint_field.values.chunks(3) {
-                    extended_vec.push(ExtensionField { value: [chunk[0], chunk[1], chunk[2]] });
+                    extended_vec.push(CubicExtensionField { value: [chunk[0], chunk[1], chunk[2]] });
                 }
                 HintFieldValue::ColumnExtended(extended_vec)
             }

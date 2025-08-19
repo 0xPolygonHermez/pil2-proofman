@@ -1,5 +1,5 @@
 [package]
-name = "proofman"
+name = "proofman-verifier"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
@@ -15,7 +15,6 @@ proofman-macros = { path = "../macros" }
 proofman-hints = { path = "../hints" }
 proofman-util = { path = "../util" }
 proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
-proofman-verifier = { path = "../verifier" }
 curves = { path = "../curves" }
 transcript = { path = "../transcript" }
 witness = { path = "../witness" }
