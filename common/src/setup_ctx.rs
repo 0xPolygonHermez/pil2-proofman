@@ -97,10 +97,12 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive2.max_pinned_proof_size)
                 .max(setup_vadcop_final.proof_size as usize);
 
-            let max_n_bits_ext = sctx_compressor.max_n_bits_ext
+            let max_n_bits_ext = sctx_compressor
+                .max_n_bits_ext
                 .max(sctx_recursive1.max_n_bits_ext)
                 .max(sctx_recursive2.max_n_bits_ext)
                 .max(setup_vadcop_final.stark_info.stark_struct.n_bits_ext as usize);
+
             SetupsVadcop {
                 sctx_compressor: Some(sctx_compressor),
                 sctx_recursive1: Some(sctx_recursive1),
