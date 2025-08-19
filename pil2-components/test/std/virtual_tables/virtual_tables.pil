@@ -34,10 +34,10 @@ airtemplate Table(const int N, const int t, const int opid, const int table_id =
     lookup_proves(opid, A, mul: multiplicity, table_id: table_id);
 }
 
-airtemplate TableContinuation(const int N, const int t, const int opid, const int table_id = -1) {
+airtemplate TableContinuation(const int N, const int offset = 0, const int t, const int opid, const int table_id = -1) {
     col fixed A[t];
     for (int i = 0; i < t; i++) {
-        A[i] = [N..(2*N-1)...]; // [N..(2*N-1)]
+        A[i] = [(offset + N)..(offset + 2*N-1)...]; // [N..(2*N-1)]
     }
 
     col witness multiplicity;
@@ -93,6 +93,7 @@ airgroup VirtualTables {
     Component(N: 2**10, t: 3, opid: 8) alias Component8;
     virtual TablePadded(N: 48, opid: 8) alias Table8;
 
-    // Table with the same opid, second slice of the table
-    virtual TableContinuation(N: 2**7, t: 3, opid: 2, table_id: 61) alias Table2_2;
+    // Table with the same opid, but more slices
+    virtual TableContinuation(N: 2**15, t: 3, opid: 2, table_id: 61) alias Table2_2;
+    virtual TableContinuation(N: 2**5, offset: 2**15, t: 3, opid: 2, table_id: 62) alias Table2_3;
 }

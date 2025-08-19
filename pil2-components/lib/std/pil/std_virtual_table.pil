@@ -164,28 +164,6 @@ function pack_tables() {
         }
     }
 
-    // Hint the ordering for efficient witness computation
-    int total_num_table_ids = 0;
-    for (int i = 0; i < vt.num_tables; i++) {
-        total_num_table_ids += vt.num_table_ids[i];
-    }
-
-    int ordered_table_ids[total_num_table_ids];
-    int ordered_acc_heights[total_num_table_ids];
-    int ordered_acc_height = 0;
-    int offset = 0;
-    for (int i = 0; i < vt.num_tables; i++) {
-        const int idx = ordered_tables[i];
-        const int num_table_ids = vt.num_table_ids[idx];
-        for (int j = 0; j < num_table_ids; j++) {
-            ordered_table_ids[offset + j] = vt.table_ids[idx][j];
-            ordered_acc_heights[offset + j] = ordered_acc_height;
-            ordered_acc_height += vt.inner_height[idx][j];
-        }
-        offset += num_table_ids;
-    }
-    @virtual_table_data{table_ids: ordered_table_ids, acc_heights: ordered_acc_heights};
-
     int max_bits = 0;
     if (MAX_VIRTUAL_BITS == -1) {
         // Take the bits that makes the total height fit
@@ -299,23 +277,49 @@ function pack_tables() {
 
     // Compute the length of the virtual table
     const int num_rows = 1 << bits_best_pack;
-    VirtualTable(num_rows, uids_best_pack, tables_best_pack, widths_best_pack, lens_best_pack, num_groups_best_pack);
+    VirtualTable(num_rows, ordered_tables, uids_best_pack, tables_best_pack, widths_best_pack, lens_best_pack, num_groups_best_pack);
 }
 
-airtemplate VirtualTable(const int N, const int uids[][], const int table_idxs[][], const int widths[], const int lens[], const int num_groups) {    
+airtemplate VirtualTable(const int N, const int tables[], const int uids[][], const int table_idxs[][], const int widths[], const int lens[], const int num_groups) {    
     // Compute the number of fixed and witness columns
     int sum_widths = 0;
     for (int i = 0; i < num_groups; i++) {
         sum_widths += widths[i];
     }
 
-    // println(`Virtual table instantiated with N: 2^${log2(N)}, #Fixed: ${num_groups + sum_widths}, #Witness: ${num_groups}, #Groups: ${num_groups}`);
-
     col fixed UID[num_groups];
     col fixed column[sum_widths];
     col witness multiplicity[num_groups];
 
-    @virtual_table_data{num_groups: num_groups};
+    // Issue hint information
+    int total_num_table_ids = 0;
+    for (int i = 0; i < vt.num_tables; i++) {
+        total_num_table_ids += vt.num_table_ids[i];
+    }
+
+    int flatten_table_ids[total_num_table_ids];
+    int acc_heights[total_num_table_ids];
+    int acc_total_height = 0;
+    int offset = 0;
+    println(`VirtualTable instantiated with: N=2^${log2(N)}, #Fixed=${num_groups + sum_widths}, #Witness=${num_groups}`);
+    println(`Table composition (total height of ${vt.total_height}):`);
+    for (int i = 0; i < vt.num_tables; i++) {
+        const int idx = tables[i];
+        const int bus_id = vt.bus_id[idx];
+        const int height = vt.height[idx];
+        const int width = vt.width[idx];
+        const int num_table_ids = vt.num_table_ids[idx];
+        for (int j = 0; j < num_table_ids; j++) {
+            const int table_id = vt.table_ids[idx][j];
+            const int height = vt.inner_height[idx][j];
+            flatten_table_ids[offset + j] = table_id;
+            acc_heights[offset + j] = acc_total_height;
+            acc_total_height += height;
+            println(`   - Table ${table_id} with height=${height} and width=${width}`);
+        }
+        offset += num_table_ids;
+    }
+    @virtual_table_data{table_ids: flatten_table_ids, acc_heights: acc_heights, num_muls: num_groups};
 
     // Prove the groups
     int col_offset = 0;
@@ -324,13 +328,21 @@ airtemplate VirtualTable(const int N, const int uids[][], const int table_idxs[]
     for (int i = 0; i < num_groups; i++) {
         const int group_len = lens[i];
         const int group_width = widths[i];
+
         // println(`Proving group ${i} with #UIDs: ${group_len}, Width: ${group_width}`);
         int group_row_offset = 0;
         for (int j = 0; j < group_len; j++) {
             const int idx = table_idxs[i][j];
-            // const int height = vt.heights[idx];
+            const int height = vt.height[idx];
             const int width = vt.width[idx];
             const int uid = uids[i][j];
+
+            // Fill the UID column
+            const int height_remaining = height - row_start;
+            const int N_remaining = N - group_row_offset;
+            // Ensure the height does not exceed N
+            const int h = (height_remaining <= N_remaining) ? height_remaining : N_remaining;
+            Tables.fill(uid, UID[i], group_row_offset, h);
 
             // Fill the table columns
             const int num_table_ids = vt.num_table_ids[idx];
@@ -343,13 +355,9 @@ airtemplate VirtualTable(const int N, const int uids[][], const int table_idxs[]
                 const int N_remaining = N - group_row_offset;
                 const int h = (height_remaining <= N_remaining) ? height_remaining : N_remaining;
                 // println(`Filling with table ${vt.table_ids[idx][k]}, row ${group_row_offset} to ${group_row_offset + h}`);
-                // println(`Table Height: ${height}, Table Height Remaining: ${height_remaining}, N: ${N}, N Remaining: ${N_remaining}, Chosen: ${h}`);
-
-                // Fill the UID column
-                Tables.fill(uid, UID[i], group_row_offset, h);
+                // println(`Table Height: ${height}, Table Height Remaining: ${height_remaining}, N: ${N}, N Remaining: ${N_remaining}, Table Rows: ${row_start} to ${row_start + h}`);
 
                 for (int l = 0; l < width; l++) {
-                    // println(`Filling column ${col_offset + l}`);
                     Tables.copy(vt.columns[idx][k][l], row_start, column[col_offset + l], group_row_offset, h);
                 }
 
