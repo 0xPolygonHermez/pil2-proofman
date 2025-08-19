@@ -516,6 +516,7 @@ extern "C" {
         maxProofSize: u64,
         maxProofsPerGPU: u64,
         maxRecursiveProofsPerGPU: u64,
+        max_n_bits_ext: u64,
     ) -> u64;
     
     pub fn check_device_memory(
