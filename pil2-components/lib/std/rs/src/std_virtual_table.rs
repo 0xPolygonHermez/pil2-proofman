@@ -27,7 +27,7 @@ pub struct VirtualTableAir {
     mask: u64,
     num_rows: usize,
     num_cols: usize,
-    uids: Vec<(usize, u64)>, // (uid, acc_height)
+    table_ids: Vec<(usize, u64)>, // (table_id, acc_height)
     multiplicities: Vec<Vec<AtomicU64>>,
     instance_id: AtomicU64,
     calculated: AtomicBool,
@@ -49,23 +49,22 @@ impl<F: PrimeField64> StdVirtualTable<F> {
         let hint_id = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "virtual_table_data")[0] as usize;
 
         let hint_opt = HintFieldOptions::default();
-        let uids =
-            get_hint_field_constant_a_as::<usize, F>(sctx, airgroup_id, air_id, hint_id, "uids", hint_opt.clone());
+        let table_ids =
+            get_hint_field_constant_a_as::<usize, F>(sctx, airgroup_id, air_id, hint_id, "table_ids", hint_opt.clone());
         let acc_heights =
             get_hint_field_constant_a_as::<u64, F>(sctx, airgroup_id, air_id, hint_id, "acc_heights", hint_opt.clone());
+        let num_muls =
+            get_hint_field_constant_as::<usize, F>(sctx, airgroup_id, air_id, hint_id, "num_muls", hint_opt.clone());
 
-        // Map each uid to an ordered set of indexes
-        let num_uids = uids.len();
-        let mut idxs = vec![(0, 0); num_uids];
-        for i in 0..num_uids {
-            idxs[i] = (uids[i], acc_heights[i]);
+        // Map each table_id to an ordered set of indexes
+        let num_table_ids = table_ids.len();
+        let mut idxs = vec![(0, 0); num_table_ids];
+        for i in 0..num_table_ids {
+            idxs[i] = (table_ids[i], acc_heights[i]);
         }
 
-        let hint_id = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "virtual_table_data")[1] as usize;
-        let num_groups =
-            get_hint_field_constant_as::<usize, F>(sctx, airgroup_id, air_id, hint_id, "num_groups", hint_opt.clone());
         let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
-        let multiplicities = (0..num_groups as usize)
+        let multiplicities = (0..num_muls as usize)
             .into_par_iter()
             .map(|_| (0..num_rows).into_par_iter().map(|_| AtomicU64::new(0)).collect())
             .collect();
@@ -76,8 +75,8 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             shift: num_rows.trailing_zeros() as u64,
             mask: (num_rows - 1) as u64,
             num_rows,
-            num_cols: num_groups as usize,
-            uids: idxs,
+            num_cols: num_muls as usize,
+            table_ids: idxs,
             multiplicities,
             instance_id: AtomicU64::new(0),
             calculated: AtomicBool::new(false),
@@ -111,7 +110,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdVirtualTable<F> {}
 
 impl VirtualTableAir {
     pub fn get_id(&self, id: usize) -> usize {
-        if let Some(pos) = self.uids.iter().position(|&(uid, _)| uid == id) {
+        if let Some(pos) = self.table_ids.iter().position(|&(table_id, _)| table_id == id) {
             pos
         } else {
             tracing::error!("ID {} not found in the virtual table", id);
@@ -126,7 +125,7 @@ impl VirtualTableAir {
         }
 
         // Get the table offset
-        let table_offset = self.uids[id].1; // Acc height of the table
+        let table_offset = self.table_ids[id].1; // Acc height of the table
 
         // Get the offset
         let offset = table_offset + row;
@@ -147,7 +146,7 @@ impl VirtualTableAir {
         }
 
         // Get the table offset
-        let table_offset = self.uids[id].1; // Acc height of the table
+        let table_offset = self.table_ids[id].1; // Acc height of the table
 
         for (&row, &multiplicity) in rows.iter().zip(multiplicities.iter()) {
             if multiplicity == 0 {
@@ -176,7 +175,7 @@ impl VirtualTableAir {
         }
 
         // Get the table offset
-        let table_offset = self.uids[id].1; // Acc height of the table
+        let table_offset = self.table_ids[id].1; // Acc height of the table
 
         for row in rows.iter() {
             // Get the offset
@@ -199,7 +198,7 @@ impl VirtualTableAir {
         }
 
         // Get the table offset
-        let table_offset = self.uids[id].1; // Acc height of the table
+        let table_offset = self.table_ids[id].1; // Acc height of the table
 
         for (row, &multiplicity) in ranged_values.iter().enumerate() {
             if multiplicity == 0 {

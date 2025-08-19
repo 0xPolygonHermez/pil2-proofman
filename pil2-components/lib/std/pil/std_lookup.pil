@@ -59,12 +59,12 @@ function lookup_assumes(const int opid, const expr expressions[], const expr sel
  * @param name An optional name for the PIOP consuming the lookup check. 
  *             This is useful for debugging and tracing operations.
  */
-function lookup_proves(const int opid, const expr expressions[], const expr mul = 1, int name = PIOP_NAME_DEFAULT, int surname = PIOP_SURNAME_DEFAULT) {
+function lookup_proves(const int opid, const expr expressions[], const expr mul = 1, int name = PIOP_NAME_DEFAULT, int surname = PIOP_SURNAME_DEFAULT, const int table_id = -1) {
     if (name == PIOP_NAME_DEFAULT) name = DEFAULT_LOOKUP_NAME;
     if (surname == PIOP_SURNAME_DEFAULT) surname = DEFAULT_LOOKUP_SURNAME;
 
     if (VIRTUAL == 1) {
-        collect_virtual_table(opid, expressions);
+        collect_virtual_table(opid, table_id, expressions);
     } else {
         sum(name, surname, SUM_TYPE_PROVES, [opid], opid, expressions, mul);
     }

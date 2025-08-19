@@ -16,7 +16,7 @@ use rayon::prelude::*;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "768dd13bfff3a05a37e5db62af22481eafe009ccc981e0d9b25f3024ea112dce";
+pub const PILOUT_HASH: &str = "03a0f99723a9df6c933c2ffb61658d0a355d679edc151ed79d22037118e43583";
 
 //AIRGROUP CONSTANTS
 
@@ -118,11 +118,11 @@ trace!(Component8Trace<F> {
 },  0, 8, 1024 );
 
 trace!(VirtualTableFixed<F> {
- UID: [F; 3], column: [F; 8], __L1__: F,
+ UID: [F; 4], column: [F; 11], __L1__: F,
 },  0, 9, 32768 );
 
 trace!(VirtualTableTrace<F> {
- multiplicity: [F; 3],
+ multiplicity: [F; 4],
 },  0, 9, 32768 );
 
 values!(Component1AirGroupValues<F> {
