@@ -97,11 +97,6 @@ else ifeq ($(UNAME_S),Linux)
         endif
     endif
 
-    # --- glibc C23 compatibility shim: avoid __isoc23_* redirects on older runtimes
-    CPPFLAGS += -D__isoc23_strtoll=strtoll -D__isoc23_strtoull=strtoull
-    # Keep fortify on, but compatible with older glibc (avoid _FORTIFY_SOURCE=3)
-    CPPFLAGS += -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2
-
     GPU_TARGETS := $(BUILD_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
 else
     $(error Unsupported platform: $(UNAME_S))
