@@ -4,20 +4,13 @@ use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
-use rand::{
-    distr::{StandardUniform, Distribution},
-    Rng, SeedableRng,
-    rngs::StdRng,
-};
+use rand::{rng, Rng, SeedableRng, rngs::StdRng};
 
 use crate::ProdBusTrace;
 
 define_wc!(ProdBus, "ProdBus ");
 
-impl<F: PrimeField64> WitnessComponent<F> for ProdBus
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for ProdBus {
     execute!(ProdBusTrace, 1);
 
     fn calculate_witness(
@@ -30,7 +23,7 @@ where
         buffer_pool: &dyn BufferPool<F>,
     ) {
         if stage == 1 {
-            let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
+            let seed = if cfg!(feature = "debug") { 0 } else { rng().random::<u64>() };
             let mut rng = StdRng::seed_from_u64(seed);
 
             let mut trace = ProdBusTrace::new_from_vec(buffer_pool.take_buffer());
