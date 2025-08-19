@@ -428,6 +428,10 @@ mod tests {
     #[allow(unused_imports)]
     use super::*;
 
+    use rand::prelude::Distribution;
+    use rand::distr::StandardUniform;
+    use rand::Rng;
+
     impl Distribution<Goldilocks> for StandardUniform {
         fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Goldilocks {
             loop {
@@ -548,7 +552,7 @@ mod tests {
     #[test]
     fn test_as_canonical_u64() {
         let mut rng = rand::rng();
-        let x: u64 = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+        let x: u64 = rng.random_range(0..=(1 << 63) - 1);
         let x_mod_order = x % Goldilocks::ORDER_U64;
 
         assert_eq!(Goldilocks::ZERO.as_canonical_u64(), 0);

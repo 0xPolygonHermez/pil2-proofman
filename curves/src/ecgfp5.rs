@@ -98,10 +98,7 @@ impl Add<&EcGFp5> for &EcGFp5 {
 
 #[cfg(test)]
 mod tests {
-    use rand::{
-        distr::{Distribution, StandardUniform},
-        rng,
-    };
+    use rand::{rng, Rng};
 
     use super::*;
 
@@ -199,8 +196,12 @@ mod tests {
         // Random tests
         let mut rng = rng();
         for _ in 0..1000 {
-            let f0: GoldilocksQuinticExtension = StandardUniform.sample(&mut rng);
-            let f1: GoldilocksQuinticExtension = StandardUniform.sample(&mut rng);
+            let f0: GoldilocksQuinticExtension = GoldilocksQuinticExtension::from_basis_coefficients_slice(
+                &[Goldilocks::from_u64(rng.random_range(0..=(1 << 63) - 1)); 5],
+            );
+            let f1: GoldilocksQuinticExtension = GoldilocksQuinticExtension::from_basis_coefficients_slice(
+                &[Goldilocks::from_u64(rng.random_range(0..=(1 << 63) - 1)); 5],
+            );
             let p = EcGFp5::hash_to_curve(f0, f1);
             assert!(p.is_on_curve());
         }
