@@ -96,6 +96,7 @@ else ifeq ($(UNAME_S),Linux)
             $(info AVX2 is supported by the CPU)
         endif
     endif
+
     GPU_TARGETS := $(BUILD_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
 else
     $(error Unsupported platform: $(UNAME_S))

@@ -160,12 +160,9 @@ struct StreamData{
     uint32_t gpuId;
     uint32_t slotId;
     StepsParams *pinned_params;
-    Goldilocks::Element *pinned_buffer;
     Goldilocks::Element *pinned_buffer_proof;
     Goldilocks::Element *pinned_buffer_exps_params;
     Goldilocks::Element *pinned_buffer_exps_args;
-
-    uint64_t pinned_size = 256 * 1024 * 1024; //256MB, this is the size of pinned memory for consts, it can be changed if needed
 
     //runtime data
     uint32_t status; //0: unused, 1: loading, 2: full
@@ -205,7 +202,6 @@ struct StreamData{
         recursive = recursive_;
         cudaEventCreate(&end_event);
         status = 0;
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer, pinned_size));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_proof, max_size_proof * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_args, maxExps * sizeof(ExpsArguments)));
@@ -258,7 +254,6 @@ struct StreamData{
         cudaSetDevice(gpuId);
         cudaStreamDestroy(stream);
         cudaEventDestroy(end_event);
-        cudaFreeHost(pinned_buffer);
         cudaFreeHost(pinned_buffer_proof);
         cudaFreeHost(pinned_buffer_exps_params);
         cudaFreeHost(pinned_buffer_exps_args);
@@ -270,14 +265,19 @@ struct DeviceCommitBuffers
     gl64_t **d_constPols;
     gl64_t **d_constPolsAggregation;
     gl64_t **d_aux_trace;
+    Goldilocks::Element **pinned_buffer;
+    Goldilocks::Element **pinned_buffer_extra;
     bool recursive;
     uint64_t max_size_proof;
+
+    uint64_t pinned_size = 128 * 1024 * 1024; //256MB, this is the size of pinned memory for consts, it can be changed if needed
 
     uint32_t  n_gpus;
     uint32_t* my_gpu_ids;
     uint32_t* gpus_g2l; 
     uint32_t n_total_streams;
     std::mutex mutex_slot_selection;
+    std::mutex *mutex_pinned;
     StreamData *streamsData;
 
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;
@@ -301,70 +301,3 @@ void load_and_copy_to_device_in_chunks(
     );
 
 #endif
-
-
-//     inline gl64_t& operator-=(const gl64_t& b)
-//     {
-//         uint64_t tmp;
-//         uint32_t borrow;
-//         asm("{ .reg.pred %top;");
-
-// # ifdef GL64_PARTIALLY_REDUCED
-//         asm("add.cc.u64 %0, %2, %3; addc.u32 %1, 0, 0;"
-//             : "=l"(tmp), "=r"(borrow)
-//             : "l"(val), "l"(MOD));
-//         asm("setp.eq.u32 %top, %0, 0;" :: "r"(borrow));
-//         asm("@%top mov.b64 %0, %1;" : "+l"(val) : "l"(tmp));
-// # endif
-
-//         // asm("mov.b64 %0, %1;" 
-//         //     : "=l"(tmp) 
-//         //     : "l"(b.val));
-
-//         // asm("setp.ge.u64 %top, %1, %2;"  // Set predicate if tmp >= MOD
-//         //     "@%top sub.u64 %0, %1, %2;"   // If true, subtract MOD from tmp
-//         //     : "+l"(tmp)
-//         //     : "l"(tmp), "l"(MOD));
-            
-//         asm("sub.cc.u64 %0, %0, %2; subc.u32 %1, 0, 0;"
-//             : "+l"(val), "=r"(borrow)
-//             : "l"(b.val));
-//         asm("add.u64 %0, %1, %2;" : "=l"(tmp) : "l"(val), "l"(MOD));
-//         asm("setp.ne.u32 %top, %0, 0;" :: "r"(borrow));
-//         asm("@%top mov.b64 %0, %1;" : "+l"(val) : "l"(tmp));
-//         asm("}");
-
-//         return *this;
-//    }
-
-//     inline gl64_t& operator+=(const gl64_t& b)
-//     {
-//         from();
-
-//         uint64_t tmp;
-//         uint32_t carry;
-
-//         asm("add.cc.u64 %0, %0, %2; addc.u32 %1, 0, 0;"
-//             : "+l"(val), "=r"(carry)
-//             : "l"(b.val));
-
-//         asm("{ .reg.pred %top;");
-// # ifdef GL64_PARTIALLY_REDUCED
-//         asm("sub.u64 %0, %1, %2;"
-//             : "=l"(tmp)
-//             : "l"(val), "l"(MOD));
-//         asm("setp.ne.u32 %top, %0, 0;" :: "r"(carry));
-//         asm("@%top mov.b64 %0, %1;" : "+l"(val) : "l"(tmp));
-// # else
-//         asm("sub.cc.u64 %0, %2, %3; subc.u32 %1, %1, 0;"
-//             : "=l"(tmp), "+r"(carry)
-//             : "l"(val), "l"(MOD));
-//         asm("setp.eq.u32 %top, %0, 0;" :: "r"(carry));
-//         asm("@%top mov.b64 %0, %1;" : "+l"(val) : "l"(tmp));
-//         // asm("setp.ge.u64 %top, %0, %1;" : : "l"(val), "l"(MOD));
-//         // asm("@%top sub.u64 %0, %0, %1;" : "+l"(val) : "l"(MOD));
-// # endif
-//         asm("}");
-
-//         return *this;
-//     }

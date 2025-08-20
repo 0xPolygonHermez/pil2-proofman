@@ -57,12 +57,17 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         d_buffers->d_aux_trace = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->d_constPols = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+        d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
+        d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
+        d_buffers->mutex_pinned = new std::mutex[d_buffers->n_gpus];
 
         for (int i = 0; i < d_buffers->n_gpus; i++) {
             cudaSetDevice(d_buffers->my_gpu_ids[i]);
             CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace[i], maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
             CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[i], maxSizes->totalConstPols * sizeof(Goldilocks::Element)));
             CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPolsAggregation[i], maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
+            CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
+            CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer_extra[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
         }
         init_gpu_const_2(d_buffers->my_gpu_ids, d_buffers->n_gpus);
 
@@ -108,12 +113,16 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         d_buffers->d_aux_trace = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->d_constPols = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+        d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
+        d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
+        d_buffers->mutex_pinned = new std::mutex[1];
 
         cudaSetDevice(d_buffers->my_gpu_ids[0]);
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace[0], maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[0], maxSizes->totalConstPols * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPolsAggregation[0], maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
-        
+        CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer[0], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer_extra[0], d_buffers->pinned_size * sizeof(Goldilocks::Element)));        
         init_gpu_const_2(d_buffers->my_gpu_ids, d_buffers->n_gpus);
 
         TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus);
@@ -165,11 +174,15 @@ void free_device_buffers(void *d_buffers_)
         CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace[i]));
         CHECKCUDAERR(cudaFree(d_buffers->d_constPols[i]));
         CHECKCUDAERR(cudaFree(d_buffers->d_constPolsAggregation[i]));
+        CHECKCUDAERR(cudaFreeHost(d_buffers->pinned_buffer[i]));
+        CHECKCUDAERR(cudaFreeHost(d_buffers->pinned_buffer_extra[i]));
     }
     free(d_buffers->d_aux_trace);
     free(d_buffers->d_constPols);
     free(d_buffers->d_constPolsAggregation);
-    
+    free(d_buffers->pinned_buffer);
+    free(d_buffers->pinned_buffer_extra);
+
     if (d_buffers->streamsData != nullptr) {
         for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
             d_buffers->streamsData[i].free();
