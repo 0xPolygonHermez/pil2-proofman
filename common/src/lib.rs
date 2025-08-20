@@ -1,6 +1,7 @@
 mod air_instance;
 mod verbose_mode;
 mod distribution_ctx;
+mod mpi_ctx;
 mod proof_ctx;
 mod prover;
 mod extended_field;
@@ -34,3 +35,4 @@ pub use custom_commits::*;
 pub use constraints::*;
 pub use fixed_cols::*;
 pub use memory_handler::*;
+pub use mpi_ctx::*;

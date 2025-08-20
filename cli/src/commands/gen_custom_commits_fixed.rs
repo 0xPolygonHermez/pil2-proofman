@@ -53,28 +53,13 @@ impl GenCustomCommitsFixedCmd {
             }
         }
 
-        let pctx;
-        #[cfg(distributed)]
-        {
-            pctx = Arc::new(ProofCtx::create_ctx(
-                self.proving_key.clone(),
-                custom_commits_map,
-                false,
-                false,
-                self.verbose.into(),
-                None,
-            ));
-        }
-        #[cfg(not(distributed))]
-        {
-            pctx = Arc::new(ProofCtx::create_ctx(
-                self.proving_key.clone(),
-                custom_commits_map,
-                false,
-                false,
-                self.verbose.into(),
-            ));
-        }
+        let pctx = Arc::new(ProofCtx::create_ctx(
+            self.proving_key.clone(),
+            custom_commits_map,
+            false,
+            false,
+            self.verbose.into(),
+        ));
 
         tracing::info!("{}", format!("{} GenCustomCommitsFixed", format!("{: >12}", "Command").bright_green().bold()));
         tracing::info!("");
