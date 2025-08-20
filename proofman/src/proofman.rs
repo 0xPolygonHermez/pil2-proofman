@@ -929,8 +929,7 @@ where
         let values_contributions: Arc<Vec<Mutex<Vec<F>>>> =
             Arc::new((0..instances.len()).map(|_| Mutex::new(Vec::<F>::new())).collect());
 
-        let roots_contributions: Arc<Vec<Mutex<[F; 4]>>> =
-            Arc::new((0..instances.len()).map(|_| Mutex::new([F::default(); 4])).collect());
+        let roots_contributions: Arc<Vec<[F; 4]>> = Arc::new((0..instances.len()).map(|_| [F::default(); 4]).collect());
 
         let (aux_trace, const_pols, const_tree) = if cfg!(feature = "gpu") {
             (Arc::new(Vec::new()), Arc::new(Vec::new()), Arc::new(Vec::new()))
@@ -2135,7 +2134,7 @@ where
 
     fn calculate_internal_contributions(
         &self,
-        roots_contributions: Arc<Vec<Mutex<[F; 4]>>>,
+        roots_contributions: Arc<Vec<[F; 4]>>,
         values_contributions: Arc<Vec<Mutex<Vec<F>>>>,
     ) -> [u64; 10] {
         timer_start_info!(CALCULATE_INTERNAL_CONTRIBUTION);
@@ -2146,7 +2145,7 @@ where
         for (idx, instance_id) in my_instances.iter().enumerate() {
             let mut contribution = vec![F::ZERO; 10];
 
-            let root_contribution = *roots_contributions[*instance_id].lock().expect("Missing root_contribution");
+            let root_contribution = roots_contributions[*instance_id];
 
             let values_to_hash = &mut values_contributions[*instance_id].lock().expect("Missing values_contribution");
             values_to_hash[4..8].copy_from_slice(&root_contribution[..4]);
@@ -2364,7 +2363,7 @@ where
     pub fn get_contribution_air(
         pctx: &ProofCtx<F>,
         sctx: &SetupCtx<F>,
-        roots_contributions: &[Mutex<[F; 4]>],
+        roots_contributions: &[[F; 4]],
         values_contributions: &[Mutex<Vec<F>>],
         instance_id: usize,
         aux_trace_contribution_ptr: *mut u8,
@@ -2381,7 +2380,6 @@ where
 
         let air_values = &pctx.get_air_instance_air_values(airgroup_id, air_id, air_instance_id);
 
-        let root_ptr = roots_contributions[instance_id].lock().unwrap().as_ptr() as *mut u8;
         let stream_id = commit_witness_c(
             3,
             setup.stark_info.stark_struct.n_bits,
@@ -2390,7 +2388,7 @@ where
             instance_id as u64,
             airgroup_id as u64,
             air_id as u64,
-            root_ptr,
+            roots_contributions[instance_id].as_ptr() as *mut u8,
             pctx.get_air_instance_trace_ptr(instance_id),
             aux_trace_contribution_ptr,
             d_buffers.get_ptr(),
