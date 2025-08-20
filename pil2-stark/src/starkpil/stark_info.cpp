@@ -344,6 +344,27 @@ uint64_t StarkInfo::getPinnedProofSize() {
     pinnedProofSize += customCommits.size() * 4; // Custom commits roots
     pinnedProofSize += (starkStruct.steps.size() - 1) * 4; // Steps roots
 
+    uint64_t maxTreeWidth = 0;
+    for (auto it = mapSectionsN.begin(); it != mapSectionsN.end(); it++) 
+    {
+        uint64_t treeWidth = it->second;
+        if(treeWidth > maxTreeWidth) {
+            maxTreeWidth = treeWidth;
+        }
+    }
+    for(uint64_t i = 0; i < starkStruct.steps.size() - 1; ++i) {
+        uint64_t nGroups = 1 << starkStruct.steps[i + 1].nBits;
+        uint64_t groupSize = (1 << starkStruct.steps[i].nBits) / nGroups;
+        uint64_t treeWidth = groupSize * FIELD_EXTENSION;
+        if(treeWidth > maxTreeWidth) {
+            maxTreeWidth = treeWidth;
+        }
+    }
+
+    uint64_t maxProofSize = ceil(log10(1 << starkStruct.nBitsExt) / log10(starkStruct.merkleTreeArity)) * (starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+
+    uint64_t maxProofBuffSize = maxTreeWidth + maxProofSize;
+
     uint64_t nTrees = nStages + customCommits.size() + 2;
     uint64_t nTreesFRI = starkStruct.steps.size() - 1;
     uint64_t queriesProofSize = (nTrees + nTreesFRI) * maxProofBuffSize * starkStruct.nQueries;
