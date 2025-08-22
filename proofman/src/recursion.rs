@@ -90,7 +90,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
         let mut updated_proof: Vec<u64> = vec![0; proof.proof.len() + publics_circom_size];
 
         if proof.proof_type == ProofType::Compressor {
-            let n_publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup_id].len() + 10;
+            let n_publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
             let publics_aggregation: Vec<F> =
                 proof.proof.iter().take(n_publics_aggregation).map(|&x| F::from_u64(x)).collect();
             add_publics_aggregation(&mut updated_proof, 0, &publics_aggregation, n_publics_aggregation);
