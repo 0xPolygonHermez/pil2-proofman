@@ -167,6 +167,15 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
     ))
 }
 
+pub fn n_publics_aggregation<F: PrimeField64>(pctx: &ProofCtx<F>, airgroup_id: usize) -> usize {
+    let mut publics_aggregation = 0;
+    publics_aggregation += 1; // circuit type
+    publics_aggregation += 4 * pctx.global_info.agg_types[airgroup_id].len(); // agg types
+    publics_aggregation += 10; // elliptic curve hash
+    publics_aggregation += 1; // n proofs aggregated
+    publics_aggregation
+}
+
 pub fn gen_recursive_proof_size<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
@@ -178,7 +187,7 @@ pub fn gen_recursive_proof_size<F: PrimeField64>(
 
     let mut new_proof_size = setup.proof_size;
 
-    let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup_id].len() + 10;
+    let publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
 
     if witness.proof_type != ProofType::VadcopFinal {
         new_proof_size += publics_aggregation as u64;
@@ -256,7 +265,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         witness.n_cols as u64,
     );
 
-    let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup_id].len() + 10;
+    let publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
 
     let initial_idx = if witness.proof_type == ProofType::VadcopFinal {
         1 + setup.stark_info.n_publics as usize
@@ -346,7 +355,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
             alives[airgroup] += airgroup_instances_alive[airgroup][p];
         }
         let setup = setups.get_setup(airgroup, 0, &ProofType::Recursive2);
-        let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup].len() + 10;
+        let publics_aggregation = n_publics_aggregation(pctx, airgroup);
         null_proofs[airgroup] = vec![0; setup.proof_size as usize + publics_aggregation];
         airgroup_proofs.push(vec![None; alives[airgroup]]);
 
