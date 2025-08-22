@@ -549,9 +549,6 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
 
 uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t maxProofsPerGPU, uint64_t maxRecursiveProofsPerGPU, uint64_t max_n_bits_ext) { return 1; }
 
-void set_device_mpi(uint32_t mpi_node_rank){}
-void set_device(uint32_t gpu_id){}
-
 uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size) { return 0; }
 
 uint64_t get_num_gpus(){ return 0;}

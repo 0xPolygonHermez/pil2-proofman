@@ -385,7 +385,7 @@ void get_stream_proofs(void *d_buffers_){
     std::lock_guard<std::mutex> lock(d_buffers->mutex_slot_selection);
     for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
         if (d_buffers->streamsData[i].status == 0 || d_buffers->streamsData[i].status == 3 || (d_buffers->streamsData[i].status == 1 && d_buffers->streamsData[i].extraStream)) continue;
-        set_device(d_buffers->streamsData[i].gpuId);
+        cudaSetDevice(d_buffers->streamsData[i].gpuId);
         CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[i].stream));
         if(d_buffers->streamsData[i].root != nullptr) {
             get_commit_root(d_buffers, i);
@@ -408,7 +408,7 @@ void get_stream_proofs_non_blocking(void *d_buffers_){
     std::lock_guard<std::mutex> lock(d_buffers->mutex_slot_selection);
     for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
         if(d_buffers->streamsData[i].status==2 &&  cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess){
-            set_device(d_buffers->streamsData[i].gpuId);
+            cudaSetDevice(d_buffers->streamsData[i].gpuId);
             if(d_buffers->streamsData[i].root != nullptr) {
                 get_commit_root(d_buffers, i);
             }else{
@@ -428,7 +428,7 @@ void get_stream_proofs_non_blocking(void *d_buffers_){
 
 void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    set_device(d_buffers->streamsData[streamId].gpuId);
+    cudaSetDevice(d_buffers->streamsData[streamId].gpuId);
     CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[streamId].stream));
     if(d_buffers->streamsData[streamId].root != nullptr) {
             get_commit_root(d_buffers, streamId);
@@ -593,22 +593,6 @@ uint64_t get_num_gpus() {
     return deviceCount;
 }
 
-// Function to set the CUDA device based on the MPI rank
-void set_device_mpi(uint32_t mpi_node_rank){
-    int deviceCount;
-    cudaGetDeviceCount(&deviceCount);
-    if (deviceCount == 0) {
-        std::cerr << "No CUDA devices found." << std::endl;
-        exit(1);
-    }
-    int device = mpi_node_rank % deviceCount;
-    cudaSetDevice(device);
-}
-
-void set_device(uint32_t gpuId){
-    cudaSetDevice(gpuId);
-}
-
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t nStreams, bool recursive){
     std::lock_guard<std::mutex> lock(d_buffers->mutex_slot_selection);
     uint32_t countFreeStreamsGPU[d_buffers->n_gpus];
@@ -705,7 +689,7 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t nStreams, bool re
 }
 
 void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId, uint64_t nStreams){
-    set_device(d_buffers->streamsData[streamId].gpuId);
+    cudaSetDevice(d_buffers->streamsData[streamId].gpuId);
     for (uint64_t j = 0; j < nStreams; j++) {
         if(d_buffers->streamsData[streamId + j].status==2 && cudaEventQuery(d_buffers->streamsData[streamId + j].end_event) == cudaSuccess) {
 
