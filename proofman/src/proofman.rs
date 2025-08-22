@@ -48,7 +48,7 @@ use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::{check_tree_paths_vadcop, gen_recursive_proof_size, initialize_fixed_pols_tree};
 use crate::{verify_basic_proof, verify_final_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
-use crate::{verify_constraints_proof, print_summary_info, get_recursive_buffer_sizes};
+use crate::{verify_constraints_proof, print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
 use crate::{
     gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof, generate_vadcop_final_proof,
     generate_fflonk_snark_proof, generate_recursivef_proof, initialize_witness_circom,
@@ -1100,7 +1100,7 @@ where
                 let n_recursive2_proofs = total_recursive_proofs(n_proofs);
                 if n_recursive2_proofs.has_remaining {
                     let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2);
-                    let publics_aggregation = 1 + 4 * self.pctx.global_info.agg_types[airgroup].len() + 10;
+                    let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup);
                     let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
                     let null_proof = Proof::new(ProofType::Recursive2, airgroup, 0, None, null_proof_buffer);
                     recursive2_proofs[airgroup].write().unwrap().push(null_proof);
