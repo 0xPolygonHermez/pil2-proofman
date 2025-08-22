@@ -59,6 +59,12 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
         d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
+        
+        // Allocate mutex array using placement new
+        d_buffers->mutex_pinned = (std::mutex*)malloc(d_buffers->n_gpus * sizeof(std::mutex));
+        for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
+            new (&d_buffers->mutex_pinned[i]) std::mutex();
+        }
 
         for (int i = 0; i < d_buffers->n_gpus; i++) {
             cudaSetDevice(d_buffers->my_gpu_ids[i]);
@@ -114,6 +120,12 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
         d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
+        
+        // Allocate mutex array using placement new
+        d_buffers->mutex_pinned = (std::mutex*)malloc(d_buffers->n_gpus * sizeof(std::mutex));
+        for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
+            new (&d_buffers->mutex_pinned[i]) std::mutex();
+        }
 
         cudaSetDevice(d_buffers->my_gpu_ids[0]);
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace[0], maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
@@ -195,6 +207,12 @@ void free_device_buffers(void *d_buffers_)
             }
         }
     }
+
+    // Manually destroy mutexes before freeing memory
+    for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
+        d_buffers->mutex_pinned[i].~mutex();
+    }
+    free(d_buffers->mutex_pinned);
 
     delete d_buffers;
 }

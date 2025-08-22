@@ -13,7 +13,8 @@ void copy_to_device_in_chunks(
 
     cudaSetDevice(gpuId);
 
-    std::lock_guard<std::mutex> lock(d_buffers->mutex_pinned);
+    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
+    std::lock_guard<std::mutex> lock(d_buffers->mutex_pinned[gpuLocalId]);
 
     uint64_t block_size = d_buffers->pinned_size;
     
@@ -75,7 +76,8 @@ void load_and_copy_to_device_in_chunks(
     
     cudaSetDevice(gpuId);
 
-    std::lock_guard<std::mutex> lock(d_buffers->mutex_pinned);
+    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
+    std::lock_guard<std::mutex> lock(d_buffers->mutex_pinned[gpuLocalId]);
     
     uint64_t block_size = d_buffers->pinned_size;
     

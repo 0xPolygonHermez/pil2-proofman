@@ -277,7 +277,7 @@ struct DeviceCommitBuffers
     uint32_t* gpus_g2l; 
     uint32_t n_total_streams;
     std::mutex mutex_slot_selection;
-    std::mutex mutex_pinned;
+    std::mutex *mutex_pinned;
     StreamData *streamsData;
 
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;
