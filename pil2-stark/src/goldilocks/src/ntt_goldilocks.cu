@@ -207,6 +207,7 @@ void NTT_Goldilocks_GPU::init_twiddle_factors_and_r(uint64_t maxLogDomainSize_, 
         }
     }
     for (int i = 0; i < nGPUs; i++) {
+        cudaSetDevice(gpu_ids[i]);
         cudaStreamSynchronize(stream[i]);
         cudaStreamDestroy(stream[i]);
     }
