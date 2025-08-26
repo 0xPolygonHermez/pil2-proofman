@@ -233,7 +233,7 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn dctx_reset(&self) {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.reset();
+        dctx.reset_instances();
     }
 
     pub fn set_proof_tx(&self, proof_tx: Option<crossbeam_channel::Sender<usize>>) {
@@ -321,9 +321,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances.clone()
     }
 
-    pub fn dctx_get_my_instances(&self) -> Vec<usize> {
+    pub fn dctx_get_process_instances(&self) -> Vec<usize> {
         let dctx = self.dctx.read().unwrap();
-        dctx.my_instances.clone()
+        dctx.process_instances.clone()
     }
 
     pub fn dctx_get_instance_info(&self, global_idx: usize) -> (usize, usize) {
@@ -336,14 +336,14 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.get_instance_chunks(global_idx)
     }
 
-    pub fn dctx_get_instance_idx(&self, global_idx: usize) -> usize {
+    pub fn dctx_get_instance_local_idx(&self, global_idx: usize) -> usize {
         let dctx = self.dctx.read().unwrap();
-        dctx.get_instance_idx(global_idx)
+        dctx.get_instance_local_idx(global_idx)
     }
 
-    pub fn dctx_is_my_instance(&self, global_idx: usize) -> bool {
+    pub fn dctx_is_my_process_instance(&self, global_idx: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
-        dctx.is_my_instance(global_idx)
+        dctx.is_my_process_instance(global_idx)
     }
 
     pub fn dctx_is_table(&self, global_idx: usize) -> bool {
@@ -361,14 +361,14 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.find_air_instance_id(global_idx)
     }
 
-    pub fn dctx_find_instance_mine(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
+    pub fn dctx_find_process_instance(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
         let dctx = self.dctx.read().unwrap();
-        dctx.find_instance_mine(airgroup_id, air_id)
+        dctx.find_process_instance(airgroup_id, air_id)
     }
 
-    pub fn dctx_set_chunks(&self, global_idx: usize, chunks: Vec<usize>) {
-        let mut dctx = self.dctx.write().unwrap();
-        dctx.set_chunks(global_idx, chunks);
+    pub fn dctx_find_process_table(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.find_process_table(airgroup_id, air_id)
     }
 
     pub fn add_instance_assign(&self, airgroup_id: usize, air_id: usize, threads_witness: usize) -> usize {
@@ -377,17 +377,6 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_instance(airgroup_id, air_id, threads_witness, weight)
     }
 
-    pub fn add_instance_rank(
-        &self,
-        airgroup_id: usize,
-        air_id: usize,
-        owner_idx: usize,
-        threads_witness: usize,
-    ) -> usize {
-        let mut dctx = self.dctx.write().unwrap();
-        let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_assign_rank(airgroup_id, air_id, owner_idx, threads_witness, weight)
-    }
 
     pub fn add_instance(&self, airgroup_id: usize, air_id: usize, threads_witness: usize) -> usize {
         let mut dctx = self.dctx.write().unwrap();
@@ -398,7 +387,7 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn add_table(&self, airgroup_id: usize, air_id: usize) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign_table(airgroup_id, air_id, weight)
+        dctx.add_table(airgroup_id, air_id, weight)
     }
 
     pub fn dctx_add_instance_no_assign(
@@ -417,27 +406,21 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.assign_instances(minimal_memory);
     }
 
-    pub fn dctx_load_balance_info(&self) -> (f64, u64, u64, f64) {
+    pub fn dctx_load_balance_info_process(&self) -> (f64, u64, u64, f64) {
         let dctx = self.dctx.read().unwrap();
-        dctx.load_balance_info()
+        dctx.load_balance_info_process()
+    }
+    pub fn dctx_load_balance_info_partition(&self) -> (f64, u64, u64, f64) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.load_balance_info_partition()
     }
 
-    pub fn dctx_set_compute_units(
-        &self,
-        rank: usize,
-        total_compute_units: usize,
-        units: Vec<u32>,
-        total_processes: usize,
-        process_id: usize,
-    ) {
+    pub fn dctx_setup(&self, n_partitions: usize, partition_ids: Vec<u32>, balance: bool, n_processes: usize, process_id: usize) {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.add_compute_units(rank, total_compute_units, units, total_processes, process_id);
+        dctx.setup_partitions(n_partitions, partition_ids, balance);
+        dctx.setup_processes(n_processes, process_id);
     }
 
-    pub fn dctx_set_balance_distribution(&self, balance: bool) {
-        let mut dctx = self.dctx.write().unwrap();
-        dctx.set_balance_distribution(balance);
-    }
 
     pub fn get_proof_values_ptr(&self) -> *mut u8 {
         let guard = &self.proof_values.values.read().unwrap();

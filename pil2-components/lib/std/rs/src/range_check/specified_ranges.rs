@@ -169,7 +169,7 @@ impl SpecifiedRanges {
 
 impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
     fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
-        let (instance_found, mut instance_id) = pctx.dctx_find_instance_mine(self.airgroup_id, self.air_id);
+        let (instance_found, mut instance_id) = pctx.dctx_find_process_table(self.airgroup_id, self.air_id);
 
         if !instance_found {
             instance_id = pctx.add_table(self.airgroup_id, self.air_id);
@@ -177,6 +177,7 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
 
         self.calculated.store(false, Ordering::Relaxed);
         self.instance_id.store(instance_id as u64, Ordering::SeqCst);
+        //todo_distributed: mirar un s'usa aquest instance_id pq vagi a taules
         Vec::new()
     }
 

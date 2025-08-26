@@ -23,7 +23,7 @@ pub fn print_summary_info<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F
     }
 
     if mpi_ctx.n_processes > 1 {
-        let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info();
+        let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info_process();
         tracing::info!(
             "Load balance. Average: {} max: {} min: {} deviation: {}",
             average_weight,
@@ -37,6 +37,8 @@ pub fn print_summary_info<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F
 }
 
 pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, global: bool) {
+
+    //todo_distributed: falta afegir taules pero no les tinc totes només les locals
     let mut air_info = HashMap::new();
 
     let mut air_instances = HashMap::new();
@@ -47,7 +49,7 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
     let mut print = vec![global; instances.len()];
 
     if !global {
-        let my_instances = pctx.dctx_get_my_instances();
+        let my_instances = pctx.dctx_get_process_instances();
         for instance_id in my_instances.iter() {
             print[*instance_id] = true;
         }

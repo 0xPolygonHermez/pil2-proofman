@@ -24,7 +24,8 @@ pub fn aggregate_airgroupvals<F: PrimeField64>(pctx: &ProofCtx<F>, airgroup_valu
         airgroupvalues.push(values);
     }
 
-    let my_instances = pctx.dctx_get_my_instances();
+    let my_instances = pctx.dctx_get_process_instances();
+    //todo_distributed: falta afegir taules
 
     for (my_instance_idx, instance_id) in my_instances.iter().enumerate() {
         let (airgroup_id, _) = pctx.dctx_get_instance_info(*instance_id);
@@ -111,7 +112,8 @@ fn get_global_hint_f<F: PrimeField64>(
     let proof_values = if let Some(pctx) = pctx { pctx.get_proof_values_ptr() } else { std::ptr::null_mut() };
     let airgroup_values = if let Some(pctx) = pctx {
         let mut airgroup_values_air_instances = Vec::new();
-        let my_instances = pctx.dctx_get_my_instances();
+        let my_instances = pctx.dctx_get_process_instances();
+        //todo_distributed: falta afegir taules
         for instance_id in my_instances.iter() {
             if !skip_prover_instance(pctx, *instance_id).0 {
                 let (airgroup_id, air_id) = pctx.dctx_get_instance_info(*instance_id);

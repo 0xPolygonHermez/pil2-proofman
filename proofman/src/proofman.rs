@@ -107,21 +107,17 @@ pub enum ProvePhase {
 #[derive(Debug, Clone)]
 pub struct ProofInfo {
     pub input_data_path: Option<PathBuf>,
-    pub total_compute_units: usize,
-    pub compute_units: Vec<u32>,
-    pub total_processes: usize,
-    pub initial_process_id: usize,
+    pub n_partitions: usize,
+    pub partition_ids: Vec<u32>,
 }
 
 impl ProofInfo {
     pub fn new(
         input_data_path: Option<PathBuf>,
-        total_compute_units: usize,
-        compute_units: Vec<u32>,
-        total_processes: usize,
-        initial_process_id: usize,
+        n_partitions: usize,
+        partition_ids: Vec<u32>,
     ) -> Self {
-        Self { input_data_path, total_compute_units, compute_units, total_processes, initial_process_id }
+        Self { input_data_path, n_partitions, partition_ids }
     }
 }
 
@@ -383,7 +379,8 @@ where
     pub fn compute_witness_(&self, options: ProofOptions) -> Result<(), Box<dyn std::error::Error>> {
         self.exec(options.minimal_memory)?;
 
-        let mut my_instances_sorted = self.pctx.dctx_get_my_instances();
+        //todo_distributed: faltaran taules
+        let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
         let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
         my_instances_sorted.shuffle(&mut rng);
 
@@ -484,7 +481,8 @@ where
         transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
 
         let instances = self.pctx.dctx_get_instances();
-        let my_instances = self.pctx.dctx_get_my_instances();
+        //todo_distributed: faltaran taules
+        let my_instances = self.pctx.dctx_get_process_instances();
         let airgroup_values_air_instances = Mutex::new(vec![Vec::new(); my_instances.len()]);
         let valid_constraints = AtomicBool::new(true);
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
@@ -531,7 +529,7 @@ where
         for instance_id in my_instances_tables.iter() {
             let (skip, _) = skip_prover_instance(&self.pctx, *instance_id);
 
-            if skip || !self.pctx.dctx_is_my_instance(*instance_id) {
+            if skip || !self.pctx.dctx_is_my_process_instance(*instance_id) {
                 continue;
             };
 
@@ -613,7 +611,7 @@ where
 
         let air_instance_id = self.pctx.dctx_find_air_instance_id(instance_id);
         let airgroup_values = self.pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id);
-        airgroup_values_air_instances.lock().unwrap()[self.pctx.dctx_get_instance_idx(instance_id)] = airgroup_values;
+        airgroup_values_air_instances.lock().unwrap()[self.pctx.dctx_get_instance_local_idx(instance_id)] = airgroup_values;
         let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(instance_id);
         if is_shared_buffer {
             self.memory_handler.release_buffer(witness_buffer);
@@ -675,12 +673,13 @@ where
             return Err("Proofman has not been initialized in final snark mode".into());
         }
 
+        //todo_distributed: cas amb una sola particiço i n_processes de moment
         let phase_inputs = ProvePhaseInputs::Full(ProofInfo::new(
             input_data_path,
-            self.mpi_ctx.n_processes as usize,
-            vec![self.mpi_ctx.rank as u32],
-            self.mpi_ctx.n_processes as usize,
-            self.mpi_ctx.rank as usize,
+            1,
+            vec![0]
+            //self.mpi_ctx.n_processes as usize,
+            //vec![self.mpi_ctx.rank as u32],
         ));
         self._generate_proof(phase_inputs, options, ProvePhase::Full)
     }
@@ -844,17 +843,12 @@ where
                 _ => panic!("Invalid phase inputs for contributions"),
             };
 
-            let mut units: Vec<u32> = Vec::new();
-            for range in &proof_info.compute_units {
-                units.push(*range);
-            }
-
-            self.pctx.dctx_set_compute_units(
+            self.pctx.dctx_setup(
+                proof_info.n_partitions,
+                proof_info.partition_ids.clone(),
+                true,
+                self.mpi_ctx.n_processes as usize,
                 self.mpi_ctx.rank as usize,
-                proof_info.total_compute_units,
-                units,
-                proof_info.total_processes,
-                proof_info.initial_process_id,
             );
             self.wcm.set_input_data_path(proof_info.input_data_path.clone());
             self.exec(options.minimal_memory)?;
@@ -867,11 +861,13 @@ where
             timer_start_info!(CALCULATING_INNER_CONTRIBUTIONS);
             timer_start_info!(PREPARING_CONTRIBUTIONS);
 
-            let my_instances = self.pctx.dctx_get_my_instances();
+            //todo_distributed: faltaran taules
+            let my_instances = self.pctx.dctx_get_process_instances();
             let my_instances_tables =
                 my_instances.iter().filter(|idx| self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
 
-            let mut my_instances_sorted = self.pctx.dctx_get_my_instances();
+            //todo distributed: faltaran taules
+            let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
             let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
             my_instances_sorted.shuffle(&mut rng);
 
@@ -1020,7 +1016,8 @@ where
         let n_airgroups = self.pctx.global_info.air_groups.len();
 
         let instances = self.pctx.dctx_get_instances();
-        let mut my_instances_sorted = self.pctx.dctx_get_my_instances();
+        //todo_distributed: faltaran taules
+        let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
         let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
         my_instances_sorted.shuffle(&mut rng);
 
@@ -1050,7 +1047,7 @@ where
         let mut n_airgroup_proofs = vec![0; n_airgroups];
         for (instance_id, instance_info) in instances.iter().enumerate() {
             let (airgroup_id, air_id) = (instance_info.airgroup_id, instance_info.air_id);
-            if self.pctx.dctx_is_my_instance(instance_id) {
+            if self.pctx.dctx_is_my_process_instance(instance_id) {
                 n_airgroup_proofs[airgroup_id] += 1;
             }
             let setup = self.sctx.get_setup(airgroup_id, air_id);
@@ -1612,10 +1609,8 @@ where
         timer_start_info!(VERIFYING_PROOFS);
         let mut valid_proofs = true;
 
-        let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
-        let mut my_instances_sorted = self.pctx.dctx_get_my_instances();
-        my_instances_sorted.shuffle(&mut rng);
-        let my_instances_sorted = self.pctx.dctx_get_my_instances();
+        //todo_distributed: faltaran taules
+        let my_instances_sorted = self.pctx.dctx_get_process_instances();
 
         let mut airgroup_values_air_instances = vec![Vec::new(); my_instances_sorted.len()];
         for instance_id in my_instances_sorted.iter() {
@@ -1640,7 +1635,7 @@ where
             let airgroup_values: Vec<F> =
                 proof.proof[0..n_airgroup_values].to_vec().iter().map(|&x| F::from_u64(x)).collect();
 
-            airgroup_values_air_instances[self.pctx.dctx_get_instance_idx(*instance_id)] = airgroup_values;
+            airgroup_values_air_instances[self.pctx.dctx_get_instance_local_idx(*instance_id)] = airgroup_values;
         }
         timer_stop_and_log_info!(VERIFYING_PROOFS);
 
@@ -2109,7 +2104,8 @@ where
 
     fn calculate_internal_contributions(&self) -> [u64; 10] {
         timer_start_info!(CALCULATE_INTERNAL_CONTRIBUTION);
-        let my_instances = self.pctx.dctx_get_my_instances();
+        //todo_distributed: faltaran taules
+        let my_instances = self.pctx.dctx_get_process_instances();
 
         let mut values = vec![vec![F::ZERO; 10]; my_instances.len()];
 
