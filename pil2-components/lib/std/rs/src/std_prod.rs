@@ -370,7 +370,6 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
 
             let instances = pctx.dctx_get_instances();
             let my_instances = pctx.dctx_get_process_instances();
-            //todo_distributed: falta afegir taules
 
             let fast_mode = pctx.debug_info.read().unwrap().std_mode.fast_mode;
 

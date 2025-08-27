@@ -1,3 +1,4 @@
+use core::panic;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceInfo {
@@ -37,23 +38,27 @@ pub struct DistributionCtx {
     // DYNAMIC PARAMETERS
 
     // Instances
-    pub n_instances: usize,             // Total number of global instances
-    pub instances: Vec<InstanceInfo>,   // Global instances info
-    pub n_tables: usize,                // Number of local table instances
-    pub tables: Vec<InstanceInfo>,      // Local table instances info
+    pub n_instances: usize,             // Total number of instances
+    pub instances: Vec<InstanceInfo>,   // Instances info
+    pub n_non_tables: usize,            // Number of non-table instances
+    pub n_tables: usize,                // Number of table instances
+    pub aux_tables: Vec<InstanceInfo>,  // Table instances info (lately appended to instances)
 
 
     // Worker-level distribution
-    pub instance_partition: Vec<i32>,   // Which partition each instance belongs to (>=0 assigned, -1 unassigned)
-    pub worker_instances: Vec<usize>,   // Global indexes of instances assigned to this worker
-    pub partition_count: Vec<u32>,      // #instances in each partition (excludes local tables)
-    pub partition_weight: Vec<u64>,     // Total computational weight per partition (excludes local tables)
+    pub instance_partition: Vec<i32>,   // Which partition each instance belongs to (>=0 assigned, -1 unassigned, -2 appended table)
+    pub worker_instances: Vec<usize>,   // Indexes of instances assigned to this worker
+    pub partition_count: Vec<u32>,      // #instances in each partition (does not include tables)
+    pub partition_weight: Vec<u64>,     // Total computational weight per partition (does not include tables)
 
     // Process-level distribution
     pub instance_process: Vec<(i32, usize)>, // For each instance: (process_id or -1 if other worker, local_idx)
-    pub process_instances: Vec<usize>,       // Global indexes of instances assigned to current process
-    pub process_count: Vec<usize>,           // #instances assigned to each process (excludes local tables)
-    pub process_weight: Vec<u64>,            // Total computational weight per process (excludes local tables)
+    pub process_instances: Vec<usize>,       // Indexes of instances assigned to current process
+    pub process_count: Vec<usize>,           // #instances assigned to each process
+    pub process_weight: Vec<u64>,            // Total computational weight per process
+
+    // Control
+    pub assignation_done: bool,         // Whether the instance assignation is done
 
 }
 
@@ -73,8 +78,9 @@ impl std::fmt::Debug for DistributionCtx {
         dbg.field("=== DYNAMIC PARAMS ===", &"");
         dbg.field("n_instances", &self.n_instances)
             .field("instances", &self.instances)
+            .field("n_non_tables", &self.n_non_tables)
             .field("n_tables", &self.n_tables)
-            .field("tables", &self.tables)
+            .field("tables", &self.aux_tables)
             .field("instance_partition", &self.instance_partition)
             .field("worker_instances", &self.worker_instances)
             .field("partition_count", &self.partition_count)
@@ -82,7 +88,8 @@ impl std::fmt::Debug for DistributionCtx {
             .field("instance_process", &self.instance_process)
             .field("process_instances", &self.process_instances)
             .field("process_count", &self.process_count)
-            .field("process_weight", &self.process_weight);
+            .field("process_weight", &self.process_weight)
+            .field("assignation_done", &self.assignation_done);
         dbg.finish()
     }
 }
@@ -97,8 +104,9 @@ impl DistributionCtx {
             process_id: 0,
             n_instances: 0,
             instances: Vec::new(),
+            n_non_tables: 0,
             n_tables: 0,
-            tables: Vec::new(),
+            aux_tables: Vec::new(),
             instance_partition: Vec::new(),
             worker_instances: Vec::new(),
             partition_count: Vec::new(),
@@ -107,6 +115,7 @@ impl DistributionCtx {
             process_instances: Vec::new(),
             process_count: Vec::new(),
             process_weight: Vec::new(),
+            assignation_done: false,
         }
     }
 
@@ -160,8 +169,9 @@ impl DistributionCtx {
         // Global instance management
         self.n_instances = 0;
         self.instances.clear();
+        self.n_non_tables = 0;
         self.n_tables = 0;
-        self.tables.clear();
+        self.aux_tables.clear();
 
         // Worker-level
         self.instance_partition.clear();
@@ -175,6 +185,8 @@ impl DistributionCtx {
         self.process_count.fill(0);
         self.process_weight.fill(0);
 
+        //control
+        self.assignation_done = false
     }
 
     /// Verify that the static configuration has been properly set up
@@ -201,66 +213,84 @@ impl DistributionCtx {
 
     /// Check if the current process is the owner of a given instance
     #[inline]
-    pub fn is_my_process_instance(&self, gid: usize) -> bool {
-        assert!(gid < self.instance_process.len());
-        self.instance_process[gid].0 == self.process_id as i32
+    pub fn is_my_process_instance(&self, instance_id: usize) -> bool {
+        if instance_id >= self.instance_process.len() {
+            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len());
+        }
+        self.instance_process[instance_id].0 == self.process_id as i32
     }
 
     /// Get the airgroup and air ID for a given instance
     /// Returns (airgroup_id, air_id)
     #[inline]
-    pub fn get_instance_info(&self, gid: usize) -> (usize, usize) {
-        if gid >= self.instances.len() {
-            panic!("Instance index {} out of bounds (max: {})", gid, self.instances.len());
+    pub fn get_instance_info(&self, instance_id: usize) -> (usize, usize) {
+        if instance_id >= self.instances.len() {
+            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len());
         }
-        (self.instances[gid].airgroup_id, self.instances[gid].air_id)
+        (self.instances[instance_id].airgroup_id, self.instances[instance_id].air_id)
     }
 
     /// Get the airgroup and air ID of a given table
     /// Returns (airgroup_id, air_id)
     #[inline]
     pub fn get_table_info(&self, table_idx: usize) -> (usize, usize) {
-        if table_idx >= self.tables.len() {
-            panic!("Table index {} out of bounds (max: {})", table_idx, self.tables.len());
+        if self.assignation_done {
+            let instance_id = self.n_non_tables + table_idx * self.n_processes + self.process_id;
+            self.get_instance_info(instance_id)
+        } else {
+            if table_idx >= self.aux_tables.len() {
+                panic!("Table index {} out of bounds (max: {})", table_idx, self.aux_tables.len());
+            }
+            (self.aux_tables[table_idx].airgroup_id, self.aux_tables[table_idx].air_id)
         }
-        (self.tables[table_idx].airgroup_id, self.tables[table_idx].air_id)
     }
 
     /// Get the local index of the instance within its owner process
     #[inline]
-    pub fn get_instance_local_idx(&self, gid: usize) -> usize {
-        if gid >= self.instance_process.len() {
-            panic!("Instance index {} out of bounds (max: {})", gid, self.instance_process.len());
+    pub fn get_instance_local_idx(&self, instance_id: usize) -> usize {
+        if instance_id >= self.instance_process.len() {
+            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len());
         }
-        self.instance_process[gid].1
+        self.instance_process[instance_id].1
     }
 
     /// Get the number of Minimum Trace chunks to be processes for a given global instance
     #[inline]
-    pub fn get_instance_chunks(&self, gid: usize) -> usize {
-        assert!(gid < self.instances.len());
-        self.instances[gid].n_chunks
+    pub fn get_instance_chunks(&self, instance_id: usize) -> usize {
+        if instance_id >= self.instances.len() {
+            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len());
+        }
+        self.instances[instance_id].n_chunks
     }
 
     /// Set the number of chunks for a given instance (these may be used for balancing purposes)
-    pub fn set_n_chunks(&mut self, global_idx: usize, n_chunks: usize) {
-        let instance_info = &mut self.instances[global_idx];
+    pub fn set_n_chunks(&mut self, instance_id: usize, n_chunks: usize) {
+        if instance_id >= self.instances.len() {
+            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len());
+        }
+        let instance_info = &mut self.instances[instance_id];
         instance_info.n_chunks = n_chunks;
     }
 
     /// Check if the current worker is the owner of a given instance
     #[inline]
-    pub fn is_my_worker_instance(&self, gid: usize) -> bool {
-        assert!(gid < self.instance_process.len());
-        self.instance_process[gid].0 >= 0
+    pub fn is_my_worker_instance(&self, instance_id: usize) -> bool {
+        
+        if instance_id >= self.instance_process.len() {
+            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len());
+        }
+        self.instance_process[instance_id].0 >= 0
     }
 
     /// Among the air instances with the same airgroup and air_id find the relative position of the current one
     #[inline]
-    pub fn find_air_instance_id(&self, gid: usize) -> usize {
+    pub fn find_air_instance_id(&self, instance_id: usize) -> usize {
+        if instance_id >= self.instances.len() {
+            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len());
+        }
         let mut air_instance_id = 0;
-        let (airgroup_id, air_id) = self.get_instance_info(gid);
-        for idx in 0..gid {
+        let (airgroup_id, air_id) = self.get_instance_info(instance_id);
+        for idx in 0..instance_id {
             let (instance_airgroup_id, instance_air_id) = self.get_instance_info(idx);
             if (instance_airgroup_id, instance_air_id) == (airgroup_id, air_id) {
                 air_instance_id += 1;
@@ -296,20 +326,24 @@ impl DistributionCtx {
     /// Returns (found, local_index)
     #[inline]
     pub fn find_process_table(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
-        let mut matches = self
-            .tables
-            .iter()
-            .enumerate()
-            .filter(|&(_pos, &info)| {
-                info.airgroup_id == airgroup_id && info.air_id == air_id
-            })
-            .map(|(pos, _)| pos);
+        if self.assignation_done {
+            self.find_process_instance(airgroup_id, air_id)
+        } else {
+            let mut matches = self
+                .aux_tables
+                .iter()
+                .enumerate()
+                .filter(|&(_pos, &info)| {
+                    info.airgroup_id == airgroup_id && info.air_id == air_id
+                })
+                .map(|(pos, _)| pos);
 
-        match (matches.next(), matches.next()) {
-            (None, _) => (false, 0),
-            (Some(pos), None) => (true, pos),
-            (Some(_), Some(_)) => {
-                panic!("Multiple tables found for airgroup_id: {airgroup_id}, air_id: {air_id}");
+            match (matches.next(), matches.next()) {
+                (None, _) => (false, 0),
+                (Some(pos), None) => (true, pos),
+                (Some(_), Some(_)) => {
+                    panic!("Multiple tables found for airgroup_id: {airgroup_id}, air_id: {air_id}");
+                }
             }
         }
     }
@@ -334,10 +368,14 @@ impl DistributionCtx {
     /// the instance added is not a table
     #[inline]
     pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, threads_witness: usize, weight: u64) -> usize {
+        if self.assignation_done {
+            panic!("Instances already assigned");
+        }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let gid: usize = self.instances.len();
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, threads_witness, weight));
         self.n_instances += 1;
+        self.n_non_tables += 1;
         let partition_id = (gid % self.n_partitions) as u32;
         self.instance_partition.push(partition_id as i32);
         self.partition_count[partition_id as usize] += 1;
@@ -372,25 +410,36 @@ impl DistributionCtx {
         threads_witness: usize,
         weight: u64,
     ) -> usize {
+        if self.assignation_done {
+            panic!("Instances already assigned");
+        }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, threads_witness, weight));
         self.instance_partition.push(-1);
         self.instance_process.push((-1, 0 as usize));
         self.n_instances += 1;
+        self.n_non_tables += 1;
         self.n_instances - 1
     }
 
     /// Add local table instances
     pub fn add_table(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+        if self.assignation_done {
+            panic!("Instances already assigned");
+        }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
-        let lid = self.tables.len();
-        self.tables.push(InstanceInfo::new(airgroup_id, air_id, true, 1, weight));
+        let lid = self.aux_tables.len();
+        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, 1, weight));
         self.n_tables += 1;
         lid
     }
 
     /// Assign instances to partitions and processes
     pub fn assign_instances(&mut self, minimal_memory: bool) {
+        if self.assignation_done {
+            panic!("Instances already assigned");
+        }
+        //assign instances
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         if self.load_balancing {
             if minimal_memory {
@@ -502,6 +551,29 @@ impl DistributionCtx {
                 }
             }
         }
+
+        // Add tables
+        self.n_tables = 0;
+        for table in self.aux_tables.iter() {
+            for rank in 0..self.n_processes {
+                let gid = self.instances.len();
+                self.instances.push(InstanceInfo::new(table.airgroup_id, table.air_id, true, table.threads_witness, table.weight));
+                self.n_instances += 1;
+                self.n_tables += 1;
+                self.instance_partition.push(-2); // Mark as table
+                self.worker_instances.push(gid);
+                let lid = self.process_count[rank];
+                self.process_count[rank] += 1;
+                self.process_weight[rank] += table.weight;
+                if rank == self.process_id  {
+                    self.process_instances.push(gid);
+                   
+                }
+                self.instance_process.push((rank as i32, lid));
+            }
+        }
+        self.aux_tables.clear();
+        self.assignation_done = true;
     }
 
     ///  Load balance info for partitions
@@ -525,7 +597,6 @@ impl DistributionCtx {
     }
 
     /// Load balance info for processes
-    /// Does not include tables
     pub fn load_balance_info_process(&self) -> (f64, u64, u64, f64) {
         let mut average_process_weight = 0.0;
         let mut max_process_weight = 0;

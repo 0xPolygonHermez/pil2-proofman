@@ -38,7 +38,7 @@ pub fn print_summary_info<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F
 
 pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, global: bool) {
 
-    //todo_distributed: falta afegir taules pero no les tinc totes només les locals
+    //todo_distributed: no tens totes les taules nomes les dels teu worker
     let mut air_info = HashMap::new();
 
     let mut air_instances = HashMap::new();

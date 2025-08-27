@@ -177,7 +177,7 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
 
         self.calculated.store(false, Ordering::Relaxed);
         self.instance_id.store(instance_id as u64, Ordering::SeqCst);
-        //todo_distributed: mirar un s'usa aquest instance_id pq vagi a taules
+        //todo_distributed: mirar on s'usa aquest index pq s'ha de desplaçar despres de append
         Vec::new()
     }
 

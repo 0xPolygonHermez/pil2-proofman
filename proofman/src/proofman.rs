@@ -379,7 +379,6 @@ where
     pub fn compute_witness_(&self, options: ProofOptions) -> Result<(), Box<dyn std::error::Error>> {
         self.exec(options.minimal_memory)?;
 
-        //todo_distributed: faltaran taules
         let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
         let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
         my_instances_sorted.shuffle(&mut rng);
@@ -481,7 +480,6 @@ where
         transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
 
         let instances = self.pctx.dctx_get_instances();
-        //todo_distributed: faltaran taules
         let my_instances = self.pctx.dctx_get_process_instances();
         let airgroup_values_air_instances = Mutex::new(vec![Vec::new(); my_instances.len()]);
         let valid_constraints = AtomicBool::new(true);
@@ -861,12 +859,10 @@ where
             timer_start_info!(CALCULATING_INNER_CONTRIBUTIONS);
             timer_start_info!(PREPARING_CONTRIBUTIONS);
 
-            //todo_distributed: faltaran taules
             let my_instances = self.pctx.dctx_get_process_instances();
             let my_instances_tables =
                 my_instances.iter().filter(|idx| self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
 
-            //todo distributed: faltaran taules
             let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
             let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
             my_instances_sorted.shuffle(&mut rng);
@@ -1016,7 +1012,6 @@ where
         let n_airgroups = self.pctx.global_info.air_groups.len();
 
         let instances = self.pctx.dctx_get_instances();
-        //todo_distributed: faltaran taules
         let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
         let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
         my_instances_sorted.shuffle(&mut rng);
@@ -1609,7 +1604,6 @@ where
         timer_start_info!(VERIFYING_PROOFS);
         let mut valid_proofs = true;
 
-        //todo_distributed: faltaran taules
         let my_instances_sorted = self.pctx.dctx_get_process_instances();
 
         let mut airgroup_values_air_instances = vec![Vec::new(); my_instances_sorted.len()];
@@ -2104,7 +2098,6 @@ where
 
     fn calculate_internal_contributions(&self) -> [u64; 10] {
         timer_start_info!(CALCULATE_INTERNAL_CONTRIBUTION);
-        //todo_distributed: faltaran taules
         let my_instances = self.pctx.dctx_get_process_instances();
 
         let mut values = vec![vec![F::ZERO; 10]; my_instances.len()];
