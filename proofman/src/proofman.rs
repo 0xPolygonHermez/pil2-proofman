@@ -421,8 +421,12 @@ where
 
         let (witness_tx, witness_rx): (Sender<usize>, Receiver<usize>) = unbounded();
         let (witness_tx_priority, witness_rx_priority): (Sender<usize>, Receiver<usize>) = unbounded();
-        self.pctx.set_witness_tx(Some(witness_tx.clone()));
-        self.pctx.set_witness_tx_priority(Some(witness_tx_priority.clone()));
+
+        if !options.minimal_memory && cfg!(feature = "gpu") {
+            self.pctx.set_witness_tx(Some(witness_tx.clone()));
+            self.pctx.set_witness_tx_priority(Some(witness_tx_priority.clone()));
+        }
+
         let witness_done = Arc::new(Counter::new());
 
         let (witness_handler, witness_handles) = self.calc_witness_handler(
@@ -441,8 +445,11 @@ where
             true,
         );
 
-        self.pctx.set_witness_tx(None);
-        self.pctx.set_witness_tx_priority(None);
+        if !options.minimal_memory && cfg!(feature = "gpu") {
+            self.pctx.set_witness_tx(None);
+            self.pctx.set_witness_tx_priority(None);
+        }
+
         drop(witness_tx);
         drop(witness_tx_priority);
 
@@ -1069,8 +1076,10 @@ where
 
         let (witness_tx, witness_rx): (Sender<usize>, Receiver<usize>) = unbounded();
         let (witness_tx_priority, witness_rx_priority): (Sender<usize>, Receiver<usize>) = unbounded();
-        self.pctx.set_witness_tx(Some(witness_tx.clone()));
-        self.pctx.set_witness_tx_priority(Some(witness_tx_priority.clone()));
+        if !options.minimal_memory && cfg!(feature = "gpu") {
+            self.pctx.set_witness_tx(Some(witness_tx.clone()));
+            self.pctx.set_witness_tx_priority(Some(witness_tx_priority.clone()));
+        }
         let witness_done = Arc::new(Counter::new());
 
         let (witness_handler, witness_handles) = self.calc_witness_handler(
@@ -1181,8 +1190,10 @@ where
             false,
         );
 
-        self.pctx.set_witness_tx(None);
-        self.pctx.set_witness_tx_priority(None);
+        if !options.minimal_memory && cfg!(feature = "gpu") {
+            self.pctx.set_witness_tx(None);
+            self.pctx.set_witness_tx_priority(None);
+        }
         drop(witness_tx);
         drop(witness_tx_priority);
 

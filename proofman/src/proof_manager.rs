@@ -71,7 +71,7 @@ impl Counter {
     pub fn wait_until_value_and_check_streams<F: FnMut()>(&self, value: usize, mut check_streams: F) {
         let mut guard = self.wait_lock.lock().unwrap();
         loop {
-            if self.counter.load(Ordering::Acquire) < value {
+            if self.counter.load(Ordering::Acquire) >= value {
                 break;
             }
             check_streams();
