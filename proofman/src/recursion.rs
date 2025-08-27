@@ -328,172 +328,10 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn aggregate_recursive2_proofs<F: PrimeField64>(
-    pctx: &ProofCtx<F>,
-    setups: &SetupsVadcop<F>,
-    proofs: Vec<Vec<Proof<F>>>,
-    prover_buffer: &[F],
-    const_pols: &[F],
-    const_tree: &[F],
-    output_dir_path: &Path,
-    d_buffers: *mut c_void,
-    save_proofs: bool,
-) -> Result<Proof<F>, Box<dyn std::error::Error>> {
-    let mut dctx = pctx.dctx.write().unwrap();
-    let n_processes = dctx.n_processes as usize;
-    let rank = dctx.rank as usize;
-    let airgroup_instances_alive = &dctx.airgroup_instances_alives;
-    let n_airgroups = pctx.global_info.air_groups.len();
-    let mut alives = vec![0; n_airgroups];
-    let mut airgroup_proofs: Vec<Vec<Option<Vec<u64>>>> = Vec::with_capacity(n_airgroups);
-
-    let mut null_proofs: Vec<Vec<u64>> = vec![Vec::new(); n_airgroups];
-
-    // Pre-process data before starting recursion loop
-    for airgroup in 0..n_airgroups {
-        let mut current_pos = 0;
-        for p in 0..n_processes {
-            if p < rank {
-                current_pos += airgroup_instances_alive[airgroup][p];
-            }
-            alives[airgroup] += airgroup_instances_alive[airgroup][p];
-        }
-        let setup = setups.get_setup(airgroup, 0, &ProofType::Recursive2);
-        let publics_aggregation = n_publics_aggregation(pctx, airgroup);
-        null_proofs[airgroup] = vec![0; setup.proof_size as usize + publics_aggregation];
-        airgroup_proofs.push(vec![None; alives[airgroup]]);
-
-        if !proofs[airgroup].is_empty() {
-            for i in 0..proofs[airgroup].len() {
-                airgroup_proofs[airgroup][current_pos + i] = Some(proofs[airgroup][i].proof.clone());
-            }
-        } else if rank == 0 {
-            airgroup_proofs[airgroup][0] = Some(vec![0; setup.proof_size as usize + publics_aggregation]);
-        }
-    }
-
-    // agregation loop
-    loop {
-        dctx.barrier();
-        dctx.distribute_recursive2_proofs(&alives, &mut airgroup_proofs);
-        let mut pending_agregations = false;
-        for airgroup in 0..n_airgroups {
-            //create a vector of sice indices length
-            let mut alive = alives[airgroup];
-            if alive > 1 {
-                let n_agg_proofs = alive / 3;
-                let n_remaining_proofs = alive % 3;
-                for i in 0..alive.div_ceil(3) {
-                    let j = i * 3;
-                    if airgroup_proofs[airgroup][j].is_none() {
-                        continue;
-                    }
-                    if (j + 2 < alive) || alive <= 3 {
-                        if airgroup_proofs[airgroup][j + 1].is_none() {
-                            panic!("Recursive2 proof is missing");
-                        }
-
-                        let proof1 = Proof::new(
-                            ProofType::Recursive2,
-                            airgroup,
-                            0,
-                            None,
-                            airgroup_proofs[airgroup][j].clone().unwrap(),
-                        );
-
-                        let proof2 = Proof::new(
-                            ProofType::Recursive2,
-                            airgroup,
-                            0,
-                            None,
-                            airgroup_proofs[airgroup][j + 1].clone().unwrap(),
-                        );
-
-                        let proof_3 = if j + 2 < alive {
-                            airgroup_proofs[airgroup][j + 2].clone().unwrap()
-                        } else {
-                            null_proofs[airgroup].clone()
-                        };
-
-                        let proof3 = Proof::new(ProofType::Recursive2, airgroup, 0, None, proof_3);
-
-                        let mut circom_witness = gen_witness_aggregation::<F>(pctx, setups, &proof1, &proof2, &proof3)?;
-                        circom_witness.global_idx = Some(rank);
-
-                        let recursive2_proof = gen_recursive_proof_size::<F>(pctx, setups, &circom_witness);
-
-                        let stream_id = generate_recursive_proof::<F>(
-                            pctx,
-                            setups,
-                            &circom_witness,
-                            &recursive2_proof,
-                            prover_buffer,
-                            output_dir_path,
-                            d_buffers,
-                            const_tree,
-                            const_pols,
-                            save_proofs,
-                        );
-
-                        get_stream_id_proof_c(d_buffers, stream_id);
-
-                        airgroup_proofs[airgroup][j] = Some(recursive2_proof.proof);
-
-                        tracing::info!("··· Recursive 2 Proof generated.");
-                    }
-                }
-                if n_agg_proofs > 0 {
-                    alive = n_agg_proofs + n_remaining_proofs;
-                } else {
-                    alive = 1;
-                }
-
-                //compact elements
-                for i in 0..n_agg_proofs {
-                    airgroup_proofs[airgroup][i] = airgroup_proofs[airgroup][i * 3].clone();
-                }
-
-                for i in 0..n_remaining_proofs {
-                    airgroup_proofs[airgroup][n_agg_proofs + i] =
-                        airgroup_proofs[airgroup][3 * n_agg_proofs + i].clone();
-                }
-                alives[airgroup] = alive;
-                if alive > 1 {
-                    pending_agregations = true;
-                }
-            }
-        }
-        if !pending_agregations {
-            break;
-        }
-    }
-
-    let mut updated_proof: Vec<u64> = Vec::new();
-    if dctx.rank == 0 {
-        let publics_circom_size =
-            pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3;
-
-        let mut updated_proof_size = publics_circom_size;
-        for proofs in &airgroup_proofs {
-            updated_proof_size += proofs[0].as_ref().unwrap().len();
-        }
-
-        updated_proof = vec![0; updated_proof_size];
-        add_publics_circom(&mut updated_proof, 0, pctx, "", false);
-
-        for proofs in &airgroup_proofs {
-            updated_proof[publics_circom_size..].copy_from_slice(&proofs[0].clone().unwrap());
-        }
-    }
-
-    Ok(Proof::new(ProofType::Recursive2, 0, 0, None, updated_proof))
-}
-
-#[allow(clippy::too_many_arguments)]
 pub fn generate_vadcop_final_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
-    proof: &Proof<F>,
+    recursive2_proofs: &[Proof<F>],
     prover_buffer: &[F],
     output_dir_path: &Path,
     const_pols: &[F],
@@ -501,8 +339,23 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     d_buffers: *mut c_void,
     save_proof: bool,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
+    let publics_circom_size =
+        pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3;
+
+    let mut updated_proof_size = publics_circom_size;
+    for proof in recursive2_proofs {
+        updated_proof_size += proof.proof.len();
+    }
+
+    let mut updated_proof = vec![0; updated_proof_size];
+    add_publics_circom(&mut updated_proof, 0, pctx, "", false);
+
+    for proof in recursive2_proofs {
+        updated_proof[publics_circom_size..].copy_from_slice(proof.proof.as_ref());
+    }
+
     let setup = setups.setup_vadcop_final.as_ref().unwrap();
-    let circom_witness_vadcop_final = generate_witness::<F>(setup, &proof.proof)?;
+    let circom_witness_vadcop_final = generate_witness::<F>(setup, &updated_proof)?;
     let witness_final_proof =
         Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, setup.n_cols as usize);
     tracing::info!("··· Generating vadcop final proof");

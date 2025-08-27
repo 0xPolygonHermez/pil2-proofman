@@ -11,7 +11,7 @@ use mpi::environment::Universe;
 
 use crate::{
     initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode, StepsParams,
-    VerboseMode,
+    VerboseMode, Proof,
 };
 
 #[derive(Debug)]
@@ -470,6 +470,30 @@ impl<F: PrimeField64> ProofCtx<F> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_instance(airgroup_id, air_id, threads_witness, weight)
+    }
+
+    pub fn dctx_get_airgroup_instances_alives(&self) -> Vec<Vec<usize>> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.airgroup_instances_alives.clone()
+    }
+
+    pub fn dctx_is_aggregation_rank(&self) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.is_aggregation_rank()
+    }
+    pub fn dctx_get_aggregation_rank(&self) -> i32 {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.get_aggregation_rank()
+    }
+
+    pub fn dctx_send_proof_agg_rank(&self, proof: &Proof<F>) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.send_proof_agg_rank(proof);
+    }
+
+    pub fn dctx_check_incoming_proofs(&self, airgroup_id: usize) -> Option<Vec<u64>> {
+        let dctx_check_incoming_proofs = self.dctx.read().unwrap();
+        dctx_check_incoming_proofs.check_incoming_proofs(airgroup_id)
     }
 
     pub fn add_instance_rank(

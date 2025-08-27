@@ -57,7 +57,6 @@ use crate::{
 use crate::total_recursive_proofs;
 use crate::check_tree_paths;
 use crate::Counter;
-use crate::aggregate_recursive2_proofs;
 
 use std::ffi::c_void;
 
@@ -128,6 +127,10 @@ impl<F: PrimeField64> ProofMan<F>
 where
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
+    pub fn is_aggregation_rank(&self) -> bool {
+        self.pctx.dctx_get_aggregation_rank() == self.pctx.dctx_get_rank() as i32
+    }
+
     pub fn get_rank(&self) -> Option<i32> {
         if self.pctx.dctx_get_n_processes() > 1 {
             Some(self.pctx.dctx_get_rank() as i32)
@@ -644,7 +647,7 @@ where
             let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances);
             let airgroupvalues = self.pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
 
-            if self.pctx.dctx_get_rank() == 0 {
+            if self.pctx.dctx_is_aggregation_rank() {
                 let valid_global_constraints =
                     verify_global_constraints_proof(&self.pctx, &self.sctx, debug_info, airgroupvalues);
 
@@ -1761,7 +1764,7 @@ where
                 let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances);
                 let airgroupvalues = self.pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
 
-                if !options.test_mode && self.pctx.dctx_get_rank() == 0 {
+                if !options.test_mode && self.pctx.dctx_is_aggregation_rank() {
                     let valid_global_constraints =
                         verify_global_constraints_proof(&self.pctx, &self.sctx, &DebugInfo::default(), airgroupvalues);
                     if valid_global_constraints.is_err() {
@@ -1784,72 +1787,24 @@ where
             }
         }
 
-        timer_start_info!(GENERATING_OUTER_COMPRESSED_PROOFS);
+        let agg_rank = self.pctx.dctx_get_aggregation_rank();
 
-        let recursive2_proofs_data: Vec<Vec<Proof<F>>> =
-            self.recursive2_proofs.iter().map(|lock| std::mem::take(&mut *lock.write().unwrap())).collect();
-
-        let agg_recursive2_proof = aggregate_recursive2_proofs(
-            &self.pctx,
-            &self.setups,
-            recursive2_proofs_data,
-            &self.prover_buffer_recursive,
-            &self.const_pols,
-            &self.const_tree,
-            &options.output_dir_path,
-            self.d_buffers.get_ptr(),
-            false,
-        )?;
-        timer_stop_and_log_info!(GENERATING_OUTER_COMPRESSED_PROOFS);
-
-        let mut proof_id = None;
-        let mut vadcop_final_proof = None;
-        if self.pctx.dctx_get_rank() == 0 {
-            let vadcop_proof_final = generate_vadcop_final_proof(
-                &self.pctx,
-                &self.setups,
-                &agg_recursive2_proof,
-                &self.prover_buffer_recursive,
-                &options.output_dir_path,
-                &self.const_pols,
-                &self.const_tree,
-                self.d_buffers.get_ptr(),
-                false,
-            )?;
-
-            proof_id = Some(
-                blake3::hash(unsafe {
-                    std::slice::from_raw_parts(
-                        vadcop_proof_final.proof.as_ptr() as *const u8,
-                        vadcop_proof_final.proof.len() * 8,
-                    )
-                })
-                .to_hex()
-                .to_string(),
-            );
-
-            vadcop_final_proof = Some(vadcop_proof_final.proof.clone());
-
-            if options.final_snark {
-                timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
-                let recursivef_proof = generate_recursivef_proof(
-                    &self.pctx,
-                    &self.setups,
-                    &vadcop_proof_final.proof,
-                    &self.prover_buffer_recursive,
-                    &options.output_dir_path,
-                    false,
-                )?;
-                timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
-
-                timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
-                let _ = generate_fflonk_snark_proof(&self.pctx, recursivef_proof, &options.output_dir_path);
-                timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
+        let (proof_id, vadcop_final_proof) = if agg_rank == self.pctx.dctx_get_rank() as i32 {
+            self.outer_aggregations(&options)?
+        } else {
+            for airgroup in 0..self.pctx.global_info.air_groups.len() {
+                let proof = self.recursive2_proofs[airgroup].write().unwrap().pop().unwrap();
+                self.pctx.dctx_send_proof_agg_rank(&proof);
             }
-        }
+
+            (None, None)
+        };
+
+        clear_proof_done_callback_c();
+
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
 
-        if self.pctx.dctx_get_rank() == 0 && options.verify_proofs {
+        if self.pctx.dctx_is_aggregation_rank() && options.verify_proofs {
             let setup_path = self.pctx.global_info.get_setup_path("vadcop_final");
             let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
             let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
@@ -1869,6 +1824,204 @@ where
             } else {
                 tracing::info!("··· {}", "\u{2713} Vadcop Final proof was verified".bright_green().bold());
             }
+        }
+
+        Ok((proof_id, vadcop_final_proof))
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn outer_aggregations(
+        &self,
+        options: &ProofOptions,
+    ) -> Result<(Option<String>, Option<Vec<u64>>), Box<dyn std::error::Error>> {
+        let my_rank = self.pctx.dctx_get_rank();
+        let n_processes = self.pctx.dctx_get_n_processes();
+
+        let (rec2_witness_tx, rec2_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
+        let (recursive_tx, recursive_rx) = unbounded::<(u64, String)>();
+
+        register_proof_done_callback_c(recursive_tx.clone());
+
+        let n_airgroups = self.pctx.global_info.air_groups.len();
+        let airgroup_instances_alive = &self.pctx.dctx_get_airgroup_instances_alives();
+        let mut alives = vec![0; n_airgroups];
+        let mut n_proofs_to_be_received = 0;
+        for airgroup in 0..n_airgroups {
+            for p in 0..n_processes {
+                alives[airgroup] += airgroup_instances_alive[airgroup][p];
+                if p != my_rank {
+                    n_proofs_to_be_received += airgroup_instances_alive[airgroup][p];
+                }
+            }
+        }
+
+        let mut total_proofs: usize = 0;
+        for (airgroup, &n_proofs) in alives.iter().enumerate() {
+            let n_recursive2_proofs = total_recursive_proofs(n_proofs);
+            if n_recursive2_proofs.has_remaining {
+                let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2);
+                let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup);
+                let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
+                let null_proof = Proof::new(ProofType::Recursive2, airgroup, 0, None, null_proof_buffer);
+                self.recursive2_proofs[airgroup].write().unwrap().push(null_proof);
+            }
+            total_proofs += n_recursive2_proofs.n_proofs as usize;
+        }
+        total_proofs += n_proofs_to_be_received;
+
+        let recursive2_done = Arc::new(Counter::new_with_threshold(total_proofs));
+
+        let pctx_clone = self.pctx.clone();
+        let setups_clone = self.setups.clone();
+        let d_buffers_clone = self.d_buffers.clone();
+        let const_pols_clone = self.const_pols.clone();
+        let const_tree_clone = self.const_tree.clone();
+        let prover_buffer_recursive = self.prover_buffer_recursive.clone();
+        let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
+        let output_dir_path_clone = options.output_dir_path.clone();
+        let save_proofs = options.save_proofs;
+        let recursive2_handle = std::thread::spawn(move || {
+            while let Ok(mut witness) = rec2_witness_rx.recv() {
+                let id = {
+                    let mut rec2_proofs = recursive2_proofs_ongoing_clone.write().unwrap();
+                    let id = rec2_proofs.len();
+                    rec2_proofs.push(None);
+                    id
+                };
+
+                witness.global_idx = Some(id);
+
+                let new_proof = gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness);
+
+                let id = new_proof.global_idx.unwrap();
+                recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
+
+                let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
+                let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
+
+                let _ = generate_recursive_proof(
+                    &pctx_clone,
+                    &setups_clone,
+                    &witness,
+                    new_proof_ref,
+                    &prover_buffer_recursive,
+                    &output_dir_path_clone,
+                    d_buffers_clone.get_ptr(),
+                    &const_tree_clone,
+                    &const_pols_clone,
+                    save_proofs,
+                );
+
+                if cfg!(not(feature = "gpu")) {
+                    launch_callback_c(id as u64, ProofType::Recursive2.into());
+                }
+            }
+        });
+
+        let mut handle_recursives = Vec::new();
+        for _ in 0..self.n_streams {
+            let pctx_clone = self.pctx.clone();
+            let setups_clone = self.setups.clone();
+            let recursive2_proofs_clone = self.recursive2_proofs.clone();
+            let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
+            let rec2_witness_tx_clone = rec2_witness_tx.clone();
+            let recursive_rx_clone = recursive_rx.clone();
+            let recursive2_done_clone = recursive2_done.clone();
+            let handle_recursive = std::thread::spawn(move || {
+                while let Ok((id, _)) = recursive_rx_clone.recv() {
+                    recursive2_done_clone.increment();
+                    if id == u64::MAX - 1 {
+                        return;
+                    }
+
+                    let proof = recursive2_proofs_ongoing_clone.write().unwrap()[id as usize].take().unwrap();
+
+                    let mut recursive2_airgroup_proofs = recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
+                    recursive2_airgroup_proofs.push(proof);
+
+                    if recursive2_airgroup_proofs.len() >= 3 {
+                        let p1 = recursive2_airgroup_proofs.pop().unwrap();
+                        let p2 = recursive2_airgroup_proofs.pop().unwrap();
+                        let p3 = recursive2_airgroup_proofs.pop().unwrap();
+                        let witness = gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3).unwrap();
+                        rec2_witness_tx_clone.send(witness).unwrap();
+                    }
+                }
+            });
+            handle_recursives.push(handle_recursive);
+        }
+
+        while n_proofs_to_be_received > 0 {
+            for airgroup_id in 0..n_airgroups {
+                let new_proof = self.pctx.dctx_check_incoming_proofs(airgroup_id);
+                if let Some(proof) = new_proof {
+                    let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
+                    let id = rec2_proofs.len();
+                    let recursive2_proof = Proof::new(ProofType::Recursive2, airgroup_id, 0, Some(id), proof);
+                    rec2_proofs.push(Some(recursive2_proof));
+
+                    launch_callback_c(id as u64, ProofType::Recursive2.into());
+
+                    n_proofs_to_be_received -= 1;
+                }
+            }
+        }
+
+        recursive2_done
+            .wait_until_threshold_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
+
+        clear_proof_done_callback_c();
+        drop(recursive_tx);
+        drop(rec2_witness_tx);
+
+        recursive2_handle.join().unwrap();
+
+        let mut recursive2_final_proofs = Vec::new();
+        for airgroup in 0..n_airgroups {
+            let proof = self.recursive2_proofs[airgroup].write().unwrap().pop().unwrap();
+            recursive2_final_proofs.push(proof);
+        }
+
+        let vadcop_proof_final = generate_vadcop_final_proof(
+            &self.pctx,
+            &self.setups,
+            &recursive2_final_proofs,
+            &self.prover_buffer_recursive,
+            &options.output_dir_path,
+            &self.const_pols,
+            &self.const_tree,
+            self.d_buffers.get_ptr(),
+            false,
+        )?;
+
+        let proof_id = Some(
+            blake3::hash(unsafe {
+                std::slice::from_raw_parts(
+                    vadcop_proof_final.proof.as_ptr() as *const u8,
+                    vadcop_proof_final.proof.len() * 8,
+                )
+            })
+            .to_hex()
+            .to_string(),
+        );
+
+        let vadcop_final_proof = Some(vadcop_proof_final.proof.clone());
+
+        if options.final_snark {
+            timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
+            let recursivef_proof = generate_recursivef_proof(
+                &self.pctx,
+                &self.setups,
+                &vadcop_proof_final.proof,
+                &self.prover_buffer_recursive,
+                &options.output_dir_path,
+                false,
+            )?;
+            timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
+
+            timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
+            let _ = generate_fflonk_snark_proof(&self.pctx, recursivef_proof, &options.output_dir_path);
+            timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
         }
 
         Ok((proof_id, vadcop_final_proof))

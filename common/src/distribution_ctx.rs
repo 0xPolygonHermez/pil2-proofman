@@ -17,6 +17,7 @@ use fields::PrimeField64;
 #[cfg(distributed)]
 use crate::ExtensionField;
 use crate::GlobalInfo;
+use crate::Proof;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceInfo {
@@ -55,6 +56,8 @@ pub struct DistributionCtx {
     pub balance_distribution: bool,
     pub node_rank: i32,
     pub node_n_processes: i32,
+
+    agg_rank_id: i32,
 }
 
 impl std::fmt::Debug for DistributionCtx {
@@ -117,6 +120,7 @@ impl DistributionCtx {
                 balance_distribution: false,
                 node_rank: 0,
                 node_n_processes: 1,
+                agg_rank_id: -1,
             }
         }
     }
@@ -152,6 +156,7 @@ impl DistributionCtx {
             balance_distribution: true,
             node_rank,
             node_n_processes,
+            agg_rank_id: -1,
         }
     }
 
@@ -166,6 +171,7 @@ impl DistributionCtx {
 
         self.airgroup_instances_alives.clear();
         self.balance_distribution = true;
+        self.agg_rank_id = -1;
     }
 
     #[inline]
@@ -495,6 +501,61 @@ impl DistributionCtx {
         }
     }
 
+    pub fn is_aggregation_rank(&self) -> bool {
+        self.agg_rank_id == self.rank
+    }
+
+    pub fn get_aggregation_rank(&mut self) -> i32 {
+        #[cfg(distributed)]
+        {
+            if self.agg_rank_id == -1 {
+                for _ in 0..10 {
+                    if let Some(_status) = self.world.any_process().immediate_probe_with_tag(999) {
+                        let (announced, _status) = self.world.any_process().receive_vec_with_tag::<i32>(999);
+                        self.agg_rank_id = announced[0];
+                        return self.agg_rank_id;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+
+                for p in 0..self.n_processes {
+                    if p != self.rank {
+                        self.world.process_at_rank(p).send_with_tag(&vec![self.rank], 999);
+                    }
+                }
+                tracing::info!("Process {} is the aggregation rank", self.rank);
+                self.agg_rank_id = self.rank;
+            }
+        }
+
+        #[cfg(not(distributed))]
+        {
+            self.agg_rank_id = 0;
+        }
+
+        self.agg_rank_id
+    }
+
+    pub fn send_proof_agg_rank<F: PrimeField64>(&self, proof: &Proof<F>) {
+        self.world.process_at_rank(self.agg_rank_id).send_with_tag(&proof.proof[..], proof.airgroup_id as i32);
+    }
+
+    pub fn check_incoming_proofs(&self, airgroup_id: usize) -> Option<Vec<u64>> {
+        #[cfg(distributed)]
+        {
+            if let Some(_status) = self.world.any_process().immediate_probe_with_tag(airgroup_id as i32) {
+                let (proof_data, _status) = self.world.any_process().receive_vec_with_tag::<u64>(airgroup_id as i32);
+                Some(proof_data)
+            } else {
+                None
+            }
+        }
+        #[cfg(not(distributed))]
+        {
+            None
+        }
+    }
+
     pub fn distribute_airgroupvalues<F: PrimeField64>(
         &self,
         airgroupvalues: Vec<Vec<u64>>,
@@ -689,83 +750,6 @@ impl DistributionCtx {
                             }
                         }
                     }
-                }
-            }
-        }
-    }
-
-    #[allow(unused_variables)]
-    pub fn distribute_recursive2_proofs(&mut self, alives: &[usize], proofs: &mut [Vec<Option<Vec<u64>>>]) {
-        #[cfg(distributed)]
-        {
-            // Count number of aggregations that will be done
-            let n_groups = alives.len();
-            let n_agregations: usize = alives.iter().map(|&alive| alive.div_ceil(3)).sum();
-            let aggs_per_process = (n_agregations / self.n_processes as usize).max(1);
-
-            let mut i_proof = 0;
-            // tags codes:
-            // 0,...,ngroups-1: proofs that need to be sent to rank0 from another rank for a group with alive == 1
-            // ngroups, ..., ngroups + 2*n_aggregations - 1: proofs that need to be sent to the owner of the aggregation task
-
-            for (group_idx, &alive) in alives.iter().enumerate() {
-                let group_proofs: &mut Vec<Option<Vec<u64>>> = &mut proofs[group_idx];
-                let n_aggs_group = alive.div_ceil(3);
-
-                if n_aggs_group == 0 {
-                    assert!(alive == 1);
-                    if self.rank == 0 {
-                        if group_proofs[0].is_none() {
-                            // Receive proof from the owner process
-                            let tag = group_idx as i32;
-                            let (msg, _status) = self.world.any_process().receive_vec_with_tag::<u64>(tag);
-                            group_proofs[0] = Some(msg);
-                        }
-                    } else if let Some(proof) = group_proofs[0].take() {
-                        let tag = group_idx as i32;
-                        self.world.process_at_rank(0).send_with_tag(&proof[..], tag);
-                    }
-                }
-
-                for i in 0..n_aggs_group {
-                    let chunk = i_proof / aggs_per_process;
-                    let owner_rank =
-                        if chunk < self.n_processes as usize { chunk } else { i_proof % self.n_processes as usize };
-                    let left_idx = i * 3;
-                    let mid_idx = i * 3 + 1;
-                    let right_idx = i * 3 + 2;
-
-                    if owner_rank == self.rank as usize {
-                        for &idx in &[left_idx, mid_idx, right_idx] {
-                            if idx < alive && group_proofs[idx].is_none() {
-                                let tag = if idx == left_idx {
-                                    i_proof * 3 + n_groups
-                                } else if idx == mid_idx {
-                                    i_proof * 3 + n_groups + 1
-                                } else {
-                                    i_proof * 3 + n_groups + 2
-                                };
-                                let (msg, _status) = self.world.any_process().receive_vec_with_tag::<u64>(tag as i32);
-                                group_proofs[idx] = Some(msg);
-                            }
-                        }
-                    } else if self.n_processes > 1 {
-                        for &idx in &[left_idx, mid_idx, right_idx] {
-                            if idx < alive {
-                                if let Some(proof) = group_proofs[idx].take() {
-                                    let tag = if idx == left_idx {
-                                        i_proof * 3 + n_groups
-                                    } else if idx == mid_idx {
-                                        i_proof * 3 + n_groups + 1
-                                    } else {
-                                        i_proof * 3 + n_groups + 2
-                                    };
-                                    self.world.process_at_rank(owner_rank as i32).send_with_tag(&proof[..], tag as i32);
-                                }
-                            }
-                        }
-                    }
-                    i_proof += 1;
                 }
             }
         }
