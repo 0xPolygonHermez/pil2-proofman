@@ -1940,8 +1940,8 @@ where
                 let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id);
                 let threads_to_use_collect = match cfg!(feature = "gpu") || stats {
                     true => (self.pctx.dctx_get_instance_chunks(instance_id) / 16)
-                        .min(self.max_num_threads / 4)
-                        .max(n_threads_witness),
+                        .max(self.max_num_threads / 4)
+                        .min(n_threads_witness),
                     false => self.max_num_threads,
                 };
 
@@ -1949,7 +1949,7 @@ where
                     self.rx_threads.recv().unwrap();
                 }
 
-                let threads_to_use_witness = match cfg!(feature = "gpu") {
+                let threads_to_use_witness = match cfg!(feature = "gpu") || stats {
                     true => threads_to_use_collect.min(n_threads_witness),
                     false => self.max_num_threads,
                 };
