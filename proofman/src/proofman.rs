@@ -101,6 +101,22 @@ pub struct ProofMan<F: PrimeField64> {
     max_num_threads: usize,
     tx_threads: Sender<()>,
     rx_threads: Receiver<()>,
+    witness_tx: Sender<usize>,
+    witness_rx: Receiver<usize>,
+    witness_tx_priority: Sender<usize>,
+    witness_rx_priority: Receiver<usize>,
+    contributions_tx: Sender<usize>,
+    contributions_rx: Receiver<usize>,
+    proofs_tx: Sender<usize>,
+    proofs_rx: Receiver<usize>,
+    compressor_witness_tx: Sender<Proof<F>>,
+    compressor_witness_rx: Receiver<Proof<F>>,
+    rec1_witness_tx: Sender<Proof<F>>,
+    rec1_witness_rx: Receiver<Proof<F>>,
+    rec2_witness_tx: Sender<Proof<F>>,
+    rec2_witness_rx: Receiver<Proof<F>>,
+    recursive_tx: Sender<(u64, String)>,
+    recursive_rx: Receiver<(u64, String)>,
 }
 
 impl<F: PrimeField64> Drop for ProofMan<F> {
@@ -419,24 +435,15 @@ where
         let memory_handler =
             Arc::new(MemoryHandler::new(self.gpu_params.max_witness_stored, self.sctx.max_witness_trace_size));
 
-        let (witness_tx, witness_rx): (Sender<usize>, Receiver<usize>) = unbounded();
-        let (witness_tx_priority, witness_rx_priority): (Sender<usize>, Receiver<usize>) = unbounded();
-
         if !options.minimal_memory && cfg!(feature = "gpu") {
-            self.pctx.set_witness_tx(Some(witness_tx.clone()));
-            self.pctx.set_witness_tx_priority(Some(witness_tx_priority.clone()));
+            self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
+            self.pctx.set_witness_tx_priority(Some(self.witness_tx_priority.clone()));
         }
 
         let witness_done = Arc::new(Counter::new());
 
-        let (witness_handler, witness_handles) = self.calc_witness_handler(
-            witness_done.clone(),
-            witness_rx,
-            witness_rx_priority,
-            memory_handler.clone(),
-            options.minimal_memory,
-            true,
-        );
+        let (witness_handler, witness_handles) =
+            self.calc_witness_handler(witness_done.clone(), memory_handler.clone(), options.minimal_memory, true);
         self.calculate_witness(
             &my_instances_sorted_no_tables,
             memory_handler.clone(),
@@ -450,8 +457,8 @@ where
             self.pctx.set_witness_tx_priority(None);
         }
 
-        drop(witness_tx);
-        drop(witness_tx_priority);
+        self.witness_tx.send(usize::MAX).ok();
+        self.witness_tx_priority.send(usize::MAX).ok();
 
         if let Some(h) = witness_handler {
             h.join().unwrap();
@@ -854,6 +861,15 @@ where
         // define managment channels and counters
         let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
 
+        let (witness_tx, witness_rx): (Sender<usize>, Receiver<usize>) = unbounded();
+        let (witness_tx_priority, witness_rx_priority): (Sender<usize>, Receiver<usize>) = unbounded();
+        let (contributions_tx, contributions_rx): (Sender<usize>, Receiver<usize>) = unbounded();
+        let (recursive_tx, recursive_rx) = unbounded::<(u64, String)>();
+        let (proofs_tx, proofs_rx): (Sender<usize>, Receiver<usize>) = unbounded();
+        let (compressor_witness_tx, compressor_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
+        let (rec1_witness_tx, rec1_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
+        let (rec2_witness_tx, rec2_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
+
         Ok(Self {
             pctx,
             sctx,
@@ -880,6 +896,22 @@ where
             values_contributions,
             tx_threads,
             rx_threads,
+            witness_tx,
+            witness_rx,
+            witness_tx_priority,
+            witness_rx_priority,
+            contributions_tx,
+            contributions_rx,
+            recursive_tx,
+            recursive_rx,
+            proofs_tx,
+            proofs_rx,
+            compressor_witness_tx,
+            compressor_witness_rx,
+            rec1_witness_tx,
+            rec1_witness_rx,
+            rec2_witness_tx,
+            rec2_witness_rx,
         })
     }
 
@@ -978,6 +1010,15 @@ where
         // define managment channels and counters
         let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
 
+        let (witness_tx, witness_rx): (Sender<usize>, Receiver<usize>) = unbounded();
+        let (witness_tx_priority, witness_rx_priority): (Sender<usize>, Receiver<usize>) = unbounded();
+        let (contributions_tx, contributions_rx): (Sender<usize>, Receiver<usize>) = unbounded();
+        let (recursive_tx, recursive_rx) = unbounded::<(u64, String)>();
+        let (proofs_tx, proofs_rx): (Sender<usize>, Receiver<usize>) = unbounded();
+        let (compressor_witness_tx, compressor_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
+        let (rec1_witness_tx, rec1_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
+        let (rec2_witness_tx, rec2_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
+
         Ok(Self {
             pctx,
             sctx,
@@ -1004,6 +1045,22 @@ where
             values_contributions,
             tx_threads,
             rx_threads,
+            witness_tx,
+            witness_rx,
+            witness_tx_priority,
+            witness_rx_priority,
+            contributions_tx,
+            contributions_rx,
+            recursive_tx,
+            recursive_rx,
+            proofs_tx,
+            proofs_rx,
+            compressor_witness_tx,
+            compressor_witness_rx,
+            rec1_witness_tx,
+            rec1_witness_rx,
+            rec2_witness_tx,
+            rec2_witness_rx,
         })
     }
 
@@ -1074,22 +1131,14 @@ where
             Self::initialize_publics_custom_commits(&self.sctx, &self.pctx)?;
         }
 
-        let (witness_tx, witness_rx): (Sender<usize>, Receiver<usize>) = unbounded();
-        let (witness_tx_priority, witness_rx_priority): (Sender<usize>, Receiver<usize>) = unbounded();
         if !options.minimal_memory && cfg!(feature = "gpu") {
-            self.pctx.set_witness_tx(Some(witness_tx.clone()));
-            self.pctx.set_witness_tx_priority(Some(witness_tx_priority.clone()));
+            self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
+            self.pctx.set_witness_tx_priority(Some(self.witness_tx_priority.clone()));
         }
         let witness_done = Arc::new(Counter::new());
 
-        let (witness_handler, witness_handles) = self.calc_witness_handler(
-            witness_done.clone(),
-            witness_rx,
-            witness_rx_priority,
-            self.memory_handler.clone(),
-            options.minimal_memory,
-            false,
-        );
+        let (witness_handler, witness_handles) =
+            self.calc_witness_handler(witness_done.clone(), self.memory_handler.clone(), options.minimal_memory, false);
 
         self.wcm.execute();
 
@@ -1126,9 +1175,8 @@ where
         let streams = Arc::new(Mutex::new(vec![None; self.n_streams]));
 
         let witnesses_done = Arc::new(AtomicUsize::new(0));
-        let (contributions_tx, contributions_rx): (Sender<usize>, Receiver<usize>) = unbounded();
 
-        self.pctx.set_proof_tx(Some(contributions_tx.clone()));
+        self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
 
         timer_stop_and_log_info!(PREPARING_CONTRIBUTIONS);
 
@@ -1143,10 +1191,13 @@ where
             let streams_clone = streams.clone();
             let witnesses_done_clone = witnesses_done.clone();
             let memory_handler_clone = self.memory_handler.clone();
-            let contributions_rx_clone = contributions_rx.clone();
+            let contributions_rx_clone = self.contributions_rx.clone();
             let contribution_handle = std::thread::spawn(move || loop {
                 match contributions_rx_clone.try_recv() {
                     Ok(instance_id) => {
+                        if instance_id == usize::MAX {
+                            break;
+                        }
                         Self::get_contribution_air(
                             &pctx_clone,
                             &sctx_clone,
@@ -1194,8 +1245,8 @@ where
             self.pctx.set_witness_tx(None);
             self.pctx.set_witness_tx_priority(None);
         }
-        drop(witness_tx);
-        drop(witness_tx_priority);
+        self.witness_tx.send(usize::MAX).ok();
+        self.witness_tx_priority.send(usize::MAX).ok();
 
         if let Some(h) = witness_handler {
             h.join().unwrap();
@@ -1206,6 +1257,8 @@ where
                 handle.join().unwrap();
             }
         }
+
+        drop(witness_handles);
 
         timer_start_info!(CALCULATING_TABLES);
 
@@ -1219,7 +1272,10 @@ where
 
         self.pctx.set_proof_tx(None);
 
-        drop(contributions_tx);
+        for _ in 0..self.n_streams {
+            self.contributions_tx.send(usize::MAX).ok();
+        }
+
         for handle in handle_contributions {
             handle.join().unwrap();
         }
@@ -1282,15 +1338,9 @@ where
 
         let proofs_pending = Arc::new(Counter::new());
 
-        let (recursive_tx, recursive_rx) = unbounded::<(u64, String)>();
-        register_proof_done_callback_c(recursive_tx.clone());
+        register_proof_done_callback_c(self.recursive_tx.clone());
 
-        let (proofs_tx, proofs_rx): (Sender<usize>, Receiver<usize>) = unbounded();
-        let (compressor_witness_tx, compressor_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
-        let (rec1_witness_tx, rec1_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
-        let (rec2_witness_tx, rec2_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
-
-        self.pctx.set_proof_tx(Some(proofs_tx.clone()));
+        self.pctx.set_proof_tx(Some(self.proofs_tx.clone()));
 
         let mut handle_recursives = Vec::new();
         for _ in 0..self.n_streams {
@@ -1302,10 +1352,10 @@ where
             let recursive2_proofs_clone = self.recursive2_proofs.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
             let proofs_pending_clone = proofs_pending.clone();
-            let rec1_witness_tx_clone = rec1_witness_tx.clone();
-            let rec2_witness_tx_clone = rec2_witness_tx.clone();
-            let compressor_witness_tx_clone = compressor_witness_tx.clone();
-            let recursive_rx_clone = recursive_rx.clone();
+            let rec1_witness_tx_clone = self.rec1_witness_tx.clone();
+            let rec2_witness_tx_clone = self.rec2_witness_tx.clone();
+            let compressor_witness_tx_clone = self.compressor_witness_tx.clone();
+            let recursive_rx_clone = self.recursive_rx.clone();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, proof_type)) = recursive_rx_clone.recv() {
                     if id == u64::MAX - 1 {
@@ -1448,10 +1498,10 @@ where
             let recursive1_proofs_clone = self.recursive1_proofs.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
             let stream_clone = vec_streams.clone();
-            let proofs_rx = proofs_rx.clone();
-            let compressor_rx = compressor_witness_rx.clone();
-            let rec2_rx = rec2_witness_rx.clone();
-            let rec1_rx = rec1_witness_rx.clone();
+            let proofs_rx = self.proofs_rx.clone();
+            let compressor_rx = self.compressor_witness_rx.clone();
+            let rec2_rx = self.rec2_witness_rx.clone();
+            let rec1_rx = self.rec1_witness_rx.clone();
             let preallocate = self.gpu_params.preallocate;
 
             let memory_handler_clone = self.memory_handler.clone();
@@ -1582,7 +1632,7 @@ where
             }
 
             let tx_threads_clone: Sender<()> = self.tx_threads.clone();
-            let proofs_tx_clone = proofs_tx.clone();
+            let proofs_tx_clone = self.proofs_tx.clone();
             let wcm = self.wcm.clone();
             let proofs_pending_clone = proofs_pending.clone();
             let is_stored = self.pctx.is_air_instance_stored(instance_id)
@@ -1643,12 +1693,10 @@ where
         get_stream_proofs_c(self.d_buffers.get_ptr());
         proofs_finished.store(true, Ordering::Relaxed);
         clear_proof_done_callback_c();
-        recursive_tx.send((u64::MAX - 1, "Basic".to_string())).unwrap();
+        for _ in 0..self.n_streams {
+            self.recursive_tx.send((u64::MAX - 1, "Basic".to_string())).unwrap();
+        }
 
-        drop(recursive_tx);
-        drop(rec2_witness_tx);
-        drop(compressor_witness_tx);
-        drop(rec1_witness_tx);
         for handle in handle_recursives {
             handle.join().unwrap();
         }
@@ -1832,8 +1880,6 @@ where
     fn calc_witness_handler(
         &self,
         witness_done: Arc<Counter>,
-        witness_rx: Receiver<usize>,
-        witness_rx_priority: Receiver<usize>,
         memory_handler: Arc<MemoryHandler<F>>,
         minimal_memory: bool,
         stats: bool,
@@ -1850,23 +1896,45 @@ where
         let memory_handler_clone = memory_handler.clone();
         let witness_handles = Arc::new(Mutex::new(Vec::new()));
         let witness_handles_clone = witness_handles.clone();
+        let witness_rx = self.witness_rx.clone();
+        let witness_rx_priority = self.witness_rx_priority.clone();
         let witness_handler = if !minimal_memory && cfg!(feature = "gpu") {
             Some(std::thread::spawn(move || loop {
                 let instance_id = match witness_rx_priority.try_recv() {
-                    Ok(id) => id,
+                    Ok(id) => {
+                        if id == usize::MAX {
+                            break;
+                        }
+                        id
+                    }
                     Err(crossbeam_channel::TryRecvError::Empty) => match witness_rx.try_recv() {
-                        Ok(id) => id,
+                        Ok(id) => {
+                            if id == usize::MAX {
+                                break;
+                            }
+                            id
+                        }
                         Err(crossbeam_channel::TryRecvError::Empty) => {
                             std::thread::sleep(std::time::Duration::from_micros(100));
                             continue;
                         }
                         Err(crossbeam_channel::TryRecvError::Disconnected) => match witness_rx_priority.try_recv() {
-                            Ok(id) => id,
+                            Ok(id) => {
+                                if id == usize::MAX {
+                                    break;
+                                }
+                                id
+                            }
                             Err(_) => break,
                         },
                     },
                     Err(crossbeam_channel::TryRecvError::Disconnected) => match witness_rx.recv() {
-                        Ok(id) => id,
+                        Ok(id) => {
+                            if id == usize::MAX {
+                                break;
+                            }
+                            id
+                        }
                         Err(_) => break,
                     },
                 };
