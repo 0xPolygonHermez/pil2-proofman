@@ -217,7 +217,7 @@ jobs:
 
       - name: Verify vadcop final proof Fibonacci Square
         run: |
-          cargo run --bin proofman-cli verify-stark --proof ./examples/fibonacci-square/build/proofs/proofs/vadcop_final_proof.bin --stark-info ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.starkinfo.json  --verifier-bin ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.verifier.bin --verkey ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.verkey.json
+          cargo run --bin proofman-cli verify-stark --proof ./examples/fibonacci-square/build/proofs/proofs/vadcop_final_proof.bin --verkey ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.verkey.bin
       
       - name: Clean proof dir
         run: |

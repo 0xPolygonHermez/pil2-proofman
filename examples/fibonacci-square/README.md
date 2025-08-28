@@ -213,7 +213,5 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
      --output-dir examples/fibonacci-square/build/proofs \
 && cargo run --bin proofman-cli verify-stark \
      --proof ./examples/fibonacci-square/build/proofs/proofs/vadcop_final_proof.bin \
-     --stark-info ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.starkinfo.json \
-     --verifier-bin ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.verifier.bin \
-     --verkey ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.verkey.json
+     --verkey ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.verkey.bin
 ```

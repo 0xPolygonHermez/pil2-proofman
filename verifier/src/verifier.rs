@@ -9,7 +9,6 @@ pub struct Boundary {
 }
 
 pub struct VerifierInfo {
-    pub n_publics: u64,
     pub n_stages: u32,
     pub n_constants: u64,
     pub n_evals: u64,
@@ -50,7 +49,6 @@ pub fn stark_verify(
         &[CubicExtensionField<Goldilocks>],
         &[Goldilocks],
         &[CubicExtensionField<Goldilocks>],
-        CubicExtensionField<Goldilocks>,
     ) -> CubicExtensionField<Goldilocks>,
     queries_fri_verify: fn(
         &[CubicExtensionField<Goldilocks>],
@@ -62,13 +60,8 @@ pub fn stark_verify(
     let mut leaves: u64 = 1 << verifier_info.n_bits_ext;
     let mut n_siblings: u64 = 0;
 
-    let root_c = [
-        Goldilocks::new(vk[0]),
-        Goldilocks::new(vk[1]),
-        Goldilocks::new(vk[2]),
-        Goldilocks::new(vk[3]),
-    ];
-    
+    let root_c = [Goldilocks::new(vk[0]), Goldilocks::new(vk[1]), Goldilocks::new(vk[2]), Goldilocks::new(vk[3])];
+
     while leaves > 1 {
         leaves = leaves.div_ceil(verifier_info.arity);
         n_siblings += 1;
@@ -76,10 +69,13 @@ pub fn stark_verify(
 
     let n_siblings_per_level = (verifier_info.arity - 1) * 4;
 
-    let mut p = 1;
+    let mut p = 0;
+
+    let n_publics = proof[p as usize];
+    p += 1;
 
     let mut publics = Vec::new();
-    for _ in 0..verifier_info.n_publics {
+    for _ in 0..n_publics {
         publics.push(Goldilocks::new(proof[p as usize]));
         p += 1;
     }
@@ -229,7 +225,7 @@ pub fn stark_verify(
 
     let mut transcript = Transcript::new();
     transcript.put(&mut root_c.clone());
-    if verifier_info.n_publics > 0 {
+    if n_publics > 0 {
         if !verifier_info.hash_commits {
             transcript.put(&mut publics);
         } else {
@@ -422,7 +418,7 @@ pub fn stark_verify(
         x_acc *= x_n;
     }
 
-    let q_val = q_verify(&challenges, &evals, &publics, &zi, xi_challenge);
+    let q_val = q_verify(&challenges, &evals, &publics, &zi);
     if q_val != q {
         tracing::error!("Quotient polynomial verification failed");
         return false;
