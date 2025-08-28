@@ -601,8 +601,7 @@ where
             );
         }
 
-        let my_instances_tables =
-            my_instances.iter().filter(|idx| self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+        let my_instances_tables = self.pctx.dctx_get_my_tables();
 
         timer_start_info!(CALCULATING_TABLES);
         for instance_id in my_instances_tables.iter() {
@@ -1155,8 +1154,8 @@ where
 
         let instances = self.pctx.dctx_get_instances();
         let my_instances = self.pctx.dctx_get_my_instances();
-        let my_instances_tables =
-            my_instances.iter().filter(|idx| self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+        let my_instances_tables = self.pctx.dctx_get_my_tables();
+        println!("MY TABLES: {:?}", my_instances_tables);
 
         let mut my_instances_sorted = self.pctx.dctx_get_my_instances();
         let mut rng = StdRng::seed_from_u64(self.pctx.dctx_get_rank() as u64);

@@ -406,6 +406,16 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances.clone()
     }
 
+    pub fn dctx_get_my_tables(&self) -> Vec<usize> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.instances
+            .iter()
+            .enumerate()
+            .filter(|(id, inst)| inst.table && (dctx.my_instances.contains(id) || !inst.duplicated))
+            .map(|(id, _)| id)
+            .collect()
+    }
+
     pub fn dctx_get_my_instances(&self) -> Vec<usize> {
         let dctx = self.dctx.read().unwrap();
         dctx.my_instances.clone()
