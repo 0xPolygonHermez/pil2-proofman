@@ -1249,6 +1249,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-c42"
+version = "0.10.0"
+dependencies = [
+ "bytemuck",
+ "fields",
+ "libloading",
+ "num-bigint",
+ "pil-std-lib",
+ "proofman",
+ "proofman-common",
+ "proofman-macros",
+ "proofman-starks-lib-c",
+ "rayon",
+ "serde",
+ "serde_arrays",
+ "serde_json",
+ "tracing",
+ "witness",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"

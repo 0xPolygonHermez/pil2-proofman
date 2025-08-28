@@ -236,12 +236,12 @@ impl<F: PrimeField64> Display for HintFieldValuesVec<F> {
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq, Hash)]
 // Define an enum to represent the possible return types
-pub enum HintFieldOutput<F: Clone + Copy + Display> {
+pub enum HintFieldOutput<F: PrimeField64> {
     Field(F),
     FieldExtended(CubicExtensionField<F>),
 }
 
-impl<F: Clone + Copy + Display> Display for HintFieldOutput<F> {
+impl<F: PrimeField64> Display for HintFieldOutput<F> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
             HintFieldOutput::Field(value) => write!(f, "{value}"),
@@ -250,7 +250,7 @@ impl<F: Clone + Copy + Display> Display for HintFieldOutput<F> {
     }
 }
 
-pub fn format_vec<T: Copy + Clone + Debug + Display>(vec: &[T]) -> String {
+pub fn format_hint_field_output_vec<F: PrimeField64>(vec: &[HintFieldOutput<F>]) -> String {
     format!("[{}]", vec.iter().map(|item| item.to_string()).collect::<Vec<String>>().join(", "))
 }
 

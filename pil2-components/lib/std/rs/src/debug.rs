@@ -6,10 +6,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use fields::PrimeField64;
+use fields::{CubicExtensionField, PrimeField64};
 use proofman_common::ProofCtx;
-use proofman_hints::{format_vec, HintFieldOutput};
-
+use proofman_hints::{format_hint_field_output_vec, HintFieldOutput};
 use num_bigint::BigUint;
 use num_traits::Zero;
 
@@ -74,8 +73,10 @@ pub fn update_debug_data_fast<F: PrimeField64>(
         num_assumes: BigUint::zero(),
     });
 
+    let norm_val = normalize_val(&val);
+
     let mut values = Vec::new();
-    for value in val.iter() {
+    for value in norm_val.iter() {
         match value {
             HintFieldOutput::Field(f) => values.push(*f),
             HintFieldOutput::FieldExtended(ef) => {
@@ -169,16 +170,31 @@ pub fn update_debug_data<F: PrimeField64>(
 }
 
 fn normalize_val<F: PrimeField64>(val: &[HintFieldOutput<F>]) -> Vec<HintFieldOutput<F>> {
+    // Canonicalize all field values to ensure they are below the Goldilocks modulus
+    let canonicalized_val: Vec<HintFieldOutput<F>> = val
+        .iter()
+        .map(|v| match v {
+            HintFieldOutput::Field(x) => HintFieldOutput::Field(F::from_u64(x.as_canonical_u64())),
+            HintFieldOutput::FieldExtended(ext) => HintFieldOutput::FieldExtended(CubicExtensionField {
+                value: [
+                    F::from_u64(ext.value[0].as_canonical_u64()),
+                    F::from_u64(ext.value[1].as_canonical_u64()),
+                    F::from_u64(ext.value[2].as_canonical_u64()),
+                ],
+            }),
+        })
+        .collect();
+
     let is_zero = |v: &HintFieldOutput<F>| match v {
         HintFieldOutput::Field(x) => *x == F::ZERO,
         HintFieldOutput::FieldExtended(ext) => ext.is_zero(),
     };
 
-    // Find the index of the last non-zero entry
-    let last_non_zero = val.iter().rposition(|v| !is_zero(v)).unwrap_or(0);
+    // Find the index of the last non-zero entry in the canonicalized values
+    let last_non_zero = canonicalized_val.iter().rposition(|v| !is_zero(v)).unwrap_or(0);
 
     // Keep everything from index 0 to last_non_zero
-    val[..=last_non_zero].to_vec()
+    canonicalized_val[..=last_non_zero].to_vec()
 }
 
 pub fn check_invalid_opids<F: PrimeField64>(_pctx: &ProofCtx<F>, debugs_data_fasts: &mut [DebugDataFast<F>]) -> Vec<F> {
@@ -363,7 +379,7 @@ pub fn print_debug_info<F: PrimeField64>(
         writeln!(
             output,
             "\t    • Value:\n\t        {}\n\t      Appears {} {} across the following:",
-            format_vec(val),
+            format_hint_field_output_vec(val),
             num,
             num_str,
         )
