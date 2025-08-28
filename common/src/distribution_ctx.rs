@@ -330,7 +330,7 @@ impl DistributionCtx {
     }
 
     pub fn add_instance_no_assign_table(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, false, 1));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, true, 1));
         self.instances_owner.push((-1, 0, weight));
         self.n_instances += 1;
         self.n_instances - 1
@@ -340,7 +340,7 @@ impl DistributionCtx {
         let mut idx = 0;
         for rank in 0..self.n_processes {
             self.n_instances += 1;
-            self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, true, 1));
+            self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, false, 1));
             let new_owner = rank;
             let count = self.owners_count[new_owner as usize] as usize;
             self.instances_owner.push((new_owner, count, weight));
