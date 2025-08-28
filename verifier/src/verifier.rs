@@ -1,6 +1,13 @@
 use fields::{intt_tiny, verify_fold, verify_mt, CubicExtensionField, Field, Goldilocks, Transcript};
-use proofman_common::Boundary;
 use proofman_util::{timer_start_info, timer_start_debug, timer_stop_and_log_info, timer_stop_and_log_debug};
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct Boundary {
+    pub name: String,
+    pub offset_min: Option<u64>,
+    pub offset_max: Option<u64>,
+}
 
 pub struct VerifierInfo {
     pub root_c: [Goldilocks; 4],
