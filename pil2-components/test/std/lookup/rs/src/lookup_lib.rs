@@ -15,7 +15,7 @@ where
     StandardUniform: Distribution<F>,
 {
     fn register_witness(&mut self, wcm: &WitnessManager<F>) {
-        let std = Std::new(wcm.get_pctx(), wcm.get_sctx());
+        let std = Std::new(wcm.get_pctx(), wcm.get_sctx(), false);
         let lookup0 = Lookup0::new();
         let lookup1 = Lookup1::new();
         let lookup2_12 = Lookup2_12::new();
