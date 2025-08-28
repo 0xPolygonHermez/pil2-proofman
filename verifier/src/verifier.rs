@@ -9,7 +9,6 @@ pub struct Boundary {
 }
 
 pub struct VerifierInfo {
-    pub root_c: [Goldilocks; 4],
     pub n_publics: u64,
     pub n_stages: u32,
     pub n_constants: u64,
@@ -44,6 +43,7 @@ pub fn log2(mut n: u64) -> u32 {
 #[allow(clippy::type_complexity)]
 pub fn stark_verify(
     proof: &[u64],
+    vk: &[u64],
     verifier_info: &VerifierInfo,
     q_verify: fn(
         &[CubicExtensionField<Goldilocks>],
@@ -62,6 +62,13 @@ pub fn stark_verify(
     let mut leaves: u64 = 1 << verifier_info.n_bits_ext;
     let mut n_siblings: u64 = 0;
 
+    let root_c = [
+        Goldilocks::new(vk[0]),
+        Goldilocks::new(vk[1]),
+        Goldilocks::new(vk[2]),
+        Goldilocks::new(vk[3]),
+    ];
+    
     while leaves > 1 {
         leaves = leaves.div_ceil(verifier_info.arity);
         n_siblings += 1;
@@ -221,7 +228,7 @@ pub fn stark_verify(
     let mut zi = Vec::new();
 
     let mut transcript = Transcript::new();
-    transcript.put(&mut verifier_info.root_c.clone());
+    transcript.put(&mut root_c.clone());
     if verifier_info.n_publics > 0 {
         if !verifier_info.hash_commits {
             transcript.put(&mut publics);
@@ -332,7 +339,7 @@ pub fn stark_verify(
     tracing::debug!("Verifying proof");
     for q in 0..verifier_info.n_fri_queries as usize {
         // 1) Fixed MT
-        if !verify_mt(&verifier_info.root_c, &s0_siblings[q][0], fri_queries[q], &s0_vals[q][0], verifier_info.arity) {
+        if !verify_mt(&root_c, &s0_siblings[q][0], fri_queries[q], &s0_vals[q][0], verifier_info.arity) {
             tracing::error!("Fixed MT verification failed for query {}", q);
             return false;
         }
