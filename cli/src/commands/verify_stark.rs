@@ -6,6 +6,7 @@ use std::fs::File;
 use std::io::Read;
 use colored::Colorize;
 use bytemuck::cast_slice;
+use zstd::stream::read::Decoder;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -16,6 +17,9 @@ pub struct VerifyStark {
 
     #[clap(short = 'k', long)]
     pub verkey: String,
+
+    #[clap(short = 'z', long, default_value_t = false)]
+    pub zip: bool,
 
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
@@ -29,9 +33,24 @@ impl VerifyStark {
 
         initialize_logger(VerboseMode::Info, None);
 
-        let mut proof_file = File::open(self.proof.clone())?;
-        let mut proof_buffer = Vec::new();
-        proof_file.read_to_end(&mut proof_buffer)?;
+        let proof_buffer = if self.zip {
+            // Read compressed proof and decompress it
+            tracing::info!("Reading compressed proof file: {}", self.proof);
+            let proof_file = File::open(self.proof.clone())?;
+            let mut decoder = Decoder::new(proof_file)?;
+            let mut proof_buffer = Vec::new();
+            decoder.read_to_end(&mut proof_buffer)?;
+            tracing::info!("Decompressed proof size: {} bytes", proof_buffer.len());
+            proof_buffer
+        } else {
+            // Read uncompressed proof
+            tracing::info!("Reading uncompressed proof file: {}", self.proof);
+            let mut proof_file = File::open(self.proof.clone())?;
+            let mut proof_buffer = Vec::new();
+            proof_file.read_to_end(&mut proof_buffer)?;
+            tracing::info!("Proof size: {} bytes", proof_buffer.len());
+            proof_buffer
+        };
 
         let proof_slice: &[u64] = cast_slice(&proof_buffer);
 
