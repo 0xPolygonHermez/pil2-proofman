@@ -24,15 +24,15 @@ pub enum VirtualTableIdInput {
 }
 
 impl<F: PrimeField64> Std<F> {
-    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, duplicate_tables: bool) -> Arc<Self> {
+    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, shared_tables: bool) -> Arc<Self> {
         // Get the mode
         let mode = RwLock::new(StdMode::default());
 
         // Instantiate the components
         let prod_bus = StdProd::new();
         let sum_bus = StdSum::new();
-        let virtual_table = StdVirtualTable::new(pctx.clone(), &sctx, duplicate_tables);
-        let range_check = StdRangeCheck::new(pctx.clone(), &sctx, virtual_table.clone(), duplicate_tables);
+        let virtual_table = StdVirtualTable::new(pctx.clone(), &sctx, shared_tables);
+        let range_check = StdRangeCheck::new(pctx.clone(), &sctx, virtual_table.clone(), shared_tables);
 
         Arc::new(Self { mode, prod_bus, sum_bus, range_check, virtual_table })
     }

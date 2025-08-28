@@ -31,11 +31,11 @@ pub struct VirtualTableAir {
     multiplicities: Vec<Vec<AtomicU64>>,
     instance_id: AtomicU64,
     calculated: AtomicBool,
-    duplicate_tables: bool,
+    shared_tables: bool,
 }
 
 impl<F: PrimeField64> StdVirtualTable<F> {
-    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: &SetupCtx<F>, duplicate_tables: bool) -> Arc<Self> {
+    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: &SetupCtx<F>, shared_tables: bool) -> Arc<Self> {
         // Get relevant data from the global hint
         let virtual_table_global_hint = get_hint_ids_by_name(sctx.get_global_bin(), "virtual_table_data_global");
         if virtual_table_global_hint.is_empty() {
@@ -81,7 +81,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             multiplicities,
             instance_id: AtomicU64::new(0),
             calculated: AtomicBool::new(false),
-            duplicate_tables,
+            shared_tables,
         };
 
         Arc::new(Self { _phantom: std::marker::PhantomData, virtual_table_air: Some(Arc::new(virtual_table_air)) })
@@ -238,7 +238,7 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         let (instance_found, mut instance_id) = pctx.dctx_find_instance_mine(self.airgroup_id, self.air_id);
 
         if !instance_found {
-            if self.duplicate_tables {
+            if !self.shared_tables {
                 instance_id = pctx.add_table_all(self.airgroup_id, self.air_id);
             } else {
                 instance_id = pctx.add_table(self.airgroup_id, self.air_id);
@@ -280,7 +280,7 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
 
             self.calculated.store(true, Ordering::Relaxed);
 
-            if self.duplicate_tables {
+            if !self.shared_tables {
                 let buffer_size = self.num_cols * self.num_rows;
                 let mut buffer = create_buffer_fast(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {

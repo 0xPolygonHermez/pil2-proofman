@@ -23,17 +23,17 @@ pub struct InstanceInfo {
     pub airgroup_id: usize,
     pub air_id: usize,
     pub table: bool,
-    pub duplicated: bool,
+    pub shared: bool,
     pub threads_witness: usize,
     pub n_chunks: usize,
 }
 
 impl InstanceInfo {
-    pub fn new(airgroup_id: usize, air_id: usize, table: bool, duplicated: bool, threads_witness: usize) -> Self {
+    pub fn new(airgroup_id: usize, air_id: usize, table: bool, shared: bool, threads_witness: usize) -> Self {
         if !table {
-            assert!(!duplicated, "If table is false, duplicated must be false");
+            assert!(!shared, "If table is false, shared must be false");
         }
-        Self { airgroup_id, air_id, table, threads_witness, n_chunks: 1, duplicated }
+        Self { airgroup_id, air_id, table, threads_witness, n_chunks: 1, shared }
     }
 }
 
