@@ -24,7 +24,7 @@ where
     fn register_witness(&mut self, wcm: &WitnessManager<F>) {
         let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
 
-        let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx());
+        let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx(), false);
         let range_check1 = RangeCheck1::new(std_lib.clone());
         let range_check2 = RangeCheck2::new(std_lib.clone());
         let range_check3 = RangeCheck3::new(std_lib.clone());
