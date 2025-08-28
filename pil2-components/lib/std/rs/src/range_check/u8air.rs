@@ -28,7 +28,7 @@ pub struct U8Air {
     multiplicities: Vec<Vec<AtomicU64>>,
     instance_id: AtomicU64,
     calculated: AtomicBool,
-    duplicate_tables: bool,
+    shared_tables: bool,
 }
 
 impl<F: PrimeField64> AirComponent<F> for U8Air {
@@ -37,7 +37,7 @@ impl<F: PrimeField64> AirComponent<F> for U8Air {
         _sctx: &SetupCtx<F>,
         airgroup_id: usize,
         air_id: usize,
-        duplicate_tables: bool,
+        shared_tables: bool,
     ) -> Arc<Self> {
         let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
 
@@ -58,7 +58,7 @@ impl<F: PrimeField64> AirComponent<F> for U8Air {
             multiplicities,
             instance_id: AtomicU64::new(0),
             calculated: AtomicBool::new(false),
-            duplicate_tables,
+            shared_tables,
         })
     }
 }
@@ -123,7 +123,7 @@ impl<F: PrimeField64> WitnessComponent<F> for U8Air {
         let (instance_found, mut instance_id) = pctx.dctx_find_instance_mine(self.airgroup_id, self.air_id);
 
         if !instance_found {
-            if self.duplicate_tables {
+            if !self.shared_tables {
                 instance_id = pctx.add_table_all(self.airgroup_id, self.air_id);
             } else {
                 instance_id = pctx.add_table(self.airgroup_id, self.air_id);
@@ -165,7 +165,7 @@ impl<F: PrimeField64> WitnessComponent<F> for U8Air {
 
             self.calculated.store(true, Ordering::Relaxed);
 
-            if self.duplicate_tables {
+            if !self.shared_tables {
                 let buffer_size = self.num_cols * self.num_rows;
                 let mut buffer = create_buffer_fast::<F>(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {

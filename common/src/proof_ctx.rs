@@ -411,7 +411,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances
             .iter()
             .enumerate()
-            .filter(|(id, inst)| inst.table && (dctx.my_instances.contains(id) || !inst.duplicated))
+            .filter(|(id, inst)| inst.table && (dctx.my_instances.contains(id) || inst.shared))
             .map(|(id, _)| id)
             .collect()
     }
