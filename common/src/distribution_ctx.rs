@@ -506,33 +506,7 @@ impl DistributionCtx {
     }
 
     pub fn get_aggregation_rank(&mut self) -> i32 {
-        #[cfg(distributed)]
-        {
-            if self.agg_rank_id == -1 {
-                for _ in 0..10 {
-                    if let Some(_status) = self.world.any_process().immediate_probe_with_tag(999) {
-                        let (announced, _status) = self.world.any_process().receive_vec_with_tag::<i32>(999);
-                        self.agg_rank_id = announced[0];
-                        return self.agg_rank_id;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
-
-                for p in 0..self.n_processes {
-                    if p != self.rank {
-                        self.world.process_at_rank(p).send_with_tag(&vec![self.rank], 999);
-                    }
-                }
-                tracing::info!("Process {} is the aggregation rank", self.rank);
-                self.agg_rank_id = self.rank;
-            }
-        }
-
-        #[cfg(not(distributed))]
-        {
-            self.agg_rank_id = 0;
-        }
-
+        self.agg_rank_id = 0;
         self.agg_rank_id
     }
 
