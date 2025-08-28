@@ -927,30 +927,9 @@ dependencies = [
 name = "proofman-verifier"
 version = "0.10.0"
 dependencies = [
- "blake3",
  "bytemuck",
- "colored",
- "crossbeam-channel",
- "csv",
- "curves",
  "fields",
- "libloading",
- "mpi",
- "num-bigint",
- "num-traits",
- "pil-std-lib",
- "proofman-common",
- "proofman-hints",
- "proofman-macros",
- "proofman-starks-lib-c",
- "proofman-util",
- "rand",
- "rayon",
- "serde",
- "serde_json",
  "tracing",
- "transcript",
- "witness",
 ]
 
 [[package]]

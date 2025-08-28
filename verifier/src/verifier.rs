@@ -1,5 +1,4 @@
 use fields::{intt_tiny, verify_fold, verify_mt, CubicExtensionField, Field, Goldilocks, Transcript};
-use proofman_util::{timer_start_info, timer_start_debug, timer_stop_and_log_info, timer_stop_and_log_debug};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -60,8 +59,6 @@ pub fn stark_verify(
         &[CubicExtensionField<Goldilocks>],
     ) -> CubicExtensionField<Goldilocks>,
 ) -> bool {
-    timer_start_info!(VERIFY_VADCOP_PROOF);
-    timer_start_debug!(PREPARING_PROOF_INPUTS);
     let mut leaves: u64 = 1 << verifier_info.n_bits_ext;
     let mut n_siblings: u64 = 0;
 
@@ -332,7 +329,6 @@ pub fn stark_verify(
         .flat_map(|pol| pol.value.iter().cloned())
         .collect();
 
-    timer_stop_and_log_debug!(PREPARING_PROOF_INPUTS);
     tracing::debug!("Verifying proof");
     for q in 0..verifier_info.n_fri_queries as usize {
         // 1) Fixed MT
@@ -442,7 +438,6 @@ pub fn stark_verify(
     }
     tracing::debug!("Final polynomial verification passed");
     tracing::debug!("Proof verification succeeded");
-    timer_stop_and_log_info!(VERIFY_VADCOP_PROOF);
 
     true
 }
