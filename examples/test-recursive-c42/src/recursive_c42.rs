@@ -48,7 +48,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC42 {
         if stage == 1 {
             let setup = sctx.get_setup(0, 0);
             let current_dir =
-                env::current_dir().expect("Failed to get current directory").join("examples/test-recursive-c36");
+                env::current_dir().expect("Failed to get current directory").join("examples/test-recursive-c42");
             let proof_path = current_dir.join("proof.bin");
 
             let mut file = File::open(proof_path).unwrap();
