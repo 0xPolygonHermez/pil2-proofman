@@ -14,7 +14,7 @@ where
     StandardUniform: Distribution<F>,
 {
     fn register_witness(&mut self, wcm: &WitnessManager<F>) {
-        Std::new(wcm.get_pctx(), wcm.get_sctx());
+        Std::new(wcm.get_pctx(), wcm.get_sctx(), false);
         let prod_bus = ProdBus::new();
         let sum_bus = SumBus::new();
         let both_buses = BothBuses::new();

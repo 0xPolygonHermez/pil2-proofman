@@ -58,16 +58,22 @@ struct HintCache {
 }
 
 impl<F: PrimeField64> StdRangeCheck<F> {
-    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: &SetupCtx<F>, virtual_table: Arc<StdVirtualTable<F>>) -> Arc<Self> {
+    pub fn new(
+        pctx: Arc<ProofCtx<F>>,
+        sctx: &SetupCtx<F>,
+        virtual_table: Arc<StdVirtualTable<F>>,
+        shared_tables: bool,
+    ) -> Arc<Self> {
         // Find which range check related AIRs need to be instantiated
         let u8air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u8air");
         let u16air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u16air");
         let specified_ranges_air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "specified_ranges");
 
         // Instantiate the AIRs
-        let u8air = Self::create_air::<U8Air>(&pctx, sctx, &u8air_hint);
-        let u16air = Self::create_air::<U16Air>(&pctx, sctx, &u16air_hint);
-        let specified_ranges_air = Self::create_air::<SpecifiedRanges>(&pctx, sctx, &specified_ranges_air_hint);
+        let u8air = Self::create_air::<U8Air>(&pctx, sctx, shared_tables, &u8air_hint);
+        let u16air = Self::create_air::<U16Air>(&pctx, sctx, shared_tables, &u16air_hint);
+        let specified_ranges_air =
+            Self::create_air::<SpecifiedRanges>(&pctx, sctx, shared_tables, &specified_ranges_air_hint);
 
         // Early return if no range check users
         let std_rc_users = get_hint_ids_by_name(sctx.get_global_bin(), "std_rc_users");
@@ -126,7 +132,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
     }
 
     // Helper function to instantiate AIRs
-    fn create_air<T>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, hints: &[u64]) -> Option<Arc<T>>
+    fn create_air<T>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, shared_tables: bool, hints: &[u64]) -> Option<Arc<T>>
     where
         T: AirComponent<F>,
     {
@@ -140,7 +146,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             return None;
         }
 
-        Some(T::new(pctx, sctx, airgroup_id, air_id))
+        Some(T::new(pctx, sctx, airgroup_id, air_id, shared_tables))
     }
 
     // Helper function to register ranges

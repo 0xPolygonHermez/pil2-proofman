@@ -15,7 +15,7 @@ where
     StandardUniform: Distribution<F>,
 {
     fn register_witness(&mut self, wcm: &WitnessManager<F>) {
-        let std = Std::new(wcm.get_pctx(), wcm.get_sctx());
+        let std = Std::new(wcm.get_pctx(), wcm.get_sctx(), false);
         let connection1 = Connection1::new();
         let connection2 = Connection2::new();
         let connection_new = ConnectionNew::new();

@@ -10,7 +10,7 @@ witness_library!(WitnessLib, Goldilocks);
 
 impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
     fn register_witness(&mut self, wcm: &WitnessManager<F>) {
-        let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx());
+        let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx(), false);
         let recursive_c36 = RecursiveC36::new();
 
         register_std(wcm, &std_lib);

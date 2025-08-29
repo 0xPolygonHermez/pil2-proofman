@@ -20,7 +20,7 @@ where
     fn register_witness(&mut self, wcm: &WitnessManager<F>) {
         let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
 
-        let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx());
+        let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx(), false);
         let simple_left = SimpleLeft::new(std_lib.clone());
         let simple_right = SimpleRight::new();
 

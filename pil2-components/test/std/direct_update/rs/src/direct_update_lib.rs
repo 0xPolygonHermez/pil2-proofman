@@ -20,7 +20,7 @@ where
         // let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
         let seed = 0;
 
-        let std = Std::new(wcm.get_pctx(), wcm.get_sctx());
+        let std = Std::new(wcm.get_pctx(), wcm.get_sctx(), false);
         let direct_update_prod_local = DirectUpdateProdLocal::new();
         let direct_update_prod_global = DirectUpdateProdGlobal::new();
         let direct_update_sum_local = DirectUpdateSumLocal::new();
