@@ -107,8 +107,8 @@ pub fn update_debug_data_fast<F: PrimeField64>(
     } else if proves {
         bus_opid_times.num_proves += hash_value * times.as_canonical_biguint();
     } else {
-        assert!(times.is_one(), "The selector value is invalid: expected 1, but received {times:?}.");
-        bus_opid_times.num_assumes += hash_value;
+        // assert!(times.is_one(), "The selector value is invalid: expected 1, but received {times:?}.");
+        bus_opid_times.num_assumes += hash_value * times.as_canonical_biguint();
     }
 }
 
@@ -162,7 +162,7 @@ pub fn update_debug_data<F: PrimeField64>(
         bus_val.shared_data.num_proves += times;
         grouped_data.row_proves.push(row);
     } else {
-        assert!(times.is_one(), "The selector value is invalid: expected 1, but received {times:?}.");
+        // assert!(times.is_one(), "The selector value is invalid: expected 1, but received {times:?}.");
         bus_val.shared_data.num_assumes += times;
         grouped_data.row_assumes.push(row);
     }
