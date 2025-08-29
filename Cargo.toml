@@ -20,6 +20,7 @@ members = [
     "transcript",
     "witness",
     "util",
+    "verifier",
     # "pil2-components/lib/std/rs",
     # "pil2-components/test/std/direct_update/rs",
     # "pil2-components/test/std/diff_buses/rs",
@@ -36,6 +37,7 @@ members = [
     # won't build with a fresh clone
     "examples/fibonacci-square",
     "examples/test-recursive-c36",
+    "examples/test-recursive-c42",
     "macros-test",
 ]
 

@@ -12,7 +12,7 @@ extern "C" {
     );
     
     pub fn save_publics(
-        numPublicInputs: ::std::os::raw::c_ulong,
+        numPublicInputs: u64,
         pPublicInputs: *mut ::std::os::raw::c_void,
         fileDir: *mut ::std::os::raw::c_char,
     );

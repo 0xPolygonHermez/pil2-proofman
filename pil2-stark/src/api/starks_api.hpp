@@ -9,7 +9,7 @@ extern "C" {
     // Save Proof
     // ========================================================================================
     void save_challenges(void *pChallenges, char *globalInfoFile, char *fileDir);
-    void save_publics(unsigned long numPublicInputs, void *pPublicInputs, char *fileDir);
+    void save_publics(uint64_t numPublicInputs, void *pPublicInputs, char *fileDir);
     void save_proof_values(void *pProofValues, char *globalInfoFile, char *fileDir);
 
     // SetupCtx

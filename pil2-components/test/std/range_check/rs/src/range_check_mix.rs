@@ -5,19 +5,12 @@ use witness::{WitnessComponent, execute, define_wc_with_std};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
-use rand::{
-    distr::{StandardUniform, Distribution},
-    Rng, SeedableRng,
-    rngs::StdRng,
-};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use crate::RangeCheckMixTrace;
 
 define_wc_with_std!(RangeCheckMix, "RngChMix");
 
-impl<F: PrimeField64> WitnessComponent<F> for RangeCheckMix<F>
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for RangeCheckMix<F> {
     execute!(RangeCheckMixTrace, 1);
 
     fn calculate_witness(

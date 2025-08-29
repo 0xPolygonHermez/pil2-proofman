@@ -37,7 +37,7 @@ void save_challenges(void *pGlobalChallenge, char* globalInfoFile, char *fileDir
 }
 
 
-void save_publics(unsigned long numPublicInputs, void *pPublicInputs, char *fileDir) {
+void save_publics(uint64_t numPublicInputs, void *pPublicInputs, char *fileDir) {
 
     Goldilocks::Element* publicInputs = (Goldilocks::Element *)pPublicInputs;
 

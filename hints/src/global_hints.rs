@@ -1,4 +1,4 @@
-use fields::PrimeField64;
+use fields::{PrimeField64, CubicExtensionField};
 use crate::{HintCol, HintFieldInfoC, HintFieldInfo, HintFieldOutput, HintFieldValue, HintFieldValues, HintFieldValuesVec};
 use proofman_starks_lib_c::{
     get_hint_field_global_constraints_values_c, get_hint_field_global_constraints_sizes_c,
@@ -8,7 +8,7 @@ use std::ffi::c_void;
 
 use std::collections::HashMap;
 
-use proofman_common::{skip_prover_instance, ExtensionField, ProofCtx, SetupCtx};
+use proofman_common::{skip_prover_instance, ProofCtx, SetupCtx};
 
 pub fn aggregate_airgroupvals<F: PrimeField64>(pctx: &ProofCtx<F>, airgroup_values: &[Vec<F>]) -> Vec<Vec<u64>> {
     const FIELD_EXTENSION: usize = 3;
@@ -29,7 +29,7 @@ pub fn aggregate_airgroupvals<F: PrimeField64>(pctx: &ProofCtx<F>, airgroup_valu
     for (my_instance_idx, instance_id) in my_instances.iter().enumerate() {
         let (airgroup_id, _) = pctx.dctx_get_instance_info(*instance_id);
         for (idx, agg_type) in pctx.global_info.agg_types[airgroup_id].iter().enumerate() {
-            let mut acc = ExtensionField {
+            let mut acc = CubicExtensionField {
                 value: [
                     airgroupvalues[airgroup_id][idx * FIELD_EXTENSION],
                     airgroupvalues[airgroup_id][idx * FIELD_EXTENSION + 1],
@@ -38,7 +38,7 @@ pub fn aggregate_airgroupvals<F: PrimeField64>(pctx: &ProofCtx<F>, airgroup_valu
             };
 
             if !airgroup_values[my_instance_idx].is_empty() {
-                let instance_airgroup_val = ExtensionField {
+                let instance_airgroup_val = CubicExtensionField {
                     value: [
                         airgroup_values[my_instance_idx][idx * FIELD_EXTENSION],
                         airgroup_values[my_instance_idx][idx * FIELD_EXTENSION + 1],
