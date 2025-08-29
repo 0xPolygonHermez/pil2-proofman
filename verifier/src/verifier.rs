@@ -213,7 +213,7 @@ pub fn stark_verify(
         final_pol.push(pol);
     }
 
-    assert!(p == proof.len() as u64, "Proof length mismatch: expected {}, got {}", proof.len(), p);
+    assert!(p == proof.len() as u64, "Proof length mismatch: expected {}, got {}", p, proof.len());
 
     let mut challenges = vec![
         CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };
@@ -325,7 +325,8 @@ pub fn stark_verify(
             continue;
         }
 
-        // TODO
+        // Handling for boundaries other than "everyRow" is intentionally deferred.
+        // If support for additional boundary types is required, implement logic here.
     }
     let mut final_pol_vals: Vec<Goldilocks> = final_pol
         .iter() // borrow each CubicExtensionField
