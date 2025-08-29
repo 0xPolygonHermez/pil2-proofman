@@ -2263,6 +2263,16 @@ where
         let setup = sctx.get_setup(airgroup_id, air_id);
 
         let mut air_instance = pctx.air_instances[instance_id].write().unwrap();
+
+        assert!(
+            air_instance.num_rows == (1 << setup.stark_info.stark_struct.n_bits),
+            "Row count mismatch for airgroup_id={}, air_id={}: expected {} rows (from proving key), but got {} rows (from pil-helpers).",
+            airgroup_id,
+            air_id,
+            1 << setup.stark_info.stark_struct.n_bits,
+            air_instance.num_rows
+        );
+
         if init_aux_trace {
             air_instance.init_aux_trace(setup.prover_buffer_size as usize);
         }
