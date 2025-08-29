@@ -1155,7 +1155,6 @@ where
         let instances = self.pctx.dctx_get_instances();
         let my_instances = self.pctx.dctx_get_my_instances();
         let my_instances_tables = self.pctx.dctx_get_my_tables();
-        println!("MY TABLES: {:?}", my_instances_tables);
 
         let mut my_instances_sorted = self.pctx.dctx_get_my_instances();
         let mut rng = StdRng::seed_from_u64(self.pctx.dctx_get_rank() as u64);
@@ -2008,7 +2007,8 @@ where
                 let threads_to_use_collect = match cfg!(feature = "gpu") || stats {
                     true => (self.pctx.dctx_get_instance_chunks(instance_id) / 16)
                         .max(self.max_num_threads / 4)
-                        .min(n_threads_witness),
+                        .min(n_threads_witness)
+                        .min(self.max_num_threads),
                     false => self.max_num_threads,
                 };
 
