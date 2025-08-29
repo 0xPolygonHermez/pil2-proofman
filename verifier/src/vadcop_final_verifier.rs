@@ -2976,7 +2976,6 @@ pub fn q_verify(challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicEx
     return tmp_3[0];
 }
 
-
 #[rustfmt::skip]
 #[allow(clippy::all)]
 pub fn query_verify(challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>], vals: &[Vec<Goldilocks>], xdivxsub: &[CubicExtensionField<Goldilocks>]) -> CubicExtensionField<Goldilocks> {
