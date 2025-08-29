@@ -208,9 +208,9 @@ impl ProveCmd {
                 encoder.write_all(proof_data)?;
                 encoder.finish()?;
 
-                let original_size = proof_data.len();
+                let original_size = vadcop_final_proof.len() * 8;
                 let compressed_size = std::fs::metadata(&compressed_output_path)?.len();
-                let compression_ratio = original_size as f64 / compressed_size as f64;
+                let compression_ratio = compressed_size as f64 / original_size as f64;
 
                 println!("Vadcop final proof saved:");
                 println!("  Original: {} bytes", original_size);
