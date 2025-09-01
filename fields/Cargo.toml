@@ -9,7 +9,7 @@ categories = { workspace = true }
 
 [dependencies]
 paste = "1.0.15"
-proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
+proofman-starks-lib-c = { path = "../provers/starks-lib-c", optional = true }
 
 serde = { workspace = true, features = ["derive"] }
 num-bigint = { workspace = true }
