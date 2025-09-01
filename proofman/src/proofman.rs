@@ -15,7 +15,7 @@ use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{free_device_buffers_c, gen_device_buffers_c, get_num_gpus_c};
 use proofman_starks_lib_c::{
     save_challenges_c, save_proof_values_c, save_publics_c, check_device_memory_c, gen_device_streams_c,
-    get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c,
+    get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c, reset_device_streams_c,
 };
 use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
@@ -860,6 +860,10 @@ where
         // define managment channels and counters
         let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
 
+        for _ in 0..max_num_threads {
+            tx_threads.send(()).unwrap();
+        }
+
         let (witness_tx, witness_rx): (Sender<usize>, Receiver<usize>) = unbounded();
         let (witness_tx_priority, witness_rx_priority): (Sender<usize>, Receiver<usize>) = unbounded();
         let (contributions_tx, contributions_rx): (Sender<usize>, Receiver<usize>) = unbounded();
@@ -1009,6 +1013,10 @@ where
         // define managment channels and counters
         let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
 
+        for _ in 0..max_num_threads {
+            tx_threads.send(()).unwrap();
+        }
+
         let (witness_tx, witness_rx): (Sender<usize>, Receiver<usize>) = unbounded();
         let (witness_tx_priority, witness_rx_priority): (Sender<usize>, Receiver<usize>) = unbounded();
         let (contributions_tx, contributions_rx): (Sender<usize>, Receiver<usize>) = unbounded();
@@ -1088,6 +1096,18 @@ where
 
         let mut ongoing_proofs = self.recursive2_proofs_ongoing.write().unwrap();
         ongoing_proofs.clear();
+
+        // Drain all relevant channels to ensure they are empty
+        while self.witness_rx.try_recv().is_ok() {}
+        while self.witness_rx_priority.try_recv().is_ok() {}
+        while self.contributions_rx.try_recv().is_ok() {}
+        while self.recursive_rx.try_recv().is_ok() {}
+        while self.proofs_rx.try_recv().is_ok() {}
+        while self.compressor_witness_rx.try_recv().is_ok() {}
+        while self.rec1_witness_rx.try_recv().is_ok() {}
+        while self.rec2_witness_rx.try_recv().is_ok() {}
+
+        reset_device_streams_c(self.d_buffers.get_ptr());
     }
 
     pub fn register_witness(&self, witness_lib: &mut dyn WitnessLibrary<F>, library: Library) {
@@ -1244,7 +1264,6 @@ where
             self.pctx.set_witness_tx_priority(None);
         }
         self.witness_tx.send(usize::MAX).ok();
-        self.witness_tx_priority.send(usize::MAX).ok();
 
         if let Some(h) = witness_handler {
             h.join().unwrap();
@@ -1445,7 +1464,7 @@ where
                         &self.const_pols,
                         &self.const_tree,
                         &self.d_buffers,
-                        Some(stream_id as usize), // or u64 if your API expects that
+                        Some(stream_id as usize),
                         options.save_proofs,
                         self.gpu_params.preallocate,
                     );
@@ -1882,10 +1901,6 @@ where
         minimal_memory: bool,
         stats: bool,
     ) -> (Option<std::thread::JoinHandle<()>>, Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>) {
-        for _ in 0..self.max_num_threads {
-            self.tx_threads.send(()).unwrap();
-        }
-
         let witness_done_clone = witness_done.clone();
         let tx_threads_clone = self.tx_threads.clone();
         let rx_threads_clone = self.rx_threads.clone();
@@ -1899,12 +1914,7 @@ where
         let witness_handler = if !minimal_memory && cfg!(feature = "gpu") {
             Some(std::thread::spawn(move || loop {
                 let instance_id = match witness_rx_priority.try_recv() {
-                    Ok(id) => {
-                        if id == usize::MAX {
-                            break;
-                        }
-                        id
-                    }
+                    Ok(id) => id,
                     Err(crossbeam_channel::TryRecvError::Empty) => match witness_rx.try_recv() {
                         Ok(id) => {
                             if id == usize::MAX {
@@ -1917,12 +1927,7 @@ where
                             continue;
                         }
                         Err(crossbeam_channel::TryRecvError::Disconnected) => match witness_rx_priority.try_recv() {
-                            Ok(id) => {
-                                if id == usize::MAX {
-                                    break;
-                                }
-                                id
-                            }
+                            Ok(id) => id,
                             Err(_) => break,
                         },
                     },

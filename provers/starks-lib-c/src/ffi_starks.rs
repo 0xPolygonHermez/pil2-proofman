@@ -1157,6 +1157,16 @@ pub fn gen_device_streams_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
+pub fn reset_device_streams_c(
+    d_buffers: *mut ::std::os::raw::c_void
+) {
+    unsafe {
+        reset_device_streams(d_buffers);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn check_device_memory_c(node_rank: u32, node_size: u32) -> u64 {
     unsafe { check_device_memory(node_rank, node_size) }
 }
@@ -1940,6 +1950,14 @@ pub fn gen_device_streams_c(
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "set_max_size_thread: This is a mock call because there is no linked library");
     0
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
+pub fn reset_device_streams_c(
+    _d_buffers: *mut ::std::os::raw::c_void
+) {
+    trace!("{}: ··· {}", "ffi     ", "reset_device_streams: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
