@@ -97,27 +97,6 @@ impl<F: PrimeField64> Drop for Setup<F> {
     }
 }
 
-impl<F: PrimeField64> Drop for Setup<F> {
-    fn drop(&mut self) {
-        let mut circom_circuit_guard = self.circom_circuit.write().unwrap();
-
-        if circom_circuit_guard.is_some() {
-            let circom_circuit = circom_circuit_guard.take().unwrap();
-
-            let circom_library_guard = self.circom_library.read().unwrap();
-
-            if let Some(circom_library) = circom_library_guard.as_ref() {
-                unsafe {
-                    let free_circom_circuit: Symbol<FreeCircomCircuitFunc> =
-                        circom_library.get(b"freeCircuit\0").expect("Failed to get freeCircuit symbol");
-
-                    free_circom_circuit(circom_circuit);
-                }
-            }
-        }
-    }
-}
-
 impl<F: PrimeField64> Setup<F> {
     pub fn new(
         global_info: &GlobalInfo,
