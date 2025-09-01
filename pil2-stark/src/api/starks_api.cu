@@ -57,12 +57,22 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         d_buffers->d_aux_trace = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->d_constPols = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+        d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
+        d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
+        
+        // Allocate mutex array using placement new
+        d_buffers->mutex_pinned = (std::mutex*)malloc(d_buffers->n_gpus * sizeof(std::mutex));
+        for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
+            new (&d_buffers->mutex_pinned[i]) std::mutex();
+        }
 
         for (int i = 0; i < d_buffers->n_gpus; i++) {
             cudaSetDevice(d_buffers->my_gpu_ids[i]);
             CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace[i], maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
             CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[i], maxSizes->totalConstPols * sizeof(Goldilocks::Element)));
             CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPolsAggregation[i], maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
+            CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
+            CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer_extra[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
         }
         init_gpu_const_2(d_buffers->my_gpu_ids, d_buffers->n_gpus);
 
@@ -108,12 +118,21 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         d_buffers->d_aux_trace = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->d_constPols = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+        d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
+        d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
+        
+        // Allocate mutex array using placement new
+        d_buffers->mutex_pinned = (std::mutex*)malloc(d_buffers->n_gpus * sizeof(std::mutex));
+        for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
+            new (&d_buffers->mutex_pinned[i]) std::mutex();
+        }
 
         cudaSetDevice(d_buffers->my_gpu_ids[0]);
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace[0], maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[0], maxSizes->totalConstPols * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPolsAggregation[0], maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
-        
+        CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer[0], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer_extra[0], d_buffers->pinned_size * sizeof(Goldilocks::Element)));        
         init_gpu_const_2(d_buffers->my_gpu_ids, d_buffers->n_gpus);
 
         TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus);
@@ -121,7 +140,7 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
     }
 }
 
-uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t maxProofsPerGPU, uint64_t maxRecursiveProofsPerGPU) {
+uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t maxProofsPerGPU, uint64_t maxRecursiveProofsPerGPU, uint64_t max_n_bits_ext) {
     
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     d_buffers->max_size_proof = maxProofSize;
@@ -150,6 +169,9 @@ uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint
         }
     }
 
+    //Generate static twiddles for the NTT
+    NTT_Goldilocks_GPU::init_twiddle_factors_and_r(max_n_bits_ext, (int) d_buffers->n_gpus, d_buffers->my_gpu_ids);
+
     return d_buffers->n_gpus;
 }
 
@@ -162,11 +184,15 @@ void free_device_buffers(void *d_buffers_)
         CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace[i]));
         CHECKCUDAERR(cudaFree(d_buffers->d_constPols[i]));
         CHECKCUDAERR(cudaFree(d_buffers->d_constPolsAggregation[i]));
+        CHECKCUDAERR(cudaFreeHost(d_buffers->pinned_buffer[i]));
+        CHECKCUDAERR(cudaFreeHost(d_buffers->pinned_buffer_extra[i]));
     }
     free(d_buffers->d_aux_trace);
     free(d_buffers->d_constPols);
     free(d_buffers->d_constPolsAggregation);
-    
+    free(d_buffers->pinned_buffer);
+    free(d_buffers->pinned_buffer_extra);
+
     if (d_buffers->streamsData != nullptr) {
         for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
             d_buffers->streamsData[i].free();
@@ -181,6 +207,12 @@ void free_device_buffers(void *d_buffers_)
             }
         }
     }
+
+    // Manually destroy mutexes before freeing memory
+    for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
+        d_buffers->mutex_pinned[i].~mutex();
+    }
+    free(d_buffers->mutex_pinned);
 
     delete d_buffers;
 }
@@ -369,7 +401,7 @@ void get_stream_proofs(void *d_buffers_){
     std::lock_guard<std::mutex> lock(d_buffers->mutex_slot_selection);
     for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
         if (d_buffers->streamsData[i].status == 0 || d_buffers->streamsData[i].status == 3 || (d_buffers->streamsData[i].status == 1 && d_buffers->streamsData[i].extraStream)) continue;
-        set_device(d_buffers->streamsData[i].gpuId);
+        cudaSetDevice(d_buffers->streamsData[i].gpuId);
         CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[i].stream));
         if(d_buffers->streamsData[i].root != nullptr) {
             get_commit_root(d_buffers, i);
@@ -392,7 +424,7 @@ void get_stream_proofs_non_blocking(void *d_buffers_){
     std::lock_guard<std::mutex> lock(d_buffers->mutex_slot_selection);
     for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
         if(d_buffers->streamsData[i].status==2 &&  cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess){
-            set_device(d_buffers->streamsData[i].gpuId);
+            cudaSetDevice(d_buffers->streamsData[i].gpuId);
             if(d_buffers->streamsData[i].root != nullptr) {
                 get_commit_root(d_buffers, i);
             }else{
@@ -412,7 +444,7 @@ void get_stream_proofs_non_blocking(void *d_buffers_){
 
 void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    set_device(d_buffers->streamsData[streamId].gpuId);
+    cudaSetDevice(d_buffers->streamsData[streamId].gpuId);
     CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[streamId].stream));
     if(d_buffers->streamsData[streamId].root != nullptr) {
             get_commit_root(d_buffers, streamId);
@@ -577,22 +609,6 @@ uint64_t get_num_gpus() {
     return deviceCount;
 }
 
-// Function to set the CUDA device based on the MPI rank
-void set_device_mpi(uint32_t mpi_node_rank){
-    int deviceCount;
-    cudaGetDeviceCount(&deviceCount);
-    if (deviceCount == 0) {
-        std::cerr << "No CUDA devices found." << std::endl;
-        exit(1);
-    }
-    int device = mpi_node_rank % deviceCount;
-    cudaSetDevice(device);
-}
-
-void set_device(uint32_t gpuId){
-    cudaSetDevice(gpuId);
-}
-
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t nStreams, bool recursive){
     std::lock_guard<std::mutex> lock(d_buffers->mutex_slot_selection);
     uint32_t countFreeStreamsGPU[d_buffers->n_gpus];
@@ -689,7 +705,7 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t nStreams, bool re
 }
 
 void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId, uint64_t nStreams){
-    set_device(d_buffers->streamsData[streamId].gpuId);
+    cudaSetDevice(d_buffers->streamsData[streamId].gpuId);
     for (uint64_t j = 0; j < nStreams; j++) {
         if(d_buffers->streamsData[streamId + j].status==2 && cudaEventQuery(d_buffers->streamsData[streamId + j].end_event) == cudaSuccess) {
 

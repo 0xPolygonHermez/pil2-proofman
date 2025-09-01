@@ -123,6 +123,17 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
         Vec::new()
     }
 
+    fn pre_calculate_witness(
+        &self,
+        _stage: u32,
+        _pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        _instance_ids: &[usize],
+        _n_cores: usize,
+        _buffer_pool: &dyn BufferPool<F>,
+    ) {
+    }
+
     fn calculate_witness(
         &self,
         stage: u32,
@@ -152,7 +163,8 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
                 }
             });
 
-            let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer, false));
+            let air_instance =
+                AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, self.num_rows, buffer, false));
             pctx.add_air_instance(air_instance, instance_id);
             // } else {
             //     self.multiplicities.par_iter().for_each(|vec| {

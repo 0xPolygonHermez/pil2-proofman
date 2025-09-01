@@ -344,6 +344,27 @@ uint64_t StarkInfo::getPinnedProofSize() {
     pinnedProofSize += customCommits.size() * 4; // Custom commits roots
     pinnedProofSize += (starkStruct.steps.size() - 1) * 4; // Steps roots
 
+    uint64_t maxTreeWidth = 0;
+    for (auto it = mapSectionsN.begin(); it != mapSectionsN.end(); it++) 
+    {
+        uint64_t treeWidth = it->second;
+        if(treeWidth > maxTreeWidth) {
+            maxTreeWidth = treeWidth;
+        }
+    }
+    for(uint64_t i = 0; i < starkStruct.steps.size() - 1; ++i) {
+        uint64_t nGroups = 1 << starkStruct.steps[i + 1].nBits;
+        uint64_t groupSize = (1 << starkStruct.steps[i].nBits) / nGroups;
+        uint64_t treeWidth = groupSize * FIELD_EXTENSION;
+        if(treeWidth > maxTreeWidth) {
+            maxTreeWidth = treeWidth;
+        }
+    }
+
+    uint64_t maxProofSize = ceil(log10(1 << starkStruct.nBitsExt) / log10(starkStruct.merkleTreeArity)) * (starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+
+    uint64_t maxProofBuffSize = maxTreeWidth + maxProofSize;
+
     uint64_t nTrees = nStages + customCommits.size() + 2;
     uint64_t nTreesFRI = starkStruct.steps.size() - 1;
     uint64_t queriesProofSize = (nTrees + nTreesFRI) * maxProofBuffSize * starkStruct.nQueries;
@@ -482,7 +503,7 @@ void StarkInfo::setMapOffsets() {
         mapOffsets[std::make_pair("cm" + to_string(stage), false)] = offsetTraces;
         offsetTraces += N * mapSectionsN["cm" + to_string(stage)]; 
     }
-
+    
     mapTotalN = std::max(mapTotalN, offsetTraces);
 
     if(!gpu) {
@@ -572,8 +593,14 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
             nrowsPack = NROWS_PACK;
             maxNBlocks = omp_get_max_threads();
         } else {
-            nrowsPack = 256;
-            maxNBlocks = 1024;
+            if(recursive) {
+                uint64_t NExtended = (1 << starkStruct.nBitsExt);
+                nrowsPack = 32;
+                maxNBlocks = NExtended / nrowsPack;
+            } else {
+                nrowsPack = 256;
+                maxNBlocks = 1024;
+            }
         }
     }
     
@@ -654,8 +681,6 @@ opType string2opType(const string s)
         return airvalue;
     if(s == "custom") 
         return custom;
-    if(s == "x")
-        return x;
     if(s == "Zi")
         return Zi;
     if(s == "eval")
@@ -696,8 +721,6 @@ string opType2string(const opType op)
         return "airvalue";
     if(op == opType::custom) 
         return "custom";
-     if(op == opType::x)
-        return "x";
     if(op == opType::Zi)
         return "Zi";
     if(op == opType::eval)

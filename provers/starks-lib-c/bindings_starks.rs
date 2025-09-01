@@ -483,10 +483,6 @@ extern "C" {
     
     pub fn free_device_buffers(d_buffers: *mut ::std::os::raw::c_void);
     
-    pub fn set_device_mpi(mpi_node_rank: u32);
-    
-    pub fn set_device(gpu_id: u32);
-    
     pub fn load_device_const_pols(
         airgroupId: u64,
         airId: u64,
@@ -516,6 +512,7 @@ extern "C" {
         maxProofSize: u64,
         maxProofsPerGPU: u64,
         maxRecursiveProofsPerGPU: u64,
+        max_n_bits_ext: u64,
     ) -> u64;
     
     pub fn check_device_memory(

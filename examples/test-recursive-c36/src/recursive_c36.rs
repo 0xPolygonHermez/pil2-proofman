@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::env;
 
 use std::ffi::{c_void, c_char};
-use proofman_common::{AirInstance, BufferPool, PreCalculate, ProofCtx, SetupCtx, TraceInfo};
+use proofman_common::{AirInstance, BufferPool, ProofCtx, SetupCtx, TraceInfo};
 use witness::WitnessComponent;
 use std::path::PathBuf;
 use fields::PrimeField64;
@@ -32,7 +32,7 @@ type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mu
 
 impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
     fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
-        pctx.add_instance(0, 0, PreCalculate::None, 1);
+        pctx.add_instance(0, 0, 1);
         vec![0]
     }
 
@@ -125,7 +125,8 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
                 pctx.set_public_value(F::as_canonical_u64(public), index);
             }
 
-            let air_instance = AirInstance::new(TraceInfo::new(0, 0, trace, false));
+            let air_instance =
+                AirInstance::new(TraceInfo::new(0, 0, 1 << (setup.stark_info.stark_struct.n_bits), trace, false));
             pctx.add_air_instance(air_instance, 0);
         }
     }
