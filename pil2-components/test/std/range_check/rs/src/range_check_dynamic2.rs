@@ -5,20 +5,13 @@ use witness::{WitnessComponent, execute, define_wc_with_std};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
-use rand::{
-    distr::{StandardUniform, Distribution},
-    Rng, SeedableRng,
-    rngs::StdRng,
-};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::RangeCheckDynamic2Trace;
 
 define_wc_with_std!(RangeCheckDynamic2, "RngChDy2");
 
-impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic2<F>
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic2<F> {
     execute!(RangeCheckDynamic2Trace, 1);
 
     fn calculate_witness(

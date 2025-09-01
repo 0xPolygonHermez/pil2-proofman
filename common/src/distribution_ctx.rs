@@ -15,7 +15,7 @@ use std::sync::atomic::Ordering;
 
 use fields::PrimeField64;
 #[cfg(distributed)]
-use crate::ExtensionField;
+use fields::CubicExtensionField;
 use crate::GlobalInfo;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -532,14 +532,14 @@ impl DistributionCtx {
                             airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2] +=
                                 F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
                         } else {
-                            let mut acc = ExtensionField {
+                            let mut acc = CubicExtensionField {
                                 value: [
                                     airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION],
                                     airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 1],
                                     airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2],
                                 ],
                             };
-                            let val = ExtensionField {
+                            let val = CubicExtensionField {
                                 value: [
                                     F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]),
                                     F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]),

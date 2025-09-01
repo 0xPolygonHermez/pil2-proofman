@@ -3,17 +3,13 @@ use witness::{witness_library, WitnessLibrary, WitnessManager};
 
 use fields::PrimeField64;
 use fields::Goldilocks;
-use rand::distr::{StandardUniform, Distribution};
 
 use crate::{Lookup0, Lookup1, Lookup2_12, Lookup2_13, Lookup2_15, Lookup3};
 use proofman::register_std;
 
 witness_library!(WitnessLib, Goldilocks);
 
-impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
     fn register_witness(&mut self, wcm: &WitnessManager<F>) {
         let std = Std::new(wcm.get_pctx(), wcm.get_sctx(), false);
         let lookup0 = Lookup0::new();
