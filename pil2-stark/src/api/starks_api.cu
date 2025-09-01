@@ -175,6 +175,14 @@ uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint
     return d_buffers->n_gpus;
 }
 
+void reset_device_streams(void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+   
+    for(uint64_t i=0; i< d_buffers->n_total_streams; ++i){
+        d_buffers->streamsData[i].reset();
+    }
+}
+
 void free_device_buffers(void *d_buffers_)
 {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;

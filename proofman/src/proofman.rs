@@ -8,13 +8,14 @@ use std::sync::atomic::AtomicUsize;
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, load_const_pols, skip_prover_instance, CurveType, DebugInfo,
     MemoryHandler, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx, SetupsVadcop, VerboseMode,
+    MAX_AIRGROUPS, MAX_INSTANCES,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{free_device_buffers_c, gen_device_buffers_c, get_num_gpus_c};
 use proofman_starks_lib_c::{
     save_challenges_c, save_proof_values_c, save_publics_c, check_device_memory_c, gen_device_streams_c,
-    get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c,
+    get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c, reset_device_streams_c,
 };
 use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
@@ -79,17 +80,43 @@ pub struct ProofMan<F: PrimeField64> {
     sctx: Arc<SetupCtx<F>>,
     setups: Arc<SetupsVadcop<F>>,
     d_buffers: Arc<DeviceBuffer>,
-    trace_size: usize,
-    prover_buffer_size: usize,
     wcm: Arc<WitnessManager<F>>,
     gpu_params: ParamsGPU,
     verify_constraints: bool,
     aggregation: bool,
     final_snark: bool,
-    n_streams_per_gpu: u64,
-    n_recursive_streams_per_gpu: u64,
+    n_streams: usize,
     memory_handler: Arc<MemoryHandler<F>>,
-    n_gpus: u64,
+    proofs: Arc<Vec<RwLock<Option<Proof<F>>>>>,
+    compressor_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>>,
+    recursive1_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>>,
+    recursive2_proofs: Arc<Vec<RwLock<Vec<Proof<F>>>>>,
+    recursive2_proofs_ongoing: Arc<RwLock<Vec<Option<Proof<F>>>>>,
+    roots_contributions: Arc<Vec<[F; 4]>>,
+    values_contributions: Arc<Vec<Mutex<Vec<F>>>>,
+    aux_trace: Arc<Vec<F>>,
+    const_pols: Arc<Vec<F>>,
+    const_tree: Arc<Vec<F>>,
+    prover_buffer_recursive: Arc<Vec<F>>,
+    max_num_threads: usize,
+    tx_threads: Sender<()>,
+    rx_threads: Receiver<()>,
+    witness_tx: Sender<usize>,
+    witness_rx: Receiver<usize>,
+    witness_tx_priority: Sender<usize>,
+    witness_rx_priority: Receiver<usize>,
+    contributions_tx: Sender<usize>,
+    contributions_rx: Receiver<usize>,
+    proofs_tx: Sender<usize>,
+    proofs_rx: Receiver<usize>,
+    compressor_witness_tx: Sender<Proof<F>>,
+    compressor_witness_rx: Receiver<Proof<F>>,
+    rec1_witness_tx: Sender<Proof<F>>,
+    rec1_witness_rx: Receiver<Proof<F>>,
+    rec2_witness_tx: Sender<Proof<F>>,
+    rec2_witness_rx: Receiver<Proof<F>>,
+    recursive_tx: Sender<(u64, String)>,
+    recursive_rx: Receiver<(u64, String)>,
 }
 
 impl<F: PrimeField64> Drop for ProofMan<F> {
@@ -245,7 +272,7 @@ where
             return Err("Witness computation dynamic library not initialized".into());
         }
 
-        self.pctx.dctx_reset();
+        self.reset();
 
         self.wcm.execute();
 
@@ -386,7 +413,7 @@ where
             return Err("Witness computation dynamic library not initialized".into());
         }
 
-        self.pctx.dctx_reset();
+        self.reset();
 
         self.wcm.execute();
 
@@ -405,18 +432,44 @@ where
         let my_instances_sorted_no_tables =
             my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
 
-        let max_num_threads = configured_num_threads(self.pctx.dctx_get_node_n_processes());
-
         let memory_handler =
             Arc::new(MemoryHandler::new(self.gpu_params.max_witness_stored, self.sctx.max_witness_trace_size));
 
+        if !options.minimal_memory && cfg!(feature = "gpu") {
+            self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
+            self.pctx.set_witness_tx_priority(Some(self.witness_tx_priority.clone()));
+        }
+
+        let witness_done = Arc::new(Counter::new());
+
+        let (witness_handler, witness_handles) =
+            self.calc_witness_handler(witness_done.clone(), memory_handler.clone(), options.minimal_memory, true);
         self.calculate_witness(
             &my_instances_sorted_no_tables,
             memory_handler.clone(),
-            max_num_threads,
+            witness_done.clone(),
             options.minimal_memory,
             true,
         );
+
+        if !options.minimal_memory && cfg!(feature = "gpu") {
+            self.pctx.set_witness_tx(None);
+            self.pctx.set_witness_tx_priority(None);
+        }
+
+        self.witness_tx.send(usize::MAX).ok();
+        self.witness_tx_priority.send(usize::MAX).ok();
+
+        if let Some(h) = witness_handler {
+            h.join().unwrap();
+        }
+
+        let handles_to_join = witness_handles.lock().unwrap().drain(..).collect::<Vec<_>>();
+        for handle in handles_to_join {
+            handle.join().unwrap();
+        }
+
+        drop(witness_handles);
 
         Ok(())
     }
@@ -485,7 +538,7 @@ where
         debug_info: &DebugInfo,
         test_mode: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.pctx.dctx_reset();
+        self.reset();
 
         self.pctx.set_debug_info(debug_info);
 
@@ -548,8 +601,7 @@ where
             );
         }
 
-        let my_instances_tables =
-            my_instances.iter().filter(|idx| self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+        let my_instances_tables = self.pctx.dctx_get_my_tables();
 
         timer_start_info!(CALCULATING_TABLES);
         for instance_id in my_instances_tables.iter() {
@@ -749,9 +801,6 @@ where
         let (d_buffers, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
             Self::prepare_gpu(&pctx, &sctx, &setups_vadcop, aggregation, &gpu_params);
 
-        let (trace_size, prover_buffer_size) =
-            if aggregation { get_recursive_buffer_sizes(&pctx, &setups_vadcop)? } else { (0, 0) };
-
         if !verify_constraints {
             initialize_fixed_pols_tree(&pctx, &sctx, &setups_vadcop, &d_buffers, aggregation, &gpu_params);
         }
@@ -767,22 +816,105 @@ where
 
         let memory_handler = Arc::new(MemoryHandler::new(max_witness_stored, sctx.max_witness_trace_size));
 
+        let proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
+            Arc::new((0..MAX_INSTANCES).map(|_| RwLock::new(None)).collect());
+        let compressor_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
+            Arc::new((0..MAX_INSTANCES).map(|_| RwLock::new(None)).collect());
+        let recursive1_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
+            Arc::new((0..MAX_INSTANCES).map(|_| RwLock::new(None)).collect());
+        let recursive2_proofs: Arc<Vec<RwLock<Vec<Proof<F>>>>> =
+            Arc::new((0..MAX_AIRGROUPS).map(|_| RwLock::new(Vec::new())).collect());
+        let recursive2_proofs_ongoing: Arc<RwLock<Vec<Option<Proof<F>>>>> = Arc::new(RwLock::new(Vec::new()));
+
+        let (aux_trace, const_pols, const_tree) = if cfg!(feature = "gpu") {
+            (Arc::new(Vec::new()), Arc::new(Vec::new()), Arc::new(Vec::new()))
+        } else {
+            (
+                Arc::new(create_buffer_fast(sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size))),
+                Arc::new(create_buffer_fast(sctx.max_const_size.max(setups_vadcop.max_const_size))),
+                Arc::new(create_buffer_fast(sctx.max_const_tree_size.max(setups_vadcop.max_const_tree_size))),
+            )
+        };
+
+        let n_proof_threads = match cfg!(feature = "gpu") {
+            true => n_gpus,
+            false => 1,
+        };
+
+        let n_streams = ((n_streams_per_gpu + n_recursive_streams_per_gpu) * n_proof_threads) as usize;
+
+        let max_num_threads = configured_num_threads(pctx.dctx_get_node_n_processes());
+
+        let prover_buffer_recursive = if cfg!(not(feature = "gpu")) && aggregation {
+            let prover_buffer_size = get_recursive_buffer_sizes(&pctx, &setups_vadcop)?;
+            Arc::new(create_buffer_fast(prover_buffer_size))
+        } else {
+            Arc::new(Vec::new())
+        };
+
+        let values_contributions: Arc<Vec<Mutex<Vec<F>>>> =
+            Arc::new((0..MAX_INSTANCES).map(|_| Mutex::new(Vec::<F>::new())).collect());
+
+        let roots_contributions: Arc<Vec<[F; 4]>> = Arc::new((0..MAX_INSTANCES).map(|_| [F::default(); 4]).collect());
+
+        // define managment channels and counters
+        let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
+
+        for _ in 0..max_num_threads {
+            tx_threads.send(()).unwrap();
+        }
+
+        let (witness_tx, witness_rx): (Sender<usize>, Receiver<usize>) = unbounded();
+        let (witness_tx_priority, witness_rx_priority): (Sender<usize>, Receiver<usize>) = unbounded();
+        let (contributions_tx, contributions_rx): (Sender<usize>, Receiver<usize>) = unbounded();
+        let (recursive_tx, recursive_rx) = unbounded::<(u64, String)>();
+        let (proofs_tx, proofs_rx): (Sender<usize>, Receiver<usize>) = unbounded();
+        let (compressor_witness_tx, compressor_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
+        let (rec1_witness_tx, rec1_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
+        let (rec2_witness_tx, rec2_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
+
         Ok(Self {
             pctx,
             sctx,
             wcm,
             setups: setups_vadcop,
             d_buffers,
-            trace_size,
-            prover_buffer_size,
+            prover_buffer_recursive,
             gpu_params,
             aggregation,
             final_snark,
             verify_constraints,
-            n_streams_per_gpu,
-            n_recursive_streams_per_gpu,
-            n_gpus,
+            n_streams,
+            max_num_threads,
             memory_handler,
+            proofs,
+            compressor_proofs,
+            recursive1_proofs,
+            recursive2_proofs,
+            recursive2_proofs_ongoing,
+            aux_trace,
+            const_pols,
+            const_tree,
+            roots_contributions,
+            values_contributions,
+            tx_threads,
+            rx_threads,
+            witness_tx,
+            witness_rx,
+            witness_tx_priority,
+            witness_rx_priority,
+            contributions_tx,
+            contributions_rx,
+            recursive_tx,
+            recursive_rx,
+            proofs_tx,
+            proofs_rx,
+            compressor_witness_tx,
+            compressor_witness_rx,
+            rec1_witness_tx,
+            rec1_witness_rx,
+            rec2_witness_tx,
+            rec2_witness_rx,
         })
     }
 
@@ -822,9 +954,6 @@ where
         let (d_buffers, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
             Self::prepare_gpu(&pctx, &sctx, &setups_vadcop, aggregation, &gpu_params);
 
-        let (trace_size, prover_buffer_size) =
-            if aggregation { get_recursive_buffer_sizes(&pctx, &setups_vadcop)? } else { (0, 0) };
-
         if !verify_constraints {
             initialize_fixed_pols_tree(&pctx, &sctx, &setups_vadcop, &d_buffers, aggregation, &gpu_params);
         }
@@ -840,23 +969,145 @@ where
 
         let memory_handler = Arc::new(MemoryHandler::new(max_witness_stored, sctx.max_witness_trace_size));
 
+        let proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
+            Arc::new((0..MAX_INSTANCES).map(|_| RwLock::new(None)).collect());
+        let compressor_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
+            Arc::new((0..MAX_INSTANCES).map(|_| RwLock::new(None)).collect());
+        let recursive1_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
+            Arc::new((0..MAX_INSTANCES).map(|_| RwLock::new(None)).collect());
+        let recursive2_proofs: Arc<Vec<RwLock<Vec<Proof<F>>>>> =
+            Arc::new((0..MAX_AIRGROUPS).map(|_| RwLock::new(Vec::new())).collect());
+        let recursive2_proofs_ongoing: Arc<RwLock<Vec<Option<Proof<F>>>>> = Arc::new(RwLock::new(Vec::new()));
+
+        let (aux_trace, const_pols, const_tree) = if cfg!(feature = "gpu") {
+            (Arc::new(Vec::new()), Arc::new(Vec::new()), Arc::new(Vec::new()))
+        } else {
+            (
+                Arc::new(create_buffer_fast(sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size))),
+                Arc::new(create_buffer_fast(sctx.max_const_size.max(setups_vadcop.max_const_size))),
+                Arc::new(create_buffer_fast(sctx.max_const_tree_size.max(setups_vadcop.max_const_tree_size))),
+            )
+        };
+
+        let n_proof_threads = match cfg!(feature = "gpu") {
+            true => n_gpus,
+            false => 1,
+        };
+
+        let n_streams = ((n_streams_per_gpu + n_recursive_streams_per_gpu) * n_proof_threads) as usize;
+
+        let max_num_threads = configured_num_threads(pctx.dctx_get_node_n_processes());
+
+        let prover_buffer_recursive = if aggregation {
+            let prover_buffer_size = get_recursive_buffer_sizes(&pctx, &setups_vadcop)?;
+            Arc::new(create_buffer_fast(prover_buffer_size))
+        } else {
+            Arc::new(Vec::new())
+        };
+
+        let values_contributions: Arc<Vec<Mutex<Vec<F>>>> =
+            Arc::new((0..MAX_INSTANCES).map(|_| Mutex::new(Vec::<F>::new())).collect());
+
+        let roots_contributions: Arc<Vec<[F; 4]>> = Arc::new((0..MAX_INSTANCES).map(|_| [F::default(); 4]).collect());
+
+        // define managment channels and counters
+        let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
+
+        for _ in 0..max_num_threads {
+            tx_threads.send(()).unwrap();
+        }
+
+        let (witness_tx, witness_rx): (Sender<usize>, Receiver<usize>) = unbounded();
+        let (witness_tx_priority, witness_rx_priority): (Sender<usize>, Receiver<usize>) = unbounded();
+        let (contributions_tx, contributions_rx): (Sender<usize>, Receiver<usize>) = unbounded();
+        let (recursive_tx, recursive_rx) = unbounded::<(u64, String)>();
+        let (proofs_tx, proofs_rx): (Sender<usize>, Receiver<usize>) = unbounded();
+        let (compressor_witness_tx, compressor_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
+        let (rec1_witness_tx, rec1_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
+        let (rec2_witness_tx, rec2_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
+
         Ok(Self {
             pctx,
             sctx,
             wcm,
             setups: setups_vadcop,
             d_buffers,
-            trace_size,
-            prover_buffer_size,
+            prover_buffer_recursive,
             gpu_params,
             aggregation,
             final_snark,
             verify_constraints,
-            n_streams_per_gpu,
-            n_recursive_streams_per_gpu,
-            n_gpus,
+            n_streams,
+            max_num_threads,
             memory_handler,
+            proofs,
+            compressor_proofs,
+            recursive1_proofs,
+            recursive2_proofs,
+            recursive2_proofs_ongoing,
+            aux_trace,
+            const_pols,
+            const_tree,
+            roots_contributions,
+            values_contributions,
+            tx_threads,
+            rx_threads,
+            witness_tx,
+            witness_rx,
+            witness_tx_priority,
+            witness_rx_priority,
+            contributions_tx,
+            contributions_rx,
+            recursive_tx,
+            recursive_rx,
+            proofs_tx,
+            proofs_rx,
+            compressor_witness_tx,
+            compressor_witness_rx,
+            rec1_witness_tx,
+            rec1_witness_rx,
+            rec2_witness_tx,
+            rec2_witness_rx,
         })
+    }
+
+    pub fn reset(&self) {
+        self.pctx.dctx_reset();
+
+        for proof_lock in self.proofs.iter() {
+            let mut proof = proof_lock.write().unwrap();
+            *proof = None;
+        }
+
+        for proof_lock in self.compressor_proofs.iter() {
+            let mut proof = proof_lock.write().unwrap();
+            *proof = None;
+        }
+
+        for proof_lock in self.recursive1_proofs.iter() {
+            let mut proof = proof_lock.write().unwrap();
+            *proof = None;
+        }
+
+        for proof_lock in self.recursive2_proofs.iter() {
+            let mut proofs = proof_lock.write().unwrap();
+            proofs.clear();
+        }
+
+        let mut ongoing_proofs = self.recursive2_proofs_ongoing.write().unwrap();
+        ongoing_proofs.clear();
+
+        // Drain all relevant channels to ensure they are empty
+        while self.witness_rx.try_recv().is_ok() {}
+        while self.witness_rx_priority.try_recv().is_ok() {}
+        while self.contributions_rx.try_recv().is_ok() {}
+        while self.recursive_rx.try_recv().is_ok() {}
+        while self.proofs_rx.try_recv().is_ok() {}
+        while self.compressor_witness_rx.try_recv().is_ok() {}
+        while self.rec1_witness_rx.try_recv().is_ok() {}
+        while self.rec2_witness_rx.try_recv().is_ok() {}
+
+        reset_device_streams_c(self.d_buffers.get_ptr());
     }
 
     pub fn register_witness(&self, witness_lib: &mut dyn WitnessLibrary<F>, library: Library) {
@@ -893,11 +1144,20 @@ where
             return Err("Proofman has not been initialized in final snark mode".into());
         }
 
-        self.pctx.dctx_reset();
+        self.reset();
 
         if !options.test_mode {
             Self::initialize_publics_custom_commits(&self.sctx, &self.pctx)?;
         }
+
+        if !options.minimal_memory && cfg!(feature = "gpu") {
+            self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
+            self.pctx.set_witness_tx_priority(Some(self.witness_tx_priority.clone()));
+        }
+        let witness_done = Arc::new(Counter::new());
+
+        let (witness_handler, witness_handles) =
+            self.calc_witness_handler(witness_done.clone(), self.memory_handler.clone(), options.minimal_memory, false);
 
         self.wcm.execute();
 
@@ -914,8 +1174,7 @@ where
 
         let instances = self.pctx.dctx_get_instances();
         let my_instances = self.pctx.dctx_get_my_instances();
-        let my_instances_tables =
-            my_instances.iter().filter(|idx| self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+        let my_instances_tables = self.pctx.dctx_get_my_tables();
 
         let mut my_instances_sorted = self.pctx.dctx_get_my_instances();
         let mut rng = StdRng::seed_from_u64(self.pctx.dctx_get_rank() as u64);
@@ -926,57 +1185,37 @@ where
 
         let instances_mine_no_tables = my_instances_sorted_no_tables.len();
 
-        let values_contributions: Arc<Vec<Mutex<Vec<F>>>> =
-            Arc::new((0..instances.len()).map(|_| Mutex::new(Vec::<F>::new())).collect());
-
-        let roots_contributions: Arc<Vec<[F; 4]>> = Arc::new((0..instances.len()).map(|_| [F::default(); 4]).collect());
-
-        let (aux_trace, const_pols, const_tree) = if cfg!(feature = "gpu") {
-            (Arc::new(Vec::new()), Arc::new(Vec::new()), Arc::new(Vec::new()))
-        } else {
-            (
-                Arc::new(create_buffer_fast(self.sctx.max_prover_buffer_size.max(self.setups.max_prover_buffer_size))),
-                Arc::new(create_buffer_fast(self.sctx.max_const_size.max(self.setups.max_const_size))),
-                Arc::new(create_buffer_fast(self.sctx.max_const_tree_size.max(self.setups.max_const_tree_size))),
-            )
-        };
-
         let max_witness_stored = match cfg!(feature = "gpu") {
             true => instances_mine_no_tables.min(self.gpu_params.max_witness_stored),
             false => 1,
         };
 
-        let max_num_threads = configured_num_threads(self.pctx.dctx_get_node_n_processes());
-        let n_proof_threads = match cfg!(feature = "gpu") {
-            true => self.n_gpus,
-            false => 1,
-        };
-
-        let n_streams = (self.n_streams_per_gpu + self.n_recursive_streams_per_gpu) * n_proof_threads;
-        let streams = Arc::new(Mutex::new(vec![None; n_streams as usize]));
+        let streams = Arc::new(Mutex::new(vec![None; self.n_streams]));
 
         let witnesses_done = Arc::new(AtomicUsize::new(0));
-        let (contributions_tx, contributions_rx): (Sender<usize>, Receiver<usize>) = unbounded();
 
-        self.pctx.set_proof_tx(Some(contributions_tx.clone()));
+        self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
 
         timer_stop_and_log_info!(PREPARING_CONTRIBUTIONS);
 
         let mut handle_contributions = Vec::new();
-        for _ in 0..n_streams {
+        for _ in 0..self.n_streams {
             let pctx_clone = self.pctx.clone();
             let sctx_clone = self.sctx.clone();
-            let roots_contributions_clone = roots_contributions.clone();
-            let values_contributions_clone = values_contributions.clone();
-            let aux_trace_clone = aux_trace.clone();
+            let roots_contributions_clone = self.roots_contributions.clone();
+            let values_contributions_clone = self.values_contributions.clone();
+            let aux_trace_clone = self.aux_trace.clone();
             let d_buffers_clone = self.d_buffers.clone();
             let streams_clone = streams.clone();
             let witnesses_done_clone = witnesses_done.clone();
             let memory_handler_clone = self.memory_handler.clone();
-            let contributions_rx_clone = contributions_rx.clone();
+            let contributions_rx_clone = self.contributions_rx.clone();
             let contribution_handle = std::thread::spawn(move || loop {
                 match contributions_rx_clone.try_recv() {
                     Ok(instance_id) => {
+                        if instance_id == usize::MAX {
+                            break;
+                        }
                         Self::get_contribution_air(
                             &pctx_clone,
                             &sctx_clone,
@@ -1015,24 +1254,45 @@ where
         self.calculate_witness(
             &my_instances_sorted_no_tables,
             self.memory_handler.clone(),
-            max_num_threads,
+            witness_done.clone(),
             options.minimal_memory,
             false,
         );
+
+        if !options.minimal_memory && cfg!(feature = "gpu") {
+            self.pctx.set_witness_tx(None);
+            self.pctx.set_witness_tx_priority(None);
+        }
+        self.witness_tx.send(usize::MAX).ok();
+
+        if let Some(h) = witness_handler {
+            h.join().unwrap();
+        }
+        if cfg!(feature = "gpu") {
+            let handles_to_join = witness_handles.lock().unwrap().drain(..).collect::<Vec<_>>();
+            for handle in handles_to_join {
+                handle.join().unwrap();
+            }
+        }
+
+        drop(witness_handles);
 
         timer_start_info!(CALCULATING_TABLES);
 
         //evalutate witness for instances of type "tables"
         for instance_id in my_instances_tables.iter() {
-            self.wcm.pre_calculate_witness(1, &[*instance_id], max_num_threads, self.memory_handler.as_ref());
-            self.wcm.calculate_witness(1, &[*instance_id], max_num_threads, self.memory_handler.as_ref());
+            self.wcm.pre_calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref());
+            self.wcm.calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref());
         }
 
         timer_stop_and_log_info!(CALCULATING_TABLES);
 
         self.pctx.set_proof_tx(None);
 
-        drop(contributions_tx);
+        for _ in 0..self.n_streams {
+            self.contributions_tx.send(usize::MAX).ok();
+        }
+
         for handle in handle_contributions {
             handle.join().unwrap();
         }
@@ -1043,7 +1303,7 @@ where
         timer_stop_and_log_info!(CALCULATING_INNER_CONTRIBUTIONS);
 
         //calculate-challenge
-        let internal_contribution = self.calculate_internal_contributions(roots_contributions, values_contributions);
+        let internal_contribution = self.calculate_internal_contributions();
 
         let all_partial_contributions = self.pctx.dctx_distribute_roots(internal_contribution);
         let all_partial_contributions_u64 = all_partial_contributions
@@ -1058,15 +1318,6 @@ where
         timer_start_info!(GENERATING_INNER_PROOFS);
 
         let n_airgroups = self.pctx.global_info.air_groups.len();
-
-        let mut proofs: Vec<RwLock<Proof<F>>> = Vec::new();
-        let compressor_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
-            Arc::new((0..instances.len()).map(|_| RwLock::new(None)).collect());
-        let recursive1_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
-            Arc::new((0..instances.len()).map(|_| RwLock::new(None)).collect());
-        let recursive2_proofs: Arc<Vec<RwLock<Vec<Proof<F>>>>> =
-            Arc::new((0..n_airgroups).map(|_| RwLock::new(Vec::new())).collect());
-        let recursive2_proofs_ongoing: Arc<RwLock<Vec<Option<Proof<F>>>>> = Arc::new(RwLock::new(Vec::new()));
 
         let vec_streams: Vec<(u64, u64)> = {
             let mut guard = streams.lock().unwrap();
@@ -1084,16 +1335,10 @@ where
 
         let mut n_airgroup_proofs = vec![0; n_airgroups];
         for (instance_id, instance_info) in instances.iter().enumerate() {
-            let (airgroup_id, air_id) = (instance_info.airgroup_id, instance_info.air_id);
             if self.pctx.dctx_is_my_instance(instance_id) {
-                n_airgroup_proofs[airgroup_id] += 1;
+                n_airgroup_proofs[instance_info.airgroup_id] += 1;
             }
-            let setup = self.sctx.get_setup(airgroup_id, air_id);
-            let proof = create_buffer_fast(setup.proof_size as usize);
-            proofs.push(RwLock::new(Proof::new(ProofType::Basic, airgroup_id, air_id, Some(instance_id), proof)));
         }
-
-        let proofs = Arc::new(proofs);
 
         if options.aggregation {
             for (airgroup, &n_proofs) in n_airgroup_proofs.iter().enumerate().take(n_airgroups) {
@@ -1103,38 +1348,31 @@ where
                     let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup);
                     let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
                     let null_proof = Proof::new(ProofType::Recursive2, airgroup, 0, None, null_proof_buffer);
-                    recursive2_proofs[airgroup].write().unwrap().push(null_proof);
+                    self.recursive2_proofs[airgroup].write().unwrap().push(null_proof);
                 }
             }
         }
-        let recursive2_proofs = Arc::new(recursive2_proofs);
 
         let proofs_pending = Arc::new(Counter::new());
 
-        let (recursive_tx, recursive_rx) = unbounded::<(u64, String)>();
-        register_proof_done_callback_c(recursive_tx.clone());
+        register_proof_done_callback_c(self.recursive_tx.clone());
 
-        let (proofs_tx, proofs_rx): (Sender<usize>, Receiver<usize>) = unbounded();
-        let (compressor_witness_tx, compressor_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
-        let (rec1_witness_tx, rec1_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
-        let (rec2_witness_tx, rec2_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
-
-        self.pctx.set_proof_tx(Some(proofs_tx.clone()));
+        self.pctx.set_proof_tx(Some(self.proofs_tx.clone()));
 
         let mut handle_recursives = Vec::new();
-        for _ in 0..n_streams {
+        for _ in 0..self.n_streams {
             let pctx_clone = self.pctx.clone();
             let setups_clone = self.setups.clone();
-            let proofs_clone = proofs.clone();
-            let compressor_proofs_clone = compressor_proofs.clone();
-            let recursive1_proofs_clone = recursive1_proofs.clone();
-            let recursive2_proofs_clone = recursive2_proofs.clone();
-            let recursive2_proofs_ongoing_clone = recursive2_proofs_ongoing.clone();
+            let proofs_clone = self.proofs.clone();
+            let compressor_proofs_clone = self.compressor_proofs.clone();
+            let recursive1_proofs_clone = self.recursive1_proofs.clone();
+            let recursive2_proofs_clone = self.recursive2_proofs.clone();
+            let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
             let proofs_pending_clone = proofs_pending.clone();
-            let rec1_witness_tx_clone = rec1_witness_tx.clone();
-            let rec2_witness_tx_clone = rec2_witness_tx.clone();
-            let compressor_witness_tx_clone = compressor_witness_tx.clone();
-            let recursive_rx_clone = recursive_rx.clone();
+            let rec1_witness_tx_clone = self.rec1_witness_tx.clone();
+            let rec2_witness_tx_clone = self.rec2_witness_tx.clone();
+            let compressor_witness_tx_clone = self.compressor_witness_tx.clone();
+            let recursive_rx_clone = self.recursive_rx.clone();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, proof_type)) = recursive_rx_clone.recv() {
                     if id == u64::MAX - 1 {
@@ -1188,7 +1426,7 @@ where
                         let compressor_proof = compressor_proofs_clone[id as usize].write().unwrap().take().unwrap();
                         Some(gen_witness_recursive(&pctx_clone, &setups_clone, &compressor_proof).unwrap())
                     } else {
-                        let proof = std::mem::take(&mut *proofs_clone[id as usize].write().unwrap());
+                        let proof = proofs_clone[id as usize].write().unwrap().take().unwrap();
                         Some(gen_witness_recursive(&pctx_clone, &setups_clone, &proof).unwrap())
                     };
 
@@ -1217,16 +1455,16 @@ where
                     proofs_pending.increment();
 
                     Self::gen_proof(
-                        &proofs,
+                        &self.proofs,
                         &self.pctx,
                         &self.sctx,
                         instance_id as usize,
                         &options.output_dir_path,
-                        &aux_trace,
-                        &const_pols,
-                        &const_tree,
+                        &self.aux_trace,
+                        &self.const_pols,
+                        &self.const_tree,
                         &self.d_buffers,
-                        Some(stream_id as usize), // or u64 if your API expects that
+                        Some(stream_id as usize),
                         options.save_proofs,
                         self.gpu_params.preallocate,
                     );
@@ -1262,26 +1500,25 @@ where
         });
 
         let proofs_finished = Arc::new(AtomicBool::new(false));
-        for _ in 0..n_streams {
+        for _ in 0..self.n_streams {
             let pctx_clone = self.pctx.clone();
             let sctx_clone = self.sctx.clone();
-            let aux_trace_clone = aux_trace.clone();
             let setups_clone = self.setups.clone();
             let d_buffers_clone = self.d_buffers.clone();
-            let trace_size = self.trace_size;
-            let prover_buffer_size = self.prover_buffer_size;
             let output_dir_path_clone = options.output_dir_path.clone();
-            let const_pols_clone = const_pols.clone();
-            let const_tree_clone = const_tree.clone();
-            let proofs_clone = proofs.clone();
-            let compressor_proofs_clone = compressor_proofs.clone();
-            let recursive1_proofs_clone = recursive1_proofs.clone();
-            let recursive2_proofs_ongoing_clone = recursive2_proofs_ongoing.clone();
+            let aux_trace_clone = self.aux_trace.clone();
+            let const_pols_clone = self.const_pols.clone();
+            let const_tree_clone = self.const_tree.clone();
+            let prover_buffer_recursive = self.prover_buffer_recursive.clone();
+            let proofs_clone = self.proofs.clone();
+            let compressor_proofs_clone = self.compressor_proofs.clone();
+            let recursive1_proofs_clone = self.recursive1_proofs.clone();
+            let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
             let stream_clone = vec_streams.clone();
-            let proofs_rx = proofs_rx.clone();
-            let compressor_rx = compressor_witness_rx.clone();
-            let rec2_rx = rec2_witness_rx.clone();
-            let rec1_rx = rec1_witness_rx.clone();
+            let proofs_rx = self.proofs_rx.clone();
+            let compressor_rx = self.compressor_witness_rx.clone();
+            let rec2_rx = self.rec2_witness_rx.clone();
+            let rec1_rx = self.rec1_witness_rx.clone();
             let preallocate = self.gpu_params.preallocate;
 
             let memory_handler_clone = self.memory_handler.clone();
@@ -1326,9 +1563,6 @@ where
                 }
 
                 let mut witness = witness.unwrap();
-
-                let trace: Vec<F> = create_buffer_fast(trace_size);
-                let prover_buffer: Vec<F> = create_buffer_fast(prover_buffer_size);
                 if witness.proof_type == ProofType::Recursive2 {
                     let id = {
                         let mut rec2_proofs = recursive2_proofs_ongoing_clone.write().unwrap();
@@ -1357,13 +1591,13 @@ where
                 if *new_proof_type == ProofType::Recursive2 {
                     let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
                     let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
+
                     let _ = generate_recursive_proof(
                         &pctx_clone,
                         &setups_clone,
                         &witness,
                         new_proof_ref,
-                        &trace,
-                        &prover_buffer,
+                        &prover_buffer_recursive,
                         &output_dir_path_clone,
                         d_buffers_clone.get_ptr(),
                         &const_tree_clone,
@@ -1378,8 +1612,7 @@ where
                         &setups_clone,
                         &witness,
                         new_proof_ref,
-                        &trace,
-                        &prover_buffer,
+                        &prover_buffer_recursive,
                         &output_dir_path_clone,
                         d_buffers_clone.get_ptr(),
                         &const_tree_clone,
@@ -1394,8 +1627,7 @@ where
                         &setups_clone,
                         &witness,
                         new_proof_ref,
-                        &trace,
-                        &prover_buffer,
+                        &prover_buffer_recursive,
                         &output_dir_path_clone,
                         d_buffers_clone.get_ptr(),
                         &const_tree_clone,
@@ -1411,20 +1643,13 @@ where
             handle_recursives.push(handle_recursive);
         }
 
-        // define managment channels and counters
-        let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
-
-        for _ in 0..max_num_threads {
-            tx_threads.send(()).unwrap();
-        }
-
         for &instance_id in my_instances_sorted.iter() {
             if my_instances_calculated[instance_id] {
                 continue;
             }
 
-            let tx_threads_clone: Sender<()> = tx_threads.clone();
-            let proofs_tx_clone = proofs_tx.clone();
+            let tx_threads_clone: Sender<()> = self.tx_threads.clone();
+            let proofs_tx_clone = self.proofs_tx.clone();
             let wcm = self.wcm.clone();
             let proofs_pending_clone = proofs_pending.clone();
             let is_stored = self.pctx.is_air_instance_stored(instance_id)
@@ -1435,13 +1660,14 @@ where
             let instance_info = &instances[instance_id];
             let (airgroup_id, air_id) = (instance_info.airgroup_id, instance_info.air_id);
 
-            let n_threads_witness = instance_info.threads_witness.min(max_num_threads);
+            let n_threads_witness = instance_info.threads_witness.min(self.max_num_threads);
 
-            let threads_to_use_collect = (instance_info.n_chunks / 16).min(max_num_threads / 4).max(n_threads_witness);
+            let threads_to_use_collect =
+                (instance_info.n_chunks / 16).min(self.max_num_threads / 4).max(n_threads_witness);
 
             if !is_stored {
                 for _ in 0..threads_to_use_collect {
-                    rx_threads.recv().unwrap();
+                    self.rx_threads.recv().unwrap();
                 }
             }
 
@@ -1484,12 +1710,10 @@ where
         get_stream_proofs_c(self.d_buffers.get_ptr());
         proofs_finished.store(true, Ordering::Relaxed);
         clear_proof_done_callback_c();
-        recursive_tx.send((u64::MAX - 1, "Basic".to_string())).unwrap();
+        for _ in 0..self.n_streams {
+            self.recursive_tx.send((u64::MAX - 1, "Basic".to_string())).unwrap();
+        }
 
-        drop(recursive_tx);
-        drop(rec2_witness_tx);
-        drop(compressor_witness_tx);
-        drop(rec1_witness_tx);
         for handle in handle_recursives {
             handle.join().unwrap();
         }
@@ -1526,10 +1750,10 @@ where
                 let mut airgroup_values_air_instances = vec![Vec::new(); my_instances.len()];
                 for instance_id in my_instances.iter() {
                     let proof = {
-                        let mut lock = proofs[*instance_id].write().unwrap();
+                        let mut lock = self.proofs[*instance_id].write().unwrap();
                         std::mem::take(&mut *lock)
                     };
-                    let valid_proof = verify_basic_proof(&self.pctx, *instance_id, &proof.proof);
+                    let valid_proof = verify_basic_proof(&self.pctx, *instance_id, &proof.as_ref().unwrap().proof);
                     if !valid_proof {
                         valid_proofs = false;
                     }
@@ -1543,8 +1767,11 @@ where
                         .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
                         .unwrap_or(0);
 
-                    let airgroup_values: Vec<F> =
-                        proof.proof[0..n_airgroup_values].to_vec().iter().map(|&x| F::from_u64(x)).collect();
+                    let airgroup_values: Vec<F> = proof.as_ref().unwrap().proof[0..n_airgroup_values]
+                        .to_vec()
+                        .iter()
+                        .map(|&x| F::from_u64(x))
+                        .collect();
 
                     airgroup_values_air_instances[self.pctx.dctx_get_instance_idx(*instance_id)] = airgroup_values;
                 }
@@ -1577,24 +1804,21 @@ where
         }
 
         timer_start_info!(GENERATING_OUTER_COMPRESSED_PROOFS);
-        let trace = create_buffer_fast::<F>(self.trace_size);
-        let prover_buffer = create_buffer_fast::<F>(self.prover_buffer_size);
+
         let recursive2_proofs_data: Vec<Vec<Proof<F>>> =
-            recursive2_proofs.iter().map(|lock| lock.read().unwrap().clone()).collect();
+            self.recursive2_proofs.iter().map(|lock| std::mem::take(&mut *lock.write().unwrap())).collect();
 
         let agg_recursive2_proof = aggregate_recursive2_proofs(
             &self.pctx,
             &self.setups,
             recursive2_proofs_data,
-            &trace,
-            &prover_buffer,
-            &const_pols,
-            &const_tree,
+            &self.prover_buffer_recursive,
+            &self.const_pols,
+            &self.const_tree,
             &options.output_dir_path,
             self.d_buffers.get_ptr(),
             false,
         )?;
-        self.pctx.dctx_barrier();
         timer_stop_and_log_info!(GENERATING_OUTER_COMPRESSED_PROOFS);
 
         let mut proof_id = None;
@@ -1604,11 +1828,10 @@ where
                 &self.pctx,
                 &self.setups,
                 &agg_recursive2_proof,
-                &trace,
-                &prover_buffer,
+                &self.prover_buffer_recursive,
                 &options.output_dir_path,
-                &const_pols,
-                &const_tree,
+                &self.const_pols,
+                &self.const_tree,
                 self.d_buffers.get_ptr(),
                 false,
             )?;
@@ -1632,8 +1855,7 @@ where
                     &self.pctx,
                     &self.setups,
                     &vadcop_proof_final.proof,
-                    &trace,
-                    &prover_buffer,
+                    &self.prover_buffer_recursive,
                     &options.output_dir_path,
                     false,
                 )?;
@@ -1671,42 +1893,35 @@ where
         Ok((proof_id, vadcop_final_proof))
     }
 
-    fn calculate_witness(
+    #[allow(clippy::type_complexity)]
+    fn calc_witness_handler(
         &self,
-        instances: &[usize],
+        witness_done: Arc<Counter>,
         memory_handler: Arc<MemoryHandler<F>>,
-        max_num_threads: usize,
         minimal_memory: bool,
         stats: bool,
-    ) {
-        timer_start_info!(CALCULATING_WITNESS);
-
-        let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
-
-        for _ in 0..max_num_threads {
-            tx_threads.send(()).unwrap();
-        }
-
-        let (witness_tx, witness_rx): (Sender<usize>, Receiver<usize>) = unbounded();
-        let (witness_tx_priority, witness_rx_priority): (Sender<usize>, Receiver<usize>) = unbounded();
-        self.pctx.set_witness_tx(Some(witness_tx.clone()));
-        self.pctx.set_witness_tx_priority(Some(witness_tx_priority.clone()));
-
-        let witness_done = Arc::new(Counter::new_with_threshold(instances.len()));
+    ) -> (Option<std::thread::JoinHandle<()>>, Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>) {
         let witness_done_clone = witness_done.clone();
-        let tx_threads_clone = tx_threads.clone();
-        let rx_threads_clone = rx_threads.clone();
+        let tx_threads_clone = self.tx_threads.clone();
+        let rx_threads_clone = self.rx_threads.clone();
         let pctx_clone = self.pctx.clone();
         let wcm_clone = self.wcm.clone();
         let memory_handler_clone = memory_handler.clone();
         let witness_handles = Arc::new(Mutex::new(Vec::new()));
         let witness_handles_clone = witness_handles.clone();
-        let witness_handler = if !minimal_memory {
+        let witness_rx = self.witness_rx.clone();
+        let witness_rx_priority = self.witness_rx_priority.clone();
+        let witness_handler = if !minimal_memory && cfg!(feature = "gpu") {
             Some(std::thread::spawn(move || loop {
                 let instance_id = match witness_rx_priority.try_recv() {
                     Ok(id) => id,
                     Err(crossbeam_channel::TryRecvError::Empty) => match witness_rx.try_recv() {
-                        Ok(id) => id,
+                        Ok(id) => {
+                            if id == usize::MAX {
+                                break;
+                            }
+                            id
+                        }
                         Err(crossbeam_channel::TryRecvError::Empty) => {
                             std::thread::sleep(std::time::Duration::from_micros(100));
                             continue;
@@ -1717,7 +1932,12 @@ where
                         },
                     },
                     Err(crossbeam_channel::TryRecvError::Disconnected) => match witness_rx.recv() {
-                        Ok(id) => id,
+                        Ok(id) => {
+                            if id == usize::MAX {
+                                break;
+                            }
+                            id
+                        }
                         Err(_) => break,
                     },
                 };
@@ -1766,10 +1986,23 @@ where
         } else {
             None
         };
+        (witness_handler, witness_handles)
+    }
 
-        if !minimal_memory {
+    fn calculate_witness(
+        &self,
+        instances: &[usize],
+        memory_handler: Arc<MemoryHandler<F>>,
+        witness_done: Arc<Counter>,
+        minimal_memory: bool,
+        stats: bool,
+    ) {
+        timer_start_info!(CALCULATING_WITNESS);
+
+        let mut witness_minimal_memory_handles = Vec::new();
+        if !minimal_memory && cfg!(feature = "gpu") {
             timer_start_info!(PRE_CALCULATE_WC);
-            self.wcm.pre_calculate_witness(1, instances, max_num_threads, memory_handler.as_ref());
+            self.wcm.pre_calculate_witness(1, instances, self.max_num_threads, memory_handler.as_ref());
             timer_stop_and_log_info!(PRE_CALCULATE_WC);
         } else {
             for &instance_id in instances.iter() {
@@ -1778,28 +2011,28 @@ where
                 let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id);
                 let threads_to_use_collect = match cfg!(feature = "gpu") || stats {
                     true => (self.pctx.dctx_get_instance_chunks(instance_id) / 16)
-                        .min(max_num_threads / 4)
-                        .max(n_threads_witness),
-                    false => max_num_threads,
+                        .max(self.max_num_threads / 4)
+                        .min(n_threads_witness)
+                        .min(self.max_num_threads),
+                    false => self.max_num_threads,
                 };
 
                 for _ in 0..threads_to_use_collect {
-                    rx_threads.recv().unwrap();
+                    self.rx_threads.recv().unwrap();
                 }
 
-                let threads_to_use_witness = match cfg!(feature = "gpu") {
+                let threads_to_use_witness = match cfg!(feature = "gpu") || stats {
                     true => threads_to_use_collect.min(n_threads_witness),
-                    false => max_num_threads,
+                    false => self.max_num_threads,
                 };
 
                 let threads_to_return = threads_to_use_collect - threads_to_use_witness;
 
                 let pctx_clone = self.pctx.clone();
                 let wcm_clone = self.wcm.clone();
-                let tx_threads_clone = tx_threads.clone();
+                let tx_threads_clone = self.tx_threads.clone();
                 let memory_handler_clone = memory_handler.clone();
                 let witness_done_clone = witness_done.clone();
-                let witness_handles_clone = witness_handles.clone();
                 let handle = std::thread::spawn(move || {
                     timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     timer_start_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -1842,27 +2075,19 @@ where
                 if !stats && cfg!(not(feature = "gpu")) {
                     handle.join().unwrap();
                 } else {
-                    witness_handles_clone.lock().unwrap().push(handle);
+                    witness_minimal_memory_handles.push(handle);
                 }
             }
         }
 
-        witness_done
-            .wait_until_threshold_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
+        witness_done.wait_until_value_and_check_streams(instances.len(), || {
+            get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr())
+        });
 
-        self.pctx.set_witness_tx(None);
-        self.pctx.set_witness_tx_priority(None);
-        drop(witness_tx);
-        drop(witness_tx_priority);
-        if let Some(h) = witness_handler {
-            h.join().unwrap();
+        for handle in witness_minimal_memory_handles {
+            handle.join().unwrap();
         }
-        if stats || cfg!(feature = "gpu") {
-            let handles_to_join = witness_handles.lock().unwrap().drain(..).collect::<Vec<_>>();
-            for handle in handles_to_join {
-                handle.join().unwrap();
-            }
-        }
+
         timer_stop_and_log_info!(CALCULATING_WITNESS);
     }
 
@@ -1976,7 +2201,7 @@ where
 
     #[allow(clippy::too_many_arguments)]
     fn gen_proof(
-        proofs: &[RwLock<Proof<F>>],
+        proofs: &[RwLock<Option<Proof<F>>>],
         pctx: &ProofCtx<F>,
         sctx: &SetupCtx<F>,
         instance_id: usize,
@@ -2025,11 +2250,15 @@ where
             None => (false, 0),
         };
 
+        let proof = create_buffer_fast(setup.proof_size as usize);
+        *proofs[instance_id].write().unwrap() =
+            Some(Proof::new(ProofType::Basic, airgroup_id, air_id, Some(instance_id), proof));
+
         gen_proof_c(
             p_setup,
             p_steps_params,
             pctx.get_global_challenge_ptr(),
-            proofs[instance_id].read().unwrap().proof.as_ptr() as *mut u64,
+            proofs[instance_id].read().unwrap().as_ref().unwrap().proof.as_ptr() as *mut u64,
             &proof_file,
             airgroup_id as u64,
             air_id as u64,
@@ -2132,11 +2361,7 @@ where
         Ok((pctx, sctx, setups_vadcop))
     }
 
-    fn calculate_internal_contributions(
-        &self,
-        roots_contributions: Arc<Vec<[F; 4]>>,
-        values_contributions: Arc<Vec<Mutex<Vec<F>>>>,
-    ) -> [u64; 10] {
+    fn calculate_internal_contributions(&self) -> [u64; 10] {
         timer_start_info!(CALCULATE_INTERNAL_CONTRIBUTION);
         let my_instances = self.pctx.dctx_get_my_instances();
 
@@ -2145,9 +2370,10 @@ where
         for (idx, instance_id) in my_instances.iter().enumerate() {
             let mut contribution = vec![F::ZERO; 10];
 
-            let root_contribution = roots_contributions[*instance_id];
+            let root_contribution = self.roots_contributions[*instance_id];
 
-            let values_to_hash = &mut values_contributions[*instance_id].lock().expect("Missing values_contribution");
+            let values_to_hash =
+                &mut self.values_contributions[*instance_id].lock().expect("Missing values_contribution");
             values_to_hash[4..8].copy_from_slice(&root_contribution[..4]);
 
             calculate_hash_c(
