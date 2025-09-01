@@ -173,7 +173,8 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
                         chunk[col] = F::from_u64(vec[row].swap(0, Ordering::Relaxed));
                     }
                 });
-                let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer, false));
+                let air_instance =
+                    AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, self.num_rows, buffer, false));
                 pctx.add_air_instance(air_instance, instance_id);
             } else {
                 pctx.dctx_distribute_multiplicities(&self.multiplicities, instance_id);
@@ -187,7 +188,8 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
                         }
                     });
 
-                    let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, self.num_rows, buffer, false));
+                    let air_instance =
+                        AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, self.num_rows, buffer, false));
                     pctx.add_air_instance(air_instance, instance_id);
                 } else {
                     self.multiplicities.par_iter().for_each(|vec| {
