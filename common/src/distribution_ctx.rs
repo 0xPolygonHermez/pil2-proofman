@@ -410,6 +410,39 @@ impl DistributionCtx {
         gid
     }
 
+    /// add an instance and assign it to a partition/process based only in the gid
+    /// the instance added is not a table
+    #[inline]
+    pub fn add_instance_partition(&mut self, airgroup_id: usize, air_id: usize, partition_id: usize, threads_witness: usize, weight: u64) -> usize {
+        if self.assignation_done {
+            panic!("Instances already assigned");
+        }
+        self.validate_static_config().expect("Static configuration invalid or incomplete");
+        let gid: usize = self.instances.len();
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness, weight));
+        self.n_instances += 1;
+        self.n_non_tables += 1;
+        self.instance_partition.push(partition_id as i32);
+        self.partition_count[partition_id as usize] += 1;
+        self.partition_weight[partition_id as usize] += weight;
+        let mut local_idx = 0;
+        let mut owner = -1;
+        if self.partition_mask[partition_id as usize] {
+            let worker_instance_id = self.worker_instances.len();
+            self.worker_instances.push(gid);
+            let process_id = worker_instance_id % self.n_processes;
+            owner = process_id as i32;
+            local_idx = self.process_count[process_id];
+            self.process_count[process_id] += 1;
+            self.process_weight[process_id] += weight;
+            if process_id == self.process_id {
+                self.process_instances.push(gid);
+            }
+        }
+        self.instance_process.push((owner, local_idx));
+        gid
+    }
+
     /// add an instance without assigning it to any partition/process
     /// It will be assigned later by assign_instances()
     /// the instance added is not a table
