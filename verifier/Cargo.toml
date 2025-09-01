@@ -13,6 +13,7 @@ build = "build.rs"
 fields.workspace = true
 tracing.workspace = true
 bytemuck.workspace = true
+zstd.workspace = true
 
 [features]
 default = []

@@ -5,8 +5,6 @@ use proofman_common::{initialize_logger, VerboseMode};
 use std::fs::File;
 use std::io::Read;
 use colored::Colorize;
-use bytemuck::cast_slice;
-use zstd::stream::read::Decoder;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -17,9 +15,6 @@ pub struct VerifyStark {
 
     #[clap(short = 'k', long)]
     pub verkey: String,
-
-    #[clap(short = 'z', long, default_value_t = false)]
-    pub zip: bool,
 
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
@@ -33,34 +28,15 @@ impl VerifyStark {
 
         initialize_logger(VerboseMode::Info, None);
 
-        let proof_buffer = if self.zip {
-            // Read compressed proof and decompress it
-            tracing::info!("Reading compressed proof file: {}", self.proof);
-            let proof_file = File::open(self.proof.clone())?;
-            let mut decoder = Decoder::new(proof_file)?;
-            let mut proof_buffer = Vec::new();
-            decoder.read_to_end(&mut proof_buffer)?;
-            tracing::info!("Decompressed proof size: {} bytes", proof_buffer.len());
-            proof_buffer
-        } else {
-            // Read uncompressed proof
-            tracing::info!("Reading uncompressed proof file: {}", self.proof);
-            let mut proof_file = File::open(self.proof.clone())?;
-            let mut proof_buffer = Vec::new();
-            proof_file.read_to_end(&mut proof_buffer)?;
-            tracing::info!("Proof size: {} bytes", proof_buffer.len());
-            proof_buffer
-        };
+        let mut proof_file = File::open(&self.proof)?;
+        let mut proof = Vec::new();
+        proof_file.read_to_end(&mut proof)?;
 
-        let proof_slice: &[u64] = cast_slice(&proof_buffer);
+        let mut verkey_file = File::open(&self.verkey)?;
+        let mut vk = Vec::new();
+        verkey_file.read_to_end(&mut vk)?;
 
-        let mut verkey_file = File::open(self.verkey.clone())?;
-        let mut verkey_buffer = Vec::new();
-        verkey_file.read_to_end(&mut verkey_buffer)?;
-
-        let verkey_slice: &[u64] = cast_slice(&verkey_buffer);
-
-        let valid = verify(proof_slice, verkey_slice);
+        let valid = verify(&proof, &vk);
 
         if !valid {
             tracing::info!("··· {}", "\u{2717} Stark proof was not verified".bright_red().bold());

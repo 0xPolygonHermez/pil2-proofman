@@ -1,4 +1,5 @@
 use fields::{intt_tiny, verify_fold, verify_mt, CubicExtensionField, Field, Goldilocks, Transcript};
+use bytemuck::cast_slice;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -41,8 +42,8 @@ pub fn log2(mut n: u64) -> u32 {
 
 #[allow(clippy::type_complexity)]
 pub fn stark_verify(
-    proof: &[u64],
-    vk: &[u64],
+    proof: &[u8],
+    vk: &[u8],
     verifier_info: &VerifierInfo,
     q_verify: fn(
         &[CubicExtensionField<Goldilocks>],
@@ -57,6 +58,8 @@ pub fn stark_verify(
         &[CubicExtensionField<Goldilocks>],
     ) -> CubicExtensionField<Goldilocks>,
 ) -> bool {
+    let proof = cast_slice::<u8, u64>(proof);
+    let vk = cast_slice::<u8, u64>(vk);
     let mut leaves: u64 = 1 << verifier_info.n_bits_ext;
     let mut n_siblings: u64 = 0;
 
