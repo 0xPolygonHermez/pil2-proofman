@@ -385,7 +385,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
             let air_ids = get_hint_field_gc_constant_a(&sctx, std_sum_users, "air_ids", false);
 
             let instances = pctx.dctx_get_instances();
-            let my_instances = pctx.dctx_get_my_instances();
+            let my_instances = pctx.dctx_get_process_instances();
 
             let fast_mode = pctx.debug_info.read().unwrap().std_mode.fast_mode;
 

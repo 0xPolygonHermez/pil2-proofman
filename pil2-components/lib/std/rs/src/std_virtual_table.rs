@@ -29,7 +29,7 @@ pub struct VirtualTableAir {
     num_cols: usize,
     table_ids: Vec<(usize, u64)>, // (table_id, acc_height)
     multiplicities: Vec<Vec<AtomicU64>>,
-    instance_id: AtomicU64,
+    table_instance_id: AtomicU64,
     calculated: AtomicBool,
     shared_tables: bool,
 }
@@ -79,7 +79,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             num_cols: num_muls as usize,
             table_ids: idxs,
             multiplicities,
-            instance_id: AtomicU64::new(0),
+            table_instance_id: AtomicU64::new(0),
             calculated: AtomicBool::new(false),
             shared_tables,
         };
@@ -235,19 +235,18 @@ impl VirtualTableAir {
 
 impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
     fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
-        let (instance_found, mut instance_id) = pctx.dctx_find_instance_mine(self.airgroup_id, self.air_id);
+        let (instance_found, mut table_instance_id) = pctx.dctx_find_process_table(self.airgroup_id, self.air_id);
 
         if !instance_found {
             if !self.shared_tables {
-                instance_id = pctx.add_table_all(self.airgroup_id, self.air_id);
+                table_instance_id = pctx.add_table_all(self.airgroup_id, self.air_id);
             } else {
-                instance_id = pctx.add_table(self.airgroup_id, self.air_id);
+                table_instance_id = pctx.add_table(self.airgroup_id, self.air_id);
             }
         }
 
         self.calculated.store(false, Ordering::Relaxed);
-        self.instance_id.store(instance_id as u64, Ordering::SeqCst);
-
+        self.table_instance_id.store(table_instance_id as u64, Ordering::SeqCst);
         Vec::new()
     }
 
@@ -272,7 +271,9 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         _buffer_pool: &dyn BufferPool<F>,
     ) {
         if stage == 1 {
-            let instance_id = self.instance_id.load(Ordering::Relaxed) as usize;
+            let table_instance_id = self.table_instance_id.load(Ordering::Relaxed) as usize;
+
+            let instance_id = pctx.dctx_get_table_instance_idx(table_instance_id);
 
             if !_instance_ids.contains(&instance_id) {
                 return;
@@ -293,9 +294,10 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
                     AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, self.num_rows, buffer, false));
                 pctx.add_air_instance(air_instance, instance_id);
             } else {
-                pctx.dctx_distribute_multiplicities(&self.multiplicities, instance_id);
+                let owner_idx = pctx.dctx_get_process_owner_instance(instance_id);
+                pctx.mpi_ctx.distribute_multiplicities(&self.multiplicities, owner_idx);
 
-                if pctx.dctx_is_my_instance(instance_id) {
+                if pctx.dctx_is_my_process_instance(instance_id) {
                     let buffer_size = self.num_cols * self.num_rows;
                     let mut buffer = create_buffer_fast(buffer_size);
                     buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {

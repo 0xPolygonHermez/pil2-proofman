@@ -64,7 +64,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
 
             publics.out = trace[trace.num_rows() - 1].b;
 
-            if pctx.dctx_is_my_instance(instance_id) {
+            if pctx.dctx_is_my_process_instance(instance_id) {
                 let mut air_values = FibonacciSquareAirValues::<F>::new();
                 air_values.fibo1[0] = F::from_u64(1);
                 air_values.fibo1[1] = F::from_u64(2);
