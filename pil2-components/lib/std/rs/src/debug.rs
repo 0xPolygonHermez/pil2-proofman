@@ -1,28 +1,23 @@
 use std::{
     collections::HashMap,
     fs::{self, File},
-    hash::{DefaultHasher, Hasher, Hash},
     io::{self, Write},
     path::{Path, PathBuf},
 };
 
+use colored::Colorize;
 use fields::PrimeField64;
 use proofman_common::ProofCtx;
 use proofman_hints::{format_vec, HintFieldOutput};
 
-use num_bigint::BigUint;
-use num_traits::Zero;
-
-use colored::*;
+use crate::normalize_vals;
 
 pub type DebugData<F> = HashMap<F, HashMap<Vec<HintFieldOutput<F>>, BusValue<F>>>; // opid -> val -> BusValue
-
-pub type DebugDataFast<F> = HashMap<F, SharedDataFast>; // opid -> sharedDataFast
 
 #[derive(Debug)]
 pub struct BusValue<F> {
     shared_data: SharedData<F>, // Data shared across all airgroups, airs, and instances
-    grouped_data: AirGroupMap,  // Data grouped by: airgroup_id -> air_id -> instance_id -> InstanceData
+    grouped_data: AirGroupMap,  // Data grouped by: airgroup_id -> air_id -> AirData -> instance_id -> InstanceData
 }
 
 #[derive(Debug)]
@@ -32,21 +27,13 @@ struct SharedData<F> {
     num_assumes: F,
 }
 
-#[derive(Clone, Debug)]
-pub struct SharedDataFast {
-    pub num_proves: BigUint,
-    pub num_assumes: BigUint,
-    pub num_proves_global: Vec<BigUint>,
-    pub num_assumes_global: Vec<BigUint>,
-}
-
 type AirGroupMap = HashMap<usize, AirMap>;
 type AirMap = HashMap<usize, AirData>;
 
 #[derive(Debug)]
 struct AirData {
     name_piop: String,
-    name_expr: Vec<String>,
+    name_exprs: Vec<String>,
     instances: InstanceMap,
 }
 
@@ -58,80 +45,54 @@ struct InstanceData {
     row_assumes: Vec<usize>,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn update_debug_data_fast<F: PrimeField64>(
-    debug_data_fast: &mut DebugDataFast<F>,
+/// Handle global debug data updates (shared across all instances)
+pub fn update_global_debug_data<F: PrimeField64>(
+    debug_data: &mut DebugData<F>,
     opid: F,
-    val: Vec<HintFieldOutput<F>>,
-    proves: bool,
+    vals: Vec<HintFieldOutput<F>>,
+    is_proves: bool,
     times: F,
-    is_global: bool,
 ) {
-    let bus_opid_times = debug_data_fast.entry(opid).or_insert_with(|| SharedDataFast {
-        num_assumes_global: Vec::new(),
-        num_proves_global: Vec::new(),
-        num_proves: BigUint::zero(),
-        num_assumes: BigUint::zero(),
+    let bus_opid = debug_data.entry(opid).or_default();
+    let norm_vals = normalize_vals(&vals);
+    let bus_val = bus_opid.entry(norm_vals).or_insert_with(|| BusValue {
+        shared_data: SharedData { direct_was_called: false, num_proves: F::ZERO, num_assumes: F::ZERO },
+        grouped_data: AirGroupMap::new(),
     });
 
-    let mut values = Vec::new();
-    for value in val.iter() {
-        match value {
-            HintFieldOutput::Field(f) => values.push(*f),
-            HintFieldOutput::FieldExtended(ef) => {
-                values.push(ef.value[0]);
-                values.push(ef.value[1]);
-                values.push(ef.value[2]);
-            }
-        }
+    // Skip if already processed
+    if bus_val.shared_data.direct_was_called {
+        return;
     }
 
-    let mut hasher = DefaultHasher::new();
-    values.hash(&mut hasher);
+    bus_val.shared_data.direct_was_called = true;
 
-    let hash_value = BigUint::from(hasher.finish());
-
-    if is_global {
-        if proves {
-            // Check if bus op id times num proves global contains value
-            if bus_opid_times.num_proves_global.contains(&hash_value) {
-                return;
-            }
-            bus_opid_times.num_proves_global.push(hash_value * times.as_canonical_biguint());
-        } else {
-            if bus_opid_times.num_assumes_global.contains(&hash_value) {
-                return;
-            }
-            bus_opid_times.num_assumes_global.push(hash_value);
-        }
-    } else if proves {
-        bus_opid_times.num_proves += hash_value * times.as_canonical_biguint();
+    if is_proves {
+        bus_val.shared_data.num_proves += times;
     } else {
         assert!(times.is_one(), "The selector value is invalid: expected 1, but received {times:?}.");
-        bus_opid_times.num_assumes += hash_value;
+        bus_val.shared_data.num_assumes += times;
     }
 }
 
+/// Handle local debug data updates (specific to airgroup/air/instance)
 #[allow(clippy::too_many_arguments)]
-pub fn update_debug_data<F: PrimeField64>(
+pub fn update_local_debug_data<F: PrimeField64>(
     debug_data: &mut DebugData<F>,
     name_piop: &str,
-    name_expr: &[String],
+    name_exprs: &[String],
     opid: F,
-    val: Vec<HintFieldOutput<F>>,
+    vals: Vec<HintFieldOutput<F>>,
     airgroup_id: usize,
     air_id: usize,
     instance_id: usize,
     row: usize,
-    proves: bool,
+    is_proves: bool,
     times: F,
-    is_global: bool,
 ) {
     let bus_opid = debug_data.entry(opid).or_default();
-
-    // Normalize the vector before inserting
-    let norm_val = normalize_val(&val);
-    let bus_val = bus_opid.entry(norm_val).or_insert_with(|| BusValue {
+    let norm_vals = normalize_vals(&vals);
+    let bus_val = bus_opid.entry(norm_vals).or_insert_with(|| BusValue {
         shared_data: SharedData { direct_was_called: false, num_proves: F::ZERO, num_assumes: F::ZERO },
         grouped_data: AirGroupMap::new(),
     });
@@ -143,22 +104,15 @@ pub fn update_debug_data<F: PrimeField64>(
         .entry(air_id)
         .or_insert_with(|| AirData {
             name_piop: name_piop.to_owned(),
-            name_expr: name_expr.to_owned(),
+            name_exprs: name_exprs.to_owned(),
             instances: InstanceMap::new(),
         })
         .instances
         .entry(instance_id)
         .or_insert_with(|| InstanceData { row_proves: Vec::new(), row_assumes: Vec::new() });
 
-    // If the value is global but it was already processed, skip it
-    if is_global {
-        if bus_val.shared_data.direct_was_called {
-            return;
-        }
-        bus_val.shared_data.direct_was_called = true;
-    }
-
-    if proves {
+    // Update shared counters
+    if is_proves {
         bus_val.shared_data.num_proves += times;
         grouped_data.row_proves.push(row);
     } else {
@@ -168,73 +122,38 @@ pub fn update_debug_data<F: PrimeField64>(
     }
 }
 
-fn normalize_val<F: PrimeField64>(val: &[HintFieldOutput<F>]) -> Vec<HintFieldOutput<F>> {
-    let is_zero = |v: &HintFieldOutput<F>| match v {
-        HintFieldOutput::Field(x) => *x == F::ZERO,
-        HintFieldOutput::FieldExtended(ext) => ext.is_zero(),
-    };
-
-    // Find the index of the last non-zero entry
-    let last_non_zero = val.iter().rposition(|v| !is_zero(v)).unwrap_or(0);
-
-    // Keep everything from index 0 to last_non_zero
-    val[..=last_non_zero].to_vec()
-}
-
-pub fn check_invalid_opids<F: PrimeField64>(_pctx: &ProofCtx<F>, debugs_data_fasts: &mut [DebugDataFast<F>]) -> Vec<F> {
-    let mut debug_data_fast = HashMap::new();
-
-    let mut global_assumes = Vec::new();
-    let mut global_proves = Vec::new();
-    for map in debugs_data_fasts {
-        for (opid, bus) in map.iter() {
-            if debug_data_fast.contains_key(opid) {
-                let bus_fast: &mut SharedDataFast = debug_data_fast.get_mut(opid).unwrap();
-                for assume_global in bus.num_assumes_global.iter() {
-                    if global_assumes.contains(assume_global) {
-                        continue;
-                    }
-                    global_assumes.push(assume_global.clone());
-                    bus_fast.num_assumes += assume_global;
-                }
-                for prove_global in bus.num_proves_global.iter() {
-                    if global_proves.contains(prove_global) {
-                        continue;
-                    }
-                    global_proves.push(prove_global.clone());
-                    bus_fast.num_proves += prove_global;
-                }
-
-                bus_fast.num_proves += bus.num_proves.clone();
-                bus_fast.num_assumes += bus.num_assumes.clone();
-            } else {
-                debug_data_fast.insert(*opid, bus.clone());
-            }
-        }
-    }
-
-    // TODO: SINCRONIZATION IN DISTRIBUTED MODE
-
-    let mut invalid_opids = Vec::new();
-
-    // Check if there are any invalid opids
-
-    for (opid, bus) in debug_data_fast.iter_mut() {
-        if bus.num_proves != bus.num_assumes {
-            invalid_opids.push(*opid);
-        }
-    }
-
-    if !invalid_opids.is_empty() {
-        tracing::error!(
-            "··· {}",
-            format!("\u{2717} The following opids does not match {invalid_opids:?}").bright_red().bold()
-        );
+#[allow(clippy::too_many_arguments)]
+pub fn update_debug_data<F: PrimeField64>(
+    debug_data: &mut DebugData<F>,
+    name_piop: &str,
+    name_exprs: &[String],
+    opid: F,
+    vals: Vec<HintFieldOutput<F>>,
+    airgroup_id: usize,
+    air_id: Option<usize>,
+    instance_id: Option<usize>,
+    row: usize,
+    is_proves: bool,
+    times: F,
+    is_global: bool,
+) {
+    if is_global {
+        update_global_debug_data(debug_data, opid, vals, is_proves, times);
     } else {
-        tracing::info!("··· {}", "\u{2713} All bus values match.".bright_green().bold());
+        update_local_debug_data(
+            debug_data,
+            name_piop,
+            name_exprs,
+            opid,
+            vals,
+            airgroup_id,
+            air_id.unwrap(),
+            instance_id.unwrap(),
+            row,
+            is_proves,
+            times,
+        );
     }
-
-    invalid_opids
 }
 
 pub fn print_debug_info<F: PrimeField64>(
@@ -394,7 +313,7 @@ pub fn print_debug_info<F: PrimeField64>(
             let airgroup_name = pctx.global_info.get_air_group_name(airgroup_id);
             let air_name = pctx.global_info.get_air_name(airgroup_id, air_id);
             let piop_name = &grouped_data.get(&airgroup_id).unwrap().get(&air_id).unwrap().name_piop;
-            let expr_name = &grouped_data.get(&airgroup_id).unwrap().get(&air_id).unwrap().name_expr;
+            let expr_name = &grouped_data.get(&airgroup_id).unwrap().get(&air_id).unwrap().name_exprs;
 
             rows.sort();
             let rows_display =
