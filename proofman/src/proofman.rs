@@ -435,7 +435,7 @@ where
         let memory_handler =
             Arc::new(MemoryHandler::new(self.gpu_params.max_witness_stored, self.sctx.max_witness_trace_size));
 
-        if !options.minimal_memory && cfg!(feature = "gpu") {
+        if !options.minimal_memory {
             self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
             self.pctx.set_witness_tx_priority(Some(self.witness_tx_priority.clone()));
         }
@@ -452,13 +452,12 @@ where
             true,
         );
 
-        if !options.minimal_memory && cfg!(feature = "gpu") {
+        if !options.minimal_memory {
             self.pctx.set_witness_tx(None);
             self.pctx.set_witness_tx_priority(None);
         }
 
         self.witness_tx.send(usize::MAX).ok();
-        self.witness_tx_priority.send(usize::MAX).ok();
 
         if let Some(h) = witness_handler {
             h.join().unwrap();
@@ -1911,7 +1910,7 @@ where
         let witness_handles_clone = witness_handles.clone();
         let witness_rx = self.witness_rx.clone();
         let witness_rx_priority = self.witness_rx_priority.clone();
-        let witness_handler = if !minimal_memory && cfg!(feature = "gpu") {
+        let witness_handler = if !minimal_memory && (cfg!(feature = "gpu") || stats) {
             Some(std::thread::spawn(move || loop {
                 let instance_id = match witness_rx_priority.try_recv() {
                     Ok(id) => id,
@@ -2000,7 +1999,7 @@ where
         timer_start_info!(CALCULATING_WITNESS);
 
         let mut witness_minimal_memory_handles = Vec::new();
-        if !minimal_memory && cfg!(feature = "gpu") {
+        if !minimal_memory && (cfg!(feature = "gpu") || stats) {
             timer_start_info!(PRE_CALCULATE_WC);
             self.wcm.pre_calculate_witness(1, instances, self.max_num_threads, memory_handler.as_ref());
             timer_stop_and_log_info!(PRE_CALCULATE_WC);
