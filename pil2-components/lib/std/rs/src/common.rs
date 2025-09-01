@@ -15,7 +15,6 @@ pub trait AirComponent<F: PrimeField64> {
     fn new(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, airgroup_id: usize, air_id: usize) -> Arc<Self>;
 }
 
-// TODO: Remove aliases if they exist!
 /// Normalize the values.
 pub fn normalize_vals<F: PrimeField64>(vals: &[HintFieldOutput<F>]) -> Vec<HintFieldOutput<F>> {
     let is_zero = |v: &HintFieldOutput<F>| match v {

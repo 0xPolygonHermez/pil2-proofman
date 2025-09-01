@@ -167,7 +167,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
     }
 
     fn debug(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
-        timer_start_info!(extract_hint_fields_SUM);
+        timer_start_info!(DEBUG_MODE_SUM);
         if self.num_users > 0 {
             let instances = pctx.dctx_get_instances();
             let my_instances = pctx.dctx_get_my_instances();
@@ -231,7 +231,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                 }
             }
         }
-        timer_stop_and_log_info!(extract_hint_fields_SUM);
+        timer_stop_and_log_info!(DEBUG_MODE_SUM);
     }
 
     fn end(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, debug_info: &DebugInfo) {
@@ -277,10 +277,10 @@ impl<F: PrimeField64> StdSum<F> {
         let gsum_debug_data = get_hint_ids_by_name(sctx.get_global_bin(), "gsum_debug_data_global");
         if !gsum_debug_data.is_empty() {
             let num_global_hints =
-                get_global_hint_field_constant_as::<usize, F>(&sctx, gsum_debug_data[0], "num_global_hints");
+                get_global_hint_field_constant_as::<usize, F>(sctx, gsum_debug_data[0], "num_global_hints");
             for i in 0..num_global_hints {
                 let airgroup_id =
-                    get_global_hint_field_constant_as::<usize, F>(&sctx, gsum_debug_data[1 + i], "airgroup_id");
+                    get_global_hint_field_constant_as::<usize, F>(sctx, gsum_debug_data[1 + i], "airgroup_id");
                 let name_piop = get_global_hint_field_constant_as_string(sctx, gsum_debug_data[1 + i], "name_piop");
                 let type_piop = get_global_hint_field_constant_as::<u64, F>(sctx, gsum_debug_data[1 + i], "type_piop");
                 assert!(

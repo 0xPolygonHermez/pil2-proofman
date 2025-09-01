@@ -16,8 +16,9 @@ pub type DebugData<F> = HashMap<F, HashMap<Vec<HintFieldOutput<F>>, BusValue<F>>
 
 #[derive(Debug)]
 pub struct BusValue<F> {
-    shared_data: SharedData<F>, // Data shared across all airgroups, airs, and instances
-    grouped_data: AirGroupMap,  // Data grouped by: airgroup_id -> air_id -> AirData -> instance_id -> InstanceData
+    shared_data: SharedData<F>,     // Data shared across all airgroups, airs, and instances
+    local_data: AirGroupMap,        // Data grouped by: airgroup_id -> air_id -> AirData -> instance_id -> InstanceData
+    global_data: GlobalAirGroupMap, // Data grouped by: airgroup_id -> AirGroupData (for global operations)
 }
 
 #[derive(Debug)]
@@ -45,11 +46,23 @@ struct InstanceData {
     row_assumes: Vec<usize>,
 }
 
+type GlobalAirGroupMap = HashMap<usize, AirGroupData>;
+
+#[derive(Debug)]
+struct AirGroupData {
+    name_piop: String,
+    name_exprs: Vec<String>,
+}
+
 /// Handle global debug data updates (shared across all instances)
+#[allow(clippy::too_many_arguments)]
 pub fn update_global_debug_data<F: PrimeField64>(
     debug_data: &mut DebugData<F>,
+    name_piop: &str,
+    name_exprs: &[String],
     opid: F,
     vals: Vec<HintFieldOutput<F>>,
+    airgroup_id: usize,
     is_proves: bool,
     times: F,
 ) {
@@ -57,7 +70,8 @@ pub fn update_global_debug_data<F: PrimeField64>(
     let norm_vals = normalize_vals(&vals);
     let bus_val = bus_opid.entry(norm_vals).or_insert_with(|| BusValue {
         shared_data: SharedData { direct_was_called: false, num_proves: F::ZERO, num_assumes: F::ZERO },
-        grouped_data: AirGroupMap::new(),
+        local_data: AirGroupMap::new(),
+        global_data: GlobalAirGroupMap::new(),
     });
 
     // Skip if already processed
@@ -66,6 +80,12 @@ pub fn update_global_debug_data<F: PrimeField64>(
     }
 
     bus_val.shared_data.direct_was_called = true;
+
+    // Store global data for this airgroup
+    bus_val
+        .global_data
+        .entry(airgroup_id)
+        .or_insert_with(|| AirGroupData { name_piop: name_piop.to_owned(), name_exprs: name_exprs.to_owned() });
 
     if is_proves {
         bus_val.shared_data.num_proves += times;
@@ -94,11 +114,12 @@ pub fn update_local_debug_data<F: PrimeField64>(
     let norm_vals = normalize_vals(&vals);
     let bus_val = bus_opid.entry(norm_vals).or_insert_with(|| BusValue {
         shared_data: SharedData { direct_was_called: false, num_proves: F::ZERO, num_assumes: F::ZERO },
-        grouped_data: AirGroupMap::new(),
+        local_data: AirGroupMap::new(),
+        global_data: GlobalAirGroupMap::new(),
     });
 
-    let grouped_data = bus_val
-        .grouped_data
+    let local_data = bus_val
+        .local_data
         .entry(airgroup_id)
         .or_default()
         .entry(air_id)
@@ -114,11 +135,11 @@ pub fn update_local_debug_data<F: PrimeField64>(
     // Update shared counters
     if is_proves {
         bus_val.shared_data.num_proves += times;
-        grouped_data.row_proves.push(row);
+        local_data.row_proves.push(row);
     } else {
         assert!(times.is_one(), "The selector value is invalid: expected 1, but received {times:?}.");
         bus_val.shared_data.num_assumes += times;
-        grouped_data.row_assumes.push(row);
+        local_data.row_assumes.push(row);
     }
 }
 
@@ -138,7 +159,7 @@ pub fn update_debug_data<F: PrimeField64>(
     is_global: bool,
 ) {
     if is_global {
-        update_global_debug_data(debug_data, opid, vals, is_proves, times);
+        update_global_debug_data(debug_data, name_piop, name_exprs, opid, vals, airgroup_id, is_proves, times);
     } else {
         update_local_debug_data(
             debug_data,
@@ -225,8 +246,9 @@ pub fn print_debug_info<F: PrimeField64>(
                 break;
             }
             let shared_data = &data.shared_data;
-            let grouped_data = &mut data.grouped_data;
-            print_diffs(pctx, val, max_values_to_print, shared_data, grouped_data, false, &mut output);
+            let local_data = &mut data.local_data;
+            let global_data = &data.global_data;
+            print_diffs(pctx, val, max_values_to_print, shared_data, local_data, global_data, false, &mut output);
         }
 
         if len_overassumed > 0 {
@@ -250,8 +272,9 @@ pub fn print_debug_info<F: PrimeField64>(
             }
 
             let shared_data = &data.shared_data;
-            let grouped_data = &mut data.grouped_data;
-            print_diffs(pctx, val, max_values_to_print, shared_data, grouped_data, true, &mut output);
+            let local_data = &mut data.local_data;
+            let global_data = &data.global_data;
+            print_diffs(pctx, val, max_values_to_print, shared_data, local_data, global_data, true, &mut output);
         }
 
         if len_overproven > 0 {
@@ -263,12 +286,14 @@ pub fn print_debug_info<F: PrimeField64>(
         tracing::info!("··· {}", "\u{2713} All bus values match.".bright_green().bold());
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn print_diffs<F: PrimeField64>(
         pctx: &ProofCtx<F>,
         val: &[HintFieldOutput<F>],
         max_values_to_print: usize,
         shared_data: &SharedData<F>,
-        grouped_data: &mut AirGroupMap,
+        local_data: &mut AirGroupMap,
+        global_data: &GlobalAirGroupMap,
         proves: bool,
         output: &mut dyn Write,
     ) {
@@ -288,9 +313,20 @@ pub fn print_debug_info<F: PrimeField64>(
         )
         .expect("Write error");
 
+        // Print global data first
+        for (airgroup_id, airgroup_data) in global_data.iter() {
+            let airgroup_name = pctx.global_info.get_air_group_name(*airgroup_id);
+            writeln!(output, "\t        - Airgroup: {} (id: {})", airgroup_name, airgroup_id).expect("Write error");
+            writeln!(output, "\t          PIOP: {}", airgroup_data.name_piop).expect("Write error");
+            writeln!(output, "\t          Expression: {:?}", airgroup_data.name_exprs).expect("Write error");
+            writeln!(output, "\t          Num: 1").expect("Write error");
+        }
+
+        // Print local data next
+
         // Collect and organize rows
         let mut organized_rows = Vec::new();
-        for (airgroup_id, air_id_map) in grouped_data.iter_mut() {
+        for (airgroup_id, air_id_map) in local_data.iter_mut() {
             for (air_id, air_data) in air_id_map.iter_mut() {
                 for (instance_id, meta_data) in air_data.instances.iter_mut() {
                     let rows = {
@@ -312,8 +348,8 @@ pub fn print_debug_info<F: PrimeField64>(
         for (airgroup_id, air_id, instance_id, mut rows) in organized_rows {
             let airgroup_name = pctx.global_info.get_air_group_name(airgroup_id);
             let air_name = pctx.global_info.get_air_name(airgroup_id, air_id);
-            let piop_name = &grouped_data.get(&airgroup_id).unwrap().get(&air_id).unwrap().name_piop;
-            let expr_name = &grouped_data.get(&airgroup_id).unwrap().get(&air_id).unwrap().name_exprs;
+            let piop_name = &local_data.get(&airgroup_id).unwrap().get(&air_id).unwrap().name_piop;
+            let expr_name = &local_data.get(&airgroup_id).unwrap().get(&air_id).unwrap().name_exprs;
 
             rows.sort();
             let rows_display =

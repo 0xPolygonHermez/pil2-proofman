@@ -285,10 +285,10 @@ impl<F: PrimeField64> StdProd<F> {
         let gprod_debug_data = get_hint_ids_by_name(sctx.get_global_bin(), "gprod_debug_data_global");
         if !gprod_debug_data.is_empty() {
             let num_global_hints =
-                get_global_hint_field_constant_as::<usize, F>(&sctx, gprod_debug_data[0], "num_global_hints");
+                get_global_hint_field_constant_as::<usize, F>(sctx, gprod_debug_data[0], "num_global_hints");
             for i in 0..num_global_hints {
                 let airgroup_id =
-                    get_global_hint_field_constant_as::<usize, F>(&sctx, gprod_debug_data[1 + i], "airgroup_id");
+                    get_global_hint_field_constant_as::<usize, F>(sctx, gprod_debug_data[1 + i], "airgroup_id");
                 let name_piop = get_global_hint_field_constant_as_string(sctx, gprod_debug_data[1 + i], "name_piop");
                 let type_piop = get_global_hint_field_constant_as::<u64, F>(sctx, gprod_debug_data[1 + i], "type_piop");
                 assert!(
