@@ -254,8 +254,7 @@ impl DistributionCtx {
 
     pub fn get_table_instance_idx(&self, table_idx: usize) -> usize {
         if self.assignation_done {
-            let instance_id = self.aux_table_map[table_idx] as usize;
-            instance_id
+            self.aux_table_map[table_idx] as usize
         } else {
             panic!("Table instances not yet assigned");
         }
@@ -396,9 +395,9 @@ impl DistributionCtx {
         let mut local_idx = 0;
         let mut owner = -1;
         if self.partition_mask[partition_id as usize] {
-            let worker_instance_id = self.worker_instances.len() as usize;
+            let worker_instance_id = self.worker_instances.len();
             self.worker_instances.push(gid);
-            let process_id = (worker_instance_id % self.n_processes) as usize;
+            let process_id = worker_instance_id % self.n_processes;
             owner = process_id as i32;
             local_idx = self.process_count[process_id];
             self.process_count[process_id] += 1;
@@ -428,7 +427,7 @@ impl DistributionCtx {
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness, weight));
         self.instance_partition.push(-1);
-        self.instance_process.push((-1, 0 as usize));
+        self.instance_process.push((-1, 0_usize));
         self.n_instances += 1;
         self.n_non_tables += 1;
         self.n_instances - 1
@@ -593,7 +592,7 @@ impl DistributionCtx {
                     }
                 }
                 let gid = self.instances.len();
-                self.instances.push(table.clone());
+                self.instances.push(*table);
                 self.n_instances += 1;
                 self.n_tables += 1;
                 self.instance_partition.push(-2); // Mark as table
