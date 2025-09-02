@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicUsize;
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, load_const_pols, skip_prover_instance, CurveType, DebugInfo,
     MemoryHandler, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx, SetupsVadcop, VerboseMode,
-    MAX_AIRGROUPS, MAX_INSTANCES,
+    MAX_INSTANCES,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -815,6 +815,7 @@ where
 
         let memory_handler = Arc::new(MemoryHandler::new(max_witness_stored, sctx.max_witness_trace_size));
 
+        let n_airgroups = pctx.global_info.air_groups.len();
         let proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
             Arc::new((0..MAX_INSTANCES).map(|_| RwLock::new(None)).collect());
         let compressor_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
@@ -822,7 +823,7 @@ where
         let recursive1_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
             Arc::new((0..MAX_INSTANCES).map(|_| RwLock::new(None)).collect());
         let recursive2_proofs: Arc<Vec<RwLock<Vec<Proof<F>>>>> =
-            Arc::new((0..MAX_AIRGROUPS).map(|_| RwLock::new(Vec::new())).collect());
+            Arc::new((0..n_airgroups).map(|_| RwLock::new(Vec::new())).collect());
         let recursive2_proofs_ongoing: Arc<RwLock<Vec<Option<Proof<F>>>>> = Arc::new(RwLock::new(Vec::new()));
 
         let (aux_trace, const_pols, const_tree) = if cfg!(feature = "gpu") {
@@ -968,6 +969,7 @@ where
 
         let memory_handler = Arc::new(MemoryHandler::new(max_witness_stored, sctx.max_witness_trace_size));
 
+        let n_airgroups = pctx.global_info.air_groups.len();
         let proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
             Arc::new((0..MAX_INSTANCES).map(|_| RwLock::new(None)).collect());
         let compressor_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
@@ -975,7 +977,7 @@ where
         let recursive1_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
             Arc::new((0..MAX_INSTANCES).map(|_| RwLock::new(None)).collect());
         let recursive2_proofs: Arc<Vec<RwLock<Vec<Proof<F>>>>> =
-            Arc::new((0..MAX_AIRGROUPS).map(|_| RwLock::new(Vec::new())).collect());
+            Arc::new((0..n_airgroups).map(|_| RwLock::new(Vec::new())).collect());
         let recursive2_proofs_ongoing: Arc<RwLock<Vec<Option<Proof<F>>>>> = Arc::new(RwLock::new(Vec::new()));
 
         let (aux_trace, const_pols, const_tree) = if cfg!(feature = "gpu") {

@@ -183,7 +183,6 @@ pub struct ProofCtx<F: PrimeField64> {
 }
 
 pub const MAX_INSTANCES: u64 = 10000;
-pub const MAX_AIRGROUPS: u64 = 100;
 
 impl<F: PrimeField64> ProofCtx<F> {
     #[cfg(distributed)]
