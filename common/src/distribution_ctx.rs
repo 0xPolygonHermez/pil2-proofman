@@ -413,7 +413,14 @@ impl DistributionCtx {
     /// add an instance and assign it to a partition/process based only in the gid
     /// the instance added is not a table
     #[inline]
-    pub fn add_instance_partition(&mut self, airgroup_id: usize, air_id: usize, partition_id: usize, threads_witness: usize, weight: u64) -> usize {
+    pub fn add_instance_partition(
+        &mut self,
+        airgroup_id: usize,
+        air_id: usize,
+        partition_id: usize,
+        threads_witness: usize,
+        weight: u64,
+    ) -> usize {
         if self.assignation_done {
             panic!("Instances already assigned");
         }
@@ -423,11 +430,11 @@ impl DistributionCtx {
         self.n_instances += 1;
         self.n_non_tables += 1;
         self.instance_partition.push(partition_id as i32);
-        self.partition_count[partition_id as usize] += 1;
-        self.partition_weight[partition_id as usize] += weight;
+        self.partition_count[partition_id] += 1;
+        self.partition_weight[partition_id] += weight;
         let mut local_idx = 0;
         let mut owner = -1;
-        if self.partition_mask[partition_id as usize] {
+        if self.partition_mask[partition_id] {
             let worker_instance_id = self.worker_instances.len();
             self.worker_instances.push(gid);
             let process_id = worker_instance_id % self.n_processes;
@@ -613,7 +620,6 @@ impl DistributionCtx {
         self.n_tables = 0;
         for (table_idx, table) in self.aux_tables.iter().enumerate() {
             if table.shared {
-                println!("BURRO");
                 let mut min_weight = u64::MAX;
                 let mut process_id = 0;
                 for (i, &weight) in self.process_weight.iter().enumerate() {

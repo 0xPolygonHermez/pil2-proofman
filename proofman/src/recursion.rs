@@ -30,6 +30,18 @@ pub struct MaxSizes {
     pub total_const_area_aggregation: u64,
 }
 
+#[derive(Debug)]
+pub struct AggProofs {
+    pub airgroup_id: u64,
+    pub proof: Vec<u64>,
+}
+
+impl AggProofs {
+    pub fn new(airgroup_id: u64, proof: Vec<u64>) -> Self {
+        Self { airgroup_id, proof }
+    }
+}
+
 pub fn gen_witness_recursive<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
@@ -328,7 +340,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn aggregate_recursive2_proofs<F: PrimeField64>(
+pub fn aggregate_worker_proofs<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     mpi_ctx: &MpiCtx,
     setups: &SetupsVadcop<F>,
@@ -339,7 +351,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
     output_dir_path: &Path,
     d_buffers: *mut c_void,
     save_proofs: bool,
-) -> Result<Vec<Option<Vec<u64>>>, Box<dyn std::error::Error>> {
+) -> Result<Vec<AggProofs>, Box<dyn std::error::Error>> {
     let n_processes = mpi_ctx.n_processes as usize;
     let rank = mpi_ctx.rank as usize;
     let n_airgroups = pctx.global_info.air_groups.len();
@@ -465,19 +477,22 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
         }
     }
 
-    let recursive2_proofs: Vec<Option<Vec<u64>>> = airgroup_proofs
-        .into_iter()
-        .map(|mut group| if group.is_empty() { None } else { group.swap_remove(0) })
-        .collect();
+    let mut agg_proofs = Vec::new();
 
-    Ok(recursive2_proofs)
+    for (airgroup_id, proofs) in airgroup_proofs.into_iter().enumerate() {
+        if let Some(Some(proof)) = proofs.into_iter().find(|p| p.is_some()) {
+            agg_proofs.push(AggProofs::new(airgroup_id as u64, proof));
+        }
+    }
+
+    Ok(agg_proofs)
 }
 
 #[allow(clippy::too_many_arguments)]
 pub fn generate_vadcop_final_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
-    recursive2_proofs: &[Option<Vec<u64>>],
+    agg_proofs: &[AggProofs],
     prover_buffer: &[F],
     output_dir_path: &Path,
     const_pols: &[F],
@@ -488,16 +503,32 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     let publics_circom_size =
         pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3;
 
+    let n_airgroups = pctx.global_info.air_groups.len();
+
     let mut updated_proof_size = publics_circom_size;
-    for proofs in recursive2_proofs {
-        updated_proof_size += proofs.as_ref().unwrap().len();
+
+    for airgroup_id in 0..n_airgroups {
+        let setup = setups.get_setup(airgroup_id, 0, &ProofType::Recursive2);
+        let publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
+        updated_proof_size += setup.proof_size as usize + publics_aggregation;
     }
 
     let mut updated_proof = vec![0; updated_proof_size];
     add_publics_circom(&mut updated_proof, 0, pctx, "", false);
 
-    for proofs in recursive2_proofs {
-        updated_proof[publics_circom_size..].copy_from_slice(proofs.as_ref().unwrap());
+    let mut offset = publics_circom_size;
+    for airgroup_id in 0..n_airgroups {
+        let setup = setups.get_setup(airgroup_id, 0, &ProofType::Recursive2);
+        let publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
+        let proof_size = setup.proof_size as usize + publics_aggregation;
+        if let Some(ap) = agg_proofs.iter().find(|ap| ap.airgroup_id as usize == airgroup_id) {
+            assert!(ap.proof.len() == proof_size);
+            updated_proof[offset..offset + proof_size].copy_from_slice(&ap.proof);
+        } else {
+            let null_proof = vec![0; proof_size];
+            updated_proof[offset..offset + proof_size].copy_from_slice(&null_proof);
+        }
+        offset += proof_size;
     }
 
     let setup = setups.setup_vadcop_final.as_ref().unwrap();

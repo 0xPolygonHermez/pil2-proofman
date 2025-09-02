@@ -182,7 +182,6 @@ pub struct ProofCtx<F: PrimeField64> {
 }
 
 pub const MAX_INSTANCES: u64 = 10000;
-pub const MAX_AIRGROUPS: u64 = 100;
 
 impl<F: PrimeField64> ProofCtx<F> {
     pub fn create_ctx(
@@ -329,7 +328,6 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn dctx_get_my_tables(&self) -> Vec<usize> {
         let dctx = self.dctx.read().unwrap();
-        println!("INSTANCES {:?}", dctx.instances);
         dctx.instances
             .iter()
             .enumerate()
@@ -404,7 +402,13 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_instance(airgroup_id, air_id, threads_witness, weight)
     }
 
-    pub fn add_instance_assign_partition(&self, airgroup_id: usize, air_id: usize, partition_id: usize, threads_witness: usize) -> usize {
+    pub fn add_instance_assign_partition(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        partition_id: usize,
+        threads_witness: usize,
+    ) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_instance_partition(airgroup_id, air_id, partition_id, threads_witness, weight)
