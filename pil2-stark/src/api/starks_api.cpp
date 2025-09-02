@@ -518,20 +518,25 @@ uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx;
     StepsParams *params = (StepsParams *)params_;
-    
+
+    params->pConstPolsAddress = &params->aux_trace[setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)]];
+    params->pConstPolsExtendedTreeAddress = &params->aux_trace[setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)]];
+
     if (d_buffers->airgroupId != airgroupId || d_buffers->airId != airId || d_buffers->proofType != "basic") {
         uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
         uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
         uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
         loadFileParallel(params->pConstPolsAddress, constPolsPath, sizeConstPols);
-        loadFileParallel(params->pConstPolsExtendedTreeAddress, constTreePath, sizeConstTree);
+        if(!setupCtx->starkInfo.overwriteFixed) {
+            loadFileParallel(params->pConstPolsExtendedTreeAddress, constTreePath, sizeConstTree);
+        }
     }
 
     d_buffers->airgroupId = airgroupId;
     d_buffers->airId = airId;
     d_buffers->proofType = "basic";
 
-    genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile));
+    genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile), string(constTreePath));
     
     return 0;
 }
@@ -564,45 +569,45 @@ void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, voi
 
 void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType) {}
 
-uint64_t gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType) {
+uint64_t gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace_, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx;
 
-    if (d_buffers->airgroupId != airgroupId || d_buffers->airId != airId || d_buffers->proofType != string(proofType)) {
-        uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
-        uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
-        uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
-        loadFileParallel(pConstPols, constPolsPath, sizeConstPols);
-        loadFileParallel(pConstTree, constTreePath, sizeConstTree);
-    }
-
-    d_buffers->airgroupId = airgroupId;
-    d_buffers->airId = airId;
-    d_buffers->proofType = string(proofType);
-
-
     Goldilocks::Element evals[setupCtx->starkInfo.evMap.size() * FIELD_EXTENSION];
     Goldilocks::Element challenges[setupCtx->starkInfo.challengesMap.size() * FIELD_EXTENSION];
     Goldilocks::Element airgroupValues[FIELD_EXTENSION];
 
+    Goldilocks::Element *aux_trace = (Goldilocks::Element *)aux_trace_;
     StepsParams params = {
         .trace = (Goldilocks::Element *)witness,
-        .aux_trace = (Goldilocks::Element *)aux_trace,
+        .aux_trace = aux_trace,
         .publicInputs = (Goldilocks::Element *)pPublicInputs,
         .proofValues = nullptr,
         .challenges = challenges,
         .airgroupValues = airgroupValues,
         .evals = evals,
         .xDivXSub = nullptr,
-        .pConstPolsAddress = (Goldilocks::Element *)pConstPols,
-        .pConstPolsExtendedTreeAddress = (Goldilocks::Element *)pConstTree,
+        .pConstPolsAddress = &aux_trace[setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)]],
+        .pConstPolsExtendedTreeAddress = &aux_trace[setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)]],
         .pCustomCommitsFixed = nullptr,
     };
 
-    genProof(*setupCtx, airgroupId, airId, instanceId, params, nullptr, proofBuffer, string(proof_file), true);
+    if (d_buffers->airgroupId != airgroupId || d_buffers->airId != airId || d_buffers->proofType != string(proofType)) {
+        uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
+        uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
+        uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
+        loadFileParallel(params.pConstPolsAddress, constPolsPath, sizeConstPols);
+        loadFileParallel(params.pConstPolsExtendedTreeAddress, constTreePath, sizeConstTree);
+    }
+
+    d_buffers->airgroupId = airgroupId;
+    d_buffers->airId = airId;
+    d_buffers->proofType = string(proofType);
+
+    genProof(*setupCtx, airgroupId, airId, instanceId, params, nullptr, proofBuffer, string(proof_file), string(constTreePath), true);
     
     return 0;
 }

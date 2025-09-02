@@ -43,7 +43,7 @@ void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx
     updateAirgroupValue(setupCtx, params, hint[0], hintFieldNameAirgroupVal, "numerator_direct", "denominator_direct", options1, options2, !prod);
 }
 
-void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, uint64_t *proofBuffer, std::string proofFile, bool recursive = false) {
+void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, uint64_t *proofBuffer, std::string proofFile, std::string constTreePath, bool recursive = false) {
     TimerStart(STARK_PROOF);
 
     NTT_Goldilocks ntt(1 << setupCtx.starkInfo.starkStruct.nBits);
@@ -53,8 +53,10 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
     
-    Starks<Goldilocks::Element> starks(setupCtx, params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed);
-    
+    Starks<Goldilocks::Element> starks(setupCtx, nullptr, params.pCustomCommitsFixed);
+    starks.treesGL[setupCtx.starkInfo.nStages + 1]->setSource(&params.pConstPolsExtendedTreeAddress[2]);
+    starks.treesGL[setupCtx.starkInfo.nStages + 1]->setNodes(&params.pConstPolsExtendedTreeAddress[2 + setupCtx.starkInfo.nConstants * (1 << setupCtx.starkInfo.starkStruct.nBitsExt)]);
+
     ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);
 
     TranscriptGL transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
@@ -138,6 +140,13 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
         if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 1) {
             starks.getChallenge(transcript, params.challenges[i * FIELD_EXTENSION]);
         }
+    }
+
+    if (setupCtx.starkInfo.overwriteFixed) {
+        TimerStart(LOAD_CONST_TREE);
+        uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx.starkInfo) * sizeof(Goldilocks::Element);
+        loadFileParallel(params.pConstPolsExtendedTreeAddress, constTreePath, sizeConstTree);
+        TimerStopAndLog(LOAD_CONST_TREE);
     }
 
     TimerStart(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);

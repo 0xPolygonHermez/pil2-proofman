@@ -210,8 +210,6 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     prover_buffer: &[F],
     output_dir_path: &Path,
     d_buffers: *mut c_void,
-    const_tree: &[F],
-    const_pols: &[F],
     save_proofs: bool,
 ) -> u64 {
     timer_start_info!(
@@ -291,18 +289,10 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         );
     }
 
-    let (const_pols_ptr, const_tree_ptr) = if cfg!(feature = "gpu") {
-        (std::ptr::null_mut(), std::ptr::null_mut())
-    } else {
-        (const_pols.as_ptr() as *mut u8, const_tree.as_ptr() as *mut u8)
-    };
-
     let stream_id = gen_recursive_proof_c(
         p_setup,
         trace.as_ptr() as *mut u8,
         prover_buffer.as_ptr() as *mut u8,
-        const_pols_ptr,
-        const_tree_ptr,
         publics.as_ptr() as *mut u8,
         new_proof.proof[initial_idx..].as_ptr() as *mut u64,
         &proof_file,
@@ -333,8 +323,6 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
     setups: &SetupsVadcop<F>,
     proofs: Vec<Vec<Proof<F>>>,
     prover_buffer: &[F],
-    const_pols: &[F],
-    const_tree: &[F],
     output_dir_path: &Path,
     d_buffers: *mut c_void,
     save_proofs: bool,
@@ -430,8 +418,6 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                             prover_buffer,
                             output_dir_path,
                             d_buffers,
-                            const_tree,
-                            const_pols,
                             save_proofs,
                         );
 
@@ -496,8 +482,6 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     proof: &Proof<F>,
     prover_buffer: &[F],
     output_dir_path: &Path,
-    const_pols: &[F],
-    const_tree: &[F],
     d_buffers: *mut c_void,
     save_proof: bool,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
@@ -516,8 +500,6 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         prover_buffer,
         output_dir_path,
         d_buffers,
-        const_tree,
-        const_pols,
         save_proof,
     );
     get_stream_id_proof_c(d_buffers, stream_id);

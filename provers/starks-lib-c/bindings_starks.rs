@@ -360,8 +360,6 @@ extern "C" {
         instanceId: u64,
         witness: *mut ::std::os::raw::c_void,
         aux_trace: *mut ::std::os::raw::c_void,
-        pConstPols: *mut ::std::os::raw::c_void,
-        pConstTree: *mut ::std::os::raw::c_void,
         pPublicInputs: *mut ::std::os::raw::c_void,
         proofBuffer: *mut u64,
         proof_file: *mut ::std::os::raw::c_char,
