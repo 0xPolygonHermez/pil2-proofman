@@ -10,6 +10,7 @@ use proofman_common::{
     MemoryHandler, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx, SetupsVadcop, VerboseMode,
     MAX_INSTANCES,
 };
+use rand::Rng;
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{free_device_buffers_c, gen_device_buffers_c, get_num_gpus_c};
@@ -1157,8 +1158,8 @@ where
         }
         let witness_done = Arc::new(Counter::new());
 
-        let (witness_handler, witness_handles) =
-            self.calc_witness_handler(witness_done.clone(), self.memory_handler.clone(), options.minimal_memory, false);
+        // let (witness_handler, witness_handles) =
+        //     self.calc_witness_handler(witness_done.clone(), self.memory_handler.clone(), options.minimal_memory, false);
 
         self.wcm.execute();
 
@@ -1171,7 +1172,7 @@ where
 
         timer_start_info!(CALCULATING_CONTRIBUTIONS);
         timer_start_info!(CALCULATING_INNER_CONTRIBUTIONS);
-        timer_start_info!(PREPARING_CONTRIBUTIONS);
+        // timer_start_info!(PREPARING_CONTRIBUTIONS);
 
         let instances = self.pctx.dctx_get_instances();
         let my_instances = self.pctx.dctx_get_my_instances();
@@ -1181,158 +1182,161 @@ where
         let mut rng = StdRng::seed_from_u64(self.pctx.dctx_get_rank() as u64);
         my_instances_sorted.shuffle(&mut rng);
 
-        let my_instances_sorted_no_tables =
-            my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+        // let my_instances_sorted_no_tables =
+        //     my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
 
-        let instances_mine_no_tables = my_instances_sorted_no_tables.len();
+        // let instances_mine_no_tables = my_instances_sorted_no_tables.len();
 
-        let max_witness_stored = match cfg!(feature = "gpu") {
-            true => instances_mine_no_tables.min(self.gpu_params.max_witness_stored),
-            false => 1,
-        };
+        // let max_witness_stored = match cfg!(feature = "gpu") {
+        //     true => instances_mine_no_tables.min(self.gpu_params.max_witness_stored),
+        //     false => 1,
+        // };
 
-        let streams = Arc::new(Mutex::new(vec![None; self.n_streams]));
+        // let streams = Arc::new(Mutex::new(vec![None; self.n_streams]));
 
-        let witnesses_done = Arc::new(AtomicUsize::new(0));
+        // let witnesses_done = Arc::new(AtomicUsize::new(0));
 
-        self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
+        // self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
 
-        timer_stop_and_log_info!(PREPARING_CONTRIBUTIONS);
+        // timer_stop_and_log_info!(PREPARING_CONTRIBUTIONS);
 
-        let mut handle_contributions = Vec::new();
-        for _ in 0..self.n_streams {
-            let pctx_clone = self.pctx.clone();
-            let sctx_clone = self.sctx.clone();
-            let roots_contributions_clone = self.roots_contributions.clone();
-            let values_contributions_clone = self.values_contributions.clone();
-            let aux_trace_clone = self.aux_trace.clone();
-            let d_buffers_clone = self.d_buffers.clone();
-            let streams_clone = streams.clone();
-            let witnesses_done_clone = witnesses_done.clone();
-            let memory_handler_clone = self.memory_handler.clone();
-            let contributions_rx_clone = self.contributions_rx.clone();
-            let contribution_handle = std::thread::spawn(move || loop {
-                match contributions_rx_clone.try_recv() {
-                    Ok(instance_id) => {
-                        if instance_id == usize::MAX {
-                            break;
-                        }
-                        Self::get_contribution_air(
-                            &pctx_clone,
-                            &sctx_clone,
-                            &roots_contributions_clone,
-                            &values_contributions_clone,
-                            instance_id,
-                            aux_trace_clone.as_ptr() as *mut u8,
-                            &d_buffers_clone,
-                            &streams_clone,
-                        );
+        // let mut handle_contributions = Vec::new();
+        // for _ in 0..self.n_streams {
+        //     let pctx_clone = self.pctx.clone();
+        //     let sctx_clone = self.sctx.clone();
+        //     let roots_contributions_clone = self.roots_contributions.clone();
+        //     let values_contributions_clone = self.values_contributions.clone();
+        //     let aux_trace_clone = self.aux_trace.clone();
+        //     let d_buffers_clone = self.d_buffers.clone();
+        //     let streams_clone = streams.clone();
+        //     let witnesses_done_clone = witnesses_done.clone();
+        //     let memory_handler_clone = self.memory_handler.clone();
+        //     let contributions_rx_clone = self.contributions_rx.clone();
+        //     let contribution_handle = std::thread::spawn(move || loop {
+        //         match contributions_rx_clone.try_recv() {
+        //             Ok(instance_id) => {
+        //                 if instance_id == usize::MAX {
+        //                     break;
+        //                 }
+        //                 Self::get_contribution_air(
+        //                     &pctx_clone,
+        //                     &sctx_clone,
+        //                     &roots_contributions_clone,
+        //                     &values_contributions_clone,
+        //                     instance_id,
+        //                     aux_trace_clone.as_ptr() as *mut u8,
+        //                     &d_buffers_clone,
+        //                     &streams_clone,
+        //                 );
 
-                        if !pctx_clone.dctx_is_table(instance_id) {
-                            witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
-                            if (instances_mine_no_tables - witnesses_done_clone.load(Ordering::Acquire))
-                                >= max_witness_stored
-                            {
-                                let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
-                                if is_shared_buffer {
-                                    memory_handler_clone.release_buffer(witness_buffer);
-                                }
-                            }
-                        }
-                    }
-                    Err(crossbeam_channel::TryRecvError::Empty) => {
-                        std::thread::sleep(std::time::Duration::from_micros(100));
-                        continue;
-                    }
-                    Err(crossbeam_channel::TryRecvError::Disconnected) => {
-                        break;
-                    }
-                }
-            });
-            handle_contributions.push(contribution_handle);
-        }
+        //                 if !pctx_clone.dctx_is_table(instance_id) {
+        //                     witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
+        //                     if (instances_mine_no_tables - witnesses_done_clone.load(Ordering::Acquire))
+        //                         >= max_witness_stored
+        //                     {
+        //                         let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
+        //                         if is_shared_buffer {
+        //                             memory_handler_clone.release_buffer(witness_buffer);
+        //                         }
+        //                     }
+        //                 }
+        //             }
+        //             Err(crossbeam_channel::TryRecvError::Empty) => {
+        //                 std::thread::sleep(std::time::Duration::from_micros(100));
+        //                 continue;
+        //             }
+        //             Err(crossbeam_channel::TryRecvError::Disconnected) => {
+        //                 break;
+        //             }
+        //         }
+        //     });
+        //     handle_contributions.push(contribution_handle);
+        // }
 
-        self.calculate_witness(
-            &my_instances_sorted_no_tables,
-            self.memory_handler.clone(),
-            witness_done.clone(),
-            options.minimal_memory,
-            false,
-        );
+        // self.calculate_witness(
+        //     &my_instances_sorted_no_tables,
+        //     self.memory_handler.clone(),
+        //     witness_done.clone(),
+        //     options.minimal_memory,
+        //     false,
+        // );
 
-        if !options.minimal_memory && cfg!(feature = "gpu") {
-            self.pctx.set_witness_tx(None);
-            self.pctx.set_witness_tx_priority(None);
-        }
-        self.witness_tx.send(usize::MAX).ok();
+        // if !options.minimal_memory && cfg!(feature = "gpu") {
+        //     self.pctx.set_witness_tx(None);
+        //     self.pctx.set_witness_tx_priority(None);
+        // }
+        // self.witness_tx.send(usize::MAX).ok();
 
-        if let Some(h) = witness_handler {
-            h.join().unwrap();
-        }
-        if cfg!(feature = "gpu") {
-            let handles_to_join = witness_handles.lock().unwrap().drain(..).collect::<Vec<_>>();
-            for handle in handles_to_join {
-                handle.join().unwrap();
-            }
-        }
+        // if let Some(h) = witness_handler {
+        //     h.join().unwrap();
+        // }
+        // if cfg!(feature = "gpu") {
+        //     let handles_to_join = witness_handles.lock().unwrap().drain(..).collect::<Vec<_>>();
+        //     for handle in handles_to_join {
+        //         handle.join().unwrap();
+        //     }
+        // }
 
-        drop(witness_handles);
+        // drop(witness_handles);
 
-        timer_start_info!(CALCULATING_TABLES);
+        // timer_start_info!(CALCULATING_TABLES);
 
-        //evalutate witness for instances of type "tables"
-        for instance_id in my_instances_tables.iter() {
-            self.wcm.pre_calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref());
-            self.wcm.calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref());
-        }
+        // //evalutate witness for instances of type "tables"
+        // for instance_id in my_instances_tables.iter() {
+        //     self.wcm.pre_calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref());
+        //     self.wcm.calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref());
+        // }
 
-        timer_stop_and_log_info!(CALCULATING_TABLES);
+        // timer_stop_and_log_info!(CALCULATING_TABLES);
 
-        self.pctx.set_proof_tx(None);
+        // self.pctx.set_proof_tx(None);
 
-        for _ in 0..self.n_streams {
-            self.contributions_tx.send(usize::MAX).ok();
-        }
+        // for _ in 0..self.n_streams {
+        //     self.contributions_tx.send(usize::MAX).ok();
+        // }
 
-        for handle in handle_contributions {
-            handle.join().unwrap();
-        }
+        // for handle in handle_contributions {
+        //     handle.join().unwrap();
+        // }
 
-        // get roots still in the streams
-        get_stream_proofs_c(self.d_buffers.get_ptr());
+        // // get roots still in the streams
+        // get_stream_proofs_c(self.d_buffers.get_ptr());
 
-        timer_stop_and_log_info!(CALCULATING_INNER_CONTRIBUTIONS);
+        // timer_stop_and_log_info!(CALCULATING_INNER_CONTRIBUTIONS);
 
-        //calculate-challenge
-        let internal_contribution = self.calculate_internal_contributions();
+        // //calculate-challenge
+        // let internal_contribution = self.calculate_internal_contributions();
 
-        let all_partial_contributions = self.pctx.dctx_distribute_roots(internal_contribution);
-        let all_partial_contributions_u64 = all_partial_contributions
-            .chunks(10)
-            .map(|chunk| chunk.try_into().expect("Each chunk should be exactly 10 elements"))
-            .collect::<Vec<[u64; 10]>>();
+        // let all_partial_contributions = self.pctx.dctx_distribute_roots(internal_contribution);
+        // let all_partial_contributions_u64 = all_partial_contributions
+        //     .chunks(10)
+        //     .map(|chunk| chunk.try_into().expect("Each chunk should be exactly 10 elements"))
+        //     .collect::<Vec<[u64; 10]>>();
 
-        self.calculate_global_challenge(&all_partial_contributions_u64);
+        // self.calculate_global_challenge(&all_partial_contributions_u64);
 
-        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
+        // timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
+
+        let global_challenge = vec![F::from_u64(rng.random_range(0..=(1 << 63) - 1)), F::from_u64(rng.random_range(0..=(1 << 63) - 1)), F::from_u64(rng.random_range(0..=(1 << 63) - 1))];
+        self.pctx.set_global_challenge(2, &global_challenge);
 
         timer_start_info!(GENERATING_INNER_PROOFS);
 
         let n_airgroups = self.pctx.global_info.air_groups.len();
 
-        let vec_streams: Vec<(u64, u64)> = {
-            let mut guard = streams.lock().unwrap();
-            let taken = std::mem::take(&mut *guard);
+        // let vec_streams: Vec<(u64, u64)> = {
+        //     let mut guard = streams.lock().unwrap();
+        //     let taken = std::mem::take(&mut *guard);
 
-            let mut result = Vec::new();
-            for (idx, maybe_id) in taken.into_iter().enumerate() {
-                if let Some(id) = maybe_id {
-                    result.push((idx as u64, id));
-                }
-            }
+        //     let mut result = Vec::new();
+        //     for (idx, maybe_id) in taken.into_iter().enumerate() {
+        //         if let Some(id) = maybe_id {
+        //             result.push((idx as u64, id));
+        //         }
+        //     }
 
-            result
-        };
+        //     result
+        // };
 
         let mut n_airgroup_proofs = vec![0; n_airgroups];
         for (instance_id, instance_info) in instances.iter().enumerate() {
@@ -1447,45 +1451,45 @@ where
             handle_recursives.push(handle_recursive);
         }
 
-        let processed_ids = Mutex::new(Vec::new());
+        // let processed_ids = Mutex::new(Vec::new());
 
-        if cfg!(feature = "gpu") && !vec_streams.is_empty() {
-            let processed: Vec<u64> = vec_streams
-                .par_iter()
-                .map(|&(stream_id, instance_id)| {
-                    proofs_pending.increment();
+        // if cfg!(feature = "gpu") && !vec_streams.is_empty() {
+        //     let processed: Vec<u64> = vec_streams
+        //         .par_iter()
+        //         .map(|&(stream_id, instance_id)| {
+        //             proofs_pending.increment();
 
-                    Self::gen_proof(
-                        &self.proofs,
-                        &self.pctx,
-                        &self.sctx,
-                        instance_id as usize,
-                        &options.output_dir_path,
-                        &self.aux_trace,
-                        &self.const_pols,
-                        &self.const_tree,
-                        &self.d_buffers,
-                        Some(stream_id as usize),
-                        options.save_proofs,
-                        self.gpu_params.preallocate,
-                    );
+        //             Self::gen_proof(
+        //                 &self.proofs,
+        //                 &self.pctx,
+        //                 &self.sctx,
+        //                 instance_id as usize,
+        //                 &options.output_dir_path,
+        //                 &self.aux_trace,
+        //                 &self.const_pols,
+        //                 &self.const_tree,
+        //                 &self.d_buffers,
+        //                 Some(stream_id as usize),
+        //                 options.save_proofs,
+        //                 self.gpu_params.preallocate,
+        //             );
 
-                    let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(instance_id as usize);
-                    if is_shared_buffer {
-                        self.memory_handler.release_buffer(witness_buffer);
-                    }
+        //             let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(instance_id as usize);
+        //             if is_shared_buffer {
+        //                 self.memory_handler.release_buffer(witness_buffer);
+        //             }
 
-                    instance_id
-                })
-                .collect();
+        //             instance_id
+        //         })
+        //         .collect();
 
-            processed_ids.lock().unwrap().extend(processed);
-        }
+        //     processed_ids.lock().unwrap().extend(processed);
+        // }
 
-        let mut my_instances_calculated = vec![false; instances.len()];
-        for idx in processed_ids.into_inner().unwrap() {
-            my_instances_calculated[idx as usize] = true;
-        }
+        // let mut my_instances_calculated = vec![false; instances.len()];
+        // for idx in processed_ids.into_inner().unwrap() {
+        //     my_instances_calculated[idx as usize] = true;
+        // }
 
         my_instances_sorted.sort_by_key(|&id| {
             let setup = self.sctx.get_setup(instances[id].airgroup_id, instances[id].air_id);
@@ -1515,7 +1519,7 @@ where
             let compressor_proofs_clone = self.compressor_proofs.clone();
             let recursive1_proofs_clone = self.recursive1_proofs.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
-            let stream_clone = vec_streams.clone();
+            // let stream_clone = vec_streams.clone();
             let proofs_rx = self.proofs_rx.clone();
             let compressor_rx = self.compressor_witness_rx.clone();
             let rec2_rx = self.rec2_witness_rx.clone();
@@ -1534,8 +1538,8 @@ where
                 if witness.is_err() {
                     // Check if proof received
                     if let Ok(instance_id) = proofs_rx.try_recv() {
-                        let stream_id: Option<usize> =
-                            stream_clone.iter().position(|&(_, id)| id == instance_id as u64);
+                        // let stream_id: Option<usize> =
+                        //     stream_clone.iter().position(|&(_, id)| id == instance_id as u64);
                         Self::gen_proof(
                             &proofs_clone,
                             &pctx_clone,
@@ -1546,7 +1550,7 @@ where
                             &const_pols_clone,
                             &const_tree_clone,
                             &d_buffers_clone,
-                            stream_id,
+                            None,
                             options.save_proofs,
                             preallocate,
                         );
@@ -1645,18 +1649,18 @@ where
         }
 
         for &instance_id in my_instances_sorted.iter() {
-            if my_instances_calculated[instance_id] {
-                continue;
-            }
+            // if my_instances_calculated[instance_id] {
+            //     continue;
+            // }
 
             let tx_threads_clone: Sender<()> = self.tx_threads.clone();
             let proofs_tx_clone = self.proofs_tx.clone();
             let wcm = self.wcm.clone();
             let proofs_pending_clone = proofs_pending.clone();
-            let is_stored = self.pctx.is_air_instance_stored(instance_id)
-                || vec_streams.iter().any(|&(_, id)| id == instance_id as u64);
+            // let is_stored = self.pctx.is_air_instance_stored(instance_id)
+            //     || vec_streams.iter().any(|&(_, id)| id == instance_id as u64);
 
-            my_instances_calculated[instance_id] = true;
+            // my_instances_calculated[instance_id] = true;
 
             let instance_info = &instances[instance_id];
             let (airgroup_id, air_id) = (instance_info.airgroup_id, instance_info.air_id);
@@ -1666,11 +1670,11 @@ where
             let threads_to_use_collect =
                 (instance_info.n_chunks / 16).min(self.max_num_threads / 4).max(n_threads_witness);
 
-            if !is_stored {
+            // if !is_stored {
                 for _ in 0..threads_to_use_collect {
                     self.rx_threads.recv().unwrap();
                 }
-            }
+            // }
 
             let threads_to_use_witness = threads_to_use_collect.min(n_threads_witness);
             let threads_to_return = threads_to_use_collect - threads_to_use_witness;
@@ -1679,7 +1683,7 @@ where
 
             let handle = std::thread::spawn(move || {
                 proofs_pending_clone.increment();
-                if !is_stored {
+                // if !is_stored {
                     timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     wcm.pre_calculate_witness(1, &[instance_id], threads_to_use_collect, memory_handler_clone.as_ref());
                     for _ in 0..threads_to_return {
@@ -1696,9 +1700,9 @@ where
                         airgroup_id,
                         air_id
                     );
-                } else {
-                    proofs_tx_clone.send(instance_id).unwrap();
-                }
+                // } else {
+                //     proofs_tx_clone.send(instance_id).unwrap();
+                // }
             });
             if cfg!(not(feature = "gpu")) {
                 handle.join().unwrap();
