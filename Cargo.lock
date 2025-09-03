@@ -322,7 +322,7 @@ dependencies = [
 
 [[package]]
 name = "curves"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "fields",
  "num-bigint",
@@ -375,7 +375,7 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "fibonacci-square"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "fields",
  "num-bigint",
@@ -393,7 +393,7 @@ dependencies = [
 
 [[package]]
 name = "fields"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "num-bigint",
  "paste",
@@ -570,7 +570,7 @@ checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 
 [[package]]
 name = "macros-test"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "proofman",
  "proofman-common",
@@ -748,7 +748,7 @@ dependencies = [
 
 [[package]]
 name = "pil-std-lib"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "colored",
  "fields",
@@ -764,7 +764,7 @@ dependencies = [
 
 [[package]]
 name = "pilout"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "bytes",
  "prost",
@@ -814,7 +814,7 @@ dependencies = [
 
 [[package]]
 name = "proofman"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "blake3",
  "bytemuck",
@@ -845,7 +845,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-cli"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "blake3",
  "bytemuck",
@@ -870,7 +870,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-common"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "crossbeam-channel",
  "env",
@@ -892,7 +892,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-hints"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "fields",
  "proofman-common",
@@ -903,7 +903,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-macros"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -913,7 +913,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-starks-lib-c"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "crossbeam-channel",
  "tracing",
@@ -921,7 +921,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-util"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "colored",
  "fields",
@@ -931,7 +931,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-verifier"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "bytemuck",
  "fields",
@@ -1236,7 +1236,7 @@ dependencies = [
 
 [[package]]
 name = "test-c36"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "bytemuck",
  "fields",
@@ -1257,7 +1257,7 @@ dependencies = [
 
 [[package]]
 name = "test-c42"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "bytemuck",
  "fields",
@@ -1374,7 +1374,7 @@ dependencies = [
 
 [[package]]
 name = "transcript"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "proofman-starks-lib-c",
 ]
@@ -1721,7 +1721,7 @@ checksum = "052283831dbae3d879dc7f51f3d92703a316ca49f91540417d38591826127814"
 
 [[package]]
 name = "witness"
-version = "0.10.0"
+version = "0.12.0"
 dependencies = [
  "colored",
  "fields",
