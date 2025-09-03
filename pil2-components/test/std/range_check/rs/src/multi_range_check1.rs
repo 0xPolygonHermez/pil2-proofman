@@ -5,20 +5,13 @@ use witness::{define_wc_with_std, execute, WitnessComponent};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
-use rand::{
-    distr::{StandardUniform, Distribution},
-    Rng, SeedableRng,
-    rngs::StdRng,
-};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::MultiRangeCheck1Trace;
 
 define_wc_with_std!(MultiRangeCheck1, "MtRngCh1");
 
-impl<F: PrimeField64> WitnessComponent<F> for MultiRangeCheck1<F>
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for MultiRangeCheck1<F> {
     execute!(MultiRangeCheck1Trace, 1);
 
     fn calculate_witness(
@@ -38,11 +31,11 @@ where
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
-            let range1 = self.std_lib.get_range(0, (1 << 7) - 1, Some(false));
-            let range2 = self.std_lib.get_range(0, (1 << 8) - 1, Some(false));
-            let range3 = self.std_lib.get_range(0, (1 << 6) - 1, Some(false));
-            let range4 = self.std_lib.get_range(1 << 5, (1 << 8) - 1, Some(false));
-            let range5 = self.std_lib.get_range(1 << 8, (1 << 9) - 1, Some(false));
+            let range1 = self.std_lib.get_range_id(0, (1 << 7) - 1, Some(false));
+            let range2 = self.std_lib.get_range_id(0, (1 << 8) - 1, Some(false));
+            let range3 = self.std_lib.get_range_id(0, (1 << 6) - 1, Some(false));
+            let range4 = self.std_lib.get_range_id(1 << 5, (1 << 8) - 1, Some(false));
+            let range5 = self.std_lib.get_range_id(1 << 8, (1 << 9) - 1, Some(false));
 
             for i in 0..num_rows {
                 let selected1 = rng.random::<bool>();
@@ -69,12 +62,12 @@ where
                         let val = rng.random_range(0..=(1 << 7) - 1);
                         trace[i].a[0] = F::from_u16(val);
 
-                        self.std_lib.range_check(val as i64, 1, range1);
+                        self.std_lib.range_check(range1, val as i64, 1);
                     } else {
                         let val = rng.random_range(0..=(1 << 8) - 1);
                         trace[i].a[0] = F::from_u16(val);
 
-                        self.std_lib.range_check(val as i64, 1, range2);
+                        self.std_lib.range_check(range2, val as i64, 1);
                     }
                 }
 
@@ -83,12 +76,12 @@ where
                         let val = rng.random_range(0..=(1 << 7) - 1);
                         trace[i].a[1] = F::from_u16(val);
 
-                        self.std_lib.range_check(val as i64, 1, range1);
+                        self.std_lib.range_check(range1, val as i64, 1);
                     } else {
                         let val = rng.random_range(0..=(1 << 6) - 1);
                         trace[i].a[1] = F::from_u16(val);
 
-                        self.std_lib.range_check(val as i64, 1, range3);
+                        self.std_lib.range_check(range3, val as i64, 1);
                     }
                 }
 
@@ -97,12 +90,12 @@ where
                         let val = rng.random_range((1 << 5)..=(1 << 8) - 1);
                         trace[i].a[2] = F::from_u16(val);
 
-                        self.std_lib.range_check(val as i64, 1, range4);
+                        self.std_lib.range_check(range4, val as i64, 1);
                     } else {
                         let val = rng.random_range((1 << 8)..=(1 << 9) - 1);
                         trace[i].a[2] = F::from_u16(val);
 
-                        self.std_lib.range_check(val as i64, 1, range5);
+                        self.std_lib.range_check(range5, val as i64, 1);
                     }
                 }
             }

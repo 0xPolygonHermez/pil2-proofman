@@ -1,0 +1,169 @@
+require "std_constants.pil";
+require "std_prod.pil";
+
+/*
+    Constraint to optimize:
+                             ∏ᵢ (stᵢ·(tᵢ+ɣ-1)+1)
+                GL === GR * ----------------------
+                             ∏ⱼ (sfⱼ·(fⱼ+ɣ-1)+1)
+    Where:
+        · GL is an expression of degree 1.
+        · GR is an expression of degree 2.
+        · ɣ is a challenge added to make the expression an extension-field expression.
+
+    To audit and generate stats:
+    node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/intermediate_prods.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/special/build/intermediate_prods.pilout
+    node --max-old-space-size=131072 ../pil2-compiler/tools/audit.js pil2-components/test/std/special/build/intermediate_prods.pilout
+    node --max-old-space-size=131072 ../pil2-proofman-js/src/main_stats.js -a pil2-components/test/std/special/build/intermediate_prods.pilout -s pil2-components/test/std/special/intermediate_prods.config.json -o pil2-components/test/std/special/build/intermediate_prods.stats
+*/
+
+airtemplate ImDummy(const int N = 2**8, const int deg_sel_a, const int deg_expr_a, const int M_a, 
+                                        const int deg_sel_p, const int deg_expr_p, const int M_p) {
+    assert((M_a > 0) || (M_p > 0));                                       
+
+    prod_set_expressions_im_non_reduced(-1); // Don't apply any reduction
+
+    if (M_a > 0) {
+        // Enlarge the degree of the selector
+        col witness sel_a[M_a];
+        expr SEL_A[M_a] = increase_degree(sel_a, deg_sel_a);
+
+        // Enlarge the degree of the expression
+        col witness assumes[M_a];
+        expr ASSUMES[M_a] = increase_degree(assumes, deg_expr_a);
+
+        // Perform the assumes
+        for (int i = 0; i < M_a; i++) {
+            prod(surname: PIOP_SURNAME_ISOLATED, type: PROD_TYPE_ASSUMES, opid: 0, expressions: [ASSUMES[i]], sel: SEL_A[i])
+        }
+    }
+
+    if (M_p > 0) {
+        // Enlarge the degree of the selector
+        col witness sel_p[M_p];
+        expr SEL_P[M_p] = increase_degree(sel_p, deg_sel_p);
+
+        // Enlarge the degree of the expression
+        col witness proves[M_p];
+        expr PROVES[M_p] = increase_degree(proves, deg_expr_p);
+
+        // Perform the proves
+        for (int i = 0; i < M_p; i++) {
+            prod(surname: PIOP_SURNAME_ISOLATED, type: PROD_TYPE_PROVES, opid: 0, expressions: [PROVES[i]], sel: SEL_P[i])
+        }
+    }
+}
+
+airtemplate ImCustom(const int N = 2**8, const int deg_sel_a, const int deg_expr_a, const int M_a, 
+                                         const int deg_sel_p, const int deg_expr_p, const int M_p) {
+    assert((M_a > 0) || (M_p > 0));  
+
+    prod_set_expressions_im_non_reduced(0); // Apply all the reductions
+
+    if (M_a > 0) {
+        // Enlarge the degree of the selector
+        col witness sel_a[M_a];
+        expr SEL_A[M_a] = increase_degree(sel_a, deg_sel_a);
+
+        // Enlarge the degree of the expression
+        col witness assumes[M_a];
+        expr ASSUMES[M_a] = increase_degree(assumes, deg_expr_a);
+
+        // Perform the assumes
+        for (int i = 0; i < M_a; i++) {
+            prod(surname: PIOP_SURNAME_ISOLATED, type: PROD_TYPE_ASSUMES, opid: 0, expressions: [ASSUMES[i]], sel: SEL_A[i])
+        }
+    }
+
+    if (M_p > 0) {
+        // Enlarge the degree of the selector
+        col witness sel_p[M_p];
+        expr SEL_P[M_p] = increase_degree(sel_p, deg_sel_p);
+
+        // Enlarge the degree of the expression
+        col witness proves[M_p];
+        expr PROVES[M_p] = increase_degree(proves, deg_expr_p);
+
+        // Perform the proves
+        for (int i = 0; i < M_p; i++) {
+            prod(surname: PIOP_SURNAME_ISOLATED, type: PROD_TYPE_PROVES, opid: 0, expressions: [PROVES[i]], sel: SEL_P[i])
+        }
+    }
+}
+
+function increase_degree(expr exps[], const int deg): expr[] {
+    const int M = length(exps);
+    expr result[M];
+    for (int i = 0; i < M; i++) {
+        result[i] = (deg == 0) ? 1 : exps[i];
+        for (int j = 1; j < deg; j++) {
+            col witness _exp;
+            result[i] *= _exp;
+        }
+        assert(degree(result[i]) == deg);
+    }
+
+    return result;
+}
+
+airgroup Intermediates {
+    // Assumes and no proves
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 1, deg_sel_p: 1, deg_expr_p: 1, M_p: 0) alias ImDummyA_1;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 1, deg_sel_p: 1, deg_expr_p: 1, M_p: 0) alias ImCustomA_1;
+
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 2, deg_sel_p: 1, deg_expr_p: 1, M_p: 0) alias ImDummyA_2;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 2, deg_sel_p: 1, deg_expr_p: 1, M_p: 0) alias ImCustomA_2;
+
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 4, deg_sel_p: 1, deg_expr_p: 1, M_p: 0) alias ImDummyA_4;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 4, deg_sel_p: 1, deg_expr_p: 1, M_p: 0) alias ImCustomA_4;
+
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 8, deg_sel_p: 1, deg_expr_p: 1, M_p: 0) alias ImDummyA_8;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 8, deg_sel_p: 1, deg_expr_p: 1, M_p: 0) alias ImCustomA_8;
+
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 16, deg_sel_p: 1, deg_expr_p: 1, M_p: 0) alias ImDummyA_16;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 16, deg_sel_p: 1, deg_expr_p: 1, M_p: 0) alias ImCustomA_16;
+
+    // No assumes and proves
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 0, deg_sel_p: 1, deg_expr_p: 1, M_p: 1) alias ImDummyP_1;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 0, deg_sel_p: 1, deg_expr_p: 1, M_p: 1) alias ImCustomP_1;
+
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 0, deg_sel_p: 1, deg_expr_p: 1, M_p: 2) alias ImDummyP_2;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 0, deg_sel_p: 1, deg_expr_p: 1, M_p: 2) alias ImCustomP_2;
+
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 0, deg_sel_p: 1, deg_expr_p: 1, M_p: 4) alias ImDummyP_4;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 0, deg_sel_p: 1, deg_expr_p: 1, M_p: 4) alias ImCustomP_4;
+
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 0, deg_sel_p: 1, deg_expr_p: 1, M_p: 8) alias ImDummyP_8;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 0, deg_sel_p: 1, deg_expr_p: 1, M_p: 8) alias ImCustomP_8;
+
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 0, deg_sel_p: 1, deg_expr_p: 1, M_p: 16) alias ImDummyP_16;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 0, deg_sel_p: 1, deg_expr_p: 1, M_p: 16) alias ImCustomP_16;
+
+    // Assumes and proves
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 1, deg_sel_p: 1, deg_expr_p: 1, M_p: 1) alias ImDummyAP_1;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 1, deg_sel_p: 1, deg_expr_p: 1, M_p: 1) alias ImCustomAP_1;
+
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 2, deg_sel_p: 1, deg_expr_p: 1, M_p: 2) alias ImDummyAP_2;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 2, deg_sel_p: 1, deg_expr_p: 1, M_p: 2) alias ImCustomAP_2;
+
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 4, deg_sel_p: 1, deg_expr_p: 1, M_p: 4) alias ImDummyAP_4;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 4, deg_sel_p: 1, deg_expr_p: 1, M_p: 4) alias ImCustomAP_4;
+
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 8, deg_sel_p: 1, deg_expr_p: 1, M_p: 8) alias ImDummyAP_8;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 8, deg_sel_p: 1, deg_expr_p: 1, M_p: 8) alias ImCustomAP_8;
+
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 16, deg_sel_p: 1, deg_expr_p: 1, M_p: 16) alias ImDummyAP_16;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 16, deg_sel_p: 1, deg_expr_p: 1, M_p: 16) alias ImCustomAP_16;
+
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 24, deg_sel_p: 1, deg_expr_p: 1, M_p: 24) alias ImDummyAP_24;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 24, deg_sel_p: 1, deg_expr_p: 1, M_p: 24) alias ImCustomAP_24;
+
+    // Test with different max constraint degrees
+    set_max_constraint_degree(5);
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 24, deg_sel_p: 1, deg_expr_p: 1, M_p: 24) alias ImDummyAP_24_5;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 24, deg_sel_p: 1, deg_expr_p: 1, M_p: 24) alias ImCustomAP_24_5;
+
+    set_max_constraint_degree(9);
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 24, deg_sel_p: 1, deg_expr_p: 1, M_p: 24) alias ImDummyAP_24_9;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 24, deg_sel_p: 1, deg_expr_p: 1, M_p: 24) alias ImCustomAP_24_9;
+}

@@ -19,7 +19,7 @@ use crate::{
     check_invalid_opids, extract_field_element_as_usize, get_global_hint_field_constant_as,
     get_hint_field_constant_a_as_string, get_hint_field_constant_as_field, get_hint_field_constant_as_string,
     get_row_field_value, print_debug_info, update_debug_data, update_debug_data_fast, DebugData, DebugDataFast,
-    SharedDataFast,
+    SharedDataFast, STD_MODE_DEFAULT, STD_MODE_ONE_INSTANCE,
 };
 
 pub struct StdSum<F: PrimeField64> {
@@ -91,7 +91,7 @@ impl<F: PrimeField64> StdSum<F> {
                 HintFieldOptions::default(),
             );
 
-            let proves = get_hint_field(sctx, pctx, instance_id, hint as usize, "proves", HintFieldOptions::default());
+            let _type = get_hint_field(sctx, pctx, instance_id, hint as usize, "type", HintFieldOptions::default());
 
             let mul = get_hint_field(sctx, pctx, instance_id, hint as usize, "selector", HintFieldOptions::default());
 
@@ -138,7 +138,7 @@ impl<F: PrimeField64> StdSum<F> {
                     air_id,
                     air_instance_id,
                     opid,
-                    &proves,
+                    &_type,
                     &mul,
                     &expressions,
                     0,
@@ -172,7 +172,7 @@ impl<F: PrimeField64> StdSum<F> {
                         air_id,
                         air_instance_id,
                         opid,
-                        &proves,
+                        &_type,
                         &mul,
                         &expressions,
                         j,
@@ -193,7 +193,7 @@ impl<F: PrimeField64> StdSum<F> {
             air_id: usize,
             instance_id: usize,
             opid: F,
-            proves: &HintFieldValue<F>,
+            _type: &HintFieldValue<F>,
             mul: &HintFieldValue<F>,
             expressions: &HintFieldValuesVec<F>,
             row: usize,
@@ -207,7 +207,7 @@ impl<F: PrimeField64> StdSum<F> {
                 return;
             }
 
-            let proves = match get_row_field_value(proves, row, "proves") {
+            let _type = match get_row_field_value(_type, row, "type") {
                 p if p.is_zero() || p == F::NEG_ONE => {
                     // If it's an "assume", negate its value
                     if p == F::NEG_ONE {
@@ -216,11 +216,11 @@ impl<F: PrimeField64> StdSum<F> {
                     false
                 }
                 p if p.is_one() => true,
-                _ => panic!("Proves hint must be either 0, 1, or -1"),
+                _ => panic!("Type hint must be either 0, 1, or -1"),
             };
 
             if fast_mode {
-                update_debug_data_fast(debug_data_fast, opid, expressions.get(row), proves, mul, is_global);
+                update_debug_data_fast(debug_data_fast, opid, expressions.get(row), _type, mul, is_global);
             } else {
                 update_debug_data(
                     debug_data,
@@ -232,7 +232,7 @@ impl<F: PrimeField64> StdSum<F> {
                     air_id,
                     instance_id,
                     row,
-                    proves,
+                    _type,
                     mul,
                     is_global,
                 );
@@ -242,6 +242,17 @@ impl<F: PrimeField64> StdSum<F> {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
+    fn pre_calculate_witness(
+        &self,
+        _stage: u32,
+        _pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        _instance_ids: &[usize],
+        _n_cores: usize,
+        _buffer_pool: &dyn BufferPool<F>,
+    ) {
+    }
+
     fn calculate_witness(
         &self,
         stage: u32,
@@ -263,6 +274,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
             let std_sum_users = get_hint_ids_by_name(sctx.get_global_bin(), "std_sum_users")[0];
 
             let num_users = get_global_hint_field_constant_as(&sctx, std_sum_users, "num_users");
+            let std_mode = get_hint_field_gc_constant_a(&sctx, std_sum_users, "std_mode", false);
             let airgroup_ids = get_hint_field_gc_constant_a(&sctx, std_sum_users, "airgroup_ids", false);
             let air_ids = get_hint_field_gc_constant_a(&sctx, std_sum_users, "air_ids", false);
 
@@ -319,15 +331,21 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                         gsum_hints[0] as usize
                     };
 
+                    let std_mode = extract_field_element_as_usize(&std_mode.values[i], "std_mode");
+                    let result = match std_mode {
+                        STD_MODE_DEFAULT => Some("result"),
+                        STD_MODE_ONE_INSTANCE => None,
+                        _ => panic!("Invalid std_mode: {std_mode}"),
+                    };
                     // This call accumulates "expression" into "reference" expression and stores its last value to "result"
-                    // Alternatively, this could be done using get_hint_field and set_hint_field methods and doing the accumulation in Rust,
+                    // Alternatively, this could be done using get_hint_field and set_hint_field methods and doing the accumulation in Rust
                     acc_mul_hint_fields(
                         &sctx,
                         &pctx,
                         *instance_id,
                         gsum_hint,
                         "reference",
-                        "result",
+                        result,
                         "numerator_air",
                         "denominator_air",
                         HintFieldOptions::default(),
@@ -340,7 +358,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                         &pctx,
                         *instance_id,
                         gsum_hint,
-                        "result",
+                        result,
                         "numerator_direct",
                         "denominator_direct",
                         HintFieldOptions::default(),

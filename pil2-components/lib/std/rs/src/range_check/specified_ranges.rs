@@ -13,7 +13,7 @@ use witness::WitnessComponent;
 use proofman_common::{AirInstance, BufferPool, ProofCtx, SetupCtx, TraceInfo};
 use proofman_hints::{get_hint_field_constant_a, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
 
-use crate::{get_hint_field_constant_as_u64, validate_binary_field, AirComponent};
+use crate::{get_hint_field_constant_as, validate_binary_field, AirComponent};
 
 #[derive(Debug, Clone)]
 pub struct SpecifiedRange {
@@ -32,12 +32,17 @@ pub struct SpecifiedRanges {
     instance_id: AtomicU64,
     calculated: AtomicBool,
     ranges: Vec<SpecifiedRange>,
+    shared_tables: bool,
 }
 
 impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
-    fn new(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, airgroup_id: Option<usize>, air_id: Option<usize>) -> Arc<Self> {
-        let airgroup_id = airgroup_id.expect("Airgroup ID must be provided");
-        let air_id = air_id.expect("Air ID must be provided");
+    fn new(
+        pctx: &ProofCtx<F>,
+        sctx: &SetupCtx<F>,
+        airgroup_id: usize,
+        air_id: usize,
+        shared_tables: bool,
+    ) -> Arc<Self> {
         let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
 
         let setup = sctx.get_setup(airgroup_id, air_id);
@@ -46,14 +51,14 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
 
         // Get the relevant data
         let col_num =
-            get_hint_field_constant_as_u64::<F>(sctx, airgroup_id, air_id, hint_id, "col_num", hint_opt.clone());
+            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint_id, "col_num", hint_opt.clone());
 
         let mins = get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "mins", hint_opt.clone()).values;
         let mins_neg =
             get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "mins_neg", hint_opt.clone()).values;
 
         let opids_count =
-            get_hint_field_constant_as_u64::<F>(sctx, airgroup_id, air_id, hint_id, "opids_count", hint_opt.clone());
+            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint_id, "opids_count", hint_opt.clone());
         let opids_len =
             get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "opids_len", hint_opt).values;
 
@@ -102,11 +107,20 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
             instance_id: AtomicU64::new(0),
             calculated: AtomicBool::new(false),
             ranges,
+            shared_tables,
         })
     }
 }
 
 impl SpecifiedRanges {
+    pub fn get_global_row(range_min: i64, value: i64) -> u64 {
+        (value - range_min) as u64
+    }
+
+    pub fn get_global_rows(range_min: i64, values: &[i64]) -> Vec<u64> {
+        values.iter().map(|&v| Self::get_global_row(range_min, v)).collect()
+    }
+
     #[inline(always)]
     pub fn update_input(&self, id: usize, value: i64, multiplicity: u64) {
         if self.calculated.load(Ordering::Relaxed) {
@@ -163,15 +177,30 @@ impl SpecifiedRanges {
 
 impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
     fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
-        let (instance_found, mut instance_id) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
+        let (instance_found, mut instance_id) = pctx.dctx_find_instance_mine(self.airgroup_id, self.air_id);
 
         if !instance_found {
-            instance_id = pctx.add_instance_all(self.airgroup_id, self.air_id);
+            if !self.shared_tables {
+                instance_id = pctx.add_table_all(self.airgroup_id, self.air_id);
+            } else {
+                instance_id = pctx.add_table(self.airgroup_id, self.air_id);
+            }
         }
 
         self.calculated.store(false, Ordering::Relaxed);
         self.instance_id.store(instance_id as u64, Ordering::SeqCst);
         Vec::new()
+    }
+
+    fn pre_calculate_witness(
+        &self,
+        _stage: u32,
+        _pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        _instance_ids: &[usize],
+        _n_cores: usize,
+        _buffer_pool: &dyn BufferPool<F>,
+    ) {
     }
 
     fn calculate_witness(
@@ -192,9 +221,7 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
 
             self.calculated.store(true, Ordering::Relaxed);
 
-            pctx.dctx_distribute_multiplicities(&self.multiplicities, instance_id);
-
-            if pctx.dctx_is_my_instance(instance_id) {
+            if !self.shared_tables {
                 let buffer_size = self.num_cols * self.num_rows;
                 let mut buffer = create_buffer_fast(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
@@ -203,14 +230,31 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
                     }
                 });
 
-                let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer, false));
+                let air_instance =
+                    AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, self.num_rows, buffer, false));
                 pctx.add_air_instance(air_instance, instance_id);
             } else {
-                self.multiplicities.par_iter().for_each(|vec| {
-                    for vec_row in vec.iter() {
-                        vec_row.swap(0, Ordering::Relaxed);
-                    }
-                });
+                pctx.dctx_distribute_multiplicities(&self.multiplicities, instance_id);
+
+                if pctx.dctx_is_my_instance(instance_id) {
+                    let buffer_size = self.num_cols * self.num_rows;
+                    let mut buffer = create_buffer_fast(buffer_size);
+                    buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
+                        for (col, vec) in self.multiplicities.iter().enumerate() {
+                            chunk[col] = F::from_u64(vec[row].swap(0, Ordering::Relaxed));
+                        }
+                    });
+
+                    let air_instance =
+                        AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, self.num_rows, buffer, false));
+                    pctx.add_air_instance(air_instance, instance_id);
+                } else {
+                    self.multiplicities.par_iter().for_each(|vec| {
+                        for vec_row in vec.iter() {
+                            vec_row.swap(0, Ordering::Relaxed);
+                        }
+                    });
+                }
             }
         }
     }

@@ -3,18 +3,13 @@ use std::sync::Arc;
 use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
-use rand::distr::{StandardUniform, Distribution};
-
 use fields::PrimeField64;
 
 use crate::Lookup3Trace;
 
 define_wc!(Lookup3, "Lkup3");
 
-impl<F: PrimeField64> WitnessComponent<F> for Lookup3
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for Lookup3 {
     execute!(Lookup3Trace, 1);
 
     fn calculate_witness(

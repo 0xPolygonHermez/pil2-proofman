@@ -4,6 +4,8 @@
 #include <string>
 #include <map>
 #include "binfile_utils.hpp"
+#include "binfile_writer.hpp"
+#include "expressions_info.hpp"
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_base_field_avx.hpp"
 #include "goldilocks_base_field_avx512.hpp"
@@ -13,15 +15,17 @@
 #include "goldilocks_cubic_extension_avx.hpp"
 #include "goldilocks_cubic_extension_avx512.hpp"
 #include "stark_info.hpp"
-#include <immintrin.h>
 #include <cassert>
 
-const int BINARY_EXPRESSIONS_SECTION = 2;
-const int BINARY_CONSTRAINTS_SECTION = 3;
-const int BINARY_HINTS_SECTION = 4;
+const int EXPRESSIONS_SECTION = 1;
+const int CONSTRAINTS_SECTION = 2;
+const int HINTS_SECTION = 3;
+const int N_SECTIONS = 3;
 
-const int GLOBAL_CONSTRAINTS_SECTION = 2;
-const int GLOBAL_HINTS_SECTION = 3;
+const int GLOBAL_CONSTRAINTS_SECTION = 1;
+const int GLOBAL_HINTS_SECTION = 2;
+const int N_GLOBAL_SECTIONS = 2;
+
 
 struct HintFieldValue {
     opType operand;
@@ -56,20 +60,6 @@ struct ParserParams
     uint32_t opsOffset = 0;
     uint32_t nArgs = 0;
     uint32_t argsOffset = 0;
-    uint32_t nConstPolsUsed = 0;
-    uint32_t constPolsOffset = 0;
-    uint32_t nCmPolsUsed = 0;
-    uint32_t cmPolsOffset = 0;
-    uint32_t nChallengesUsed = 0;
-    uint32_t challengesOffset = 0;
-    uint32_t nPublicsUsed = 0;
-    uint32_t publicsOffset = 0;
-    uint32_t nAirgroupValuesUsed = 0;
-    uint32_t airgroupValuesOffset = 0;
-    uint32_t nAirValuesUsed = 0;
-    uint32_t airValuesOffset = 0;
-    std::vector<uint32_t> nCustomCommitsPolsUsed;
-    std::vector<uint32_t> customCommitsOffset;
     uint32_t firstRow = 0;
     uint32_t lastRow = 0;
     uint32_t destDim = 0;
@@ -83,22 +73,17 @@ struct ParserArgs
     uint8_t* ops = nullptr;
     uint16_t* args = nullptr;
     Goldilocks::Element* numbers = nullptr;
-    uint16_t* constPolsIds = nullptr;
-    uint16_t* cmPolsIds = nullptr;
-    uint16_t* challengesIds = nullptr;
-    uint16_t* publicsIds = nullptr;
-    uint16_t* airgroupValuesIds = nullptr;
-    uint16_t* airValuesIds = nullptr;
-    uint16_t* customCommitsPolsIds = nullptr;
     uint64_t nNumbers = 0;
 };
 
 class ExpressionsBin
 {
 public:
-
+    
     uint32_t  nOpsTotal = 0;
     uint32_t  nArgsTotal = 0;
+
+    bool write = false;
 
     std::map<uint64_t, ParserParams> expressionsInfo;
 
@@ -115,39 +100,44 @@ public:
 
     uint64_t maxArgs = 0;
     uint64_t maxOps = 0;
-    
-    ~ExpressionsBin() {
-        if (expressionsBinArgsExpressions.ops) delete[] expressionsBinArgsExpressions.ops;
-        if (expressionsBinArgsExpressions.args) delete[] expressionsBinArgsExpressions.args;
-        if (expressionsBinArgsExpressions.numbers) delete[] expressionsBinArgsExpressions.numbers;
-        if (expressionsBinArgsExpressions.constPolsIds) delete[] expressionsBinArgsExpressions.constPolsIds;
-        if (expressionsBinArgsExpressions.cmPolsIds) delete[] expressionsBinArgsExpressions.cmPolsIds;
-        if (expressionsBinArgsExpressions.challengesIds) delete[] expressionsBinArgsExpressions.challengesIds;
-        if (expressionsBinArgsExpressions.publicsIds) delete[] expressionsBinArgsExpressions.publicsIds;
-        if (expressionsBinArgsExpressions.airgroupValuesIds) delete[] expressionsBinArgsExpressions.airgroupValuesIds;
-        if (expressionsBinArgsExpressions.airValuesIds) delete[] expressionsBinArgsExpressions.airValuesIds;
-        if (expressionsBinArgsExpressions.customCommitsPolsIds) delete[] expressionsBinArgsExpressions.customCommitsPolsIds;
 
-        if (expressionsBinArgsConstraints.ops) delete[] expressionsBinArgsConstraints.ops;
-        if (expressionsBinArgsConstraints.args) delete[] expressionsBinArgsConstraints.args;
-        if (expressionsBinArgsConstraints.numbers) delete[] expressionsBinArgsConstraints.numbers;
-        if (expressionsBinArgsConstraints.constPolsIds) delete[] expressionsBinArgsConstraints.constPolsIds;
-        if (expressionsBinArgsConstraints.cmPolsIds) delete[] expressionsBinArgsConstraints.cmPolsIds;
-        if (expressionsBinArgsConstraints.challengesIds) delete[] expressionsBinArgsConstraints.challengesIds;
-        if (expressionsBinArgsConstraints.publicsIds) delete[] expressionsBinArgsConstraints.publicsIds;
-        if (expressionsBinArgsConstraints.airgroupValuesIds) delete[] expressionsBinArgsConstraints.airgroupValuesIds;
-        if (expressionsBinArgsConstraints.airValuesIds) delete[] expressionsBinArgsConstraints.airValuesIds;
-        if (expressionsBinArgsConstraints.customCommitsPolsIds) delete[] expressionsBinArgsConstraints.customCommitsPolsIds;
+    ~ExpressionsBin() {
+        if (!write) {
+            if (expressionsBinArgsExpressions.ops) delete[] expressionsBinArgsExpressions.ops;
+            if (expressionsBinArgsExpressions.args) delete[] expressionsBinArgsExpressions.args;
+            if (expressionsBinArgsExpressions.numbers) delete[] expressionsBinArgsExpressions.numbers;
+
+            if (expressionsBinArgsConstraints.ops) delete[] expressionsBinArgsConstraints.ops;
+            if (expressionsBinArgsConstraints.args) delete[] expressionsBinArgsConstraints.args;
+            if (expressionsBinArgsConstraints.numbers) delete[] expressionsBinArgsConstraints.numbers;
+        }        
     };
 
     /* Constructor */
     ExpressionsBin(string file, bool globalBin = false, bool verifierBin = false);
+
+    ExpressionsBin(string starkInfoFile, string expressionsInfoFile, string expressionsBinFile, bool globalBin = false, bool verifierBin = false);
 
     void loadExpressionsBin(BinFileUtils::BinFile *expressionsBin);
 
     void loadGlobalBin(BinFileUtils::BinFile *globalBin);
 
     void loadVerifierBin(BinFileUtils::BinFile *verifierBin);
+
+    void writeGlobalExpressionsBin(string binFile, ExpressionsInfo& expsInfo);
+
+    void writeExpressionsBin(string binFile, ExpressionsInfo& expsInfo);
+
+    void writeVerifierBin(string binFile, ExpressionsInfo& expsInfo);
+
+    void writeExpressionsSection(BinFileUtils::BinFileWriter &binFile, int section, std::vector<ExpInfoBin> expressionsInfo, std::vector<uint64_t> numbersExps, uint64_t maxTmp1, uint64_t maxTmp3, uint64_t maxArgs, uint64_t maxOps);
+    
+    void writeGlobalConstraintsSection(BinFileUtils::BinFileWriter &binFile, int section, std::vector<ExpInfoBin> constraintsInfo, std::vector<uint64_t> numbersConstraints);
+    void writeGlobalHintsSection(BinFileUtils::BinFileWriter &binFile, int section, std::vector<HintInfo> hintsInfo);
+
+    void writeConstraintsSection(BinFileUtils::BinFileWriter &binFile, int section, std::vector<ExpInfoBin> constraintsInfo, std::vector<uint64_t> numbersConstraints);
+
+    void writeHintsSection(BinFileUtils::BinFileWriter &binFile, int section, std::vector<HintInfo> hintsInfo);
 
     uint64_t getNumberHintIdsByName(std::string name);
 

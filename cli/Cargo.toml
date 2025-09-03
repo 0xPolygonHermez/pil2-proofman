@@ -16,6 +16,7 @@ pilout = { path = "../pilout" }
 proofman-util = { path = "../util" }
 proofman = { path = "../proofman" }
 proofman-common = { path = "../common" }
+proofman-verifier = { path = "../verifier" }
 witness = { path = "../witness" }
 fields = { path = "../fields" }
 
@@ -26,6 +27,7 @@ colored.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 bytemuck.workspace = true
+zstd.workspace = true
 
 clap = { version = "4.5.38", features = ["derive", "env"] }
 tinytemplate = "1.1"

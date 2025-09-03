@@ -8,6 +8,7 @@ use crate::commands::field::Field;
 use std::io::Write;
 use bytemuck::cast_slice;
 use fields::Goldilocks;
+use zstd::stream::write::Encoder;
 
 use proofman::ProofMan;
 use proofman_common::{ModeName, ProofOptions, ParamsGPU};
@@ -171,6 +172,7 @@ impl ProveCmd {
                 )?,
             };
         } else {
+            proofman.set_barrier();
             let (_, vadcop_final_proof) = match self.field {
                 Field::Goldilocks => proofman.generate_proof(
                     self.witness_lib.clone(),
@@ -192,11 +194,27 @@ impl ProveCmd {
             proofman.set_barrier();
 
             if let Some(vadcop_final_proof) = vadcop_final_proof {
-                // Save the vadcop final proof
+                let proof_data = cast_slice(&vadcop_final_proof);
+
+                // Save the uncompressed vadcop final proof
                 let output_file_path = self.output_dir.join("proofs/vadcop_final_proof.bin");
-                // write a Vec<u64> to a bin file stored in output_file_path
-                let mut file = File::create(output_file_path)?;
-                file.write_all(cast_slice(&vadcop_final_proof))?;
+                let mut file = File::create(&output_file_path)?;
+                file.write_all(proof_data)?;
+
+                // Save the compressed vadcop final proof using zstd (fastest compression level)
+                let compressed_output_path = self.output_dir.join("proofs/vadcop_final_proof.compressed.bin");
+                let compressed_file = File::create(&compressed_output_path)?;
+                let mut encoder = Encoder::new(compressed_file, 1)?;
+                encoder.write_all(proof_data)?;
+                encoder.finish()?;
+
+                let original_size = vadcop_final_proof.len() * 8;
+                let compressed_size = std::fs::metadata(&compressed_output_path)?.len();
+                let compression_ratio = compressed_size as f64 / original_size as f64;
+
+                println!("Vadcop final proof saved:");
+                println!("  Original: {} bytes", original_size);
+                println!("  Compressed: {} bytes (ratio: {:.2}x)", compressed_size, compression_ratio);
             }
         }
 

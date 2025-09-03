@@ -37,7 +37,7 @@ void save_challenges(void *pGlobalChallenge, char* globalInfoFile, char *fileDir
 }
 
 
-void save_publics(unsigned long numPublicInputs, void *pPublicInputs, char *fileDir) {
+void save_publics(uint64_t numPublicInputs, void *pPublicInputs, char *fileDir) {
 
     Goldilocks::Element* publicInputs = (Goldilocks::Element *)pPublicInputs;
 
@@ -104,6 +104,10 @@ void *stark_info_new(char *filename, bool recursive, bool verify_constraints, bo
 
 uint64_t get_proof_size(void *pStarkInfo) {
     return ((StarkInfo *)pStarkInfo)->proofSize;
+}
+
+uint64_t get_proof_pinned_size(void *pStarkInfo) {
+    return ((StarkInfo *)pStarkInfo)->getPinnedProofSize();
 }
 
 void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3) {
@@ -364,7 +368,7 @@ void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nC
 }
 
 #ifndef __USE_CUDA__
-uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t instanceId, void *root, void *trace, void *auxTrace, void *d_buffers, void *pSetupCtx_) {
+uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *trace, void *auxTrace, void *d_buffers, void *pSetupCtx_) {
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     Goldilocks::Element *traceGL = (Goldilocks::Element *)trace;
     Goldilocks::Element *auxTraceGL = (Goldilocks::Element *)auxTrace;
@@ -543,21 +547,20 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
     return (void *)d_buffers;
 };
 
-uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t maxProofsPerGPU, uint64_t maxRecursiveProofsPerGPU) { return 1; }
+uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t maxProofsPerGPU, uint64_t maxRecursiveProofsPerGPU, uint64_t max_n_bits_ext) { return 1; }
 
-void set_device_mpi(uint32_t mpi_node_rank){}
-void set_device(uint32_t gpu_id){}
+void reset_device_streams(void *d_buffers_) {}
 
-uint64_t check_device_memory() { return 0; }
+uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size) { return 0; }
 
 uint64_t get_num_gpus(){ return 0;}
 
 void free_device_buffers(void *d_buffers_) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
-    free(d_buffers);
+    delete d_buffers;
 }
 
-void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_) {}
+void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, uint64_t nStreams) {}
 
 void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType) {}
 
@@ -580,7 +583,26 @@ uint64_t gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t air
     d_buffers->airId = airId;
     d_buffers->proofType = string(proofType);
 
-    genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness,  (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, proofBuffer, string(proof_file), vadcop);
+
+    Goldilocks::Element evals[setupCtx->starkInfo.evMap.size() * FIELD_EXTENSION];
+    Goldilocks::Element challenges[setupCtx->starkInfo.challengesMap.size() * FIELD_EXTENSION];
+    Goldilocks::Element airgroupValues[FIELD_EXTENSION];
+
+    StepsParams params = {
+        .trace = (Goldilocks::Element *)witness,
+        .aux_trace = (Goldilocks::Element *)aux_trace,
+        .publicInputs = (Goldilocks::Element *)pPublicInputs,
+        .proofValues = nullptr,
+        .challenges = challenges,
+        .airgroupValues = airgroupValues,
+        .evals = evals,
+        .xDivXSub = nullptr,
+        .pConstPolsAddress = (Goldilocks::Element *)pConstPols,
+        .pConstPolsExtendedTreeAddress = (Goldilocks::Element *)pConstTree,
+        .pCustomCommitsFixed = nullptr,
+    };
+
+    genProof(*setupCtx, airgroupId, airId, instanceId, params, nullptr, proofBuffer, string(proof_file), true);
     
     return 0;
 }
@@ -607,7 +629,7 @@ void *gen_recursive_proof_final(void *pSetupCtx, char* globalInfoFile, uint64_t 
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
-    return genRecursiveProof<RawFr::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file), false);
+    return genRecursiveProofBN128(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file));
 }
 
 void read_exec_file(uint64_t *exec_data, char *exec_file, uint64_t nCommitedPols) {

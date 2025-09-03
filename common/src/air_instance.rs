@@ -53,6 +53,7 @@ pub struct CustomCommitInfo<F> {
 pub struct TraceInfo<F> {
     airgroup_id: usize,
     air_id: usize,
+    num_rows: usize,
     trace: Vec<F>,
     custom_traces: Option<Vec<CustomCommitInfo<F>>>,
     air_values: Option<Vec<F>>,
@@ -61,8 +62,17 @@ pub struct TraceInfo<F> {
 }
 
 impl<F> TraceInfo<F> {
-    pub fn new(airgroup_id: usize, air_id: usize, trace: Vec<F>, shared_buffer: bool) -> Self {
-        Self { airgroup_id, air_id, trace, custom_traces: None, air_values: None, airgroup_values: None, shared_buffer }
+    pub fn new(airgroup_id: usize, air_id: usize, num_rows: usize, trace: Vec<F>, shared_buffer: bool) -> Self {
+        Self {
+            airgroup_id,
+            air_id,
+            num_rows,
+            trace,
+            custom_traces: None,
+            air_values: None,
+            airgroup_values: None,
+            shared_buffer,
+        }
     }
 
     pub fn with_custom_traces(mut self, custom_traces: Vec<CustomCommitInfo<F>>) -> Self {
@@ -116,6 +126,7 @@ impl<'a, F> FromTrace<'a, F> {
 pub struct AirInstance<F> {
     pub airgroup_id: usize,
     pub air_id: usize,
+    pub num_rows: usize,
     pub trace: Vec<F>,
     pub aux_trace: Vec<F>,
     pub custom_commits_fixed: Vec<F>,
@@ -131,6 +142,7 @@ impl<F: Field> AirInstance<F> {
     pub fn new(trace_info: TraceInfo<F>) -> Self {
         let airgroup_id = trace_info.airgroup_id;
         let air_id = trace_info.air_id;
+        let num_rows = trace_info.num_rows;
 
         let airvalues = trace_info.air_values.unwrap_or_default();
 
@@ -139,6 +151,7 @@ impl<F: Field> AirInstance<F> {
         AirInstance {
             airgroup_id,
             air_id,
+            num_rows,
             trace: trace_info.trace,
             aux_trace: Vec::new(),
             custom_commits_fixed: Vec::new(),
@@ -155,6 +168,7 @@ impl<F: Field> AirInstance<F> {
         let mut trace_info = TraceInfo::new(
             traces.trace.airgroup_id(),
             traces.trace.air_id(),
+            traces.trace.num_rows(),
             traces.trace.get_buffer(),
             traces.trace.is_shared_buffer(),
         );

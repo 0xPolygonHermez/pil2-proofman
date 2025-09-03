@@ -45,6 +45,8 @@ namespace BinFileUtils
         void startWriteSection(u_int32_t sectionId);
         void endWriteSection();
 
+        void writeU8LE(u_int8_t value);
+        void writeU16LE(u_int16_t value);
         void writeU32LE(u_int32_t value);
         void writeU64LE(u_int64_t value);
         void write(void *buffer, u_int64_t len);

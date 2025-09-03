@@ -2,15 +2,16 @@ use libloading::{Library, Symbol};
 use fields::PrimeField64;
 use std::ffi::CString;
 use proofman_starks_lib_c::*;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use num_traits::ToPrimitive;
-use std::sync::Arc;
 
 use proofman_common::{load_const_pols, load_const_pols_tree, Proof, ProofCtx, ProofType, Setup, SetupsVadcop};
 
 use std::os::raw::{c_void, c_char};
 
-use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_stop_and_log_trace, timer_start_trace};
+use proofman_util::{
+    timer_start_info, timer_stop_and_log_info, timer_stop_and_log_trace, timer_start_trace, create_buffer_fast,
+};
 
 use crate::{add_publics_circom, add_publics_aggregation};
 
@@ -91,7 +92,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
         let mut updated_proof: Vec<u64> = vec![0; proof.proof.len() + publics_circom_size];
 
         if proof.proof_type == ProofType::Compressor {
-            let n_publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup_id].len() + 10;
+            let n_publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
             let publics_aggregation: Vec<F> =
                 proof.proof.iter().take(n_publics_aggregation).map(|&x| F::from_u64(x)).collect();
             add_publics_aggregation(&mut updated_proof, 0, &publics_aggregation, n_publics_aggregation);
@@ -168,6 +169,15 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
     ))
 }
 
+pub fn n_publics_aggregation<F: PrimeField64>(pctx: &ProofCtx<F>, airgroup_id: usize) -> usize {
+    let mut publics_aggregation = 0;
+    publics_aggregation += 1; // circuit type
+    publics_aggregation += 4 * pctx.global_info.agg_types[airgroup_id].len(); // agg types
+    publics_aggregation += 10; // elliptic curve hash
+    publics_aggregation += 1; // n proofs aggregated
+    publics_aggregation
+}
+
 pub fn gen_recursive_proof_size<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
@@ -179,7 +189,7 @@ pub fn gen_recursive_proof_size<F: PrimeField64>(
 
     let mut new_proof_size = setup.proof_size;
 
-    let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup_id].len() + 10;
+    let publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
 
     if witness.proof_type != ProofType::VadcopFinal {
         new_proof_size += publics_aggregation as u64;
@@ -197,15 +207,20 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     setups: &SetupsVadcop<F>,
     witness: &Proof<F>,
     new_proof: &Proof<F>,
-    trace: &[F],
     prover_buffer: &[F],
     output_dir_path: &Path,
     d_buffers: *mut c_void,
-    const_tree: Arc<Vec<F>>,
-    const_pols: Arc<Vec<F>>,
+    const_tree: &[F],
+    const_pols: &[F],
     save_proofs: bool,
 ) -> u64 {
-    timer_start_info!(GEN_RECURSIVE_PROOF, "GEN_RECURSIVE_PROOF_{:?}", witness.proof_type);
+    timer_start_info!(
+        GEN_RECURSIVE_PROOF,
+        "GEN_RECURSIVE_PROOF_{:?} [{}:{}]",
+        witness.proof_type,
+        witness.airgroup_id,
+        witness.air_id
+    );
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
     let global_info_file: &str = global_info_path.to_str().unwrap();
 
@@ -234,6 +249,10 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     };
 
     let setup = setups.get_setup(airgroup_id, air_id, &witness.proof_type);
+
+    let trace: Vec<F> =
+        create_buffer_fast(setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize);
+
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
     let mut publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
@@ -251,7 +270,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         witness.n_cols as u64,
     );
 
-    let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup_id].len() + 10;
+    let publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
 
     let initial_idx = if witness.proof_type == ProofType::VadcopFinal {
         1 + setup.stark_info.n_publics as usize
@@ -298,7 +317,13 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         proof_type,
     );
 
-    timer_stop_and_log_info!(GEN_RECURSIVE_PROOF, "GEN_RECURSIVE_PROOF_{:?}", witness.proof_type);
+    timer_stop_and_log_info!(
+        GEN_RECURSIVE_PROOF,
+        "GEN_RECURSIVE_PROOF_{:?} [{}:{}]",
+        witness.proof_type,
+        witness.airgroup_id,
+        witness.air_id
+    );
     stream_id
 }
 
@@ -306,12 +331,11 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 pub fn aggregate_recursive2_proofs<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
-    proofs: &[Vec<Proof<F>>],
-    trace: &[F],
+    proofs: Vec<Vec<Proof<F>>>,
     prover_buffer: &[F],
-    const_pols: Arc<Vec<F>>,
-    const_tree: Arc<Vec<F>>,
-    output_dir_path: PathBuf,
+    const_pols: &[F],
+    const_tree: &[F],
+    output_dir_path: &Path,
     d_buffers: *mut c_void,
     save_proofs: bool,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
@@ -335,7 +359,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
             alives[airgroup] += airgroup_instances_alive[airgroup][p];
         }
         let setup = setups.get_setup(airgroup, 0, &ProofType::Recursive2);
-        let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup].len() + 10;
+        let publics_aggregation = n_publics_aggregation(pctx, airgroup);
         null_proofs[airgroup] = vec![0; setup.proof_size as usize + publics_aggregation];
         airgroup_proofs.push(vec![None; alives[airgroup]]);
 
@@ -403,12 +427,11 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                             setups,
                             &circom_witness,
                             &recursive2_proof,
-                            trace,
                             prover_buffer,
-                            &output_dir_path,
+                            output_dir_path,
                             d_buffers,
-                            const_tree.clone(),
-                            const_pols.clone(),
+                            const_tree,
+                            const_pols,
                             save_proofs,
                         );
 
@@ -471,11 +494,10 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     proof: &Proof<F>,
-    trace: &[F],
     prover_buffer: &[F],
-    output_dir_path: PathBuf,
-    const_pols: Arc<Vec<F>>,
-    const_tree: Arc<Vec<F>>,
+    output_dir_path: &Path,
+    const_pols: &[F],
+    const_tree: &[F],
     d_buffers: *mut c_void,
     save_proof: bool,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
@@ -491,9 +513,8 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         setups,
         &witness_final_proof,
         &final_proof,
-        trace,
         prover_buffer,
-        &output_dir_path,
+        output_dir_path,
         d_buffers,
         const_tree,
         const_pols,
@@ -519,9 +540,8 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     proof: &[u64],
-    trace: &[F],
     prover_buffer: &[F],
-    output_dir_path: PathBuf,
+    output_dir_path: &Path,
     save_proofs: bool,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
@@ -530,6 +550,8 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     let setup = setups.setup_recursivef.as_ref().unwrap();
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
+    let trace: Vec<F> =
+        create_buffer_fast(setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize);
     let setup_path = pctx.global_info.get_setup_path("recursivef");
 
     let const_tree_size = setup.const_tree_size;
@@ -594,11 +616,12 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
 pub fn generate_fflonk_snark_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     proof: *mut c_void,
-    output_dir_path: PathBuf,
+    output_dir_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let setup_path = pctx.global_info.get_setup_path("final");
 
-    let rust_lib_filename = setup_path.display().to_string() + ".so";
+    let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
+    let rust_lib_filename = setup_path.display().to_string() + lib_extension;
     let rust_lib_path = Path::new(rust_lib_filename.as_str());
 
     if !rust_lib_path.exists() {
@@ -664,25 +687,17 @@ fn generate_witness<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) -> Result<V
 pub fn get_recursive_buffer_sizes<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
-) -> Result<(usize, usize), Box<dyn std::error::Error>> {
-    let mut max_trace = 0;
+) -> Result<usize, Box<dyn std::error::Error>> {
     let mut max_prover_size = 0;
 
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                 let setup_compressor = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
-                max_trace = max_trace.max(
-                    setup_compressor.n_cols as usize
-                        * (1 << (setup_compressor.stark_info.stark_struct.n_bits)) as usize,
-                );
                 max_prover_size = max_prover_size.max(setup_compressor.prover_buffer_size);
             }
 
             let setup_recursive1 = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
-            max_trace = max_trace.max(
-                setup_recursive1.n_cols as usize * (1 << (setup_recursive1.stark_info.stark_struct.n_bits)) as usize,
-            );
             max_prover_size = max_prover_size.max(setup_recursive1.prover_buffer_size);
         }
     }
@@ -690,15 +705,10 @@ pub fn get_recursive_buffer_sizes<F: PrimeField64>(
     let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup in 0..n_airgroups {
         let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0);
-        max_trace = max_trace.max(setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize);
         max_prover_size = max_prover_size.max(setup.prover_buffer_size);
     }
 
-    if cfg!(feature = "gpu") {
-        max_prover_size = 0;
-    }
-
-    Ok((max_trace, max_prover_size as usize))
+    Ok(max_prover_size as usize)
 }
 
 #[derive(Debug)]

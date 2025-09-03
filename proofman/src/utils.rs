@@ -2,7 +2,6 @@ use fields::PrimeField64;
 use num_traits::ToPrimitive;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
-use std::sync::Arc;
 use std::{collections::HashMap, path::PathBuf};
 
 use colored::*;
@@ -60,9 +59,11 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
         n_instances = my_instances.len();
     }
 
+    let max_prover_memory = sctx.max_prover_buffer_size as f64 * 8.0;
+
     let mut memory_tables = 0 as f64;
     for (instance_id, &instance_info) in instances.iter().enumerate() {
-        let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
+        let (airgroup_id, air_id, is_table) = (instance_info.airgroup_id, instance_info.air_id, instance_info.table);
         if !print[instance_id] {
             continue;
         }
@@ -78,7 +79,7 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
             let memory_instance = setup.prover_buffer_size as f64 * 8.0;
             let memory_fixed =
                 (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))) as f64 * 8.0;
-            if all {
+            if is_table {
                 memory_tables += memory_trace;
             }
             let total_cols: u64 = setup
@@ -115,7 +116,6 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
         }
     }
     tracing::info!("{}", "--- TOTAL PROVER MEMORY USAGE ----------------------------".bright_white().bold());
-    let mut max_prover_memory = 0f64;
     for air_group in air_groups {
         let air_group_instances = air_instances.get(air_group).unwrap();
         let mut air_names: Vec<_> = air_group_instances.keys().collect();
@@ -126,9 +126,6 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
             let (_, _, _, memory_trace, memory_instance) = air_info.get(air_name).unwrap();
             let gpu = cfg!(feature = "gpu");
             if gpu {
-                if max_prover_memory < *memory_instance {
-                    max_prover_memory = *memory_instance;
-                }
                 tracing::info!(
                     "      · {}: {} per each of {} instance",
                     air_name,
@@ -136,9 +133,6 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
                     count,
                 );
             } else {
-                if max_prover_memory < *memory_instance + *memory_trace {
-                    max_prover_memory = *memory_instance + *memory_trace;
-                }
                 tracing::info!(
                     "      · {}: {} + {} per each of {} instance | Total: {}",
                     air_name,
@@ -327,7 +321,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     setups: &SetupsVadcop<F>,
-    d_buffers: Arc<DeviceBuffer>,
+    d_buffers: &DeviceBuffer,
     aggregation: bool,
     gpu_params: &ParamsGPU,
 ) {
@@ -339,6 +333,11 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                 let setup = sctx.get_setup(airgroup_id, air_id);
                 let proof_type: &str = setup.setup_type.clone().into();
                 tracing::info!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
+                let mut n_streams = 1;
+                if setup.single_instance {
+                    let max_prover_buffer_size = sctx.max_prover_buffer_size;
+                    n_streams = setup.prover_buffer_size.div_ceil(max_prover_buffer_size as u64);
+                }
                 load_device_setup_c(
                     airgroup_id as u64,
                     air_id as u64,
@@ -346,6 +345,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                     (&setup.p_setup).into(),
                     d_buffers.get_ptr(),
                     setup.verkey.as_ptr() as *mut u8,
+                    n_streams,
                 );
                 if gpu_params.preallocate {
                     let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
@@ -385,6 +385,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                             (&setup.p_setup).into(),
                             d_buffers.get_ptr(),
                             setup.verkey.as_ptr() as *mut u8,
+                            1,
                         );
                         if gpu_params.preallocate {
                             let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
@@ -422,6 +423,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                         (&setup.p_setup).into(),
                         d_buffers.get_ptr(),
                         setup.verkey.as_ptr() as *mut u8,
+                        1,
                     );
                     if gpu_params.preallocate {
                         let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
@@ -458,6 +460,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                     (&setup.p_setup).into(),
                     d_buffers.get_ptr(),
                     setup.verkey.as_ptr() as *mut u8,
+                    1,
                 );
                 if gpu_params.preallocate {
                     let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
@@ -491,6 +494,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                 (&setup_vadcop_final.p_setup).into(),
                 d_buffers.get_ptr(),
                 setup_vadcop_final.verkey.as_ptr() as *mut u8,
+                1,
             );
             if gpu_params.preallocate {
                 let const_pols_path = setup_vadcop_final.setup_path.to_string_lossy().to_string() + ".const";
@@ -618,8 +622,8 @@ pub fn add_publics_aggregation<F: PrimeField64>(
 }
 
 pub fn register_std<F: PrimeField64>(wcm: &WitnessManager<F>, std: &Std<F>) {
-    wcm.register_component_std(std.std_prod.clone());
-    wcm.register_component_std(std.std_sum.clone());
+    wcm.register_component_std(std.prod_bus.clone());
+    wcm.register_component_std(std.sum_bus.clone());
     wcm.register_component_std(std.range_check.clone());
 
     if std.range_check.u8air.is_some() {
@@ -633,6 +637,11 @@ pub fn register_std<F: PrimeField64>(wcm: &WitnessManager<F>, std: &Std<F>) {
     if std.range_check.specified_ranges_air.is_some() {
         wcm.register_component_std(std.range_check.specified_ranges_air.clone().unwrap());
     }
+
+    wcm.register_component_std(std.virtual_table.clone());
+    if std.virtual_table.virtual_table_air.is_some() {
+        wcm.register_component_std(std.virtual_table.virtual_table_air.clone().unwrap());
+    }
 }
 
 pub fn register_std_dev<F: PrimeField64>(
@@ -642,8 +651,8 @@ pub fn register_std_dev<F: PrimeField64>(
     register_u16: bool,
     register_specified_ranges: bool,
 ) {
-    wcm.register_component_std(std.std_prod.clone());
-    wcm.register_component_std(std.std_sum.clone());
+    wcm.register_component_std(std.prod_bus.clone());
+    wcm.register_component_std(std.sum_bus.clone());
     wcm.register_component_std(std.range_check.clone());
 
     if register_u8 && std.range_check.u8air.is_some() {
@@ -657,4 +666,6 @@ pub fn register_std_dev<F: PrimeField64>(
     if register_specified_ranges && std.range_check.specified_ranges_air.is_some() {
         wcm.register_component_std(std.range_check.specified_ranges_air.clone().unwrap());
     }
+
+    wcm.register_component_std(std.virtual_table.clone());
 }

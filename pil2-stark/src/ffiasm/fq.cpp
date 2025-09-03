@@ -67,7 +67,7 @@ char *Fq_element2str(PFqElement pE) {
     if (!(pE->type & Fq_LONG)) {
         if (pE->shortVal>=0) {
             char *r = new char[32];
-            sprintf(r, "%d", pE->shortVal);
+            snprintf(r, 32, "%d", pE->shortVal);
             return r;
         } else {
             mpz_init_set_si(r, pE->shortVal);
@@ -162,16 +162,19 @@ void Fq_div(PFqElement r, PFqElement a, PFqElement b) {
     Fq_mul(r, a, &tmp);
 }
 
+#ifdef __USE_ASSEMBLY__
 void Fq_fail() {
     assert(false);
 }
-
+#endif
 
 RawFq::RawFq() {
+#ifdef __USE_ASSEMBLY__
     Fq_init();
     set(fZero, 0);
     set(fOne, 1);
     neg(fNegOne, fOne);
+#endif
 }
 
 RawFq::~RawFq() {

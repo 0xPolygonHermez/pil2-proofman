@@ -9,11 +9,11 @@ use proofman_util::create_buffer_fast;
 use rayon::{
     iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator},
     slice::ParallelSliceMut,
+    prelude::*,
 };
 use witness::WitnessComponent;
 use proofman_common::{AirInstance, BufferPool, ProofCtx, SetupCtx, TraceInfo};
 use std::sync::atomic::Ordering;
-use rayon::prelude::*;
 use crate::AirComponent;
 
 const P2_8: usize = 256;
@@ -28,12 +28,17 @@ pub struct U8Air {
     multiplicities: Vec<Vec<AtomicU64>>,
     instance_id: AtomicU64,
     calculated: AtomicBool,
+    shared_tables: bool,
 }
 
 impl<F: PrimeField64> AirComponent<F> for U8Air {
-    fn new(pctx: &ProofCtx<F>, _sctx: &SetupCtx<F>, airgroup_id: Option<usize>, air_id: Option<usize>) -> Arc<Self> {
-        let airgroup_id = airgroup_id.expect("Airgroup ID must be provided");
-        let air_id = air_id.expect("Air ID must be provided");
+    fn new(
+        pctx: &ProofCtx<F>,
+        _sctx: &SetupCtx<F>,
+        airgroup_id: usize,
+        air_id: usize,
+        shared_tables: bool,
+    ) -> Arc<Self> {
         let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
 
         // Get and store the ranges
@@ -53,11 +58,20 @@ impl<F: PrimeField64> AirComponent<F> for U8Air {
             multiplicities,
             instance_id: AtomicU64::new(0),
             calculated: AtomicBool::new(false),
+            shared_tables,
         })
     }
 }
 
 impl U8Air {
+    pub const fn get_global_row(value: u8) -> u64 {
+        value as u64
+    }
+
+    pub fn get_global_rows(values: &[u8]) -> Vec<u64> {
+        values.iter().map(|&v| Self::get_global_row(v)).collect()
+    }
+
     #[inline(always)]
     pub fn update_input(&self, value: u8, multiplicity: u64) {
         if self.calculated.load(Ordering::Relaxed) {
@@ -106,16 +120,31 @@ impl U8Air {
 
 impl<F: PrimeField64> WitnessComponent<F> for U8Air {
     fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
-        let (instance_found, mut instance_id) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
+        let (instance_found, mut instance_id) = pctx.dctx_find_instance_mine(self.airgroup_id, self.air_id);
 
         if !instance_found {
-            instance_id = pctx.add_instance_all(self.airgroup_id, self.air_id);
+            if !self.shared_tables {
+                instance_id = pctx.add_table_all(self.airgroup_id, self.air_id);
+            } else {
+                instance_id = pctx.add_table(self.airgroup_id, self.air_id);
+            }
         }
 
         self.calculated.store(false, Ordering::Relaxed);
         self.instance_id.store(instance_id as u64, Ordering::SeqCst);
 
         Vec::new()
+    }
+
+    fn pre_calculate_witness(
+        &self,
+        _stage: u32,
+        _pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        _instance_ids: &[usize],
+        _n_cores: usize,
+        _buffer_pool: &dyn BufferPool<F>,
+    ) {
     }
 
     fn calculate_witness(
@@ -134,11 +163,9 @@ impl<F: PrimeField64> WitnessComponent<F> for U8Air {
                 return;
             }
 
-            pctx.dctx_distribute_multiplicities(&self.multiplicities, instance_id);
-
             self.calculated.store(true, Ordering::Relaxed);
 
-            if pctx.dctx_is_my_instance(instance_id) {
+            if !self.shared_tables {
                 let buffer_size = self.num_cols * self.num_rows;
                 let mut buffer = create_buffer_fast::<F>(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
@@ -147,14 +174,31 @@ impl<F: PrimeField64> WitnessComponent<F> for U8Air {
                     }
                 });
 
-                let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer, false));
+                let air_instance =
+                    AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, self.num_rows, buffer, false));
                 pctx.add_air_instance(air_instance, instance_id);
             } else {
-                self.multiplicities.par_iter().for_each(|vec| {
-                    for vec_row in vec.iter() {
-                        vec_row.swap(0, Ordering::Relaxed);
-                    }
-                });
+                pctx.dctx_distribute_multiplicities(&self.multiplicities, instance_id);
+
+                if pctx.dctx_is_my_instance(instance_id) {
+                    let buffer_size = self.num_cols * self.num_rows;
+                    let mut buffer = create_buffer_fast::<F>(buffer_size);
+                    buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
+                        for (col, vec) in self.multiplicities.iter().enumerate() {
+                            chunk[col] = F::from_u64(vec[row].swap(0, Ordering::Relaxed));
+                        }
+                    });
+
+                    let air_instance =
+                        AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, self.num_rows, buffer, false));
+                    pctx.add_air_instance(air_instance, instance_id);
+                } else {
+                    self.multiplicities.par_iter().for_each(|vec| {
+                        for vec_row in vec.iter() {
+                            vec_row.swap(0, Ordering::Relaxed);
+                        }
+                    });
+                }
             }
         }
     }

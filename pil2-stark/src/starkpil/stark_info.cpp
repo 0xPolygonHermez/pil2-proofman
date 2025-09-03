@@ -337,6 +337,50 @@ void StarkInfo::getProofSize() {
     proofSize += (1 << starkStruct.steps[starkStruct.steps.size()-1].nBits) * FIELD_EXTENSION;
 }
 
+uint64_t StarkInfo::getPinnedProofSize() {
+    uint64_t pinnedProofSize = 0;
+
+    pinnedProofSize += (nStages + 1) * 4; // Roots
+    pinnedProofSize += customCommits.size() * 4; // Custom commits roots
+    pinnedProofSize += (starkStruct.steps.size() - 1) * 4; // Steps roots
+
+    uint64_t maxTreeWidth = 0;
+    for (auto it = mapSectionsN.begin(); it != mapSectionsN.end(); it++) 
+    {
+        uint64_t treeWidth = it->second;
+        if(treeWidth > maxTreeWidth) {
+            maxTreeWidth = treeWidth;
+        }
+    }
+    for(uint64_t i = 0; i < starkStruct.steps.size() - 1; ++i) {
+        uint64_t nGroups = 1 << starkStruct.steps[i + 1].nBits;
+        uint64_t groupSize = (1 << starkStruct.steps[i].nBits) / nGroups;
+        uint64_t treeWidth = groupSize * FIELD_EXTENSION;
+        if(treeWidth > maxTreeWidth) {
+            maxTreeWidth = treeWidth;
+        }
+    }
+
+    uint64_t maxProofSize = ceil(log10(1 << starkStruct.nBitsExt) / log10(starkStruct.merkleTreeArity)) * (starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+
+    uint64_t maxProofBuffSize = maxTreeWidth + maxProofSize;
+
+    uint64_t nTrees = nStages + customCommits.size() + 2;
+    uint64_t nTreesFRI = starkStruct.steps.size() - 1;
+    uint64_t queriesProofSize = (nTrees + nTreesFRI) * maxProofBuffSize * starkStruct.nQueries;
+
+    pinnedProofSize += queriesProofSize;
+
+    pinnedProofSize += evMap.size() * FIELD_EXTENSION; // Evals
+
+    pinnedProofSize += airgroupValuesSize;
+    pinnedProofSize += airValuesSize;
+
+    uint64_t finalPolDegree = 1 << starkStruct.steps[starkStruct.steps.size() - 1].nBits;
+    pinnedProofSize += finalPolDegree * FIELD_EXTENSION; // Final polynomial values
+    return pinnedProofSize;
+}
+
 void StarkInfo::setMapOffsets() {
     uint64_t N = (1 << starkStruct.nBits);
     uint64_t NExtended = (1 << starkStruct.nBitsExt);
@@ -362,14 +406,20 @@ void StarkInfo::setMapOffsets() {
 
     uint64_t numNodes = getNumNodesMT(NExtended);
 
-    if(!preallocate) {
+    if(!preallocate) {    
         mapOffsets[std::make_pair("const", true)] = mapTotalN;
         MerkleTreeGL mt(starkStruct.merkleTreeArity, true, NExtended, nConstants);
         uint64_t constTreeSize = (2 + (NExtended * nConstants) + numNodes);
         mapTotalN += constTreeSize;
 
-        mapOffsets[std::make_pair("const", false)] = mapTotalN;
-        mapTotalN += N * nConstants;
+        if (!recursive &&  (N * nConstants * 8.0 / (1024 * 1024)) >= 512) {
+            overwriteFixed = true;
+        }
+        
+        if(!overwriteFixed) {
+            mapOffsets[std::make_pair("const", false)] = mapTotalN;
+            mapTotalN += N * nConstants;
+        }
     }
 
     if(gpu) {
@@ -379,14 +429,17 @@ void StarkInfo::setMapOffsets() {
         mapOffsets[std::make_pair("publics", false)] = mapTotalN;
         mapTotalN += nPublics;
 
+        mapOffsets[std::make_pair("proofvalues", false)] = mapTotalN;
+        mapTotalN += proofValuesSize;
+
         mapOffsets[std::make_pair("airgroupvalues", false)] = mapTotalN;
         mapTotalN += airgroupValuesSize;
 
         mapOffsets[std::make_pair("airvalues", false)] = mapTotalN;
         mapTotalN += airValuesSize;
 
-        mapOffsets[std::make_pair("proofvalues", false)] = mapTotalN;
-        mapTotalN += proofValuesSize;
+        mapOffsets[std::make_pair("challenge", false)] = mapTotalN;
+        mapTotalN += HASH_SIZE;
 
         mapOffsets[std::make_pair("evals", false)] = mapTotalN;
         mapTotalN += evMap.size() * FIELD_EXTENSION;
@@ -399,9 +452,6 @@ void StarkInfo::setMapOffsets() {
 
         mapOffsets[std::make_pair("fri_queries", false)] = mapTotalN;
         mapTotalN += starkStruct.nQueries;
-
-        mapOffsets[std::make_pair("challenge", false)] = mapTotalN;
-        mapTotalN += HASH_SIZE;
 
         maxTreeWidth = 0;
         for (auto it = mapSectionsN.begin(); it != mapSectionsN.end(); it++) 
@@ -448,57 +498,36 @@ void StarkInfo::setMapOffsets() {
         }
     }
 
-    if(!gpu || recursive) {
-        for(uint64_t stage = 1; stage <= nStages + 1; stage++) {
-            mapOffsets[std::make_pair("cm" + to_string(stage), false)] = mapOffsets[std::make_pair("cm" + to_string(stage), true)];
-        }
-    } else {
-        uint64_t offsetTraces = mapOffsets[std::make_pair("cm2", true)];
-        for(uint64_t stage = nStages; stage >= 1; stage--) {
-            mapOffsets[std::make_pair("cm" + to_string(stage), false)] = offsetTraces;
-            offsetTraces += N * mapSectionsN["cm" + to_string(stage)]; 
-        }
-
-        mapTotalN = std::max(mapTotalN, offsetTraces);
+    uint64_t offsetTraces = mapOffsets[std::make_pair("cm2", true)];
+    for(uint64_t stage = nStages; stage >= 1; stage--) {
+        mapOffsets[std::make_pair("cm" + to_string(stage), false)] = offsetTraces;
+        offsetTraces += N * mapSectionsN["cm" + to_string(stage)]; 
     }
+    
+    mapTotalN = std::max(mapTotalN, offsetTraces);
 
     if(!gpu) {
         mapOffsets[std::make_pair("evals", true)] = mapTotalN;
         mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
     }
 
-    if(recursive) {
-        uint64_t maxSizeHelper = 0;
-        if(gpu) {
-            maxSizeHelper = (boundaries.size() + 1) * NExtended;
-            mapOffsets[std::make_pair("zi", true)] = mapTotalN;
-            mapOffsets[std::make_pair("x_n", false)] = mapTotalN;
-            mapOffsets[std::make_pair("x", true)] = mapTotalN + boundaries.size() * NExtended;
-            mapTotalN += maxSizeHelper;
-        }
-        mapOffsets[std::make_pair("f", true)] = mapTotalN;
-        mapOffsets[std::make_pair("q", true)] = mapTotalN;
-        mapTotalN += NExtended * FIELD_EXTENSION;
-        mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN;
-    } else {
-        mapOffsets[std::make_pair("f", true)] = mapTotalN;
-        mapOffsets[std::make_pair("q", true)] = mapTotalN;
-        mapTotalN += NExtended * FIELD_EXTENSION;
+    mapOffsets[std::make_pair("f", true)] = mapTotalN;
+    mapOffsets[std::make_pair("q", true)] = mapTotalN;
+    mapTotalN += NExtended * FIELD_EXTENSION;
 
-        uint64_t maxSizeHelper = 0;
-        if(gpu) {
-            maxSizeHelper += boundaries.size() * NExtended;
-            mapOffsets[std::make_pair("zi", true)] = mapTotalN;
-            mapOffsets[std::make_pair("x", true)] = mapTotalN;
-        }
-        
-        maxTotalN = std::max(maxTotalN, mapTotalN + maxSizeHelper);
-        mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN + maxSizeHelper;
+    uint64_t maxSizeHelper = 0;
+    if(gpu) {
+        maxSizeHelper += boundaries.size() * NExtended;
+        mapOffsets[std::make_pair("zi", true)] = mapTotalN;
+        mapOffsets[std::make_pair("x", true)] = mapTotalN;
     }
+    
+    maxTotalN = std::max(maxTotalN, mapTotalN + maxSizeHelper);
+    mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN + maxSizeHelper;   
 
     uint64_t LEvSize = mapOffsets[std::make_pair("f", true)];
     mapOffsets[std::make_pair("lev", false)] = LEvSize;
-    uint64_t maxOpenings = std::min(openingPoints.size(), uint64_t(4));
+    uint64_t maxOpenings = std::min(uint64_t(openingPoints.size()), uint64_t(4));
     LEvSize += maxOpenings * N * FIELD_EXTENSION;
     if(!gpu) {
         mapOffsets[std::make_pair("buff_helper_fft_lev", false)] = LEvSize;
@@ -564,13 +593,13 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
             nrowsPack = NROWS_PACK;
             maxNBlocks = omp_get_max_threads();
         } else {
-            // TODO: SHOULD NOT BE HARDCODED
             if(recursive) {
-                nrowsPack = 64;
-                maxNBlocks = 4096;
+                uint64_t NExtended = (1 << starkStruct.nBitsExt);
+                nrowsPack = 32;
+                maxNBlocks = NExtended / nrowsPack;
             } else {
-                nrowsPack = 128;
-                maxNBlocks = 2048;
+                nrowsPack = 256;
+                maxNBlocks = 1024;
             }
         }
     }
@@ -652,9 +681,62 @@ opType string2opType(const string s)
         return airvalue;
     if(s == "custom") 
         return custom;
-    if(s == "proofvalue") 
+    if(s == "Zi")
+        return Zi;
+    if(s == "eval")
+        return eval;
+    if(s == "xDivXSubXi") 
+        return xDivXSubXi;
+    if(s == "q") 
+        return q;
+    if(s == "f") 
+        return f;
+    if(s == "proofvalue")
         return proofvalue;
     zklog.error("string2opType() found invalid string=" + s);
+    exitProcess();
+    exit(-1);
+}
+
+
+string opType2string(const opType op) 
+{
+    if(op == opType::const_) 
+        return "const";
+    if(op == opType::cm)
+        return "cm";
+    if(op == opType::tmp)
+        return "tmp";
+    if(op == opType::public_)
+        return "public";
+    if(op == opType::airgroupvalue)
+        return "airgroupvalue";
+    if(op == opType::challenge)
+        return "challenge";
+    if(op == opType::number)
+        return "number";
+    if(op == opType::string_) 
+        return "string";
+    if(op == opType::airvalue) 
+        return "airvalue";
+    if(op == opType::custom) 
+        return "custom";
+    if(op == opType::Zi)
+        return "Zi";
+    if(op == opType::eval)
+        return "eval";
+    if(op == opType::xDivXSubXi) 
+        return "xDivXSubXi";
+    if(op == opType::q)
+        return "q";
+    if(op == opType::f)
+        return "f";
+    if(op == opType::eval)
+        return "eval";
+    if(op == opType::proofvalue)
+        return "proofvalue";
+
+    zklog.error("string2opType() found invalid operation");
     exitProcess();
     exit(-1);
 }

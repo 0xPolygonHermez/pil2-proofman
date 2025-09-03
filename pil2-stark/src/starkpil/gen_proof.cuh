@@ -51,11 +51,14 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPar
     HintFieldOptions options1;
     HintFieldOptions options2;
     options2.inverse = true;
-    accMulHintFieldsGPU(setupCtx, h_params, d_params, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod,expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
-    updateAirgroupValueGPU(setupCtx, h_params, d_params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+
+    std::string hintFieldNameAirgroupVal = setupCtx.starkInfo.airgroupValuesMap.size() > 0 ? "result" : "";
+
+    accMulHintFieldsGPU(setupCtx, h_params, d_params, hint[0], "reference", hintFieldNameAirgroupVal, "numerator_air", "denominator_air",options1, options2, !prod,expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+    updateAirgroupValueGPU(setupCtx, h_params, d_params, hint[0], hintFieldNameAirgroupVal, "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
 }
 
-void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, uint32_t stream_id, uint64_t instance_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream) {
+void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, char *constTreePath, uint32_t stream_id, uint64_t instance_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, bool skipRecalculation, TimerGPU &timer, cudaStream_t stream, bool recursive = false) {
     TimerStartGPU(timer, STARK_GPU_PROOF);
     TimerStartGPU(timer, STARK_STEP_0);
 
@@ -130,15 +133,40 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.steps.size() - 1;
 
     d_transcript->reset(stream);
-    d_transcript->put(d_challenge, FIELD_EXTENSION, stream);
+    if (recursive) {
+        d_transcript->put(starks.treesGL[setupCtx.starkInfo.nStages+1]->get_nodes_ptr() + starks.treesGL[setupCtx.starkInfo.nStages + 1]->numNodes - HASH_SIZE, HASH_SIZE, stream);
+        if (setupCtx.starkInfo.nPublics > 0)
+        {
+            if (!setupCtx.starkInfo.starkStruct.hashCommits)
+            {
+                d_transcript->put(h_params.publicInputs, setupCtx.starkInfo.nPublics, stream);
+            }
+            else
+            {
+                calculateHash(d_transcript_helper, h_params.challenges, setupCtx, h_params.publicInputs, setupCtx.starkInfo.nPublics, stream);
+                d_transcript->put(h_params.challenges, HASH_SIZE, stream);
+            }
+        }
+    } else {
+       d_transcript->put(d_challenge, FIELD_EXTENSION, stream); 
+    }
+    
+    TimerStopGPU(timer, STARK_STEP_0);
+    
+    TimerStartGPU(timer, STARK_COMMIT_STAGE_1);
+    if (recursive) {
+        commitStage_inplace(1, setupCtx, starks.treesGL, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, d_transcript, false, timer, stream);
+    } else {
+        commitStage_inplace(1, setupCtx, starks.treesGL, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, nullptr, skipRecalculation, timer, stream);
+    }
+    TimerStopGPU(timer, STARK_COMMIT_STAGE_1);
+
+    TimerStartGPU(timer, STARK_CALCULATE_WITNESS_STD);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++) {
         if(setupCtx.starkInfo.challengesMap[i].stage == 2) {
             d_transcript->getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION], stream);
         }
     }
-    TimerStopGPU(timer, STARK_STEP_0);
-    
-    TimerStartGPU(timer, STARK_CALCULATE_WITNESS_STD);
     calculateWitnessSTD_gpu(setupCtx, h_params, d_params, true, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     calculateWitnessSTD_gpu(setupCtx, h_params, d_params, false, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
 
@@ -147,10 +175,6 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStartGPU(timer, CALCULATE_IM_POLS);
     calculateImPolsExpressions(setupCtx, air_instance_info->expressions_gpu, h_params, d_params, 2, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     TimerStopGPU(timer, CALCULATE_IM_POLS);
-    
-    TimerStartGPU(timer, STARK_COMMIT_STAGE_1);
-    commitStage_inplace(1, setupCtx, starks.treesGL, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, nullptr, skipRecalculation, timer, stream);
-    TimerStopGPU(timer, STARK_COMMIT_STAGE_1);
     
     TimerStartGPU(timer, STARK_COMMIT_STAGE_2);
     commitStage_inplace(2, setupCtx, starks.treesGL, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, d_transcript, false, timer, stream);
@@ -173,7 +197,15 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     }
     uint64_t zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
     computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, stream);
+
+    if (setupCtx.starkInfo.overwriteFixed) {
+        uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx.starkInfo) * sizeof(Goldilocks::Element);
+        load_and_copy_to_device_in_chunks(d_buffers, constTreePath, (uint8_t*)d_const_tree, sizeConstTree, stream_id);
+    }
+
+    TimerStartGPU(timer, STARK_QUOTIENT_POLYNOMIAL);
     calculateExpression(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId, false, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+    TimerStopGPU(timer, STARK_QUOTIENT_POLYNOMIAL);
     commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, (gl64_t *)h_params.trace, (gl64_t *)h_params.aux_trace, d_transcript, false, timer, stream);
     TimerStopGPU(timer, STARK_STEP_Q);
     TimerStartGPU(timer, STARK_STEP_EVALS);
