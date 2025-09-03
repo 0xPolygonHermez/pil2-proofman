@@ -8,6 +8,7 @@ use mpi::datatype::PartitionMut;
 use mpi::environment::Universe;
 #[cfg(distributed)]
 use mpi::topology::Communicator;
+use core::panic;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 #[cfg(distributed)]
@@ -18,6 +19,11 @@ use fields::PrimeField64;
 use crate::ExtensionField;
 use crate::GlobalInfo;
 use crate::Proof;
+
+#[cfg(distributed)]
+use mpi::ffi;
+
+
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceInfo {
@@ -56,8 +62,9 @@ pub struct DistributionCtx {
     pub balance_distribution: bool,
     pub node_rank: i32,
     pub node_n_processes: i32,
-
     agg_rank_id: i32,
+    #[cfg(distributed)]
+    win: ffi::MPI_Win,
 }
 
 impl std::fmt::Debug for DistributionCtx {
@@ -77,6 +84,7 @@ impl std::fmt::Debug for DistributionCtx {
                 .field("balance_distribution", &self.balance_distribution)
                 .field("node_rank", &self.node_rank)
                 .field("node_n_processes", &self.node_n_processes)
+                .field("agg_rank_id", &self.agg_rank_id)
                 .finish()
         }
         #[cfg(not(distributed))]
@@ -94,6 +102,7 @@ impl std::fmt::Debug for DistributionCtx {
                 .field("balance_distribution", &self.balance_distribution)
                 .field("node_rank", &self.node_rank)
                 .field("node_n_processes", &self.node_n_processes)
+                .field("agg_rank_id", &self.agg_rank_id)
                 .finish()
         }
     }
@@ -120,7 +129,7 @@ impl DistributionCtx {
                 balance_distribution: false,
                 node_rank: 0,
                 node_n_processes: 1,
-                agg_rank_id: -1,
+                agg_rank_id: 0,
             }
         }
     }
@@ -141,7 +150,9 @@ impl DistributionCtx {
         let node_rank = local_comm.rank();
         let node_n_processes = local_comm.size();
 
-        DistributionCtx {
+        let win = std::ptr::null_mut();
+
+        let mut ctx = DistributionCtx {
             rank,
             n_processes,
             universe,
@@ -157,6 +168,46 @@ impl DistributionCtx {
             node_rank,
             node_n_processes,
             agg_rank_id: -1,
+            win,
+        };
+
+        // Create the MPI window after struct initialization
+        ctx.create_window();
+        ctx
+    }
+
+    #[cfg(distributed)]
+    fn create_window(&mut self) {
+        unsafe {
+            let mut win: ffi::MPI_Win = std::ptr::null_mut();
+            
+            // Create a window using the local agg_rank_id variable on rank 0
+            // Other ranks create windows with null pointer and zero size
+            let result = if self.rank == 0 {
+                ffi::MPI_Win_create(
+                    &mut self.agg_rank_id as *mut i32 as *mut std::ffi::c_void,
+                    std::mem::size_of::<i32>() as ffi::MPI_Aint,
+                    std::mem::size_of::<i32>() as std::ffi::c_int,
+                    ffi::RSMPI_INFO_NULL,
+                    self.world.as_raw(),
+                    &mut win
+                )
+            } else {
+                ffi::MPI_Win_create(
+                    std::ptr::null_mut() as *mut std::ffi::c_void,
+                    0 as ffi::MPI_Aint,
+                    1 as std::ffi::c_int,  // disp_unit cannot be 0, use 1
+                    ffi::RSMPI_INFO_NULL,
+                    self.world.as_raw(),
+                    &mut win
+                )
+            };
+            
+            if result != 0 { 
+                panic!("Failed to create MPI window on rank {}: error code {}", self.rank, result);
+            }
+            
+            self.win = win;
         }
     }
 
@@ -501,12 +552,58 @@ impl DistributionCtx {
         }
     }
 
+    pub fn ready_to_aggregate(&mut self) {
+        if self.agg_rank_id == -1 {
+            let my_rank = self.rank;
+            let expected_value = -1;
+            let mut previous_value: i32 = 0; // This receives the previous value from the window
+
+            unsafe {
+                // Lock the window at rank 0 (exclusive)
+                mpi::ffi::MPI_Win_lock(
+                    mpi::ffi::MPI_LOCK_EXCLUSIVE as i32,
+                    0, // <- rank that owns agg_rank_id
+                    0,
+                    self.win,
+                );
+
+                // Try to claim the aggregator role with Compare_and_swap
+                mpi::ffi::MPI_Compare_and_swap(
+                    &my_rank as *const i32 as *const _,           
+                    &expected_value as *const i32 as *const _,    
+                    &mut previous_value as *mut i32 as *mut _,    
+                    mpi::ffi::RSMPI_INT32_T,
+                    0, // target rank (rank 0 owns the variable)
+                    0, 
+                    self.win,
+                );
+
+                // Ensure completion
+                mpi::ffi::MPI_Win_flush(0, self.win);
+                mpi::ffi::MPI_Win_unlock(0, self.win);
+            }
+
+            // - If previous_value == -1: the agg_rank_id is my_rank
+            // - If previous_value != -1: the agg_rank is the first process that claimed it
+            self.agg_rank_id = if previous_value == expected_value {
+                my_rank  
+            } else {
+                previous_value
+            };
+        }
+    }
+
     pub fn is_aggregation_rank(&self) -> bool {
+        if self.agg_rank_id == -1 {
+            panic!("Aggregation rank is not set");
+        }
         self.agg_rank_id == self.rank
     }
 
     pub fn get_aggregation_rank(&mut self) -> i32 {
-        self.agg_rank_id = 0;
+        if self.agg_rank_id == -1 {
+            panic!("Aggregation rank is not set");
+        }
         self.agg_rank_id
     }
 
@@ -724,6 +821,20 @@ impl DistributionCtx {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+impl Drop for DistributionCtx {
+    fn drop(&mut self) {
+        #[cfg(distributed)]
+        {
+            // Free the MPI window if it was created
+            if !self.win.is_null() {
+                unsafe {
+                    ffi::MPI_Win_free(&mut self.win);
                 }
             }
         }

@@ -477,6 +477,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.airgroup_instances_alives.clone()
     }
 
+    pub fn dctx_ready_to_aggregate(&self){
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.ready_to_aggregate();
+    }
+
     pub fn dctx_is_aggregation_rank(&self) -> bool {
         let dctx = self.dctx.read().unwrap();
         dctx.is_aggregation_rank()

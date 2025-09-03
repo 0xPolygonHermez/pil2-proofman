@@ -1786,7 +1786,7 @@ where
                 return Ok((None, None));
             }
         }
-
+        self.pctx.dctx_ready_to_aggregate();
         let agg_rank = self.pctx.dctx_get_aggregation_rank();
 
         let (proof_id, vadcop_final_proof) = if agg_rank == self.pctx.dctx_get_rank() as i32 {
