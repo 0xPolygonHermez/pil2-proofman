@@ -1,11 +1,26 @@
 require "goldilocks.pil";
 
-// FIX: dynamic arrays not ready yet
-// Set the array size across the library
-int ARRAY_SIZE = 500;
+/*
+Available std modes:
 
-function set_array_size(const int limit) {
-    ARRAY_SIZE = limit;
+    name      | code | note
+--------------|------|----------------------------------------------------------------------------
+ Default      |  0   | default mode
+ One instance |  1   | one instance mode
+*/
+
+const int STD_MODE_DEFAULT = 0;
+const int STD_MODE_ONE_INSTANCE = 1;
+
+int STD_MODE = STD_MODE_DEFAULT;
+
+function set_std_mode(const int mode) {
+    if (mode != STD_MODE_DEFAULT && mode != STD_MODE_ONE_INSTANCE) {
+        error(`Unknown std mode: ${mode}`);
+    }
+
+    // Set the std mode
+    STD_MODE = mode;
 }
 
 /*
@@ -13,13 +28,12 @@ Available PIOPs:
 
     name     | code | note
 -------------|------|----------------------------------------------------------------------------
- Default     |  0   | Default name set by the library
+ Default     |  0   | default name set by the library
  Permutation |  1   | name as "Permutation"
  Lookup      |  2   | name as "Lookup"
  Range Check |  3   | name as "Range Check"
  Connection  |  4   | name as "Connection"
  Direct      |  5   | name used for direct updates of the proof constraint
- Isolated    |  6   | name used for isolated components which avoids checks with other components
 */
 
 const int PIOP_NAME_DEFAULT = 0;
@@ -28,10 +42,11 @@ const int PIOP_NAME_LOOKUP = 2;
 const int PIOP_NAME_RANGE_CHECK = 3;
 const int PIOP_NAME_CONNECTION = 4;
 const int PIOP_NAME_DIRECT = 5;
-const int PIOP_NAME_ISOLATED = 6;
 
 function get_piop_name(const int name): string {
     switch (name) {
+        case PIOP_NAME_DEFAULT:
+            return "";
         case PIOP_NAME_PERMUTATION:
             return "Permutation";
         case PIOP_NAME_LOOKUP:
@@ -42,8 +57,33 @@ function get_piop_name(const int name): string {
             return "Connection";
         case PIOP_NAME_DIRECT:
             return "Direct";
-        case PIOP_NAME_ISOLATED:
+        default:
+            error(`Unknown name code: ${name}`);
+    }
+}
+
+/*
+Available PIOPs types:
+
+    name     | code | note
+-------------|------|----------------------------------------------------------------------------
+ Default     |  0   | default name set by the library
+ Isolated    |  1   | name used for isolated components which avoids checks with other components
+ Dynamic     |  2   | name used for dynamic components which adapts to changes
+*/
+
+const int PIOP_SURNAME_DEFAULT = 0;
+const int PIOP_SURNAME_ISOLATED = 1;
+const int PIOP_SURNAME_DYNAMIC = 2;
+
+function get_piop_surname(const int name): string {
+    switch (name) {
+        case PIOP_SURNAME_DEFAULT:
+            return "";
+        case PIOP_SURNAME_ISOLATED:
             return "Isolated";
+        case PIOP_SURNAME_DYNAMIC:
+            return "Dynamic";
         default:
             error(`Unknown name code: ${name}`);
     }
@@ -63,38 +103,24 @@ const int PIOP_BUS_DEFAULT = 0;
 const int PIOP_BUS_SUM = 1;
 const int PIOP_BUS_PROD = 2;
 
-private function valide_bus_type(const int bus_type) {
+int PIOP_BUS_TYPE = PIOP_BUS_DEFAULT;
+
+function set_std_bus_type(const int bus_type) {
     if (bus_type != PIOP_BUS_SUM && bus_type != PIOP_BUS_PROD) {
         error(`Unknown bus type: ${bus_type}`);
     }
+
+    // Set the bus type
+    PIOP_BUS_TYPE = bus_type;
 }
 
-function set_std_bus_type(const int bus_type) {
-    valide_bus_type(bus_type);
+// FIX: dynamic arrays not ready yet
+// Set the array size across the library
+int ARRAY_SIZE = 750;
 
-    // Set the bus type for the std components that allow for different bus types
-    set_permutation_bus_type(bus_type);
+function set_array_size(const int limit) {
+    ARRAY_SIZE = limit;
 }
-
-function set_permutation_bus_type(const int bus_type) {
-    valide_bus_type(bus_type);
-
-    DEFAULT_PERMUTATION_BUS_TYPE = bus_type;
-}
-
-/*
-Available direct types:
-
-    name    | code | note
-------------|------|----------------------------------------------------------------------------
- Default    |  0   | default constraint behavior set by the library
- AIR        |  1   | update the air constraint directly
- Global     |  2   | update the global constraint directly
-*/
-
-const int PIOP_DIRECT_TYPE_DEFAULT = 0;
-const int PIOP_DIRECT_TYPE_AIR = 1;
-const int PIOP_DIRECT_TYPE_GLOBAL = 2;
 
 /*
     name    | code | note
@@ -127,15 +153,16 @@ switch (ACTIVE_FIELD) {
         error("Unknown field");
 }
 
-// Set the blowup factor across the library
-int BLOWUP_FACTOR = 2;
+// Maximum constraint degree
+int MAX_CONSTRAINT_DEGREE = 3;
 
-function set_blowup_factor(const int factor) {
-    if (factor < 1) {
-        error(`Blowup factor must be at least 1 but got ${factor}`);
+function set_max_constraint_degree(const int degree) {
+    if (degree < 1) {
+        error(`Max constraint degree must be at least 1 but got ${degree}`);
     }
 
-    BLOWUP_FACTOR = factor;
+    // Update the maximum constraint degree
+    MAX_CONSTRAINT_DEGREE = degree;
 }
 
 // Powers of 2

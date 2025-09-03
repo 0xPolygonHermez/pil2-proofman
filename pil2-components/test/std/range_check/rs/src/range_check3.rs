@@ -5,20 +5,13 @@ use witness::{WitnessComponent, execute, define_wc_with_std};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
-use rand::{
-    distr::{StandardUniform, Distribution},
-    Rng, SeedableRng,
-    rngs::StdRng,
-};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::RangeCheck3Trace;
 
 define_wc_with_std!(RangeCheck3, "RngChck3");
 
-impl<F: PrimeField64> WitnessComponent<F> for RangeCheck3<F>
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for RangeCheck3<F> {
     execute!(RangeCheck3Trace, 1);
 
     fn calculate_witness(
@@ -37,8 +30,8 @@ where
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
-            let range1 = self.std_lib.get_range(0, (1 << 4) - 1, Some(false));
-            let range2 = self.std_lib.get_range(0, (1 << 8) - 1, Some(false));
+            let range1 = self.std_lib.get_range_id(0, (1 << 4) - 1, Some(false));
+            let range2 = self.std_lib.get_range_id(0, (1 << 8) - 1, Some(false));
 
             for i in 0..num_rows {
                 let val1 = rng.random_range(0..=(1 << 4) - 1);
@@ -46,8 +39,8 @@ where
                 trace[i].c1 = F::from_u16(val1);
                 trace[i].c2 = F::from_u16(val2);
 
-                self.std_lib.range_check(val1 as i64, 1, range1);
-                self.std_lib.range_check(val2 as i64, 1, range2);
+                self.std_lib.range_check(range1, val1 as i64, 1);
+                self.std_lib.range_check(range2, val2 as i64, 1);
             }
 
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));

@@ -74,8 +74,8 @@ namespace BinFileUtils
         if (fstat(fd, &sb) == -1) /* To obtain file size */
             throw std::system_error(errno, std::generic_category(), "fstat");
 
-        size = sb.st_size + sizeof(u_int32_t) + sizeof(u_int64_t);
-        void *addrmm = mmap(NULL, size, PROT_READ, MAP_PRIVATE | MAP_POPULATE, fd, 0);
+        size = sb.st_size;
+        void *addrmm = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
         if (addrmm == MAP_FAILED) {
             close(fd);
             throw std::system_error(errno, std::generic_category(), "mmap");
@@ -90,7 +90,7 @@ namespace BinFileUtils
         
         // int nThreads = omp_get_max_threads() / 2;
         // ThreadUtils::parcpy(addr, addrmm, size, nThreads);
-        memcpy(addr, addrmm, sb.st_size);
+        memcpy(addr, addrmm, size);
 
         munmap(addrmm, size);
         close(fd);

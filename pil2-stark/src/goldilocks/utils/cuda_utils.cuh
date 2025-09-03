@@ -5,19 +5,25 @@
 #include <stdio.h>
 #include <assert.h>
 
-__host__ inline void checkCudaError(cudaError_t code, const char *file, int line)
+__host__ inline void checkCudaError(cudaError_t code, const char* expr, const char *file, int line)
 {
-    if (code != cudaSuccess)
-    {
-        printf("CUDA error: %s %s %d\n", cudaGetErrorString(code), file, line);
-        assert(0);
+   if (code != cudaSuccess) {
+        fprintf(stderr,
+                "[CUDA] %s failed: %s (%d) at %s:%d\n",
+                expr, cudaGetErrorString(code), static_cast<int>(code), file, line);
+
+        // Also report the last sticky error (useful after kernel launches)
+        const cudaError_t last = cudaGetLastError();
+        if (last != cudaSuccess && last != code) {
+            fprintf(stderr,
+                    "[CUDA] sticky last error: %s (%d)\n",
+                    cudaGetErrorString(last), static_cast<int>(last));
+        }
+        fflush(stderr);
+        std::abort(); // don't use assert(0) here
     }
 }
-
-#define CHECKCUDAERR(ans)                          \
-    {                                              \
-        checkCudaError((ans), __FILE__, __LINE__); \
-    }
+#define CHECKCUDAERR(ans) checkCudaError((ans), #ans, __FILE__, __LINE__)
 
 __device__ __forceinline__ void mymemcpy(uint64_t* dst, uint64_t* src, size_t n)
 {

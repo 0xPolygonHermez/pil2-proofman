@@ -1,7 +1,6 @@
 #include "starks.hpp"
 
-template <typename ElementType>
-void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *witness, Goldilocks::Element *aux_trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, uint64_t *proofBuffer, std::string proofFile, bool vadcop) {
+void *genRecursiveProofBN128(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *witness, Goldilocks::Element *aux_trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, uint64_t *proofBuffer, std::string proofFile) {
     TimerStart(STARK_PROOF);
 
     NTT_Goldilocks ntt(1 << setupCtx.starkInfo.starkStruct.nBits);
@@ -9,33 +8,31 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
 
     ProverHelpers proverHelpers(setupCtx.starkInfo, true);
 
-    FRIProof<ElementType> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
-
-    using TranscriptType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, TranscriptGL, TranscriptBN128>;
+    FRIProof<RawFr::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
     
-    Starks<ElementType> starks(setupCtx, pConstTree);
+    Starks<RawFr::Element> starks(setupCtx, pConstTree);
     
     ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);
 
-    uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
+    uint64_t nFieldElements = 1;
 
-    TranscriptType transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
+    TranscriptBN128 transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 
     Goldilocks::Element evals[setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION];
     Goldilocks::Element challenges[setupCtx.starkInfo.challengesMap.size() * FIELD_EXTENSION];
     
     StepsParams params = {
-        trace: witness,
-        aux_trace,
-        publicInputs : publicInputs,
-        proofValues: nullptr,
-        challenges : challenges,
-        airgroupValues : nullptr,
-        evals : evals,
-        xDivXSub : nullptr,
-        pConstPolsAddress: pConstPols,
-        pConstPolsExtendedTreeAddress: pConstTree,
-        pCustomCommitsFixed:  nullptr,
+        .trace = witness,
+        .aux_trace = aux_trace,
+        .publicInputs = publicInputs,
+        .proofValues = nullptr,
+        .challenges = challenges,
+        .airgroupValues = nullptr,
+        .evals = evals,
+        .xDivXSub = nullptr,
+        .pConstPolsAddress = pConstPols,
+        .pConstPolsExtendedTreeAddress = pConstTree,
+        .pCustomCommitsFixed = nullptr,
     };
 
     //--------------------------------
@@ -43,14 +40,14 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     //--------------------------------
 
     TimerStart(STARK_STEP_0);
-    ElementType verkey[nFieldElements];
+    RawFr::Element verkey[nFieldElements];
     starks.treesGL[setupCtx.starkInfo.nStages + 1]->getRoot(verkey);
     starks.addTranscript(transcript, &verkey[0], nFieldElements);
     if(setupCtx.starkInfo.nPublics > 0) {
         if(!setupCtx.starkInfo.starkStruct.hashCommits) {
             starks.addTranscriptGL(transcript, &publicInputs[0], setupCtx.starkInfo.nPublics);
         } else {
-            ElementType hash[nFieldElements];
+            RawFr::Element hash[nFieldElements];
             starks.calculateHash(hash, &publicInputs[0], setupCtx.starkInfo.nPublics);
             starks.addTranscript(transcript, hash, nFieldElements);
         }
@@ -163,7 +160,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
         starks.addTranscriptGL(transcript, evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
     } else {
-        ElementType hash[nFieldElements];
+        RawFr::Element hash[nFieldElements];
         starks.calculateHash(hash, evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
         starks.addTranscript(transcript, hash, nFieldElements);
     }
@@ -196,10 +193,10 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     {   
         uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
         uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
-        FRI<ElementType>::fold(step, friPol, challenge, nBitsExt, prevBits, currentBits);
+        FRI<RawFr::Element>::fold(step, friPol, challenge, nBitsExt, prevBits, currentBits);
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {
-            FRI<ElementType>::merkelize(step, proof, friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits);
+            FRI<RawFr::Element>::merkelize(step, proof, friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits);
             starks.addTranscript(transcript, &proof.proof.fri.treesFRI[step].root[0], nFieldElements);
         }
         else
@@ -207,7 +204,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
             if(!setupCtx.starkInfo.starkStruct.hashCommits) {
                 starks.addTranscriptGL(transcript, friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION);
             } else {
-                ElementType hash[nFieldElements];
+                RawFr::Element hash[nFieldElements];
                 starks.calculateHash(hash, friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION);
                 starks.addTranscript(transcript, hash, nFieldElements);
             } 
@@ -220,44 +217,34 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
 
     uint64_t friQueries[setupCtx.starkInfo.starkStruct.nQueries];
 
-    TranscriptType transcriptPermutation(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
+    TranscriptBN128 transcriptPermutation(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
     starks.addTranscriptGL(transcriptPermutation, challenge, FIELD_EXTENSION);
     transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits);
 
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
-    FRI<ElementType>::proveQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, nTrees);
+    FRI<RawFr::Element>::proveQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, nTrees);
     for(uint64_t step = 1; step < setupCtx.starkInfo.starkStruct.steps.size(); ++step) {
-        FRI<ElementType>::proveFRIQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, step, setupCtx.starkInfo.starkStruct.steps[step].nBits, proof, starks.treesFRI[step - 1]);
+        FRI<RawFr::Element>::proveFRIQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, step, setupCtx.starkInfo.starkStruct.steps[step].nBits, proof, starks.treesFRI[step - 1]);
     }
 
-    FRI<ElementType>::setFinalPol(proof, friPol, setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size() - 1].nBits);
+    FRI<RawFr::Element>::setFinalPol(proof, friPol, setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size() - 1].nBits);
     TimerStopAndLog(STARK_FRI_QUERIES);
 
     TimerStopAndLog(STARK_STEP_FRI);
 
     proof.proof.setEvals(params.evals);
-    if (setupCtx.starkInfo.starkStruct.verificationHashType == "BN128") {
-        nlohmann::json zkin = proof.proof.proof2json();
-        if(vadcop) {
-            zkin = publics2zkin(zkin, setupCtx.starkInfo.nPublics, publicInputs, globalInfo, airgroupId);
-        } else {
-            zkin["publics"] = json::array();
-            for(uint64_t i = 0; i < uint64_t(globalInfo["nPublics"]); ++i) {
-                zkin["publics"][i] = Goldilocks::toString(publicInputs[i]);
-            }
-        }
-
-        if(!proofFile.empty()) {
-            json2file(zkin, proofFile);
-        }
-
-        return (void *) new nlohmann::json(zkin);
-    } else {
-        proofBuffer = proof.proof.proof2pointer(proofBuffer);
-        if(!proofFile.empty()) {
-            json2file(pointer2json(proofBuffer, setupCtx.starkInfo), proofFile);
-        }
+    nlohmann::json zkin = proof.proof.proof2json();
+    zkin["publics"] = json::array();
+    for(uint64_t i = 0; i < uint64_t(globalInfo["nPublics"]); ++i) {
+        zkin["publics"][i] = Goldilocks::toString(publicInputs[i]);
     }
+
+    if(!proofFile.empty()) {
+        json2file(zkin, proofFile);
+    }
+
+    return (void *) new nlohmann::json(zkin);
+    
 
     TimerStopAndLog(STARK_PROOF);
 

@@ -1,14 +1,9 @@
-use std::sync::Arc;
-
 use pil_std_lib::Std;
 use witness::{witness_library, WitnessLibrary, WitnessManager};
 
 use fields::PrimeField64;
 use fields::Goldilocks;
-use rand::{
-    distr::{StandardUniform, Distribution},
-    Rng,
-};
+use rand::{rng, Rng};
 
 use proofman::register_std;
 
@@ -19,14 +14,11 @@ use crate::{
 
 witness_library!(WitnessLib, Goldilocks);
 
-impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib
-where
-    StandardUniform: Distribution<F>,
-{
-    fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
-        let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
+impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
+    fn register_witness(&mut self, wcm: &WitnessManager<F>) {
+        let seed = if cfg!(feature = "debug") { 0 } else { rng().random::<u64>() };
 
-        let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx());
+        let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx(), false);
         let range_check1 = RangeCheck1::new(std_lib.clone());
         let range_check2 = RangeCheck2::new(std_lib.clone());
         let range_check3 = RangeCheck3::new(std_lib.clone());
@@ -37,7 +29,7 @@ where
         let range_check_dynamic2 = RangeCheckDynamic2::new(std_lib.clone());
         let range_check_mix = RangeCheckMix::new(std_lib.clone());
 
-        register_std(&wcm, &std_lib);
+        register_std(wcm, &std_lib);
         range_check1.set_seed(seed);
         range_check2.set_seed(seed);
         range_check3.set_seed(seed);

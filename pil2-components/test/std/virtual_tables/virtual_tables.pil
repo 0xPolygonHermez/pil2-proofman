@@ -1,0 +1,99 @@
+require "std_lookup.pil";
+require "std_range_check.pil";
+
+/*
+    To audit and generate stats:
+    node ../pil2-compiler/src/pil.js ./pil2-components/test/std/virtual_tables/virtual_tables.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/virtual_tables/build/build.pilout
+    node --max-old-space-size=131072 ../pil2-compiler/tools/audit.js pil2-components/test/std/virtual_tables/build/build.pilout
+    node --max-old-space-size=131072 ../pil2-proofman-js/src/main_stats.js -a pil2-components/test/std/virtual_tables/build/build.pilout -o pil2-components/test/std/virtual_tables/build/virtual_tables.stats
+*/
+
+airtemplate Component(const int N, const int t, const int opid) {
+    col witness a[t];
+    lookup_assumes(opid, a);
+}
+
+airtemplate ComponentRC(const int N, const int t, const int opid) {
+    col witness a[t];
+    col witness b[3];
+
+    range_check(expression: b[0], min: 5, max: 2**8 - 1, predefined: 1);
+    range_check(expression: b[1], min: 0, max: 2**16 - 1, predefined: 1);
+    range_check(expression: b[2], min: 0, max: 2**6 - 1, predefined: 0);
+
+    lookup_assumes(opid, a);
+}
+
+airtemplate Table(const int N, const int t, const int opid, const int table_id = -1) {
+    col fixed A[t];
+    for (int i = 0; i < t; i++) {
+        A[i] = [(N-1)..0...]; // [(N-1)..0];
+    }
+
+    col witness multiplicity;
+    lookup_proves(opid, A, mul: multiplicity, table_id: table_id);
+}
+
+airtemplate TableContinuation(const int N, const int offset = 0, const int t, const int opid, const int table_id = -1) {
+    col fixed A[t];
+    for (int i = 0; i < t; i++) {
+        A[i] = [(offset + N)..(offset + 2*N-1)...]; // [N..(2*N-1)]
+    }
+
+    col witness multiplicity;
+    lookup_proves(opid, A, mul: multiplicity, table_id: table_id);
+}
+
+airtemplate TablePadded(const int N, const int opid) {
+    const int P2_2 = 1 << 2;
+    const int P2_4 = 1 << 4;
+    const int MASK_2 = P2_2 - 1;
+    const int TOTAL_SIZE = P2_2*P2_2*3;
+    assert(N >= TOTAL_SIZE);
+
+    const int PADDING_VALUES = N - TOTAL_SIZE;
+    println(`With N=${N} there are ${PADDING_VALUES} padding values`);
+
+    col fixed A = [0..MASK_2]...;
+    col fixed B = [0:P2_2..MASK_2:P2_2]...;
+    col fixed C = [0:P2_4, 1:P2_4, 2:P2_4]...;
+
+    col witness multiplicity;
+    lookup_proves(opid, [A, B, C], mul: multiplicity);
+}
+
+airgroup VirtualTables {
+    set_range_check_tables_virtual(); // Enable virtual tables for range checks
+    set_max_virtual_bits(15); // Set the maximum bits for virtual tables
+
+    // Virtual tables
+    Component(N: 2**5, t: 5, opid: 1) alias Component1;
+    virtual Table(N: 2**5, t: 5, opid: 1) alias Table1;
+
+    Component(N: 2**4, t: 3, opid: 2) alias Component2;
+    virtual Table(N: 2**4, t: 3, opid: 2, table_id: 60) alias Table2_1;
+
+    Component(N: 2**2, t: 3, opid: 3) alias Component3;
+    virtual Table(N: 2**2, t: 3, opid: 3) alias Table3;
+
+    ComponentRC(N: 2**7, t: 2, opid: 4) alias Component4;
+    virtual Table(N: 2**7, t: 2, opid: 4) alias Table4;
+    
+    Component(N: 2**6, t: 6, opid: 5) alias Component5;
+    virtual Table(N: 2**6, t: 6, opid: 5) alias Table5;
+    
+    Component(N: 2**10, t: 2, opid: 6) alias Component6;
+    virtual Table(N: 2**10, t: 2, opid: 6) alias Table6;
+
+    // Standard tables
+    Component(N: 2**9, t: 9, opid: 7) alias Component7;
+    Table(N: 2**9, t: 9, opid: 7) alias Table7;
+
+    // Non power-of-two virtual tables
+    Component(N: 2**10, t: 3, opid: 8) alias Component8;
+    virtual TablePadded(N: 48, opid: 8) alias Table8;
+
+    // Table with the same opid, but more slices
+    virtual TableContinuation(N: 2**15, t: 3, opid: 2, table_id: 61) alias Table2_2;
+    virtual TableContinuation(N: 2**5, offset: 2**15, t: 3, opid: 2, table_id: 62) alias Table2_3;
+}

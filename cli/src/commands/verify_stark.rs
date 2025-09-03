@@ -1,11 +1,10 @@
 // extern crate env_logger;
 use clap::Parser;
-use proofman::verify_final_proof;
+use proofman_verifier::verify;
 use proofman_common::{initialize_logger, VerboseMode};
 use std::fs::File;
 use std::io::Read;
 use colored::Colorize;
-use bytemuck::cast_slice;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -13,12 +12,6 @@ use bytemuck::cast_slice;
 pub struct VerifyStark {
     #[clap(short = 'p', long)]
     pub proof: String,
-
-    #[clap(short = 's', long)]
-    pub stark_info: String,
-
-    #[clap(short = 'e', long)]
-    pub verifier_bin: String,
 
     #[clap(short = 'k', long)]
     pub verkey: String,
@@ -35,14 +28,15 @@ impl VerifyStark {
 
         initialize_logger(VerboseMode::Info, None);
 
-        let mut file = File::open(self.proof.clone())?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
+        let mut proof_file = File::open(&self.proof)?;
+        let mut proof = Vec::new();
+        proof_file.read_to_end(&mut proof)?;
 
-        let proof_slice: &[u64] = cast_slice(&buffer);
+        let mut verkey_file = File::open(&self.verkey)?;
+        let mut vk = Vec::new();
+        verkey_file.read_to_end(&mut vk)?;
 
-        let valid =
-            verify_final_proof(proof_slice, self.stark_info.clone(), self.verifier_bin.clone(), self.verkey.clone());
+        let valid = verify(&proof, &vk);
 
         if !valid {
             tracing::info!("··· {}", "\u{2717} Stark proof was not verified".bright_red().bold());

@@ -20,6 +20,7 @@ members = [
     "transcript",
     "witness",
     "util",
+    "verifier",
     # "pil2-components/lib/std/rs",
     # "pil2-components/test/std/direct_update/rs",
     # "pil2-components/test/std/diff_buses/rs",
@@ -27,12 +28,16 @@ members = [
     # "pil2-components/test/std/lookup/rs",
     # "pil2-components/test/std/connection/rs",
     # "pil2-components/test/std/permutation/rs",
+    # "pil2-components/test/std/one_instance/rs",
+    # "pil2-components/test/std/virtual_tables/rs",
     # "pil2-components/test/simple/rs",
     # whoever re-enables this, it has to work out of
     # the box with `cargo check --workspace` or CI will
     # break and dev experience will be bad since repo
     # won't build with a fresh clone
     "examples/fibonacci-square",
+    "examples/test-recursive-c36",
+    "examples/test-recursive-c42",
     "macros-test",
 ]
 
@@ -68,3 +73,4 @@ tracing = "0.1"
 libloading = "0.8.7"
 sysinfo = "0.35.1"
 blake3 = "1.3.1"
+zstd = "0.13"

@@ -4,20 +4,13 @@ use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
-use rand::{
-    distr::{StandardUniform, Distribution},
-    Rng, SeedableRng,
-    rngs::StdRng,
-};
+use rand::{rng, Rng, SeedableRng, rngs::StdRng};
 
 use crate::ConnectionNewTrace;
 
 define_wc!(ConnectionNew, "Connct_N");
 
-impl<F: PrimeField64> WitnessComponent<F> for ConnectionNew
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for ConnectionNew {
     execute!(ConnectionNewTrace, 1);
 
     fn calculate_witness(
@@ -30,7 +23,7 @@ where
         buffer_pool: &dyn BufferPool<F>,
     ) {
         if stage == 1 {
-            let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
+            let seed = if cfg!(feature = "debug") { 0 } else { rng().random::<u64>() };
             let mut rng = StdRng::seed_from_u64(seed);
             let mut trace = ConnectionNewTrace::new_from_vec(buffer_pool.take_buffer());
             let num_rows = trace.num_rows();
@@ -45,14 +38,14 @@ where
                 }
 
                 // Start connection
-                trace[i].a[0] = rng.random();
-                trace[i].b[0] = rng.random();
-                trace[i].c[0] = rng.random();
+                trace[i].a[0] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                trace[i].b[0] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                trace[i].c[0] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
 
                 // Start connection
-                trace[i].a[1] = rng.random();
-                trace[i].b[1] = rng.random();
-                trace[i].c[1] = rng.random();
+                trace[i].a[1] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                trace[i].b[1] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                trace[i].c[1] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
                 if i == 3 + frame[1] {
                     trace[i - 1].c[1] = trace[i].c[1];
                     frame[1] += num_rows / 2;
@@ -64,9 +57,9 @@ where
 
                 // TODO: Finish!
                 // // Start connection
-                // trace[i].a[2] = rng.random();
-                // trace[i].b[2] = rng.random();
-                // trace[i].c[2] = rng.random();
+                // trace[i].a[2] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                // trace[i].b[2] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                // trace[i].c[2] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
                 // if i == 3 + frame[2] {
                 //     trace[i - 1].c[2] = trace[i].c[2];
 
@@ -89,9 +82,9 @@ where
                 // }
 
                 // Start connection
-                trace[i].a[3] = rng.random();
-                trace[i].b[3] = rng.random();
-                trace[i].c[3] = rng.random();
+                trace[i].a[3] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                trace[i].b[3] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                trace[i].c[3] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
                 if i == 2 + frame[3] {
                     trace[i - 1].c[3] = trace[i].a[3];
                     frame[3] += num_rows / 2;
@@ -103,9 +96,9 @@ where
                 }
 
                 // Start connection
-                trace[i].a[4] = rng.random();
-                trace[i].b[4] = rng.random();
-                trace[i].c[4] = rng.random();
+                trace[i].a[4] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                trace[i].b[4] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                trace[i].c[4] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
 
                 if i == 2 + frame[4] {
                     trace[i - 1].d[4] = trace[i - 1].b[4];
@@ -125,9 +118,9 @@ where
                 }
 
                 // Start connection
-                trace[i].a[5] = rng.random();
-                trace[i].b[5] = rng.random();
-                trace[i].c[5] = rng.random();
+                trace[i].a[5] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                trace[i].b[5] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                trace[i].c[5] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
                 if i == 3 + frame[5] {
                     trace[i - 1].d[5] = trace[i].d[5];
                     trace[i - 3].b[5] = trace[i].d[5];

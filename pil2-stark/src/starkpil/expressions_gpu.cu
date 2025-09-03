@@ -573,24 +573,7 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
 
                 switch (ops[kk])
                 {
-
                 case 0:
-                {
-                    // COPY dim1 to dim1
-                    gl64_t* a = (gl64_t*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 1], args[i_args + 2], args[i_args + 3], i, 1, isCyclic, debug);
-                    bool isConstant = args[i_args + 1] > bufferCommitsSize + 1 ? true : false;
-                    gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize][args[i_args] * blockDim.x]);
-                    #if DEBUG
-                    printArguments((Goldilocks::Element *) a, 1, isConstant, NULL, true, 0, i, 4, kk, nOps, debug);
-                    #endif
-                    gl64_gpu::copy_gpu(res, a, isConstant);
-                    #if DEBUG
-                    printRes((Goldilocks::Element *) res, 1, i, debug);
-                    #endif
-                    i_args += 4;
-                    break;
-                }
-                case 1:
                 {
                     // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
                     gl64_t* a = (gl64_t*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 1, isCyclic, debug);
@@ -608,7 +591,7 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
                     i_args += 8;
                     break;
                 }
-                case 2:
+                case 1:
                 {
                     // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
                     gl64_t* a = (gl64_t*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, debug);
@@ -626,7 +609,7 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
                     i_args += 8;
                     break;
                 }
-                case 3:
+                case 2:
                 {
                     // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
                     gl64_t* a = (gl64_t*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, debug);
@@ -642,19 +625,6 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
                     printRes((Goldilocks::Element *) res, 3, i, debug);
                     #endif
                     i_args += 8;
-                    break;
-                }
-                case 4:
-                {
-                    // COPY dim3 to dim3
-                    gl64_t* a = (gl64_t*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 1], args[i_args + 2], args[i_args + 3], i, 3, isCyclic, debug);
-                    bool isConstant = args[i_args + 1] > bufferCommitsSize + 1 ? true : false;
-                    gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize + 1][args[i_args] * blockDim.x]);
-                    Goldilocks3GPU::copy_gpu(res, a, isConstant);
-                    #if DEBUG
-                    printRes((Goldilocks::Element *) res, 3, i, debug);
-                    #endif
-                    i_args += 4;
                     break;
                 }
                 default:

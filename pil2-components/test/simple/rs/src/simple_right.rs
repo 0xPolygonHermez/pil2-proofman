@@ -4,16 +4,12 @@ use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
-use rand::distr::{StandardUniform, Distribution};
 
 use crate::SimpleRightTrace;
 
 define_wc!(SimpleRight, "SimRight");
 
-impl<F: PrimeField64> WitnessComponent<F> for SimpleRight
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for SimpleRight {
     execute!(SimpleRightTrace, 1);
 
     fn calculate_witness(

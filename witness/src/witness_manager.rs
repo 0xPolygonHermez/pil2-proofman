@@ -115,9 +115,7 @@ impl<F: PrimeField64> WitnessManager<F> {
             let instance_ids_filtered: Vec<_> = self.components_instance_ids.read().unwrap()[idx]
                 .iter()
                 .filter(|id| {
-                    ids_hash_set.contains(id)
-                        && (self.pctx.dctx_is_my_instance(**id) || self.pctx.dctx_is_instance_all(**id))
-                        && self.pctx.dctx_instance_precalculate(**id)
+                    ids_hash_set.contains(id) && (self.pctx.dctx_is_my_instance(**id) || self.pctx.dctx_is_table(**id))
                 })
                 .cloned()
                 .collect();
@@ -159,8 +157,7 @@ impl<F: PrimeField64> WitnessManager<F> {
             let instance_ids_filtered: Vec<_> = self.components_instance_ids.read().unwrap()[idx]
                 .iter()
                 .filter(|id| {
-                    ids_hash_set.contains(id)
-                        && (self.pctx.dctx_is_my_instance(**id) || self.pctx.dctx_is_instance_all(**id))
+                    ids_hash_set.contains(id) && (self.pctx.dctx_is_my_instance(**id) || self.pctx.dctx_is_table(**id))
                 })
                 .cloned()
                 .collect();

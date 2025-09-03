@@ -8,8 +8,12 @@ use proofman_hints::{
     HintFieldValue,
 };
 
+pub const STD_MODE_DEFAULT: usize = 0;
+pub const STD_MODE_ONE_INSTANCE: usize = 1;
+
 pub trait AirComponent<F: PrimeField64> {
-    fn new(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, airgroup_id: Option<usize>, air_id: Option<usize>) -> Arc<Self>;
+    fn new(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, airgroup_id: usize, air_id: usize, shared_tables: bool)
+        -> Arc<Self>;
 }
 
 // Helper to extract hint fields
@@ -53,20 +57,52 @@ pub fn validate_binary_field<F: PrimeField64>(value: F, field_name: &str) -> boo
     }
 }
 
-pub fn get_hint_field_constant_as_u64<F: PrimeField64>(
+pub fn get_hint_field_constant_as<T, F: PrimeField64>(
     sctx: &SetupCtx<F>,
     airgroup_id: usize,
     air_id: usize,
     hint_id: usize,
     field_name: &str,
     hint_field_options: HintFieldOptions,
-) -> u64 {
+) -> T
+where
+    T: TryFrom<u64>,
+{
     let value = match get_hint_field_constant::<F>(sctx, airgroup_id, air_id, hint_id, field_name, hint_field_options) {
-        HintFieldValue::Field(value) => value,
+        HintFieldValue::Field(value) => value.as_canonical_u64(),
         _ => panic!("Hint '{hint_id}' for field '{field_name}' must be a field element"),
     };
 
-    value.as_canonical_u64()
+    T::try_from(value).unwrap_or_else(|_| panic!("Cannot convert value to {}", std::any::type_name::<T>()))
+}
+
+pub fn get_hint_field_constant_a_as<T, F: PrimeField64>(
+    sctx: &SetupCtx<F>,
+    airgroup_id: usize,
+    air_id: usize,
+    hint_id: usize,
+    field_name: &str,
+    hint_field_options: HintFieldOptions,
+) -> Vec<T>
+where
+    T: TryFrom<u64>,
+{
+    let hint_fields = get_hint_field_constant_a(sctx, airgroup_id, air_id, hint_id, field_name, hint_field_options);
+
+    let mut return_values = Vec::new();
+    for (i, hint_field) in hint_fields.values.iter().enumerate() {
+        match hint_field {
+            HintFieldValue::Field(value) => {
+                let converted = T::try_from(value.as_canonical_u64()).unwrap_or_else(|_| {
+                    panic!("Cannot convert value at position {i} to {}", std::any::type_name::<T>())
+                });
+                return_values.push(converted);
+            }
+            _ => panic!("Hint '{hint_id}' for field '{field_name}' at position '{i}' must be a field element"),
+        }
+    }
+
+    return_values
 }
 
 pub fn get_hint_field_constant_a_as_string<F: PrimeField64>(

@@ -1,77 +1,81 @@
 require "std_constants.pil";
 require "std_tools.pil";
 
-// Control how the airvals are grouped
-int AIRVALS_IM_NON_REDUCED = 0; // Set to -1 to non-reduce all the terms
-int AIRVALS_IM_REDUCE_FACTOR = 1;
+// TODO: Parametrize with the maximum constraint degree instead of assuming it is 3
 
-function set_airvals_im_non_reduced(const int num) {
+const int SUM_TYPE_ASSUMES = 0;
+const int SUM_TYPE_PROVES = 1;
+const int SUM_TYPE_FREE = 2;
+
+const int SUM_UPDATE_TYPE_LOCAL_DEFAULT = 0;
+const int SUM_UPDATE_TYPE_LOCAL_AIRVAL = 1;
+const int SUM_UPDATE_TYPE_GLOBAL = 2;
+
+// Control how the expressions are grouped
+int SUM_EXPRESSIONS_IM_NON_REDUCED = 0; // Set to -1 to non-reduce all the terms
+
+function sum_set_expressions_im_non_reduced(const int num) {
     if (num < -1) {
         error(`The non-reduced value must be at least -1, but received ${num}`);
     }
 
-    AIRVALS_IM_NON_REDUCED = num;
+    SUM_EXPRESSIONS_IM_NON_REDUCED = num;
 }
 
-function set_airvals_im_reduce_factor(const int factor) {
+// Control how the airvals are grouped
+int SUM_AIRVALS_IM_NON_REDUCED = 0; // Set to -1 to non-reduce all the terms
+int SUM_AIRVALS_IM_REDUCE_FACTOR = 1;
+
+function sum_set_airvals_im_non_reduced(const int num) {
+    if (num < -1) {
+        error(`The non-reduced value must be at least -1, but received ${num}`);
+    }
+
+    SUM_AIRVALS_IM_NON_REDUCED = num;
+}
+
+function sum_set_airvals_im_reduce_factor(const int factor) {
     if (factor < 1) {
         error(`The factor must be at least 1, but received ${factor}`);
     }
 
-    AIRVALS_IM_REDUCE_FACTOR = factor;
+    SUM_AIRVALS_IM_REDUCE_FACTOR = factor;
 }
 
-// TODO: Do the same as with the airvals for the proovals in the function piop_gsum_proof
-// Control how the proofvals are grouped
-int PROOFVALS_IM_FACTOR = 1;
-
-function set_proofvals_factor(const int factor) {
-    PROOFVALS_IM_FACTOR = factor;
-}
-
-function sum(const int name, const int type, const int opids[], const expr busid, const expr expressions[], const expr mul = 1, const int direct_type = PIOP_DIRECT_TYPE_DEFAULT) {
-    switch (type) {
-        case 0: // Assume
-            update_piop_sum(name, 0, opids, busid, mul, expressions, direct_type);
-        case 1: // Prove
-            update_piop_sum(name, 1, opids, busid, mul, expressions, direct_type);
-        case 2: // Free
-            update_piop_sum(name, 2, opids, busid, mul, expressions, direct_type);
-        default:
-            error(`Invalid sum type: ${type}`);
+function sum(const int name = PIOP_NAME_DEFAULT, const int surname = PIOP_SURNAME_DEFAULT, const int type, const int opids[], const expr busid, const expr expressions[], const expr mul = 1, const int update_type = SUM_UPDATE_TYPE_LOCAL_DEFAULT) {
+    if (VIRTUAL == 1) {
+        error("Cannot use the sum bus in a virtual table context.");
     }
-}
 
-function sum_assumes(const int name, const int opids[], const expr busid, const expr expressions[], const expr sel = 1, const int direct_type = PIOP_DIRECT_TYPE_DEFAULT) {
-    sum(name, 0, opids, busid, expressions, sel, direct_type);
-}
-
-function sum_proves(const int name, const int opids[], const expr busid, const expr expressions[], const expr mul = 1, const int direct_type = PIOP_DIRECT_TYPE_DEFAULT) {
-    sum(name, 1, opids, busid, expressions, mul, direct_type);
+    assert(type == SUM_TYPE_ASSUMES || type == SUM_TYPE_PROVES || type == SUM_TYPE_FREE);
+    assert(update_type == SUM_UPDATE_TYPE_LOCAL_DEFAULT || update_type == SUM_UPDATE_TYPE_LOCAL_AIRVAL || update_type == SUM_UPDATE_TYPE_GLOBAL);
+    update_piop_sum(name, surname, type, opids, busid, mul, expressions, update_type);
 }
 
 /**
  * It updates the sum check constraints.
  *
  * @param name        The name of the PIOP consuming the sum check
- * @param proves      1 if the PIOP proves a statement, 0 if it assumes a statement and 2 if it is free
+ * @param surname     The surname of the PIOP consuming the sum check
+ * @param type        The type of the PIOP
  * @param opids       The vector of opids of the PIOP
  * @param busid       The ID that uniquely identifies the PIOP in the bus
  * @param sel         The selector of the PIOP
  * @param expressions The vector of expressions of the PIOP
- * @param direct_type Defines wheter the update has to be done at the global, air or default level
+ * @param update_type Defines wheter the update has to be done at the air cols, air vals or global vals
  */
-private function update_piop_sum(const int name, const int proves, const int opids[], const expr busid, const expr sel, const expr expressions[], const int direct_type = PIOP_DIRECT_TYPE_DEFAULT) {
+private function update_piop_sum(const int name, const int surname, const int type, const int opids[], const expr busid, const expr sel, const expr expressions[], const int update_type) {
+    const string name_str = get_piop_name(name);
+    const string surname_str = get_piop_surname(surname);
     const int exprs_num = length(expressions);
     if (exprs_num < 1) {
-        string side = proves ? "proves" : "assumes";
-        error(`The number of expressions in ${side} of ${name} #${opids} must be at least 1`);
+        error(`The number of expressions of ${name_str} ${surname_str} #${opids} must be at least 1`);
     }
 
-    init_proof_containers_sum(name, opids);
+    init_proof_containers_sum(name, surname, opids);
 
-    if (direct_type == PIOP_DIRECT_TYPE_AIR || direct_type == PIOP_DIRECT_TYPE_DEFAULT) {
-        init_air_containers_sum(name);
+    if (update_type == SUM_UPDATE_TYPE_LOCAL_DEFAULT || update_type == SUM_UPDATE_TYPE_LOCAL_AIRVAL) {
+        init_air_containers_sum();
     }
 
     // Create debug hints for the witness computation
@@ -82,42 +86,46 @@ private function update_piop_sum(const int name, const int proves, const int opi
         sum_expr += expressions[i];
     }
 
-    // TODO: Redo when ternary operator wokrs properly over expressions
-    expr proves_hint;
-    if (proves == 2) {
-        proves_hint = sel;
+    // TODO: Redo when ternary operator works properly over expressions
+    expr type_hint;
+    if (type == SUM_TYPE_FREE) {
+        type_hint = sel;
     } else {
-        proves_hint = proves;
+        type_hint = type;
     }
-    @gsum_debug_data{name_piop: get_piop_name(name), name_expr: name_expr, busid: busid, is_global: direct_type == PIOP_DIRECT_TYPE_GLOBAL,
-                         proves: proves_hint, selector: sel, expressions: expressions, deg_expr: degree(sum_expr), deg_sel: degree(sel)};
+    @gsum_debug_data{name_piop: name_str, name_expr: name_expr, busid: busid, is_global: update_type == SUM_UPDATE_TYPE_GLOBAL,
+                          type: type_hint, selector: sel, expressions: expressions, deg_expr: degree(sum_expr), deg_sel: degree(sel)};
 
-    initial_checks_sum(proves, opids, exprs_num, direct_type);
+    initial_checks_sum(name, surname, type, opids, exprs_num);
 
     // selected vector to simple expression reduction
     expr exprs_compressed = compress_exprs(busid, expressions);
 
-    switch (direct_type) {
-        case PIOP_DIRECT_TYPE_GLOBAL:
-            gsum_update_global_constraint_data(proves, sel, exprs_compressed);
-        case PIOP_DIRECT_TYPE_AIR, PIOP_DIRECT_TYPE_DEFAULT:
-            gsum_update_air_constraint_data(proves, sel, exprs_compressed, direct_type);
+    switch (update_type) {
+        case SUM_UPDATE_TYPE_GLOBAL:
+            if (STD_MODE == STD_MODE_ONE_INSTANCE) {
+                error("Updating the global constraint is not allowed in one instance mode");
+            }
 
-            // Additional processing for air constraints
-            // TODO: Uncomment when expression comparison is implemented
-            // on final air find_repeated_proves();
+            gsum_update_global_constraint_data(type, sel, exprs_compressed);
+        case SUM_UPDATE_TYPE_LOCAL_DEFAULT, SUM_UPDATE_TYPE_LOCAL_AIRVAL:
+            gsum_update_air_constraint_data(type, sel, exprs_compressed, update_type);
 
             // Update constraints at the air level
             on final air piop_gsum_air();
 
-            // Update constraints at the airgroup level
-            on final airgroup piop_gsum_airgroup();
+            // Update the constraints at the airgroup level
+            if (STD_MODE != STD_MODE_ONE_INSTANCE) {
+                on final airgroup piop_gsum_airgroup();
+            }
         default:
-            error(`Invalid direct_type: ${direct_type}`);
+            error(`Invalid update type: ${update_type}`);
     }
 
     // Update the constraints at the proof level
-    on final proof piop_gsum_proof();
+    if (STD_MODE != STD_MODE_ONE_INSTANCE) {
+        on final proof piop_gsum_proof();
+    }
 
     // At the end, check consistency of all the opids
     on final proof check_opids_were_completed_sum();
@@ -126,7 +134,7 @@ private function update_piop_sum(const int name, const int proves, const int opi
     on final proof piop_gsum_issue_global_hints(); 
 }
 
-private function init_proof_containers_sum(const int name, const int opids[]) {
+private function init_proof_containers_sum(const int name, const int surname, const int opids[]) {
     container proof.std.gsum {
         // Used for final checks
         int opids_count = 0;
@@ -146,6 +154,7 @@ private function init_proof_containers_sum(const int name, const int opids[]) {
         int air_count = 0;
         int airgroup_ids[ARRAY_SIZE];
         int air_ids[ARRAY_SIZE];
+        int std_mode[ARRAY_SIZE];
     }
 
     // Opid-specific data
@@ -153,6 +162,7 @@ private function init_proof_containers_sum(const int name, const int opids[]) {
     for (int i = 0; i < length(opids); i++) {
         container proof.std.gsum.`id${opids[i]}` {
             int name = name;
+            int surname = surname;
             int expressions;
             int proves = 0;
             int assumes = 0;
@@ -160,13 +170,12 @@ private function init_proof_containers_sum(const int name, const int opids[]) {
     }
 }
 
-private function init_air_containers_sum(const int name) {
+private function init_air_containers_sum() {
     // AIR-specific data
     container air.std.gsum {
         int gsum_nargs = 0;
         expr gsum_s[ARRAY_SIZE];
         expr gsum_e[ARRAY_SIZE];
-        int gsum_t[ARRAY_SIZE]; // Used for optimization
 
         // Direct-related data, used to update `gsum` at the air level
         int direct_gsum_nargs = 0;
@@ -175,75 +184,78 @@ private function init_air_containers_sum(const int name) {
     }
 }
 
-private function initial_checks_sum(const int proves, const int opids[], const int exprs_num, const int direct_type) {
+private function initial_checks_sum(const int name, const int surname, const int type, const int opids[], const int exprs_num) {
     for (int i = 0; i < length(opids); i++) {
-        // Assumes and proves of the same opid must have the same number of expressions
+        // First time we see an opid
         if (proof.std.gsum.`id${opids[i]}`.expressions == 0) {
-            // The first time we see this opid, we store the number of expressions
+            // Store the number of expressions
             proof.std.gsum.`id${opids[i]}`.expressions = exprs_num;
 
-            // Store the opid to check at the end that all the opids have been completed
+            // Store the opid
             proof.std.gsum.opids[proof.std.gsum.opids_count] = opids[i];
             proof.std.gsum.opids_count++;
-        } else if (exprs_num != proof.std.gsum.`id${opids[i]}`.expressions) {
+        } else if ((surname != PIOP_SURNAME_DYNAMIC) && (exprs_num != proof.std.gsum.`id${opids[i]}`.expressions)) {
             // If this is not the first time we see this opid, we check that the number of expressions is the same
+            const string name = get_piop_name(name);
+            const string surname = get_piop_surname(surname);
             const int expected_exprs = proof.std.gsum.`id${opids[i]}`.expressions;
-            error(`The number of expressions of PIOP #${opids[i]} must be ${expected_exprs} but was ${exprs_num}`);
+            error(`The number of expressions of ${name} ${surname} #${opids[i]} must be ${expected_exprs} but was ${exprs_num}`);
         }
 
         // The same opid can appear in different airs, so we keep track of the number of proves and assumes
         // for final checks
-        if (proves == 2) {
+        if (type == SUM_TYPE_FREE) {
             // If the user is responsible for the use of proves and assumes, then mark both
             proof.std.gsum.`id${opids[i]}`.proves++;
             proof.std.gsum.`id${opids[i]}`.assumes++;
         } else {
             // Otherwise, we mark it correctly
-            const string is_proves_str = proves ? "proves" : "assumes";
+            string is_proves_str;
+            if (type == SUM_TYPE_PROVES) {
+                is_proves_str = "proves";
+            } else {
+                is_proves_str = "assumes";
+            }
             proof.std.gsum.`id${opids[i]}`.`${is_proves_str}`++;
         }
     }
 }
 
-private function gsum_update_global_constraint_data(const int proves, const expr sel, const expr exprs_compressed) {
+private function gsum_update_global_constraint_data(const int type, const expr sel, const expr exprs) {
     use proof.std.gsum;
 
-    direct_gsum_s[direct_gsum_nargs] = proves ? sel : 0 - sel;
-    direct_gsum_e[direct_gsum_nargs] = exprs_compressed;
+    if ((type == SUM_TYPE_PROVES) || (type == SUM_TYPE_FREE)) {
+        direct_gsum_s[direct_gsum_nargs] = sel;
+    } else {
+        direct_gsum_s[direct_gsum_nargs] = 0 - sel;
+    }
+    direct_gsum_e[direct_gsum_nargs] = exprs;
     direct_gsum_nargs++;
 }
 
-private function gsum_update_air_constraint_data(const int proves, const expr sel, const expr exprs_compressed, const int direct_type) {
+private function gsum_update_air_constraint_data(const int type, const expr sel, const expr exprs, const int update_type) {
     use air.std.gsum;
 
-    if (direct_type == PIOP_DIRECT_TYPE_AIR) {
-        direct_gsum_s[direct_gsum_nargs] = proves ? sel : 0 - sel;
-        direct_gsum_e[direct_gsum_nargs] = exprs_compressed;
+    if (update_type == SUM_UPDATE_TYPE_LOCAL_AIRVAL) {
+        if ((type == SUM_TYPE_PROVES) || (type == SUM_TYPE_FREE)) {
+            direct_gsum_s[direct_gsum_nargs] = sel;
+        } else {
+            direct_gsum_s[direct_gsum_nargs] = 0 - sel;
+        }
+        direct_gsum_e[direct_gsum_nargs] = exprs;
         direct_gsum_nargs++;
     } else {
-        gsum_s[gsum_nargs] = proves ? sel : 0 - sel;
-        gsum_e[gsum_nargs] = exprs_compressed;
-        gsum_t[gsum_nargs] = proves;
+        if ((type == SUM_TYPE_PROVES) || (type == SUM_TYPE_FREE)) {
+            gsum_s[gsum_nargs] = sel;
+        } else {
+            gsum_s[gsum_nargs] = 0 - sel;
+        }
+        gsum_e[gsum_nargs] = exprs;
         gsum_nargs++;
     }
 }
 
 // Deferred functions
-private function find_repeated_proves() {
-    use air.std.gsum;
-
-    for (int i = 0; i < gsum_nargs; i++) {
-        if (gsum_t[i] == 0) continue;
-        for (int j = i + 1; j < gsum_nargs; j++) {
-            if (gsum_t[j] == 0) continue;
-            if (gsum_e[i] == gsum_e[j]) {
-                println(`Proves of Lookups ${i} and ${j} are the same, consider merging them`);
-            }
-        }
-    }
-
-}
-
 private function piop_gsum_air() {
     use air.std.gsum;
 
@@ -251,184 +263,208 @@ private function piop_gsum_air() {
 
     col witness stage(2) gsum;
 
-    airgroupval aggregate(sum) default(0) gsum_result;
-
-    /*
-                                            muli       seli
-        gsum === 'gsum * (1 - L1) + ∑ᵢ ( -------- - -------- )
-                                           ti + ɣ     fi + ɣ
-    */
-
-    /*
-      Transform the rational constraint to a polynomial one by substituting
-      all the rational terms by terms of degree 1 (except for one to optimize):
-            gsum === 'gsum * (1 - L1) + ∑ᵢ imi + num / den
-    */
-
-    // Identify isolated terms of specific degrees
-    int isolated_term = -1;
-    for (int i = 0; i < gsum_nargs; i++) {
-        const int gsum_s_degree = degree(gsum_s[i]);
-        const int gsum_e_degree = degree(gsum_e[i]);
-        if ((gsum_s_degree == 3 && gsum_e_degree == 1) ||
-            (gsum_s_degree == 2 && gsum_e_degree == 1)) 
-        {
-            isolated_term = i;
-            break;
-        } 
+    if (STD_MODE != STD_MODE_ONE_INSTANCE) {
+        airgroupval aggregate(sum) default(0) gsum_result;
     }
 
-    // Identify the rest
-    int low_degree_term[gsum_nargs];
-    int high_degree_term[gsum_nargs];
-    int low_degree_len = 0;
-    int high_degree_len = 0;
-    for (int i = 0; i < gsum_nargs; i++) {
-        // If the isolated term has already been identified, continue
-        if (i == isolated_term) {
-            continue;
-        }
+    /*
+                                          selᵢ
+        gsum === 'gsum * (1 - L1) + ∑ᵢ --------
+                                         fᵢ + ɣ
 
-        const int gsum_s_degree = degree(gsum_s[i]);
-        const int gsum_e_degree = degree(gsum_e[i]);
-
-        if (gsum_s_degree == 0 && gsum_e_degree == 0)
-        {
-            // In the case that both the numerator and the denominator are constants, 
-            // we can directly add them through the direct terms
-            direct_gsum_s[direct_gsum_nargs] = gsum_s[i];
-            direct_gsum_e[direct_gsum_nargs] = gsum_e[i];
-            direct_gsum_nargs++;
-        } 
-        else if (gsum_s_degree > 2 || gsum_e_degree > 1) 
-        {
-            // Track high-degree terms
-            high_degree_term[high_degree_len] = i;
-            high_degree_len++;
-        } 
-        else 
-        {
-            // Handle low-degree terms
-            if (isolated_term == -1) {
-                // If the isolated term has not been identified, assign
-                isolated_term = i;
-            } else {
-                // Otherwise, add it to the low-degree terms
-                low_degree_term[low_degree_len] = i;
-                low_degree_len++;
-            }
-        }
-    }
+        We transform some of the rational constraint to a polynomial one by 
+        substituting all the rational terms by individual terms (except for one to optimize):
+            gsum === 'gsum * (1 - L1) + ∑ⱼ imⱼ + num / den
+    */
 
     if (!defined(std_gamma)) {
         challenge stage(2) std_gamma;
     }
 
+    expr num = 0;
+    expr den = 1;
     expr sum_ims = 0;
-    // Create an intermediate for clusters of low-degree terms so that
-    // the degree of the constraint is lower than the maximum allowed
-    if (low_degree_len > 0) {
-        const int nIm = low_degree_len/BLOWUP_FACTOR;
-        if (nIm > 0) {
-            col witness stage(2) im[nIm];
-            for (int i = 0; i < nIm; i++) {
+    // Compute the number of terms that are not reduced
+    int num_non_reduced = SUM_EXPRESSIONS_IM_NON_REDUCED;
+    if ((SUM_EXPRESSIONS_IM_NON_REDUCED == -1) || (gsum_nargs < SUM_EXPRESSIONS_IM_NON_REDUCED)) {
+        num_non_reduced = gsum_nargs;
+    }
 
-                //              s[3*i]            s[3*i+1]            s[3*i+2]
-                // im[i] = --------------- + ----------------- + -----------------
-                //              e[3*i]            e[3*i+1]            e[3*i+2]
-                // where:
-                // s[x] = mul[x]  if the x-th term is a prove,
-                // s[x] = -sel[x] if the x-th term is an assume,
-                // e[x] = (t[x] + ɣ) if the x-th term is a prove,
-                // e[x] = (f[x] + ɣ) if the x-th term is an assume,
+    // The first num_non_reduced terms are not reduced
+    for (int i = 0; i < num_non_reduced; i++) {
+        den *= (gsum_e[i] + std_gamma);
+
+        expr _tmp = gsum_s[i];
+        for (int j = 0; j < num_non_reduced; j++) {
+            if (j != i) _tmp *= (gsum_e[j] + std_gamma);
+        }
+        num += _tmp;
+    }
+
+    // The rest of the terms are grouped in clusters of size MAX_CONSTRAINT_DEGREE-1
+    const int num_terms = gsum_nargs - num_non_reduced;
+    if (num_terms > 0) {
+        // Identify isolated terms of specific degrees
+        int isolated_term = -1;
+        for (int i = num_non_reduced; i < gsum_nargs; i++) {
+            const int gsum_s_degree = degree(gsum_s[i]);
+            const int gsum_e_degree = degree(gsum_e[i]);
+            if ((gsum_s_degree == 3 && gsum_e_degree == 1) ||
+                (gsum_s_degree == 2 && gsum_e_degree == 1)) 
+            {
+                isolated_term = i;
+                break;
+            } 
+        }
+
+        // Identify the rest
+        int low_degree_term[num_terms];
+        int high_degree_term[num_terms];
+        int low_degree_len = 0;
+        int high_degree_len = 0;
+        for (int i = num_non_reduced; i < gsum_nargs; i++) {
+            // If the isolated term has already been identified, continue
+            if (i == isolated_term) {
+                continue;
+            }
+
+            const int gsum_s_degree = degree(gsum_s[i]);
+            const int gsum_e_degree = degree(gsum_e[i]);
+
+            if (gsum_s_degree == 0 && gsum_e_degree == 0)
+            {
+                // In the case that both the numerator and the denominator are constants, 
+                // we can directly add them through the direct terms
+                direct_gsum_s[direct_gsum_nargs] = gsum_s[i];
+                direct_gsum_e[direct_gsum_nargs] = gsum_e[i];
+                direct_gsum_nargs++;
+            } 
+            else if (gsum_s_degree > 2 || gsum_e_degree > 1) 
+            {
+                // Track high-degree terms
+                high_degree_term[high_degree_len] = i;
+                high_degree_len++;
+            } 
+            else 
+            {
+                // Handle low-degree terms
+                if (isolated_term == -1) {
+                    // If the isolated term has not been identified, assign
+                    isolated_term = i;
+                } else {
+                    // Otherwise, add it to the low-degree terms
+                    low_degree_term[low_degree_len] = i;
+                    low_degree_len++;
+                }
+            }
+        }
+
+        // Create an intermediate for clusters of low-degree terms so that
+        // the degree of the constraint is lower than the maximum allowed
+        if (low_degree_len > 0) {
+            const int nIm = low_degree_len/(MAX_CONSTRAINT_DEGREE-1);
+            if (nIm > 0) {
+                col witness stage(2) im[nIm];
+                for (int i = 0; i < nIm; i++) {
+
+                    //              s[3*i]            s[3*i+1]            s[3*i+2]
+                    // im[i] = --------------- + ----------------- + -----------------
+                    //           e[3*i] + ɣ         e[3*i+1] + ɣ       e[3*i+2] + ɣ
+
+                    expr prods = 1;
+                    expr sums = 0;
+                    const int factor_offset = (MAX_CONSTRAINT_DEGREE-1) * i;
+                    for (int j = 0; j < (MAX_CONSTRAINT_DEGREE-1); j++) {
+                        prods *= (gsum_e[low_degree_term[factor_offset + j]] + std_gamma);
+
+                        expr _partial = gsum_s[low_degree_term[factor_offset + j]];
+                        for (int k = 0; k < (MAX_CONSTRAINT_DEGREE-1); k++) {
+                            if (k != j) _partial *= (gsum_e[low_degree_term[factor_offset + k]] + std_gamma);
+                        }
+                        sums += _partial;
+                    }
+                    @im_col{reference: im[i], numerator: sums, denominator: prods};
+
+                    // im[i] * t[3*i] * t[3*i+1] * t[3*i+2] ===
+                    //                    mul[3*i]*t[3*i+1]*t[3*i+2] + mul[3*i+1]*t[3*i]*t[3*i+2] + mul[3*i+2]*t[3*i]*t[3*i+1];
+                    im[i] * prods === sums;
+
+                    sum_ims += im[i];
+                }
+            }
+
+            const int nRemTerms = low_degree_len % (MAX_CONSTRAINT_DEGREE-1);
+            // If there are remaining terms, add an extra cluster
+            if (nRemTerms > 0) {
+                col witness stage(2) im_extra;
 
                 expr prods = 1;
                 expr sums = 0;
-                for (int j = 0; j < BLOWUP_FACTOR; j++) {
-                    prods *= (gsum_e[low_degree_term[BLOWUP_FACTOR * i + j]] + std_gamma);
+                const int low_degree_offset = (MAX_CONSTRAINT_DEGREE-1) * nIm;
+                for (int j = 0; j < nRemTerms; j++) {
+                    prods *= (gsum_e[low_degree_term[low_degree_offset + j]] + std_gamma);
 
-                    expr _partial = gsum_s[low_degree_term[BLOWUP_FACTOR * i + j]];
-                    for (int k = 0; k < BLOWUP_FACTOR; k++) {
-                        if (k == j) continue;
-                        _partial *= (gsum_e[low_degree_term[BLOWUP_FACTOR * i + k]] + std_gamma);
+                    expr _partial = gsum_s[low_degree_term[low_degree_offset + j]];
+                    for (int k = 0; k < nRemTerms; k++) {
+                        if (k != j) _partial *= (gsum_e[low_degree_term[low_degree_offset + k]] + std_gamma);
                     }
                     sums += _partial;
                 }
-                @im_col{reference: im[i], numerator: sums, denominator: prods};
+                @im_col{reference: im_extra, numerator: sums, denominator: prods};
 
-                // im[i] * t[3*i] * t[3*i+1] * t[3*i+2] ===
-                //                    mul[3*i]*t[3*i+1]*t[3*i+2] + mul[3*i+1]*t[3*i]*t[3*i+2] + mul[3*i+2]*t[3*i]*t[3*i+1];
-                im[i] * prods === sums;
+                im_extra * prods === sums;
 
-                sum_ims += im[i];
+                sum_ims += im_extra;
             }
         }
 
-        const int nRemTerms = low_degree_len % BLOWUP_FACTOR;
-        // If there are remaining terms, add an extra cluster
-        if (nRemTerms > 0) {
-            col witness stage(2) im_extra;
+        // Create a single intermediate for all the high-degree terms
+        if (high_degree_len > 0) {
+            /*
+                        s[i]   
+            im[i] = ----------
+                     e[i] + ɣ  
+            */
+            col witness stage(2) im_high_degree[high_degree_len];
 
-            expr prods = 1;
-            expr sums = 0;
-            for (int j = 0; j < nRemTerms; j++) {
-                prods *= (gsum_e[low_degree_term[BLOWUP_FACTOR * nIm + j]] + std_gamma);
+            for (int i = 0; i < high_degree_len; i++) {
+                const int index = high_degree_term[i];
 
-                expr _partial = gsum_s[low_degree_term[BLOWUP_FACTOR * nIm + j]];
-                for (int k = 0; k < nRemTerms; k++) {
-                    if (k == j) continue;
-                    _partial *= (gsum_e[low_degree_term[BLOWUP_FACTOR * nIm + k]] + std_gamma);
-                }
-                sums += _partial;
+                @im_col{reference: im_high_degree[i], numerator: gsum_s[index], denominator: gsum_e[index] + std_gamma};
+
+                im_high_degree[i] * (gsum_e[index] + std_gamma) === gsum_s[index];
+
+                sum_ims += im_high_degree[i];
             }
-            @im_col{reference: im_extra, numerator: sums, denominator: prods};
-
-            im_extra * prods === sums;
-
-            sum_ims += im_extra;
         }
-    }
 
-    // Create a single intermediate for all the high-degree terms
-    if (high_degree_len > 0) {
-        /*
-                      s[i]   
-           im[i] = ----------
-                    e[i] + ɣ  
-        */
-        col witness stage(2) im_high_degree[high_degree_len];
+        // Compute the isolated term numerator and denominator
+        if (isolated_term != -1) {
+            den *= (gsum_e[isolated_term] + std_gamma);
 
-        for (int i = 0; i < high_degree_len; i++) {
-            const int index = high_degree_term[i];
-
-            @im_col{reference: im_high_degree[i], numerator: gsum_s[index], denominator: gsum_e[index] + std_gamma};
-
-            im_high_degree[i] * (gsum_e[index] + std_gamma) === gsum_s[index];
-            sum_ims += im_high_degree[i];
+            expr _tmp = gsum_s[isolated_term];
+            for (int j = 0; j < num_non_reduced; j++) {
+                _tmp *= (gsum_e[j] + std_gamma);
+            }
+            num += _tmp;
         }
-    }
-
-    // Compute the isolated term numerator and denominator
-    expr isolated_num = 0;
-    expr isolated_den = 1;
-    if (isolated_term != -1) {
-        isolated_den = (gsum_e[isolated_term] + std_gamma);
-        isolated_num = gsum_s[isolated_term];
     }
 
     //  At this point, the constraint has been transformed to:
-    //       gsum === 'gsum * (1 - L1) + ∑ᵢ imᵢ + num / den
+    //       gsum === 'gsum * (1 - L1) + ∑ⱼ imⱼ + num / den
     //  check that the constraint is satisfied
-    (gsum - 'gsum * (1 - L1) - sum_ims) * isolated_den - isolated_num === 0;
+    (gsum - 'gsum * (1 - L1) - sum_ims) * den - num === 0;
 
     /*
-     At the very last row, it should be satisfied that:
-          gsum_result === gsum + ∑ⱼ sⱼ / (eⱼ + ɣ)
-     where both sⱼ and eⱼ are field elements, for all j.
+    At the very last row, it should be satisfied that:
+                                     selᵢ
+        gsum_result === gsum + ∑ᵢ --------
+                                    fᵢ + ɣ
+    where both selᵢ and fᵢ are field elements, for all ᵢ.
 
     We also transform some of the rational constraint to a polynomial one by 
     substituting all the rational terms by individual terms:
-          gsum_result === gsum + ∑ⱼ sⱼ / (eⱼ + ɣ) + ∑ᵢ im_i
+          gsum_result === gsum + ∑ⱼ imⱼ
     */
 
     // Compute the direct terms numerator and denominator
@@ -436,8 +472,8 @@ private function piop_gsum_air() {
     expr direct_den = 1;
     expr direct_sum_ims = 0;
     if (direct_gsum_nargs > 0) {
-        int num_non_reduced = AIRVALS_IM_NON_REDUCED;
-        if ((AIRVALS_IM_NON_REDUCED == -1) || (direct_gsum_nargs < AIRVALS_IM_NON_REDUCED)) {
+        int num_non_reduced = SUM_AIRVALS_IM_NON_REDUCED;
+        if ((SUM_AIRVALS_IM_NON_REDUCED == -1) || (direct_gsum_nargs < SUM_AIRVALS_IM_NON_REDUCED)) {
             num_non_reduced = direct_gsum_nargs;
         }
 
@@ -452,11 +488,11 @@ private function piop_gsum_air() {
             direct_num += _tmp;
         }
 
-        // The rest of the terms are grouped in clusters of size AIRVALS_IM_REDUCE_FACTOR
+        // The rest of the terms are grouped in clusters of size SUM_AIRVALS_IM_REDUCE_FACTOR
         const int num_terms = direct_gsum_nargs - num_non_reduced;
         if (num_terms > 0) {
             const int initial_offset = num_non_reduced;
-            const int num_im = num_terms/AIRVALS_IM_REDUCE_FACTOR;
+            const int num_im = num_terms/SUM_AIRVALS_IM_REDUCE_FACTOR;
             if (num_im > 0) {
                 airval stage(2) im_direct[num_im];
                 for (int i = 0; i < num_im; i++) {
@@ -466,14 +502,13 @@ private function piop_gsum_air() {
 
                     expr prods = 1;
                     expr sums = 0;
-                    const int factor_offset = AIRVALS_IM_REDUCE_FACTOR * i;
-                    for (int j = 0; j < AIRVALS_IM_REDUCE_FACTOR; j++) {
+                    const int factor_offset = SUM_AIRVALS_IM_REDUCE_FACTOR * i;
+                    for (int j = 0; j < SUM_AIRVALS_IM_REDUCE_FACTOR; j++) {
                         prods *= (direct_gsum_e[initial_offset + factor_offset + j] + std_gamma);
 
                         expr _partial = direct_gsum_s[initial_offset + factor_offset + j];
-                        for (int k = 0; k < AIRVALS_IM_REDUCE_FACTOR; k++) {
-                            if (k == j) continue;
-                            _partial *= (direct_gsum_e[initial_offset + factor_offset + k] + std_gamma);
+                        for (int k = 0; k < SUM_AIRVALS_IM_REDUCE_FACTOR; k++) {
+                            if (k != j) _partial *= (direct_gsum_e[initial_offset + factor_offset + k] + std_gamma);
                         }
                         sums += _partial;
                     }
@@ -488,20 +523,19 @@ private function piop_gsum_air() {
             }
 
             // If there are remaining terms, add an extra cluster
-            const int num_rem_terms = num_terms % AIRVALS_IM_REDUCE_FACTOR;
+            const int num_rem_terms = num_terms % SUM_AIRVALS_IM_REDUCE_FACTOR;
             if (num_rem_terms > 0) {
                 airval stage(2) im_direct_extra;
 
                 expr prods = 1;
                 expr sums = 0;
-                const int offset = initial_offset + AIRVALS_IM_REDUCE_FACTOR * num_im;
+                const int offset = initial_offset + SUM_AIRVALS_IM_REDUCE_FACTOR * num_im;
                 for (int j = 0; j < num_rem_terms; j++) {
                     prods *= (direct_gsum_e[offset + j] + std_gamma);
 
                     expr _partial = direct_gsum_s[offset + j];
                     for (int k = 0; k < num_rem_terms; k++) {
-                        if (k == j) continue;
-                        _partial *= (direct_gsum_e[offset + k] + std_gamma);
+                        if (k != j) _partial *= (direct_gsum_e[offset + k] + std_gamma);
                     }
                     sums += _partial;
                 }
@@ -514,13 +548,20 @@ private function piop_gsum_air() {
         }
     }
 
-    @gsum_col{reference: gsum, numerator_air: sum_ims * isolated_den + isolated_num, denominator_air: isolated_den, 
-                               numerator_direct: direct_sum_ims * direct_den + direct_num, denominator_direct: direct_den, result: gsum_result};
-    L1' * ((gsum_result - gsum - direct_sum_ims) * direct_den - direct_num) === 0;
+    expr result;
+    if (STD_MODE == STD_MODE_ONE_INSTANCE) {
+        result = 0;
+    } else {
+        result = gsum_result;
+    }
+    @gsum_col{reference: gsum, numerator_air: sum_ims * den + num, denominator_air: den, 
+                               numerator_direct: direct_sum_ims * direct_den + direct_num, denominator_direct: direct_den, result: result};
+    L1' * ((result - gsum - direct_sum_ims) * direct_den - direct_num) === 0;
 
     // Store the airgroup and air ids for global hints
     proof.std.gsum.airgroup_ids[proof.std.gsum.air_count] = AIRGROUP_ID;
     proof.std.gsum.air_ids[proof.std.gsum.air_count] = AIR_ID;
+    proof.std.gsum.std_mode[proof.std.gsum.air_count] = STD_MODE;
     proof.std.gsum.air_count++;
 }
 
@@ -573,20 +614,21 @@ private function check_opids_were_completed_sum() {
         use proof.std.gsum.`id${opid}`;
 
         // If the PIOP is isolated, avoid any check
-        if (name == PIOP_NAME_ISOLATED) continue;
+        if (surname == PIOP_SURNAME_ISOLATED) continue;
 
         const string name_str = get_piop_name(name);
+        const string surname_str = get_piop_surname(surname);
 
-        // At least one assume and one prove must be defined
+        // At least one assume and one prove must has been defined
         if (assumes == 0) {
-            error(`${name_str} #${opid} defined without assume`);
+            error(`${name_str} ${surname_str} #${opid} defined without assume`);
         } else if (proves == 0) {
-            error(`${name_str} #${opid} defined without proves`);
+            error(`${name_str} ${surname_str} #${opid} defined without proves`);
         }
     }
 }
 
 private function piop_gsum_issue_global_hints() {
     use proof.std.gsum;
-    @std_sum_users{num_users: air_count, airgroup_ids: airgroup_ids, air_ids: air_ids, stage_wc: 2};
+    @std_sum_users{num_users: air_count, std_mode: std_mode, airgroup_ids: airgroup_ids, air_ids: air_ids, stage_wc: 2};
 }

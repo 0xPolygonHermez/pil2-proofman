@@ -4,21 +4,13 @@ use witness::{WitnessComponent, execute, define_wc_with_std};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
-use rand::{
-    distr::{Distribution, StandardUniform},
-    rngs::StdRng,
-    seq::SliceRandom,
-    Rng, SeedableRng,
-};
+use rand::{rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
 
 use crate::SimpleLeftTrace;
 
 define_wc_with_std!(SimpleLeft, "SimLeft ");
 
-impl<F: PrimeField64> WitnessComponent<F> for SimpleLeft<F>
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for SimpleLeft<F> {
     execute!(SimpleLeftTrace, 1);
 
     fn calculate_witness(
@@ -39,13 +31,13 @@ where
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
             let range = [
-                self.std_lib.get_range(0, (1 << 8) - 1, Some(true)),
-                self.std_lib.get_range(0, (1 << 16) - 1, Some(true)),
-                self.std_lib.get_range(1, (1 << 8) - 1, Some(true)),
-                self.std_lib.get_range(0, 1 << 8, Some(true)),
-                self.std_lib.get_range(0, (1 << 8) - 1, Some(false)),
-                self.std_lib.get_range(-(1 << 7), -1, Some(false)),
-                self.std_lib.get_range(-(1 << 7) - 1, (1 << 7) - 1, Some(false)),
+                self.std_lib.get_range_id(0, (1 << 8) - 1, Some(true)),
+                self.std_lib.get_range_id(0, (1 << 16) - 1, Some(true)),
+                self.std_lib.get_range_id(1, (1 << 8) - 1, Some(true)),
+                self.std_lib.get_range_id(0, 1 << 8, Some(true)),
+                self.std_lib.get_range_id(0, (1 << 8) - 1, Some(false)),
+                self.std_lib.get_range_id(-(1 << 7), -1, Some(false)),
+                self.std_lib.get_range_id(-(1 << 7) - 1, (1 << 7) - 1, Some(false)),
             ];
 
             // Assumes
@@ -75,66 +67,66 @@ where
                         if i == 0 {
                             let val = 0;
                             trace[i].k[j] = F::from_u32(val);
-                            self.std_lib.range_check(val as i64, 1, range[j]);
+                            self.std_lib.range_check(range[j], val as i64, 1);
                             continue;
                         } else if i == 1 {
                             let val = 1 << 4;
                             trace[i].k[j] = F::from_u32(val);
-                            self.std_lib.range_check(val as i64, 1, range[j]);
+                            self.std_lib.range_check(range[j], val as i64, 1);
                             continue;
                         } else if i == 2 {
                             let val = (1 << 8) - 1;
                             trace[i].k[j] = F::from_u32(val);
-                            self.std_lib.range_check(val as i64, 1, range[j]);
+                            self.std_lib.range_check(range[j], val as i64, 1);
                             continue;
                         }
                     } else if j == 5 {
                         if i == 0 {
                             let val = -(1 << 7);
                             trace[i].k[j] = F::from_u64((val as i128 + F::ORDER_U64 as i128) as u64);
-                            self.std_lib.range_check(val as i64, 1, range[j]);
+                            self.std_lib.range_check(range[j], val as i64, 1);
                             continue;
                         } else if i == 1 {
                             let val = -(1 << 2);
                             trace[i].k[j] = F::from_u64((val as i128 + F::ORDER_U64 as i128) as u64);
-                            self.std_lib.range_check(val as i64, 1, range[j]);
+                            self.std_lib.range_check(range[j], val as i64, 1);
                             continue;
                         } else if i == 2 {
                             let val = -1;
                             trace[i].k[j] = F::from_u64((val as i128 + F::ORDER_U64 as i128) as u64);
-                            self.std_lib.range_check(val as i64, 1, range[j]);
+                            self.std_lib.range_check(range[j], val as i64, 1);
                             continue;
                         }
                     } else if j == 6 {
                         if i == 0 {
                             let val = -(1 << 7) - 1;
                             trace[i].k[j] = F::from_u64((val as i128 + F::ORDER_U64 as i128) as u64);
-                            self.std_lib.range_check(val as i64, 1, range[j]);
+                            self.std_lib.range_check(range[j], val as i64, 1);
                             continue;
                         } else if i == 1 {
                             let val = -(1 << 2);
                             trace[i].k[j] = F::from_u64((val as i128 + F::ORDER_U64 as i128) as u64);
-                            self.std_lib.range_check(val as i64, 1, range[j]);
+                            self.std_lib.range_check(range[j], val as i64, 1);
                             continue;
                         } else if i == 2 {
                             let val = -1;
                             trace[i].k[j] = F::from_u64((val as i128 + F::ORDER_U64 as i128) as u64);
-                            self.std_lib.range_check(val as i64, 1, range[j]);
+                            self.std_lib.range_check(range[j], val as i64, 1);
                             continue;
                         } else if i == 3 {
                             let val = 0;
                             trace[i].k[j] = F::from_u32(val);
-                            self.std_lib.range_check(val as i64, 1, range[j]);
+                            self.std_lib.range_check(range[j], val as i64, 1);
                             continue;
                         } else if i == 4 {
                             let val = (1 << 7) - 1;
                             trace[i].k[j] = F::from_u32(val);
-                            self.std_lib.range_check(val as i64, 1, range[j]);
+                            self.std_lib.range_check(range[j], val as i64, 1);
                             continue;
                         } else if i == 5 {
                             let val = 10;
                             trace[i].k[j] = F::from_u32(val);
-                            self.std_lib.range_check(val as i64, 1, range[j]);
+                            self.std_lib.range_check(range[j], val as i64, 1);
                             continue;
                         }
                     }
@@ -144,7 +136,7 @@ where
                     } else {
                         F::from_u32(val[j] as u32)
                     };
-                    self.std_lib.range_check(val[j] as i64, 1, range[j]);
+                    self.std_lib.range_check(range[j], val[j] as i64, 1);
                 }
             }
 

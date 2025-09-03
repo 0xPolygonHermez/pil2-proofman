@@ -1,22 +1,39 @@
-use fields::Field;
+use crate::Field;
 use core::array;
 use std::fmt::{Display, Formatter, Result};
 use core::iter::{Product, Sum};
 use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use std::ops::{Index, IndexMut};
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct ExtensionField<F: Display> {
+pub struct CubicExtensionField<F: Display> {
     pub value: [F; 3],
 }
 
-impl<F: Display> Display for ExtensionField<F> {
+impl<F: Display> Index<usize> for CubicExtensionField<F> {
+    type Output = F;
+
+    #[inline]
+    fn index(&self, idx: usize) -> &F {
+        &self.value[idx]
+    }
+}
+
+impl<F: Display> IndexMut<usize> for CubicExtensionField<F> {
+    #[inline]
+    fn index_mut(&mut self, idx: usize) -> &mut F {
+        &mut self.value[idx]
+    }
+}
+
+impl<F: Display> Display for CubicExtensionField<F> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         // Format the elements in the array as [a, b, c]
         write!(f, "[{}, {}, {}]", self.value[0], self.value[1], self.value[2])
     }
 }
 
-impl<F: Field> ExtensionField<F> {
+impl<F: Field> CubicExtensionField<F> {
     pub fn zero() -> Self {
         Self { value: field_to_array(F::ZERO) }
     }
@@ -30,9 +47,33 @@ impl<F: Field> ExtensionField<F> {
         Self { value: field_to_array(F::NEG_ONE) }
     }
 
+    pub fn is_zero(&self) -> bool {
+        self.value.iter().all(|&x| x.is_zero())
+    }
+
     #[inline(always)]
     pub fn square(&self) -> Self {
         Self { value: cubic_square(&self.value).to_vec().try_into().unwrap() }
+    }
+
+    #[inline]
+    pub fn pow(&self, mut exp: u64) -> Self {
+        // result = 1
+        let mut result = Self::one();
+        // temp = self
+        let mut base = *self;
+        // while there are bits left in exp
+        while exp > 0 {
+            // if the low bit is set, multiply it into result
+            if exp & 1 == 1 {
+                result *= base;
+            }
+            // square the base each round
+            base = base.square();
+            // shift off the bit we just processed
+            exp >>= 1;
+        }
+        result
     }
 
     pub fn inverse(&self) -> Self {
@@ -48,9 +89,17 @@ impl<F: Field> ExtensionField<F> {
 
         Self { value }
     }
+
+    #[inline]
+    pub fn sub_from_scalar(self, scalar: F) -> Self {
+        // destructure for clarity
+        let [v0, v1, v2] = self.value;
+        let zero = F::ZERO;
+        CubicExtensionField { value: [scalar - v0, zero - v1, zero - v2] }
+    }
 }
 
-impl<F: Field> Add for ExtensionField<F> {
+impl<F: Field> Add for CubicExtensionField<F> {
     type Output = Self;
 
     #[inline]
@@ -63,7 +112,7 @@ impl<F: Field> Add for ExtensionField<F> {
     }
 }
 
-impl<F: Field> Add<F> for ExtensionField<F> {
+impl<F: Field> Add<F> for CubicExtensionField<F> {
     type Output = Self;
 
     #[inline]
@@ -74,26 +123,26 @@ impl<F: Field> Add<F> for ExtensionField<F> {
     }
 }
 
-impl<F: Field> AddAssign for ExtensionField<F> {
+impl<F: Field> AddAssign for CubicExtensionField<F> {
     fn add_assign(&mut self, rhs: Self) {
         *self = *self + rhs;
     }
 }
 
-impl<F: Field> AddAssign<F> for ExtensionField<F> {
+impl<F: Field> AddAssign<F> for CubicExtensionField<F> {
     fn add_assign(&mut self, rhs: F) {
         *self = *self + rhs;
     }
 }
 
-impl<F: Field> Sum for ExtensionField<F> {
+impl<F: Field> Sum for CubicExtensionField<F> {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         let zero = Self { value: field_to_array(F::ZERO) };
         iter.fold(zero, |acc, x| acc + x)
     }
 }
 
-impl<F: Field> Sub for ExtensionField<F> {
+impl<F: Field> Sub for CubicExtensionField<F> {
     type Output = Self;
 
     #[inline]
@@ -106,7 +155,7 @@ impl<F: Field> Sub for ExtensionField<F> {
     }
 }
 
-impl<F: Field> Sub<F> for ExtensionField<F> {
+impl<F: Field> Sub<F> for CubicExtensionField<F> {
     type Output = Self;
 
     #[inline]
@@ -117,21 +166,21 @@ impl<F: Field> Sub<F> for ExtensionField<F> {
     }
 }
 
-impl<F: Field> SubAssign for ExtensionField<F> {
+impl<F: Field> SubAssign for CubicExtensionField<F> {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
         *self = *self - rhs;
     }
 }
 
-impl<F: Field> SubAssign<F> for ExtensionField<F> {
+impl<F: Field> SubAssign<F> for CubicExtensionField<F> {
     #[inline]
     fn sub_assign(&mut self, rhs: F) {
         *self = *self - rhs;
     }
 }
 
-impl<F: Field> Mul for ExtensionField<F> {
+impl<F: Field> Mul for CubicExtensionField<F> {
     type Output = Self;
 
     #[inline]
@@ -142,7 +191,7 @@ impl<F: Field> Mul for ExtensionField<F> {
     }
 }
 
-impl<F: Field> Mul<F> for ExtensionField<F> {
+impl<F: Field> Mul<F> for CubicExtensionField<F> {
     type Output = Self;
 
     #[inline]
@@ -151,27 +200,27 @@ impl<F: Field> Mul<F> for ExtensionField<F> {
     }
 }
 
-impl<F: Field> Product for ExtensionField<F> {
+impl<F: Field> Product for CubicExtensionField<F> {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
         let one = Self { value: field_to_array(F::ONE) };
         iter.fold(one, |acc, x| acc * x)
     }
 }
 
-impl<F: Field> MulAssign for ExtensionField<F> {
+impl<F: Field> MulAssign for CubicExtensionField<F> {
     #[inline]
     fn mul_assign(&mut self, rhs: Self) {
         *self = *self * rhs;
     }
 }
 
-impl<F: Field> MulAssign<F> for ExtensionField<F> {
+impl<F: Field> MulAssign<F> for CubicExtensionField<F> {
     fn mul_assign(&mut self, rhs: F) {
         *self = *self * rhs;
     }
 }
 
-impl<F: Field> Neg for ExtensionField<F> {
+impl<F: Field> Neg for CubicExtensionField<F> {
     type Output = Self;
 
     #[inline]
@@ -180,7 +229,7 @@ impl<F: Field> Neg for ExtensionField<F> {
     }
 }
 
-impl<F: Field> Div for ExtensionField<F> {
+impl<F: Field> Div for CubicExtensionField<F> {
     type Output = Self;
 
     #[allow(clippy::suspicious_arithmetic_impl)]
@@ -191,7 +240,7 @@ impl<F: Field> Div for ExtensionField<F> {
     }
 }
 
-impl<F: Field> DivAssign for ExtensionField<F> {
+impl<F: Field> DivAssign for CubicExtensionField<F> {
     fn div_assign(&mut self, rhs: Self) {
         *self = *self / rhs;
     }

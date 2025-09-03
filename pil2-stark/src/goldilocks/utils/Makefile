@@ -33,6 +33,17 @@
 
 # Location of the CUDA Toolkit
 CUDA_PATH ?= /usr/local/cuda
+# Skip everything if CUDA is not available (check added for pil2-proofman) - this check has been added in pil2-proofman
+NVCC := $(CUDA_PATH)/bin/nvcc
+NVCC_EXISTS := $(shell [ -x "$(NVCC)" ] && echo 1 || echo 0)
+ifeq ($(NVCC_EXISTS),0)
+all:
+	@echo "[INFO] CUDA not found, skipping CUDA utils Makefile."
+clean:
+	@echo "[INFO] Nothing to clean for CUDA utils (CUDA not found)."
+%:
+	@echo "[INFO] CUDA not found, skipping CUDA utils Makefile."
+else
 
 ##############################
 # start deprecated interface #
@@ -339,3 +350,4 @@ clean:
 	rm -f deviceQuery deviceQuery.o
 
 clobber: clean
+endif
