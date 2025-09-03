@@ -2,7 +2,6 @@ use libloading::{Library, Symbol};
 use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
 use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
 use std::ops::Add;
-use std::sync::atomic::AtomicUsize;
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, load_const_pols, skip_prover_instance, CurveType, DebugInfo,
     MemoryHandler, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx, SetupsVadcop, VerboseMode,
@@ -22,7 +21,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::fmt::Write as FmtWrite;
 use std::io::Read;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
 use csv::Writer;
@@ -415,17 +414,11 @@ where
         self.reset();
         self.pctx.dctx_reset();
 
-        self.exec(options.minimal_memory)?;
-
-        let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
-        let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
-        my_instances_sorted.shuffle(&mut rng);
-
-        let my_instances_sorted_no_tables =
-            my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
-
-        let memory_handler =
-            Arc::new(MemoryHandler::new(self.gpu_params.max_witness_stored, self.sctx.max_witness_trace_size));
+        let memory_handler = Arc::new(MemoryHandler::new(
+            self.pctx.clone(),
+            self.gpu_params.max_witness_stored,
+            self.sctx.max_witness_trace_size,
+        ));
 
         if !options.minimal_memory {
             self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
@@ -436,6 +429,16 @@ where
 
         let (witness_handler, witness_handles) =
             self.calc_witness_handler(witness_done.clone(), memory_handler.clone(), options.minimal_memory, true);
+
+        self.exec(options.minimal_memory)?;
+
+        let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
+        let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
+        my_instances_sorted.shuffle(&mut rng);
+
+        let my_instances_sorted_no_tables =
+            my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+
         self.calculate_witness(
             &my_instances_sorted_no_tables,
             memory_handler.clone(),
@@ -820,7 +823,8 @@ where
             false => 1,
         };
 
-        let memory_handler = Arc::new(MemoryHandler::new(max_witness_stored, sctx.max_witness_trace_size));
+        let memory_handler =
+            Arc::new(MemoryHandler::new(pctx.clone(), max_witness_stored, sctx.max_witness_trace_size));
 
         let n_airgroups = pctx.global_info.air_groups.len();
         let proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
@@ -1029,6 +1033,51 @@ where
             }
             let witness_done = Arc::new(Counter::new());
 
+            self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
+
+            for _ in 0..self.n_streams {
+                let pctx_clone = self.pctx.clone();
+                let sctx_clone = self.sctx.clone();
+                let values_contributions_clone = self.values_contributions.clone();
+                let roots_contributions_clone = self.roots_contributions.clone();
+                let d_buffers_clone = self.d_buffers.clone();
+                let aux_trace_clone = self.aux_trace.clone();
+                let streams_clone = self.streams.clone();
+                let memory_handler_clone = self.memory_handler.clone();
+                let contributions_rx_clone = self.contributions_rx.clone();
+                let contribution_handle = std::thread::spawn(move || loop {
+                    match contributions_rx_clone.try_recv() {
+                        Ok(instance_id) => {
+                            if instance_id == usize::MAX {
+                                break;
+                            }
+                            Self::get_contribution_air(
+                                &pctx_clone,
+                                &sctx_clone,
+                                &roots_contributions_clone,
+                                &values_contributions_clone,
+                                instance_id,
+                                aux_trace_clone.as_ptr() as *mut u8,
+                                &d_buffers_clone,
+                                &streams_clone,
+                            );
+
+                            if !pctx_clone.dctx_is_table(instance_id) {
+                                memory_handler_clone.to_be_released_buffer(instance_id);
+                            }
+                        }
+                        Err(crossbeam_channel::TryRecvError::Empty) => {
+                            std::thread::sleep(std::time::Duration::from_micros(100));
+                            continue;
+                        }
+                        Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                            break;
+                        }
+                    }
+                });
+                self.handle_contributions.lock().unwrap().push(contribution_handle);
+            }
+
             let (witness_handler, witness_handles) = self.calc_witness_handler(
                 witness_done.clone(),
                 self.memory_handler.clone(),
@@ -1052,74 +1101,10 @@ where
             let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
             my_instances_sorted.shuffle(&mut rng);
 
-            let my_instances_sorted_no_tables =
-                my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
-
-            let instances_mine_no_tables = my_instances_sorted_no_tables.len();
-
-            let max_witness_stored = match cfg!(feature = "gpu") {
-                true => instances_mine_no_tables.min(self.gpu_params.max_witness_stored),
-                false => 1,
-            };
-
-            let witnesses_done = Arc::new(AtomicUsize::new(0));
-
-            self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
-
             timer_stop_and_log_info!(PREPARING_CONTRIBUTIONS);
 
-            for _ in 0..self.n_streams {
-                let pctx_clone = self.pctx.clone();
-                let sctx_clone = self.sctx.clone();
-                let values_contributions_clone = self.values_contributions.clone();
-                let roots_contributions_clone = self.roots_contributions.clone();
-                let d_buffers_clone = self.d_buffers.clone();
-                let aux_trace_clone = self.aux_trace.clone();
-                let streams_clone = self.streams.clone();
-                let witnesses_done_clone = witnesses_done.clone();
-                let memory_handler_clone = self.memory_handler.clone();
-                let contributions_rx_clone = self.contributions_rx.clone();
-                let contribution_handle = std::thread::spawn(move || loop {
-                    match contributions_rx_clone.try_recv() {
-                        Ok(instance_id) => {
-                            if instance_id == usize::MAX {
-                                break;
-                            }
-                            Self::get_contribution_air(
-                                &pctx_clone,
-                                &sctx_clone,
-                                &roots_contributions_clone,
-                                &values_contributions_clone,
-                                instance_id,
-                                aux_trace_clone.as_ptr() as *mut u8,
-                                &d_buffers_clone,
-                                &streams_clone,
-                            );
-
-                            if !pctx_clone.dctx_is_table(instance_id) {
-                                witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
-                                if (instances_mine_no_tables - witnesses_done_clone.load(Ordering::Acquire))
-                                    >= max_witness_stored
-                                {
-                                    let (is_shared_buffer, witness_buffer) =
-                                        pctx_clone.free_instance_traces(instance_id);
-                                    if is_shared_buffer {
-                                        memory_handler_clone.release_buffer(witness_buffer);
-                                    }
-                                }
-                            }
-                        }
-                        Err(crossbeam_channel::TryRecvError::Empty) => {
-                            std::thread::sleep(std::time::Duration::from_micros(100));
-                            continue;
-                        }
-                        Err(crossbeam_channel::TryRecvError::Disconnected) => {
-                            break;
-                        }
-                    }
-                });
-                self.handle_contributions.lock().unwrap().push(contribution_handle);
-            }
+            let my_instances_sorted_no_tables =
+                my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
 
             self.calculate_witness(
                 &my_instances_sorted_no_tables,
@@ -1208,6 +1193,8 @@ where
         self.calculate_global_challenge(&all_partial_contributions_u64);
 
         timer_start_info!(GENERATING_INNER_PROOFS);
+
+        self.memory_handler.empty_queue_to_be_released();
 
         let n_airgroups = self.pctx.global_info.air_groups.len();
 
