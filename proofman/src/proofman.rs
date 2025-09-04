@@ -1754,6 +1754,7 @@ where
             let id = rec2_proofs.len();
             let agg_proof = Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, Some(id), proof.proof);
             rec2_proofs.push(Some(agg_proof));
+            self.received_agg_proofs[proof.airgroup_id as usize].fetch_add(1, Ordering::SeqCst);
             launch_callback_c(id as u64, ProofType::Recursive2.into());
         }
 
@@ -1764,7 +1765,7 @@ where
                 if n_agg_proofs == 0 {
                     continue;
                 }
-                let n_agg_proofs_to_be_done = total_recursive_proofs(n_agg_proofs);
+                let n_agg_proofs_to_be_done = total_recursive_proofs(n_agg_proofs + 1);
                 if n_agg_proofs_to_be_done.has_remaining {
                     let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
                     let id = rec2_proofs.len();
