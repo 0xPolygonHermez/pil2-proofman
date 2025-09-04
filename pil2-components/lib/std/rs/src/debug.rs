@@ -8,7 +8,7 @@ use std::{
 use colored::Colorize;
 use fields::PrimeField64;
 use proofman_common::ProofCtx;
-use proofman_hints::{format_vec, HintFieldOutput};
+use proofman_hints::{format_hint_field_output_vec, HintFieldOutput};
 
 use crate::normalize_vals;
 
