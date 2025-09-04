@@ -140,6 +140,10 @@ where
         self.pctx.dctx_barrier();
     }
 
+    pub fn mpi_broadcast(&self, buf: &mut Vec<u8>) {
+        self.pctx.dctx_broadcast(buf);
+    }
+
     #[cfg(distributed)]
     pub fn check_setup(
         proving_key_path: PathBuf,

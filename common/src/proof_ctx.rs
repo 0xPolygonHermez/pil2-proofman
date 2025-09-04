@@ -375,6 +375,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.barrier();
     }
 
+    pub fn dctx_broadcast(&self, buf: &mut Vec<u8>) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.broadcast(buf);
+    }
+
     pub fn dctx_is_min_rank_owner(&self, airgroup_id: usize, air_id: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
         dctx.is_min_rank_owner(airgroup_id, air_id)
