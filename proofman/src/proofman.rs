@@ -1759,7 +1759,6 @@ where
         }
 
         if last_proof {
-            let mut total_proofs_to_be_done = 0;
             for (airgroup_id, n_proofs) in self.received_agg_proofs.iter().enumerate() {
                 let n_agg_proofs = n_proofs.load(Ordering::SeqCst);
                 if n_agg_proofs == 0 {
@@ -1776,10 +1775,9 @@ where
                     rec2_proofs.push(Some(null_proof));
                     launch_callback_c(id as u64, ProofType::Recursive2.into());
                 }
-                total_proofs_to_be_done += n_agg_proofs_to_be_done.n_proofs;
             }
 
-            self.total_outer_agg_proofs.wait_until_value_and_check_streams(total_proofs_to_be_done, || {
+            self.total_outer_agg_proofs.wait_until_zero_and_check_streams(|| {
                 get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr())
             });
             get_stream_proofs_c(self.d_buffers.get_ptr());
@@ -1850,7 +1848,6 @@ where
             let total_outer_agg_proofs = self.total_outer_agg_proofs.clone();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, _)) = recursive_rx_clone.recv() {
-                    total_outer_agg_proofs.increment();
                     if id == u64::MAX - 1 {
                         return;
                     }
@@ -1865,8 +1862,10 @@ where
                         let p2 = recursive2_airgroup_proofs.pop().unwrap();
                         let p3 = recursive2_airgroup_proofs.pop().unwrap();
                         let witness = gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3).unwrap();
+                        total_outer_agg_proofs.increment();
                         rec2_witness_tx_clone.send(witness).unwrap();
                     }
+                    total_outer_agg_proofs.decrement();
                 }
             });
             self.handle_recursives.lock().unwrap().push(handle_recursive);
