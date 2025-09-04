@@ -1667,8 +1667,9 @@ where
 
             let n_threads_witness = instance_info.threads_witness.min(self.max_num_threads);
 
-            let threads_to_use_collect =
-                (instance_info.n_chunks / 16).min(self.max_num_threads / 4).max(n_threads_witness);
+            let threads_to_use_collect = (self.pctx.dctx_get_instance_chunks(instance_id) / 16)
+                .min(self.max_num_threads / 4)
+                .max(n_threads_witness);
 
             if !is_stored {
                 for _ in 0..threads_to_use_collect {

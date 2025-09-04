@@ -465,9 +465,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.find_instance_mine(airgroup_id, air_id)
     }
 
-    pub fn dctx_set_chunks(&self, global_idx: usize, chunks: Vec<usize>) {
+    pub fn dctx_set_chunks(&self, global_idx: usize, chunks: Vec<usize>, slow: bool) {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.set_chunks(global_idx, chunks);
+        dctx.set_chunks(global_idx, chunks, slow);
     }
 
     pub fn add_instance_assign(&self, airgroup_id: usize, air_id: usize, threads_witness: usize) -> usize {
@@ -535,11 +535,6 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn dctx_load_balance_info(&self) -> (f64, u64, u64, f64) {
         let dctx = self.dctx.read().unwrap();
         dctx.load_balance_info()
-    }
-
-    pub fn dctx_set_balance_distribution(&self, balance: bool) {
-        let mut dctx = self.dctx.write().unwrap();
-        dctx.set_balance_distribution(balance);
     }
 
     pub fn dctx_distribute_multiplicity(&self, multiplicity: &[AtomicU64], global_idx: usize) {
