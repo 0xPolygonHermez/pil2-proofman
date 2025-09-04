@@ -184,10 +184,14 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
 pub fn n_publics_aggregation<F: PrimeField64>(pctx: &ProofCtx<F>, airgroup_id: usize) -> usize {
     let mut publics_aggregation = 0;
     publics_aggregation += 1; // circuit type
+    publics_aggregation += 1; // n proofs aggregated
     publics_aggregation += 4 * pctx.global_info.agg_types[airgroup_id].len(); // agg types
     publics_aggregation += 10; // elliptic curve hash
-    publics_aggregation += 1; // n proofs aggregated
     publics_aggregation
+}
+
+pub fn get_accumulated_challenge<F: PrimeField64>(proof: &Proof<F>) -> Vec<u64> {
+    proof.proof[6..16].to_vec()
 }
 
 pub fn gen_recursive_proof_size<F: PrimeField64>(

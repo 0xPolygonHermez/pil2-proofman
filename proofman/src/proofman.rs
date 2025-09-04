@@ -48,6 +48,7 @@ use crate::{verify_constraints_proof, verify_basic_proof, verify_final_proof, ve
 use crate::MaxSizes;
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
 use crate::{
+    get_accumulated_challenge,
     gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof, generate_vadcop_final_proof,
     generate_fflonk_snark_proof, generate_recursivef_proof, initialize_witness_circom,
 };
@@ -1195,6 +1196,7 @@ where
                 .expect("Expected exactly 10 elements");
 
             if phase == ProvePhase::Contributions {
+                println!("Internal contribution: {:?}", internal_contribution_u64);
                 return Ok(ProvePhaseResult::Contributions(internal_contribution_u64));
             }
             vec![internal_contribution_u64]
@@ -1753,6 +1755,8 @@ where
             let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
             let id = rec2_proofs.len();
             let agg_proof = Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, Some(id), proof.proof);
+            let acc_challenge = get_accumulated_challenge(&agg_proof);
+            println!("ACC_CHALLENGE_{}: {:?}", proof.airgroup_id, acc_challenge);
             rec2_proofs.push(Some(agg_proof));
             self.received_agg_proofs[proof.airgroup_id as usize].fetch_add(1, Ordering::SeqCst);
             self.total_outer_agg_proofs.increment();
@@ -1854,6 +1858,9 @@ where
                     }
 
                     let proof = recursive2_proofs_ongoing_clone.write().unwrap()[id as usize].take().unwrap();
+
+                    let acc_challenge = get_accumulated_challenge(&proof);
+                    println!("ACC_CHALLENGE OUTER: {:?}", acc_challenge);
 
                     let mut recursive2_airgroup_proofs = recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
                     recursive2_airgroup_proofs.push(proof);
