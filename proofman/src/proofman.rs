@@ -1790,15 +1790,11 @@ where
             }
 
             if final_proof {
-                let agg_proofs_data: Vec<AggProofs> = self
-                    .recursive2_proofs
-                    .iter()
-                    .enumerate()
-                    .map(|(airgroup_id, lock)| {
-                        AggProofs::new(
-                            airgroup_id as u64,
-                            lock.read().unwrap().first().expect("Expected at least one proof").proof.clone(),
-                        )
+                let agg_proofs_data: Vec<AggProofs> = (0..self.pctx.global_info.air_groups.len())
+                    .map(|airgroup_id| {
+                        let mut lock = self.recursive2_proofs[airgroup_id].write().unwrap();
+                        let proof = std::mem::take(&mut lock.first_mut().expect("Expected at least one proof").proof);
+                        AggProofs::new(airgroup_id as u64, proof)
                     })
                     .collect();
 
