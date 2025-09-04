@@ -188,10 +188,10 @@ impl<F: PrimeField64> WitnessManager<F> {
 
     pub fn end(&self, debug_info: &DebugInfo) {
         for component in self.components.read().unwrap().iter() {
-            component.end(self.pctx.clone(), debug_info);
+            component.end(self.pctx.clone(), self.sctx.clone(), debug_info);
         }
         for component in self.components_std.read().unwrap().iter() {
-            component.end(self.pctx.clone(), debug_info);
+            component.end(self.pctx.clone(), self.sctx.clone(), debug_info);
         }
     }
 

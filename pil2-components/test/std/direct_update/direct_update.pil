@@ -36,6 +36,8 @@ airtemplate DirectUpdateProdGlobal(const int N = 2**4) {
 airgroup DirectUpdateProd {
     DirectUpdateProdLocal();
 
+    DirectUpdateProdGlobal();
+
     public c_public[2];
     proofval d_proofval_0;
     proofval d_proofval_1;
@@ -43,17 +45,6 @@ airgroup DirectUpdateProd {
     proofval perform_global_update_1;
     direct_global_update_proves(OP_BUS_ID2, [OPID2, ...c_public, d_proofval_0, d_proofval_1], sel: perform_global_update_0, bus_type: PIOP_BUS_PROD);
     direct_global_update_proves(OP_BUS_ID2, [OPID2, ...c_public, d_proofval_0, d_proofval_1], sel: perform_global_update_1, bus_type: PIOP_BUS_PROD);
-
-    DirectUpdateProdGlobal();
-
-    // TODO: Uncommented when compiler bug is fixed
-    // public c_public[2];
-    // proofval d_proofval_0;
-    // proofval d_proofval_1;
-    // proofval perform_global_update_0;
-    // proofval perform_global_update_1;
-    // direct_global_update_proves(OP_BUS_ID2, [OPID2, ...c_public, d_proofval_0, d_proofval_1], sel: perform_global_update_0, bus_type: PIOP_BUS_PROD);
-    // direct_global_update_proves(OP_BUS_ID2, [OPID2, ...c_public, d_proofval_0, d_proofval_1], sel: perform_global_update_1, bus_type: PIOP_BUS_PROD);
 }
 
 const int OP_BUS_ID3 = 300;

@@ -230,8 +230,8 @@ void getHintFieldGlobalConstraintSizes(json& globalInfo, ExpressionsBin &globalC
             hintFieldValues[i].fieldType = dim == 1 ? HintFieldType::Field : HintFieldType::FieldExtended;
             hintFieldValues[i].offset = FIELD_EXTENSION;
         } else if (hintFieldVal.operand == opType::string_) {
+            hintFieldValues[i].string_size = hintFieldVal.stringValue.size();
             hintFieldValues[i].fieldType = HintFieldType::String;
-            hintFieldValues[i].size = hintFieldVal.stringValue.size();
             hintFieldValues[i].offset = 0;
         } else {
             zklog.error("Unknown HintFieldType");
@@ -285,7 +285,11 @@ void getHintFieldGlobalConstraint(json& globalInfo, ExpressionsBin &globalConstr
         } else if (hintFieldVal.operand == opType::airgroupvalue) {
             std::memcpy(hintFieldInfo.values, &airgroupValues[hintFieldVal.dim][FIELD_EXTENSION*hintFieldVal.id], FIELD_EXTENSION * sizeof(Goldilocks::Element));
         } else if (hintFieldVal.operand == opType::proofvalue) {
-            std::memcpy(hintFieldInfo.values, &proofValues[FIELD_EXTENSION*hintFieldVal.id], hintFieldInfo.size * sizeof(Goldilocks::Element));
+            uint64_t pos = 0;
+            for(uint64_t i = 0; i < hintFieldVal.id; ++i) {
+                pos += globalInfo["proofValuesMap"][i]["stage"] == 1 ? 1 : FIELD_EXTENSION;
+            }
+            std::memcpy(hintFieldInfo.values, &proofValues[pos], hintFieldInfo.size * sizeof(Goldilocks::Element));
         } else if (hintFieldVal.operand == opType::string_) {
             std::memcpy(hintFieldInfo.stringValue, hintFieldVal.stringValue.data(), hintFieldVal.stringValue.size());
         } else {
