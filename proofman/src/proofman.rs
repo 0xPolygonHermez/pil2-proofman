@@ -1931,12 +1931,6 @@ where
         });
 
         *self.outer_aggregations_handle.lock().unwrap() = Some(outer_aggregations_handle);
-
-        for airgroup_id in 0..self.pctx.global_info.air_groups.len() {
-            if !self.recursive2_proofs[airgroup_id].read().unwrap().is_empty() {
-                self.total_outer_agg_proofs.increment();
-            };
-        }
     }
 
     fn verify_proofs(&self, test_mode: bool) -> Result<ProvePhaseResult, Box<dyn std::error::Error>> {
