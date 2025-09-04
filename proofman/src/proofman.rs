@@ -1755,6 +1755,7 @@ where
             let agg_proof = Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, Some(id), proof.proof);
             rec2_proofs.push(Some(agg_proof));
             self.received_agg_proofs[proof.airgroup_id as usize].fetch_add(1, Ordering::SeqCst);
+            self.total_outer_agg_proofs.increment();
             launch_callback_c(id as u64, ProofType::Recursive2.into());
         }
 
@@ -1772,14 +1773,14 @@ where
                     let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
                     let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
                     let null_proof = Proof::new(ProofType::Recursive2, airgroup_id, 0, Some(id), null_proof_buffer);
+                    self.total_outer_agg_proofs.increment();
                     rec2_proofs.push(Some(null_proof));
                     launch_callback_c(id as u64, ProofType::Recursive2.into());
                 }
             }
 
-            self.total_outer_agg_proofs.wait_until_zero_and_check_streams(|| {
-                get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr())
-            });
+            self.total_outer_agg_proofs
+                .wait_until_zero_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
             get_stream_proofs_c(self.d_buffers.get_ptr());
             self.outer_agg_proofs_finished.store(true, Ordering::SeqCst);
             clear_proof_done_callback_c();
@@ -1930,6 +1931,12 @@ where
         });
 
         *self.outer_aggregations_handle.lock().unwrap() = Some(outer_aggregations_handle);
+
+        for airgroup_id in 0..self.pctx.global_info.air_groups.len() {
+            if !self.recursive2_proofs[airgroup_id].read().unwrap().is_empty() {
+                self.total_outer_agg_proofs.increment();
+            };
+        }
     }
 
     fn verify_proofs(&self, test_mode: bool) -> Result<ProvePhaseResult, Box<dyn std::error::Error>> {
