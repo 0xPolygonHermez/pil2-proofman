@@ -4,21 +4,13 @@ use witness::{WitnessComponent, execute, define_wc_with_std};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
-use rand::{
-    distr::{Distribution, StandardUniform},
-    rngs::StdRng,
-    seq::SliceRandom,
-    Rng, SeedableRng,
-};
+use rand::{rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
 
 use crate::SimpleLeftTrace;
 
 define_wc_with_std!(SimpleLeft, "SimLeft ");
 
-impl<F: PrimeField64> WitnessComponent<F> for SimpleLeft<F>
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for SimpleLeft<F> {
     execute!(SimpleLeftTrace, 1);
 
     fn calculate_witness(

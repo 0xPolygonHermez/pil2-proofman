@@ -3,10 +3,7 @@ use witness::{witness_library, WitnessLibrary, WitnessManager};
 
 use fields::PrimeField64;
 use fields::Goldilocks;
-use rand::{
-    distr::{StandardUniform, Distribution},
-    Rng,
-};
+use rand::{rng, Rng};
 
 use crate::{
     Component1, Component2, Component3, Component4, Component5, Component6, /*Component7, Table7*/
@@ -16,14 +13,11 @@ use proofman::register_std;
 
 witness_library!(WitnessLib, Goldilocks);
 
-impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
     fn register_witness(&mut self, wcm: &WitnessManager<F>) {
-        let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
+        let seed = if cfg!(feature = "debug") { 0 } else { rng().random::<u64>() };
 
-        let std = Std::new(wcm.get_pctx(), wcm.get_sctx());
+        let std = Std::new(wcm.get_pctx(), wcm.get_sctx(), false);
         register_std(wcm, &std);
 
         let component1 = Component1::new(std.clone());

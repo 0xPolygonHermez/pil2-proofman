@@ -375,6 +375,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.barrier();
     }
 
+    pub fn dctx_broadcast(&self, buf: &mut Vec<u8>) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.broadcast(buf);
+    }
+
     pub fn dctx_is_min_rank_owner(&self, airgroup_id: usize, air_id: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
         dctx.is_min_rank_owner(airgroup_id, air_id)
@@ -403,6 +408,16 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn dctx_get_instances(&self) -> Vec<InstanceInfo> {
         let dctx = self.dctx.read().unwrap();
         dctx.instances.clone()
+    }
+
+    pub fn dctx_get_my_tables(&self) -> Vec<usize> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.instances
+            .iter()
+            .enumerate()
+            .filter(|(id, inst)| inst.table && (dctx.my_instances.contains(id) || inst.shared))
+            .map(|(id, _)| id)
+            .collect()
     }
 
     pub fn dctx_get_my_instances(&self) -> Vec<usize> {
@@ -483,6 +498,12 @@ impl<F: PrimeField64> ProofCtx<F> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_instance_no_assign_table(airgroup_id, air_id, weight)
+    }
+
+    pub fn add_table_all(&self, airgroup_id: usize, air_id: usize) -> usize {
+        let mut dctx = self.dctx.write().unwrap();
+        let weight = self.get_weight(airgroup_id, air_id);
+        dctx.add_instance_assign_table_all(airgroup_id, air_id, weight)
     }
 
     pub fn dctx_get_n_instances(&self) -> usize {

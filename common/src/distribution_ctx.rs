@@ -15,7 +15,7 @@ use std::sync::atomic::Ordering;
 
 use fields::PrimeField64;
 #[cfg(distributed)]
-use crate::ExtensionField;
+use fields::CubicExtensionField;
 use crate::GlobalInfo;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -23,14 +23,17 @@ pub struct InstanceInfo {
     pub airgroup_id: usize,
     pub air_id: usize,
     pub table: bool,
+    pub shared: bool,
     pub threads_witness: usize,
     pub n_chunks: usize,
-    pub range: (usize, usize),
 }
 
 impl InstanceInfo {
-    pub fn new(airgroup_id: usize, air_id: usize, table: bool, threads_witness: usize) -> Self {
-        Self { airgroup_id, air_id, table, threads_witness, n_chunks: 1, range: (0, 0) }
+    pub fn new(airgroup_id: usize, air_id: usize, table: bool, shared: bool, threads_witness: usize) -> Self {
+        if !table {
+            assert!(!shared, "If table is false, shared must be false");
+        }
+        Self { airgroup_id, air_id, table, threads_witness, n_chunks: 1, shared }
     }
 }
 
@@ -277,7 +280,7 @@ impl DistributionCtx {
     #[inline]
     pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, threads_witness: usize, weight: u64) -> usize {
         let idx = self.instances.len();
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, threads_witness));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness));
         self.n_instances += 1;
         let new_owner = (idx % self.n_processes as usize) as i32;
         let count = self.owners_count[new_owner as usize] as usize;
@@ -300,7 +303,7 @@ impl DistributionCtx {
         weight: u64,
     ) -> usize {
         let idx = self.instances.len();
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, threads_witness));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness));
         self.n_instances += 1;
         let count = self.owners_count[owner_idx] as usize;
         self.instances_owner.push((owner_idx as i32, count, weight));
@@ -320,17 +323,24 @@ impl DistributionCtx {
         threads_witness: usize,
         weight: u64,
     ) -> usize {
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, threads_witness));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness));
         self.instances_owner.push((-1, 0, weight));
         self.n_instances += 1;
         self.n_instances - 1
     }
 
     pub fn add_instance_no_assign_table(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, true, 1));
+        self.instances_owner.push((-1, 0, weight));
+        self.n_instances += 1;
+        self.n_instances - 1
+    }
+
+    pub fn add_instance_assign_table_all(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
         let mut idx = 0;
         for rank in 0..self.n_processes {
             self.n_instances += 1;
-            self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, 1));
+            self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, false, 1));
             let new_owner = rank;
             let count = self.owners_count[new_owner as usize] as usize;
             self.instances_owner.push((new_owner, count, weight));
@@ -347,9 +357,6 @@ impl DistributionCtx {
     pub fn set_chunks(&mut self, global_idx: usize, chunks: Vec<usize>) {
         let instance_info = &mut self.instances[global_idx];
         instance_info.n_chunks = chunks.len();
-        if let (Some(&first), Some(&last)) = (chunks.first(), chunks.last()) {
-            instance_info.range = (first, last);
-        }
     }
 
     pub fn assign_instances(&mut self, minimal_memory: bool) {
@@ -525,14 +532,14 @@ impl DistributionCtx {
                             airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2] +=
                                 F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
                         } else {
-                            let mut acc = ExtensionField {
+                            let mut acc = CubicExtensionField {
                                 value: [
                                     airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION],
                                     airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 1],
                                     airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2],
                                 ],
                             };
-                            let val = ExtensionField {
+                            let val = CubicExtensionField {
                                 value: [
                                     F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]),
                                     F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]),
@@ -760,6 +767,30 @@ impl DistributionCtx {
                     }
                     i_proof += 1;
                 }
+            }
+        }
+    }
+
+    //rank 0 broadcasts to the rest of processes a msg of unknown size
+    //Root provides data in `buf`; others can pass an empty Vec that is filled with the message
+    pub fn broadcast(&self, buf: &mut Vec<u8>) {
+        #[cfg(distributed)]
+        {
+            // global communication: rank 0 broadcasts to all processes
+            if self.n_processes > 1 {
+                let root = self.world.process_at_rank(0);
+
+                // 1) Broadcast the length as u64
+                let mut len: u64 = if self.rank == 0 { buf.len() as u64 } else { 0 };
+                root.broadcast_into(&mut len);
+
+                // 2) Resize non-root buffers to the incoming size
+                if self.rank != 0 {
+                    buf.resize(len as usize, 0u8);
+                }
+
+                // 3) Broadcast bytes into place
+                root.broadcast_into(&mut buf[..]);
             }
         }
     }

@@ -307,7 +307,7 @@ pub fn print_debug_info<F: PrimeField64>(
         writeln!(
             output,
             "\t    • Value:\n\t        {}\n\t      Appears {} {} across the following:",
-            format_vec(val),
+            format_hint_field_output_vec(val),
             num,
             num_str,
         )

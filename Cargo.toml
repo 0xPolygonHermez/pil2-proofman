@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.10.0"
+version = "0.12.0"
 edition = "2021"
 license = "Apache-2.0 or MIT"
 keywords = ["pil2-proofman", "prover", "zero-knowledge"]
@@ -20,6 +20,7 @@ members = [
     "transcript",
     "witness",
     "util",
+    "verifier",
     # "pil2-components/lib/std/rs",
     # "pil2-components/test/std/direct_update/rs",
     # "pil2-components/test/std/diff_buses/rs",
@@ -36,6 +37,7 @@ members = [
     # won't build with a fresh clone
     "examples/fibonacci-square",
     "examples/test-recursive-c36",
+    "examples/test-recursive-c42",
     "macros-test",
 ]
 
@@ -71,3 +73,4 @@ tracing = "0.1"
 libloading = "0.8.7"
 sysinfo = "0.35.1"
 blake3 = "1.3.1"
+zstd = "0.13"
