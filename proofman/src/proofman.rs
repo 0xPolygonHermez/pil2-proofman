@@ -185,8 +185,20 @@ where
         self.mpi_ctx.barrier();
     }
 
+    pub fn get_rank(&self) -> Option<i32> {
+        if self.pctx.mpi_ctx.n_processes > 1 {
+            Some(self.mpi_ctx.rank as i32)
+        } else {
+            None
+        }
+    }
+
     pub fn get_mpi_ctx(&self) -> &MpiCtx {
         &self.mpi_ctx
+    }
+
+    pub fn mpi_broadcast(&self, buf: &mut Vec<u8>) {
+        self.pctx.dctx_broadcast(buf);
     }
 
     pub fn check_setup(
