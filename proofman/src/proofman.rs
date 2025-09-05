@@ -159,12 +159,6 @@ pub struct ContributionsInfo {
 }
 
 #[derive(Debug)]
-pub struct ContributionsInfo {
-    pub challenge: [u64; 10],
-    pub worker_index: u32,
-}
-
-#[derive(Debug)]
 pub enum ProvePhaseInputs {
     Contributions(ProofInfo),
     Internal(Vec<ContributionsInfo>),
