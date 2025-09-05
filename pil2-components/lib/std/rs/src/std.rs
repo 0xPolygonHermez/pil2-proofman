@@ -17,12 +17,6 @@ pub struct Std<F: PrimeField64> {
     pub virtual_table: Arc<StdVirtualTable<F>>,
 }
 
-#[derive(Debug)]
-pub enum VirtualTableIdInput {
-    Id(usize),
-    FromParams { min: i64, max: i64, predefined: Option<bool> },
-}
-
 impl<F: PrimeField64> Std<F> {
     pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, shared_tables: bool) -> Arc<Self> {
         // Get the mode
@@ -44,7 +38,7 @@ impl<F: PrimeField64> Std<F> {
 
     /// Gets the virtual table ID for a given ID
     pub fn get_virtual_table_id(&self, id: usize) -> usize {
-        self.virtual_table.get_id(id)
+        self.virtual_table.get_global_id(id)
     }
 
     pub fn range_check(&self, id: usize, val: i64, multiplicity: u64) {

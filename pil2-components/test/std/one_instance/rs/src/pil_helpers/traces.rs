@@ -9,12 +9,14 @@ use proofman_common as common;
 pub use proofman_macros::trace;
 pub use proofman_macros::values;
 
+use std::fmt;
+
 use rayon::prelude::*;
 
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "65772ad1722dcb3cf6bc216bf23e7da6b317024c55f0aebbbaadbbe82fcdfa9a";
+pub const PILOUT_HASH: &str = "ab1f4cece7f2f1e2b27e4f098629e2f75ba1f7a9b53fcd87c57e1bf066a853ac";
 
 //AIRGROUP CONSTANTS
 
