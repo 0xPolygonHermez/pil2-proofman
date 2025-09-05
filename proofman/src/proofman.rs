@@ -48,9 +48,8 @@ use crate::{verify_constraints_proof, verify_basic_proof, verify_final_proof, ve
 use crate::MaxSizes;
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
 use crate::{
-    get_accumulated_challenge,
-    gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof, generate_vadcop_final_proof,
-    generate_fflonk_snark_proof, generate_recursivef_proof, initialize_witness_circom,
+    get_accumulated_challenge, gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof,
+    generate_vadcop_final_proof, generate_fflonk_snark_proof, generate_recursivef_proof, initialize_witness_circom,
 };
 use crate::total_recursive_proofs;
 use crate::check_tree_paths;
@@ -120,9 +119,10 @@ pub struct ProofMan<F: PrimeField64> {
     outer_aggregations_handle: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
     outer_agg_proofs_finished: Arc<AtomicBool>,
     total_outer_agg_proofs: Arc<Counter>,
-    received_agg_proofs: Arc<Vec<AtomicUsize>>,
+    received_agg_proofs: Arc<RwLock<Vec<Vec<usize>>>>,
     handle_recursives: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     handle_contributions: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
+    worker_contributions: Arc<RwLock<Vec<[u64; 10]>>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -137,18 +137,30 @@ pub struct ProofInfo {
     pub input_data_path: Option<PathBuf>,
     pub n_partitions: usize,
     pub partition_ids: Vec<u32>,
+    pub worker_index: usize,
 }
 
 impl ProofInfo {
-    pub fn new(input_data_path: Option<PathBuf>, n_partitions: usize, partition_ids: Vec<u32>) -> Self {
-        Self { input_data_path, n_partitions, partition_ids }
+    pub fn new(
+        input_data_path: Option<PathBuf>,
+        n_partitions: usize,
+        partition_ids: Vec<u32>,
+        worker_index: usize,
+    ) -> Self {
+        Self { input_data_path, n_partitions, partition_ids, worker_index }
     }
+}
+
+#[derive(Debug)]
+pub struct ContributionsInfo {
+    pub challenge: [u64; 10],
+    pub worker_index: u32,
 }
 
 #[derive(Debug)]
 pub enum ProvePhaseInputs {
     Contributions(ProofInfo),
-    Internal(Vec<[u64; 10]>),
+    Internal(Vec<ContributionsInfo>),
     Full(ProofInfo),
 }
 
@@ -737,7 +749,7 @@ where
         }
 
         //todo_distributed: cas amb una sola particiço i n_processes de moment
-        let phase_inputs = ProvePhaseInputs::Full(ProofInfo::new(input_data_path, 1, vec![0]));
+        let phase_inputs = ProvePhaseInputs::Full(ProofInfo::new(input_data_path, 1, vec![0], 0));
         self._generate_proof(phase_inputs, options, ProvePhase::Full)
     }
 
@@ -888,7 +900,7 @@ where
         let (rec1_witness_tx, rec1_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
         let (rec2_witness_tx, rec2_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
 
-        let received_agg_proofs = Arc::new((0..n_airgroups).map(|_| AtomicUsize::new(0)).collect::<Vec<_>>());
+        let received_agg_proofs = Arc::new(RwLock::new((0..n_airgroups).map(|_| Vec::new()).collect::<Vec<Vec<_>>>()));
 
         Ok(Self {
             pctx,
@@ -940,6 +952,7 @@ where
             handle_recursives: Arc::new(Mutex::new(Vec::new())),
             handle_contributions: Arc::new(Mutex::new(Vec::new())),
             outer_agg_proofs_finished: Arc::new(AtomicBool::new(true)),
+            worker_contributions: Arc::new(RwLock::new(Vec::new())),
         })
     }
 
@@ -981,9 +994,8 @@ where
 
         reset_device_streams_c(self.d_buffers.get_ptr());
 
-        for airgroup in 0..self.pctx.global_info.air_groups.len() {
-            self.received_agg_proofs[airgroup].store(0, Ordering::SeqCst);
-        }
+        self.received_agg_proofs.write().unwrap().clear();
+
         self.total_outer_agg_proofs.reset();
     }
 
@@ -1015,6 +1027,7 @@ where
             self.pctx.dctx_setup(
                 proof_info.n_partitions,
                 proof_info.partition_ids.clone(),
+                proof_info.worker_index,
                 true,
                 self.mpi_ctx.n_processes as usize,
                 self.mpi_ctx.rank as usize,
@@ -1196,18 +1209,17 @@ where
                 .expect("Expected exactly 10 elements");
 
             if phase == ProvePhase::Contributions {
-                println!("Internal contribution: {:?}", internal_contribution_u64);
                 return Ok(ProvePhaseResult::Contributions(internal_contribution_u64));
             }
-            vec![internal_contribution_u64]
+            &vec![ContributionsInfo { challenge: internal_contribution_u64, worker_index: 0 }]
         } else {
             match phase_inputs {
-                ProvePhaseInputs::Internal(ref contributions) => contributions.clone(),
+                ProvePhaseInputs::Internal(ref contributions) => contributions,
                 _ => return Err("Internal phase requires Internal phase inputs".into()),
             }
         };
 
-        self.calculate_global_challenge(&all_partial_contributions_u64);
+        self.calculate_global_challenge(all_partial_contributions_u64);
 
         timer_start_info!(GENERATING_INNER_PROOFS);
 
@@ -1644,18 +1656,28 @@ where
                 self.d_buffers.get_ptr(),
                 false,
             )?;
+
+            let mut agg_proofs = Vec::new();
+
+            let worker_index = self.pctx.get_worker_index();
+            for (airgroup_id, proofs) in agg_worker_proofs.into_iter().enumerate() {
+                if let Some(Some(proof)) = proofs.into_iter().find(|p| p.is_some()) {
+                    agg_proofs.push(AggProofs::new(airgroup_id as u64, proof, vec![worker_index]));
+                }
+            }
+
             timer_stop_and_log_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
 
             if phase == ProvePhase::Internal && self.mpi_ctx.rank == 0 {
                 self.outer_aggregations(&options);
-                return Ok(ProvePhaseResult::Internal(agg_worker_proofs));
+                return Ok(ProvePhaseResult::Internal(agg_proofs));
             }
 
             if self.mpi_ctx.rank == 0 {
                 self.outer_aggregations(&options);
                 let vadcop_final = self.receive_aggregated_proofs(vec![], true, true, &options);
 
-                vadcop_final_proof = Some(vadcop_final.unwrap());
+                vadcop_final_proof = Some(vadcop_final.unwrap().into_iter().next().unwrap().proof);
 
                 let vadcop_final_ref = vadcop_final_proof.as_ref().unwrap();
                 proof_id = Some(
@@ -1750,22 +1772,37 @@ where
         last_proof: bool,
         final_proof: bool,
         options: &ProofOptions,
-    ) -> Option<Vec<u64>> {
+    ) -> Option<Vec<AggProofs>> {
         for proof in agg_proofs {
+            let proof_acc_challenge = get_accumulated_challenge(&proof.proof);
+            let w_index = self.pctx.get_worker_index();
+            let mut stored_contributions =
+                vec![self.worker_contributions.read().unwrap()[w_index].iter().map(|&x| F::from_u64(x)).collect()];
+            for w in &proof.worker_indexes {
+                stored_contributions
+                    .push(self.worker_contributions.read().unwrap()[*w].iter().map(|&x| F::from_u64(x)).collect());
+            }
+
+            // TODO: Verify proofs!
+
+            let workers_acc_challenge = self.aggregate_contributions(&stored_contributions);
+            for (c, value) in workers_acc_challenge.iter().enumerate() {
+                if value.as_canonical_u64() != proof_acc_challenge[c] {
+                    panic!("Aggregated proof challenge does not match the expected challenge");
+                }
+            }
+            self.received_agg_proofs.write().unwrap()[proof.airgroup_id as usize].extend(proof.worker_indexes);
             let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
             let id = rec2_proofs.len();
             let agg_proof = Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, Some(id), proof.proof);
-            let acc_challenge = get_accumulated_challenge(&agg_proof);
-            println!("ACC_CHALLENGE_{}: {:?}", proof.airgroup_id, acc_challenge);
             rec2_proofs.push(Some(agg_proof));
-            self.received_agg_proofs[proof.airgroup_id as usize].fetch_add(1, Ordering::SeqCst);
             self.total_outer_agg_proofs.increment();
             launch_callback_c(id as u64, ProofType::Recursive2.into());
         }
 
         if last_proof {
-            for (airgroup_id, n_proofs) in self.received_agg_proofs.iter().enumerate() {
-                let n_agg_proofs = n_proofs.load(Ordering::SeqCst);
+            for (airgroup_id, worker_indexes) in self.received_agg_proofs.read().unwrap().iter().enumerate() {
+                let n_agg_proofs = worker_indexes.len();
                 if n_agg_proofs == 0 {
                     continue;
                 }
@@ -1792,15 +1829,17 @@ where
                 self.recursive_tx.send((u64::MAX - 1, "Recursive2".to_string())).unwrap();
             }
 
-            if final_proof {
-                let agg_proofs_data: Vec<AggProofs> = (0..self.pctx.global_info.air_groups.len())
-                    .map(|airgroup_id| {
-                        let mut lock = self.recursive2_proofs[airgroup_id].write().unwrap();
-                        let proof = std::mem::take(&mut lock.first_mut().expect("Expected at least one proof").proof);
-                        AggProofs::new(airgroup_id as u64, proof)
-                    })
-                    .collect();
+            let agg_proofs_data: Vec<AggProofs> = (0..self.pctx.global_info.air_groups.len())
+                .map(|airgroup_id| {
+                    let mut lock = self.recursive2_proofs[airgroup_id].write().unwrap();
+                    let proof = std::mem::take(&mut lock.first_mut().expect("Expected at least one proof").proof);
+                    AggProofs::new(airgroup_id as u64, proof, vec![])
+                })
+                .collect();
 
+            if !final_proof {
+                return Some(agg_proofs_data);
+            } else {
                 let vadcop_proof_final = generate_vadcop_final_proof(
                     &self.pctx,
                     &self.setups,
@@ -1831,7 +1870,7 @@ where
                     let _ = generate_fflonk_snark_proof(&self.pctx, recursivef_proof, &options.output_dir_path);
                     timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
                 } else {
-                    return Some(vadcop_proof_final.proof);
+                    return Some(vec![AggProofs::new(0, vadcop_proof_final.proof, vec![])]);
                 }
             }
         }
@@ -1859,9 +1898,6 @@ where
 
                     let proof = recursive2_proofs_ongoing_clone.write().unwrap()[id as usize].take().unwrap();
 
-                    let acc_challenge = get_accumulated_challenge(&proof);
-                    println!("ACC_CHALLENGE OUTER: {:?}", acc_challenge);
-
                     let mut recursive2_airgroup_proofs = recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
                     recursive2_airgroup_proofs.push(proof);
 
@@ -1869,6 +1905,7 @@ where
                         let p1 = recursive2_airgroup_proofs.pop().unwrap();
                         let p2 = recursive2_airgroup_proofs.pop().unwrap();
                         let p3 = recursive2_airgroup_proofs.pop().unwrap();
+
                         let witness = gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3).unwrap();
                         total_outer_agg_proofs.increment();
                         rec2_witness_tx_clone.send(witness).unwrap();
@@ -2491,7 +2528,7 @@ where
         partial_contribution_u64
     }
 
-    fn calculate_global_challenge(&self, all_partial_contributions_u64: &[[u64; 10]]) {
+    fn calculate_global_challenge(&self, all_partial_contributions_u64: &[ContributionsInfo]) {
         timer_start_info!(CALCULATE_GLOBAL_CHALLENGE);
 
         let transcript = FFITranscript::new(2, true);
@@ -2503,8 +2540,21 @@ where
             transcript.add_elements(proof_values_stage.as_ptr() as *mut u8, proof_values_stage.len());
         }
 
-        let all_partial_contributions: Vec<Vec<F>> =
-            all_partial_contributions_u64.iter().map(|&arr| arr.iter().map(|&x| F::from_u64(x)).collect()).collect();
+        let all_partial_contributions: Vec<Vec<F>> = all_partial_contributions_u64
+            .iter()
+            .map(|arr| arr.challenge.iter().map(|&x| F::from_u64(x)).collect())
+            .collect();
+
+        let n_workers =
+            all_partial_contributions_u64.iter().map(|contribution| contribution.worker_index).max().unwrap_or(0) + 1;
+        let mut worker_contributions = self.worker_contributions.write().unwrap();
+        for contribution in all_partial_contributions_u64 {
+            if contribution.worker_index < n_workers {
+                worker_contributions[contribution.worker_index as usize] = contribution.challenge;
+            } else {
+                panic!("Invalid worker index in contributions");
+            }
+        }
 
         let value = self.aggregate_contributions(&all_partial_contributions);
         transcript.add_elements(value.as_ptr() as *mut u8, value.len());

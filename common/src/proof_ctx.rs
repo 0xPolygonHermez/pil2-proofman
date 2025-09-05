@@ -461,6 +461,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         &self,
         n_partitions: usize,
         partition_ids: Vec<u32>,
+        worker_index: usize,
         balance: bool,
         n_processes: usize,
         process_id: usize,
@@ -468,6 +469,13 @@ impl<F: PrimeField64> ProofCtx<F> {
         let mut dctx = self.dctx.write().unwrap();
         dctx.setup_partitions(n_partitions, partition_ids, balance);
         dctx.setup_processes(n_processes, process_id);
+        dctx.setup_worker_index(worker_index);
+    }
+
+    pub fn get_worker_index(&self) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        assert!(dctx.worker_index >= 0, "Worker index not set");
+        dctx.worker_index as usize
     }
 
     pub fn get_proof_values_ptr(&self) -> *mut u8 {

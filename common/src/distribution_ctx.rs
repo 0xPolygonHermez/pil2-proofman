@@ -63,6 +63,8 @@ pub struct DistributionCtx {
     pub process_count: Vec<usize>,           // #instances assigned to each process
     pub process_weight: Vec<u64>,            // Total computational weight per process
 
+    pub worker_index: i32, // Index of the current worker
+
     // Control
     pub assignation_done: bool, // Whether the instance assignation is done
 }
@@ -121,6 +123,7 @@ impl DistributionCtx {
             process_instances: Vec::new(),
             process_count: Vec::new(),
             process_weight: Vec::new(),
+            worker_index: -1,
             assignation_done: false,
         }
     }
@@ -159,6 +162,10 @@ impl DistributionCtx {
         self.process_weight = vec![0; n_processes];
     }
 
+    pub fn setup_worker_index(&mut self, worker_index: usize) {
+        self.worker_index = worker_index as i32;
+    }
+
     /// Reset all DYNAMIC parameters for a new proof
     /// This clears all instance-specific data while preserving the STATIC configuration
     pub fn reset_instances(&mut self) {
@@ -181,6 +188,8 @@ impl DistributionCtx {
         self.process_instances.clear();
         self.process_count.fill(0);
         self.process_weight.fill(0);
+
+        self.worker_index = -1;
 
         //control
         self.assignation_done = false
