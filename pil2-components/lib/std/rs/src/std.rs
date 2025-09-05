@@ -29,8 +29,8 @@ impl<F: PrimeField64> Std<F> {
         let mode = RwLock::new(StdMode::default());
 
         // Instantiate the components
-        let prod_bus = StdProd::new();
-        let sum_bus = StdSum::new();
+        let prod_bus = StdProd::new(&sctx);
+        let sum_bus = StdSum::new(&sctx);
         let virtual_table = StdVirtualTable::new(pctx.clone(), &sctx, shared_tables);
         let range_check = StdRangeCheck::new(pctx.clone(), &sctx, virtual_table.clone(), shared_tables);
 

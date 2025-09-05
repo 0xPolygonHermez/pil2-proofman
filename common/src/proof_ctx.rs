@@ -321,6 +321,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         !self.air_instances[global_idx].read().unwrap().trace.is_empty()
     }
 
+    pub fn dctx_broadcast(&self, buf: &mut Vec<u8>) {
+        self.mpi_ctx.broadcast(buf);
+    }
+
     pub fn dctx_get_instances(&self) -> Vec<InstanceInfo> {
         let dctx = self.dctx.read().unwrap();
         dctx.instances.clone()
