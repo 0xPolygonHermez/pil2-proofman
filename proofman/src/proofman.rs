@@ -122,7 +122,7 @@ pub struct ProofMan<F: PrimeField64> {
     received_agg_proofs: Arc<RwLock<Vec<Vec<usize>>>>,
     handle_recursives: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     handle_contributions: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
-    worker_contributions: Arc<RwLock<Vec<[u64; 10]>>>,
+    worker_contributions: Arc<RwLock<Vec<ContributionsInfo>>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -149,6 +149,13 @@ impl ProofInfo {
     ) -> Self {
         Self { input_data_path, n_partitions, partition_ids, worker_index }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ContributionsInfo {
+    pub challenge: [u64; 10],
+    pub airgroup_id: usize,
+    pub worker_index: u32,
 }
 
 #[derive(Debug)]
@@ -1211,7 +1218,7 @@ where
             if phase == ProvePhase::Contributions {
                 return Ok(ProvePhaseResult::Contributions(internal_contribution_u64));
             }
-            &vec![ContributionsInfo { challenge: internal_contribution_u64, worker_index: 0 }]
+            &vec![ContributionsInfo { challenge: internal_contribution_u64, worker_index: 0, airgroup_id: 0 }]
         } else {
             match phase_inputs {
                 ProvePhaseInputs::Internal(ref contributions) => contributions,
@@ -1776,11 +1783,26 @@ where
         for proof in agg_proofs {
             let proof_acc_challenge = get_accumulated_challenge(&proof.proof);
             let w_index = self.pctx.get_worker_index();
-            let mut stored_contributions =
-                vec![self.worker_contributions.read().unwrap()[w_index].iter().map(|&x| F::from_u64(x)).collect()];
+            let mut stored_contributions = Vec::new();
+            let my_contribution_info = self
+                .worker_contributions
+                .read()
+                .unwrap()
+                .iter()
+                .find(|contrib| {
+                    contrib.worker_index == w_index as u32 && contrib.airgroup_id == proof.airgroup_id as usize
+                })
+                .map(|contrib| contrib.challenge.iter().map(|&x| F::from_u64(x)).collect())
+                .unwrap_or_else(Vec::new);
+            stored_contributions.push(my_contribution_info);
             for w in &proof.worker_indexes {
-                stored_contributions
-                    .push(self.worker_contributions.read().unwrap()[*w].iter().map(|&x| F::from_u64(x)).collect());
+                if let Some(contrib) = self.worker_contributions.read().unwrap().iter().find(|contrib| {
+                    contrib.worker_index == *w as u32 && contrib.airgroup_id == proof.airgroup_id as usize
+                }) {
+                    stored_contributions.push(contrib.challenge.iter().map(|&x| F::from_u64(x)).collect());
+                } else {
+                    panic!("Missing contribution from worker {} and airgroup id {}", w, proof.airgroup_id);
+                }
             }
 
             // TODO: Verify proofs!
@@ -2550,7 +2572,7 @@ where
         let mut worker_contributions = self.worker_contributions.write().unwrap();
         for contribution in all_partial_contributions_u64 {
             if contribution.worker_index < n_workers {
-                worker_contributions[contribution.worker_index as usize] = contribution.challenge;
+                worker_contributions.push(*contribution);
             } else {
                 panic!("Invalid worker index in contributions");
             }
