@@ -189,8 +189,6 @@ impl DistributionCtx {
         self.process_count.fill(0);
         self.process_weight.fill(0);
 
-        self.worker_index = -1;
-
         //control
         self.assignation_done = false
     }
