@@ -994,9 +994,12 @@ where
         while self.rec2_witness_rx.try_recv().is_ok() {}
 
         reset_device_streams_c(self.d_buffers.get_ptr());
+        
+        for inner_vec in self.received_agg_proofs.write().unwrap().iter_mut() {
+            inner_vec.clear();
+        }
 
-        self.received_agg_proofs.write().unwrap().clear();
-
+        
         self.total_outer_agg_proofs.reset();
     }
 
@@ -1776,19 +1779,7 @@ where
     ) -> Option<Vec<AggProofs>> {
         for proof in agg_proofs {
             let proof_acc_challenge = get_accumulated_challenge(&proof.proof);
-            let w_index = self.pctx.get_worker_index();
-            let mut stored_contributions = Vec::new();
-            let my_contribution_info = self
-                .worker_contributions
-                .read()
-                .unwrap()
-                .iter()
-                .find(|contrib| {
-                    contrib.worker_index == w_index as u32 && contrib.airgroup_id == proof.airgroup_id as usize
-                })
-                .map(|contrib| contrib.challenge.iter().map(|&x| F::from_u64(x)).collect())
-                .unwrap_or_else(Vec::new);
-            stored_contributions.push(my_contribution_info);
+            let mut stored_contributions = Vec::new();            
             for w in &proof.worker_indexes {
                 if let Some(contrib) = self.worker_contributions.read().unwrap().iter().find(|contrib| {
                     contrib.worker_index == *w as u32 && contrib.airgroup_id == proof.airgroup_id as usize
