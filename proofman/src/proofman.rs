@@ -167,7 +167,7 @@ pub enum ProvePhaseInputs {
 
 #[derive(Debug)]
 pub enum ProvePhaseResult {
-    Contributions([u64; 10]),
+    Contributions(Vec<ContributionsInfo>),
     Internal(Vec<AggProofs>),
     Full(Option<String>, Option<Vec<u64>>),
 }
@@ -994,12 +994,11 @@ where
         while self.rec2_witness_rx.try_recv().is_ok() {}
 
         reset_device_streams_c(self.d_buffers.get_ptr());
-        
+
         for inner_vec in self.received_agg_proofs.write().unwrap().iter_mut() {
             inner_vec.clear();
         }
 
-        
         self.total_outer_agg_proofs.reset();
     }
 
@@ -1213,7 +1212,11 @@ where
                 .expect("Expected exactly 10 elements");
 
             if phase == ProvePhase::Contributions {
-                return Ok(ProvePhaseResult::Contributions(internal_contribution_u64));
+                return Ok(ProvePhaseResult::Contributions(vec![ContributionsInfo {
+                    challenge: internal_contribution_u64,
+                    worker_index: self.pctx.get_worker_index() as u32,
+                    airgroup_id: 0,
+                }]));
             }
             &vec![ContributionsInfo { challenge: internal_contribution_u64, worker_index: 0, airgroup_id: 0 }]
         } else {
@@ -1779,7 +1782,7 @@ where
     ) -> Option<Vec<AggProofs>> {
         for proof in agg_proofs {
             let proof_acc_challenge = get_accumulated_challenge(&proof.proof);
-            let mut stored_contributions = Vec::new();            
+            let mut stored_contributions = Vec::new();
             for w in &proof.worker_indexes {
                 if let Some(contrib) = self.worker_contributions.read().unwrap().iter().find(|contrib| {
                     contrib.worker_index == *w as u32 && contrib.airgroup_id == proof.airgroup_id as usize
