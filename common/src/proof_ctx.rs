@@ -385,6 +385,16 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.process_ready_for_outer_agg();
     }
 
+    pub fn dctx_send_proof_to_rank(&self, proof: &Vec<u64>, rank: i32) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.send_proof_to_rank(proof, rank);
+    }
+
+    pub fn dctx_recv_proof_from_rank(&self, rank: i32) -> Vec<u64> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.recv_proof_from_rank(rank)
+    }
+
     pub fn dctx_get_outer_agg_rank(&self) -> i32 {
         let dctx = self.dctx.read().unwrap();
         dctx.get_outer_agg_rank()
