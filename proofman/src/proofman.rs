@@ -1658,7 +1658,10 @@ where
             let recursive2_proofs_data: Vec<Vec<u64>> = self
                 .recursive2_proofs
                 .iter()
-                .map(|lock| lock.read().unwrap().first().expect("Expected at least one proof").proof.clone())
+                .map(|lock| {
+                    let mut write_lock = lock.write().unwrap();
+                    std::mem::take(&mut write_lock.first_mut().expect("Expected at least one proof").proof)
+                })
                 .collect();
 
             timer_start_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
@@ -1681,6 +1684,10 @@ where
             let worker_index = self.pctx.get_worker_index();
             for (airgroup_id, proofs) in agg_worker_proofs.into_iter().enumerate() {
                 if let Some(Some(proof)) = proofs.into_iter().find(|p| p.is_some()) {
+                    if self.mpi_ctx.rank == 0 {
+                        let agg_proof = Proof::new(ProofType::Recursive2, airgroup_id, 0, None, proof.clone());
+                        self.recursive2_proofs[airgroup_id].write().unwrap().push(agg_proof);
+                    }
                     agg_proofs.push(AggProofs::new(airgroup_id as u64, proof, vec![worker_index]));
                 }
             }
