@@ -531,6 +531,13 @@ extern "C" {
     pub fn register_proof_done_callback(cb: ProofDoneCallback);
     
     pub fn launch_callback(instanceId: u64, proofType: *mut ::std::os::raw::c_char);
+
+    // MPI calls
+    // ========================================================================================
+    pub fn initialize_agg_readiness_tracker();
+    pub fn free_agg_readiness_tracker();
+    pub fn agg_is_ready() -> i32;
+    pub fn reset_agg_readiness_tracker();
 }
 
 // Type definitions
