@@ -1660,7 +1660,7 @@ where
                 .iter()
                 .map(|lock| {
                     let mut write_lock = lock.write().unwrap();
-                    std::mem::take(&mut write_lock.first_mut().expect("Expected at least one proof").proof)
+                    write_lock.pop().expect("Expected at least one proof").proof
                 })
                 .collect();
 
@@ -1695,11 +1695,6 @@ where
                     let agg_proof =
                         Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, None, proof.proof.clone());
                     self.recursive2_proofs[proof.airgroup_id as usize].write().unwrap().push(agg_proof);
-                    println!(
-                        "SELF.RECURSIVE2_PROOFS: {} {:?}",
-                        proof.airgroup_id,
-                        self.recursive2_proofs[proof.airgroup_id as usize].read().unwrap().len()
-                    );
                 }
                 self.outer_aggregations(&options);
                 return Ok(ProvePhaseResult::Internal(agg_proofs));
@@ -1866,11 +1861,6 @@ where
 
             let agg_proofs_data: Vec<AggProofs> = (0..self.pctx.global_info.air_groups.len())
                 .map(|airgroup_id| {
-                    println!(
-                        "SELF.RECURSIVE2_PROOFS: {:?} {:?}",
-                        airgroup_id,
-                        self.recursive2_proofs[airgroup_id as usize].read().unwrap().len()
-                    );
                     let mut lock = self.recursive2_proofs[airgroup_id].write().unwrap();
                     let proof = std::mem::take(&mut lock.first_mut().expect("Expected at least one proof").proof);
                     AggProofs::new(airgroup_id as u64, proof, vec![])
