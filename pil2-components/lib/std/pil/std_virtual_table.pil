@@ -3,20 +3,22 @@ require "std_lookup.pil";
 
 // TODO: Add the possibility of different table sizes for the different virtual tables
 
-int MAX_VIRTUAL_BITS = -1; // -1 indicates that the bits is specified on demand
-                           // and is set to be the maximum of all specified ranges
+int MAX_VIRTUAL_ROWS = -1; // -1 indicates that the rows is specified on demand
 
 int MAX_NUM_VIRTUAL_TABLES = 1; // Maximum number of virtual tables
 
 const int MAX_VIRTUAL_TABLE_WIDTH = 64;
 const int MAX_VIRTUAL_TABLE_IDS = 16;
+const int MAX_VIRTUAL_TABLE_GROUPS = 16;
 
-function set_max_virtual_bits(const int bits) {
-    if (bits <= 0) {
-        error(`The input bits should be greater than 0, got ${bits} instead`);
+function set_max_num_rows_virtual(const int rows) {
+    if (rows <= 0) {
+        error(`The input rows should be greater than 0, got ${rows} instead`);
+    } else if ((rows & (rows - 1)) != 0) {
+        error(`The input rows should be a power of two, got ${rows} instead`);
     }
 
-    MAX_VIRTUAL_BITS = bits;
+    MAX_VIRTUAL_ROWS = rows;
 }
 
 function set_max_num_virtual_tables(const int num) {
@@ -27,6 +29,41 @@ function set_max_num_virtual_tables(const int num) {
     }
 
     MAX_NUM_VIRTUAL_TABLES = num;
+}
+
+function set_group_virtual_tables(const int table_ids[]) {
+    open_container_virtual_table();
+
+    use airgroup.std.vt alias vt;
+
+    const int n = length(table_ids);
+    if (n == 0) {
+        error("The input group cannot be empty");
+    }
+
+    for (int i = 0; i < n; i++) {
+        const int table_id = table_ids[i];
+        // Check for inner duplicates
+        for (int j = i + 1; j < n; j++) {
+            if (table_id == table_ids[j]) {
+                error(`The table_ids must be unique, found duplicate ${table_id}`);
+            }
+        }
+
+        // Check for outter duplicates
+        for (int j = 0; j < vt.num_groups; j++) {
+            for (int k = 0; k < vt.group_len[j]; k++) {
+                if (vt.group[j][k] == table_id) {
+                    error(`The table_ids must be unique across groups, found duplicate ${table_id}`);
+                }
+            }
+        }
+
+        vt.group[vt.num_groups][vt.group_len[vt.num_groups]] = table_id;
+        vt.group_len[vt.num_groups]++;
+    }
+
+    vt.num_groups++;
 }
 
 function collect_virtual_table(const int bus_id, const int table_id = -1, const expr table[]) {
@@ -54,17 +91,9 @@ function collect_virtual_table(const int bus_id, const int table_id = -1, const 
         }
     }
 
-    container airgroup.std.virtual_table alias vt {
-        expr columns[ARRAY_SIZE][MAX_VIRTUAL_TABLE_IDS][MAX_VIRTUAL_TABLE_WIDTH];
-        int bus_id[ARRAY_SIZE];
-        int table_ids[ARRAY_SIZE][MAX_VIRTUAL_TABLE_IDS]; // One bus_id can be associated with multiple table_ids
-        int inner_height[ARRAY_SIZE][MAX_VIRTUAL_TABLE_IDS];
-        int num_table_ids[ARRAY_SIZE];
-        int width[ARRAY_SIZE];
-        int height[ARRAY_SIZE];
-        int num_tables = 0;
-        int total_height = 0;
-    }
+    open_container_virtual_table();
+
+    use airgroup.std.vt alias vt;
 
     int bus_id_pos = -1;
     for (int i = 0; i < vt.num_tables; i++) {
@@ -114,6 +143,24 @@ function collect_virtual_table(const int bus_id, const int table_id = -1, const 
     on final(1) airgroup pack_tables();
 }
 
+function open_container_virtual_table() {
+    container airgroup.std.vt {
+        expr columns[ARRAY_SIZE][MAX_VIRTUAL_TABLE_IDS][MAX_VIRTUAL_TABLE_WIDTH];
+        int bus_id[ARRAY_SIZE];
+        int table_ids[ARRAY_SIZE][MAX_VIRTUAL_TABLE_IDS]; // One bus_id can be associated with multiple table_ids
+        int inner_height[ARRAY_SIZE][MAX_VIRTUAL_TABLE_IDS];
+        int num_table_ids[ARRAY_SIZE];
+        int width[ARRAY_SIZE];
+        int height[ARRAY_SIZE];
+        int num_tables = 0;
+        int total_height = 0;
+
+        int group[MAX_VIRTUAL_TABLE_GROUPS][ARRAY_SIZE];
+        int group_len[MAX_VIRTUAL_TABLE_GROUPS];
+        int num_groups = 0;
+    }
+}
+
 /*
     Given a set of tables Tᵢ := (uidᵢ, wᵢ, hᵢ), where  uidᵢ is the table uid, wᵢ is the width,
     and hᵢ is the height, this function packs the tables into a single table.
@@ -148,29 +195,39 @@ function collect_virtual_table(const int bus_id, const int table_id = -1, const 
                         witness_area = H·((∑ⱼ 1) + 3 + 3*((∑ⱼ 1)//2)) // multiplicity + grand_sum + lookups_1
                         area         = fixed_area + witness_area
     where wⱼ is the width of the j-th group in the packing and ∑ⱼ 1 is the number of groups in the packing.
+
+    NOTE: A table is never placed into two or more AIRs
 */
 function pack_tables() {
-    use airgroup.std.virtual_table alias vt;
+    use airgroup.std.vt alias vt;
 
-    // Compute the number of bits
-    int virtual_bits = MAX_VIRTUAL_BITS;
-    if (MAX_VIRTUAL_BITS == -1) {
-        // Take the bits that makes the total height fit
-        virtual_bits = 0;
-        while ((1 << virtual_bits) < vt.total_height) {
-            virtual_bits++;
+    // Compute the number of rows
+    int num_rows = MAX_VIRTUAL_ROWS;
+    if (num_rows == -1) {
+        // Take the rows that makes the total height fit
+        num_rows = 1;
+        while (num_rows < vt.total_height) {
+            num_rows *= 2;
         }
     }
 
     // Compute the number of virtual tables
-    const int num_rows = 1 << virtual_bits;
     const int required_num_virtual_tables = (vt.total_height + num_rows - 1) / num_rows;
-    int num_virtual_tables;
-    if (MAX_NUM_VIRTUAL_TABLES > required_num_virtual_tables) {
-        println(`[Warning] The number of virtual tables set via set_max_num_virtual_tables() is ${MAX_NUM_VIRTUAL_TABLES}, but only ${required_num_virtual_tables} are required to fit the tables. Using ${required_num_virtual_tables} instead.`);
-        num_virtual_tables = required_num_virtual_tables;
-    } else {
-        num_virtual_tables = MAX_NUM_VIRTUAL_TABLES;
+    const int min_num_virtual_tables = (vt.num_groups > 0) ? vt.num_groups : 1;
+    if (min_num_virtual_tables > MAX_NUM_VIRTUAL_TABLES) {
+        error(`The number of groups specified (${vt.num_groups}) exceeds the maximum number of virtual tables (${MAX_NUM_VIRTUAL_TABLES}). Consider increasing the maximum number of virtual tables via set_max_num_virtual_tables()`);
+    }
+    int num_virtual_tables = MAX_NUM_VIRTUAL_TABLES;
+    if (required_num_virtual_tables < num_virtual_tables) {
+        if (required_num_virtual_tables < min_num_virtual_tables) {
+            // Respect minimum constraint
+            println(`[Warning] The number of virtual tables required to fit the tables is ${required_num_virtual_tables}, but a minimum of ${min_num_virtual_tables} groups must be used. Using ${min_num_virtual_tables} instead.`);
+            num_virtual_tables = min_num_virtual_tables;
+        } else {
+            // Reduce to what is actually required
+            println(`[Warning] The number of virtual tables is ${MAX_NUM_VIRTUAL_TABLES}, but only ${required_num_virtual_tables} are required to fit the tables. Using ${required_num_virtual_tables} instead.`);
+            num_virtual_tables = required_num_virtual_tables;
+        }
     }
 
     // Order the tables by width in ascending order and then by height in descending order
@@ -198,42 +255,102 @@ function pack_tables() {
         }
     }
 
-    // Divide the ordered tables by num_virtual_tables of approximately equal height
-    // Note: A table is never placed into two or more AIRs
+    // Assign the tables to the virtual tables
     int ordered_tables_air[num_virtual_tables][vt.num_tables];
     int ordered_tables_air_height[num_virtual_tables];
     int ordered_tables_air_len[num_virtual_tables];
-    const int max_height_by_table = (vt.total_height + num_virtual_tables - 1) / num_virtual_tables;
-    int table_offset = 0;
-    for (int i = 0; i < num_virtual_tables; i++) {
-        if (table_offset >= vt.num_tables) {
-            num_virtual_tables = i;
-            break;
-        }
 
-        int col_offset = 0;
-        for (int j = table_offset; j < vt.num_tables; j++) {
-            const int idx = ordered_tables[j];
-            const int is_last_air = (i == num_virtual_tables - 1);
-            if (!is_last_air && (col_offset > 0) && (ordered_tables_air_height[i] + vt.height[idx] > max_height_by_table)) {
-                break;
+    // Map (ordered position) -> group index, -1 if ungrouped
+    int table_group[vt.num_tables];
+    int bus_group[vt.num_tables];
+    for (int k = 0; k < vt.num_tables; k++) { 
+        table_group[k] = -1; 
+        bus_group[k] = -1;
+    }
+
+    // Initialize the tables with the already assigned groups
+    for (int i = 0; i < vt.num_groups; i++) {
+        const int group_len = vt.group_len[i];
+        for (int j = 0; j < group_len; j++) {
+            const int table_id = vt.group[i][j];
+
+            // Find the table with this table_id
+            int found = 0;
+            for (int k = 0; k < vt.num_tables; k++) {
+                const int idx = ordered_tables[k];
+                for (int l = 0; l < vt.num_table_ids[idx]; l++) {
+                    if (vt.table_ids[idx][l] == table_id) {
+                        // Check bus (opid) grouping consistency
+                        if (bus_group[idx] == -1) {
+                            bus_group[idx] = i; // first time this bus appears
+                        } else if (bus_group[idx] != i) {
+                            error(`Table_id ${table_id} (opid ${vt.bus_id[idx]}) already assigned to group ${bus_group[idx]}, cannot also assign to group ${i}`);
+                        }
+
+                        table_group[k] = i;
+                        found = 1;
+                        break;
+                    }
+                }
+                if (found == 1) break;
             }
 
-            ordered_tables_air[i][col_offset] = idx;
-            ordered_tables_air_height[i] += vt.height[idx];
-            ordered_tables_air_len[i]++;
-            col_offset++;
+            if (found == 0) {
+                error(`The table_id ${table_id} specified in the group ${i} does not correspond to any virtual table`);
+            }
+        }
+    }
+
+    // Distribute ungrouped tables:
+    //  - Keep user‑grouped tables already placed (preserve their relative order).
+    //  - Append remaining tables in sorted order after the explicit group tables of that virtual table.
+    //  - Respect the max height per virtual table except for the last one, which absorbs leftovers.
+    const int max_height_by_table = (vt.total_height + num_virtual_tables - 1) / num_virtual_tables;
+    int table_offset = 0;
+    for (int i = 0; i < vt.num_tables; i++) {
+        const int idx = ordered_tables[i];
+        const int height = vt.height[idx];
+
+        int target_vt = table_group[i];
+        if (target_vt == -1) {
+            // Ungrouped: choose best fit (least remaining space after placement)
+            int best_vt = -1;
+            int best_remaining = -1;
+            for (int j = 0; j < num_virtual_tables; j++) {
+                const int is_last = (j == num_virtual_tables - 1);
+                int capacity = max_height_by_table - ordered_tables_air_height[j];
+                if (is_last) {
+                    capacity = 1 << 30; // effectively infinite spill
+                }
+                if (height <= capacity) {
+                    const int remaining_after = capacity - height;
+                    if (best_vt == -1 || remaining_after < best_remaining) {
+                        best_vt = j;
+                        best_remaining = remaining_after;
+                        if (best_remaining == 0) break;
+                    }
+                }
+            }
+            if (best_vt == -1) {
+                // Force into last
+                best_vt = num_virtual_tables - 1;
+            }
+            target_vt = best_vt;
         }
 
-        table_offset += col_offset;
+        // Place into target virtual table
+        ordered_tables_air[target_vt][ordered_tables_air_len[target_vt]] = idx;
+        ordered_tables_air_height[target_vt] += height;
+        ordered_tables_air_len[target_vt]++;
     }
 
     // Store the airgroup_ids and air_ids of the virtual tables
-    container proof.std.virtual_table {
+    container proof.std.vt {
         int airgroup_ids[num_virtual_tables];
         int air_ids[num_virtual_tables];
     }
 
+    // Instantiate the virtual tables
     for (int i = 0; i < num_virtual_tables; i++) {
         const int total_height_air = ordered_tables_air_height[i];
         const int num_tables_air = ordered_tables_air_len[i];
@@ -241,7 +358,7 @@ function pack_tables() {
         // Proceed with the packing
         const int num_groups = (total_height_air + num_rows - 1) / num_rows;
         if (num_groups > ARRAY_SIZE) {
-            error(`The number of bits=${virtual_bits} set in the virtual table generates too many groups=${num_groups} > max_groups=${ARRAY_SIZE}. Consider setting more virtual bits via set_max_virtual_bits()`);
+            error(`The number of rows=${num_rows} set in the virtual table generates too many groups=${num_groups} > max_groups=${ARRAY_SIZE}. Consider setting more rows via set_max_num_rows_virtual()`);
         }
 
         // Compute the packing
@@ -424,13 +541,13 @@ airtemplate VirtualTable(const int N, const int tables[], const int num_tables, 
     }
 
     // save the airgroup id and air id of the table for latter use
-    proof.std.virtual_table.airgroup_ids[vt_idx] = AIRGROUP_ID;
-    proof.std.virtual_table.air_ids[vt_idx] = AIR_ID;
+    proof.std.vt.airgroup_ids[vt_idx] = AIRGROUP_ID;
+    proof.std.vt.air_ids[vt_idx] = AIR_ID;
 
     on final proof issue_virtual_table_data_global();
 }
 
 private function issue_virtual_table_data_global() {
-    use proof.std.virtual_table;
+    use proof.std.vt;
     @virtual_table_data_global{airgroup_ids: airgroup_ids, air_ids: air_ids};
 }
