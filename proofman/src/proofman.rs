@@ -1684,10 +1684,6 @@ where
             let worker_index = self.pctx.get_worker_index();
             for (airgroup_id, proofs) in agg_worker_proofs.into_iter().enumerate() {
                 if let Some(Some(proof)) = proofs.into_iter().find(|p| p.is_some()) {
-                    if self.mpi_ctx.rank == 0 {
-                        let agg_proof = Proof::new(ProofType::Recursive2, airgroup_id, 0, None, proof.clone());
-                        self.recursive2_proofs[airgroup_id].write().unwrap().push(agg_proof);
-                    }
                     agg_proofs.push(AggProofs::new(airgroup_id as u64, proof, vec![worker_index]));
                 }
             }
@@ -1696,6 +1692,11 @@ where
 
             if phase == ProvePhase::Internal && self.mpi_ctx.rank == 0 {
                 self.outer_aggregations(&options);
+                for proof in &agg_proofs {
+                    let agg_proof =
+                        Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, None, proof.proof.clone());
+                    self.recursive2_proofs[proof.airgroup_id as usize].write().unwrap().push(agg_proof);
+                }
                 return Ok(ProvePhaseResult::Internal(agg_proofs));
             }
 
