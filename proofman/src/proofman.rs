@@ -35,7 +35,7 @@ use rand::rngs::StdRng;
 
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, calculate_hash_c, load_custom_commit_c, calculate_impols_expressions_c,
-    clear_proof_done_callback_c, launch_callback_c,
+    clear_proof_done_callback_c, launch_callback_c
 };
 
 use std::{
@@ -1725,6 +1725,9 @@ where
         }
 
         timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
+        self.pctx.dctx_process_ready_for_outer_agg();
+        let outer_rank = self.pctx.dctx_get_outer_agg_rank();
+        println!("Outer aggregation rank: {}", outer_rank);
 
         timer_stop_and_log_info!(GENERATING_PROOFS);
 

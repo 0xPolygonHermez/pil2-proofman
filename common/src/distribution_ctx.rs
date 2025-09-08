@@ -19,6 +19,9 @@ use fields::CubicExtensionField;
 use crate::GlobalInfo;
 
 use std::collections::HashSet;
+use proofman_starks_lib_c::{
+    initialize_agg_readiness_tracker_c, free_agg_readiness_tracker_c, agg_is_ready_c, reset_agg_readiness_tracker_c
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceInfo {
@@ -62,6 +65,7 @@ pub struct DistributionCtx {
     pub airgroup_instances_alives: Vec<Vec<usize>>,
     pub node_rank: i32,
     pub node_n_processes: i32,
+    pub outer_agg_rank: i32,
 }
 
 impl std::fmt::Debug for DistributionCtx {
@@ -80,6 +84,7 @@ impl std::fmt::Debug for DistributionCtx {
                 .field("airgroup_instances_alives", &self.airgroup_instances_alives)
                 .field("node_rank", &self.node_rank)
                 .field("node_n_processes", &self.node_n_processes)
+                .field("outer_agg_rank", &self.outer_agg_rank)
                 .finish()
         }
         #[cfg(not(distributed))]
@@ -96,6 +101,7 @@ impl std::fmt::Debug for DistributionCtx {
                 .field("airgroup_instances_alives", &self.airgroup_instances_alives)
                 .field("node_rank", &self.node_rank)
                 .field("node_n_processes", &self.node_n_processes)
+                .field("outer_agg_rank", &self.outer_agg_rank)
                 .finish()
         }
     }
@@ -122,6 +128,7 @@ impl DistributionCtx {
                 airgroup_instances_alives: Vec::new(),
                 node_rank: 0,
                 node_n_processes: 1,
+                outer_agg_rank: 0,
             }
         }
     }
@@ -142,6 +149,10 @@ impl DistributionCtx {
         let node_rank = local_comm.rank();
         let node_n_processes = local_comm.size();
 
+        // Initialize the agg readiness tracker in the C library
+        initialize_agg_readiness_tracker_c();
+        
+
         DistributionCtx {
             rank,
             n_processes,
@@ -157,6 +168,7 @@ impl DistributionCtx {
             airgroup_instances_alives: Vec::new(),
             node_rank,
             node_n_processes,
+            outer_agg_rank: -1,
         }
     }
 
@@ -171,6 +183,7 @@ impl DistributionCtx {
         self.owners_weight = vec![0; self.n_processes as usize];
 
         self.airgroup_instances_alives.clear();
+        self.reset_outer_agg_tracker();
     }
 
     #[inline]
@@ -276,6 +289,30 @@ impl DistributionCtx {
 
         min_owner == self.rank
     }
+
+    #[inline]
+    pub fn process_ready_for_outer_agg(&mut self){ 
+        #[cfg(distributed)]
+        {
+            self.outer_agg_rank = agg_is_ready_c();
+        }
+    }
+
+    pub fn get_outer_agg_rank(&self) -> i32 {
+        if self.outer_agg_rank == -1 {
+            panic!("Aggregation rank not yet determined. Call process_ready_for_aggregation() first.");
+        }
+        self.outer_agg_rank
+    }
+
+    pub fn reset_outer_agg_tracker(&mut self) {
+        #[cfg(distributed)]
+        {
+            self.outer_agg_rank = -1;
+            reset_agg_readiness_tracker_c();
+        }
+    }
+
 
     #[inline]
     pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, threads_witness: usize, weight: u64) -> usize {
@@ -797,7 +834,7 @@ impl DistributionCtx {
                 // 2) Resize non-root buffers to the incoming size
                 if self.rank != 0 {
                     buf.resize(len as usize, 0u8);
-                }
+                } 
 
                 // 3) Broadcast bytes into place
                 root.broadcast_into(&mut buf[..]);
@@ -811,5 +848,15 @@ impl Default for DistributionCtx {
         DistributionCtx::new()
     }
 }
+
+// call free_agg_readiness_tracker_c() when DistributionCtx is dropped
+impl Drop for DistributionCtx {
+    fn drop(&mut self) {
+        #[cfg(distributed)]
+        {
+            free_agg_readiness_tracker_c();
+        }
+    }
+}   
 unsafe impl Send for DistributionCtx {}
 unsafe impl Sync for DistributionCtx {}

@@ -380,6 +380,16 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.broadcast(buf);
     }
 
+    pub fn dctx_process_ready_for_outer_agg(&self) {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.process_ready_for_outer_agg();
+    }
+
+    pub fn dctx_get_outer_agg_rank(&self) -> i32 {
+        let dctx = self.dctx.read().unwrap();
+        dctx.get_outer_agg_rank()
+    }
+
     pub fn dctx_is_min_rank_owner(&self, airgroup_id: usize, air_id: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
         dctx.is_min_rank_owner(airgroup_id, air_id)
