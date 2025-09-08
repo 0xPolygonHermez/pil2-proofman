@@ -17,10 +17,11 @@ use fields::PrimeField64;
 #[cfg(distributed)]
 use fields::CubicExtensionField;
 use crate::GlobalInfo;
+use crate::Proof;
 
 use std::collections::HashSet;
 use proofman_starks_lib_c::{
-    initialize_agg_readiness_tracker_c, free_agg_readiness_tracker_c, agg_is_ready_c, reset_agg_readiness_tracker_c
+    initialize_agg_readiness_tracker_c, free_agg_readiness_tracker_c, agg_is_ready_c, reset_agg_readiness_tracker_c,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -151,7 +152,6 @@ impl DistributionCtx {
 
         // Initialize the agg readiness tracker in the C library
         initialize_agg_readiness_tracker_c();
-        
 
         DistributionCtx {
             rank,
@@ -291,7 +291,7 @@ impl DistributionCtx {
     }
 
     #[inline]
-    pub fn process_ready_for_outer_agg(&mut self){ 
+    pub fn process_ready_for_outer_agg(&mut self) {
         #[cfg(distributed)]
         {
             self.outer_agg_rank = agg_is_ready_c();
@@ -312,7 +312,6 @@ impl DistributionCtx {
             reset_agg_readiness_tracker_c();
         }
     }
-
 
     #[inline]
     pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, threads_witness: usize, weight: u64) -> usize {
@@ -541,11 +540,11 @@ impl DistributionCtx {
             values.to_vec()
         }
     }
-    
+
     #[cfg(distributed)]
     pub fn send_proof_to_rank(&self, proof: &Vec<u64>, rank: i32) {
-       // Send the proof directly - the vector already contains its length information
-       self.world.process_at_rank(rank).send(proof);
+        // Send the proof directly - the vector already contains its length information
+        self.world.process_at_rank(rank).send(proof);
     }
 
     #[cfg(distributed)]
@@ -553,6 +552,26 @@ impl DistributionCtx {
         // Receive the proof directly as a vector
         let (proof_buffer, _) = self.world.process_at_rank(rank).receive_vec::<u64>();
         proof_buffer
+    }
+
+    pub fn send_proof_agg_rank<F: PrimeField64>(&self, proof: &Proof<F>) {
+        self.world.process_at_rank(self.outer_agg_rank).send_with_tag(&proof.proof[..], proof.airgroup_id as i32);
+    }
+
+    pub fn check_incoming_proofs(&self, airgroup_id: usize) -> Option<Vec<u64>> {
+        #[cfg(distributed)]
+        {
+            if let Some(_status) = self.world.any_process().immediate_probe_with_tag(airgroup_id as i32) {
+                let (proof_data, _status) = self.world.any_process().receive_vec_with_tag::<u64>(airgroup_id as i32);
+                Some(proof_data)
+            } else {
+                None
+            }
+        }
+        #[cfg(not(distributed))]
+        {
+            None
+        }
     }
 
     pub fn distribute_airgroupvalues<F: PrimeField64>(
@@ -847,7 +866,7 @@ impl DistributionCtx {
                 // 2) Resize non-root buffers to the incoming size
                 if self.rank != 0 {
                     buf.resize(len as usize, 0u8);
-                } 
+                }
 
                 // 3) Broadcast bytes into place
                 root.broadcast_into(&mut buf[..]);
@@ -870,6 +889,6 @@ impl Drop for DistributionCtx {
             free_agg_readiness_tracker_c();
         }
     }
-}   
+}
 unsafe impl Send for DistributionCtx {}
 unsafe impl Sync for DistributionCtx {}

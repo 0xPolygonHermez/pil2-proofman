@@ -1306,7 +1306,7 @@ pub fn free_agg_readiness_tracker_c() {
 
 #[cfg(feature = "no_lib_link")]
 pub fn agg_is_ready_c() -> i32 {
-    unsafe { agg_is_ready() }
+    0
 }
 
 #[cfg(feature = "no_lib_link")]
