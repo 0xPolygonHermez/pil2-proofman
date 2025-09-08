@@ -330,9 +330,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances.clone()
     }
 
-    pub fn dctx_get_partition_ids(&self) -> Vec<usize> {
+    pub fn dctx_is_first_partition(&self) -> bool {
         let dctx = self.dctx.read().unwrap();
-        dctx.get_partition_ids().iter().map(|&id| id as usize).collect()
+        dctx.partition_mask[0]
     }
 
     pub fn dctx_get_my_tables(&self) -> Vec<usize> {
@@ -411,16 +411,15 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_instance(airgroup_id, air_id, threads_witness, weight)
     }
 
-    pub fn add_instance_assign_partition(
+    pub fn add_instance_assign_first_partition(
         &self,
         airgroup_id: usize,
         air_id: usize,
-        partition_id: usize,
         threads_witness: usize,
     ) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_partition(airgroup_id, air_id, partition_id, threads_witness, weight)
+        dctx.add_instance_first_partition(airgroup_id, air_id, threads_witness, weight)
     }
 
     pub fn add_instance(&self, airgroup_id: usize, air_id: usize, threads_witness: usize) -> usize {

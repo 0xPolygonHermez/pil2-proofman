@@ -52,7 +52,6 @@ pub struct DistributionCtx {
     pub aux_table_map: Vec<i32>,       // Map from aux tables to original instances
 
     // Worker-level distribution
-    pub partition_ids: Vec<i32>,      // Which partition IDs are assigned to this worker
     pub instance_partition: Vec<i32>, // Which partition each instance belongs to (>=0 assigned, -1 unassigned, -2 appended table)
     pub worker_instances: Vec<usize>, // Indexes of instances assigned to this worker
     pub partition_count: Vec<u32>,    // #instances in each partition (does not include tables)
@@ -116,7 +115,6 @@ impl DistributionCtx {
             n_tables: 0,
             aux_tables: Vec::new(),
             aux_table_map: Vec::new(),
-            partition_ids: Vec::new(),
             instance_partition: Vec::new(),
             worker_instances: Vec::new(),
             partition_count: Vec::new(),
@@ -147,7 +145,6 @@ impl DistributionCtx {
             }
         }
 
-        self.partition_ids = partition_ids.iter().map(|&id| id as i32).collect();
         self.partition_count = vec![0; n_partitions];
         self.partition_weight = vec![0; n_partitions];
     }
@@ -181,7 +178,6 @@ impl DistributionCtx {
         self.aux_table_map.clear();
 
         // Worker-level
-        self.partition_ids.clear();
         self.instance_partition.clear();
         self.worker_instances.clear();
         self.partition_count.fill(0);
@@ -269,10 +265,6 @@ impl DistributionCtx {
         } else {
             panic!("Table instances not yet assigned");
         }
-    }
-
-    pub fn get_partition_ids(&self) -> &[i32] {
-        &self.partition_ids
     }
 
     /// Get the local index of the instance within its owner process
@@ -428,11 +420,10 @@ impl DistributionCtx {
     /// add an instance and assign it to a partition/process based only in the gid
     /// the instance added is not a table
     #[inline]
-    pub fn add_instance_partition(
+    pub fn add_instance_first_partition(
         &mut self,
         airgroup_id: usize,
         air_id: usize,
-        partition_id: usize,
         threads_witness: usize,
         weight: u64,
     ) -> usize {
@@ -444,6 +435,7 @@ impl DistributionCtx {
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness, weight));
         self.n_instances += 1;
         self.n_non_tables += 1;
+        let partition_id = 0;
         self.instance_partition.push(partition_id as i32);
         self.partition_count[partition_id] += 1;
         self.partition_weight[partition_id] += weight;

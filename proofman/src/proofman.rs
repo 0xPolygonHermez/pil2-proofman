@@ -201,10 +201,6 @@ where
         self.pctx.dctx_broadcast(buf);
     }
 
-    pub fn contains_partition(&self, partition_id: i32) -> bool {
-        self.pctx.dctx_get_partition_ids().contains(&(partition_id as usize))
-    }
-
     pub fn check_setup(
         proving_key_path: PathBuf,
         aggregation: bool,
