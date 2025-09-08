@@ -1,3 +1,4 @@
+use borsh::{BorshDeserialize, BorshSerialize};
 use libloading::{Library, Symbol};
 use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
 use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
@@ -125,7 +126,7 @@ pub struct ProofMan<F: PrimeField64> {
     worker_contributions: Arc<RwLock<Vec<ContributionsInfo>>>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, BorshSerialize, BorshDeserialize)]
 pub enum ProvePhase {
     Contributions,
     Internal,
@@ -140,6 +141,30 @@ pub struct ProofInfo {
     pub worker_index: usize,
 }
 
+impl BorshSerialize for ProofInfo {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        // Handle the Option<PathBuf> properly
+        let path_string = self.input_data_path.as_ref().map(|p| p.to_string_lossy().to_string());
+
+        BorshSerialize::serialize(&path_string, writer)?;
+        BorshSerialize::serialize(&self.n_partitions, writer)?;
+        BorshSerialize::serialize(&self.partition_ids, writer)?;
+        BorshSerialize::serialize(&self.worker_index, writer)?;
+        Ok(())
+    }
+}
+
+impl BorshDeserialize for ProofInfo {
+    fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let input_data_path_string: Option<String> = BorshDeserialize::deserialize_reader(reader)?;
+        let input_data_path = input_data_path_string.map(PathBuf::from);
+        let n_partitions = usize::deserialize_reader(reader)?;
+        let partition_ids = Vec::<u32>::deserialize_reader(reader)?;
+        let worker_index = usize::deserialize_reader(reader)?;
+        Ok(Self { input_data_path, n_partitions, partition_ids, worker_index })
+    }
+}
+
 impl ProofInfo {
     pub fn new(
         input_data_path: Option<PathBuf>,
@@ -151,14 +176,14 @@ impl ProofInfo {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, BorshSerialize, BorshDeserialize)]
 pub struct ContributionsInfo {
     pub challenge: [u64; 10],
     pub airgroup_id: usize,
     pub worker_index: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, BorshSerialize, BorshDeserialize)]
 pub enum ProvePhaseInputs {
     Contributions(ProofInfo),
     Internal(Vec<ContributionsInfo>),
@@ -185,12 +210,8 @@ where
         self.mpi_ctx.barrier();
     }
 
-    pub fn get_rank(&self) -> Option<i32> {
-        if self.pctx.mpi_ctx.n_processes > 1 {
-            Some(self.mpi_ctx.rank)
-        } else {
-            None
-        }
+    pub fn rank(&self) -> Option<i32> {
+        (self.pctx.mpi_ctx.n_processes > 1).then(|| self.mpi_ctx.rank as i32)
     }
 
     pub fn get_mpi_ctx(&self) -> &MpiCtx {

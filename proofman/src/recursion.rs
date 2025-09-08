@@ -1,3 +1,4 @@
+use borsh::{BorshSerialize, BorshDeserialize};
 use libloading::{Library, Symbol};
 use fields::PrimeField64;
 use std::ffi::CString;
@@ -30,7 +31,7 @@ pub struct MaxSizes {
     pub total_const_area_aggregation: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, BorshSerialize, BorshDeserialize)]
 pub struct AggProofs {
     pub airgroup_id: u64,
     pub proof: Vec<u64>,

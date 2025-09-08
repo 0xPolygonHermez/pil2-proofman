@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 use std::sync::Arc;
 use crate::MpiCtx;
+use borsh::{BorshDeserialize, BorshSerialize};
 
 use fields::PrimeField64;
 use transcript::FFITranscript;
@@ -45,6 +46,44 @@ pub struct ProofOptions {
     pub test_mode: bool,
     pub output_dir_path: PathBuf,
     pub minimal_memory: bool,
+}
+
+impl BorshSerialize for ProofOptions {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        BorshSerialize::serialize(&self.verify_constraints, writer)?;
+        BorshSerialize::serialize(&self.aggregation, writer)?;
+        BorshSerialize::serialize(&self.final_snark, writer)?;
+        BorshSerialize::serialize(&self.verify_proofs, writer)?;
+        BorshSerialize::serialize(&self.save_proofs, writer)?;
+        BorshSerialize::serialize(&self.test_mode, writer)?;
+        BorshSerialize::serialize(&self.output_dir_path.to_string_lossy().to_string(), writer)?;
+        BorshSerialize::serialize(&self.minimal_memory, writer)?;
+        Ok(())
+    }
+}
+
+impl BorshDeserialize for ProofOptions {
+    fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let verify_constraints = bool::deserialize_reader(reader)?;
+        let aggregation = bool::deserialize_reader(reader)?;
+        let final_snark = bool::deserialize_reader(reader)?;
+        let verify_proofs = bool::deserialize_reader(reader)?;
+        let save_proofs = bool::deserialize_reader(reader)?;
+        let test_mode = bool::deserialize_reader(reader)?;
+        let output_dir_path_str = String::deserialize_reader(reader)?;
+        let minimal_memory = bool::deserialize_reader(reader)?;
+
+        Ok(Self {
+            verify_constraints,
+            aggregation,
+            final_snark,
+            verify_proofs,
+            save_proofs,
+            test_mode,
+            output_dir_path: PathBuf::from(output_dir_path_str),
+            minimal_memory,
+        })
+    }
 }
 
 #[derive(Clone)]
