@@ -191,7 +191,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             let is_virtual = hint_data.is_virtual;
             let virtual_id = if is_virtual {
                 // Get the virtual table ID
-                virtual_table.get_id(hint_data.opid as usize)
+                virtual_table.get_global_id(hint_data.opid as usize)
             } else {
                 0
             };
@@ -306,11 +306,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let row = U8Air::get_global_row(value as u8);
 
                     // Increment the virtual row
-                    self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_row(
-                        range_item.virtual_id,
-                        row,
-                        multiplicity,
-                    );
+                    self.virtual_table.inc_virtual_row(range_item.virtual_id, row, multiplicity);
                 } else {
                     self.u8air.as_ref().unwrap().update_input(value as u8, multiplicity);
                 }
@@ -323,11 +319,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let row = U16Air::get_global_row(value as u16);
 
                     // Increment the virtual row
-                    self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_row(
-                        range_item.virtual_id,
-                        row,
-                        multiplicity,
-                    );
+                    self.virtual_table.inc_virtual_row(range_item.virtual_id, row, multiplicity);
                 } else {
                     self.u16air.as_ref().unwrap().update_input(value as u16, multiplicity);
                 }
@@ -343,11 +335,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let rows = vec![U8Air::get_global_row(lower_value), U8Air::get_global_row(upper_value)];
 
                     // Increment the virtual row
-                    self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_rows_same_mul(
-                        range_item.virtual_id,
-                        &rows,
-                        multiplicity,
-                    );
+                    self.virtual_table.inc_virtual_rows_same_mul(range_item.virtual_id, &rows, multiplicity);
                 } else {
                     let u8_air = self.u8air.as_ref().unwrap();
                     u8_air.update_input(lower_value, multiplicity);
@@ -365,11 +353,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let rows = vec![U16Air::get_global_row(lower_value), U16Air::get_global_row(upper_value)];
 
                     // Increment the virtual rows
-                    self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_rows_same_mul(
-                        range_item.virtual_id,
-                        &rows,
-                        multiplicity,
-                    );
+                    self.virtual_table.inc_virtual_rows_same_mul(range_item.virtual_id, &rows, multiplicity);
                 } else {
                     let u16_air = self.u16air.as_ref().unwrap();
                     u16_air.update_input(lower_value, multiplicity);
@@ -382,11 +366,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let row = SpecifiedRanges::get_global_row(range_item.data.min, value);
 
                     // Increment the virtual rows
-                    self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_row(
-                        range_item.virtual_id,
-                        row,
-                        multiplicity,
-                    );
+                    self.virtual_table.inc_virtual_row(range_item.virtual_id, row, multiplicity);
                 } else {
                     self.specified_ranges_air.as_ref().unwrap().update_input(id, value, multiplicity);
                 }
@@ -415,11 +395,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let rows = U8Air::get_global_rows(&vals);
 
                     // Increment the virtual rows
-                    self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_rows(
-                        range_item.virtual_id,
-                        &rows,
-                        &values,
-                    );
+                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, &values);
                 } else {
                     self.u8air.as_ref().unwrap().update_inputs(values);
                 }
@@ -433,11 +409,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let rows = U16Air::get_global_rows(&vals);
 
                     // Increment the virtual rows
-                    self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_rows(
-                        range_item.virtual_id,
-                        &rows,
-                        &values,
-                    );
+                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, &values);
                 } else {
                     self.u16air.as_ref().unwrap().update_inputs(values);
                 }
@@ -449,11 +421,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let rows = SpecifiedRanges::get_global_rows(range_item.data.min, &vals);
 
                     // Increment the virtual rows
-                    self.virtual_table.virtual_table_air.as_ref().unwrap().inc_virtual_rows(
-                        range_item.virtual_id,
-                        &rows,
-                        &values,
-                    );
+                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, &values);
                 } else {
                     self.specified_ranges_air.as_ref().unwrap().update_inputs(id, values);
                 }
