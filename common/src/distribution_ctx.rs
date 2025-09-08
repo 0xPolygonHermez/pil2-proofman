@@ -539,6 +539,19 @@ impl DistributionCtx {
             values.to_vec()
         }
     }
+    
+    #[cfg(distributed)]
+    pub fn send_proof_to_rank(&self, proof: &Vec<u64>, rank: i32) {
+       // Send the proof directly - the vector already contains its length information
+       self.world.process_at_rank(rank).send(proof);
+    }
+
+    #[cfg(distributed)]
+    pub fn recv_proof_from_rank(&self, rank: i32) -> Vec<u64> {
+        // Receive the proof directly as a vector
+        let (proof_buffer, _) = self.world.process_at_rank(rank).receive_vec::<u64>();
+        proof_buffer
+    }
 
     pub fn distribute_airgroupvalues<F: PrimeField64>(
         &self,
