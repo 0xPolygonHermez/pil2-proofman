@@ -330,6 +330,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances.clone()
     }
 
+    pub fn dctx_get_partition_ids(&self) -> Vec<usize> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.get_partition_ids().iter().map(|&id| id as usize).collect()
+    }
+
     pub fn dctx_get_my_tables(&self) -> Vec<usize> {
         let dctx = self.dctx.read().unwrap();
         dctx.instances

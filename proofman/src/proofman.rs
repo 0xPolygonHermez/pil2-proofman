@@ -187,7 +187,7 @@ where
 
     pub fn get_rank(&self) -> Option<i32> {
         if self.pctx.mpi_ctx.n_processes > 1 {
-            Some(self.mpi_ctx.rank as i32)
+            Some(self.mpi_ctx.rank)
         } else {
             None
         }
@@ -199,6 +199,10 @@ where
 
     pub fn mpi_broadcast(&self, buf: &mut Vec<u8>) {
         self.pctx.dctx_broadcast(buf);
+    }
+
+    pub fn contains_partition(&self, partition_id: i32) -> bool {
+        self.pctx.dctx_get_partition_ids().contains(&(partition_id as usize))
     }
 
     pub fn check_setup(
@@ -863,8 +867,9 @@ where
             true => n_gpus,
             false => 1,
         };
-        let n_streams = (n_streams_per_gpu + n_recursive_streams_per_gpu) * n_proof_threads;
-        let streams = Arc::new(Mutex::new(vec![None; n_streams as usize]));
+
+        let n_streams = ((n_streams_per_gpu + n_recursive_streams_per_gpu) * n_proof_threads) as usize;
+        let streams = Arc::new(Mutex::new(vec![None; n_streams]));
 
         let (aux_trace, const_pols, const_tree) = if cfg!(feature = "gpu") {
             (Arc::new(Vec::new()), Arc::new(Vec::new()), Arc::new(Vec::new()))
@@ -875,13 +880,6 @@ where
                 Arc::new(create_buffer_fast(sctx.max_const_tree_size.max(setups_vadcop.max_const_tree_size))),
             )
         };
-
-        let n_proof_threads = match cfg!(feature = "gpu") {
-            true => n_gpus,
-            false => 1,
-        };
-
-        let n_streams = ((n_streams_per_gpu + n_recursive_streams_per_gpu) * n_proof_threads) as usize;
 
         let max_num_threads = configured_num_threads(mpi_ctx.node_n_processes as usize);
 
@@ -1251,11 +1249,10 @@ where
 
         let vec_streams: Vec<(u64, u64)> = {
             let mut guard = self.streams.lock().unwrap();
-            let taken = std::mem::take(&mut *guard);
 
             let mut result = Vec::new();
-            for (idx, maybe_id) in taken.into_iter().enumerate() {
-                if let Some(id) = maybe_id {
+            for (idx, maybe_id) in guard.iter_mut().enumerate() {
+                if let Some(id) = maybe_id.take() {
                     result.push((idx as u64, id));
                 }
             }
@@ -1696,12 +1693,10 @@ where
                         Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, None, proof.proof.clone());
                     self.recursive2_proofs[proof.airgroup_id as usize].write().unwrap().push(agg_proof);
                 }
-                self.outer_aggregations(&options);
                 return Ok(ProvePhaseResult::Internal(agg_proofs));
             }
 
             if self.mpi_ctx.rank == 0 {
-                self.outer_aggregations(&options);
                 let vadcop_final = self.receive_aggregated_proofs(vec![], true, true, &options);
 
                 vadcop_final_proof = Some(vadcop_final.unwrap().into_iter().next().unwrap().proof);
@@ -1800,6 +1795,10 @@ where
         final_proof: bool,
         options: &ProofOptions,
     ) -> Option<Vec<AggProofs>> {
+        if !agg_proofs.is_empty() && self.outer_aggregations_handle.lock().unwrap().is_none() {
+            self.outer_aggregations(options);
+        }
+
         for proof in agg_proofs {
             let proof_acc_challenge = get_accumulated_challenge(&proof.proof);
             let mut stored_contributions = Vec::new();
@@ -1853,10 +1852,22 @@ where
             self.total_outer_agg_proofs
                 .wait_until_zero_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
             get_stream_proofs_c(self.d_buffers.get_ptr());
-            self.outer_agg_proofs_finished.store(true, Ordering::SeqCst);
-            clear_proof_done_callback_c();
-            for _ in 0..self.n_streams {
-                self.recursive_tx.send((u64::MAX - 1, "Recursive2".to_string())).unwrap();
+
+            if self.outer_aggregations_handle.lock().unwrap().is_some() {
+                self.outer_agg_proofs_finished.store(true, Ordering::SeqCst);
+                clear_proof_done_callback_c();
+                for _ in 0..self.n_streams {
+                    self.recursive_tx.send((u64::MAX - 1, "Recursive2".to_string())).unwrap();
+                }
+
+                let handles = self.handle_recursives.lock().unwrap().drain(..).collect::<Vec<_>>();
+                for handle in handles {
+                    handle.join().unwrap();
+                }
+                let mut outer_aggregations_handle = self.outer_aggregations_handle.lock().unwrap();
+                if let Some(handle) = outer_aggregations_handle.take() {
+                    handle.join().unwrap();
+                }
             }
 
             let agg_proofs_data: Vec<AggProofs> = (0..self.pctx.global_info.air_groups.len())

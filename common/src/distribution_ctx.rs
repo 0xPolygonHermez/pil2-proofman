@@ -52,6 +52,7 @@ pub struct DistributionCtx {
     pub aux_table_map: Vec<i32>,       // Map from aux tables to original instances
 
     // Worker-level distribution
+    pub partition_ids: Vec<i32>,      // Which partition IDs are assigned to this worker
     pub instance_partition: Vec<i32>, // Which partition each instance belongs to (>=0 assigned, -1 unassigned, -2 appended table)
     pub worker_instances: Vec<usize>, // Indexes of instances assigned to this worker
     pub partition_count: Vec<u32>,    // #instances in each partition (does not include tables)
@@ -115,6 +116,7 @@ impl DistributionCtx {
             n_tables: 0,
             aux_tables: Vec::new(),
             aux_table_map: Vec::new(),
+            partition_ids: Vec::new(),
             instance_partition: Vec::new(),
             worker_instances: Vec::new(),
             partition_count: Vec::new(),
@@ -137,14 +139,15 @@ impl DistributionCtx {
         self.n_partitions = n_partitions;
         self.partition_mask = vec![false; n_partitions];
 
-        for id in partition_ids {
-            if id < n_partitions as u32 {
-                self.partition_mask[id as usize] = true;
+        for id in &partition_ids {
+            if *id < n_partitions as u32 {
+                self.partition_mask[*id as usize] = true;
             } else {
                 panic!("Partition ID {} exceeds total partitions {}", id, n_partitions);
             }
         }
 
+        self.partition_ids = partition_ids.iter().map(|&id| id as i32).collect();
         self.partition_count = vec![0; n_partitions];
         self.partition_weight = vec![0; n_partitions];
     }
@@ -178,6 +181,7 @@ impl DistributionCtx {
         self.aux_table_map.clear();
 
         // Worker-level
+        self.partition_ids.clear();
         self.instance_partition.clear();
         self.worker_instances.clear();
         self.partition_count.fill(0);
@@ -265,6 +269,10 @@ impl DistributionCtx {
         } else {
             panic!("Table instances not yet assigned");
         }
+    }
+
+    pub fn get_partition_ids(&self) -> &[i32] {
+        &self.partition_ids
     }
 
     /// Get the local index of the instance within its owner process
