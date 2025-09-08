@@ -25,115 +25,134 @@ ProofDoneCallback proof_done_callback = nullptr;
 MPI_Win win;
 int win_buff = -1;
 
-extern "C" {
-    void initialize_agg_readiness_tracker() {
-        
-        int initialized = 0;
-        MPI_Initialized(&initialized);
-        if (!initialized) {
-            printf("Error: MPI not initialized when call_mpi was called\n");
-            return;
-        }
-        
-        int rank = 0;
-        int size = 1;
-        
-        // Note! we use MPI_COMM_WORLD directly
-        int err = MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        err = MPI_Comm_size(MPI_COMM_WORLD, &size);
-        err = MPI_Barrier(MPI_COMM_WORLD);
+void initialize_agg_readiness_tracker() {
+    
+    int initialized = 0;
+    MPI_Initialized(&initialized);
+    if (!initialized) {
+        printf("Error: MPI not initialized when call_mpi was called\n");
+        return;
+    }
+    
+    int rank = 0;
+    int size = 1;
+    
+    // Note! we use MPI_COMM_WORLD directly
+    int err = MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    err = MPI_Comm_size(MPI_COMM_WORLD, &size);
+    err = MPI_Barrier(MPI_COMM_WORLD);
 
-        if(size == 1) return;
+    if(size == 1) return;
 
-        // Create MPI window
-        // For rank 0: Create a window exposing win_buff (initialized to -1)
-        // For other ranks: Create a window without exposing memory (NULL base and 0 size)
-        if(rank == 0) {
-            // Make sure win_buff is initialized to -1 before creating the window
-            win_buff = -1;
-            err = MPI_Win_create(&win_buff, sizeof(int), sizeof(int),
+    // Create MPI window
+    // For rank 0: Create a window exposing win_buff (initialized to -1)
+    // For other ranks: Create a window without exposing memory (NULL base and 0 size)
+    if(rank == 0) {
+        // Make sure win_buff is initialized to -1 before creating the window
+        win_buff = -1;
+        err = MPI_Win_create(&win_buff, sizeof(int), sizeof(int),
+                        MPI_INFO_NULL, MPI_COMM_WORLD, &win);
+    } else {
+        err = MPI_Win_create(NULL, 0, sizeof(int),
                             MPI_INFO_NULL, MPI_COMM_WORLD, &win);
-        } else {
-            err = MPI_Win_create(NULL, 0, sizeof(int),
-                                MPI_INFO_NULL, MPI_COMM_WORLD, &win);
-        }
-        
-        if (err != MPI_SUCCESS) {
-            char error_string[MPI_MAX_ERROR_STRING];
-            int error_string_length;
-            MPI_Error_string(err, error_string, &error_string_length);
-            printf("Rank %d: MPI_Win_create failed: %s\n", rank, error_string);
-            return;
-        }
+    }
+    
+    if (err != MPI_SUCCESS) {
+        char error_string[MPI_MAX_ERROR_STRING];
+        int error_string_length;
+        MPI_Error_string(err, error_string, &error_string_length);
+        printf("Rank %d: MPI_Win_create failed: %s\n", rank, error_string);
+        return;
+    }
 
+}
+
+
+void free_agg_readiness_tracker(){
+    int initialized = 0;
+    MPI_Initialized(&initialized);
+    if (!initialized) {
+        printf("Error: MPI not initialized when free_agg_readiness_tracker was called\n");
+        return;
+    }
+
+    int rank = 0;
+    int size = 1;
+    
+    // Note! we use MPI_COMM_WORLD directly
+    int err = MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    err = MPI_Comm_size(MPI_COMM_WORLD, &size);
+    err = MPI_Barrier(MPI_COMM_WORLD);
+    if(size == 1) return;
+
+    // Free the window
+    err = MPI_Win_free(&win);
+    if (err != MPI_SUCCESS) {
+        char error_string[MPI_MAX_ERROR_STRING];
+        int error_string_length;
+        MPI_Error_string(err, error_string, &error_string_length);
+        printf("Rank %d: MPI_Win_free failed: %s\n", rank, error_string);
+        return;
     }
 }
 
-extern "C" {
-    void free_agg_readiness_tracker(){
-        int initialized = 0;
-        MPI_Initialized(&initialized);
-        if (!initialized) {
-            printf("Error: MPI not initialized when free_agg_readiness_tracker was called\n");
-            return;
-        }
 
-        int rank = 0;
-        int size = 1;
-        
-        // Note! we use MPI_COMM_WORLD directly
-        int err = MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        err = MPI_Comm_size(MPI_COMM_WORLD, &size);
-        err = MPI_Barrier(MPI_COMM_WORLD);
-        if(size == 1) return;
-
-        // Free the window
-        err = MPI_Win_free(&win);
-        if (err != MPI_SUCCESS) {
-            char error_string[MPI_MAX_ERROR_STRING];
-            int error_string_length;
-            MPI_Error_string(err, error_string, &error_string_length);
-            printf("Rank %d: MPI_Win_free failed: %s\n", rank, error_string);
-            return;
-        }
+int agg_is_ready() {
+    int initialized = 0;
+    MPI_Initialized(&initialized);
+    if (!initialized) {
+        printf("Error: MPI not initialized when agg_is_ready was called\n");
+        return -1;
     }
-}
 
-extern "C" {
-    int agg_is_ready() {
-        int initialized = 0;
-        MPI_Initialized(&initialized);
-        if (!initialized) {
-            printf("Error: MPI not initialized when agg_is_ready was called\n");
-            return -1;
-        }
+    int rank = 0;
+    int size = 1;
+    
+    // Note! we use MPI_COMM_WORLD directly
+    int err = MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    err = MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-        int rank = 0;
-        int size = 1;
-        
-        // Note! we use MPI_COMM_WORLD directly
-        int err = MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        err = MPI_Comm_size(MPI_COMM_WORLD, &size);
+    if(size == 1) return 0;
 
-        if(size == 1) return 0;
-
-        // lock window on rank 0 (which contains the data we want to access)
-        err = MPI_Win_lock(MPI_LOCK_EXCLUSIVE, 0, 0, win);
+    // lock window on rank 0 (which contains the data we want to access)
+    err = MPI_Win_lock(MPI_LOCK_EXCLUSIVE, 0, 0, win);
+    if (err != MPI_SUCCESS) {
+        char error_string[MPI_MAX_ERROR_STRING];
+        int error_string_length;
+        MPI_Error_string(err, error_string, &error_string_length);
+        printf("Rank %d: MPI_Win_lock failed: %s\n", rank, error_string);
+        return -1;
+    }
+    // get the value in the window
+    int value = -1;
+    err = MPI_Get(&value, 1, MPI_INT, 0, 0, 1, MPI_INT, win);
+    if (err != MPI_SUCCESS) {
+        char error_string[MPI_MAX_ERROR_STRING];
+        int error_string_length;
+        MPI_Error_string(err, error_string, &error_string_length);
+        printf("Rank %d: MPI_Get failed: %s\n", rank, error_string);
+        MPI_Win_unlock(0, win);
+        return -1;
+    }
+    //flush
+    err = MPI_Win_flush(0, win);
+    if (err != MPI_SUCCESS) {
+        char error_string[MPI_MAX_ERROR_STRING];
+        int error_string_length;
+        MPI_Error_string(err, error_string, &error_string_length);
+        printf("Rank %d: MPI_Win_flush failed: %s\n", rank, error_string);
+        MPI_Win_unlock(0, win);
+        return -1;
+    }
+    // if value is -1 set my rank in the window
+    if(value == -1) {
+        value = rank;
+        err = MPI_Put(&value, 1, MPI_INT, 0, 0, 1, MPI_INT, win);
         if (err != MPI_SUCCESS) {
             char error_string[MPI_MAX_ERROR_STRING];
             int error_string_length;
             MPI_Error_string(err, error_string, &error_string_length);
-            printf("Rank %d: MPI_Win_lock failed: %s\n", rank, error_string);
-            return -1;
-        }
-        // get the value in the window
-        int value = -1;
-        err = MPI_Get(&value, 1, MPI_INT, 0, 0, 1, MPI_INT, win);
-        if (err != MPI_SUCCESS) {
-            char error_string[MPI_MAX_ERROR_STRING];
-            int error_string_length;
-            MPI_Error_string(err, error_string, &error_string_length);
-            printf("Rank %d: MPI_Get failed: %s\n", rank, error_string);
+            printf("Rank %d: MPI_Put failed: %s\n", rank, error_string);
             MPI_Win_unlock(0, win);
             return -1;
         }
@@ -147,42 +166,20 @@ extern "C" {
             MPI_Win_unlock(0, win);
             return -1;
         }
-        // if value is -1 set my rank in the window
-        if(value == -1) {
-            value = rank;
-            err = MPI_Put(&value, 1, MPI_INT, 0, 0, 1, MPI_INT, win);
-            if (err != MPI_SUCCESS) {
-                char error_string[MPI_MAX_ERROR_STRING];
-                int error_string_length;
-                MPI_Error_string(err, error_string, &error_string_length);
-                printf("Rank %d: MPI_Put failed: %s\n", rank, error_string);
-                MPI_Win_unlock(0, win);
-                return -1;
-            }
-            //flush
-            err = MPI_Win_flush(0, win);
-            if (err != MPI_SUCCESS) {
-                char error_string[MPI_MAX_ERROR_STRING];
-                int error_string_length;
-                MPI_Error_string(err, error_string, &error_string_length);
-                printf("Rank %d: MPI_Win_flush failed: %s\n", rank, error_string);
-                MPI_Win_unlock(0, win);
-                return -1;
-            }
-        }
-        // unlock window
-        err = MPI_Win_unlock(0, win);
-        if (err != MPI_SUCCESS) {
-            char error_string[MPI_MAX_ERROR_STRING];
-            int error_string_length;
-            MPI_Error_string(err, error_string, &error_string_length);
-            printf("Rank %d: MPI_Win_unlock failed: %s\n", rank, error_string);
-            return -1;
-        }
-        return value;
-
     }
+    // unlock window
+    err = MPI_Win_unlock(0, win);
+    if (err != MPI_SUCCESS) {
+        char error_string[MPI_MAX_ERROR_STRING];
+        int error_string_length;
+        MPI_Error_string(err, error_string, &error_string_length);
+        printf("Rank %d: MPI_Win_unlock failed: %s\n", rank, error_string);
+        return -1;
+    }
+    return value;
+
 }
+
 
 void reset_agg_readiness_tracker(){
     int initialized = 0;
