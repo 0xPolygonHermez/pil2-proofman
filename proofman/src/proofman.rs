@@ -1727,7 +1727,7 @@ where
         timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
         self.pctx.dctx_process_ready_for_outer_agg();
         let outer_rank = self.pctx.dctx_get_outer_agg_rank() as usize;
-        println!("Outer aggregation rank: {}", outer_rank);
+        tracing::info!("    Outer aggregation rank: {}", outer_rank);
 
         timer_stop_and_log_info!(GENERATING_PROOFS);
 

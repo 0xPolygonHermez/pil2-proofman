@@ -13,7 +13,9 @@
 #include "fixed_cols.hpp"
 #include "final_snark_proof.hpp"
 #include "starks_api_internal.hpp"
+#ifdef __USE_MPI_RMA__
 #include "mpi.h"
+#endif
 
 
 #include <nlohmann/json.hpp>
@@ -22,15 +24,17 @@ using json = nlohmann::json;
 using namespace CPlusPlusLogging;
 
 ProofDoneCallback proof_done_callback = nullptr;
+#ifdef __USE_MPI_RMA__
 MPI_Win win;
 int win_buff = -1;
+#endif
 
 void initialize_agg_readiness_tracker() {
-    
+#ifdef __USE_MPI_RMA__    
     int initialized = 0;
     MPI_Initialized(&initialized);
     if (!initialized) {
-        printf("Error: MPI not initialized when call_mpi was called\n");
+        printf("Error: MPI not initialized when initialize_agg_readiness_tracker was called\n");
         return;
     }
     
@@ -64,11 +68,12 @@ void initialize_agg_readiness_tracker() {
         printf("Rank %d: MPI_Win_create failed: %s\n", rank, error_string);
         return;
     }
-
+#endif
 }
 
 
 void free_agg_readiness_tracker(){
+#ifdef __USE_MPI_RMA__
     int initialized = 0;
     MPI_Initialized(&initialized);
     if (!initialized) {
@@ -94,10 +99,12 @@ void free_agg_readiness_tracker(){
         printf("Rank %d: MPI_Win_free failed: %s\n", rank, error_string);
         return;
     }
+#endif
 }
 
 
 int agg_is_ready() {
+#ifdef __USE_MPI_RMA__
     int initialized = 0;
     MPI_Initialized(&initialized);
     if (!initialized) {
@@ -177,11 +184,13 @@ int agg_is_ready() {
         return -1;
     }
     return value;
-
+#endif
+    return 0;
 }
 
 
 void reset_agg_readiness_tracker(){
+#ifdef __USE_MPI_RMA__
     int initialized = 0;
     MPI_Initialized(&initialized);
     if (!initialized) {
@@ -235,6 +244,7 @@ void reset_agg_readiness_tracker(){
         MPI_Error_string(err, error_string, &error_string_length);
         printf("Rank %d: MPI_Win_unlock failed: %s\n", rank, error_string);
     }
+#endif
 }
 
 void save_challenges(void *pGlobalChallenge, char* globalInfoFile, char *fileDir) {
