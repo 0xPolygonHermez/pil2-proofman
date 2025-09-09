@@ -553,7 +553,6 @@ impl DistributionCtx {
         let (proof_buffer, _) = self.world.process_at_rank(rank).receive_vec::<u64>();
         proof_buffer
     }
-    
     #[cfg(distributed)]
     pub fn send_proof_agg_rank<F: PrimeField64>(&self, proof: &Proof<F>) {
         self.world.process_at_rank(self.outer_agg_rank).send_with_tag(&proof.proof[..], proof.airgroup_id as i32);
