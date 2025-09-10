@@ -3,7 +3,7 @@
 #include "expressions_ctx.hpp"
 
 #define DEBUG 0
-#define DEBUG_ROW 161699
+#define DEBUG_ROW 0
 
 #define NROWS_PACK 128
 class ExpressionsPack : public ExpressionsCtx {

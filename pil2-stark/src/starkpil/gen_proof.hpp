@@ -141,7 +141,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     }
 
     TimerStart(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
-    starks.calculateQuotientPolynomial(params, expressionsCtx);
+    starks.calculateQuotientPolynomialOut(params, expressionsCtx);
     TimerStopAndLog(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);

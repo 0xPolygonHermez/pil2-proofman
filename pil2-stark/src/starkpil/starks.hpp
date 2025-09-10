@@ -93,6 +93,7 @@ public:
     void computeQ(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, NTT_Goldilocks &nttExtended, Goldilocks::Element* pBuffHelper = nullptr);
     
     void calculateImPolsExpressions(uint64_t step, StepsParams& params, ExpressionsCtx& expressionsCtx);
+    void calculateQuotientPolynomialOut(StepsParams& params, ExpressionsCtx& expressionsCtx);
     void calculateQuotientPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
     void calculateFRIPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
 
@@ -411,8 +412,61 @@ void Starks<ElementType>::calculateImPolsExpressions(uint64_t step, StepsParams 
 }
 
 template <typename ElementType>
+void Starks<ElementType>::calculateQuotientPolynomialOut(StepsParams &params, ExpressionsCtx &expressionsCtx) {
+
+    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+
+    Goldilocks::Element *tmpQ3;
+    Goldilocks::Element *tmpQ1;
+    tmpQ3 = new Goldilocks::Element[3 * NExtended];
+    tmpQ1 = new Goldilocks::Element[NExtended];
+
+    Goldilocks::Element *Q = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]];
+    memset(Q, 0, 3 * NExtended * sizeof(Goldilocks::Element));
+
+    Goldilocks::Element *zi = expressionsCtx.proverHelpers->zi;
+
+    Goldilocks3::Element zi_challenge = {params.challenges[2*FIELD_EXTENSION], params.challenges[2*FIELD_EXTENSION + 1], params.challenges[2*FIELD_EXTENSION + 2]};
+    Goldilocks3::Element acc_challenge ={Goldilocks::one(), Goldilocks::zero(), Goldilocks::zero()};
+
+    //for (uint64_t i = 0; i < setupCtx.expressionsBin.constraintsInfoDebug.size(); i++) {
+    for (int i = setupCtx.expressionsBin.constraintsInfoDebug.size()-1; i >=0; i--) {
+        memset(tmpQ3, 0, 3 * NExtended * sizeof(Goldilocks::Element));
+        memset(tmpQ1, 0, NExtended * sizeof(Goldilocks::Element));
+        uint64_t destDim = setupCtx.expressionsBin.constraintsInfoDebug[i].destDim;
+
+        //calculate constraint
+        Goldilocks::Element* opQ = destDim == 1 ? tmpQ1 : tmpQ3;
+        Dest constraintDest(opQ, NExtended, 0, i);
+        constraintDest.addParams(i, destDim);
+        expressionsCtx.calculateExpressions(params, constraintDest, NExtended, true, false, true);
+        // add contribution
+        for(uint64_t j = 0; j <  NExtended; j++) {
+            //tmQ*=challenge
+            if (destDim == 1) {
+                Goldilocks3::mul((Goldilocks3::Element &)(tmpQ3[j * FIELD_EXTENSION]), (Goldilocks3::Element &)acc_challenge, tmpQ1[j]);
+            } else {
+                Goldilocks3::mul((Goldilocks3::Element &)(tmpQ3[j * FIELD_EXTENSION]), (Goldilocks3::Element &)acc_challenge, (Goldilocks3::Element &)(tmpQ3[j * FIELD_EXTENSION]));
+            }
+            
+            //Q+=tmpQ3
+            Goldilocks3::add((Goldilocks3::Element &)(Q[j * FIELD_EXTENSION]), (Goldilocks3::Element &)(Q[j * FIELD_EXTENSION]), (Goldilocks3::Element &)(tmpQ3[j * FIELD_EXTENSION]));
+        }
+        //challenge*=initial_challenge
+        Goldilocks3::mul(acc_challenge, acc_challenge, zi_challenge); 
+    }
+
+    for(uint64_t i = 0; i <  NExtended; i++) {
+        //Q *= invZ
+        Goldilocks3::mul((Goldilocks3::Element &)(Q[i * FIELD_EXTENSION]), (Goldilocks3::Element &)(Q[i * FIELD_EXTENSION]), zi[i]);
+    }
+    delete[] tmpQ3;
+    delete[] tmpQ1;
+}
+
+template <typename ElementType>
 void Starks<ElementType>::calculateQuotientPolynomial(StepsParams &params, ExpressionsCtx &expressionsCtx) {
-    expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId);
+    expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId, false, false, true);
 }
 
 template <typename ElementType>

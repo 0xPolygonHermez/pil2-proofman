@@ -211,7 +211,7 @@ public:
     
     virtual void calculateExpressions(StepsParams& params, Dest &dest, uint64_t domainSize, bool domainExtended, bool compilationTime = false, bool verify_constraints = false, bool debug = false) {};
  
-    void calculateExpression(StepsParams& params, Goldilocks::Element* dest, uint64_t expressionId, bool inverse = false, bool compilation_time = false) {
+    void calculateExpression(StepsParams& params, Goldilocks::Element* dest, uint64_t expressionId, bool inverse = false, bool compilation_time = false, bool debug = false) {
         uint64_t domainSize;
         bool domainExtended;
         if (compilation_time) {
@@ -227,7 +227,7 @@ public:
         }
         Dest destStruct(dest, domainSize, 0, expressionId);
         destStruct.addParams(expressionId, setupCtx.expressionsBin.expressionsInfo[expressionId].destDim, inverse);
-        calculateExpressions(params, destStruct, domainSize, domainExtended, compilation_time);
+        calculateExpressions(params, destStruct, domainSize, domainExtended, compilation_time, false, debug);
     }
 
     void setXi(Goldilocks::Element *xi) {
