@@ -82,7 +82,7 @@ extern "C" {
     uint64_t get_n_constraints(void *pSetupCtx);
     void get_constraints_lines_sizes(void *pSetupCtx, uint64_t *constraintsLinesSizes);
     void get_constraints_lines(void *pSetupCtx, uint8_t **constraintsLines);
-    void verify_constraints(void *pSetupCtx, void *stepsParams, void *constraintsInfo);
+    void verify_constraints(void *pSetupCtx, void *stepsParams, void *constraintsInfo, void *d_buffers);
 
     // Global constraints
     // =================================================================================

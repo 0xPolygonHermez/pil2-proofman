@@ -269,11 +269,12 @@ extern "C" {
     pub fn get_constraints_lines_sizes(pSetupCtx: *mut ::std::os::raw::c_void, constraintsLinesSizes: *mut u64);
     
     pub fn get_constraints_lines(pSetupCtx: *mut ::std::os::raw::c_void, constraintsLines: *mut *mut u8);
-    
+
     pub fn verify_constraints(
         pSetupCtx: *mut ::std::os::raw::c_void,
         stepsParams: *mut ::std::os::raw::c_void,
         constraintsInfo: *mut ::std::os::raw::c_void,
+        d_buffers: *mut ::std::os::raw::c_void,
     );
 
     // Global Constraints

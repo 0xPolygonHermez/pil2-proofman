@@ -636,9 +636,14 @@ pub fn get_constraints_lines_c(p_setup: *mut c_void, constraints_lines: *mut *mu
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn verify_constraints_c(p_setup: *mut c_void, p_steps_params: *mut u8, constraints_info: *mut c_void) {
+pub fn verify_constraints_c(
+    p_setup: *mut c_void,
+    p_steps_params: *mut u8,
+    constraints_info: *mut c_void,
+    d_buffers: *mut c_void,
+) {
     unsafe {
-        verify_constraints(p_setup, p_steps_params as *mut std::os::raw::c_void, constraints_info);
+        verify_constraints(p_setup, p_steps_params as *mut std::os::raw::c_void, constraints_info, d_buffers);
     }
 }
 
@@ -1630,7 +1635,12 @@ pub fn get_constraints_lines_c(_p_setup: *mut c_void, _constraints_lines: *mut *
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn verify_constraints_c(_p_setup: *mut c_void, _p_steps_params: *mut u8, _constraints_info: *mut c_void) {
+pub fn verify_constraints_c(
+    _p_setup: *mut c_void,
+    _p_steps_params: *mut u8,
+    _constraints_info: *mut c_void,
+    _d_buffers: *mut c_void,
+) {
     trace!("··· {}", "verify_constraints: This is a mock call because there is no linked library");
 }
 

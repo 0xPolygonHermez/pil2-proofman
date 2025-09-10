@@ -116,7 +116,7 @@ impl<F: PrimeField64> Setup<F> {
         let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
         let expressions_bin_path = setup_path.display().to_string() + ".bin";
 
-        let gpu = cfg!(feature = "gpu");
+        let gpu = cfg!(feature = "gpu") && !verify_constraints;
 
         let (
             stark_info,

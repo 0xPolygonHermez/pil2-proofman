@@ -572,7 +572,6 @@ where
         let my_instances = self.pctx.dctx_get_my_instances();
         let airgroup_values_air_instances = Mutex::new(vec![Vec::new(); my_instances.len()]);
         let valid_constraints = AtomicBool::new(true);
-        let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
         let max_num_threads = configured_num_threads(self.pctx.dctx_get_node_n_processes());
 
@@ -587,11 +586,6 @@ where
 
             self.wcm.pre_calculate_witness(1, &[instance_id], max_num_threads, self.memory_handler.as_ref());
             self.wcm.calculate_witness(1, &[instance_id], max_num_threads, self.memory_handler.as_ref());
-
-            // Join the previous thread (if any) before starting a new one
-            if let Some(handle) = thread_handle.take() {
-                handle.join().unwrap();
-            }
 
             self.verify_proof_constraints_stage(
                 &valid_constraints,
@@ -618,11 +612,6 @@ where
             if skip || !self.pctx.dctx_is_my_instance(*instance_id) {
                 continue;
             };
-
-            // Join the previous thread (if any) before starting a new one
-            if let Some(handle) = thread_handle.take() {
-                handle.join().unwrap();
-            }
 
             let instance_info = &instances[*instance_id];
             let (airgroup_id, air_id) = (instance_info.airgroup_id, instance_info.air_id);
@@ -689,8 +678,13 @@ where
 
         self.wcm.debug(&[instance_id], debug_info);
 
-        let valid =
-            verify_constraints_proof(&self.pctx, &self.sctx, instance_id, debug_info.n_print_constraints as u64);
+        let valid = verify_constraints_proof(
+            &self.pctx,
+            &self.sctx,
+            &self.d_buffers,
+            instance_id,
+            debug_info.n_print_constraints as u64,
+        );
         if !valid {
             valid_constraints.fetch_and(valid, Ordering::Relaxed);
         }
@@ -802,7 +796,7 @@ where
         timer_start_info!(INIT_PROOFMAN);
 
         let (d_buffers, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
-            Self::prepare_gpu(&pctx, &sctx, &setups_vadcop, aggregation, &gpu_params);
+            Self::prepare_gpu(&pctx, &sctx, &setups_vadcop, verify_constraints, aggregation, &gpu_params);
 
         if !verify_constraints {
             initialize_fixed_pols_tree(&pctx, &sctx, &setups_vadcop, &d_buffers, aggregation, &gpu_params);
@@ -956,7 +950,7 @@ where
         timer_start_info!(INIT_PROOFMAN);
 
         let (d_buffers, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
-            Self::prepare_gpu(&pctx, &sctx, &setups_vadcop, aggregation, &gpu_params);
+            Self::prepare_gpu(&pctx, &sctx, &setups_vadcop, verify_constraints, aggregation, &gpu_params);
 
         if !verify_constraints {
             initialize_fixed_pols_tree(&pctx, &sctx, &setups_vadcop, &d_buffers, aggregation, &gpu_params);
@@ -2100,6 +2094,7 @@ where
         pctx: &ProofCtx<F>,
         sctx: &SetupCtx<F>,
         setups_vadcop: &SetupsVadcop<F>,
+        verify_constraints: bool,
         aggregation: bool,
         gpu_params: &ParamsGPU,
     ) -> (Arc<DeviceBuffer>, u64, u64, u64) {
@@ -2114,7 +2109,7 @@ where
         let n_gpus = get_num_gpus_c();
         let n_processes_node = pctx.dctx_get_node_n_processes() as u64;
 
-        let n_partitions = match cfg!(feature = "gpu") {
+        let n_partitions = match cfg!(feature = "gpu") && !verify_constraints {
             true => {
                 if n_gpus > n_processes_node {
                     1
@@ -2145,7 +2140,7 @@ where
             }
         }
 
-        let n_streams_per_gpu = match cfg!(feature = "gpu") {
+        let n_streams_per_gpu = match cfg!(feature = "gpu") && !verify_constraints {
             true => {
                 let max_number_proofs_per_gpu = gpu_params
                     .max_number_streams
@@ -2158,7 +2153,7 @@ where
             false => 1,
         };
 
-        let mut gpu_available_memory = match cfg!(feature = "gpu") {
+        let mut gpu_available_memory = match cfg!(feature = "gpu") && !verify_constraints {
             true => max_size_buffer as i64 - (n_streams_per_gpu * sctx.max_prover_buffer_size) as i64,
             false => 0,
         };

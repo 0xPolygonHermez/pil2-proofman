@@ -83,6 +83,9 @@ public:
     uint32_t  nOpsTotal = 0;
     uint32_t  nArgsTotal = 0;
 
+    uint32_t  nOpsDebug = 0;
+    uint32_t  nArgsDebug = 0;
+
     bool write = false;
 
     std::map<uint64_t, ParserParams> expressionsInfo;

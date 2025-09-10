@@ -8,12 +8,15 @@ use proofman_common::{
     DebugInfo, GlobalConstraintInfo, ProofCtx, SetupCtx,
 };
 
+use proofman_util::DeviceBuffer;
+
 use std::os::raw::c_void;
 use colored::*;
 
 pub fn verify_constraints<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
+    d_buffers: &DeviceBuffer,
     global_id: usize,
     n_print_constraints: u64,
 ) -> Vec<ConstraintInfo> {
@@ -52,7 +55,12 @@ pub fn verify_constraints<F: PrimeField64>(
             })
             .collect();
 
-        verify_constraints_c(p_setup, (&steps_params).into(), constraints_info_c.as_mut_ptr() as *mut c_void);
+        verify_constraints_c(
+            p_setup,
+            (&steps_params).into(),
+            constraints_info_c.as_mut_ptr() as *mut c_void,
+            d_buffers.get_ptr(),
+        );
 
         for (info_c, info_rust) in constraints_info_c.iter().zip(constraints_info.iter_mut()) {
             info_rust.id = info_c.id;
@@ -146,10 +154,11 @@ pub fn verify_global_constraints_proof<F: PrimeField64>(
 pub fn verify_constraints_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
+    d_buffers: &DeviceBuffer,
     instance_id: usize,
     n_print_constraints: u64,
 ) -> bool {
-    let constraints = verify_constraints(pctx, sctx, instance_id, n_print_constraints);
+    let constraints = verify_constraints(pctx, sctx, d_buffers, instance_id, n_print_constraints);
 
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
