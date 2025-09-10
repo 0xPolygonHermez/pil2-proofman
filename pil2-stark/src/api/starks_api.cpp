@@ -1,7 +1,6 @@
 #include "zkglobals.hpp"
 #include "proof2zkinStark.hpp"
 #include "starks.hpp"
-#include "verify_constraints.hpp"
 #include "global_constraints.hpp"
 #include "gen_recursive_proof.hpp"
 #include "gen_proof.hpp"
@@ -13,6 +12,10 @@
 #include "fixed_cols.hpp"
 #include "final_snark_proof.hpp"
 #include "starks_api_internal.hpp"
+
+#ifndef __USE_CUDA__
+#include "verify_constraints.hpp"
+#endif
 
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
@@ -453,10 +456,12 @@ void get_constraints_lines(void* pSetupCtx, uint8_t **constraintsLines)
     }
 }
 
-void verify_constraints(void *pSetupCtx, void* stepsParams, void* constraintsInfo)
+#ifndef __USE_CUDA__
+void verify_constraints(void *pSetupCtx, void* stepsParams, void* constraintsInfo, void *d_buffers)
 {
     verifyConstraints(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, (ConstraintInfo *)constraintsInfo);
 }
+#endif
 
 // Global Constraints
 // =================================================================================

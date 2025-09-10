@@ -195,6 +195,10 @@ impl<F: Field> AirInstance<F> {
         self.trace.clone()
     }
 
+    pub fn get_aux_trace(&self) -> Vec<F> {
+        self.aux_trace.clone()
+    }
+
     pub fn get_trace_stage(&self, stage: usize) -> Vec<F> {
         if stage < 2 {
             panic!("Stage must be 2 or higher");

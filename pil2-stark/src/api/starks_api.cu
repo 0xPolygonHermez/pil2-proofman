@@ -9,6 +9,7 @@
 
 #ifdef __USE_CUDA__
 #include "gen_recursive_proof.cuh"
+#include "verify_constraints.cuh"
 #include "gen_proof.cuh"
 #include "gen_commit.cuh"
 #include "poseidon2_goldilocks.cu"
@@ -275,6 +276,12 @@ void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initia
 
     delete[] constPols;
     delete[] constTree;
+}
+
+
+void verify_constraints(void *pSetupCtx, void* stepsParams, void* constraintsInfo, void *d_buffers)
+{
+    verifyConstraintsGPU(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, (ConstraintInfo *)constraintsInfo, (DeviceCommitBuffers *)d_buffers);
 }
 
 uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool skipRecalculation, uint64_t streamId_, char *constPolsPath,  char *constTreePath) {
