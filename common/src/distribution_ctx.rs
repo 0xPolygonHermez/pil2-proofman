@@ -17,8 +17,12 @@ use fields::PrimeField64;
 #[cfg(distributed)]
 use fields::CubicExtensionField;
 use crate::GlobalInfo;
+use crate::Proof;
 
 use std::collections::HashSet;
+use proofman_starks_lib_c::{
+    initialize_agg_readiness_tracker_c, free_agg_readiness_tracker_c, agg_is_ready_c, reset_agg_readiness_tracker_c,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceInfo {
@@ -62,6 +66,7 @@ pub struct DistributionCtx {
     pub airgroup_instances_alives: Vec<Vec<usize>>,
     pub node_rank: i32,
     pub node_n_processes: i32,
+    pub outer_agg_rank: i32,
 }
 
 impl std::fmt::Debug for DistributionCtx {
@@ -80,6 +85,7 @@ impl std::fmt::Debug for DistributionCtx {
                 .field("airgroup_instances_alives", &self.airgroup_instances_alives)
                 .field("node_rank", &self.node_rank)
                 .field("node_n_processes", &self.node_n_processes)
+                .field("outer_agg_rank", &self.outer_agg_rank)
                 .finish()
         }
         #[cfg(not(distributed))]
@@ -96,6 +102,7 @@ impl std::fmt::Debug for DistributionCtx {
                 .field("airgroup_instances_alives", &self.airgroup_instances_alives)
                 .field("node_rank", &self.node_rank)
                 .field("node_n_processes", &self.node_n_processes)
+                .field("outer_agg_rank", &self.outer_agg_rank)
                 .finish()
         }
     }
@@ -122,6 +129,7 @@ impl DistributionCtx {
                 airgroup_instances_alives: Vec::new(),
                 node_rank: 0,
                 node_n_processes: 1,
+                outer_agg_rank: 0,
             }
         }
     }
@@ -142,6 +150,9 @@ impl DistributionCtx {
         let node_rank = local_comm.rank();
         let node_n_processes = local_comm.size();
 
+        // Initialize the agg readiness tracker in the C library
+        initialize_agg_readiness_tracker_c();
+
         DistributionCtx {
             rank,
             n_processes,
@@ -157,6 +168,7 @@ impl DistributionCtx {
             airgroup_instances_alives: Vec::new(),
             node_rank,
             node_n_processes,
+            outer_agg_rank: -1,
         }
     }
 
@@ -171,6 +183,7 @@ impl DistributionCtx {
         self.owners_weight = vec![0; self.n_processes as usize];
 
         self.airgroup_instances_alives.clear();
+        self.reset_outer_agg_tracker();
     }
 
     #[inline]
@@ -275,6 +288,29 @@ impl DistributionCtx {
         }
 
         min_owner == self.rank
+    }
+
+    #[inline]
+    pub fn process_ready_for_outer_agg(&mut self) {
+        #[cfg(distributed)]
+        {
+            self.outer_agg_rank = agg_is_ready_c();
+        }
+    }
+
+    pub fn get_outer_agg_rank(&self) -> i32 {
+        if self.outer_agg_rank == -1 {
+            panic!("Aggregation rank not yet determined. Call process_ready_for_aggregation() first.");
+        }
+        self.outer_agg_rank
+    }
+
+    pub fn reset_outer_agg_tracker(&mut self) {
+        #[cfg(distributed)]
+        {
+            self.outer_agg_rank = -1;
+            reset_agg_readiness_tracker_c();
+        }
     }
 
     #[inline]
@@ -502,6 +538,40 @@ impl DistributionCtx {
         #[cfg(not(distributed))]
         {
             values.to_vec()
+        }
+    }
+
+    #[cfg(distributed)]
+    pub fn send_proof_to_rank(&self, proof: &Vec<u64>, rank: i32) {
+        // Send the proof directly - the vector already contains its length information
+        self.world.process_at_rank(rank).send(proof);
+    }
+
+    #[cfg(distributed)]
+    pub fn recv_proof_from_rank(&self, rank: i32) -> Vec<u64> {
+        // Receive the proof directly as a vector
+        let (proof_buffer, _) = self.world.process_at_rank(rank).receive_vec::<u64>();
+        proof_buffer
+    }
+    #[cfg(distributed)]
+    pub fn send_proof_agg_rank<F: PrimeField64>(&self, proof: &Proof<F>) {
+        self.world.process_at_rank(self.outer_agg_rank).send_with_tag(&proof.proof[..], proof.airgroup_id as i32);
+    }
+
+    pub fn check_incoming_proofs(&self, airgroup_id: usize) -> Option<Vec<u64>> {
+        #[cfg(distributed)]
+        {
+            if let Some(_status) = self.world.any_process().immediate_probe_with_tag(airgroup_id as i32) {
+                let (proof_data, _status) = self.world.any_process().receive_vec_with_tag::<u64>(airgroup_id as i32);
+                Some(proof_data)
+            } else {
+                None
+            }
+        }
+        #[cfg(not(distributed))]
+        {
+            _ = airgroup_id;
+            None
         }
     }
 
@@ -809,6 +879,16 @@ impl DistributionCtx {
 impl Default for DistributionCtx {
     fn default() -> Self {
         DistributionCtx::new()
+    }
+}
+
+// call free_agg_readiness_tracker_c() when DistributionCtx is dropped
+impl Drop for DistributionCtx {
+    fn drop(&mut self) {
+        #[cfg(distributed)]
+        {
+            free_agg_readiness_tracker_c();
+        }
     }
 }
 unsafe impl Send for DistributionCtx {}
