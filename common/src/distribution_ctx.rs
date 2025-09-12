@@ -1,5 +1,11 @@
 use core::panic;
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct InstanceChunks {
+    pub chunks: Vec<usize>,
+    pub slow: bool,
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceInfo {
     pub airgroup_id: usize,
@@ -46,6 +52,7 @@ pub struct DistributionCtx {
     // Instances
     pub n_instances: usize,            // Total number of instances
     pub instances: Vec<InstanceInfo>,  // Instances info
+    pub instances_chunks: Vec<InstanceChunks>, // Chunks info per instance
     pub n_non_tables: usize,           // Number of non-table instances
     pub n_tables: usize,               // Number of table instances
     pub aux_tables: Vec<InstanceInfo>, // Table instances info (lately appended to instances)
@@ -111,6 +118,7 @@ impl DistributionCtx {
             process_id: 0,
             n_instances: 0,
             instances: Vec::new(),
+            instances_chunks: Vec::new(),
             n_non_tables: 0,
             n_tables: 0,
             aux_tables: Vec::new(),
@@ -172,6 +180,7 @@ impl DistributionCtx {
         // Global instance management
         self.n_instances = 0;
         self.instances.clear();
+        self.instances_chunks.clear();
         self.n_non_tables = 0;
         self.n_tables = 0;
         self.aux_tables.clear();
@@ -282,7 +291,7 @@ impl DistributionCtx {
         if instance_id >= self.instances.len() {
             panic!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len());
         }
-        self.instances[instance_id].n_chunks
+        self.instances_chunks[instance_id].chunks.len()
     }
 
     /// Set the number of chunks for a given instance (these may be used for balancing purposes)
@@ -303,12 +312,8 @@ impl DistributionCtx {
         self.instance_process[instance_id].0 >= 0
     }
 
-    /// Among the air instances with the same airgroup and air_id find the relative position of the current one
     #[inline]
     pub fn find_air_instance_id(&self, instance_id: usize) -> usize {
-        if instance_id >= self.instances.len() {
-            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len());
-        }
         let mut air_instance_id = 0;
         let (airgroup_id, air_id) = self.get_instance_info(instance_id);
         for idx in 0..instance_id {
@@ -493,6 +498,12 @@ impl DistributionCtx {
         lid
     }
 
+    pub fn set_chunks(&mut self, global_idx: usize, chunks: Vec<usize>, slow: bool) {
+        let instance_info = &mut self.instances_chunks[global_idx];
+        instance_info.chunks = chunks;
+        instance_info.slow = slow;
+    }
+
     pub fn add_table_all(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
         if self.assignation_done {
             panic!("Instances already assigned");
@@ -512,114 +523,88 @@ impl DistributionCtx {
         }
         //assign instances
         self.validate_static_config().expect("Static configuration invalid or incomplete");
-        if self.load_balancing {
-            if minimal_memory {
-                // Sort unassigned instances according to n_chunks
-                let mut unassigned_instances = Vec::new();
-                for (gid, &partition_id) in self.instance_partition.iter().enumerate() {
-                    if partition_id == -1 {
-                        unassigned_instances.push((gid, self.instances[gid].n_chunks));
-                    }
-                }
-
-                // Sort the unassigned instances by weight
-                unassigned_instances.sort_by(|a, b| b.1.cmp(&a.1));
-
-                // Assign half of the unassigned instances in round-robin fashion
-                let mut partition_id: usize = 0;
-                let mut process_id: usize = 0;
-                for (gid, _) in unassigned_instances.iter().take(unassigned_instances.len() / 2) {
-                    self.instance_partition[*gid] = partition_id as i32;
-                    self.partition_count[partition_id] += 1;
-                    self.partition_weight[partition_id] += self.instances[*gid].weight;
-                    if self.partition_mask[partition_id] {
-                        self.worker_instances.push(*gid);
-                        let lid = self.process_count[process_id];
-                        self.process_count[process_id] += 1;
-                        self.process_weight[process_id] += self.instances[*gid].weight;
-                        if process_id == self.process_id {
-                            self.process_instances.push(*gid);
-                        }
-                        self.instance_process[*gid].0 = process_id as i32;
-                        self.instance_process[*gid].1 = lid;
-                        process_id = (process_id + 1) % self.n_processes;
-                    }
-                    partition_id = (partition_id + 1) % self.n_partitions;
-                }
-            }
-
-            // Sort the unassigned instances by proof weight
+        if minimal_memory {
+            // Sort unassigned instances according to n_chunks
             let mut unassigned_instances = Vec::new();
             for (gid, &partition_id) in self.instance_partition.iter().enumerate() {
                 if partition_id == -1 {
-                    unassigned_instances.push((gid, self.instances[gid].weight));
+                    unassigned_instances.push((gid, self.instances[gid].n_chunks));
                 }
             }
 
-            // Sort the unassigned instances by proof weight
+            // Sort the unassigned instances by weight
             unassigned_instances.sort_by(|a, b| b.1.cmp(&a.1));
 
-            // Distribute the unassigned instances to the process with minimum weight each time
-            // cost: O(n^2) may be optimized if needed
-            for (gid, _) in unassigned_instances {
-                let mut min_weight = u64::MAX;
-                let mut partition_id = 0;
-                for (i, &weight) in self.partition_weight.iter().enumerate() {
-                    if weight < min_weight {
-                        min_weight = weight;
-                        partition_id = i;
-                    } else if (min_weight == weight) && (self.partition_count[i] < self.partition_count[partition_id]) {
-                        partition_id = i;
-                    }
-                }
-                self.instance_partition[gid] = partition_id as i32;
+            // Assign half of the unassigned instances in round-robin fashion
+            let mut partition_id: usize = 0;
+            let mut process_id: usize = 0;
+            for (gid, _) in unassigned_instances.iter().take(unassigned_instances.len() / 2) {
+                self.instance_partition[*gid] = partition_id as i32;
                 self.partition_count[partition_id] += 1;
-                self.partition_weight[partition_id] += self.instances[gid].weight;
+                self.partition_weight[partition_id] += self.instances[*gid].weight;
                 if self.partition_mask[partition_id] {
-                    self.worker_instances.push(gid);
-                    let mut min_weight = u64::MAX;
-                    let mut process_id = 0;
-                    for (i, &weight) in self.process_weight.iter().enumerate() {
-                        if weight < min_weight {
-                            min_weight = weight;
-                            process_id = i;
-                        } else if (min_weight == weight) && (self.process_count[i] < self.process_count[process_id]) {
-                            process_id = i;
-                        }
-                    }
+                    self.worker_instances.push(*gid);
                     let lid = self.process_count[process_id];
                     self.process_count[process_id] += 1;
-                    self.process_weight[process_id] += self.instances[gid].weight;
+                    self.process_weight[process_id] += self.instances[*gid].weight;
                     if process_id == self.process_id {
-                        self.process_instances.push(gid);
+                        self.process_instances.push(*gid);
                     }
-                    self.instance_process[gid].0 = process_id as i32;
-                    self.instance_process[gid].1 = lid;
+                    self.instance_process[*gid].0 = process_id as i32;
+                    self.instance_process[*gid].1 = lid;
+                    process_id = (process_id + 1) % self.n_processes;
+                }
+                partition_id = (partition_id + 1) % self.n_partitions;
+            }
+        }
+
+        // Sort the unassigned instances by proof weight
+        let mut unassigned_instances = Vec::new();
+        for (gid, &partition_id) in self.instance_partition.iter().enumerate() {
+            if partition_id == -1 {
+                unassigned_instances.push((gid, self.instances[gid].weight));
+            }
+        }
+
+        // Sort the unassigned instances by proof weight
+        unassigned_instances.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Distribute the unassigned instances to the process with minimum weight each time
+        // cost: O(n^2) may be optimized if needed
+        for (gid, _) in unassigned_instances {
+            let mut min_weight = u64::MAX;
+            let mut partition_id = 0;
+            for (i, &weight) in self.partition_weight.iter().enumerate() {
+                if weight < min_weight {
+                    min_weight = weight;
+                    partition_id = i;
+                } else if (min_weight == weight) && (self.partition_count[i] < self.partition_count[partition_id]) {
+                    partition_id = i;
                 }
             }
-        } else {
-            // Round-robin assignment for unassigned instances
-            let mut partition_id_iter: usize = 0;
-            let mut process_id_iter: usize = 0;
-            for (gid, partition_id) in self.instance_partition.iter_mut().enumerate() {
-                if *partition_id == -1 {
-                    *partition_id = partition_id_iter as i32;
-                    self.partition_count[*partition_id as usize] += 1;
-                    self.partition_weight[*partition_id as usize] += self.instances[gid].weight;
-                    if self.partition_mask[*partition_id as usize] {
-                        self.worker_instances.push(gid);
-                        let lid = self.process_count[process_id_iter];
-                        self.process_count[process_id_iter] += 1;
-                        self.process_weight[process_id_iter] += self.instances[gid].weight;
-                        if process_id_iter == self.process_id {
-                            self.process_instances.push(gid);
-                        }
-                        self.instance_process[gid].0 = process_id_iter as i32;
-                        self.instance_process[gid].1 = lid;
-                        process_id_iter = (process_id_iter + 1) % self.n_processes;
+            self.instance_partition[gid] = partition_id as i32;
+            self.partition_count[partition_id] += 1;
+            self.partition_weight[partition_id] += self.instances[gid].weight;
+            if self.partition_mask[partition_id] {
+                self.worker_instances.push(gid);
+                let mut min_weight = u64::MAX;
+                let mut process_id = 0;
+                for (i, &weight) in self.process_weight.iter().enumerate() {
+                    if weight < min_weight {
+                        min_weight = weight;
+                        process_id = i;
+                    } else if (min_weight == weight) && (self.process_count[i] < self.process_count[process_id]) {
+                        process_id = i;
                     }
-                    partition_id_iter = (partition_id_iter + 1) % self.n_partitions;
                 }
+                let lid = self.process_count[process_id];
+                self.process_count[process_id] += 1;
+                self.process_weight[process_id] += self.instances[gid].weight;
+                if process_id == self.process_id {
+                    self.process_instances.push(gid);
+                }
+                self.instance_process[gid].0 = process_id as i32;
+                self.instance_process[gid].1 = lid;
             }
         }
 

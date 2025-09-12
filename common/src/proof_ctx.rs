@@ -444,10 +444,21 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.get_table_instance_idx(table_idx)
     }
 
+    pub fn dctx_set_chunks(&self, global_idx: usize, chunks: Vec<usize>, slow: bool) {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.set_chunks(global_idx, chunks, slow);
+    }
+
     pub fn add_instance_assign(&self, airgroup_id: usize, air_id: usize, threads_witness: usize) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_instance(airgroup_id, air_id, threads_witness, weight)
+    }
+
+    pub fn dctx_get_airgroup_instances_alives(&self) -> Vec<Vec<usize>> {
+        // let dctx = self.dctx.read().unwrap();
+        // dctx.airgroup_instances_alives.clone()
+        Vec::new()
     }
 
     pub fn add_instance_assign_first_partition(

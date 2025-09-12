@@ -10,11 +10,17 @@ use mpi::environment::Universe;
 use mpi::topology::Communicator;
 
 #[cfg(distributed)]
-use std::sync::atomic::{Ordering, AtomicU64};
+use std::sync::atomic::{Ordering, AtomicU64, AtomicI32};
 use fields::PrimeField64;
 #[cfg(distributed)]
 use fields::CubicExtensionField;
 use crate::GlobalInfo;
+use crate::Proof;
+
+use std::collections::HashSet;
+use proofman_starks_lib_c::{
+    initialize_agg_readiness_tracker_c, free_agg_readiness_tracker_c, agg_is_ready_c, reset_agg_readiness_tracker_c,
+};
 
 pub struct MpiCtx {
     #[cfg(distributed)]
@@ -25,6 +31,7 @@ pub struct MpiCtx {
     pub n_processes: i32,
     pub node_rank: i32,
     pub node_n_processes: i32,
+    pub outer_agg_rank: AtomicI32,
 }
 
 impl Default for MpiCtx {
@@ -46,12 +53,53 @@ impl MpiCtx {
             let node_rank = local_comm.rank();
             let node_n_processes = local_comm.size();
 
-            MpiCtx { rank, n_processes, universe, world, node_rank, node_n_processes }
+            // Initialize the agg readiness tracker in the C library
+            initialize_agg_readiness_tracker_c();
+
+            MpiCtx {
+                rank,
+                n_processes,
+                universe,
+                world,
+                node_rank,
+                node_n_processes,
+                outer_agg_rank: AtomicI32::new(-1),
+            }
         }
         #[cfg(not(distributed))]
         {
-            MpiCtx { rank: 0, n_processes: 1, node_rank: 0, node_n_processes: 1 }
+            MpiCtx { rank: 0, n_processes: 1, node_rank: 0, node_n_processes: 1, outer_agg_rank: AtomicI32::new(0) }
         }
+    }
+
+    /// add an instance and assign it to a partition/process based only in the gid
+    /// the instance added is not a table
+    #[inline]
+    pub fn process_ready_for_outer_agg(&self) {
+        #[cfg(distributed)]
+        {
+            self.outer_agg_rank.store(agg_is_ready_c(), Ordering::SeqCst);
+        }
+    }
+
+    pub fn get_outer_agg_rank(&self) -> i32 {
+        if self.outer_agg_rank.load(Ordering::SeqCst) == -1 {
+            panic!("Aggregation rank not yet determined. Call process_ready_for_aggregation() first.");
+        }
+        self.outer_agg_rank.load(Ordering::SeqCst)
+    }
+
+    pub fn reset_outer_agg_tracker(&self) {
+        #[cfg(distributed)]
+        {
+            self.outer_agg_rank.store(-1, Ordering::SeqCst);
+            reset_agg_readiness_tracker_c();
+        }
+    }
+
+    pub fn reset_outer_agg_rank(&self) {
+        self.reset_outer_agg_tracker();
+        self.outer_agg_rank.store(-1, Ordering::SeqCst);
     }
 
     #[cfg(distributed)]
@@ -63,7 +111,7 @@ impl MpiCtx {
         let node_rank = local_comm.rank();
         let node_n_processes = local_comm.size();
 
-        MpiCtx { rank, n_processes, universe, world, node_rank, node_n_processes }
+        MpiCtx { rank, n_processes, universe, world, node_rank, node_n_processes, outer_agg_rank: AtomicI32::new(-1) }
     }
 
     #[inline]
@@ -215,6 +263,42 @@ impl MpiCtx {
                 // 3) Broadcast bytes into place
                 root.broadcast_into(&mut buf[..]);
             }
+        }
+    }
+
+    #[cfg(distributed)]
+    pub fn send_proof_to_rank(&self, proof: &Vec<u64>, rank: i32) {
+        // Send the proof directly - the vector already contains its length information
+        self.world.process_at_rank(rank).send(proof);
+    }
+
+    #[cfg(distributed)]
+    pub fn recv_proof_from_rank(&self, rank: i32) -> Vec<u64> {
+        // Receive the proof directly as a vector
+        let (proof_buffer, _) = self.world.process_at_rank(rank).receive_vec::<u64>();
+        proof_buffer
+    }
+    #[cfg(distributed)]
+    pub fn send_proof_agg_rank<F: PrimeField64>(&self, proof: &Proof<F>) {
+        self.world
+            .process_at_rank(self.outer_agg_rank.load(Ordering::SeqCst))
+            .send_with_tag(&proof.proof[..], proof.airgroup_id as i32);
+    }
+
+    pub fn check_incoming_proofs(&self, airgroup_id: usize) -> Option<Vec<u64>> {
+        #[cfg(distributed)]
+        {
+            if let Some(_status) = self.world.any_process().immediate_probe_with_tag(airgroup_id as i32) {
+                let (proof_data, _status) = self.world.any_process().receive_vec_with_tag::<u64>(airgroup_id as i32);
+                Some(proof_data)
+            } else {
+                None
+            }
+        }
+        #[cfg(not(distributed))]
+        {
+            _ = airgroup_id;
+            None
         }
     }
 
@@ -383,6 +467,15 @@ impl MpiCtx {
                     }
                 }
             }
+        }
+    }
+}
+
+impl Drop for MpiCtx {
+    fn drop(&mut self) {
+        #[cfg(distributed)]
+        {
+            free_agg_readiness_tracker_c();
         }
     }
 }
