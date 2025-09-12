@@ -115,6 +115,7 @@ impl DistributionCtx {
                 n_instances: 0,
                 my_instances: Vec::new(),
                 instances: Vec::new(),
+                instances_chunks: Vec::new(),
                 instances_owner: Vec::new(),
                 owners_count: vec![0; 1],
                 owners_weight: vec![0; 1],
