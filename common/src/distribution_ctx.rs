@@ -50,13 +50,13 @@ pub struct DistributionCtx {
     // DYNAMIC PARAMETERS
 
     // Instances
-    pub n_instances: usize,            // Total number of instances
-    pub instances: Vec<InstanceInfo>,  // Instances info
+    pub n_instances: usize,                    // Total number of instances
+    pub instances: Vec<InstanceInfo>,          // Instances info
     pub instances_chunks: Vec<InstanceChunks>, // Chunks info per instance
-    pub n_non_tables: usize,           // Number of non-table instances
-    pub n_tables: usize,               // Number of table instances
-    pub aux_tables: Vec<InstanceInfo>, // Table instances info (lately appended to instances)
-    pub aux_table_map: Vec<i32>,       // Map from aux tables to original instances
+    pub n_non_tables: usize,                   // Number of non-table instances
+    pub n_tables: usize,                       // Number of table instances
+    pub aux_tables: Vec<InstanceInfo>,         // Table instances info (lately appended to instances)
+    pub aux_table_map: Vec<i32>,               // Map from aux tables to original instances
 
     // Worker-level distribution
     pub instance_partition: Vec<i32>, // Which partition each instance belongs to (>=0 assigned, -1 unassigned, -2 appended table)
@@ -398,6 +398,7 @@ impl DistributionCtx {
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let gid: usize = self.instances.len();
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness, weight));
+        self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
         self.n_instances += 1;
         self.n_non_tables += 1;
         let partition_id = (gid % self.n_partitions) as u32;
@@ -438,6 +439,7 @@ impl DistributionCtx {
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let gid: usize = self.instances.len();
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness, weight));
+        self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
         self.n_instances += 1;
         self.n_non_tables += 1;
         let partition_id = 0;
@@ -478,6 +480,8 @@ impl DistributionCtx {
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness, weight));
+        self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
+
         self.instance_partition.push(-1);
         self.instance_process.push((-1, 0_usize));
         self.n_instances += 1;
@@ -571,6 +575,9 @@ impl DistributionCtx {
 
         // Distribute the unassigned instances to the process with minimum weight each time
         // cost: O(n^2) may be optimized if needed
+
+        // TODO 0.12.0: CONSIDER IMPLEMENTING BACK ASSIGNATION BY CHUNKS!!!
+
         for (gid, _) in unassigned_instances {
             let mut min_weight = u64::MAX;
             let mut partition_id = 0;
@@ -624,6 +631,7 @@ impl DistributionCtx {
                 }
                 let gid = self.instances.len();
                 self.instances.push(*table);
+                self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
                 self.n_instances += 1;
                 self.n_tables += 1;
                 self.instance_partition.push(-2); // Mark as table
@@ -647,6 +655,7 @@ impl DistributionCtx {
                         table.threads_witness,
                         table.weight,
                     ));
+                    self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
                     self.n_instances += 1;
                     self.n_tables += 1;
                     self.instance_partition.push(-2); // Mark as table

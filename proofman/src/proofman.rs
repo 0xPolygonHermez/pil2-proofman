@@ -211,7 +211,7 @@ where
     }
 
     pub fn rank(&self) -> Option<i32> {
-        (self.pctx.mpi_ctx.n_processes > 1).then(|| self.mpi_ctx.rank as i32)
+        (self.pctx.mpi_ctx.n_processes > 1).then(|| self.mpi_ctx.rank)
     }
 
     pub fn get_mpi_ctx(&self) -> &MpiCtx {
@@ -1684,7 +1684,7 @@ where
                 false,
             )?;
 
-            // TODO: RECOVER RMA
+            // TODO 0.12.0: RECOVER RMA
             // if self.pctx.dctx_get_rank() == outer_rank {
             //     self.worker_aggregations(&options)?;
             // } else {
@@ -1705,13 +1705,15 @@ where
 
             timer_stop_and_log_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
 
-            if phase == ProvePhase::Internal && self.mpi_ctx.rank == 0 {
+            if self.mpi_ctx.rank == 0 {
                 for proof in &agg_proofs {
                     let agg_proof =
                         Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, None, proof.proof.clone());
                     self.recursive2_proofs[proof.airgroup_id as usize].write().unwrap().push(agg_proof);
                 }
-                return Ok(ProvePhaseResult::Internal(agg_proofs));
+                if phase == ProvePhase::Internal {
+                    return Ok(ProvePhaseResult::Internal(agg_proofs));
+                }
             }
 
             if self.mpi_ctx.rank == 0 {

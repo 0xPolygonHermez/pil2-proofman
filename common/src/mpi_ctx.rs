@@ -17,7 +17,7 @@ use fields::CubicExtensionField;
 use crate::GlobalInfo;
 use crate::Proof;
 
-use std::collections::HashSet;
+// use std::collections::HashSet;
 use proofman_starks_lib_c::{
     initialize_agg_readiness_tracker_c, free_agg_readiness_tracker_c, agg_is_ready_c, reset_agg_readiness_tracker_c,
 };
