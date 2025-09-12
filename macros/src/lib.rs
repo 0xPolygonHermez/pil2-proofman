@@ -364,22 +364,14 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
         }
 
         impl<#generics> #trace_struct_name<#generics> {
+            #[inline]
             pub fn row_slice(&self) -> &[#row_struct_name<#generics>] {
-                unsafe {
-                    std::slice::from_raw_parts(
-                        self.buffer.as_ptr() as *const #row_struct_name<#generics>,
-                        self.num_rows,
-                    )
-                }
+                self.row_slice_mut.as_ref()
             }
 
+            #[inline]
             pub fn row_slice_mut(&mut self) -> &mut [#row_struct_name<#generics>] {
-                unsafe {
-                    std::slice::from_raw_parts_mut(
-                        self.buffer.as_mut_ptr() as *mut #row_struct_name<#generics>,
-                        self.num_rows,
-                    )
-                }
+                self.row_slice_mut.as_mut()
             }
         }
 
