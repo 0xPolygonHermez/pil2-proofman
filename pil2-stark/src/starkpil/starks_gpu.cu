@@ -1060,8 +1060,8 @@ void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstan
     Goldilocks::Element *dest = (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]);
 
     uint64_t domainSize = (1 << setupCtx.starkInfo.starkStruct.nBitsExt);
-    uint32_t nthreads_ = setupCtx.starkInfo.nrowsPack;
-    uint32_t nblocks_ = std::min((uint32_t)setupCtx.starkInfo.maxNBlocks, (uint32_t)((domainSize + nthreads_-1)/ nthreads_));
+    uint32_t nthreads_ = 128;
+    uint32_t nblocks_ = std::min((uint32_t)512, (uint32_t)((domainSize + nthreads_-1)/ nthreads_));
     size_t sharedMem = nthreads_ * 3 * FIELD_EXTENSION * sizeof(Goldilocks::Element);
     dim3 nThreads(nthreads_);    
     dim3 nBlocks(nblocks_);
@@ -1072,7 +1072,7 @@ void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstan
         air_instance_info->evalsInfoFRISizes,
         air_instance_info->evalsInfoFRI,
         (gl64_t*)h_params.evals,
-        (gl64_t*)h_params.challenges + 4 * FIELD_EXTENSION, // TODO: HARDCODED
+        (gl64_t*)h_params.challenges + 4 * FIELD_EXTENSION,
         (gl64_t*)h_params.challenges + 5 * FIELD_EXTENSION,
         (gl64_t*)h_params.aux_trace,
         (gl64_t*)h_params.xDivXSub,
