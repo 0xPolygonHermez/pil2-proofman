@@ -198,27 +198,35 @@ __global__ void insertTracePol(Goldilocks::Element *d_aux_trace, uint64_t offset
     }
 }
 
-
 __global__ void fillLEv_2d(gl64_t *d_LEv,  uint64_t nOpeningPoints, uint64_t N, gl64_t *d_shiftedValues)
 {
+    uint64_t i  = blockIdx.x;                  // opening point index
+    uint64_t k0 = blockIdx.y * blockDim.y;     // start exponent for this block
+    uint64_t k  = k0 + threadIdx.y;            // this thread's exponent index
+    if (i >= nOpeningPoints || k >= N) return;
 
-    uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
-    uint64_t k = blockIdx.y * blockDim.y + threadIdx.y;
-    if (i < nOpeningPoints && k < N)
-    {
-        
-        Goldilocks3GPU::Element xi;
-        xi[0] = d_shiftedValues[i * FIELD_EXTENSION];
-        xi[1] = d_shiftedValues[i * FIELD_EXTENSION + 1];
-        xi[2] = d_shiftedValues[i * FIELD_EXTENSION + 2];
-        Goldilocks3GPU::Element xiShiftedPow;
-        Goldilocks3GPU::pow(xi, k, xiShiftedPow);
-        d_LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION] = xiShiftedPow[0];
-        d_LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 1] = xiShiftedPow[1];
-        d_LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 2] = xiShiftedPow[2];
+    Goldilocks3GPU::Element xi;
+    xi[0] = d_shiftedValues[i * FIELD_EXTENSION + 0];
+    xi[1] = d_shiftedValues[i * FIELD_EXTENSION + 1];
+    xi[2] = d_shiftedValues[i * FIELD_EXTENSION + 2];
 
+    __shared__ Goldilocks3GPU::Element basePow;
+
+    if (threadIdx.y == 0) {
+        Goldilocks3GPU::pow(xi, k0, basePow);
     }
+    __syncthreads();
 
+    Goldilocks3GPU::Element xi_t;
+    Goldilocks3GPU::pow(xi, threadIdx.y, xi_t);
+
+    Goldilocks3GPU::Element res;
+    Goldilocks3GPU::mul(res, basePow, xi_t);
+
+    uint64_t pos = (k * nOpeningPoints + i) * FIELD_EXTENSION;
+    d_LEv[pos + 0] = res[0];
+    d_LEv[pos + 1] = res[1];
+    d_LEv[pos + 2] = res[2];
 }
 
 __global__ void evalXiShifted(gl64_t* d_shiftedValues, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t invShift_)
