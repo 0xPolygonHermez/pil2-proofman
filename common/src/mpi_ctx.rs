@@ -194,6 +194,30 @@ impl MpiCtx {
         }
     }
 
+    //rank 0 broadcasts to the rest of processes a msg of unknown size
+    //Root provides data in `buf`; others can pass an empty Vec that is filled with the message
+    pub fn broadcast(&self, buf: &mut Vec<u8>) {
+        #[cfg(distributed)]
+        {
+            // global communication: rank 0 broadcasts to all processes
+            if self.n_processes > 1 {
+                let root = self.world.process_at_rank(0);
+
+                // 1) Broadcast the length as u64
+                let mut len: u64 = if self.rank == 0 { buf.len() as u64 } else { 0 };
+                root.broadcast_into(&mut len);
+
+                // 2) Resize non-root buffers to the incoming size
+                if self.rank != 0 {
+                    buf.resize(len as usize, 0u8);
+                }
+
+                // 3) Broadcast bytes into place
+                root.broadcast_into(&mut buf[..]);
+            }
+        }
+    }
+
     #[allow(unused_variables)]
     pub fn distribute_recursive2_proofs(&self, alives: &[usize], proofs: &mut [Vec<Option<Vec<u64>>>]) {
         #[cfg(distributed)]

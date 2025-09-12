@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 use std::sync::Arc;
 use crate::MpiCtx;
+use borsh::{BorshDeserialize, BorshSerialize};
 
 use fields::PrimeField64;
 use transcript::FFITranscript;
@@ -45,6 +46,44 @@ pub struct ProofOptions {
     pub test_mode: bool,
     pub output_dir_path: PathBuf,
     pub minimal_memory: bool,
+}
+
+impl BorshSerialize for ProofOptions {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        BorshSerialize::serialize(&self.verify_constraints, writer)?;
+        BorshSerialize::serialize(&self.aggregation, writer)?;
+        BorshSerialize::serialize(&self.final_snark, writer)?;
+        BorshSerialize::serialize(&self.verify_proofs, writer)?;
+        BorshSerialize::serialize(&self.save_proofs, writer)?;
+        BorshSerialize::serialize(&self.test_mode, writer)?;
+        BorshSerialize::serialize(&self.output_dir_path.to_string_lossy().to_string(), writer)?;
+        BorshSerialize::serialize(&self.minimal_memory, writer)?;
+        Ok(())
+    }
+}
+
+impl BorshDeserialize for ProofOptions {
+    fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let verify_constraints = bool::deserialize_reader(reader)?;
+        let aggregation = bool::deserialize_reader(reader)?;
+        let final_snark = bool::deserialize_reader(reader)?;
+        let verify_proofs = bool::deserialize_reader(reader)?;
+        let save_proofs = bool::deserialize_reader(reader)?;
+        let test_mode = bool::deserialize_reader(reader)?;
+        let output_dir_path_str = String::deserialize_reader(reader)?;
+        let minimal_memory = bool::deserialize_reader(reader)?;
+
+        Ok(Self {
+            verify_constraints,
+            aggregation,
+            final_snark,
+            verify_proofs,
+            save_proofs,
+            test_mode,
+            output_dir_path: PathBuf::from(output_dir_path_str),
+            minimal_memory,
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -321,9 +360,18 @@ impl<F: PrimeField64> ProofCtx<F> {
         !self.air_instances[global_idx].read().unwrap().trace.is_empty()
     }
 
+    pub fn dctx_broadcast(&self, buf: &mut Vec<u8>) {
+        self.mpi_ctx.broadcast(buf);
+    }
+
     pub fn dctx_get_instances(&self) -> Vec<InstanceInfo> {
         let dctx = self.dctx.read().unwrap();
         dctx.instances.clone()
+    }
+
+    pub fn dctx_is_first_partition(&self) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.partition_mask[0]
     }
 
     pub fn dctx_get_my_tables(&self) -> Vec<usize> {
@@ -402,16 +450,15 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_instance(airgroup_id, air_id, threads_witness, weight)
     }
 
-    pub fn add_instance_assign_partition(
+    pub fn add_instance_assign_first_partition(
         &self,
         airgroup_id: usize,
         air_id: usize,
-        partition_id: usize,
         threads_witness: usize,
     ) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_partition(airgroup_id, air_id, partition_id, threads_witness, weight)
+        dctx.add_instance_first_partition(airgroup_id, air_id, threads_witness, weight)
     }
 
     pub fn add_instance(&self, airgroup_id: usize, air_id: usize, threads_witness: usize) -> usize {
@@ -461,6 +508,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         &self,
         n_partitions: usize,
         partition_ids: Vec<u32>,
+        worker_index: usize,
         balance: bool,
         n_processes: usize,
         process_id: usize,
@@ -468,6 +516,13 @@ impl<F: PrimeField64> ProofCtx<F> {
         let mut dctx = self.dctx.write().unwrap();
         dctx.setup_partitions(n_partitions, partition_ids, balance);
         dctx.setup_processes(n_processes, process_id);
+        dctx.setup_worker_index(worker_index);
+    }
+
+    pub fn get_worker_index(&self) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        assert!(dctx.worker_index >= 0, "Worker index not set");
+        dctx.worker_index as usize
     }
 
     pub fn get_proof_values_ptr(&self) -> *mut u8 {

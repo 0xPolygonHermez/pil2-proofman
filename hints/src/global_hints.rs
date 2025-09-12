@@ -240,13 +240,13 @@ pub fn get_hint_field_gc<F: PrimeField64>(
 }
 
 pub fn get_hint_field_gc_a<F: PrimeField64>(
-    pctx: ProofCtx<F>,
-    sctx: SetupCtx<F>,
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
 ) -> HintFieldValuesVec<F> {
-    let hint_infos = get_global_hint_f(Some(&pctx), &sctx, hint_id, hint_field_name, print_expression);
+    let hint_infos = get_global_hint_f(Some(pctx), sctx, hint_id, hint_field_name, print_expression);
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.iter().enumerate() {

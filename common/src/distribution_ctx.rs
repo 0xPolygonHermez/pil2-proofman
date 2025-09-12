@@ -63,6 +63,8 @@ pub struct DistributionCtx {
     pub process_count: Vec<usize>,           // #instances assigned to each process
     pub process_weight: Vec<u64>,            // Total computational weight per process
 
+    pub worker_index: i32, // Index of the current worker
+
     // Control
     pub assignation_done: bool, // Whether the instance assignation is done
 }
@@ -121,6 +123,7 @@ impl DistributionCtx {
             process_instances: Vec::new(),
             process_count: Vec::new(),
             process_weight: Vec::new(),
+            worker_index: -1,
             assignation_done: false,
         }
     }
@@ -134,9 +137,9 @@ impl DistributionCtx {
         self.n_partitions = n_partitions;
         self.partition_mask = vec![false; n_partitions];
 
-        for id in partition_ids {
-            if id < n_partitions as u32 {
-                self.partition_mask[id as usize] = true;
+        for id in &partition_ids {
+            if *id < n_partitions as u32 {
+                self.partition_mask[*id as usize] = true;
             } else {
                 panic!("Partition ID {} exceeds total partitions {}", id, n_partitions);
             }
@@ -157,6 +160,10 @@ impl DistributionCtx {
         self.process_id = process_id;
         self.process_count = vec![0; n_processes];
         self.process_weight = vec![0; n_processes];
+    }
+
+    pub fn setup_worker_index(&mut self, worker_index: usize) {
+        self.worker_index = worker_index as i32;
     }
 
     /// Reset all DYNAMIC parameters for a new proof
@@ -413,11 +420,10 @@ impl DistributionCtx {
     /// add an instance and assign it to a partition/process based only in the gid
     /// the instance added is not a table
     #[inline]
-    pub fn add_instance_partition(
+    pub fn add_instance_first_partition(
         &mut self,
         airgroup_id: usize,
         air_id: usize,
-        partition_id: usize,
         threads_witness: usize,
         weight: u64,
     ) -> usize {
@@ -429,6 +435,7 @@ impl DistributionCtx {
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness, weight));
         self.n_instances += 1;
         self.n_non_tables += 1;
+        let partition_id = 0;
         self.instance_partition.push(partition_id as i32);
         self.partition_count[partition_id] += 1;
         self.partition_weight[partition_id] += weight;

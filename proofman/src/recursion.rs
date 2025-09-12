@@ -1,3 +1,4 @@
+use borsh::{BorshSerialize, BorshDeserialize};
 use libloading::{Library, Symbol};
 use fields::PrimeField64;
 use std::ffi::CString;
@@ -30,15 +31,16 @@ pub struct MaxSizes {
     pub total_const_area_aggregation: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, BorshSerialize, BorshDeserialize)]
 pub struct AggProofs {
     pub airgroup_id: u64,
     pub proof: Vec<u64>,
+    pub worker_indexes: Vec<usize>,
 }
 
 impl AggProofs {
-    pub fn new(airgroup_id: u64, proof: Vec<u64>) -> Self {
-        Self { airgroup_id, proof }
+    pub fn new(airgroup_id: u64, proof: Vec<u64>, worker_indexes: Vec<usize>) -> Self {
+        Self { airgroup_id, proof, worker_indexes }
     }
 }
 
@@ -184,10 +186,14 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
 pub fn n_publics_aggregation<F: PrimeField64>(pctx: &ProofCtx<F>, airgroup_id: usize) -> usize {
     let mut publics_aggregation = 0;
     publics_aggregation += 1; // circuit type
+    publics_aggregation += 1; // n proofs aggregated
     publics_aggregation += 4 * pctx.global_info.agg_types[airgroup_id].len(); // agg types
     publics_aggregation += 10; // elliptic curve hash
-    publics_aggregation += 1; // n proofs aggregated
     publics_aggregation
+}
+
+pub fn get_accumulated_challenge(proof: &[u64]) -> Vec<u64> {
+    proof[6..16].to_vec()
 }
 
 pub fn gen_recursive_proof_size<F: PrimeField64>(
@@ -340,6 +346,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
 pub fn aggregate_worker_proofs<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     mpi_ctx: &MpiCtx,
@@ -351,7 +358,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
     output_dir_path: &Path,
     d_buffers: *mut c_void,
     save_proofs: bool,
-) -> Result<Vec<AggProofs>, Box<dyn std::error::Error>> {
+) -> Result<Vec<Vec<Option<Vec<u64>>>>, Box<dyn std::error::Error>> {
     let n_processes = mpi_ctx.n_processes as usize;
     let rank = mpi_ctx.rank as usize;
     let n_airgroups = pctx.global_info.air_groups.len();
@@ -477,15 +484,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
         }
     }
 
-    let mut agg_proofs = Vec::new();
-
-    for (airgroup_id, proofs) in airgroup_proofs.into_iter().enumerate() {
-        if let Some(Some(proof)) = proofs.into_iter().find(|p| p.is_some()) {
-            agg_proofs.push(AggProofs::new(airgroup_id as u64, proof));
-        }
-    }
-
-    Ok(agg_proofs)
+    Ok(airgroup_proofs)
 }
 
 #[allow(clippy::too_many_arguments)]
