@@ -48,8 +48,8 @@ cargo run --bin proofman-cli check-setup --proving-key examples/test-recursive-c
 Finally, generate the proof using the following command:
 
 ```bash
-     cargo run --bin target/release/proofman-cli prove \
-     --witness-lib ./target/release/libtest_c36${PIL2_PROOFMAN_EXT}\
+     cargo run --bin target/debug/proofman-cli prove \
+     --witness-lib ./target/debug/libtest_c36${PIL2_PROOFMAN_EXT}\
      --proving-key examples/test-recursive-c36/build/provingKey/ \
      --output-dir examples/test-recursive-c36/build/proofs -y -vv
 ```
