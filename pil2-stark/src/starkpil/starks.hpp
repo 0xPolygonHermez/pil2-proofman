@@ -16,6 +16,7 @@
 #include "exit_process.hpp"
 #include "expressions_bin.hpp"
 #include "expressions_pack.hpp"
+#include "expressions_pack_q.hpp"
 #include "hints.hpp"
 
 class gl64_t;
@@ -94,6 +95,7 @@ public:
     
     void calculateImPolsExpressions(uint64_t step, StepsParams& params, ExpressionsCtx& expressionsCtx);
     void calculateQuotientPolynomialOut(StepsParams& params, ExpressionsCtx& expressionsCtx);
+    void calculateQuotientPolynomialIn(StepsParams& params, ExpressionsCtx& expressionsCtx);
     void calculateQuotientPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
     void calculateFRIPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
 
@@ -467,6 +469,19 @@ void Starks<ElementType>::calculateQuotientPolynomialOut(StepsParams &params, Ex
 template <typename ElementType>
 void Starks<ElementType>::calculateQuotientPolynomial(StepsParams &params, ExpressionsCtx &expressionsCtx) {
     expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId, false, false, true);
+}
+template <typename ElementType>
+void Starks<ElementType>::calculateQuotientPolynomialIn(StepsParams &params, ExpressionsCtx &expressionsCtx) {
+
+    uint64_t domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    bool domainExtended = true;
+    Goldilocks::Element *dest = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", domainExtended)]];
+
+    Dest destStruct(dest, domainSize, 0,-1);
+    for (int i = setupCtx.expressionsBin.constraintsInfoDebug.size()-1; i >=0; i--) {
+        destStruct.addParams(i, setupCtx.expressionsBin.constraintsInfoDebug[i].destDim);
+    }
+    expressionsCtx.calculateExpressions(params, destStruct, domainSize, domainExtended, false, true);
 }
 
 template <typename ElementType>
