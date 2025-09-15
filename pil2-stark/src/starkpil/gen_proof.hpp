@@ -56,6 +56,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     Starks<Goldilocks::Element> starks(setupCtx, params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed);
     
     ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);
+    ExpressionsPackQ expressionsCtxQ(setupCtx, &proverHelpers);
 
     TranscriptGL transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 
@@ -141,7 +142,10 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     }
 
     TimerStart(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
+    //starks.calculateQuotientPolynomial(params, expressionsCtx);
     starks.calculateQuotientPolynomialOut(params, expressionsCtx);
+    cout<<"================================="<<endl;
+    starks.calculateQuotientPolynomialIn(params, expressionsCtxQ);
     TimerStopAndLog(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
