@@ -319,10 +319,6 @@ __device__ __forceinline__ Goldilocks::Element* load__(
             printRes((Goldilocks::Element *)temp, 3, row, debug);
         #endif
         getInversePolinomial__((gl64_t*)temp, 3);
-        #if DEBUG
-            printArguments(temp, 3, false, &dParams->aux_trace[dArgs->x_offset + row], 1, false, row, 2, 0, 0, debug);
-        #endif
-        Goldilocks3GPU::mul_31_gpu_no_const((gl64_t*)temp, (gl64_t*)temp, x);
         return temp;
     }
 
