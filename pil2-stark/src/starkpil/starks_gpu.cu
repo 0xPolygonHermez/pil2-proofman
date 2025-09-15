@@ -1092,7 +1092,7 @@ void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstan
 
     uint64_t domainSize = (1 << setupCtx.starkInfo.starkStruct.nBitsExt);
     uint32_t nthreads_ = setupCtx.starkInfo.nrowsPack;
-    uint32_t nblocks_ = std::min((uint32_t)512, (uint32_t)((domainSize + nthreads_-1)/ nthreads_));
+    uint32_t nblocks_ = std::min((uint32_t)setupCtx.starkInfo.maxNBlocks, (uint32_t)((domainSize + nthreads_-1)/ nthreads_));
     size_t sharedMem = nthreads_ * 3 * FIELD_EXTENSION * sizeof(Goldilocks::Element);
     dim3 nThreads(nthreads_);    
     dim3 nBlocks(nblocks_);
