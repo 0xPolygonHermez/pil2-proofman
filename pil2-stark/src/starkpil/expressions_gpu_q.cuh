@@ -1,12 +1,12 @@
-#ifndef EXPRESSIONS_GPU_HPP
-#define EXPRESSIONS_GPU_HPP
+#ifndef EXPRESSIONS_GPU_Q_CUH
+#define EXPRESSIONS_GPU_Q_CUH
 #include "expressions_ctx.hpp"
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 #include "gpu_timer.cuh"
 #include <omp.h>
 
-struct DeviceArguments
+struct DeviceArgumentsQ
 {
     uint64_t N;
     uint64_t NExtended;
@@ -38,22 +38,22 @@ struct DeviceArguments
     Goldilocks::Element *numbersConstraints;
 };
 
-__global__  void computeExpressions_(StepsParams *h_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, bool debug, bool constraints);
+__global__  void computeExpressions_q_(StepsParams *h_params, DeviceArgumentsQ *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, bool debug, bool constraints);
 
-class ExpressionsGPU : public ExpressionsCtx
+class ExpressionsGPUQ : public ExpressionsCtx
 {
 public:
     uint32_t nRowsPack;
     uint32_t nBlocks;
     uint64_t bufferCommitSize;
    
-    DeviceArguments *d_deviceArgs;
-    DeviceArguments h_deviceArgs;
+    DeviceArgumentsQ *d_deviceArgs;
+    DeviceArgumentsQ h_deviceArgs;
 
-    ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack = 128, uint32_t nBlocks = 4096);
-    ~ExpressionsGPU();
+    ExpressionsGPUQ(SetupCtx &setupCtx, uint32_t nRowsPack = 128, uint32_t nBlocks = 4096);
+    ~ExpressionsGPUQ();
 
-    void calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool debug = false, bool constraints = false);
+    void calculateExpressions_gpu_q(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool debug = false, bool constraints = false);
     
 };
 #endif
