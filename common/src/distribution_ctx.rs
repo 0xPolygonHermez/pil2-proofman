@@ -20,6 +20,7 @@ use crate::GlobalInfo;
 use crate::Proof;
 
 use std::collections::HashSet;
+#[cfg(distributed)]
 use proofman_starks_lib_c::{
     initialize_agg_readiness_tracker_c, free_agg_readiness_tracker_c, agg_is_ready_c, reset_agg_readiness_tracker_c,
 };
@@ -541,21 +542,27 @@ impl DistributionCtx {
         }
     }
 
-    #[cfg(distributed)]
-    pub fn send_proof_to_rank(&self, proof: &Vec<u64>, rank: i32) {
+    pub fn send_proof_to_rank(&self, _proof: &Vec<u64>, _rank: i32) {
         // Send the proof directly - the vector already contains its length information
-        self.world.process_at_rank(rank).send(proof);
+        #[cfg(distributed)]
+        self.world.process_at_rank(_rank).send(_proof);
     }
 
     #[cfg(distributed)]
-    pub fn recv_proof_from_rank(&self, rank: i32) -> Vec<u64> {
+    pub fn recv_proof_from_rank(&self, _rank: i32) -> Vec<u64> {
         // Receive the proof directly as a vector
-        let (proof_buffer, _) = self.world.process_at_rank(rank).receive_vec::<u64>();
+        let (proof_buffer, _) = self.world.process_at_rank(_rank).receive_vec::<u64>();
         proof_buffer
     }
-    #[cfg(distributed)]
-    pub fn send_proof_agg_rank<F: PrimeField64>(&self, proof: &Proof<F>) {
-        self.world.process_at_rank(self.outer_agg_rank).send_with_tag(&proof.proof[..], proof.airgroup_id as i32);
+
+    #[cfg(not(distributed))]
+    pub fn recv_proof_from_rank(&self, _rank: i32) -> Vec<u64> {
+        vec![]
+    }
+
+    pub fn send_proof_agg_rank<F: PrimeField64>(&self, _proof: &Proof<F>) {
+        #[cfg(distributed)]
+        self.world.process_at_rank(self.outer_agg_rank).send_with_tag(&_proof.proof[..], _proof.airgroup_id as i32);
     }
 
     pub fn check_incoming_proofs(&self, airgroup_id: usize) -> Option<Vec<u64>> {
@@ -853,7 +860,7 @@ impl DistributionCtx {
 
     //rank 0 broadcasts to the rest of processes a msg of unknown size
     //Root provides data in `buf`; others can pass an empty Vec that is filled with the message
-    pub fn broadcast(&self, buf: &mut Vec<u8>) {
+    pub fn broadcast(&self, _buf: &mut Vec<u8>) {
         #[cfg(distributed)]
         {
             // global communication: rank 0 broadcasts to all processes
@@ -861,16 +868,16 @@ impl DistributionCtx {
                 let root = self.world.process_at_rank(0);
 
                 // 1) Broadcast the length as u64
-                let mut len: u64 = if self.rank == 0 { buf.len() as u64 } else { 0 };
+                let mut len: u64 = if self.rank == 0 { _buf.len() as u64 } else { 0 };
                 root.broadcast_into(&mut len);
 
                 // 2) Resize non-root buffers to the incoming size
                 if self.rank != 0 {
-                    buf.resize(len as usize, 0u8);
+                    _buf.resize(len as usize, 0u8);
                 }
 
                 // 3) Broadcast bytes into place
-                root.broadcast_into(&mut buf[..]);
+                root.broadcast_into(&mut _buf[..]);
             }
         }
     }
