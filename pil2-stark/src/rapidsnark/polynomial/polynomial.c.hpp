@@ -554,7 +554,7 @@ void Polynomial<Engine>::divZh(u_int64_t domainSize, int extension) {
         E.fr.neg(this->coef[i], this->coef[i]);
     }
 
-    int nThreads = pow(2, floor(log2(omp_get_max_threads())));
+    int nThreads = pow(2, floor(log2(double(omp_get_max_threads()))));
     uint64_t nElementsThread = domainSize / nThreads;
 
     assert(domainSize == nElementsThread * nThreads);
@@ -608,7 +608,7 @@ void Polynomial<Engine>::divByZerofier(u_int64_t n, FrElement beta) {
         }
     }
 
-    int nThreads = pow(2, floor(log2(omp_get_max_threads())));
+    int nThreads = pow(2, floor(log2(double(omp_get_max_threads()))));
     nThreads = std::min(n, (u_int64_t)nThreads);
 
     uint64_t nElementsThread = n / nThreads;

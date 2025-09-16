@@ -3,6 +3,8 @@
 
 #include "cpolynomial.hpp"
 
+#include <cmath>
+
 using namespace CPlusPlusLogging;
 
 template<typename Engine>
