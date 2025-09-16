@@ -1532,8 +1532,7 @@ where
 
             let handle_recursive = std::thread::spawn(move || loop {
                 if let Ok(instance_id) = proofs_rx.try_recv() {
-                    let stream_id: Option<usize> =
-                        stream_clone.iter().position(|&(_, id)| id == instance_id as u64);
+                    let stream_id: Option<usize> = stream_clone.iter().position(|&(_, id)| id == instance_id as u64);
                     Self::gen_proof(
                         &proofs_clone,
                         &pctx_clone,
