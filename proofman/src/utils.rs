@@ -34,6 +34,19 @@ pub fn print_summary_info<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F
 
         print_summary(pctx, sctx, false);
     }
+
+    if pctx.get_n_partitions() > 1 {
+        let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info_process();
+        tracing::info!(
+            "Load balance. Average: {} max: {} min: {} deviation: {}",
+            average_weight,
+            max_weight,
+            min_weight,
+            max_deviation
+        );
+
+        print_summary(pctx, sctx, false);
+    }
 }
 
 pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, global: bool) {

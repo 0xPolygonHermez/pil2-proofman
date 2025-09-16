@@ -530,6 +530,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.setup_worker_index(worker_index);
     }
 
+    pub fn get_n_partitions(&self) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        dctx.n_partitions
+    }
+
     pub fn get_worker_index(&self) -> usize {
         let dctx = self.dctx.read().unwrap();
         assert!(dctx.worker_index >= 0, "Worker index not set");
