@@ -9,15 +9,16 @@ use mpi::environment::Universe;
 #[cfg(distributed)]
 use mpi::topology::Communicator;
 
-#[cfg(distributed)]
 use std::sync::atomic::{Ordering, AtomicU64, AtomicI32};
 use fields::PrimeField64;
 #[cfg(distributed)]
 use fields::CubicExtensionField;
 use crate::GlobalInfo;
+#[cfg(distributed)]
 use crate::Proof;
 
 // use std::collections::HashSet;
+#[cfg(distributed)]
 use proofman_starks_lib_c::{
     initialize_agg_readiness_tracker_c, free_agg_readiness_tracker_c, agg_is_ready_c, reset_agg_readiness_tracker_c,
 };
@@ -131,7 +132,7 @@ impl MpiCtx {
         }
         #[cfg(not(distributed))]
         {
-            roots
+            values.to_vec()
         }
     }
 
@@ -244,7 +245,7 @@ impl MpiCtx {
 
     //rank 0 broadcasts to the rest of processes a msg of unknown size
     //Root provides data in `buf`; others can pass an empty Vec that is filled with the message
-    pub fn broadcast(&self, buf: &mut Vec<u8>) {
+    pub fn broadcast(&self, _buf: &mut Vec<u8>) {
         #[cfg(distributed)]
         {
             // global communication: rank 0 broadcasts to all processes
@@ -252,16 +253,16 @@ impl MpiCtx {
                 let root = self.world.process_at_rank(0);
 
                 // 1) Broadcast the length as u64
-                let mut len: u64 = if self.rank == 0 { buf.len() as u64 } else { 0 };
+                let mut len: u64 = if self.rank == 0 { _buf.len() as u64 } else { 0 };
                 root.broadcast_into(&mut len);
 
                 // 2) Resize non-root buffers to the incoming size
                 if self.rank != 0 {
-                    buf.resize(len as usize, 0u8);
+                    _buf.resize(len as usize, 0u8);
                 }
 
                 // 3) Broadcast bytes into place
-                root.broadcast_into(&mut buf[..]);
+                root.broadcast_into(&mut _buf[..]);
             }
         }
     }
