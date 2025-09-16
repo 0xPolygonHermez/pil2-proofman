@@ -412,9 +412,9 @@ void StarkInfo::setMapOffsets() {
         uint64_t constTreeSize = (2 + (NExtended * nConstants) + numNodes);
         mapTotalN += constTreeSize;
 
-        if (!recursive &&  (N * nConstants * 8.0 / (1024 * 1024)) >= 512) {
-            overwriteFixed = true;
-        }
+        // if (!recursive &&  (N * nConstants * 8.0 / (1024 * 1024)) >= 512) {
+        //     overwriteFixed = true;
+        // }
         
         if(!overwriteFixed) {
             mapOffsets[std::make_pair("const", false)] = mapTotalN;
