@@ -614,7 +614,7 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
     mapBuffHelper += memoryTmp3;
 
     if(!gpu) {
-        uint64_t values = 4 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
+        uint64_t values = 3 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
         mapOffsets[std::make_pair("values", false)] = mapBuffHelper;
         mapBuffHelper += values;
     } else {

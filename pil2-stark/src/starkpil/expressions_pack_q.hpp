@@ -221,11 +221,9 @@ public:
         }
     }
 
-    inline void accumulate(uint64_t nrowsPack, uint32_t dim, Goldilocks::Element* acumulator, Goldilocks::Element * tmp, Goldilocks3::Element& challenge, uint32_t constraint_id, uint32_t nConstraints, bool print_factor = false) {
-        Goldilocks3::Element factor = {Goldilocks::one(), Goldilocks::zero(), Goldilocks::zero()};
-        for(uint32_t i = 0; i < nConstraints-(constraint_id+1); ++i) {
-            Goldilocks3::mul(factor, factor, challenge);
-        }
+    inline void accumulate(uint64_t nrowsPack, uint32_t dim, Goldilocks::Element* acumulator, Goldilocks::Element * tmp, Goldilocks3::Element* challenge_powers, uint32_t constraint_id, uint32_t nConstraints, bool print_factor = false) {
+        Goldilocks3::Element factor;
+        memcpy(factor, &challenge_powers[nConstraints - (constraint_id + 1)], sizeof(Goldilocks3::Element));
         if(dim == 1) {
             for (uint64_t i = 0; i < nrowsPack; ++i)
             {
@@ -318,7 +316,10 @@ public:
     }
 
 
-    void calculateExpressions(StepsParams& params, Dest &dest, uint64_t domainSize, bool domainExtended, bool compilation_time, bool verify_constraints = false, bool debug = false) override {
+    void calculateExpressionsQ(StepsParams& params, Dest &dest, uint64_t domainSize, uint64_t challengeId,  bool debug = false) {
+
+        bool verify_constraints = true;
+        bool domainExtended = true;
         uint64_t nrowsPack = std::min(nrowsPack_, domainSize);
 
         uint64_t *mapOffsetsExps = domainExtended ? mapOffsetsExtended : mapOffsets;
@@ -354,7 +355,15 @@ public:
         Goldilocks::Element *tmp1_ = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("tmp1", false)]]; //rick: suficient espai aqui
         Goldilocks::Element *tmp3_ = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("tmp3", false)]]; //rick: suficient espai aqui
         Goldilocks::Element *values_ = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("values", false)]]; //rick: que son aquest values
-        Goldilocks3::Element challenge = {params.challenges[2*FIELD_EXTENSION], params.challenges[2*FIELD_EXTENSION + 1], params.challenges[2*FIELD_EXTENSION + 2]};                    
+        Goldilocks3::Element challenge = {params.challenges[challengeId*FIELD_EXTENSION], params.challenges[challengeId*FIELD_EXTENSION + 1], params.challenges[challengeId*FIELD_EXTENSION + 2]};
+        Goldilocks3::Element* challenge_powers = new Goldilocks3::Element[dest.params.size()];
+        challenge_powers[0][0] = Goldilocks::one();
+        challenge_powers[0][1] = Goldilocks::zero();
+        challenge_powers[0][2] = Goldilocks::zero();
+        for(uint64_t i = 1; i < dest.params.size(); ++i) {
+            Goldilocks3::mul(challenge_powers[i], challenge_powers[i-1], challenge);
+        }
+
         #pragma omp parallel for
         for (uint64_t i = 0; i < domainSize; i+= nrowsPack) {
             bool isCyclic = i < k_min || i >= k_max;
@@ -368,12 +377,10 @@ public:
             expressions_params[bufferCommitsSize + 7] = params.challenges;
             expressions_params[bufferCommitsSize + 8] = params.evals;
 
-            Goldilocks::Element *values = &values_[omp_get_thread_num()*4*FIELD_EXTENSION*nrowsPack];
-            Goldilocks::Element *accumulator = &values[3*FIELD_EXTENSION*nrowsPack];
+            Goldilocks::Element *values = &values_[omp_get_thread_num()*3*FIELD_EXTENSION*nrowsPack];
+            Goldilocks::Element *accumulator = &values[2*FIELD_EXTENSION*nrowsPack];
             memset(accumulator, 0, FIELD_EXTENSION*nrowsPack*sizeof(Goldilocks::Element));
-            for(uint64_t k = 0; k < dest.params.size(); ++k) {
-                memset(values, 0, 3*FIELD_EXTENSION*nrowsPack*sizeof(Goldilocks::Element));
-                
+            for(uint64_t k = 0; k < dest.params.size(); ++k) {                
                 uint64_t i_args = 0;
                 uint8_t* ops = &parserArgs.ops[parserParams[k].opsOffset];
                 uint16_t* args = &parserArgs.args[parserParams[k].argsOffset];
@@ -383,8 +390,8 @@ public:
                 memset(expressions_params[bufferCommitsSize], 0, maxTemp1Size*sizeof(Goldilocks::Element));
                 memset(expressions_params[bufferCommitsSize + 1], 0, maxTemp3Size*sizeof(Goldilocks::Element));
                 
-                Goldilocks::Element *valueA = &values[FIELD_EXTENSION*nrowsPack];
-                Goldilocks::Element *valueB = &values[2*FIELD_EXTENSION*nrowsPack];
+                Goldilocks::Element *valueA = values;
+                Goldilocks::Element *valueB = &values[FIELD_EXTENSION*nrowsPack];
                 for (uint64_t kk = 0; kk < parserParams[k].nOps; ++kk) {
                     switch (ops[kk]) {
                         case 0: {
@@ -420,9 +427,6 @@ public:
                             bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
                             bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
                             Goldilocks::Element *res = kk == parserParams[k].nOps - 1 ? values : &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * nrowsPack];
-                            if( kk == parserParams[k].nOps - 1 && i==0 ){
-                                std::cout << "res pointer: "<< (void*)res << " values pointer: "<< (void*)values <<std::endl;
-                            }
                             printArguments(nrowsPack, a, 3, isConstantA, b, 3, isConstantB, i, args[i_args], kk, parserParams[k].nOps, debug);
                             Goldilocks3::op_pack(nrowsPack, args[i_args], res, a, isConstantA, b, isConstantB);
                             printRes(nrowsPack, res, 3, i, debug);
@@ -438,7 +442,7 @@ public:
                 if (i_args != parserParams[k].nArgs) std::cout << " " << i_args << " - " << parserParams[k].nArgs << std::endl;
                 assert(i_args == parserParams[k].nArgs);
                 
-                accumulate(nrowsPack, dest.params[k].dim, accumulator, values, challenge, dest.params[k].expId, dest.params.size(), i==0);
+                accumulate(nrowsPack, dest.params[k].dim, accumulator, values, challenge_powers, dest.params[k].expId, dest.params.size(), i==0);
             }
             ziAndStorePolynomial(nrowsPack, dest, accumulator, i);
         }

@@ -95,7 +95,7 @@ public:
     
     void calculateImPolsExpressions(uint64_t step, StepsParams& params, ExpressionsCtx& expressionsCtx);
     void calculateQuotientPolynomialOut(StepsParams& params, ExpressionsCtx& expressionsCtx);
-    void calculateQuotientPolynomialIn(StepsParams& params, ExpressionsCtx& expressionsCtx);
+    void calculateQuotientPolynomialIn(StepsParams& params, ExpressionsPackQ& expressionsCtx);
     void calculateQuotientPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
     void calculateFRIPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
 
@@ -471,7 +471,7 @@ void Starks<ElementType>::calculateQuotientPolynomial(StepsParams &params, Expre
     expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId, false, false, true);
 }
 template <typename ElementType>
-void Starks<ElementType>::calculateQuotientPolynomialIn(StepsParams &params, ExpressionsCtx &expressionsCtx) {
+void Starks<ElementType>::calculateQuotientPolynomialIn(StepsParams &params, ExpressionsPackQ &expressionsCtxQ) {
 
     uint64_t domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     bool domainExtended = true;
@@ -481,7 +481,7 @@ void Starks<ElementType>::calculateQuotientPolynomialIn(StepsParams &params, Exp
     for (int i = setupCtx.expressionsBin.constraintsInfoDebug.size()-1; i >=0; i--) {
         destStruct.addParams(i, setupCtx.expressionsBin.constraintsInfoDebug[i].destDim);
     }
-    expressionsCtx.calculateExpressions(params, destStruct, domainSize, domainExtended, false, true);
+    expressionsCtxQ.calculateExpressionsQ(params, destStruct, domainSize, 2);
 }
 
 template <typename ElementType>
