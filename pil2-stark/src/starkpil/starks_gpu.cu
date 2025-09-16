@@ -1063,8 +1063,6 @@ __global__  void computeFRIExpression(uint64_t domainSize, uint64_t nOpeningPoin
             res[threadIdx.x] = aux[0];
             res[blockDim.x + threadIdx.x] = aux[1];
             res[2 * blockDim.x + threadIdx.x] = aux[2];
-            // printArgs(res, 3, false, d_x + i, 1, false, i, 2, nOp, debug);
-            Goldilocks3GPU::mul_31_gpu_no_const(res, res, d_x + i);
             // printArgs(res, 3, false, accum, 3, false, i, 2, nOp++, debug);
 
             gl64_t *out = o == 0 ? fri_pol : accum;
