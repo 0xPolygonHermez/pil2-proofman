@@ -7,3 +7,5 @@ run.sh
 vendor
 .cargo
 MyLogFile.log
+.vscode/launch.json
+.vscode/settings.json
