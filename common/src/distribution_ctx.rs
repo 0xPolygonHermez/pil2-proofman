@@ -1,4 +1,6 @@
 use core::panic;
+use std::collections::HashSet;
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceChunks {
@@ -576,42 +578,115 @@ impl DistributionCtx {
         // Distribute the unassigned instances to the process with minimum weight each time
         // cost: O(n^2) may be optimized if needed
 
-        // TODO 0.12.0: CONSIDER IMPLEMENTING BACK ASSIGNATION BY CHUNKS!!!
+        let mut instances_assigned_partition =
+            vec![HashMap::<(usize, usize), usize>::new(); self.n_partitions as usize];
+        let mut instances_assigned_process = vec![HashMap::<(usize, usize), usize>::new(); self.n_processes as usize];
 
-        for (gid, _) in unassigned_instances {
+        let mut local_process_count = self.process_count.clone();
+        for (gid, _) in &unassigned_instances {
             let mut min_weight = u64::MAX;
-            let mut partition_id = 0;
+            let mut min_weight_idx = 0;
             for (i, &weight) in self.partition_weight.iter().enumerate() {
                 if weight < min_weight {
                     min_weight = weight;
-                    partition_id = i;
-                } else if (min_weight == weight) && (self.partition_count[i] < self.partition_count[partition_id]) {
-                    partition_id = i;
+                    min_weight_idx = i;
+                } else if (min_weight == weight) && (self.partition_count[i] < self.partition_count[min_weight_idx]) {
+                    min_weight_idx = i;
                 }
             }
-            self.instance_partition[gid] = partition_id as i32;
-            self.partition_count[partition_id] += 1;
-            self.partition_weight[partition_id] += self.instances[gid].weight;
-            if self.partition_mask[partition_id] {
-                self.worker_instances.push(gid);
+            let (airgroup_id, air_id) = self.get_instance_info(*gid);
+            *instances_assigned_partition[min_weight_idx].entry((airgroup_id, air_id)).or_insert(0) += 1;
+            self.partition_count[min_weight_idx] += 1;
+            self.partition_weight[min_weight_idx] += self.instances[*gid].weight;
+            if self.partition_mask[min_weight_idx] {
+                self.worker_instances.push(*gid);
                 let mut min_weight = u64::MAX;
-                let mut process_id = 0;
+                let mut min_weight_process_idx = 0;
                 for (i, &weight) in self.process_weight.iter().enumerate() {
                     if weight < min_weight {
                         min_weight = weight;
-                        process_id = i;
-                    } else if (min_weight == weight) && (self.process_count[i] < self.process_count[process_id]) {
-                        process_id = i;
+                        min_weight_process_idx = i;
+                    } else if (min_weight == weight)
+                        && (local_process_count[i] < local_process_count[min_weight_process_idx])
+                    {
+                        min_weight_process_idx = i;
                     }
                 }
-                let lid = self.process_count[process_id];
-                self.process_count[process_id] += 1;
-                self.process_weight[process_id] += self.instances[gid].weight;
-                if process_id == self.process_id {
-                    self.process_instances.push(gid);
+
+                local_process_count[min_weight_process_idx] += 1;
+                self.process_weight[min_weight_process_idx] += self.instances[*gid].weight;
+                instances_assigned_process[min_weight_process_idx]
+                    .entry((airgroup_id, air_id))
+                    .and_modify(|c| *c += 1)
+                    .or_insert(1);
+            }
+        }
+
+        unassigned_instances.sort_by_key(|&(idx, weight)| (self.instances_chunks[idx].slow, std::cmp::Reverse(weight)));
+
+        let partitions_chunks: &mut Vec<HashSet<usize>> = &mut (0..self.n_partitions).map(|_| HashSet::new()).collect();
+        let process_chunks: &mut Vec<HashSet<usize>> = &mut (0..self.n_processes).map(|_| HashSet::new()).collect();
+
+        for (gid, _) in &unassigned_instances {
+            let chunks = &self.instances_chunks[*gid].chunks;
+            let (airgroup_id, air_id) = self.get_instance_info(*gid);
+            let mut min_chunks = usize::MAX;
+            let mut min_chunks_idx = 0;
+            for partition_id in 0..self.n_partitions {
+                if instances_assigned_partition[partition_id as usize].get(&(airgroup_id, air_id)).unwrap_or(&0) > &0 {
+                    let mut new_chunks_added = 0;
+                    for chunk in chunks {
+                        if !partitions_chunks[partition_id as usize].contains(chunk) {
+                            new_chunks_added += 1;
+                        }
+                    }
+                    if new_chunks_added < min_chunks {
+                        min_chunks = new_chunks_added;
+                        min_chunks_idx = partition_id as usize;
+                    }
                 }
-                self.instance_process[gid].0 = process_id as i32;
-                self.instance_process[gid].1 = lid;
+            }
+
+            if let Some(c) = instances_assigned_partition[min_chunks_idx].get_mut(&(airgroup_id, air_id)) {
+                *c -= 1;
+            }
+
+            for chunk in chunks {
+                partitions_chunks[min_chunks_idx].insert(*chunk);
+            }
+
+            if self.partition_mask[min_chunks_idx] {
+                let mut min_chunks = usize::MAX;
+                let mut min_process_id = 0;
+                for process_id in 0..self.n_processes {
+                    if instances_assigned_process[process_id as usize].get(&(airgroup_id, air_id)).unwrap_or(&0) > &0 {
+                        let mut new_chunks_added = 0;
+                        for chunk in chunks {
+                            if !process_chunks[process_id as usize].contains(chunk) {
+                                new_chunks_added += 1;
+                            }
+                        }
+                        if new_chunks_added < min_chunks {
+                            min_chunks = new_chunks_added;
+                            min_process_id = process_id;
+                        }
+                    }
+                }
+
+                for chunk in chunks {
+                    process_chunks[min_process_id].insert(*chunk);
+                }
+
+                if min_process_id == self.process_id {
+                    self.process_instances.push(*gid);
+                }
+
+                self.instance_process[*gid].0 = min_process_id as i32;
+                self.instance_process[*gid].1 = self.process_count[min_process_id];
+                self.process_count[min_process_id] += 1;
+                if let Some(c) = instances_assigned_process[min_process_id].get_mut(&(airgroup_id, air_id)) {
+                    *c -= 1;
+                }
             }
         }
 

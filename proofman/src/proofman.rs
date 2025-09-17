@@ -330,6 +330,8 @@ where
     }
 
     pub fn execute_(&self, output_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+        self.pctx.dctx_setup(1, vec![0], 0, true, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize);
+
         self.reset();
         self.pctx.dctx_reset();
 
@@ -459,6 +461,8 @@ where
     }
 
     pub fn compute_witness_(&self, options: ProofOptions) -> Result<(), Box<dyn std::error::Error>> {
+        self.pctx.dctx_setup(1, vec![0], 0, true, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize);
+
         self.reset();
         self.pctx.dctx_reset();
 
@@ -581,6 +585,8 @@ where
         test_mode: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.pctx.set_debug_info(debug_info);
+
+        self.pctx.dctx_setup(1, vec![0], 0, true, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize);
 
         self.reset();
         self.pctx.dctx_reset();
