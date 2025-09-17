@@ -10,7 +10,7 @@ witness_library!(WitnessLib, Goldilocks);
 
 impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
     fn register_witness(&mut self, wcm: &WitnessManager<F>) {
-        Std::new(wcm.get_pctx(), wcm.get_sctx(), false);
+        Std::new(wcm.get_pctx(), wcm.get_sctx(), false, vec![]);
         let prod_bus = ProdBus::new();
         let sum_bus = SumBus::new();
         let both_buses = BothBuses::new();

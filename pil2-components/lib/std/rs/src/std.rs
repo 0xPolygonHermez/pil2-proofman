@@ -1,5 +1,4 @@
 use std::sync::{Arc, RwLock};
-
 use fields::PrimeField64;
 
 use proofman_common::{ProofCtx, SetupCtx, StdMode};
@@ -18,14 +17,19 @@ pub struct Std<F: PrimeField64> {
 }
 
 impl<F: PrimeField64> Std<F> {
-    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, shared_tables: bool) -> Arc<Self> {
+    pub fn new(
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        shared_tables: bool,
+        unique_worker_table_ids: Vec<usize>,
+    ) -> Arc<Self> {
         // Get the mode
         let mode = RwLock::new(StdMode::default());
 
         // Instantiate the components
         let prod_bus = StdProd::new(&sctx);
         let sum_bus = StdSum::new(&sctx);
-        let virtual_table = StdVirtualTable::new(pctx.clone(), &sctx, shared_tables);
+        let virtual_table = StdVirtualTable::new(pctx.clone(), &sctx, shared_tables, unique_worker_table_ids);
         let range_check = StdRangeCheck::new(pctx.clone(), &sctx, virtual_table.clone(), shared_tables);
 
         Arc::new(Self { mode, prod_bus, sum_bus, range_check, virtual_table })

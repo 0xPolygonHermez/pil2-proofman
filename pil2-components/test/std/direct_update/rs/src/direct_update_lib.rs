@@ -14,7 +14,7 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
     fn register_witness(&mut self, wcm: &WitnessManager<F>) {
         let seed = if cfg!(feature = "debug") { 0 } else { rng().random::<u64>() };
 
-        let std = Std::new(wcm.get_pctx(), wcm.get_sctx(), false);
+        let std = Std::new(wcm.get_pctx(), wcm.get_sctx(), false, vec![]);
         let direct_update_prod_local = DirectUpdateProdLocal::new();
         let direct_update_prod_global = DirectUpdateProdGlobal::new();
         let direct_update_sum_local = DirectUpdateSumLocal::new();
