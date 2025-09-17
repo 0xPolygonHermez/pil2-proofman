@@ -70,7 +70,9 @@ struct CsvInfo {
     air_id: usize,
     name: String,
     instance_count: usize,
+    percentage_instances: f64,
     total_area: u64,
+    percentage_area: f64,
 }
 
 pub struct ProofMan<F: PrimeField64> {
@@ -353,11 +355,17 @@ where
                         airgroup_id,
                         air_id,
                         total_area: 0,
+                        percentage_area: 0f64,
                         instance_count: 0,
+                        percentage_instances: 0f64,
                     },
                 );
             }
         }
+
+        let mut total_area = 0;
+        let mut total_instances = 0;
+
         for instance_info in instances.iter() {
             let airgroup_id = instance_info.airgroup_id;
             let air_id = instance_info.air_id;
@@ -374,7 +382,8 @@ where
                 .map(|(_, value)| *value)
                 .sum();
             let area = (1 << n_bits) * total_cols;
-
+            total_area += area;
+            total_instances += 1;
             air_info.entry(air_name).and_modify(|info| {
                 info.total_area += area;
                 info.instance_count += 1;
@@ -383,12 +392,9 @@ where
 
         let mut wtr = Writer::from_path(output_path)?;
 
-        let mut total_area = 0;
-        let mut total_instances = 0;
-
-        for info in air_info.values() {
-            total_area += info.total_area;
-            total_instances += info.instance_count;
+        for info in air_info.values_mut() {
+            info.percentage_area = info.total_area as f64 / total_area as f64 * 100f64;
+            info.percentage_instances = info.instance_count as f64 / total_instances as f64 * 100f64;
         }
 
         for (airgroup_id, air_group) in self.pctx.global_info.airs.iter().enumerate() {
@@ -406,7 +412,9 @@ where
             air_id: Option<usize>,
             name: String,
             total_instances: usize,
+            percentage_instances: f64,
             total_area: u64,
+            percentage_area: f64,
         }
 
         wtr.serialize(Summary {
@@ -414,7 +422,9 @@ where
             name: "TOTAL".into(),
             airgroup_id: None,
             air_id: None,
+            percentage_area: 100f64,
             total_area,
+            percentage_instances: 100f64,
             total_instances,
         })?;
 
