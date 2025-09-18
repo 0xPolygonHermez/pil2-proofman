@@ -493,7 +493,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
 pub fn generate_vadcop_final_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
-    proof: &Proof<F>,
+    recursive2_proofs: &[Proof<F>],
     prover_buffer: &[F],
     output_dir_path: &Path,
     const_pols: &[F],
@@ -501,8 +501,23 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     d_buffers: *mut c_void,
     save_proof: bool,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
+    let publics_circom_size =
+        pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3;
+
+    let mut updated_proof_size = publics_circom_size;
+    for proof in recursive2_proofs {
+        updated_proof_size += proof.proof.len();
+    }
+
+    let mut updated_proof = vec![0; updated_proof_size];
+    add_publics_circom(&mut updated_proof, 0, pctx, "", false);
+
+    for proof in recursive2_proofs {
+        updated_proof[publics_circom_size..].copy_from_slice(proof.proof.as_ref());
+    }
+
     let setup = setups.setup_vadcop_final.as_ref().unwrap();
-    let circom_witness_vadcop_final = generate_witness::<F>(setup, &proof.proof)?;
+    let circom_witness_vadcop_final = generate_witness::<F>(setup, &updated_proof)?;
     let witness_final_proof =
         Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, setup.n_cols as usize);
     tracing::info!("··· Generating vadcop final proof");

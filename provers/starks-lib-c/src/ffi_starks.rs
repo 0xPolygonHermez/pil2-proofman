@@ -42,6 +42,32 @@ pub fn register_proof_done_callback_c(tx: crossbeam_channel::Sender<(u64, String
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn initialize_agg_readiness_tracker_c() {
+    unsafe {
+        initialize_agg_readiness_tracker();
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn free_agg_readiness_tracker_c() {
+    unsafe {
+        free_agg_readiness_tracker();
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn agg_is_ready_c() -> i32 {
+    unsafe { agg_is_ready() }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn reset_agg_readiness_tracker_c() {
+    unsafe {
+        reset_agg_readiness_tracker();
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn launch_callback_c(instance_id: u64, proof_type: &str) {
     let proof_type_str = CString::new(proof_type).unwrap();
     let proof_type_ptr = proof_type_str.as_ptr() as *mut std::os::raw::c_char;
@@ -1262,6 +1288,38 @@ pub fn register_proof_done_callback_c(_tx: crossbeam_channel::Sender<(u64, Strin
         "{}: ··· {}",
         "ffi     ",
         "register_proof_done_callback: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn initialize_agg_readiness_tracker_c() {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "initialize_agg_readiness_tracker: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn free_agg_readiness_tracker_c() {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "free_agg_readiness_tracker: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn agg_is_ready_c() -> i32 {
+    0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn reset_agg_readiness_tracker_c() {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "reset_agg_readiness_tracker: This is a mock call because there is no linked library"
     );
 }
 

@@ -142,7 +142,6 @@ public:
                 Goldilocks::Element *xdivxsub = &params.aux_trace[mapOffsetFriPol + row*FIELD_EXTENSION];
                 Goldilocks3::op_31_pack(nrowsPack, 3, xdivxsub, &xis[o * FIELD_EXTENSION], true, &proverHelpers->x[row], false);
                 getInversePolinomial(nrowsPack, xdivxsub, value, true, 3);
-                Goldilocks3::op_31_pack(nrowsPack, 2, xdivxsub, xdivxsub, false, &proverHelpers->x[row], false);
                 return xdivxsub;
             }
         } else if (type >= setupCtx.starkInfo.nStages + 4 && type < setupCtx.starkInfo.customCommits.size() + setupCtx.starkInfo.nStages + 4) {

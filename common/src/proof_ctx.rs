@@ -11,7 +11,7 @@ use mpi::environment::Universe;
 
 use crate::{
     initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode, StepsParams,
-    VerboseMode,
+    VerboseMode, Proof,
 };
 
 #[derive(Debug)]
@@ -380,6 +380,26 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.broadcast(buf);
     }
 
+    pub fn dctx_process_ready_for_outer_agg(&self) {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.process_ready_for_outer_agg();
+    }
+
+    pub fn dctx_send_proof_to_rank(&self, proof: &Vec<u64>, rank: i32) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.send_proof_to_rank(proof, rank);
+    }
+
+    pub fn dctx_recv_proof_from_rank(&self, rank: i32) -> Vec<u64> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.recv_proof_from_rank(rank)
+    }
+
+    pub fn dctx_get_outer_agg_rank(&self) -> i32 {
+        let dctx = self.dctx.read().unwrap();
+        dctx.get_outer_agg_rank()
+    }
+
     pub fn dctx_is_min_rank_owner(&self, airgroup_id: usize, air_id: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
         dctx.is_min_rank_owner(airgroup_id, air_id)
@@ -465,15 +485,30 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.find_instance_mine(airgroup_id, air_id)
     }
 
-    pub fn dctx_set_chunks(&self, global_idx: usize, chunks: Vec<usize>) {
+    pub fn dctx_set_chunks(&self, global_idx: usize, chunks: Vec<usize>, slow: bool) {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.set_chunks(global_idx, chunks);
+        dctx.set_chunks(global_idx, chunks, slow);
     }
 
     pub fn add_instance_assign(&self, airgroup_id: usize, air_id: usize, threads_witness: usize) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_instance(airgroup_id, air_id, threads_witness, weight)
+    }
+
+    pub fn dctx_get_airgroup_instances_alives(&self) -> Vec<Vec<usize>> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.airgroup_instances_alives.clone()
+    }
+
+    pub fn dctx_send_proof_agg_rank(&self, proof: &Proof<F>) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.send_proof_agg_rank(proof);
+    }
+
+    pub fn dctx_check_incoming_proofs(&self, airgroup_id: usize) -> Option<Vec<u64>> {
+        let dctx_check_incoming_proofs = self.dctx.read().unwrap();
+        dctx_check_incoming_proofs.check_incoming_proofs(airgroup_id)
     }
 
     pub fn add_instance_rank(
@@ -535,11 +570,6 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn dctx_load_balance_info(&self) -> (f64, u64, u64, f64) {
         let dctx = self.dctx.read().unwrap();
         dctx.load_balance_info()
-    }
-
-    pub fn dctx_set_balance_distribution(&self, balance: bool) {
-        let mut dctx = self.dctx.write().unwrap();
-        dctx.set_balance_distribution(balance);
     }
 
     pub fn dctx_distribute_multiplicity(&self, multiplicity: &[AtomicU64], global_idx: usize) {

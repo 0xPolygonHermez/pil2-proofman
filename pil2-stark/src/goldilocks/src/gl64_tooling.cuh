@@ -59,6 +59,9 @@ struct AirInstanceInfo {
     uint64_t numBatchesEvals;
     EvalInfo **evalsInfo;
     uint64_t *evalsInfoSizes;
+
+    EvalInfo **evalsInfoFRI;
+    uint64_t *evalsInfoFRISizes;
     
     SetupCtx *setupCtx;
 
@@ -127,6 +130,58 @@ struct AirInstanceInfo {
             delete[] evalsInfoHost;
             count++;
         }
+
+        uint64_t nOpeningPoints = setupCtx->starkInfo.openingPoints.size();
+
+        evalsInfoFRI = new EvalInfo*[nOpeningPoints];
+        uint64_t *evalsInfoFRISizes_ = new uint64_t[nOpeningPoints];
+
+        std::fill(evalsInfoFRISizes_, evalsInfoFRISizes_ + nOpeningPoints, 0);
+        for (uint64_t i = 0; i < setupCtx->starkInfo.evMap.size(); i++) {
+            evalsInfoFRISizes_[setupCtx->starkInfo.evMap[i].openingPos]++;
+        }
+
+        EvalInfo** evalsInfoByOpeningPos = new EvalInfo*[nOpeningPoints];
+        for (uint64_t pos = 0; pos < nOpeningPoints; pos++) {
+            evalsInfoByOpeningPos[pos] = new EvalInfo[evalsInfoFRISizes_[pos]];
+        }
+
+        std::fill(evalsInfoFRISizes_, evalsInfoFRISizes_ + nOpeningPoints, 0);
+        for (uint64_t i = 0; i < setupCtx->starkInfo.evMap.size(); i++) {
+            EvMap ev = setupCtx->starkInfo.evMap[i];
+            uint64_t pos = ev.openingPos;
+
+            std::string type = (ev.type == EvMap::eType::cm) ? "cm" :
+                            (ev.type == EvMap::eType::custom) ? "custom" : "fixed";
+
+            PolMap polInfo = (type == "cm")      ? setupCtx->starkInfo.cmPolsMap[ev.id] :
+                            (type == "custom")  ? setupCtx->starkInfo.customCommitsMap[ev.commitId][ev.id] :
+                                                setupCtx->starkInfo.constPolsMap[ev.id];
+
+            EvalInfo* evInfo = &evalsInfoByOpeningPos[pos][evalsInfoFRISizes_[pos]];
+            evInfo->type = (type == "cm") ? 0 : (type == "custom") ? 1 : 2;
+            evInfo->offset = setupCtx->starkInfo.getTraceOffset(type, polInfo, true);
+            evInfo->stride = setupCtx->starkInfo.getTraceNColsSection(type, polInfo, true);
+            evInfo->dim = polInfo.dim;
+            evInfo->evalPos = i;
+            evInfo->openingPos = pos;
+
+            evalsInfoFRISizes_[pos]++;
+        }
+
+        for (uint64_t opening = 0; opening < nOpeningPoints; opening++) {
+            CHECKCUDAERR(cudaMalloc(&evalsInfoFRI[opening], evalsInfoFRISizes_[opening] * sizeof(EvalInfo)));
+            CHECKCUDAERR(cudaMemcpy(evalsInfoFRI[opening], evalsInfoByOpeningPos[opening],
+                                    evalsInfoFRISizes_[opening] * sizeof(EvalInfo),
+                                    cudaMemcpyHostToDevice));
+            delete[] evalsInfoByOpeningPos[opening];
+        }
+        
+        CHECKCUDAERR(cudaMalloc(&evalsInfoFRISizes, nOpeningPoints * sizeof(uint64_t)));
+        CHECKCUDAERR(cudaMemcpy(evalsInfoFRISizes, evalsInfoFRISizes_, nOpeningPoints * sizeof(uint64_t), cudaMemcpyHostToDevice));
+        
+        delete[] evalsInfoFRISizes_;
+        delete[] evalsInfoByOpeningPos;
     }
 
     ~AirInstanceInfo() {
@@ -148,8 +203,15 @@ struct AirInstanceInfo {
 
         delete[] evalsInfoSizes;
         delete[] evalsInfo;
-}
 
+        for (uint64_t i = 0; i < setupCtx->starkInfo.openingPoints.size(); ++i) {
+            if (evalsInfoFRI[i] != nullptr) {
+                CHECKCUDAERR(cudaFree(evalsInfoFRI[i]));
+            }
+        }
+
+        CHECKCUDAERR(cudaFree(evalsInfoFRISizes));
+    }
 };
 
 

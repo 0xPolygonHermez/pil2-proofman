@@ -1,8 +1,13 @@
 # Platform detection for compiler and library paths
 UNAME_S := $(shell uname -s)
 ifneq ($(UNAME_S),Darwin)
-    INFO := $(shell cd src/goldilocks && ./configure.sh && cd ../.. && sleep 2)
-    include src/goldilocks/CudaArch.mk
+    ifndef CUDA_ARCH
+        INFO := $(shell cd src/goldilocks && ./configure.sh && cd ../.. && sleep 2)
+        include src/goldilocks/CudaArch.mk
+        $(info CUDA_ARCH was not defined externally, using value from CudaArch.mk: $(CUDA_ARCH))
+    else
+        $(info CUDA_ARCH defined externally: $(CUDA_ARCH))
+    endif
 endif
 
 # CUDA detection - check multiple possible locations
@@ -78,12 +83,19 @@ ifeq ($(UNAME_S),Darwin)
     NVCC :=
 else ifeq ($(UNAME_S),Linux)
     CXX      = g++
-    include src/goldilocks/CudaArch.mk
+    
+    # Add MPI compiler flags if needed
+    MPI_CPPFLAGS := $(shell which mpicc >/dev/null 2>&1 && mpicc --showme:compile 2>/dev/null || echo "")
+    MPI_LDFLAGS := $(shell which mpicc >/dev/null 2>&1 && mpicc --showme:link 2>/dev/null || echo "")
     CPPFLAGS = -I/usr/include -I/usr/local/include -MMD -MP $(INC_FLAGS)
     CXXFLAGS = -std=c++17 -Wall -pthread -Wno-unused-label -fPIC -fopenmp
     LDFLAGS  = -rdynamic -fopenmp -lsodium -lpthread -lgmp -lstdc++
     LDFLAGS_GPU := -lcudart -lsodium -lpthread -lgmp -lstdc++
     CFLAGS   = -fopenmp
+
+    # Add MPI include path and libraries - use C bindings only
+    CPPFLAGS += $(MPI_CPPFLAGS) -DOMPI_SKIP_MPICXX -DMPICH_SKIP_MPICXX -D__USE_MPI_RMA__
+    LDFLAGS += $(MPI_LDFLAGS)
     # AVX512/AVX2 detection
     AVX512_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx512' -m 1)
     ifneq ($(AVX512_SUPPORTED),)

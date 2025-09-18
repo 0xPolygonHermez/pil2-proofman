@@ -163,6 +163,13 @@ extern "C" {
     void register_proof_done_callback(ProofDoneCallback cb);
     void launch_callback(uint64_t instanceId, char *proofType);
 
+    // MPI calls
+    // =================================================================================
+    void initialize_agg_readiness_tracker();
+    void free_agg_readiness_tracker();
+    int  agg_is_ready();
+    void reset_agg_readiness_tracker();
+
 #ifdef __cplusplus
 }
 #endif
