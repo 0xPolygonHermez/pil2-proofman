@@ -122,10 +122,10 @@ impl MpiCtx {
         }
     }
 
-    pub fn distribute_roots(&self, values: [u64; 10]) -> Vec<u64> {
+    pub fn distribute_roots(&self, values: Vec<u64>) -> Vec<u64> {
         #[cfg(distributed)]
         {
-            let mut all_values: Vec<u64> = vec![0u64; 10 * self.n_processes as usize];
+            let mut all_values: Vec<u64> = vec![0u64; values.len() * self.n_processes as usize];
             self.world.all_gather_into(&values, &mut all_values);
             all_values
         }

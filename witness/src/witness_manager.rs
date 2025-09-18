@@ -82,7 +82,7 @@ impl<F: PrimeField64> WitnessManager<F> {
                 self.input_data_path.read().unwrap().clone(),
             );
         }
-        
+
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
             component.execute(
                 self.pctx.clone(),

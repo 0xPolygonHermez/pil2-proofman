@@ -1,12 +1,10 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use libloading::{Library, Symbol};
-use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
 use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
-use std::ops::Add;
 use proofman_common::{
-    calculate_fixed_tree, configured_num_threads, load_const_pols, skip_prover_instance, CurveType, DebugInfo,
-    MemoryHandler, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx, SetupsVadcop, VerboseMode,
-    MAX_INSTANCES, MpiCtx, initialize_logger,
+    calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
+    DebugInfo, MemoryHandler, MpiCtx, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx, SetupsVadcop,
+    VerboseMode, MAX_INSTANCES,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -31,8 +29,8 @@ use rand::{SeedableRng, seq::SliceRandom};
 use rand::rngs::StdRng;
 
 use proofman_starks_lib_c::{
-    gen_proof_c, commit_witness_c, calculate_hash_c, load_custom_commit_c, calculate_impols_expressions_c,
-    clear_proof_done_callback_c, launch_callback_c,
+    gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c, clear_proof_done_callback_c,
+    launch_callback_c,
 };
 
 use std::{
@@ -43,6 +41,7 @@ use std::{
 use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
+use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
 use crate::{check_tree_paths_vadcop, gen_recursive_proof_size, initialize_fixed_pols_tree};
 use crate::{verify_constraints_proof, verify_basic_proof, verify_final_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
@@ -178,9 +177,9 @@ impl ProofInfo {
     }
 }
 
-#[derive(Debug, Clone, Copy, BorshSerialize, BorshDeserialize)]
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct ContributionsInfo {
-    pub challenge: [u64; 10],
+    pub challenge: Vec<u64>,
     pub airgroup_id: usize,
     pub worker_index: u32,
 }
@@ -1219,25 +1218,26 @@ where
             timer_stop_and_log_info!(CALCULATING_INNER_CONTRIBUTIONS);
 
             //calculate-challenge
-            let internal_contribution = self.calculate_internal_contributions();
+            let internal_contribution =
+                calculate_internal_contributions(&self.pctx, &self.roots_contributions, &self.values_contributions);
 
             timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
 
+            let contributions_size = match self.pctx.global_info.curve {
+                CurveType::None => self.pctx.global_info.lattice_size.unwrap(),
+                _ => 10,
+            };
+
             let all_internal_partial_contributions = self.mpi_ctx.distribute_roots(internal_contribution);
             let all_internal_partial_contributions_split: Vec<Vec<F>> = all_internal_partial_contributions
-                .chunks(10)
+                .chunks(contributions_size)
                 .map(|chunk| chunk.iter().map(|&x| F::from_u64(x)).collect())
                 .collect();
 
-            let internal_contribution = self.aggregate_contributions(&all_internal_partial_contributions_split);
+            let internal_contribution = aggregate_contributions(&self.pctx, &all_internal_partial_contributions_split);
 
-            // Map internal contribution to [u64; 10]
-            let internal_contribution_u64: [u64; 10] = internal_contribution
-                .iter()
-                .map(|&x| x.as_canonical_u64())
-                .collect::<Vec<u64>>()
-                .try_into()
-                .expect("Expected exactly 10 elements");
+            let internal_contribution_u64: Vec<u64> =
+                internal_contribution.iter().map(|&x| x.as_canonical_u64()).collect::<Vec<u64>>();
 
             if phase == ProvePhase::Contributions {
                 return Ok(ProvePhaseResult::Contributions(vec![ContributionsInfo {
@@ -1254,7 +1254,18 @@ where
             }
         };
 
-        self.calculate_global_challenge(all_partial_contributions_u64);
+        let n_workers =
+            all_partial_contributions_u64.iter().map(|contribution| contribution.worker_index).max().unwrap_or(0) + 1;
+        let mut worker_contributions = self.worker_contributions.write().unwrap();
+        for contribution in all_partial_contributions_u64 {
+            if contribution.worker_index < n_workers {
+                worker_contributions.push(contribution.clone());
+            } else {
+                panic!("Invalid worker index in contributions");
+            }
+        }
+
+        calculate_global_challenge(&self.pctx, all_partial_contributions_u64);
 
         timer_start_info!(GENERATING_INNER_PROOFS);
 
@@ -1850,7 +1861,7 @@ where
 
             // TODO: Verify proofs!
 
-            let workers_acc_challenge = self.aggregate_contributions(&stored_contributions);
+            let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
             for (c, value) in workers_acc_challenge.iter().enumerate() {
                 if value.as_canonical_u64() != proof_acc_challenge[c] {
                     panic!("Aggregated proof challenge does not match the expected challenge");
@@ -2708,92 +2719,6 @@ where
         Ok((pctx, sctx, setups_vadcop))
     }
 
-    fn calculate_internal_contributions(&self) -> [u64; 10] {
-        timer_start_info!(CALCULATE_INTERNAL_CONTRIBUTION);
-        let my_instances = self.pctx.dctx_get_process_instances();
-
-        let mut values = vec![vec![F::ZERO; 10]; my_instances.len()];
-
-        for (idx, instance_id) in my_instances.iter().enumerate() {
-            let mut contribution = vec![F::ZERO; 10];
-
-            let root_contribution = self.roots_contributions[*instance_id];
-
-            let values_to_hash =
-                &mut *self.values_contributions[*instance_id].lock().expect("Missing values_contribution").clone();
-            values_to_hash[4..8].copy_from_slice(&root_contribution[..4]);
-
-            calculate_hash_c(
-                contribution.as_mut_ptr() as *mut u8,
-                values_to_hash.as_mut_ptr() as *mut u8,
-                values_to_hash.len() as u64,
-                10,
-            );
-
-            for (i, v) in contribution.iter().enumerate().take(10) {
-                values[idx][i] = *v;
-            }
-        }
-
-        let partial_contribution = self.add_contributions(&values);
-
-        let partial_contribution_u64: [u64; 10] = partial_contribution
-            .iter()
-            .map(|&x| x.as_canonical_u64())
-            .collect::<Vec<u64>>()
-            .try_into()
-            .expect("Expected exactly 10 elements");
-
-        timer_stop_and_log_info!(CALCULATE_INTERNAL_CONTRIBUTION);
-
-        partial_contribution_u64
-    }
-
-    fn calculate_global_challenge(&self, all_partial_contributions_u64: &[ContributionsInfo]) {
-        timer_start_info!(CALCULATE_GLOBAL_CHALLENGE);
-
-        let transcript = FFITranscript::new(2, true);
-
-        transcript.add_elements(self.pctx.get_publics_ptr(), self.pctx.global_info.n_publics);
-
-        let proof_values_stage = self.pctx.get_proof_values_by_stage(1);
-        if !proof_values_stage.is_empty() {
-            transcript.add_elements(proof_values_stage.as_ptr() as *mut u8, proof_values_stage.len());
-        }
-
-        let all_partial_contributions: Vec<Vec<F>> = all_partial_contributions_u64
-            .iter()
-            .map(|arr| arr.challenge.iter().map(|&x| F::from_u64(x)).collect())
-            .collect();
-
-        let n_workers =
-            all_partial_contributions_u64.iter().map(|contribution| contribution.worker_index).max().unwrap_or(0) + 1;
-        let mut worker_contributions = self.worker_contributions.write().unwrap();
-        for contribution in all_partial_contributions_u64 {
-            if contribution.worker_index < n_workers {
-                worker_contributions.push(*contribution);
-            } else {
-                panic!("Invalid worker index in contributions");
-            }
-        }
-
-        let value = self.aggregate_contributions(&all_partial_contributions);
-        transcript.add_elements(value.as_ptr() as *mut u8, value.len());
-
-        let global_challenge = [F::ZERO; 3];
-        transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
-
-        tracing::info!(
-            "··· Global challenge: [{}, {}, {}]",
-            global_challenge[0],
-            global_challenge[1],
-            global_challenge[2]
-        );
-        self.pctx.set_global_challenge(2, &global_challenge);
-
-        timer_stop_and_log_info!(CALCULATE_GLOBAL_CHALLENGE);
-    }
-
     #[allow(dead_code)]
     fn diagnostic_instance(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, instance_id: usize) -> bool {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
@@ -3029,87 +2954,5 @@ where
             airgroup_id,
             air_id
         );
-    }
-
-    fn add_contributions(&self, values: &[Vec<F>]) -> Vec<F> {
-        if self.pctx.global_info.curve == CurveType::EcGFp5 {
-            let mut result = EcGFp5::hash_to_curve(
-                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][0..5]),
-                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][5..10]),
-            );
-
-            for value in values.iter().skip(1) {
-                let curve_point = EcGFp5::hash_to_curve(
-                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[0..5]),
-                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[5..10]),
-                );
-
-                result = result.add(&curve_point);
-            }
-
-            let mut curve_point_values = vec![F::ZERO; 10];
-            curve_point_values[0..5].copy_from_slice(result.x().as_basis_coefficients_slice());
-            curve_point_values[5..10].copy_from_slice(result.y().as_basis_coefficients_slice());
-            curve_point_values
-        } else {
-            let mut result = EcMasFp5::hash_to_curve(
-                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][0..5]),
-                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][5..10]),
-            );
-
-            for value in values.iter().skip(1) {
-                let curve_point = EcMasFp5::hash_to_curve(
-                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[0..5]),
-                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[5..10]),
-                );
-                result = result.add(&curve_point);
-            }
-
-            let mut curve_point_values = vec![F::ZERO; 10];
-            curve_point_values[0..5].copy_from_slice(result.x().as_basis_coefficients_slice());
-            curve_point_values[5..10].copy_from_slice(result.y().as_basis_coefficients_slice());
-            curve_point_values
-        }
-    }
-
-    fn aggregate_contributions(&self, values: &[Vec<F>]) -> Vec<F> {
-        if self.pctx.global_info.curve == CurveType::EcGFp5 {
-            let mut result = EcGFp5::new(
-                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][0..5]),
-                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][5..10]),
-            );
-
-            for value in values.iter().skip(1) {
-                let curve_point = EcGFp5::new(
-                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[0..5]),
-                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[5..10]),
-                );
-
-                result = result.add(&curve_point);
-            }
-
-            let mut curve_point_values = vec![F::ZERO; 10];
-            curve_point_values[0..5].copy_from_slice(result.x().as_basis_coefficients_slice());
-            curve_point_values[5..10].copy_from_slice(result.y().as_basis_coefficients_slice());
-            curve_point_values
-        } else {
-            let mut result = EcMasFp5::new(
-                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][0..5]),
-                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][5..10]),
-            );
-
-            for value in values.iter().skip(1) {
-                let curve_point = EcMasFp5::new(
-                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[0..5]),
-                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[5..10]),
-                );
-                result = result.add(&curve_point);
-            }
-
-            let mut curve_point_values = vec![F::ZERO; 10];
-            curve_point_values[0..5].copy_from_slice(result.x().as_basis_coefficients_slice());
-            curve_point_values[5..10].copy_from_slice(result.y().as_basis_coefficients_slice());
-            curve_point_values
-        }
     }
 }
