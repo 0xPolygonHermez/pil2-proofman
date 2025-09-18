@@ -20,6 +20,7 @@ pub struct WitnessManager<F: PrimeField64> {
     input_data_path: RwLock<Option<PathBuf>>,
     init: AtomicBool,
     library: Mutex<Option<Library>>,
+    execution_done: AtomicBool,
 }
 
 impl<F: PrimeField64> WitnessManager<F> {
@@ -34,6 +35,7 @@ impl<F: PrimeField64> WitnessManager<F> {
             input_data_path: RwLock::new(None),
             init: AtomicBool::new(false),
             library: Mutex::new(None),
+            execution_done: AtomicBool::new(false),
         }
     }
 
@@ -70,7 +72,8 @@ impl<F: PrimeField64> WitnessManager<F> {
         Ok(())
     }
 
-    pub fn execute(&self) {
+    pub fn execute(&self, minimal_memory: bool) {
+        self.execution_done.store(false, Ordering::SeqCst);
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
             component.execute(
                 self.pctx.clone(),
@@ -86,6 +89,10 @@ impl<F: PrimeField64> WitnessManager<F> {
                 self.input_data_path.read().unwrap().clone(),
             );
         }
+
+        self.pctx.dctx_assign_instances(minimal_memory);
+
+        self.execution_done.store(true, Ordering::SeqCst);
     }
 
     pub fn debug(&self, instance_ids: &[usize], debug_info: &DebugInfo) {
@@ -147,15 +154,17 @@ impl<F: PrimeField64> WitnessManager<F> {
             }
         }
 
-        for component in self.components_std.read().unwrap().iter() {
-            component.pre_calculate_witness(
-                stage,
-                self.pctx.clone(),
-                self.sctx.clone(),
-                instance_ids,
-                n_cores,
-                buffer_pool,
-            );
+        if self.execution_done.load(Ordering::SeqCst) {
+            for component in self.components_std.read().unwrap().iter() {
+                component.pre_calculate_witness(
+                    stage,
+                    self.pctx.clone(),
+                    self.sctx.clone(),
+                    instance_ids,
+                    n_cores,
+                    buffer_pool,
+                );
+            }
         }
     }
 
@@ -196,15 +205,17 @@ impl<F: PrimeField64> WitnessManager<F> {
             }
         }
 
-        for component in self.components_std.read().unwrap().iter() {
-            component.calculate_witness(
-                stage,
-                self.pctx.clone(),
-                self.sctx.clone(),
-                instance_ids,
-                n_cores,
-                buffer_pool,
-            );
+        if self.execution_done.load(Ordering::SeqCst) {
+            for component in self.components_std.read().unwrap().iter() {
+                component.calculate_witness(
+                    stage,
+                    self.pctx.clone(),
+                    self.sctx.clone(),
+                    instance_ids,
+                    n_cores,
+                    buffer_pool,
+                );
+            }
         }
     }
 

@@ -584,8 +584,7 @@ impl DistributionCtx {
         // Distribute the unassigned instances to the process with minimum weight each time
         // cost: O(n^2) may be optimized if needed
 
-        let mut instances_assigned_partition =
-            vec![HashMap::<(usize, usize), usize>::new(); self.n_partitions];
+        let mut instances_assigned_partition = vec![HashMap::<(usize, usize), usize>::new(); self.n_partitions];
         let mut instances_assigned_process = vec![HashMap::<(usize, usize), usize>::new(); self.n_processes];
 
         let mut local_process_count = self.process_count.clone();

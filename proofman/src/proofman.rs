@@ -2116,9 +2116,7 @@ where
             return Err("Witness computation dynamic library not initialized".into());
         }
 
-        self.wcm.execute();
-
-        self.pctx.dctx_assign_instances(minimal_memory);
+        self.wcm.execute(minimal_memory);
 
         print_summary_info(&self.pctx, &self.sctx, &self.mpi_ctx);
 
