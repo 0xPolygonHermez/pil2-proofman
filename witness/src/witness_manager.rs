@@ -74,18 +74,19 @@ impl<F: PrimeField64> WitnessManager<F> {
 
     pub fn execute(&self, minimal_memory: bool) {
         self.execution_done.store(false, Ordering::SeqCst);
-        for (idx, component) in self.components.read().unwrap().iter().enumerate() {
-            component.execute(
-                self.pctx.clone(),
-                &self.components_instance_ids[idx],
-                self.input_data_path.read().unwrap().clone(),
-            );
-        }
         let n_components = self.components_std.read().unwrap().len();
         for (idx, component) in self.components_std.read().unwrap().iter().enumerate() {
             component.execute(
                 self.pctx.clone(),
                 &self.components_instance_ids[n_components + idx],
+                self.input_data_path.read().unwrap().clone(),
+            );
+        }
+        
+        for (idx, component) in self.components.read().unwrap().iter().enumerate() {
+            component.execute(
+                self.pctx.clone(),
+                &self.components_instance_ids[idx],
                 self.input_data_path.read().unwrap().clone(),
             );
         }
