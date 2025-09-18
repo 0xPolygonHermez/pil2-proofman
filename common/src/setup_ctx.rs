@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 
 use fields::PrimeField64;
-use proofman_starks_lib_c::{expressions_bin_new_c, expressions_bin_free_c};
+use proofman_starks_lib_c::{expressions_bin_new_c, expressions_bin_free_c, get_n_constraints_c};    
 
 use crate::load_const_pols;
 use crate::GlobalInfo;
@@ -23,6 +23,7 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub max_prover_recursive_buffer_size: usize,
     pub max_pinned_proof_size: usize,
     pub max_n_bits_ext: usize,
+    pub max_n_constraints: usize,
     pub total_const_size: usize,
 }
 
@@ -103,6 +104,11 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive2.max_n_bits_ext)
                 .max(setup_vadcop_final.stark_info.stark_struct.n_bits_ext as usize);
 
+            let max_n_constraints = sctx_compressor
+                .max_n_constraints
+                .max(sctx_recursive1.max_n_constraints)
+                .max(sctx_recursive2.max_n_constraints); //todo_q: look at final?
+
             SetupsVadcop {
                 sctx_compressor: Some(sctx_compressor),
                 sctx_recursive1: Some(sctx_recursive1),
@@ -116,6 +122,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_prover_recursive_buffer_size,
                 max_pinned_proof_size,
                 max_n_bits_ext,
+                max_n_constraints,
                 total_const_size,
             }
         } else {
@@ -133,6 +140,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_prover_recursive_buffer_size: 0,
                 max_pinned_proof_size: 0,
                 max_n_bits_ext: 0,
+                max_n_constraints: 0,
             }
         }
     }
@@ -162,6 +170,7 @@ pub struct SetupRepository<F: PrimeField64> {
     global_bin: Option<*mut c_void>,
     global_info_file: String,
     max_n_bits_ext: usize,
+    max_n_constraints: usize,
 }
 
 unsafe impl<F: PrimeField64> Send for SetupRepository<F> {}
@@ -199,6 +208,7 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut max_const_tree_size = 0;
         let mut max_const_size = 0;
         let mut max_n_bits_ext = 0;
+        let mut max_n_constraints = 0;
         let mut max_prover_buffer_size = 0;
         let mut max_prover_trace_size = 0;
         let mut max_witness_trace_size = 0;
@@ -250,6 +260,11 @@ impl<F: PrimeField64> SetupRepository<F> {
                         total_const_size += setup.const_pols_size + setup.const_tree_size;
                         max_pinned_proof_size = max_pinned_proof_size.max(setup.pinned_proof_size);
                         max_n_bits_ext = max_n_bits_ext.max(n_bits_ext);
+
+                        let p_setup = (&setup.p_setup).into();
+                        let n_constraints = get_n_constraints_c(p_setup);
+                        max_n_constraints = max_n_constraints.max(n_constraints as usize);
+
                     }
                     setups.insert((airgroup_id, air_id), setup);
                     if setup_type == &ProofType::Recursive2 {
@@ -276,6 +291,7 @@ impl<F: PrimeField64> SetupRepository<F> {
             max_pinned_proof_size: max_pinned_proof_size as usize,
             total_const_size,
             max_n_bits_ext: max_n_bits_ext as usize,
+            max_n_constraints: max_n_constraints as usize,
         }
     }
 }
@@ -291,6 +307,7 @@ pub struct SetupCtx<F: PrimeField64> {
     pub max_witness_trace_size: usize,
     pub max_pinned_proof_size: usize,
     pub max_n_bits_ext: usize,
+    pub max_n_constraints: usize,
     pub total_const_size: usize,
     setup_type: ProofType,
 }
@@ -311,6 +328,7 @@ impl<F: PrimeField64> SetupCtx<F> {
         let max_pinned_proof_size = setup_repository.max_pinned_proof_size;
         let total_const_size = setup_repository.total_const_size;
         let max_n_bits_ext = setup_repository.max_n_bits_ext;
+        let max_n_constraints = setup_repository.max_n_constraints;
         SetupCtx {
             setup_repository,
             max_const_tree_size,
@@ -320,6 +338,7 @@ impl<F: PrimeField64> SetupCtx<F> {
             max_witness_trace_size,
             max_pinned_proof_size,
             max_n_bits_ext,
+            max_n_constraints,
             total_const_size,
             setup_type: setup_type.clone(),
         }

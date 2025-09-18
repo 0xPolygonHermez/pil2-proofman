@@ -38,7 +38,7 @@ struct DeviceArgumentsQ
     Goldilocks::Element *numbersConstraints;
 };
 
-__global__  void computeExpressions_q_(StepsParams *h_params, DeviceArgumentsQ *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, bool debug, bool constraints);
+__global__  void computeExpressions_q_(StepsParams *d_params, DeviceArgumentsQ *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, const bool debug, const bool constraints, uint64_t challengeId, Goldilocks::Element *d_challengePowers);
 
 class ExpressionsGPUQ : public ExpressionsCtx
 {
@@ -53,8 +53,7 @@ public:
     ExpressionsGPUQ(SetupCtx &setupCtx, uint32_t nRowsPack = 128, uint32_t nBlocks = 4096);
     ~ExpressionsGPUQ();
 
-    void calculateExpressions_gpu_q(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool debug = false, bool constraints = false);
-    
+    void calculateExpressions_gpu_q(StepsParams *d_params, Dest dest, uint64_t domainSize, uint64_t challengeId, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, Goldilocks::Element *d_challengePowers, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool debug = false);
 };
 #endif
 

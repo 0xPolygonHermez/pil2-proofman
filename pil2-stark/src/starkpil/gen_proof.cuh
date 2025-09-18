@@ -67,12 +67,14 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     StepsParams *params_pinned = d_buffers->streamsData[stream_id].pinned_params;
     Goldilocks::Element *proof_buffer_pinned = d_buffers->streamsData[stream_id].pinned_buffer_proof;
     Goldilocks::Element *pinned_exps_params = d_buffers->streamsData[stream_id].pinned_buffer_exps_params;
+    Goldilocks::Element *pinned_exps_params_q = d_buffers->streamsData[stream_id].pinned_buffer_exps_params_q;
     Goldilocks::Element *pinned_exps_args = d_buffers->streamsData[stream_id].pinned_buffer_exps_args;
     TranscriptGL_GPU *d_transcript = d_buffers->streamsData[stream_id].transcript;
     TranscriptGL_GPU *d_transcript_helper = d_buffers->streamsData[stream_id].transcript_helper;
     StepsParams *d_params =  d_buffers->streamsData[stream_id].params;
     ExpsArguments *d_expsArgs = d_buffers->streamsData[stream_id].d_expsArgs;
     DestParamsGPU *d_destParams = d_buffers->streamsData[stream_id].d_destParams;
+    Goldilocks::Element *d_challengePowers = d_buffers->streamsData[stream_id].d_challengePowers;
 
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
@@ -204,7 +206,11 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     }
 
     TimerStartGPU(timer, STARK_QUOTIENT_POLYNOMIAL);
-    calculateExpression(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId, false, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+     if (recursive) {
+        calculateExpression(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId, false, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+     } else{
+        calculateExpressionQ(setupCtx, air_instance_info->expressions_gpu_q, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId, d_expsArgs, d_destParams, pinned_exps_params_q, pinned_exps_args, d_challengePowers, countId, timer, stream);
+    }
     TimerStopGPU(timer, STARK_QUOTIENT_POLYNOMIAL);
     commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, (gl64_t *)h_params.trace, (gl64_t *)h_params.aux_trace, d_transcript, false, timer, stream);
     TimerStopGPU(timer, STARK_STEP_Q);

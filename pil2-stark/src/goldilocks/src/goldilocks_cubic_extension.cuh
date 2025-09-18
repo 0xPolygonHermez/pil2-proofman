@@ -524,9 +524,10 @@ public:
                 c[2 * blockDim.x + threadIdx.x] = a[2];
                 break;
             case 2:
-                c[threadIdx.x] = a[0] * b[threadIdx.x];
-                c[blockDim.x + threadIdx.x] = a[1] * b[threadIdx.x];
-                c[2 * blockDim.x + threadIdx.x] = a[2] * b[threadIdx.x];
+                gl64_t aux = b[threadIdx.x];
+                c[threadIdx.x] = a[0] * aux;
+                c[blockDim.x + threadIdx.x] = a[1] * aux;
+                c[2 * blockDim.x + threadIdx.x] = a[2] * aux;
                 break;
             case 3:
                 c[threadIdx.x] = b[threadIdx.x] - a[0];

@@ -2377,6 +2377,7 @@ where
             n_streams_per_gpu as u64,
             n_recursive_streams_per_gpu as u64,
             sctx.max_n_bits_ext as u64,
+            sctx.max_n_constraints as u64,
         );
 
         (d_buffers, n_streams_per_gpu as u64, n_recursive_streams_per_gpu as u64, n_gpus)

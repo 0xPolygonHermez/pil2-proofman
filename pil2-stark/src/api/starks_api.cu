@@ -141,7 +141,7 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
     }
 }
 
-uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t maxProofsPerGPU, uint64_t maxRecursiveProofsPerGPU, uint64_t max_n_bits_ext) {
+uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t maxProofsPerGPU, uint64_t maxRecursiveProofsPerGPU, uint64_t max_n_bits_ext, uint64_t maxNConstraints) {
     
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     d_buffers->max_size_proof = maxProofSize;
@@ -162,11 +162,11 @@ uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint
         uint64_t gpu_stream_start = i * (maxProofsPerGPU + maxRecursiveProofsPerGPU);
 
         for (uint64_t j = 0; j < maxProofsPerGPU; j++) {
-            d_buffers->streamsData[gpu_stream_start + j].initialize(maxProofSize, d_buffers->my_gpu_ids[i], j*maxSizeProverBuffer, false);
+            d_buffers->streamsData[gpu_stream_start + j].initialize(maxProofSize, d_buffers->my_gpu_ids[i], j*maxSizeProverBuffer, false, maxNConstraints);
         }
 
         for (uint64_t j = 0; j < maxRecursiveProofsPerGPU; j++) {
-            d_buffers->streamsData[gpu_stream_start + maxProofsPerGPU + j].initialize(maxProofSize, d_buffers->my_gpu_ids[i], maxProofsPerGPU*maxSizeProverBuffer + j*maxSizeProverBufferAggregation, true);
+            d_buffers->streamsData[gpu_stream_start + maxProofsPerGPU + j].initialize(maxProofSize, d_buffers->my_gpu_ids[i], maxProofsPerGPU*maxSizeProverBuffer + j*maxSizeProverBufferAggregation, true, maxNConstraints);
         }
     }
 

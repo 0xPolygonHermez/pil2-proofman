@@ -9,6 +9,7 @@
 #include "cuda_utils.cuh"
 #include "transcriptGL.cuh"
 #include "expressions_gpu.cuh"
+#include "expressions_gpu_q.cuh"
 #include <limits.h>
 #include "gl64_t.cuh"
 
@@ -54,6 +55,7 @@ struct AirInstanceInfo {
     bool stored = false;
 
     ExpressionsGPU *expressions_gpu;
+    ExpressionsGPUQ *expressions_gpu_q;
     int64_t *opening_points;
 
     uint64_t numBatchesEvals;
@@ -75,6 +77,7 @@ struct AirInstanceInfo {
         CHECKCUDAERR(cudaMemcpy(d_openingPoints, setupCtx->starkInfo.openingPoints.data(), setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t), cudaMemcpyHostToDevice));
         opening_points = d_openingPoints;
         expressions_gpu = new ExpressionsGPU(*setupCtx, setupCtx->starkInfo.nrowsPack, setupCtx->starkInfo.maxNBlocks);
+        expressions_gpu_q = new ExpressionsGPUQ(*setupCtx, setupCtx->starkInfo.nrowsPack, setupCtx->starkInfo.maxNBlocks);
 
         Goldilocks::Element *d_verkeyRoot;
         CHECKCUDAERR(cudaMalloc(&d_verkeyRoot, HASH_SIZE * sizeof(Goldilocks::Element)));
@@ -194,6 +197,7 @@ struct AirInstanceInfo {
         }
 
         delete expressions_gpu;
+        delete expressions_gpu_q;
 
         for (uint64_t i = 0; i < numBatchesEvals; ++i) {
             if (evalsInfo[i] != nullptr) {
@@ -221,9 +225,11 @@ struct StreamData{
     cudaStream_t stream;
     uint32_t gpuId;
     uint32_t slotId;
+    uint64_t maxNConstraints;
     StepsParams *pinned_params;
     Goldilocks::Element *pinned_buffer_proof;
     Goldilocks::Element *pinned_buffer_exps_params;
+    Goldilocks::Element *pinned_buffer_exps_params_q;
     Goldilocks::Element *pinned_buffer_exps_args;
 
     //runtime data
@@ -237,6 +243,7 @@ struct StreamData{
     StepsParams *params;
     ExpsArguments *d_expsArgs;
     DestParamsGPU *d_destParams;
+    Goldilocks::Element *d_challengePowers;
 
     //callback inputs
     void *root;
@@ -254,18 +261,20 @@ struct StreamData{
     bool extraStream;
     uint64_t streamsUsed;
     
-    void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint64_t offset_, bool recursive_){
+    void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint64_t offset_, bool recursive_, uint64_t maxNConstraints_){
         uint64_t maxExps = 1000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
         timer.init(stream);
         gpuId = gpuId_;
         offset = offset_;
+        maxNConstraints = maxNConstraints_;
         recursive = recursive_;
         cudaEventCreate(&end_event);
         status = 0;
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_proof, max_size_proof * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_params_q, maxExps * sizeof(DestParamsGPU) * maxNConstraints));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_args, maxExps * sizeof(ExpsArguments)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, sizeof(StepsParams)));
 
@@ -286,8 +295,9 @@ struct StreamData{
                                            stream);
 
         CHECKCUDAERR(cudaMalloc(&params, sizeof(StepsParams)));
-        CHECKCUDAERR(cudaMalloc(&d_destParams, 2 * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(cudaMalloc(&d_destParams, maxNConstraints * sizeof(DestParamsGPU)));
         CHECKCUDAERR(cudaMalloc(&d_expsArgs, sizeof(ExpsArguments)));
+        CHECKCUDAERR(cudaMalloc(&d_challengePowers, maxNConstraints *3 * sizeof(Goldilocks::Element)));
     }
 
     ~StreamData() {
@@ -296,6 +306,7 @@ struct StreamData{
         CHECKCUDAERR(cudaFree(params));
         CHECKCUDAERR(cudaFree(d_destParams));
         CHECKCUDAERR(cudaFree(d_expsArgs));
+        CHECKCUDAERR(cudaFree(d_challengePowers));
     }
 
     void reset(){
@@ -318,6 +329,7 @@ struct StreamData{
         cudaEventDestroy(end_event);
         cudaFreeHost(pinned_buffer_proof);
         cudaFreeHost(pinned_buffer_exps_params);
+        cudaFreeHost(pinned_buffer_exps_params_q);
         cudaFreeHost(pinned_buffer_exps_args);
         cudaFreeHost(pinned_params);
     }
