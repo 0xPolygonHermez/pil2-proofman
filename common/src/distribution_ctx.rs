@@ -1,6 +1,7 @@
 use core::panic;
 use std::collections::HashSet;
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceChunks {
@@ -36,7 +37,7 @@ impl InstanceInfo {
 /// 1. Distributed Prover MANAGER distributes PARTITIONS across WORKERS
 /// 2. Instances are distributed across PARTITIONS as they are created
 /// 3. Instances are distributed across local PROCESSES within each WORKER
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct DistributionCtx {
     // STATIC PARAMETERS:
     pub load_balancing: bool, // Whether to balance distribution (true) or use round-robin (false)
@@ -55,6 +56,7 @@ pub struct DistributionCtx {
     pub n_instances: usize,                    // Total number of instances
     pub instances: Vec<InstanceInfo>,          // Instances info
     pub instances_chunks: Vec<InstanceChunks>, // Chunks info per instance
+    pub instances_calculated: Vec<AtomicBool>, // Whether the witness has been calculated for each instance
     pub n_non_tables: usize,                   // Number of non-table instances
     pub n_tables: usize,                       // Number of table instances
     pub aux_tables: Vec<InstanceInfo>,         // Table instances info (lately appended to instances)
@@ -120,6 +122,7 @@ impl DistributionCtx {
             process_id: 0,
             n_instances: 0,
             instances: Vec::new(),
+            instances_calculated: Vec::new(),
             instances_chunks: Vec::new(),
             n_non_tables: 0,
             n_tables: 0,
@@ -183,6 +186,7 @@ impl DistributionCtx {
         self.n_instances = 0;
         self.instances.clear();
         self.instances_chunks.clear();
+        self.instances_calculated.clear();
         self.n_non_tables = 0;
         self.n_tables = 0;
         self.aux_tables.clear();
@@ -401,6 +405,7 @@ impl DistributionCtx {
         let gid: usize = self.instances.len();
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness, weight));
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
+        self.instances_calculated.push(AtomicBool::new(false));
         self.n_instances += 1;
         self.n_non_tables += 1;
         let partition_id = (gid % self.n_partitions) as u32;
@@ -442,6 +447,7 @@ impl DistributionCtx {
         let gid: usize = self.instances.len();
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness, weight));
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
+        self.instances_calculated.push(AtomicBool::new(false));
         self.n_instances += 1;
         self.n_non_tables += 1;
         let partition_id = 0;
@@ -483,7 +489,7 @@ impl DistributionCtx {
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness, weight));
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
-
+        self.instances_calculated.push(AtomicBool::new(false));
         self.instance_partition.push(-1);
         self.instance_process.push((-1, 0_usize));
         self.n_instances += 1;
@@ -579,8 +585,8 @@ impl DistributionCtx {
         // cost: O(n^2) may be optimized if needed
 
         let mut instances_assigned_partition =
-            vec![HashMap::<(usize, usize), usize>::new(); self.n_partitions as usize];
-        let mut instances_assigned_process = vec![HashMap::<(usize, usize), usize>::new(); self.n_processes as usize];
+            vec![HashMap::<(usize, usize), usize>::new(); self.n_partitions];
+        let mut instances_assigned_process = vec![HashMap::<(usize, usize), usize>::new(); self.n_processes];
 
         let mut local_process_count = self.process_count.clone();
         for (gid, _) in &unassigned_instances {
@@ -633,16 +639,16 @@ impl DistributionCtx {
             let mut min_chunks = usize::MAX;
             let mut min_chunks_idx = 0;
             for partition_id in 0..self.n_partitions {
-                if instances_assigned_partition[partition_id as usize].get(&(airgroup_id, air_id)).unwrap_or(&0) > &0 {
+                if instances_assigned_partition[partition_id].get(&(airgroup_id, air_id)).unwrap_or(&0) > &0 {
                     let mut new_chunks_added = 0;
                     for chunk in chunks {
-                        if !partitions_chunks[partition_id as usize].contains(chunk) {
+                        if !partitions_chunks[partition_id].contains(chunk) {
                             new_chunks_added += 1;
                         }
                     }
                     if new_chunks_added < min_chunks {
                         min_chunks = new_chunks_added;
-                        min_chunks_idx = partition_id as usize;
+                        min_chunks_idx = partition_id;
                     }
                 }
             }
@@ -659,10 +665,10 @@ impl DistributionCtx {
                 let mut min_chunks = usize::MAX;
                 let mut min_process_id = 0;
                 for process_id in 0..self.n_processes {
-                    if instances_assigned_process[process_id as usize].get(&(airgroup_id, air_id)).unwrap_or(&0) > &0 {
+                    if instances_assigned_process[process_id].get(&(airgroup_id, air_id)).unwrap_or(&0) > &0 {
                         let mut new_chunks_added = 0;
                         for chunk in chunks {
-                            if !process_chunks[process_id as usize].contains(chunk) {
+                            if !process_chunks[process_id].contains(chunk) {
                                 new_chunks_added += 1;
                             }
                         }
@@ -706,6 +712,7 @@ impl DistributionCtx {
                 }
                 let gid = self.instances.len();
                 self.instances.push(*table);
+                self.instances_calculated.push(AtomicBool::new(false));
                 self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
                 self.n_instances += 1;
                 self.n_tables += 1;

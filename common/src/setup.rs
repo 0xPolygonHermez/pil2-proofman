@@ -181,7 +181,6 @@ impl<F: PrimeField64> Setup<F> {
 
             let n_operations_quotient = get_operations_quotient_c(expressions_bin, p_stark_info) as u64;
 
-            println!("N operations quotient: {air_id} -> {}", n_operations_quotient);
             let verkey_file = setup_path.with_extension("verkey.json");
 
             let mut file = File::open(&verkey_file).expect("Unable to open file");

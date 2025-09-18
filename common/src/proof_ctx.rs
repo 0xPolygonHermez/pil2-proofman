@@ -376,6 +376,23 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.partition_mask[0]
     }
 
+    pub fn dctx_reset_instances_calculated(&self) {
+        let dctx = self.dctx.read().unwrap();
+        for instance in dctx.instances_calculated.iter() {
+            instance.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    pub fn dctx_set_instance_calculated(&self, global_idx: usize) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.instances_calculated[global_idx].store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn dctx_is_instance_calculated(&self, global_idx: usize) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.instances_calculated[global_idx].load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub fn dctx_get_my_tables(&self) -> Vec<usize> {
         let dctx = self.dctx.read().unwrap();
         dctx.instances

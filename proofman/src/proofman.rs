@@ -1258,6 +1258,7 @@ where
 
         timer_start_info!(GENERATING_INNER_PROOFS);
 
+        self.pctx.dctx_reset_instances_calculated();
         self.memory_handler.empty_queue_to_be_released();
 
         let n_airgroups = self.pctx.global_info.air_groups.len();

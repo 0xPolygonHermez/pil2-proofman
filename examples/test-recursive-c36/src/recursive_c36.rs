@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::env;
 
 use std::ffi::{c_void, c_char};
@@ -31,9 +31,9 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
 impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {
         pctx.add_instance(0, 0, 1);
-        vec![0]
+        global_ids.write().unwrap().push(0);
     }
 
     fn calculate_witness(

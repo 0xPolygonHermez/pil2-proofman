@@ -8,9 +8,11 @@ use crate::WitnessComponent;
 use libloading::Library;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+pub const MAX_COMPONENTS: usize = 1000;
+
 pub struct WitnessManager<F: PrimeField64> {
     components: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
-    components_instance_ids: RwLock<Vec<Vec<usize>>>,
+    components_instance_ids: Vec<RwLock<Vec<usize>>>,
     components_std: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
     pctx: Arc<ProofCtx<F>>,
     sctx: Arc<SetupCtx<F>>,
@@ -24,7 +26,7 @@ impl<F: PrimeField64> WitnessManager<F> {
     pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) -> Self {
         WitnessManager {
             components: RwLock::new(Vec::new()),
-            components_instance_ids: RwLock::new(Vec::new()),
+            components_instance_ids: (0..MAX_COMPONENTS).map(|_| RwLock::new(Vec::new())).collect(),
             components_std: RwLock::new(Vec::new()),
             pctx,
             sctx,
@@ -54,7 +56,6 @@ impl<F: PrimeField64> WitnessManager<F> {
 
     pub fn register_component(&self, component: Arc<dyn WitnessComponent<F>>) {
         self.components.write().unwrap().push(component);
-        self.components_instance_ids.write().unwrap().push(Vec::new());
     }
 
     pub fn register_component_std(&self, component: Arc<dyn WitnessComponent<F>>) {
@@ -71,11 +72,19 @@ impl<F: PrimeField64> WitnessManager<F> {
 
     pub fn execute(&self) {
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
-            let global_ids = component.execute(self.pctx.clone(), self.input_data_path.read().unwrap().clone());
-            self.components_instance_ids.write().unwrap()[idx] = global_ids;
+            component.execute(
+                self.pctx.clone(),
+                &self.components_instance_ids[idx],
+                self.input_data_path.read().unwrap().clone(),
+            );
         }
-        for component in self.components_std.read().unwrap().iter() {
-            component.execute(self.pctx.clone(), self.input_data_path.read().unwrap().clone());
+        let n_components = self.components_std.read().unwrap().len();
+        for (idx, component) in self.components_std.read().unwrap().iter().enumerate() {
+            component.execute(
+                self.pctx.clone(),
+                &self.components_instance_ids[n_components + idx],
+                self.input_data_path.read().unwrap().clone(),
+            );
         }
     }
 
@@ -84,7 +93,9 @@ impl<F: PrimeField64> WitnessManager<F> {
             for (idx, component) in self.components.read().unwrap().iter().enumerate() {
                 let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
 
-                let instance_ids_filtered: Vec<_> = self.components_instance_ids.read().unwrap()[idx]
+                let instance_ids_filtered: Vec<_> = self.components_instance_ids[idx]
+                    .read()
+                    .unwrap()
                     .iter()
                     .filter(|id| ids_hash_set.contains(id))
                     .cloned()
@@ -112,11 +123,14 @@ impl<F: PrimeField64> WitnessManager<F> {
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
             let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
 
-            let instance_ids_filtered: Vec<_> = self.components_instance_ids.read().unwrap()[idx]
+            let instance_ids_filtered: Vec<_> = self.components_instance_ids[idx]
+                .read()
+                .unwrap()
                 .iter()
                 .filter(|id| {
                     ids_hash_set.contains(id)
                         && (self.pctx.dctx_is_my_process_instance(**id) || self.pctx.dctx_is_table(**id))
+                        && !self.pctx.dctx_is_instance_calculated(**id)
                 })
                 .cloned()
                 .collect();
@@ -155,16 +169,22 @@ impl<F: PrimeField64> WitnessManager<F> {
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
             let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
 
-            let instance_ids_filtered: Vec<_> = self.components_instance_ids.read().unwrap()[idx]
+            let instance_ids_filtered: Vec<_> = self.components_instance_ids[idx]
+                .read()
+                .unwrap()
                 .iter()
                 .filter(|id| {
                     ids_hash_set.contains(id)
                         && (self.pctx.dctx_is_my_process_instance(**id) || self.pctx.dctx_is_table(**id))
+                        && !self.pctx.dctx_is_instance_calculated(**id)
                 })
                 .cloned()
                 .collect();
 
             if !instance_ids_filtered.is_empty() {
+                for id in &instance_ids_filtered {
+                    self.pctx.dctx_set_instance_calculated(*id);
+                }
                 component.calculate_witness(
                     stage,
                     self.pctx.clone(),

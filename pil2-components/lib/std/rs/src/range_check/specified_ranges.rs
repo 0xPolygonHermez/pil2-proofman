@@ -1,7 +1,7 @@
 use core::panic;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
-    Arc,
+    Arc, RwLock,
 };
 use proofman_util::create_buffer_fast;
 use rayon::prelude::*;
@@ -176,7 +176,7 @@ impl SpecifiedRanges {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>, _global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {
         let (instance_found, mut table_instance_id) = pctx.dctx_find_process_table(self.airgroup_id, self.air_id);
 
         if !instance_found {
@@ -194,7 +194,6 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
             }
         });
         self.table_instance_id.store(table_instance_id as u64, Ordering::SeqCst);
-        Vec::new()
     }
 
     fn pre_calculate_witness(
