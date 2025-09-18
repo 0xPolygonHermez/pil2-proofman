@@ -441,6 +441,11 @@ uint64_t get_max_ops(void *pExpressionsBin){
     return expressionsBin->maxOps;
 };
 
+uint64_t get_operations_quotient(void *pExpressionsBin, void *pStarkInfo){
+    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
+    return expressionsBin->expressionsInfo[((StarkInfo *)pStarkInfo)->cExpId].nOps;
+};
+
 void expressions_bin_free(void *pExpressionsBin)
 {
     auto expressionsBin = (ExpressionsBin *)pExpressionsBin;

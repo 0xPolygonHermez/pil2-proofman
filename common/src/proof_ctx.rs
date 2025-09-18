@@ -317,7 +317,9 @@ impl<F: PrimeField64> ProofCtx<F> {
                     .sum::<u64>();
                 total_cols += 3; // FRI polinomial
                 let n_openings = setup.stark_info.opening_points.len() as u64;
-                let weight = (total_cols + n_openings * 2) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
+                // let n_ops_quotient = setup.n_operations_quotient;
+                let weight = (total_cols + n_openings * 3) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
+                // weight += (n_ops_quotient / 10) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
                 self.weights.insert((airgroup_id, air_id), weight);
             }
         }
