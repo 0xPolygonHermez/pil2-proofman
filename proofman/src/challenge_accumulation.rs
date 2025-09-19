@@ -1,6 +1,6 @@
 use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
 use proofman_common::{CurveType, ProofCtx};
-use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
+use fields::{poseidon2_hash, ExtensionField, GoldilocksQuinticExtension, PrimeField64};
 use std::ops::Add;
 use proofman_starks_lib_c::{calculate_hash_c};
 use transcript::FFITranscript;
@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use std::ffi::c_void;
 
 use crate::ContributionsInfo;
+use rayon::prelude::*;
 
 pub fn calculate_internal_contributions<F>(
     pctx: &ProofCtx<F>,
@@ -30,13 +31,12 @@ where
 
     let mut values = vec![vec![F::ZERO; contributions_size]; my_instances.len()];
 
-    for (idx, instance_id) in my_instances.iter().enumerate() {
+    values.par_iter_mut().zip(my_instances.par_iter()).for_each(|(values_row, instance_id)| {
         let mut contribution = vec![F::ZERO; 12];
-
         let root_contribution = roots_contributions[*instance_id];
 
-        let values_to_hash =
-            &mut *values_contributions[*instance_id].lock().expect("Missing values_contribution").clone();
+        let mut values_to_hash =
+            values_contributions[*instance_id].lock().expect("Missing values_contribution").clone();
         values_to_hash[4..8].copy_from_slice(&root_contribution[..4]);
 
         calculate_hash_c(
@@ -48,23 +48,20 @@ where
 
         if pctx.global_info.curve != CurveType::None {
             for (i, v) in contribution.iter().enumerate().take(10) {
-                values[idx][i] = *v;
+                values_row[i] = *v;
             }
         } else {
             for (i, v) in contribution.iter().enumerate().take(12) {
-                values[idx][i] = *v;
+                values_row[i] = *v;
             }
             let n_hashes = contributions_size / 12 - 1;
             for j in 0..n_hashes {
-                calculate_hash_c(
-                    values[idx][(j + 1) * 12..((j + 2) * 12)].as_mut_ptr() as *mut u8,
-                    values[idx][(j * 12)..((j + 1) * 12)].as_mut_ptr() as *mut u8,
-                    12,
-                    12,
-                );
+                let input_slice = &mut values_row[(j * 12)..((j + 1) * 12)];
+                let output = poseidon2_hash(input_slice);
+                values_row[((j + 1) * 12)..((j + 2) * 12)].copy_from_slice(&output[..12]);
             }
         }
-    }
+    });
 
     let partial_contribution = add_contributions(pctx, &values);
 
