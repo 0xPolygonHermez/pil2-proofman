@@ -29,7 +29,7 @@ impl Transcript {
         let mut inputs = vec![Goldilocks::ZERO; 12];
         inputs[..8].copy_from_slice(&self.pending);
         inputs[8..12].copy_from_slice(&self.state[..4]);
-        let output = poseidon2_hash(&mut inputs);
+        let output = poseidon2_hash(&inputs);
         self.out_cursor = 12;
         for i in 0..8 {
             self.pending[i] = Goldilocks::ZERO;
