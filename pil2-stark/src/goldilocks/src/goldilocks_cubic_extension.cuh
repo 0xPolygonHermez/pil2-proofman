@@ -411,7 +411,7 @@ public:
         }
     }
 
-       static __device__ __forceinline__ void add_31_gpu_no_const(gl64_t *c, const gl64_t *a, const gl64_t *b) {
+    static __device__ __forceinline__ void add_31_gpu_no_const(gl64_t *c, const gl64_t *a, const gl64_t *b) {
         c[threadIdx.x] = a[threadIdx.x] + b[threadIdx.x];
         c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x];
         c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x];
@@ -479,7 +479,7 @@ public:
     
     static __device__ __forceinline__ void op_31_gpu(uint64_t op, gl64_t *c, const gl64_t *a, bool const_a, const gl64_t *b, bool const_b)
     {
-
+        gl64_t aux;  // Declare outside switch to avoid bypass warning
         if (const_a && const_b)
         {
             switch (op)
@@ -495,9 +495,10 @@ public:
                 c[2 * blockDim.x + threadIdx.x] = a[2];
                 break;
             case 2:
-                c[threadIdx.x] = a[0] * b[0];
-                c[blockDim.x + threadIdx.x] = a[1] * b[0];
-                c[2 * blockDim.x + threadIdx.x] = a[2] * b[0];
+                aux = b[0];
+                c[threadIdx.x] = a[0] * aux;
+                c[blockDim.x + threadIdx.x] = a[1] * aux;
+                c[2 * blockDim.x + threadIdx.x] = a[2] * aux;
                 break;
             case 3:
                 c[threadIdx.x] = b[0] - a[0];
@@ -524,7 +525,7 @@ public:
                 c[2 * blockDim.x + threadIdx.x] = a[2];
                 break;
             case 2:
-                gl64_t aux = b[threadIdx.x];
+                aux = b[threadIdx.x];
                 c[threadIdx.x] = a[0] * aux;
                 c[blockDim.x + threadIdx.x] = a[1] * aux;
                 c[2 * blockDim.x + threadIdx.x] = a[2] * aux;
@@ -554,9 +555,10 @@ public:
                 c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x];
                 break;
             case 2:
-                c[threadIdx.x] = a[threadIdx.x] * b[0];
-                c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x] * b[0];
-                c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x] * b[0];
+                aux = b[0];
+                c[threadIdx.x] = a[threadIdx.x] * aux;
+                c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x] * aux;
+                c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x] * aux;
                 break;
             case 3:
                 c[threadIdx.x] = b[0] - a[threadIdx.x];
@@ -583,9 +585,10 @@ public:
                 c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x];
                 break;
             case 2:
-                c[threadIdx.x] = a[threadIdx.x] * b[threadIdx.x];
-                c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x] * b[threadIdx.x];
-                c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x] * b[threadIdx.x];
+                aux = b[threadIdx.x];
+                c[threadIdx.x] = a[threadIdx.x] * aux;
+                c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x] * aux;
+                c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x] * aux;
                 break;
             case 3:
                 c[threadIdx.x] = b[threadIdx.x] - a[threadIdx.x];
