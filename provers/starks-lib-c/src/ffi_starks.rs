@@ -290,6 +290,11 @@ pub fn get_max_n_ops_c(p_expressions_bin: *mut c_void) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn get_operations_quotient_c(p_expressions_bin: *mut c_void, p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_operations_quotient(p_expressions_bin, p_stark_info) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn expressions_bin_free_c(p_expressions_bin: *mut c_void) {
     unsafe {
         expressions_bin_free(p_expressions_bin);
@@ -1469,6 +1474,11 @@ pub fn get_max_n_args_c(_p_expressions_bin: *mut c_void) -> u64 {
 #[cfg(feature = "no_lib_link")]
 pub fn get_max_n_ops_c(_p_expressions_bin: *mut c_void) -> u64 {
     10000
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_operations_quotient_c(_p_expressions_bin: *mut c_void, _p_stark_info: *mut c_void) -> u64 {
+    0
 }
 
 #[cfg(feature = "no_lib_link")]

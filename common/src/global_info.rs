@@ -26,6 +26,7 @@ pub struct PublicMap {
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub enum CurveType {
+    None,
     EcGFp5,
     EcMasFp5,
 }
@@ -37,6 +38,9 @@ pub struct GlobalInfo {
     pub airs: Vec<Vec<GlobalInfoAir>>,
     pub air_groups: Vec<String>,
     pub curve: CurveType,
+
+    #[serde(rename = "latticeSize")]
+    pub lattice_size: Option<usize>,
     #[serde(rename = "aggTypes")]
     pub agg_types: Vec<Vec<GlobalInfoAggType>>,
 

@@ -8,7 +8,7 @@ use colored::*;
 
 use std::error::Error;
 
-use proofman_common::{format_bytes, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop, ParamsGPU};
+use proofman_common::{format_bytes, MpiCtx, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop, ParamsGPU};
 use proofman_util::DeviceBuffer;
 use proofman_starks_lib_c::load_device_const_pols_c;
 use proofman_starks_lib_c::custom_commit_size_c;
@@ -17,12 +17,13 @@ use proofman_starks_lib_c::load_device_setup_c;
 use pil_std_lib::Std;
 use witness::WitnessManager;
 
-pub fn print_summary_info<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) {
-    let mpi_rank = pctx.dctx_get_rank();
-    let n_processes = pctx.dctx_get_n_processes();
+pub fn print_summary_info<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, mpi_ctx: &MpiCtx) {
+    if mpi_ctx.rank == 0 {
+        print_summary(pctx, sctx, true);
+    }
 
-    if n_processes > 1 {
-        let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info();
+    if mpi_ctx.n_processes > 1 {
+        let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info_process();
         tracing::info!(
             "Load balance. Average: {} max: {} min: {} deviation: {}",
             average_weight,
@@ -30,18 +31,26 @@ pub fn print_summary_info<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F
             min_weight,
             max_deviation
         );
+
+        print_summary(pctx, sctx, false);
     }
 
-    if mpi_rank == 0 {
-        print_summary(pctx, sctx, true);
-    }
+    if pctx.get_n_partitions() > 1 {
+        let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info_process();
+        tracing::info!(
+            "Load balance. Average: {} max: {} min: {} deviation: {}",
+            average_weight,
+            max_weight,
+            min_weight,
+            max_deviation
+        );
 
-    if n_processes > 1 {
         print_summary(pctx, sctx, false);
     }
 }
 
 pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, global: bool) {
+    //todo_distributed: no tens totes les taules nomes les dels teu worker
     let mut air_info = HashMap::new();
 
     let mut air_instances = HashMap::new();
@@ -52,7 +61,7 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
     let mut print = vec![global; instances.len()];
 
     if !global {
-        let my_instances = pctx.dctx_get_my_instances();
+        let my_instances = pctx.dctx_get_process_instances();
         for instance_id in my_instances.iter() {
             print[*instance_id] = true;
         }

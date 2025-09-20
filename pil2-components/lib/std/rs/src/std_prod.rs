@@ -178,7 +178,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
         if self.num_users > 0 {
             // Find which instances is using the std_prod
             let instances = pctx.dctx_get_instances();
-            let my_instances = pctx.dctx_get_my_instances();
+            let my_instances = pctx.dctx_get_process_instances();
             let mut global_instance_ids = Vec::new();
             for i in 0..self.num_users {
                 let airgroup_id = self.airgroup_ids[i];

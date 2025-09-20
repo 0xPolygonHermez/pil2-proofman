@@ -180,7 +180,7 @@ public:
     bool gpu = false;
     bool preallocate = false;
 
-    bool overwriteFixed = false;
+    bool calculateFixedExtended = false;
 
     uint64_t mapTotalN;
     uint64_t mapTotalNCustomCommitsFixed;

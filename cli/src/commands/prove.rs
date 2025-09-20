@@ -11,6 +11,7 @@ use fields::Goldilocks;
 use zstd::stream::write::Encoder;
 
 use proofman::ProofMan;
+use proofman::ProvePhaseResult;
 use proofman_common::{ModeName, ProofOptions, ParamsGPU};
 use std::fs::{self, File};
 use std::path::Path;
@@ -132,32 +133,15 @@ impl ProveCmd {
             gpu_params.with_max_witness_stored(self.max_witness_stored.unwrap());
         }
 
-        let proofman;
-        #[cfg(distributed)]
-        {
-            proofman = ProofMan::<Goldilocks>::new(
-                self.proving_key.clone(),
-                custom_commits_map,
-                verify_constraints,
-                self.aggregation,
-                self.final_snark,
-                gpu_params,
-                self.verbose.into(),
-                None,
-            )?;
-        }
-        #[cfg(not(distributed))]
-        {
-            proofman = ProofMan::<Goldilocks>::new(
-                self.proving_key.clone(),
-                custom_commits_map,
-                verify_constraints,
-                self.aggregation,
-                self.final_snark,
-                gpu_params,
-                self.verbose.into(),
-            )?;
-        }
+        let proofman = ProofMan::<Goldilocks>::new(
+            self.proving_key.clone(),
+            custom_commits_map,
+            verify_constraints,
+            self.aggregation,
+            self.final_snark,
+            gpu_params,
+            self.verbose.into(),
+        )?;
 
         if debug_info.std_mode.name == ModeName::Debug {
             match self.field {
@@ -173,7 +157,7 @@ impl ProveCmd {
             };
         } else {
             proofman.set_barrier();
-            let (_, vadcop_final_proof) = match self.field {
+            let result = match self.field {
                 Field::Goldilocks => proofman.generate_proof(
                     self.witness_lib.clone(),
                     self.public_inputs.clone(),
@@ -191,12 +175,10 @@ impl ProveCmd {
                 )?,
             };
 
-            proofman.set_barrier();
-
-            if let Some(vadcop_final_proof) = vadcop_final_proof {
+            if let ProvePhaseResult::Full(_, Some(vadcop_final_proof)) = result {
                 let proof_data = cast_slice(&vadcop_final_proof);
 
-                // Save the uncompressed vadcop final proof
+                // Save the vadcop final proof
                 let output_file_path = self.output_dir.join("proofs/vadcop_final_proof.bin");
                 let mut file = File::create(&output_file_path)?;
                 file.write_all(proof_data)?;

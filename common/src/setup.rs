@@ -11,7 +11,7 @@ use proofman_starks_lib_c::set_memory_expressions_c;
 use proofman_starks_lib_c::{
     expressions_bin_new_c, stark_info_new_c, stark_info_free_c, expressions_bin_free_c, get_map_totaln_c,
     get_map_totaln_custom_commits_fixed_c, get_proof_size_c, get_max_n_tmp1_c, get_max_n_tmp3_c, get_const_tree_size_c,
-    load_const_pols_c, load_const_tree_c, read_exec_file_c, get_proof_pinned_size_c,
+    load_const_pols_c, load_const_tree_c, read_exec_file_c, get_proof_pinned_size_c, get_operations_quotient_c,
 };
 use proofman_util::create_buffer_fast;
 
@@ -73,6 +73,7 @@ pub struct Setup<F: PrimeField64> {
     pub verkey: Vec<F>,
     pub exec_data: RwLock<Option<Vec<u64>>>,
     pub n_cols: u64,
+    pub n_operations_quotient: u64,
     pub single_instance: bool,
 }
 
@@ -132,6 +133,7 @@ impl<F: PrimeField64> Setup<F> {
             proof_size,
             pinned_proof_size,
             n_cols,
+            n_operations_quotient,
         ) = if setup_type == &ProofType::Compressor && !global_info.get_air_has_compressor(airgroup_id, air_id) {
             // If the condition is met, use None for each pointer
             (
@@ -141,6 +143,7 @@ impl<F: PrimeField64> Setup<F> {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                0,
                 0,
                 0,
                 0,
@@ -176,6 +179,8 @@ impl<F: PrimeField64> Setup<F> {
 
             let const_tree_size = get_const_tree_size_c(p_stark_info) as usize;
 
+            let n_operations_quotient = get_operations_quotient_c(expressions_bin, p_stark_info) as u64;
+
             let verkey_file = setup_path.with_extension("verkey.json");
 
             let mut file = File::open(&verkey_file).expect("Unable to open file");
@@ -203,6 +208,7 @@ impl<F: PrimeField64> Setup<F> {
                     proof_size,
                     pinned_proof_size,
                     n_cols,
+                    n_operations_quotient,
                 )
             } else {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
@@ -221,6 +227,7 @@ impl<F: PrimeField64> Setup<F> {
                     proof_size,
                     pinned_proof_size,
                     n_cols,
+                    n_operations_quotient,
                 )
             }
         };
@@ -247,6 +254,7 @@ impl<F: PrimeField64> Setup<F> {
             setup_type: setup_type.clone(),
             air_name: global_info.airs[airgroup_id][air_id].name.clone(),
             n_cols,
+            n_operations_quotient,
             single_instance,
         }
     }

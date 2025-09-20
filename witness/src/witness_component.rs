@@ -1,13 +1,11 @@
-use std::sync::Arc;
+use std::sync::{RwLock, Arc};
 
 use fields::PrimeField64;
 use proofman_common::{BufferPool, ProofCtx, SetupCtx, DebugInfo};
 use std::path::PathBuf;
 
 pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
-    fn execute(&self, _pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
-        Vec::new()
-    }
+    fn execute(&self, _pctx: Arc<ProofCtx<F>>, _global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {}
 
     fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) {}
 
@@ -51,13 +49,19 @@ pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
 #[macro_export]
 macro_rules! execute {
     ($Trace:ident, $num_instances: expr) => {
-        fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<std::path::PathBuf>) -> Vec<usize> {
+        fn execute(
+            &self,
+            pctx: Arc<ProofCtx<F>>,
+            global_ids: &std::sync::RwLock<Vec<usize>>,
+            _input_data_path: Option<std::path::PathBuf>,
+        ) {
             let mut instance_ids = Vec::new();
             for _ in 0..$num_instances {
-                instance_ids.push(pctx.add_instance($Trace::<usize>::AIRGROUP_ID, $Trace::<usize>::AIR_ID, 1));
+                let global_id = pctx.add_instance($Trace::<usize>::AIRGROUP_ID, $Trace::<usize>::AIR_ID, 1);
+                instance_ids.push(global_id);
+                global_ids.write().unwrap().push(global_id);
             }
             *self.instance_ids.write().unwrap() = instance_ids.clone();
-            instance_ids
         }
     };
 }

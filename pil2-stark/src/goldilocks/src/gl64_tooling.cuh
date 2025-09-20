@@ -332,7 +332,7 @@ struct DeviceCommitBuffers
     bool recursive;
     uint64_t max_size_proof;
 
-    uint64_t pinned_size = 128 * 1024 * 1024; //256MB, this is the size of pinned memory for consts, it can be changed if needed
+    uint64_t pinned_size = 256 * 1024 * 1024; //256MB
 
     uint32_t  n_gpus;
     uint32_t* my_gpu_ids;

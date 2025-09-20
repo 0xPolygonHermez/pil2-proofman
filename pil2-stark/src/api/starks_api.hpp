@@ -45,6 +45,7 @@ extern "C" {
     uint64_t get_max_n_tmp3(void *pExpressionsBin);
     uint64_t get_max_args(void *pExpressionsBin);
     uint64_t get_max_ops(void *pExpressionsBin);
+    uint64_t get_operations_quotient(void *pExpressionsBin, void *pStarkInfo);
     void expressions_bin_free(void *pExpressionsBin);
 
     // Hints

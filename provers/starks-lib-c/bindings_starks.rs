@@ -110,7 +110,9 @@ extern "C" {
     pub fn get_max_args(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
     
     pub fn get_max_ops(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
-    
+
+    pub fn get_operations_quotient(pExpressionsBin: *mut ::std::os::raw::c_void, pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+
     pub fn expressions_bin_free(pExpressionsBin: *mut ::std::os::raw::c_void);
 
     // Hints

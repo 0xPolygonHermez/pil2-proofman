@@ -22,13 +22,12 @@ void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint6
 
         uint64_t offset_src = nStreams == 1  ? setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)] : 0;
         uint64_t offset_dst = nStreams == 1  ? setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)] : N * nCols;
-        uint64_t offset_aux = nStreams == 1  ? setupCtx->starkInfo.mapOffsets[std::make_pair("extra_helper_fft", false)] : (N + NExtended) * nCols;
         uint64_t offset_mt = nStreams == 1  ? setupCtx->starkInfo.mapOffsets[make_pair("mt1", true)] : (N + NExtended) * nCols;
 
         Goldilocks::Element *pNodes = (Goldilocks::Element*)dst + offset_mt;
         
         NTT_Goldilocks_GPU ntt;
-        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, nBits, nBitsExtended, nCols, d_aux_trace, offset_aux, timer, stream);
+        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, nBits, nBitsExtended, nCols, timer, stream);
         CHECKCUDAERR(cudaMemcpyAsync(root_pinned, &pNodes[tree_size - HASH_SIZE], HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     } else {
         std::cout << "nCols must be greater than 0" << std::endl;

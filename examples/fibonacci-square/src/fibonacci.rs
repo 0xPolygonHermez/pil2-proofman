@@ -18,14 +18,12 @@ impl FibonacciSquare {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
-        let instance_ids = vec![pctx.add_instance(
-            FibonacciSquareTrace::<usize>::AIRGROUP_ID,
-            FibonacciSquareTrace::<usize>::AIR_ID,
-            1,
-        )];
+    fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {
+        let global_id =
+            pctx.add_instance(FibonacciSquareTrace::<usize>::AIRGROUP_ID, FibonacciSquareTrace::<usize>::AIR_ID, 1);
+        let instance_ids = vec![global_id];
         *self.instance_ids.write().unwrap() = instance_ids.clone();
-        instance_ids
+        global_ids.write().unwrap().push(global_id);
     }
 
     fn calculate_witness(
@@ -35,7 +33,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         _sctx: Arc<SetupCtx<F>>,
         instance_ids: &[usize],
         _n_cores: usize,
-        _buffer_pool: &dyn BufferPool<F>,
+        buffer_pool: &dyn BufferPool<F>,
     ) {
         if stage == 1 {
             let instance_id = instance_ids[0];
@@ -48,7 +46,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
             let mut a = F::as_canonical_u64(&publics.in1);
             let mut b = F::as_canonical_u64(&publics.in2);
 
-            let mut trace = FibonacciSquareTrace::new();
+            let mut trace = FibonacciSquareTrace::new_from_vec_zeroes(buffer_pool.take_buffer());
 
             trace[0].a = F::from_u64(a);
             trace[0].b = F::from_u64(b);
@@ -64,16 +62,13 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
 
             publics.out = trace[trace.num_rows() - 1].b;
 
-            if pctx.dctx_is_my_instance(instance_id) {
-                let mut air_values = FibonacciSquareAirValues::<F>::new();
-                air_values.fibo1[0] = F::from_u64(1);
-                air_values.fibo1[1] = F::from_u64(2);
-                air_values.fibo3 = [F::from_u64(5), F::from_u64(5), F::from_u64(5)];
+            let mut air_values = FibonacciSquareAirValues::<F>::new();
+            air_values.fibo1[0] = F::from_u64(1);
+            air_values.fibo1[1] = F::from_u64(2);
+            air_values.fibo3 = [F::from_u64(5), F::from_u64(5), F::from_u64(5)];
 
-                let air_instance =
-                    AirInstance::new_from_trace(FromTrace::new(&mut trace).with_air_values(&mut air_values));
-                pctx.add_air_instance(air_instance, instance_id);
-            }
+            let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace).with_air_values(&mut air_values));
+            pctx.add_air_instance(air_instance, instance_id);
         }
     }
 
