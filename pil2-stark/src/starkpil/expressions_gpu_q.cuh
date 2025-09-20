@@ -38,9 +38,7 @@ struct DeviceArgumentsQ
     Goldilocks::Element *numbersConstraints;
 };
 
-__global__  void computeExpressions_q_(StepsParams *d_params, DeviceArgumentsQ *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, const bool debug, const bool constraints, uint64_t challengeId, Goldilocks::Element *d_challengePowers);
-__global__  void computeExpressions_q_2_(StepsParams *d_params, DeviceArgumentsQ *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, const bool debug, const bool constraints, uint64_t challengeId, Goldilocks::Element *d_challengePowers);
-
+__global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, const bool debug, const bool constraints, uint64_t challengeId, Goldilocks::Element *d_challengePowers);
 class ExpressionsGPUQ : public ExpressionsCtx
 {
 public:
