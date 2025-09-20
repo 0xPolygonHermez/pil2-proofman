@@ -52,7 +52,7 @@ macro_rules! execute {
         fn execute(
             &self,
             pctx: Arc<ProofCtx<F>>,
-            global_ids: &RwLock<Vec<usize>>,
+            global_ids: &std::sync::RwLock<Vec<usize>>,
             _input_data_path: Option<std::path::PathBuf>,
         ) {
             let mut instance_ids = Vec::new();
