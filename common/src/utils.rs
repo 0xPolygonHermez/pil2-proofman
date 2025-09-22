@@ -15,18 +15,27 @@ use sysinfo::System;
 use rayon::ThreadPool;
 use rayon::ThreadPoolBuilder;
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::fmt::format::Writer;
-use tracing_subscriber::fmt::format::FormatFields;
-use tracing_subscriber::fmt::time::SystemTime;
 use tracing_subscriber::registry::LookupSpan;
-use tracing_subscriber::fmt::FormatEvent;
-use tracing_subscriber::fmt::time::FormatTime;
+use tracing_subscriber::fmt::format::{Format, FormatEvent, FormatFields, Full, Writer};
 use tracing_subscriber::fmt;
 use std::sync::OnceLock;
 
 static GLOBAL_RANK: OnceLock<i32> = OnceLock::new();
 
-struct RankFormatter;
+struct RankFormatter {
+    inner: Format<Full>,
+}
+
+impl RankFormatter {
+    fn new() -> Self {
+        Self {
+            inner: Format::default()
+                .with_level(true) // keep level
+                .with_target(false) // adjust options as you like
+                .with_ansi(true),
+        }
+    }
+}
 
 impl<S, N> FormatEvent<S, N> for RankFormatter
 where
@@ -39,20 +48,11 @@ where
         mut writer: Writer<'_>,
         event: &tracing::Event<'_>,
     ) -> std::fmt::Result {
-        let timer = SystemTime;
-        timer.format_time(&mut writer)?;
-        write!(writer, " ")?;
-
         if let Some(rank) = GLOBAL_RANK.get().copied() {
             write!(writer, "[rank={rank}] ")?;
         }
 
-        // Print level and event fields
-        write!(writer, "{}: ", event.metadata().level())?;
-        ctx.format_fields(writer.by_ref(), event)?;
-        writeln!(writer)?;
-
-        Ok(())
+        self.inner.format_event(ctx, writer, event)
     }
 }
 
@@ -70,7 +70,7 @@ pub fn initialize_logger(verbose_mode: VerboseMode, rank: Option<i32>) {
     }
 
     let stdout_layer = tracing_subscriber::fmt::layer()
-        .event_format(RankFormatter)
+        .event_format(RankFormatter::new())
         .with_writer(std::io::stdout)
         .with_ansi(true)
         .with_filter(LevelFilter::from(verbose_mode));

@@ -25,8 +25,7 @@ sysinfo.workspace = true
 crossbeam-channel.workspace = true
 num_cpus = "1.17.0"
 env = "1.0.1"
-
-tracing-subscriber = { version = "0.3.19" }
+tracing-subscriber.workspace = true
 
 # Distributed mode (mpi) is only supported on Linux x86_64
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
