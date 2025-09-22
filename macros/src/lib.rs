@@ -144,7 +144,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
                 // Allocate uninitialized memory for performance
                 let mut vec: Vec<std::mem::MaybeUninit<#generics>> = Vec::with_capacity(num_rows * #row_struct_name::<#generics>::ROW_SIZE);
-                let buffer = unsafe {
+                let mut buffer: Vec<#generics> = unsafe {
                     vec.set_len(num_rows * #row_struct_name::<#generics>::ROW_SIZE);
                     std::mem::transmute(vec)
                 };
@@ -186,7 +186,16 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 .for_each(|x| {
                     *x = <#generics>::default();
                 });
-                Self::new_from_vec(buffer)
+
+                Self {
+                    buffer,
+                    num_rows,
+                    row_size,
+                    airgroup_id: Self::AIRGROUP_ID,
+                    air_id: Self::AIR_ID,
+                    commit_id: #commit_id,
+                    shared_buffer: true,
+                }
             }
 
             pub fn new_from_vec(mut buffer: Vec<#generics>) -> Self {
@@ -219,7 +228,23 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             }
 
             pub fn from_vec(buffer: Vec<#generics>) -> Self {
-                Self::new_from_vec(buffer)
+                let row_size = #row_struct_name::<#generics>::ROW_SIZE;
+                let num_rows = Self::NUM_ROWS;
+                let expected_len = num_rows * row_size;
+
+                assert!(buffer.len() >= expected_len, "Flat buffer too small");
+                assert!(num_rows >= 2);
+                assert!(num_rows & (num_rows - 1) == 0);
+
+                Self {
+                    buffer,
+                    num_rows,
+                    row_size,
+                    airgroup_id: Self::AIRGROUP_ID,
+                    air_id: Self::AIR_ID,
+                    commit_id: #commit_id,
+                    shared_buffer: true,
+                }
             }
 
             pub fn par_iter_mut_chunks(&mut self, n: usize) -> impl rayon::iter::IndexedParallelIterator<Item = &mut [#row_struct_name<#generics>]> {
