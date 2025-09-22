@@ -1,17 +1,16 @@
 use std::os::raw::c_void;
-use std::sync::atomic::AtomicU64;
 use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
+use std::sync::Arc;
+use crate::MpiCtx;
+use borsh::{BorshDeserialize, BorshSerialize};
 
 use fields::PrimeField64;
 use transcript::FFITranscript;
 
-#[cfg(distributed)]
-use mpi::environment::Universe;
-
 use crate::{
     initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode, StepsParams,
-    VerboseMode, Proof,
+    VerboseMode,
 };
 
 #[derive(Debug)]
@@ -47,6 +46,44 @@ pub struct ProofOptions {
     pub test_mode: bool,
     pub output_dir_path: PathBuf,
     pub minimal_memory: bool,
+}
+
+impl BorshSerialize for ProofOptions {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        BorshSerialize::serialize(&self.verify_constraints, writer)?;
+        BorshSerialize::serialize(&self.aggregation, writer)?;
+        BorshSerialize::serialize(&self.final_snark, writer)?;
+        BorshSerialize::serialize(&self.verify_proofs, writer)?;
+        BorshSerialize::serialize(&self.save_proofs, writer)?;
+        BorshSerialize::serialize(&self.test_mode, writer)?;
+        BorshSerialize::serialize(&self.output_dir_path.to_string_lossy().to_string(), writer)?;
+        BorshSerialize::serialize(&self.minimal_memory, writer)?;
+        Ok(())
+    }
+}
+
+impl BorshDeserialize for ProofOptions {
+    fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let verify_constraints = bool::deserialize_reader(reader)?;
+        let aggregation = bool::deserialize_reader(reader)?;
+        let final_snark = bool::deserialize_reader(reader)?;
+        let verify_proofs = bool::deserialize_reader(reader)?;
+        let save_proofs = bool::deserialize_reader(reader)?;
+        let test_mode = bool::deserialize_reader(reader)?;
+        let output_dir_path_str = String::deserialize_reader(reader)?;
+        let minimal_memory = bool::deserialize_reader(reader)?;
+
+        Ok(Self {
+            verify_constraints,
+            aggregation,
+            final_snark,
+            verify_proofs,
+            save_proofs,
+            test_mode,
+            output_dir_path: PathBuf::from(output_dir_path_str),
+            minimal_memory,
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -165,6 +202,7 @@ impl ParamsGPU {
 
 #[allow(dead_code)]
 pub struct ProofCtx<F: PrimeField64> {
+    pub mpi_ctx: Arc<MpiCtx>,
     pub public_inputs: Values<F>,
     pub proof_values: Values<F>,
     pub global_challenge: Values<F>,
@@ -185,68 +223,19 @@ pub struct ProofCtx<F: PrimeField64> {
 pub const MAX_INSTANCES: u64 = 10000;
 
 impl<F: PrimeField64> ProofCtx<F> {
-    #[cfg(distributed)]
     pub fn create_ctx(
         proving_key_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
         aggregation: bool,
         final_snark: bool,
         verbose_mode: VerboseMode,
-        mpi_universe: Option<Universe>,
-    ) -> Self {
-        tracing::info!("Creating proof context");
-
-        let dctx = DistributionCtx::with_universe(mpi_universe);
-
-        let rank = if dctx.n_processes > 1 { Some(dctx.rank) } else { None };
-        initialize_logger(verbose_mode, rank);
-        let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
-        let n_publics = global_info.n_publics;
-        let n_proof_values = global_info
-            .proof_values_map
-            .as_ref()
-            .map(|map| map.iter().filter(|entry| entry.stage == 1).count())
-            .unwrap_or(0);
-        let n_challenges = global_info.n_challenges.iter().sum::<usize>();
-
-        let weights = HashMap::new();
-
-        let air_instances: Vec<RwLock<AirInstance<F>>> =
-            (0..MAX_INSTANCES).map(|_| RwLock::new(AirInstance::<F>::default())).collect();
-
-        Self {
-            global_info,
-            public_inputs: Values::new(n_publics),
-            proof_values: Values::new(n_proof_values),
-            challenges: Values::new(n_challenges * 3),
-            global_challenge: Values::new(3),
-            air_instances,
-            dctx: RwLock::new(dctx),
-            debug_info: RwLock::new(DebugInfo::default()),
-            custom_commits_fixed,
-            weights,
-            aggregation,
-            final_snark,
-            witness_tx: RwLock::new(None),
-            witness_tx_priority: RwLock::new(None),
-            proof_tx: RwLock::new(None),
-        }
-    }
-
-    #[cfg(not(distributed))]
-    pub fn create_ctx(
-        proving_key_path: PathBuf,
-        custom_commits_fixed: HashMap<String, PathBuf>,
-        aggregation: bool,
-        final_snark: bool,
-        verbose_mode: VerboseMode,
+        mpi_ctx: Arc<MpiCtx>,
     ) -> Self {
         tracing::info!("Creating proof context");
 
         let dctx = DistributionCtx::new();
 
-        let rank = if dctx.n_processes > 1 { Some(dctx.rank) } else { None };
-        initialize_logger(verbose_mode, rank);
+        initialize_logger(verbose_mode, None);
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
         let n_publics = global_info.n_publics;
         let n_proof_values = global_info
@@ -262,6 +251,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             (0..MAX_INSTANCES).map(|_| RwLock::new(AirInstance::<F>::default())).collect();
 
         Self {
+            mpi_ctx,
             global_info,
             public_inputs: Values::new(n_publics),
             proof_values: Values::new(n_proof_values),
@@ -287,7 +277,7 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn dctx_reset(&self) {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.reset();
+        dctx.reset_instances();
     }
 
     pub fn set_proof_tx(&self, proof_tx: Option<crossbeam_channel::Sender<usize>>) {
@@ -327,7 +317,9 @@ impl<F: PrimeField64> ProofCtx<F> {
                     .sum::<u64>();
                 total_cols += 3; // FRI polinomial
                 let n_openings = setup.stark_info.opening_points.len() as u64;
-                let weight = (total_cols + n_openings * 2) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
+                // let n_ops_quotient = setup.n_operations_quotient;
+                let weight = (total_cols + n_openings * 3) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
+                // weight += (n_ops_quotient / 10) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
                 self.weights.insert((airgroup_id, air_id), weight);
             }
         }
@@ -370,59 +362,8 @@ impl<F: PrimeField64> ProofCtx<F> {
         !self.air_instances[global_idx].read().unwrap().trace.is_empty()
     }
 
-    pub fn dctx_barrier(&self) {
-        let dctx = self.dctx.read().unwrap();
-        dctx.barrier();
-    }
-
     pub fn dctx_broadcast(&self, buf: &mut Vec<u8>) {
-        let dctx = self.dctx.read().unwrap();
-        dctx.broadcast(buf);
-    }
-
-    pub fn dctx_process_ready_for_outer_agg(&self) {
-        let mut dctx = self.dctx.write().unwrap();
-        dctx.process_ready_for_outer_agg();
-    }
-
-    pub fn dctx_send_proof_to_rank(&self, proof: &Vec<u64>, rank: i32) {
-        let dctx = self.dctx.read().unwrap();
-        dctx.send_proof_to_rank(proof, rank);
-    }
-
-    pub fn dctx_recv_proof_from_rank(&self, rank: i32) -> Vec<u64> {
-        let dctx = self.dctx.read().unwrap();
-        dctx.recv_proof_from_rank(rank)
-    }
-
-    pub fn dctx_get_outer_agg_rank(&self) -> i32 {
-        let dctx = self.dctx.read().unwrap();
-        dctx.get_outer_agg_rank()
-    }
-
-    pub fn dctx_is_min_rank_owner(&self, airgroup_id: usize, air_id: usize) -> bool {
-        let dctx = self.dctx.read().unwrap();
-        dctx.is_min_rank_owner(airgroup_id, air_id)
-    }
-
-    pub fn dctx_get_rank(&self) -> usize {
-        let dctx = self.dctx.read().unwrap();
-        dctx.rank as usize
-    }
-
-    pub fn dctx_get_node_rank(&self) -> usize {
-        let dctx = self.dctx.read().unwrap();
-        dctx.node_rank as usize
-    }
-
-    pub fn dctx_get_node_n_processes(&self) -> usize {
-        let dctx = self.dctx.read().unwrap();
-        dctx.node_n_processes as usize
-    }
-
-    pub fn dctx_get_n_processes(&self) -> usize {
-        let dctx = self.dctx.read().unwrap();
-        dctx.n_processes as usize
+        self.mpi_ctx.broadcast(buf);
     }
 
     pub fn dctx_get_instances(&self) -> Vec<InstanceInfo> {
@@ -430,19 +371,46 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances.clone()
     }
 
+    pub fn dctx_is_first_partition(&self) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.partition_mask[0]
+    }
+
+    pub fn dctx_reset_instances_calculated(&self) {
+        let dctx = self.dctx.read().unwrap();
+        for instance in dctx.instances_calculated.iter() {
+            instance.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    pub fn dctx_set_instance_calculated(&self, global_idx: usize) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.instances_calculated[global_idx].store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn dctx_is_instance_calculated(&self, global_idx: usize) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.instances_calculated[global_idx].load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub fn dctx_get_my_tables(&self) -> Vec<usize> {
         let dctx = self.dctx.read().unwrap();
         dctx.instances
             .iter()
             .enumerate()
-            .filter(|(id, inst)| inst.table && (dctx.my_instances.contains(id) || inst.shared))
+            .filter(|(id, inst)| inst.table && (dctx.process_instances.contains(id) || inst.shared))
             .map(|(id, _)| id)
             .collect()
     }
 
-    pub fn dctx_get_my_instances(&self) -> Vec<usize> {
+    pub fn dctx_get_process_instances(&self) -> Vec<usize> {
         let dctx = self.dctx.read().unwrap();
-        dctx.my_instances.clone()
+        dctx.process_instances.clone()
+    }
+
+    pub fn dctx_get_process_owner_instance(&self, instance_id: usize) -> i32 {
+        let dctx = self.dctx.read().unwrap();
+        dctx.get_process_owner_instance(instance_id)
     }
 
     pub fn dctx_get_instance_info(&self, global_idx: usize) -> (usize, usize) {
@@ -455,14 +423,14 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.get_instance_chunks(global_idx)
     }
 
-    pub fn dctx_get_instance_idx(&self, global_idx: usize) -> usize {
+    pub fn dctx_get_instance_local_idx(&self, global_idx: usize) -> usize {
         let dctx = self.dctx.read().unwrap();
-        dctx.get_instance_idx(global_idx)
+        dctx.get_instance_local_idx(global_idx)
     }
 
-    pub fn dctx_is_my_instance(&self, global_idx: usize) -> bool {
+    pub fn dctx_is_my_process_instance(&self, global_idx: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
-        dctx.is_my_instance(global_idx)
+        dctx.is_my_process_instance(global_idx)
     }
 
     pub fn dctx_is_table(&self, global_idx: usize) -> bool {
@@ -480,9 +448,19 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.find_air_instance_id(global_idx)
     }
 
-    pub fn dctx_find_instance_mine(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
+    pub fn dctx_find_process_instance(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
         let dctx = self.dctx.read().unwrap();
-        dctx.find_instance_mine(airgroup_id, air_id)
+        dctx.find_process_instance(airgroup_id, air_id)
+    }
+
+    pub fn dctx_find_process_table(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.find_process_table(airgroup_id, air_id)
+    }
+
+    pub fn dctx_get_table_instance_idx(&self, table_idx: usize) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        dctx.get_table_instance_idx(table_idx)
     }
 
     pub fn dctx_set_chunks(&self, global_idx: usize, chunks: Vec<usize>, slow: bool) {
@@ -497,30 +475,20 @@ impl<F: PrimeField64> ProofCtx<F> {
     }
 
     pub fn dctx_get_airgroup_instances_alives(&self) -> Vec<Vec<usize>> {
-        let dctx = self.dctx.read().unwrap();
-        dctx.airgroup_instances_alives.clone()
+        // let dctx = self.dctx.read().unwrap();
+        // dctx.airgroup_instances_alives.clone()
+        Vec::new()
     }
 
-    pub fn dctx_send_proof_agg_rank(&self, proof: &Proof<F>) {
-        let dctx = self.dctx.read().unwrap();
-        dctx.send_proof_agg_rank(proof);
-    }
-
-    pub fn dctx_check_incoming_proofs(&self, airgroup_id: usize) -> Option<Vec<u64>> {
-        let dctx_check_incoming_proofs = self.dctx.read().unwrap();
-        dctx_check_incoming_proofs.check_incoming_proofs(airgroup_id)
-    }
-
-    pub fn add_instance_rank(
+    pub fn add_instance_assign_first_partition(
         &self,
         airgroup_id: usize,
         air_id: usize,
-        owner_idx: usize,
         threads_witness: usize,
     ) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_assign_rank(airgroup_id, air_id, owner_idx, threads_witness, weight)
+        dctx.add_instance_first_partition(airgroup_id, air_id, threads_witness, weight)
     }
 
     pub fn add_instance(&self, airgroup_id: usize, air_id: usize, threads_witness: usize) -> usize {
@@ -532,23 +500,13 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn add_table(&self, airgroup_id: usize, air_id: usize) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign_table(airgroup_id, air_id, weight)
+        dctx.add_table(airgroup_id, air_id, weight)
     }
 
     pub fn add_table_all(&self, airgroup_id: usize, air_id: usize) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_assign_table_all(airgroup_id, air_id, weight)
-    }
-
-    pub fn dctx_get_n_instances(&self) -> usize {
-        let dctx = self.dctx.read().unwrap();
-        dctx.instances.len()
-    }
-
-    pub fn dctx_distribute_roots(&self, values: [u64; 10]) -> Vec<u64> {
-        let dctx = self.dctx.read().unwrap();
-        dctx.distribute_roots(values)
+        dctx.add_table_all(airgroup_id, air_id, weight)
     }
 
     pub fn dctx_add_instance_no_assign(
@@ -567,39 +525,38 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.assign_instances(minimal_memory);
     }
 
-    pub fn dctx_load_balance_info(&self) -> (f64, u64, u64, f64) {
+    pub fn dctx_load_balance_info_process(&self) -> (f64, u64, u64, f64) {
         let dctx = self.dctx.read().unwrap();
-        dctx.load_balance_info()
+        dctx.load_balance_info_process()
+    }
+    pub fn dctx_load_balance_info_partition(&self) -> (f64, u64, u64, f64) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.load_balance_info_partition()
     }
 
-    pub fn dctx_distribute_multiplicity(&self, multiplicity: &[AtomicU64], global_idx: usize) {
-        let dctx = self.dctx.read().unwrap();
-        let owner = dctx.owner(global_idx);
-        dctx.distribute_multiplicity(multiplicity, owner);
-    }
-
-    pub fn dctx_distribute_publics(&self, publics: Vec<u64>) {
-        let dctx = self.dctx.read().unwrap();
-        let publics_to_set = dctx.distribute_publics(publics);
-        for idx in (0..publics_to_set.len()).step_by(2) {
-            self.set_public_value(publics_to_set[idx + 1], publics_to_set[idx] as usize);
-        }
-    }
-
-    pub fn dctx_distribute_multiplicities(&self, multiplicities: &[Vec<AtomicU64>], global_idx: usize) {
-        let dctx = self.dctx.read().unwrap();
-        let owner = dctx.owner(global_idx);
-        dctx.distribute_multiplicities(multiplicities, owner);
-    }
-
-    pub fn dctx_distribute_airgroupvalues(&self, airgroup_values: Vec<Vec<u64>>) -> Vec<Vec<F>> {
-        let dctx = self.dctx.read().unwrap();
-        dctx.distribute_airgroupvalues(airgroup_values, &self.global_info)
-    }
-
-    pub fn dctx_close(&self) {
+    pub fn dctx_setup(
+        &self,
+        n_partitions: usize,
+        partition_ids: Vec<u32>,
+        worker_index: usize,
+        n_processes: usize,
+        process_id: usize,
+    ) {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.close(self.global_info.air_groups.len());
+        dctx.setup_partitions(n_partitions, partition_ids);
+        dctx.setup_processes(n_processes, process_id);
+        dctx.setup_worker_index(worker_index);
+    }
+
+    pub fn get_n_partitions(&self) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        dctx.n_partitions
+    }
+
+    pub fn get_worker_index(&self) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        assert!(dctx.worker_index >= 0, "Worker index not set");
+        dctx.worker_index as usize
     }
 
     pub fn get_proof_values_ptr(&self) -> *mut u8 {

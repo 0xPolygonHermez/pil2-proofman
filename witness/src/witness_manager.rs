@@ -8,9 +8,11 @@ use crate::WitnessComponent;
 use libloading::Library;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+pub const MAX_COMPONENTS: usize = 1000;
+
 pub struct WitnessManager<F: PrimeField64> {
     components: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
-    components_instance_ids: RwLock<Vec<Vec<usize>>>,
+    components_instance_ids: Vec<RwLock<Vec<usize>>>,
     components_std: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
     pctx: Arc<ProofCtx<F>>,
     sctx: Arc<SetupCtx<F>>,
@@ -18,13 +20,14 @@ pub struct WitnessManager<F: PrimeField64> {
     input_data_path: RwLock<Option<PathBuf>>,
     init: AtomicBool,
     library: Mutex<Option<Library>>,
+    execution_done: AtomicBool,
 }
 
 impl<F: PrimeField64> WitnessManager<F> {
     pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) -> Self {
         WitnessManager {
             components: RwLock::new(Vec::new()),
-            components_instance_ids: RwLock::new(Vec::new()),
+            components_instance_ids: (0..MAX_COMPONENTS).map(|_| RwLock::new(Vec::new())).collect(),
             components_std: RwLock::new(Vec::new()),
             pctx,
             sctx,
@@ -32,6 +35,7 @@ impl<F: PrimeField64> WitnessManager<F> {
             input_data_path: RwLock::new(None),
             init: AtomicBool::new(false),
             library: Mutex::new(None),
+            execution_done: AtomicBool::new(false),
         }
     }
 
@@ -54,7 +58,6 @@ impl<F: PrimeField64> WitnessManager<F> {
 
     pub fn register_component(&self, component: Arc<dyn WitnessComponent<F>>) {
         self.components.write().unwrap().push(component);
-        self.components_instance_ids.write().unwrap().push(Vec::new());
     }
 
     pub fn register_component_std(&self, component: Arc<dyn WitnessComponent<F>>) {
@@ -69,25 +72,43 @@ impl<F: PrimeField64> WitnessManager<F> {
         Ok(())
     }
 
-    pub fn execute(&self) {
+    pub fn execute(&self, minimal_memory: bool) {
+        self.execution_done.store(false, Ordering::SeqCst);
+        let n_components = self.components_std.read().unwrap().len();
+        for (idx, component) in self.components_std.read().unwrap().iter().enumerate() {
+            component.execute(
+                self.pctx.clone(),
+                &self.components_instance_ids[n_components + idx],
+                self.input_data_path.read().unwrap().clone(),
+            );
+        }
+
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
-            let global_ids = component.execute(self.pctx.clone(), self.input_data_path.read().unwrap().clone());
-            self.components_instance_ids.write().unwrap()[idx] = global_ids;
+            component.execute(
+                self.pctx.clone(),
+                &self.components_instance_ids[idx],
+                self.input_data_path.read().unwrap().clone(),
+            );
         }
-        for component in self.components_std.read().unwrap().iter() {
-            component.execute(self.pctx.clone(), self.input_data_path.read().unwrap().clone());
-        }
+
+        self.pctx.dctx_assign_instances(minimal_memory);
+
+        self.execution_done.store(true, Ordering::SeqCst);
+    }
+
+    pub fn reset(&self) {
+        self.components_instance_ids.iter().for_each(|ids| ids.write().unwrap().clear());
     }
 
     pub fn debug(&self, instance_ids: &[usize], debug_info: &DebugInfo) {
         if debug_info.std_mode.name == ModeName::Debug || !debug_info.debug_instances.is_empty() {
             for (idx, component) in self.components.read().unwrap().iter().enumerate() {
-                let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
+                let ids_hash_set: HashSet<usize> = instance_ids.iter().cloned().collect();
 
-                let instance_ids_filtered: Vec<_> = self.components_instance_ids.read().unwrap()[idx]
+                let instance_ids_filtered: Vec<usize> = ids_hash_set
                     .iter()
-                    .filter(|id| ids_hash_set.contains(id))
-                    .cloned()
+                    .filter(|id| self.components_instance_ids[idx].read().unwrap().contains(id))
+                    .cloned() // turn &&usize → usize
                     .collect();
 
                 if !instance_ids_filtered.is_empty() {
@@ -110,12 +131,14 @@ impl<F: PrimeField64> WitnessManager<F> {
         buffer_pool: &dyn BufferPool<F>,
     ) {
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
-            let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
+            let ids_hash_set: HashSet<usize> = instance_ids.iter().cloned().collect();
 
-            let instance_ids_filtered: Vec<_> = self.components_instance_ids.read().unwrap()[idx]
+            let instance_ids_filtered: Vec<_> = ids_hash_set
                 .iter()
                 .filter(|id| {
-                    ids_hash_set.contains(id) && (self.pctx.dctx_is_my_instance(**id) || self.pctx.dctx_is_table(**id))
+                    self.components_instance_ids[idx].read().unwrap().contains(id)
+                        && (self.pctx.dctx_is_my_process_instance(**id) || self.pctx.dctx_is_table(**id))
+                        && !self.pctx.dctx_is_instance_calculated(**id)
                 })
                 .cloned()
                 .collect();
@@ -132,15 +155,17 @@ impl<F: PrimeField64> WitnessManager<F> {
             }
         }
 
-        for component in self.components_std.read().unwrap().iter() {
-            component.pre_calculate_witness(
-                stage,
-                self.pctx.clone(),
-                self.sctx.clone(),
-                instance_ids,
-                n_cores,
-                buffer_pool,
-            );
+        if self.execution_done.load(Ordering::SeqCst) {
+            for component in self.components_std.read().unwrap().iter() {
+                component.pre_calculate_witness(
+                    stage,
+                    self.pctx.clone(),
+                    self.sctx.clone(),
+                    instance_ids,
+                    n_cores,
+                    buffer_pool,
+                );
+            }
         }
     }
 
@@ -152,17 +177,22 @@ impl<F: PrimeField64> WitnessManager<F> {
         buffer_pool: &dyn BufferPool<F>,
     ) {
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
-            let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
+            let ids_hash_set: HashSet<usize> = instance_ids.iter().cloned().collect();
 
-            let instance_ids_filtered: Vec<_> = self.components_instance_ids.read().unwrap()[idx]
+            let instance_ids_filtered: Vec<_> = ids_hash_set
                 .iter()
                 .filter(|id| {
-                    ids_hash_set.contains(id) && (self.pctx.dctx_is_my_instance(**id) || self.pctx.dctx_is_table(**id))
+                    self.components_instance_ids[idx].read().unwrap().contains(id)
+                        && (self.pctx.dctx_is_my_process_instance(**id) || self.pctx.dctx_is_table(**id))
+                        && !self.pctx.dctx_is_instance_calculated(**id)
                 })
                 .cloned()
                 .collect();
 
             if !instance_ids_filtered.is_empty() {
+                for id in &instance_ids_filtered {
+                    self.pctx.dctx_set_instance_calculated(*id);
+                }
                 component.calculate_witness(
                     stage,
                     self.pctx.clone(),
@@ -174,15 +204,17 @@ impl<F: PrimeField64> WitnessManager<F> {
             }
         }
 
-        for component in self.components_std.read().unwrap().iter() {
-            component.calculate_witness(
-                stage,
-                self.pctx.clone(),
-                self.sctx.clone(),
-                instance_ids,
-                n_cores,
-                buffer_pool,
-            );
+        if self.execution_done.load(Ordering::SeqCst) {
+            for component in self.components_std.read().unwrap().iter() {
+                component.calculate_witness(
+                    stage,
+                    self.pctx.clone(),
+                    self.sctx.clone(),
+                    instance_ids,
+                    n_cores,
+                    buffer_pool,
+                );
+            }
         }
     }
 
