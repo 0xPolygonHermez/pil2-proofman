@@ -187,7 +187,6 @@ impl DistributionCtx {
         self.worker_instances.clear();
         self.partition_count.fill(0);
         self.partition_weight.fill(0);
-        self.partition_mask.clear();
 
         // Process-level
         self.instance_process.clear();
