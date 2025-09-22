@@ -2757,6 +2757,7 @@ where
                     air_instance_id,
                 );
                 invalid_initialization = true;
+                break;
             }
         }
 
