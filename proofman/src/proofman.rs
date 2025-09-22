@@ -1847,7 +1847,7 @@ where
         }
 
         for proof in agg_proofs {
-            let proof_acc_challenge = get_accumulated_challenge(&proof.proof);
+            let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
             let mut stored_contributions = Vec::new();
             for w in &proof.worker_indexes {
                 if let Some(contrib) = self.worker_contributions.read().unwrap().iter().find(|contrib| {
@@ -2757,6 +2757,7 @@ where
                     air_instance_id,
                 );
                 invalid_initialization = true;
+                break;
             }
         }
 
@@ -2915,7 +2916,7 @@ where
             d_buffers.get_ptr(),
             (&setup.p_setup).into(),
         );
-        if !setup.single_instance {
+        if !setup.single_instance && cfg!(feature = "gpu") {
             streams.lock().unwrap()[stream_id as usize] = Some(instance_id as u64);
         } else {
             streams.lock().unwrap()[stream_id as usize] = None;

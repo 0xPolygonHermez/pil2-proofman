@@ -6,7 +6,9 @@ use proofman_starks_lib_c::*;
 use std::path::Path;
 use num_traits::ToPrimitive;
 
-use proofman_common::{load_const_pols, load_const_pols_tree, MpiCtx, Proof, ProofCtx, ProofType, Setup, SetupsVadcop};
+use proofman_common::{
+    load_const_pols, load_const_pols_tree, CurveType, MpiCtx, Proof, ProofCtx, ProofType, Setup, SetupsVadcop,
+};
 
 use std::os::raw::{c_void, c_char};
 
@@ -188,12 +190,20 @@ pub fn n_publics_aggregation<F: PrimeField64>(pctx: &ProofCtx<F>, airgroup_id: u
     publics_aggregation += 1; // circuit type
     publics_aggregation += 1; // n proofs aggregated
     publics_aggregation += 4 * pctx.global_info.agg_types[airgroup_id].len(); // agg types
-    publics_aggregation += 10; // elliptic curve hash
+    if pctx.global_info.curve != CurveType::None {
+        publics_aggregation += 10; // elliptic curve hash
+    } else {
+        publics_aggregation += pctx.global_info.lattice_size.unwrap(); // lattice components
+    }
     publics_aggregation
 }
 
-pub fn get_accumulated_challenge(proof: &[u64]) -> Vec<u64> {
-    proof[6..16].to_vec()
+pub fn get_accumulated_challenge<F: PrimeField64>(pctx: &ProofCtx<F>, proof: &[u64]) -> Vec<u64> {
+    if pctx.global_info.curve != CurveType::None {
+        proof[6..16].to_vec()
+    } else {
+        proof[6..pctx.global_info.lattice_size.unwrap()].to_vec()
+    }
 }
 
 pub fn gen_recursive_proof_size<F: PrimeField64>(
