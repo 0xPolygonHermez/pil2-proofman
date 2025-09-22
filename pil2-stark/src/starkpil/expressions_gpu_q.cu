@@ -4,11 +4,13 @@
 #include "gl64_tooling.cuh"
 #include "goldilocks_cubic_extension.cuh"
 
+#define COUNTERS 1
+
 extern __shared__ Goldilocks::Element scratchpad[];
 __device__ __noinline__ void ziAndstorePolynomial_q__(ExpsArguments *d_expsArgs, Goldilocks::Element *accumulator, Goldilocks::Element* d_zi, uint64_t row);
 __device__ __noinline__ void accumulate_q__(ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, gl64_t *accumulator, gl64_t* tmp, gl64_t* d_challengePowers, bool print);
 __device__ __noinline__ void getInversePolinomial_q__(gl64_t *polynomial, uint64_t dim);
-__device__ __forceinline__ Goldilocks::Element* load_q__(
+__device__ __noinline__ Goldilocks::Element* load_q__(
     const DeviceArgumentsQ*  dArgs,
     const ExpsArguments*  dExpsArgs,
     Goldilocks::Element*  temp,
@@ -20,13 +22,18 @@ __device__ __forceinline__ Goldilocks::Element* load_q__(
     const uint64_t row,
     const uint64_t dim,
     const bool isCyclic,
+#if COUNTERS
+    const bool debug,
+    uint64_t* counter
+#else
     const bool debug
+#endif
 );
 __global__ void computeChallengePowers_q_(uint64_t dest_nParams, uint64_t challengeId, StepsParams *d_params, Goldilocks::Element *d_challengePowers);
 
 #define DEBUG_ROW 161699
-__device__ __forceinline__ void printArguments_q(Goldilocks::Element *a, uint32_t dimA,  bool constA, Goldilocks::Element *b, uint32_t dimB, bool constB, int i, uint64_t op_type, uint64_t op, uint64_t nOps, bool debug);
-__device__ __forceinline__ void printRes_q(Goldilocks::Element *res, uint32_t dimRes, int i, bool debug);
+__device__ __noinline__ void printArguments_q(Goldilocks::Element *a, uint32_t dimA,  bool constA, Goldilocks::Element *b, uint32_t dimB, bool constB, int i, uint64_t op_type, uint64_t op, uint64_t nOps, bool debug);
+__device__ __noinline__ void printRes_q(Goldilocks::Element *res, uint32_t dimRes, int i, bool debug);
 
 ExpressionsGPUQ::ExpressionsGPUQ(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t nBlocks) : ExpressionsCtx(setupCtx), nRowsPack(nRowsPack), nBlocks(nBlocks)
 {
@@ -117,7 +124,6 @@ void ExpressionsGPUQ::calculateExpressions_gpu_q(StepsParams *d_params, Dest des
 {
     ExpsArguments h_expsArgs;
     bool domainExtended = true;
-    bool constraints = true;
 
     uint32_t nrowsPack = 256; //std::min(static_cast<uint32_t>(nRowsPack), static_cast<uint32_t>(domainSize));
     h_expsArgs.nRowsPack = nrowsPack;
@@ -138,9 +144,7 @@ void ExpressionsGPUQ::calculateExpressions_gpu_q(StepsParams *d_params, Dest des
 
     for (uint64_t k = 0; k < dest.params.size(); ++k)
     {
-        ParserParams &parserParams = constraints 
-            ? setupCtx.expressionsBin.constraintsInfoDebug[dest.params[k].expId]
-            : setupCtx.expressionsBin.expressionsInfo[dest.params[k].expId];
+        ParserParams &parserParams =  setupCtx.expressionsBin.constraintsInfoDebug[dest.params[k].expId];
         if (parserParams.nTemp1*h_expsArgs.nRowsPack > h_expsArgs.maxTemp1Size) {
             h_expsArgs.maxTemp1Size = parserParams.nTemp1*h_expsArgs.nRowsPack;
         }
@@ -162,9 +166,7 @@ void ExpressionsGPUQ::calculateExpressions_gpu_q(StepsParams *d_params, Dest des
     DestParamsGPU* h_dest_params = new DestParamsGPU[h_expsArgs.dest_nParams];
     for (uint64_t j = 0; j < h_expsArgs.dest_nParams; ++j){
 
-        ParserParams &parserParams = constraints 
-            ? setupCtx.expressionsBin.constraintsInfoDebug[dest.params[j].expId]
-            : setupCtx.expressionsBin.expressionsInfo[dest.params[j].expId];
+        ParserParams &parserParams = setupCtx.expressionsBin.constraintsInfoDebug[dest.params[j].expId];
         h_dest_params[j].dim = dest.params[j].dim;
         h_dest_params[j].expId = dest.params[j].expId;
         h_dest_params[j].nTemp1 = parserParams.nTemp1;
@@ -190,7 +192,7 @@ void ExpressionsGPUQ::calculateExpressions_gpu_q(StepsParams *d_params, Dest des
     CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, pinned_exps_args + countId * sizeof(ExpsArguments), sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
 
     uint32_t nblocks_ = static_cast<uint32_t>(std::min<uint64_t>(static_cast<uint64_t>(nBlocks),(domainSize + nrowsPack - 1) / nrowsPack));
-    uint32_t nthreads_ = nblocks_ == 1 ? domainSize : nrowsPack;
+    //uint32_t nthreads_ = nblocks_ == 1 ? domainSize : nrowsPack;
     //dim3 nBlocks_ =  nblocks_;
     //dim3 nThreads_ = nthreads_;
 
@@ -201,12 +203,12 @@ void ExpressionsGPUQ::calculateExpressions_gpu_q(StepsParams *d_params, Dest des
 
     TimerStartCategoryGPU(timer, EXPRESSIONS);
     computeChallengePowers_q_<<<1, 1, 0, stream>>>(h_expsArgs.dest_nParams, challengeId, d_params, d_challengePowers);
-    computeExpressions_q__<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams, debug, constraints, challengeId, d_challengePowers);
+    computeExpressions_q__<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams, debug, challengeId, d_challengePowers);
 
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 }
 
-__device__ __forceinline__ Goldilocks::Element* load_q__(
+__device__ __noinline__ Goldilocks::Element* load_q__(
     const DeviceArgumentsQ*  dArgs,
     const ExpsArguments*  dExpsArgs,
     Goldilocks::Element*  temp,
@@ -218,48 +220,28 @@ __device__ __forceinline__ Goldilocks::Element* load_q__(
     const uint64_t row,
     const uint64_t dim,
     const bool isCyclic,
-    const bool debug
-) {
-
-#if DEBUG 
-    bool print = debug && row + threadIdx.x == DEBUG_ROW;
+#if COUNTERS
+    const bool debug,
+    uint64_t* counter
+#else
+   const bool debug
 #endif
 
+) {
     const uint32_t r = row + threadIdx.x;
     const uint64_t base = dArgs->bufferCommitSize;
     const uint64_t domainSize = dExpsArgs->domainSize;
 
     // Fast-path: temporary/intermediate buffers
     if (type == base ) {
-#if DEBUG
-        if(print){ 
-            if(type == dArgs->bufferCommitSize) printf("Expression debug tmp1\n");
-        }
-#endif
         return &exprParams[type][threadIdx.y * dExpsArgs->maxTemp1Size + argIdx * blockDim.x];
     }
      if (type == base + 1) {
-#if DEBUG
-        if(print){ 
-            if(type == dArgs->bufferCommitSize + 1) printf("Expression debug tmp3\n");
-        }
-#endif
         return &exprParams[type][threadIdx.y * dExpsArgs->maxTemp3Size + argIdx * blockDim.x];
     }
     // Fast-path: constants
     if (type >= base + 2) {
-#if DEBUG
-        if(print){
-            if(type == dArgs->bufferCommitSize + 2 ) printf("Expression debug publicInputs\n");
-            if(type == dArgs->bufferCommitSize + 3 ) printf("Expression debug numbers\n");
-            if(type == dArgs->bufferCommitSize + 4 ) printf("Expression debug airValues\n");
-            if(type == dArgs->bufferCommitSize + 5 ) printf("Expression debug proofValues\n");
-            if(type == dArgs->bufferCommitSize + 6 ) printf("Expression debug airgroupValues\n");
-            if(type == dArgs->bufferCommitSize + 7 ) printf("Expression debug challenges\n");
-            if(type == dArgs->bufferCommitSize + 8 ) printf("Expression debug evals\n");
-        }
-#endif
-        return &exprParams[type][argIdx];
+     return &exprParams[type][argIdx];
     }
 
     const int64_t stride = dExpsArgs->nextStridesExps[argOffset];
@@ -268,16 +250,6 @@ __device__ __forceinline__ Goldilocks::Element* load_q__(
     // ConstPols
     if (type == 0) {
         const Goldilocks::Element* basePtr =  &dParams->pConstPolsExtendedTreeAddress[2];
-
-#if DEBUG 
-            if(print) {
-                if(isCyclic) {
-                    printf("Expression debug constPols cyclic\n");
-                } else {
-                    printf("Expression debug constPols\n");   
-                }
-            }
-#endif
         const uint64_t pos = logicalRow * dArgs->mapSectionsN[0] + argIdx;
         temp[threadIdx.x] = basePtr[pos];
         return temp;
@@ -289,15 +261,6 @@ __device__ __forceinline__ Goldilocks::Element* load_q__(
         const uint64_t nCols = dArgs->mapSectionsN[type];
         const uint64_t pos = logicalRow * nCols + argIdx;
 
-#if DEBUG
-        if(print) {
-            if(isCyclic) {
-                printf("Expression debug aux_trace cyclic %lu\n", offset + logicalRow * nCols + argIdx);
-            } else {
-                printf("Expression debug aux_trace\n");
-            }
-        }
-#endif
         #pragma unroll
         for (uint64_t d = 0; d < dim; d++) {
             temp[threadIdx.x + d * blockDim.x] =
@@ -306,18 +269,6 @@ __device__ __forceinline__ Goldilocks::Element* load_q__(
         return temp;
     }
         
-
-
-    // Custom commits
-#if DEBUG
-        if(print) {
-            if(isCyclic) {
-                printf("Expression debug customCommits cyclic\n");
-            } else {
-                printf("Expression debug customCommits\n");
-            }
-        }
-#endif
     const uint64_t idx = type - (dArgs->nStages + 4);
     const uint64_t offset = dExpsArgs->mapOffsetsCustomExps[idx];
     const uint64_t nCols = dArgs->mapSectionsNCustomFixed[idx];
@@ -326,7 +277,6 @@ __device__ __forceinline__ Goldilocks::Element* load_q__(
     temp[threadIdx.x] = dParams->pCustomCommitsFixed[offset + pos];
     return temp;
 }
-
 
 __device__ __noinline__ void ziAndstorePolynomial_q__(ExpsArguments *d_expsArgs, Goldilocks::Element *accumulator, Goldilocks::Element* d_zi, uint64_t row)
 {
@@ -389,7 +339,7 @@ __device__ __noinline__ void getInversePolinomial_q__(gl64_t *polynomial, uint64
     }
 }
 
-__device__ __forceinline__ void printArguments_q(Goldilocks::Element *a, uint32_t dimA, bool constA, Goldilocks::Element *b, uint32_t dimB, bool constB, int i, uint64_t op_type, uint64_t op, uint64_t nOps, const bool debug){
+__device__ __noinline__ void printArguments_q(Goldilocks::Element *a, uint32_t dimA, bool constA, Goldilocks::Element *b, uint32_t dimB, bool constB, int i, uint64_t op_type, uint64_t op, uint64_t nOps, const bool debug){
     bool print = debug && i + threadIdx.x == DEBUG_ROW;
     if(print){
         printf("Expression debug op: %lu of %lu with type %lu\n", op, nOps, op_type);
@@ -409,7 +359,7 @@ __device__ __forceinline__ void printArguments_q(Goldilocks::Element *a, uint32_
     }
 }
 
-__device__ __forceinline__ void printRes_q(Goldilocks::Element *res, uint32_t dimRes, int i, const bool debug){
+__device__ __noinline__ void printRes_q(Goldilocks::Element *res, uint32_t dimRes, int i, const bool debug){
     bool print = debug && i + threadIdx.x == DEBUG_ROW;
     if(print){
         for(uint32_t j = 0; j < dimRes; j++){
@@ -435,7 +385,7 @@ __global__ void computeChallengePowers_q_(uint64_t dest_nParams, uint64_t challe
 }
 
 
-__global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, const bool debug, const bool constraints, uint64_t challengeId, Goldilocks::Element *d_challengePowers)
+__global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, const bool debug, uint64_t challengeId, Goldilocks::Element *d_challengePowers)
 {
 
     int chunk_idx = blockIdx.x;
@@ -473,11 +423,17 @@ __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ 
         accumulator[threadIdx.x].fe = uint64_t(0);
         accumulator[threadIdx.x + blockDim.x].fe = uint64_t(0);
         accumulator[threadIdx.x + 2 * blockDim.x].fe = uint64_t(0);
-
+#if COUNTERS
+        uint64_t global_counter[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+#endif
+        
         
 #pragma unroll 1
         for (uint64_t k = threadIdx.y; k < d_expsArgs->dest_nParams; k+=blockDim.y)
         {
+#if COUNTERS
+            uint64_t counter[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+#endif
             if(threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0){
                 //printf("constraint executed constraintId: %lu - nOps: %lu - nArgs: %lu - nTemp1: %lu - nTemp3: %lu - challenge: %lu %lu %lu\n", d_destParams[k].expId, d_destParams[k].nOps, d_destParams[k].nArgs, d_destParams[k].nTemp1, d_destParams[k].nTemp3, d_challengePowers[d_destParams[k].expId*FIELD_EXTENSION].fe, d_challengePowers[d_destParams[k].expId*FIELD_EXTENSION +1 ].fe, d_challengePowers[d_destParams[k].expId*FIELD_EXTENSION + 2].fe);
                 printf("ExpId %lu ops %lu args %lu opsOffset %lu argsOffset %lu nTmp1 %lu nTmp3 %lu dim %lu\n", d_destParams[k].expId, d_destParams[k].nOps, d_destParams[k].nArgs, d_destParams[k].opsOffset, d_destParams[k].argsOffset, d_destParams[k].nTemp1, d_destParams[k].nTemp3, d_destParams[k].dim);
@@ -496,8 +452,13 @@ __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ 
                 case 0:
                 {
                     // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
+    #if COUNTERS
+                    gl64_t* a = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 1, isCyclic, debug, counter);
+                    gl64_t* b = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueB, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic, debug, counter);
+    #else
                     gl64_t* a = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 1, isCyclic, debug);
                     gl64_t* b = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueB, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic, debug);
+    #endif
                     bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
                     bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
                     gl64_t *res = (gl64_t*) (kk == nOps - 1 ? valueA : &(tmp1[args[i_args + 1] * blockDim.x]));
@@ -514,8 +475,13 @@ __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ 
                 case 1:
                 {
                     // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
+#if COUNTERS
+                    gl64_t* a = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, debug, counter);
+                    gl64_t* b = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueB, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic, debug, counter);
+#else
                     gl64_t* a = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, debug);
                     gl64_t* b = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueB, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic, debug);
+#endif  
                     bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
                     bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
                     gl64_t *res = (gl64_t*) (kk == nOps - 1 ? valueA : &(tmp3[args[i_args + 1] * blockDim.x]));
@@ -532,8 +498,13 @@ __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ 
                 case 2:
                 {
                     // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
+#if COUNTERS
+                    gl64_t* a = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, debug, counter);
+                    gl64_t* b = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueB, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 3, isCyclic, debug, counter);
+#else
                     gl64_t* a = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, debug);
                     gl64_t* b = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueB, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 3, isCyclic, debug);
+#endif  
                     bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
                     bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
                     gl64_t *res = (gl64_t*) (kk == nOps - 1 ? valueA : &(tmp3[args[i_args + 1] * blockDim.x]));
@@ -554,10 +525,105 @@ __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ 
                 }
                 }
             }
-            
+#if COUNTERS
+            for(uint32_t c = 0; c < 14; c++){
+                global_counter[c] += counter[c];
+            }
+
+            if(threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0 && threadIdx.y == 0 && false){
+                printf("Counters temp1 %lu tmp1> %lu temp3 %lu temp3> %lu publicInputs %lu numbers %lu airValues %lu proofValues %lu airgroupValues %lu challenges %lu evals %lu constPols %lu aux_trace %lu customCommits %lu\n", counter[0], counter[1], counter[2], counter[3], counter[4], counter[5], counter[6], counter[7], counter[8], counter[9], counter[10], counter[11], counter[12], counter[13]);
+                uint64_t totalLoads = counter[0] + counter[1] + counter[2] + counter[3] + counter[4] + counter[5] + counter[6] + counter[7] + counter[8] + counter[9] + counter[10] + counter[11] + counter[12] + counter[13];
+                
+                // Calculate percentages
+                float pct[14];
+                pct[0] = (float)counter[0]/totalLoads*100.0f;  // temp1
+                pct[1] = (float)counter[1]/totalLoads*100.0f;  // tmp1>
+                pct[2] = (float)counter[2]/totalLoads*100.0f;  // temp3
+                pct[3] = (float)counter[3]/totalLoads*100.0f;  // temp3>
+                pct[4] = (float)counter[4]/totalLoads*100.0f;  // publicInputs
+                pct[5] = (float)counter[5]/totalLoads*100.0f;  // numbers
+                pct[6] = (float)counter[6]/totalLoads*100.0f;  // airValues
+                pct[7] = (float)counter[7]/totalLoads*100.0f;  // proofValues
+                pct[8] = (float)counter[8]/totalLoads*100.0f;  // airgroupValues
+                pct[9] = (float)counter[9]/totalLoads*100.0f;  // challenges
+                pct[10] = (float)counter[10]/totalLoads*100.0f; // evals
+                pct[11] = (float)counter[11]/totalLoads*100.0f; // constPols
+                pct[12] = (float)counter[12]/totalLoads*100.0f; // aux_trace
+                pct[13] = (float)counter[13]/totalLoads*100.0f; // customCommits
+                
+                // Find top 5 categories (simple approach without full sort)
+                const char* names[14] = {"temp1","tmp1>","temp3","temp3>","publicInputs","numbers","airValues","proofValues","airgroupValues","challenges","evals","constPols","aux_trace","customCommits"};
+                
+                printf("Top memory access patterns:\n");
+                
+                // Find and print top 5 without sorting entire array
+                for(int rank = 0; rank < 5; rank++) {
+                    int maxIdx = -1;
+                    float maxPct = -1.0f;
+                    
+                    // Find highest remaining percentage
+                    for(int i = 0; i < 14; i++) {
+                        if(pct[i] > maxPct) {
+                            maxPct = pct[i];
+                            maxIdx = i;
+                        }
+                    }
+                    
+                    if(maxIdx >= 0 && maxPct > 0.0f) {
+                        printf("  %d. %s: %.1f%% (%lu accesses)\n", rank+1, names[maxIdx], maxPct, counter[maxIdx]);
+                        pct[maxIdx] = -1.0f; // Mark as used
+                    }
+                }
+                
+                printf("Total memory accesses: %lu\n", totalLoads);
+            }
+#endif
             accumulate_q__(d_expsArgs, &d_destParams[k], (gl64_t *)accumulator, (gl64_t *)(valueA), (gl64_t*)d_challengePowers, threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0); 
                      
         }
+#if COUNTERS
+        if(threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0 && threadIdx.y == 0 && true){
+            printf("Global Counters temp1 %lu tmp1> %lu temp3 %lu temp3> %lu publicInputs %lu numbers %lu airValues %lu proofValues %lu airgroupValues %lu challenges %lu evals %lu constPols %lu aux_trace %lu customCommits %lu\n", global_counter[0], global_counter[1], global_counter[2], global_counter[3], global_counter[4], global_counter[5], global_counter[6], global_counter[7], global_counter[8], global_counter[9], global_counter[10], global_counter[11], global_counter[12], global_counter[13]);
+            // percentages of top 10 counters
+            uint64_t totalLoads = global_counter[0] + global_counter[1] + global_counter[2] + global_counter[3] + global_counter[4] + global_counter[5] + global_counter[6] + global_counter[7] + global_counter[8] + global_counter[9] + global_counter[10] + global_counter[11] + global_counter[12] + global_counter[13];
+            float pct[14];
+            pct[0]      = (float)global_counter[0]/totalLoads*100.0f;  // temp1
+            pct[1]      = (float)global_counter[1]/totalLoads*100.0f;  // tmp1>
+            pct[2]      = (float)global_counter[2]/totalLoads*100.0f;  // temp3
+            pct[3]      = (float)global_counter[3]/totalLoads*100.0f;  // temp3>
+            pct[4]      = (float)global_counter[4]/totalLoads*100.0f;  // publicInputs
+            pct[5]      = (float)global_counter[5]/totalLoads*100.0f;  // numbers
+            pct[6]      = (float)global_counter[6]/totalLoads*100.0f;  // airValues
+            pct[7]      = (float)global_counter[7]/totalLoads*100.0f;  // proofValues
+            pct[8]      = (float)global_counter[8]/totalLoads*100.0f;  // airgroupValues
+            pct[9]      = (float)global_counter[9]/totalLoads*100.0f;  // challenges
+            pct[10]     = (float)global_counter[10]/totalLoads*100.0f; // evals
+            pct[11]     = (float)global_counter[11]/totalLoads*100.0f; // constPols
+            pct[12]     = (float)global_counter[12]/totalLoads*100.0f; // aux_trace
+            pct[13]     = (float)global_counter[13]/totalLoads*100.0f; // customCommits 
+            const char* names[14] = {"temp1","tmp1>","temp3","temp3>","publicInputs","numbers","airValues","proofValues","airgroupValues","challenges","evals","constPols","aux_trace","customCommits"};
+            printf("Top memory access patterns:\n");
+            // Find and print top 14 without sorting entire array
+            float accumulatedPct = 0.0f;
+            for(int rank = 0; rank < 14; rank++) {
+                int maxIdx = -1;
+                float maxPct = -1.0f;
+                // Find highest remaining percentage
+                for(int i = 0; i < 14; i++) {
+                    if(pct[i] > maxPct) {
+                        maxPct = pct[i];
+                        maxIdx = i;
+                    }
+                }
+                accumulatedPct += maxPct;
+                if(maxIdx >= 0 && maxPct > 0.0f) {
+                    printf("  %d. %s: %.1f%% (%lu accesses), accumulated: %.1f%%\n", rank+1, names[maxIdx], maxPct, global_counter[maxIdx], accumulatedPct);
+                    pct[maxIdx] = -1.0f; // Mark as used
+                }
+            }
+            printf("Total memory accesses: %lu\n", totalLoads);
+        }
+#endif
         __syncthreads();
         ziAndstorePolynomial_q__(d_expsArgs, accumulator, d_zi, i);
         __syncthreads();
