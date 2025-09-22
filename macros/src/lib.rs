@@ -102,6 +102,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
         pub struct #trace_struct_name<#generics> {
             pub buffer: Vec<#generics>,
+            pub row_slice_mut: std::mem::ManuallyDrop<Vec<#row_struct_name<#generics>>>,
             pub num_rows: usize,
             pub row_size: usize,
             pub airgroup_id: usize,
@@ -125,10 +126,12 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
 
-                let buffer: Vec<#generics> = vec![#generics::default(); num_rows * #row_struct_name::<#generics>::ROW_SIZE];
+                let mut buffer: Vec<#generics> = vec![#generics::default(); num_rows * #row_struct_name::<#generics>::ROW_SIZE];
 
+                let ptr = buffer.as_mut_ptr() as *mut #row_struct_name<#generics>;
                 #trace_struct_name {
                     buffer,
+                    row_slice_mut: unsafe { std::mem::ManuallyDrop::new(Vec::from_raw_parts(ptr, num_rows, num_rows)) },
                     num_rows,
                     row_size: #row_struct_name::<#generics>::ROW_SIZE,
                     airgroup_id: Self::AIRGROUP_ID,
@@ -158,8 +161,10 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     }
                 }
 
+                let ptr = buffer.as_mut_ptr() as *mut #row_struct_name<#generics>;
                 #trace_struct_name {
                     buffer,
+                    row_slice_mut: unsafe { std::mem::ManuallyDrop::new(Vec::from_raw_parts(ptr, num_rows, num_rows)) },
                     num_rows,
                     row_size: #row_struct_name::<#generics>::ROW_SIZE,
                     airgroup_id: Self::AIRGROUP_ID,
@@ -216,9 +221,11 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     }
                 }
 
+                let ptr = buffer.as_mut_ptr() as *mut #row_struct_name<#generics>;
                 Self {
                     buffer,
-                    num_rows,
+                    row_slice_mut: unsafe { std::mem::ManuallyDrop::new(Vec::from_raw_parts(ptr, num_rows, num_rows)) },
+                    num_rows: Self::NUM_ROWS,
                     row_size,
                     airgroup_id: Self::AIRGROUP_ID,
                     air_id: Self::AIR_ID,
@@ -276,15 +283,16 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             }
 
             /// Splits the internal buffer into multiple disjoint owned chunks according to the specified sizes,
-            /// returning the resulting chunks and optionally a remainder chunk if the buffer has leftover elements.
+            /// returning a `#split_struct_name` containing these chunks and any leftover elements.
             ///
             /// # Arguments
             /// * `sizes` - A slice of sizes, where each value specifies the number of elements for the corresponding chunk.
             ///
             /// # Returns
-            /// A tuple containing:
-            /// - `Vec<Vec<RowStruct<...>>>`: A vector of disjoint `Vec`s created from the original buffer, one for each size in `sizes`.
-            /// - `Option<Vec<RowStruct<...>>>`: A final `Vec` containing any remaining elements of the buffer not accounted for in `sizes`, or `None` if the sizes consumed the entire buffer.
+            /// A `#split_struct_name<#generics>` containing:
+            /// - `original_buffer`: The original buffer that was split.
+            /// - `chunks`: A vector of `Vec<#row_struct_name<#generics>>` representing the split chunks.
+            /// - `leftover`: An optional `Vec<#row_struct_name<#generics>>` containing any remaining elements after the splits.
             ///
             /// # Panics
             /// This function will panic if:
@@ -294,12 +302,10 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             /// - The internal buffer's length does not match its capacity (i.e., buffer must be fully initialized).
             ///
             /// # Safety
-            /// This function performs unsafe operations to split the buffer:
-            /// - It reinterprets disjoint segments of the internal buffer as new `Vec`s using `Vec::from_raw_parts`.
-            /// - The original buffer is `mem::forget`-ted to avoid double-free.
-            ///
-            /// Each resulting `Vec` receives a unique, non-overlapping section of the original buffer's memory,
-            /// and takes ownership of its slice. This allows safe and concurrent processing of chunks without lifetimes or borrowing.
+            /// This function performs unsafe operations to split the buffer. The chunks are expected to be contiguous in memory.
+            /// The original buffer  is not dropped, is stored in `original_buffer`, and will not be deallocated until
+            /// the `#split_struct_name` is dropped.
+            /// The split chunks are manually dropped to prevent double deallocation.
             pub fn to_split_struct(self, sizes: &[usize]) -> #split_struct_name<#generics> {
                 assert!(!sizes.is_empty(), "Sizes cannot be empty");
                 assert!(sizes.iter().all(|&size| size > 0), "All sizes must be greater than zero");
@@ -345,9 +351,6 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     None
                 };
 
-                // Prevent original Vec from dropping its buffer
-                // std::mem::forget(self.buffer);
-
                 debug_assert_eq!(offset + leftover.as_ref().map_or(0, |v| v.len()), Self::NUM_ROWS);
 
                 #split_struct_name {
@@ -360,34 +363,21 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
             /// Reconstructs a trace buffer from contiguous, previously split chunks.
             ///
-            /// This function takes a vector of contiguous `Vec`s and an optional leftover buffer,
-            /// and reconstructs the original trace buffer without reallocating or copying memory.
+            /// This function takes a `#split_struct_name<#generics>` and reconstructs the original
+            /// `#trace_struct_name<#generics>` instance that owns the entire original buffer.
             ///
             /// # Parameters
-            /// - `splits`: A `Vec` of `Vec<#row_struct_name<#generics>>` representing the original buffer split into chunks.
-            ///   All chunks **must be contiguous in memory**, i.e., each chunk must directly follow the previous one.
-            /// - `leftover`: An optional final chunk representing the trailing elements of the original buffer, if `into_split_buffers`
-            ///   was used with a total size less than `NUM_ROWS`.
-            ///
-            /// # Panics
-            /// - If `splits` is empty.
-            /// - If the total combined length of all chunks does not equal `Self::NUM_ROWS`.
-            /// - If the chunks are not contiguous in memory (i.e., `prev_end != curr_start`).
-            ///
-            /// # Safety
-            /// This function performs raw pointer arithmetic and reconstructs a single `Vec` from multiple parts.
-            /// It assumes that:
-            /// - All chunks came from a prior call to `into_split_buffers`.
-            /// - None of the `Vec`s were modified or reallocated after splitting.
-            /// - The memory represented by all chunks forms one continuous allocation.
+            /// * `split_struct` - A `#split_struct_name<#generics>` containing the split chunks and the original buffer.
             ///
             /// # Returns
-            /// A fully reconstructed `Self` instance with ownership of the entire original buffer.
+            /// The original `#trace_struct_name<#generics>` instance that owns the buffer.
             pub fn from_split_struct(
                 mut split_struct: #split_struct_name<#generics>,
             ) -> Self {
+                let ptr = split_struct.original_buffer.as_mut_ptr() as *mut #row_struct_name<#generics>;
                 #trace_struct_name {
                     buffer: unsafe { split_struct.original_buffer },
+                    row_slice_mut: unsafe { std::mem::ManuallyDrop::new(Vec::from_raw_parts(ptr, Self::NUM_ROWS, Self::NUM_ROWS)) },
                     num_rows: Self::NUM_ROWS,
                     row_size: #row_struct_name::<#generics>::ROW_SIZE,
                     airgroup_id: Self::AIRGROUP_ID,
@@ -399,36 +389,30 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
         }
 
         impl<#generics> #trace_struct_name<#generics> {
+            #[inline]
             pub fn row_slice(&self) -> &[#row_struct_name<#generics>] {
-                unsafe {
-                    std::slice::from_raw_parts(
-                        self.buffer.as_ptr() as *const #row_struct_name<#generics>,
-                        self.num_rows,
-                    )
-                }
+                self.row_slice_mut.as_ref()
             }
 
+            #[inline]
             pub fn row_slice_mut(&mut self) -> &mut [#row_struct_name<#generics>] {
-                unsafe {
-                    std::slice::from_raw_parts_mut(
-                        self.buffer.as_mut_ptr() as *mut #row_struct_name<#generics>,
-                        self.num_rows,
-                    )
-                }
+                self.row_slice_mut.as_mut()
             }
         }
 
         impl<#generics> std::ops::Index<usize> for #trace_struct_name<#generics> {
             type Output = #row_struct_name<#generics>;
 
+            #[inline]
             fn index(&self, index: usize) -> &Self::Output {
-                &self.row_slice()[index]
+                &self.row_slice_mut[index]
             }
         }
 
         impl<#generics> std::ops::IndexMut<usize> for #trace_struct_name<#generics> {
+            #[inline]
             fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-                &mut self.row_slice_mut()[index]
+                &mut self.row_slice_mut[index]
             }
         }
 
