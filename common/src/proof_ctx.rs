@@ -539,12 +539,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         n_partitions: usize,
         partition_ids: Vec<u32>,
         worker_index: usize,
-        balance: bool,
         n_processes: usize,
         process_id: usize,
     ) {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.setup_partitions(n_partitions, partition_ids, balance);
+        dctx.setup_partitions(n_partitions, partition_ids);
         dctx.setup_processes(n_processes, process_id);
         dctx.setup_worker_index(worker_index);
     }

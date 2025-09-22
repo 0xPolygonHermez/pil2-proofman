@@ -39,9 +39,6 @@ impl InstanceInfo {
 /// 3. Instances are distributed across local PROCESSES within each WORKER
 #[derive(Default)]
 pub struct DistributionCtx {
-    // STATIC PARAMETERS:
-    pub load_balancing: bool, // Whether to balance distribution (true) or use round-robin (false)
-
     // Worker-level
     pub n_partitions: usize,       // Total number of partitions in the system
     pub partition_mask: Vec<bool>, // Which partitions are assigned to this worker
@@ -57,7 +54,6 @@ pub struct DistributionCtx {
     pub instances: Vec<InstanceInfo>,          // Instances info
     pub instances_chunks: Vec<InstanceChunks>, // Chunks info per instance
     pub instances_calculated: Vec<AtomicBool>, // Whether the witness has been calculated for each instance
-    pub n_non_tables: usize,                   // Number of non-table instances
     pub n_tables: usize,                       // Number of table instances
     pub aux_tables: Vec<InstanceInfo>,         // Table instances info (lately appended to instances)
     pub aux_table_map: Vec<i32>,               // Map from aux tables to original instances
@@ -86,8 +82,7 @@ impl std::fmt::Debug for DistributionCtx {
 
         // STATIC PARAMETERS
         dbg.field("=== STATIC PARAMS ===", &"");
-        dbg.field("load_balancing", &self.load_balancing)
-            .field("n_partitions", &self.n_partitions)
+        dbg.field("n_partitions", &self.n_partitions)
             .field("partition_mask", &self.partition_mask)
             .field("n_processes", &self.n_processes)
             .field("process_id", &self.process_id);
@@ -96,7 +91,6 @@ impl std::fmt::Debug for DistributionCtx {
         dbg.field("=== DYNAMIC PARAMS ===", &"");
         dbg.field("n_instances", &self.n_instances)
             .field("instances", &self.instances)
-            .field("n_non_tables", &self.n_non_tables)
             .field("n_tables", &self.n_tables)
             .field("tables", &self.aux_tables)
             .field("instance_partition", &self.instance_partition)
@@ -115,7 +109,6 @@ impl std::fmt::Debug for DistributionCtx {
 impl DistributionCtx {
     pub fn new() -> Self {
         DistributionCtx {
-            load_balancing: true,
             n_partitions: 0,
             partition_mask: Vec::new(),
             n_processes: 0,
@@ -124,7 +117,6 @@ impl DistributionCtx {
             instances: Vec::new(),
             instances_calculated: Vec::new(),
             instances_chunks: Vec::new(),
-            n_non_tables: 0,
             n_tables: 0,
             aux_tables: Vec::new(),
             aux_table_map: Vec::new(),
@@ -145,8 +137,7 @@ impl DistributionCtx {
     /// - `n_partitions`: Total number of partitions in the distributed system
     /// - `partition_ids`: Which partition IDs are assigned to this worker
     /// - `balance`: Whether to balance load across partitions or use round-robin
-    pub fn setup_partitions(&mut self, n_partitions: usize, partition_ids: Vec<u32>, balance: bool) {
-        self.load_balancing = balance;
+    pub fn setup_partitions(&mut self, n_partitions: usize, partition_ids: Vec<u32>) {
         self.n_partitions = n_partitions;
         self.partition_mask = vec![false; n_partitions];
 
@@ -187,7 +178,6 @@ impl DistributionCtx {
         self.instances.clear();
         self.instances_chunks.clear();
         self.instances_calculated.clear();
-        self.n_non_tables = 0;
         self.n_tables = 0;
         self.aux_tables.clear();
         self.aux_table_map.clear();
@@ -197,6 +187,7 @@ impl DistributionCtx {
         self.worker_instances.clear();
         self.partition_count.fill(0);
         self.partition_weight.fill(0);
+        self.partition_mask.clear();
 
         // Process-level
         self.instance_process.clear();
@@ -205,7 +196,7 @@ impl DistributionCtx {
         self.process_weight.fill(0);
 
         //control
-        self.assignation_done = false
+        self.assignation_done = false;
     }
 
     /// Verify that the static configuration has been properly set up
@@ -407,7 +398,6 @@ impl DistributionCtx {
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
         self.instances_calculated.push(AtomicBool::new(false));
         self.n_instances += 1;
-        self.n_non_tables += 1;
         let partition_id = (gid % self.n_partitions) as u32;
         self.instance_partition.push(partition_id as i32);
         self.partition_count[partition_id as usize] += 1;
@@ -449,7 +439,6 @@ impl DistributionCtx {
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
         self.instances_calculated.push(AtomicBool::new(false));
         self.n_instances += 1;
-        self.n_non_tables += 1;
         let partition_id = 0;
         self.instance_partition.push(partition_id as i32);
         self.partition_count[partition_id] += 1;
@@ -493,7 +482,6 @@ impl DistributionCtx {
         self.instance_partition.push(-1);
         self.instance_process.push((-1, 0_usize));
         self.n_instances += 1;
-        self.n_non_tables += 1;
         self.n_instances - 1
     }
 

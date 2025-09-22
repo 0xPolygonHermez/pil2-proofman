@@ -96,17 +96,19 @@ impl<F: PrimeField64> WitnessManager<F> {
         self.execution_done.store(true, Ordering::SeqCst);
     }
 
+    pub fn reset(&self) {
+        self.components_instance_ids.iter().for_each(|ids| ids.write().unwrap().clear());
+    }
+
     pub fn debug(&self, instance_ids: &[usize], debug_info: &DebugInfo) {
         if debug_info.std_mode.name == ModeName::Debug || !debug_info.debug_instances.is_empty() {
             for (idx, component) in self.components.read().unwrap().iter().enumerate() {
-                let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
+                let ids_hash_set: HashSet<usize> = instance_ids.iter().cloned().collect();
 
-                let instance_ids_filtered: Vec<_> = self.components_instance_ids[idx]
-                    .read()
-                    .unwrap()
+                let instance_ids_filtered: Vec<usize> = ids_hash_set
                     .iter()
-                    .filter(|id| ids_hash_set.contains(id))
-                    .cloned()
+                    .filter(|id| self.components_instance_ids[idx].read().unwrap().contains(id))
+                    .cloned() // turn &&usize → usize
                     .collect();
 
                 if !instance_ids_filtered.is_empty() {
@@ -129,14 +131,12 @@ impl<F: PrimeField64> WitnessManager<F> {
         buffer_pool: &dyn BufferPool<F>,
     ) {
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
-            let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
+            let ids_hash_set: HashSet<usize> = instance_ids.iter().cloned().collect();
 
-            let instance_ids_filtered: Vec<_> = self.components_instance_ids[idx]
-                .read()
-                .unwrap()
+            let instance_ids_filtered: Vec<_> = ids_hash_set
                 .iter()
                 .filter(|id| {
-                    ids_hash_set.contains(id)
+                    self.components_instance_ids[idx].read().unwrap().contains(id)
                         && (self.pctx.dctx_is_my_process_instance(**id) || self.pctx.dctx_is_table(**id))
                         && !self.pctx.dctx_is_instance_calculated(**id)
                 })
@@ -177,14 +177,12 @@ impl<F: PrimeField64> WitnessManager<F> {
         buffer_pool: &dyn BufferPool<F>,
     ) {
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
-            let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
+            let ids_hash_set: HashSet<usize> = instance_ids.iter().cloned().collect();
 
-            let instance_ids_filtered: Vec<_> = self.components_instance_ids[idx]
-                .read()
-                .unwrap()
+            let instance_ids_filtered: Vec<_> = ids_hash_set
                 .iter()
                 .filter(|id| {
-                    ids_hash_set.contains(id)
+                    self.components_instance_ids[idx].read().unwrap().contains(id)
                         && (self.pctx.dctx_is_my_process_instance(**id) || self.pctx.dctx_is_table(**id))
                         && !self.pctx.dctx_is_instance_calculated(**id)
                 })

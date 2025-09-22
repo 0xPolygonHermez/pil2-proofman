@@ -331,7 +331,7 @@ where
     }
 
     pub fn execute_(&self, output_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-        self.pctx.dctx_setup(1, vec![0], 0, true, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize);
+        self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize);
 
         self.reset();
         self.pctx.dctx_reset();
@@ -470,7 +470,7 @@ where
     }
 
     pub fn compute_witness_(&self, options: ProofOptions) -> Result<(), Box<dyn std::error::Error>> {
-        self.pctx.dctx_setup(1, vec![0], 0, true, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize);
+        self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize);
 
         self.reset();
         self.pctx.dctx_reset();
@@ -595,7 +595,7 @@ where
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.pctx.set_debug_info(debug_info);
 
-        self.pctx.dctx_setup(1, vec![0], 0, true, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize);
+        self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize);
 
         self.reset();
         self.pctx.dctx_reset();
@@ -1004,6 +1004,7 @@ where
     }
 
     pub fn reset(&self) {
+        self.wcm.reset();
         self.pctx.dctx_reset();
 
         for proof_lock in self.proofs.iter() {
@@ -1077,7 +1078,6 @@ where
                 proof_info.n_partitions,
                 proof_info.partition_ids.clone(),
                 proof_info.worker_index,
-                true,
                 self.mpi_ctx.n_processes as usize,
                 self.mpi_ctx.rank as usize,
             );
