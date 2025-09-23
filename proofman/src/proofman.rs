@@ -882,7 +882,7 @@ where
         timer_stop_and_log_info!(INIT_PROOFMAN);
 
         let max_witness_stored = match cfg!(feature = "gpu") {
-            true => gpu_params.max_witness_stored,
+            true => n_gpus as usize * gpu_params.max_witness_stored,
             false => 1,
         };
 
