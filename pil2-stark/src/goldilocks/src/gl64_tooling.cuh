@@ -133,7 +133,7 @@ struct AirInstanceInfo {
 
         uint64_t nOpeningPoints = setupCtx->starkInfo.openingPoints.size();
 
-        evalsInfoFRI = new EvalInfo*[nOpeningPoints];
+        EvalInfo **evalsInfoFRI_ = new EvalInfo*[nOpeningPoints];
         uint64_t *evalsInfoFRISizes_ = new uint64_t[nOpeningPoints];
 
         std::fill(evalsInfoFRISizes_, evalsInfoFRISizes_ + nOpeningPoints, 0);
@@ -170,12 +170,17 @@ struct AirInstanceInfo {
         }
 
         for (uint64_t opening = 0; opening < nOpeningPoints; opening++) {
-            CHECKCUDAERR(cudaMalloc(&evalsInfoFRI[opening], evalsInfoFRISizes_[opening] * sizeof(EvalInfo)));
-            CHECKCUDAERR(cudaMemcpy(evalsInfoFRI[opening], evalsInfoByOpeningPos[opening],
+            CHECKCUDAERR(cudaMalloc(&evalsInfoFRI_[opening], evalsInfoFRISizes_[opening] * sizeof(EvalInfo)));
+            CHECKCUDAERR(cudaMemcpy(evalsInfoFRI_[opening], evalsInfoByOpeningPos[opening],
                                     evalsInfoFRISizes_[opening] * sizeof(EvalInfo),
                                     cudaMemcpyHostToDevice));
             delete[] evalsInfoByOpeningPos[opening];
         }
+        
+        CHECKCUDAERR(cudaMalloc(&evalsInfoFRI, nOpeningPoints * sizeof(EvalInfo*)));
+        CHECKCUDAERR(cudaMemcpy(evalsInfoFRI, evalsInfoFRI_, nOpeningPoints * sizeof(EvalInfo*), cudaMemcpyHostToDevice));
+        
+        delete[] evalsInfoFRI_;
         
         CHECKCUDAERR(cudaMalloc(&evalsInfoFRISizes, nOpeningPoints * sizeof(uint64_t)));
         CHECKCUDAERR(cudaMemcpy(evalsInfoFRISizes, evalsInfoFRISizes_, nOpeningPoints * sizeof(uint64_t), cudaMemcpyHostToDevice));
@@ -204,13 +209,26 @@ struct AirInstanceInfo {
         delete[] evalsInfoSizes;
         delete[] evalsInfo;
 
-        for (uint64_t i = 0; i < setupCtx->starkInfo.openingPoints.size(); ++i) {
-            if (evalsInfoFRI[i] != nullptr) {
-                CHECKCUDAERR(cudaFree(evalsInfoFRI[i]));
+        if (evalsInfoFRI != nullptr) {
+            uint64_t nOpeningPoints = setupCtx->starkInfo.openingPoints.size();
+            
+            EvalInfo **host_evalsInfoFRI = new EvalInfo*[nOpeningPoints];
+            CHECKCUDAERR(cudaMemcpy(host_evalsInfoFRI, evalsInfoFRI, nOpeningPoints * sizeof(EvalInfo*), cudaMemcpyDeviceToHost));
+            
+            for (uint64_t i = 0; i < nOpeningPoints; ++i) {
+                if (host_evalsInfoFRI[i] != nullptr) {
+                    CHECKCUDAERR(cudaFree(host_evalsInfoFRI[i]));
+                }
             }
+            
+            delete[] host_evalsInfoFRI;
+            
+            CHECKCUDAERR(cudaFree(evalsInfoFRI));
         }
 
-        CHECKCUDAERR(cudaFree(evalsInfoFRISizes));
+        if (evalsInfoFRISizes != nullptr) {
+            CHECKCUDAERR(cudaFree(evalsInfoFRISizes));
+        }
     }
 };
 
@@ -220,7 +238,7 @@ struct StreamData{
     //const data
     cudaStream_t stream;
     uint32_t gpuId;
-    uint32_t slotId;
+    uint64_t localStreamId;
     StepsParams *pinned_params;
     Goldilocks::Element *pinned_buffer_proof;
     Goldilocks::Element *pinned_buffer_exps_params;
@@ -247,20 +265,18 @@ struct StreamData{
     uint64_t airId; 
     uint64_t instanceId;
     string proofType;
-    
-    uint64_t offset;
-    
+        
     bool recursive;
     bool extraStream;
     uint64_t streamsUsed;
     
-    void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint64_t offset_, bool recursive_){
+    void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_){
         uint64_t maxExps = 1000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
         timer.init(stream);
         gpuId = gpuId_;
-        offset = offset_;
+        localStreamId = localStreamId_;
         recursive = recursive_;
         cudaEventCreate(&end_event);
         status = 0;
@@ -326,18 +342,21 @@ struct DeviceCommitBuffers
 {
     gl64_t **d_constPols;
     gl64_t **d_constPolsAggregation;
-    gl64_t **d_aux_trace;
+    gl64_t ***d_aux_trace;
+    gl64_t ***d_aux_traceAggregation;
     Goldilocks::Element **pinned_buffer;
     Goldilocks::Element **pinned_buffer_extra;
     bool recursive;
     uint64_t max_size_proof;
 
-    uint64_t pinned_size = 256 * 1024 * 1024; //256MB
+    uint64_t pinned_size = 128 * 1024 * 1024; //256MB
 
     uint32_t  n_gpus;
     uint32_t* my_gpu_ids;
     uint32_t* gpus_g2l; 
     uint32_t n_total_streams;
+    uint32_t n_streams;
+    uint32_t n_recursive_streams;
     std::mutex mutex_slot_selection;
     std::mutex *mutex_pinned;
     StreamData *streamsData;

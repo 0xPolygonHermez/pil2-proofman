@@ -1170,8 +1170,6 @@ pub fn gen_device_streams_c(
     max_size_buffer: u64,
     max_size_buffer_aggregation: u64,
     max_pinned_proof_size: u64,
-    max_number_proofs_per_gpu: u64,
-    max_number_recursive_proofs_per_gpu: u64,
     max_n_bits_ext: u64,
 ) -> u64 {
     unsafe {
@@ -1180,8 +1178,6 @@ pub fn gen_device_streams_c(
             max_size_buffer,
             max_size_buffer_aggregation,
             max_pinned_proof_size,
-            max_number_proofs_per_gpu,
-            max_number_recursive_proofs_per_gpu,
             max_n_bits_ext,
         )
     }
@@ -2010,8 +2006,6 @@ pub fn gen_device_streams_c(
     _max_size_buffer: u64,
     _max_size_buffer_aggregation: u64,
     _max_pinned_proof_size: u64,
-    _max_number_proofs_per_gpu: u64,
-    _max_number_recursive_proofs_per_gpu: u64,
     _max_n_bits_ext: u64,
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "set_max_size_thread: This is a mock call because there is no linked library");
