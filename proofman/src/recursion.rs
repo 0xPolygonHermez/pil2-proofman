@@ -202,7 +202,7 @@ pub fn get_accumulated_challenge<F: PrimeField64>(pctx: &ProofCtx<F>, proof: &[u
     if pctx.global_info.curve != CurveType::None {
         proof[6..16].to_vec()
     } else {
-        proof[6..pctx.global_info.lattice_size.unwrap()].to_vec()
+        proof[6..6 + pctx.global_info.lattice_size.unwrap()].to_vec()
     }
 }
 
