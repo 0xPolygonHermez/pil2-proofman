@@ -1,7 +1,7 @@
 # Platform detection for compiler and library paths
 UNAME_S := $(shell uname -s)
 ifneq ($(UNAME_S),Darwin)
-    INFO := $(shell cd src/goldilocks && ./configure.sh && cd ../.. && sleep 2)
+    #INFO := $(shell cd src/goldilocks && ./configure.sh && cd ../.. && sleep 2)
     include src/goldilocks/CudaArch.mk
 endif
 
