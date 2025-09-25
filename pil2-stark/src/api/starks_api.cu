@@ -34,6 +34,12 @@ void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 
 
+void get_instances_ready(void *d_buffers_, int64_t* instances_ready) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
+        instances_ready[i] = d_buffers->streamsData[i].instanceId;
+    }
+}
 
 void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size)
 {
@@ -206,7 +212,8 @@ void reset_device_streams(void *d_buffers_) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
    
     for(uint64_t i=0; i< d_buffers->n_total_streams; ++i){
-        d_buffers->streamsData[i].reset();
+        d_buffers->streamsData[i].instanceId = -1;
+        d_buffers->streamsData[i].reset(true);
     }
 }
 
@@ -473,10 +480,10 @@ void get_stream_proofs(void *d_buffers_){
             get_proof(d_buffers, i);
         }
         uint64_t streamsUsed = d_buffers->streamsData[i].streamsUsed;
-        d_buffers->streamsData[i].reset();
+        d_buffers->streamsData[i].reset(false);
         if (streamsUsed > 1) {
             for (uint64_t j = 1; j < streamsUsed; j++) {
-                d_buffers->streamsData[i + j].reset();
+                d_buffers->streamsData[i + j].reset(false);
             }
         }
         
@@ -495,10 +502,10 @@ void get_stream_proofs_non_blocking(void *d_buffers_){
                 get_proof(d_buffers, i);
             }
             uint64_t streamsUsed = d_buffers->streamsData[i].streamsUsed;
-            d_buffers->streamsData[i].reset();
+            d_buffers->streamsData[i].reset(false);
             if (streamsUsed > 1) {
                 for (uint64_t j = 1; j < streamsUsed; j++) {
-                    d_buffers->streamsData[i + j].reset();
+                    d_buffers->streamsData[i + j].reset(false);
                 }
             }
             
@@ -517,10 +524,10 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {
         }
 
     uint64_t streamsUsed = d_buffers->streamsData[streamId].streamsUsed;
-    d_buffers->streamsData[streamId].reset();
+    d_buffers->streamsData[streamId].reset(false);
     if (streamsUsed > 1) {
         for (uint64_t j = 1; j < streamsUsed; j++) {
-            d_buffers->streamsData[streamId + j].reset();
+            d_buffers->streamsData[streamId + j].reset(false);
         }
     }    
 }
@@ -759,7 +766,7 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t nStreams, bool re
     } else {
         for (uint64_t j = 1; j < d_buffers->streamsData[selectedStreamId].streamsUsed; j++) {
             if (d_buffers->streamsData[selectedStreamId + j].extraStream) {
-                d_buffers->streamsData[selectedStreamId + j].reset();
+                d_buffers->streamsData[selectedStreamId + j].reset(false);
             }
         }
     }
@@ -780,10 +787,10 @@ void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId, uint64_t n
                 get_proof(d_buffers, streamId + j);
             }
         }
-        d_buffers->streamsData[streamId + j].reset();
+        d_buffers->streamsData[streamId + j].reset(false);
         d_buffers->streamsData[streamId + j].status = 1;
     }
-   
+
 }
 
 void closeStreamTimer(TimerGPU &timer, bool isProve) {

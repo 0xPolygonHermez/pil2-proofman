@@ -29,7 +29,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
                 return buffer;
             }
             if let Some(stored_instance_id) = self.instance_ids_to_be_released.pop() {
-                let (_, witness_buffer) = self.pctx.free_instance(stored_instance_id);
+                let (_, witness_buffer) = self.pctx.free_instance_traces(stored_instance_id);
                 return witness_buffer;
             }
             std::thread::sleep(std::time::Duration::from_micros(10));

@@ -263,7 +263,7 @@ struct StreamData{
     string proofFile;
     uint64_t airgroupId; 
     uint64_t airId; 
-    uint64_t instanceId;
+    int64_t instanceId;
     string proofType;
         
     bool recursive;
@@ -279,6 +279,7 @@ struct StreamData{
         localStreamId = localStreamId_;
         recursive = recursive_;
         cudaEventCreate(&end_event);
+        instanceId = -1;
         status = 0;
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_proof, max_size_proof * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
@@ -314,11 +315,11 @@ struct StreamData{
         CHECKCUDAERR(cudaFree(d_expsArgs));
     }
 
-    void reset(){
+    void reset(bool reset_status){
         cudaSetDevice(gpuId);
         cudaEventDestroy(end_event);
         cudaEventCreate(&end_event);
-        status = 3;
+        status = reset_status ? 0 : 3;
 
         extraStream = false;
         streamsUsed = 1;
