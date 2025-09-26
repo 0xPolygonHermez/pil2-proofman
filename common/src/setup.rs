@@ -55,6 +55,7 @@ pub struct Setup<F: PrimeField64> {
     pub airgroup_id: usize,
     pub air_id: usize,
     pub p_setup: SetupC,
+    pub p_setup_verify: SetupC,
     pub stark_info: StarkInfo,
     pub const_pols_size: usize,
     pub const_tree_size: usize,
@@ -116,6 +117,7 @@ impl<F: PrimeField64> Setup<F> {
 
         let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
         let expressions_bin_path = setup_path.display().to_string() + ".bin";
+        let expressions_bin_verifier_path = setup_path.display().to_string() + ".verifier.bin";
 
         let gpu = cfg!(feature = "gpu");
 
@@ -123,6 +125,8 @@ impl<F: PrimeField64> Setup<F> {
             stark_info,
             p_stark_info,
             p_expressions_bin,
+            p_stark_info_verify,
+            p_expressions_bin_verify,
             const_pols,
             const_pols_tree,
             verkey,
@@ -138,6 +142,8 @@ impl<F: PrimeField64> Setup<F> {
             // If the condition is met, use None for each pointer
             (
                 StarkInfo::default(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 Vec::new(),
@@ -171,6 +177,12 @@ impl<F: PrimeField64> Setup<F> {
             let n_max_tmp1 = get_max_n_tmp1_c(expressions_bin);
             let n_max_tmp3 = get_max_n_tmp3_c(expressions_bin);
             set_memory_expressions_c(p_stark_info, n_max_tmp1, n_max_tmp3);
+            let p_stark_info_verify = stark_info_new_c(stark_info_path.as_str(), false, false, true, false, false);
+            let expressions_bin_verify = expressions_bin_new_c(expressions_bin_verifier_path.as_str(), false, true);
+            let n_max_tmp1 = get_max_n_tmp1_c(expressions_bin_verify);
+            let n_max_tmp3 = get_max_n_tmp3_c(expressions_bin_verify);
+            set_memory_expressions_c(p_stark_info_verify, n_max_tmp1, n_max_tmp3);
+
             let prover_buffer_size = get_map_totaln_c(p_stark_info);
             let custom_commits_fixed_buffer_size = get_map_totaln_custom_commits_fixed_c(p_stark_info);
             let proof_size = get_proof_size_c(p_stark_info);
@@ -198,6 +210,8 @@ impl<F: PrimeField64> Setup<F> {
                     stark_info,
                     p_stark_info,
                     expressions_bin,
+                    p_stark_info_verify,
+                    expressions_bin_verify,
                     const_pols,
                     Vec::new(),
                     verkey,
@@ -217,6 +231,8 @@ impl<F: PrimeField64> Setup<F> {
                     stark_info,
                     p_stark_info,
                     expressions_bin,
+                    p_stark_info_verify,
+                    expressions_bin_verify,
                     const_pols,
                     const_pols_tree,
                     verkey,
@@ -237,6 +253,7 @@ impl<F: PrimeField64> Setup<F> {
             airgroup_id,
             stark_info,
             p_setup: SetupC { p_stark_info, p_expressions_bin },
+            p_setup_verify: SetupC { p_stark_info: p_stark_info_verify, p_expressions_bin: p_expressions_bin_verify },
             const_pols_size,
             const_tree_size,
             const_pols,

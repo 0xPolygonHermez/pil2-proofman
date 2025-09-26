@@ -7,44 +7,36 @@ use proofman_starks_lib_c::{
 
 use colored::*;
 
-use proofman_common::{ProofCtx, ProofType};
+use proofman_common::{ProofCtx, ProofType, Setup};
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 
 use std::os::raw::c_void;
 
-pub fn verify_final_proof(
-    proof: &[u64],
-    stark_info_path: String,
-    expressions_bin_path: String,
-    verkey_path: String,
-) -> bool {
-    timer_start_info!(VERIFY_FINAL_PROOF);
-    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, true, false, false);
-    let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
+use crate::{add_publics_circom, n_publics_aggregation};
 
-    let n_max_tmp1 = get_max_n_tmp1_c(p_expressions_bin);
-    let n_max_tmp3 = get_max_n_tmp3_c(p_expressions_bin);
-    set_memory_expressions_c(p_stark_info, n_max_tmp1, n_max_tmp3);
+pub fn verify_recursive2_proof<F: PrimeField64>(proof: &[u64], pctx: &ProofCtx<F>, setup: &Setup<F>) -> bool {
+    timer_start_info!(VERIFY_RECURSIVE_PROOF);
+    let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
 
-    let n_publics = proof[0];
-    let proof = &proof[1..];
-    let (publics, vadcop_proof) = proof.split_at(n_publics as usize);
+    let publics_aggregation = n_publics_aggregation(pctx, setup.airgroup_id);
+
+    let (publics, vadcop_proof) = proof.split_at(publics_aggregation);
+
+    let mut publics_extended = vec![0; setup.stark_info.n_publics as usize];
+    publics_extended[0..publics.len()].copy_from_slice(publics);
+    add_publics_circom(&mut publics_extended, publics_aggregation, pctx, &verkey_path, true);
 
     let valid = stark_verify_c(
         &verkey_path,
         vadcop_proof.as_ptr() as *mut u64,
-        p_stark_info,
-        p_expressions_bin,
-        publics.as_ptr() as *mut u8,
+        setup.p_setup_verify.p_stark_info,
+        setup.p_setup_verify.p_expressions_bin,
+        publics_extended.as_ptr() as *mut u8,
         std::ptr::null_mut(),
         std::ptr::null_mut(),
     );
 
-    // Clean up allocated resources
-    expressions_bin_free_c(p_expressions_bin);
-    stark_info_free_c(p_stark_info);
-
-    timer_stop_and_log_info!(VERIFY_FINAL_PROOF);
+    timer_stop_and_log_info!(VERIFY_RECURSIVE_PROOF);
     valid
 }
 

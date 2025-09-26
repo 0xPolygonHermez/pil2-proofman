@@ -16,7 +16,7 @@ use proofman_util::{
     timer_start_info, timer_stop_and_log_info, timer_stop_and_log_trace, timer_start_trace, create_buffer_fast,
 };
 
-use crate::{add_publics_circom, add_publics_aggregation};
+use crate::{add_publics_aggregation, add_publics_circom};
 
 type GetWitnessFunc =
     unsafe extern "C" fn(zkin: *mut u64, circom_circuit: *mut c_void, witness: *mut c_void, n_mutexes: u64);
