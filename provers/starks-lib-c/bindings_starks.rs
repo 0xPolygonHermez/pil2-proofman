@@ -512,11 +512,14 @@ extern "C" {
         maxSizeProverBuffer: u64,
         maxSizeProverBufferAggregation: u64,
         maxProofSize: u64,
-        maxProofsPerGPU: u64,
-        maxRecursiveProofsPerGPU: u64,
         max_n_bits_ext: u64,
     ) -> u64;
     
+    pub fn get_instances_ready(
+        d_buffers_: *mut ::std::os::raw::c_void,
+        instances_ready: *mut i64,
+    );
+
     pub fn reset_device_streams(
         d_buffers_: *mut ::std::os::raw::c_void,
     );

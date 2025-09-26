@@ -29,8 +29,11 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 #[derive(Debug)]
 pub struct MaxSizes {
     pub total_const_area: u64,
-    pub max_aux_trace_area: u64,
+    pub aux_trace_area: u64,
+    pub aux_trace_recursive_area: u64,
     pub total_const_area_aggregation: u64,
+    pub n_streams: usize,
+    pub n_recursive_streams: usize,
 }
 
 #[derive(Debug, BorshSerialize, BorshDeserialize)]

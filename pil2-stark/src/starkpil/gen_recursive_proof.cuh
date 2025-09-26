@@ -63,7 +63,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
         pCustomCommitsFixed : nullptr,
     };
     
-    *params_pinned = h_params;
+    memcpy(params_pinned, &h_params, sizeof(StepsParams));
     
     CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams), cudaMemcpyHostToDevice, stream));
 
