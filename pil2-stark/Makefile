@@ -1,8 +1,13 @@
 # Platform detection for compiler and library paths
 UNAME_S := $(shell uname -s)
 ifneq ($(UNAME_S),Darwin)
-    INFO := $(shell cd src/goldilocks && ./configure.sh && cd ../.. && sleep 2)
-    include src/goldilocks/CudaArch.mk
+    ifndef CUDA_ARCH
+        INFO := $(shell cd src/goldilocks && ./configure.sh && cd ../.. && sleep 2)
+        include src/goldilocks/CudaArch.mk
+        $(info CUDA_ARCH was not defined externally, using value from CudaArch.mk: $(CUDA_ARCH))
+    else
+        $(info CUDA_ARCH defined externally: $(CUDA_ARCH))
+    endif
 endif
 
 # CUDA detection - check multiple possible locations
@@ -53,8 +58,14 @@ AS := nasm
 ASFLAGS := -f elf64
 NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 -arch=$(CUDA_ARCH) -DGL64_PARTIALLY_REDUCED -D__AVX2__ -D__USE_ASSEMBLY__
 
-# Use the following flag to solve amxtileintrin.h incompatibility
+# Use the following flag to solve amxtileintrin.h incompatibility or use PROOFMAN_HOST_COMPILER_BIN variable to set the host compiler
 # NVCCFLAGS += --compiler-bindir=/usr/bin/g++-10
+
+ifdef PROOFMAN_HOST_COMPILER_BIN
+    NVCCFLAGS += --compiler-bindir=$(PROOFMAN_HOST_COMPILER_BIN)
+endif
+    
+
 
 # Debugging flags
 # NVCCFLAGS += -G -lineinfo -Xptxas=-v
@@ -82,7 +93,6 @@ else ifeq ($(UNAME_S),Linux)
     # Add MPI compiler flags if needed
     MPI_CPPFLAGS := $(shell which mpicc >/dev/null 2>&1 && mpicc --showme:compile 2>/dev/null || echo "")
     MPI_LDFLAGS := $(shell which mpicc >/dev/null 2>&1 && mpicc --showme:link 2>/dev/null || echo "")
-    include src/goldilocks/CudaArch.mk
     CPPFLAGS = -I/usr/include -I/usr/local/include -MMD -MP $(INC_FLAGS)
     CXXFLAGS = -std=c++17 -Wall -pthread -Wno-unused-label -fPIC -fopenmp
     LDFLAGS  = -rdynamic -fopenmp -lsodium -lpthread -lgmp -lstdc++
