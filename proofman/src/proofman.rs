@@ -1,4 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
+use bytemuck::cast_slice;
 use libloading::{Library, Symbol};
 use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
 use proofman_common::{
@@ -13,6 +14,7 @@ use proofman_starks_lib_c::{
     save_challenges_c, save_proof_values_c, save_publics_c, check_device_memory_c, gen_device_streams_c,
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c, reset_device_streams_c,
 };
+use proofman_verifier::verify;
 use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::fs;
@@ -43,7 +45,7 @@ use transcript::FFITranscript;
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
 use crate::{check_tree_paths_vadcop, gen_recursive_proof_size, initialize_fixed_pols_tree};
-use crate::{verify_constraints_proof, verify_basic_proof, verify_final_proof, verify_global_constraints_proof};
+use crate::{verify_constraints_proof, verify_basic_proof, verify_recursive2_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
 use crate::{
@@ -1781,15 +1783,16 @@ where
         if options.verify_proofs {
             if options.aggregation {
                 if self.mpi_ctx.rank == 0 {
-                    let setup_path = self.pctx.global_info.get_setup_path("vadcop_final");
-                    let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
-                    let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
-                    let verkey_path = setup_path.display().to_string() + ".verkey.json";
+                    let setup = self.setups.setup_vadcop_final.as_ref().unwrap();
 
                     timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
-                    let vadcop_proof_final_ref = vadcop_final_proof.as_ref().unwrap();
-                    let valid_proofs =
-                        verify_final_proof(vadcop_proof_final_ref, stark_info_path, expressions_bin_path, verkey_path);
+
+                    let proof_bytes: &[u8] = cast_slice(vadcop_final_proof.as_ref().unwrap());
+
+                    let verkey_u64: Vec<u64> = setup.verkey.iter().map(|x| x.as_canonical_u64()).collect();
+
+                    let vk_bytes: &[u8] = cast_slice(&verkey_u64);
+                    let valid_proofs = verify(proof_bytes, vk_bytes);
                     timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
                     if !valid_proofs {
                         tracing::info!("··· {}", "\u{2717} Vadcop Final proof was not verified".bright_red().bold());
@@ -1859,7 +1862,13 @@ where
                 }
             }
 
-            // TODO: Verify proofs!
+            let setup = self.setups.sctx_recursive2.as_ref().unwrap().get_setup(proof.airgroup_id as usize, 0);
+
+            let valid_recursive_proof = verify_recursive2_proof(&proof.proof, &self.pctx, setup);
+
+            if !valid_recursive_proof {
+                panic!("Received aggregated proof is invalid!");
+            }
 
             let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
             for (c, value) in workers_acc_challenge.iter().enumerate() {
