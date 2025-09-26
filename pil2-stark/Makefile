@@ -64,9 +64,6 @@ NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 -arch=$(CUDA_ARCH
 ifdef PROOFMAN_HOST_COMPILER_BIN
     NVCCFLAGS += --compiler-bindir=$(PROOFMAN_HOST_COMPILER_BIN)
 endif
-    
-
-
 # Debugging flags
 # NVCCFLAGS += -G -lineinfo -Xptxas=-v
 
