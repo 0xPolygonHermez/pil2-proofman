@@ -617,6 +617,7 @@ where
         let my_instances = self.pctx.dctx_get_process_instances();
         let airgroup_values_air_instances = Mutex::new(vec![Vec::new(); my_instances.len()]);
         let valid_constraints = AtomicBool::new(true);
+        let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
         for &instance_id in my_instances.iter() {
             let instance_info = instances[instance_id];
@@ -629,6 +630,11 @@ where
 
             self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref());
             self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref());
+
+            // Join the previous thread (if any) before starting a new one
+            if let Some(handle) = thread_handle.take() {
+                handle.join().unwrap();
+            }
 
             self.verify_proof_constraints_stage(
                 &valid_constraints,
@@ -2457,6 +2463,9 @@ where
         };
 
         mpi_ctx.barrier();
+
+        let n_gpus = get_num_gpus_c();
+        let n_processes_node = mpi_ctx.node_n_processes as usize as u64;
 
         let n_gpus = get_num_gpus_c();
         let n_processes_node = mpi_ctx.node_n_processes as usize as u64;

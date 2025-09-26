@@ -53,9 +53,12 @@ AS := nasm
 ASFLAGS := -f elf64
 NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 -arch=$(CUDA_ARCH) -DGL64_PARTIALLY_REDUCED -D__AVX2__ -D__USE_ASSEMBLY__
 
-# Use the following flag to solve amxtileintrin.h incompatibility
-NVCCFLAGS += --compiler-bindir=/usr/bin/g++-10
+# Use the following flag to solve amxtileintrin.h incompatibility or use PROOFMAN_HOST_COMPILER_BIN variable to set the host compiler
+# NVCCFLAGS += --compiler-bindir=/usr/bin/g++-10
 
+ifdef PROOFMAN_HOST_COMPILER_BIN
+    NVCCFLAGS += --compiler-bindir=$(PROOFMAN_HOST_COMPILER_BIN)
+endif
 # Debugging flags
 # NVCCFLAGS += -G -lineinfo -Xptxas=-v
 
