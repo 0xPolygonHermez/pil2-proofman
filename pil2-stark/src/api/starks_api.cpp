@@ -444,6 +444,11 @@ uint64_t get_max_ops(void *pExpressionsBin){
     return expressionsBin->maxOps;
 };
 
+uint64_t get_operations_quotient(void *pExpressionsBin, void *pStarkInfo){
+    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
+    return expressionsBin->expressionsInfo[((StarkInfo *)pStarkInfo)->cExpId].nOps;
+};
+
 void expressions_bin_free(void *pExpressionsBin)
 {
     auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
@@ -778,13 +783,15 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
     return (void *)d_buffers;
 };
 
-uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t maxProofsPerGPU, uint64_t maxRecursiveProofsPerGPU, uint64_t max_n_bits_ext, uint64_t maxNConstraints) { return 1; }
+uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t max_n_bits_ext, uint64_t maxNConstraints) { return 1; }
+
+void get_instances_ready(void *d_buffers, int64_t* instances_ready) {}
 
 void reset_device_streams(void *d_buffers_) {}
 
 uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size) { return 0; }
 
-uint64_t get_num_gpus(){ return 0;}
+uint64_t get_num_gpus(){ return 1;}
 
 void free_device_buffers(void *d_buffers_) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;

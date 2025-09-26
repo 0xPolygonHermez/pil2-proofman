@@ -110,7 +110,9 @@ extern "C" {
     pub fn get_max_args(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
     
     pub fn get_max_ops(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
-    
+
+    pub fn get_operations_quotient(pExpressionsBin: *mut ::std::os::raw::c_void, pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+
     pub fn expressions_bin_free(pExpressionsBin: *mut ::std::os::raw::c_void);
 
     // Hints
@@ -511,12 +513,15 @@ extern "C" {
         maxSizeProverBuffer: u64,
         maxSizeProverBufferAggregation: u64,
         maxProofSize: u64,
-        maxProofsPerGPU: u64,
-        maxRecursiveProofsPerGPU: u64,
         max_n_bits_ext: u64,
         max_n_constraints: u64,
     ) -> u64;
     
+    pub fn get_instances_ready(
+        d_buffers_: *mut ::std::os::raw::c_void,
+        instances_ready: *mut i64,
+    );
+
     pub fn reset_device_streams(
         d_buffers_: *mut ::std::os::raw::c_void,
     );

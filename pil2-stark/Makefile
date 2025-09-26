@@ -1,13 +1,8 @@
 # Platform detection for compiler and library paths
 UNAME_S := $(shell uname -s)
 ifneq ($(UNAME_S),Darwin)
-    ifndef CUDA_ARCH
-        INFO := $(shell cd src/goldilocks && ./configure.sh && cd ../.. && sleep 2)
-        include src/goldilocks/CudaArch.mk
-        $(info CUDA_ARCH was not defined externally, using value from CudaArch.mk: $(CUDA_ARCH))
-    else
-        $(info CUDA_ARCH defined externally: $(CUDA_ARCH))
-    endif
+    INFO := $(shell cd src/goldilocks && ./configure.sh && cd ../.. && sleep 2)
+    include src/goldilocks/CudaArch.mk
 endif
 
 # CUDA detection - check multiple possible locations
@@ -87,6 +82,7 @@ else ifeq ($(UNAME_S),Linux)
     # Add MPI compiler flags if needed
     MPI_CPPFLAGS := $(shell which mpicc >/dev/null 2>&1 && mpicc --showme:compile 2>/dev/null || echo "")
     MPI_LDFLAGS := $(shell which mpicc >/dev/null 2>&1 && mpicc --showme:link 2>/dev/null || echo "")
+    include src/goldilocks/CudaArch.mk
     CPPFLAGS = -I/usr/include -I/usr/local/include -MMD -MP $(INC_FLAGS)
     CXXFLAGS = -std=c++17 -Wall -pthread -Wno-unused-label -fPIC -fopenmp
     LDFLAGS  = -rdynamic -fopenmp -lsodium -lpthread -lgmp -lstdc++

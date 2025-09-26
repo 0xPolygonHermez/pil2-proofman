@@ -185,7 +185,12 @@ pub fn verify_basic_proof<F: PrimeField64>(pctx: &ProofCtx<F>, instance_id: usiz
     let verkey_path = setup_path.display().to_string() + ".verkey.json";
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
-    tracing::info!("    Verifying proof of {}: Instance #{}", air_name, air_instance_id);
+    tracing::info!(
+        "    Verifying proof of {}: Instance #{} with global index #{}",
+        air_name,
+        air_instance_id,
+        instance_id
+    );
 
     let is_valid_proof = verify_proof(
         proof.as_ptr() as *mut u64,

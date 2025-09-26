@@ -80,6 +80,10 @@ impl Counter {
         }
     }
 
+    pub fn reset(&self) {
+        self.counter.store(0, Ordering::Release);
+    }
+
     pub fn wait_until_zero(&self) {
         let mut guard = self.wait_lock.lock().unwrap();
         while self.counter.load(Ordering::Acquire) > 0 {

@@ -122,7 +122,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         pCustomCommitsFixed,
     };
 
-    *params_pinned = h_params;
+    memcpy(params_pinned, &h_params, sizeof(StepsParams));
     
     CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams), cudaMemcpyHostToDevice, stream));
     
@@ -200,9 +200,8 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     uint64_t zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
     computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, stream);
 
-    if (setupCtx.starkInfo.overwriteFixed) {
-        uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx.starkInfo) * sizeof(Goldilocks::Element);
-        load_and_copy_to_device_in_chunks(d_buffers, constTreePath, (uint8_t*)d_const_tree, sizeConstTree, stream_id);
+    if (setupCtx.starkInfo.calculateFixedExtended) {
+        extendAndMerkelizeFixed(setupCtx, pConstPolsAddress, pConstPolsExtendedTreeAddress, timer, stream);
     }
 
     TimerStartGPU(timer, STARK_QUOTIENT_POLYNOMIAL);

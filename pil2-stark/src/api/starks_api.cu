@@ -20,8 +20,11 @@
 struct MaxSizes
 {
     uint64_t totalConstPols;
-    uint64_t maxAuxTraceArea;
+    uint64_t auxTraceArea;
+    uint64_t auxTraceRecursiveArea;
     uint64_t totalConstPolsAggregation;
+    uint64_t nStreams;
+    uint64_t nRecursiveStreams;
 };
 
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t nStreams = 1, bool recursive = false);
@@ -32,6 +35,12 @@ void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 
 
+void get_instances_ready(void *d_buffers_, int64_t* instances_ready) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
+        instances_ready[i] = d_buffers->streamsData[i].instanceId;
+    }
+}
 
 void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size)
 {
@@ -55,11 +64,19 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
             d_buffers->my_gpu_ids[i] = node_rank * d_buffers->n_gpus + i;
             d_buffers->gpus_g2l[d_buffers->my_gpu_ids[i]] = i;
         }
-        d_buffers->d_aux_trace = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+        d_buffers->d_aux_trace = (gl64_t ***)malloc(d_buffers->n_gpus * sizeof(gl64_t**));
+        d_buffers->d_aux_traceAggregation = (gl64_t ***)malloc(d_buffers->n_gpus * sizeof(gl64_t**));
         d_buffers->d_constPols = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
         d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
+        d_buffers->n_streams = maxSizes->nStreams;
+        d_buffers->n_recursive_streams = maxSizes->nRecursiveStreams;
+        d_buffers->n_total_streams = d_buffers->n_gpus * (d_buffers->n_streams + d_buffers->n_recursive_streams);
+        for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
+            d_buffers->d_aux_trace[i] = (gl64_t **)malloc(maxSizes->nStreams * sizeof(gl64_t*));
+            d_buffers->d_aux_traceAggregation[i] = (gl64_t **)malloc(maxSizes->nRecursiveStreams * sizeof(gl64_t*));
+        }
         
         // Allocate mutex array using placement new
         d_buffers->mutex_pinned = (std::mutex*)malloc(d_buffers->n_gpus * sizeof(std::mutex));
@@ -69,11 +86,16 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
 
         for (int i = 0; i < d_buffers->n_gpus; i++) {
             cudaSetDevice(d_buffers->my_gpu_ids[i]);
-            CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace[i], maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
             CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[i], maxSizes->totalConstPols * sizeof(Goldilocks::Element)));
             CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPolsAggregation[i], maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
             CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
             CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer_extra[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
+            for (int j = 0; j < maxSizes->nStreams; ++j) {
+                CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace[i][j], maxSizes->auxTraceArea * sizeof(Goldilocks::Element)));
+            }
+            for (int j = 0; j < maxSizes->nRecursiveStreams; ++j) {
+                CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_traceAggregation[i][j], maxSizes->auxTraceRecursiveArea * sizeof(Goldilocks::Element)));
+            }
         }
         init_gpu_const_2(d_buffers->my_gpu_ids, d_buffers->n_gpus);
 
@@ -116,11 +138,19 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         d_buffers->my_gpu_ids[0] = node_rank % deviceCount;
         d_buffers->gpus_g2l[d_buffers->my_gpu_ids[0]] = 0;
         
-        d_buffers->d_aux_trace = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+        d_buffers->d_aux_trace = (gl64_t ***)malloc(d_buffers->n_gpus * sizeof(gl64_t**));
+        d_buffers->d_aux_traceAggregation = (gl64_t ***)malloc(d_buffers->n_gpus * sizeof(gl64_t**));
         d_buffers->d_constPols = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
         d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
+        d_buffers->n_streams = maxSizes->nStreams;
+        d_buffers->n_recursive_streams = maxSizes->nRecursiveStreams;
+        d_buffers->n_total_streams = (d_buffers->n_streams + d_buffers->n_recursive_streams);
+        
+        // Allocate the second level arrays for the single GPU
+        d_buffers->d_aux_trace[0] = (gl64_t **)malloc(maxSizes->nStreams * sizeof(gl64_t*));
+        d_buffers->d_aux_traceAggregation[0] = (gl64_t **)malloc(maxSizes->nRecursiveStreams * sizeof(gl64_t*));
         
         // Allocate mutex array using placement new
         d_buffers->mutex_pinned = (std::mutex*)malloc(d_buffers->n_gpus * sizeof(std::mutex));
@@ -129,7 +159,12 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         }
 
         cudaSetDevice(d_buffers->my_gpu_ids[0]);
-        CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace[0], maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
+        for (int j = 0; j < maxSizes->nStreams; ++j) {
+            CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace[0][j], maxSizes->auxTraceArea * sizeof(Goldilocks::Element)));
+        }
+        for (int j = 0; j < maxSizes->nRecursiveStreams; ++j) {
+            CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_traceAggregation[0][j], maxSizes->auxTraceRecursiveArea * sizeof(Goldilocks::Element)));
+        }
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[0], maxSizes->totalConstPols * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPolsAggregation[0], maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer[0], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
@@ -141,14 +176,12 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
     }
 }
 
-uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t maxProofsPerGPU, uint64_t maxRecursiveProofsPerGPU, uint64_t max_n_bits_ext, uint64_t maxNConstraints) {
+uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t max_n_bits_ext, uint64_t maxNConstraints) {
     
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     d_buffers->max_size_proof = maxProofSize;
-    uint32_t n_streams = d_buffers->n_gpus * maxProofsPerGPU;
-    uint32_t n_streams_recursive = d_buffers->n_gpus * maxRecursiveProofsPerGPU;
-
-    d_buffers->n_total_streams = n_streams + n_streams_recursive;
+    uint32_t n_streams = d_buffers->n_gpus * d_buffers->n_streams;
+    uint32_t n_streams_recursive = d_buffers->n_gpus * d_buffers->n_recursive_streams;
 
     if (d_buffers->streamsData != nullptr) {
         for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
@@ -159,14 +192,14 @@ uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint
     d_buffers->streamsData = new StreamData[d_buffers->n_total_streams];
 
     for(uint64_t i=0; i< d_buffers->n_gpus; ++i){
-        uint64_t gpu_stream_start = i * (maxProofsPerGPU + maxRecursiveProofsPerGPU);
+        uint64_t gpu_stream_start = i * (d_buffers->n_streams + d_buffers->n_recursive_streams);
 
-        for (uint64_t j = 0; j < maxProofsPerGPU; j++) {
-            d_buffers->streamsData[gpu_stream_start + j].initialize(maxProofSize, d_buffers->my_gpu_ids[i], j*maxSizeProverBuffer, false, maxNConstraints);
+        for (uint64_t j = 0; j < d_buffers->n_streams; j++) {
+            d_buffers->streamsData[gpu_stream_start + j].initialize(maxProofSize, d_buffers->my_gpu_ids[i], j, false);
         }
 
-        for (uint64_t j = 0; j < maxRecursiveProofsPerGPU; j++) {
-            d_buffers->streamsData[gpu_stream_start + maxProofsPerGPU + j].initialize(maxProofSize, d_buffers->my_gpu_ids[i], maxProofsPerGPU*maxSizeProverBuffer + j*maxSizeProverBufferAggregation, true, maxNConstraints);
+        for (uint64_t j = 0; j < d_buffers->n_recursive_streams; j++) {
+            d_buffers->streamsData[gpu_stream_start + d_buffers->n_streams + j].initialize(maxProofSize, d_buffers->my_gpu_ids[i], j, true, maxNConstraints);
         }
     }
 
@@ -180,7 +213,8 @@ void reset_device_streams(void *d_buffers_) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
    
     for(uint64_t i=0; i< d_buffers->n_total_streams; ++i){
-        d_buffers->streamsData[i].reset();
+        d_buffers->streamsData[i].instanceId = -1;
+        d_buffers->streamsData[i].reset(true);
     }
 }
 
@@ -190,13 +224,31 @@ void free_device_buffers(void *d_buffers_)
 
     for (int i = 0; i < d_buffers->n_gpus; ++i) {
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
-        CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace[i]));
+        
+        if (d_buffers->d_aux_trace[i] != nullptr) {
+            for (int j = 0; j < d_buffers->n_streams; ++j) {  // You'll need to store nStreams or use a safe upper bound
+                if (d_buffers->d_aux_trace[i][j] != nullptr) {
+                    CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace[i][j]));
+                }
+            }
+            free(d_buffers->d_aux_trace[i]);
+        }
+        if (d_buffers->d_aux_traceAggregation[i] != nullptr) {
+            for (int j = 0; j < d_buffers->n_recursive_streams; ++j) {  // You'll need to store nRecursiveStreams or use a safe upper bound
+                if (d_buffers->d_aux_traceAggregation[i][j] != nullptr) {
+                    CHECKCUDAERR(cudaFree(d_buffers->d_aux_traceAggregation[i][j]));
+                }
+            }
+            free(d_buffers->d_aux_traceAggregation[i]);
+        }
+        
         CHECKCUDAERR(cudaFree(d_buffers->d_constPols[i]));
         CHECKCUDAERR(cudaFree(d_buffers->d_constPolsAggregation[i]));
         CHECKCUDAERR(cudaFreeHost(d_buffers->pinned_buffer[i]));
         CHECKCUDAERR(cudaFreeHost(d_buffers->pinned_buffer_extra[i]));
     }
     free(d_buffers->d_aux_trace);
+    free(d_buffers->d_aux_traceAggregation);
     free(d_buffers->d_constPols);
     free(d_buffers->d_constPolsAggregation);
     free(d_buffers->pinned_buffer);
@@ -212,17 +264,28 @@ void free_device_buffers(void *d_buffers_)
     for (auto &outer_pair : d_buffers->air_instances) {
         for (auto &inner_pair : outer_pair.second) {
             for (AirInstanceInfo *ptr : inner_pair.second) {
-                delete ptr;
+                if (ptr != nullptr) {
+                    delete ptr;
+                }
             }
+            inner_pair.second.clear();
         }
+        outer_pair.second.clear();
     }
-
+    d_buffers->air_instances.clear();
     // Manually destroy mutexes before freeing memory
     for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
         d_buffers->mutex_pinned[i].~mutex();
     }
     free(d_buffers->mutex_pinned);
 
+    if (d_buffers->gpus_g2l != nullptr) {
+        free(d_buffers->gpus_g2l);
+    }
+    if (d_buffers->my_gpu_ids != nullptr) {
+        free(d_buffers->my_gpu_ids);
+    }
+    
     delete d_buffers;
 }
 
@@ -301,7 +364,7 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
     TimerGPU &timer = d_buffers->streamsData[streamId].timer;
 
-    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId] + d_buffers->streamsData[streamId].offset;
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
 
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
@@ -380,7 +443,7 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
         uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
         d_const_tree = d_aux_trace + offsetConstTree;
 
-        if (!setupCtx->starkInfo.overwriteFixed) {
+        if (!setupCtx->starkInfo.calculateFixedExtended) {
             load_and_copy_to_device_in_chunks(d_buffers, constTreePath, (uint8_t*)d_const_tree, sizeConstTree, streamId);
         }
     }
@@ -424,10 +487,10 @@ void get_stream_proofs(void *d_buffers_){
             get_proof(d_buffers, i);
         }
         uint64_t streamsUsed = d_buffers->streamsData[i].streamsUsed;
-        d_buffers->streamsData[i].reset();
+        d_buffers->streamsData[i].reset(false);
         if (streamsUsed > 1) {
             for (uint64_t j = 1; j < streamsUsed; j++) {
-                d_buffers->streamsData[i + j].reset();
+                d_buffers->streamsData[i + j].reset(false);
             }
         }
         
@@ -446,10 +509,10 @@ void get_stream_proofs_non_blocking(void *d_buffers_){
                 get_proof(d_buffers, i);
             }
             uint64_t streamsUsed = d_buffers->streamsData[i].streamsUsed;
-            d_buffers->streamsData[i].reset();
+            d_buffers->streamsData[i].reset(false);
             if (streamsUsed > 1) {
                 for (uint64_t j = 1; j < streamsUsed; j++) {
-                    d_buffers->streamsData[i + j].reset();
+                    d_buffers->streamsData[i + j].reset(false);
                 }
             }
             
@@ -468,10 +531,10 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {
         }
 
     uint64_t streamsUsed = d_buffers->streamsData[streamId].streamsUsed;
-    d_buffers->streamsData[streamId].reset();
+    d_buffers->streamsData[streamId].reset(false);
     if (streamsUsed > 1) {
         for (uint64_t j = 1; j < streamsUsed; j++) {
-            d_buffers->streamsData[streamId + j].reset();
+            d_buffers->streamsData[streamId + j].reset(false);
         }
     }    
 }
@@ -494,8 +557,9 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
 
-    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId] + d_buffers->streamsData[streamId].offset;
-   
+    gl64_t * d_aux_trace = d_buffers->streamsData[streamId].recursive
+        ? (gl64_t *)d_buffers->d_aux_traceAggregation[gpuLocalId][d_buffers->streamsData[streamId].localStreamId]
+        : d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
@@ -561,7 +625,7 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
     auto key = std::make_pair(airgroupId, airId);
     std::string proofType = "basic";
     uint64_t nStreams = d_buffers->air_instances[key][proofType][gpuLocalId]->nStreams;
-    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId] + d_buffers->streamsData[streamId].offset;
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t offsetStage1 = nStreams == 1 ? setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)] : 0;
     copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1), sizeTrace, streamId);
@@ -709,7 +773,7 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t nStreams, bool re
     } else {
         for (uint64_t j = 1; j < d_buffers->streamsData[selectedStreamId].streamsUsed; j++) {
             if (d_buffers->streamsData[selectedStreamId + j].extraStream) {
-                d_buffers->streamsData[selectedStreamId + j].reset();
+                d_buffers->streamsData[selectedStreamId + j].reset(false);
             }
         }
     }
@@ -730,10 +794,10 @@ void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId, uint64_t n
                 get_proof(d_buffers, streamId + j);
             }
         }
-        d_buffers->streamsData[streamId + j].reset();
+        d_buffers->streamsData[streamId + j].reset(false);
         d_buffers->streamsData[streamId + j].status = 1;
     }
-   
+
 }
 
 void closeStreamTimer(TimerGPU &timer, bool isProve) {

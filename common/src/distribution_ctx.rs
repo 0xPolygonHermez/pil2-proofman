@@ -1,29 +1,13 @@
-#[cfg(distributed)]
-use mpi::traits::*;
-#[cfg(distributed)]
-use mpi::collective::CommunicatorCollectives;
-#[cfg(distributed)]
-use mpi::datatype::PartitionMut;
-#[cfg(distributed)]
-use mpi::environment::Universe;
-#[cfg(distributed)]
-use mpi::topology::Communicator;
-use std::collections::HashMap;
-use std::sync::atomic::AtomicU64;
-#[cfg(distributed)]
-use std::sync::atomic::Ordering;
-
-use fields::PrimeField64;
-#[cfg(distributed)]
-use fields::CubicExtensionField;
-use crate::GlobalInfo;
-use crate::Proof;
-
+use core::panic;
 use std::collections::HashSet;
-#[cfg(distributed)]
-use proofman_starks_lib_c::{
-    initialize_agg_readiness_tracker_c, free_agg_readiness_tracker_c, agg_is_ready_c, reset_agg_readiness_tracker_c,
-};
+use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct InstanceChunks {
+    pub chunks: Vec<usize>,
+    pub slow: bool,
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceInfo {
@@ -32,204 +16,303 @@ pub struct InstanceInfo {
     pub table: bool,
     pub shared: bool,
     pub threads_witness: usize,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct InstanceChunks {
-    pub chunks: Vec<usize>,
-    pub slow: bool,
+    pub n_chunks: usize,
+    pub weight: u64,
 }
 
 impl InstanceInfo {
-    pub fn new(airgroup_id: usize, air_id: usize, table: bool, shared: bool, threads_witness: usize) -> Self {
-        if !table {
-            assert!(!shared, "If table is false, shared must be false");
-        }
-        Self { airgroup_id, air_id, table, threads_witness, shared }
+    pub fn new(
+        airgroup_id: usize,
+        air_id: usize,
+        table: bool,
+        shared: bool,
+        threads_witness: usize,
+        weight: u64,
+    ) -> Self {
+        Self { airgroup_id, air_id, table, threads_witness, shared, n_chunks: 0, weight }
     }
 }
 
-/// Represents the context of distributed computing
+/// Context for distributed computing with two-level hierarchy:
+/// 1. Distributed Prover MANAGER distributes PARTITIONS across WORKERS
+/// 2. Instances are distributed across PARTITIONS as they are created
+/// 3. Instances are distributed across local PROCESSES within each WORKER
+#[derive(Default)]
 pub struct DistributionCtx {
-    pub rank: i32,
-    pub n_processes: i32,
-    #[cfg(distributed)]
-    pub universe: Universe,
-    #[cfg(distributed)]
-    pub world: mpi::topology::SimpleCommunicator,
-    pub n_instances: usize,
-    pub my_instances: Vec<usize>,
-    pub instances: Vec<InstanceInfo>,
-    pub instances_chunks: Vec<InstanceChunks>,
-    pub instances_owner: Vec<(i32, usize, u64)>, //owner_rank, owner_instance_idx, weight
-    pub owners_count: Vec<i32>,
-    pub owners_weight: Vec<u64>,
-    pub airgroup_instances_alives: Vec<Vec<usize>>,
-    pub node_rank: i32,
-    pub node_n_processes: i32,
-    pub outer_agg_rank: i32,
+    // Worker-level
+    pub n_partitions: usize,       // Total number of partitions in the system
+    pub partition_mask: Vec<bool>, // Which partitions are assigned to this worker
+
+    // Process-level
+    pub n_processes: usize, // Number of processes used by this worker
+    pub process_id: usize,  // ID of current process within this worker
+
+    // DYNAMIC PARAMETERS
+
+    // Instances
+    pub n_instances: usize,                    // Total number of instances
+    pub instances: Vec<InstanceInfo>,          // Instances info
+    pub instances_chunks: Vec<InstanceChunks>, // Chunks info per instance
+    pub instances_calculated: Vec<AtomicBool>, // Whether the witness has been calculated for each instance
+    pub n_tables: usize,                       // Number of table instances
+    pub aux_tables: Vec<InstanceInfo>,         // Table instances info (lately appended to instances)
+    pub aux_table_map: Vec<i32>,               // Map from aux tables to original instances
+
+    // Worker-level distribution
+    pub instance_partition: Vec<i32>, // Which partition each instance belongs to (>=0 assigned, -1 unassigned, -2 appended table)
+    pub worker_instances: Vec<usize>, // Indexes of instances assigned to this worker
+    pub partition_count: Vec<u32>,    // #instances in each partition (does not include tables)
+    pub partition_weight: Vec<u64>,   // Total computational weight per partition (does not include tables)
+
+    // Process-level distribution
+    pub instance_process: Vec<(i32, usize)>, // For each instance: (process_id or -1 if other worker, local_idx)
+    pub process_instances: Vec<usize>,       // Indexes of instances assigned to current process
+    pub process_count: Vec<usize>,           // #instances assigned to each process
+    pub process_weight: Vec<u64>,            // Total computational weight per process
+
+    pub worker_index: i32, // Index of the current worker
+
+    // Control
+    pub assignation_done: bool, // Whether the instance assignation is done
 }
 
 impl std::fmt::Debug for DistributionCtx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        #[cfg(distributed)]
-        {
-            f.debug_struct("DistributionCtx")
-                .field("rank", &self.rank)
-                .field("n_processes", &self.n_processes)
-                .field("n_instances", &self.n_instances)
-                .field("my_instances", &self.my_instances)
-                .field("instances", &self.instances)
-                .field("instances_owner", &self.instances_owner)
-                .field("owners_count", &self.owners_count)
-                .field("owners_weight", &self.owners_weight)
-                .field("airgroup_instances_alives", &self.airgroup_instances_alives)
-                .field("node_rank", &self.node_rank)
-                .field("node_n_processes", &self.node_n_processes)
-                .field("outer_agg_rank", &self.outer_agg_rank)
-                .finish()
-        }
-        #[cfg(not(distributed))]
-        {
-            f.debug_struct("DistributionCtx")
-                .field("rank", &self.rank)
-                .field("n_processes", &self.n_processes)
-                .field("n_instances", &self.n_instances)
-                .field("my_instances", &self.my_instances)
-                .field("instances", &self.instances)
-                .field("instances_owner", &self.instances_owner)
-                .field("owners_count", &self.owners_count)
-                .field("owners_weight", &self.owners_weight)
-                .field("airgroup_instances_alives", &self.airgroup_instances_alives)
-                .field("node_rank", &self.node_rank)
-                .field("node_n_processes", &self.node_n_processes)
-                .field("outer_agg_rank", &self.outer_agg_rank)
-                .finish()
-        }
+        let mut dbg = f.debug_struct("DistributionCtx");
+
+        // STATIC PARAMETERS
+        dbg.field("=== STATIC PARAMS ===", &"");
+        dbg.field("n_partitions", &self.n_partitions)
+            .field("partition_mask", &self.partition_mask)
+            .field("n_processes", &self.n_processes)
+            .field("process_id", &self.process_id);
+
+        // DYNAMIC PARAMETERS
+        dbg.field("=== DYNAMIC PARAMS ===", &"");
+        dbg.field("n_instances", &self.n_instances)
+            .field("instances", &self.instances)
+            .field("n_tables", &self.n_tables)
+            .field("tables", &self.aux_tables)
+            .field("instance_partition", &self.instance_partition)
+            .field("worker_instances", &self.worker_instances)
+            .field("partition_count", &self.partition_count)
+            .field("partition_weight", &self.partition_weight)
+            .field("instance_process", &self.instance_process)
+            .field("process_instances", &self.process_instances)
+            .field("process_count", &self.process_count)
+            .field("process_weight", &self.process_weight)
+            .field("assignation_done", &self.assignation_done);
+        dbg.finish()
     }
 }
 
 impl DistributionCtx {
     pub fn new() -> Self {
-        #[cfg(distributed)]
-        {
-            Self::with_universe(None)
+        DistributionCtx {
+            n_partitions: 0,
+            partition_mask: Vec::new(),
+            n_processes: 0,
+            process_id: 0,
+            n_instances: 0,
+            instances: Vec::new(),
+            instances_calculated: Vec::new(),
+            instances_chunks: Vec::new(),
+            n_tables: 0,
+            aux_tables: Vec::new(),
+            aux_table_map: Vec::new(),
+            instance_partition: Vec::new(),
+            worker_instances: Vec::new(),
+            partition_count: Vec::new(),
+            partition_weight: Vec::new(),
+            instance_process: Vec::new(),
+            process_instances: Vec::new(),
+            process_count: Vec::new(),
+            process_weight: Vec::new(),
+            worker_index: -1,
+            assignation_done: false,
         }
-        #[cfg(not(distributed))]
-        {
-            DistributionCtx {
-                rank: 0,
-                n_processes: 1,
-                n_instances: 0,
-                my_instances: Vec::new(),
-                instances: Vec::new(),
-                instances_chunks: Vec::new(),
-                instances_owner: Vec::new(),
-                owners_count: vec![0; 1],
-                owners_weight: vec![0; 1],
-                airgroup_instances_alives: Vec::new(),
-                node_rank: 0,
-                node_n_processes: 1,
-                outer_agg_rank: 0,
+    }
+
+    /// Configure the static partitioning parameters
+    /// - `n_partitions`: Total number of partitions in the distributed system
+    /// - `partition_ids`: Which partition IDs are assigned to this worker
+    /// - `balance`: Whether to balance load across partitions or use round-robin
+    pub fn setup_partitions(&mut self, n_partitions: usize, partition_ids: Vec<u32>) {
+        self.n_partitions = n_partitions;
+        self.partition_mask = vec![false; n_partitions];
+
+        for id in &partition_ids {
+            if *id < n_partitions as u32 {
+                self.partition_mask[*id as usize] = true;
+            } else {
+                panic!("Partition ID {} exceeds total partitions {}", id, n_partitions);
             }
         }
+
+        self.partition_count = vec![0; n_partitions];
+        self.partition_weight = vec![0; n_partitions];
     }
 
-    #[cfg(distributed)]
-    pub fn with_universe(mpi_universe: Option<Universe>) -> Self {
-        let universe = mpi_universe.unwrap_or_else(|| {
-            let (universe, _threading) = mpi::initialize_with_threading(mpi::Threading::Multiple)
-                .expect("Failed to initialize MPI with threading");
-            universe
-        });
-
-        let world = universe.world();
-        let rank = world.rank();
-        let n_processes = world.size();
-
-        let local_comm = world.split_shared(rank);
-        let node_rank = local_comm.rank();
-        let node_n_processes = local_comm.size();
-
-        // Initialize the agg readiness tracker in the C library
-        initialize_agg_readiness_tracker_c();
-
-        DistributionCtx {
-            rank,
-            n_processes,
-            universe,
-            world,
-            n_instances: 0,
-            my_instances: Vec::new(),
-            instances: Vec::new(),
-            instances_chunks: Vec::new(),
-            instances_owner: Vec::new(),
-            owners_count: vec![0; n_processes as usize],
-            owners_weight: vec![0; n_processes as usize],
-            airgroup_instances_alives: Vec::new(),
-            node_rank,
-            node_n_processes,
-            outer_agg_rank: -1,
+    /// Configure the static processes parameters
+    /// - `n_processes`: Number of processes available to this worker
+    /// - `process_id`: The rank/ID of the current process (must be < n_processes)
+    pub fn setup_processes(&mut self, n_processes: usize, process_id: usize) {
+        if process_id >= n_processes {
+            panic!("Process rank {} exceeds total processes {}", process_id, n_processes);
         }
+        self.n_processes = n_processes;
+        self.process_id = process_id;
+        self.process_count = vec![0; n_processes];
+        self.process_weight = vec![0; n_processes];
     }
 
-    pub fn reset(&mut self) {
+    pub fn setup_worker_index(&mut self, worker_index: usize) {
+        self.worker_index = worker_index as i32;
+    }
+
+    /// Reset all DYNAMIC parameters for a new proof
+    /// This clears all instance-specific data while preserving the STATIC configuration
+    pub fn reset_instances(&mut self) {
+        // Global instance management
         self.n_instances = 0;
-        self.my_instances.clear();
         self.instances.clear();
         self.instances_chunks.clear();
-        self.instances_owner.clear();
+        self.instances_calculated.clear();
+        self.n_tables = 0;
+        self.aux_tables.clear();
+        self.aux_table_map.clear();
 
-        self.owners_count = vec![0; self.n_processes as usize];
-        self.owners_weight = vec![0; self.n_processes as usize];
+        // Worker-level
+        self.instance_partition.clear();
+        self.worker_instances.clear();
+        self.partition_count.fill(0);
+        self.partition_weight.fill(0);
 
-        self.airgroup_instances_alives.clear();
-        self.reset_outer_agg_tracker();
+        // Process-level
+        self.instance_process.clear();
+        self.process_instances.clear();
+        self.process_count.fill(0);
+        self.process_weight.fill(0);
+
+        //control
+        self.assignation_done = false;
+    }
+
+    /// Verify that the static configuration has been properly set up
+    #[inline]
+    pub fn validate_static_config(&self) -> Result<(), String> {
+        // Check partition configuration
+        if self.n_partitions == 0 {
+            return Err("Partition configuration not set. Call setup_partitions() first.".to_string());
+        }
+        if self.partition_mask.len() != self.n_partitions {
+            return Err("Partition mask size mismatch with n_partitions".to_string());
+        }
+
+        // Check process configuration
+        if self.n_processes == 0 {
+            return Err("Process configuration not set. Call setup_processes() first.".to_string());
+        }
+        if self.process_id >= self.n_processes {
+            return Err(format!("Invalid process rank {} >= {}", self.process_id, self.n_processes));
+        }
+
+        Ok(())
+    }
+
+    /// Check if the current process is the owner of a given instance
+    #[inline]
+    pub fn is_my_process_instance(&self, instance_id: usize) -> bool {
+        if instance_id >= self.instance_process.len() {
+            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len());
+        }
+        self.instance_process[instance_id].0 == self.process_id as i32
     }
 
     #[inline]
-    pub fn barrier(&self) {
-        #[cfg(distributed)]
-        {
-            self.world.barrier();
+    pub fn get_process_owner_instance(&self, instance_id: usize) -> i32 {
+        if instance_id >= self.instance_process.len() {
+            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len());
+        }
+        let owner = self.instance_process[instance_id].0;
+        assert!(owner != -1, "Instance {} is not owned by any process", instance_id);
+        owner
+    }
+
+    /// Get the airgroup and air ID for a given instance
+    /// Returns (airgroup_id, air_id)
+    #[inline]
+    pub fn get_instance_info(&self, instance_id: usize) -> (usize, usize) {
+        if instance_id >= self.instances.len() {
+            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len());
+        }
+        (self.instances[instance_id].airgroup_id, self.instances[instance_id].air_id)
+    }
+
+    /// Get the airgroup and air ID of a given table
+    /// Returns (airgroup_id, air_id)
+    #[inline]
+    pub fn get_table_info(&self, table_idx: usize) -> (usize, usize) {
+        if self.assignation_done {
+            let instance_id = self.aux_table_map[table_idx] as usize;
+            self.get_instance_info(instance_id)
+        } else {
+            if table_idx >= self.aux_tables.len() {
+                panic!("Table index {} out of bounds (max: {})", table_idx, self.aux_tables.len());
+            }
+            (self.aux_tables[table_idx].airgroup_id, self.aux_tables[table_idx].air_id)
         }
     }
 
+    pub fn get_table_instance_idx(&self, table_idx: usize) -> usize {
+        if self.assignation_done {
+            self.aux_table_map[table_idx] as usize
+        } else {
+            panic!("Table instances not yet assigned");
+        }
+    }
+
+    /// Get the local index of the instance within its owner process
     #[inline]
-    pub fn is_distributed(&self) -> bool {
-        self.n_processes > 1
+    pub fn get_instance_local_idx(&self, instance_id: usize) -> usize {
+        if instance_id >= self.instance_process.len() {
+            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len());
+        }
+        self.instance_process[instance_id].1
+    }
+
+    /// Get the number of Minimum Trace chunks to be processes for a given global instance
+    #[inline]
+    pub fn get_instance_chunks(&self, instance_id: usize) -> usize {
+        if instance_id >= self.instances.len() {
+            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len());
+        }
+        self.instances_chunks[instance_id].chunks.len()
+    }
+
+    /// Set the number of chunks for a given instance (these may be used for balancing purposes)
+    pub fn set_n_chunks(&mut self, instance_id: usize, n_chunks: usize) {
+        if instance_id >= self.instances.len() {
+            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len());
+        }
+        let instance_info = &mut self.instances[instance_id];
+        instance_info.n_chunks = n_chunks;
+    }
+
+    /// Check if the current worker is the owner of a given instance
+    #[inline]
+    pub fn is_my_worker_instance(&self, instance_id: usize) -> bool {
+        if instance_id >= self.instance_process.len() {
+            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len());
+        }
+        self.instance_process[instance_id].0 >= 0
     }
 
     #[inline]
-    pub fn is_my_instance(&self, global_idx: usize) -> bool {
-        self.owner(global_idx) == self.rank
-    }
-
-    #[inline]
-    pub fn owner(&self, global_idx: usize) -> i32 {
-        self.instances_owner[global_idx].0
-    }
-
-    #[inline]
-    pub fn get_instance_info(&self, global_idx: usize) -> (usize, usize) {
-        (self.instances[global_idx].airgroup_id, self.instances[global_idx].air_id)
-    }
-
-    #[inline]
-    pub fn get_instance_idx(&self, global_idx: usize) -> usize {
-        self.my_instances.iter().position(|&x| x == global_idx).unwrap()
-    }
-
-    #[inline]
-    pub fn get_instance_chunks(&self, global_idx: usize) -> usize {
-        self.instances_chunks[global_idx].chunks.len()
-    }
-
-    #[inline]
-    pub fn find_air_instance_id(&self, global_idx: usize) -> usize {
+    pub fn find_air_instance_id(&self, instance_id: usize) -> usize {
         let mut air_instance_id = 0;
-        let (airgroup_id, air_id) = self.get_instance_info(global_idx);
-        for idx in 0..global_idx {
+        let (airgroup_id, air_id) = self.get_instance_info(instance_id);
+        for idx in 0..instance_id {
             let (instance_airgroup_id, instance_air_id) = self.get_instance_info(idx);
             if (instance_airgroup_id, instance_air_id) == (airgroup_id, air_id) {
                 air_instance_id += 1;
@@ -238,10 +321,12 @@ impl DistributionCtx {
         air_instance_id
     }
 
+    /// Find an instance with the given airgroup_id and air_id among the current process's instances
+    /// Returns (found, local_index)
     #[inline]
-    pub fn find_instance_mine(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
+    pub fn find_process_instance(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
         let mut matches = self
-            .my_instances
+            .process_instances
             .iter()
             .enumerate()
             .filter(|&(_pos, &id)| {
@@ -259,14 +344,39 @@ impl DistributionCtx {
         }
     }
 
+    /// Find a table with the given airgroup_id and air_id among the current process's tables
+    /// Returns (found, local_index)
+    #[inline]
+    pub fn find_process_table(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
+        if self.assignation_done {
+            self.find_process_instance(airgroup_id, air_id)
+        } else {
+            let mut matches = self
+                .aux_tables
+                .iter()
+                .enumerate()
+                .filter(|&(_pos, &info)| info.airgroup_id == airgroup_id && info.air_id == air_id)
+                .map(|(pos, _)| pos);
+
+            match (matches.next(), matches.next()) {
+                (None, _) => (false, 0),
+                (Some(pos), None) => (true, pos),
+                (Some(_), Some(_)) => {
+                    panic!("Multiple tables found for airgroup_id: {airgroup_id}, air_id: {air_id}");
+                }
+            }
+        }
+    }
+
+    /// Of all the instances with the same airgroup and air_id find the one with the given air_instance_id
     #[inline]
     pub fn find_instance_id(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Option<usize> {
         let mut count = 0;
-        for (global_idx, instance) in self.instances.iter().enumerate() {
+        for (instance_idx, instance) in self.instances.iter().enumerate() {
             let (inst_airgroup_id, inst_air_id) = (instance.airgroup_id, instance.air_id);
             if airgroup_id == inst_airgroup_id && air_id == inst_air_id {
                 if count == air_instance_id {
-                    return Some(global_idx);
+                    return Some(instance_idx);
                 }
                 count += 1;
             }
@@ -274,86 +384,85 @@ impl DistributionCtx {
         None
     }
 
-    #[inline]
-    pub fn is_min_rank_owner(&self, airgroup_id: usize, air_id: usize) -> bool {
-        let mut min_owner = self.n_processes + 1;
-        for (idx, instance) in self.instances.iter().enumerate() {
-            let (inst_airgroup_id, inst_air_id) = (instance.airgroup_id, instance.air_id);
-            if airgroup_id == inst_airgroup_id && air_id == inst_air_id && self.instances_owner[idx].0 < min_owner {
-                min_owner = self.instances_owner[idx].0;
-            }
-        }
-
-        if min_owner == self.n_processes + 1 {
-            panic!("No instance found for airgroup_id: {airgroup_id}, air_id: {air_id}");
-        }
-
-        min_owner == self.rank
-    }
-
-    #[inline]
-    pub fn process_ready_for_outer_agg(&mut self) {
-        #[cfg(distributed)]
-        {
-            self.outer_agg_rank = agg_is_ready_c();
-        }
-    }
-
-    pub fn get_outer_agg_rank(&self) -> i32 {
-        if self.outer_agg_rank == -1 {
-            panic!("Aggregation rank not yet determined. Call process_ready_for_aggregation() first.");
-        }
-        self.outer_agg_rank
-    }
-
-    pub fn reset_outer_agg_tracker(&mut self) {
-        #[cfg(distributed)]
-        {
-            self.outer_agg_rank = -1;
-            reset_agg_readiness_tracker_c();
-        }
-    }
-
+    /// add an instance and assign it to a partition/process based only in the gid
+    /// the instance added is not a table
     #[inline]
     pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, threads_witness: usize, weight: u64) -> usize {
-        let idx = self.instances.len();
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness));
-        self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
-        self.n_instances += 1;
-        let new_owner = (idx % self.n_processes as usize) as i32;
-        let count = self.owners_count[new_owner as usize] as usize;
-        self.instances_owner.push((new_owner, count, weight));
-        self.owners_count[new_owner as usize] += 1;
-        self.owners_weight[new_owner as usize] += weight;
-        if new_owner == self.rank {
-            self.my_instances.push(idx);
+        if self.assignation_done {
+            panic!("Instances already assigned");
         }
-        idx
+        self.validate_static_config().expect("Static configuration invalid or incomplete");
+        let gid: usize = self.instances.len();
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness, weight));
+        self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
+        self.instances_calculated.push(AtomicBool::new(false));
+        self.n_instances += 1;
+        let partition_id = (gid % self.n_partitions) as u32;
+        self.instance_partition.push(partition_id as i32);
+        self.partition_count[partition_id as usize] += 1;
+        self.partition_weight[partition_id as usize] += weight;
+        let mut local_idx = 0;
+        let mut owner = -1;
+        if self.partition_mask[partition_id as usize] {
+            let worker_instance_id = self.worker_instances.len();
+            self.worker_instances.push(gid);
+            let process_id = worker_instance_id % self.n_processes;
+            owner = process_id as i32;
+            local_idx = self.process_count[process_id];
+            self.process_count[process_id] += 1;
+            self.process_weight[process_id] += weight;
+            if process_id == self.process_id {
+                self.process_instances.push(gid);
+            }
+        }
+        self.instance_process.push((owner, local_idx));
+        gid
     }
 
+    /// add an instance and assign it to a partition/process based only in the gid
+    /// the instance added is not a table
     #[inline]
-    pub fn add_instance_assign_rank(
+    pub fn add_instance_first_partition(
         &mut self,
         airgroup_id: usize,
         air_id: usize,
-        owner_idx: usize,
         threads_witness: usize,
         weight: u64,
     ) -> usize {
-        let idx = self.instances.len();
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness));
-        self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
-        self.n_instances += 1;
-        let count = self.owners_count[owner_idx] as usize;
-        self.instances_owner.push((owner_idx as i32, count, weight));
-        self.owners_count[owner_idx] += 1;
-        self.owners_weight[owner_idx] += weight;
-        if owner_idx as i32 == self.rank {
-            self.my_instances.push(idx);
+        if self.assignation_done {
+            panic!("Instances already assigned");
         }
-        idx
+        self.validate_static_config().expect("Static configuration invalid or incomplete");
+        let gid: usize = self.instances.len();
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness, weight));
+        self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
+        self.instances_calculated.push(AtomicBool::new(false));
+        self.n_instances += 1;
+        let partition_id = 0;
+        self.instance_partition.push(partition_id as i32);
+        self.partition_count[partition_id] += 1;
+        self.partition_weight[partition_id] += weight;
+        let mut local_idx = 0;
+        let mut owner = -1;
+        if self.partition_mask[partition_id] {
+            let worker_instance_id = self.worker_instances.len();
+            self.worker_instances.push(gid);
+            let process_id = worker_instance_id % self.n_processes;
+            owner = process_id as i32;
+            local_idx = self.process_count[process_id];
+            self.process_count[process_id] += 1;
+            self.process_weight[process_id] += weight;
+            if process_id == self.process_id {
+                self.process_instances.push(gid);
+            }
+        }
+        self.instance_process.push((owner, local_idx));
+        gid
     }
 
+    /// add an instance without assigning it to any partition/process
+    /// It will be assigned later by assign_instances()
+    /// the instance added is not a table
     #[inline]
     pub fn add_instance_no_assign(
         &mut self,
@@ -362,38 +471,30 @@ impl DistributionCtx {
         threads_witness: usize,
         weight: u64,
     ) -> usize {
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness));
-        self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
-        self.instances_owner.push((-1, 0, weight));
-        self.n_instances += 1;
-        self.n_instances - 1
-    }
-
-    pub fn add_instance_no_assign_table(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, true, 1));
-        self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
-        self.instances_owner.push((-1, 0, weight));
-        self.n_instances += 1;
-        self.n_instances - 1
-    }
-
-    pub fn add_instance_assign_table_all(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
-        let mut idx = 0;
-        for rank in 0..self.n_processes {
-            self.n_instances += 1;
-            self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, false, 1));
-            self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
-            let new_owner = rank;
-            let count = self.owners_count[new_owner as usize] as usize;
-            self.instances_owner.push((new_owner, count, weight));
-            self.owners_count[new_owner as usize] += 1;
-            self.owners_weight[new_owner as usize] += weight;
-            if new_owner == self.rank {
-                self.my_instances.push(self.instances.len() - 1);
-                idx = self.instances.len() - 1;
-            }
+        if self.assignation_done {
+            panic!("Instances already assigned");
         }
-        idx
+        self.validate_static_config().expect("Static configuration invalid or incomplete");
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness, weight));
+        self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
+        self.instances_calculated.push(AtomicBool::new(false));
+        self.instance_partition.push(-1);
+        self.instance_process.push((-1, 0_usize));
+        self.n_instances += 1;
+        self.n_instances - 1
+    }
+
+    /// Add local table instances
+    pub fn add_table(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+        if self.assignation_done {
+            panic!("Instances already assigned");
+        }
+        self.validate_static_config().expect("Static configuration invalid or incomplete");
+        let lid = self.aux_tables.len();
+        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, true, 1, weight));
+        self.aux_table_map.push(-1);
+        self.n_tables += 1;
+        lid
     }
 
     pub fn set_chunks(&mut self, global_idx: usize, chunks: Vec<usize>, slow: bool) {
@@ -402,13 +503,31 @@ impl DistributionCtx {
         instance_info.slow = slow;
     }
 
+    pub fn add_table_all(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+        if self.assignation_done {
+            panic!("Instances already assigned");
+        }
+        self.validate_static_config().expect("Static configuration invalid or incomplete");
+        let lid = self.aux_tables.len();
+        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, false, 1, weight));
+        self.aux_table_map.push(-1);
+        self.n_tables += 1;
+        lid
+    }
+
+    /// Assign instances to partitions and processes
     pub fn assign_instances(&mut self, minimal_memory: bool) {
+        if self.assignation_done {
+            panic!("Instances already assigned");
+        }
+        //assign instances
+        self.validate_static_config().expect("Static configuration invalid or incomplete");
         if minimal_memory {
-            // Sort unassigned instances according to wc_weights
+            // Sort unassigned instances according to n_chunks
             let mut unassigned_instances = Vec::new();
-            for (idx, &(owner, _, _)) in self.instances_owner.iter().enumerate() {
-                if owner == -1 {
-                    unassigned_instances.push((idx, self.instances_chunks[idx].chunks.len() as u64));
+            for (gid, &partition_id) in self.instance_partition.iter().enumerate() {
+                if partition_id == -1 {
+                    unassigned_instances.push((gid, self.instances[gid].n_chunks));
                 }
             }
 
@@ -416,24 +535,33 @@ impl DistributionCtx {
             unassigned_instances.sort_by(|a, b| b.1.cmp(&a.1));
 
             // Assign half of the unassigned instances in round-robin fashion
-            let mut owner_idx = 0;
-            for (idx, _) in unassigned_instances.iter().take(unassigned_instances.len() / 2) {
-                self.instances_owner[*idx].0 = owner_idx as i32;
-                self.instances_owner[*idx].1 = self.owners_count[owner_idx] as usize;
-                self.owners_count[owner_idx] += 1;
-                self.owners_weight[owner_idx] += self.instances_owner[*idx].2;
-                if owner_idx == self.rank as usize {
-                    self.my_instances.push(*idx);
+            let mut partition_id: usize = 0;
+            let mut process_id: usize = 0;
+            for (gid, _) in unassigned_instances.iter().take(unassigned_instances.len() / 2) {
+                self.instance_partition[*gid] = partition_id as i32;
+                self.partition_count[partition_id] += 1;
+                self.partition_weight[partition_id] += self.instances[*gid].weight;
+                if self.partition_mask[partition_id] {
+                    self.worker_instances.push(*gid);
+                    let lid = self.process_count[process_id];
+                    self.process_count[process_id] += 1;
+                    self.process_weight[process_id] += self.instances[*gid].weight;
+                    if process_id == self.process_id {
+                        self.process_instances.push(*gid);
+                    }
+                    self.instance_process[*gid].0 = process_id as i32;
+                    self.instance_process[*gid].1 = lid;
+                    process_id = (process_id + 1) % self.n_processes;
                 }
-                owner_idx = (owner_idx + 1) % self.n_processes as usize;
+                partition_id = (partition_id + 1) % self.n_partitions;
             }
         }
 
         // Sort the unassigned instances by proof weight
         let mut unassigned_instances = Vec::new();
-        for (idx, &(owner, _, weight)) in self.instances_owner.iter().enumerate() {
-            if owner == -1 {
-                unassigned_instances.push((idx, weight));
+        for (gid, &partition_id) in self.instance_partition.iter().enumerate() {
+            if partition_id == -1 {
+                unassigned_instances.push((gid, self.instances[gid].weight));
             }
         }
 
@@ -443,460 +571,215 @@ impl DistributionCtx {
         // Distribute the unassigned instances to the process with minimum weight each time
         // cost: O(n^2) may be optimized if needed
 
-        let mut instances_assigned = vec![HashMap::<(usize, usize), usize>::new(); self.n_processes as usize];
+        let mut instances_assigned_partition = vec![HashMap::<(usize, usize), usize>::new(); self.n_partitions];
+        let mut instances_assigned_process = vec![HashMap::<(usize, usize), usize>::new(); self.n_processes];
 
-        for (idx, _) in &unassigned_instances {
+        let mut local_process_count = self.process_count.clone();
+        for (gid, _) in &unassigned_instances {
             let mut min_weight = u64::MAX;
             let mut min_weight_idx = 0;
-            for (i, &weight) in self.owners_weight.iter().enumerate() {
+            for (i, &weight) in self.partition_weight.iter().enumerate() {
                 if weight < min_weight {
                     min_weight = weight;
                     min_weight_idx = i;
-                } else if (min_weight == weight) && (self.owners_count[i] < self.owners_count[min_weight_idx]) {
+                } else if (min_weight == weight) && (self.partition_count[i] < self.partition_count[min_weight_idx]) {
                     min_weight_idx = i;
                 }
             }
-            let (airgroup_id, air_id) = self.get_instance_info(*idx);
-            *instances_assigned[min_weight_idx].entry((airgroup_id, air_id)).or_insert(0) += 1;
-            self.owners_count[min_weight_idx] += 1;
-            self.owners_weight[min_weight_idx] += self.instances_owner[*idx].2;
+            let (airgroup_id, air_id) = self.get_instance_info(*gid);
+            *instances_assigned_partition[min_weight_idx].entry((airgroup_id, air_id)).or_insert(0) += 1;
+            self.partition_count[min_weight_idx] += 1;
+            self.partition_weight[min_weight_idx] += self.instances[*gid].weight;
+            if self.partition_mask[min_weight_idx] {
+                self.worker_instances.push(*gid);
+                let mut min_weight = u64::MAX;
+                let mut min_weight_process_idx = 0;
+                for (i, &weight) in self.process_weight.iter().enumerate() {
+                    if weight < min_weight {
+                        min_weight = weight;
+                        min_weight_process_idx = i;
+                    } else if (min_weight == weight)
+                        && (local_process_count[i] < local_process_count[min_weight_process_idx])
+                    {
+                        min_weight_process_idx = i;
+                    }
+                }
+
+                local_process_count[min_weight_process_idx] += 1;
+                self.process_weight[min_weight_process_idx] += self.instances[*gid].weight;
+                instances_assigned_process[min_weight_process_idx]
+                    .entry((airgroup_id, air_id))
+                    .and_modify(|c| *c += 1)
+                    .or_insert(1);
+            }
         }
 
         unassigned_instances.sort_by_key(|&(idx, weight)| (self.instances_chunks[idx].slow, std::cmp::Reverse(weight)));
 
-        let owners_chunks: &mut Vec<HashSet<usize>> = &mut (0..self.n_processes).map(|_| HashSet::new()).collect();
+        let partitions_chunks: &mut Vec<HashSet<usize>> = &mut (0..self.n_partitions).map(|_| HashSet::new()).collect();
+        let process_chunks: &mut Vec<HashSet<usize>> = &mut (0..self.n_processes).map(|_| HashSet::new()).collect();
 
-        for (idx, _) in &unassigned_instances {
-            let chunks = &self.instances_chunks[*idx].chunks;
-            let (airgroup_id, air_id) = self.get_instance_info(*idx);
+        for (gid, _) in &unassigned_instances {
+            let chunks = &self.instances_chunks[*gid].chunks;
+            let (airgroup_id, air_id) = self.get_instance_info(*gid);
             let mut min_chunks = usize::MAX;
             let mut min_chunks_idx = 0;
-            for owner in 0..self.n_processes {
-                if instances_assigned[owner as usize].get(&(airgroup_id, air_id)).unwrap_or(&0) > &0 {
+            for partition_id in 0..self.n_partitions {
+                if instances_assigned_partition[partition_id].get(&(airgroup_id, air_id)).unwrap_or(&0) > &0 {
                     let mut new_chunks_added = 0;
                     for chunk in chunks {
-                        if !owners_chunks[owner as usize].contains(chunk) {
+                        if !partitions_chunks[partition_id].contains(chunk) {
                             new_chunks_added += 1;
                         }
                     }
                     if new_chunks_added < min_chunks {
                         min_chunks = new_chunks_added;
-                        min_chunks_idx = owner as usize;
+                        min_chunks_idx = partition_id;
                     }
                 }
+            }
+
+            if let Some(c) = instances_assigned_partition[min_chunks_idx].get_mut(&(airgroup_id, air_id)) {
+                *c -= 1;
             }
 
             for chunk in chunks {
-                owners_chunks[min_chunks_idx].insert(*chunk);
-            }
-            self.instances_owner[*idx].0 = min_chunks_idx as i32;
-            self.instances_owner[*idx].1 = self.owners_count[min_chunks_idx] as usize;
-            if let Some(c) = instances_assigned[min_chunks_idx].get_mut(&(airgroup_id, air_id)) {
-                *c -= 1;
-            }
-            if min_chunks_idx == self.rank as usize {
-                self.my_instances.push(*idx);
-            }
-        }
-    }
-
-    // Returns the maximum weight deviation from the average weight
-    // This is calculated as the maximum weight divided by the average weight
-    pub fn load_balance_info(&self) -> (f64, u64, u64, f64) {
-        let mut average_weight = 0.0;
-        let mut max_weight = 0;
-        let mut min_weight = u64::MAX;
-        for i in 0..self.n_processes as usize {
-            average_weight += self.owners_weight[i] as f64;
-            if self.owners_weight[i] > max_weight {
-                max_weight = self.owners_weight[i];
-            }
-            if self.owners_weight[i] < min_weight {
-                min_weight = self.owners_weight[i];
-            }
-        }
-        average_weight /= self.n_processes as f64;
-        let max_deviation = max_weight as f64 / average_weight;
-        (average_weight, max_weight, min_weight, max_deviation)
-    }
-
-    pub fn close(&mut self, n_airgroups: usize) {
-        //Calculate for each airgroup how many processes have instances of that airgroup alive
-        self.airgroup_instances_alives = vec![vec![0; self.n_processes as usize]; n_airgroups];
-        for (idx, &instance_info) in self.instances.iter().enumerate() {
-            let owner = self.instances_owner[idx].0;
-            self.airgroup_instances_alives[instance_info.airgroup_id][owner as usize] = 1;
-        }
-    }
-
-    pub fn distribute_roots(&self, values: [u64; 10]) -> Vec<u64> {
-        #[cfg(distributed)]
-        {
-            let mut all_values: Vec<u64> = vec![0u64; 10 * self.n_processes as usize];
-            self.world.all_gather_into(&values, &mut all_values);
-            all_values
-        }
-        #[cfg(not(distributed))]
-        {
-            values.to_vec()
-        }
-    }
-
-    pub fn send_proof_to_rank(&self, _proof: &Vec<u64>, _rank: i32) {
-        // Send the proof directly - the vector already contains its length information
-        #[cfg(distributed)]
-        self.world.process_at_rank(_rank).send(_proof);
-    }
-
-    #[cfg(distributed)]
-    pub fn recv_proof_from_rank(&self, _rank: i32) -> Vec<u64> {
-        // Receive the proof directly as a vector
-        let (proof_buffer, _) = self.world.process_at_rank(_rank).receive_vec::<u64>();
-        proof_buffer
-    }
-
-    #[cfg(not(distributed))]
-    pub fn recv_proof_from_rank(&self, _rank: i32) -> Vec<u64> {
-        vec![]
-    }
-
-    pub fn send_proof_agg_rank<F: PrimeField64>(&self, _proof: &Proof<F>) {
-        #[cfg(distributed)]
-        self.world.process_at_rank(self.outer_agg_rank).send_with_tag(&_proof.proof[..], _proof.airgroup_id as i32);
-    }
-
-    pub fn check_incoming_proofs(&self, airgroup_id: usize) -> Option<Vec<u64>> {
-        #[cfg(distributed)]
-        {
-            if let Some(_status) = self.world.any_process().immediate_probe_with_tag(airgroup_id as i32) {
-                let (proof_data, _status) = self.world.any_process().receive_vec_with_tag::<u64>(airgroup_id as i32);
-                Some(proof_data)
-            } else {
-                None
-            }
-        }
-        #[cfg(not(distributed))]
-        {
-            _ = airgroup_id;
-            None
-        }
-    }
-
-    pub fn distribute_airgroupvalues<F: PrimeField64>(
-        &self,
-        airgroupvalues: Vec<Vec<u64>>,
-        _global_info: &GlobalInfo,
-    ) -> Vec<Vec<F>> {
-        #[cfg(distributed)]
-        {
-            let airgroupvalues_flatten: Vec<u64> = airgroupvalues.into_iter().flatten().collect();
-            let mut gathered_data: Vec<u64> = vec![0; airgroupvalues_flatten.len() * self.n_processes as usize];
-
-            const FIELD_EXTENSION: usize = 3;
-
-            self.world.all_gather_into(&airgroupvalues_flatten, &mut gathered_data);
-
-            let mut airgroupvalues_full: Vec<Vec<F>> = Vec::new();
-            for agg_types in _global_info.agg_types.iter() {
-                let mut values = vec![F::ZERO; agg_types.len() * FIELD_EXTENSION];
-                for (idx, agg_type) in agg_types.iter().enumerate() {
-                    if agg_type.agg_type == 1 {
-                        values[idx * FIELD_EXTENSION] = F::ONE;
-                    }
-                }
-                airgroupvalues_full.push(values);
+                partitions_chunks[min_chunks_idx].insert(*chunk);
             }
 
-            for p in 0..self.n_processes as usize {
-                let mut pos = 0;
-                for (airgroup_id, agg_types) in _global_info.agg_types.iter().enumerate() {
-                    for (idx, agg_type) in agg_types.iter().enumerate() {
-                        if agg_type.agg_type == 0 {
-                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION] +=
-                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]);
-                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 1] +=
-                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]);
-                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2] +=
-                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
-                        } else {
-                            let mut acc = CubicExtensionField {
-                                value: [
-                                    airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION],
-                                    airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 1],
-                                    airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2],
-                                ],
-                            };
-                            let val = CubicExtensionField {
-                                value: [
-                                    F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]),
-                                    F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]),
-                                    F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]),
-                                ],
-                            };
-                            acc *= val;
-                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION] = acc.value[0];
-                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 1] = acc.value[1];
-                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2] = acc.value[2];
-                        }
-                        pos += FIELD_EXTENSION;
-                    }
-                }
-            }
-            airgroupvalues_full
-        }
-        #[cfg(not(distributed))]
-        {
-            airgroupvalues
-                .into_iter()
-                .map(|inner_vec| inner_vec.into_iter().map(|x| F::from_u64(x)).collect::<Vec<F>>())
-                .collect()
-        }
-    }
-
-    pub fn distribute_publics(&self, publics: Vec<u64>) -> Vec<u64> {
-        #[cfg(distributed)]
-        {
-            let size = self.n_processes;
-
-            let local_size = publics.len() as i32;
-            let mut sizes: Vec<i32> = vec![0; self.n_processes as usize];
-            self.world.all_gather_into(&local_size, &mut sizes);
-
-            // Compute displacements and total size
-            let mut displacements: Vec<i32> = vec![0; size as usize];
-            for i in 1..size as usize {
-                displacements[i] = displacements[i - 1] + sizes[i - 1];
-            }
-
-            let total_size: i32 = sizes.iter().sum();
-
-            // Flattened buffer to receive all the data
-            let mut all_publics: Vec<u64> = vec![0; total_size as usize];
-
-            let publics_sizes = &sizes;
-            let publics_displacements = &displacements;
-
-            let mut partitioned_all_publics =
-                PartitionMut::new(&mut all_publics, publics_sizes.as_slice(), publics_displacements.as_slice());
-
-            // Use all_gather_varcount_into to gather all data from all processes
-            self.world.all_gather_varcount_into(&publics, &mut partitioned_all_publics);
-
-            // Each process will now have the same complete dataset
-            all_publics
-        }
-        #[cfg(not(distributed))]
-        {
-            publics
-        }
-    }
-
-    pub fn distribute_multiplicity(&self, _multiplicity: &[AtomicU64], _owner: i32) {
-        #[cfg(distributed)]
-        {
-            //assert that I can operate with u32
-            assert!(_multiplicity.len() < u32::MAX as usize);
-
-            if _owner != self.rank {
-                //pack multiplicities in a sparce vector
-                let mut packed_multiplicity = Vec::new();
-                packed_multiplicity.push(0u32); //this will be the counter
-                for (idx, mul) in _multiplicity.iter().enumerate() {
-                    let m = mul.load(Ordering::Relaxed);
-                    if m != 0 {
-                        assert!(m < u32::MAX as u64);
-                        packed_multiplicity.push(idx as u32);
-                        packed_multiplicity.push(m as u32);
-                        packed_multiplicity[0] += 2;
-                    }
-                }
-                self.world.process_at_rank(_owner).send(&packed_multiplicity[..]);
-            } else {
-                let mut packed_multiplicity: Vec<u32> = vec![0; _multiplicity.len() * 2 + 1];
-                for i in 0..self.n_processes {
-                    if i != _owner {
-                        self.world.process_at_rank(i).receive_into(&mut packed_multiplicity);
-                        for j in (1..packed_multiplicity[0]).step_by(2) {
-                            let idx = packed_multiplicity[j as usize] as usize;
-                            let m = packed_multiplicity[j as usize + 1] as u64;
-                            _multiplicity[idx].fetch_add(m, Ordering::Relaxed);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn distribute_multiplicities(&self, _multiplicities: &[Vec<AtomicU64>], _owner: i32) {
-        #[cfg(distributed)]
-        {
-            // Ensure that each multiplicity vector can be operated with u32
-            let mut buff_size = 0;
-            for multiplicity in _multiplicities.iter() {
-                assert!(multiplicity.len() < u32::MAX as usize);
-                buff_size += multiplicity.len() + 1;
-            }
-
-            let n_columns = _multiplicities.len();
-            if _owner != self.rank {
-                // Pack multiplicities in a sparse vector
-                let mut packed_multiplicities = vec![0u32; n_columns];
-                for (col_idx, multiplicity) in _multiplicities.iter().enumerate() {
-                    for (idx, mul) in multiplicity.iter().enumerate() {
-                        let m = mul.load(Ordering::Relaxed);
-                        if m != 0 {
-                            assert!(m < u32::MAX as u64);
-                            packed_multiplicities[col_idx] += 1;
-                            packed_multiplicities.push(idx as u32);
-                            packed_multiplicities.push(m as u32);
-                        }
-                    }
-                }
-                self.world.process_at_rank(_owner).send(&packed_multiplicities[..]);
-            } else {
-                let mut packed_multiplicities: Vec<u32> = vec![0; buff_size * 2];
-                for i in 0..self.n_processes {
-                    if i != _owner {
-                        self.world.process_at_rank(i).receive_into(&mut packed_multiplicities);
-
-                        // Read counters
-                        let mut counters = vec![0usize; n_columns];
-                        for col_idx in 0..n_columns {
-                            counters[col_idx] = packed_multiplicities[col_idx] as usize;
-                        }
-
-                        // Unpack multiplicities
-                        let mut idx = n_columns;
-                        for col_idx in 0..n_columns {
-                            for _ in 0..counters[col_idx] {
-                                let row_idx = packed_multiplicities[idx] as usize;
-                                let m = packed_multiplicities[idx + 1] as u64;
-                                _multiplicities[col_idx][row_idx].fetch_add(m, Ordering::Relaxed);
-                                idx += 2;
+            if self.partition_mask[min_chunks_idx] {
+                let mut min_chunks = usize::MAX;
+                let mut min_process_id = 0;
+                for process_id in 0..self.n_processes {
+                    if instances_assigned_process[process_id].get(&(airgroup_id, air_id)).unwrap_or(&0) > &0 {
+                        let mut new_chunks_added = 0;
+                        for chunk in chunks {
+                            if !process_chunks[process_id].contains(chunk) {
+                                new_chunks_added += 1;
                             }
                         }
+                        if new_chunks_added < min_chunks {
+                            min_chunks = new_chunks_added;
+                            min_process_id = process_id;
+                        }
                     }
+                }
+
+                for chunk in chunks {
+                    process_chunks[min_process_id].insert(*chunk);
+                }
+
+                if min_process_id == self.process_id {
+                    self.process_instances.push(*gid);
+                }
+
+                self.instance_process[*gid].0 = min_process_id as i32;
+                self.instance_process[*gid].1 = self.process_count[min_process_id];
+                self.process_count[min_process_id] += 1;
+                if let Some(c) = instances_assigned_process[min_process_id].get_mut(&(airgroup_id, air_id)) {
+                    *c -= 1;
                 }
             }
         }
-    }
 
-    #[allow(unused_variables)]
-    pub fn distribute_recursive2_proofs(&mut self, alives: &[usize], proofs: &mut [Vec<Option<Vec<u64>>>]) {
-        #[cfg(distributed)]
-        {
-            // Count number of aggregations that will be done
-            let n_groups = alives.len();
-            let n_agregations: usize = alives.iter().map(|&alive| alive.div_ceil(3)).sum();
-            let aggs_per_process = (n_agregations / self.n_processes as usize).max(1);
-
-            let mut i_proof = 0;
-            // tags codes:
-            // 0,...,ngroups-1: proofs that need to be sent to rank0 from another rank for a group with alive == 1
-            // ngroups, ..., ngroups + 2*n_aggregations - 1: proofs that need to be sent to the owner of the aggregation task
-
-            for (group_idx, &alive) in alives.iter().enumerate() {
-                let group_proofs: &mut Vec<Option<Vec<u64>>> = &mut proofs[group_idx];
-                let n_aggs_group = alive.div_ceil(3);
-
-                if n_aggs_group == 0 {
-                    assert!(alive == 1);
-                    if self.rank == 0 {
-                        if group_proofs[0].is_none() {
-                            // Receive proof from the owner process
-                            let tag = group_idx as i32;
-                            let (msg, _status) = self.world.any_process().receive_vec_with_tag::<u64>(tag);
-                            group_proofs[0] = Some(msg);
-                        }
-                    } else if let Some(proof) = group_proofs[0].take() {
-                        let tag = group_idx as i32;
-                        self.world.process_at_rank(0).send_with_tag(&proof[..], tag);
+        // Add tables that
+        self.n_tables = 0;
+        for (table_idx, table) in self.aux_tables.iter().enumerate() {
+            if table.shared {
+                let mut min_weight = u64::MAX;
+                let mut process_id = 0;
+                for (i, &weight) in self.process_weight.iter().enumerate() {
+                    if weight < min_weight {
+                        min_weight = weight;
+                        process_id = i;
+                    } else if (min_weight == weight) && (self.process_count[i] < self.process_count[process_id]) {
+                        process_id = i;
                     }
                 }
-
-                for i in 0..n_aggs_group {
-                    let chunk = i_proof / aggs_per_process;
-                    let owner_rank =
-                        if chunk < self.n_processes as usize { chunk } else { i_proof % self.n_processes as usize };
-                    let left_idx = i * 3;
-                    let mid_idx = i * 3 + 1;
-                    let right_idx = i * 3 + 2;
-
-                    if owner_rank == self.rank as usize {
-                        for &idx in &[left_idx, mid_idx, right_idx] {
-                            if idx < alive && group_proofs[idx].is_none() {
-                                let tag = if idx == left_idx {
-                                    i_proof * 3 + n_groups
-                                } else if idx == mid_idx {
-                                    i_proof * 3 + n_groups + 1
-                                } else {
-                                    i_proof * 3 + n_groups + 2
-                                };
-                                let (msg, _status) = self.world.any_process().receive_vec_with_tag::<u64>(tag as i32);
-                                group_proofs[idx] = Some(msg);
-                            }
-                        }
-                    } else if self.n_processes > 1 {
-                        for &idx in &[left_idx, mid_idx, right_idx] {
-                            if idx < alive {
-                                if let Some(proof) = group_proofs[idx].take() {
-                                    let tag = if idx == left_idx {
-                                        i_proof * 3 + n_groups
-                                    } else if idx == mid_idx {
-                                        i_proof * 3 + n_groups + 1
-                                    } else {
-                                        i_proof * 3 + n_groups + 2
-                                    };
-                                    self.world.process_at_rank(owner_rank as i32).send_with_tag(&proof[..], tag as i32);
-                                }
-                            }
-                        }
+                let gid = self.instances.len();
+                self.instances.push(*table);
+                self.instances_calculated.push(AtomicBool::new(false));
+                self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
+                self.n_instances += 1;
+                self.n_tables += 1;
+                self.instance_partition.push(-2); // Mark as table
+                self.worker_instances.push(gid);
+                let lid = self.process_count[process_id];
+                self.process_count[process_id] += 1;
+                self.process_weight[process_id] += table.weight;
+                if process_id == self.process_id {
+                    self.process_instances.push(gid);
+                }
+                self.aux_table_map[table_idx] = gid as i32;
+                self.instance_process.push((process_id as i32, lid));
+            } else {
+                for rank in 0..self.n_processes {
+                    let gid = self.instances.len();
+                    self.instances.push(InstanceInfo::new(
+                        table.airgroup_id,
+                        table.air_id,
+                        true,
+                        false,
+                        table.threads_witness,
+                        table.weight,
+                    ));
+                    self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
+                    self.n_instances += 1;
+                    self.n_tables += 1;
+                    self.instance_partition.push(-2); // Mark as table
+                    self.worker_instances.push(gid);
+                    let lid = self.process_count[rank];
+                    self.process_count[rank] += 1;
+                    self.process_weight[rank] += table.weight;
+                    if rank == self.process_id {
+                        self.process_instances.push(gid);
+                        self.aux_table_map[table_idx] = gid as i32;
                     }
-                    i_proof += 1;
+                    self.instance_process.push((rank as i32, lid));
                 }
             }
         }
+        self.aux_tables.clear();
+        self.assignation_done = true;
     }
 
-    //rank 0 broadcasts to the rest of processes a msg of unknown size
-    //Root provides data in `buf`; others can pass an empty Vec that is filled with the message
-    pub fn broadcast(&self, _buf: &mut Vec<u8>) {
-        #[cfg(distributed)]
-        {
-            // global communication: rank 0 broadcasts to all processes
-            if self.n_processes > 1 {
-                let root = self.world.process_at_rank(0);
-
-                // 1) Broadcast the length as u64
-                let mut len: u64 = if self.rank == 0 { _buf.len() as u64 } else { 0 };
-                root.broadcast_into(&mut len);
-
-                // 2) Resize non-root buffers to the incoming size
-                if self.rank != 0 {
-                    _buf.resize(len as usize, 0u8);
-                }
-
-                // 3) Broadcast bytes into place
-                root.broadcast_into(&mut _buf[..]);
+    ///  Load balance info for partitions
+    ///  Does not include tables
+    pub fn load_balance_info_partition(&self) -> (f64, u64, u64, f64) {
+        let mut average_partition_weight = 0.0;
+        let mut max_partition_weight = 0;
+        let mut min_partition_weight = u64::MAX;
+        for i in 0..self.n_partitions {
+            average_partition_weight += self.partition_weight[i] as f64;
+            if self.partition_weight[i] > max_partition_weight {
+                max_partition_weight = self.partition_weight[i];
+            }
+            if self.partition_weight[i] < min_partition_weight {
+                min_partition_weight = self.partition_weight[i];
             }
         }
+        average_partition_weight /= self.n_partitions as f64;
+        let max_deviation = max_partition_weight as f64 / average_partition_weight;
+        (average_partition_weight, max_partition_weight, min_partition_weight, max_deviation)
     }
-}
 
-impl Default for DistributionCtx {
-    fn default() -> Self {
-        DistributionCtx::new()
-    }
-}
+    /// Load balance info for processes
+    pub fn load_balance_info_process(&self) -> (f64, u64, u64, f64) {
+        let mut average_process_weight = 0.0;
+        let mut max_process_weight = 0;
+        let mut min_process_weight = u64::MAX;
 
-// call free_agg_readiness_tracker_c() when DistributionCtx is dropped
-impl Drop for DistributionCtx {
-    fn drop(&mut self) {
-        #[cfg(distributed)]
-        {
-            free_agg_readiness_tracker_c();
+        for i in 0..self.n_processes {
+            average_process_weight += self.process_weight[i] as f64;
+            if self.process_weight[i] > max_process_weight {
+                max_process_weight = self.process_weight[i];
+            }
+            if self.process_weight[i] < min_process_weight {
+                min_process_weight = self.process_weight[i];
+            }
         }
+        average_process_weight /= self.n_processes as f64;
+        let max_deviation = max_process_weight as f64 / average_process_weight;
+        (average_process_weight, max_process_weight, min_process_weight, max_deviation)
     }
 }
-unsafe impl Send for DistributionCtx {}
-unsafe impl Sync for DistributionCtx {}
