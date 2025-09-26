@@ -674,23 +674,6 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn get_air_instance_params_print(&self, instance_id: usize, gen_proof: bool) {
-        let air_instance = self.air_instances[instance_id].read().unwrap();
-
-        let challenges = if gen_proof { air_instance.get_challenges_ptr() } else { self.get_challenges_ptr() };
-        let aux_trace: *mut u8 = if gen_proof { std::ptr::null_mut() } else { air_instance.get_aux_trace_ptr() };
-        let const_pols: *mut u8 = if gen_proof { std::ptr::null_mut() } else { air_instance.get_fixed_ptr() };
-
-        if instance_id == 5 {
-            let air_trace = air_instance.get_aux_trace();
-            for (i, v) in air_trace.iter().enumerate() {
-                if i >= 256 && i < 256 + 256 * 6 {
-                    println!("AUX TRACE {i} : {v}");
-                }
-            }
-        }
-    }
-
     pub fn get_air_instance_trace_ptr(&self, instance_id: usize) -> *mut u8 {
         self.air_instances[instance_id].read().unwrap().get_trace_ptr()
     }

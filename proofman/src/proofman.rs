@@ -662,6 +662,11 @@ where
                 continue;
             };
 
+            // Join the previous thread (if any) before starting a new one
+            if let Some(handle) = thread_handle.take() {
+                handle.join().unwrap();
+            }
+
             let instance_info = &instances[*instance_id];
             let (airgroup_id, air_id) = (instance_info.airgroup_id, instance_info.air_id);
             self.verify_proof_constraints_stage(
@@ -872,7 +877,7 @@ where
         timer_start_info!(INIT_PROOFMAN);
 
         let (d_buffers, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
-            Self::prepare_gpu(&sctx, &setups_vadcop, aggregation, &gpu_params, &mpi_ctx);
+            Self::prepare_gpu(&sctx, &setups_vadcop, verify_constraints, aggregation, &gpu_params, &mpi_ctx);
 
         if !verify_constraints {
             initialize_fixed_pols_tree(&pctx, &sctx, &setups_vadcop, &d_buffers, aggregation, &gpu_params);
@@ -2463,9 +2468,6 @@ where
         };
 
         mpi_ctx.barrier();
-
-        let n_gpus = get_num_gpus_c();
-        let n_processes_node = mpi_ctx.node_n_processes as usize as u64;
 
         let n_gpus = get_num_gpus_c();
         let n_processes_node = mpi_ctx.node_n_processes as usize as u64;
