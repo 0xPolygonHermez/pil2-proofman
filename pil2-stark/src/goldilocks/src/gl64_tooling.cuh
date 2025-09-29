@@ -43,6 +43,18 @@ public:
         default: assert(0); break;
         }
     }
+
+    static __device__ __forceinline__ void op_gpu_stride(uint64_t op, gl64_t *c, const gl64_t *a, uint32_t stride_a, const gl64_t *b, uint32_t stride_b)
+    {
+        switch (op)
+        {
+        case 0: c[threadIdx.x] = a[threadIdx.x * stride_a] + b[threadIdx.x * stride_b]; break;
+        case 1: c[threadIdx.x] = a[threadIdx.x * stride_a] - b[threadIdx.x * stride_b]; break;
+        case 2: c[threadIdx.x] = a[threadIdx.x * stride_a] * b[threadIdx.x * stride_b]; break;
+        case 3: c[threadIdx.x] = b[threadIdx.x * stride_b] - a[threadIdx.x * stride_a]; break;
+        default: assert(0); break;
+        }
+    }
 };
 
 struct AirInstanceInfo {

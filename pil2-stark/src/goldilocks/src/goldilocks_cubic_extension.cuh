@@ -389,6 +389,44 @@ public:
         c_[2 * blockDim.x + threadIdx.x] = B - G;
     }
 
+    static __device__ __forceinline__ void op_gpu_stride(uint64_t op, gl64_t *c, const gl64_t *a, uint32_t stride_a, const gl64_t *b, uint32_t stride_b)
+    {
+        gl64_t A, B, C, D, E, F, G;
+        switch (op)
+        {
+        case 0:
+            c[threadIdx.x*FIELD_EXTENSION] = a[threadIdx.x*stride_a] + b[threadIdx.x*stride_b];
+            c[threadIdx.x*FIELD_EXTENSION + 1] = a[threadIdx.x*stride_a + 1] + b[threadIdx.x*stride_b + 1];
+            c[threadIdx.x*FIELD_EXTENSION + 2] = a[threadIdx.x*stride_a + 2] + b[threadIdx.x*stride_b + 2];
+            break;
+        case 1:
+            c[threadIdx.x*FIELD_EXTENSION] = a[threadIdx.x*stride_a] - b[threadIdx.x*stride_b];
+            c[threadIdx.x*FIELD_EXTENSION + 1] = a[threadIdx.x*stride_a + 1] - b[threadIdx.x*stride_b + 1];
+            c[threadIdx.x*FIELD_EXTENSION + 2] = a[threadIdx.x*stride_a + 2] - b[threadIdx.x*stride_b + 2];
+            break;
+        case 2:            
+            A = (a[threadIdx.x*stride_a] + a[threadIdx.x*stride_a + 1]) * (b[threadIdx.x*stride_b] + b[threadIdx.x*stride_b+1]);
+            B = (a[threadIdx.x*stride_a] + a[threadIdx.x*stride_a + 2]) * (b[threadIdx.x*stride_b] + b[threadIdx.x*stride_b + 2]);
+            C = (a[threadIdx.x*stride_a+1] + a[threadIdx.x*stride_a + 2]) * (b[threadIdx.x*stride_b+1] + b[threadIdx.x*stride_b + 2]);
+            D = a[threadIdx.x*stride_a] * b[threadIdx.x*stride_b];
+            E = a[threadIdx.x*stride_a+1] * b[threadIdx.x*stride_b+1];
+            F = a[threadIdx.x*stride_a + 2] * b[threadIdx.x*stride_b + 2];
+            G = D - E;
+            c[threadIdx.x*FIELD_EXTENSION] = (C + G) - F;
+            c[threadIdx.x*FIELD_EXTENSION + 1] = ((((A + C) - E) - E) - D);
+            c[threadIdx.x*FIELD_EXTENSION + 2] = B - G;
+            break;
+        case 3:
+            c[threadIdx.x*FIELD_EXTENSION] = b[threadIdx.x*stride_b] - a[threadIdx.x*stride_a];
+            c[threadIdx.x*FIELD_EXTENSION + 1] = b[threadIdx.x*stride_b + 1] - a[threadIdx.x*stride_a + 1];
+            c[threadIdx.x*FIELD_EXTENSION + 2] = b[threadIdx.x*stride_b + 2] - a[threadIdx.x*stride_a + 2];
+            break;
+        default:
+            assert(0);
+            break;
+        }
+    }
+
     static __device__ __forceinline__ void op_gpu(uint64_t op, gl64_t *c, const gl64_t *a, bool const_a, const gl64_t *b, bool const_b)
     {
         switch (op)
@@ -477,7 +515,47 @@ public:
         c[2 * blockDim.x + threadIdx.x] = B - G;
     }
     
-    static __device__ __forceinline__ void op_31_gpu(uint64_t op, gl64_t *c, const gl64_t *a, bool const_a, const gl64_t *b, bool const_b)
+    static __device__ __forceinline__ void op_31_gpu_stride(uint64_t op, gl64_t *c, const gl64_t *a, uint32_t stride_a, const gl64_t *b, uint32_t stride_b)
+    {
+        if(b == c){
+            printf("Error: in-place operation not supported\n");
+            assert(0);
+        }
+        gl64_t aux;  
+        switch (op)
+        {
+        case 0:
+            c[threadIdx.x*FIELD_EXTENSION] = a[threadIdx.x*stride_a] + b[threadIdx.x*stride_b];
+            c[threadIdx.x*FIELD_EXTENSION+1] = a[threadIdx.x*stride_a + 1];
+            c[threadIdx.x*FIELD_EXTENSION+2] = a[threadIdx.x*stride_a + 2];
+            break;
+        case 1:
+            c[threadIdx.x*FIELD_EXTENSION] = a[threadIdx.x*stride_a] - b[threadIdx.x*stride_b];
+            c[threadIdx.x*FIELD_EXTENSION+1] = a[threadIdx.x*stride_a + 1];
+            c[threadIdx.x*FIELD_EXTENSION+2] = a[threadIdx.x*stride_a + 2];
+            break;
+        case 2:
+            aux = b[threadIdx.x*stride_b];
+            c[threadIdx.x*FIELD_EXTENSION] = a[threadIdx.x*stride_a] * aux;
+            c[threadIdx.x*FIELD_EXTENSION+1] = a[threadIdx.x*stride_a + 1] * aux;
+            c[threadIdx.x*FIELD_EXTENSION+2] = a[threadIdx.x*stride_a + 2] * aux;
+            break;
+        case 3:
+            c[threadIdx.x*FIELD_EXTENSION] = b[threadIdx.x*stride_b] - a[threadIdx.x*stride_a];
+            c[threadIdx.x*FIELD_EXTENSION+1] = -a[threadIdx.x*stride_a + 1];
+            c[threadIdx.x*FIELD_EXTENSION+2] = -a[threadIdx.x*stride_a + 2];
+            break;
+        default:
+            assert(0);
+            break;
+        }
+    }
+    
+
+
+
+
+static __device__ __forceinline__ void op_31_gpu(uint64_t op, gl64_t *c, const gl64_t *a, bool const_a, const gl64_t *b, bool const_b)
     {
         gl64_t aux;  // Declare outside switch to avoid bypass warning
         if (const_a && const_b)
