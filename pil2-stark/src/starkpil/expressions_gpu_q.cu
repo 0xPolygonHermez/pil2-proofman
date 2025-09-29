@@ -208,7 +208,7 @@ void ExpressionsGPUQ::calculateExpressions_gpu_q(StepsParams *d_params, Dest des
     //dim3 nBlocks_ =  nblocks_;
     //dim3 nThreads_ = nthreads_;
 
-    dim3 nThreads_(nrowsPack, 1, 1); //max: 512
+    dim3 nThreads_(nrowsPack, 2, 1); //max: 512
     dim3 nBlocks_ = 2048;  //max: 2048
 
     size_t sharedMem = (bufferCommitSize  + 9) * sizeof(Goldilocks::Element *) + 2 * (nThreads_.x * nThreads_.y) * (FIELD_EXTENSION + 1) * sizeof(Goldilocks::Element)+100*sizeof(Goldilocks::Element);
@@ -216,7 +216,7 @@ void ExpressionsGPUQ::calculateExpressions_gpu_q(StepsParams *d_params, Dest des
     TimerStartCategoryGPU(timer, EXPRESSIONS);
     computeChallengePowers_q_<<<1, 1, 0, stream>>>(h_expsArgs.dest_nParams, challengeId, d_params, d_challengePowers);
     computeExpressions_q__<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams, debug, challengeId, d_challengePowers);
-    print_q__<<<1, 1, 0, stream>>>(d_expsArgs);
+    //print_q__<<<1, 1, 0, stream>>>(d_expsArgs);
 
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 }
@@ -242,33 +242,22 @@ __device__ __noinline__ Goldilocks::Element* load_q__(
 #endif
     uint32_t& stride
 ) {
-    if(threadIdx.x == 0 && blockIdx.x == 0 && row==0){
-        printf("type %u ", type);
-    }
+    
     const uint32_t r = row + threadIdx.x;
     const uint64_t base = dArgs->bufferCommitSize;
     const uint64_t domainSize = dExpsArgs->domainSize;
 
     // Fast-path: temporary/intermediate buffers
     if (type == base ) {
-        if(threadIdx.x == 0 && blockIdx.x == 0 && row==0){
-            printf("temp1, offset  %llu ", threadIdx.y * dExpsArgs->maxTemp1Size + argIdx * blockDim.x);
-        }
         stride = 1;
         return &exprParams[type][threadIdx.y * dExpsArgs->maxTemp1Size + argIdx * blockDim.x];
     }
      if (type == base + 1) {
-        if(threadIdx.x == 0 && blockIdx.x == 0 && row==0){
-            printf("temp3, offset  %llu ", threadIdx.y * dExpsArgs->maxTemp3Size + argIdx * blockDim.x);
-        }
         stride = FIELD_EXTENSION;
         return &exprParams[type][threadIdx.y * dExpsArgs->maxTemp3Size + argIdx * blockDim.x];
     }
     // Fast-path: constants
     if (type >= base + 2) {
-        if(threadIdx.x == 0 && blockIdx.x == 0 && row==0){
-            printf("const, offset  %u ", (uint32_t)(argIdx));
-        }
         stride = 0;
         return &exprParams[type][argIdx];
     }
@@ -278,10 +267,6 @@ __device__ __noinline__ Goldilocks::Element* load_q__(
 
     // ConstPols
     if (type == 0) {
-
-        if(threadIdx.x == 0 && blockIdx.x == 0 && row==0){
-            printf("constPols, offset  %u ", (uint32_t)(argIdx));
-        }
         stride = 1;
         const Goldilocks::Element* basePtr =  &dParams->pConstPolsExtendedTreeAddress[2];
         const uint64_t pos = logicalRow * dArgs->mapSectionsN[0] + (uint64_t)(argIdx);
@@ -296,23 +281,14 @@ __device__ __noinline__ Goldilocks::Element* load_q__(
         const uint64_t pos = logicalRow * nCols + argIdx;
 
         if(dim == 1){
-            if(threadIdx.x == 0 && blockIdx.x == 0 && row==0){
-                printf("aux_trace1, offset  %llu ", offset + pos);
-            }
             stride = 1;
             temp1[threadIdx.x] = dParams->aux_trace[offset + pos];
             return temp1;
         } else{
-            if(threadIdx.x == 0 && blockIdx.x == 0 && row==0){
-                printf("aux_trace3, offset  %llu ", offset + pos);
-            }
             stride = FIELD_EXTENSION;
             temp3[threadIdx.x*FIELD_EXTENSION]= dParams->aux_trace[offset + pos];
             temp3[threadIdx.x*FIELD_EXTENSION + 1] = dParams->aux_trace[offset + pos + 1];
-            temp3[threadIdx.x*FIELD_EXTENSION + 2] = dParams->aux_trace[offset + pos + 2]; //rick
-            /*for (uint64_t d = 0; d < dim; d++) {
-                temp3[threadIdx.x + d * blockDim.x] = dParams->aux_trace[offset + pos + d];
-            }*/
+            temp3[threadIdx.x*FIELD_EXTENSION + 2] = dParams->aux_trace[offset + pos + 2]; 
             return temp3;
         }
     }
@@ -322,9 +298,6 @@ __device__ __noinline__ Goldilocks::Element* load_q__(
     const uint64_t nCols = dArgs->mapSectionsNCustomFixed[idx];
     const uint64_t pos = logicalRow * nCols + argIdx;
     stride = 1;
-    if(threadIdx.x == 0 && blockIdx.x == 0 && row==0){
-        printf("customFixed, offset  %llu ", offset + pos);
-    }
     temp1[threadIdx.x] = dParams->pCustomCommitsFixed[offset + pos];
     return temp1;
 }
@@ -371,9 +344,9 @@ __device__ __noinline__ void    accumulate_q__(ExpsArguments *d_expsArgs, DestPa
 {
     Goldilocks::Element* challenge_print = (Goldilocks::Element*) d_challengePowers;
 
-    if(print){
+    /*if(print){
         printf("factor %lu %lu %lu\n", challenge_print[(d_expsArgs->dest_nParams - (d_destParams->expId + 1))*FIELD_EXTENSION].fe, challenge_print[(d_expsArgs->dest_nParams - (d_destParams->expId + 1))*FIELD_EXTENSION + 1].fe, challenge_print[(d_expsArgs->dest_nParams - (d_destParams->expId + 1))*FIELD_EXTENSION + 2].fe);
-    }
+    }*/
     
     if (d_destParams->dim == 1)
     {
@@ -396,10 +369,10 @@ __device__ __noinline__ void    accumulate_q__(ExpsArguments *d_expsArgs, DestPa
         Goldilocks3GPU::op_gpu(0, accumulator, accumulator, false, helper, false);
     }*/
 
-    if(print){
+    /*if(print){
         Goldilocks::Element* helper_print = (Goldilocks::Element*) helper;
         printf("value %lu %lu %lu\n", helper_print[0].fe, helper_print[1].fe, helper_print[2].fe);
-    }
+    }*/
 }
 
 __global__ void computeChallengePowers_q_(uint64_t dest_nParams, uint64_t challengeId, StepsParams *d_params, Goldilocks::Element *d_challengePowers)
@@ -447,7 +420,7 @@ __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ 
     Goldilocks::Element *sharedWorkspace = (Goldilocks::Element *)(expressions_params + bufferCommitsSize + 9);
     Goldilocks::Element *valueA3 = &sharedWorkspace[threadIdx.y * 2 * blockDim.x * (FIELD_EXTENSION+1)];
     Goldilocks::Element *valueB3 = valueA3 + blockDim.x * FIELD_EXTENSION;
-    Goldilocks::Element *valueA1 = valueB3 + blockDim.x;
+    Goldilocks::Element *valueA1 = valueB3 + blockDim.x * FIELD_EXTENSION;
     Goldilocks::Element *valueB1 = valueA1 + blockDim.x;
 
     Goldilocks::Element *d_zi = &d_params->aux_trace[d_deviceArgs->zi_offset];
@@ -473,31 +446,22 @@ __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ 
         
         
 #pragma unroll 1
-        uint64_t limit = d_expsArgs->dest_nParams;
-        //if(limit > 8) limit = 8; // for debug, process only 4 constraints
-        for (uint64_t k = threadIdx.y; k < limit; k+=blockDim.y) //256
+        for (uint64_t k = threadIdx.y; k < d_expsArgs->dest_nParams; k+=blockDim.y)
         {   
 #if COUNTERS
             uint64_t counter[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 #endif
-            if(threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0){
+            /*if(threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0){
                 //printf("constraint executed constraintId: %lu - nOps: %lu - nArgs: %lu - nTemp1: %lu - nTemp3: %lu - challenge: %lu %lu %lu\n", d_destParams[k].expId, d_destParams[k].nOps, d_destParams[k].nArgs, d_destParams[k].nTemp1, d_destParams[k].nTemp3, d_challengePowers[d_destParams[k].expId*FIELD_EXTENSION].fe, d_challengePowers[d_destParams[k].expId*FIELD_EXTENSION +1 ].fe, d_challengePowers[d_destParams[k].expId*FIELD_EXTENSION + 2].fe);
                 printf("ExpId %lu ops %lu args %lu opsOffset %lu argsOffset %lu nTmp1 %lu nTmp3 %lu dim %lu\n", d_destParams[k].expId, d_destParams[k].nOps, d_destParams[k].nArgs, d_destParams[k].opsOffset, d_destParams[k].argsOffset, d_destParams[k].nTemp1, d_destParams[k].nTemp3, d_destParams[k].dim);
-            }
+            }*/
             uint8_t *ops =  &d_deviceArgs->opsConstraints[d_destParams[k].opsOffset];
             uint16_t *args =  &d_deviceArgs->argsConstraints[d_destParams[k].argsOffset];
 
             uint64_t i_args = 0;
             uint64_t nOps = d_destParams[k].nOps;
-            //gl64_t *res;
-            //if(k==limit-1) nOps = 2; //256
             for (uint64_t kk = 0; kk < nOps; ++kk)
-
             {
-                if(threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0){
-                    printf("    op %u ", ops[kk]);
-                }
-
                 switch (ops[kk])
                 {
                 case 0:
@@ -589,9 +553,6 @@ __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ 
                 }
                 }
             }
-            if(threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0){
-                printf("\n");
-            }
 #if COUNTERS
             for(uint32_t c = 0; c < 14; c++){
                 global_counter[c] += counter[c];
@@ -651,21 +612,12 @@ __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ 
 #endif
             
             if(ops[nOps-1] == 0){
-                if(threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0 && threadIdx.y == 0){
-                    printf("acc1 %lu \n", valueA1[i*FIELD_EXTENSION].fe);
-                }
                 accumulate_q__(d_expsArgs, &d_destParams[k], (gl64_t *)accumulator, (gl64_t *)(valueA1), (gl64_t*)d_challengePowers, (gl64_t *)(valueB3),  threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0); 
             }else{
-                if(threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0 && threadIdx.y == 0){
-                    printf("acc3 %lu %lu %lu\n", valueA3[i*FIELD_EXTENSION].fe, valueA3[i*FIELD_EXTENSION + 1].fe, valueA3[i*FIELD_EXTENSION + 2].fe);
-                }
+
                 accumulate_q__(d_expsArgs, &d_destParams[k], (gl64_t *)accumulator, (gl64_t *)(valueA3), (gl64_t*)d_challengePowers, (gl64_t *)(valueB3),  threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0);
             } 
         }
-        
-        // Synchronize after all constraint evaluations before accumulator reduction
-        __syncthreads();
-        
 #if COUNTERS
         if(threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0 && threadIdx.y == 0 && false){
             printf("Global Counters temp1 %lu tmp1> %lu temp3 %lu temp3> %lu publicInputs %lu numbers %lu airValues %lu proofValues %lu airgroupValues %lu challenges %lu evals %lu constPols %lu aux_trace %lu customCommits %lu\n", global_counter[0], global_counter[1], global_counter[2], global_counter[3], global_counter[4], global_counter[5], global_counter[6], global_counter[7], global_counter[8], global_counter[9], global_counter[10], global_counter[11], global_counter[12], global_counter[13]);
@@ -712,11 +664,7 @@ __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ 
         __syncthreads();
         ziAndstorePolynomial_q__(d_expsArgs, accumulator, d_zi, i);
         __syncthreads();
-        if(threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0 && threadIdx.y == 0){
-            printf("stored %lu %lu %lu\n", d_expsArgs->dest_gpu[i*FIELD_EXTENSION].fe, d_expsArgs->dest_gpu[i*FIELD_EXTENSION + 1].fe, d_expsArgs->dest_gpu[i*FIELD_EXTENSION + 2].fe);
-        }
-
-      chunk_idx += gridDim.x;
+        chunk_idx += gridDim.x;
     }
 
 }
