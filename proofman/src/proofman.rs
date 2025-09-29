@@ -1043,6 +1043,7 @@ where
         while self.rec1_witness_rx.try_recv().is_ok() {}
         while self.rec2_witness_rx.try_recv().is_ok() {}
 
+        self.worker_contributions.write().unwrap().clear();
         reset_device_streams_c(self.d_buffers.get_ptr());
 
         for inner_vec in self.received_agg_proofs.write().unwrap().iter_mut() {
