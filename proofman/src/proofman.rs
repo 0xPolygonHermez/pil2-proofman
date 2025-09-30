@@ -499,8 +499,11 @@ where
         let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
         my_instances_sorted.shuffle(&mut rng);
 
-        let my_instances_sorted_no_tables =
-            my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+        let my_instances_sorted_no_tables = my_instances_sorted
+            .iter()
+            .filter(|idx| !self.pctx.dctx_is_table(**idx) && !self.pctx.dctx_is_instance_calculated(**idx))
+            .copied()
+            .collect::<Vec<_>>();
 
         self.calculate_witness(
             &my_instances_sorted_no_tables,
@@ -1164,8 +1167,11 @@ where
 
             timer_stop_and_log_info!(PREPARING_CONTRIBUTIONS);
 
-            let my_instances_sorted_no_tables =
-                my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+            let my_instances_sorted_no_tables = my_instances_sorted
+                .iter()
+                .filter(|idx| !self.pctx.dctx_is_table(**idx) && !self.pctx.dctx_is_instance_calculated(**idx))
+                .copied()
+                .collect::<Vec<_>>();
 
             self.calculate_witness(
                 &my_instances_sorted_no_tables,

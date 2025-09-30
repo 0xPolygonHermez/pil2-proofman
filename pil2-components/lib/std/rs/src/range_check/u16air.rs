@@ -120,7 +120,7 @@ impl U16Air {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for U16Air {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, _global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>, _global_ids: Arc<RwLock<Vec<usize>>>, _input_data_path: Option<PathBuf>) {
         let (instance_found, mut table_instance_id) = pctx.dctx_find_process_table(self.airgroup_id, self.air_id);
 
         if !instance_found {

@@ -12,7 +12,7 @@ pub const MAX_COMPONENTS: usize = 1000;
 
 pub struct WitnessManager<F: PrimeField64> {
     components: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
-    components_instance_ids: Vec<RwLock<Vec<usize>>>,
+    components_instance_ids: Vec<Arc<RwLock<Vec<usize>>>>,
     components_std: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
     pctx: Arc<ProofCtx<F>>,
     sctx: Arc<SetupCtx<F>>,
@@ -27,7 +27,7 @@ impl<F: PrimeField64> WitnessManager<F> {
     pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) -> Self {
         WitnessManager {
             components: RwLock::new(Vec::new()),
-            components_instance_ids: (0..MAX_COMPONENTS).map(|_| RwLock::new(Vec::new())).collect(),
+            components_instance_ids: (0..MAX_COMPONENTS).map(|_| Arc::new(RwLock::new(Vec::new()))).collect(),
             components_std: RwLock::new(Vec::new()),
             pctx,
             sctx,
@@ -78,7 +78,7 @@ impl<F: PrimeField64> WitnessManager<F> {
         for (idx, component) in self.components_std.read().unwrap().iter().enumerate() {
             component.execute(
                 self.pctx.clone(),
-                &self.components_instance_ids[n_components + idx],
+                self.components_instance_ids[n_components + idx].clone(),
                 self.input_data_path.read().unwrap().clone(),
             );
         }
@@ -86,7 +86,7 @@ impl<F: PrimeField64> WitnessManager<F> {
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
             component.execute(
                 self.pctx.clone(),
-                &self.components_instance_ids[idx],
+                self.components_instance_ids[idx].clone(),
                 self.input_data_path.read().unwrap().clone(),
             );
         }

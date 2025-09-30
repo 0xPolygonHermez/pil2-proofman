@@ -5,7 +5,13 @@ use proofman_common::{BufferPool, ProofCtx, SetupCtx, DebugInfo};
 use std::path::PathBuf;
 
 pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
-    fn execute(&self, _pctx: Arc<ProofCtx<F>>, _global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {}
+    fn execute(
+        &self,
+        _pctx: Arc<ProofCtx<F>>,
+        _global_ids: Arc<RwLock<Vec<usize>>>,
+        _input_data_path: Option<PathBuf>,
+    ) {
+    }
 
     fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) {}
 
@@ -52,7 +58,7 @@ macro_rules! execute {
         fn execute(
             &self,
             pctx: Arc<ProofCtx<F>>,
-            global_ids: &std::sync::RwLock<Vec<usize>>,
+            global_ids: Arc<RwLock<Vec<usize>>>,
             _input_data_path: Option<std::path::PathBuf>,
         ) {
             let mut instance_ids = Vec::new();
