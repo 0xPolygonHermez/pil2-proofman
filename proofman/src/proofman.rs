@@ -1680,61 +1680,86 @@ where
         }
 
         timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
-        self.mpi_ctx.process_ready_for_outer_agg();
-        let outer_rank = self.mpi_ctx.get_outer_agg_rank() as usize;
-        tracing::info!("    Outer aggregation rank: {}", outer_rank);
 
         timer_stop_and_log_info!(GENERATING_PROOFS);
 
         let mut proof_id = None;
         let mut vadcop_final_proof = None;
         if options.aggregation {
-            let recursive2_proofs_data: Vec<Vec<u64>> = self
-                .recursive2_proofs
-                .iter()
-                .map(|lock| {
-                    let mut write_lock = lock.write().unwrap();
-                    write_lock.pop().expect("Expected at least one proof").proof
-                })
-                .collect();
-
-            timer_start_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
-
-            let agg_worker_proofs = aggregate_worker_proofs(
-                &self.pctx,
-                &self.mpi_ctx,
-                &self.setups,
-                recursive2_proofs_data,
-                &self.prover_buffer_recursive,
-                &self.const_pols,
-                &self.const_tree,
-                &options.output_dir_path,
-                self.d_buffers.get_ptr(),
-                false,
-            )?;
-
-            // TODO 0.12.0: RECOVER RMA
-            // if self.pctx.dctx_get_rank() == outer_rank {
-            //     self.worker_aggregations(&options)?;
-            // } else {
-            //     for airgroup in 0..self.pctx.global_info.air_groups.len() {
-            //         let proof = self.recursive2_proofs[airgroup].write().unwrap().pop().unwrap();
-            //         self.pctx.dctx_send_proof_agg_rank(&proof);
-            //     }
-            // };
-
+            self.mpi_ctx.process_ready_for_outer_agg();
+            let outer_rank = self.mpi_ctx.get_outer_agg_rank() as usize;
             let mut agg_proofs = Vec::new();
 
-            let worker_index = self.pctx.get_worker_index();
-            for (airgroup_id, proofs) in agg_worker_proofs.into_iter().enumerate() {
-                if let Some(Some(proof)) = proofs.into_iter().find(|p| p.is_some()) {
-                    agg_proofs.push(AggProofs::new(airgroup_id as u64, proof, vec![worker_index]));
-                }
+            if !options.rma {
+                timer_start_info!(WAITING_FOR_COMPRESSED_PROOFS);
+                self.mpi_ctx.barrier();
+                timer_stop_and_log_info!(WAITING_FOR_COMPRESSED_PROOFS);
+                timer_start_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
+                let recursive2_proofs_data: Vec<Vec<u64>> = self
+                    .recursive2_proofs
+                    .iter()
+                    .map(|lock| {
+                        let mut write_lock = lock.write().unwrap();
+                        write_lock.pop().expect("Expected at least one proof").proof
+                    })
+                    .collect();
+
+                aggregate_worker_proofs(
+                    &self.pctx,
+                    &self.mpi_ctx,
+                    &self.setups,
+                    recursive2_proofs_data,
+                    &self.prover_buffer_recursive,
+                    &self.const_pols,
+                    &self.const_tree,
+                    &options.output_dir_path,
+                    self.d_buffers.get_ptr(),
+                    false,
+                    &mut agg_proofs,
+                    phase == ProvePhase::Internal,
+                )?;
+                timer_stop_and_log_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
+            } else {
+                tracing::info!("    Outer aggregation rank: {}", outer_rank);
+                if self.pctx.mpi_ctx.rank as usize == outer_rank {
+                    self.worker_aggregations(&options, outer_rank != 0, phase == ProvePhase::Internal)?;
+                } else {
+                    for airgroup in 0..self.pctx.global_info.air_groups.len() {
+                        let proof = self.recursive2_proofs[airgroup].write().unwrap().pop().unwrap();
+                        self.pctx.mpi_ctx.send_proof_agg_rank(&proof);
+                    }
+                };
             }
 
-            timer_stop_and_log_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
-
             if self.mpi_ctx.rank == 0 {
+                if options.rma && outer_rank != 0 {
+                    let mut airgroup_instances_to_receive = vec![0; n_airgroups];
+                    for global_id in self.pctx.dctx_get_worker_instances().iter() {
+                        let airgroup_id = instances[*global_id].airgroup_id;
+                        airgroup_instances_to_receive[airgroup_id] += 1;
+                        if airgroup_instances_to_receive[airgroup_id] == 3 {
+                            airgroup_instances_to_receive[airgroup_id] = 1;
+                        }
+                    }
+
+                    for (airgroup, instances) in airgroup_instances_to_receive.iter_mut().take(n_airgroups).enumerate()
+                    {
+                        if *instances > 0 {
+                            if phase != ProvePhase::Internal {
+                                *instances = 1;
+                            }
+
+                            for _ in 0..*instances {
+                                let proof = self.pctx.mpi_ctx.recv_proof_from_rank(airgroup, outer_rank as i32);
+                                agg_proofs.push(AggProofs::new(
+                                    airgroup as u64,
+                                    proof,
+                                    vec![self.pctx.get_worker_index()],
+                                ));
+                            }
+                        }
+                    }
+                }
                 for proof in &agg_proofs {
                     let agg_proof =
                         Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, None, proof.proof.clone());
@@ -2121,7 +2146,14 @@ where
     }
 
     #[allow(clippy::type_complexity)]
-    fn _worker_aggregations(&self, options: &ProofOptions) -> Result<(), Box<dyn std::error::Error>> {
+    fn worker_aggregations(
+        &self,
+        options: &ProofOptions,
+        send_proofs: bool,
+        is_distributed: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        timer_start_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
+
         let my_rank = self.mpi_ctx.rank as usize;
         let n_processes = self.mpi_ctx.n_processes as usize;
 
@@ -2130,8 +2162,13 @@ where
 
         register_proof_done_callback_c(recursive_tx.clone());
 
+        let instances = self.pctx.dctx_get_instances();
         let n_airgroups = self.pctx.global_info.air_groups.len();
-        let airgroup_instances_alive = &self.pctx.dctx_get_airgroup_instances_alives();
+        let mut airgroup_instances_alive = vec![vec![0; n_processes]; n_airgroups];
+        for global_id in self.pctx.dctx_get_worker_instances().iter() {
+            let owner = self.pctx.dctx_get_process_owner_instance(*global_id) as usize;
+            airgroup_instances_alive[instances[*global_id].airgroup_id][owner] = 1;
+        }
         let mut alives = vec![0; n_airgroups];
         let mut n_proofs_to_be_received = 0;
         for airgroup in 0..n_airgroups {
@@ -2146,7 +2183,7 @@ where
         let mut total_proofs: usize = 0;
         for (airgroup, &n_proofs) in alives.iter().enumerate() {
             let n_recursive2_proofs = total_recursive_proofs(n_proofs);
-            if n_recursive2_proofs.has_remaining {
+            if n_recursive2_proofs.has_remaining && !is_distributed {
                 let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2);
                 let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup);
                 let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
@@ -2263,6 +2300,18 @@ where
         drop(rec2_witness_tx);
 
         recursive2_handle.join().unwrap();
+
+        if send_proofs {
+            self.recursive2_proofs.iter().enumerate().for_each(|(airgroup_id, lock)| {
+                let mut write_lock = lock.write().unwrap();
+                while let Some(proof_struct) = write_lock.pop() {
+                    let proof = proof_struct.proof;
+                    self.pctx.mpi_ctx.send_proof_to_rank(&proof, airgroup_id, 0);
+                }
+            });
+        }
+
+        timer_stop_and_log_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
 
         Ok(())
     }

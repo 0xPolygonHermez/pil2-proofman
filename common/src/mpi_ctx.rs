@@ -267,15 +267,15 @@ impl MpiCtx {
     }
 
     #[cfg(distributed)]
-    pub fn send_proof_to_rank(&self, proof: &Vec<u64>, rank: i32) {
+    pub fn send_proof_to_rank(&self, proof: &Vec<u64>, airgroup_id: usize, rank: i32) {
         // Send the proof directly - the vector already contains its length information
-        self.world.process_at_rank(rank).send(proof);
+        self.world.process_at_rank(rank).send_with_tag(proof, airgroup_id as i32);
     }
 
     #[cfg(distributed)]
-    pub fn recv_proof_from_rank(&self, rank: i32) -> Vec<u64> {
+    pub fn recv_proof_from_rank(&self, airgroup_id: usize, rank: i32) -> Vec<u64> {
         // Receive the proof directly as a vector
-        let (proof_buffer, _) = self.world.process_at_rank(rank).receive_vec::<u64>();
+        let (proof_buffer, _) = self.world.process_at_rank(rank).receive_vec_with_tag::<u64>(airgroup_id as i32);
         proof_buffer
     }
     #[cfg(distributed)]
