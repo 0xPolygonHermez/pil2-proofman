@@ -1205,6 +1205,7 @@ where
             drop(witness_handles);
 
             timer_start_info!(CALCULATING_TABLES);
+            self.wcm.pre_calculate_tables();
 
             //evaluate witness for instances of type "tables"
             for instance_id in my_instances_tables.iter() {
