@@ -26,6 +26,8 @@ type GetWitnessFinalFunc =
 
 type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
+pub const N_RECURSIVE_PROOFS_PER_AGGREGATION: usize = 3;
+
 #[derive(Debug)]
 pub struct MaxSizes {
     pub total_const_area: u64,
@@ -161,7 +163,7 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
 
     let setup_recursive2 = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0);
 
-    let updated_proof_size = 3 * proof_len + publics_circom_size;
+    let updated_proof_size = N_RECURSIVE_PROOFS_PER_AGGREGATION * proof_len + publics_circom_size;
 
     let mut updated_proof_recursive2: Vec<u64> = vec![0; updated_proof_size];
 
@@ -364,7 +366,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     mpi_ctx: &MpiCtx,
     setups: &SetupsVadcop<F>,
-    proofs: Vec<Vec<u64>>,
+    proofs: Vec<Vec<Proof<F>>>,
     prover_buffer: &[F],
     const_pols: &[F],
     const_tree: &[F],
@@ -382,14 +384,24 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
 
     let mut null_proofs: Vec<Vec<u64>> = vec![Vec::new(); n_airgroups];
 
+    let instances = pctx.dctx_get_instances();
+    let mut airgroup_instances_alive = vec![vec![0; n_processes]; n_airgroups];
+    for global_id in pctx.dctx_get_worker_instances().iter() {
+        let owner = pctx.dctx_get_process_owner_instance(*global_id) as usize;
+        airgroup_instances_alive[instances[*global_id].airgroup_id][owner] += 1;
+        if airgroup_instances_alive[instances[*global_id].airgroup_id][owner] == N_RECURSIVE_PROOFS_PER_AGGREGATION {
+            airgroup_instances_alive[instances[*global_id].airgroup_id][owner] = 1;
+        }
+    }
+
     // Pre-process data before starting recursion loop
     for airgroup in 0..n_airgroups {
         let mut current_pos = 0;
         for p in 0..n_processes {
             if p < rank {
-                current_pos += 1;
+                current_pos += airgroup_instances_alive[airgroup][p];
             }
-            alives[airgroup] += 1;
+            alives[airgroup] += airgroup_instances_alive[airgroup][p];
         }
         let setup = setups.get_setup(airgroup, 0, &ProofType::Recursive2);
         let publics_aggregation = n_publics_aggregation(pctx, airgroup);
@@ -397,11 +409,15 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
         airgroup_proofs.push(vec![None; alives[airgroup]]);
 
         if !proofs[airgroup].is_empty() {
-            airgroup_proofs[airgroup][current_pos] = Some(proofs[airgroup].clone());
+            for i in 0..proofs[airgroup].len() {
+                airgroup_proofs[airgroup][current_pos + i] = Some(proofs[airgroup][i].proof.clone());
+            }
         } else if rank == 0 {
             airgroup_proofs[airgroup][0] = Some(vec![0; setup.proof_size as usize + publics_aggregation]);
         }
     }
+
+    println!("Rank {}: Initial alives: {:?}", rank, alives);
 
     let min_alive = if is_distributed { 2 } else { 1 };
 
@@ -414,14 +430,16 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
             //create a vector of sice indices length
             let mut alive = alives[airgroup];
             if alive > min_alive {
-                let n_agg_proofs = alive / 3;
-                let n_remaining_proofs = alive % 3;
-                for i in 0..alive.div_ceil(3) {
-                    let j = i * 3;
+                let n_agg_proofs = alive / N_RECURSIVE_PROOFS_PER_AGGREGATION;
+                let n_remaining_proofs = alive % N_RECURSIVE_PROOFS_PER_AGGREGATION;
+                for i in 0..alive.div_ceil(N_RECURSIVE_PROOFS_PER_AGGREGATION) {
+                    let j = i * N_RECURSIVE_PROOFS_PER_AGGREGATION;
                     if airgroup_proofs[airgroup][j].is_none() {
                         continue;
                     }
-                    if (j + 2 < alive) || alive <= 3 {
+                    if (j + N_RECURSIVE_PROOFS_PER_AGGREGATION - 1 < alive)
+                        || alive <= N_RECURSIVE_PROOFS_PER_AGGREGATION
+                    {
                         if airgroup_proofs[airgroup][j + 1].is_none() {
                             panic!("Recursive2 proof is missing");
                         }
@@ -442,8 +460,8 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                             airgroup_proofs[airgroup][j + 1].clone().unwrap(),
                         );
 
-                        let proof_3 = if j + 2 < alive {
-                            airgroup_proofs[airgroup][j + 2].clone().unwrap()
+                        let proof_3 = if j + N_RECURSIVE_PROOFS_PER_AGGREGATION - 1 < alive {
+                            airgroup_proofs[airgroup][j + N_RECURSIVE_PROOFS_PER_AGGREGATION - 1].clone().unwrap()
                         } else {
                             null_proofs[airgroup].clone()
                         };
@@ -483,12 +501,13 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
 
                 //compact elements
                 for i in 0..n_agg_proofs {
-                    airgroup_proofs[airgroup][i] = airgroup_proofs[airgroup][i * 3].clone();
+                    airgroup_proofs[airgroup][i] =
+                        airgroup_proofs[airgroup][i * N_RECURSIVE_PROOFS_PER_AGGREGATION].clone();
                 }
 
                 for i in 0..n_remaining_proofs {
                     airgroup_proofs[airgroup][n_agg_proofs + i] =
-                        airgroup_proofs[airgroup][3 * n_agg_proofs + i].clone();
+                        airgroup_proofs[airgroup][N_RECURSIVE_PROOFS_PER_AGGREGATION * n_agg_proofs + i].clone();
                 }
                 alives[airgroup] = alive;
                 if alive > min_alive {
@@ -779,12 +798,12 @@ impl Recursive2Proofs {
     }
 }
 
-pub fn total_recursive_proofs(mut n: usize) -> Recursive2Proofs {
+pub fn total_recursive_proofs(mut n: usize, is_distributed: bool) -> Recursive2Proofs {
     let mut total = 0;
-    let mut rem = n % 3;
+    let mut rem = n % N_RECURSIVE_PROOFS_PER_AGGREGATION;
     while n > 1 {
-        let next = n / 3;
-        rem = n % 3;
+        let next = n / N_RECURSIVE_PROOFS_PER_AGGREGATION;
+        rem = n % N_RECURSIVE_PROOFS_PER_AGGREGATION;
         total += next;
         if next != 0 {
             n = next + rem;
@@ -794,7 +813,11 @@ pub fn total_recursive_proofs(mut n: usize) -> Recursive2Proofs {
     }
 
     if rem == 2 {
-        Recursive2Proofs::new(total + 1, true)
+        if is_distributed {
+            Recursive2Proofs::new(total, false)
+        } else {
+            Recursive2Proofs::new(total + 1, true)
+        }
     } else {
         Recursive2Proofs::new(total, false)
     }
