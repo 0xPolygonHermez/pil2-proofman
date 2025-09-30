@@ -64,8 +64,11 @@ pub struct ProveCmd {
     #[clap(short = 'c', long, value_name="KEY=VALUE", num_args(1..))]
     pub custom_commits: Vec<String>,
 
-    #[clap(short = 'r', long, default_value_t = false)]
+    #[clap(short = 'z', long, default_value_t = false)]
     pub preallocate: bool,
+
+    #[clap(short = 'r', long, default_value_t = false)]
+    pub rma: bool,
 
     #[clap(short = 'm', long, default_value_t = false)]
     pub minimal_memory: bool,
@@ -166,6 +169,7 @@ impl ProveCmd {
                     ProofOptions::new(
                         false,
                         self.aggregation,
+                        self.rma,
                         self.final_snark,
                         self.verify_proofs,
                         self.minimal_memory,
