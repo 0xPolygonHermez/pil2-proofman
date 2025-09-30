@@ -369,7 +369,9 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
     output_dir_path: &Path,
     d_buffers: *mut c_void,
     save_proofs: bool,
-) -> Result<Vec<Vec<Option<Vec<u64>>>>, Box<dyn std::error::Error>> {
+    agg_proofs: &mut Vec<AggProofs>,
+    is_distributed: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let n_processes = mpi_ctx.n_processes as usize;
     let rank = mpi_ctx.rank as usize;
     let n_airgroups = pctx.global_info.air_groups.len();
@@ -399,6 +401,8 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
         }
     }
 
+    let min_alive = if is_distributed { 2 } else { 1 };
+
     // agregation loop
     loop {
         mpi_ctx.barrier();
@@ -407,7 +411,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
         for airgroup in 0..n_airgroups {
             //create a vector of sice indices length
             let mut alive = alives[airgroup];
-            if alive > 1 {
+            if alive > min_alive {
                 let n_agg_proofs = alive / 3;
                 let n_remaining_proofs = alive % 3;
                 for i in 0..alive.div_ceil(3) {
@@ -485,7 +489,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                         airgroup_proofs[airgroup][3 * n_agg_proofs + i].clone();
                 }
                 alives[airgroup] = alive;
-                if alive > 1 {
+                if alive > min_alive {
                     pending_agregations = true;
                 }
             }
@@ -495,7 +499,17 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
         }
     }
 
-    Ok(airgroup_proofs)
+    if pctx.mpi_ctx.rank == 0 {
+        let worker_index = pctx.get_worker_index();
+        for (airgroup_id, alive) in alives.iter().enumerate() {
+            for i in 0..*alive {
+                let proof = airgroup_proofs[airgroup_id][i].take().expect("Expected proof");
+                agg_proofs.push(AggProofs::new(airgroup_id as u64, proof, vec![worker_index]));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

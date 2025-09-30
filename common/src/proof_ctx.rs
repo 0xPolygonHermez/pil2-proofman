@@ -40,6 +40,7 @@ pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
 pub struct ProofOptions {
     pub verify_constraints: bool,
     pub aggregation: bool,
+    pub rma: bool,
     pub final_snark: bool,
     pub verify_proofs: bool,
     pub save_proofs: bool,
@@ -52,6 +53,7 @@ impl BorshSerialize for ProofOptions {
     fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
         BorshSerialize::serialize(&self.verify_constraints, writer)?;
         BorshSerialize::serialize(&self.aggregation, writer)?;
+        BorshSerialize::serialize(&self.rma, writer)?;
         BorshSerialize::serialize(&self.final_snark, writer)?;
         BorshSerialize::serialize(&self.verify_proofs, writer)?;
         BorshSerialize::serialize(&self.save_proofs, writer)?;
@@ -66,6 +68,7 @@ impl BorshDeserialize for ProofOptions {
     fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
         let verify_constraints = bool::deserialize_reader(reader)?;
         let aggregation = bool::deserialize_reader(reader)?;
+        let rma = bool::deserialize_reader(reader)?;
         let final_snark = bool::deserialize_reader(reader)?;
         let verify_proofs = bool::deserialize_reader(reader)?;
         let save_proofs = bool::deserialize_reader(reader)?;
@@ -76,6 +79,7 @@ impl BorshDeserialize for ProofOptions {
         Ok(Self {
             verify_constraints,
             aggregation,
+            rma,
             final_snark,
             verify_proofs,
             save_proofs,
@@ -116,9 +120,11 @@ impl DebugInfo {
     }
 }
 impl ProofOptions {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         verify_constraints: bool,
         aggregation: bool,
+        rma: bool,
         final_snark: bool,
         verify_proofs: bool,
         minimal_memory: bool,
@@ -128,6 +134,7 @@ impl ProofOptions {
         Self {
             verify_constraints,
             aggregation,
+            rma,
             final_snark,
             verify_proofs,
             minimal_memory,
@@ -137,9 +144,11 @@ impl ProofOptions {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_test(
         verify_constraints: bool,
         aggregation: bool,
+        rma: bool,
         final_snark: bool,
         verify_proofs: bool,
         minimal_memory: bool,
@@ -149,6 +158,7 @@ impl ProofOptions {
         Self {
             verify_constraints,
             aggregation,
+            rma,
             final_snark,
             verify_proofs,
             save_proofs,
@@ -380,6 +390,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances.clone()
     }
 
+    pub fn dctx_get_worker_instances(&self) -> Vec<usize> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.worker_instances.clone()
+    }
+
     pub fn dctx_is_first_partition(&self) -> bool {
         let dctx = self.dctx.read().unwrap();
         dctx.partition_mask[0]
@@ -481,12 +496,6 @@ impl<F: PrimeField64> ProofCtx<F> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_instance(airgroup_id, air_id, threads_witness, weight)
-    }
-
-    pub fn dctx_get_airgroup_instances_alives(&self) -> Vec<Vec<usize>> {
-        // let dctx = self.dctx.read().unwrap();
-        // dctx.airgroup_instances_alives.clone()
-        Vec::new()
     }
 
     pub fn add_instance_assign_first_partition(

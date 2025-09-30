@@ -621,6 +621,7 @@ pub fn write_custom_commit_c(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[cfg(not(feature = "no_lib_link"))]
 pub fn commit_witness_c(
     arity: u64,
@@ -1284,6 +1285,7 @@ pub fn load_device_setup_c(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[cfg(not(feature = "no_lib_link"))]
 pub fn load_device_const_pols_c(
     airgroup_id: u64,
