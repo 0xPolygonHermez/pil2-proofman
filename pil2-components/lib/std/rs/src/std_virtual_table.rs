@@ -178,10 +178,10 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             for id in ids.iter() {
                 if vta.table_ids.iter().any(|&(table_id, _)| table_id == *id) {
                     if instance_id.is_none() {
-                        instance_id = Some(*id);
+                        instance_id = Some(vta.table_instance_id.load(Ordering::Relaxed) as usize);
                     } else {
                         // Check it is the same
-                        if instance_id.unwrap() != *id {
+                        if instance_id.unwrap() != vta.table_instance_id.load(Ordering::Relaxed) as usize {
                             panic!("Multiple unique table IDs found in the same Virtual Table Air");
                         }
                     }
