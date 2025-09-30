@@ -123,6 +123,12 @@ impl<F: PrimeField64> WitnessManager<F> {
         }
     }
 
+    pub fn pre_calculate_tables(&self) {
+        for component in self.components.read().unwrap().iter() {
+            component.pre_calculate_tables(self.pctx.clone());
+        }
+    }
+
     pub fn pre_calculate_witness(
         &self,
         stage: u32,

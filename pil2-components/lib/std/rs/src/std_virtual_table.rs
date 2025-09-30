@@ -30,15 +30,21 @@ pub struct VirtualTableAir {
     mask: u64,
     num_rows: usize,
     num_cols: usize,
-    table_ids: Vec<(usize, u64)>, // (table_id, acc_height)
+    pub table_ids: Vec<(usize, u64)>, // (table_id, acc_height)
     multiplicities: Vec<Vec<AtomicU64>>,
-    table_instance_id: AtomicU64,
+    pub table_instance_id: AtomicU64,
     calculated: AtomicBool,
     shared_tables: bool,
+    is_unique: bool,
 }
 
 impl<F: PrimeField64> StdVirtualTable<F> {
-    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: &SetupCtx<F>, shared_tables: bool) -> Arc<Self> {
+    pub fn new(
+        pctx: Arc<ProofCtx<F>>,
+        sctx: &SetupCtx<F>,
+        shared_tables: bool,
+        unique_worker_table_ids: Vec<usize>,
+    ) -> Arc<Self> {
         // Get relevant data from the global hint
         let virtual_table_global_hint = get_hint_ids_by_name(sctx.get_global_bin(), "virtual_table_data_global");
         if virtual_table_global_hint.is_empty() {
@@ -112,6 +118,8 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 .map(|_| (0..num_rows).into_par_iter().map(|_| AtomicU64::new(0)).collect())
                 .collect();
 
+            let is_unique = unique_worker_table_ids.iter().any(|id| table_ids.contains(id));
+
             let virtual_table_air = VirtualTableAir {
                 airgroup_id,
                 air_id,
@@ -124,6 +132,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 table_instance_id: AtomicU64::new(0),
                 calculated: AtomicBool::new(false),
                 shared_tables,
+                is_unique,
             };
             virtual_tables.push(Arc::new(virtual_table_air));
         }
@@ -158,6 +167,28 @@ impl<F: PrimeField64> StdVirtualTable<F> {
     pub fn inc_virtual_rows_ranged(&self, global_id: usize, ranged_values: &[u64]) {
         let (air_idx, uid_idx) = self.indices_by_global_id[global_id];
         self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_rows_ranged(uid_idx, ranged_values);
+    }
+
+    pub fn get_virtual_table_id_unique(&self, ids: &[usize]) -> Option<usize> {
+        let mut instance_id = None;
+        for vta in self.virtual_table_airs.as_ref().unwrap().iter() {
+            if vta.is_unique == false {
+                continue;
+            }
+            for id in ids.iter() {
+                if vta.table_ids.iter().any(|&(table_id, _)| table_id == *id) {
+                    if instance_id.is_none() {
+                        instance_id = Some(*id);
+                    } else {
+                        // Check it is the same
+                        if instance_id.unwrap() != *id {
+                            panic!("Multiple unique table IDs found in the same Virtual Table Air");
+                        }
+                    }
+                }
+            }
+        }
+        instance_id
     }
 }
 
@@ -293,6 +324,8 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         if !instance_found {
             if !self.shared_tables {
                 table_instance_id = pctx.add_table_all(self.airgroup_id, self.air_id);
+            } else if self.is_unique {
+                table_instance_id = pctx.add_table_unique(self.airgroup_id, self.air_id);
             } else {
                 table_instance_id = pctx.add_table(self.airgroup_id, self.air_id);
             }
@@ -331,7 +364,10 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         if stage == 1 {
             let table_instance_id = self.table_instance_id.load(Ordering::Relaxed) as usize;
 
-            let instance_id = pctx.dctx_get_table_instance_idx(table_instance_id);
+            let instance_id = match self.is_unique {
+                true => table_instance_id,
+                false => pctx.dctx_get_table_instance_idx(table_instance_id),
+            };
 
             if !_instance_ids.contains(&instance_id) {
                 return;

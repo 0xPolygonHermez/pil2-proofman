@@ -503,6 +503,12 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_table(airgroup_id, air_id, weight)
     }
 
+    pub fn add_table_unique(&self, airgroup_id: usize, air_id: usize) -> usize {
+        let mut dctx = self.dctx.write().unwrap();
+        let weight = self.get_weight(airgroup_id, air_id);
+        dctx.add_table_unique(airgroup_id, air_id, weight)
+    }
+
     pub fn add_table_all(&self, airgroup_id: usize, air_id: usize) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);

@@ -20,6 +20,8 @@ pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
     ) {
     }
 
+    fn pre_calculate_tables(&self, _pctx: Arc<ProofCtx<F>>) {}
+
     fn pre_calculate_witness(
         &self,
         _stage: u32,

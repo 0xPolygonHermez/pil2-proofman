@@ -528,6 +528,16 @@ where
 
         drop(witness_handles);
 
+        timer_start_info!(CALCULATING_TABLES);
+        let my_instances_tables = self.pctx.dctx_get_my_tables();
+
+        self.wcm.pre_calculate_tables();
+        for instance_id in my_instances_tables.iter() {
+            self.wcm.pre_calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref());
+            self.wcm.calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref());
+        }
+        timer_stop_and_log_info!(CALCULATING_TABLES);
+
         Ok(())
     }
     #[allow(clippy::too_many_arguments)]
@@ -647,9 +657,10 @@ where
             );
         }
 
-        let my_instances_tables = self.pctx.dctx_get_my_tables();
-
         timer_start_info!(CALCULATING_TABLES);
+        let my_instances_tables = self.pctx.dctx_get_my_tables();
+        self.wcm.pre_calculate_tables();
+
         for instance_id in my_instances_tables.iter() {
             self.wcm.calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref());
         }

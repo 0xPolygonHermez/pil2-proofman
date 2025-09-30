@@ -497,6 +497,20 @@ impl DistributionCtx {
         lid
     }
 
+    pub fn add_table_unique(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+        if self.assignation_done {
+            panic!("Instances already assigned");
+        }
+        self.validate_static_config().expect("Static configuration invalid or incomplete");
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, false, 1, weight));
+        self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
+        self.instances_calculated.push(AtomicBool::new(false));
+        self.instance_partition.push(-1);
+        self.instance_process.push((-1, 0_usize));
+        self.n_instances += 1;
+        self.n_instances - 1
+    }
+
     pub fn set_chunks(&mut self, global_idx: usize, chunks: Vec<usize>, slow: bool) {
         let instance_info = &mut self.instances_chunks[global_idx];
         instance_info.chunks = chunks;
@@ -682,7 +696,7 @@ impl DistributionCtx {
             }
         }
 
-        // Add tables that
+        // Add tables
         self.n_tables = 0;
         for (table_idx, table) in self.aux_tables.iter().enumerate() {
             if table.shared {
