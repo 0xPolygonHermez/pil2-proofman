@@ -322,10 +322,10 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         let (instance_found, mut table_instance_id) = pctx.dctx_find_process_table(self.airgroup_id, self.air_id);
 
         if !instance_found {
-            if !self.shared_tables {
-                table_instance_id = pctx.add_table_all(self.airgroup_id, self.air_id);
-            } else if self.is_unique {
+            if self.is_unique {
                 table_instance_id = pctx.add_table_unique(self.airgroup_id, self.air_id);
+            } else if !self.shared_tables {
+                table_instance_id = pctx.add_table_all(self.airgroup_id, self.air_id);
             } else {
                 table_instance_id = pctx.add_table(self.airgroup_id, self.air_id);
             }
