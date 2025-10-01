@@ -364,7 +364,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     mpi_ctx: &MpiCtx,
     setups: &SetupsVadcop<F>,
-    proofs: Vec<Vec<Proof<F>>>,
+    mut proofs: Vec<Vec<Proof<F>>>,
     prover_buffer: &[F],
     const_pols: &[F],
     const_tree: &[F],
@@ -408,7 +408,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
 
         if !proofs[airgroup].is_empty() {
             for i in 0..proofs[airgroup].len() {
-                airgroup_proofs[airgroup][current_pos + i] = Some(proofs[airgroup][i].proof.clone());
+                airgroup_proofs[airgroup][current_pos + i] = Some(std::mem::take(&mut proofs[airgroup][i].proof));
             }
         } else if rank == 0 {
             airgroup_proofs[airgroup][0] = Some(vec![0; setup.proof_size as usize + publics_aggregation]);
@@ -447,7 +447,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                             airgroup,
                             0,
                             None,
-                            airgroup_proofs[airgroup][j].clone().unwrap(),
+                            airgroup_proofs[airgroup][j].take().unwrap(),
                         );
 
                         let proof2 = Proof::new(
@@ -455,11 +455,11 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                             airgroup,
                             0,
                             None,
-                            airgroup_proofs[airgroup][j + 1].clone().unwrap(),
+                            airgroup_proofs[airgroup][j + 1].take().unwrap(),
                         );
 
                         let proof_3 = if j + N_RECURSIVE_PROOFS_PER_AGGREGATION - 1 < alive {
-                            airgroup_proofs[airgroup][j + N_RECURSIVE_PROOFS_PER_AGGREGATION - 1].clone().unwrap()
+                            airgroup_proofs[airgroup][j + N_RECURSIVE_PROOFS_PER_AGGREGATION - 1].take().unwrap()
                         } else {
                             null_proofs[airgroup].clone()
                         };
@@ -500,12 +500,12 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                 //compact elements
                 for i in 0..n_agg_proofs {
                     airgroup_proofs[airgroup][i] =
-                        airgroup_proofs[airgroup][i * N_RECURSIVE_PROOFS_PER_AGGREGATION].clone();
+                        airgroup_proofs[airgroup][i * N_RECURSIVE_PROOFS_PER_AGGREGATION].take();
                 }
 
                 for i in 0..n_remaining_proofs {
                     airgroup_proofs[airgroup][n_agg_proofs + i] =
-                        airgroup_proofs[airgroup][N_RECURSIVE_PROOFS_PER_AGGREGATION * n_agg_proofs + i].clone();
+                        airgroup_proofs[airgroup][N_RECURSIVE_PROOFS_PER_AGGREGATION * n_agg_proofs + i].take();
                 }
                 alives[airgroup] = alive;
                 if alive > min_alive {
