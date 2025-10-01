@@ -120,7 +120,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         pCustomCommitsFixed,
     };
 
-    *params_pinned = h_params;
+    memcpy(params_pinned, &h_params, sizeof(StepsParams));
     
     CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams), cudaMemcpyHostToDevice, stream));
     
@@ -198,9 +198,8 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     uint64_t zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
     computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, stream);
 
-    if (setupCtx.starkInfo.overwriteFixed) {
-        uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx.starkInfo) * sizeof(Goldilocks::Element);
-        load_and_copy_to_device_in_chunks(d_buffers, constTreePath, (uint8_t*)d_const_tree, sizeConstTree, stream_id);
+    if (setupCtx.starkInfo.calculateFixedExtended) {
+        extendAndMerkelizeFixed(setupCtx, pConstPolsAddress, pConstPolsExtendedTreeAddress, timer, stream);
     }
 
     TimerStartGPU(timer, STARK_QUOTIENT_POLYNOMIAL);
@@ -233,7 +232,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         }
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_lev", false)];
         computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), &air_instance_info->opening_points[i], d_aux_trace, offset_helper, d_LEv, timer, stream);
-        evmap_inplace(setupCtx, h_params, count++, openingPoints.size(), openingPoints.data(), air_instance_info, (Goldilocks::Element*)d_LEv, timer, stream);
+        evmap_inplace(setupCtx, h_params, count++, openingPoints.size(), openingPoints.data(), air_instance_info, (Goldilocks::Element*)d_LEv, offset_helper, timer, stream);
     }
     
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
@@ -260,7 +259,12 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     dim3 threads(256);
     dim3 blocks((NExtended + threads.x - 1) / threads.x);
     computeX_kernel<<<blocks, threads, 0, stream>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));
-    calculateExpression(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId, false, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+    TimerStartGPU(timer, STARK_FRI_POLYNOMIAL);
+    // calculateExpression(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId, false, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, air_instance_info->airId == 0);
+    TimerStartCategoryGPU(timer, EXPRESSIONS);
+    calculateFRIExpression(setupCtx, h_params, air_instance_info, stream);
+    TimerStopCategoryGPU(timer, EXPRESSIONS);
+    TimerStopGPU(timer, STARK_FRI_POLYNOMIAL);
     for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) { 
         Goldilocks::Element *src = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)];
         starks.treesFRI[step]->setSource(src);

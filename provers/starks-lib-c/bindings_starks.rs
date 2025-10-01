@@ -110,7 +110,9 @@ extern "C" {
     pub fn get_max_args(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
     
     pub fn get_max_ops(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
-    
+
+    pub fn get_operations_quotient(pExpressionsBin: *mut ::std::os::raw::c_void, pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+
     pub fn expressions_bin_free(pExpressionsBin: *mut ::std::os::raw::c_void);
 
     // Hints
@@ -510,11 +512,14 @@ extern "C" {
         maxSizeProverBuffer: u64,
         maxSizeProverBufferAggregation: u64,
         maxProofSize: u64,
-        maxProofsPerGPU: u64,
-        maxRecursiveProofsPerGPU: u64,
         max_n_bits_ext: u64,
     ) -> u64;
     
+    pub fn get_instances_ready(
+        d_buffers_: *mut ::std::os::raw::c_void,
+        instances_ready: *mut i64,
+    );
+
     pub fn reset_device_streams(
         d_buffers_: *mut ::std::os::raw::c_void,
     );
@@ -531,6 +536,13 @@ extern "C" {
     pub fn register_proof_done_callback(cb: ProofDoneCallback);
     
     pub fn launch_callback(instanceId: u64, proofType: *mut ::std::os::raw::c_char);
+
+    // MPI calls
+    // ========================================================================================
+    pub fn initialize_agg_readiness_tracker();
+    pub fn free_agg_readiness_tracker();
+    pub fn agg_is_ready() -> i32;
+    pub fn reset_agg_readiness_tracker();
 }
 
 // Type definitions

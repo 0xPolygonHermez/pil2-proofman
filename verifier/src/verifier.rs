@@ -312,9 +312,7 @@ pub fn stark_verify(
                 wi = wi.inverse();
             }
 
-            let val = (x - (xi_challenge * wi)).inverse() * x;
-
-            xdivxsub[q].push(val);
+            xdivxsub[q].push((x - (xi_challenge * wi)).inverse());
         }
     }
 

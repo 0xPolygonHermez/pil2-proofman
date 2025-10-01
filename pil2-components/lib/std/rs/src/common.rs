@@ -4,8 +4,8 @@ use fields::PrimeField64;
 
 use proofman_common::{ProofCtx, SetupCtx};
 use proofman_hints::{
-    get_hint_field_constant_gc, get_hint_field_constant, get_hint_field_constant_a, HintFieldOptions, HintFieldOutput,
-    HintFieldValue,
+    get_hint_field_constant, get_hint_field_constant_a, get_hint_field_constant_gc, get_hint_field_gc_constant_a,
+    HintFieldOptions, HintFieldOutput, HintFieldValue,
 };
 
 pub const STD_MODE_DEFAULT: usize = 0;
@@ -16,7 +16,28 @@ pub trait AirComponent<F: PrimeField64> {
         -> Arc<Self>;
 }
 
+/// Normalize the values.
+pub fn normalize_vals<F: PrimeField64>(vals: &[HintFieldOutput<F>]) -> Vec<HintFieldOutput<F>> {
+    let is_zero = |v: &HintFieldOutput<F>| match v {
+        HintFieldOutput::Field(x) => *x == F::ZERO,
+        HintFieldOutput::FieldExtended(ext) => ext.is_zero(),
+    };
+
+    // Find the index of the last non-zero entry
+    let last_non_zero = vals.iter().rposition(|v| !is_zero(v)).unwrap_or(0);
+
+    // Keep everything from index 0 to last_non_zero
+    vals[..=last_non_zero].to_vec()
+}
+
 // Helper to extract hint fields
+pub fn get_global_hint_field<F: PrimeField64>(sctx: &SetupCtx<F>, hint_id: u64, field_name: &str) -> F {
+    match get_hint_field_constant_gc(sctx, hint_id, field_name, false) {
+        HintFieldValue::Field(value) => value,
+        _ => panic!("Hint '{hint_id}' for field '{field_name}' must be a field element"),
+    }
+}
+
 pub fn get_global_hint_field_constant_as<T, F>(sctx: &SetupCtx<F>, hint_id: u64, field_name: &str) -> T
 where
     T: TryFrom<u64>,
@@ -30,6 +51,60 @@ where
     let biguint_value = field_value.as_canonical_u64();
 
     biguint_value.try_into().unwrap_or_else(|_| panic!("Cannot convert value to {}", std::any::type_name::<T>()))
+}
+
+pub fn get_global_hint_field_constant_as_string<F: PrimeField64>(
+    sctx: &SetupCtx<F>,
+    hint_id: u64,
+    field_name: &str,
+) -> String {
+    let hint_field = get_hint_field_constant_gc(sctx, hint_id, field_name, false);
+
+    match hint_field {
+        HintFieldValue::String(value) => value,
+        _ => panic!("Hint '{hint_id}' for field '{field_name}' must be a string"),
+    }
+}
+
+pub fn get_global_hint_field_constant_a_as<T, F>(sctx: &SetupCtx<F>, hint_id: u64, field_name: &str) -> Vec<T>
+where
+    T: TryFrom<u64>,
+    F: PrimeField64,
+{
+    let hint_fields = get_hint_field_gc_constant_a(sctx, hint_id, field_name, false);
+
+    let mut return_values = Vec::new();
+    for (i, hint_field) in hint_fields.values.iter().enumerate() {
+        match hint_field {
+            HintFieldValue::Field(value) => {
+                let converted = T::try_from(value.as_canonical_u64()).unwrap_or_else(|_| {
+                    panic!("Cannot convert value at position {i} to {}", std::any::type_name::<T>())
+                });
+                return_values.push(converted);
+            }
+            _ => panic!("Hint '{hint_id}' for field '{field_name}' at position '{i}' must be a field element"),
+        }
+    }
+
+    return_values
+}
+
+pub fn get_global_hint_field_constant_a_as_string<F: PrimeField64>(
+    sctx: &SetupCtx<F>,
+    hint_id: u64,
+    field_name: &str,
+) -> Vec<String> {
+    let hint_fields = get_hint_field_gc_constant_a(sctx, hint_id, field_name, false);
+
+    let mut return_values = Vec::new();
+    for (i, hint_field) in hint_fields.values.iter().enumerate() {
+        match hint_field {
+            HintFieldValue::String(value) => return_values.push(value.clone()),
+            _ => panic!("Hint '{hint_id}' for field '{field_name}' at position '{i}' must be a string"),
+        }
+    }
+
+    return_values
 }
 
 pub fn get_hint_field_constant_as_field<F: PrimeField64>(

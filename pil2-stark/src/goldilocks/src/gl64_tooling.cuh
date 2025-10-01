@@ -59,6 +59,9 @@ struct AirInstanceInfo {
     uint64_t numBatchesEvals;
     EvalInfo **evalsInfo;
     uint64_t *evalsInfoSizes;
+
+    EvalInfo **evalsInfoFRI;
+    uint64_t *evalsInfoFRISizes;
     
     SetupCtx *setupCtx;
 
@@ -127,6 +130,63 @@ struct AirInstanceInfo {
             delete[] evalsInfoHost;
             count++;
         }
+
+        uint64_t nOpeningPoints = setupCtx->starkInfo.openingPoints.size();
+
+        EvalInfo **evalsInfoFRI_ = new EvalInfo*[nOpeningPoints];
+        uint64_t *evalsInfoFRISizes_ = new uint64_t[nOpeningPoints];
+
+        std::fill(evalsInfoFRISizes_, evalsInfoFRISizes_ + nOpeningPoints, 0);
+        for (uint64_t i = 0; i < setupCtx->starkInfo.evMap.size(); i++) {
+            evalsInfoFRISizes_[setupCtx->starkInfo.evMap[i].openingPos]++;
+        }
+
+        EvalInfo** evalsInfoByOpeningPos = new EvalInfo*[nOpeningPoints];
+        for (uint64_t pos = 0; pos < nOpeningPoints; pos++) {
+            evalsInfoByOpeningPos[pos] = new EvalInfo[evalsInfoFRISizes_[pos]];
+        }
+
+        std::fill(evalsInfoFRISizes_, evalsInfoFRISizes_ + nOpeningPoints, 0);
+        for (uint64_t i = 0; i < setupCtx->starkInfo.evMap.size(); i++) {
+            EvMap ev = setupCtx->starkInfo.evMap[i];
+            uint64_t pos = ev.openingPos;
+
+            std::string type = (ev.type == EvMap::eType::cm) ? "cm" :
+                            (ev.type == EvMap::eType::custom) ? "custom" : "fixed";
+
+            PolMap polInfo = (type == "cm")      ? setupCtx->starkInfo.cmPolsMap[ev.id] :
+                            (type == "custom")  ? setupCtx->starkInfo.customCommitsMap[ev.commitId][ev.id] :
+                                                setupCtx->starkInfo.constPolsMap[ev.id];
+
+            EvalInfo* evInfo = &evalsInfoByOpeningPos[pos][evalsInfoFRISizes_[pos]];
+            evInfo->type = (type == "cm") ? 0 : (type == "custom") ? 1 : 2;
+            evInfo->offset = setupCtx->starkInfo.getTraceOffset(type, polInfo, true);
+            evInfo->stride = setupCtx->starkInfo.getTraceNColsSection(type, polInfo, true);
+            evInfo->dim = polInfo.dim;
+            evInfo->evalPos = i;
+            evInfo->openingPos = pos;
+
+            evalsInfoFRISizes_[pos]++;
+        }
+
+        for (uint64_t opening = 0; opening < nOpeningPoints; opening++) {
+            CHECKCUDAERR(cudaMalloc(&evalsInfoFRI_[opening], evalsInfoFRISizes_[opening] * sizeof(EvalInfo)));
+            CHECKCUDAERR(cudaMemcpy(evalsInfoFRI_[opening], evalsInfoByOpeningPos[opening],
+                                    evalsInfoFRISizes_[opening] * sizeof(EvalInfo),
+                                    cudaMemcpyHostToDevice));
+            delete[] evalsInfoByOpeningPos[opening];
+        }
+        
+        CHECKCUDAERR(cudaMalloc(&evalsInfoFRI, nOpeningPoints * sizeof(EvalInfo*)));
+        CHECKCUDAERR(cudaMemcpy(evalsInfoFRI, evalsInfoFRI_, nOpeningPoints * sizeof(EvalInfo*), cudaMemcpyHostToDevice));
+        
+        delete[] evalsInfoFRI_;
+        
+        CHECKCUDAERR(cudaMalloc(&evalsInfoFRISizes, nOpeningPoints * sizeof(uint64_t)));
+        CHECKCUDAERR(cudaMemcpy(evalsInfoFRISizes, evalsInfoFRISizes_, nOpeningPoints * sizeof(uint64_t), cudaMemcpyHostToDevice));
+        
+        delete[] evalsInfoFRISizes_;
+        delete[] evalsInfoByOpeningPos;
     }
 
     ~AirInstanceInfo() {
@@ -148,8 +208,28 @@ struct AirInstanceInfo {
 
         delete[] evalsInfoSizes;
         delete[] evalsInfo;
-}
 
+        if (evalsInfoFRI != nullptr) {
+            uint64_t nOpeningPoints = setupCtx->starkInfo.openingPoints.size();
+            
+            EvalInfo **host_evalsInfoFRI = new EvalInfo*[nOpeningPoints];
+            CHECKCUDAERR(cudaMemcpy(host_evalsInfoFRI, evalsInfoFRI, nOpeningPoints * sizeof(EvalInfo*), cudaMemcpyDeviceToHost));
+            
+            for (uint64_t i = 0; i < nOpeningPoints; ++i) {
+                if (host_evalsInfoFRI[i] != nullptr) {
+                    CHECKCUDAERR(cudaFree(host_evalsInfoFRI[i]));
+                }
+            }
+            
+            delete[] host_evalsInfoFRI;
+            
+            CHECKCUDAERR(cudaFree(evalsInfoFRI));
+        }
+
+        if (evalsInfoFRISizes != nullptr) {
+            CHECKCUDAERR(cudaFree(evalsInfoFRISizes));
+        }
+    }
 };
 
 
@@ -158,7 +238,7 @@ struct StreamData{
     //const data
     cudaStream_t stream;
     uint32_t gpuId;
-    uint32_t slotId;
+    uint64_t localStreamId;
     StepsParams *pinned_params;
     Goldilocks::Element *pinned_buffer_proof;
     Goldilocks::Element *pinned_buffer_exps_params;
@@ -183,24 +263,23 @@ struct StreamData{
     string proofFile;
     uint64_t airgroupId; 
     uint64_t airId; 
-    uint64_t instanceId;
+    int64_t instanceId;
     string proofType;
-    
-    uint64_t offset;
-    
+        
     bool recursive;
     bool extraStream;
     uint64_t streamsUsed;
     
-    void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint64_t offset_, bool recursive_){
+    void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_){
         uint64_t maxExps = 1000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
         timer.init(stream);
         gpuId = gpuId_;
-        offset = offset_;
+        localStreamId = localStreamId_;
         recursive = recursive_;
         cudaEventCreate(&end_event);
+        instanceId = -1;
         status = 0;
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_proof, max_size_proof * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
@@ -236,11 +315,11 @@ struct StreamData{
         CHECKCUDAERR(cudaFree(d_expsArgs));
     }
 
-    void reset(){
+    void reset(bool reset_status){
         cudaSetDevice(gpuId);
         cudaEventDestroy(end_event);
         cudaEventCreate(&end_event);
-        status = 3;
+        status = reset_status ? 0 : 3;
 
         extraStream = false;
         streamsUsed = 1;
@@ -264,18 +343,21 @@ struct DeviceCommitBuffers
 {
     gl64_t **d_constPols;
     gl64_t **d_constPolsAggregation;
-    gl64_t **d_aux_trace;
+    gl64_t ***d_aux_trace;
+    gl64_t ***d_aux_traceAggregation;
     Goldilocks::Element **pinned_buffer;
     Goldilocks::Element **pinned_buffer_extra;
     bool recursive;
     uint64_t max_size_proof;
 
-    uint64_t pinned_size = 128 * 1024 * 1024; //256MB, this is the size of pinned memory for consts, it can be changed if needed
+    uint64_t pinned_size = 128 * 1024 * 1024; //256MB
 
     uint32_t  n_gpus;
     uint32_t* my_gpu_ids;
     uint32_t* gpus_g2l; 
     uint32_t n_total_streams;
+    uint32_t n_streams;
+    uint32_t n_recursive_streams;
     std::mutex mutex_slot_selection;
     std::mutex *mutex_pinned;
     StreamData *streamsData;

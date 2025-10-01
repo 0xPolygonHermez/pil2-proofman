@@ -60,22 +60,45 @@ private function update_piop_prod(const int name, const int surname, const int t
     }
 
     // Create debug hints for the witness computation
-    string name_expr[exprs_num];
-    expr sum_expr = 0;
+    string name_exprs[exprs_num];
+    expr sum_exprs = 0;
     for (int i = 0; i < exprs_num; i++) {
-        name_expr[i] = string(expressions[i]);
-        sum_expr += expressions[i];
+        name_exprs[i] = string(expressions[i]);
+        sum_exprs += expressions[i];
     }
 
-    // TODO: Redo when ternary operator works properly over expressions
-    expr type_hint;
-    if (type == PROD_TYPE_FREE) {
-        type_hint = sel;
+    if (update_type != PROD_UPDATE_TYPE_GLOBAL) {
+        @gprod_debug_data{name_piop: name_str, type_piop: type, busid: opid, num_reps: sel, name_exprs: name_exprs, 
+                          expressions: expressions, deg_expr: degree(sum_exprs), deg_sel: degree(sel)};
     } else {
-        type_hint = type;
+        // Save the information and issue it in a global context
+        container proof.std.gprod.hint alias gprodhint {
+            int airgroup_id[ARRAY_SIZE];
+            string name_piop[ARRAY_SIZE];
+            expr type_piop[ARRAY_SIZE];
+            string name_exprs[ARRAY_SIZE][64];
+            int busid[ARRAY_SIZE];
+            expr num_reps[ARRAY_SIZE];
+            expr expressions[ARRAY_SIZE][64];
+            int exprs_num[ARRAY_SIZE];
+            int num_global_hints = 0;
+        }
+
+        gprodhint.airgroup_id[gprodhint.num_global_hints] = AIRGROUP_ID;
+        gprodhint.name_piop[gprodhint.num_global_hints] = name_str;
+        gprodhint.type_piop[gprodhint.num_global_hints] = type;
+        for (int i = 0; i < exprs_num; i++) {
+            gprodhint.name_exprs[gprodhint.num_global_hints][i] = name_exprs[i];
+            gprodhint.expressions[gprodhint.num_global_hints][i] = expressions[i];
+        }
+        gprodhint.exprs_num[gprodhint.num_global_hints] = exprs_num;
+        gprodhint.busid[gprodhint.num_global_hints] = opid;
+        gprodhint.num_reps[gprodhint.num_global_hints] = sel;
+        gprodhint.num_global_hints++;
+
+        // Generate global debug hints
+        on final proof piop_gprod_issue_global_debug_hints();
     }
-    @gprod_debug_data{name_piop: name_str, name_expr: name_expr, busid: opid, is_global: update_type == PROD_UPDATE_TYPE_GLOBAL,
-                           type: type_hint, selector: sel, expressions: expressions, deg_expr: degree(sum_expr), deg_sel: degree(sel)};
 
     initial_checks_prod(name, surname, type, opid, exprs_num);
 
@@ -895,7 +918,22 @@ private function check_opids_were_completed_prod() {
     }
 }
 
+private function piop_gprod_issue_global_debug_hints() {
+    use proof.std.gprod.hint;
+    @gprod_debug_data_global{num_global_hints: num_global_hints}
+    for (int i = 0; i < num_global_hints; i++) {
+        int exprs_num = exprs_num[i];
+        expr tmp_name_exprs[exprs_num];
+        expr tmp_exprs[exprs_num];
+        for (int j = 0; j < exprs_num; j++) {
+            tmp_name_exprs[j] = name_exprs[i][j];
+            tmp_exprs[j] = expressions[i][j];
+        }
+        @gprod_debug_data_global{airgroup_id: airgroup_id[i], name_piop: name_piop[i], type_piop: type_piop[i], busid: busid[i], num_reps: num_reps[i], name_exprs: tmp_name_exprs, expressions: tmp_exprs};
+    }
+}
+
 private function piop_gprod_issue_global_hints() {
     use proof.std.gprod;
-    @std_prod_users{num_users: air_count, std_mode: std_mode, airgroup_ids: airgroup_ids, air_ids: air_ids, stage_wc: 2};
+    @std_prod_users{num_users: air_count, std_mode: std_mode, airgroup_ids: airgroup_ids, air_ids: air_ids};
 }

@@ -42,6 +42,32 @@ pub fn register_proof_done_callback_c(tx: crossbeam_channel::Sender<(u64, String
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn initialize_agg_readiness_tracker_c() {
+    unsafe {
+        initialize_agg_readiness_tracker();
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn free_agg_readiness_tracker_c() {
+    unsafe {
+        free_agg_readiness_tracker();
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn agg_is_ready_c() -> i32 {
+    unsafe { agg_is_ready() }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn reset_agg_readiness_tracker_c() {
+    unsafe {
+        reset_agg_readiness_tracker();
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn launch_callback_c(instance_id: u64, proof_type: &str) {
     let proof_type_str = CString::new(proof_type).unwrap();
     let proof_type_ptr = proof_type_str.as_ptr() as *mut std::os::raw::c_char;
@@ -261,6 +287,11 @@ pub fn get_max_n_args_c(p_expressions_bin: *mut c_void) -> u64 {
 #[cfg(not(feature = "no_lib_link"))]
 pub fn get_max_n_ops_c(p_expressions_bin: *mut c_void) -> u64 {
     unsafe { get_max_ops(p_expressions_bin) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_operations_quotient_c(p_expressions_bin: *mut c_void, p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_operations_quotient(p_expressions_bin, p_stark_info) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1139,8 +1170,6 @@ pub fn gen_device_streams_c(
     max_size_buffer: u64,
     max_size_buffer_aggregation: u64,
     max_pinned_proof_size: u64,
-    max_number_proofs_per_gpu: u64,
-    max_number_recursive_proofs_per_gpu: u64,
     max_n_bits_ext: u64,
 ) -> u64 {
     unsafe {
@@ -1149,10 +1178,16 @@ pub fn gen_device_streams_c(
             max_size_buffer,
             max_size_buffer_aggregation,
             max_pinned_proof_size,
-            max_number_proofs_per_gpu,
-            max_number_recursive_proofs_per_gpu,
             max_n_bits_ext,
         )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
+pub fn get_instances_ready_c(d_buffers: *mut ::std::os::raw::c_void, instances_ready: *mut i64) {
+    unsafe {
+        get_instances_ready(d_buffers, instances_ready);
     }
 }
 
@@ -1257,6 +1292,38 @@ pub fn register_proof_done_callback_c(_tx: crossbeam_channel::Sender<(u64, Strin
         "{}: ··· {}",
         "ffi     ",
         "register_proof_done_callback: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn initialize_agg_readiness_tracker_c() {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "initialize_agg_readiness_tracker: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn free_agg_readiness_tracker_c() {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "free_agg_readiness_tracker: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn agg_is_ready_c() -> i32 {
+    0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn reset_agg_readiness_tracker_c() {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "reset_agg_readiness_tracker: This is a mock call because there is no linked library"
     );
 }
 
@@ -1411,6 +1478,11 @@ pub fn get_max_n_args_c(_p_expressions_bin: *mut c_void) -> u64 {
 #[cfg(feature = "no_lib_link")]
 pub fn get_max_n_ops_c(_p_expressions_bin: *mut c_void) -> u64 {
     10000
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_operations_quotient_c(_p_expressions_bin: *mut c_void, _p_stark_info: *mut c_void) -> u64 {
+    0
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1942,12 +2014,16 @@ pub fn gen_device_streams_c(
     _max_size_buffer: u64,
     _max_size_buffer_aggregation: u64,
     _max_pinned_proof_size: u64,
-    _max_number_proofs_per_gpu: u64,
-    _max_number_recursive_proofs_per_gpu: u64,
     _max_n_bits_ext: u64,
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "set_max_size_thread: This is a mock call because there is no linked library");
     0
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
+pub fn get_instances_ready_c(_d_buffers: *mut ::std::os::raw::c_void, _instances_ready: *mut i64) {
+    trace!("{}: ··· {}", "ffi     ", "get_instances_ready: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
