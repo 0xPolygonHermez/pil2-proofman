@@ -420,8 +420,6 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
         }
     }
 
-    println!("Rank {}: Initial alives: {:?}", rank, alives);
-
     let min_alive = if is_distributed { 2 } else { 1 };
 
     // agregation loop
