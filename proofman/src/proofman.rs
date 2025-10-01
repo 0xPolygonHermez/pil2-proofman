@@ -1692,13 +1692,17 @@ where
                     self.d_buffers.get_ptr(),
                     false,
                     &mut agg_proofs,
-                    phase == ProvePhase::Internal,
+                    phase == ProvePhase::Internal || self.mpi_ctx.n_processes > 1,
                 )?;
                 timer_stop_and_log_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
             } else {
                 tracing::info!("    Outer aggregation rank: {}", outer_rank);
                 if self.pctx.mpi_ctx.rank as usize == outer_rank {
-                    self.worker_aggregations_rma(&options, outer_rank != 0, phase == ProvePhase::Internal)?;
+                    self.worker_aggregations_rma(
+                        &options,
+                        outer_rank != 0,
+                        phase == ProvePhase::Internal || self.mpi_ctx.n_processes > 1,
+                    )?;
                 } else {
                     for airgroup in 0..self.pctx.global_info.air_groups.len() {
                         let mut write_lock = self.recursive2_proofs[airgroup].write().unwrap();
@@ -2145,9 +2149,14 @@ where
         let mut airgroup_instances_alive = vec![vec![0; n_processes]; n_airgroups];
         for global_id in self.pctx.dctx_get_worker_instances().iter() {
             let owner = self.pctx.dctx_get_process_owner_instance(*global_id) as usize;
-            airgroup_instances_alive[instances[*global_id].airgroup_id][owner] += 1;
-            if airgroup_instances_alive[instances[*global_id].airgroup_id][owner] == N_RECURSIVE_PROOFS_PER_AGGREGATION
-            {
+            if is_distributed {
+                airgroup_instances_alive[instances[*global_id].airgroup_id][owner] += 1;
+                if airgroup_instances_alive[instances[*global_id].airgroup_id][owner]
+                    == N_RECURSIVE_PROOFS_PER_AGGREGATION
+                {
+                    airgroup_instances_alive[instances[*global_id].airgroup_id][owner] = 1;
+                }
+            } else {
                 airgroup_instances_alive[instances[*global_id].airgroup_id][owner] = 1;
             }
         }
