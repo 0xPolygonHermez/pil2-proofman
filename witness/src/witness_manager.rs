@@ -138,7 +138,6 @@ impl<F: PrimeField64> WitnessManager<F> {
                 .filter(|id| {
                     self.components_instance_ids[idx].read().unwrap().contains(id)
                         && (self.pctx.dctx_is_my_process_instance(**id) || self.pctx.dctx_is_table(**id))
-                        && !self.pctx.dctx_is_instance_calculated(**id)
                 })
                 .cloned()
                 .collect();
@@ -184,15 +183,11 @@ impl<F: PrimeField64> WitnessManager<F> {
                 .filter(|id| {
                     self.components_instance_ids[idx].read().unwrap().contains(id)
                         && (self.pctx.dctx_is_my_process_instance(**id) || self.pctx.dctx_is_table(**id))
-                        && !self.pctx.dctx_is_instance_calculated(**id)
                 })
                 .cloned()
                 .collect();
 
             if !instance_ids_filtered.is_empty() {
-                for id in &instance_ids_filtered {
-                    self.pctx.dctx_set_instance_calculated(*id);
-                }
                 component.calculate_witness(
                     stage,
                     self.pctx.clone(),

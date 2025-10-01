@@ -472,6 +472,7 @@ where
     }
 
     pub fn compute_witness_(&self, options: ProofOptions) -> Result<(), Box<dyn std::error::Error>> {
+        timer_start_info!(COMPUTE_STATS);
         self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize);
 
         self.reset();
@@ -531,6 +532,7 @@ where
 
         drop(witness_handles);
 
+        timer_stop_and_log_info!(COMPUTE_STATS);
         Ok(())
     }
     #[allow(clippy::too_many_arguments)]

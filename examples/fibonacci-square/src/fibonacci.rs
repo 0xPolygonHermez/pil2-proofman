@@ -18,7 +18,7 @@ impl FibonacciSquare {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: Arc<RwLock<Vec<usize>>>, _input_data_path: Option<PathBuf>) {
         let global_id =
             pctx.add_instance(FibonacciSquareTrace::<usize>::AIRGROUP_ID, FibonacciSquareTrace::<usize>::AIR_ID, 1);
         let instance_ids = vec![global_id];

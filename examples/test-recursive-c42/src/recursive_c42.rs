@@ -31,7 +31,7 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
 impl<F: PrimeField64> WitnessComponent<F> for RecursiveC42 {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: Arc<RwLock<Vec<usize>>>, _input_data_path: Option<PathBuf>) {
         pctx.add_instance(0, 0, 1);
         global_ids.write().unwrap().push(0);
     }

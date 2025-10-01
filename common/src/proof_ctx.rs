@@ -293,14 +293,18 @@ impl<F: PrimeField64> ProofCtx<F> {
     }
 
     pub fn set_witness_ready(&self, global_id: usize, priority: bool) {
-        if priority {
-            if let Some(witness_tx_priority) = &*self.witness_tx_priority.read().unwrap() {
-                witness_tx_priority.send(global_id).unwrap();
-                return;
+        if !self.dctx_is_instance_calculated(global_id) {
+            self.dctx_set_instance_calculated(global_id);
+
+            if priority {
+                if let Some(witness_tx_priority) = &*self.witness_tx_priority.read().unwrap() {
+                    witness_tx_priority.send(global_id).unwrap();
+                    return;
+                }
             }
-        }
-        if let Some(witness_tx) = &*self.witness_tx.read().unwrap() {
-            witness_tx.send(global_id).unwrap();
+            if let Some(witness_tx) = &*self.witness_tx.read().unwrap() {
+                witness_tx.send(global_id).unwrap();
+            }
         }
     }
 
