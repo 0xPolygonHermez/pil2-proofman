@@ -129,6 +129,7 @@ pub struct ProofMan<F: PrimeField64> {
     handle_recursives: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     handle_contributions: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     worker_contributions: Arc<RwLock<Vec<ContributionsInfo>>>,
+    error: Arc<Mutex<Option<Box<dyn std::error::Error + Send + Sync>>>>,
 }
 
 #[derive(Debug, PartialEq, Clone, BorshSerialize, BorshDeserialize)]
@@ -1005,6 +1006,7 @@ where
             outer_agg_proofs_finished: Arc::new(AtomicBool::new(true)),
             worker_contributions: Arc::new(RwLock::new(Vec::new())),
             n_gpus: n_gpus as usize,
+            error: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -1053,6 +1055,8 @@ where
         }
 
         self.total_outer_agg_proofs.reset();
+
+        *self.error.lock().unwrap() = None;
     }
 
     pub fn register_witness(
@@ -1114,13 +1118,18 @@ where
                 let aux_trace_clone = self.aux_trace.clone();
                 let memory_handler_clone = self.memory_handler.clone();
                 let contributions_rx_clone = self.contributions_rx.clone();
+                let error_clone = self.error.clone();
                 let contribution_handle = std::thread::spawn(move || loop {
+                    if error_clone.lock().unwrap().is_some() {
+                        break;
+                    }
                     match contributions_rx_clone.try_recv() {
                         Ok(instance_id) => {
                             if instance_id == usize::MAX {
                                 break;
                             }
-                            Self::get_contribution_air(
+
+                            if let Err(e) = Self::get_contribution_air(
                                 &pctx_clone,
                                 &sctx_clone,
                                 &roots_contributions_clone,
@@ -1128,8 +1137,10 @@ where
                                 instance_id,
                                 aux_trace_clone.as_ptr() as *mut u8,
                                 &d_buffers_clone,
-                            )
-                            .unwrap(); // TODO: COME LATER
+                            ) {
+                                *error_clone.lock().unwrap() = Some(e);
+                                break;
+                            }
 
                             if !pctx_clone.dctx_is_table(instance_id) {
                                 memory_handler_clone.to_be_released_buffer(instance_id);
@@ -1225,6 +1236,10 @@ where
             let handles = self.handle_contributions.lock().unwrap().drain(..).collect::<Vec<_>>();
             for handle in handles {
                 handle.join().unwrap();
+            }
+
+            if let Some(e) = self.error.lock().unwrap().take() {
+                return Err(e);
             }
 
             // get roots still in the gpu
@@ -1336,10 +1351,14 @@ where
             let rec2_witness_tx_clone = self.rec2_witness_tx.clone();
             let compressor_witness_tx_clone = self.compressor_witness_tx.clone();
             let recursive_rx_clone = self.recursive_rx.clone();
+            let error_clone = self.error.clone();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, proof_type)) = recursive_rx_clone.recv() {
                     if id == u64::MAX - 1 {
                         return;
+                    }
+                    if error_clone.lock().unwrap().is_some() {
+                        break;
                     }
                     let p: ProofType = proof_type.parse().unwrap();
                     if !options.aggregation {
@@ -1348,11 +1367,18 @@ where
                     }
 
                     let new_proof_type = if p == ProofType::Basic {
-                        let (airgroup_id, air_id) = pctx_clone.dctx_get_instance_info(id as usize).unwrap(); // TODO: COME LATER
-                        if pctx_clone.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                            ProofType::Compressor as usize
-                        } else {
-                            ProofType::Recursive1 as usize
+                        match pctx_clone.dctx_get_instance_info(id as usize) {
+                            Ok((airgroup_id, air_id)) => {
+                                if pctx_clone.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                                    ProofType::Compressor as usize
+                                } else {
+                                    ProofType::Recursive1 as usize
+                                }
+                            }
+                            Err(e) => {
+                                *error_clone.lock().unwrap() = Some(format!("instance info failed: {}", e).into());
+                                return;
+                            }
                         }
                     } else if p == ProofType::Compressor {
                         ProofType::Recursive1 as usize
@@ -1382,15 +1408,41 @@ where
                             }
                         };
 
-                        recursive2_proof.map(|(p1, p2, p3)| {
-                            gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3).unwrap()
-                        })
+                        match recursive2_proof {
+                            Some((p1, p2, p3)) => {
+                                match gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3) {
+                                    Ok(witness) => Some(witness),
+                                    Err(e) => {
+                                        *error_clone.lock().unwrap() =
+                                            Some(format!("gen_witness_aggregation failed: {}", e).into());
+                                        break;
+                                    }
+                                }
+                            }
+                            None => None,
+                        }
                     } else if new_proof_type == ProofType::Recursive1 as usize && p == ProofType::Compressor {
                         let compressor_proof = compressor_proofs_clone[id as usize].write().unwrap().take().unwrap();
-                        Some(gen_witness_recursive(&pctx_clone, &setups_clone, &compressor_proof).unwrap())
+                        let w = gen_witness_recursive(&pctx_clone, &setups_clone, &compressor_proof);
+                        match w {
+                            Ok(witness) => Some(witness),
+                            Err(e) => {
+                                *error_clone.lock().unwrap() =
+                                    Some(format!("gen_witness_recursive failed: {}", e).into());
+                                break;
+                            }
+                        }
                     } else {
                         let proof = proofs_clone[id as usize].write().unwrap().take().unwrap();
-                        Some(gen_witness_recursive(&pctx_clone, &setups_clone, &proof).unwrap())
+                        let w = gen_witness_recursive(&pctx_clone, &setups_clone, &proof);
+                        match w {
+                            Ok(witness) => Some(witness),
+                            Err(e) => {
+                                *error_clone.lock().unwrap() =
+                                    Some(format!("gen_witness_recursive failed: {}", e).into());
+                                break;
+                            }
+                        }
                     };
 
                     if let Some(witness) = witness {
@@ -1416,8 +1468,11 @@ where
             if *instance_id < 0 {
                 return;
             }
+            if self.error.lock().unwrap().is_some() {
+                return;
+            }
             proofs_pending.increment();
-            Self::gen_proof(
+            if let Err(e) = Self::gen_proof(
                 &self.proofs,
                 &self.pctx,
                 &self.sctx,
@@ -1430,8 +1485,10 @@ where
                 Some(stream_id),
                 options.save_proofs,
                 self.gpu_params.preallocate,
-            )
-            .unwrap(); // TODO: COME LATER
+            ) {
+                *self.error.lock().unwrap() = Some(e.into());
+                return;
+            }
 
             let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(*instance_id as usize);
             if is_shared_buffer {
@@ -1444,18 +1501,28 @@ where
             my_instances_calculated[*instance_id as usize] = true;
         }
 
-        my_instances_sorted.sort_by_key(|&id| {
-            let setup = self.sctx.get_setup(instances[id].airgroup_id, instances[id].air_id).unwrap(); // TODO: COME LATER
-            (
-                if setup.single_instance { 1 } else { 0 },
-                if self.pctx.is_air_instance_stored(id) { 0 } else { 1 },
-                if self.pctx.global_info.get_air_has_compressor(instances[id].airgroup_id, instances[id].air_id) {
-                    0
-                } else {
-                    1
-                },
-            )
-        });
+        let keys: Vec<Result<_, Box<dyn std::error::Error + Send + Sync>>> = my_instances_sorted
+            .iter()
+            .map(|&id| {
+                let setup = self.sctx.get_setup(instances[id].airgroup_id, instances[id].air_id)?;
+                Ok((
+                    if setup.single_instance { 1 } else { 0 },
+                    if self.pctx.is_air_instance_stored(id) { 0 } else { 1 },
+                    if self.pctx.global_info.get_air_has_compressor(instances[id].airgroup_id, instances[id].air_id) {
+                        0
+                    } else {
+                        1
+                    },
+                ))
+            })
+            .collect();
+
+        if keys.iter().any(|k| k.is_err()) {
+            return Err(keys.into_iter().find_map(|k| k.err()).unwrap());
+        }
+
+        let keys: Vec<_> = keys.into_iter().map(Result::unwrap).collect();
+        my_instances_sorted.sort_by_key(|&id| keys[id]);
 
         let proofs_finished = Arc::new(AtomicBool::new(false));
         for stream_id in 0..self.n_streams {
@@ -1481,11 +1548,14 @@ where
             let memory_handler_clone = self.memory_handler.clone();
 
             let proofs_finished_clone = proofs_finished.clone();
-
+            let error_clone = self.error.clone();
             let handle_recursive = std::thread::spawn(move || loop {
+                if error_clone.lock().unwrap().is_some() {
+                    break;
+                }
                 if stream_id < n_streams_non_recursive {
                     if let Ok(instance_id) = proofs_rx.try_recv() {
-                        Self::gen_proof(
+                        if let Err(e) = Self::gen_proof(
                             &proofs_clone,
                             &pctx_clone,
                             &sctx_clone,
@@ -1498,8 +1568,10 @@ where
                             None,
                             options.save_proofs,
                             preallocate,
-                        )
-                        .unwrap(); // TODO: COME LATER
+                        ) {
+                            *error_clone.lock().unwrap() = Some(e.into());
+                            break;
+                        }
                         let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
                         if is_shared_buffer {
                             memory_handler_clone.release_buffer(witness_buffer);
@@ -1532,7 +1604,13 @@ where
                     witness.global_idx = Some(id);
                 }
 
-                let new_proof = gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness).unwrap(); // TODO: COME LATER
+                let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        *error_clone.lock().unwrap() = Some(format!("gen_recursive_proof_size failed: {}", e).into());
+                        break;
+                    }
+                };
                 let new_proof_type_str: &str = new_proof.proof_type.clone().into();
 
                 let new_proof_type = &new_proof.proof_type.clone();
@@ -1550,7 +1628,7 @@ where
                     let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
                     let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
 
-                    let _ = generate_recursive_proof(
+                    if let Err(e) = generate_recursive_proof(
                         &pctx_clone,
                         &setups_clone,
                         &witness,
@@ -1561,11 +1639,14 @@ where
                         &const_tree_clone,
                         &const_pols_clone,
                         options.save_proofs,
-                    );
+                    ) {
+                        *error_clone.lock().unwrap() = Some(format!("generate_recursive_proof failed: {}", e).into());
+                        break;
+                    }
                 } else if *new_proof_type == ProofType::Compressor {
                     let compressor_lock = compressor_proofs_clone[id].read().unwrap();
                     let new_proof_ref = compressor_lock.as_ref().unwrap();
-                    let _ = generate_recursive_proof(
+                    if let Err(e) = generate_recursive_proof(
                         &pctx_clone,
                         &setups_clone,
                         &witness,
@@ -1576,11 +1657,14 @@ where
                         &const_tree_clone,
                         &const_pols_clone,
                         options.save_proofs,
-                    );
+                    ) {
+                        *error_clone.lock().unwrap() = Some(format!("generate_recursive_proof failed: {}", e).into());
+                        break;
+                    }
                 } else {
                     let recursive1_lock = recursive1_proofs_clone[id].read().unwrap();
                     let new_proof_ref = recursive1_lock.as_ref().unwrap();
-                    let _ = generate_recursive_proof(
+                    if let Err(e) = generate_recursive_proof(
                         &pctx_clone,
                         &setups_clone,
                         &witness,
@@ -1591,7 +1675,10 @@ where
                         &const_tree_clone,
                         &const_pols_clone,
                         options.save_proofs,
-                    );
+                    ) {
+                        *error_clone.lock().unwrap() = Some(format!("generate_recursive_proof failed: {}", e).into());
+                        break;
+                    }
                 }
 
                 if cfg!(not(feature = "gpu")) {
@@ -1624,7 +1711,6 @@ where
 
         let (witness_handler, witness_handles) =
             self.calc_witness_handler(witness_done.clone(), self.memory_handler.clone(), options.minimal_memory, false);
-
         self.calculate_witness(
             &instances_to_be_calculated,
             self.memory_handler.clone(),
@@ -1638,7 +1724,6 @@ where
             self.pctx.set_witness_tx_priority(None);
         }
         self.witness_tx.send(usize::MAX).ok();
-
         if let Some(h) = witness_handler {
             h.join().unwrap();
         }
@@ -1651,7 +1736,13 @@ where
 
         drop(witness_handles);
 
-        proofs_pending.wait_until_zero_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
+        proofs_pending.wait_until_zero_and_check_streams(
+            || get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()),
+            self.error.clone(),
+        );
+        if let Some(e) = self.error.lock().unwrap().take() {
+            return Err(e);
+        }
         get_stream_proofs_c(self.d_buffers.get_ptr());
         proofs_finished.store(true, Ordering::Relaxed);
         clear_proof_done_callback_c();
@@ -1911,8 +2002,13 @@ where
                 }
             }
 
-            self.total_outer_agg_proofs
-                .wait_until_zero_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
+            self.total_outer_agg_proofs.wait_until_zero_and_check_streams(
+                || get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()),
+                self.error.clone(),
+            );
+            if let Some(e) = self.error.lock().unwrap().take() {
+                return Err(e);
+            }
             get_stream_proofs_c(self.d_buffers.get_ptr());
 
             if self.outer_aggregations_handle.lock().unwrap().is_some() {
@@ -1993,10 +2089,15 @@ where
             let rec2_witness_tx_clone = self.rec2_witness_tx.clone();
             let recursive_rx_clone = self.recursive_rx.clone();
             let total_outer_agg_proofs = self.total_outer_agg_proofs.clone();
+            let error_clone = self.error.clone();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, _)) = recursive_rx_clone.recv() {
                     if id == u64::MAX - 1 {
                         return;
+                    }
+
+                    if error_clone.lock().unwrap().is_some() {
+                        break;
                     }
 
                     let proof = recursive2_proofs_ongoing_clone.write().unwrap()[id as usize].take().unwrap();
@@ -2028,9 +2129,13 @@ where
         let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
         let outer_agg_proofs_finished = self.outer_agg_proofs_finished.clone();
         let rec2_witness_rx = self.rec2_witness_rx.clone();
+        let error_clone = self.error.clone();
         let output_dir_path_clone = options.output_dir_path.clone();
         let save_proofs = options.save_proofs;
         let outer_aggregations_handle = std::thread::spawn(move || loop {
+            if error_clone.lock().unwrap().is_some() {
+                break;
+            }
             let witness = rec2_witness_rx.try_recv();
             if witness.is_err() {
                 if outer_agg_proofs_finished.load(Ordering::Relaxed) {
@@ -2051,7 +2156,13 @@ where
 
             witness.global_idx = Some(id);
 
-            let new_proof = gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness).unwrap(); // TODO: COME LATER
+            let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
+                Ok(p) => p,
+                Err(e) => {
+                    *error_clone.lock().unwrap() = Some(format!("gen_recursive_proof_size failed: {}", e).into());
+                    break;
+                }
+            };
 
             let id = new_proof.global_idx.unwrap();
             recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
@@ -2216,10 +2327,14 @@ where
         let const_tree_clone = self.const_tree.clone();
         let prover_buffer_recursive = self.prover_buffer_recursive.clone();
         let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
+        let error_clone = self.error.clone();
         let output_dir_path_clone = options.output_dir_path.clone();
         let save_proofs = options.save_proofs;
         let recursive2_handle = std::thread::spawn(move || {
             while let Ok(mut witness) = rec2_witness_rx.recv() {
+                if error_clone.lock().unwrap().is_some() {
+                    break;
+                }
                 let id = {
                     let mut rec2_proofs = recursive2_proofs_ongoing_clone.write().unwrap();
                     let id = rec2_proofs.len();
@@ -2229,7 +2344,13 @@ where
 
                 witness.global_idx = Some(id);
 
-                let new_proof = gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness).unwrap(); // TODO: COME LATER
+                let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        *error_clone.lock().unwrap() = Some(format!("gen_recursive_proof_size failed: {}", e).into());
+                        break;
+                    }
+                };
 
                 let id = new_proof.global_idx.unwrap();
                 recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
@@ -2265,11 +2386,16 @@ where
             let rec2_witness_tx_clone = rec2_witness_tx.clone();
             let recursive_rx_clone = recursive_rx.clone();
             let recursive2_done_clone = recursive2_done.clone();
+            let error_clone = self.error.clone();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, _)) = recursive_rx_clone.recv() {
                     recursive2_done_clone.increment();
                     if id == u64::MAX - 1 {
                         return;
+                    }
+
+                    if error_clone.lock().unwrap().is_some() {
+                        break;
                     }
 
                     let proof = recursive2_proofs_ongoing_clone.write().unwrap()[id as usize].take().unwrap();
@@ -2305,9 +2431,13 @@ where
             }
         }
 
-        recursive2_done
-            .wait_until_threshold_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
-
+        recursive2_done.wait_until_threshold_and_check_streams(
+            || get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()),
+            self.error.clone(),
+        );
+        if let Some(e) = self.error.lock().unwrap().take() {
+            return Err(e);
+        }
         clear_proof_done_callback_c();
         drop(recursive_tx);
         drop(rec2_witness_tx);
@@ -2347,8 +2477,12 @@ where
         let witness_handles_clone = witness_handles.clone();
         let witness_rx = self.witness_rx.clone();
         let witness_rx_priority = self.witness_rx_priority.clone();
+        let error_clone = self.error.clone();
         let witness_handler = if !minimal_memory && (cfg!(feature = "gpu") || stats) {
             Some(std::thread::spawn(move || loop {
+                if error_clone.lock().unwrap().is_some() {
+                    break;
+                }
                 let instance_id = match witness_rx_priority.try_recv() {
                     Ok(id) => id,
                     Err(crossbeam_channel::TryRecvError::Empty) => match witness_rx.try_recv() {
@@ -2378,7 +2512,13 @@ where
                     },
                 };
 
-                let (airgroup_id, air_id) = pctx_clone.dctx_get_instance_info(instance_id).unwrap(); // TODO: COME LATER
+                let (airgroup_id, air_id) = match pctx_clone.dctx_get_instance_info(instance_id) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        *error_clone.lock().unwrap() = Some(format!("gen_recursive_proof_size failed: {}", e).into());
+                        break;
+                    }
+                };
 
                 let n_threads_witness = pctx_clone.dctx_instance_threads_witness(instance_id);
 
@@ -2392,9 +2532,15 @@ where
                 }
 
                 let pctx_clone = pctx_clone.clone();
+                let error_clone = error_clone.clone();
                 let handle = std::thread::spawn(move || {
                     timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                    wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref()).unwrap(); // TODO: COME LATER
+                    if let Err(e) =
+                        wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
+                    {
+                        *error_clone.lock().unwrap() = Some(format!("calculate_witness failed: {}", e).into());
+                        return;
+                    }
                     for _ in 0..n_threads_witness {
                         tx_threads_clone.send(()).unwrap();
                     }
@@ -2442,6 +2588,9 @@ where
             timer_stop_and_log_info!(PRE_CALCULATE_WC);
         } else {
             for &instance_id in instances.iter() {
+                if self.error.lock().unwrap().is_some() {
+                    break;
+                }
                 let n_threads_witness = self.pctx.dctx_instance_threads_witness(instance_id);
 
                 let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
@@ -2469,20 +2618,33 @@ where
                 let tx_threads_clone = self.tx_threads.clone();
                 let memory_handler_clone = memory_handler.clone();
                 let witness_done_clone = witness_done.clone();
+                let error_clone = self.error.clone();
                 let handle = std::thread::spawn(move || {
                     timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     timer_start_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                    wcm_clone
-                        .pre_calculate_witness(1, &[instance_id], threads_to_use_collect, memory_handler_clone.as_ref())
-                        .unwrap(); // TODO: COME LATER
+                    if let Err(e) = wcm_clone.pre_calculate_witness(
+                        1,
+                        &[instance_id],
+                        threads_to_use_collect,
+                        memory_handler_clone.as_ref(),
+                    ) {
+                        *error_clone.lock().unwrap() = Some(format!("pre_calculate_witness failed: {}", e).into());
+                        return;
+                    }
                     timer_stop_and_log_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     for _ in 0..threads_to_return {
                         tx_threads_clone.send(()).unwrap();
                     }
                     timer_start_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                    wcm_clone
-                        .calculate_witness(1, &[instance_id], threads_to_use_witness, memory_handler_clone.as_ref())
-                        .unwrap(); // TODO: COME LATER
+                    if let Err(e) = wcm_clone.calculate_witness(
+                        1,
+                        &[instance_id],
+                        threads_to_use_witness,
+                        memory_handler_clone.as_ref(),
+                    ) {
+                        *error_clone.lock().unwrap() = Some(format!("calculate_witness failed: {}", e).into());
+                        return;
+                    }
                     timer_stop_and_log_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     for _ in 0..threads_to_use_witness {
                         tx_threads_clone.send(()).unwrap();
@@ -2510,12 +2672,18 @@ where
             }
         }
 
-        witness_done.wait_until_value_and_check_streams(instances.len(), || {
-            get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr())
-        });
+        witness_done.wait_until_value_and_check_streams(
+            instances.len(),
+            || get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()),
+            self.error.clone(),
+        );
 
         for handle in witness_minimal_memory_handles {
             handle.join().unwrap();
+        }
+
+        if let Some(e) = self.error.lock().unwrap().take() {
+            return Err(e);
         }
 
         timer_stop_and_log_info!(CALCULATING_WITNESS);
