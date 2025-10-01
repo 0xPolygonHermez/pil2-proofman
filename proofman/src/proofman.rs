@@ -1762,23 +1762,6 @@ where
                     .to_hex()
                     .to_string(),
                 );
-
-                if options.final_snark {
-                    timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
-                    let recursivef_proof = generate_recursivef_proof(
-                        &self.pctx,
-                        &self.setups,
-                        vadcop_final_ref,
-                        &self.prover_buffer_recursive,
-                        &options.output_dir_path,
-                        false,
-                    )?;
-                    timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
-
-                    timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
-                    let _ = generate_fflonk_snark_proof(&self.pctx, recursivef_proof, &options.output_dir_path);
-                    timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
-                }
             }
         }
 
