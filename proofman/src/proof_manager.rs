@@ -1,6 +1,6 @@
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Condvar, Mutex,
+    Arc, Condvar, Mutex,
 };
 
 pub struct Counter {
@@ -49,9 +49,16 @@ impl Counter {
         new_val
     }
 
-    pub fn wait_until_threshold_and_check_streams<F: FnMut()>(&self, mut check_streams: F) {
+    pub fn wait_until_threshold_and_check_streams<F: FnMut()>(
+        &self,
+        mut check_streams: F,
+        error: Arc<Mutex<Option<Box<dyn std::error::Error + Send + Sync>>>>,
+    ) {
         let mut guard = self.wait_lock.lock().unwrap();
         loop {
+            if error.lock().unwrap().is_some() {
+                break;
+            }
             if self.counter.load(Ordering::Acquire) >= self.threshold {
                 break;
             }
@@ -61,16 +68,24 @@ impl Counter {
         }
     }
 
-    pub fn wait_until_threshold(&self) {
+    pub fn wait_until_threshold(&self, error: Arc<Mutex<Option<Box<dyn std::error::Error + Send + Sync>>>>) {
         let mut guard = self.wait_lock.lock().unwrap();
-        while self.counter.load(Ordering::Acquire) < self.threshold {
+        while self.counter.load(Ordering::Acquire) < self.threshold && error.lock().unwrap().is_none() {
             guard = self.cvar.wait(guard).unwrap();
         }
     }
 
-    pub fn wait_until_value_and_check_streams<F: FnMut()>(&self, value: usize, mut check_streams: F) {
+    pub fn wait_until_value_and_check_streams<F: FnMut()>(
+        &self,
+        value: usize,
+        mut check_streams: F,
+        error: Arc<Mutex<Option<Box<dyn std::error::Error + Send + Sync>>>>,
+    ) {
         let mut guard = self.wait_lock.lock().unwrap();
         loop {
+            if error.lock().unwrap().is_some() {
+                break;
+            }
             if self.counter.load(Ordering::Acquire) >= value {
                 break;
             }
@@ -84,16 +99,23 @@ impl Counter {
         self.counter.store(0, Ordering::Release);
     }
 
-    pub fn wait_until_zero(&self) {
+    pub fn wait_until_zero(&self, error: Arc<Mutex<Option<Box<dyn std::error::Error + Send + Sync>>>>) {
         let mut guard = self.wait_lock.lock().unwrap();
-        while self.counter.load(Ordering::Acquire) > 0 {
+        while self.counter.load(Ordering::Acquire) > 0 && error.lock().unwrap().is_none() {
             guard = self.cvar.wait(guard).unwrap();
         }
     }
 
-    pub fn wait_until_zero_and_check_streams<F: FnMut()>(&self, mut check_streams: F) {
+    pub fn wait_until_zero_and_check_streams<F: FnMut()>(
+        &self,
+        mut check_streams: F,
+        error: Arc<Mutex<Option<Box<dyn std::error::Error + Send + Sync>>>>,
+    ) {
         let mut guard = self.wait_lock.lock().unwrap();
         loop {
+            if error.lock().unwrap().is_some() {
+                break;
+            }
             if self.counter.load(Ordering::Acquire) == 0 {
                 break;
             }
