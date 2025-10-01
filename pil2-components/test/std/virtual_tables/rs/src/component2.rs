@@ -39,17 +39,17 @@ impl<F: PrimeField64> WitnessComponent<F> for Component2<F> {
             let t = trace[0].a.len();
             for i in 0..num_rows {
                 let (val, row, id) = if i % 3 == 0 {
-                    let val = rng.random_range(0..Table2_1::N) as u64;
+                    let val = rng.random_range(0..Table2_1::N);
                     // Get the row
                     let row = Table2_1::calculate_table_row(val);
                     (val, row, id_1)
                 } else if i % 3 == 1 {
-                    let val = rng.random_range(Table2_2::N..(2*Table2_2::N)) as u64;
+                    let val = rng.random_range(Table2_2::N..(2 * Table2_2::N));
                     // Get the row
                     let row = Table2_2::calculate_table_row(val);
                     (val, row, id_2)
                 } else {
-                    let val = rng.random_range((Table2_3::OFFSET + Table2_3::N)..(Table2_3::OFFSET + 2*Table2_3::N)) as u64;
+                    let val = rng.random_range((Table2_3::OFFSET + Table2_3::N)..(Table2_3::OFFSET + 2 * Table2_3::N));
                     // Get the row
                     let row = Table2_3::calculate_table_row(val);
                     (val, row, id_3)

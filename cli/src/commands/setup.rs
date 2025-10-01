@@ -34,29 +34,14 @@ impl CheckSetupCmd {
 
         let verbose_mode = VerboseMode::Debug;
 
-        #[cfg(distributed)]
-        {
-            match self.field {
-                Field::Goldilocks => ProofMan::<Goldilocks>::check_setup(
-                    self.proving_key.clone(),
-                    self.aggregation,
-                    self.final_snark,
-                    verbose_mode,
-                    None,
-                )?,
-            };
-        }
-        #[cfg(not(distributed))]
-        {
-            match self.field {
-                Field::Goldilocks => ProofMan::<Goldilocks>::check_setup(
-                    self.proving_key.clone(),
-                    self.aggregation,
-                    self.final_snark,
-                    verbose_mode,
-                )?,
-            };
-        }
+        match self.field {
+            Field::Goldilocks => ProofMan::<Goldilocks>::check_setup(
+                self.proving_key.clone(),
+                self.aggregation,
+                self.final_snark,
+                verbose_mode,
+            )?,
+        };
 
         Ok(())
     }

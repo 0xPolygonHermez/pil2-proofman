@@ -24,7 +24,7 @@ pub fn aggregate_airgroupvals<F: PrimeField64>(pctx: &ProofCtx<F>, airgroup_valu
         airgroupvalues.push(values);
     }
 
-    let my_instances = pctx.dctx_get_my_instances();
+    let my_instances = pctx.dctx_get_process_instances();
 
     for (my_instance_idx, instance_id) in my_instances.iter().enumerate() {
         let (airgroup_id, _) = pctx.dctx_get_instance_info(*instance_id);
@@ -111,7 +111,7 @@ fn get_global_hint_f<F: PrimeField64>(
     let proof_values = if let Some(pctx) = pctx { pctx.get_proof_values_ptr() } else { std::ptr::null_mut() };
     let airgroup_values = if let Some(pctx) = pctx {
         let mut airgroup_values_air_instances = Vec::new();
-        let my_instances = pctx.dctx_get_my_instances();
+        let my_instances = pctx.dctx_get_process_instances();
         for instance_id in my_instances.iter() {
             if !skip_prover_instance(pctx, *instance_id).0 {
                 let (airgroup_id, air_id) = pctx.dctx_get_instance_info(*instance_id);
@@ -240,13 +240,13 @@ pub fn get_hint_field_gc<F: PrimeField64>(
 }
 
 pub fn get_hint_field_gc_a<F: PrimeField64>(
-    pctx: ProofCtx<F>,
-    sctx: SetupCtx<F>,
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
 ) -> HintFieldValuesVec<F> {
-    let hint_infos = get_global_hint_f(Some(&pctx), &sctx, hint_id, hint_field_name, print_expression);
+    let hint_infos = get_global_hint_f(Some(pctx), sctx, hint_id, hint_field_name, print_expression);
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.iter().enumerate() {

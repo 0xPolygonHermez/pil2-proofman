@@ -1,6 +1,10 @@
 # PIL2 Components
-This repository contains all pil2 components as processors and secondary machines (storage, memory, binary, arithmetic, keccak, poseidon, sha256, mem_align,...).
 
-## Minimal Basic example
-There are a simple processor called basic, with a memory and rom, to execute zkasm programs. It's a simple example to play with this tooling. You found more information in this [link](components/basic/README.md)
+PIL2 Components hosts reusable components for PIL2-based proving systems
+- **Standard PIL library**
+  - Reusable constraints and expressions you can import from other PILs (e.g. generalized sum “gsum” utilities).
+  - Organized to keep constraint degrees bounded and reusable across machines.
 
+- **Rust helpers**
+  - Utilities for witness generation and orchestration.
+  - Virtual table management (e.g. `StdVirtualTable` and `VirtualTableAir`) to collect multiplicities and map logical table IDs into concrete trace regions efficiently.

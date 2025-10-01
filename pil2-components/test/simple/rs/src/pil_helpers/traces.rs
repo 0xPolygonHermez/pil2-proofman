@@ -16,7 +16,7 @@ use rayon::prelude::*;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "8977c7c1502cf03d4ffe423e287d750652cf47d318346ff202d1ad9ccf67fb76";
+pub const PILOUT_HASH: &str = "9d2300fc201aca871cec5e470b95c60255c67e0735425fe2520067d77e0416c5";
 
 //AIRGROUP CONSTANTS
 
@@ -60,12 +60,12 @@ trace!(U8AirTrace<F> {
 },  0, 2, 128 );
 
 trace!(U16AirFixed<F> {
- RANGE: [F; 2], __L1__: F,
-},  0, 3, 32768 );
+ RANGE: [F; 4], __L1__: F,
+},  0, 3, 16384 );
 
 trace!(U16AirTrace<F> {
- mul: [F; 2],
-},  0, 3, 32768 );
+ mul: [F; 4],
+},  0, 3, 16384 );
 
 trace!(SpecifiedRangesFixed<F> {
  RANGE: [F; 11], __L1__: F,
