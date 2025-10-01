@@ -22,7 +22,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic2<F> {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if stage == 1 {
             let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 
@@ -31,11 +31,11 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic2<F> {
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
-            let range1 = self.std_lib.get_range_id(5225, 29023, Some(false));
-            let range2 = self.std_lib.get_range_id(-8719, -7269, Some(false));
-            let range3 = self.std_lib.get_range_id(-10, 10, Some(false));
-            let range4 = self.std_lib.get_range_id(0, (1 << 8) - 1, Some(false));
-            let range5 = self.std_lib.get_range_id(0, (1 << 7) - 1, Some(false));
+            let range1 = self.std_lib.get_range_id(5225, 29023, Some(false))?;
+            let range2 = self.std_lib.get_range_id(-8719, -7269, Some(false))?;
+            let range3 = self.std_lib.get_range_id(-10, 10, Some(false))?;
+            let range4 = self.std_lib.get_range_id(0, (1 << 8) - 1, Some(false))?;
+            let range5 = self.std_lib.get_range_id(0, (1 << 7) - 1, Some(false))?;
 
             for i in 0..num_rows {
                 let range = rng.random_range(0..=4);
@@ -100,12 +100,13 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic2<F> {
 
                         self.std_lib.range_check(range5, val as i64, 1);
                     }
-                    _ => panic!("Invalid range"),
+                    _ => return Err(("Invalid range".to_string()).into()),
                 }
             }
 
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
             pctx.add_air_instance(air_instance, instance_ids[0]);
         }
+        Ok(())
     }
 }

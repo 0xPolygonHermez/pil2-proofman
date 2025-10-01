@@ -5,9 +5,23 @@ use proofman_common::{BufferPool, ProofCtx, SetupCtx, DebugInfo};
 use std::path::PathBuf;
 
 pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
-    fn execute(&self, _pctx: Arc<ProofCtx<F>>, _global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {}
+    fn execute(
+        &self,
+        _pctx: Arc<ProofCtx<F>>,
+        _global_ids: &RwLock<Vec<usize>>,
+        _input_data_path: Option<PathBuf>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
 
-    fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) {}
+    fn debug(
+        &self,
+        _pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        _instance_ids: &[usize],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
 
     fn calculate_witness(
         &self,
@@ -17,7 +31,8 @@ pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
     }
 
     fn pre_calculate_witness(
@@ -28,20 +43,28 @@ pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
         instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         for instance_id in instance_ids {
             pctx.set_witness_ready(*instance_id, false);
         }
+        Ok(())
     }
 
-    fn end(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _debug_info: &DebugInfo) {}
+    fn end(
+        &self,
+        _pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        _debug_info: &DebugInfo,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
 
     fn gen_custom_commits_fixed(
         &self,
         _pctx: Arc<ProofCtx<F>>,
         _sctx: Arc<SetupCtx<F>>,
         _check: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(())
     }
 }
@@ -54,14 +77,15 @@ macro_rules! execute {
             pctx: Arc<ProofCtx<F>>,
             global_ids: &std::sync::RwLock<Vec<usize>>,
             _input_data_path: Option<std::path::PathBuf>,
-        ) {
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let mut instance_ids = Vec::new();
             for _ in 0..$num_instances {
-                let global_id = pctx.add_instance($Trace::<F>::AIRGROUP_ID, $Trace::<F>::AIR_ID, 1);
+                let global_id = pctx.add_instance($Trace::<F>::AIRGROUP_ID, $Trace::<F>::AIR_ID, 1)?;
                 instance_ids.push(global_id);
                 global_ids.write().unwrap().push(global_id);
             }
             *self.instance_ids.write().unwrap() = instance_ids.clone();
+            Ok(())
         }
     };
 }

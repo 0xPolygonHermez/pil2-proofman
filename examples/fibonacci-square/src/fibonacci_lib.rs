@@ -10,8 +10,8 @@ use crate::{BuildPublics, BuildPublicValues, BuildProofValues, FibonacciSquare, 
 witness_library!(WitnessLib, Goldilocks);
 
 impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
-    fn register_witness(&mut self, wcm: &WitnessManager<F>) {
-        let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx(), true);
+    fn register_witness(&mut self, wcm: &WitnessManager<F>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx(), true)?;
         let module = Module::new(FibonacciSquareTrace::<F>::NUM_ROWS as u64, std_lib.clone());
         let fibonacci = FibonacciSquare::new();
 
@@ -41,5 +41,6 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
         let mut proof_values = BuildProofValues::from_vec_guard(wcm.get_pctx().get_proof_values());
         proof_values.value1 = F::from_u64(5);
         proof_values.value2 = F::from_u64(125);
+        Ok(())
     }
 }

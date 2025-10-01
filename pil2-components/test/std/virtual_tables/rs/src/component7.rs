@@ -40,7 +40,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Component7
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
         if stage == 1 {
             let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 
@@ -67,5 +67,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Component7
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
             pctx.add_air_instance(air_instance, instance_ids[0]);
         }
+        Ok(())
     }
 }

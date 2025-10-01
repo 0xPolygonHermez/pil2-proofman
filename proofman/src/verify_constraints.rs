@@ -16,9 +16,9 @@ pub fn verify_constraints<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     global_id: usize,
     n_print_constraints: u64,
-) -> Vec<ConstraintInfo> {
-    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(global_id);
-    let setup = sctx.get_setup(airgroup_id, air_id);
+) -> Result<Vec<ConstraintInfo>, Box<dyn std::error::Error + Send + Sync>> {
+    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(global_id)?;
+    let setup = sctx.get_setup(airgroup_id, air_id)?;
 
     let steps_params = pctx.get_air_instance_params(global_id, false);
 
@@ -28,7 +28,7 @@ pub fn verify_constraints<F: PrimeField64>(
 
     let mut constraints_info = vec![ConstraintInfo::new(n_print_constraints); n_constraints as usize];
 
-    let (skip, constraints_skip) = skip_prover_instance(pctx, global_id);
+    let (skip, constraints_skip) = skip_prover_instance(pctx, global_id)?;
 
     if !skip {
         if !constraints_skip.is_empty() {
@@ -64,7 +64,7 @@ pub fn verify_constraints<F: PrimeField64>(
         }
     }
 
-    constraints_info
+    Ok(constraints_info)
 }
 
 pub fn verify_global_constraints_proof<F: PrimeField64>(
@@ -72,7 +72,7 @@ pub fn verify_global_constraints_proof<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     debug_info: &DebugInfo,
     airgroupvalues: Vec<Vec<F>>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing::info!("--> Checking global constraints");
 
     let mut airgroup_values_ptrs: Vec<*mut F> = airgroupvalues
@@ -148,13 +148,13 @@ pub fn verify_constraints_proof<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     instance_id: usize,
     n_print_constraints: u64,
-) -> bool {
-    let constraints = verify_constraints(pctx, sctx, instance_id, n_print_constraints);
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    let constraints = verify_constraints(pctx, sctx, instance_id, n_print_constraints)?;
 
-    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
+    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
-    let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
-    let (skip, _) = skip_prover_instance(pctx, instance_id);
+    let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
+    let (skip, _) = skip_prover_instance(pctx, instance_id)?;
     if skip {
         tracing::info!(
             "{}",
@@ -162,12 +162,12 @@ pub fn verify_constraints_proof<F: PrimeField64>(
                 .bright_yellow()
                 .bold()
         );
-        return true;
+        return Ok(true);
     };
 
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
-    let constraints_lines = get_constraints_lines_str(sctx, airgroup_id, air_id);
+    let constraints_lines = get_constraints_lines_str(sctx, airgroup_id, air_id)?;
 
     let mut valid_constraints_instance = true;
     let skipping = "is skipped".bright_yellow();
@@ -259,5 +259,5 @@ pub fn verify_constraints_proof<F: PrimeField64>(
         );
     }
 
-    valid_constraints_instance
+    Ok(valid_constraints_instance)
 }

@@ -38,21 +38,25 @@ pub struct VirtualTableAir {
 }
 
 impl<F: PrimeField64> StdVirtualTable<F> {
-    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: &SetupCtx<F>, shared_tables: bool) -> Arc<Self> {
+    pub fn new(
+        pctx: Arc<ProofCtx<F>>,
+        sctx: &SetupCtx<F>,
+        shared_tables: bool,
+    ) -> Result<Arc<Self>, Box<dyn std::error::Error + Send + Sync>> {
         // Get relevant data from the global hint
         let virtual_table_global_hint = get_hint_ids_by_name(sctx.get_global_bin(), "virtual_table_data_global");
         if virtual_table_global_hint.is_empty() {
-            return Arc::new(Self {
+            return Ok(Arc::new(Self {
                 _phantom: std::marker::PhantomData,
                 global_id_by_uid: HashMap::new(),
                 indices_by_global_id: Vec::new(),
                 virtual_table_airs: None,
-            });
+            }));
         }
 
         let airgroup_ids =
-            get_global_hint_field_constant_a_as::<usize, F>(sctx, virtual_table_global_hint[0], "airgroup_ids");
-        let air_ids = get_global_hint_field_constant_a_as::<usize, F>(sctx, virtual_table_global_hint[0], "air_ids");
+            get_global_hint_field_constant_a_as::<usize, F>(sctx, virtual_table_global_hint[0], "airgroup_ids")?;
+        let air_ids = get_global_hint_field_constant_a_as::<usize, F>(sctx, virtual_table_global_hint[0], "air_ids")?;
 
         let num_virtual_tables = airgroup_ids.len();
         let mut virtual_tables = Vec::with_capacity(num_virtual_tables);
@@ -64,7 +68,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             let air_id = air_ids[i];
 
             // Get the Virtual Table structure
-            let setup = sctx.get_setup(airgroup_id, air_id);
+            let setup = sctx.get_setup(airgroup_id, air_id)?;
             let hint_id = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "virtual_table_data")[0] as usize;
 
             let hint_opt = HintFieldOptions::default();
@@ -75,7 +79,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 hint_id,
                 "table_ids",
                 hint_opt.clone(),
-            );
+            )?;
             let acc_heights = get_hint_field_constant_a_as::<u64, F>(
                 sctx,
                 airgroup_id,
@@ -83,7 +87,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 hint_id,
                 "acc_heights",
                 hint_opt.clone(),
-            );
+            )?;
             let num_muls = get_hint_field_constant_as::<usize, F>(
                 sctx,
                 airgroup_id,
@@ -91,7 +95,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 hint_id,
                 "num_muls",
                 hint_opt.clone(),
-            );
+            )?;
 
             // Map each table_id to an ordered set of indexes
             let num_table_ids = table_ids.len();
@@ -128,16 +132,16 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             virtual_tables.push(Arc::new(virtual_table_air));
         }
 
-        Arc::new(Self {
+        Ok(Arc::new(Self {
             _phantom: std::marker::PhantomData,
             global_id_by_uid,
             indices_by_global_id,
             virtual_table_airs: Some(virtual_tables),
-        })
+        }))
     }
 
-    pub fn get_global_id(&self, id: usize) -> usize {
-        self.global_id_by_uid.get(&id).copied().unwrap_or_else(|| panic!("ID {id} not found in the global ID map"))
+    pub fn get_global_id(&self, id: usize) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        self.global_id_by_uid.get(&id).copied().ok_or_else(|| format!("ID {id} not found in the global ID map").into())
     }
 
     pub fn inc_virtual_row(&self, global_id: usize, row: u64, multiplicity: u64) {
@@ -170,17 +174,17 @@ impl<F: PrimeField64> WitnessComponent<F> for StdVirtualTable<F> {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
     }
 }
 
 impl VirtualTableAir {
-    pub fn get_id(&self, id: usize) -> usize {
+    pub fn get_id(&self, id: usize) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         if let Some(pos) = self.table_ids.iter().position(|&(table_id, _)| table_id == id) {
-            pos
+            Ok(pos)
         } else {
-            tracing::error!("ID {} not found in the virtual table", id);
-            panic!();
+            Err(("ID not found in the virtual table".to_string()).into())
         }
     }
 
@@ -287,14 +291,19 @@ impl VirtualTableAir {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, _global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {
-        let (instance_found, mut table_instance_id) = pctx.dctx_find_process_table(self.airgroup_id, self.air_id);
+    fn execute(
+        &self,
+        pctx: Arc<ProofCtx<F>>,
+        _global_ids: &RwLock<Vec<usize>>,
+        _input_data_path: Option<PathBuf>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let (instance_found, mut table_instance_id) = pctx.dctx_find_process_table(self.airgroup_id, self.air_id)?;
 
         if !instance_found {
             if !self.shared_tables {
-                table_instance_id = pctx.add_table_all(self.airgroup_id, self.air_id);
+                table_instance_id = pctx.add_table_all(self.airgroup_id, self.air_id)?;
             } else {
-                table_instance_id = pctx.add_table(self.airgroup_id, self.air_id);
+                table_instance_id = pctx.add_table(self.airgroup_id, self.air_id)?;
             }
         }
 
@@ -306,6 +315,7 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         });
 
         self.table_instance_id.store(table_instance_id as u64, Ordering::SeqCst);
+        Ok(())
     }
 
     fn pre_calculate_witness(
@@ -316,7 +326,8 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
     }
 
     fn calculate_witness(
@@ -327,24 +338,24 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if stage == 1 {
             let table_instance_id = self.table_instance_id.load(Ordering::Relaxed) as usize;
 
-            let instance_id = pctx.dctx_get_table_instance_idx(table_instance_id);
+            let instance_id = pctx.dctx_get_table_instance_idx(table_instance_id)?;
 
             if !_instance_ids.contains(&instance_id) {
-                return;
+                return Ok(());
             }
 
             self.calculated.store(true, Ordering::Relaxed);
 
             if self.shared_tables {
-                let owner_idx = pctx.dctx_get_process_owner_instance(instance_id);
+                let owner_idx = pctx.dctx_get_process_owner_instance(instance_id)?;
                 pctx.mpi_ctx.distribute_multiplicities(&self.multiplicities, owner_idx);
             }
 
-            if !self.shared_tables || pctx.dctx_is_my_process_instance(instance_id) {
+            if !self.shared_tables || pctx.dctx_is_my_process_instance(instance_id)? {
                 let buffer_size = self.num_cols * self.num_rows;
                 let mut buffer = create_buffer_fast(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
@@ -363,5 +374,6 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
                 pctx.add_air_instance(air_instance, instance_id);
             }
         }
+        Ok(())
     }
 }

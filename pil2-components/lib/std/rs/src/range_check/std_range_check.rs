@@ -1,4 +1,3 @@
-use core::panic;
 use std::{fmt::Debug, sync::Arc};
 
 use fields::PrimeField64;
@@ -63,36 +62,36 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         sctx: &SetupCtx<F>,
         virtual_table: Arc<StdVirtualTable<F>>,
         shared_tables: bool,
-    ) -> Arc<Self> {
+    ) -> Result<Arc<Self>, Box<dyn std::error::Error + Send + Sync>> {
         // Find which range check related AIRs need to be instantiated
         let u8air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u8air");
         let u16air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u16air");
         let specified_ranges_air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "specified_ranges");
 
         // Instantiate the AIRs
-        let u8air = Self::create_air::<U8Air>(&pctx, sctx, shared_tables, &u8air_hint);
-        let u16air = Self::create_air::<U16Air>(&pctx, sctx, shared_tables, &u16air_hint);
+        let u8air = Self::create_air::<U8Air>(&pctx, sctx, shared_tables, &u8air_hint)?;
+        let u16air = Self::create_air::<U16Air>(&pctx, sctx, shared_tables, &u16air_hint)?;
         let specified_ranges_air =
-            Self::create_air::<SpecifiedRanges>(&pctx, sctx, shared_tables, &specified_ranges_air_hint);
+            Self::create_air::<SpecifiedRanges>(&pctx, sctx, shared_tables, &specified_ranges_air_hint)?;
 
         // Early return if no range check users
         let std_rc_users = get_hint_ids_by_name(sctx.get_global_bin(), "std_rc_users");
         let Some(std_rc_users) = std_rc_users.first() else {
-            return Arc::new(Self {
+            return Ok(Arc::new(Self {
                 _phantom: std::marker::PhantomData,
                 ranges: Vec::new(),
                 u8air,
                 u16air,
                 specified_ranges_air,
                 virtual_table,
-            });
+            }));
         };
 
-        let num_users = get_global_hint_field_constant_as::<usize, F>(sctx, *std_rc_users, "num_users");
-        let airgroup_ids = get_hint_field_gc_constant_a(sctx, *std_rc_users, "airgroup_ids", false);
-        let air_ids = get_hint_field_gc_constant_a(sctx, *std_rc_users, "air_ids", false);
-        let opids_count = get_global_hint_field_constant_as::<usize, F>(sctx, *std_rc_users, "opids_count");
-        let spec_opids_count = get_global_hint_field_constant_as::<usize, F>(sctx, *std_rc_users, "spec_opids_count");
+        let num_users = get_global_hint_field_constant_as::<usize, F>(sctx, *std_rc_users, "num_users")?;
+        let airgroup_ids = get_hint_field_gc_constant_a(sctx, *std_rc_users, "airgroup_ids", false)?;
+        let air_ids = get_hint_field_gc_constant_a(sctx, *std_rc_users, "air_ids", false)?;
+        let opids_count = get_global_hint_field_constant_as::<usize, F>(sctx, *std_rc_users, "opids_count")?;
+        let spec_opids_count = get_global_hint_field_constant_as::<usize, F>(sctx, *std_rc_users, "spec_opids_count")?;
 
         let mut ranges = vec![
             StdRange {
@@ -107,8 +106,8 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         let mut processed_predefined_ranges = spec_opids_count;
         let mut processed_specified_ranges = 0;
         for i in 0..num_users {
-            let airgroup_id = extract_field_element_as_usize(&airgroup_ids.values[i], "airgroup_id");
-            let air_id = extract_field_element_as_usize(&air_ids.values[i], "air_id");
+            let airgroup_id = extract_field_element_as_usize(&airgroup_ids.values[i], "airgroup_id")?;
+            let air_id = extract_field_element_as_usize(&air_ids.values[i], "air_id")?;
 
             Self::register_ranges(
                 sctx,
@@ -118,35 +117,40 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 &mut ranges,
                 &mut processed_predefined_ranges,
                 &mut processed_specified_ranges,
-            );
+            )?;
         }
 
-        Arc::new(Self {
+        Ok(Arc::new(Self {
             _phantom: std::marker::PhantomData,
             ranges,
             u8air,
             u16air,
             specified_ranges_air,
             virtual_table,
-        })
+        }))
     }
 
     // Helper function to instantiate AIRs
-    fn create_air<T>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, shared_tables: bool, hints: &[u64]) -> Option<Arc<T>>
+    fn create_air<T>(
+        pctx: &ProofCtx<F>,
+        sctx: &SetupCtx<F>,
+        shared_tables: bool,
+        hints: &[u64],
+    ) -> Result<Option<Arc<T>>, Box<dyn std::error::Error + Send + Sync>>
     where
         T: AirComponent<F>,
     {
         if hints.is_empty() {
-            return None;
+            return Ok(None);
         }
-        let airgroup_id = get_global_hint_field_constant_as(sctx, hints[0], "airgroup_id");
-        let air_id = get_global_hint_field_constant_as(sctx, hints[0], "air_id");
+        let airgroup_id = get_global_hint_field_constant_as(sctx, hints[0], "airgroup_id")?;
+        let air_id = get_global_hint_field_constant_as(sctx, hints[0], "air_id")?;
         if (airgroup_id as u64 == F::NEG_ONE.as_canonical_u64()) || (air_id as u64 == F::NEG_ONE.as_canonical_u64()) {
             // The AIR is virtual, so we do not instantiate it
-            return None;
+            return Ok(None);
         }
 
-        Some(T::new(pctx, sctx, airgroup_id, air_id, shared_tables))
+        Ok(Some(T::new(pctx, sctx, airgroup_id, air_id, shared_tables)?))
     }
 
     // Helper function to register ranges
@@ -158,14 +162,14 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         ranges: &mut [StdRange],
         processed_predefined_ranges: &mut usize,
         processed_specified_ranges: &mut usize,
-    ) {
-        let setup = sctx.get_setup(airgroup_id, air_id);
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let setup = sctx.get_setup(airgroup_id, air_id)?;
 
         // Obtain info from the range hints
         let rc_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "range_def");
 
         for hint in rc_hints {
-            let hint_data = Self::parse_range_hint(sctx, airgroup_id, air_id, hint);
+            let hint_data = Self::parse_range_hint(sctx, airgroup_id, air_id, hint)?;
 
             let data = RangeData { min: hint_data.min, max: hint_data.max, predefined: hint_data.predefined };
 
@@ -191,19 +195,25 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             let is_virtual = hint_data.is_virtual;
             let virtual_id = if is_virtual {
                 // Get the virtual table ID
-                virtual_table.get_global_id(hint_data.opid as usize)
+                virtual_table.get_global_id(hint_data.opid as usize)?
             } else {
                 0
             };
             ranges[idx] = StdRange { rc_type, is_virtual: hint_data.is_virtual, virtual_id, data };
         }
+        Ok(())
     }
 
-    fn parse_range_hint(sctx: &SetupCtx<F>, airgroup_id: usize, air_id: usize, hint: u64) -> HintCache {
+    fn parse_range_hint(
+        sctx: &SetupCtx<F>,
+        airgroup_id: usize,
+        air_id: usize,
+        hint: u64,
+    ) -> Result<HintCache, Box<dyn std::error::Error + Send + Sync>> {
         let options = HintFieldOptions::default();
 
         let opid =
-            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint as usize, "opid", options.clone());
+            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint as usize, "opid", options.clone())?;
 
         let predefined = validate_binary_field(
             get_hint_field_constant_as_field::<F>(
@@ -213,29 +223,42 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 hint as usize,
                 "predefined",
                 options.clone(),
-            ),
+            )?,
             "Predefined",
-        );
+        )?;
 
         let min_val =
-            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint as usize, "min", options.clone());
+            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint as usize, "min", options.clone())?;
         let min_neg = validate_binary_field(
-            get_hint_field_constant_as_field::<F>(sctx, airgroup_id, air_id, hint as usize, "min_neg", options.clone()),
+            get_hint_field_constant_as_field::<F>(
+                sctx,
+                airgroup_id,
+                air_id,
+                hint as usize,
+                "min_neg",
+                options.clone(),
+            )?,
             "Min neg",
-        );
+        )?;
 
         let max_val =
-            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint as usize, "max", options.clone());
+            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint as usize, "max", options.clone())?;
         let max_neg = validate_binary_field(
-            get_hint_field_constant_as_field::<F>(sctx, airgroup_id, air_id, hint as usize, "max_neg", options.clone()),
+            get_hint_field_constant_as_field::<F>(
+                sctx,
+                airgroup_id,
+                air_id,
+                hint as usize,
+                "max_neg",
+                options.clone(),
+            )?,
             "Max neg",
-        );
+        )?;
 
         let HintFieldValue::String(rc_type_str) =
-            get_hint_field_constant::<F>(sctx, airgroup_id, air_id, hint as usize, "type", options.clone())
+            get_hint_field_constant::<F>(sctx, airgroup_id, air_id, hint as usize, "type", options.clone())?
         else {
-            tracing::error!("Type hint must be a string");
-            panic!();
+            return Err("Type hint must be a string".to_string().into());
         };
 
         let is_virtual = validate_binary_field(
@@ -246,9 +269,9 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 hint as usize,
                 "is_virtual",
                 options.clone(),
-            ),
+            )?,
             "Is virtual",
-        );
+        )?;
 
         let min = if min_neg { min_val as i128 - F::ORDER_U64 as i128 } else { min_val as i128 };
 
@@ -256,8 +279,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
 
         // Check that min or max does not overflow 63 bits
         if min > i64::MAX as i128 || max > i64::MAX as i128 {
-            tracing::error!("Min/Max value is too large");
-            panic!();
+            return Err(("Min/Max value is too large".to_string()).into());
         }
 
         // Use match with string literals for better optimization
@@ -267,24 +289,27 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             "U8Double" => StdRangeType::U8AirDouble,
             "U16Double" => StdRangeType::U16AirDouble,
             "Specified" => StdRangeType::SpecifiedRanges,
-            _ => panic!("Invalid range check type: {rc_type_str}"),
+            _ => return Err(("Invalid range check type: {rc_type_str}".to_string()).into()),
         };
 
-        HintCache { opid, predefined, min: min as i64, max: max as i64, rc_type, is_virtual }
+        Ok(HintCache { opid, predefined, min: min as i64, max: max as i64, rc_type, is_virtual })
     }
 
-    pub fn get_range_id(&self, min: i64, max: i64, predefined: Option<bool>) -> usize {
+    pub fn get_range_id(
+        &self,
+        min: i64,
+        max: i64,
+        predefined: Option<bool>,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         // Default predefined value in STD is false
         let predefined = predefined.unwrap_or(false);
 
         // Find the range with the given [min,max] values, return its id
         let received_range_data = RangeData { min, max, predefined };
         if let Some(i) = self.ranges.iter().position(|r| r.data == received_range_data) {
-            i
+            Ok(i)
         } else {
-            // If the range was not computed in the setup phase, error
-            tracing::error!("Range not found: [min,max] = [{min},{max}] (predefined: {predefined})");
-            panic!();
+            Err(format!("Range not found: [min,max] = [{min},{max}] (predefined: {predefined})").into())
         }
     }
 
@@ -374,7 +399,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         }
     }
 
-    pub fn assign_values(&self, id: usize, values: Vec<u32>) {
+    pub fn assign_values(&self, id: usize, values: Vec<u32>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Find the range with the given id
         let range_item = &self.ranges[id];
 
@@ -427,9 +452,10 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 }
             }
             StdRangeType::U8AirDouble | StdRangeType::U16AirDouble => {
-                panic!("Double ranges are not supported for multiple values");
+                return Err("Double ranges are not supported for multiple values".to_string().into());
             }
         }
+        Ok(())
     }
 
     #[cfg(all(debug_assertions, feature = "verify-rc-values"))]
@@ -452,6 +478,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdRangeCheck<F> {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
     }
 }

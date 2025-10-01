@@ -18,11 +18,18 @@ impl FibonacciSquare {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {
-        let global_id = pctx.add_instance(FibonacciSquareTrace::<F>::AIRGROUP_ID, FibonacciSquareTrace::<F>::AIR_ID, 1);
+    fn execute(
+        &self,
+        pctx: Arc<ProofCtx<F>>,
+        global_ids: &RwLock<Vec<usize>>,
+        _input_data_path: Option<PathBuf>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let global_id =
+            pctx.add_instance(FibonacciSquareTrace::<F>::AIRGROUP_ID, FibonacciSquareTrace::<F>::AIR_ID, 1)?;
         let instance_ids = vec![global_id];
         *self.instance_ids.write().unwrap() = instance_ids.clone();
         global_ids.write().unwrap().push(global_id);
+        Ok(())
     }
 
     fn calculate_witness(
@@ -33,7 +40,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if stage == 1 {
             let instance_id = instance_ids[0];
 
@@ -69,6 +76,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace).with_air_values(&mut air_values));
             pctx.add_air_instance(air_instance, instance_id);
         }
+        Ok(())
     }
 
     fn gen_custom_commits_fixed(
@@ -76,7 +84,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
         check: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let buffer = vec![F::ZERO; FibonacciSquareRomTrace::<F>::ROW_SIZE * FibonacciSquareRomTrace::<F>::NUM_ROWS];
         let mut trace_rom = FibonacciSquareRomTrace::new_from_vec_zeroes(buffer);
 
@@ -87,7 +95,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
 
         let file_name = pctx.get_custom_commits_fixed_buffer("rom", true)?;
 
-        let setup = sctx.get_setup(trace_rom.airgroup_id(), trace_rom.air_id());
+        let setup = sctx.get_setup(trace_rom.airgroup_id(), trace_rom.air_id())?;
         let blowup_factor = 1 << (setup.stark_info.stark_struct.n_bits_ext - setup.stark_info.stark_struct.n_bits);
         write_custom_commit_trace::<F>(&mut trace_rom, blowup_factor, &file_name, check)?;
         Ok(())
@@ -107,5 +115,6 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         // tracing::info!("  Airgroup values: {:?}", airgroup_values);
         // tracing::info!("  Publics: {:?}", publics);
         // tracing::info!("  Proof values: {:?}", proof_values);
+        Ok(())
     }
 }

@@ -21,7 +21,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Component2<F> {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if stage == 1 {
             let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 
@@ -31,9 +31,9 @@ impl<F: PrimeField64> WitnessComponent<F> for Component2<F> {
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
             // Get the virtual table ID
-            let id_1 = self.std_lib.get_virtual_table_id(60);
-            let id_2 = self.std_lib.get_virtual_table_id(61);
-            let id_3 = self.std_lib.get_virtual_table_id(62);
+            let id_1 = self.std_lib.get_virtual_table_id(60)?;
+            let id_2 = self.std_lib.get_virtual_table_id(61)?;
+            let id_3 = self.std_lib.get_virtual_table_id(62)?;
 
             // Assumes
             let t = trace[0].a.len();
@@ -66,5 +66,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Component2<F> {
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
             pctx.add_air_instance(air_instance, instance_ids[0]);
         }
+        Ok(())
     }
 }

@@ -12,7 +12,7 @@ pub fn write_custom_commit_trace<F: PrimeField64>(
     blowup_factor: u64,
     file_name: &Path,
     check: bool,
-) -> Result<Vec<F>, Box<dyn std::error::Error>> {
+) -> Result<Vec<F>, Box<dyn std::error::Error + Send + Sync>> {
     let buffer = custom_trace.get_buffer();
     let n = custom_trace.num_rows() as u64;
     let n_extended = blowup_factor * custom_trace.num_rows() as u64;

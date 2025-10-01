@@ -142,14 +142,19 @@ impl<F: PrimeField64> SetupsVadcop<F> {
         }
     }
 
-    pub fn get_setup(&self, airgroup_id: usize, air_id: usize, setup_type: &ProofType) -> &Setup<F> {
+    pub fn get_setup(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        setup_type: &ProofType,
+    ) -> Result<&Setup<F>, Box<dyn std::error::Error + Send + Sync>> {
         match setup_type {
             ProofType::Compressor => self.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id),
             ProofType::Recursive1 => self.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id),
             ProofType::Recursive2 => self.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, air_id),
-            ProofType::VadcopFinal => self.setup_vadcop_final.as_ref().unwrap(),
-            ProofType::RecursiveF => self.setup_recursivef.as_ref().unwrap(),
-            _ => panic!("Invalid setup type"),
+            ProofType::VadcopFinal => Ok(self.setup_vadcop_final.as_ref().unwrap()),
+            ProofType::RecursiveF => Ok(self.setup_recursivef.as_ref().unwrap()),
+            _ => Err("Invalid setup type".into()),
         }
     }
 }
@@ -331,30 +336,36 @@ impl<F: PrimeField64> SetupCtx<F> {
         }
     }
 
-    pub fn get_setup(&self, airgroup_id: usize, air_id: usize) -> &Setup<F> {
+    pub fn get_setup(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+    ) -> Result<&Setup<F>, Box<dyn std::error::Error + Send + Sync>> {
         match self.setup_repository.setups.get(&(airgroup_id, air_id)) {
-            Some(setup) => setup,
+            Some(setup) => Ok(setup),
             None => {
                 // Handle the error case as needed
                 tracing::error!("Setup not found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
-                // You might want to return a default value or panic
-                panic!("Setup not found"); // or return a default value if applicable
+                Err(format!("Setup not found for airgroup_id: {}, air_id: {}", airgroup_id, air_id).into())
             }
         }
     }
 
-    pub fn get_fixed(&self, airgroup_id: usize, air_id: usize) -> Vec<F> {
+    pub fn get_fixed(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+    ) -> Result<Vec<F>, Box<dyn std::error::Error + Send + Sync>> {
         match self.setup_repository.setups.get(&(airgroup_id, air_id)) {
             Some(setup) => {
                 let const_pols: Vec<F> = vec![F::ZERO; setup.const_pols_size];
                 load_const_pols(setup, &const_pols);
-                const_pols
+                Ok(const_pols)
             }
             None => {
                 // Handle the error case as needed
                 tracing::error!("Setup not found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
-                // You might want to return a default value or panic
-                panic!("Setup not found"); // or return a default value if applicable
+                Err(format!("Setup not found for airgroup_id: {}, air_id: {}", airgroup_id, air_id).into())
             }
         }
     }

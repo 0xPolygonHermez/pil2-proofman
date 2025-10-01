@@ -10,7 +10,10 @@ use std::collections::HashMap;
 
 use proofman_common::{skip_prover_instance, ProofCtx, SetupCtx};
 
-pub fn aggregate_airgroupvals<F: PrimeField64>(pctx: &ProofCtx<F>, airgroup_values: &[Vec<F>]) -> Vec<Vec<u64>> {
+pub fn aggregate_airgroupvals<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    airgroup_values: &[Vec<F>],
+) -> Result<Vec<Vec<u64>>, Box<dyn std::error::Error + Send + Sync>> {
     const FIELD_EXTENSION: usize = 3;
 
     let mut airgroupvalues = Vec::new();
@@ -27,7 +30,7 @@ pub fn aggregate_airgroupvals<F: PrimeField64>(pctx: &ProofCtx<F>, airgroup_valu
     let my_instances = pctx.dctx_get_process_instances();
 
     for (my_instance_idx, instance_id) in my_instances.iter().enumerate() {
-        let (airgroup_id, _) = pctx.dctx_get_instance_info(*instance_id);
+        let (airgroup_id, _) = pctx.dctx_get_instance_info(*instance_id)?;
         for (idx, agg_type) in pctx.global_info.agg_types[airgroup_id].iter().enumerate() {
             let mut acc = CubicExtensionField {
                 value: [
@@ -71,7 +74,7 @@ pub fn aggregate_airgroupvals<F: PrimeField64>(pctx: &ProofCtx<F>, airgroup_valu
         airgroupvalues_u64.push(values);
     }
 
-    airgroupvalues_u64
+    Ok(airgroupvalues_u64)
 }
 
 fn get_global_hint_f<F: PrimeField64>(
@@ -80,7 +83,7 @@ fn get_global_hint_f<F: PrimeField64>(
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
-) -> Vec<HintFieldInfo<F>> {
+) -> Result<Vec<HintFieldInfo<F>>, Box<dyn std::error::Error + Send + Sync>> {
     let n_hints_values = get_hint_field_global_constraints_values_c(sctx.get_global_bin(), hint_id, hint_field_name);
 
     let mut hint_field_values = vec![HintFieldInfo::default(); n_hints_values as usize];
@@ -113,17 +116,17 @@ fn get_global_hint_f<F: PrimeField64>(
         let mut airgroup_values_air_instances = Vec::new();
         let my_instances = pctx.dctx_get_process_instances();
         for instance_id in my_instances.iter() {
-            if !skip_prover_instance(pctx, *instance_id).0 {
-                let (airgroup_id, air_id) = pctx.dctx_get_instance_info(*instance_id);
-                let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
+            if !skip_prover_instance(pctx, *instance_id)?.0 {
+                let (airgroup_id, air_id) = pctx.dctx_get_instance_info(*instance_id)?;
+                let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id)?;
                 airgroup_values_air_instances.push(pctx.get_air_instance_airgroup_values(
                     airgroup_id,
                     air_id,
                     air_instance_id,
-                ));
+                )?);
             }
         }
-        let mut airgroupvals = aggregate_airgroupvals(pctx, &airgroup_values_air_instances);
+        let mut airgroupvals = aggregate_airgroupvals(pctx, &airgroup_values_air_instances)?;
         let mut airgroup_values_ptrs: Vec<*mut u64> = airgroupvals
             .iter_mut() // Iterate mutably over the inner Vecs
             .map(|inner_vec| inner_vec.as_mut_ptr()) // Get a raw pointer to each inner Vec
@@ -146,7 +149,7 @@ fn get_global_hint_f<F: PrimeField64>(
         print_expression,
     );
 
-    hint_field_values
+    Ok(hint_field_values)
 }
 
 pub fn get_hint_field_constant_gc<F: PrimeField64>(
@@ -154,18 +157,21 @@ pub fn get_hint_field_constant_gc<F: PrimeField64>(
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
-) -> HintFieldValue<F> {
-    let hint_info = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression);
+) -> Result<HintFieldValue<F>, Box<dyn std::error::Error + Send + Sync>> {
+    let hint_info = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression)?;
 
     if hint_info[0].matrix_size != 0 {
-        panic!("get_hint_field can only be called with single expressions, but {hint_field_name} is an array");
+        return Err(format!(
+            "get_hint_field can only be called with single expressions, but {hint_field_name} is an array"
+        )
+        .into());
     }
 
     if print_expression {
         tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info[0].expression_line).unwrap());
     }
 
-    HintCol::from_hint_field(&hint_info[0])
+    Ok(HintCol::from_hint_field(&hint_info[0]))
 }
 
 pub fn get_hint_field_gc_constant_a<F: PrimeField64>(
@@ -173,13 +179,13 @@ pub fn get_hint_field_gc_constant_a<F: PrimeField64>(
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
-) -> HintFieldValuesVec<F> {
-    let hint_infos = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression);
+) -> Result<HintFieldValuesVec<F>, Box<dyn std::error::Error + Send + Sync>> {
+    let hint_infos = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression)?;
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.iter().enumerate() {
         if v == 0 && hint_info.matrix_size != 1 {
-            panic!("get_hint_field_m can only be called with an array of expressions!");
+            return Err(("get_hint_field_m can only be called with an array of expressions!".to_string()).into());
         }
         if print_expression {
             tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
@@ -188,7 +194,7 @@ pub fn get_hint_field_gc_constant_a<F: PrimeField64>(
         hint_field_values.push(hint_value);
     }
 
-    HintFieldValuesVec { values: hint_field_values }
+    Ok(HintFieldValuesVec { values: hint_field_values })
 }
 
 pub fn get_hint_field_constant_gc_m<F: PrimeField64>(
@@ -196,14 +202,14 @@ pub fn get_hint_field_constant_gc_m<F: PrimeField64>(
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
-) -> HintFieldValues<F> {
-    let hint_infos = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression);
+) -> Result<HintFieldValues<F>, Box<dyn std::error::Error + Send + Sync>> {
+    let hint_infos = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression)?;
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 
     for (v, hint_info) in hint_infos.iter().enumerate() {
         if v == 0 && hint_info.matrix_size > 2 {
-            panic!("get_hint_field_m can only be called with a matrix of expressions!",);
+            return Err(("get_hint_field_m can only be called with a matrix of expressions!".to_string()).into());
         }
         let hint_value = HintCol::from_hint_field(hint_info);
         let mut pos = Vec::new();
@@ -216,7 +222,7 @@ pub fn get_hint_field_constant_gc_m<F: PrimeField64>(
         hint_field_values.insert(pos, hint_value);
     }
 
-    HintFieldValues { values: hint_field_values }
+    Ok(HintFieldValues { values: hint_field_values })
 }
 
 pub fn get_hint_field_gc<F: PrimeField64>(
@@ -225,18 +231,21 @@ pub fn get_hint_field_gc<F: PrimeField64>(
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
-) -> HintFieldValue<F> {
-    let hint_info = get_global_hint_f(Some(pctx), sctx, hint_id, hint_field_name, print_expression);
+) -> Result<HintFieldValue<F>, Box<dyn std::error::Error + Send + Sync>> {
+    let hint_info = get_global_hint_f(Some(pctx), sctx, hint_id, hint_field_name, print_expression)?;
 
     if hint_info[0].matrix_size != 0 {
-        panic!("get_hint_field can only be called with single expressions, but {hint_field_name} is an array");
+        return Err(format!(
+            "get_hint_field can only be called with single expressions, but {hint_field_name} is an array"
+        )
+        .into());
     }
 
     if print_expression {
         tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info[0].expression_line).unwrap());
     }
 
-    HintCol::from_hint_field(&hint_info[0])
+    Ok(HintCol::from_hint_field(&hint_info[0]))
 }
 
 pub fn get_hint_field_gc_a<F: PrimeField64>(
@@ -245,13 +254,13 @@ pub fn get_hint_field_gc_a<F: PrimeField64>(
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
-) -> HintFieldValuesVec<F> {
-    let hint_infos = get_global_hint_f(Some(pctx), sctx, hint_id, hint_field_name, print_expression);
+) -> Result<HintFieldValuesVec<F>, Box<dyn std::error::Error + Send + Sync>> {
+    let hint_infos = get_global_hint_f(Some(pctx), sctx, hint_id, hint_field_name, print_expression)?;
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.iter().enumerate() {
         if v == 0 && hint_info.matrix_size != 1 {
-            panic!("get_hint_field_m can only be called with an array of expressions!");
+            return Err(("get_hint_field_m can only be called with an array of expressions!".to_string()).into());
         }
         if print_expression {
             tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
@@ -259,7 +268,7 @@ pub fn get_hint_field_gc_a<F: PrimeField64>(
         let hint_value = HintCol::from_hint_field(hint_info);
         hint_field_values.push(hint_value);
     }
-    HintFieldValuesVec { values: hint_field_values }
+    Ok(HintFieldValuesVec { values: hint_field_values })
 }
 
 pub fn get_hint_field_gc_m<F: PrimeField64>(
@@ -268,14 +277,14 @@ pub fn get_hint_field_gc_m<F: PrimeField64>(
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
-) -> HintFieldValues<F> {
-    let hint_infos = get_global_hint_f(Some(&pctx), &sctx, hint_id, hint_field_name, print_expression);
+) -> Result<HintFieldValues<F>, Box<dyn std::error::Error + Send + Sync>> {
+    let hint_infos = get_global_hint_f(Some(&pctx), &sctx, hint_id, hint_field_name, print_expression)?;
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 
     for (v, hint_info) in hint_infos.iter().enumerate() {
         if v == 0 && hint_info.matrix_size > 2 {
-            panic!("get_hint_field_m can only be called with a matrix of expressions!",);
+            return Err(("get_hint_field_m can only be called with a matrix of expressions!".to_string()).into());
         }
         let hint_value = HintCol::from_hint_field(hint_info);
         let mut pos = Vec::new();
@@ -288,7 +297,7 @@ pub fn get_hint_field_gc_m<F: PrimeField64>(
         hint_field_values.insert(pos, hint_value);
     }
 
-    HintFieldValues { values: hint_field_values }
+    Ok(HintFieldValues { values: hint_field_values })
 }
 
 pub fn set_hint_field_gc<F: PrimeField64>(

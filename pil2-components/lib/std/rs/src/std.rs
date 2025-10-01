@@ -18,26 +18,35 @@ pub struct Std<F: PrimeField64> {
 }
 
 impl<F: PrimeField64> Std<F> {
-    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, shared_tables: bool) -> Arc<Self> {
+    pub fn new(
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        shared_tables: bool,
+    ) -> Result<Arc<Self>, Box<dyn std::error::Error + Send + Sync>> {
         // Get the mode
         let mode = RwLock::new(StdMode::default());
 
         // Instantiate the components
-        let prod_bus = StdProd::new(&sctx);
-        let sum_bus = StdSum::new(&sctx);
-        let virtual_table = StdVirtualTable::new(pctx.clone(), &sctx, shared_tables);
-        let range_check = StdRangeCheck::new(pctx.clone(), &sctx, virtual_table.clone(), shared_tables);
+        let prod_bus = StdProd::new(&sctx)?;
+        let sum_bus = StdSum::new(&sctx)?;
+        let virtual_table = StdVirtualTable::new(pctx.clone(), &sctx, shared_tables)?;
+        let range_check = StdRangeCheck::new(pctx.clone(), &sctx, virtual_table.clone(), shared_tables)?;
 
-        Arc::new(Self { mode, prod_bus, sum_bus, range_check, virtual_table })
+        Ok(Arc::new(Self { mode, prod_bus, sum_bus, range_check, virtual_table }))
     }
 
     /// Gets the range id for a given range subject to the range check
-    pub fn get_range_id(&self, min: i64, max: i64, predefined: Option<bool>) -> usize {
+    pub fn get_range_id(
+        &self,
+        min: i64,
+        max: i64,
+        predefined: Option<bool>,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         self.range_check.get_range_id(min, max, predefined)
     }
 
     /// Gets the virtual table ID for a given ID
-    pub fn get_virtual_table_id(&self, id: usize) -> usize {
+    pub fn get_virtual_table_id(&self, id: usize) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         self.virtual_table.get_global_id(id)
     }
 
@@ -45,8 +54,8 @@ impl<F: PrimeField64> Std<F> {
         self.range_check.assign_value(id, val, multiplicity);
     }
 
-    pub fn range_checks(&self, id: usize, values: Vec<u32>) {
-        self.range_check.assign_values(id, values);
+    pub fn range_checks(&self, id: usize, values: Vec<u32>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.range_check.assign_values(id, values)
     }
 
     pub fn inc_virtual_row(&self, id: usize, row: u64, multiplicity: u64) {

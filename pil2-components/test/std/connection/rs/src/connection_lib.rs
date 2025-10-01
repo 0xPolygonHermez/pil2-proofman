@@ -10,8 +10,8 @@ use proofman::register_std;
 witness_library!(WitnessLib, Goldilocks);
 
 impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
-    fn register_witness(&mut self, wcm: &WitnessManager<F>) {
-        let std = Std::new(wcm.get_pctx(), wcm.get_sctx(), false);
+    fn register_witness(&mut self, wcm: &WitnessManager<F>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let std = Std::new(wcm.get_pctx(), wcm.get_sctx(), false)?;
         let connection1 = Connection1::new();
         let connection2 = Connection2::new();
         let connection_new = ConnectionNew::new();
@@ -20,5 +20,6 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
         wcm.register_component(connection1.clone());
         wcm.register_component(connection2.clone());
         wcm.register_component(connection_new.clone());
+        Ok(())
     }
 }

@@ -11,10 +11,10 @@ use proofman::register_std;
 witness_library!(WitnessLib, Goldilocks);
 
 impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
-    fn register_witness(&mut self, wcm: &WitnessManager<F>) {
+    fn register_witness(&mut self, wcm: &WitnessManager<F>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let seed = if cfg!(feature = "debug") { 0 } else { rng().random::<u64>() };
 
-        let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx(), false);
+        let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx(), false)?;
         let simple_left = SimpleLeft::new(std_lib.clone());
         let simple_right = SimpleRight::new();
 
@@ -24,5 +24,6 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
         wcm.register_component(simple_right.clone());
 
         simple_left.set_seed(seed);
+        Ok(())
     }
 }
