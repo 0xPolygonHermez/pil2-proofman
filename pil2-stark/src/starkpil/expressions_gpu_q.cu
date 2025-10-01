@@ -8,8 +8,9 @@
 
 extern __shared__ Goldilocks::Element scratchpad[];
 __device__ __noinline__ void ziAndstorePolynomial_q__(ExpsArguments *d_expsArgs, Goldilocks::Element *accumulator, Goldilocks::Element* d_zi, uint64_t row);
+__device__ __noinline__ void ziAndstorePolynomial_q_cyclic__(ExpsArguments *d_expsArgs, Goldilocks::Element *accumulator, Goldilocks::Element* d_zi, uint64_t row);
 __device__ __noinline__ void accumulate_q__(ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, gl64_t *accumulator, gl64_t* tmp, gl64_t* d_challengePowers, gl64_t* helper, bool print);
-__device__ __noinline__ void getInversePolinomial_q__(gl64_t *polynomial, uint64_t dim);
+__device__ __noinline__ void accumulate_q_cyclic__(ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, gl64_t *accumulator, gl64_t* tmp, gl64_t* d_challengePowers, gl64_t* helper, bool print);
 
 __device__ __noinline__ Goldilocks::Element* load_q__(
     const DeviceArgumentsQ*  dArgs,
@@ -229,7 +230,7 @@ void ExpressionsGPUQ::calculateExpressions_gpu_q(StepsParams *d_params, Dest des
     //dim3 nBlocks_ =  nblocks_;
     //dim3 nThreads_ = nthreads_;
 
-    dim3 nThreads_(nrowsPack, 2, 1); //max: 512
+    dim3 nThreads_(nrowsPack, 1, 1); //max: 512
     dim3 nBlocks_ = 2048;  //max: 2048
 
     size_t sharedMem = (bufferCommitSize  + 9) * sizeof(Goldilocks::Element *) + 2 * (nThreads_.x * nThreads_.y) * (FIELD_EXTENSION + 1) * sizeof(Goldilocks::Element)+100*sizeof(Goldilocks::Element);
@@ -444,7 +445,80 @@ __device__ __noinline__ void ziAndstorePolynomial_q__(ExpsArguments *d_expsArgs,
     }*/
 }
 
+__device__ __noinline__ void ziAndstorePolynomial_q_cyclic__(ExpsArguments *d_expsArgs, Goldilocks::Element *accumulator, Goldilocks::Element* d_zi, uint64_t row)
+{
+    if (threadIdx.y == 0){
+        gl64_t* dest = (gl64_t*) d_expsArgs->dest_gpu;
+        gl64_t* acc = (gl64_t*)accumulator;
+        
+        // Sum accumulators from all threadIdx.y values
+       for(uint32_t i = 1; i < blockDim.y; i++){
+            gl64_t* acc_other = (gl64_t*)(accumulator + i * blockDim.x * FIELD_EXTENSION);
+            acc[threadIdx.x*FIELD_EXTENSION] = acc[threadIdx.x*FIELD_EXTENSION] + acc_other[threadIdx.x*FIELD_EXTENSION];
+            acc[threadIdx.x*FIELD_EXTENSION + 1] = acc[threadIdx.x*FIELD_EXTENSION + 1] + acc_other[threadIdx.x*FIELD_EXTENSION + 1];
+            acc[threadIdx.x*FIELD_EXTENSION + 2] = acc[threadIdx.x*FIELD_EXTENSION + 2] + acc_other[threadIdx.x*FIELD_EXTENSION + 2];
+        }
+        
+        gl64_t* zi = (gl64_t*)d_zi;
+        dest[(row + threadIdx.x) * FIELD_EXTENSION] = acc[threadIdx.x*FIELD_EXTENSION] * zi[row + threadIdx.x];
+        dest[(row + threadIdx.x) * FIELD_EXTENSION + 1] = acc[threadIdx.x*FIELD_EXTENSION + 1] * zi[row + threadIdx.x];
+        dest[(row + threadIdx.x) * FIELD_EXTENSION + 2] = acc[threadIdx.x*FIELD_EXTENSION + 2] * zi[row + threadIdx.x];
+    } //rick
+    /*if (threadIdx.y == 0){
+        gl64_t* dest = (gl64_t*) d_expsArgs->dest_gpu;
+        gl64_t* acc = (gl64_t*)accumulator;
+        
+        // Sum accumulators from all threadIdx.y values
+        for(uint32_t i = 1; i < blockDim.y; i++){
+            gl64_t* acc_other = (gl64_t*)(accumulator + i * blockDim.x * FIELD_EXTENSION);
+            acc[threadIdx.x] = acc[threadIdx.x] + acc_other[threadIdx.x];
+            acc[threadIdx.x + blockDim.x] = acc[threadIdx.x + blockDim.x] + acc_other[threadIdx.x + blockDim.x];
+            acc[threadIdx.x + 2*blockDim.x] = acc[threadIdx.x + 2*blockDim.x] + acc_other[threadIdx.x + 2*blockDim.x];
+        }
+        
+        gl64_t* zi = (gl64_t*)d_zi;
+        dest[(row + threadIdx.x) * FIELD_EXTENSION] = acc[threadIdx.x] * zi[row + threadIdx.x];
+        dest[(row + threadIdx.x) * FIELD_EXTENSION + 1] = acc[threadIdx.x + blockDim.x] * zi[row + threadIdx.x];
+        dest[(row + threadIdx.x) * FIELD_EXTENSION + 2] = acc[threadIdx.x +  2 * blockDim.x] * zi[row + threadIdx.x];
+    }*/
+}
+
 __device__ __noinline__ void    accumulate_q__(ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, gl64_t *accumulator, gl64_t* tmp, gl64_t* d_challengePowers, gl64_t* helper, bool print)
+{
+    Goldilocks::Element* challenge_print = (Goldilocks::Element*) d_challengePowers;
+
+    /*if(print){
+        printf("factor %lu %lu %lu\n", challenge_print[(d_expsArgs->dest_nParams - (d_destParams->expId + 1))*FIELD_EXTENSION].fe, challenge_print[(d_expsArgs->dest_nParams - (d_destParams->expId + 1))*FIELD_EXTENSION + 1].fe, challenge_print[(d_expsArgs->dest_nParams - (d_destParams->expId + 1))*FIELD_EXTENSION + 2].fe);
+    }*/
+    
+    if (d_destParams->dim == 1)
+    {
+        Goldilocks3GPU::op_31_gpu_stride(2,helper, &d_challengePowers[(d_expsArgs->dest_nParams - (d_destParams->expId + 1))*FIELD_EXTENSION], 0, tmp, 1);
+        Goldilocks3GPU::op_gpu_stride(0, accumulator, accumulator, FIELD_EXTENSION, helper, FIELD_EXTENSION);
+    }
+    else
+    {   
+        Goldilocks3GPU::op_gpu_stride(2,helper, &d_challengePowers[(d_expsArgs->dest_nParams - (d_destParams->expId + 1))*FIELD_EXTENSION], 0, tmp, 3);
+        Goldilocks3GPU::op_gpu_stride(0, accumulator, accumulator, FIELD_EXTENSION, helper, FIELD_EXTENSION);
+    }  //rick
+   /*if (d_destParams->dim == 1)
+    {
+        Goldilocks3GPU::op_31_gpu(2,helper, &d_challengePowers[(d_expsArgs->dest_nParams - (d_destParams->expId + 1))*FIELD_EXTENSION], true, tmp, false);
+        Goldilocks3GPU::op_gpu(0, accumulator, accumulator, false, helper, false);
+    }
+    else
+    {   
+        Goldilocks3GPU::op_gpu(2,helper, &d_challengePowers[(d_expsArgs->dest_nParams - (d_destParams->expId + 1))*FIELD_EXTENSION], true, tmp, false);
+        Goldilocks3GPU::op_gpu(0, accumulator, accumulator, false, helper, false);
+    }*/
+
+    /*if(print){
+        Goldilocks::Element* helper_print = (Goldilocks::Element*) helper;
+        printf("value %lu %lu %lu\n", helper_print[0].fe, helper_print[1].fe, helper_print[2].fe);
+    }*/
+}
+
+__device__ __noinline__ void    accumulate_q_cyclic__(ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, gl64_t *accumulator, gl64_t* tmp, gl64_t* d_challengePowers, gl64_t* helper, bool print)
 {
     Goldilocks::Element* challenge_print = (Goldilocks::Element*) d_challengePowers;
 
@@ -501,21 +575,21 @@ __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ 
 
     int chunk_idx = blockIdx.x;
     uint64_t nchunks = d_expsArgs->domainSize / blockDim.x;
+
+    uint32_t bufferCommitsSize = d_deviceArgs->bufferCommitSize;
+    Goldilocks::Element **expressions_params = (Goldilocks::Element **)scratchpad;
+
+    if (threadIdx.x == 0 && threadIdx.y == 0)
     {
-        /*uint32_t bufferCommitsSize = d_deviceArgs->bufferCommitSize;
-        Goldilocks::Element **expressions_params = (Goldilocks::Element **)scratchpad;
-        if (threadIdx.x == 0 && threadIdx.y == 0)
-        {
-            expressions_params[bufferCommitsSize + 0] = (&d_params->aux_trace[d_expsArgs->offsetTmp1 + (blockIdx.x * blockDim.y) * d_expsArgs->maxTemp1Size]);
-            expressions_params[bufferCommitsSize + 1] = (&d_params->aux_trace[d_expsArgs->offsetTmp3 + (blockIdx.x * blockDim.y) * d_expsArgs->maxTemp3Size]);
-            expressions_params[bufferCommitsSize + 2] = d_params->publicInputs;
-            expressions_params[bufferCommitsSize + 3] = d_deviceArgs->numbersConstraints;
-            expressions_params[bufferCommitsSize + 4] = d_params->airValues;
-            expressions_params[bufferCommitsSize + 5] = d_params->proofValues;
-            expressions_params[bufferCommitsSize + 6] = d_params->airgroupValues;
-            expressions_params[bufferCommitsSize + 7] = d_params->challenges;
-            expressions_params[bufferCommitsSize + 8] = d_params->evals;
-        }*/
+        expressions_params[bufferCommitsSize + 0] = (&d_params->aux_trace[d_expsArgs->offsetTmp1 + (blockIdx.x * blockDim.y) * d_expsArgs->maxTemp1Size]);
+        expressions_params[bufferCommitsSize + 1] = (&d_params->aux_trace[d_expsArgs->offsetTmp3 + (blockIdx.x * blockDim.y) * d_expsArgs->maxTemp3Size]);
+        expressions_params[bufferCommitsSize + 2] = d_params->publicInputs;
+        expressions_params[bufferCommitsSize + 3] = d_deviceArgs->numbersConstraints;
+        expressions_params[bufferCommitsSize + 4] = d_params->airValues;
+        expressions_params[bufferCommitsSize + 5] = d_params->proofValues;
+        expressions_params[bufferCommitsSize + 6] = d_params->airgroupValues;
+        expressions_params[bufferCommitsSize + 7] = d_params->challenges;
+        expressions_params[bufferCommitsSize + 8] = d_params->evals;
     }
     __syncthreads();
     Goldilocks::Element *accumulator = &(d_params->aux_trace[d_expsArgs->offsetDestVals + (blockIdx.x * blockDim.y + threadIdx.y) * blockDim.x * FIELD_EXTENSION]);
@@ -527,18 +601,19 @@ __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ 
     Goldilocks::Element *valueA1 = valueB3 + blockDim.x * FIELD_EXTENSION;
     Goldilocks::Element *valueB1 = valueA1 + blockDim.x;
 
-    //Goldilocks::Element *d_zi = &d_params->aux_trace[d_deviceArgs->zi_offset];
-    //Goldilocks::Element *tmp1 = (&d_params->aux_trace[d_expsArgs->offsetTmp1 + (blockIdx.x * blockDim.y + threadIdx.y) * d_expsArgs->maxTemp1Size]);
-    //Goldilocks::Element *tmp3 = (&d_params->aux_trace[d_expsArgs->offsetTmp3 + (blockIdx.x * blockDim.y + threadIdx.y) * d_expsArgs->maxTemp3Size]);
+    Goldilocks::Element *d_zi = &d_params->aux_trace[d_deviceArgs->zi_offset];
+    Goldilocks::Element *tmp1 = (&d_params->aux_trace[d_expsArgs->offsetTmp1 + (blockIdx.x * blockDim.y + threadIdx.y) * d_expsArgs->maxTemp1Size]);
+    Goldilocks::Element *tmp3 = (&d_params->aux_trace[d_expsArgs->offsetTmp3 + (blockIdx.x * blockDim.y + threadIdx.y) * d_expsArgs->maxTemp3Size]);
 
 
     while (chunk_idx < nchunks)
     {
         uint64_t i = chunk_idx * blockDim.x;
-        if(i < d_expsArgs->k_min || i >= d_expsArgs->k_max){
+        bool isCyclic = i < d_expsArgs->k_min || i >= d_expsArgs->k_max;
+        if(isCyclic){
             chunk_idx += gridDim.x;
             continue;
-        } 
+        }
 
         //set to zero the accumulator
         accumulator[threadIdx.x * FIELD_EXTENSION].fe = uint64_t(0);
@@ -569,21 +644,24 @@ __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ 
                 case 0:
                 {
                     // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
-                    //uint32_t stride_a;
-                    //uint32_t stride_b;
+                    uint32_t stride_a;
+                    uint32_t stride_b;
     #if COUNTERS
                     gl64_t* a = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueA1, valueA3, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 1, debug, counter, stride_a);
                     gl64_t* b = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueB1, valueB3, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, debug, counter, stride_b);
     #else
-                    //gl64_t* a = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueA1, valueA3, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 1, debug, stride_a);
-                    //gl64_t* b = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueB1, valueB3, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, debug, stride_b);
-                    gl64_t *a, *b;
+                    gl64_t* a = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueA1, valueA3, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 1, debug, stride_a);
+                    gl64_t* b = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueB1, valueB3, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, debug, stride_b);
     #endif
+                    bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
+                    bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
                     
-                    //gl64_t *res = (gl64_t*) (kk == nOps - 1 ? valueA1 : &(tmp1[args[i_args + 1] * blockDim.x]));
+                    gl64_t *res = (gl64_t*) (kk == nOps - 1 ? valueA1 : &(tmp1[args[i_args + 1] * blockDim.x]));
                     //res =  &(tmp1[args[i_args + 1] * blockDim.x]);
-                    //gl64_gpu::op_gpu_stride( args[i_args], res, a, stride_a, b, stride_b);
-                    gl64_gpu::op_gpu_stride_( args[i_args], a);
+                    #if DEBUG
+                    printArguments_q((Goldilocks::Element *)a, 1, isConstantA, (Goldilocks::Element *)b, 1, isConstantB, i, args[i_args], kk, nOps, debug);
+                    #endif
+                    gl64_gpu::op_gpu_stride( args[i_args], res, a, stride_a, b, stride_b);
 
                     i_args += 8;
                     break;
@@ -591,17 +669,17 @@ __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ 
                 case 1:
                 {
                     // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
-                    //uint32_t stride_a;
-                    //uint32_t stride_b;
+                    uint32_t stride_a;
+                    uint32_t stride_b;
 #if COUNTERS
-                    gl64_t* a = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueA1, valueA3, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, debug, counter, stride_a);
-                    gl64_t* b = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueB1, valueB3, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, debug, counter, stride_b);
+                    gl64_t* a = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueA1, valueA3, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3,  debug, counter, stride_a);
+                    gl64_t* b = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueB1, valueB3, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1,  debug, counter, stride_b);
 #else
-                    //gl64_t* a = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueA1, valueA3, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, debug, stride_a);
-                    //gl64_t* b = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueB1, valueB3, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, debug, stride_b);
-                    gl64_t *a, *b;
-
+                    gl64_t* a = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueA1, valueA3, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3,  debug, stride_a);
+                    gl64_t* b = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueB1, valueB3, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1,  debug, stride_b);
 #endif  
+                    bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
+                    bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
                     gl64_t *res = (gl64_t*) (kk == nOps - 1 ? valueA3 : &(tmp3[args[i_args + 1] * blockDim.x]));
                     //res =  &(tmp3[args[i_args + 1] * blockDim.x]);
                     Goldilocks3GPU::op_31_gpu_stride(args[i_args], res, a, stride_a, b, stride_b);
@@ -611,28 +689,35 @@ __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ 
                 case 2:
                 {
                     // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
-                    //uint32_t stride_a;
-                    //uint32_t stride_b;
+                    uint32_t stride_a;
+                    uint32_t stride_b;
 #if COUNTERS
-                    gl64_t* a = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueA1, valueA3, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, debug, counter, stride_a);
-                    gl64_t* b = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueB1, valueB3, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 3, debug, counter, stride_b);
+                    gl64_t* a = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueA1, valueA3, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3,  debug, counter, stride_a);
+                    gl64_t* b = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueB1, valueB3, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 3,  debug, counter, stride_b);
 #else
-                    //gl64_t* a = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueA1, valueA3, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, debug, stride_a);
-                    //gl64_t* b = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueB1, valueB3, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 3, debug, stride_b);
-                    gl64_t *a, *b;
-
+                    gl64_t* a = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueA1, valueA3, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3,  debug, stride_a);
+                    gl64_t* b = (gl64_t*)load_q__(d_deviceArgs, d_expsArgs, valueB1, valueB3, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 3,  debug, stride_b);
 #endif  
-                    //gl64_t *res = (gl64_t*) (kk == nOps - 1 ? valueA3 : &(tmp3[args[i_args + 1] * blockDim.x]));
+                    bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
+                    bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
+                    gl64_t *res = (gl64_t*) (kk == nOps - 1 ? valueA3 : &(tmp3[args[i_args + 1] * blockDim.x]));
                     //res =  &(tmp3[args[i_args + 1] * blockDim.x]);
-                    //Goldilocks3GPU::op_gpu_stride(args[i_args], res, a, stride_a, b, stride_b);
+                    #if DEBUG
+                    printArguments_q((Goldilocks::Element *)a, 3, isConstantA, (Goldilocks::Element *)b, 3, isConstantB, i, args[i_args], kk, nOps, debug);
+                    #endif
+                    //Goldilocks3GPU::op_gpu(args[i_args], res, a, isConstantA, b, isConstantB);
+                    Goldilocks3GPU::op_gpu_stride(args[i_args], res, a, stride_a, b, stride_b);
+                    #if DEBUG
+                    printRes_q((Goldilocks::Element *) res, 3, i, debug);
+                    #endif
                     i_args += 8;
                     break;
                 }
-               /*default:
+                default:
                 {
                     printf(" Wrong operation! %d \n", ops[kk]);
                     assert(0);
-                }*/
+                }
                 }
             }
 #if COUNTERS
@@ -693,12 +778,12 @@ __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ 
             }
 #endif
             
-            /*if(ops[nOps-1] == 0){
+            if(ops[nOps-1] == 0){
                 accumulate_q__(d_expsArgs, &d_destParams[k], (gl64_t *)accumulator, (gl64_t *)(valueA1), (gl64_t*)d_challengePowers, (gl64_t *)(valueB3),  threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0); 
             }else{
 
                 accumulate_q__(d_expsArgs, &d_destParams[k], (gl64_t *)accumulator, (gl64_t *)(valueA3), (gl64_t*)d_challengePowers, (gl64_t *)(valueB3),  threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0);
-            }*/ 
+            } 
         }
 #if COUNTERS
         if(threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0 && threadIdx.y == 0 && false){
@@ -743,9 +828,9 @@ __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ 
             printf("Total memory accesses: %lu\n", totalLoads);
         }
 #endif
-        /*__syncthreads();
+        __syncthreads();
         ziAndstorePolynomial_q__(d_expsArgs, accumulator, d_zi, i);
-        __syncthreads();*/
+        __syncthreads();
         chunk_idx += gridDim.x;
     }
 
@@ -973,10 +1058,10 @@ __global__  void computeExpressions_q_cyclic__(StepsParams *d_params, DeviceArgu
 #endif
             
             if(ops[nOps-1] == 0){
-                accumulate_q__(d_expsArgs, &d_destParams[k], (gl64_t *)accumulator, (gl64_t *)(valueA1), (gl64_t*)d_challengePowers, (gl64_t *)(valueB3),  threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0); 
+                accumulate_q_cyclic__(d_expsArgs, &d_destParams[k], (gl64_t *)accumulator, (gl64_t *)(valueA1), (gl64_t*)d_challengePowers, (gl64_t *)(valueB3),  threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0); 
             }else{
 
-                accumulate_q__(d_expsArgs, &d_destParams[k], (gl64_t *)accumulator, (gl64_t *)(valueA3), (gl64_t*)d_challengePowers, (gl64_t *)(valueB3),  threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0);
+                accumulate_q_cyclic__(d_expsArgs, &d_destParams[k], (gl64_t *)accumulator, (gl64_t *)(valueA3), (gl64_t*)d_challengePowers, (gl64_t *)(valueB3),  threadIdx.x == 0 && blockIdx.x == 0 && chunk_idx == 0);
             } 
         }
 #if COUNTERS
@@ -1023,7 +1108,7 @@ __global__  void computeExpressions_q_cyclic__(StepsParams *d_params, DeviceArgu
         }
 #endif
         __syncthreads();
-        ziAndstorePolynomial_q__(d_expsArgs, accumulator, d_zi, i);
+        ziAndstorePolynomial_q_cyclic__(d_expsArgs, accumulator, d_zi, i);
         __syncthreads();
         chunk_idx += gridDim.x;
     }
