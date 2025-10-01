@@ -39,6 +39,8 @@ struct DeviceArgumentsQ
 };
 
 __global__  void computeExpressions_q__(StepsParams *d_params, DeviceArgumentsQ *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, const bool debug, uint64_t challengeId, Goldilocks::Element *d_challengePowers);
+
+__global__  void computeExpressions_q_cyclic__(StepsParams *d_params, DeviceArgumentsQ *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, const bool debug, uint64_t challengeId, Goldilocks::Element *d_challengePowers);
 class ExpressionsGPUQ : public ExpressionsCtx
 {
 public:
