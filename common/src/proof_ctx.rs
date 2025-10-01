@@ -611,10 +611,12 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.n_partitions
     }
 
-    pub fn get_worker_index(&self) -> usize {
+    pub fn get_worker_index(&self) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         let dctx = self.dctx.read().unwrap();
-        assert!(dctx.worker_index >= 0, "Worker index not set");
-        dctx.worker_index as usize
+        if dctx.worker_index < 0 {
+            return Err("Worker index not set".into());
+        }
+        Ok(dctx.worker_index as usize)
     }
 
     pub fn get_proof_values_ptr(&self) -> *mut u8 {

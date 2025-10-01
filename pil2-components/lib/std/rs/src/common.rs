@@ -160,7 +160,7 @@ pub fn validate_binary_field<F: PrimeField64>(
     } else if value.is_one() {
         Ok(true)
     } else {
-        return Err(format!("{} hint must be either 0 or 1", field_name).into());
+        Err(format!("{} hint must be either 0 or 1", field_name).into())
     }
 }
 

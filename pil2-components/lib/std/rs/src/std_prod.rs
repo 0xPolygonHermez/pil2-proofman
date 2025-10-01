@@ -304,12 +304,9 @@ impl<F: PrimeField64> StdProd<F> {
                 let name_piop = get_global_hint_field_constant_as_string(sctx, gprod_debug_data[1 + i], "name_piop")?;
                 let type_piop =
                     get_global_hint_field_constant_as::<u64, F>(sctx, gprod_debug_data[1 + i], "type_piop")?;
-                assert!(
-                    type_piop == Self::PROD_TYPE_ASSUMES
-                        || type_piop == Self::PROD_TYPE_PROVES
-                        || type_piop == Self::PROD_TYPE_FREE,
-                    "Invalid type_piop: {type_piop}"
-                );
+                if ![Self::PROD_TYPE_ASSUMES, Self::PROD_TYPE_PROVES, Self::PROD_TYPE_FREE].contains(&type_piop) {
+                    return Err(format!("Invalid type_piop: {type_piop}").into());
+                }
 
                 let opid = get_global_hint_field(sctx, gprod_debug_data[1 + i], "busid")?;
 
@@ -346,7 +343,7 @@ impl<F: PrimeField64> StdProd<F> {
                 let expressions = get_hint_field_gc_a(pctx, sctx, gprod_debug_data[1 + i], "expressions", false)?;
                 let is_proves = type_piop == Self::PROD_TYPE_PROVES;
                 if fast_mode {
-                    update_debug_data_fast(debug_data_fast, opid, expressions.get(0), is_proves, num_reps, true);
+                    update_debug_data_fast(debug_data_fast, opid, expressions.get(0), is_proves, num_reps, true)?;
                 } else {
                     update_debug_data(
                         debug_data,
@@ -361,7 +358,7 @@ impl<F: PrimeField64> StdProd<F> {
                         is_proves,
                         num_reps,
                         true,
-                    );
+                    )?;
                 }
             }
         }
@@ -432,12 +429,9 @@ impl<F: PrimeField64> StdProd<F> {
                 "type_piop",
                 HintFieldOptions::default(),
             )?;
-            assert!(
-                type_piop == Self::PROD_TYPE_ASSUMES
-                    || type_piop == Self::PROD_TYPE_PROVES
-                    || type_piop == Self::PROD_TYPE_FREE,
-                "Invalid type_piop: {type_piop}"
-            );
+            if ![Self::PROD_TYPE_ASSUMES, Self::PROD_TYPE_PROVES, Self::PROD_TYPE_FREE].contains(&type_piop) {
+                return Err(format!("Invalid type_piop: {type_piop}").into());
+            }
 
             let num_reps =
                 get_hint_field(sctx, pctx, instance_id, hint as usize, "num_reps", HintFieldOptions::default())?;
@@ -549,7 +543,7 @@ impl<F: PrimeField64> StdProd<F> {
             _ => unreachable!(),
         };
         if fast_mode {
-            update_debug_data_fast(debug_data_fast, opid, expressions.get(row), is_proves, num_reps, is_global);
+            update_debug_data_fast(debug_data_fast, opid, expressions.get(row), is_proves, num_reps, is_global)
         } else {
             update_debug_data(
                 debug_data,
@@ -564,8 +558,7 @@ impl<F: PrimeField64> StdProd<F> {
                 is_proves,
                 num_reps,
                 is_global,
-            );
+            )
         }
-        Ok(())
     }
 }

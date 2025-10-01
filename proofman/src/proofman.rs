@@ -1272,7 +1272,7 @@ where
             if phase == ProvePhase::Contributions {
                 return Ok(ProvePhaseResult::Contributions(vec![ContributionsInfo {
                     challenge: internal_contribution_u64,
-                    worker_index: self.pctx.get_worker_index() as u32,
+                    worker_index: self.pctx.get_worker_index()? as u32,
                     airgroup_id: 0,
                 }]));
             }
@@ -1352,6 +1352,7 @@ where
             let compressor_witness_tx_clone = self.compressor_witness_tx.clone();
             let recursive_rx_clone = self.recursive_rx.clone();
             let error_clone = self.error.clone();
+            let output_dir_path = options.output_dir_path.clone();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, proof_type)) = recursive_rx_clone.recv() {
                     if id == u64::MAX - 1 {
@@ -1410,7 +1411,14 @@ where
 
                         match recursive2_proof {
                             Some((p1, p2, p3)) => {
-                                match gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3) {
+                                match gen_witness_aggregation(
+                                    &pctx_clone,
+                                    &setups_clone,
+                                    &p1,
+                                    &p2,
+                                    &p3,
+                                    &output_dir_path,
+                                ) {
                                     Ok(witness) => Some(witness),
                                     Err(e) => {
                                         *error_clone.lock().unwrap() =
@@ -1423,7 +1431,7 @@ where
                         }
                     } else if new_proof_type == ProofType::Recursive1 as usize && p == ProofType::Compressor {
                         let compressor_proof = compressor_proofs_clone[id as usize].write().unwrap().take().unwrap();
-                        let w = gen_witness_recursive(&pctx_clone, &setups_clone, &compressor_proof);
+                        let w = gen_witness_recursive(&pctx_clone, &setups_clone, &compressor_proof, &output_dir_path);
                         match w {
                             Ok(witness) => Some(witness),
                             Err(e) => {
@@ -1434,7 +1442,7 @@ where
                         }
                     } else {
                         let proof = proofs_clone[id as usize].write().unwrap().take().unwrap();
-                        let w = gen_witness_recursive(&pctx_clone, &setups_clone, &proof);
+                        let w = gen_witness_recursive(&pctx_clone, &setups_clone, &proof, &output_dir_path);
                         match w {
                             Ok(witness) => Some(witness),
                             Err(e) => {
@@ -1486,7 +1494,7 @@ where
                 options.save_proofs,
                 self.gpu_params.preallocate,
             ) {
-                *self.error.lock().unwrap() = Some(e.into());
+                *self.error.lock().unwrap() = Some(e);
                 return;
             }
 
@@ -1569,7 +1577,7 @@ where
                             options.save_proofs,
                             preallocate,
                         ) {
-                            *error_clone.lock().unwrap() = Some(e.into());
+                            *error_clone.lock().unwrap() = Some(e);
                             break;
                         }
                         let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
@@ -1846,7 +1854,7 @@ where
                                 agg_proofs.push(AggProofs::new(
                                     airgroup as u64,
                                     proof,
-                                    vec![self.pctx.get_worker_index()],
+                                    vec![self.pctx.get_worker_index()?],
                                 ));
                             }
                         }
@@ -2090,6 +2098,7 @@ where
             let recursive_rx_clone = self.recursive_rx.clone();
             let total_outer_agg_proofs = self.total_outer_agg_proofs.clone();
             let error_clone = self.error.clone();
+            let output_dir_path = options.output_dir_path.clone();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, _)) = recursive_rx_clone.recv() {
                     if id == u64::MAX - 1 {
@@ -2110,7 +2119,9 @@ where
                         let p2 = recursive2_airgroup_proofs.pop().unwrap();
                         let p3 = recursive2_airgroup_proofs.pop().unwrap();
 
-                        let witness = gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3).unwrap();
+                        let witness =
+                            gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3, &output_dir_path)
+                                .unwrap();
                         total_outer_agg_proofs.increment();
                         rec2_witness_tx_clone.send(witness).unwrap();
                     }
@@ -2387,6 +2398,7 @@ where
             let recursive_rx_clone = recursive_rx.clone();
             let recursive2_done_clone = recursive2_done.clone();
             let error_clone = self.error.clone();
+            let output_dir_path = options.output_dir_path.clone();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, _)) = recursive_rx_clone.recv() {
                     recursive2_done_clone.increment();
@@ -2407,7 +2419,9 @@ where
                         let p1 = recursive2_airgroup_proofs.pop().unwrap();
                         let p2 = recursive2_airgroup_proofs.pop().unwrap();
                         let p3 = recursive2_airgroup_proofs.pop().unwrap();
-                        let witness = gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3).unwrap();
+                        let witness =
+                            gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3, &output_dir_path)
+                                .unwrap();
                         rec2_witness_tx_clone.send(witness).unwrap();
                     }
                 }
@@ -2995,14 +3009,15 @@ where
 
         let mut air_instance = pctx.air_instances[instance_id].write().unwrap();
 
-        assert!(
-            air_instance.num_rows == (1 << setup.stark_info.stark_struct.n_bits),
-            "Row count mismatch for airgroup_id={}, air_id={}: expected {} rows (from proving key), but got {} rows (from pil-helpers).",
-            airgroup_id,
-            air_id,
-            1 << setup.stark_info.stark_struct.n_bits,
-            air_instance.num_rows
-        );
+        if air_instance.num_rows != (1 << setup.stark_info.stark_struct.n_bits) {
+            return Err(format!(
+                "Row count mismatch for airgroup_id={}, air_id={}: expected {} rows (from proving key), but got {} rows (from pil-helpers).",
+                airgroup_id,
+                air_id,
+                1 << setup.stark_info.stark_struct.n_bits,
+                air_instance.num_rows
+            ).into());
+        }
 
         if init_aux_trace {
             air_instance.init_aux_trace(setup.prover_buffer_size as usize);

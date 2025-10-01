@@ -29,7 +29,7 @@ pub fn update_debug_data_fast<F: PrimeField64>(
     is_proves: bool,
     times: F,
     is_global: bool,
-) {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let bus_opid_times = debug_data_fast.entry(opid).or_insert_with(|| SharedDataFast {
         global_values: Vec::new(),
         num_proves: BigUint::zero(),
@@ -59,7 +59,7 @@ pub fn update_debug_data_fast<F: PrimeField64>(
     // If the value is global but it was already processed, skip it
     if is_global {
         if bus_opid_times.global_values.contains(&hash_value) {
-            return;
+            return Ok(());
         }
         bus_opid_times.global_values.push(hash_value.clone());
     }
@@ -68,9 +68,12 @@ pub fn update_debug_data_fast<F: PrimeField64>(
     if is_proves {
         bus_opid_times.num_proves += hash_value * times.as_canonical_biguint();
     } else {
-        assert!(times.is_one(), "The selector value is invalid: expected 1, but received {times:?}.");
+        if !times.is_one() {
+            return Err(format!("The selector value is invalid: expected 1, but received {times:?}.").into());
+        }
         bus_opid_times.num_assumes += hash_value;
     }
+    Ok(())
 }
 
 pub fn check_invalid_opids<F: PrimeField64>(_pctx: &ProofCtx<F>, debugs_data_fasts: &mut [DebugDataFast<F>]) -> Vec<F> {
