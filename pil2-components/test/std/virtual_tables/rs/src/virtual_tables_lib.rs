@@ -14,10 +14,10 @@ use proofman::register_std;
 witness_library!(WitnessLib, Goldilocks);
 
 impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
-    fn register_witness(&mut self, wcm: &WitnessManager<F>) {
+    fn register_witness(&mut self, wcm: &WitnessManager<F>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let seed = if cfg!(feature = "debug") { 0 } else { rng().random::<u64>() };
 
-        let std = Std::new(wcm.get_pctx(), wcm.get_sctx(), false);
+        let std = Std::new(wcm.get_pctx(), wcm.get_sctx(), false)?;
         register_std(wcm, &std);
 
         let component1 = Component1::new(std.clone());
@@ -47,5 +47,6 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
         // wcm.register_component(table7);
         // wcm.register_component(component7);
         wcm.register_component(component8);
+        Ok(())
     }
 }

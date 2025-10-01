@@ -20,7 +20,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Lookup3 {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if stage == 1 {
             // For simplicity, add a single instance of each air
             let mut trace = Lookup3Trace::new_from_vec(buffer_pool.take_buffer());
@@ -53,5 +53,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Lookup3 {
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
             pctx.add_air_instance(air_instance, instance_ids[0]);
         }
+        Ok(())
     }
 }

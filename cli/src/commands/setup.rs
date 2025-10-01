@@ -28,7 +28,7 @@ pub struct CheckSetupCmd {
 }
 
 impl CheckSetupCmd {
-    pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("{} CheckSetup", format!("{: >12}", "Command").bright_green().bold());
         println!();
 

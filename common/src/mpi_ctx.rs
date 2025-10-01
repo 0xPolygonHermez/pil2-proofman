@@ -82,11 +82,11 @@ impl MpiCtx {
         }
     }
 
-    pub fn get_outer_agg_rank(&self) -> i32 {
+    pub fn get_outer_agg_rank(&self) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
         if self.outer_agg_rank.load(Ordering::SeqCst) == -1 {
-            panic!("Aggregation rank not yet determined. Call process_ready_for_aggregation() first.");
+            return Err("Aggregation rank not yet determined. Call process_ready_for_aggregation() first.".into());
         }
-        self.outer_agg_rank.load(Ordering::SeqCst)
+        Ok(self.outer_agg_rank.load(Ordering::SeqCst))
     }
 
     pub fn reset_outer_agg_tracker(&self) {

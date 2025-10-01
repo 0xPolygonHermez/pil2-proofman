@@ -31,9 +31,15 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
 impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {
-        pctx.add_instance(0, 0, 1);
+    fn execute(
+        &self,
+        pctx: Arc<ProofCtx<F>>,
+        global_ids: &RwLock<Vec<usize>>,
+        _input_data_path: Option<PathBuf>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        pctx.add_instance(0, 0, 1)?;
         global_ids.write().unwrap().push(0);
+        Ok(())
     }
 
     fn calculate_witness(
@@ -44,9 +50,9 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if stage == 1 {
-            let setup = sctx.get_setup(0, 0);
+            let setup = sctx.get_setup(0, 0)?;
             let current_dir =
                 env::current_dir().expect("Failed to get current directory").join("examples/test-recursive-c36");
             let proof_path = current_dir.join("proof.bin");
@@ -129,5 +135,6 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
                 AirInstance::new(TraceInfo::new(0, 0, 1 << (setup.stark_info.stark_struct.n_bits), trace, false));
             pctx.add_air_instance(air_instance, 0);
         }
+        Ok(())
     }
 }

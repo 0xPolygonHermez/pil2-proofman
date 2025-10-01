@@ -82,37 +82,39 @@ pub struct GlobalInfoStepsFRI {
 }
 
 impl GlobalInfo {
-    pub fn new(proving_key_path: &Path) -> Self {
+    pub fn new(proving_key_path: &Path) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         tracing::debug!("··· Loading GlobalInfo JSON {}", proving_key_path.display());
 
-        let global_info = Self::from_file(&proving_key_path.display().to_string());
-
-        global_info
+        Self::from_file(&proving_key_path.display().to_string())
     }
 
-    pub fn from_file(folder_path: &String) -> Self {
-        let file_path = folder_path.to_string() + "/pilout.globalInfo.json";
-        let global_info_json =
-            fs::read_to_string(&file_path).unwrap_or_else(|_| panic!("Failed to read file {file_path}"));
+    pub fn from_file(folder_path: &String) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let file_path = Path::new(folder_path).join("pilout.globalInfo.json");
 
+        // Read the JSON file
+        let global_info_json =
+            fs::read_to_string(&file_path).map_err(|_| format!("Failed to read file {}", file_path.display()))?;
+
+        // Parse the JSON into a Value
         let mut global_info_value: Value = serde_json::from_str(&global_info_json)
-            .unwrap_or_else(|err| panic!("Failed to parse JSON file: {file_path}: {err}"));
+            .map_err(|err| format!("Failed to parse JSON file {}: {}", file_path.display(), err))?;
 
         // Add the folder_path to the JSON object
         if let Some(obj) = global_info_value.as_object_mut() {
             obj.insert("folder_path".to_string(), Value::String(folder_path.to_string()));
         } else {
-            panic!("JSON is not an object: {file_path}");
+            return Err(format!("JSON is not an object: {}", file_path.display()).into());
         }
 
         // Serialize the updated JSON object back to a string
         let updated_global_info_json = serde_json::to_string(&global_info_value)
-            .unwrap_or_else(|err| panic!("Failed to serialize updated JSON: {err}"));
+            .map_err(|err| format!("Failed to serialize updated JSON: {}", err))?;
 
-        // Deserialize the updated JSON string into the `GlobalInfo` struct
+        // Deserialize into GlobalInfo
         let global_info: GlobalInfo = serde_json::from_str(&updated_global_info_json)
-            .unwrap_or_else(|err| panic!("Failed to parse updated JSON file: {file_path}: {err}"));
-        global_info
+            .map_err(|err| format!("Failed to parse updated JSON file {}: {}", file_path.display(), err))?;
+
+        Ok(global_info)
     }
 
     pub fn get_proving_key_path(&self) -> PathBuf {

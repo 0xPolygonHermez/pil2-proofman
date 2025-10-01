@@ -20,7 +20,7 @@ impl<F: PrimeField64> WitnessComponent<F> for SumBus {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if stage == 1 {
             let mut trace = SumBusTrace::new_from_vec(buffer_pool.take_buffer());
             let num_rows = trace.num_rows();
@@ -35,5 +35,6 @@ impl<F: PrimeField64> WitnessComponent<F> for SumBus {
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
             pctx.add_air_instance(air_instance, instance_ids[0]);
         }
+        Ok(())
     }
 }

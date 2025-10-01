@@ -3,8 +3,6 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use rayon::prelude::*;
-
 use fields::PrimeField64;
 
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
@@ -35,34 +33,34 @@ pub struct StdSum<F: PrimeField64> {
 }
 
 impl<F: PrimeField64> StdSum<F> {
-    pub fn new(sctx: &Arc<SetupCtx<F>>) -> Arc<Self> {
+    pub fn new(sctx: &Arc<SetupCtx<F>>) -> Result<Arc<Self>, Box<dyn std::error::Error + Send + Sync>> {
         // Get the sum check global data related to its users
         let std_sum_users = get_hint_ids_by_name(sctx.get_global_bin(), "std_sum_users");
 
         let Some(&std_sum_users) = std_sum_users.first() else {
-            return Arc::new(Self {
+            return Ok(Arc::new(Self {
                 num_users: 0,
                 std_mode: Vec::new(),
                 airgroup_ids: Vec::new(),
                 air_ids: Vec::new(),
                 debug_data: RwLock::new(HashMap::new()),
                 debug_data_fast: RwLock::new(Vec::new()),
-            });
+            }));
         };
 
-        let num_users = get_global_hint_field_constant_as::<usize, F>(sctx, std_sum_users, "num_users");
-        let std_mode = get_global_hint_field_constant_a_as::<usize, F>(sctx, std_sum_users, "std_mode");
-        let airgroup_ids = get_global_hint_field_constant_a_as::<usize, F>(sctx, std_sum_users, "airgroup_ids");
-        let air_ids = get_global_hint_field_constant_a_as::<usize, F>(sctx, std_sum_users, "air_ids");
+        let num_users = get_global_hint_field_constant_as::<usize, F>(sctx, std_sum_users, "num_users")?;
+        let std_mode = get_global_hint_field_constant_a_as::<usize, F>(sctx, std_sum_users, "std_mode")?;
+        let airgroup_ids = get_global_hint_field_constant_a_as::<usize, F>(sctx, std_sum_users, "airgroup_ids")?;
+        let air_ids = get_global_hint_field_constant_a_as::<usize, F>(sctx, std_sum_users, "air_ids")?;
 
-        Arc::new(Self {
+        Ok(Arc::new(Self {
             num_users,
             std_mode,
             airgroup_ids,
             air_ids,
             debug_data: RwLock::new(HashMap::new()),
             debug_data_fast: RwLock::new(Vec::new()),
-        })
+        }))
     }
 }
 
@@ -75,7 +73,8 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
     }
 
     fn calculate_witness(
@@ -86,7 +85,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
         instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if stage == 2 {
             let instances = pctx.dctx_get_instances();
             // Process each sum check user
@@ -97,7 +96,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                 for instance_id in instance_ids.iter() {
                     if instances[*instance_id].airgroup_id != airgroup_id
                         || instances[*instance_id].air_id != air_id
-                        || skip_prover_instance(&pctx, *instance_id).0
+                        || skip_prover_instance(&pctx, *instance_id)?.0
                     {
                         continue;
                     }
@@ -105,7 +104,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                     // Get the air associated with the air_instance
                     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
-                    let setup = sctx.get_setup(airgroup_id, air_id);
+                    let setup = sctx.get_setup(airgroup_id, air_id)?;
                     let p_expressions_bin = setup.p_setup.p_expressions_bin;
 
                     let im_hints = get_hint_ids_by_name(p_expressions_bin, "im_col");
@@ -128,12 +127,12 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                             vec![HintFieldOptions::default(); n_im_total_hints],
                             vec!["denominator"; n_im_total_hints],
                             vec![HintFieldOptions::inverse(); n_im_total_hints],
-                        );
+                        )?;
                     }
 
-                    // We know that at most one sumuct hint exists
+                    // We know that at most one gsum hint exists
                     let gsum_hint = if gsum_hints.len() > 1 {
-                        panic!("Multiple sumuct hints found for AIR '{air_name}'");
+                        return Err(format!("Multiple gsum hints found for AIR '{air_name}'").into());
                     } else {
                         gsum_hints[0] as usize
                     };
@@ -142,7 +141,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                     let result = match std_mode {
                         STD_MODE_DEFAULT => Some("result"),
                         STD_MODE_ONE_INSTANCE => None,
-                        _ => panic!("Invalid std_mode: {std_mode}"),
+                        _ => return Err(format!("Unknown std_mode {std_mode} for AIR '{air_name}'").into()),
                     };
                     // This call accumulates "expression" into "reference" expression and stores its last value to "result"
                     // Alternatively, this could be done using get_hint_field and set_hint_field methods and doing the accumulation in Rust
@@ -158,7 +157,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                         HintFieldOptions::default(),
                         HintFieldOptions::inverse(),
                         true,
-                    );
+                    )?;
 
                     update_airgroupvalue(
                         &sctx,
@@ -171,13 +170,19 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                         HintFieldOptions::default(),
                         HintFieldOptions::inverse(),
                         true,
-                    );
+                    )?;
                 }
             }
         }
+        Ok(())
     }
 
-    fn debug(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+    fn debug(
+        &self,
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         timer_start_info!(DEBUG_MODE_SUM);
         if self.num_users > 0 {
             let instances = pctx.dctx_get_instances();
@@ -192,7 +197,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                     if instances[*instance_id].airgroup_id == airgroup_id
                         && instances[*instance_id].air_id == air_id
                         && instance_ids.contains(instance_id)
-                        && !skip_prover_instance(&pctx, *instance_id).0
+                        && !skip_prover_instance(&pctx, *instance_id)?.0
                     {
                         global_instance_ids.push(instance_id);
                     }
@@ -202,27 +207,28 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
             let fast_mode = pctx.debug_info.read().unwrap().std_mode.fast_mode;
             if fast_mode {
                 // Process each sum check user
-                let debugs_data_fasts: Vec<HashMap<F, SharedDataFast>> = global_instance_ids
-                    .par_iter()
-                    .map(|&global_instance_id| {
-                        if !instance_ids.contains(global_instance_id) {
-                            return HashMap::new();
-                        }
+                let mut debugs_data_fasts: Vec<HashMap<F, SharedDataFast>> = Vec::new();
 
-                        let mut local_debug_data_fast = HashMap::new();
+                for &global_instance_id in &global_instance_ids {
+                    if !instance_ids.contains(global_instance_id) {
+                        debugs_data_fasts.push(HashMap::new());
+                        continue;
+                    }
 
-                        Self::extract_hint_fields(
-                            &pctx,
-                            &sctx,
-                            *global_instance_id,
-                            &mut HashMap::new(),
-                            &mut local_debug_data_fast,
-                            true,
-                        );
+                    let mut local_debug_data_fast = HashMap::new();
 
-                        local_debug_data_fast
-                    })
-                    .collect();
+                    // Now you can use `?` if extract_hint_fields returns Result
+                    Self::extract_hint_fields(
+                        &pctx,
+                        &sctx,
+                        *global_instance_id,
+                        &mut HashMap::new(),
+                        &mut local_debug_data_fast,
+                        true,
+                    )?;
+
+                    debugs_data_fasts.push(local_debug_data_fast);
+                }
 
                 for debug_data_fast in debugs_data_fasts.iter() {
                     self.debug_data_fast.write().unwrap().push(debug_data_fast.clone());
@@ -238,25 +244,31 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                         &mut debug_data,
                         &mut HashMap::new(),
                         false,
-                    );
+                    )?;
                 }
             }
         }
         timer_stop_and_log_info!(DEBUG_MODE_SUM);
+        Ok(())
     }
 
-    fn end(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, debug_info: &DebugInfo) {
+    fn end(
+        &self,
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        debug_info: &DebugInfo,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if debug_info.std_mode.name == ModeName::Debug || !debug_info.debug_instances.is_empty() {
             let fast_mode = debug_info.std_mode.fast_mode;
 
             // Perform the global hint update
             if fast_mode {
                 let mut local_debug_data_fast = HashMap::new();
-                Self::extract_global_hint_fields(&pctx, &sctx, &mut HashMap::new(), &mut local_debug_data_fast, true);
+                Self::extract_global_hint_fields(&pctx, &sctx, &mut HashMap::new(), &mut local_debug_data_fast, true)?;
                 self.debug_data_fast.write().unwrap().push(local_debug_data_fast);
             } else {
                 let mut debug_data = self.debug_data.write().unwrap();
-                Self::extract_global_hint_fields(&pctx, &sctx, &mut debug_data, &mut HashMap::new(), false);
+                Self::extract_global_hint_fields(&pctx, &sctx, &mut debug_data, &mut HashMap::new(), false)?;
             }
 
             // At the end, check all the debug data
@@ -270,6 +282,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                 print_debug_info(&pctx, max_values_to_print, print_to_file, &mut debug_data);
             }
         }
+        Ok(())
     }
 }
 
@@ -284,16 +297,16 @@ impl<F: PrimeField64> StdSum<F> {
         debug_data: &mut DebugData<F>,
         debug_data_fast: &mut DebugDataFast<F>,
         fast_mode: bool,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let gsum_debug_data = get_hint_ids_by_name(sctx.get_global_bin(), "gsum_debug_data_global");
         if !gsum_debug_data.is_empty() {
             let num_global_hints =
-                get_global_hint_field_constant_as::<usize, F>(sctx, gsum_debug_data[0], "num_global_hints");
+                get_global_hint_field_constant_as::<usize, F>(sctx, gsum_debug_data[0], "num_global_hints")?;
             for i in 0..num_global_hints {
                 let airgroup_id =
-                    get_global_hint_field_constant_as::<usize, F>(sctx, gsum_debug_data[1 + i], "airgroup_id");
-                let name_piop = get_global_hint_field_constant_as_string(sctx, gsum_debug_data[1 + i], "name_piop");
-                let type_piop = get_global_hint_field_constant_as::<u64, F>(sctx, gsum_debug_data[1 + i], "type_piop");
+                    get_global_hint_field_constant_as::<usize, F>(sctx, gsum_debug_data[1 + i], "airgroup_id")?;
+                let name_piop = get_global_hint_field_constant_as_string(sctx, gsum_debug_data[1 + i], "name_piop")?;
+                let type_piop = get_global_hint_field_constant_as::<u64, F>(sctx, gsum_debug_data[1 + i], "type_piop")?;
                 assert!(
                     type_piop == Self::SUM_TYPE_ASSUMES
                         || type_piop == Self::SUM_TYPE_PROVES
@@ -301,7 +314,7 @@ impl<F: PrimeField64> StdSum<F> {
                     "Invalid type_piop: {type_piop}"
                 );
 
-                let opid = get_global_hint_field(sctx, gsum_debug_data[1 + i], "busid");
+                let opid = get_global_hint_field(sctx, gsum_debug_data[1 + i], "busid")?;
 
                 // If opids are specified, then only update the bus if the opid is in the list
                 if !pctx.debug_info.read().unwrap().std_mode.opids.is_empty()
@@ -310,10 +323,10 @@ impl<F: PrimeField64> StdSum<F> {
                     continue;
                 }
 
-                let num_reps = get_hint_field_gc(pctx, sctx, gsum_debug_data[1 + i], "num_reps", false);
+                let num_reps = get_hint_field_gc(pctx, sctx, gsum_debug_data[1 + i], "num_reps", false)?;
 
                 // If the number of repetitions is zero, continue
-                let mut num_reps = get_row_field_value(&num_reps, 0, "num_reps");
+                let mut num_reps = get_row_field_value(&num_reps, 0, "num_reps")?;
                 if num_reps.is_zero() {
                     continue;
                 }
@@ -323,15 +336,17 @@ impl<F: PrimeField64> StdSum<F> {
                     if num_reps == F::NEG_ONE {
                         num_reps = -num_reps;
                     } else if num_reps != F::ONE {
-                        panic!(
+                        return Err(format!(
                             "The number of repetitions in a free piop can only be {{-1, 0, 1}}, received: {num_reps}"
-                        );
+                        )
+                        .into());
                     }
                 }
 
-                let name_exprs = get_global_hint_field_constant_a_as_string(sctx, gsum_debug_data[1 + i], "name_exprs");
+                let name_exprs =
+                    get_global_hint_field_constant_a_as_string(sctx, gsum_debug_data[1 + i], "name_exprs")?;
 
-                let expressions = get_hint_field_gc_a(pctx, sctx, gsum_debug_data[1 + i], "expressions", false);
+                let expressions = get_hint_field_gc_a(pctx, sctx, gsum_debug_data[1 + i], "expressions", false)?;
                 let is_proves = type_piop == Self::SUM_TYPE_PROVES;
                 if fast_mode {
                     update_debug_data_fast(debug_data_fast, opid, expressions.get(0), is_proves, num_reps, true);
@@ -353,6 +368,7 @@ impl<F: PrimeField64> StdSum<F> {
                 }
             }
         }
+        Ok(())
     }
 
     fn extract_hint_fields(
@@ -362,11 +378,11 @@ impl<F: PrimeField64> StdSum<F> {
         debug_data: &mut DebugData<F>,
         debug_data_fast: &mut DebugDataFast<F>,
         fast_mode: bool,
-    ) {
-        let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
-        let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
+        let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
 
-        let setup = sctx.get_setup(airgroup_id, air_id);
+        let setup = sctx.get_setup(airgroup_id, air_id)?;
         let p_expressions_bin = setup.p_setup.p_expressions_bin;
 
         let debug_data_hints = get_hint_ids_by_name(p_expressions_bin, "gsum_debug_data");
@@ -383,7 +399,7 @@ impl<F: PrimeField64> StdSum<F> {
                 hint as usize,
                 "name_piop",
                 HintFieldOptions::default(),
-            );
+            )?;
 
             let name_exprs = get_hint_field_constant_a_as_string(
                 sctx,
@@ -392,9 +408,9 @@ impl<F: PrimeField64> StdSum<F> {
                 hint as usize,
                 "name_exprs",
                 HintFieldOptions::default(),
-            );
+            )?;
 
-            let busid = get_hint_field(sctx, pctx, instance_id, hint as usize, "busid", HintFieldOptions::default());
+            let busid = get_hint_field(sctx, pctx, instance_id, hint as usize, "busid", HintFieldOptions::default())?;
 
             let type_piop = get_hint_field_constant_as::<u64, F>(
                 sctx,
@@ -403,7 +419,7 @@ impl<F: PrimeField64> StdSum<F> {
                 hint as usize,
                 "type_piop",
                 HintFieldOptions::default(),
-            );
+            )?;
             assert!(
                 type_piop == Self::SUM_TYPE_ASSUMES
                     || type_piop == Self::SUM_TYPE_PROVES
@@ -412,10 +428,10 @@ impl<F: PrimeField64> StdSum<F> {
             );
 
             let num_reps =
-                get_hint_field(sctx, pctx, instance_id, hint as usize, "num_reps", HintFieldOptions::default());
+                get_hint_field(sctx, pctx, instance_id, hint as usize, "num_reps", HintFieldOptions::default())?;
 
             let expressions =
-                get_hint_field_a(sctx, pctx, instance_id, hint as usize, "expressions", HintFieldOptions::default());
+                get_hint_field_a(sctx, pctx, instance_id, hint as usize, "expressions", HintFieldOptions::default())?;
 
             let deg_expr = get_hint_field_constant_as_field(
                 sctx,
@@ -424,7 +440,7 @@ impl<F: PrimeField64> StdSum<F> {
                 hint as usize,
                 "deg_expr",
                 HintFieldOptions::default(),
-            );
+            )?;
 
             let deg_mul = get_hint_field_constant_as_field(
                 sctx,
@@ -433,7 +449,7 @@ impl<F: PrimeField64> StdSum<F> {
                 hint as usize,
                 "deg_sel",
                 HintFieldOptions::default(),
-            );
+            )?;
 
             // If both the expresion and the mul are of degree zero, then simply update the bus once
             if deg_expr.is_zero() && deg_mul.is_zero() {
@@ -447,7 +463,7 @@ impl<F: PrimeField64> StdSum<F> {
                         }
                         opid
                     }
-                    _ => panic!("busid must be a field element"),
+                    _ => return Err("busid must be a field element".into()),
                 };
 
                 Self::update_bus(
@@ -465,7 +481,7 @@ impl<F: PrimeField64> StdSum<F> {
                     debug_data_fast,
                     false,
                     fast_mode,
-                );
+                )?;
             }
             // Otherwise, update the bus for each row
             else {
@@ -481,7 +497,7 @@ impl<F: PrimeField64> StdSum<F> {
 
                             opid
                         }
-                        _ => panic!("busid must be a field element"),
+                        _ => return Err("busid must be a field element".into()),
                     };
 
                     Self::update_bus(
@@ -499,10 +515,11 @@ impl<F: PrimeField64> StdSum<F> {
                         debug_data_fast,
                         false,
                         fast_mode,
-                    );
+                    )?;
                 }
             }
         }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -521,10 +538,10 @@ impl<F: PrimeField64> StdSum<F> {
         debug_data_fast: &mut DebugDataFast<F>,
         is_global: bool,
         fast_mode: bool,
-    ) {
-        let mut num_reps = get_row_field_value(num_reps, row, "num_reps");
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut num_reps = get_row_field_value(num_reps, row, "num_reps")?;
         if num_reps.is_zero() {
-            return;
+            return Ok(());
         }
 
         let is_proves = match type_piop {
@@ -538,7 +555,10 @@ impl<F: PrimeField64> StdSum<F> {
                 } else if num_reps == F::ONE {
                     true
                 } else {
-                    panic!("The number of repetitions in a free piop can only be {{-1, 0, 1}}, received: {num_reps}");
+                    return Err(format!(
+                        "The number of repetitions in a free piop can only be {{-1, 0, 1}}, received: {num_reps}"
+                    )
+                    .into());
                 }
             }
             _ => unreachable!(),
@@ -561,5 +581,6 @@ impl<F: PrimeField64> StdSum<F> {
                 is_global,
             );
         }
+        Ok(())
     }
 }

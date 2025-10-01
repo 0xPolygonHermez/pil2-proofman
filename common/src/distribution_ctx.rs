@@ -1,4 +1,3 @@
-use core::panic;
 use std::collections::HashSet;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -137,7 +136,11 @@ impl DistributionCtx {
     /// - `n_partitions`: Total number of partitions in the distributed system
     /// - `partition_ids`: Which partition IDs are assigned to this worker
     /// - `balance`: Whether to balance load across partitions or use round-robin
-    pub fn setup_partitions(&mut self, n_partitions: usize, partition_ids: Vec<u32>) {
+    pub fn setup_partitions(
+        &mut self,
+        n_partitions: usize,
+        partition_ids: Vec<u32>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.n_partitions = n_partitions;
         self.partition_mask = vec![false; n_partitions];
 
@@ -145,25 +148,31 @@ impl DistributionCtx {
             if *id < n_partitions as u32 {
                 self.partition_mask[*id as usize] = true;
             } else {
-                panic!("Partition ID {} exceeds total partitions {}", id, n_partitions);
+                return Err(format!("Partition ID {} exceeds total partitions {}", id, n_partitions).into());
             }
         }
 
         self.partition_count = vec![0; n_partitions];
         self.partition_weight = vec![0; n_partitions];
+        Ok(())
     }
 
     /// Configure the static processes parameters
     /// - `n_processes`: Number of processes available to this worker
     /// - `process_id`: The rank/ID of the current process (must be < n_processes)
-    pub fn setup_processes(&mut self, n_processes: usize, process_id: usize) {
+    pub fn setup_processes(
+        &mut self,
+        n_processes: usize,
+        process_id: usize,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if process_id >= n_processes {
-            panic!("Process rank {} exceeds total processes {}", process_id, n_processes);
+            return Err(format!("Process rank {} exceeds total processes {}", process_id, n_processes).into());
         }
         self.n_processes = n_processes;
         self.process_id = process_id;
         self.process_count = vec![0; n_processes];
         self.process_weight = vec![0; n_processes];
+        Ok(())
     }
 
     pub fn setup_worker_index(&mut self, worker_index: usize) {
@@ -222,109 +231,137 @@ impl DistributionCtx {
 
     /// Check if the current process is the owner of a given instance
     #[inline]
-    pub fn is_my_process_instance(&self, instance_id: usize) -> bool {
+    pub fn is_my_process_instance(&self, instance_id: usize) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         if instance_id >= self.instance_process.len() {
-            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len());
+            return Err(
+                format!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len()).into()
+            );
         }
-        self.instance_process[instance_id].0 == self.process_id as i32
+        Ok(self.instance_process[instance_id].0 == self.process_id as i32)
     }
 
     #[inline]
-    pub fn get_process_owner_instance(&self, instance_id: usize) -> i32 {
+    pub fn get_process_owner_instance(
+        &self,
+        instance_id: usize,
+    ) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
         if instance_id >= self.instance_process.len() {
-            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len());
+            return Err(
+                format!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len()).into()
+            );
         }
         let owner = self.instance_process[instance_id].0;
-        assert!(owner != -1, "Instance {} is not owned by any process", instance_id);
-        owner
+        if owner == -1 {
+            return Err(format!("Instance {} is not owned by any process", instance_id).into());
+        }
+        Ok(owner)
     }
 
     /// Get the airgroup and air ID for a given instance
     /// Returns (airgroup_id, air_id)
     #[inline]
-    pub fn get_instance_info(&self, instance_id: usize) -> (usize, usize) {
+    pub fn get_instance_info(
+        &self,
+        instance_id: usize,
+    ) -> Result<(usize, usize), Box<dyn std::error::Error + Send + Sync>> {
         if instance_id >= self.instances.len() {
-            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len());
+            return Err(format!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len()).into());
         }
-        (self.instances[instance_id].airgroup_id, self.instances[instance_id].air_id)
+        Ok((self.instances[instance_id].airgroup_id, self.instances[instance_id].air_id))
     }
 
     /// Get the airgroup and air ID of a given table
     /// Returns (airgroup_id, air_id)
     #[inline]
-    pub fn get_table_info(&self, table_idx: usize) -> (usize, usize) {
+    pub fn get_table_info(&self, table_idx: usize) -> Result<(usize, usize), Box<dyn std::error::Error + Send + Sync>> {
         if self.assignation_done {
             let instance_id = self.aux_table_map[table_idx] as usize;
             self.get_instance_info(instance_id)
         } else {
             if table_idx >= self.aux_tables.len() {
-                panic!("Table index {} out of bounds (max: {})", table_idx, self.aux_tables.len());
+                return Err(format!("Table index {} out of bounds (max: {})", table_idx, self.aux_tables.len()).into());
             }
-            (self.aux_tables[table_idx].airgroup_id, self.aux_tables[table_idx].air_id)
+            Ok((self.aux_tables[table_idx].airgroup_id, self.aux_tables[table_idx].air_id))
         }
     }
 
-    pub fn get_table_instance_idx(&self, table_idx: usize) -> usize {
+    pub fn get_table_instance_idx(&self, table_idx: usize) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         if self.assignation_done {
-            self.aux_table_map[table_idx] as usize
+            Ok(self.aux_table_map[table_idx] as usize)
         } else {
-            panic!("Table instances not yet assigned");
+            Err("Table instances not yet assigned".into())
         }
     }
 
     /// Get the local index of the instance within its owner process
     #[inline]
-    pub fn get_instance_local_idx(&self, instance_id: usize) -> usize {
+    pub fn get_instance_local_idx(
+        &self,
+        instance_id: usize,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         if instance_id >= self.instance_process.len() {
-            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len());
+            return Err(
+                format!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len()).into()
+            );
         }
-        self.instance_process[instance_id].1
+        Ok(self.instance_process[instance_id].1)
     }
 
     /// Get the number of Minimum Trace chunks to be processes for a given global instance
     #[inline]
-    pub fn get_instance_chunks(&self, instance_id: usize) -> usize {
+    pub fn get_instance_chunks(&self, instance_id: usize) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         if instance_id >= self.instances.len() {
-            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len());
+            return Err(format!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len()).into());
         }
-        self.instances_chunks[instance_id].chunks.len()
+        Ok(self.instances_chunks[instance_id].chunks.len())
     }
 
     /// Set the number of chunks for a given instance (these may be used for balancing purposes)
-    pub fn set_n_chunks(&mut self, instance_id: usize, n_chunks: usize) {
+    pub fn set_n_chunks(
+        &mut self,
+        instance_id: usize,
+        n_chunks: usize,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if instance_id >= self.instances.len() {
-            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len());
+            return Err(format!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len()).into());
         }
         let instance_info = &mut self.instances[instance_id];
         instance_info.n_chunks = n_chunks;
+        Ok(())
     }
 
     /// Check if the current worker is the owner of a given instance
     #[inline]
-    pub fn is_my_worker_instance(&self, instance_id: usize) -> bool {
+    pub fn is_my_worker_instance(&self, instance_id: usize) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         if instance_id >= self.instance_process.len() {
-            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len());
+            return Err(
+                format!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len()).into()
+            );
         }
-        self.instance_process[instance_id].0 >= 0
+        Ok(self.instance_process[instance_id].0 >= 0)
     }
 
     #[inline]
-    pub fn find_air_instance_id(&self, instance_id: usize) -> usize {
+    pub fn find_air_instance_id(&self, instance_id: usize) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         let mut air_instance_id = 0;
-        let (airgroup_id, air_id) = self.get_instance_info(instance_id);
+        let (airgroup_id, air_id) = self.get_instance_info(instance_id)?;
         for idx in 0..instance_id {
-            let (instance_airgroup_id, instance_air_id) = self.get_instance_info(idx);
+            let (instance_airgroup_id, instance_air_id) = self.get_instance_info(idx)?;
             if (instance_airgroup_id, instance_air_id) == (airgroup_id, air_id) {
                 air_instance_id += 1;
             }
         }
-        air_instance_id
+        Ok(air_instance_id)
     }
 
     /// Find an instance with the given airgroup_id and air_id among the current process's instances
     /// Returns (found, local_index)
     #[inline]
-    pub fn find_process_instance(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
+    pub fn find_process_instance(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+    ) -> Result<(bool, usize), Box<dyn std::error::Error + Send + Sync>> {
         let mut matches = self
             .process_instances
             .iter()
@@ -336,10 +373,10 @@ impl DistributionCtx {
             .map(|(pos, _)| pos);
 
         match (matches.next(), matches.next()) {
-            (None, _) => (false, 0),
-            (Some(pos), None) => (true, pos),
+            (None, _) => Ok((false, 0)),
+            (Some(pos), None) => Ok((true, pos)),
             (Some(_), Some(_)) => {
-                panic!("Multiple instances found for airgroup_id: {airgroup_id}, air_id: {air_id}");
+                Err(format!("Multiple instances found for airgroup_id: {airgroup_id}, air_id: {air_id}").into())
             }
         }
     }
@@ -347,7 +384,11 @@ impl DistributionCtx {
     /// Find a table with the given airgroup_id and air_id among the current process's tables
     /// Returns (found, local_index)
     #[inline]
-    pub fn find_process_table(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
+    pub fn find_process_table(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+    ) -> Result<(bool, usize), Box<dyn std::error::Error + Send + Sync>> {
         if self.assignation_done {
             self.find_process_instance(airgroup_id, air_id)
         } else {
@@ -359,10 +400,10 @@ impl DistributionCtx {
                 .map(|(pos, _)| pos);
 
             match (matches.next(), matches.next()) {
-                (None, _) => (false, 0),
-                (Some(pos), None) => (true, pos),
+                (None, _) => Ok((false, 0)),
+                (Some(pos), None) => Ok((true, pos)),
                 (Some(_), Some(_)) => {
-                    panic!("Multiple tables found for airgroup_id: {airgroup_id}, air_id: {air_id}");
+                    Err(format!("Multiple tables found for airgroup_id: {airgroup_id}, air_id: {air_id}").into())
                 }
             }
         }
@@ -387,9 +428,15 @@ impl DistributionCtx {
     /// add an instance and assign it to a partition/process based only in the gid
     /// the instance added is not a table
     #[inline]
-    pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, threads_witness: usize, weight: u64) -> usize {
+    pub fn add_instance(
+        &mut self,
+        airgroup_id: usize,
+        air_id: usize,
+        threads_witness: usize,
+        weight: u64,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         if self.assignation_done {
-            panic!("Instances already assigned");
+            return Err("Instances already assigned".into());
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let gid: usize = self.instances.len();
@@ -416,7 +463,7 @@ impl DistributionCtx {
             }
         }
         self.instance_process.push((owner, local_idx));
-        gid
+        Ok(gid)
     }
 
     /// add an instance and assign it to a partition/process based only in the gid
@@ -428,9 +475,9 @@ impl DistributionCtx {
         air_id: usize,
         threads_witness: usize,
         weight: u64,
-    ) -> usize {
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         if self.assignation_done {
-            panic!("Instances already assigned");
+            return Err("Instances already assigned".into());
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let gid: usize = self.instances.len();
@@ -457,7 +504,7 @@ impl DistributionCtx {
             }
         }
         self.instance_process.push((owner, local_idx));
-        gid
+        Ok(gid)
     }
 
     /// add an instance without assigning it to any partition/process
@@ -470,9 +517,9 @@ impl DistributionCtx {
         air_id: usize,
         threads_witness: usize,
         weight: u64,
-    ) -> usize {
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         if self.assignation_done {
-            panic!("Instances already assigned");
+            return Err("Instances already assigned".into());
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness, weight));
@@ -481,20 +528,25 @@ impl DistributionCtx {
         self.instance_partition.push(-1);
         self.instance_process.push((-1, 0_usize));
         self.n_instances += 1;
-        self.n_instances - 1
+        Ok(self.n_instances - 1)
     }
 
     /// Add local table instances
-    pub fn add_table(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+    pub fn add_table(
+        &mut self,
+        airgroup_id: usize,
+        air_id: usize,
+        weight: u64,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         if self.assignation_done {
-            panic!("Instances already assigned");
+            return Err("Instances already assigned".into());
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let lid = self.aux_tables.len();
         self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, true, 1, weight));
         self.aux_table_map.push(-1);
         self.n_tables += 1;
-        lid
+        Ok(lid)
     }
 
     pub fn set_chunks(&mut self, global_idx: usize, chunks: Vec<usize>, slow: bool) {
@@ -503,22 +555,27 @@ impl DistributionCtx {
         instance_info.slow = slow;
     }
 
-    pub fn add_table_all(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+    pub fn add_table_all(
+        &mut self,
+        airgroup_id: usize,
+        air_id: usize,
+        weight: u64,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         if self.assignation_done {
-            panic!("Instances already assigned");
+            return Err("Instances already assigned".into());
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let lid = self.aux_tables.len();
         self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, false, 1, weight));
         self.aux_table_map.push(-1);
         self.n_tables += 1;
-        lid
+        Ok(lid)
     }
 
     /// Assign instances to partitions and processes
-    pub fn assign_instances(&mut self, minimal_memory: bool) {
+    pub fn assign_instances(&mut self, minimal_memory: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if self.assignation_done {
-            panic!("Instances already assigned");
+            return Err("Instances already assigned".into());
         }
         //assign instances
         self.validate_static_config().expect("Static configuration invalid or incomplete");
@@ -586,7 +643,7 @@ impl DistributionCtx {
                     min_weight_idx = i;
                 }
             }
-            let (airgroup_id, air_id) = self.get_instance_info(*gid);
+            let (airgroup_id, air_id) = self.get_instance_info(*gid)?;
             *instances_assigned_partition[min_weight_idx].entry((airgroup_id, air_id)).or_insert(0) += 1;
             self.partition_count[min_weight_idx] += 1;
             self.partition_weight[min_weight_idx] += self.instances[*gid].weight;
@@ -621,7 +678,7 @@ impl DistributionCtx {
 
         for (gid, _) in &unassigned_instances {
             let chunks = &self.instances_chunks[*gid].chunks;
-            let (airgroup_id, air_id) = self.get_instance_info(*gid);
+            let (airgroup_id, air_id) = self.get_instance_info(*gid)?;
             let mut min_chunks = usize::MAX;
             let mut min_chunks_idx = 0;
             for partition_id in 0..self.n_partitions {
@@ -741,6 +798,7 @@ impl DistributionCtx {
         }
         self.aux_tables.clear();
         self.assignation_done = true;
+        Ok(())
     }
 
     ///  Load balance info for partitions

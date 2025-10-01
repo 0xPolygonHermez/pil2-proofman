@@ -172,11 +172,15 @@ pub fn verify_proof_bn128<F: PrimeField64>(
     result
 }
 
-pub fn verify_basic_proof<F: PrimeField64>(pctx: &ProofCtx<F>, instance_id: usize, proof: &[u64]) -> bool {
+pub fn verify_basic_proof<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    instance_id: usize,
+    proof: &[u64],
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let mut is_valid = true;
 
-    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
-    let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
+    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
+    let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
 
     let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Basic);
 
@@ -215,5 +219,5 @@ pub fn verify_basic_proof<F: PrimeField64>(pctx: &ProofCtx<F>, instance_id: usiz
         );
     }
 
-    is_valid
+    Ok(is_valid)
 }

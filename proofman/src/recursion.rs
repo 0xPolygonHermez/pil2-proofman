@@ -55,7 +55,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     proof: &Proof<F>,
-) -> Result<Proof<F>, Box<dyn std::error::Error>> {
+) -> Result<Proof<F>, Box<dyn std::error::Error + Send + Sync>> {
     let (airgroup_id, air_id) = (proof.airgroup_id, proof.air_id);
 
     assert!(proof.proof_type == ProofType::Basic || proof.proof_type == ProofType::Compressor);
@@ -69,7 +69,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
             proof.airgroup_id,
             proof.air_id
         );
-        let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+        let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
 
         let publics_circom_size =
             pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3;
@@ -101,7 +101,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
             proof.airgroup_id,
             proof.air_id
         );
-        let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
+        let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
 
         let recursive2_verkey =
             pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive2).display().to_string()
@@ -150,7 +150,7 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
     proof1: &Proof<F>,
     proof2: &Proof<F>,
     proof3: &Proof<F>,
-) -> Result<Proof<F>, Box<dyn std::error::Error>> {
+) -> Result<Proof<F>, Box<dyn std::error::Error + Send + Sync>> {
     timer_start_info!(GENERATE_WITNESS_AGGREGATION);
     let proof_len = proof1.proof.len();
     assert!(proof_len == proof2.proof.len() && proof_len == proof3.proof.len());
@@ -161,7 +161,7 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
     let publics_circom_size: usize =
         pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3 + 4;
 
-    let setup_recursive2 = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0);
+    let setup_recursive2 = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?;
 
     let updated_proof_size = N_RECURSIVE_PROOFS_PER_AGGREGATION * proof_len + publics_circom_size;
 
@@ -215,10 +215,10 @@ pub fn gen_recursive_proof_size<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     witness: &Proof<F>,
-) -> Proof<F> {
+) -> Result<Proof<F>, Box<dyn std::error::Error + Send + Sync>> {
     let (airgroup_id, air_id) = (witness.airgroup_id, witness.air_id);
 
-    let setup = setups.get_setup(airgroup_id, air_id, &witness.proof_type);
+    let setup = setups.get_setup(airgroup_id, air_id, &witness.proof_type)?;
 
     let mut new_proof_size = setup.proof_size;
 
@@ -231,7 +231,7 @@ pub fn gen_recursive_proof_size<F: PrimeField64>(
     }
 
     let new_proof = vec![0; new_proof_size as usize];
-    Proof::new(witness.proof_type.clone(), witness.airgroup_id, witness.air_id, witness.global_idx, new_proof)
+    Ok(Proof::new(witness.proof_type.clone(), witness.airgroup_id, witness.air_id, witness.global_idx, new_proof))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -246,7 +246,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     const_tree: &[F],
     const_pols: &[F],
     save_proofs: bool,
-) -> u64 {
+) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
     timer_start_info!(
         GEN_RECURSIVE_PROOF,
         "GEN_RECURSIVE_PROOF_{:?} [{}:{}]",
@@ -281,7 +281,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         false => String::from(""),
     };
 
-    let setup = setups.get_setup(airgroup_id, air_id, &witness.proof_type);
+    let setup = setups.get_setup(airgroup_id, air_id, &witness.proof_type)?;
 
     let trace: Vec<F> =
         create_buffer_fast(setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize);
@@ -357,7 +357,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         witness.airgroup_id,
         witness.air_id
     );
-    stream_id
+    Ok(stream_id)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -375,7 +375,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
     save_proofs: bool,
     agg_proofs: &mut Vec<AggProofs>,
     is_distributed: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let n_processes = mpi_ctx.n_processes as usize;
     let rank = mpi_ctx.rank as usize;
     let n_airgroups = pctx.global_info.air_groups.len();
@@ -387,7 +387,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
     let instances = pctx.dctx_get_instances();
     let mut airgroup_instances_alive = vec![vec![0; n_processes]; n_airgroups];
     for global_id in pctx.dctx_get_worker_instances().iter() {
-        let owner = pctx.dctx_get_process_owner_instance(*global_id) as usize;
+        let owner = pctx.dctx_get_process_owner_instance(*global_id)? as usize;
         if is_distributed {
             airgroup_instances_alive[instances[*global_id].airgroup_id][owner] += 1;
             if airgroup_instances_alive[instances[*global_id].airgroup_id][owner] == N_RECURSIVE_PROOFS_PER_AGGREGATION
@@ -408,7 +408,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
             }
             alives[airgroup] += airgroup_instances_alive[airgroup][p];
         }
-        let setup = setups.get_setup(airgroup, 0, &ProofType::Recursive2);
+        let setup = setups.get_setup(airgroup, 0, &ProofType::Recursive2)?;
         let publics_aggregation = n_publics_aggregation(pctx, airgroup);
         null_proofs[airgroup] = vec![0; setup.proof_size as usize + publics_aggregation];
         airgroup_proofs.push(vec![None; alives[airgroup]]);
@@ -444,7 +444,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                         || alive <= N_RECURSIVE_PROOFS_PER_AGGREGATION
                     {
                         if airgroup_proofs[airgroup][j + 1].is_none() {
-                            panic!("Recursive2 proof is missing");
+                            return Err("Recursive2 proof is missing".into());
                         }
 
                         let proof1 = Proof::new(
@@ -474,7 +474,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                         let mut circom_witness = gen_witness_aggregation::<F>(pctx, setups, &proof1, &proof2, &proof3)?;
                         circom_witness.global_idx = Some(rank);
 
-                        let recursive2_proof = gen_recursive_proof_size::<F>(pctx, setups, &circom_witness);
+                        let recursive2_proof = gen_recursive_proof_size::<F>(pctx, setups, &circom_witness)?;
 
                         let stream_id = generate_recursive_proof::<F>(
                             pctx,
@@ -487,7 +487,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                             const_tree,
                             const_pols,
                             save_proofs,
-                        );
+                        )?;
 
                         get_stream_id_proof_c(d_buffers, stream_id);
 
@@ -547,7 +547,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     const_tree: &[F],
     d_buffers: *mut c_void,
     save_proof: bool,
-) -> Result<Proof<F>, Box<dyn std::error::Error>> {
+) -> Result<Proof<F>, Box<dyn std::error::Error + Send + Sync>> {
     let publics_circom_size =
         pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3;
 
@@ -556,7 +556,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     let mut updated_proof_size = publics_circom_size;
 
     for airgroup_id in 0..n_airgroups {
-        let setup = setups.get_setup(airgroup_id, 0, &ProofType::Recursive2);
+        let setup = setups.get_setup(airgroup_id, 0, &ProofType::Recursive2)?;
         let publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
         updated_proof_size += setup.proof_size as usize + publics_aggregation;
     }
@@ -566,7 +566,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
 
     let mut offset = publics_circom_size;
     for airgroup_id in 0..n_airgroups {
-        let setup = setups.get_setup(airgroup_id, 0, &ProofType::Recursive2);
+        let setup = setups.get_setup(airgroup_id, 0, &ProofType::Recursive2)?;
         let publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
         let proof_size = setup.proof_size as usize + publics_aggregation;
         if let Some(ap) = agg_proofs.iter().find(|ap| ap.airgroup_id as usize == airgroup_id) {
@@ -585,7 +585,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, setup.n_cols as usize);
     tracing::info!("··· Generating vadcop final proof");
     timer_start_info!(GENERATE_VADCOP_FINAL_PROOF);
-    let mut final_proof = gen_recursive_proof_size::<F>(pctx, setups, &witness_final_proof);
+    let mut final_proof = gen_recursive_proof_size::<F>(pctx, setups, &witness_final_proof)?;
     let stream_id = generate_recursive_proof::<F>(
         pctx,
         setups,
@@ -597,7 +597,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         const_tree,
         const_pols,
         save_proof,
-    );
+    )?;
     get_stream_id_proof_c(d_buffers, stream_id);
 
     // Set publics for vadcop final proof
@@ -621,7 +621,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     prover_buffer: &[F],
     output_dir_path: &Path,
     save_proofs: bool,
-) -> Result<*mut c_void, Box<dyn std::error::Error>> {
+) -> Result<*mut c_void, Box<dyn std::error::Error + Send + Sync>> {
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
     let global_info_file: &str = global_info_path.to_str().unwrap();
 
@@ -695,7 +695,7 @@ pub fn generate_fflonk_snark_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     proof: *mut c_void,
     output_dir_path: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let setup_path = pctx.global_info.get_setup_path("final");
 
     let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
@@ -740,7 +740,10 @@ pub fn generate_fflonk_snark_proof<F: PrimeField64>(
     Ok(())
 }
 
-fn generate_witness<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) -> Result<Vec<F>, Box<dyn std::error::Error>> {
+fn generate_witness<F: PrimeField64>(
+    setup: &Setup<F>,
+    zkin: &[u64],
+) -> Result<Vec<F>, Box<dyn std::error::Error + Send + Sync>> {
     let mut witness_size = setup.size_witness.read().unwrap().unwrap();
     witness_size += *setup.exec_data.read().unwrap().as_ref().unwrap().first().unwrap();
 
@@ -749,7 +752,7 @@ fn generate_witness<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) -> Result<V
     let circom_circuit_guard = setup.circom_circuit.read().unwrap();
     let circom_circuit_ptr = match *circom_circuit_guard {
         Some(ptr) => ptr,
-        None => panic!("circom_circuit is not initialized"),
+        None => return Err("circom_circuit is not initialized".into()),
     };
 
     unsafe {
@@ -765,24 +768,24 @@ fn generate_witness<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) -> Result<V
 pub fn get_recursive_buffer_sizes<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
-) -> Result<usize, Box<dyn std::error::Error>> {
+) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
     let mut max_prover_size = 0;
 
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                let setup_compressor = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+                let setup_compressor = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
                 max_prover_size = max_prover_size.max(setup_compressor.prover_buffer_size);
             }
 
-            let setup_recursive1 = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
+            let setup_recursive1 = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
             max_prover_size = max_prover_size.max(setup_recursive1.prover_buffer_size);
         }
     }
 
     let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup in 0..n_airgroups {
-        let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0);
+        let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0)?;
         max_prover_size = max_prover_size.max(setup.prover_buffer_size);
     }
 

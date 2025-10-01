@@ -53,7 +53,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Table7
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
         if stage == 1 {
             let instance_id = self.instance_id.load(Ordering::Relaxed) as usize;
 

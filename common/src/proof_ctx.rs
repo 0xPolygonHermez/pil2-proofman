@@ -240,13 +240,13 @@ impl<F: PrimeField64> ProofCtx<F> {
         final_snark: bool,
         verbose_mode: VerboseMode,
         mpi_ctx: Arc<MpiCtx>,
-    ) -> Self {
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         tracing::info!("Creating proof context");
 
         let dctx = DistributionCtx::new();
 
         initialize_logger(verbose_mode, None);
-        let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
+        let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path)?;
         let n_publics = global_info.n_publics;
         let n_proof_values = global_info
             .proof_values_map
@@ -260,7 +260,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         let air_instances: Vec<RwLock<AirInstance<F>>> =
             (0..MAX_INSTANCES).map(|_| RwLock::new(AirInstance::<F>::default())).collect();
 
-        Self {
+        Ok(Self {
             mpi_ctx,
             global_info,
             public_inputs: Values::new(n_publics),
@@ -277,7 +277,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             witness_tx: RwLock::new(None),
             witness_tx_priority: RwLock::new(None),
             proof_tx: RwLock::new(None),
-        }
+        })
     }
 
     pub fn set_debug_info(&self, debug_info: &DebugInfo) {
@@ -314,10 +314,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn set_weights(&mut self, sctx: &SetupCtx<F>) {
+    pub fn set_weights(&mut self, sctx: &SetupCtx<F>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         for (airgroup_id, air_group) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
-                let setup = sctx.get_setup(airgroup_id, air_id);
+                let setup = sctx.get_setup(airgroup_id, air_id)?;
                 let mut total_cols = setup
                     .stark_info
                     .map_sections_n
@@ -333,6 +333,7 @@ impl<F: PrimeField64> ProofCtx<F> {
                 self.weights.insert((airgroup_id, air_id), weight);
             }
         }
+        Ok(())
     }
 
     pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
@@ -423,27 +424,42 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.process_instances.clone()
     }
 
-    pub fn dctx_get_process_owner_instance(&self, instance_id: usize) -> i32 {
+    pub fn dctx_get_process_owner_instance(
+        &self,
+        instance_id: usize,
+    ) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
         let dctx = self.dctx.read().unwrap();
         dctx.get_process_owner_instance(instance_id)
     }
 
-    pub fn dctx_get_instance_info(&self, global_idx: usize) -> (usize, usize) {
+    pub fn dctx_get_instance_info(
+        &self,
+        global_idx: usize,
+    ) -> Result<(usize, usize), Box<dyn std::error::Error + Send + Sync>> {
         let dctx = self.dctx.read().unwrap();
         dctx.get_instance_info(global_idx)
     }
 
-    pub fn dctx_get_instance_chunks(&self, global_idx: usize) -> usize {
+    pub fn dctx_get_instance_chunks(
+        &self,
+        global_idx: usize,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         let dctx = self.dctx.read().unwrap();
         dctx.get_instance_chunks(global_idx)
     }
 
-    pub fn dctx_get_instance_local_idx(&self, global_idx: usize) -> usize {
+    pub fn dctx_get_instance_local_idx(
+        &self,
+        global_idx: usize,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         let dctx = self.dctx.read().unwrap();
         dctx.get_instance_local_idx(global_idx)
     }
 
-    pub fn dctx_is_my_process_instance(&self, global_idx: usize) -> bool {
+    pub fn dctx_is_my_process_instance(
+        &self,
+        global_idx: usize,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let dctx = self.dctx.read().unwrap();
         dctx.is_my_process_instance(global_idx)
     }
@@ -458,22 +474,36 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances[global_idx].threads_witness
     }
 
-    pub fn dctx_find_air_instance_id(&self, global_idx: usize) -> usize {
+    pub fn dctx_find_air_instance_id(
+        &self,
+        global_idx: usize,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         let dctx = self.dctx.read().unwrap();
         dctx.find_air_instance_id(global_idx)
     }
 
-    pub fn dctx_find_process_instance(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
+    pub fn dctx_find_process_instance(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+    ) -> Result<(bool, usize), Box<dyn std::error::Error + Send + Sync>> {
         let dctx = self.dctx.read().unwrap();
         dctx.find_process_instance(airgroup_id, air_id)
     }
 
-    pub fn dctx_find_process_table(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
+    pub fn dctx_find_process_table(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+    ) -> Result<(bool, usize), Box<dyn std::error::Error + Send + Sync>> {
         let dctx = self.dctx.read().unwrap();
         dctx.find_process_table(airgroup_id, air_id)
     }
 
-    pub fn dctx_get_table_instance_idx(&self, table_idx: usize) -> usize {
+    pub fn dctx_get_table_instance_idx(
+        &self,
+        table_idx: usize,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         let dctx = self.dctx.read().unwrap();
         dctx.get_table_instance_idx(table_idx)
     }
@@ -483,7 +513,12 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.set_chunks(global_idx, chunks, slow);
     }
 
-    pub fn add_instance_assign(&self, airgroup_id: usize, air_id: usize, threads_witness: usize) -> usize {
+    pub fn add_instance_assign(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        threads_witness: usize,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_instance(airgroup_id, air_id, threads_witness, weight)
@@ -494,25 +529,38 @@ impl<F: PrimeField64> ProofCtx<F> {
         airgroup_id: usize,
         air_id: usize,
         threads_witness: usize,
-    ) -> usize {
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_instance_first_partition(airgroup_id, air_id, threads_witness, weight)
     }
 
-    pub fn add_instance(&self, airgroup_id: usize, air_id: usize, threads_witness: usize) -> usize {
+    pub fn add_instance(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        threads_witness: usize,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_instance_no_assign(airgroup_id, air_id, threads_witness, weight)
     }
 
-    pub fn add_table(&self, airgroup_id: usize, air_id: usize) -> usize {
+    pub fn add_table(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_table(airgroup_id, air_id, weight)
     }
 
-    pub fn add_table_all(&self, airgroup_id: usize, air_id: usize) -> usize {
+    pub fn add_table_all(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_table_all(airgroup_id, air_id, weight)
@@ -524,14 +572,14 @@ impl<F: PrimeField64> ProofCtx<F> {
         air_id: usize,
         threads_witness: usize,
         weight: u64,
-    ) -> usize {
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         let mut dctx = self.dctx.write().unwrap();
         dctx.add_instance_no_assign(airgroup_id, air_id, threads_witness, weight)
     }
 
-    pub fn dctx_assign_instances(&self, minimal_memory: bool) {
+    pub fn dctx_assign_instances(&self, minimal_memory: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.assign_instances(minimal_memory);
+        dctx.assign_instances(minimal_memory)
     }
 
     pub fn dctx_load_balance_info_process(&self) -> (f64, u64, u64, f64) {
@@ -550,11 +598,12 @@ impl<F: PrimeField64> ProofCtx<F> {
         worker_index: usize,
         n_processes: usize,
         process_id: usize,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.setup_partitions(n_partitions, partition_ids);
-        dctx.setup_processes(n_processes, process_id);
+        dctx.setup_partitions(n_partitions, partition_ids)?;
+        dctx.setup_processes(n_processes, process_id)?;
         dctx.setup_worker_index(worker_index);
+        Ok(())
     }
 
     pub fn get_n_partitions(&self) -> usize {
@@ -687,23 +736,35 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.air_instances[instance_id].read().unwrap().get_trace_ptr()
     }
 
-    pub fn get_air_instance_trace(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Vec<F> {
+    pub fn get_air_instance_trace(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        air_instance_id: usize,
+    ) -> Result<Vec<F>, Box<dyn std::error::Error + Send + Sync>> {
         let dctx = self.dctx.read().unwrap();
         let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
-            return self.air_instances[index].read().unwrap().get_trace();
+            Ok(self.air_instances[index].read().unwrap().get_trace())
         } else {
-            panic!("Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found");
+            Err(format!("Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found")
+                .into())
         }
     }
 
-    pub fn get_air_instance_air_values(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Vec<F> {
+    pub fn get_air_instance_air_values(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        air_instance_id: usize,
+    ) -> Result<Vec<F>, Box<dyn std::error::Error + Send + Sync>> {
         let dctx = self.dctx.read().unwrap();
         let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
-            return self.air_instances[index].read().unwrap().get_air_values();
+            Ok(self.air_instances[index].read().unwrap().get_air_values())
         } else {
-            panic!("Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found");
+            Err(format!("Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found")
+                .into())
         }
     }
 
@@ -712,13 +773,14 @@ impl<F: PrimeField64> ProofCtx<F> {
         airgroup_id: usize,
         air_id: usize,
         air_instance_id: usize,
-    ) -> Vec<F> {
+    ) -> Result<Vec<F>, Box<dyn std::error::Error + Send + Sync>> {
         let dctx = self.dctx.read().unwrap();
         let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
-            return self.air_instances[index].read().unwrap().get_airgroup_values();
+            Ok(self.air_instances[index].read().unwrap().get_airgroup_values())
         } else {
-            panic!("Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found");
+            Err(format!("Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found")
+                .into())
         }
     }
 

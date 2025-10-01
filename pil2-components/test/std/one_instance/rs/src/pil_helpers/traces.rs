@@ -9,8 +9,6 @@ use proofman_common as common;
 pub use proofman_macros::trace;
 pub use proofman_macros::values;
 
-use std::fmt;
-
 use rayon::prelude::*;
 
 #[allow(dead_code)]

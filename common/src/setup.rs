@@ -289,7 +289,7 @@ impl<F: PrimeField64> Setup<F> {
         self.const_pols_tree.as_ptr() as *mut u8
     }
 
-    pub fn set_circom_circuit(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn set_circom_circuit(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
         let rust_lib_filename = self.setup_path.display().to_string() + lib_extension;
         let rust_lib_path = Path::new(rust_lib_filename.as_str());
@@ -320,7 +320,7 @@ impl<F: PrimeField64> Setup<F> {
         Ok(())
     }
 
-    pub fn set_exec_file_data(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn set_exec_file_data(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let exec_filename = self.setup_path.display().to_string() + ".exec";
         let exec_filename_str = CString::new(exec_filename.as_str()).unwrap();
         let exec_filename_ptr = exec_filename_str.as_ptr() as *mut std::os::raw::c_char;

@@ -21,7 +21,7 @@ impl<F: PrimeField64> WitnessComponent<F> for SimpleLeft<F> {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if stage == 1 {
             let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 
@@ -31,13 +31,13 @@ impl<F: PrimeField64> WitnessComponent<F> for SimpleLeft<F> {
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
             let range = [
-                self.std_lib.get_range_id(0, (1 << 8) - 1, Some(true)),
-                self.std_lib.get_range_id(0, (1 << 16) - 1, Some(true)),
-                self.std_lib.get_range_id(1, (1 << 8) - 1, Some(true)),
-                self.std_lib.get_range_id(0, 1 << 8, Some(true)),
-                self.std_lib.get_range_id(0, (1 << 8) - 1, Some(false)),
-                self.std_lib.get_range_id(-(1 << 7), -1, Some(false)),
-                self.std_lib.get_range_id(-(1 << 7) - 1, (1 << 7) - 1, Some(false)),
+                self.std_lib.get_range_id(0, (1 << 8) - 1, Some(true))?,
+                self.std_lib.get_range_id(0, (1 << 16) - 1, Some(true))?,
+                self.std_lib.get_range_id(1, (1 << 8) - 1, Some(true))?,
+                self.std_lib.get_range_id(0, 1 << 8, Some(true))?,
+                self.std_lib.get_range_id(0, (1 << 8) - 1, Some(false))?,
+                self.std_lib.get_range_id(-(1 << 7), -1, Some(false))?,
+                self.std_lib.get_range_id(-(1 << 7) - 1, (1 << 7) - 1, Some(false))?,
             ];
 
             // Assumes
@@ -153,5 +153,6 @@ impl<F: PrimeField64> WitnessComponent<F> for SimpleLeft<F> {
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
             pctx.add_air_instance(air_instance, instance_ids[0]);
         }
+        Ok(())
     }
 }

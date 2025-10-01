@@ -30,7 +30,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if stage == 1 {
             tracing::debug!("··· Starting witness computation stage 1");
             let publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
@@ -39,7 +39,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
             let mut b = F::as_canonical_u64(&publics.in2);
 
             //range_check(colu: mod - x_mod, min: 1, max: 2**8-1);
-            let range = self.std_lib.get_range_id(1, (1 << 8) - 1, None);
+            let range = self.std_lib.get_range_id(1, (1 << 8) - 1, None)?;
 
             let mut modules = Vec::new();
             for _ in 1..self.fibonacci_rows {
@@ -101,5 +101,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
                 pctx.add_air_instance(air_instance, instance_id);
             }
         }
+        Ok(())
     }
 }

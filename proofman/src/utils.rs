@@ -17,9 +17,13 @@ use proofman_starks_lib_c::load_device_setup_c;
 use pil_std_lib::Std;
 use witness::WitnessManager;
 
-pub fn print_summary_info<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, mpi_ctx: &MpiCtx) {
+pub fn print_summary_info<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
+    mpi_ctx: &MpiCtx,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     if mpi_ctx.rank == 0 {
-        print_summary(pctx, sctx, true);
+        print_summary(pctx, sctx, true)?;
     }
 
     if mpi_ctx.n_processes > 1 {
@@ -32,7 +36,7 @@ pub fn print_summary_info<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F
             max_deviation
         );
 
-        print_summary(pctx, sctx, false);
+        print_summary(pctx, sctx, false)?;
     }
 
     if pctx.get_n_partitions() > 1 {
@@ -45,11 +49,16 @@ pub fn print_summary_info<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F
             max_deviation
         );
 
-        print_summary(pctx, sctx, false);
+        print_summary(pctx, sctx, false)?;
     }
+    Ok(())
 }
 
-pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, global: bool) {
+pub fn print_summary<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
+    global: bool,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     //todo_distributed: no tens totes les taules nomes les dels teu worker
     let mut air_info = HashMap::new();
 
@@ -80,7 +89,7 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
         let air_group_name = pctx.global_info.air_groups[airgroup_id].clone();
         let air_instance_map = air_instances.entry(air_group_name).or_insert_with(HashMap::new);
         if !air_instance_map.contains_key(&air_name.clone()) {
-            let setup = sctx.get_setup(airgroup_id, air_id);
+            let setup = sctx.get_setup(airgroup_id, air_id)?;
             let n_bits = setup.stark_info.stark_struct.n_bits;
             let memory_trace = (*setup.stark_info.map_sections_n.get("cm1").unwrap()
                 * (1 << (setup.stark_info.stark_struct.n_bits))) as f64
@@ -157,13 +166,14 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
     tracing::info!("----------------------------------------------------------");
     tracing::info!("      Extra memory tables (CPU): {}", format_bytes(memory_tables));
     tracing::info!("----------------------------------------------------------");
+    Ok(())
 }
 
 fn check_const_tree<F: PrimeField64>(
     setup: &Setup<F>,
     aggregation: bool,
     final_snark: bool,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
     let mut flags = String::new();
     if aggregation {
@@ -225,10 +235,13 @@ fn check_const_tree<F: PrimeField64>(
     Ok(())
 }
 
-pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> Result<(), Box<dyn Error>> {
+pub fn check_tree_paths<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
-            let setup = sctx.get_setup(airgroup_id, air_id);
+            let setup = sctx.get_setup(airgroup_id, air_id)?;
             check_const_tree(setup, false, false)?;
 
             let n_custom_commits = setup.stark_info.custom_commits.len();
@@ -289,12 +302,12 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     final_snark: bool,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                let setup = sctx_compressor.get_setup(airgroup_id, air_id);
+                let setup = sctx_compressor.get_setup(airgroup_id, air_id)?;
                 check_const_tree(setup, true, false)?;
             }
         }
@@ -303,7 +316,7 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
-            let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
+            let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
             check_const_tree(setup, true, false)?;
         }
     }
@@ -311,7 +324,7 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap();
     let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup in 0..n_airgroups {
-        let setup = sctx_recursive2.get_setup(airgroup, 0);
+        let setup = sctx_recursive2.get_setup(airgroup, 0)?;
         check_const_tree(setup, true, false)?;
     }
 
@@ -333,13 +346,13 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
     d_buffers: &DeviceBuffer,
     aggregation: bool,
     gpu_params: &ParamsGPU,
-) {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let gpu = cfg!(feature = "gpu");
     if gpu {
         let mut offset = 0;
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
-                let setup = sctx.get_setup(airgroup_id, air_id);
+                let setup = sctx.get_setup(airgroup_id, air_id)?;
                 let proof_type: &str = setup.setup_type.clone().into();
                 tracing::info!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
                 let mut n_streams = 1;
@@ -383,7 +396,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                    let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+                    let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
                     if gpu {
                         let proof_type: &str = setup.setup_type.clone().into();
                         tracing::info!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
@@ -421,7 +434,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
-                let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
+                let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
                 if gpu {
                     let proof_type: &str = setup.setup_type.clone().into();
                     tracing::info!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
@@ -458,7 +471,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
 
         let n_airgroups = pctx.global_info.air_groups.len();
         for airgroup_id in 0..n_airgroups {
-            let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0);
+            let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?;
             if gpu {
                 let proof_type: &str = setup.setup_type.clone().into();
                 tracing::info!(airgroup_id, air_id = 0, proof_type, "Loading expressions setup in GPU");
@@ -525,21 +538,22 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
             }
         }
     }
+    Ok(())
 }
 
 pub fn initialize_witness_circom<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     final_snark: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+                let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
                 setup.set_exec_file_data()?;
                 setup.set_circom_circuit()?;
             }
-            let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
+            let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
             setup.set_exec_file_data()?;
             setup.set_circom_circuit()?;
         }
@@ -547,7 +561,7 @@ pub fn initialize_witness_circom<F: PrimeField64>(
 
     let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup in 0..n_airgroups {
-        let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0);
+        let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0)?;
         setup.set_circom_circuit()?;
         setup.set_exec_file_data()?;
     }

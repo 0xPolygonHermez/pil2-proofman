@@ -62,8 +62,8 @@ pub fn get_constraints_lines_str<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     airgroup_id: usize,
     air_id: usize,
-) -> Vec<String> {
-    let setup = sctx.get_setup(airgroup_id, air_id);
+) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    let setup = sctx.get_setup(airgroup_id, air_id)?;
 
     let p_setup = (&setup.p_setup).into();
     let n_constraints = get_n_constraints_c(p_setup);
@@ -87,7 +87,7 @@ pub fn get_constraints_lines_str<F: PrimeField64>(
         constraints_lines_str.push(std::str::from_utf8(&constraint_line).unwrap().to_string());
     }
 
-    constraints_lines_str
+    Ok(constraints_lines_str)
 }
 
 pub fn get_global_constraints_lines_str<F: PrimeField64>(sctx: &SetupCtx<F>) -> Vec<String> {

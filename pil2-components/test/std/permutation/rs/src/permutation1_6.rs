@@ -21,7 +21,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Permutation1_6 {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if stage == 1 {
             let seed = if cfg!(feature = "debug") { 0 } else { rng().random::<u64>() };
             let mut rng = StdRng::seed_from_u64(seed);
@@ -70,5 +70,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Permutation1_6 {
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
             pctx.add_air_instance(air_instance, instance_ids[0]);
         }
+        Ok(())
     }
 }

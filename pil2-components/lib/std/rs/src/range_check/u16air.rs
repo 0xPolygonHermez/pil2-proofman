@@ -38,7 +38,7 @@ impl<F: PrimeField64> AirComponent<F> for U16Air {
         airgroup_id: usize,
         air_id: usize,
         shared_tables: bool,
-    ) -> Arc<Self> {
+    ) -> Result<Arc<Self>, Box<dyn std::error::Error + Send + Sync>> {
         let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
 
         // Get and store the ranges
@@ -49,7 +49,7 @@ impl<F: PrimeField64> AirComponent<F> for U16Air {
             .map(|_| (0..num_rows).into_par_iter().map(|_| AtomicU64::new(0)).collect())
             .collect();
 
-        Arc::new(Self {
+        Ok(Arc::new(Self {
             airgroup_id,
             air_id,
             shift: num_rows.trailing_zeros() as usize,
@@ -60,7 +60,7 @@ impl<F: PrimeField64> AirComponent<F> for U16Air {
             table_instance_id: AtomicU64::new(0),
             calculated: AtomicBool::new(false),
             shared_tables,
-        })
+        }))
     }
 }
 
@@ -120,14 +120,19 @@ impl U16Air {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for U16Air {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, _global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {
-        let (instance_found, mut table_instance_id) = pctx.dctx_find_process_table(self.airgroup_id, self.air_id);
+    fn execute(
+        &self,
+        pctx: Arc<ProofCtx<F>>,
+        _global_ids: &RwLock<Vec<usize>>,
+        _input_data_path: Option<PathBuf>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let (instance_found, mut table_instance_id) = pctx.dctx_find_process_table(self.airgroup_id, self.air_id)?;
 
         if !instance_found {
             if !self.shared_tables {
-                table_instance_id = pctx.add_table_all(self.airgroup_id, self.air_id);
+                table_instance_id = pctx.add_table_all(self.airgroup_id, self.air_id)?;
             } else {
-                table_instance_id = pctx.add_table(self.airgroup_id, self.air_id);
+                table_instance_id = pctx.add_table(self.airgroup_id, self.air_id)?;
             }
         }
 
@@ -138,6 +143,7 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
             }
         });
         self.table_instance_id.store(table_instance_id as u64, Ordering::SeqCst);
+        Ok(())
     }
 
     fn pre_calculate_witness(
@@ -148,7 +154,8 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
     }
 
     fn calculate_witness(
@@ -159,24 +166,24 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if stage == 1 {
             let table_instance_id = self.table_instance_id.load(Ordering::Relaxed) as usize;
 
-            let instance_id = pctx.dctx_get_table_instance_idx(table_instance_id);
+            let instance_id = pctx.dctx_get_table_instance_idx(table_instance_id)?;
 
             if !_instance_ids.contains(&instance_id) {
-                return;
+                return Ok(());
             }
 
             self.calculated.store(true, Ordering::Relaxed);
 
             if self.shared_tables {
-                let owner_idx = pctx.dctx_get_process_owner_instance(instance_id);
+                let owner_idx = pctx.dctx_get_process_owner_instance(instance_id)?;
                 pctx.mpi_ctx.distribute_multiplicities(&self.multiplicities, owner_idx);
             }
 
-            if !self.shared_tables || pctx.dctx_is_my_process_instance(instance_id) {
+            if !self.shared_tables || pctx.dctx_is_my_process_instance(instance_id)? {
                 let buffer_size = self.num_cols * self.num_rows;
                 let mut buffer = create_buffer_fast(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
@@ -189,5 +196,6 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
                 pctx.add_air_instance(air_instance, instance_id);
             }
         }
+        Ok(())
     }
 }
