@@ -2,7 +2,7 @@ use std::os::raw::c_void;
 use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 use std::sync::Arc;
-use crate::MpiCtx;
+use crate::{MpiCtx, PackedInfo};
 use borsh::{BorshDeserialize, BorshSerialize};
 
 use fields::PrimeField64;
@@ -166,6 +166,7 @@ pub struct ParamsGPU {
     pub number_threads_pools_witness: usize,
     pub max_witness_stored: usize,
     pub single_instances: Vec<(usize, usize)>, // (airgroup_id, air_id)
+    pub pack_trace: bool,
 }
 
 impl Default for ParamsGPU {
@@ -176,6 +177,7 @@ impl Default for ParamsGPU {
             number_threads_pools_witness: 4,
             max_witness_stored: 4,
             single_instances: Vec::new(),
+            pack_trace: true,
         }
     }
 }
@@ -197,6 +199,10 @@ impl ParamsGPU {
     }
     pub fn with_single_instance(&mut self, single_instance: (usize, usize)) {
         self.single_instances.push(single_instance);
+    }
+
+    pub fn with_pack_trace(&mut self, pack_trace: bool) {
+        self.pack_trace = pack_trace;
     }
 }
 
@@ -360,6 +366,10 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn is_air_instance_stored(&self, global_idx: usize) -> bool {
         !self.air_instances[global_idx].read().unwrap().trace.is_empty()
+    }
+
+    pub fn get_packed_info(&self, global_idx: usize) -> PackedInfo {
+        self.air_instances[global_idx].read().unwrap().get_packed_info()
     }
 
     pub fn dctx_broadcast(&self, buf: &mut Vec<u8>) {

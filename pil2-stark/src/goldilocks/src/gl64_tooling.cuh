@@ -12,6 +12,12 @@
 #include <limits.h>
 #include "gl64_t.cuh"
 
+struct PackedInfo {
+    bool is_packed;
+    uint64_t num_packed_words;
+    uint64_t *unpack_info;
+};
+
 class gl64_gpu
 {
 public:
@@ -370,6 +376,16 @@ void copy_to_device_in_chunks(
     const void* src,
     void* dst,
     uint64_t total_size,
+    uint64_t streamId
+    );
+
+void copy_to_device_in_chunks_packed(
+    DeviceCommitBuffers* d_buffers,
+    const void* src,
+    void* dst,
+    uint64_t nBits,
+    uint64_t nCols,
+    PackedInfo *packed_info,
     uint64_t streamId
     );
 

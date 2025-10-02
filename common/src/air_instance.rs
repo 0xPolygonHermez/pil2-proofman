@@ -2,7 +2,7 @@ use std::ptr;
 use fields::Field;
 use proofman_util::create_buffer_fast;
 
-use crate::{trace::Trace, trace::Values};
+use crate::{trace::{Trace, Values}, PackedInfo};
 
 #[repr(C)]
 pub struct StepsParams {
@@ -59,6 +59,9 @@ pub struct TraceInfo<F> {
     air_values: Option<Vec<F>>,
     airgroup_values: Option<Vec<F>>,
     shared_buffer: bool,
+    is_packed: bool,
+    num_packed_words: u64,
+    unpack_info: Vec<u64>,
 }
 
 impl<F> TraceInfo<F> {
@@ -72,7 +75,17 @@ impl<F> TraceInfo<F> {
             air_values: None,
             airgroup_values: None,
             shared_buffer,
+            is_packed: false,
+            num_packed_words: 0,
+            unpack_info: vec![],
         }
+    }
+
+    pub fn with_packed_info(mut self, is_packed: bool, num_packed_words: u64, unpack_info: Vec<u64>) -> Self {
+        self.is_packed = is_packed;
+        self.num_packed_words = num_packed_words;
+        self.unpack_info = unpack_info;
+        self
     }
 
     pub fn with_custom_traces(mut self, custom_traces: Vec<CustomCommitInfo<F>>) -> Self {
@@ -136,6 +149,7 @@ pub struct AirInstance<F> {
     pub evals: Vec<F>,
     pub fixed: Vec<F>,
     pub shared_buffer: bool,
+    pub packed_info: PackedInfo,
 }
 
 impl<F: Field> AirInstance<F> {
@@ -161,6 +175,11 @@ impl<F: Field> AirInstance<F> {
             challenges: Vec::new(),
             shared_buffer: trace_info.shared_buffer,
             fixed: Vec::new(),
+            packed_info: PackedInfo::new(
+                trace_info.is_packed,
+                trace_info.num_packed_words,
+                trace_info.unpack_info,
+            ),
         }
     }
 
@@ -307,5 +326,9 @@ impl<F: Field> AirInstance<F> {
         self.challenges = Vec::new();
         self.fixed = Vec::new();
         (shared_buffer, trace)
+    }
+
+    pub fn get_packed_info(&self) -> PackedInfo {
+        self.packed_info.clone()
     }
 }
