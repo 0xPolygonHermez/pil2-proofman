@@ -21,7 +21,7 @@ pub fn print_summary_info<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     mpi_ctx: &MpiCtx,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if mpi_ctx.rank == 0 {
         print_summary(pctx, sctx, true)?;
     }
@@ -58,7 +58,7 @@ pub fn print_summary<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     global: bool,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     //todo_distributed: no tens totes les taules nomes les dels teu worker
     let mut air_info = HashMap::new();
 
@@ -173,7 +173,7 @@ fn check_const_tree<F: PrimeField64>(
     setup: &Setup<F>,
     aggregation: bool,
     final_snark: bool,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
     let mut flags = String::new();
     if aggregation {
@@ -238,7 +238,7 @@ fn check_const_tree<F: PrimeField64>(
 pub fn check_tree_paths<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx.get_setup(airgroup_id, air_id)?;
@@ -302,7 +302,7 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     final_snark: bool,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
@@ -346,7 +346,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
     d_buffers: &DeviceBuffer,
     aggregation: bool,
     gpu_params: &ParamsGPU,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let gpu = cfg!(feature = "gpu");
     if gpu {
         let mut offset = 0;

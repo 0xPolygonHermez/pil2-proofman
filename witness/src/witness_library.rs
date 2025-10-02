@@ -1,4 +1,4 @@
-use std::{any::Any, error::Error};
+use std::{any::Any};
 
 use crate::WitnessManager;
 use fields::PrimeField64;
@@ -6,7 +6,7 @@ use proofman_common::{ProofCtx, VerboseMode};
 
 /// This is the type of the function that is used to load a witness library.
 pub type WitnessLibInitFn<F> =
-    fn(VerboseMode, Option<i32>) -> Result<Box<dyn WitnessLibrary<F>>, Box<dyn Error + Send + Sync>>;
+    fn(VerboseMode, Option<i32>) -> Result<Box<dyn WitnessLibrary<F>>, Box<dyn std::error::Error + Send + Sync>>;
 
 pub trait WitnessLibrary<F: PrimeField64> {
     fn register_witness(&mut self, wcm: &WitnessManager<F>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
