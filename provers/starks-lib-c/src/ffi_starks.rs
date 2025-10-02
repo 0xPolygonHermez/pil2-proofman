@@ -595,6 +595,7 @@ pub fn commit_witness_c(
     aux_trace: *mut u8,
     d_buffers: *mut c_void,
     setup: *mut c_void,
+    packed_info: *mut c_void,
 ) -> u64 {
     unsafe {
         commit_witness(
@@ -610,6 +611,7 @@ pub fn commit_witness_c(
             aux_trace as *mut std::os::raw::c_void,
             d_buffers,
             setup,
+            packed_info,
         )
     }
 }
@@ -837,6 +839,7 @@ pub fn gen_proof_c(
     stream_id: u64,
     const_pols_path: &str,
     const_tree_path: &str,
+    packed_info: *mut c_void,
 ) -> u64 {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -862,6 +865,7 @@ pub fn gen_proof_c(
             stream_id,
             const_filename_ptr,
             const_tree_filename_ptr,
+            packed_info,
         )
     }
 }
@@ -1654,6 +1658,7 @@ pub fn commit_witness_c(
     _aux_trace: *mut u8,
     _d_buffers: *mut c_void,
     _setup: *mut c_void,
+    _packed_info: *mut c_void,
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "commit_witness: This is a mock call because there is no linked library");
     0
@@ -1809,6 +1814,7 @@ pub fn gen_proof_c(
     _stream_id: u64,
     _const_pols_path: &str,
     _const_tree_path: &str,
+    _packed_info: *mut c_void,
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "gen_proof: This is a mock call because there is no linked library");
     0

@@ -245,6 +245,7 @@ extern "C" {
         auxTrace: *mut ::std::os::raw::c_void,
         d_buffers: *mut ::std::os::raw::c_void,
         pSetupCtx_: *mut ::std::os::raw::c_void,
+        packed_info: *mut ::std::os::raw::c_void,
     ) -> u64;
 
     // Hash & Transcript
@@ -352,6 +353,7 @@ extern "C" {
         streamId: u64,
         constPolsPath: *mut ::std::os::raw::c_char,
         constTreePath: *mut ::std::os::raw::c_char,
+        packed_info: *mut ::std::os::raw::c_void,
     ) -> u64;
     
     pub fn gen_recursive_proof(

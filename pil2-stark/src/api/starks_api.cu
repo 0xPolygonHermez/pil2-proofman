@@ -179,8 +179,6 @@ uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint
     
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     d_buffers->max_size_proof = maxProofSize;
-    uint32_t n_streams = d_buffers->n_gpus * d_buffers->n_streams;
-    uint32_t n_streams_recursive = d_buffers->n_gpus * d_buffers->n_recursive_streams;
 
     if (d_buffers->streamsData != nullptr) {
         for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
@@ -340,7 +338,7 @@ void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initia
     delete[] constTree;
 }
 
-uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool skipRecalculation, uint64_t streamId_, char *constPolsPath,  char *constTreePath) {
+uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool skipRecalculation, uint64_t streamId_, char *constPolsPath,  char *constTreePath, void *packedInfo) {
 
     auto key = std::make_pair(airgroupId, airId);
     std::string proofType = "basic";
@@ -392,7 +390,12 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     uint64_t offsetChallenge = setupCtx->starkInfo.mapOffsets[std::make_pair("challenge", false)];
 
     if (!skipRecalculation) {
-        copy_to_device_in_chunks(d_buffers, params->trace, (uint8_t*)(d_aux_trace + offsetStage1), N * nCols * sizeof(Goldilocks::Element), streamId);
+        PackedInfo *packed_info = (PackedInfo *)packedInfo;
+        if (packed_info->is_packed) {
+            copy_to_device_in_chunks_packed(d_buffers, params->trace, (uint8_t*)(d_aux_trace + offsetStage1), N, nCols, packed_info, streamId);
+        } else {
+            copy_to_device_in_chunks(d_buffers, params->trace, (uint8_t*)(d_aux_trace + offsetStage1), N * nCols * sizeof(Goldilocks::Element), streamId);
+        }
     }
     
     size_t totalCopySize = 0;
@@ -596,7 +599,7 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
     return streamId;
 }
 
-uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *trace, void *auxTrace, void *d_buffers_, void *pSetupCtx_) {
+uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *trace, void *auxTrace, void *d_buffers_, void *pSetupCtx_, void *packedInfo) {
 
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
@@ -621,7 +624,12 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t offsetStage1 = nStreams == 1 ? setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)] : 0;
-    copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1), sizeTrace, streamId);
+    PackedInfo *packed_info = (PackedInfo *)packedInfo;
+    if (packed_info->is_packed) {
+        copy_to_device_in_chunks_packed(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1), N, nCols, packed_info, streamId);
+    } else {
+        copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1), sizeTrace, streamId);
+    }
     genCommit_gpu(arity, nBits, nBitsExt, nCols, d_aux_trace, d_buffers->streamsData[streamId].pinned_buffer_proof, setupCtx, timer, stream, nStreams);
 
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
