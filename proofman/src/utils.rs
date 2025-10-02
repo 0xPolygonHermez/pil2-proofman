@@ -8,7 +8,7 @@ use colored::*;
 
 use std::error::Error;
 
-use proofman_common::{format_bytes, MpiCtx, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop, ParamsGPU};
+use proofman_common::{format_bytes,PilHelpers, MpiCtx, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop, ParamsGPU};
 use proofman_util::DeviceBuffer;
 use proofman_starks_lib_c::load_device_const_pols_c;
 use proofman_starks_lib_c::custom_commit_size_c;
@@ -324,6 +324,32 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     }
 
     Ok(())
+}
+
+pub fn calculate_max_witness_trace_size<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, pil_helpers: &Option<Box<dyn PilHelpers>>, gpu_params: &ParamsGPU) -> usize {
+    let mut max_witness_trace_size = 0;
+    let gpu = cfg!(feature = "gpu");
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            let setup = sctx.get_setup(airgroup_id, air_id);
+            let n = 1 << setup.stark_info.stark_struct.n_bits;
+            let num_packed_words = if let Some(pil_helpers) = pil_helpers {
+                pil_helpers.get_packed_words(airgroup_id, air_id)
+            } else {
+                None
+            };
+            let is_packed = gpu && gpu_params.pack_trace && num_packed_words.is_some();
+            let trace_size = if !is_packed {
+                let n_cols = setup.stark_info.map_sections_n["cm1"];
+                n * n_cols
+            } else {
+                n * num_packed_words.unwrap()
+            };
+           
+            max_witness_trace_size = max_witness_trace_size.max(trace_size as usize);
+        }
+    }
+    max_witness_trace_size
 }
 
 pub fn initialize_fixed_pols_tree<F: PrimeField64>(

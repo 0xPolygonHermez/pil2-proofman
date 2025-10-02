@@ -95,6 +95,7 @@ impl StatsCmd {
             false,
             gpu_params,
             self.verbose.into(),
+            None,
         )?;
 
         match self.field {

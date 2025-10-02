@@ -1019,7 +1019,6 @@ __global__  void computeFRIExpression(uint64_t domainSize, uint64_t nOpeningPoin
 
         uint64_t i = chunk_idx * blockDim.x;
         uint64_t r = i + threadIdx.x;
-        uint64_t nOp = 0;
         for(uint64_t o = 0; o < nOpeningPoints; ++o) {
             for(uint64_t j = 0; j < d_countsPerOpeningPos[o]; ++j) {
                 EvalInfo evalInfo = d_evalInfoPerOpening[o][j];
