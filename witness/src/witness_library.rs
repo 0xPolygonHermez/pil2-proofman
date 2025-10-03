@@ -1,4 +1,4 @@
-use std::{any::Any, error::Error};
+use std::error::Error;
 
 use crate::WitnessManager;
 use fields::PrimeField64;
@@ -15,10 +15,6 @@ pub trait WitnessLibrary<F: PrimeField64> {
     /// Used as a heuristic for estimating computational cost.
     fn get_witness_weight(&self, _pctx: &ProofCtx<F>, _global_id: usize) -> Result<usize, Box<dyn std::error::Error>> {
         Ok(1)
-    }
-
-    fn get_execution_result(&self) -> Option<Box<dyn Any>> {
-        None
     }
 }
 
