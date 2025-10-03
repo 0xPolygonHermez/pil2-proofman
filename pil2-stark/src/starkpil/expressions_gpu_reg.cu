@@ -4,6 +4,16 @@
 #include "gl64_tooling.cuh"
 #include "goldilocks_cubic_extension.cuh"
 
+
+//Next steps:
+// 1. All reads through temporals and operations on temporals (lost)
+// 2. Constants in first position of each worp (restore)
+// 3. First temporals in shared memory
+// 4. Join operations 33 - 31
+// 5. Join operations 33 - 11
+// 6. Separate cyclic and non-cyclic (equal)
+// 7. Separate cyclic and non-cyclic (lost)
+
 extern __shared__ Goldilocks::Element scratchpad[];
 
 __device__ __noinline__ void storePolynomial_reg__(ExpsArguments *d_expsArgs, gl64_t *destVals, uint64_t row);
@@ -174,7 +184,9 @@ void ExpressionsGPUREG::calculateExpressions_gpu_reg(StepsParams *d_params, Dest
     dim3 nBlocks_ =  nblocks_;
     dim3 nThreads_ = nthreads_;
 
-    size_t sharedMem = (bufferCommitSize  + 9) * sizeof(Goldilocks::Element *) + 2 * nthreads_ * FIELD_EXTENSION * sizeof(Goldilocks::Element);
+    assert(bufferCommitSize  + 9  < 32);
+
+    size_t sharedMem = (32 + 6 * nthreads_ ) * sizeof(Goldilocks::Element);
 
     TimerStartCategoryGPU(timer, EXPRESSIONS);
     computeExpressions_reg__<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams, debug, constraints);
@@ -219,15 +231,6 @@ __device__ __forceinline__ Goldilocks::Element* load_reg__(
             ? &dParams->pConstPolsExtendedTreeAddress[2]
             : dParams->pConstPolsAddress;
 
-#if DEBUG 
-            if(print) {
-                if(isCyclic) {
-                    printf("Expression debug constPols cyclic\n");
-                } else {
-                    printf("Expression debug constPols\n");   
-                }
-            }
-#endif
         const uint64_t pos = logicalRow * dArgs->mapSectionsN[0] + argIdx;
         temp[threadIdx.x] = basePtr[pos];
         return temp;
@@ -321,7 +324,7 @@ __global__  void computeExpressions_reg__(StepsParams *d_params, DeviceArguments
 
             uint8_t *ops = constraints ? &d_deviceArgs->opsConstraints[d_destParams[k].opsOffset] : &d_deviceArgs->ops[d_destParams[k].opsOffset];
             uint16_t *args = constraints ? &d_deviceArgs->argsConstraints[d_destParams[k].argsOffset] : &d_deviceArgs->args[d_destParams[k].argsOffset];
-            Goldilocks::Element *valueA = (Goldilocks::Element *)( expressions_params + bufferCommitsSize + 9);
+            Goldilocks::Element *valueA =  &scratchpad[32];
             Goldilocks::Element *valueB =  valueA + blockDim.x * FIELD_EXTENSION;
 
             uint64_t i_args = 0;
