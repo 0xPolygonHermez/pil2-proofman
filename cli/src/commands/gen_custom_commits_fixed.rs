@@ -2,7 +2,7 @@
 use clap::Parser;
 use libloading::{Library, Symbol};
 use std::sync::Arc;
-use proofman_common::{ProofCtx, ProofType, SetupCtx, ParamsGPU, MpiCtx};
+use proofman_common::{MpiCtx, ParamsGPU, ProofCtx, ProofType, SetupCtx};
 use std::{collections::HashMap, path::PathBuf};
 use colored::Colorize;
 use crate::commands::field::Field;
@@ -78,6 +78,6 @@ impl GenCustomCommitsFixedCmd {
         let mut witness_lib = witness_lib(self.verbose.into(), None)?;
         witness_lib.register_witness(&wcm)?;
 
-        wcm.gen_custom_commits_fixed(self.check)
+        wcm.gen_custom_commits_fixed(self.check).map_err(|e| e.into())
     }
 }

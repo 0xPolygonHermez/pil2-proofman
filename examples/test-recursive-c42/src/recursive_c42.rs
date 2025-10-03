@@ -2,7 +2,7 @@ use std::sync::{Arc, RwLock};
 use std::env;
 
 use std::ffi::{c_void, c_char};
-use proofman_common::{AirInstance, BufferPool, ProofCtx, SetupCtx, TraceInfo};
+use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanResult, SetupCtx, TraceInfo};
 use witness::WitnessComponent;
 use std::path::PathBuf;
 use fields::PrimeField64;
@@ -36,7 +36,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC42 {
         pctx: Arc<ProofCtx<F>>,
         global_ids: &RwLock<Vec<usize>>,
         _input_data_path: Option<PathBuf>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         pctx.add_instance(0, 0, 1)?;
         global_ids.write().unwrap().push(0);
         Ok(())
@@ -50,7 +50,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC42 {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         if stage == 1 {
             let setup = sctx.get_setup(0, 0)?;
             let current_dir =

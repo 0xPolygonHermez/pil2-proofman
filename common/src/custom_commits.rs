@@ -6,13 +6,14 @@ use fields::PrimeField64;
 use proofman_starks_lib_c::write_custom_commit_c;
 
 use crate::trace::Trace;
+use crate::{ProofmanResult, ProofmanError};
 
 pub fn write_custom_commit_trace<F: PrimeField64>(
     custom_trace: &mut dyn Trace<F>,
     blowup_factor: u64,
     file_name: &Path,
     check: bool,
-) -> Result<Vec<F>, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<Vec<F>> {
     let buffer = custom_trace.get_buffer();
     let n = custom_trace.num_rows() as u64;
     let n_extended = blowup_factor * custom_trace.num_rows() as u64;
@@ -47,7 +48,7 @@ pub fn write_custom_commit_trace<F: PrimeField64>(
     if check {
         for idx in 0..4 {
             if root_file[idx] != root[idx] {
-                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Root does not match")));
+                return Err(ProofmanError::ProofmanError("Root does not match".into()));
             }
         }
     }

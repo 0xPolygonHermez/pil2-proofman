@@ -1,4 +1,5 @@
 use proofman_common::load_from_json;
+use proofman_common::ProofmanResult;
 use witness::{witness_library, WitnessLibrary, WitnessManager};
 use pil_std_lib::Std;
 use fields::PrimeField64;
@@ -10,7 +11,7 @@ use crate::{BuildPublics, BuildPublicValues, BuildProofValues, FibonacciSquare, 
 witness_library!(WitnessLib, Goldilocks);
 
 impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
-    fn register_witness(&mut self, wcm: &WitnessManager<F>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn register_witness(&mut self, wcm: &WitnessManager<F>) -> ProofmanResult<()> {
         let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx(), true)?;
         let module = Module::new(FibonacciSquareTrace::<usize>::NUM_ROWS as u64, std_lib.clone());
         let fibonacci = FibonacciSquare::new();

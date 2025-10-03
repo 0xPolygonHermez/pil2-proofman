@@ -7,7 +7,7 @@ use proofman_starks_lib_c::{
 
 use colored::*;
 
-use proofman_common::{ProofCtx, ProofType};
+use proofman_common::{ProofCtx, ProofType, ProofmanResult};
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 
 use std::os::raw::c_void;
@@ -176,7 +176,7 @@ pub fn verify_basic_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     instance_id: usize,
     proof: &[u64],
-) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<bool> {
     let mut is_valid = true;
 
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;

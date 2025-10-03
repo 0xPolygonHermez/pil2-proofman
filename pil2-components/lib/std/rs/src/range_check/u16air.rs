@@ -12,7 +12,7 @@ use rayon::{
     prelude::*,
 };
 use witness::WitnessComponent;
-use proofman_common::{AirInstance, BufferPool, ProofCtx, SetupCtx, TraceInfo};
+use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanResult, SetupCtx, TraceInfo};
 use std::sync::atomic::Ordering;
 use crate::AirComponent;
 
@@ -38,7 +38,7 @@ impl<F: PrimeField64> AirComponent<F> for U16Air {
         airgroup_id: usize,
         air_id: usize,
         shared_tables: bool,
-    ) -> Result<Arc<Self>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<Arc<Self>> {
         let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
 
         // Get and store the ranges
@@ -125,7 +125,7 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
         pctx: Arc<ProofCtx<F>>,
         _global_ids: &RwLock<Vec<usize>>,
         _input_data_path: Option<PathBuf>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         let (instance_found, mut table_instance_id) = pctx.dctx_find_process_table(self.airgroup_id, self.air_id)?;
 
         if !instance_found {
@@ -154,7 +154,7 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         Ok(())
     }
 
@@ -166,7 +166,7 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         if stage == 1 {
             let table_instance_id = self.table_instance_id.load(Ordering::Relaxed) as usize;
 

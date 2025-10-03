@@ -26,8 +26,11 @@ use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
 use csv::Writer;
 
+use tokio_util::sync::CancellationToken;
+
 use rand::{SeedableRng, seq::SliceRandom};
 use rand::rngs::StdRng;
+use proofman_common::{ProofmanResult, ProofmanError};
 
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c, clear_proof_done_callback_c,
@@ -75,6 +78,26 @@ struct CsvInfo {
     percentage_instances: f64,
     total_area: u64,
     percentage_area: f64,
+}
+
+#[derive(Debug, Default)]
+pub struct CancellationInfo {
+    pub token: CancellationToken,
+    pub error: Option<ProofmanError>,
+}
+
+impl CancellationInfo {
+    pub fn cancel(&mut self, error: Option<ProofmanError>) {
+        self.token.cancel();
+        if let Some(err) = error {
+            self.error = Some(err);
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.token = CancellationToken::new();
+        self.error = None;
+    }
 }
 
 pub struct ProofMan<F: PrimeField64> {
@@ -129,7 +152,7 @@ pub struct ProofMan<F: PrimeField64> {
     handle_recursives: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     handle_contributions: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     worker_contributions: Arc<RwLock<Vec<ContributionsInfo>>>,
-    error: Arc<Mutex<Option<Box<dyn std::error::Error + Send + Sync>>>>,
+    cancellation_info: Arc<RwLock<CancellationInfo>>,
 }
 
 #[derive(Debug, PartialEq, Clone, BorshSerialize, BorshDeserialize)]
@@ -228,15 +251,36 @@ where
         self.pctx.dctx_broadcast(buf);
     }
 
+    fn check_cancel(&self) -> ProofmanResult<()> {
+        let mut cancellation_info = self.cancellation_info.write().unwrap();
+        if cancellation_info.token.is_cancelled() {
+            let error = cancellation_info.error.take();
+            self.reset()?;
+            if let Some(e) = error {
+                return Err(e);
+            } else {
+                return Err(ProofmanError::Cancelled);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn cancel(&self) {
+        let mut cancellation_info = self.cancellation_info.write().unwrap();
+        cancellation_info.cancel(None);
+    }
+
     pub fn check_setup(
         proving_key_path: PathBuf,
         aggregation: bool,
         final_snark: bool,
         verbose_mode: VerboseMode,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         // Check proving_key_path exists
         if !proving_key_path.exists() {
-            return Err(format!("Proving key folder not found at path: {proving_key_path:?}").into());
+            return Err(ProofmanError::InvalidParameters(format!(
+                "Proving key folder not found at path: {proving_key_path:?}"
+            )));
         }
 
         let mpi_ctx = Arc::new(MpiCtx::new());
@@ -253,11 +297,7 @@ where
         Self::check_setup_(&pctx, aggregation, final_snark)
     }
 
-    pub fn check_setup_(
-        pctx: &ProofCtx<F>,
-        aggregation: bool,
-        final_snark: bool,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn check_setup_(pctx: &ProofCtx<F>, aggregation: bool, final_snark: bool) -> ProofmanResult<()> {
         let setups_aggregation =
             Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, false, &ParamsGPU::new(false)));
 
@@ -311,7 +351,7 @@ where
         input_data_path: Option<PathBuf>,
         output_path: PathBuf,
         verbose_mode: VerboseMode,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
@@ -326,20 +366,15 @@ where
         self.execute_(output_path)
     }
 
-    pub fn execute_from_lib(
-        &self,
-        input_data_path: Option<PathBuf>,
-        output_path: PathBuf,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn execute_from_lib(&self, input_data_path: Option<PathBuf>, output_path: PathBuf) -> ProofmanResult<()> {
         self.wcm.set_input_data_path(input_data_path);
         self.execute_(output_path)
     }
 
-    pub fn execute_(&self, output_path: PathBuf) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn execute_(&self, output_path: PathBuf) -> ProofmanResult<()> {
         self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize)?;
 
-        self.reset();
-        self.pctx.dctx_reset();
+        self.reset()?;
 
         self.exec(false)?;
 
@@ -445,7 +480,7 @@ where
         debug_info: &DebugInfo,
         verbose_mode: VerboseMode,
         options: ProofOptions,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
@@ -468,17 +503,16 @@ where
         input_data_path: Option<PathBuf>,
         debug_info: &DebugInfo,
         options: ProofOptions,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         self.pctx.set_debug_info(debug_info);
         self.wcm.set_input_data_path(input_data_path);
         self.compute_witness_(options)
     }
 
-    pub fn compute_witness_(&self, options: ProofOptions) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn compute_witness_(&self, options: ProofOptions) -> ProofmanResult<()> {
         self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize)?;
 
-        self.reset();
-        self.pctx.dctx_reset();
+        self.reset()?;
 
         let memory_handler = Arc::new(MemoryHandler::new(
             self.pctx.clone(),
@@ -543,29 +577,34 @@ where
         debug_info: &DebugInfo,
         verbose_mode: VerboseMode,
         test_mode: bool,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         // Check witness_lib path exists
         if !witness_lib_path.exists() {
-            return Err(format!("Witness computation dynamic library not found at path: {witness_lib_path:?}").into());
+            return Err(ProofmanError::InvalidParameters(format!(
+                "Witness computation dynamic library not found at path: {witness_lib_path:?}"
+            )));
         }
 
         // Check input data path
         if let Some(ref input_data_path) = input_data_path {
             if !input_data_path.exists() {
-                return Err(format!("Input data file not found at path: {input_data_path:?}").into());
+                return Err(ProofmanError::InvalidParameters(format!(
+                    "Input data file not found at path: {input_data_path:?}"
+                )));
             }
         }
 
         // Check public_inputs_path is a folder
         if let Some(ref publics_path) = public_inputs_path {
             if !publics_path.exists() {
-                return Err(format!("Public inputs file not found at path: {publics_path:?}").into());
+                return Err(ProofmanError::InvalidParameters(format!(
+                    "Public inputs file not found at path: {publics_path:?}"
+                )));
             }
         }
 
         if !output_dir_path.exists() {
-            fs::create_dir_all(&output_dir_path)
-                .map_err(|err| format!("Failed to create output directory: {err:?}"))?;
+            fs::create_dir_all(&output_dir_path)?;
         }
 
         timer_start_info!(CREATE_WITNESS_LIB);
@@ -587,23 +626,18 @@ where
         input_data_path: Option<PathBuf>,
         debug_info: &DebugInfo,
         test_mode: bool,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         self.wcm.set_input_data_path(input_data_path);
 
         self._verify_proof_constraints(debug_info, test_mode)
     }
 
-    fn _verify_proof_constraints(
-        &self,
-        debug_info: &DebugInfo,
-        test_mode: bool,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn _verify_proof_constraints(&self, debug_info: &DebugInfo, test_mode: bool) -> ProofmanResult<()> {
         self.pctx.set_debug_info(debug_info);
 
         self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize)?;
 
-        self.reset();
-        self.pctx.dctx_reset();
+        self.reset()?;
 
         self.exec(false)?;
 
@@ -700,7 +734,7 @@ where
                 if valid_constraints.load(Ordering::Relaxed) && valid_global_constraints.is_ok() {
                     return Ok(());
                 } else {
-                    return Err("Constraints were not verified".into());
+                    return Err(ProofmanError::InvalidProof("Constraints were not verified".into()));
                 }
             }
         }
@@ -718,14 +752,14 @@ where
         air_id: usize,
         debug_info: &DebugInfo,
         max_num_threads: usize,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true)?;
 
         #[cfg(feature = "diagnostic")]
         {
             let invalid_initialization = Self::diagnostic_instance(&self.pctx, &self.sctx, instance_id);
             if invalid_initialization {
-                return Some(Err("Invalid initialization".into()));
+                return Some(Err(ProofmanError::InvalidProof("Invalid initialization".into())));
             }
         }
 
@@ -759,29 +793,34 @@ where
         input_data_path: Option<PathBuf>,
         verbose_mode: VerboseMode,
         options: ProofOptions,
-    ) -> Result<ProvePhaseResult, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<ProvePhaseResult> {
         // Check witness_lib path exists
         if !witness_lib_path.exists() {
-            return Err(format!("Witness computation dynamic library not found at path: {witness_lib_path:?}").into());
+            return Err(ProofmanError::InvalidParameters(format!(
+                "Witness computation dynamic library not found at path: {witness_lib_path:?}"
+            )));
         }
 
         // Check input data path
         if let Some(ref input_data_path) = input_data_path {
             if !input_data_path.exists() {
-                return Err(format!("Input data file not found at path: {input_data_path:?}").into());
+                return Err(ProofmanError::InvalidParameters(format!(
+                    "Input data file not found at path: {input_data_path:?}"
+                )));
             }
         }
 
         // Check public_inputs_path is a folder
         if let Some(ref publics_path) = public_inputs_path {
             if !publics_path.exists() {
-                return Err(format!("Public inputs file not found at path: {publics_path:?}").into());
+                return Err(ProofmanError::InvalidParameters(format!(
+                    "Public inputs file not found at path: {publics_path:?}"
+                )));
             }
         }
 
         if !options.output_dir_path.exists() {
-            fs::create_dir_all(&options.output_dir_path)
-                .map_err(|err| format!("Failed to create output directory: {err:?}"))?;
+            fs::create_dir_all(&options.output_dir_path)?;
         }
 
         timer_start_info!(CREATE_WITNESS_LIB);
@@ -795,15 +834,21 @@ where
         self.register_witness(&mut *witness_lib, library)?;
 
         if self.verify_constraints {
-            return Err("Proofman has been initialized in verify_constraints mode".into());
+            return Err(ProofmanError::InvalidParameters(
+                "Proofman has been initialized in verify_constraints mode".into(),
+            ));
         }
 
         if options.aggregation && !self.aggregation {
-            return Err("Proofman has not been initialized in aggregation mode".into());
+            return Err(ProofmanError::InvalidParameters(
+                "Proofman has not been initialized in aggregation mode".into(),
+            ));
         }
 
         if options.final_snark && !self.final_snark {
-            return Err("Proofman has not been initialized in final snark mode".into());
+            return Err(ProofmanError::InvalidParameters(
+                "Proofman has not been initialized in final snark mode".into(),
+            ));
         }
 
         let phase_inputs = ProvePhaseInputs::Full(ProofInfo::new(input_data_path, 1, vec![0], 0));
@@ -816,22 +861,27 @@ where
         phase_inputs: ProvePhaseInputs,
         options: ProofOptions,
         phase: ProvePhase,
-    ) -> Result<ProvePhaseResult, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<ProvePhaseResult> {
         if !options.output_dir_path.exists() {
-            fs::create_dir_all(&options.output_dir_path)
-                .map_err(|err| format!("Failed to create output directory: {err:?}"))?;
+            fs::create_dir_all(&options.output_dir_path)?;
         }
 
         if self.verify_constraints {
-            return Err("Proofman has been initialized in verify_constraints mode".into());
+            return Err(ProofmanError::InvalidParameters(
+                "Proofman has been initialized in verify_constraints mode".into(),
+            ));
         }
 
         if options.aggregation && !self.aggregation {
-            return Err("Proofman has not been initialized in aggregation mode".into());
+            return Err(ProofmanError::InvalidParameters(
+                "Proofman has not been initialized in aggregation mode".into(),
+            ));
         }
 
         if options.final_snark && !self.final_snark {
-            return Err("Proofman has not been initialized in final snark mode".into());
+            return Err(ProofmanError::InvalidParameters(
+                "Proofman has not been initialized in final snark mode".into(),
+            ));
         }
 
         self._generate_proof(phase_inputs, options, phase)
@@ -846,15 +896,19 @@ where
         final_snark: bool,
         gpu_params: ParamsGPU,
         verbose_mode: VerboseMode,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<Self> {
         // Check proving_key_path exists
         if !proving_key_path.exists() {
-            return Err(format!("Proving key folder not found at path: {proving_key_path:?}").into());
+            return Err(ProofmanError::InvalidParameters(format!(
+                "Proving key folder not found at path: {proving_key_path:?}"
+            )));
         }
 
         // Check proving_key_path is a folder
         if !proving_key_path.is_dir() {
-            return Err(format!("Proving key parameter must be a folder: {proving_key_path:?}").into());
+            return Err(ProofmanError::InvalidParameters(format!(
+                "Proving key parameter must be a folder: {proving_key_path:?}"
+            )));
         }
 
         let mpi_ctx = Arc::new(MpiCtx::new());
@@ -1006,11 +1060,13 @@ where
             outer_agg_proofs_finished: Arc::new(AtomicBool::new(true)),
             worker_contributions: Arc::new(RwLock::new(Vec::new())),
             n_gpus: n_gpus as usize,
-            error: Arc::new(Mutex::new(None)),
+            cancellation_info: Arc::new(RwLock::new(CancellationInfo::default())),
         })
     }
 
-    pub fn reset(&self) {
+    pub fn reset(&self) -> ProofmanResult<()> {
+        self.cancellation_info.write().unwrap().reset();
+
         self.wcm.reset();
         self.pctx.dctx_reset();
 
@@ -1038,6 +1094,7 @@ where
         ongoing_proofs.clear();
 
         // Drain all relevant channels to ensure they are empty
+        while self.rx_threads.try_recv().is_ok() {}
         while self.witness_rx.try_recv().is_ok() {}
         while self.witness_rx_priority.try_recv().is_ok() {}
         while self.contributions_rx.try_recv().is_ok() {}
@@ -1048,22 +1105,23 @@ where
         while self.rec2_witness_rx.try_recv().is_ok() {}
 
         self.worker_contributions.write().unwrap().clear();
+        get_stream_proofs_c(self.d_buffers.get_ptr());
         reset_device_streams_c(self.d_buffers.get_ptr());
 
         for inner_vec in self.received_agg_proofs.write().unwrap().iter_mut() {
             inner_vec.clear();
         }
 
-        self.total_outer_agg_proofs.reset();
+        for _ in 0..self.max_num_threads {
+            self.tx_threads.send(()).unwrap();
+        }
 
-        *self.error.lock().unwrap() = None;
+        self.total_outer_agg_proofs.reset();
+        self.pctx.dctx_reset();
+        Ok(())
     }
 
-    pub fn register_witness(
-        &self,
-        witness_lib: &mut dyn WitnessLibrary<F>,
-        library: Library,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn register_witness(&self, witness_lib: &mut dyn WitnessLibrary<F>, library: Library) -> ProofmanResult<()> {
         timer_start_info!(REGISTERING_WITNESS);
         witness_lib.register_witness(&self.wcm)?;
         self.wcm.set_init_witness(true, library);
@@ -1078,7 +1136,7 @@ where
         phase_inputs: ProvePhaseInputs,
         options: ProofOptions,
         phase: ProvePhase,
-    ) -> Result<ProvePhaseResult, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<ProvePhaseResult> {
         timer_start_info!(GENERATING_VADCOP_PROOF);
         timer_start_info!(GENERATING_PROOFS);
 
@@ -1086,7 +1144,7 @@ where
             let proof_info = match phase_inputs {
                 ProvePhaseInputs::Full(proof_info) => proof_info,
                 ProvePhaseInputs::Contributions(proof_info) => proof_info,
-                _ => return Err("Invalid phase inputs for contributions".into()),
+                _ => return Err(ProofmanError::InvalidParameters("Invalid phase inputs for contributions".into())),
             };
 
             self.pctx.dctx_setup(
@@ -1098,8 +1156,7 @@ where
             )?;
             self.wcm.set_input_data_path(proof_info.input_data_path.clone());
 
-            self.reset();
-            self.pctx.dctx_reset();
+            self.reset()?;
 
             if !options.minimal_memory && cfg!(feature = "gpu") {
                 self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
@@ -1118,9 +1175,9 @@ where
                 let aux_trace_clone = self.aux_trace.clone();
                 let memory_handler_clone = self.memory_handler.clone();
                 let contributions_rx_clone = self.contributions_rx.clone();
-                let error_clone = self.error.clone();
+                let cancellation_info_clone = self.cancellation_info.clone();
                 let contribution_handle = std::thread::spawn(move || loop {
-                    if error_clone.lock().unwrap().is_some() {
+                    if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                         break;
                     }
                     match contributions_rx_clone.try_recv() {
@@ -1138,7 +1195,7 @@ where
                                 aux_trace_clone.as_ptr() as *mut u8,
                                 &d_buffers_clone,
                             ) {
-                                *error_clone.lock().unwrap() = Some(e);
+                                cancellation_info_clone.write().unwrap().cancel(Some(e));
                                 break;
                             }
 
@@ -1238,9 +1295,7 @@ where
                 handle.join().unwrap();
             }
 
-            if let Some(e) = self.error.lock().unwrap().take() {
-                return Err(e);
-            }
+            self.check_cancel()?;
 
             // get roots still in the gpu
             get_stream_proofs_c(self.d_buffers.get_ptr());
@@ -1280,7 +1335,7 @@ where
         } else {
             match phase_inputs {
                 ProvePhaseInputs::Internal(ref contributions) => contributions,
-                _ => return Err("Internal phase requires Internal phase inputs".into()),
+                _ => return Err(ProofmanError::ProofmanError("Internal phase requires Internal phase inputs".into())),
             }
         };
 
@@ -1291,7 +1346,7 @@ where
             if contribution.worker_index < n_workers {
                 worker_contributions.push(contribution.clone());
             } else {
-                return Err("Invalid worker index in contributions".into());
+                return Err(ProofmanError::ProofmanError("Invalid worker index in contributions".into()));
             }
         }
 
@@ -1351,14 +1406,14 @@ where
             let rec2_witness_tx_clone = self.rec2_witness_tx.clone();
             let compressor_witness_tx_clone = self.compressor_witness_tx.clone();
             let recursive_rx_clone = self.recursive_rx.clone();
-            let error_clone = self.error.clone();
+            let cancellation_info_clone = self.cancellation_info.clone();
             let output_dir_path = options.output_dir_path.clone();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, proof_type)) = recursive_rx_clone.recv() {
                     if id == u64::MAX - 1 {
                         return;
                     }
-                    if error_clone.lock().unwrap().is_some() {
+                    if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                         break;
                     }
                     let p: ProofType = proof_type.parse().unwrap();
@@ -1377,7 +1432,7 @@ where
                                 }
                             }
                             Err(e) => {
-                                *error_clone.lock().unwrap() = Some(format!("instance info failed: {}", e).into());
+                                cancellation_info_clone.write().unwrap().cancel(Some(e));
                                 return;
                             }
                         }
@@ -1421,8 +1476,7 @@ where
                                 ) {
                                     Ok(witness) => Some(witness),
                                     Err(e) => {
-                                        *error_clone.lock().unwrap() =
-                                            Some(format!("gen_witness_aggregation failed: {}", e).into());
+                                        cancellation_info_clone.write().unwrap().cancel(Some(e));
                                         break;
                                     }
                                 }
@@ -1435,8 +1489,7 @@ where
                         match w {
                             Ok(witness) => Some(witness),
                             Err(e) => {
-                                *error_clone.lock().unwrap() =
-                                    Some(format!("gen_witness_recursive failed: {}", e).into());
+                                cancellation_info_clone.write().unwrap().cancel(Some(e));
                                 break;
                             }
                         }
@@ -1446,8 +1499,7 @@ where
                         match w {
                             Ok(witness) => Some(witness),
                             Err(e) => {
-                                *error_clone.lock().unwrap() =
-                                    Some(format!("gen_witness_recursive failed: {}", e).into());
+                                cancellation_info_clone.write().unwrap().cancel(Some(e));
                                 break;
                             }
                         }
@@ -1476,7 +1528,7 @@ where
             if *instance_id < 0 {
                 return;
             }
-            if self.error.lock().unwrap().is_some() {
+            if self.cancellation_info.read().unwrap().token.is_cancelled() {
                 return;
             }
             proofs_pending.increment();
@@ -1494,7 +1546,7 @@ where
                 options.save_proofs,
                 self.gpu_params.preallocate,
             ) {
-                *self.error.lock().unwrap() = Some(e);
+                self.cancellation_info.write().unwrap().cancel(Some(e));
                 return;
             }
 
@@ -1509,7 +1561,7 @@ where
             my_instances_calculated[*instance_id as usize] = true;
         }
 
-        let keys: Vec<Result<_, Box<dyn std::error::Error + Send + Sync>>> = my_instances_sorted
+        let keys: Vec<ProofmanResult<_>> = my_instances_sorted
             .iter()
             .map(|&id| {
                 let setup = self.sctx.get_setup(instances[id].airgroup_id, instances[id].air_id)?;
@@ -1556,9 +1608,9 @@ where
             let memory_handler_clone = self.memory_handler.clone();
 
             let proofs_finished_clone = proofs_finished.clone();
-            let error_clone = self.error.clone();
+            let cancellation_info_clone = self.cancellation_info.clone();
             let handle_recursive = std::thread::spawn(move || loop {
-                if error_clone.lock().unwrap().is_some() {
+                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                     break;
                 }
                 if stream_id < n_streams_non_recursive {
@@ -1577,7 +1629,7 @@ where
                             options.save_proofs,
                             preallocate,
                         ) {
-                            *error_clone.lock().unwrap() = Some(e);
+                            cancellation_info_clone.write().unwrap().cancel(Some(e));
                             break;
                         }
                         let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
@@ -1615,7 +1667,7 @@ where
                 let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
                     Ok(p) => p,
                     Err(e) => {
-                        *error_clone.lock().unwrap() = Some(format!("gen_recursive_proof_size failed: {}", e).into());
+                        cancellation_info_clone.write().unwrap().cancel(Some(e));
                         break;
                     }
                 };
@@ -1648,7 +1700,7 @@ where
                         &const_pols_clone,
                         options.save_proofs,
                     ) {
-                        *error_clone.lock().unwrap() = Some(format!("generate_recursive_proof failed: {}", e).into());
+                        cancellation_info_clone.write().unwrap().cancel(Some(e));
                         break;
                     }
                 } else if *new_proof_type == ProofType::Compressor {
@@ -1666,7 +1718,7 @@ where
                         &const_pols_clone,
                         options.save_proofs,
                     ) {
-                        *error_clone.lock().unwrap() = Some(format!("generate_recursive_proof failed: {}", e).into());
+                        cancellation_info_clone.write().unwrap().cancel(Some(e));
                         break;
                     }
                 } else {
@@ -1684,7 +1736,7 @@ where
                         &const_pols_clone,
                         options.save_proofs,
                     ) {
-                        *error_clone.lock().unwrap() = Some(format!("generate_recursive_proof failed: {}", e).into());
+                        cancellation_info_clone.write().unwrap().cancel(Some(e));
                         break;
                     }
                 }
@@ -1746,11 +1798,9 @@ where
 
         proofs_pending.wait_until_zero_and_check_streams(
             || get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()),
-            self.error.clone(),
+            &self.cancellation_info,
         );
-        if let Some(e) = self.error.lock().unwrap().take() {
-            return Err(e);
-        }
+        self.check_cancel()?;
         get_stream_proofs_c(self.d_buffers.get_ptr());
         proofs_finished.store(true, Ordering::Relaxed);
         clear_proof_done_callback_c();
@@ -1903,7 +1953,7 @@ where
                     timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
                     if !valid_proofs {
                         tracing::info!("··· {}", "\u{2717} Vadcop Final proof was not verified".bright_red().bold());
-                        return Err("Vadcop Final proof was not verified".into());
+                        return Err(ProofmanError::InvalidProof("Vadcop Final proof was not verified".into()));
                     } else {
                         tracing::info!("··· {}", "\u{2713} Vadcop Final proof was verified".bright_green().bold());
                     }
@@ -1951,7 +2001,7 @@ where
         last_proof: bool,
         final_proof: bool,
         options: &ProofOptions,
-    ) -> Result<Option<Vec<AggProofs>>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<Option<Vec<AggProofs>>> {
         if !agg_proofs.is_empty() && self.outer_aggregations_handle.lock().unwrap().is_none() {
             self.outer_aggregations(options);
         }
@@ -1965,11 +2015,10 @@ where
                 }) {
                     stored_contributions.push(contrib.challenge.iter().map(|&x| F::from_u64(x)).collect());
                 } else {
-                    return Err(format!(
+                    return Err(ProofmanError::ProofmanError(format!(
                         "Missing contribution from worker {} and airgroup id {}",
                         w, proof.airgroup_id
-                    )
-                    .into());
+                    )));
                 }
             }
 
@@ -1978,7 +2027,9 @@ where
             let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
             for (c, value) in workers_acc_challenge.iter().enumerate() {
                 if value.as_canonical_u64() != proof_acc_challenge[c] {
-                    return Err("Aggregated proof challenge does not match the expected challenge".into());
+                    return Err(ProofmanError::InvalidProof(
+                        "Aggregated proof challenge does not match the expected challenge".into(),
+                    ));
                 }
             }
             self.received_agg_proofs.write().unwrap()[proof.airgroup_id as usize].extend(proof.worker_indexes);
@@ -2012,11 +2063,9 @@ where
 
             self.total_outer_agg_proofs.wait_until_zero_and_check_streams(
                 || get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()),
-                self.error.clone(),
+                &self.cancellation_info,
             );
-            if let Some(e) = self.error.lock().unwrap().take() {
-                return Err(e);
-            }
+            self.check_cancel()?;
             get_stream_proofs_c(self.d_buffers.get_ptr());
 
             if self.outer_aggregations_handle.lock().unwrap().is_some() {
@@ -2097,7 +2146,7 @@ where
             let rec2_witness_tx_clone = self.rec2_witness_tx.clone();
             let recursive_rx_clone = self.recursive_rx.clone();
             let total_outer_agg_proofs = self.total_outer_agg_proofs.clone();
-            let error_clone = self.error.clone();
+            let cancellation_info_clone = self.cancellation_info.clone();
             let output_dir_path = options.output_dir_path.clone();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, _)) = recursive_rx_clone.recv() {
@@ -2105,7 +2154,7 @@ where
                         return;
                     }
 
-                    if error_clone.lock().unwrap().is_some() {
+                    if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                         break;
                     }
 
@@ -2140,11 +2189,11 @@ where
         let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
         let outer_agg_proofs_finished = self.outer_agg_proofs_finished.clone();
         let rec2_witness_rx = self.rec2_witness_rx.clone();
-        let error_clone = self.error.clone();
+        let cancellation_info_clone = self.cancellation_info.clone();
         let output_dir_path_clone = options.output_dir_path.clone();
         let save_proofs = options.save_proofs;
         let outer_aggregations_handle = std::thread::spawn(move || loop {
-            if error_clone.lock().unwrap().is_some() {
+            if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                 break;
             }
             let witness = rec2_witness_rx.try_recv();
@@ -2170,7 +2219,7 @@ where
             let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
                 Ok(p) => p,
                 Err(e) => {
-                    *error_clone.lock().unwrap() = Some(format!("gen_recursive_proof_size failed: {}", e).into());
+                    cancellation_info_clone.write().unwrap().cancel(Some(e));
                     break;
                 }
             };
@@ -2202,7 +2251,7 @@ where
         *self.outer_aggregations_handle.lock().unwrap() = Some(outer_aggregations_handle);
     }
 
-    fn verify_proofs(&self, test_mode: bool) -> Result<ProvePhaseResult, Box<dyn std::error::Error + Send + Sync>> {
+    fn verify_proofs(&self, test_mode: bool) -> ProofmanResult<ProvePhaseResult> {
         timer_start_info!(VERIFYING_PROOFS);
         let mut valid_proofs = true;
 
@@ -2252,15 +2301,15 @@ where
             tracing::info!("··· {}", "\u{2713} All proofs were successfully verified".bright_green().bold());
             Ok(ProvePhaseResult::Internal(Vec::new()))
         } else {
-            Err("Basic proofs were not verified".into())
+            Err(ProofmanError::InvalidProof("Basic proofs were not verified".into()))
         }
     }
 
-    fn exec(&self, minimal_memory: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn exec(&self, minimal_memory: bool) -> ProofmanResult<()> {
         timer_start_info!(EXECUTE);
 
         if !self.wcm.is_init_witness() {
-            return Err("Witness computation dynamic library not initialized".into());
+            return Err(ProofmanError::ProofmanError("Witness computation dynamic library not initialized".into()));
         }
 
         self.wcm.execute(minimal_memory)?;
@@ -2277,7 +2326,7 @@ where
         options: &ProofOptions,
         send_proofs: bool,
         is_distributed: bool,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         timer_start_info!(GENERATING_WORKER_RMA_COMPRESSED_PROOFS);
 
         let my_rank = self.mpi_ctx.rank as usize;
@@ -2338,12 +2387,12 @@ where
         let const_tree_clone = self.const_tree.clone();
         let prover_buffer_recursive = self.prover_buffer_recursive.clone();
         let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
-        let error_clone = self.error.clone();
+        let cancellation_info_clone = self.cancellation_info.clone();
         let output_dir_path_clone = options.output_dir_path.clone();
         let save_proofs = options.save_proofs;
         let recursive2_handle = std::thread::spawn(move || {
             while let Ok(mut witness) = rec2_witness_rx.recv() {
-                if error_clone.lock().unwrap().is_some() {
+                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                     break;
                 }
                 let id = {
@@ -2358,7 +2407,7 @@ where
                 let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
                     Ok(p) => p,
                     Err(e) => {
-                        *error_clone.lock().unwrap() = Some(format!("gen_recursive_proof_size failed: {}", e).into());
+                        cancellation_info_clone.write().unwrap().cancel(Some(e));
                         break;
                     }
                 };
@@ -2397,7 +2446,7 @@ where
             let rec2_witness_tx_clone = rec2_witness_tx.clone();
             let recursive_rx_clone = recursive_rx.clone();
             let recursive2_done_clone = recursive2_done.clone();
-            let error_clone = self.error.clone();
+            let cancellation_info_clone = self.cancellation_info.clone();
             let output_dir_path = options.output_dir_path.clone();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, _)) = recursive_rx_clone.recv() {
@@ -2406,7 +2455,7 @@ where
                         return;
                     }
 
-                    if error_clone.lock().unwrap().is_some() {
+                    if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                         break;
                     }
 
@@ -2447,11 +2496,9 @@ where
 
         recursive2_done.wait_until_threshold_and_check_streams(
             || get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()),
-            self.error.clone(),
+            &self.cancellation_info,
         );
-        if let Some(e) = self.error.lock().unwrap().take() {
-            return Err(e);
-        }
+        self.check_cancel()?;
         clear_proof_done_callback_c();
         drop(recursive_tx);
         drop(rec2_witness_tx);
@@ -2491,10 +2538,10 @@ where
         let witness_handles_clone = witness_handles.clone();
         let witness_rx = self.witness_rx.clone();
         let witness_rx_priority = self.witness_rx_priority.clone();
-        let error_clone = self.error.clone();
+        let cancellation_info_clone = self.cancellation_info.clone();
         let witness_handler = if !minimal_memory && (cfg!(feature = "gpu") || stats) {
             Some(std::thread::spawn(move || loop {
-                if error_clone.lock().unwrap().is_some() {
+                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                     break;
                 }
                 let instance_id = match witness_rx_priority.try_recv() {
@@ -2529,7 +2576,7 @@ where
                 let (airgroup_id, air_id) = match pctx_clone.dctx_get_instance_info(instance_id) {
                     Ok(v) => v,
                     Err(e) => {
-                        *error_clone.lock().unwrap() = Some(format!("gen_recursive_proof_size failed: {}", e).into());
+                        cancellation_info_clone.write().unwrap().cancel(Some(e));
                         break;
                     }
                 };
@@ -2546,13 +2593,13 @@ where
                 }
 
                 let pctx_clone = pctx_clone.clone();
-                let error_clone = error_clone.clone();
+                let cancellation_info_clone = cancellation_info_clone.clone();
                 let handle = std::thread::spawn(move || {
                     timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     if let Err(e) =
                         wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
                     {
-                        *error_clone.lock().unwrap() = Some(format!("calculate_witness failed: {}", e).into());
+                        cancellation_info_clone.write().unwrap().cancel(Some(e));
                         return;
                     }
                     for _ in 0..n_threads_witness {
@@ -2592,7 +2639,7 @@ where
         witness_done: Arc<Counter>,
         minimal_memory: bool,
         stats: bool,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         timer_start_info!(CALCULATING_WITNESS);
 
         let mut witness_minimal_memory_handles = Vec::new();
@@ -2602,7 +2649,7 @@ where
             timer_stop_and_log_info!(PRE_CALCULATE_WC);
         } else {
             for &instance_id in instances.iter() {
-                if self.error.lock().unwrap().is_some() {
+                if self.cancellation_info.read().unwrap().token.is_cancelled() {
                     break;
                 }
                 let n_threads_witness = self.pctx.dctx_instance_threads_witness(instance_id);
@@ -2632,7 +2679,7 @@ where
                 let tx_threads_clone = self.tx_threads.clone();
                 let memory_handler_clone = memory_handler.clone();
                 let witness_done_clone = witness_done.clone();
-                let error_clone = self.error.clone();
+                let cancellation_info_clone = self.cancellation_info.clone();
                 let handle = std::thread::spawn(move || {
                     timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     timer_start_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -2642,7 +2689,7 @@ where
                         threads_to_use_collect,
                         memory_handler_clone.as_ref(),
                     ) {
-                        *error_clone.lock().unwrap() = Some(format!("pre_calculate_witness failed: {}", e).into());
+                        cancellation_info_clone.write().unwrap().cancel(Some(e));
                         return;
                     }
                     timer_stop_and_log_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -2656,7 +2703,7 @@ where
                         threads_to_use_witness,
                         memory_handler_clone.as_ref(),
                     ) {
-                        *error_clone.lock().unwrap() = Some(format!("calculate_witness failed: {}", e).into());
+                        cancellation_info_clone.write().unwrap().cancel(Some(e));
                         return;
                     }
                     timer_stop_and_log_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -2689,16 +2736,14 @@ where
         witness_done.wait_until_value_and_check_streams(
             instances.len(),
             || get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()),
-            self.error.clone(),
+            &self.cancellation_info,
         );
 
         for handle in witness_minimal_memory_handles {
             handle.join().unwrap();
         }
 
-        if let Some(e) = self.error.lock().unwrap().take() {
-            return Err(e);
-        }
+        self.check_cancel()?;
 
         timer_stop_and_log_info!(CALCULATING_WITNESS);
         Ok(())
@@ -2711,7 +2756,7 @@ where
         aggregation: bool,
         gpu_params: &ParamsGPU,
         mpi_ctx: &MpiCtx,
-    ) -> Result<(Arc<DeviceBuffer>, u64, u64, u64), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<(Arc<DeviceBuffer>, u64, u64, u64)> {
         let mut free_memory_gpu = match cfg!(feature = "gpu") {
             true => {
                 check_device_memory_c(mpi_ctx.node_rank as u32, mpi_ctx.node_n_processes as usize as u32) as f64 * 0.98
@@ -2760,7 +2805,7 @@ where
                 let max_number_proofs_per_gpu =
                     gpu_params.max_number_streams.min(max_size_buffer as usize / sctx.max_prover_buffer_size);
                 if max_number_proofs_per_gpu < 1 {
-                    return Err("Not enough GPU memory to run the proof".into());
+                    return Err(ProofmanError::InvalidConfiguration("Not enough GPU memory to run the proof".into()));
                 }
                 max_number_proofs_per_gpu
             }
@@ -2768,12 +2813,11 @@ where
         };
 
         if sctx.max_single_buffer_size > n_streams_per_gpu * sctx.max_prover_buffer_size {
-            return Err(format!(
+            return Err(ProofmanError::InvalidConfiguration(format!(
                 "Not enough GPU memory to run the proof. At least: {} are required but only {} is available.",
                 sctx.max_single_buffer_size / sctx.max_prover_buffer_size,
                 n_streams_per_gpu
-            )
-            .into());
+            )));
         }
 
         let mut gpu_available_memory = match cfg!(feature = "gpu") {
@@ -2837,7 +2881,7 @@ where
         stream_id_: Option<usize>,
         save_proof: bool,
         gpu_preallocate: bool,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         timer_start_info!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
         Self::initialize_air_instance(pctx, sctx, instance_id, false, false)?;
@@ -2913,8 +2957,7 @@ where
         final_snark: bool,
         gpu_params: &ParamsGPU,
         verbose_mode: VerboseMode,
-    ) -> Result<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>), Box<dyn std::error::Error + Send + Sync>>
-    {
+    ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>)> {
         let mut pctx = ProofCtx::create_ctx(
             proving_key_path,
             custom_commits_fixed,
@@ -2949,11 +2992,7 @@ where
     }
 
     #[allow(dead_code)]
-    fn diagnostic_instance(
-        pctx: &ProofCtx<F>,
-        sctx: &SetupCtx<F>,
-        instance_id: usize,
-    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    fn diagnostic_instance(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, instance_id: usize) -> ProofmanResult<bool> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
         let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
@@ -3003,20 +3042,20 @@ where
         instance_id: usize,
         init_aux_trace: bool,
         verify_constraints: bool,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         let setup = sctx.get_setup(airgroup_id, air_id)?;
 
         let mut air_instance = pctx.air_instances[instance_id].write().unwrap();
 
         if air_instance.num_rows != (1 << setup.stark_info.stark_struct.n_bits) {
-            return Err(format!(
+            return Err(ProofmanError::InvalidSetup(format!(
                 "Row count mismatch for airgroup_id={}, air_id={}: expected {} rows (from proving key), but got {} rows (from pil-helpers).",
                 airgroup_id,
                 air_id,
                 1 << setup.stark_info.stark_struct.n_bits,
                 air_instance.num_rows
-            ).into());
+            )));
         }
 
         if init_aux_trace {
@@ -3076,10 +3115,7 @@ where
         Ok(())
     }
 
-    fn initialize_publics_custom_commits(
-        sctx: &SetupCtx<F>,
-        pctx: &ProofCtx<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn initialize_publics_custom_commits(sctx: &SetupCtx<F>, pctx: &ProofCtx<F>) -> ProofmanResult<()> {
         tracing::info!("Initializing publics custom_commits");
         for (airgroup_id, airs) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in airs.iter().enumerate() {
@@ -3112,7 +3148,7 @@ where
         sctx: &SetupCtx<F>,
         pctx: &ProofCtx<F>,
         instance_id: usize,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         let setup = sctx.get_setup(airgroup_id, air_id)?;
 
@@ -3131,7 +3167,7 @@ where
         instance_id: usize,
         aux_trace_contribution_ptr: *mut u8,
         d_buffers: &DeviceBuffer,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         let n_field_elements = 4;
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
 

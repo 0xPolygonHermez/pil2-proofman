@@ -5,6 +5,7 @@ use serde_json::Value;
 use std::fs;
 
 use crate::ProofType;
+use crate::{ProofmanResult, ProofmanError};
 
 #[derive(Clone, Deserialize)]
 pub struct ProofValueMap {
@@ -82,38 +83,32 @@ pub struct GlobalInfoStepsFRI {
 }
 
 impl GlobalInfo {
-    pub fn new(proving_key_path: &Path) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn new(proving_key_path: &Path) -> ProofmanResult<Self> {
         tracing::debug!("··· Loading GlobalInfo JSON {}", proving_key_path.display());
 
         Self::from_file(&proving_key_path.display().to_string())
     }
 
-    pub fn from_file(folder_path: &String) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn from_file(folder_path: &String) -> ProofmanResult<Self> {
         let file_path = Path::new(folder_path).join("pilout.globalInfo.json");
 
         // Read the JSON file
-        let global_info_json =
-            fs::read_to_string(&file_path).map_err(|_| format!("Failed to read file {}", file_path.display()))?;
+        let global_info_json = fs::read_to_string(&file_path)?;
 
         // Parse the JSON into a Value
-        let mut global_info_value: Value = serde_json::from_str(&global_info_json)
-            .map_err(|err| format!("Failed to parse JSON file {}: {}", file_path.display(), err))?;
+        let mut global_info_value: Value = serde_json::from_str(&global_info_json)?;
 
         // Add the folder_path to the JSON object
         if let Some(obj) = global_info_value.as_object_mut() {
             obj.insert("folder_path".to_string(), Value::String(folder_path.to_string()));
         } else {
-            return Err(format!("JSON is not an object: {}", file_path.display()).into());
+            return Err(ProofmanError::InvalidConfiguration(format!("JSON is not an object: {}", file_path.display())));
         }
 
         // Serialize the updated JSON object back to a string
-        let updated_global_info_json = serde_json::to_string(&global_info_value)
-            .map_err(|err| format!("Failed to serialize updated JSON: {}", err))?;
-
+        let updated_global_info_json = serde_json::to_string(&global_info_value)?;
         // Deserialize into GlobalInfo
-        let global_info: GlobalInfo = serde_json::from_str(&updated_global_info_json)
-            .map_err(|err| format!("Failed to parse updated JSON file {}: {}", file_path.display(), err))?;
-
+        let global_info: GlobalInfo = serde_json::from_str(&updated_global_info_json)?;
         Ok(global_info)
     }
 

@@ -1,4 +1,5 @@
 use pil_std_lib::Std;
+use proofman_common::ProofmanResult;
 use witness::{witness_library, WitnessLibrary, WitnessManager};
 
 use fields::PrimeField64;
@@ -11,7 +12,7 @@ use crate::{DirectUpdateProdLocal, DirectUpdateProdGlobal, DirectUpdateSumLocal,
 witness_library!(WitnessLib, Goldilocks);
 
 impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
-    fn register_witness(&mut self, wcm: &WitnessManager<F>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn register_witness(&mut self, wcm: &WitnessManager<F>) -> ProofmanResult<()> {
         let seed = if cfg!(feature = "debug") { 0 } else { rng().random::<u64>() };
 
         let std = Std::new(wcm.get_pctx(), wcm.get_sctx(), false)?;

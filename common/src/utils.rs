@@ -1,4 +1,4 @@
-use crate::DEFAULT_N_PRINT_CONSTRAINTS;
+use crate::{ProofmanError, ProofmanResult, DEFAULT_N_PRINT_CONSTRAINTS};
 use crate::{
     AirGroupMap, AirIdMap, DebugInfo, GlobalInfo, InstanceMap, ModeName, ProofCtx, StdMode, VerboseMode,
     DEFAULT_PRINT_VALS,
@@ -98,7 +98,7 @@ pub fn format_bytes(mut num_bytes: f64) -> String {
 pub fn skip_prover_instance<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     global_idx: usize,
-) -> Result<(bool, Vec<usize>), Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<(bool, Vec<usize>)> {
     if pctx.debug_info.read().unwrap().debug_instances.is_empty() {
         return Ok((false, Vec::new()));
     }
@@ -176,23 +176,21 @@ struct InstanceJson {
     constraints: Option<Vec<usize>>,
 }
 
-pub fn json_to_debug_instances_map(
-    proving_key_path: PathBuf,
-    json_path: String,
-) -> Result<DebugInfo, Box<dyn std::error::Error + Send + Sync>> {
+pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String) -> ProofmanResult<DebugInfo> {
     // Check proving_key_path exists
     if !proving_key_path.exists() {
-        return Err(format!("Proving key folder not found at path: {proving_key_path:?}").into());
+        return Err(ProofmanError::InvalidConfiguration(format!(
+            "Proving key folder not found at path: {proving_key_path:?}"
+        )));
     }
 
     let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path)?;
 
     // Read the file contents
-    let debug_json = fs::read_to_string(&json_path).map_err(|_| format!("Failed to read file {}", json_path))?;
+    let debug_json = fs::read_to_string(&json_path)?;
 
     // Deserialize the JSON into the `DebugJson` struct
-    let json: DebugJson =
-        serde_json::from_str(&debug_json).map_err(|err| format!("Failed to parse JSON file: {json_path}: {err}"))?;
+    let json: DebugJson = serde_json::from_str(&debug_json)?;
 
     // Initialize the airgroup map
     let mut airgroup_map: AirGroupMap = HashMap::new();
@@ -203,12 +201,14 @@ pub fn json_to_debug_instances_map(
             let mut air_id_map: AirIdMap = HashMap::new();
 
             if airgroup.airgroup.is_none() && airgroup.airgroup_id.is_none() {
-                return Err(("Airgroup or airgroup_id must be defined in the JSON file".to_string()).into());
+                return Err(ProofmanError::InvalidSetup(
+                    "Airgroup or airgroup_id must be defined in the JSON file".to_string(),
+                ));
             }
             if airgroup.airgroup.is_some() && airgroup.airgroup_id.is_some() {
-                return Err(
-                    ("Only airgroup or airgroup_id can be defined in the JSON file, not both".to_string()).into()
-                );
+                return Err(ProofmanError::InvalidSetup(
+                    "Only airgroup or airgroup_id can be defined in the JSON file, not both".to_string(),
+                ));
             }
 
             let airgroup_id = if airgroup.airgroup_id.is_some() {
@@ -217,7 +217,9 @@ pub fn json_to_debug_instances_map(
                 let airgroup_name = airgroup.airgroup.unwrap().to_string();
                 let airgroup_id = global_info.air_groups.iter().position(|x| x == &airgroup_name);
                 if airgroup_id.is_none() {
-                    return Err(format!("Airgroup name {airgroup_name} not found in global_info.airgroups").into());
+                    return Err(ProofmanError::InvalidSetup(format!(
+                        "Airgroup name {airgroup_name} not found in global_info.airgroups"
+                    )));
                 }
                 airgroup_id.unwrap()
             };
@@ -225,10 +227,14 @@ pub fn json_to_debug_instances_map(
             if let Some(air_ids) = airgroup.air_ids {
                 for air in air_ids {
                     if air.air.is_none() && air.air_id.is_none() {
-                        return Err(("Air or air_id must be defined in the JSON file".to_string()).into());
+                        return Err(ProofmanError::InvalidSetup(
+                            "Air or air_id must be defined in the JSON file".to_string(),
+                        ));
                     }
                     if air.air.is_some() && air.air_id.is_some() {
-                        return Err(("Only air or air_id can be defined in the JSON file, not both".to_string()).into());
+                        return Err(ProofmanError::InvalidSetup(
+                            "Only air or air_id can be defined in the JSON file, not both".to_string(),
+                        ));
                     }
 
                     let air_id = if air.air_id.is_some() {
@@ -237,7 +243,9 @@ pub fn json_to_debug_instances_map(
                         let air_name = air.air.unwrap().to_string();
                         let air_id = global_info.airs[airgroup_id].iter().position(|x| x.name == air_name);
                         if air_id.is_none() {
-                            return Err(format!("Airgroup name {air_name} not found in global_info.airgroups").into());
+                            return Err(ProofmanError::InvalidSetup(format!(
+                                "Airgroup name {air_name} not found in global_info.airgroups"
+                            )));
                         }
                         air_id.unwrap()
                     };
@@ -322,9 +330,7 @@ pub fn configured_num_threads(n_local_processes: usize) -> usize {
     num
 }
 
-pub fn join_thread(
-    handle: std::thread::JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync + Send + Sync>>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync + Send + Sync>> {
+pub fn join_thread(handle: std::thread::JoinHandle<ProofmanResult<()>>) -> ProofmanResult<()> {
     match handle.join() {
         Ok(inner_result) => inner_result, // propagate closure error
         Err(panic_info) => {
@@ -336,7 +342,7 @@ pub fn join_thread(
             } else {
                 "Unknown thread panic".to_string()
             };
-            Err(panic_msg.into())
+            Err(ProofmanError::ProofmanError(panic_msg))
         }
     }
 }

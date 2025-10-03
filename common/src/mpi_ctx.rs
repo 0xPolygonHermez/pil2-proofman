@@ -13,9 +13,11 @@ use std::sync::atomic::{Ordering, AtomicU64, AtomicI32};
 use fields::PrimeField64;
 #[cfg(distributed)]
 use fields::CubicExtensionField;
-use crate::GlobalInfo;
+use crate::{GlobalInfo, ProofmanError};
 #[cfg(distributed)]
 use crate::Proof;
+
+use crate::ProofmanResult;
 
 #[cfg(distributed)]
 use proofman_starks_lib_c::{
@@ -82,9 +84,11 @@ impl MpiCtx {
         }
     }
 
-    pub fn get_outer_agg_rank(&self) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn get_outer_agg_rank(&self) -> ProofmanResult<i32> {
         if self.outer_agg_rank.load(Ordering::SeqCst) == -1 {
-            return Err("Aggregation rank not yet determined. Call process_ready_for_aggregation() first.".into());
+            return Err(ProofmanError::InvalidAssignation(
+                "Aggregation rank not yet determined. Call process_ready_for_aggregation() first.".into(),
+            ));
         }
         Ok(self.outer_agg_rank.load(Ordering::SeqCst))
     }

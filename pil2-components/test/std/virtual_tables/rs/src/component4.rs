@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use witness::{define_wc_with_std, execute, WitnessComponent};
-use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx, ProofmanResult};
 
 use fields::PrimeField64;
 use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -21,7 +21,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Component4<F> {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         if stage == 1 {
             let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 

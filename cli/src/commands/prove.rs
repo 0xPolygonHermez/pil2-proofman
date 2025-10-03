@@ -198,9 +198,9 @@ impl ProveCmd {
                 let compressed_size = std::fs::metadata(&compressed_output_path)?.len();
                 let compression_ratio = compressed_size as f64 / original_size as f64;
 
-                println!("Vadcop final proof saved:");
-                println!("  Original: {} bytes", original_size);
-                println!("  Compressed: {} bytes (ratio: {:.2}x)", compressed_size, compression_ratio);
+                tracing::info!("Vadcop final proof saved:");
+                tracing::info!("  Original: {} bytes", original_size);
+                tracing::info!("  Compressed: {} bytes (ratio: {:.2}x)", compressed_size, compression_ratio);
             }
         }
 

@@ -6,9 +6,9 @@ use std::{collections::HashMap, path::PathBuf};
 
 use colored::*;
 
-use std::error::Error;
-
-use proofman_common::{format_bytes, MpiCtx, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop, ParamsGPU};
+use proofman_common::{
+    format_bytes, MpiCtx, ParamsGPU, ProofCtx, ProofType, ProofmanError, ProofmanResult, Setup, SetupCtx, SetupsVadcop,
+};
 use proofman_util::DeviceBuffer;
 use proofman_starks_lib_c::load_device_const_pols_c;
 use proofman_starks_lib_c::custom_commit_size_c;
@@ -21,7 +21,7 @@ pub fn print_summary_info<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     mpi_ctx: &MpiCtx,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<()> {
     if mpi_ctx.rank == 0 {
         print_summary(pctx, sctx, true)?;
     }
@@ -54,11 +54,7 @@ pub fn print_summary_info<F: PrimeField64>(
     Ok(())
 }
 
-pub fn print_summary<F: PrimeField64>(
-    pctx: &ProofCtx<F>,
-    sctx: &SetupCtx<F>,
-    global: bool,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, global: bool) -> ProofmanResult<()> {
     //todo_distributed: no tens totes les taules nomes les dels teu worker
     let mut air_info = HashMap::new();
 
@@ -169,11 +165,7 @@ pub fn print_summary<F: PrimeField64>(
     Ok(())
 }
 
-fn check_const_tree<F: PrimeField64>(
-    setup: &Setup<F>,
-    aggregation: bool,
-    final_snark: bool,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool, final_snark: bool) -> ProofmanResult<()> {
     let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
     let mut flags = String::new();
     if aggregation {
@@ -184,30 +176,30 @@ fn check_const_tree<F: PrimeField64>(
     }
 
     if !PathBuf::from(&const_pols_tree_path).exists() {
-        let error_message = format!(
+        let error_message = ProofmanError::InvalidSetup(format!(
             "Error: Unable to find the constant tree at '{const_pols_tree_path}'.\n\
             Please run the following command:\n\
             \x1b[1mcargo run --bin proofman-cli check-setup --proving-key <PROVING_KEY>{flags}\x1b[0m"
-        );
-        return Err(error_message.into());
+        ));
+        return Err(error_message);
     }
 
-    let error_message = format!(
+    let error_message = ProofmanError::InvalidSetup(format!(
         "Error: The constant tree file at '{const_pols_tree_path}' exists but is invalid or corrupted.\n\
         Please regenerate it by running:\n\
         \x1b[1mcargo run --bin proofman-cli check-setup --proving-key <PROVING_KEY>{flags}\x1b[0m"
-    );
+    ));
 
     let const_pols_tree_size = setup.const_tree_size;
     match fs::metadata(&const_pols_tree_path) {
         Ok(metadata) => {
             let actual_size = metadata.len() as usize;
             if actual_size != const_pols_tree_size * 8 {
-                return Err(error_message.into());
+                return Err(error_message);
             }
         }
         Err(err) => {
-            return Err(format!("Failed to get metadata for {}: {}", setup.air_name, err).into());
+            return Err(ProofmanError::InvalidSetup(format!("Failed to get metadata for {}: {}", setup.air_name, err)));
         }
     }
     if setup.setup_type != ProofType::RecursiveF {
@@ -228,17 +220,14 @@ fn check_const_tree<F: PrimeField64>(
             let byte_range = i * 8..(i + 1) * 8;
             let value = u64::from_le_bytes(buffer[byte_range].try_into()?);
             if value != *verkey_val {
-                return Err(error_message.into());
+                return Err(error_message);
             }
         }
     }
     Ok(())
 }
 
-pub fn check_tree_paths<F: PrimeField64>(
-    pctx: &ProofCtx<F>,
-    sctx: &SetupCtx<F>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx.get_setup(airgroup_id, air_id)?;
@@ -302,7 +291,7 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     final_snark: bool,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<()> {
     let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
@@ -346,7 +335,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
     d_buffers: &DeviceBuffer,
     aggregation: bool,
     gpu_params: &ParamsGPU,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<()> {
     let gpu = cfg!(feature = "gpu");
     if gpu {
         let mut offset = 0;
@@ -545,7 +534,7 @@ pub fn initialize_witness_circom<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     final_snark: bool,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<()> {
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {

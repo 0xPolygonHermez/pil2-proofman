@@ -7,7 +7,7 @@ use colored::Colorize;
 use fields::PrimeField64;
 use num_bigint::BigUint;
 use num_traits::Zero;
-use proofman_common::ProofCtx;
+use proofman_common::{ProofCtx, ProofmanError, ProofmanResult};
 use proofman_hints::HintFieldOutput;
 
 use crate::normalize_vals;
@@ -29,7 +29,7 @@ pub fn update_debug_data_fast<F: PrimeField64>(
     is_proves: bool,
     times: F,
     is_global: bool,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<()> {
     let bus_opid_times = debug_data_fast.entry(opid).or_insert_with(|| SharedDataFast {
         global_values: Vec::new(),
         num_proves: BigUint::zero(),
@@ -69,7 +69,9 @@ pub fn update_debug_data_fast<F: PrimeField64>(
         bus_opid_times.num_proves += hash_value * times.as_canonical_biguint();
     } else {
         if !times.is_one() {
-            return Err(format!("The selector value is invalid: expected 1, but received {times:?}.").into());
+            return Err(ProofmanError::StdError(format!(
+                "The selector value is invalid: expected 1, but received {times:?}."
+            )));
         }
         bus_opid_times.num_assumes += hash_value;
     }

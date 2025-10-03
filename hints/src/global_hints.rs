@@ -8,12 +8,12 @@ use std::ffi::c_void;
 
 use std::collections::HashMap;
 
-use proofman_common::{skip_prover_instance, ProofCtx, SetupCtx};
+use proofman_common::{skip_prover_instance, ProofCtx, SetupCtx, ProofmanResult, ProofmanError};
 
 pub fn aggregate_airgroupvals<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     airgroup_values: &[Vec<F>],
-) -> Result<Vec<Vec<u64>>, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<Vec<Vec<u64>>> {
     const FIELD_EXTENSION: usize = 3;
 
     let mut airgroupvalues = Vec::new();
@@ -83,7 +83,7 @@ fn get_global_hint_f<F: PrimeField64>(
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
-) -> Result<Vec<HintFieldInfo<F>>, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<Vec<HintFieldInfo<F>>> {
     let n_hints_values = get_hint_field_global_constraints_values_c(sctx.get_global_bin(), hint_id, hint_field_name);
 
     let mut hint_field_values = vec![HintFieldInfo::default(); n_hints_values as usize];
@@ -157,14 +157,13 @@ pub fn get_hint_field_constant_gc<F: PrimeField64>(
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
-) -> Result<HintFieldValue<F>, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<HintFieldValue<F>> {
     let hint_info = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression)?;
 
     if hint_info[0].matrix_size != 0 {
-        return Err(format!(
+        return Err(ProofmanError::InvalidHints(format!(
             "get_hint_field can only be called with single expressions, but {hint_field_name} is an array"
-        )
-        .into());
+        )));
     }
 
     if print_expression {
@@ -179,13 +178,15 @@ pub fn get_hint_field_gc_constant_a<F: PrimeField64>(
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
-) -> Result<HintFieldValuesVec<F>, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<HintFieldValuesVec<F>> {
     let hint_infos = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression)?;
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.iter().enumerate() {
         if v == 0 && hint_info.matrix_size != 1 {
-            return Err(("get_hint_field_m can only be called with an array of expressions!".to_string()).into());
+            return Err(ProofmanError::InvalidHints(
+                "get_hint_field_m can only be called with an array of expressions!".to_string(),
+            ));
         }
         if print_expression {
             tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
@@ -202,14 +203,16 @@ pub fn get_hint_field_constant_gc_m<F: PrimeField64>(
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
-) -> Result<HintFieldValues<F>, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<HintFieldValues<F>> {
     let hint_infos = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression)?;
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 
     for (v, hint_info) in hint_infos.iter().enumerate() {
         if v == 0 && hint_info.matrix_size > 2 {
-            return Err(("get_hint_field_m can only be called with a matrix of expressions!".to_string()).into());
+            return Err(ProofmanError::InvalidHints(
+                "get_hint_field_m can only be called with a matrix of expressions!".to_string(),
+            ));
         }
         let hint_value = HintCol::from_hint_field(hint_info);
         let mut pos = Vec::new();
@@ -231,14 +234,13 @@ pub fn get_hint_field_gc<F: PrimeField64>(
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
-) -> Result<HintFieldValue<F>, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<HintFieldValue<F>> {
     let hint_info = get_global_hint_f(Some(pctx), sctx, hint_id, hint_field_name, print_expression)?;
 
     if hint_info[0].matrix_size != 0 {
-        return Err(format!(
+        return Err(ProofmanError::InvalidHints(format!(
             "get_hint_field can only be called with single expressions, but {hint_field_name} is an array"
-        )
-        .into());
+        )));
     }
 
     if print_expression {
@@ -254,13 +256,15 @@ pub fn get_hint_field_gc_a<F: PrimeField64>(
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
-) -> Result<HintFieldValuesVec<F>, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<HintFieldValuesVec<F>> {
     let hint_infos = get_global_hint_f(Some(pctx), sctx, hint_id, hint_field_name, print_expression)?;
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.iter().enumerate() {
         if v == 0 && hint_info.matrix_size != 1 {
-            return Err(("get_hint_field_m can only be called with an array of expressions!".to_string()).into());
+            return Err(ProofmanError::InvalidHints(
+                "get_hint_field_m can only be called with an array of expressions!".to_string(),
+            ));
         }
         if print_expression {
             tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
@@ -277,14 +281,16 @@ pub fn get_hint_field_gc_m<F: PrimeField64>(
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
-) -> Result<HintFieldValues<F>, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<HintFieldValues<F>> {
     let hint_infos = get_global_hint_f(Some(&pctx), &sctx, hint_id, hint_field_name, print_expression)?;
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 
     for (v, hint_info) in hint_infos.iter().enumerate() {
         if v == 0 && hint_info.matrix_size > 2 {
-            return Err(("get_hint_field_m can only be called with a matrix of expressions!".to_string()).into());
+            return Err(ProofmanError::InvalidHints(
+                "get_hint_field_m can only be called with a matrix of expressions!".to_string(),
+            ));
         }
         let hint_value = HintCol::from_hint_field(hint_info);
         let mut pos = Vec::new();

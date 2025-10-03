@@ -5,7 +5,7 @@ use proofman_starks_lib_c::{
 use std::cmp;
 use proofman_common::{
     get_constraints_lines_str, get_global_constraints_lines_str, skip_prover_instance, ConstraintInfo, ConstraintInfoC,
-    DebugInfo, GlobalConstraintInfo, ProofCtx, SetupCtx,
+    DebugInfo, GlobalConstraintInfo, ProofCtx, ProofmanError, ProofmanResult, SetupCtx,
 };
 
 use std::os::raw::c_void;
@@ -16,7 +16,7 @@ pub fn verify_constraints<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     global_id: usize,
     n_print_constraints: u64,
-) -> Result<Vec<ConstraintInfo>, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<Vec<ConstraintInfo>> {
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(global_id)?;
     let setup = sctx.get_setup(airgroup_id, air_id)?;
 
@@ -72,7 +72,7 @@ pub fn verify_global_constraints_proof<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     debug_info: &DebugInfo,
     airgroupvalues: Vec<Vec<F>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<()> {
     tracing::info!("--> Checking global constraints");
 
     let mut airgroup_values_ptrs: Vec<*mut F> = airgroupvalues
@@ -139,7 +139,8 @@ pub fn verify_global_constraints_proof<F: PrimeField64>(
         Ok(())
     } else {
         tracing::info!("··· {}", "\u{2717} Not all global constraints were verified".bright_red().bold());
-        Err(Box::new(std::io::Error::other("Not all global constraints were verified.".to_string())))
+
+        Err(ProofmanError::InvalidProof("Not all global constraints were verified.".to_string()))
     }
 }
 
@@ -148,7 +149,7 @@ pub fn verify_constraints_proof<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     instance_id: usize,
     n_print_constraints: u64,
-) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<bool> {
     let constraints = verify_constraints(pctx, sctx, instance_id, n_print_constraints)?;
 
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;

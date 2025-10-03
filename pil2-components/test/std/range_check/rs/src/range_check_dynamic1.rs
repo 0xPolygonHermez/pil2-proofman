@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use witness::{WitnessComponent, execute, define_wc_with_std};
 
-use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanError, ProofmanResult, SetupCtx};
 
 use fields::PrimeField64;
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -22,7 +22,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic1<F> {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         if stage == 1 {
             let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 
@@ -80,7 +80,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic1<F> {
 
                         self.std_lib.range_check(range17, val as i64, 1);
                     }
-                    _ => return Err(("Invalid range".to_string()).into()),
+                    _ => return Err(ProofmanError::StdError("Invalid range".to_string())),
                 }
             }
 

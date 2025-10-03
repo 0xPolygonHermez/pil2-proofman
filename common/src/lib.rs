@@ -16,6 +16,7 @@ pub mod custom_commits;
 pub mod constraints;
 pub mod fixed_cols;
 pub mod memory_handler;
+pub mod error_manager;
 
 pub use air_instance::*;
 pub use verbose_mode::*;
@@ -34,3 +35,4 @@ pub use constraints::*;
 pub use fixed_cols::*;
 pub use memory_handler::*;
 pub use mpi_ctx::*;
+pub use error_manager::*;
