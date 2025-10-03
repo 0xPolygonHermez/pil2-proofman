@@ -2,7 +2,10 @@ use std::ptr;
 use fields::Field;
 use proofman_util::create_buffer_fast;
 
-use crate::{trace::{Trace, Values}, PackedInfo};
+use crate::{
+    trace::{Trace, Values},
+    PackedInfo,
+};
 
 #[repr(C)]
 pub struct StepsParams {
@@ -175,11 +178,7 @@ impl<F: Field> AirInstance<F> {
             challenges: Vec::new(),
             shared_buffer: trace_info.shared_buffer,
             fixed: Vec::new(),
-            packed_info: PackedInfo::new(
-                trace_info.is_packed,
-                trace_info.num_packed_words,
-                trace_info.unpack_info,
-            ),
+            packed_info: PackedInfo::new(trace_info.is_packed, trace_info.num_packed_words, trace_info.unpack_info),
         }
     }
 

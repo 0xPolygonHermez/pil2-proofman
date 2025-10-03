@@ -2,7 +2,9 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use libloading::{Library, Symbol};
 use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
 use proofman_common::{
-    calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType, DebugInfo, MemoryHandler, MpiCtx, ParamsGPU, PilHelpers, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES
+    calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
+    DebugInfo, MemoryHandler, MpiCtx, ParamsGPU, PilHelpers, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx,
+    SetupsVadcop, VerboseMode, MAX_INSTANCES,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -41,7 +43,9 @@ use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
-use crate::{calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, initialize_fixed_pols_tree};
+use crate::{
+    calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, initialize_fixed_pols_tree,
+};
 use crate::{verify_constraints_proof, verify_basic_proof, verify_final_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
@@ -889,8 +893,7 @@ where
 
         let max_witness_trace_size = calculate_max_witness_trace_size(&pctx, &sctx, &pil_helpers, &gpu_params);
 
-        let memory_handler =
-            Arc::new(MemoryHandler::new(pctx.clone(), max_witness_stored, max_witness_trace_size));
+        let memory_handler = Arc::new(MemoryHandler::new(pctx.clone(), max_witness_stored, max_witness_trace_size));
 
         let n_airgroups = pctx.global_info.air_groups.len();
         let proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
