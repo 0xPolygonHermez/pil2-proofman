@@ -45,7 +45,7 @@ impl<F: PrimeField64> Std<F> {
         self.range_check.assign_value(id, val, multiplicity);
     }
 
-    pub fn range_checks(&self, id: usize, values: Vec<u32>) -> ProofmanResult<()> {
+    pub fn range_checks(&self, id: usize, values: Vec<u32>) {
         self.range_check.assign_values(id, values)
     }
 
