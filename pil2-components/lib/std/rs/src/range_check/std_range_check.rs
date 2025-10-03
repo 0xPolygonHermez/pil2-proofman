@@ -391,7 +391,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         }
     }
 
-    pub fn assign_values(&self, id: usize, values: Vec<u32>) -> ProofmanResult<()> {
+    pub fn assign_values(&self, id: usize, values: Vec<u32>) {
         // Find the range with the given id
         let range_item = &self.ranges[id];
 
@@ -443,11 +443,8 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     self.specified_ranges_air.as_ref().unwrap().update_inputs(id, values);
                 }
             }
-            StdRangeType::U8AirDouble | StdRangeType::U16AirDouble => {
-                return Err(ProofmanError::StdError("Double ranges are not supported for multiple values".to_string()));
-            }
+            StdRangeType::U8AirDouble | StdRangeType::U16AirDouble => unreachable!()
         }
-        Ok(())
     }
 
     #[cfg(all(debug_assertions, feature = "verify-rc-values"))]
