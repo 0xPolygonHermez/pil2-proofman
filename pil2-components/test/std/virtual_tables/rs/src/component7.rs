@@ -1,7 +1,7 @@
 use std::sync::{atomic::{AtomicU64, Ordering}, Arc};
 
 use witness::{execute, WitnessComponent};
-use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx, ProofmanResult};
 
 use fields::PrimeField64;
 use rand::{
@@ -40,7 +40,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Component7
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
+    ) -> ProofmanResult<()>{
         if stage == 1 {
             let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 

@@ -9,7 +9,7 @@ use fields::PrimeField64;
 use std::path::PathBuf;
 
 use witness::WitnessComponent;
-use proofman_common::{AirInstance, BufferPool, ProofCtx, SetupCtx, TraceInfo};
+use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanError, ProofmanResult, SetupCtx, TraceInfo};
 use proofman_hints::{get_hint_field_constant_a, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
 
 use crate::{get_hint_field_constant_as, validate_binary_field, AirComponent};
@@ -41,7 +41,7 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
         airgroup_id: usize,
         air_id: usize,
         shared_tables: bool,
-    ) -> Result<Arc<Self>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<Arc<Self>> {
         let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
 
         let setup = sctx.get_setup(airgroup_id, air_id)?;
@@ -67,19 +67,19 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
         for ((min_hint, min_neg_hint), opid_len_hint) in mins.iter().zip(mins_neg.iter()).zip(opids_len.iter()) {
             let min = match min_hint {
                 HintFieldValue::Field(f) => f.as_canonical_u64(),
-                _ => return Err(("min hint must be a field element".to_string()).into()),
+                _ => return Err(ProofmanError::StdError("min hint must be a field element".to_string())),
             };
 
             let min_neg = match min_neg_hint {
                 HintFieldValue::Field(f) => validate_binary_field(*f, "Min neg")?,
-                _ => return Err(("min neg hint must be a field element".to_string()).into()),
+                _ => return Err(ProofmanError::StdError("min neg hint must be a field element".to_string())),
             };
 
             let min = if min_neg { min as i128 - F::ORDER_U64 as i128 } else { min as i128 };
 
             let opid_len = match opid_len_hint {
                 HintFieldValue::Field(f) => f.as_canonical_u64() as usize,
-                _ => return Err(("Opid len hint must be a field element".to_string()).into()),
+                _ => return Err(ProofmanError::StdError("Opid len hint must be a field element".to_string())),
             };
 
             // In this conversion we assume that min is at most of 63 bits
@@ -180,7 +180,7 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
         pctx: Arc<ProofCtx<F>>,
         _global_ids: &RwLock<Vec<usize>>,
         _input_data_path: Option<PathBuf>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         let (instance_found, mut table_instance_id) = pctx.dctx_find_process_table(self.airgroup_id, self.air_id)?;
 
         if !instance_found {
@@ -209,7 +209,7 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         Ok(())
     }
 
@@ -221,7 +221,7 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         if stage == 1 {
             let table_instance_id = self.table_instance_id.load(Ordering::Relaxed) as usize;
 

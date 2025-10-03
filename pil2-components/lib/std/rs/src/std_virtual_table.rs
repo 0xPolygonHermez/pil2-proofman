@@ -12,7 +12,7 @@ use fields::PrimeField64;
 use std::path::PathBuf;
 
 use witness::WitnessComponent;
-use proofman_common::{AirInstance, BufferPool, ProofCtx, SetupCtx, TraceInfo};
+use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanResult, ProofmanError, SetupCtx, TraceInfo};
 use proofman_hints::{get_hint_ids_by_name, HintFieldOptions};
 
 use crate::{get_global_hint_field_constant_a_as, get_hint_field_constant_a_as, get_hint_field_constant_as};
@@ -38,11 +38,7 @@ pub struct VirtualTableAir {
 }
 
 impl<F: PrimeField64> StdVirtualTable<F> {
-    pub fn new(
-        pctx: Arc<ProofCtx<F>>,
-        sctx: &SetupCtx<F>,
-        shared_tables: bool,
-    ) -> Result<Arc<Self>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: &SetupCtx<F>, shared_tables: bool) -> ProofmanResult<Arc<Self>> {
         // Get relevant data from the global hint
         let virtual_table_global_hint = get_hint_ids_by_name(sctx.get_global_bin(), "virtual_table_data_global");
         if virtual_table_global_hint.is_empty() {
@@ -140,8 +136,11 @@ impl<F: PrimeField64> StdVirtualTable<F> {
         }))
     }
 
-    pub fn get_global_id(&self, id: usize) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
-        self.global_id_by_uid.get(&id).copied().ok_or_else(|| format!("ID {id} not found in the global ID map").into())
+    pub fn get_global_id(&self, id: usize) -> ProofmanResult<usize> {
+        self.global_id_by_uid
+            .get(&id)
+            .copied()
+            .ok_or_else(|| ProofmanError::StdError(format!("ID {id} not found in the global ID map")))
     }
 
     pub fn inc_virtual_row(&self, global_id: usize, row: u64, multiplicity: u64) {
@@ -174,17 +173,17 @@ impl<F: PrimeField64> WitnessComponent<F> for StdVirtualTable<F> {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         Ok(())
     }
 }
 
 impl VirtualTableAir {
-    pub fn get_id(&self, id: usize) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn get_id(&self, id: usize) -> ProofmanResult<usize> {
         if let Some(pos) = self.table_ids.iter().position(|&(table_id, _)| table_id == id) {
             Ok(pos)
         } else {
-            Err(("ID not found in the virtual table".to_string()).into())
+            Err(ProofmanError::StdError("ID not found in the virtual table".to_string()))
         }
     }
 
@@ -296,7 +295,7 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         pctx: Arc<ProofCtx<F>>,
         _global_ids: &RwLock<Vec<usize>>,
         _input_data_path: Option<PathBuf>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         let (instance_found, mut table_instance_id) = pctx.dctx_find_process_table(self.airgroup_id, self.air_id)?;
 
         if !instance_found {
@@ -326,7 +325,7 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         Ok(())
     }
 
@@ -338,7 +337,7 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         if stage == 1 {
             let table_instance_id = self.table_instance_id.load(Ordering::Relaxed) as usize;
 

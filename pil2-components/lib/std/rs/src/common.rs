@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use fields::PrimeField64;
 
-use proofman_common::{ProofCtx, SetupCtx};
+use proofman_common::{ProofCtx, ProofmanError, ProofmanResult, SetupCtx};
 use proofman_hints::{
     get_hint_field_constant, get_hint_field_constant_a, get_hint_field_constant_gc, get_hint_field_gc_constant_a,
     HintFieldOptions, HintFieldOutput, HintFieldValue,
@@ -18,7 +18,7 @@ pub trait AirComponent<F: PrimeField64> {
         airgroup_id: usize,
         air_id: usize,
         shared_tables: bool,
-    ) -> Result<Arc<Self>, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> ProofmanResult<Arc<Self>>;
 }
 
 /// Normalize the values.
@@ -36,22 +36,16 @@ pub fn normalize_vals<F: PrimeField64>(vals: &[HintFieldOutput<F>]) -> Vec<HintF
 }
 
 // Helper to extract hint fields
-pub fn get_global_hint_field<F: PrimeField64>(
-    sctx: &SetupCtx<F>,
-    hint_id: u64,
-    field_name: &str,
-) -> Result<F, Box<dyn std::error::Error + Send + Sync>> {
+pub fn get_global_hint_field<F: PrimeField64>(sctx: &SetupCtx<F>, hint_id: u64, field_name: &str) -> ProofmanResult<F> {
     match get_hint_field_constant_gc(sctx, hint_id, field_name, false)? {
         HintFieldValue::Field(value) => Ok(value),
-        _ => Err(format!("Hint '{hint_id}' for field '{field_name}' must be a field element").into()),
+        _ => Err(ProofmanError::InvalidHints(format!(
+            "Hint '{hint_id}' for field '{field_name}' must be a field element"
+        ))),
     }
 }
 
-pub fn get_global_hint_field_constant_as<T, F>(
-    sctx: &SetupCtx<F>,
-    hint_id: u64,
-    field_name: &str,
-) -> Result<T, Box<dyn std::error::Error + Send + Sync>>
+pub fn get_global_hint_field_constant_as<T, F>(sctx: &SetupCtx<F>, hint_id: u64, field_name: &str) -> ProofmanResult<T>
 where
     T: TryFrom<u64>,
     T::Error: std::fmt::Debug,
@@ -59,13 +53,18 @@ where
 {
     let field_value = match get_hint_field_constant_gc(sctx, hint_id, field_name, false)? {
         HintFieldValue::Field(field_value) => field_value,
-        _ => return Err(format!("Hint '{hint_id}' for field '{field_name}' must be a field element").into()),
+        _ => {
+            return Err(ProofmanError::InvalidHints(format!(
+                "Hint '{hint_id}' for field '{field_name}' must be a field element"
+            )))
+        }
     };
 
     let biguint_value = field_value.as_canonical_u64();
 
-    let value: T =
-        biguint_value.try_into().map_err(|_| format!("Cannot convert value to {}", std::any::type_name::<T>()))?;
+    let value: T = biguint_value.try_into().map_err(|_| {
+        ProofmanError::InvalidAssignation(format!("Cannot convert value to {}", std::any::type_name::<T>()))
+    })?;
 
     Ok(value)
 }
@@ -74,12 +73,12 @@ pub fn get_global_hint_field_constant_as_string<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     hint_id: u64,
     field_name: &str,
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<String> {
     let hint_field = get_hint_field_constant_gc(sctx, hint_id, field_name, false)?;
 
     match hint_field {
         HintFieldValue::String(value) => Ok(value),
-        _ => Err(format!("Hint '{hint_id}' for field '{field_name}' must be a string").into()),
+        _ => Err(ProofmanError::InvalidHints(format!("Hint '{hint_id}' for field '{field_name}' must be a string"))),
     }
 }
 
@@ -87,7 +86,7 @@ pub fn get_global_hint_field_constant_a_as<T, F>(
     sctx: &SetupCtx<F>,
     hint_id: u64,
     field_name: &str,
-) -> Result<Vec<T>, Box<dyn std::error::Error + Send + Sync>>
+) -> ProofmanResult<Vec<T>>
 where
     T: TryFrom<u64>,
     F: PrimeField64,
@@ -98,16 +97,20 @@ where
     for (i, hint_field) in hint_fields.values.iter().enumerate() {
         match hint_field {
             HintFieldValue::Field(value) => {
-                let converted = T::try_from(value.as_canonical_u64())
-                    .map_err(|_| format!("Cannot convert value at position {} to {}", i, std::any::type_name::<T>()))?;
+                let converted = T::try_from(value.as_canonical_u64()).map_err(|_| {
+                    ProofmanError::InvalidHints(format!(
+                        "Cannot convert value at position {} to {}",
+                        i,
+                        std::any::type_name::<T>()
+                    ))
+                })?;
                 return_values.push(converted);
             }
             _ => {
-                return Err(format!(
+                return Err(ProofmanError::InvalidHints(format!(
                     "Hint '{}' for field '{}' at position '{}' must be a field element",
                     hint_id, field_name, i
-                )
-                .into());
+                )));
             }
         }
     }
@@ -119,7 +122,7 @@ pub fn get_global_hint_field_constant_a_as_string<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     hint_id: u64,
     field_name: &str,
-) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<Vec<String>> {
     let hint_fields = get_hint_field_gc_constant_a(sctx, hint_id, field_name, false)?;
 
     let mut return_values = Vec::new();
@@ -127,9 +130,9 @@ pub fn get_global_hint_field_constant_a_as_string<F: PrimeField64>(
         match hint_field {
             HintFieldValue::String(value) => return_values.push(value.clone()),
             _ => {
-                return Err(
-                    format!("Hint '{hint_id}' for field '{field_name}' at position '{i}' must be a string").into()
-                )
+                return Err(ProofmanError::InvalidHints(format!(
+                    "Hint '{hint_id}' for field '{field_name}' at position '{i}' must be a string"
+                )));
             }
         }
     }
@@ -144,23 +147,22 @@ pub fn get_hint_field_constant_as_field<F: PrimeField64>(
     hint_id: usize,
     field_name: &str,
     hint_field_options: HintFieldOptions,
-) -> Result<F, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<F> {
     match get_hint_field_constant(sctx, airgroup_id, air_id, hint_id, field_name, hint_field_options)? {
         HintFieldValue::Field(value) => Ok(value),
-        _ => Err(format!("Hint '{hint_id}' for field '{field_name}' must be a field element").into()),
+        _ => Err(ProofmanError::InvalidHints(format!(
+            "Hint '{hint_id}' for field '{field_name}' must be a field element"
+        ))),
     }
 }
 
-pub fn validate_binary_field<F: PrimeField64>(
-    value: F,
-    field_name: &str,
-) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+pub fn validate_binary_field<F: PrimeField64>(value: F, field_name: &str) -> ProofmanResult<bool> {
     if value.is_zero() {
         Ok(false)
     } else if value.is_one() {
         Ok(true)
     } else {
-        Err(format!("{} hint must be either 0 or 1", field_name).into())
+        Err(ProofmanError::InvalidHints(format!("{} hint must be either 0 or 1", field_name)))
     }
 }
 
@@ -171,17 +173,22 @@ pub fn get_hint_field_constant_as<T, F: PrimeField64>(
     hint_id: usize,
     field_name: &str,
     hint_field_options: HintFieldOptions,
-) -> Result<T, Box<dyn std::error::Error + Send + Sync>>
+) -> ProofmanResult<T>
 where
     T: TryFrom<u64>,
 {
     let value = match get_hint_field_constant::<F>(sctx, airgroup_id, air_id, hint_id, field_name, hint_field_options)?
     {
         HintFieldValue::Field(value) => value.as_canonical_u64(),
-        _ => return Err(format!("Hint '{hint_id}' for field '{field_name}' must be a field element").into()),
+        _ => {
+            return Err(ProofmanError::InvalidHints(format!(
+                "Hint '{hint_id}' for field '{field_name}' must be a field element"
+            )))
+        }
     };
 
-    T::try_from(value).map_err(|_| format!("Cannot convert value to {}", std::any::type_name::<T>()).into())
+    T::try_from(value)
+        .map_err(|_| ProofmanError::InvalidHints(format!("Cannot convert value to {}", std::any::type_name::<T>())))
 }
 
 pub fn get_hint_field_constant_a_as<T, F: PrimeField64>(
@@ -191,7 +198,7 @@ pub fn get_hint_field_constant_a_as<T, F: PrimeField64>(
     hint_id: usize,
     field_name: &str,
     hint_field_options: HintFieldOptions,
-) -> Result<Vec<T>, Box<dyn std::error::Error + Send + Sync>>
+) -> ProofmanResult<Vec<T>>
 where
     T: TryFrom<u64>,
 {
@@ -203,15 +210,18 @@ where
         let field_value = match hint_field {
             HintFieldValue::Field(v) => v,
             _ => {
-                return Err(format!(
+                return Err(ProofmanError::InvalidHints(format!(
                     "Hint '{hint_id}' for field '{field_name}' at position {i} must be a field element"
-                )
-                .into());
+                )));
             }
         };
 
-        let converted = T::try_from(field_value.as_canonical_u64())
-            .map_err(|_| format!("Cannot convert value at position {i} to {}", std::any::type_name::<T>()))?;
+        let converted = T::try_from(field_value.as_canonical_u64()).map_err(|_| {
+            ProofmanError::InvalidHints(format!(
+                "Cannot convert value at position {i} to {}",
+                std::any::type_name::<T>()
+            ))
+        })?;
 
         return_values.push(converted);
     }
@@ -226,7 +236,7 @@ pub fn get_hint_field_constant_a_as_string<F: PrimeField64>(
     hint_id: usize,
     field_name: &str,
     hint_field_options: HintFieldOptions,
-) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<Vec<String>> {
     let hint_fields = get_hint_field_constant_a(sctx, airgroup_id, air_id, hint_id, field_name, hint_field_options)?;
 
     let mut return_values = Vec::new();
@@ -234,9 +244,9 @@ pub fn get_hint_field_constant_a_as_string<F: PrimeField64>(
         match hint_field {
             HintFieldValue::String(value) => return_values.push(value.clone()),
             _ => {
-                return Err(
-                    format!("Hint '{hint_id}' for field '{field_name}' at position '{i}' must be a string").into()
-                )
+                return Err(ProofmanError::InvalidHints(format!(
+                    "Hint '{hint_id}' for field '{field_name}' at position '{i}' must be a string"
+                )))
             }
         }
     }
@@ -251,20 +261,17 @@ pub fn get_hint_field_constant_as_string<F: PrimeField64>(
     hint_id: usize,
     field_name: &str,
     hint_field_options: HintFieldOptions,
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<String> {
     match get_hint_field_constant(sctx, airgroup_id, air_id, hint_id, field_name, hint_field_options)? {
         HintFieldValue::String(value) => Ok(value),
-        _ => Err(format!("Hint '{hint_id}' for field '{field_name}' must be a string").into()),
+        _ => Err(ProofmanError::InvalidHints(format!("Hint '{hint_id}' for field '{field_name}' must be a string"))),
     }
 }
 
 // Helper to extract a single field element as usize
-pub fn extract_field_element_as_usize<F: PrimeField64>(
-    field: &HintFieldValue<F>,
-    name: &str,
-) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+pub fn extract_field_element_as_usize<F: PrimeField64>(field: &HintFieldValue<F>, name: &str) -> ProofmanResult<usize> {
     let HintFieldValue::Field(field_value) = field else {
-        return Err(format!("'{name}' hint must be a field element").into());
+        return Err(ProofmanError::InvalidHints(format!("'{name}' hint must be a field element")));
     };
     Ok(field_value.as_canonical_u64() as usize)
 }
@@ -273,9 +280,9 @@ pub fn get_row_field_value<F: PrimeField64>(
     field_value: &HintFieldValue<F>,
     row: usize,
     name: &str,
-) -> Result<F, Box<dyn std::error::Error + Send + Sync>> {
+) -> ProofmanResult<F> {
     match field_value.get(row) {
         HintFieldOutput::Field(value) => Ok(value),
-        _ => Err(format!("'{name}' must be a field element").into()),
+        _ => Err(ProofmanError::InvalidHints(format!("'{name}' must be a field element"))),
     }
 }

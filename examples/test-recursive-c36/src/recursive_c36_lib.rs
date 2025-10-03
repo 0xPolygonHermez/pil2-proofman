@@ -1,3 +1,4 @@
+use proofman_common::ProofmanResult;
 use witness::{witness_library, WitnessLibrary, WitnessManager};
 use pil_std_lib::Std;
 use fields::PrimeField64;
@@ -9,7 +10,7 @@ use crate::RecursiveC36;
 witness_library!(WitnessLib, Goldilocks);
 
 impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
-    fn register_witness(&mut self, wcm: &WitnessManager<F>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn register_witness(&mut self, wcm: &WitnessManager<F>) -> ProofmanResult<()> {
         let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx(), false)?;
         let recursive_c36 = RecursiveC36::new();
 

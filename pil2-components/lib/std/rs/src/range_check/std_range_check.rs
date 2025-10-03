@@ -3,7 +3,7 @@ use std::{fmt::Debug, sync::Arc};
 use fields::PrimeField64;
 
 use witness::WitnessComponent;
-use proofman_common::{BufferPool, ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, ProofCtx, ProofmanError, ProofmanResult, SetupCtx};
 use proofman_hints::{
     get_hint_field_constant, get_hint_field_gc_constant_a, get_hint_ids_by_name, HintFieldOptions, HintFieldValue,
 };
@@ -62,7 +62,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         sctx: &SetupCtx<F>,
         virtual_table: Arc<StdVirtualTable<F>>,
         shared_tables: bool,
-    ) -> Result<Arc<Self>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<Arc<Self>> {
         // Find which range check related AIRs need to be instantiated
         let u8air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u8air");
         let u16air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u16air");
@@ -136,7 +136,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         sctx: &SetupCtx<F>,
         shared_tables: bool,
         hints: &[u64],
-    ) -> Result<Option<Arc<T>>, Box<dyn std::error::Error + Send + Sync>>
+    ) -> ProofmanResult<Option<Arc<T>>>
     where
         T: AirComponent<F>,
     {
@@ -162,7 +162,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         ranges: &mut [StdRange],
         processed_predefined_ranges: &mut usize,
         processed_specified_ranges: &mut usize,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         let setup = sctx.get_setup(airgroup_id, air_id)?;
 
         // Obtain info from the range hints
@@ -204,12 +204,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         Ok(())
     }
 
-    fn parse_range_hint(
-        sctx: &SetupCtx<F>,
-        airgroup_id: usize,
-        air_id: usize,
-        hint: u64,
-    ) -> Result<HintCache, Box<dyn std::error::Error + Send + Sync>> {
+    fn parse_range_hint(sctx: &SetupCtx<F>, airgroup_id: usize, air_id: usize, hint: u64) -> ProofmanResult<HintCache> {
         let options = HintFieldOptions::default();
 
         let opid =
@@ -258,7 +253,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         let HintFieldValue::String(rc_type_str) =
             get_hint_field_constant::<F>(sctx, airgroup_id, air_id, hint as usize, "type", options.clone())?
         else {
-            return Err("Type hint must be a string".to_string().into());
+            return Err(ProofmanError::StdError("Type hint must be a string".to_string()));
         };
 
         let is_virtual = validate_binary_field(
@@ -279,7 +274,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
 
         // Check that min or max does not overflow 63 bits
         if min > i64::MAX as i128 || max > i64::MAX as i128 {
-            return Err(("Min/Max value is too large".to_string()).into());
+            return Err(ProofmanError::StdError("Min/Max value is too large".to_string()));
         }
 
         // Use match with string literals for better optimization
@@ -289,18 +284,13 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             "U8Double" => StdRangeType::U8AirDouble,
             "U16Double" => StdRangeType::U16AirDouble,
             "Specified" => StdRangeType::SpecifiedRanges,
-            _ => return Err(("Invalid range check type: {rc_type_str}".to_string()).into()),
+            _ => return Err(ProofmanError::StdError("Invalid range check type: {rc_type_str}".to_string())),
         };
 
         Ok(HintCache { opid, predefined, min: min as i64, max: max as i64, rc_type, is_virtual })
     }
 
-    pub fn get_range_id(
-        &self,
-        min: i64,
-        max: i64,
-        predefined: Option<bool>,
-    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn get_range_id(&self, min: i64, max: i64, predefined: Option<bool>) -> ProofmanResult<usize> {
         // Default predefined value in STD is false
         let predefined = predefined.unwrap_or(false);
 
@@ -309,7 +299,9 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         if let Some(i) = self.ranges.iter().position(|r| r.data == received_range_data) {
             Ok(i)
         } else {
-            Err(format!("Range not found: [min,max] = [{min},{max}] (predefined: {predefined})").into())
+            Err(ProofmanError::StdError(format!(
+                "Range not found: [min,max] = [{min},{max}] (predefined: {predefined})"
+            )))
         }
     }
 
@@ -399,7 +391,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         }
     }
 
-    pub fn assign_values(&self, id: usize, values: Vec<u32>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn assign_values(&self, id: usize, values: Vec<u32>) -> ProofmanResult<()> {
         // Find the range with the given id
         let range_item = &self.ranges[id];
 
@@ -452,7 +444,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 }
             }
             StdRangeType::U8AirDouble | StdRangeType::U16AirDouble => {
-                return Err("Double ranges are not supported for multiple values".to_string().into());
+                return Err(ProofmanError::StdError("Double ranges are not supported for multiple values".to_string()));
             }
         }
         Ok(())
@@ -478,7 +470,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdRangeCheck<F> {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         Ok(())
     }
 }

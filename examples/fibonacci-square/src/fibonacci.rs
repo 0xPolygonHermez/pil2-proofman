@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use proofman_common::{BufferPool, write_custom_commit_trace, AirInstance, FromTrace, ProofCtx, SetupCtx};
+use proofman_common::{write_custom_commit_trace, AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanResult, SetupCtx};
 use witness::WitnessComponent;
 use std::path::PathBuf;
 use fields::PrimeField64;
@@ -23,7 +23,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         pctx: Arc<ProofCtx<F>>,
         global_ids: &RwLock<Vec<usize>>,
         _input_data_path: Option<PathBuf>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         let global_id =
             pctx.add_instance(FibonacciSquareTrace::<F>::AIRGROUP_ID, FibonacciSquareTrace::<F>::AIR_ID, 1)?;
         let instance_ids = vec![global_id];
@@ -40,7 +40,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         if stage == 1 {
             let instance_id = instance_ids[0];
 
@@ -84,7 +84,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
         check: bool,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         let buffer = vec![F::ZERO; FibonacciSquareRomTrace::<F>::ROW_SIZE * FibonacciSquareRomTrace::<F>::NUM_ROWS];
         let mut trace_rom = FibonacciSquareRomTrace::new_from_vec_zeroes(buffer);
 
@@ -101,7 +101,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         Ok(())
     }
 
-    fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) {
+    fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) -> ProofmanResult<()> {
         // let trace = FibonacciSquareTrace::new_from_vec(_pctx.get_air_instance_trace(0, 0, 0));
         // let fixed = FibonacciSquareFixed::new_from_vec(_sctx.get_fixed(0, 0));
         // let air_values = FibonacciSquareAirValues::new_from_vec(pctx.get_air_instance_air_values(0, 0, 0));

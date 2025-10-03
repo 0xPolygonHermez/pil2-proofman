@@ -7,7 +7,9 @@ use fields::PrimeField64;
 
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use witness::WitnessComponent;
-use proofman_common::{skip_prover_instance, BufferPool, DebugInfo, ModeName, ProofCtx, SetupCtx};
+use proofman_common::{
+    skip_prover_instance, BufferPool, DebugInfo, ModeName, ProofCtx, ProofmanError, ProofmanResult, SetupCtx,
+};
 use proofman_hints::{
     acc_mul_hint_fields, get_hint_field, get_hint_field_a, get_hint_field_gc, get_hint_field_gc_a,
     get_hint_ids_by_name, mul_hint_fields, update_airgroupvalue, HintFieldOptions, HintFieldOutput, HintFieldValue,
@@ -33,7 +35,7 @@ pub struct StdSum<F: PrimeField64> {
 }
 
 impl<F: PrimeField64> StdSum<F> {
-    pub fn new(sctx: &Arc<SetupCtx<F>>) -> Result<Arc<Self>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn new(sctx: &Arc<SetupCtx<F>>) -> ProofmanResult<Arc<Self>> {
         // Get the sum check global data related to its users
         let std_sum_users = get_hint_ids_by_name(sctx.get_global_bin(), "std_sum_users");
 
@@ -73,7 +75,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         Ok(())
     }
 
@@ -85,7 +87,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
         instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         if stage == 2 {
             let instances = pctx.dctx_get_instances();
             // Process each sum check user
@@ -132,7 +134,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
 
                     // We know that at most one gsum hint exists
                     let gsum_hint = if gsum_hints.len() > 1 {
-                        return Err(format!("Multiple gsum hints found for AIR '{air_name}'").into());
+                        return Err(ProofmanError::StdError(format!("Multiple gsum hints found for AIR '{air_name}'")));
                     } else {
                         gsum_hints[0] as usize
                     };
@@ -141,7 +143,11 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                     let result = match std_mode {
                         STD_MODE_DEFAULT => Some("result"),
                         STD_MODE_ONE_INSTANCE => None,
-                        _ => return Err(format!("Unknown std_mode {std_mode} for AIR '{air_name}'").into()),
+                        _ => {
+                            return Err(ProofmanError::StdError(format!(
+                                "Unknown std_mode {std_mode} for AIR '{air_name}'"
+                            )))
+                        }
                     };
                     // This call accumulates "expression" into "reference" expression and stores its last value to "result"
                     // Alternatively, this could be done using get_hint_field and set_hint_field methods and doing the accumulation in Rust
@@ -177,12 +183,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
         Ok(())
     }
 
-    fn debug(
-        &self,
-        pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx<F>>,
-        instance_ids: &[usize],
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn debug(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) -> ProofmanResult<()> {
         timer_start_info!(DEBUG_MODE_SUM);
         if self.num_users > 0 {
             let instances = pctx.dctx_get_instances();
@@ -252,12 +253,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
         Ok(())
     }
 
-    fn end(
-        &self,
-        pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx<F>>,
-        debug_info: &DebugInfo,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn end(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, debug_info: &DebugInfo) -> ProofmanResult<()> {
         if debug_info.std_mode.name == ModeName::Debug || !debug_info.debug_instances.is_empty() {
             let fast_mode = debug_info.std_mode.fast_mode;
 
@@ -297,7 +293,7 @@ impl<F: PrimeField64> StdSum<F> {
         debug_data: &mut DebugData<F>,
         debug_data_fast: &mut DebugDataFast<F>,
         fast_mode: bool,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         let gsum_debug_data = get_hint_ids_by_name(sctx.get_global_bin(), "gsum_debug_data_global");
         if !gsum_debug_data.is_empty() {
             let num_global_hints =
@@ -308,7 +304,7 @@ impl<F: PrimeField64> StdSum<F> {
                 let name_piop = get_global_hint_field_constant_as_string(sctx, gsum_debug_data[1 + i], "name_piop")?;
                 let type_piop = get_global_hint_field_constant_as::<u64, F>(sctx, gsum_debug_data[1 + i], "type_piop")?;
                 if ![Self::SUM_TYPE_ASSUMES, Self::SUM_TYPE_PROVES, Self::SUM_TYPE_FREE].contains(&type_piop) {
-                    return Err(format!("Invalid type_piop: {type_piop}").into());
+                    return Err(ProofmanError::StdError(format!("Invalid type_piop: {type_piop}")));
                 }
 
                 let opid = get_global_hint_field(sctx, gsum_debug_data[1 + i], "busid")?;
@@ -333,10 +329,9 @@ impl<F: PrimeField64> StdSum<F> {
                     if num_reps == F::NEG_ONE {
                         num_reps = -num_reps;
                     } else if num_reps != F::ONE {
-                        return Err(format!(
+                        return Err(ProofmanError::StdError(format!(
                             "The number of repetitions in a free piop can only be {{-1, 0, 1}}, received: {num_reps}"
-                        )
-                        .into());
+                        )));
                     }
                 }
 
@@ -375,7 +370,7 @@ impl<F: PrimeField64> StdSum<F> {
         debug_data: &mut DebugData<F>,
         debug_data_fast: &mut DebugDataFast<F>,
         fast_mode: bool,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
 
@@ -418,7 +413,7 @@ impl<F: PrimeField64> StdSum<F> {
                 HintFieldOptions::default(),
             )?;
             if ![Self::SUM_TYPE_ASSUMES, Self::SUM_TYPE_PROVES, Self::SUM_TYPE_FREE].contains(&type_piop) {
-                return Err(format!("Invalid type_piop: {type_piop}").into());
+                return Err(ProofmanError::StdError(format!("Invalid type_piop: {type_piop}")));
             }
 
             let num_reps =
@@ -457,7 +452,7 @@ impl<F: PrimeField64> StdSum<F> {
                         }
                         opid
                     }
-                    _ => return Err("busid must be a field element".into()),
+                    _ => return Err(ProofmanError::StdError("busid must be a field element".to_string())),
                 };
 
                 Self::update_bus(
@@ -491,7 +486,7 @@ impl<F: PrimeField64> StdSum<F> {
 
                             opid
                         }
-                        _ => return Err("busid must be a field element".into()),
+                        _ => return Err(ProofmanError::StdError("busid must be a field element".to_string())),
                     };
 
                     Self::update_bus(
@@ -532,7 +527,7 @@ impl<F: PrimeField64> StdSum<F> {
         debug_data_fast: &mut DebugDataFast<F>,
         is_global: bool,
         fast_mode: bool,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         let mut num_reps = get_row_field_value(num_reps, row, "num_reps")?;
         if num_reps.is_zero() {
             return Ok(());
@@ -549,10 +544,9 @@ impl<F: PrimeField64> StdSum<F> {
                 } else if num_reps == F::ONE {
                     true
                 } else {
-                    return Err(format!(
+                    return Err(ProofmanError::StdError(format!(
                         "The number of repetitions in a free piop can only be {{-1, 0, 1}}, received: {num_reps}"
-                    )
-                    .into());
+                    )));
                 }
             }
             _ => unreachable!(),

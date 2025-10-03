@@ -2,7 +2,7 @@ use std::os::raw::c_void;
 use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 use std::sync::Arc;
-use crate::MpiCtx;
+use crate::{MpiCtx, ProofmanError};
 use borsh::{BorshDeserialize, BorshSerialize};
 
 use fields::PrimeField64;
@@ -10,7 +10,7 @@ use transcript::FFITranscript;
 
 use crate::{
     initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode, StepsParams,
-    VerboseMode,
+    VerboseMode, ProofmanResult,
 };
 
 #[derive(Debug)]
@@ -249,7 +249,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         final_snark: bool,
         verbose_mode: VerboseMode,
         mpi_ctx: Arc<MpiCtx>,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<Self> {
         tracing::info!("Creating proof context");
 
         let dctx = DistributionCtx::new();
@@ -323,7 +323,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn set_weights(&mut self, sctx: &SetupCtx<F>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn set_weights(&mut self, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
         for (airgroup_id, air_group) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id)?;
@@ -349,20 +349,13 @@ impl<F: PrimeField64> ProofCtx<F> {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
     }
 
-    pub fn get_custom_commits_fixed_buffer(
-        &self,
-        name: &str,
-        return_error: bool,
-    ) -> Result<PathBuf, Box<std::io::Error>> {
+    pub fn get_custom_commits_fixed_buffer(&self, name: &str, return_error: bool) -> ProofmanResult<PathBuf> {
         let file_name = self.custom_commits_fixed.get(name);
         match file_name {
             Some(path) => Ok(path.to_path_buf()),
             None => {
                 if return_error {
-                    Err(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("Custom Commit Fixed {file_name:?} not found"),
-                    )))
+                    Err(ProofmanError::ProofmanError(format!("Custom Commit Fixed {file_name:?} not found")))
                 } else {
                     tracing::warn!("Custom Commit Fixed {file_name:?} not found");
                     Ok(PathBuf::new())
@@ -433,42 +426,27 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.process_instances.clone()
     }
 
-    pub fn dctx_get_process_owner_instance(
-        &self,
-        instance_id: usize,
-    ) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dctx_get_process_owner_instance(&self, instance_id: usize) -> ProofmanResult<i32> {
         let dctx = self.dctx.read().unwrap();
         dctx.get_process_owner_instance(instance_id)
     }
 
-    pub fn dctx_get_instance_info(
-        &self,
-        global_idx: usize,
-    ) -> Result<(usize, usize), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dctx_get_instance_info(&self, global_idx: usize) -> ProofmanResult<(usize, usize)> {
         let dctx = self.dctx.read().unwrap();
         dctx.get_instance_info(global_idx)
     }
 
-    pub fn dctx_get_instance_chunks(
-        &self,
-        global_idx: usize,
-    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dctx_get_instance_chunks(&self, global_idx: usize) -> ProofmanResult<usize> {
         let dctx = self.dctx.read().unwrap();
         dctx.get_instance_chunks(global_idx)
     }
 
-    pub fn dctx_get_instance_local_idx(
-        &self,
-        global_idx: usize,
-    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dctx_get_instance_local_idx(&self, global_idx: usize) -> ProofmanResult<usize> {
         let dctx = self.dctx.read().unwrap();
         dctx.get_instance_local_idx(global_idx)
     }
 
-    pub fn dctx_is_my_process_instance(
-        &self,
-        global_idx: usize,
-    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dctx_is_my_process_instance(&self, global_idx: usize) -> ProofmanResult<bool> {
         let dctx = self.dctx.read().unwrap();
         dctx.is_my_process_instance(global_idx)
     }
@@ -483,36 +461,22 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances[global_idx].threads_witness
     }
 
-    pub fn dctx_find_air_instance_id(
-        &self,
-        global_idx: usize,
-    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dctx_find_air_instance_id(&self, global_idx: usize) -> ProofmanResult<usize> {
         let dctx = self.dctx.read().unwrap();
         dctx.find_air_instance_id(global_idx)
     }
 
-    pub fn dctx_find_process_instance(
-        &self,
-        airgroup_id: usize,
-        air_id: usize,
-    ) -> Result<(bool, usize), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dctx_find_process_instance(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<(bool, usize)> {
         let dctx = self.dctx.read().unwrap();
         dctx.find_process_instance(airgroup_id, air_id)
     }
 
-    pub fn dctx_find_process_table(
-        &self,
-        airgroup_id: usize,
-        air_id: usize,
-    ) -> Result<(bool, usize), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dctx_find_process_table(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<(bool, usize)> {
         let dctx = self.dctx.read().unwrap();
         dctx.find_process_table(airgroup_id, air_id)
     }
 
-    pub fn dctx_get_table_instance_idx(
-        &self,
-        table_idx: usize,
-    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dctx_get_table_instance_idx(&self, table_idx: usize) -> ProofmanResult<usize> {
         let dctx = self.dctx.read().unwrap();
         dctx.get_table_instance_idx(table_idx)
     }
@@ -527,7 +491,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         airgroup_id: usize,
         air_id: usize,
         threads_witness: usize,
-    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_instance(airgroup_id, air_id, threads_witness, weight)
@@ -538,38 +502,25 @@ impl<F: PrimeField64> ProofCtx<F> {
         airgroup_id: usize,
         air_id: usize,
         threads_witness: usize,
-    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_instance_first_partition(airgroup_id, air_id, threads_witness, weight)
     }
 
-    pub fn add_instance(
-        &self,
-        airgroup_id: usize,
-        air_id: usize,
-        threads_witness: usize,
-    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn add_instance(&self, airgroup_id: usize, air_id: usize, threads_witness: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_instance_no_assign(airgroup_id, air_id, threads_witness, weight)
     }
 
-    pub fn add_table(
-        &self,
-        airgroup_id: usize,
-        air_id: usize,
-    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn add_table(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_table(airgroup_id, air_id, weight)
     }
 
-    pub fn add_table_all(
-        &self,
-        airgroup_id: usize,
-        air_id: usize,
-    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn add_table_all(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_table_all(airgroup_id, air_id, weight)
@@ -581,12 +532,12 @@ impl<F: PrimeField64> ProofCtx<F> {
         air_id: usize,
         threads_witness: usize,
         weight: u64,
-    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         dctx.add_instance_no_assign(airgroup_id, air_id, threads_witness, weight)
     }
 
-    pub fn dctx_assign_instances(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dctx_assign_instances(&self) -> ProofmanResult<()> {
         let mut dctx = self.dctx.write().unwrap();
         dctx.assign_instances()
     }
@@ -607,7 +558,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         worker_index: usize,
         n_processes: usize,
         process_id: usize,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         let mut dctx = self.dctx.write().unwrap();
         dctx.setup_partitions(n_partitions, partition_ids)?;
         dctx.setup_processes(n_processes, process_id)?;
@@ -620,10 +571,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.n_partitions
     }
 
-    pub fn get_worker_index(&self) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn get_worker_index(&self) -> ProofmanResult<usize> {
         let dctx = self.dctx.read().unwrap();
         if dctx.worker_index < 0 {
-            return Err("Worker index not set".into());
+            return Err(ProofmanError::InvalidAssignation("Worker index not set".into()));
         }
         Ok(dctx.worker_index as usize)
     }
@@ -752,14 +703,15 @@ impl<F: PrimeField64> ProofCtx<F> {
         airgroup_id: usize,
         air_id: usize,
         air_instance_id: usize,
-    ) -> Result<Vec<F>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<Vec<F>> {
         let dctx = self.dctx.read().unwrap();
         let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
             Ok(self.air_instances[index].read().unwrap().get_trace())
         } else {
-            Err(format!("Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found")
-                .into())
+            Err(ProofmanError::OutOfBounds(format!(
+                "Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found"
+            )))
         }
     }
 
@@ -768,14 +720,15 @@ impl<F: PrimeField64> ProofCtx<F> {
         airgroup_id: usize,
         air_id: usize,
         air_instance_id: usize,
-    ) -> Result<Vec<F>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<Vec<F>> {
         let dctx = self.dctx.read().unwrap();
         let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
             Ok(self.air_instances[index].read().unwrap().get_air_values())
         } else {
-            Err(format!("Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found")
-                .into())
+            Err(ProofmanError::OutOfBounds(format!(
+                "Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found"
+            )))
         }
     }
 
@@ -784,14 +737,15 @@ impl<F: PrimeField64> ProofCtx<F> {
         airgroup_id: usize,
         air_id: usize,
         air_instance_id: usize,
-    ) -> Result<Vec<F>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<Vec<F>> {
         let dctx = self.dctx.read().unwrap();
         let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
             Ok(self.air_instances[index].read().unwrap().get_airgroup_values())
         } else {
-            Err(format!("Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found")
-                .into())
+            Err(ProofmanError::OutOfBounds(format!(
+                "Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found"
+            )))
         }
     }
 

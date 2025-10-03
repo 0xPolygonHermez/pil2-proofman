@@ -1,7 +1,9 @@
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc, Condvar, Mutex,
+    Condvar, Mutex, RwLock,
 };
+
+use crate::CancellationInfo;
 
 pub struct Counter {
     counter: AtomicUsize,
@@ -52,11 +54,11 @@ impl Counter {
     pub fn wait_until_threshold_and_check_streams<F: FnMut()>(
         &self,
         mut check_streams: F,
-        error: Arc<Mutex<Option<Box<dyn std::error::Error + Send + Sync>>>>,
+        cancellation_info: &RwLock<CancellationInfo>,
     ) {
         let mut guard = self.wait_lock.lock().unwrap();
         loop {
-            if error.lock().unwrap().is_some() {
+            if cancellation_info.read().unwrap().token.is_cancelled() {
                 break;
             }
             if self.counter.load(Ordering::Acquire) >= self.threshold {
@@ -68,9 +70,11 @@ impl Counter {
         }
     }
 
-    pub fn wait_until_threshold(&self, error: Arc<Mutex<Option<Box<dyn std::error::Error + Send + Sync>>>>) {
+    pub fn wait_until_threshold(&self, cancellation_info: &RwLock<CancellationInfo>) {
         let mut guard = self.wait_lock.lock().unwrap();
-        while self.counter.load(Ordering::Acquire) < self.threshold && error.lock().unwrap().is_none() {
+        while self.counter.load(Ordering::Acquire) < self.threshold
+            && !cancellation_info.read().unwrap().token.is_cancelled()
+        {
             guard = self.cvar.wait(guard).unwrap();
         }
     }
@@ -79,11 +83,11 @@ impl Counter {
         &self,
         value: usize,
         mut check_streams: F,
-        error: Arc<Mutex<Option<Box<dyn std::error::Error + Send + Sync>>>>,
+        cancellation_info: &RwLock<CancellationInfo>,
     ) {
         let mut guard = self.wait_lock.lock().unwrap();
         loop {
-            if error.lock().unwrap().is_some() {
+            if cancellation_info.read().unwrap().token.is_cancelled() {
                 break;
             }
             if self.counter.load(Ordering::Acquire) >= value {
@@ -99,9 +103,9 @@ impl Counter {
         self.counter.store(0, Ordering::Release);
     }
 
-    pub fn wait_until_zero(&self, error: Arc<Mutex<Option<Box<dyn std::error::Error + Send + Sync>>>>) {
+    pub fn wait_until_zero(&self, cancellation_info: &RwLock<CancellationInfo>) {
         let mut guard = self.wait_lock.lock().unwrap();
-        while self.counter.load(Ordering::Acquire) > 0 && error.lock().unwrap().is_none() {
+        while self.counter.load(Ordering::Acquire) > 0 && !cancellation_info.read().unwrap().token.is_cancelled() {
             guard = self.cvar.wait(guard).unwrap();
         }
     }
@@ -109,11 +113,11 @@ impl Counter {
     pub fn wait_until_zero_and_check_streams<F: FnMut()>(
         &self,
         mut check_streams: F,
-        error: Arc<Mutex<Option<Box<dyn std::error::Error + Send + Sync>>>>,
+        cancellation_info: &RwLock<CancellationInfo>,
     ) {
         let mut guard = self.wait_lock.lock().unwrap();
         loop {
-            if error.lock().unwrap().is_some() {
+            if cancellation_info.read().unwrap().token.is_cancelled() {
                 break;
             }
             if self.counter.load(Ordering::Acquire) == 0 {

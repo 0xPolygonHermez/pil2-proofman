@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock, Mutex};
 use std::path::PathBuf;
 
 use fields::PrimeField64;
-use proofman_common::{BufferPool, DebugInfo, ModeName, ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, DebugInfo, ModeName, ProofCtx, ProofmanResult, SetupCtx};
 use crate::WitnessComponent;
 use libloading::Library;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -72,7 +72,7 @@ impl<F: PrimeField64> WitnessManager<F> {
         self.components_std.write().unwrap().push(component);
     }
 
-    pub fn gen_custom_commits_fixed(&self, check: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn gen_custom_commits_fixed(&self, check: bool) -> ProofmanResult<()> {
         for component in self.components.read().unwrap().iter() {
             component.gen_custom_commits_fixed(self.pctx.clone(), self.sctx.clone(), check)?;
         }
@@ -80,7 +80,7 @@ impl<F: PrimeField64> WitnessManager<F> {
         Ok(())
     }
 
-    pub fn execute(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn execute(&self) -> ProofmanResult<()> {
         self.execution_done.store(false, Ordering::SeqCst);
         let n_components = self.components_std.read().unwrap().len();
         for (idx, component) in self.components_std.read().unwrap().iter().enumerate() {
@@ -109,11 +109,7 @@ impl<F: PrimeField64> WitnessManager<F> {
         self.components_instance_ids.iter().for_each(|ids| ids.write().unwrap().clear());
     }
 
-    pub fn debug(
-        &self,
-        instance_ids: &[usize],
-        debug_info: &DebugInfo,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn debug(&self, instance_ids: &[usize], debug_info: &DebugInfo) -> ProofmanResult<()> {
         if debug_info.std_mode.name == ModeName::Debug || !debug_info.debug_instances.is_empty() {
             for (idx, component) in self.components.read().unwrap().iter().enumerate() {
                 let ids_hash_set: HashSet<usize> = instance_ids.iter().cloned().collect();
@@ -143,7 +139,7 @@ impl<F: PrimeField64> WitnessManager<F> {
         instance_ids: &[usize],
         n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
             let ids_hash_set: HashSet<usize> = instance_ids.iter().cloned().collect();
 
@@ -191,7 +187,7 @@ impl<F: PrimeField64> WitnessManager<F> {
         instance_ids: &[usize],
         n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
             let ids_hash_set: HashSet<usize> = instance_ids.iter().cloned().collect();
 
@@ -236,7 +232,7 @@ impl<F: PrimeField64> WitnessManager<F> {
         Ok(())
     }
 
-    pub fn end(&self, debug_info: &DebugInfo) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn end(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
         for component in self.components.read().unwrap().iter() {
             component.end(self.pctx.clone(), self.sctx.clone(), debug_info)?;
         }

@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use proofman_common::{BufferPool, AirInstance, FromTrace, ProofCtx, SetupCtx};
+use proofman_common::{AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanResult, SetupCtx};
 use witness::{WitnessComponent, execute};
 use pil_std_lib::Std;
 use fields::PrimeField64;
@@ -30,7 +30,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> ProofmanResult<()> {
         if stage == 1 {
             tracing::debug!("··· Starting witness computation stage 1");
             let publics = BuildPublicValues::from_vec_guard(pctx.get_publics());

@@ -2,7 +2,7 @@ use std::sync::{Arc, RwLock};
 
 use fields::PrimeField64;
 
-use proofman_common::{ProofCtx, SetupCtx, StdMode};
+use proofman_common::{ProofCtx, ProofmanResult, SetupCtx, StdMode};
 
 use crate::{StdProd, StdRangeCheck, StdSum, StdVirtualTable};
 
@@ -18,11 +18,7 @@ pub struct Std<F: PrimeField64> {
 }
 
 impl<F: PrimeField64> Std<F> {
-    pub fn new(
-        pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx<F>>,
-        shared_tables: bool,
-    ) -> Result<Arc<Self>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, shared_tables: bool) -> ProofmanResult<Arc<Self>> {
         // Get the mode
         let mode = RwLock::new(StdMode::default());
 
@@ -36,17 +32,12 @@ impl<F: PrimeField64> Std<F> {
     }
 
     /// Gets the range id for a given range subject to the range check
-    pub fn get_range_id(
-        &self,
-        min: i64,
-        max: i64,
-        predefined: Option<bool>,
-    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn get_range_id(&self, min: i64, max: i64, predefined: Option<bool>) -> ProofmanResult<usize> {
         self.range_check.get_range_id(min, max, predefined)
     }
 
     /// Gets the virtual table ID for a given ID
-    pub fn get_virtual_table_id(&self, id: usize) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn get_virtual_table_id(&self, id: usize) -> ProofmanResult<usize> {
         self.virtual_table.get_global_id(id)
     }
 
@@ -54,7 +45,7 @@ impl<F: PrimeField64> Std<F> {
         self.range_check.assign_value(id, val, multiplicity);
     }
 
-    pub fn range_checks(&self, id: usize, values: Vec<u32>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn range_checks(&self, id: usize, values: Vec<u32>) -> ProofmanResult<()> {
         self.range_check.assign_values(id, values)
     }
 
