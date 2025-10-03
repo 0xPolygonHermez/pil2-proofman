@@ -814,6 +814,30 @@ void calculateExpressionQ(SetupCtx& setupCtx, ExpressionsGPUQ* expressionsCtx, S
 
 }
 
+void calculateExpressionREG(SetupCtx& setupCtx, ExpressionsGPUREG* expressionsCtx, StepsParams *d_params, Goldilocks::Element* dest_gpu, uint64_t expressionId, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, Goldilocks::Element *d_challengePowers,  uint64_t& countId, TimerGPU& timer, cudaStream_t stream, bool debug){
+
+    bool inverse = false;
+    uint64_t domainSize;
+    bool domainExtended;
+    if (expressionId == setupCtx.starkInfo.cExpId || expressionId == setupCtx.starkInfo.friExpId)
+    {
+        setupCtx.expressionsBin.expressionsInfo[expressionId].destDim = 3;
+        domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+        domainExtended = true;
+    }
+    else
+    {
+        domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
+        domainExtended = false;
+    }
+    Dest destStruct(NULL, domainSize, 0, expressionId);
+    destStruct.addParams(expressionId, setupCtx.expressionsBin.expressionsInfo[expressionId].destDim, inverse);
+    destStruct.dest_gpu = dest_gpu;
+    countId++;
+    expressionsCtx->calculateExpressions_gpu_reg(d_params, destStruct, domainSize, domainExtended, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, debug);
+
+}
+
 void setProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, Goldilocks::Element *proof_buffer_pinned, cudaStream_t stream) {
     uint64_t initialOffset = 0;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;

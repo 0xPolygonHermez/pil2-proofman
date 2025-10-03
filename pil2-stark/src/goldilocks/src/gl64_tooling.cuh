@@ -10,6 +10,7 @@
 #include "transcriptGL.cuh"
 #include "expressions_gpu.cuh"
 #include "expressions_gpu_q.cuh"
+#include "expressions_gpu_reg.cuh"
 #include <limits.h>
 #include "gl64_t.cuh"
 
@@ -68,6 +69,7 @@ struct AirInstanceInfo {
 
     ExpressionsGPU *expressions_gpu;
     ExpressionsGPUQ *expressions_gpu_q;
+    ExpressionsGPUREG *expressions_gpu_reg;
     int64_t *opening_points;
 
     uint64_t numBatchesEvals;
@@ -90,6 +92,7 @@ struct AirInstanceInfo {
         opening_points = d_openingPoints;
         expressions_gpu = new ExpressionsGPU(*setupCtx, setupCtx->starkInfo.nrowsPack, setupCtx->starkInfo.maxNBlocks);
         expressions_gpu_q = new ExpressionsGPUQ(*setupCtx, setupCtx->starkInfo.nrowsPack, setupCtx->starkInfo.maxNBlocks);
+        expressions_gpu_reg = new ExpressionsGPUREG(*setupCtx, setupCtx->starkInfo.nrowsPack, setupCtx->starkInfo.maxNBlocks);
 
         Goldilocks::Element *d_verkeyRoot;
         CHECKCUDAERR(cudaMalloc(&d_verkeyRoot, HASH_SIZE * sizeof(Goldilocks::Element)));
@@ -215,6 +218,7 @@ struct AirInstanceInfo {
 
         delete expressions_gpu;
         delete expressions_gpu_q;
+        delete expressions_gpu_reg;
 
         for (uint64_t i = 0; i < numBatchesEvals; ++i) {
             if (evalsInfo[i] != nullptr) {

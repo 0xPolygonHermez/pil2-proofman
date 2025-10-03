@@ -1,4 +1,5 @@
 #include "expressions_gpu_q.cuh"
+#include "expressions_gpu_reg.cuh"
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 #include "gl64_tooling.cuh"

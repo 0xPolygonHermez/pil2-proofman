@@ -208,9 +208,14 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     if (recursive) {
         //todo_q: fix max_n_constraints for pinned bufers
         calculateExpression(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId, false, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
-     } else{
+     } 
+     /*else{
         calculateExpressionQ(setupCtx, air_instance_info->expressions_gpu_q, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId, d_expsArgs, d_destParams, pinned_exps_params_q, pinned_exps_args, d_challengePowers, countId, timer, stream);
+    }*/
+     else{
+        calculateExpressionREG(setupCtx, air_instance_info->expressions_gpu_reg, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId, d_expsArgs, d_destParams, pinned_exps_params_q, pinned_exps_args, d_challengePowers, countId, timer, stream);
     }
+
     TimerStopGPU(timer, STARK_QUOTIENT_POLYNOMIAL);
     commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, (gl64_t *)h_params.trace, (gl64_t *)h_params.aux_trace, d_transcript, false, timer, stream);
     TimerStopGPU(timer, STARK_STEP_Q);
