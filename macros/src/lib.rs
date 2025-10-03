@@ -17,6 +17,6 @@ pub fn values(input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro]
-pub fn packed_row(input: TokenStream) -> TokenStream {
-    packed_trace::packed_row_entrypoint(input)
+pub fn packed_trace(input: TokenStream) -> TokenStream {
+    packed_trace::packed_trace_entrypoint(input)
 }

@@ -6,7 +6,7 @@ __global__ void unpack_rows_kernel_pinned(
     uint64_t nRows,
     uint64_t nCols,
     uint64_t words_per_row,
-    uint64_t *d_unpack_info
+    const uint64_t* __restrict__ d_unpack_info
 ) {
     uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
     if (row >= nRows) return;
@@ -20,7 +20,7 @@ __global__ void unpack_rows_kernel_pinned(
 
     #pragma unroll
     for (uint64_t c = 0; c < nCols; c++) {
-        uint64_t nbits = d_unpack_info[c];
+        uint64_t nbits = __ldg(&d_unpack_info[c]);
         uint64_t val;
 
         uint64_t bits_left = 64 - bit_offset;
@@ -45,7 +45,6 @@ __global__ void unpack_rows_kernel_pinned(
         unpacked_row[c] = val;
     }
 }
-
 
 void copy_to_device_in_chunks_packed(
     DeviceCommitBuffers* d_buffers,
