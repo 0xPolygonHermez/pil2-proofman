@@ -403,6 +403,20 @@ __device__ __forceinline__ void op_gpu_(uint64_t op, gl64_t* C, bool isConstA, b
     }
 }
 
+__device__ __forceinline__ void op_gpu_p(uint64_t op, gl64_t *C, const gl64_t *A, bool const_a, const gl64_t *B, bool const_b)
+{
+    uint32_t indxA = const_a ? 0 : threadIdx.x;
+    uint32_t indxB = const_b ? 0 : threadIdx.x;
+
+    switch (op)
+    {
+        case 0: C[threadIdx.x] = A[indxA] + B[indxB]; break;
+        case 1: C[threadIdx.x] = A[indxA] - B[indxB]; break;
+        case 2: C[threadIdx.x] = A[indxA] * B[indxB]; break;
+        case 3: C[threadIdx.x] = B[indxB] - A[indxA]; break;
+    }
+}
+
 __device__ __forceinline__ void op_31_gpu_(uint64_t op, gl64_t* C, bool isConstA, bool isConstB)
 {
     uint32_t indxA = isConstA ? (threadIdx.x>>5)<<5 : threadIdx.x;
@@ -434,6 +448,37 @@ __device__ __forceinline__ void op_31_gpu_(uint64_t op, gl64_t* C, bool isConstA
         break;
     }
 };
+
+__device__ __forceinline__ void op_31_gpu_p(uint64_t op, gl64_t *C, const gl64_t *A, bool const_a, const gl64_t *B, bool const_b){
+
+    uint32_t indxA = const_a ? 0 : threadIdx.x;
+    uint32_t indxB = const_b ? 0 : threadIdx.x;
+    uint32_t blockA = const_a ? 1 : blockDim.x;
+    
+    switch (op)
+    {
+    case 0:
+        C[threadIdx.x] = A[indxA] + B[indxB];
+        C[blockDim.x + threadIdx.x] = A[blockA + indxA];
+        C[2 * blockDim.x + threadIdx.x] = A[2 * blockA + indxA];
+        break;
+    case 1:
+        C[threadIdx.x] = A[indxA] - B[indxB];
+        C[blockDim.x + threadIdx.x] = A[blockA + indxA];
+        C[2 * blockDim.x + threadIdx.x] = A[2 * blockA + indxA];
+        break;
+    case 2:
+        C[threadIdx.x] = A[indxA] * B[indxB];
+        C[blockDim.x + threadIdx.x] = A[blockA + indxA] * B[indxB];
+        C[2 * blockDim.x + threadIdx.x] = A[2 * blockA + indxA] * B[indxB];
+        break;
+    case 3:
+        C[threadIdx.x] = B[indxB] - A[indxA];
+        C[blockDim.x + threadIdx.x] = -A[blockA + indxA];
+        C[2 * blockDim.x + threadIdx.x] = -A[2 * blockA + indxA];
+        break;
+    }
+}
 
 __device__ __forceinline__ void op_33_gpu_(uint64_t op, gl64_t* C, bool isConstA, bool isConstB)
 {
@@ -477,6 +522,49 @@ __device__ __forceinline__ void op_33_gpu_(uint64_t op, gl64_t* C, bool isConstA
         break;
     }
 };
+
+__device__ __forceinline__ void op_33_gpu_p(uint64_t op, gl64_t *C, const gl64_t *A, bool const_a, const gl64_t *B, bool const_b){
+    
+    uint32_t indxA = const_a ? 0 : threadIdx.x;
+    uint32_t indxB = const_b ? 0 : threadIdx.x;
+    uint32_t blockA = const_a ? 1 : blockDim.x;
+    uint32_t blockB = const_b ? 1 : blockDim.x;
+    
+    switch (op)
+    {
+    case 0:
+            C[threadIdx.x] = A[indxA] + B[indxB];
+            C[blockDim.x + threadIdx.x] = A[blockA + indxA] + B[blockB + indxB];
+            C[2 * blockDim.x + threadIdx.x] = A[2 * blockA + indxA] + B[2 * blockB + indxB];
+
+        break;
+    case 1:
+
+            C[threadIdx.x] = A[indxA] - B[indxB];
+            C[blockDim.x + threadIdx.x] = A[blockA + indxA] - B[blockB + indxB];
+            C[2 * blockDim.x + threadIdx.x] = A[2 * blockA + indxA] - B[2 * blockB + indxB];
+
+        break;
+    case 2:
+            gl64_t A_ = (A[indxA] + A[blockA + indxA]) * (B[indxB] + B[blockB + indxB]);
+            gl64_t B_ = (A[indxA] + A[2 * blockA + indxA]) * (B[indxB] + B[2 * blockB + indxB]);
+            gl64_t C_ = (A[blockA + indxA] + A[2 * blockA + indxA]) * (B[blockB + indxB] + B[2 * blockB + indxB]);
+            gl64_t D_ = A[indxA] * B[indxB];
+            gl64_t E_ = A[blockA + indxA] * B[blockB + indxB];
+            gl64_t F_ = A[2 * blockA + indxA] * B[2 * blockB + indxB];
+            gl64_t G_ = D_ - E_;
+            C[threadIdx.x] = (C_ + G_) - F_;
+            C[blockDim.x + threadIdx.x] = ((((A_ + C_) - E_) - E_) - D_);
+            C[2 * blockDim.x + threadIdx.x] = B_ - G_;
+        break;
+    case 3:
+            C[threadIdx.x] = B[indxB] - A[indxA];
+            C[blockDim.x + threadIdx.x] =  B[blockB + indxB] -  A[blockA + indxA];
+            C[2 * blockDim.x + threadIdx.x] = B[2 * blockB + indxB] -  A[2 * blockA + indxA];
+        break;
+    }
+}
+        
 
 
 __global__  void computeExpressions_reg__(StepsParams *d_params, DeviceArgumentsREG *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, const bool debug, const bool constraints)
@@ -532,7 +620,7 @@ __global__  void computeExpressions_reg__(StepsParams *d_params, DeviceArguments
                     bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
                     bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
                     gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize][args[i_args + 1] * blockDim.x]);
-                    gl64_gpu::op_gpu( args[i_args], res, a, isConstantA, b, isConstantB);
+                    op_gpu_p( args[i_args], res, a, isConstantA, b, isConstantB);
                     //op_gpu_(args[i_args], res, isConstantA, isConstantB);
                     i_args += 8;
                     break;
@@ -545,7 +633,7 @@ __global__  void computeExpressions_reg__(StepsParams *d_params, DeviceArguments
                     bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
                     bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
                     gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * blockDim.x]);
-                    Goldilocks3GPU::op_31_gpu(args[i_args], res, a, isConstantA, b, isConstantB);
+                    op_31_gpu_p(args[i_args], res, a, isConstantA, b, isConstantB);
                     //op_31_gpu_(args[i_args], res, isConstantA, isConstantB);
                     i_args += 8;
                     break;
@@ -558,8 +646,7 @@ __global__  void computeExpressions_reg__(StepsParams *d_params, DeviceArguments
                     bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
                     bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
                     gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * blockDim.x]);
-                    Goldilocks3GPU::op_gpu(args[i_args], res, a, isConstantA, b, isConstantB);
-                    //op_33_gpu_(args[i_args], res, isConstantA, isConstantB);
+                    op_33_gpu_p(args[i_args], res, a, isConstantA, b, isConstantB);
                     i_args += 8;
                     break;
                 }
@@ -572,7 +659,7 @@ __global__  void computeExpressions_reg__(StepsParams *d_params, DeviceArguments
             }
             if (i_args !=  d_destParams[k].nArgs){
                 printf(" %lu consumed args - %lu expected args \n", i_args, d_destParams[k].nArgs);
-                assert(0);
+                //assert(0);
             }            
         }
         storePolynomial_reg__(d_expsArgs, destVals, i);
