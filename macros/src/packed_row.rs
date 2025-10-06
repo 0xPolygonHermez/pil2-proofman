@@ -6,11 +6,7 @@ use syn::Ident;
 
 use crate::trace_row::{TraceField, BitType, contains_generic, compute_total_bits, is_array, collect_dimensions};
 
-pub fn packed_row_impl(
-    name: &Ident,
-    generic: &Option<Ident>,
-    fields: &[TraceField],
-) -> TokenStream {
+pub fn packed_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceField]) -> TokenStream {
     let packed_bits: usize = fields.iter().map(|f| compute_total_bits(&f.ty)).sum();
     let packed_words = packed_bits.div_ceil(64);
 
@@ -50,7 +46,7 @@ pub fn packed_row_impl(
 fn get_packed_fields(fields: &[TraceField]) -> Vec<TokenStream> {
     let mut packed_fields = vec![];
     let mut has_true_generic = false;
-    
+
     for f in fields.iter() {
         let name = &f.name;
         if contains_generic(&f.ty) {
@@ -60,14 +56,14 @@ fn get_packed_fields(fields: &[TraceField]) -> Vec<TokenStream> {
         }
         // Non-generic fields are stored in the packed array, not as separate fields
     }
-    
+
     // If we have a generic parameter F but no truly generic fields, add PhantomData
     if !has_true_generic {
         packed_fields.push(quote! {
             _phantom: std::marker::PhantomData<F>
         });
     }
-    
+
     packed_fields
 }
 
@@ -92,10 +88,7 @@ fn get_packed_setters_getters(fields: &[TraceField]) -> Vec<TokenStream> {
     setter_getters
 }
 
-fn add_generic_setter_getter(
-    field_name: &Ident,
-    setter_getters: &mut Vec<TokenStream>,
-) {
+fn add_generic_setter_getter(field_name: &Ident, setter_getters: &mut Vec<TokenStream>) {
     let setter_name = format_ident!("set_{}", field_name);
     let getter_name = format_ident!("get_{}", field_name);
 

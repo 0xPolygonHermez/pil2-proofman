@@ -6,11 +6,11 @@
 #![allow(dead_code)]
 
 use proofman_common as common;
-pub use proofman_macros::trace;
+use proofman_common::GenericTrace;
+pub use proofman_macros::trace_row;
 pub use proofman_macros::values;
-
+use fields::PrimeField64;
 use std::fmt;
-
 use rayon::prelude::*;
 
 #[allow(dead_code)]
@@ -61,17 +61,25 @@ values!({ project_name }ProofValues<F> \{
 {{ for column in proof_vals.values }} { column.name }: { column.type },{{ endfor }}
 });
 {{ endfor }} {{ for air_group in air_groups }}{{ for air in air_group.airs }}
-trace!({ air.name }Fixed<F> \{
+trace_row!({ air.name }FixedRow<F> \{
 {{ for column in air.fixed }} { column.name }: { column.type },{{ endfor }}
-},  { air_group.airgroup_id }, { air.id }, { air.num_rows } );
+});
+pub type { air.name }Fixed<F> = GenericTrace<F, { air.name }FixedRow<F>, { air.num_rows }, { air_group.airgroup_id }, { air.id }>;
 
-trace!({ air.name }Trace<F> \{
-{{ for column in air.columns }} { column.name }: { column.type },{{ endfor }}
-},  { air_group.airgroup_id }, { air.id }, { air.num_rows } );
-{{ endfor }}{{ endfor }}{{ for air_group in air_groups }}{{ for air in air_group.airs }}{{ for custom_commit in air.custom_columns  }}
-trace!({ air.name }{custom_commit.name}Trace<F> \{
+trace_row!({ air.name }TraceRow<F> \{
+{{ for column in air.columns }} { column.name }:{{ if air.has_packed }}{ column.type_packed }{{ else }}{ column.type }{{ endif }},{{ endfor }}
+});
+pub type { air.name }Trace<F> = GenericTrace<F, { air.name }TraceRow<F>, { air.num_rows }, { air_group.airgroup_id }, { air.id }>;
+
+{{ if air.has_packed }}
+pub type { air.name }TracePacked<F> = GenericTrace<F, { air.name }TraceRowPacked<F>, { air.num_rows }, { air_group.airgroup_id }, { air.id }>;
+
+{{ endif }}{{ endfor }}{{ endfor }}{{ for air_group in air_groups }}{{ for air in air_group.airs }}{{ for custom_commit in air.custom_columns  }}
+trace_row!({ air.name }{custom_commit.name}TraceRow<F> \{
 {{ for column in custom_commit.custom_columns }} { column.name }: { column.type },{{ endfor }}
-}, { air_group.airgroup_id }, { air.id }, { air.num_rows }, { custom_commit.commit_id } );
+});
+pub type { air.name }{custom_commit.name}Trace<F> = GenericTrace<F, { air.name }{custom_commit.name}TraceRow<F>, { air.num_rows }, { air_group.airgroup_id }, { air.id }, { custom_commit.commit_id }>;
+
 {{ endfor }}{{ endfor }}{{ endfor }}{{ for air_group in air_groups }}{{ for air in air_group.airs }}{{ for air_values in air.air_values  }}
 values!({ air.name }AirValues<F> \{
 {{ for column in air_values.values }} { column.name }: { column.type },{{ endfor }}

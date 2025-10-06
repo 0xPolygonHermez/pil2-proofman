@@ -26,6 +26,12 @@ impl<
         const COMMIT_ID: usize,
     > GenericTrace<F, R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
 {
+    pub const NUM_ROWS: usize = NUM_ROWS;
+    pub const AIRGROUP_ID: usize = AIRGROUP_ID;
+    pub const AIR_ID: usize = AIR_ID;
+    pub const COMMIT_ID: usize = COMMIT_ID;
+    pub const ROW_SIZE: usize = R::ROW_SIZE;
+
     pub fn new() -> Self {
         GenericTrace::with_capacity(NUM_ROWS)
     }
@@ -176,6 +182,48 @@ impl<
         } else {
             Some(COMMIT_ID)
         }
+    }
+}
+
+impl<
+        F: Default + Clone + Copy + Send,
+        R: TraceRow,
+        const NUM_ROWS: usize,
+        const AIRGROUP_ID: usize,
+        const AIR_ID: usize,
+        const COMMIT_ID: usize,
+    > crate::trace::Trace<F> for GenericTrace<F, R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
+{
+    fn num_rows(&self) -> usize {
+        NUM_ROWS
+    }
+
+    fn n_cols(&self) -> usize {
+        R::ROW_SIZE
+    }
+
+    fn airgroup_id(&self) -> usize {
+        AIRGROUP_ID
+    }
+
+    fn air_id(&self) -> usize {
+        AIR_ID
+    }
+
+    fn commit_id(&self) -> Option<usize> {
+        if COMMIT_ID == 0 {
+            None
+        } else {
+            Some(COMMIT_ID)
+        }
+    }
+
+    fn get_buffer(&mut self) -> Vec<F> {
+        self.get_buffer()
+    }
+
+    fn is_shared_buffer(&self) -> bool {
+        self.shared_buffer
     }
 }
 

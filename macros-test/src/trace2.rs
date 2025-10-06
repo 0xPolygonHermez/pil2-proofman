@@ -49,6 +49,5 @@ mod tests {
         assert_eq!(trace[0].get_field2(1, 1), trace_packed[0].get_field2(1, 1));
         assert_eq!(trace[0].get_field2(2, 0), trace_packed[0].get_field2(2, 0));
         assert_eq!(trace[0].get_field2(2, 1), trace_packed[0].get_field2(2, 1));
-
     }
 }

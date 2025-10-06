@@ -6,11 +6,7 @@ use syn::Ident;
 
 use crate::trace_row::{TraceField, BitType, contains_generic, compute_total_bits, is_array, collect_dimensions};
 
-pub fn unpacked_row_impl(
-    name: &Ident,
-    generic: &Option<Ident>,
-    fields: &[TraceField],
-) -> TokenStream {
+pub fn unpacked_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceField]) -> TokenStream {
     let generics = if let Some(g) = generic {
         quote! { <#g> }
     } else {
@@ -43,7 +39,7 @@ pub fn unpacked_row_impl(
 
 fn get_unpacked_fields(fields: &[TraceField]) -> Vec<TokenStream> {
     let mut unpacked_fields = vec![];
-    
+
     for f in fields.iter() {
         let name = &f.name;
         if contains_generic(&f.ty) {
@@ -55,7 +51,7 @@ fn get_unpacked_fields(fields: &[TraceField]) -> Vec<TokenStream> {
             unpacked_fields.push(quote! { pub #name: #field_type });
         }
     }
-    
+
     unpacked_fields
 }
 
@@ -79,10 +75,7 @@ fn get_unpacked_setters_getters(fields: &[TraceField]) -> Vec<TokenStream> {
     setter_getters
 }
 
-fn add_unpacked_generic_setter_getter(
-    field_name: &Ident,
-    setter_getters: &mut Vec<TokenStream>,
-) {
+fn add_unpacked_generic_setter_getter(field_name: &Ident, setter_getters: &mut Vec<TokenStream>) {
     let setter_name = format_ident!("set_{}", field_name);
     let getter_name = format_ident!("get_{}", field_name);
 
@@ -99,15 +92,11 @@ fn add_unpacked_generic_setter_getter(
     });
 }
 
-fn add_unpacked_setter_getter(
-    field_name: &Ident,
-    field_type: &BitType,
-    setter_getters: &mut Vec<TokenStream>,
-) {
+fn add_unpacked_setter_getter(field_name: &Ident, field_type: &BitType, setter_getters: &mut Vec<TokenStream>) {
     let bit_width = compute_total_bits(field_type);
     let rust_type = type_for_bitwidth(bit_width);
     let from_method = method_name_for_bitwidth(bit_width);
-    
+
     let setter_name = format_ident!("set_{}", field_name);
     let getter_name = format_ident!("get_{}", field_name);
 
@@ -124,17 +113,13 @@ fn add_unpacked_setter_getter(
     });
 }
 
-fn add_unpacked_array_setter_getter(
-    field_name: &Ident,
-    field_type: &BitType,
-    setter_getters: &mut Vec<TokenStream>,
-) {
+fn add_unpacked_array_setter_getter(field_name: &Ident, field_type: &BitType, setter_getters: &mut Vec<TokenStream>) {
     let (bit_width, dims) = collect_dimensions(field_type);
     let rust_type = type_for_bitwidth(bit_width);
     let from_method = method_name_for_bitwidth(bit_width);
     let args = dimension_args(&dims);
     let array_access = generate_array_access(&args);
-    
+
     let setter_name = format_ident!("set_{}", field_name);
     let getter_name = format_ident!("get_{}", field_name);
 
