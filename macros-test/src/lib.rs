@@ -1,3 +1,5 @@
+mod trace2;
+
 #[cfg(test)]
 mod tests {
     use proofman_macros::trace;

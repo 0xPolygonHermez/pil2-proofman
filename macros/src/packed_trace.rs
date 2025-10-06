@@ -165,9 +165,13 @@ pub(crate) fn packed_row_entrypoint(input: proc_macro::TokenStream) -> proc_macr
     let packed_bits: usize = fields.iter().map(|f| compute_total_bits(&f.ty)).sum();
     let packed_words = packed_bits.div_ceil(64);
 
-
     let generics = if let Some(g) = &generic {
         quote! { <#g> }
+    } else {
+        quote! {}
+    };
+    let generics_with_bounds = if let Some(g) = &generic {
+        quote! { <#g: Copy + Default + Send> }
     } else {
         quote! {}
     };
@@ -175,16 +179,20 @@ pub(crate) fn packed_row_entrypoint(input: proc_macro::TokenStream) -> proc_macr
     let setter_getters = get_setters_getters(&fields);
 
     let packed_row = quote! {
-        #[derive(Debug, Default)]
-        pub struct #name #generics {
+        #[derive(Debug, Copy, Clone, Default)]
+        pub struct #name #generics_with_bounds {
             #(#generic_fields,)*
             pub packed: [u64; #packed_words],
         }
 
-        impl #generics #name #generics {
+        impl #generics_with_bounds #name #generics {
             pub const PACKED_BITS: usize = #packed_bits;
             pub const PACKED_WORDS: usize = #packed_words;
             #(#setter_getters)*
+        }
+
+        impl #generics_with_bounds proofman_common::trace2::TraceRow for #name #generics {
+            const ROW_SIZE: usize = #name::#generics::PACKED_WORDS;
         }
     };
 
