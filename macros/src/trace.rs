@@ -87,7 +87,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
         use rayon::prelude::*;
 
         pub struct #trace_struct_name<#generics> {
-            pub buffer: Vec<#generics>,
+            pub buffer: Vec<#row_struct_name<#generics>>,
             pub num_rows: usize,
             pub row_size: usize,
             pub airgroup_id: usize,
@@ -111,7 +111,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
 
-                let buffer: Vec<#generics> = vec![#generics::default(); num_rows * #row_struct_name::<#generics>::ROW_SIZE];
+                let buffer: Vec<#row_struct_name<#generics>> = vec![#row_struct_name::<#generics>::default(); num_rows];
 
                 #trace_struct_name {
                     buffer,
@@ -129,18 +129,19 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 assert!(num_rows & (num_rows - 1) == 0);
 
                 // Allocate uninitialized memory for performance
-                let mut vec: Vec<std::mem::MaybeUninit<#generics>> = Vec::with_capacity(num_rows * #row_struct_name::<#generics>::ROW_SIZE);
-                let mut buffer: Vec<#generics> = unsafe {
-                    vec.set_len(num_rows * #row_struct_name::<#generics>::ROW_SIZE);
+                let mut vec: Vec<std::mem::MaybeUninit<#row_struct_name<#generics>>> = Vec::with_capacity(num_rows);
+                let mut buffer: Vec<#row_struct_name<#generics>> = unsafe {
+                    vec.set_len(num_rows);
                     std::mem::transmute(vec)
                 };
 
                 #[cfg(feature = "diagnostic")]
                 unsafe {
-                    let ptr = buffer.as_mut_ptr() as *mut u64;
-                    let expected_len = num_rows * #row_struct_name::<#generics>::ROW_SIZE;
-                    for i in 0..expected_len {
-                        ptr.add(i).write(u64::MAX - 1);
+                    let mut ptr = buffer.as_mut_ptr() as *mut u64;
+                    let expected_len = num_rows;
+                    for _ in 0..expected_len * #row_struct_name::<#generics>::ROW_SIZE {
+                        ptr.write(u64::MAX - 1);
+                        ptr = ptr.add(1);
                     }
                 }
 
@@ -173,6 +174,12 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     *x = <#generics>::default();
                 });
 
+                let mut ptr = buffer.as_mut_ptr();
+                std::mem::forget(buffer);
+                let buffer = unsafe {
+                    Vec::from_raw_parts(ptr as *mut #row_struct_name<#generics>, num_rows, num_rows)
+                };
+
                 Self {
                     buffer,
                     num_rows,
@@ -195,12 +202,20 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
                 if cfg!(feature = "diagnostic") {
                     unsafe {
-                        let ptr = buffer.as_mut_ptr() as *mut u64;
-                        for i in 0..expected_len {
-                            ptr.add(i).write(u64::MAX - 1);
+                        let mut ptr = buffer.as_mut_ptr() as *mut u64;
+                        let expected_len = num_rows;
+                        for _ in 0..expected_len * #row_struct_name::<#generics>::ROW_SIZE {
+                            ptr.write(u64::MAX - 1);
+                            ptr = ptr.add(1);
                         }
                     }
                 }
+
+                let mut ptr = buffer.as_mut_ptr();
+                std::mem::forget(buffer);
+                let buffer = unsafe {
+                    Vec::from_raw_parts(ptr as *mut #row_struct_name<#generics>, num_rows, num_rows)
+                };
 
                 Self {
                     buffer,
@@ -213,7 +228,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 }
             }
 
-            pub fn from_vec(buffer: Vec<#generics>) -> Self {
+            pub fn from_vec(mut buffer: Vec<#generics>) -> Self {
                 let row_size = #row_struct_name::<#generics>::ROW_SIZE;
                 let num_rows = Self::NUM_ROWS;
                 let expected_len = num_rows * row_size;
@@ -221,6 +236,12 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 assert!(buffer.len() >= expected_len, "Flat buffer too small");
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
+
+                let mut ptr = buffer.as_mut_ptr();
+                std::mem::forget(buffer);
+                let buffer = unsafe {
+                    Vec::from_raw_parts(ptr as *mut #row_struct_name<#generics>, num_rows, num_rows)
+                };
 
                 Self {
                     buffer,
@@ -238,7 +259,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 assert!(n <= self.num_rows, "n must be less than or equal to NUM_ROWS");
                 let chunk_size = self.num_rows / n;
                 assert!(chunk_size > 0, "Chunk size must be greater than zero");
-                self.row_slice_mut().par_chunks_mut(chunk_size)
+                self.buffer.par_chunks_mut(chunk_size)
             }
 
             pub fn num_rows(&self) -> usize {
@@ -254,7 +275,14 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             }
 
             pub fn get_buffer(&mut self) -> Vec<#generics> {
-                std::mem::take(&mut self.buffer)
+                let mut buffer = std::mem::take(&mut self.buffer);
+        
+                let new_len = self.num_rows * self.row_size;
+                let mut ptr = buffer.as_mut_ptr();
+                std::mem::forget(buffer);
+                unsafe {
+                    Vec::from_raw_parts(ptr as *mut #generics, new_len, new_len)
+                }
             }
 
             pub fn is_shared_buffer(&self) -> bool {
@@ -262,37 +290,17 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             }
         }
 
-        impl<#generics> #trace_struct_name<#generics> {
-            pub fn row_slice(&self) -> &[#row_struct_name<#generics>] {
-                unsafe {
-                    std::slice::from_raw_parts(
-                        self.buffer.as_ptr() as *const #row_struct_name<#generics>,
-                        self.num_rows,
-                    )
-                }
-            }
-
-            pub fn row_slice_mut(&mut self) -> &mut [#row_struct_name<#generics>] {
-                unsafe {
-                    std::slice::from_raw_parts_mut(
-                        self.buffer.as_mut_ptr() as *mut #row_struct_name<#generics>,
-                        self.num_rows,
-                    )
-                }
-            }
-        }
-
         impl<#generics> std::ops::Index<usize> for #trace_struct_name<#generics> {
             type Output = #row_struct_name<#generics>;
 
             fn index(&self, index: usize) -> &Self::Output {
-                &self.row_slice()[index]
+                &self.buffer[index]
             }
         }
 
         impl<#generics> std::ops::IndexMut<usize> for #trace_struct_name<#generics> {
             fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-                &mut self.row_slice_mut()[index]
+                &mut self.buffer[index]
             }
         }
 
@@ -318,7 +326,14 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             }
 
             fn get_buffer(&mut self) -> Vec<#generics> {
-                std::mem::take(&mut self.buffer)
+                let mut buffer = std::mem::take(&mut self.buffer);
+        
+                let new_len = self.num_rows * self.row_size;
+                let mut ptr = buffer.as_mut_ptr();
+                std::mem::forget(buffer);
+                unsafe {
+                    Vec::from_raw_parts(ptr as *mut #generics, new_len, new_len)
+                }
             }
 
             fn is_shared_buffer(&self) -> bool {

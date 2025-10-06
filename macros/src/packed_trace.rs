@@ -11,7 +11,7 @@ use syn::{Ident, Result, Token, braced, parse_macro_input, token};
 ///
 /// # Example
 /// ```rust
-/// use trace_macro::packed_row;
+/// use proofman_macros::packed_row;
 ///
 /// packed_row! {
 ///     PackedRowExample<F> {
