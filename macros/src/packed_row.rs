@@ -152,6 +152,12 @@ fn add_packed_array_setter_getter(
     let setter_name = format_ident!("set_{}", field_name);
     let getter_name = format_ident!("get_{}", field_name);
 
+    let conversion = if bit_width == 1 {
+        quote! { raw_value != 0 }
+    } else {
+        quote! { raw_value as #rust_type }
+    };
+
     setter_getters.push(quote! {
         #[inline(always)]
         pub fn #setter_name(&mut self, #(#args: usize,)* value: #rust_type) {
@@ -180,7 +186,7 @@ fn add_packed_array_setter_getter(
         }
 
         #[inline(always)]
-        pub fn #getter_name(&self, #(#args: usize),*) -> F {
+        pub fn #getter_name(&self, #(#args: usize),*) -> #rust_type {
             let index = #flat;
             let bit_offset = #base_offset + index * #bit_width;
             let word_start = bit_offset / 64;
@@ -199,7 +205,7 @@ fn add_packed_array_setter_getter(
                 let high = self.packed[word_start + 1] & high_mask;
                 (high << low_bits) | low
             };
-            F::from_u64(raw_value)
+            #conversion
         }
     });
 }
@@ -242,6 +248,12 @@ fn emit_contained_packed_accessor(
     let mask_bits = ((1u128 << bit_width) - 1) as u64;
     let mask = mask_bits << bit_start;
 
+    let getter_conversion = if bit_width == 1 {
+        quote! { raw_value != 0 }
+    } else {
+        quote! { raw_value as #rust_type }
+    };
+
     quote! {
         #[inline(always)]
         pub fn #setter_name(&mut self, value: #rust_type) {
@@ -253,10 +265,10 @@ fn emit_contained_packed_accessor(
         }
 
         #[inline(always)]
-        pub fn #getter_name(&self) -> F {
+        pub fn #getter_name(&self) -> #rust_type {
             const MASK_BITS: u64 = #mask_bits;
             let raw_value = (self.packed[#word_start] >> #bit_start) & MASK_BITS;
-            F::from_u64(raw_value)
+            #getter_conversion
         }
     }
 }
@@ -275,6 +287,12 @@ fn emit_split_packed_accessor(
     let low_mask = ((1u128 << low_bits) - 1) as u64;
     let high_mask = ((1u128 << high_bits) - 1) as u64;
 
+    let getter_conversion = if bit_width == 1 {
+        quote! { raw_value != 0 }
+    } else {
+        quote! { raw_value as #rust_type }
+    };
+
     quote! {
         #[inline(always)]
         pub fn #setter_name(&mut self, value: #rust_type) {
@@ -288,13 +306,13 @@ fn emit_split_packed_accessor(
         }
 
         #[inline(always)]
-        pub fn #getter_name(&self) -> F {
+        pub fn #getter_name(&self) -> #rust_type {
             const LOW_MASK: u64 = #low_mask;
             const HIGH_MASK: u64 = #high_mask;
             let low = (self.packed[#word_start] >> #bit_start) & LOW_MASK;
             let high = self.packed[#word_end] & HIGH_MASK;
             let raw_value = (high << #low_bits) | low;
-            F::from_u64(raw_value)
+            #getter_conversion
         }
     }
 }

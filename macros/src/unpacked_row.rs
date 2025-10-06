@@ -100,6 +100,12 @@ fn add_unpacked_setter_getter(field_name: &Ident, field_type: &BitType, setter_g
     let setter_name = format_ident!("set_{}", field_name);
     let getter_name = format_ident!("get_{}", field_name);
 
+    let conversion = if bit_width == 1 {
+        quote! { self.#field_name.as_canonical_u64() != 0 }
+    } else {
+        quote! { self.#field_name.as_canonical_u64() as #rust_type }
+    };
+
     setter_getters.push(quote! {
         #[inline(always)]
         pub fn #setter_name(&mut self, value: #rust_type) {
@@ -107,8 +113,8 @@ fn add_unpacked_setter_getter(field_name: &Ident, field_type: &BitType, setter_g
         }
 
         #[inline(always)]
-        pub fn #getter_name(&self) -> F {
-            self.#field_name
+        pub fn #getter_name(&self) -> #rust_type {
+            #conversion
         }
     });
 }
@@ -123,6 +129,12 @@ fn add_unpacked_array_setter_getter(field_name: &Ident, field_type: &BitType, se
     let setter_name = format_ident!("set_{}", field_name);
     let getter_name = format_ident!("get_{}", field_name);
 
+    let conversion = if bit_width == 1 {
+        quote! { self.#field_name #array_access.as_canonical_u64() != 0 }
+    } else {
+        quote! { self.#field_name #array_access.as_canonical_u64() as #rust_type }
+    };
+
     setter_getters.push(quote! {
         #[inline(always)]
         pub fn #setter_name(&mut self, #(#args: usize,)* value: #rust_type) {
@@ -130,8 +142,8 @@ fn add_unpacked_array_setter_getter(field_name: &Ident, field_type: &BitType, se
         }
 
         #[inline(always)]
-        pub fn #getter_name(&self, #(#args: usize),*) -> F {
-            self.#field_name #array_access
+        pub fn #getter_name(&self, #(#args: usize),*) -> #rust_type {
+            #conversion
         }
     });
 }
