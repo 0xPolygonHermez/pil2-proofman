@@ -4,11 +4,6 @@
 #include "gl64_tooling.cuh"
 #include "goldilocks_cubic_extension.cuh"
 
-
-//Next steps:
-// Mirar temps parts 
-// Milloerar lectores els dim3
-
 extern __shared__ Goldilocks::Element scratchpad[];
 
 ExpressionsGPUREG::ExpressionsGPUREG(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t nBlocks) : ExpressionsCtx(setupCtx), nRowsPack(nRowsPack), nBlocks(nBlocks){
@@ -234,14 +229,36 @@ __device__ __forceinline__ Goldilocks::Element* load_reg__(
         const uint64_t nCols = dArgs->mapSectionsN[type];
         const uint64_t pos = logicalRow * nCols + argIdx;
 
-        if (type == 1 && !dExpsArgs->domainExtended) {
-            temp[threadIdx.x] = dParams->trace[pos];
-        } else {
-            #pragma unroll
-            for (uint64_t d = 0; d < dim; d++) {
-                temp[threadIdx.x + d * blockDim.x] =
-                    dParams->aux_trace[offset + pos + d];
-            }
+        /*uint32_t warp_first_thread = (threadIdx.x >> 5) << 5;
+        uint32_t lane = threadIdx.x & 31;
+
+        uint32_t lane_row = lane / FIELD_EXTENSION;
+        uint32_t lane_col = lane % FIELD_EXTENSION;
+        uint32_t traceRow = (row + warp_first_thread +lane_row + stride) % domainSize;
+        uint32_t tracePos = traceRow * nCols + argIdx;
+        temp[lane_col * blockDim.x + warp_first_thread + lane_row] =
+            dParams->aux_trace[offset + tracePos + lane_col];
+        
+
+        lane_row = (lane + 32) / FIELD_EXTENSION;
+        lane_col = (lane + 32) % FIELD_EXTENSION;
+        traceRow = (row + warp_first_thread +lane_row + stride) % domainSize;
+        tracePos = traceRow * nCols + argIdx;
+        temp[lane_col * blockDim.x + warp_first_thread + lane_row] =
+            dParams->aux_trace[offset + tracePos + lane_col];
+
+        lane_row = (lane + 64) / FIELD_EXTENSION;
+        lane_col = (lane + 64) % FIELD_EXTENSION;
+        traceRow = (row + warp_first_thread + lane_row + stride) % domainSize;
+        tracePos = traceRow * nCols + argIdx;
+        temp[lane_col * blockDim.x + warp_first_thread + lane_row] =
+            dParams->aux_trace[offset + tracePos + lane_col];*/
+
+
+       #pragma unroll
+        for (uint64_t d = 0; d < dim; d++) {
+            temp[threadIdx.x + d * blockDim.x] =
+               dParams->aux_trace[offset + pos + d];
         }
         return temp;
     }
@@ -455,16 +472,10 @@ __global__  void computeExpressions_reg__(StepsParams *d_params, DeviceArguments
                     i_args += 8;
                     break;
                 }
-                default:
-                {
-                    printf(" Wrong operation! %d \n", ops[kk]);
-                    assert(0);
-                }
                 }
             }
             if (i_args !=  d_destParams[k].nArgs){
                 printf(" %lu consumed args - %lu expected args \n", i_args, d_destParams[k].nArgs);
-                //assert(0);
             }            
         }
         storePolynomial_reg__(d_expsArgs, destVals, i);
