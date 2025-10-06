@@ -174,7 +174,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     *x = <#generics>::default();
                 });
 
-                let mut ptr = buffer.as_mut_ptr();
+                let ptr = buffer.as_mut_ptr();
                 std::mem::forget(buffer);
                 let buffer = unsafe {
                     Vec::from_raw_parts(ptr as *mut #row_struct_name<#generics>, num_rows, num_rows)
@@ -211,7 +211,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     }
                 }
 
-                let mut ptr = buffer.as_mut_ptr();
+                let ptr = buffer.as_mut_ptr();
                 std::mem::forget(buffer);
                 let buffer = unsafe {
                     Vec::from_raw_parts(ptr as *mut #row_struct_name<#generics>, num_rows, num_rows)
@@ -237,7 +237,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
 
-                let mut ptr = buffer.as_mut_ptr();
+                let ptr = buffer.as_mut_ptr();
                 std::mem::forget(buffer);
                 let buffer = unsafe {
                     Vec::from_raw_parts(ptr as *mut #row_struct_name<#generics>, num_rows, num_rows)
@@ -276,9 +276,9 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
             pub fn get_buffer(&mut self) -> Vec<#generics> {
                 let mut buffer = std::mem::take(&mut self.buffer);
-        
+
                 let new_len = self.num_rows * self.row_size;
-                let mut ptr = buffer.as_mut_ptr();
+                let ptr = buffer.as_mut_ptr();
                 std::mem::forget(buffer);
                 unsafe {
                     Vec::from_raw_parts(ptr as *mut #generics, new_len, new_len)
@@ -327,9 +327,9 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
             fn get_buffer(&mut self) -> Vec<#generics> {
                 let mut buffer = std::mem::take(&mut self.buffer);
-        
+
                 let new_len = self.num_rows * self.row_size;
-                let mut ptr = buffer.as_mut_ptr();
+                let ptr = buffer.as_mut_ptr();
                 std::mem::forget(buffer);
                 unsafe {
                     Vec::from_raw_parts(ptr as *mut #generics, new_len, new_len)
