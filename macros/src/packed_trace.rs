@@ -116,7 +116,7 @@ fn parse_bit_type(input: ParseStream, generic: Option<&Ident>) -> Result<BitType
                     let bit_count = get_bit_count(input, "ubit", 1, 64)?;
                     Ok(BitType::Bit(bit_count, Signedness::Signed))
                 } else {
-                    return Err(input.error("Expected parentheses after `ibit`, like `ibit(5)`"));
+                    Err(input.error("Expected parentheses after `ibit`, like `ibit(5)`"))
                 }
             }
             "ibit" => {
@@ -124,7 +124,7 @@ fn parse_bit_type(input: ParseStream, generic: Option<&Ident>) -> Result<BitType
                     let bit_count = get_bit_count(input, "ibit", 2, 64)?;
                     Ok(BitType::Bit(bit_count, Signedness::Signed))
                 } else {
-                    return Err(input.error("Expected parentheses after `ibit`, like `ibit(5)`"));
+                    Err(input.error("Expected parentheses after `ibit`, like `ibit(5)`"))
                 }
             }
             "u8" => Ok(BitType::Bit(8, Signedness::Unsigned)),
@@ -163,7 +163,8 @@ pub(crate) fn packed_row_entrypoint(input: proc_macro::TokenStream) -> proc_macr
     let TraceRowInput { name, generic, fields } = parse_macro_input!(input as TraceRowInput);
 
     let packed_bits: usize = fields.iter().map(|f| compute_total_bits(&f.ty)).sum();
-    let packed_words = (packed_bits + 63) / 64;
+    let packed_words = packed_bits.div_ceil(64);
+
 
     let generics = if let Some(g) = &generic {
         quote! { <#g> }
