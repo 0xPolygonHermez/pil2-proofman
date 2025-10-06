@@ -4,6 +4,7 @@
 use proc_macro::TokenStream;
 
 mod trace;
+mod trace2;
 mod packed_trace;
 
 #[proc_macro]
