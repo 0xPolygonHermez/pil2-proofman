@@ -37,7 +37,7 @@ pub fn packed_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceFie
             #(#setter_getters)*
         }
 
-        impl #generics_with_bounds proofman_common::trace2::TraceRow for #name #generics {
+        impl #generics_with_bounds proofman_common::trace::TraceRow for #name #generics {
             const ROW_SIZE: usize = #name::#generics::PACKED_WORDS;
         }
     }

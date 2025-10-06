@@ -31,7 +31,7 @@ pub fn unpacked_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceF
             #(#setter_getters)*
         }
 
-        impl #generics_with_bounds proofman_common::trace2::TraceRow for #name #generics {
+        impl #generics_with_bounds proofman_common::trace::TraceRow for #name #generics {
             const ROW_SIZE: usize = 1; // For unpacked, we use a constant size
         }
     }
