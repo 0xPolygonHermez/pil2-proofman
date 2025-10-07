@@ -33,12 +33,23 @@ pub fn packed_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceFie
     let generic_fields = get_packed_fields(fields);
     let setter_getters = get_packed_setters_getters(fields);
 
+    let default_field_exprs = get_default_field_exprs(fields);
+
     quote! {
         #[repr(C)]
-        #[derive(Debug, Copy, Clone, Default)]
+        #[derive(Debug, Copy, Clone)]
         pub struct #name #generics_with_bounds {
             #(#generic_fields,)*
             pub packed: [u64; #packed_words],
+        }
+
+        impl #generics_with_bounds Default for #name #generics {
+            fn default() -> Self {
+                Self {
+                    #(#default_field_exprs,)*
+                    packed: [0u64; #packed_words],
+                }
+            }
         }
 
         impl #generics_with_bounds #name #generics {
@@ -348,6 +359,40 @@ fn generate_f_field_type(ty: &BitType) -> TokenStream {
         BitType::Array(inner, len) => {
             let inner_type = generate_f_field_type(inner);
             quote! { [#inner_type; #len] }
+        }
+    }
+}
+
+fn get_default_field_exprs(fields: &[TraceField]) -> Vec<TokenStream> {
+    let mut default_exprs = vec![];
+    let mut has_true_generic = false;
+
+    for f in fields.iter() {
+        if contains_generic(&f.ty) {
+            let name = &f.name;
+            let init = default_expr(&f.ty);
+            default_exprs.push(quote! { #name: #init });
+            has_true_generic = true;
+        }
+    }
+
+    // If we have a generic parameter F but no truly generic fields, add PhantomData
+    if !has_true_generic {
+        default_exprs.push(quote! {
+            _phantom: std::marker::PhantomData
+        });
+    }
+
+    default_exprs
+}
+
+fn default_expr(ty: &BitType) -> TokenStream {
+    match ty {
+        BitType::Bit(_) => quote! { F::default() },
+        BitType::Generic => quote! { F::default() },
+        BitType::Array(inner, len) => {
+            let inner_default = default_expr(inner);
+            quote! { [#inner_default; #len] }
         }
     }
 }
