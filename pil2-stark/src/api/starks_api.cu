@@ -626,8 +626,11 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
     uint64_t offsetStage1 = nStreams == 1 ? setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)] : 0;
     PackedInfo *packed_info = (PackedInfo *)packedInfo;
     if (packed_info->is_packed) {
+        uint64_t total_size = packed_info->num_packed_words * N * sizeof(Goldilocks::Element);
+        cout << "Total size for packed data of airgroup id " << airgroupId << " and airId " << airId << ": " << total_size / (1024 * 1024) << " MB bytes." << endl;
         copy_to_device_in_chunks_packed(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1), N, nCols, packed_info, streamId);
     } else {
+        cout << "Total size for unpacked data of airgroup id " << airgroupId << " and airId " << airId << ": " << sizeTrace / (1024 * 1024) << " MB bytes." << endl;
         copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1), sizeTrace, streamId);
     }
     genCommit_gpu(arity, nBits, nBitsExt, nCols, d_aux_trace, d_buffers->streamsData[streamId].pinned_buffer_proof, setupCtx, timer, stream, nStreams);

@@ -47,6 +47,9 @@ pub fn unpacked_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceF
 
         impl #generics_with_bounds proofman_common::trace::TraceRow for #name #generics {
             const ROW_SIZE: usize = #row_size; // Total number of F elements
+            const IS_PACKED: bool = false;
+            const PACKED_WORDS: usize = 0;
+            const UNPACK_INFO: &'static [usize] = &[];
         }
     }
 }
