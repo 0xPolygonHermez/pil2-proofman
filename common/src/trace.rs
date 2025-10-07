@@ -36,6 +36,7 @@ pub struct GenericTrace<
     const COMMIT_ID: usize = 0,
 > {
     pub buffer: Vec<R>,
+    _size: u64,
     pub shared_buffer: bool,
     _phantom: std::marker::PhantomData<F>,
 }
@@ -66,7 +67,7 @@ impl<
 
         let buffer: Vec<R> = vec![R::default(); num_rows];
 
-        Self { buffer, shared_buffer: false, _phantom: std::marker::PhantomData }
+        Self { buffer, _size: 0, shared_buffer: false, _phantom: std::marker::PhantomData }
     }
 
     pub fn with_capacity(num_rows: usize) -> Self {
@@ -89,7 +90,7 @@ impl<
             }
         }
 
-        Self { buffer, shared_buffer: false, _phantom: std::marker::PhantomData }
+        Self { buffer, _size: 0, shared_buffer: false, _phantom: std::marker::PhantomData }
     }
 
     pub fn new_from_vec_zeroes(mut buffer: Vec<F>) -> Self {
@@ -109,10 +110,11 @@ impl<
         });
 
         let ptr = buffer.as_mut_ptr();
+        let _size = buffer.len() as u64;
         std::mem::forget(buffer);
         let buffer = unsafe { Vec::from_raw_parts(ptr as *mut R, num_rows, num_rows) };
 
-        Self { buffer, shared_buffer: true, _phantom: std::marker::PhantomData }
+        Self { buffer, _size, shared_buffer: true, _phantom: std::marker::PhantomData }
     }
 
     pub fn new_from_vec(mut buffer: Vec<F>) -> Self {
@@ -135,10 +137,11 @@ impl<
         }
 
         let ptr = buffer.as_mut_ptr();
+        let _size = buffer.len() as u64;
         std::mem::forget(buffer);
         let buffer = unsafe { Vec::from_raw_parts(ptr as *mut R, num_rows, num_rows) };
 
-        Self { buffer, shared_buffer: true, _phantom: std::marker::PhantomData }
+        Self { buffer, _size, shared_buffer: true, _phantom: std::marker::PhantomData }
     }
 
     pub fn from_vec(mut buffer: Vec<F>) -> Self {
@@ -151,10 +154,11 @@ impl<
         assert!(num_rows & (num_rows - 1) == 0);
 
         let ptr = buffer.as_mut_ptr();
+        let _size = buffer.len() as u64;
         std::mem::forget(buffer);
         let buffer = unsafe { Vec::from_raw_parts(ptr as *mut R, num_rows, num_rows) };
 
-        Self { buffer, shared_buffer: true, _phantom: std::marker::PhantomData }
+        Self { buffer, _size, shared_buffer: true, _phantom: std::marker::PhantomData }
     }
 
     pub fn par_iter_mut_chunks(&mut self, n: usize) -> impl IndexedParallelIterator<Item = &mut [R]> {
@@ -168,7 +172,12 @@ impl<
     pub fn get_buffer(&mut self) -> Vec<F> {
         let mut buffer = std::mem::take(&mut self.buffer);
 
-        let new_len = NUM_ROWS * R::ROW_SIZE;
+        if self._size == 0 {
+            let len = NUM_ROWS * R::ROW_SIZE;
+            return unsafe { Vec::from_raw_parts(buffer.as_ptr() as *mut F, len, len) };
+        }
+
+        let new_len = self._size as usize;
         let ptr = buffer.as_mut_ptr();
         std::mem::forget(buffer);
         unsafe { Vec::from_raw_parts(ptr as *mut F, new_len, new_len) }
