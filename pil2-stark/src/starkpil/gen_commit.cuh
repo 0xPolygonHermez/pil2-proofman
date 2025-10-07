@@ -7,7 +7,7 @@
 #include "starks_gpu.cuh"
 
 
-void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint64_t nCols, gl64_t *d_aux_trace, Goldilocks::Element *root_pinned, SetupCtx *setupCtx, TimerGPU &timer, cudaStream_t stream, uint64_t nStreams = 1) {
+void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint64_t nCols, gl64_t *d_aux_trace, Goldilocks::Element *root_pinned, SetupCtx *setupCtx, PackedInfo *packed_info, TimerGPU &timer, cudaStream_t stream, uint64_t nStreams = 1) {
 
     TimerStartGPU(timer, STARK_GPU_COMMIT);
 
@@ -21,11 +21,15 @@ void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint6
         uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(NExtended, arity);
 
         uint64_t offset_src = nStreams == 1  ? setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)] : 0;
+        uint64_t offset_src_packed = nStreams == 1 ? offset_src + N * nCols : N * nCols;
         uint64_t offset_dst = nStreams == 1  ? setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)] : N * nCols;
         uint64_t offset_mt = nStreams == 1  ? setupCtx->starkInfo.mapOffsets[make_pair("mt1", true)] : (N + NExtended) * nCols;
 
         Goldilocks::Element *pNodes = (Goldilocks::Element*)dst + offset_mt;
         
+        if (packed_info->is_packed) {
+            unpack_trace(packed_info, (uint64_t *)(src + offset_src_packed), (uint64_t *)(src + offset_src), nCols, N, stream, timer);
+        }
         NTT_Goldilocks_GPU ntt;
         ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, nBits, nBitsExtended, nCols, timer, stream);
         CHECKCUDAERR(cudaMemcpyAsync(root_pinned, &pNodes[tree_size - HASH_SIZE], HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));

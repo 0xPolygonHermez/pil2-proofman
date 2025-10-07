@@ -41,6 +41,81 @@ Goldilocks::Element omegas_inv_[33] = {
     0x16d265893b5b7e85,
 };
 
+__global__ void unpack(
+    const uint64_t* src,
+    uint64_t* dst,
+    uint64_t nRows,
+    uint64_t nCols,
+    uint64_t words_per_row,
+    uint64_t *d_unpack_info
+) {
+    uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= nRows) return;
+
+    const uint64_t* packed_row = src + row * words_per_row;
+    uint64_t* unpacked_row = dst + row * nCols;
+
+    uint64_t word = packed_row[0];
+    uint64_t word_idx = 0;
+    uint64_t bit_offset = 0;
+
+    #pragma unroll
+    for (uint64_t c = 0; c < nCols; c++) {
+        uint64_t nbits = d_unpack_info[c];
+        uint64_t val;
+
+        uint64_t bits_left = 64 - bit_offset;
+
+        if (nbits <= bits_left) {
+            uint64_t mask = (nbits == 64) ? ~0ULL : ((1ULL << nbits) - 1ULL);
+            val = (word >> bit_offset) & mask;
+            bit_offset += nbits;
+
+            if (bit_offset == 64 && word_idx + 1 < words_per_row) {
+                word = packed_row[++word_idx];
+                bit_offset = 0;
+            }
+        } else {
+            uint64_t low = word >> bit_offset;
+            word = packed_row[++word_idx];
+            uint64_t high = word & ((1ULL << (nbits - bits_left)) - 1ULL);
+            val = (high << bits_left) | low;
+            bit_offset = nbits - bits_left;
+        }
+
+        unpacked_row[c] = val;
+    }
+}
+
+void unpack_trace(
+    PackedInfo *packedInfo,
+    uint64_t* src,
+    uint64_t* dst,
+    uint64_t nCols,
+    uint64_t nRows,
+    cudaStream_t stream,
+    TimerGPU &timer
+) {    
+    TimerStartGPU(timer, UNPACK_TRACE);
+    uint64_t* d_unpack_info;
+    cudaMalloc(&d_unpack_info, nCols * sizeof(uint64_t));
+    cudaMemcpy(d_unpack_info, packedInfo->unpack_info, nCols * sizeof(uint64_t), cudaMemcpyHostToDevice);
+
+    dim3 threads(256);
+    dim3 blocks((nRows + threads.x - 1) / threads.x);
+    unpack<<<blocks, threads, 0, stream>>>(
+        src,
+        dst,
+        nRows,
+        nCols,
+        packedInfo->num_packed_words,
+        d_unpack_info
+    );
+    CHECKCUDAERR(cudaGetLastError());
+    cudaFree(d_unpack_info);
+    TimerStopGPU(timer, UNPACK_TRACE);
+}
+
 void computeZerofier(Goldilocks::Element *d_zi, uint64_t nBits, uint64_t nBitsExt, cudaStream_t stream) {
     uint64_t NExtended = 1 << nBitsExt;
     uint64_t extendBits = nBitsExt - nBits;

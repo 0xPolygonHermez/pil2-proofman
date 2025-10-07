@@ -391,11 +391,10 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
 
     if (!skipRecalculation) {
         PackedInfo *packed_info = (PackedInfo *)packedInfo;
-        if (packed_info->is_packed) {
-            copy_to_device_in_chunks_packed(d_buffers, params->trace, (uint8_t*)(d_aux_trace + offsetStage1), N, nCols, packed_info, streamId);
-        } else {
-            copy_to_device_in_chunks(d_buffers, params->trace, (uint8_t*)(d_aux_trace + offsetStage1), N * nCols * sizeof(Goldilocks::Element), streamId);
-        }
+        d_buffers->streamsData[streamId].packedInfo = packed_info;
+        uint64_t total_size = packed_info->is_packed ? packed_info->num_packed_words * N * sizeof(Goldilocks::Element) : N * nCols * sizeof(Goldilocks::Element);
+        uint64_t *dst = packed_info->is_packed ? (uint64_t *)(d_aux_trace + offsetStage1 + N * nCols) : (uint64_t *)(d_aux_trace + offsetStage1);
+        copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId);
     }
     
     size_t totalCopySize = 0;
@@ -625,15 +624,11 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t offsetStage1 = nStreams == 1 ? setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)] : 0;
     PackedInfo *packed_info = (PackedInfo *)packedInfo;
-    if (packed_info->is_packed) {
-        uint64_t total_size = packed_info->num_packed_words * N * sizeof(Goldilocks::Element);
-        cout << "Total size for packed data of airgroup id " << airgroupId << " and airId " << airId << ": " << total_size / (1024 * 1024) << " MB bytes." << endl;
-        copy_to_device_in_chunks_packed(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1), N, nCols, packed_info, streamId);
-    } else {
-        cout << "Total size for unpacked data of airgroup id " << airgroupId << " and airId " << airId << ": " << sizeTrace / (1024 * 1024) << " MB bytes." << endl;
-        copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1), sizeTrace, streamId);
-    }
-    genCommit_gpu(arity, nBits, nBitsExt, nCols, d_aux_trace, d_buffers->streamsData[streamId].pinned_buffer_proof, setupCtx, timer, stream, nStreams);
+    d_buffers->streamsData[streamId].packedInfo = packed_info;
+    uint64_t total_size = packed_info->is_packed ? packed_info->num_packed_words * N * sizeof(Goldilocks::Element) : sizeTrace;
+    uint64_t *dst = packed_info->is_packed ? (uint64_t*)(d_aux_trace + offsetStage1 + N * nCols) : (uint64_t*)(d_aux_trace + offsetStage1);
+    copy_to_device_in_chunks(d_buffers, trace, dst, total_size, streamId);
+    genCommit_gpu(arity, nBits, nBitsExt, nCols, d_aux_trace, d_buffers->streamsData[streamId].pinned_buffer_proof, setupCtx, packed_info, timer, stream, nStreams);
 
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
