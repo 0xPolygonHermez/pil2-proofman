@@ -95,8 +95,8 @@ void unpack_trace(
     uint64_t nRows,
     cudaStream_t stream,
     TimerGPU &timer
-) {    
-    TimerStartGPU(timer, UNPACK_TRACE);
+) {
+    TimerStartCategoryGPU(timer, UNPACK_TRACE);
     uint64_t* d_unpack_info;
     cudaMalloc(&d_unpack_info, nCols * sizeof(uint64_t));
     cudaMemcpy(d_unpack_info, packedInfo->unpack_info, nCols * sizeof(uint64_t), cudaMemcpyHostToDevice);
@@ -113,7 +113,7 @@ void unpack_trace(
     );
     CHECKCUDAERR(cudaGetLastError());
     cudaFree(d_unpack_info);
-    TimerStopGPU(timer, UNPACK_TRACE);
+    TimerStopCategoryGPU(timer, UNPACK_TRACE);
 }
 
 void computeZerofier(Goldilocks::Element *d_zi, uint64_t nBits, uint64_t nBitsExt, cudaStream_t stream) {

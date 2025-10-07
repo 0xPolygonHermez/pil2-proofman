@@ -8,9 +8,6 @@
 
 
 void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint64_t nCols, gl64_t *d_aux_trace, Goldilocks::Element *root_pinned, SetupCtx *setupCtx, PackedInfo *packed_info, TimerGPU &timer, cudaStream_t stream, uint64_t nStreams = 1) {
-
-    TimerStartGPU(timer, STARK_GPU_COMMIT);
-
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExtended;
     if (nCols > 0)
@@ -37,8 +34,6 @@ void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint6
         std::cout << "nCols must be greater than 0" << std::endl;
         assert(0);
     }
-
-    TimerStopGPU(timer, STARK_GPU_COMMIT);
 }
 
 #endif
