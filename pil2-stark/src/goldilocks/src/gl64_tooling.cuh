@@ -275,6 +275,8 @@ struct StreamData{
     bool recursive;
     bool extraStream;
     uint64_t streamsUsed;
+
+    PackedInfo *packedInfo;
     
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_){
         uint64_t maxExps = 1000; // TODO: CALCULATE IT PROPERLY!
@@ -295,6 +297,7 @@ struct StreamData{
         extraStream = false;
         streamsUsed = 1;
         root = nullptr;
+        packedInfo = nullptr;
         pSetupCtx = nullptr;
         proofBuffer = nullptr;
         airgroupId = UINT64_MAX;
@@ -378,17 +381,6 @@ void copy_to_device_in_chunks(
     uint64_t total_size,
     uint64_t streamId
     );
-
-void copy_to_device_in_chunks_packed(
-    DeviceCommitBuffers* d_buffers,
-    const void* src,
-    void* dst,
-    uint64_t nBits,
-    uint64_t nCols,
-    PackedInfo *packed_info,
-    uint64_t streamId
-    );
-
 
 void load_and_copy_to_device_in_chunks(
     DeviceCommitBuffers* d_buffers,
