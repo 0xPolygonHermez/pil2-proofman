@@ -36,7 +36,8 @@ pub struct GenericTrace<
     const COMMIT_ID: usize = 0,
 > {
     pub buffer: Vec<R>,
-    _size: u64,
+    original_len: usize,
+    original_capacity: usize,
     pub shared_buffer: bool,
     _phantom: std::marker::PhantomData<F>,
 }
@@ -67,7 +68,7 @@ impl<
 
         let buffer: Vec<R> = vec![R::default(); num_rows];
 
-        Self { buffer, _size: 0, shared_buffer: false, _phantom: std::marker::PhantomData }
+        Self { buffer, original_len: 0, original_capacity: 0, shared_buffer: false, _phantom: std::marker::PhantomData }
     }
 
     pub fn with_capacity(num_rows: usize) -> Self {
@@ -90,7 +91,7 @@ impl<
             }
         }
 
-        Self { buffer, _size: 0, shared_buffer: false, _phantom: std::marker::PhantomData }
+        Self { buffer, original_len: 0, original_capacity: 0, shared_buffer: false, _phantom: std::marker::PhantomData }
     }
 
     pub fn new_from_vec_zeroes(mut buffer: Vec<F>) -> Self {
@@ -110,11 +111,12 @@ impl<
         });
 
         let ptr = buffer.as_mut_ptr();
-        let _size = buffer.len() as u64;
+        let original_len = buffer.len();
+        let original_capacity = buffer.capacity();
         std::mem::forget(buffer);
         let buffer = unsafe { Vec::from_raw_parts(ptr as *mut R, num_rows, num_rows) };
 
-        Self { buffer, _size, shared_buffer: true, _phantom: std::marker::PhantomData }
+        Self { buffer, original_len, original_capacity, shared_buffer: true, _phantom: std::marker::PhantomData }
     }
 
     pub fn new_from_vec(mut buffer: Vec<F>) -> Self {
@@ -137,11 +139,12 @@ impl<
         }
 
         let ptr = buffer.as_mut_ptr();
-        let _size = buffer.len() as u64;
+        let original_len = buffer.len();
+        let original_capacity = buffer.capacity();
         std::mem::forget(buffer);
         let buffer = unsafe { Vec::from_raw_parts(ptr as *mut R, num_rows, num_rows) };
 
-        Self { buffer, _size, shared_buffer: true, _phantom: std::marker::PhantomData }
+        Self { buffer, original_len, original_capacity, shared_buffer: true, _phantom: std::marker::PhantomData }
     }
 
     pub fn from_vec(mut buffer: Vec<F>) -> Self {
@@ -154,11 +157,12 @@ impl<
         assert!(num_rows & (num_rows - 1) == 0);
 
         let ptr = buffer.as_mut_ptr();
-        let _size = buffer.len() as u64;
+        let original_len = buffer.len();
+        let original_capacity = buffer.capacity();
         std::mem::forget(buffer);
         let buffer = unsafe { Vec::from_raw_parts(ptr as *mut R, num_rows, num_rows) };
 
-        Self { buffer, _size, shared_buffer: true, _phantom: std::marker::PhantomData }
+        Self { buffer, original_len, original_capacity, shared_buffer: true, _phantom: std::marker::PhantomData }
     }
 
     pub fn par_iter_mut_chunks(&mut self, n: usize) -> impl IndexedParallelIterator<Item = &mut [R]> {
@@ -172,15 +176,20 @@ impl<
     pub fn get_buffer(&mut self) -> Vec<F> {
         let mut buffer = std::mem::take(&mut self.buffer);
 
-        if self._size == 0 {
+        if self.original_capacity == 0 {
+            // Buffer was created internally, not from external Vec<F>
             let len = NUM_ROWS * R::ROW_SIZE;
             return unsafe { Vec::from_raw_parts(buffer.as_ptr() as *mut F, len, len) };
         }
 
-        let new_len = self._size as usize;
+        // Buffer was created from external Vec<F>, restore original metadata
+        let original_len = self.original_len;
+        let original_capacity = self.original_capacity;
         let ptr = buffer.as_mut_ptr();
         std::mem::forget(buffer);
-        unsafe { Vec::from_raw_parts(ptr as *mut F, new_len, new_len) }
+        self.original_len = 0; // prevent double free
+        self.original_capacity = 0;
+        unsafe { Vec::from_raw_parts(ptr as *mut F, original_len, original_capacity) }
     }
 
     pub fn is_shared_buffer(&self) -> bool {
@@ -282,6 +291,32 @@ impl<
 {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.buffer[index]
+    }
+}
+
+impl<F, R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID: usize, const COMMIT_ID: usize> Drop
+    for GenericTrace<F, R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
+{
+    fn drop(&mut self) {
+        if self.original_capacity == 0 {
+            // Buffer was created internally, drop normally
+            // The Vec<R> will handle its own cleanup
+        } else {
+            // Buffer was created from external Vec<F>, need to restore original metadata
+            let original_len = self.original_len;
+            let original_capacity = self.original_capacity;
+
+            // Take ownership of the buffer to prevent double-drop
+            let buffer = std::mem::take(&mut self.buffer);
+            let ptr = buffer.as_ptr();
+            std::mem::forget(buffer);
+
+            // Reconstruct the original Vec<F> with correct length and capacity
+            unsafe {
+                let _original_buffer = Vec::from_raw_parts(ptr as *mut F, original_len, original_capacity);
+                // _original_buffer will be dropped automatically here
+            }
+        }
     }
 }
 
