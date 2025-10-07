@@ -13,7 +13,8 @@ pub fn packed_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceFie
     let packed_words = packed_bits.div_ceil(64);
 
     // Count generic F fields (these are stored separately, each takes one u64)
-    let generic_field_count: usize = fields.iter().filter(|f| contains_generic(&f.ty)).count();
+    let generic_field_count: usize =
+        fields.iter().filter(|f| contains_generic(&f.ty)).map(|f| calculate_generic_field_size(&f.ty)).sum();
 
     // Total ROW_SIZE is packed words + generic fields
     let total_row_size = packed_words + generic_field_count;
@@ -33,7 +34,7 @@ pub fn packed_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceFie
     let setter_getters = get_packed_setters_getters(fields);
 
     quote! {
-        #[repr(C)] 
+        #[repr(C)]
         #[derive(Debug, Copy, Clone, Default)]
         pub struct #name #generics_with_bounds {
             #(#generic_fields,)*
@@ -59,8 +60,9 @@ fn get_packed_fields(fields: &[TraceField]) -> Vec<TokenStream> {
     for f in fields.iter() {
         let name = &f.name;
         if contains_generic(&f.ty) {
-            // Always include truly generic fields
-            packed_fields.push(quote! { pub #name: F });
+            // Always include truly generic fields with proper array expansion
+            let field_type = generate_f_field_type(&f.ty);
+            packed_fields.push(quote! { pub #name: #field_type });
             has_true_generic = true;
         }
         // Non-generic fields are stored in the packed array, not as separate fields
@@ -82,8 +84,11 @@ fn get_packed_setters_getters(fields: &[TraceField]) -> Vec<TokenStream> {
 
     for f in fields.iter() {
         if contains_generic(&f.ty) {
-            // Generate direct F field accessors for truly generic fields
-            add_generic_setter_getter(&f.name, &mut setter_getters);
+            // For generic fields, only generate setters/getters for non-array fields
+            // Array fields can be accessed directly
+            if !is_array(&f.ty) {
+                add_generic_setter_getter(&f.name, &mut setter_getters);
+            }
         } else {
             // For non-generic fields, generate packed accessors
             if is_array(&f.ty) {
@@ -322,6 +327,27 @@ fn emit_split_packed_accessor(
             let high = self.packed[#word_end] & HIGH_MASK;
             let raw_value = (high << #low_bits) | low;
             #getter_conversion
+        }
+    }
+}
+
+fn calculate_generic_field_size(ty: &BitType) -> usize {
+    match ty {
+        BitType::Bit(_) => 1,  // This shouldn't happen for generic fields, but just in case
+        BitType::Generic => 1, // Generic F field is one F element
+        BitType::Array(inner, len) => {
+            calculate_generic_field_size(inner) * len // Recursively calculate array size
+        }
+    }
+}
+
+fn generate_f_field_type(ty: &BitType) -> TokenStream {
+    match ty {
+        BitType::Bit(_) => quote! { F },
+        BitType::Generic => quote! { F },
+        BitType::Array(inner, len) => {
+            let inner_type = generate_f_field_type(inner);
+            quote! { [#inner_type; #len] }
         }
     }
 }

@@ -25,7 +25,7 @@ pub fn unpacked_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceF
     let row_size = calculate_row_size(fields);
 
     quote! {
-        #[repr(C)] 
+        #[repr(C)]
         #[derive(Debug, Copy, Clone, Default)]
         pub struct #name #generics_with_bounds {
             #(#unpacked_fields,)*
@@ -47,8 +47,9 @@ fn get_unpacked_fields(fields: &[TraceField]) -> Vec<TokenStream> {
     for f in fields.iter() {
         let name = &f.name;
         if contains_generic(&f.ty) {
-            // Generic fields stay as F
-            unpacked_fields.push(quote! { pub #name: F });
+            // Expand generic fields: arrays become arrays of F, not just F
+            let field_type = generate_f_field_type(&f.ty);
+            unpacked_fields.push(quote! { pub #name: #field_type });
         } else {
             // Non-generic fields become F with the appropriate array structure
             let field_type = generate_f_field_type(&f.ty);
@@ -64,8 +65,11 @@ fn get_unpacked_setters_getters(fields: &[TraceField]) -> Vec<TokenStream> {
 
     for f in fields.iter() {
         if contains_generic(&f.ty) {
-            // Generate direct F field accessors for truly generic fields
-            add_unpacked_generic_setter_getter(&f.name, &mut setter_getters);
+            // For generic fields, only generate setters/getters for non-array fields
+            // Array fields can be accessed directly
+            if !is_array(&f.ty) {
+                add_unpacked_generic_setter_getter(&f.name, &mut setter_getters);
+            }
         } else {
             // For non-generic fields, generate F field accessors with conversion
             if is_array(&f.ty) {
