@@ -93,17 +93,18 @@ void copy_to_device_in_chunks_packed(
         uint64_t copySizeBlockPrev = std::min(block_size, total_size - (i - 1) * block_size);
         uint64_t nRowsPerBlock = copySizeBlockPrev / (packed_info->num_packed_words * sizeof(Goldilocks::Element));
         
-        dim3 threads(256);
-        dim3 blocks((nRowsPerBlock + threads.x - 1) / threads.x);
-        unpack_rows_kernel_pinned<<<blocks, threads, 0, stream>>>(
-            pinned_buffer,
-            (uint64_t*)dst + (i - 1) * (block_size / sizeof(Goldilocks::Element)),
-            nRowsPerBlock,
-            nCols,
-            packed_info->num_packed_words,
-            d_unpack_info
-        );
-        CHECKCUDAERR(cudaGetLastError());
+        // TODO: Re-enable kernel
+        // dim3 threads(256);
+        // dim3 blocks((nRowsPerBlock + threads.x - 1) / threads.x);
+        // unpack_rows_kernel_pinned<<<blocks, threads, 0, stream>>>(
+        //     pinned_buffer,
+        //     (uint64_t*)dst + (i - 1) * (block_size / sizeof(Goldilocks::Element)),
+        //     nRowsPerBlock,
+        //     nCols,
+        //     packed_info->num_packed_words,
+        //     d_unpack_info
+        // );
+        // CHECKCUDAERR(cudaGetLastError());
 
         uint64_t copySizeBlock = std::min(block_size, total_size - i * block_size);
         std::memcpy(pinned_buffer_extra, (const uint8_t*)src + i * block_size, copySizeBlock);
@@ -113,17 +114,18 @@ void copy_to_device_in_chunks_packed(
     
     uint64_t copySizeBlockFinal = std::min(block_size, total_size - (nBlocks - 1) * block_size);
     uint64_t nRowsPerBlockFinal = copySizeBlockFinal / (packed_info->num_packed_words * sizeof(Goldilocks::Element));
-    dim3 threads(256);
-    dim3 blocks((nRowsPerBlockFinal + threads.x - 1) / threads.x);
-    unpack_rows_kernel_pinned<<<blocks, threads, 0, stream>>>(
-        pinned_buffer,
-        (uint64_t*)dst + (nBlocks - 1) * (block_size / sizeof(Goldilocks::Element)),
-        nRowsPerBlockFinal,
-        nCols,
-        packed_info->num_packed_words,
-        d_unpack_info
-    );
-    CHECKCUDAERR(cudaGetLastError());
+    // TODO: Re-enable kernel
+    // dim3 threads(256);
+    // dim3 blocks((nRowsPerBlockFinal + threads.x - 1) / threads.x);
+    // unpack_rows_kernel_pinned<<<blocks, threads, 0, stream>>>(
+    //     pinned_buffer,
+    //     (uint64_t*)dst + (nBlocks - 1) * (block_size / sizeof(Goldilocks::Element)),
+    //     nRowsPerBlockFinal,
+    //     nCols,
+    //     packed_info->num_packed_words,
+    //     d_unpack_info
+    // );
+    // CHECKCUDAERR(cudaGetLastError());
 
     CHECKCUDAERR(cudaStreamSynchronize(stream));
     

@@ -189,6 +189,10 @@ impl<F: Field> AirInstance<F> {
             traces.trace.num_rows(),
             traces.trace.get_buffer(),
             traces.trace.is_shared_buffer(),
+        ).with_packed_info(
+            traces.trace.is_packed(),
+            traces.trace.num_packed_words(),
+            traces.trace.unpack_info(),
         );
 
         if let Some(custom_traces) = traces.custom_traces.as_mut() {
