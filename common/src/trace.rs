@@ -114,6 +114,7 @@ impl<
 
         Self { buffer, shared_buffer: true, _phantom: std::marker::PhantomData }
     }
+
     pub fn new_from_vec(mut buffer: Vec<F>) -> Self {
         let row_size = R::ROW_SIZE;
         let num_rows = NUM_ROWS;
@@ -126,8 +127,7 @@ impl<
         if cfg!(feature = "diagnostic") {
             unsafe {
                 let mut ptr = buffer.as_mut_ptr() as *mut u64;
-                let expected_len = num_rows;
-                for _ in 0..expected_len * R::ROW_SIZE {
+                for _ in 0..expected_len {
                     ptr.write(u64::MAX - 1);
                     ptr = ptr.add(1);
                 }
@@ -268,7 +268,8 @@ impl<
         const NUM_ROWS: usize,
         const AIRGROUP_ID: usize,
         const AIR_ID: usize,
-    > std::ops::IndexMut<usize> for GenericTrace<F, R, NUM_ROWS, AIRGROUP_ID, AIR_ID>
+        const COMMIT_ID: usize,
+    > std::ops::IndexMut<usize> for GenericTrace<F, R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
 {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.buffer[index]
