@@ -21,7 +21,11 @@ pub fn unpacked_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceF
     let unpacked_fields = get_unpacked_fields(fields);
     let setter_getters = get_unpacked_setters_getters(fields);
 
+    // Calculate the total number of F elements in the row
+    let row_size = calculate_row_size(fields);
+
     quote! {
+        #[repr(C)] 
         #[derive(Debug, Copy, Clone, Default)]
         pub struct #name #generics_with_bounds {
             #(#unpacked_fields,)*
@@ -32,7 +36,7 @@ pub fn unpacked_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceF
         }
 
         impl #generics_with_bounds proofman_common::trace::TraceRow for #name #generics {
-            const ROW_SIZE: usize = 1; // For unpacked, we use a constant size
+            const ROW_SIZE: usize = #row_size; // Total number of F elements
         }
     }
 }
@@ -191,4 +195,22 @@ fn generate_array_access(idents: &[Ident]) -> TokenStream {
         access = quote! { #access[#id] };
     }
     access
+}
+
+fn calculate_row_size(fields: &[TraceField]) -> usize {
+    let mut size = 0;
+    for field in fields {
+        size += calculate_field_size(&field.ty);
+    }
+    size
+}
+
+fn calculate_field_size(ty: &BitType) -> usize {
+    match ty {
+        BitType::Bit(_) => 1,  // Each bit field is stored as one F element
+        BitType::Generic => 1, // Generic F field is one F element
+        BitType::Array(inner, len) => {
+            calculate_field_size(inner) * len // Recursively calculate array size
+        }
+    }
 }

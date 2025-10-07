@@ -7,8 +7,16 @@ use syn::Ident;
 use crate::trace_row::{TraceField, BitType, contains_generic, compute_total_bits, is_array, collect_dimensions};
 
 pub fn packed_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceField]) -> TokenStream {
-    let packed_bits: usize = fields.iter().map(|f| compute_total_bits(&f.ty)).sum();
+    // Calculate bits needed for non-generic fields (these go in the packed array)
+    let packed_bits: usize =
+        fields.iter().filter(|f| !contains_generic(&f.ty)).map(|f| compute_total_bits(&f.ty)).sum();
     let packed_words = packed_bits.div_ceil(64);
+
+    // Count generic F fields (these are stored separately, each takes one u64)
+    let generic_field_count: usize = fields.iter().filter(|f| contains_generic(&f.ty)).count();
+
+    // Total ROW_SIZE is packed words + generic fields
+    let total_row_size = packed_words + generic_field_count;
 
     let generics = if let Some(g) = generic {
         quote! { <#g> }
@@ -25,6 +33,7 @@ pub fn packed_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceFie
     let setter_getters = get_packed_setters_getters(fields);
 
     quote! {
+        #[repr(C)] 
         #[derive(Debug, Copy, Clone, Default)]
         pub struct #name #generics_with_bounds {
             #(#generic_fields,)*
@@ -38,7 +47,7 @@ pub fn packed_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceFie
         }
 
         impl #generics_with_bounds proofman_common::trace::TraceRow for #name #generics {
-            const ROW_SIZE: usize = #name::#generics::PACKED_WORDS;
+            const ROW_SIZE: usize = #total_row_size; // Packed words + generic fields
         }
     }
 }
