@@ -24,11 +24,21 @@ pub fn unpacked_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceF
     // Calculate the total number of F elements in the row
     let row_size = calculate_row_size(fields);
 
+    let default_field_exprs = get_default_field_exprs(fields);
+
     quote! {
         #[repr(C)]
-        #[derive(Debug, Copy, Clone, Default)]
+        #[derive(Debug, Copy, Clone)]
         pub struct #name #generics_with_bounds {
             #(#unpacked_fields,)*
+        }
+
+        impl #generics_with_bounds Default for #name #generics {
+            fn default() -> Self {
+                Self {
+                    #(#default_field_exprs,)*
+                }
+            }
         }
 
         impl #generics_with_bounds #name #generics {
@@ -215,6 +225,29 @@ fn calculate_field_size(ty: &BitType) -> usize {
         BitType::Generic => 1, // Generic F field is one F element
         BitType::Array(inner, len) => {
             calculate_field_size(inner) * len // Recursively calculate array size
+        }
+    }
+}
+
+fn get_default_field_exprs(fields: &[TraceField]) -> Vec<TokenStream> {
+    let mut default_exprs = vec![];
+
+    for f in fields.iter() {
+        let name = &f.name;
+        let init = default_expr(&f.ty);
+        default_exprs.push(quote! { #name: #init });
+    }
+
+    default_exprs
+}
+
+fn default_expr(ty: &BitType) -> TokenStream {
+    match ty {
+        BitType::Bit(_) => quote! { F::default() },
+        BitType::Generic => quote! { F::default() },
+        BitType::Array(inner, len) => {
+            let inner_default = default_expr(inner);
+            quote! { [#inner_default; #len] }
         }
     }
 }
