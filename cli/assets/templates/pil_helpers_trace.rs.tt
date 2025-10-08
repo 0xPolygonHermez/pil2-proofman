@@ -7,6 +7,7 @@
 
 use proofman_common as common;
 use proofman_common::GenericTrace;
+use proofman_common::PackedInfoConst;
 pub use proofman_macros::trace_row;
 pub use proofman_macros::values;
 use fields::PrimeField64;
@@ -63,21 +64,21 @@ values!({ project_name }ProofValues<F> \{
 trace_row!({ air.name }FixedRow<F> \{
 {{ for column in air.fixed }} { column.name }: { column.type },{{ endfor }}
 });
-pub type { air.name }Fixed<F> = GenericTrace<F, { air.name }FixedRow<F>, { air.num_rows }, { air_group.airgroup_id }, { air.id }>;
+pub type { air.name }Fixed<F> = GenericTrace<{ air.name }FixedRow<F>, { air.num_rows }, { air_group.airgroup_id }, { air.id }>;
 
 trace_row!({ air.name }TraceRow<F> \{
 {{ for column in air.columns }} { column.name }:{{ if air.has_packed }}{ column.type_packed }{{ else }}{ column.type }{{ endif }},{{ endfor }}
 });
-pub type { air.name }Trace<F> = GenericTrace<F, { air.name }TraceRow<F>, { air.num_rows }, { air_group.airgroup_id }, { air.id }>;
+pub type { air.name }Trace<F> = GenericTrace<{ air.name }TraceRow<F>, { air.num_rows }, { air_group.airgroup_id }, { air.id }>;
 
 {{ if air.has_packed }}
-pub type { air.name }TracePacked<F> = GenericTrace<F, { air.name }TraceRowPacked<F>, { air.num_rows }, { air_group.airgroup_id }, { air.id }>;
+pub type { air.name }TracePacked<F> = GenericTrace<{ air.name }TraceRowPacked<F>, { air.num_rows }, { air_group.airgroup_id }, { air.id }>;
 
 {{ endif }}{{ endfor }}{{ endfor }}{{ for air_group in air_groups }}{{ for air in air_group.airs }}{{ for custom_commit in air.custom_columns  }}
 trace_row!({ air.name }{custom_commit.name}TraceRow<F> \{
 {{ for column in custom_commit.custom_columns }} { column.name }: { column.type },{{ endfor }}
 });
-pub type { air.name }{custom_commit.name}Trace<F> = GenericTrace<F, { air.name }{custom_commit.name}TraceRow<F>, { air.num_rows }, { air_group.airgroup_id }, { air.id }, { custom_commit.commit_id }>;
+pub type { air.name }{custom_commit.name}Trace<F> = GenericTrace<{ air.name }{custom_commit.name}TraceRow<F>, { air.num_rows }, { air_group.airgroup_id }, { air.id }, { custom_commit.commit_id }>;
 
 {{ endfor }}{{ endfor }}{{ endfor }}{{ for air_group in air_groups }}{{ for air in air_group.airs }}{{ for air_values in air.air_values  }}
 values!({ air.name }AirValues<F> \{
@@ -88,3 +89,10 @@ values!({ air.name }AirGroupValues<F> \{
 {{ for column in air_groupvalues.values }} { column.name }: { column.type },{{ endfor }}
 });
 {{ endfor }}{{ endfor }}{{ endfor }}
+pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[{{ for item in packed_info }}
+    ({ item.airgroup_id }, { item.air_id }, PackedInfoConst \{
+        is_packed: { item.is_packed },
+        num_packed_words: { item.num_packed_words },
+        unpack_info: &[{ item.unpack_info }],
+    }),{{ endfor }}
+];

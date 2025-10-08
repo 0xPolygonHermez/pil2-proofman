@@ -2,7 +2,8 @@ use std::error::Error;
 
 use crate::WitnessManager;
 use fields::PrimeField64;
-use proofman_common::{ProofCtx, VerboseMode};
+use proofman_common::{PackedInfo, ProofCtx, VerboseMode};
+use std::collections::HashMap;
 
 /// This is the type of the function that is used to load a witness library.
 pub type WitnessLibInitFn<F> = fn(VerboseMode, Option<i32>) -> Result<Box<dyn WitnessLibrary<F>>, Box<dyn Error>>;
@@ -15,6 +16,10 @@ pub trait WitnessLibrary<F: PrimeField64> {
     /// Used as a heuristic for estimating computational cost.
     fn get_witness_weight(&self, _pctx: &ProofCtx<F>, _global_id: usize) -> Result<usize, Box<dyn std::error::Error>> {
         Ok(1)
+    }
+
+    fn get_packed_info(&self) -> HashMap<(usize, usize), PackedInfo> {
+        HashMap::new()
     }
 }
 

@@ -177,11 +177,13 @@ pub fn collect_dimensions(mut ty: &BitType) -> (usize, Vec<usize>) {
         ty = inner;
     }
     let mut accumulated_dims = vec![1; dims.len()];
-    for i in 0..dims.len() - 1 {
-        for j in i + 1..dims.len() {
-            accumulated_dims[i] *= dims[j];
+    for (i, val) in accumulated_dims.iter_mut().enumerate().take(dims.len() - 1) {
+        for dim in dims.iter().skip(i + 1) {
+            *val *= *dim;
         }
     }
-    accumulated_dims[dims.len() - 1] = dims[0];
+    if let Some(last) = dims.first() {
+        accumulated_dims[dims.len() - 1] = *last;
+    }
     (compute_total_bits(ty), accumulated_dims)
 }

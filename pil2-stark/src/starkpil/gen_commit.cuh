@@ -7,7 +7,7 @@
 #include "starks_gpu.cuh"
 
 
-void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint64_t nCols, gl64_t *d_aux_trace, Goldilocks::Element *root_pinned, SetupCtx *setupCtx, PackedInfo *packed_info, TimerGPU &timer, cudaStream_t stream, uint64_t nStreams = 1) {
+void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint64_t nCols, gl64_t *d_aux_trace, Goldilocks::Element *root_pinned, SetupCtx *setupCtx, AirInstanceInfo *air_instance_info, TimerGPU &timer, cudaStream_t stream, uint64_t nStreams = 1) {
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExtended;
     if (nCols > 0)
@@ -24,8 +24,8 @@ void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint6
 
         Goldilocks::Element *pNodes = (Goldilocks::Element*)dst + offset_mt;
         
-        if (packed_info->is_packed) {
-            unpack_trace(packed_info, (uint64_t *)(src + offset_src_packed), (uint64_t *)(src + offset_src), nCols, N, stream, timer);
+        if (air_instance_info->is_packed) {
+            unpack_trace(air_instance_info, (uint64_t *)(src + offset_src_packed), (uint64_t *)(src + offset_src), nCols, N, stream, timer);
         }
         NTT_Goldilocks_GPU ntt;
         ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, nBits, nBitsExtended, nCols, timer, stream);

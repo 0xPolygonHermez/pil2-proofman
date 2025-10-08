@@ -936,6 +936,7 @@ dependencies = [
  "libloading",
  "mpi",
  "num_cpus",
+ "once_cell",
  "proofman-macros",
  "proofman-starks-lib-c",
  "proofman-util",

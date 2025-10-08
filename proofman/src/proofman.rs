@@ -3,7 +3,7 @@ use libloading::{Library, Symbol};
 use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
-    DebugInfo, MemoryHandler, MpiCtx, ParamsGPU, PilHelpers, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx,
+    DebugInfo, MemoryHandler, MpiCtx, PackedInfo, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx,
     SetupsVadcop, VerboseMode, MAX_INSTANCES,
 };
 use colored::Colorize;
@@ -43,9 +43,7 @@ use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
-use crate::{
-    calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, initialize_fixed_pols_tree,
-};
+use crate::{calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, initialize_setup_gpu};
 use crate::{verify_constraints_proof, verify_basic_proof, verify_final_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
@@ -130,6 +128,7 @@ pub struct ProofMan<F: PrimeField64> {
     handle_contributions: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     worker_contributions: Arc<RwLock<Vec<ContributionsInfo>>>,
     max_witness_trace_size: usize,
+    packed_info: HashMap<(usize, usize), PackedInfo>,
 }
 
 #[derive(Debug, PartialEq, Clone, BorshSerialize, BorshDeserialize)]
@@ -220,8 +219,8 @@ where
         (self.pctx.mpi_ctx.n_processes > 1).then(|| self.mpi_ctx.rank)
     }
 
-    pub fn get_mpi_ctx(&self) -> &MpiCtx {
-        &self.mpi_ctx
+    pub fn get_mpi_info() -> Arc<MpiCtx> {
+        MpiCtx::global()
     }
 
     pub fn mpi_broadcast(&self, buf: &mut Vec<u8>) {
@@ -239,7 +238,7 @@ where
             return Err(format!("Proving key folder not found at path: {proving_key_path:?}").into());
         }
 
-        let mpi_ctx = Arc::new(MpiCtx::new());
+        let mpi_ctx = MpiCtx::global();
 
         let pctx = ProofCtx::<F>::create_ctx(
             proving_key_path,
@@ -846,7 +845,7 @@ where
         final_snark: bool,
         gpu_params: ParamsGPU,
         verbose_mode: VerboseMode,
-        pil_helpers: Option<Box<dyn PilHelpers>>,
+        packed_info: HashMap<(usize, usize), PackedInfo>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // Check proving_key_path exists
         if !proving_key_path.exists() {
@@ -858,7 +857,7 @@ where
             return Err(format!("Proving key parameter must be a folder: {proving_key_path:?}").into());
         }
 
-        let mpi_ctx = Arc::new(MpiCtx::new());
+        let mpi_ctx = MpiCtx::global();
 
         initialize_logger(verbose_mode, Some(mpi_ctx.rank));
 
@@ -876,11 +875,7 @@ where
         timer_start_info!(INIT_PROOFMAN);
 
         let (d_buffers, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
-            Self::prepare_gpu(&sctx, &setups_vadcop, aggregation, &gpu_params, &mpi_ctx);
-
-        if !verify_constraints {
-            initialize_fixed_pols_tree(&pctx, &sctx, &setups_vadcop, &d_buffers, aggregation, &gpu_params);
-        }
+            Self::prepare_gpu(&pctx, &sctx, &setups_vadcop, aggregation, &gpu_params, &mpi_ctx, &packed_info);
 
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));
 
@@ -891,7 +886,7 @@ where
             false => 1,
         };
 
-        let max_witness_trace_size = calculate_max_witness_trace_size(&pctx, &sctx, &pil_helpers, &gpu_params);
+        let max_witness_trace_size = calculate_max_witness_trace_size(&pctx, &sctx, &packed_info, &gpu_params);
 
         let memory_handler = Arc::new(MemoryHandler::new(pctx.clone(), max_witness_stored, max_witness_trace_size));
 
@@ -1009,6 +1004,7 @@ where
             worker_contributions: Arc::new(RwLock::new(Vec::new())),
             n_gpus: n_gpus as usize,
             max_witness_trace_size,
+            packed_info,
         })
     }
 
@@ -2103,7 +2099,7 @@ where
 
         self.wcm.execute();
 
-        print_summary_info(&self.pctx, &self.sctx, &self.mpi_ctx);
+        print_summary_info(&self.pctx, &self.sctx, &self.mpi_ctx, &self.packed_info);
 
         timer_stop_and_log_info!(EXECUTE);
         Ok(())
@@ -2455,11 +2451,13 @@ where
     }
 
     fn prepare_gpu(
+        pctx: &ProofCtx<F>,
         sctx: &SetupCtx<F>,
         setups_vadcop: &SetupsVadcop<F>,
         aggregation: bool,
         gpu_params: &ParamsGPU,
         mpi_ctx: &MpiCtx,
+        packed_info: &HashMap<(usize, usize), PackedInfo>,
     ) -> (Arc<DeviceBuffer>, u64, u64, u64) {
         let mut free_memory_gpu = match cfg!(feature = "gpu") {
             true => {
@@ -2568,6 +2566,10 @@ where
             sctx.max_n_bits_ext as u64,
         );
 
+        if cfg!(feature = "gpu") {
+            initialize_setup_gpu(pctx, sctx, setups_vadcop, &d_buffers, aggregation, packed_info, gpu_params);
+        }
+
         (d_buffers, n_streams_per_gpu as u64, n_recursive_streams_per_gpu as u64, n_gpus)
     }
 
@@ -2626,8 +2628,6 @@ where
         *proofs[instance_id].write().unwrap() =
             Some(Proof::new(ProofType::Basic, airgroup_id, air_id, Some(instance_id), proof));
 
-        let packed_info = pctx.get_packed_info(instance_id);
-
         gen_proof_c(
             p_setup,
             p_steps_params,
@@ -2642,7 +2642,6 @@ where
             stream_id as u64,
             &const_pols_path,
             &const_pols_tree_path,
-            packed_info.as_ffi().get_ptr(),
         );
 
         if cfg!(not(feature = "gpu")) {
@@ -2879,8 +2878,6 @@ where
 
         let air_values = &pctx.get_air_instance_air_values(airgroup_id, air_id, air_instance_id);
 
-        let packed_info = pctx.get_packed_info(instance_id);
-
         commit_witness_c(
             3,
             setup.stark_info.stark_struct.n_bits,
@@ -2894,7 +2891,6 @@ where
             aux_trace_contribution_ptr,
             d_buffers.get_ptr(),
             (&setup.p_setup).into(),
-            packed_info.as_ffi().get_ptr(),
         );
 
         let n_airvalues = setup

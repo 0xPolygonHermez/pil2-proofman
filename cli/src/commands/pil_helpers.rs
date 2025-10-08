@@ -33,6 +33,15 @@ pub struct PilHelpersCmd {
     pub verbose: u8, // Using u8 to hold the number of `-v`
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct PackInfo {
+    airgroup_id: usize,
+    air_id: usize,
+    is_packed: bool,
+    num_packed_words: u64,
+    unpack_info: String,
+}
+
 #[derive(Clone, Serialize)]
 struct ProofCtx {
     project_name: String,
@@ -45,6 +54,7 @@ struct ProofCtx {
     proof_values: Vec<ValuesCtx>,
     publics: Vec<ValuesCtx>,
     has_packed: bool,
+    packed_info: Vec<PackInfo>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -285,9 +295,11 @@ impl PilHelpersCmd {
             });
 
         // Build columns data for traces
+        let mut packed_info: Vec<PackInfo> = Vec::new();
         for (airgroup_id, airgroup) in pilout.air_groups.iter().enumerate() {
             for (air_id, _) in airgroup.airs.iter().enumerate() {
                 let air = wcctxs[airgroup_id].airs.get_mut(air_id).unwrap();
+                let is_packed = air.has_packed;
                 air.custom_columns = pilout.air_groups[airgroup_id].airs[air_id]
                     .custom_commits
                     .iter()
@@ -300,6 +312,7 @@ impl PilHelpersCmd {
                     .collect();
 
                 // Search symbols where airgroup_id == airgroup_id && air_id == air_id && type == WitnessCol
+                let mut vec_bits = vec![];
                 pilout
                     .symbols
                     .iter()
@@ -389,6 +402,8 @@ impl PilHelpersCmd {
                                 _ => format!("ubit({})", bits), // dynamically include bits
                             };
 
+                            let total_lengths = symbol.lengths.iter().product::<u32>();
+                            vec_bits.extend(vec![bits as u64; total_lengths as usize]);
                             if symbol.lengths.is_empty() {
                                 type_bits.to_string()
                             } else {
@@ -467,6 +482,11 @@ impl PilHelpersCmd {
                             });
                         }
                     });
+                if is_packed {
+                    let num_packed_words = vec_bits.iter().sum::<u64>().div_ceil(64);
+                    let unpack_info = vec_bits.iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", ");
+                    packed_info.push(PackInfo { airgroup_id, air_id, is_packed: true, num_packed_words, unpack_info });
+                }
             }
         }
 
@@ -481,6 +501,7 @@ impl PilHelpersCmd {
             publics,
             proof_values,
             has_packed,
+            packed_info,
         };
 
         const MOD_RS: &str = include_str!("../../assets/templates/pil_helpers_mod.rs.tt");

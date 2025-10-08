@@ -1,4 +1,5 @@
 use std::os::raw::c_void;
+use serde::Serialize;
 
 #[derive(Debug)]
 #[repr(C)]
@@ -15,7 +16,7 @@ impl PackedInfoFFI {
 }
 
 /// Safe Rust version
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, Serialize)]
 pub struct PackedInfo {
     pub is_packed: bool,
     pub num_packed_words: u64,
@@ -33,5 +34,19 @@ impl PackedInfo {
             num_packed_words: self.num_packed_words,
             unpack_info: self.unpack_info.as_ptr() as *mut u64,
         }
+    }
+}
+
+/// Safe Rust version
+#[derive(Default, Debug, Clone, Serialize)]
+pub struct PackedInfoConst {
+    pub is_packed: bool,
+    pub num_packed_words: u64,
+    pub unpack_info: &'static [u64],
+}
+
+impl PackedInfoConst {
+    pub fn new(is_packed: bool, num_packed_words: u64, unpack_info: &'static [u64]) -> Self {
+        Self { is_packed, num_packed_words, unpack_info }
     }
 }

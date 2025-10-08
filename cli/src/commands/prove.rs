@@ -141,7 +141,7 @@ impl ProveCmd {
             self.final_snark,
             gpu_params,
             self.verbose.into(),
-            None,
+            HashMap::new(),
         )?;
 
         if debug_info.std_mode.name == ModeName::Debug {

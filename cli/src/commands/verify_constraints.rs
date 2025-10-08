@@ -78,7 +78,7 @@ impl VerifyConstraintsCmd {
             false,
             ParamsGPU::default(),
             self.verbose.into(),
-            None,
+            HashMap::new(),
         )?;
 
         match self.field {

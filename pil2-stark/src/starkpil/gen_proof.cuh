@@ -151,9 +151,9 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
        d_transcript->put(d_challenge, FIELD_EXTENSION, stream); 
     }
     
-    if (!recursive && !skipRecalculation && d_buffers->streamsData[stream_id].packedInfo != nullptr && d_buffers->streamsData[stream_id].packedInfo->is_packed) {
+    if (!recursive && !skipRecalculation && air_instance_info->is_packed) {
         uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm1"];
-        unpack_trace(d_buffers->streamsData[stream_id].packedInfo, (uint64_t*)h_params.trace + N * nCols, (uint64_t*)h_params.trace, nCols, N, stream, timer);  
+        unpack_trace(air_instance_info, (uint64_t*)h_params.trace + N * nCols, (uint64_t*)h_params.trace, nCols, N, stream, timer);  
     }
     TimerStopGPU(timer, STARK_STEP_0);
     

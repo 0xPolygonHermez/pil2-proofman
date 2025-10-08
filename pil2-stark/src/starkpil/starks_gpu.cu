@@ -47,11 +47,18 @@ __global__ void unpack(
     uint64_t nRows,
     uint64_t nCols,
     uint64_t words_per_row,
-    uint64_t *d_unpack_info
+    const uint64_t *d_unpack_info
 ) {
+    extern __shared__ uint64_t shared_mem[];
+    uint64_t* shared_unpack_info = shared_mem;
+
+    // Load unpack info
+    if (threadIdx.x < nCols)
+        shared_unpack_info[threadIdx.x] = d_unpack_info[threadIdx.x];
+    __syncthreads();
+
     uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
     if (row >= nRows) return;
-
     const uint64_t* packed_row = src + row * words_per_row;
     uint64_t* unpacked_row = dst + row * nCols;
 
@@ -61,16 +68,14 @@ __global__ void unpack(
 
     #pragma unroll
     for (uint64_t c = 0; c < nCols; c++) {
-        uint64_t nbits = d_unpack_info[c];
+        uint64_t nbits = shared_unpack_info[c];
         uint64_t val;
-
         uint64_t bits_left = 64 - bit_offset;
 
         if (nbits <= bits_left) {
             uint64_t mask = (nbits == 64) ? ~0ULL : ((1ULL << nbits) - 1ULL);
             val = (word >> bit_offset) & mask;
             bit_offset += nbits;
-
             if (bit_offset == 64 && word_idx + 1 < words_per_row) {
                 word = packed_row[++word_idx];
                 bit_offset = 0;
@@ -88,7 +93,7 @@ __global__ void unpack(
 }
 
 void unpack_trace(
-    PackedInfo *packedInfo,
+    AirInstanceInfo *air_instance_info,
     uint64_t* src,
     uint64_t* dst,
     uint64_t nCols,
@@ -96,24 +101,21 @@ void unpack_trace(
     cudaStream_t stream,
     TimerGPU &timer
 ) {
-    TimerStartCategoryGPU(timer, UNPACK_TRACE);
-    uint64_t* d_unpack_info;
-    cudaMalloc(&d_unpack_info, nCols * sizeof(uint64_t));
-    cudaMemcpy(d_unpack_info, packedInfo->unpack_info, nCols * sizeof(uint64_t), cudaMemcpyHostToDevice);
-
-    dim3 threads(256);
+    dim3 threads(512);
     dim3 blocks((nRows + threads.x - 1) / threads.x);
-    unpack<<<blocks, threads, 0, stream>>>(
+
+    size_t sharedMemSize = nCols * sizeof(uint64_t);
+    TimerStartCategoryGPU(timer, UNPACK_TRACE);
+    unpack<<<blocks, threads, sharedMemSize, stream>>>(
         src,
         dst,
         nRows,
         nCols,
-        packedInfo->num_packed_words,
-        d_unpack_info
+        air_instance_info->num_packed_words,
+        air_instance_info->unpack_info
     );
-    CHECKCUDAERR(cudaGetLastError());
-    cudaFree(d_unpack_info);
     TimerStopCategoryGPU(timer, UNPACK_TRACE);
+    CHECKCUDAERR(cudaGetLastError());
 }
 
 void computeZerofier(Goldilocks::Element *d_zi, uint64_t nBits, uint64_t nBitsExt, cudaStream_t stream) {
