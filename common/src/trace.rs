@@ -25,28 +25,30 @@ pub trait TraceRow: Copy + Default + Send {
 }
 
 pub struct GenericTrace<
-    F,
     R: TraceRow,
     const NUM_ROWS: usize,
     const AIRGROUP_ID: usize,
     const AIR_ID: usize,
     const COMMIT_ID: usize = 0,
 > {
+    // Buffer of rows
     pub buffer: Vec<R>,
-    original_len: usize,
-    original_capacity: usize,
+
+    // Length of the original Vec<F>. If zero, indicates buffer was created internally and can be dropped normally
+    src_buffer_len: usize,
+
+    // Capacity of the original Vec<F>. If zero, indicates buffer was created internally and can be dropped normally
+    src_buffer_capacity: usize,
+
+    // Number of bytes per F element in original buffer
+    src_element_size: usize,
+
+    // Whether the buffer was created from scratch (false) or over an existing Vec<F> (true) to reuse memory
     pub shared_buffer: bool,
-    _phantom: std::marker::PhantomData<F>,
 }
 
-impl<
-        F: Default + Clone + Copy + Send,
-        R: TraceRow,
-        const NUM_ROWS: usize,
-        const AIRGROUP_ID: usize,
-        const AIR_ID: usize,
-        const COMMIT_ID: usize,
-    > GenericTrace<F, R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
+impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID: usize, const COMMIT_ID: usize>
+    GenericTrace<R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
 {
     pub const NUM_ROWS: usize = NUM_ROWS;
     pub const AIRGROUP_ID: usize = AIRGROUP_ID;
@@ -65,7 +67,7 @@ impl<
 
         let buffer: Vec<R> = vec![R::default(); num_rows];
 
-        Self { buffer, original_len: 0, original_capacity: 0, shared_buffer: false, _phantom: std::marker::PhantomData }
+        Self { buffer, src_buffer_len: 0, src_buffer_capacity: 0, src_element_size: 0, shared_buffer: false }
     }
 
     pub fn with_capacity(num_rows: usize) -> Self {
@@ -88,10 +90,10 @@ impl<
             }
         }
 
-        Self { buffer, original_len: 0, original_capacity: 0, shared_buffer: false, _phantom: std::marker::PhantomData }
+        Self { buffer, src_buffer_len: 0, src_buffer_capacity: 0, src_element_size: 0, shared_buffer: false }
     }
 
-    pub fn new_from_vec_zeroes(mut buffer: Vec<F>) -> Self {
+    pub fn new_from_vec_zeroes<F: Default + Clone + Send>(mut buffer: Vec<F>) -> Self {
         let row_size = R::ROW_SIZE;
         let num_rows = NUM_ROWS;
         let used_len = num_rows * row_size;
@@ -108,15 +110,18 @@ impl<
         });
 
         let ptr = buffer.as_mut_ptr();
-        let original_len = buffer.len();
-        let original_capacity = buffer.capacity();
+        let src_buffer_len = buffer.len();
+        let src_buffer_capacity = buffer.capacity();
+        let src_element_size = std::mem::size_of::<F>();
+
         std::mem::forget(buffer);
+
         let buffer = unsafe { Vec::from_raw_parts(ptr as *mut R, num_rows, num_rows) };
 
-        Self { buffer, original_len, original_capacity, shared_buffer: true, _phantom: std::marker::PhantomData }
+        Self { buffer, src_buffer_len, src_buffer_capacity, src_element_size, shared_buffer: true }
     }
 
-    pub fn new_from_vec(mut buffer: Vec<F>) -> Self {
+    pub fn new_from_vec<F>(mut buffer: Vec<F>) -> Self {
         let row_size = R::ROW_SIZE;
         let num_rows = NUM_ROWS;
         let expected_len = num_rows * row_size;
@@ -136,15 +141,18 @@ impl<
         }
 
         let ptr = buffer.as_mut_ptr();
-        let original_len = buffer.len();
-        let original_capacity = buffer.capacity();
+        let src_buffer_len = buffer.len();
+        let src_buffer_capacity = buffer.capacity();
+        let src_element_size = std::mem::size_of::<F>();
+
         std::mem::forget(buffer);
+
         let buffer = unsafe { Vec::from_raw_parts(ptr as *mut R, num_rows, num_rows) };
 
-        Self { buffer, original_len, original_capacity, shared_buffer: true, _phantom: std::marker::PhantomData }
+        Self { buffer, src_buffer_len, src_buffer_capacity, src_element_size, shared_buffer: true }
     }
 
-    pub fn from_vec(mut buffer: Vec<F>) -> Self {
+    pub fn from_vec<F>(mut buffer: Vec<F>) -> Self {
         let row_size = R::ROW_SIZE;
         let num_rows = NUM_ROWS;
         let expected_len = num_rows * row_size;
@@ -154,12 +162,15 @@ impl<
         assert!(num_rows & (num_rows - 1) == 0);
 
         let ptr = buffer.as_mut_ptr();
-        let original_len = buffer.len();
-        let original_capacity = buffer.capacity();
+        let src_buffer_len = buffer.len();
+        let src_buffer_capacity = buffer.capacity();
+        let src_element_size = std::mem::size_of::<F>();
+
         std::mem::forget(buffer);
+
         let buffer = unsafe { Vec::from_raw_parts(ptr as *mut R, num_rows, num_rows) };
 
-        Self { buffer, original_len, original_capacity, shared_buffer: true, _phantom: std::marker::PhantomData }
+        Self { buffer, src_buffer_len, src_buffer_capacity, src_element_size, shared_buffer: true }
     }
 
     pub fn par_iter_mut_chunks(&mut self, n: usize) -> impl IndexedParallelIterator<Item = &mut [R]> {
@@ -170,22 +181,25 @@ impl<
         self.buffer.par_chunks_mut(chunk_size)
     }
 
-    pub fn get_buffer(&mut self) -> Vec<F> {
+    pub fn get_buffer<F>(&mut self) -> Vec<F> {
         let mut buffer = std::mem::take(&mut self.buffer);
 
-        if self.original_capacity == 0 {
+        if !self.shared_buffer {
             // Buffer was created internally, not from external Vec<F>
             let len = NUM_ROWS * R::ROW_SIZE;
             return unsafe { Vec::from_raw_parts(buffer.as_ptr() as *mut F, len, len) };
         }
 
         // Buffer was created from external Vec<F>, restore original metadata
-        let original_len = self.original_len;
-        let original_capacity = self.original_capacity;
         let ptr = buffer.as_mut_ptr();
+        let original_len = self.src_buffer_len;
+        let original_capacity = self.src_buffer_capacity;
+
         std::mem::forget(buffer);
-        self.original_len = 0; // prevent double free
-        self.original_capacity = 0;
+
+        self.src_buffer_len = 0; // prevent double free
+        self.src_buffer_capacity = 0;
+
         unsafe { Vec::from_raw_parts(ptr as *mut F, original_len, original_capacity) }
     }
 
@@ -230,7 +244,7 @@ impl<
         const AIRGROUP_ID: usize,
         const AIR_ID: usize,
         const COMMIT_ID: usize,
-    > crate::trace::Trace<F> for GenericTrace<F, R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
+    > crate::trace::Trace<F> for GenericTrace<R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
 {
     fn num_rows(&self) -> usize {
         NUM_ROWS
@@ -273,14 +287,8 @@ impl<
     }
 }
 
-impl<
-        F: Default + Clone + Copy + Send,
-        R: TraceRow,
-        const NUM_ROWS: usize,
-        const AIRGROUP_ID: usize,
-        const AIR_ID: usize,
-        const COMMIT_ID: usize,
-    > std::ops::Index<usize> for GenericTrace<F, R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
+impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID: usize, const COMMIT_ID: usize>
+    std::ops::Index<usize> for GenericTrace<R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
 {
     type Output = R;
 
@@ -289,31 +297,25 @@ impl<
     }
 }
 
-impl<
-        F: Default + Clone + Copy + Send,
-        R: TraceRow,
-        const NUM_ROWS: usize,
-        const AIRGROUP_ID: usize,
-        const AIR_ID: usize,
-        const COMMIT_ID: usize,
-    > std::ops::IndexMut<usize> for GenericTrace<F, R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
+impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID: usize, const COMMIT_ID: usize>
+    std::ops::IndexMut<usize> for GenericTrace<R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
 {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.buffer[index]
     }
 }
 
-impl<F, R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID: usize, const COMMIT_ID: usize> Drop
-    for GenericTrace<F, R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
+impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID: usize, const COMMIT_ID: usize> Drop
+    for GenericTrace<R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
 {
     fn drop(&mut self) {
-        if self.original_capacity == 0 {
+        if !self.shared_buffer {
             // Buffer was created internally, drop normally
             // The Vec<R> will handle its own cleanup
         } else {
             // Buffer was created from external Vec<F>, need to restore original metadata
-            let original_len = self.original_len;
-            let original_capacity = self.original_capacity;
+            let src_buffer_len = self.src_buffer_len * self.src_element_size;
+            let src_buffer_capacity = self.src_buffer_capacity * self.src_element_size;
 
             // Take ownership of the buffer to prevent double-drop
             let buffer = std::mem::take(&mut self.buffer);
@@ -322,7 +324,8 @@ impl<F, R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_
 
             // Reconstruct the original Vec<F> with correct length and capacity
             unsafe {
-                let _original_buffer = Vec::from_raw_parts(ptr as *mut F, original_len, original_capacity);
+                // NOTE: This is safe because we are restoring the original buffer
+                let _original_buffer = Vec::from_raw_parts(ptr as *mut u8, src_buffer_len, src_buffer_capacity);
                 // _original_buffer will be dropped automatically here
             }
         }
@@ -347,7 +350,7 @@ mod tests {
         (0..len as u64).collect()
     }
 
-    type SampleTrace = GenericTrace<u64, SampleTestRow, 16, 2, 7>; // 16 rows, row_size 4 => flat 64 elements
+    type SampleTrace = GenericTrace<SampleTestRow, 16, 2, 7>; // 16 rows, row_size 4 => flat 64 elements
 
     #[test]
     fn new_zeroes_initializes_rows() {
@@ -369,11 +372,11 @@ mod tests {
     fn new_from_vec_zeroes_sets_all_zero_and_marks_shared() {
         // Provide larger buffer than needed to ensure slicing works
         let buf = vec![123u64; 16 * SampleTestRow::ROW_SIZE + 10];
-        let mut t = GenericTrace::<u64, SampleTestRow, 16, 0, 0>::new_from_vec_zeroes(buf.clone());
+        let mut t = GenericTrace::<SampleTestRow, 16, 0, 0>::new_from_vec_zeroes(buf.clone());
         assert!(t.is_shared_buffer());
         assert_eq!(t.buffer.len(), 16);
         // Convert back to flat representation safely via get_buffer()
-        let flat = t.get_buffer();
+        let flat: Vec<u64> = t.get_buffer();
         assert_eq!(flat.len(), 16 * SampleTestRow::ROW_SIZE);
         assert!(flat.iter().all(|&x| x == 0), "expected all zeroes after zero-initialization");
     }
@@ -382,7 +385,7 @@ mod tests {
     fn new_from_vec_keeps_shared_flag() {
         let flat_len = 16 * SampleTestRow::ROW_SIZE;
         let buf = make_buffer(flat_len);
-        let t = GenericTrace::<u64, SampleTestRow, 16, 2, 7>::new_from_vec(buf);
+        let t = GenericTrace::<SampleTestRow, 16, 2, 7>::new_from_vec(buf);
         assert!(t.is_shared_buffer());
         assert_eq!(t.airgroup_id(), 2);
         assert_eq!(t.air_id(), 7);
@@ -393,7 +396,7 @@ mod tests {
     fn from_vec_alias() {
         let flat_len = 16 * SampleTestRow::ROW_SIZE;
         let buf = make_buffer(flat_len);
-        let t = GenericTrace::<u64, SampleTestRow, 16, 0, 0>::from_vec(buf);
+        let t = GenericTrace::<SampleTestRow, 16, 0, 0>::from_vec(buf);
         assert!(t.is_shared_buffer());
     }
 
@@ -430,8 +433,8 @@ mod tests {
     fn get_buffer_converts_back_to_flat() {
         let flat_len = 16 * SampleTestRow::ROW_SIZE;
         let buf = make_buffer(flat_len);
-        let mut t = GenericTrace::<u64, SampleTestRow, 16, 0, 0>::new_from_vec(buf.clone());
-        let recovered = t.get_buffer();
+        let mut t = GenericTrace::<SampleTestRow, 16, 0, 0>::new_from_vec(buf.clone());
+        let recovered: Vec<u64> = t.get_buffer();
         assert_eq!(recovered.len(), flat_len);
         // We can't guarantee ordering semantics without knowing row representation layout, but we can at least
         // check capacity/length match expectation.
