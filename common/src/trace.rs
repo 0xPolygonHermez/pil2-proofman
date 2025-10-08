@@ -332,6 +332,7 @@ mod tests {
     struct SampleTestRow;
     impl TraceRow for SampleTestRow {
         const ROW_SIZE: usize = 4;
+        const IS_PACKED: bool = false;
     }
 
     // Helper to build a flat buffer of F (u64 here) with sequential numbers
@@ -366,8 +367,18 @@ mod tests {
         assert_eq!(t.buffer.len(), 16);
         // Convert back to flat representation safely via get_buffer()
         let flat: Vec<u64> = t.get_buffer();
-        assert_eq!(flat.len(), 16 * SampleTestRow::ROW_SIZE);
-        assert!(flat.iter().all(|&x| x == 0), "expected all zeroes after zero-initialization");
+        // get_buffer() returns the original buffer with original length (74 elements)
+        assert_eq!(flat.len(), 16 * SampleTestRow::ROW_SIZE + 10);
+        // Only the first 64 elements (used portion) should be zeroed
+        assert!(
+            flat[..16 * SampleTestRow::ROW_SIZE].iter().all(|&x| x == 0),
+            "expected used portion to be zeroed after zero-initialization"
+        );
+        // The remaining elements should retain original values (123)
+        assert!(
+            flat[16 * SampleTestRow::ROW_SIZE..].iter().all(|&x| x == 123),
+            "expected unused portion to retain original values"
+        );
     }
 
     #[test]

@@ -19,8 +19,8 @@ mod tests {
     );
 
     // This will generate MainRowPacked and MainRowUnpacked structs
-    pub type MainTrace<F> = GenericTrace<F, MainRow<F>, 128, 0, 0>;
-    pub type MainTracePacked<F> = GenericTrace<F, MainRowPacked<F>, 128, 0, 0>;
+    pub type MainTrace<F> = GenericTrace<MainRow<F>, 128, 0, 0>;
+    pub type MainTracePacked<F> = GenericTrace<MainRowPacked<F>, 128, 0, 0>;
 
     #[test]
     fn test_packed_trace() {
