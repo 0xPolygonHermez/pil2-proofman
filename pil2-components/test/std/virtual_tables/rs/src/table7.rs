@@ -23,7 +23,7 @@ impl Table7 {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             instance_ids: std::sync::RwLock::new(Vec::new()),
-            multiplicity: create_atomic_vec(Table7Trace::<usize>::NUM_ROWS),
+            multiplicity: create_atomic_vec(Table7Trace::<F>::NUM_ROWS),
             calculated: AtomicBool::new(false),
         })
     }
