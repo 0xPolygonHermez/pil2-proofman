@@ -45,6 +45,17 @@ void ntt_cuda( gl64_t *data, gl64_t **d_r, gl64_t **d_fwd_twiddle_factors, gl64_
 void ntt_cuda_blocks( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size_in, uint32_t log_domain_size_out, uint32_t ncols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize, gl64_t *aux_data);
 
 
+__global__ void printDataKernel_(gl64_t *data, uint32_t domain_size, uint32_t ncols){
+    Goldilocks::Element * data_print = (Goldilocks::Element *) data;
+
+    printf("Abans Domain size %u, ncols %u\n", domain_size, ncols);
+    for( int i = 0; i < domain_size*ncols; ++i){
+        printf("%lu ", data_print[i].fe);
+        
+    }
+    printf("\n");
+} 
+
 __global__ void printDataKernel(gl64_t *data, uint32_t domain_size, uint32_t ncols){
     Goldilocks::Element * data_print = (Goldilocks::Element *) data;
 
@@ -197,15 +208,15 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
 
     //CHECKCUDAERR(cudaMemcpyAsync(d_dst_ntt_, d_src_ntt_, size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice, stream));
     //CHECKCUDAERR(cudaMemsetAsync(d_dst_ntt_ + size * ncols, 0, (ext_size - size) * ncols * sizeof(gl64_t), stream));
-    /*dim3 block(32, 4);
+    dim3 block(32, 4);
     dim3 grid((size + block.x - 1) / block.x,
              (ncols + block.y - 1) / block.y);
-    size_t sharedMemSize = block.x * block.y * sizeof(gl64_t);*/
+    size_t sharedMemSize = block.x * block.y * sizeof(gl64_t);
     
     //std::cout <<" print 1 " <<std::endl;
     //printDataKernel<<<1,1,0,stream>>>(d_dst_ntt_, ext_size, ncols);
 
-    //prepareBlocksInputRowMajor<<<grid, block, sharedMemSize, stream>>>(d_dst_ntt_, d_src_ntt_, size, ncols); 
+    prepareBlocksInputRowMajor<<<grid, block, sharedMemSize, stream>>>(d_dst_ntt_, d_src_ntt_, size, ncols); 
         
     //std::cout <<" print 2 " <<std::endl;
     //printDataKernel<<<1,1,0,stream>>>(d_dst_ntt_, ext_size, ncols);
@@ -217,17 +228,17 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
 
 
     //put inputs in blocks of 4 columns
-    //ntt_cuda_blocks(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, n_bits_ext, ncols, true, true, stream, maxLogDomainSize, d_src_ntt_); //apply NTT in those blocks
+    ntt_cuda_blocks(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, n_bits_ext, ncols, true, true, stream, maxLogDomainSize, d_src_ntt_); //apply NTT in those blocks
     
     
     //fromBlocksToRowMajor<<<grid, block, sharedMemSize, stream>>>(d_src_ntt_, d_dst_ntt_, size, ncols); //put result again into row major
     //CHECKCUDAERR(cudaMemcpyAsync(d_dst_ntt_, d_src_ntt_, size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice, stream));
     //CHECKCUDAERR(cudaMemsetAsync(d_dst_ntt_ + size * ncols, 0, (ext_size - size) * ncols * sizeof(gl64_t), stream));
 
-    CHECKCUDAERR(cudaMemcpyAsync(d_dst_ntt_, d_src_ntt_, size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice, stream));
-    CHECKCUDAERR(cudaMemsetAsync(d_dst_ntt_ + size * ncols, 0, (ext_size - size) * ncols * sizeof(gl64_t), stream));
+    //CHECKCUDAERR(cudaMemcpyAsync(d_dst_ntt_, d_src_ntt_, size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice, stream));
+    //CHECKCUDAERR(cudaMemsetAsync(d_dst_ntt_ + size * ncols, 0, (ext_size - size) * ncols * sizeof(gl64_t), stream));
 
-    ntt_cuda(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, ncols, true, true, stream, maxLogDomainSize);
+    //ntt_cuda(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, ncols, true, true, stream, maxLogDomainSize);
     ntt_cuda(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, ncols, false, false, stream, maxLogDomainSize);
 
     TimerStopCategoryGPU(timer, NTT);
@@ -713,6 +724,8 @@ __global__ void reverse_permutation_blocks(gl64_t *data, uint32_t log2_domain_si
         uint64_t rowr = (__brev(r) >> (32 - log2_domain_size_in));
         if (rowr > r) 
         {
+            assert(r * ncols_block + threadIdx.x < domain_size_in * ncols_block);
+            assert(rowr * ncols_block + threadIdx.x < domain_size_in * ncols_block);
             gl64_t tmp = data_block[r * ncols_block + threadIdx.x];
             data_block[r * ncols_block + threadIdx.x] = data_block[rowr * ncols_block + threadIdx.x];
             data_block[rowr * ncols_block + threadIdx.x] = tmp;   
@@ -922,13 +935,17 @@ void ntt_cuda_blocks( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factor
 
     dim3 blockDim;
     dim3 gridDim;
-    Goldilocks::Element * data_print = (Goldilocks::Element *) data;
-    //blockDim = dim3(4);
-    //gridDim = dim3(1024,(ncols + 3) / 4);
+    blockDim = dim3(4);
+    gridDim = dim3(1024,(ncols + 3) / 4);
 
     //printDataKernel<<<1,1,0,stream>>>(data, domain_size_out, ncols);
+    printDataKernel_<<<1,1,0,stream>>>(data, domain_size_out, ncols);
 
-    //reverse_permutation_blocks<<<gridDim, blockDim, 0, stream>>>(data, log_domain_size_in, domain_size_out, ncols);
+    reverse_permutation_blocks<<<gridDim, blockDim, 0, stream>>>(data, log_domain_size_in, domain_size_out, ncols);
+    reverse_permutation_blocks<<<gridDim, blockDim, 0, stream>>>(data, log_domain_size_in, domain_size_out, ncols);
+
+    printDataKernel_<<<1,1,0,stream>>>(data, domain_size_out, ncols);
+
 
     //printDataKernel<<<1,1,0,stream>>>(data, domain_size_out, ncols);
 
