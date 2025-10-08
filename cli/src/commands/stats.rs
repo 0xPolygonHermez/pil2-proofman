@@ -95,7 +95,7 @@ impl StatsCmd {
             false,
             gpu_params,
             self.verbose.into(),
-            None,
+            HashMap::new(),
         )?;
 
         match self.field {

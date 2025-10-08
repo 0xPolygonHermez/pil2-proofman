@@ -36,7 +36,7 @@ mod tests {
         trace_packed[0].set_field2(1, 1, 333);
         trace_packed[0].set_field2(2, 0, 97);
         trace_packed[0].set_field2(2, 1, 4);
-        
+
         // Test field3: [[[u16; 4]; 2], 3] - 3D array
         trace_packed[0].set_field3(0, 0, 0, 100u16);
         trace_packed[0].set_field3(0, 0, 1, 101u16);
@@ -72,7 +72,7 @@ mod tests {
         trace[0].set_field2(1, 1, 333);
         trace[0].set_field2(2, 0, 97);
         trace[0].set_field2(2, 1, 4);
-        
+
         // Test field3: [[[u16; 4]; 2], 3] - 3D array
         trace[0].set_field3(0, 0, 0, 100u16);
         trace[0].set_field3(0, 0, 1, 101u16);
@@ -107,7 +107,7 @@ mod tests {
         assert_eq!(trace[0].get_field2(1, 1), trace_packed[0].get_field2(1, 1));
         assert_eq!(trace[0].get_field2(2, 0), trace_packed[0].get_field2(2, 0));
         assert_eq!(trace[0].get_field2(2, 1), trace_packed[0].get_field2(2, 1));
-        
+
         // Test field3 assertions
         assert_eq!(trace[0].get_field3(0, 0, 0), trace_packed[0].get_field3(0, 0, 0));
         assert_eq!(trace[0].get_field3(0, 0, 1), trace_packed[0].get_field3(0, 0, 1));
@@ -133,6 +133,5 @@ mod tests {
         assert_eq!(trace[0].get_field3(2, 1, 1), trace_packed[0].get_field3(2, 1, 1));
         assert_eq!(trace[0].get_field3(2, 1, 2), trace_packed[0].get_field3(2, 1, 2));
         assert_eq!(trace[0].get_field3(2, 1, 3), trace_packed[0].get_field3(2, 1, 3));
-        
     }
 }

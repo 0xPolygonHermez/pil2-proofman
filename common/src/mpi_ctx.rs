@@ -17,10 +17,15 @@ use crate::GlobalInfo;
 #[cfg(distributed)]
 use crate::Proof;
 
+use std::sync::Arc;
+use once_cell::sync::OnceCell;
+
 #[cfg(distributed)]
 use proofman_starks_lib_c::{
     initialize_agg_readiness_tracker_c, free_agg_readiness_tracker_c, agg_is_ready_c, reset_agg_readiness_tracker_c,
 };
+
+pub static MPI_CTX: OnceCell<Arc<MpiCtx>> = OnceCell::new();
 
 pub struct MpiCtx {
     #[cfg(distributed)]
@@ -41,7 +46,11 @@ impl Default for MpiCtx {
 }
 
 impl MpiCtx {
-    pub fn new() -> Self {
+    pub fn global() -> Arc<MpiCtx> {
+        MPI_CTX.get_or_init(|| Arc::new(MpiCtx::new())).clone()
+    }
+
+    fn new() -> Self {
         #[cfg(distributed)]
         {
             let (universe, _threading) = mpi::initialize_with_threading(mpi::Threading::Multiple)

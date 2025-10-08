@@ -26,6 +26,7 @@ crossbeam-channel.workspace = true
 borsh.workspace = true
 num_cpus = "1.17.0"
 env = "1.0.1"
+once_cell.workspace = true
 
 tracing-subscriber = { version = "0.3.19" }
 crossbeam-queue = "0.3.12"
@@ -40,6 +41,7 @@ no_lib_link = ["proofman-starks-lib-c/no_lib_link"]
 disable_distributed = []
 diagnostic = ["proofman-macros/diagnostic"]
 gpu = ["proofman-starks-lib-c/gpu"]
+packed = []
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(distributed)'] }

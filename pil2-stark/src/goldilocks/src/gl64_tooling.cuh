@@ -73,9 +73,13 @@ struct AirInstanceInfo {
 
     Goldilocks::Element *verkeyRoot;
 
+    bool is_packed = false;
+    uint64_t num_packed_words = 0;
+    uint64_t *unpack_info = nullptr;
+
     uint64_t nStreams = 1;
 
-    AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_, uint64_t nStreams_): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId), nStreams(nStreams_) {
+    AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_, PackedInfo *packedInfo, uint64_t nStreams_): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId), nStreams(nStreams_) {
         int64_t *d_openingPoints;
         CHECKCUDAERR(cudaMalloc(&d_openingPoints, setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t)));
         CHECKCUDAERR(cudaMemcpy(d_openingPoints, setupCtx->starkInfo.openingPoints.data(), setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t), cudaMemcpyHostToDevice));
@@ -193,6 +197,16 @@ struct AirInstanceInfo {
         
         delete[] evalsInfoFRISizes_;
         delete[] evalsInfoByOpeningPos;
+
+        if (packedInfo != nullptr) {
+            is_packed = packedInfo->is_packed;
+            num_packed_words = packedInfo->num_packed_words;
+            uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
+            if (is_packed && num_packed_words > 0) {
+                CHECKCUDAERR(cudaMalloc(&unpack_info, nCols * sizeof(uint64_t)));
+                CHECKCUDAERR(cudaMemcpy(unpack_info, packedInfo->unpack_info, nCols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+            }
+        }
     }
 
     ~AirInstanceInfo() {
@@ -235,6 +249,10 @@ struct AirInstanceInfo {
         if (evalsInfoFRISizes != nullptr) {
             CHECKCUDAERR(cudaFree(evalsInfoFRISizes));
         }
+
+        if (unpack_info != nullptr) {
+            CHECKCUDAERR(cudaFree(unpack_info));
+        }
     }
 };
 
@@ -275,8 +293,6 @@ struct StreamData{
     bool recursive;
     bool extraStream;
     uint64_t streamsUsed;
-
-    PackedInfo *packedInfo;
     
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_){
         uint64_t maxExps = 1000; // TODO: CALCULATE IT PROPERLY!
@@ -297,7 +313,6 @@ struct StreamData{
         extraStream = false;
         streamsUsed = 1;
         root = nullptr;
-        packedInfo = nullptr;
         pSetupCtx = nullptr;
         proofBuffer = nullptr;
         airgroupId = UINT64_MAX;

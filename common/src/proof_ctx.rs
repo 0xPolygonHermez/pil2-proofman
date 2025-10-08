@@ -2,7 +2,7 @@ use std::os::raw::c_void;
 use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 use std::sync::Arc;
-use crate::{MpiCtx, PackedInfo};
+use crate::MpiCtx;
 use borsh::{BorshDeserialize, BorshSerialize};
 
 use fields::PrimeField64;
@@ -175,6 +175,9 @@ impl Default for ParamsGPU {
             preallocate: false,
             max_number_streams: usize::MAX,
             number_threads_pools_witness: 4,
+            #[cfg(all(feature = "gpu", feature = "packed"))]
+            max_witness_stored: 10,
+            #[cfg(any(not(feature = "gpu"), not(feature = "packed")))]
             max_witness_stored: 4,
             single_instances: Vec::new(),
             pack_trace: true,
@@ -366,10 +369,6 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn is_air_instance_stored(&self, global_idx: usize) -> bool {
         !self.air_instances[global_idx].read().unwrap().trace.is_empty()
-    }
-
-    pub fn get_packed_info(&self, global_idx: usize) -> PackedInfo {
-        self.air_instances[global_idx].read().unwrap().get_packed_info()
     }
 
     pub fn dctx_broadcast(&self, buf: &mut Vec<u8>) {

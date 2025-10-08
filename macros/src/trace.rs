@@ -343,14 +343,6 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             fn is_packed(&self) -> bool {
                 false
             }
-
-            fn num_packed_words(&self) -> u64 {
-                0
-            }
-
-            fn unpack_info(&self) -> Vec<u64> {
-                vec![]
-            }
         }
     };
 

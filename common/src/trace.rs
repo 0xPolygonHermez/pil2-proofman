@@ -7,8 +7,6 @@ pub trait Trace<F>: Send {
     fn get_buffer(&mut self) -> Vec<F>;
     fn is_shared_buffer(&self) -> bool;
     fn is_packed(&self) -> bool;
-    fn num_packed_words(&self) -> u64;
-    fn unpack_info(&self) -> Vec<u64>;
 }
 
 pub trait Values<F>: Send {
@@ -20,10 +18,9 @@ use rayon::prelude::*;
 pub trait TraceRow: Copy + Default + Send {
     const ROW_SIZE: usize;
     const IS_PACKED: bool;
-    const PACKED_WORDS: usize;
-    const UNPACK_INFO: &'static [usize];
 }
 
+#[derive(Default)]
 pub struct GenericTrace<
     R: TraceRow,
     const NUM_ROWS: usize,
@@ -276,14 +273,6 @@ impl<
 
     fn is_packed(&self) -> bool {
         R::IS_PACKED
-    }
-
-    fn num_packed_words(&self) -> u64 {
-        R::PACKED_WORDS as u64
-    }
-
-    fn unpack_info(&self) -> Vec<u64> {
-        R::UNPACK_INFO.iter().map(|&x| x as u64).collect()
     }
 }
 
