@@ -50,7 +50,7 @@ __global__ void printDataKernel_(gl64_t *data, uint32_t domain_size, uint32_t nc
 
     printf("Abans Domain size %u, ncols %u\n", domain_size, ncols);
     for( int i = 0; i < domain_size*ncols; ++i){
-        printf("%lu ", data_print[i].fe);
+        printf("%lu, ", data_print[i].fe);
         
     }
     printf("\n");
@@ -61,7 +61,7 @@ __global__ void printDataKernel(gl64_t *data, uint32_t domain_size, uint32_t nco
 
     printf("Domain size %u, ncols %u\n", domain_size, ncols);
     for( int i = 0; i < domain_size*ncols; ++i){
-        printf("%lu ", data_print[i].fe);
+        printf("%lu, ", data_print[i].fe);
         
     }
     printf("\n");
@@ -203,7 +203,10 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
     uint64_t ext_size = 1 << n_bits_ext;    
     gl64_t *d_dst_ntt_ = &d_dst_ntt[offset_dst_ntt];
     gl64_t *d_src_ntt_ = &d_src_ntt[offset_src_ntt];
-
+    gl64_t *d_aux;
+    cudaMalloc(&d_aux, ext_size * ncols * sizeof(gl64_t));
+    cudaMemset(d_aux, 0, ext_size * ncols * sizeof(gl64_t));
+    
     //CHECKCUDAERR(cudaMemsetAsync(d_dst_ntt_ , 0, ext_size * ncols * sizeof(gl64_t), stream));
 
     //CHECKCUDAERR(cudaMemcpyAsync(d_dst_ntt_, d_src_ntt_, size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice, stream));
@@ -214,12 +217,12 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
     size_t sharedMemSize = block.x * block.y * sizeof(gl64_t);
     
     //std::cout <<" print 1 " <<std::endl;
-    //printDataKernel<<<1,1,0,stream>>>(d_dst_ntt_, ext_size, ncols);
+    printDataKernel_<<<1,1,0,stream>>>(d_src_ntt_, size, ncols);
 
     prepareBlocksInputRowMajor<<<grid, block, sharedMemSize, stream>>>(d_dst_ntt_, d_src_ntt_, size, ncols); 
         
     //std::cout <<" print 2 " <<std::endl;
-    //printDataKernel<<<1,1,0,stream>>>(d_dst_ntt_, ext_size, ncols);
+    // printDataKernel<<<1,1,0,stream>>>(d_dst_ntt_, ext_size, ncols);
 
     //fromBlocksToRowMajor<<<grid, block, sharedMemSize, stream>>>(d_src_ntt_, d_dst_ntt_, size, ncols); 
     
@@ -228,7 +231,7 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
 
 
     //put inputs in blocks of 4 columns
-    ntt_cuda_blocks(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, n_bits_ext, ncols, true, true, stream, maxLogDomainSize, d_src_ntt_); //apply NTT in those blocks
+    ntt_cuda_blocks(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, n_bits_ext, ncols, true, true, stream, maxLogDomainSize, d_aux); //apply NTT in those blocks
     
     
     //fromBlocksToRowMajor<<<grid, block, sharedMemSize, stream>>>(d_src_ntt_, d_dst_ntt_, size, ncols); //put result again into row major
@@ -239,8 +242,11 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
     //CHECKCUDAERR(cudaMemsetAsync(d_dst_ntt_ + size * ncols, 0, (ext_size - size) * ncols * sizeof(gl64_t), stream));
 
     //ntt_cuda(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, ncols, true, true, stream, maxLogDomainSize);
-    ntt_cuda(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, ncols, false, false, stream, maxLogDomainSize);
+    // ntt_cuda(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, ncols, false, false, stream, maxLogDomainSize);
 
+    ntt_cuda_blocks(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, ncols, false, false, stream, maxLogDomainSize, d_aux);
+    
+    cudaFree(d_aux);
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
     Poseidon2GoldilocksGPU::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_dst_ntt_, ncols, ext_size, stream);
@@ -938,33 +944,20 @@ void ntt_cuda_blocks( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factor
     blockDim = dim3(4);
     gridDim = dim3(1024,(ncols + 3) / 4);
 
-    //printDataKernel<<<1,1,0,stream>>>(data, domain_size_out, ncols);
-    printDataKernel_<<<1,1,0,stream>>>(data, domain_size_out, ncols);
-
     reverse_permutation_blocks<<<gridDim, blockDim, 0, stream>>>(data, log_domain_size_in, domain_size_out, ncols);
-    reverse_permutation_blocks<<<gridDim, blockDim, 0, stream>>>(data, log_domain_size_in, domain_size_out, ncols);
-
-    printDataKernel_<<<1,1,0,stream>>>(data, domain_size_out, ncols);
-
-
-    //printDataKernel<<<1,1,0,stream>>>(data, domain_size_out, ncols);
-
-    //reverse_permutation_blocks<<<gridDim, blockDim, 0, stream>>>(data, log_domain_size_in, domain_size_out, ncols);
     
-    //printDataKernel<<<1,1,0,stream>>>(data, domain_size_out, ncols);
+    // dim3 block(32, 4);
+    // dim3 grid((domain_size_in + block.x - 1) / block.x,
+    //          (ncols + block.y - 1) / block.y);
+    // size_t sharedMemSize = block.x * block.y * sizeof(gl64_t);
+    // fromBlocksToRowMajor<<<grid, block, sharedMemSize, stream>>>(aux_data, data, domain_size_in, ncols); //put result again into row major
+    // CHECKCUDAERR(cudaMemcpyAsync(data, aux_data, domain_size_in * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice, stream));
+    // CHECKCUDAERR(cudaMemsetAsync(data + domain_size_in * ncols, 0, (domain_size_out - domain_size_in) * ncols * sizeof(gl64_t), stream));
 
-    dim3 block(32, 4);
-    dim3 grid((domain_size_in + block.x - 1) / block.x,
-             (ncols + block.y - 1) / block.y);
-    size_t sharedMemSize = block.x * block.y * sizeof(gl64_t);
-    fromBlocksToRowMajor<<<grid, block, sharedMemSize, stream>>>(aux_data, data, domain_size_in, ncols); //put result again into row major
-    CHECKCUDAERR(cudaMemcpyAsync(data, aux_data, domain_size_in * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice, stream));
-    CHECKCUDAERR(cudaMemsetAsync(data + domain_size_in * ncols, 0, (domain_size_out - domain_size_in) * ncols * sizeof(gl64_t), stream));
-
-    blockDim = dim3(16);
-    gridDim = dim3(8192);
-    reverse_permutation_new<<<gridDim, blockDim, 0, stream>>>(data, log_domain_size_in, ncols);
-    printDataKernel<<<1,1,0,stream>>>(data, domain_size_out, ncols);
+    // blockDim = dim3(16);
+    // gridDim = dim3(8192);
+    // reverse_permutation_new<<<gridDim, blockDim, 0, stream>>>(aux_data, log_domain_size_in, ncols);
+    // printDataKernel<<<1,1,0,stream>>>(data, domain_size_out, ncols);
 
 
     CHECKCUDAERR(cudaGetLastError());
@@ -983,12 +976,14 @@ void ntt_cuda_blocks( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factor
 
     if(log_domain_size_in >= 8) {
          for(uint32_t step = 0; step < log_domain_size_in; step+=8){
-                br_ntt_8_steps<<<domain_size_in / 256, 256, 0, stream>>>(data, d_twiddles, d_r, domain_size_in, log_domain_size_in, ncols, step, true, inverse, extend, maxLogDomainSize, 0, ncols-1);
+                // br_ntt_8_steps<<<domain_size_in / 256, 256, 0, stream>>>(data, d_twiddles, d_r, domain_size_in, log_domain_size_in, ncols, step, true, inverse, extend, maxLogDomainSize, 0, ncols-1);
+                br_ntt_8_steps_blocks<<<domain_size_in / 256, 256, 0, stream>>>(data, d_twiddles, d_r, domain_size_in, log_domain_size_in, ncols, step, true, inverse, extend, maxLogDomainSize);
                 CHECKCUDAERR(cudaGetLastError());
         }
     } else {
         for (uint32_t stage = 0; stage < log_domain_size_in; stage++)
         {
+            assert(0);
             //br_ntt_group_blocks<<<domain_size_in / 2, ncols, 0, stream>>>(data, d_twiddles, d_r, stage, domain_size_in, log_domain_size_in, ncols, inverse, extend, maxLogDomainSize);
             //CHECKCUDAERR(cudaGetLastError());
             br_ntt_group<<<domain_size_in / 2, ncols, 0, stream>>>(data, d_twiddles, d_r, stage, domain_size_in, log_domain_size_in, ncols, inverse, extend, maxLogDomainSize);

@@ -503,9 +503,13 @@ void StarkInfo::setMapOffsets() {
         mapOffsets[std::make_pair("cm" + to_string(stage), false)] = offsetTraces;
         offsetTraces += N * mapSectionsN["cm" + to_string(stage)]; 
     }
-    
-    mapTotalN = std::max(mapTotalN, offsetTraces);
 
+    uint64_t offsetTraceStage2 = mapOffsets[std::make_pair("mt2", true)] + numNodes;
+    mapOffsets[std::make_pair("cm2", false)] = offsetTraceStage2;
+    offsetTraceStage2 += N * mapSectionsN["cm2"];
+    maxTotalN = std::max(maxTotalN, offsetTraceStage2);
+        
+    cout << mapOffsets[std::make_pair("cm2", false)] << " " << mapOffsets[std::make_pair("cm2", true)] << endl;
     if(!gpu) {
         mapOffsets[std::make_pair("evals", true)] = mapTotalN;
         mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;

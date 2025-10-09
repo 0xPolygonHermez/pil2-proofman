@@ -7,6 +7,6 @@ if [[ "$1" == "compile" ]]; then
         exit 1
     fi
 fi
-./target/release/proofman-cli prove  --witness-lib ./target/release/libfibonacci_square${PIL2_PROOFMAN_EXT}      --proving-key examples/fibonacci-square/build/provingKey/      --public-inputs examples/fibonacci-square/src/inputs.json      --output-dir examples/fibonacci-square/build/proofs      --custom-commits rom=examples/fibonacci-square/build/rom.bin -t 1 -y 
+ ./target/release/proofman-cli prove  --witness-lib ./target/release/libfibonacci_square${PIL2_PROOFMAN_EXT}      --proving-key examples/fibonacci-square/build/provingKey/      --public-inputs examples/fibonacci-square/src/inputs.json      --output-dir examples/fibonacci-square/build/proofs      --custom-commits rom=examples/fibonacci-square/build/rom.bin -t 1 -y 
 
 #compute-sanitizer --tool racecheck ./target/debug/proofman-cli prove  --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT}      --proving-key examples/fibonacci-square/build/provingKey/      --public-inputs examples/fibonacci-square/src/inputs.json      --output-dir examples/fibonacci-square/build/proofs      --custom-commits rom=examples/fibonacci-square/build/rom.bin -y > k
