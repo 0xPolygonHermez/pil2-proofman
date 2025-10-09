@@ -351,6 +351,7 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     if (skipRecalculation) reserveStream(d_buffers, streamId);
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
     uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
+    cudaSetDevice(gpuId);
 
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     StepsParams *params = (StepsParams *)params_;
@@ -614,6 +615,7 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
 
     auto key = std::make_pair(airgroupId, airId);
     std::string proofType = "basic";
+    cudaSetDevice(gpuId);
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][proofType][gpuLocalId];
 
     uint64_t N = 1 << nBits;
