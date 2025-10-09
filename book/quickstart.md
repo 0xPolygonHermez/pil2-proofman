@@ -9,7 +9,7 @@ Before starting, make sure you have [Rust](https://www.rust-lang.org/tools/insta
 Optional recommendations:
 
 - [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer) extension if you are using VS Code to assist you when writing Rust code.
-- [PIL2 Highlight syntax code](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer) if you are using VS Code to highlight your code when writing PIL2 code.
+- [PIL2 Highlight syntax code](https://github.com/0xPolygonHermez/pil2-vscode) if you are using VS Code to highlight your code when writing PIL2 code.
 
 Install the following repositories:
 
@@ -26,7 +26,7 @@ public in1;
 public in2;
 public out;
 
-airgroup Fibonacci(2**10) {
+airtemplate Fibonacci(int N) {
     col witness a,b;
 
     col fixed L1 = [1,0...];
@@ -37,6 +37,10 @@ airgroup Fibonacci(2**10) {
     L1 * (b - in1) === 0;
     L1 * (a - in2) === 0;
     LLAST * (a - out) === 0;
+}
+
+airgroup Fibonacci {
+    Fibonacci(2**10)
 }
 ```
 
