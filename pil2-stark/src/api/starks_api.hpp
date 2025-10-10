@@ -6,6 +6,17 @@
 extern "C" {
 #endif
 
+    struct PackedInfo {
+        bool is_packed;
+        uint64_t num_packed_words;
+        uint64_t *unpack_info;
+
+        ~PackedInfo() {
+            delete[] unpack_info;
+            unpack_info = nullptr;
+        }
+    };
+    
     // Save Proof
     // ========================================================================================
     void save_challenges(void *pChallenges, char *globalInfoFile, char *fileDir);
