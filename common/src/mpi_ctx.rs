@@ -25,7 +25,7 @@ use proofman_starks_lib_c::{
     initialize_agg_readiness_tracker_c, free_agg_readiness_tracker_c, agg_is_ready_c, reset_agg_readiness_tracker_c,
 };
 
-pub static MPI_CTX: OnceCell<Arc<MpiCtx>> = OnceCell::new();
+pub const MPI_CTX: OnceCell<Arc<MpiCtx>> = OnceCell::new();
 
 pub struct MpiCtx {
     #[cfg(distributed)]
