@@ -18,66 +18,43 @@ type FieldExtension<F> = [F; 3];
 
 pub const PILOUT_HASH: &str = "{pilout_hash}";
 
-//AIRGROUP CONSTANTS
-{{ for constant in constant_airgroups }}
+// AIRGROUP CONSTANTS
+{{- for constant in constant_airgroups }}
 pub const { constant.0 }_AIRGROUP_ID: usize = { constant.1 };
-{{ endfor }}
-//AIR CONSTANTS
-{{ for constant in constant_airs }}
+{{- endfor }}
+
+// AIR CONSTANTS
+{{- for constant in constant_airs }}
 pub const { constant.0 }_AIR_IDS: &[usize] = &[{ constant.3 }];
-{{ endfor }}
-{{ for public_values in publics }}
-//PUBLICS
-use serde::Deserialize;
-use serde::Serialize;
-use serde_arrays;
+{{- endfor }}
 
-{{ for column in public_values.values_u64 }}{{ if column.array }}
-fn default_array_{column.name}() -> {column.type} \{
-    {column.type_default}
-}
-{{endif}}{{ endfor }}
+// PUBLIC VALUES
+{{- for public_values in publics }}
+values!({ project_name }PublicValues<F> \{ {{- for column in public_values.values }} { column.name }: { column.type },{{- endfor }} });
+{{- endfor }}
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct {project_name}Publics \{
-    {{ for column in public_values.values_u64 }}{{ if column.array }}#[serde(default = "default_array_{column.name}", with = "serde_arrays")]{{ else }}#[serde(default)]{{ endif }}
-    pub {column.name}: {column.type},
-    {{ endfor }}
-}
+// PROOF VALUES
+{{- for proof_vals in proof_values  }}
+values!({ project_name }ProofValues<F> \{ {{- for column in proof_vals.values }} { column.name }: { column.type },{{- endfor }} });
+{{- endfor }}
 
-impl Default for {project_name}Publics \{
-    fn default() -> Self \{
-        Self \{ {{ for column in public_values.values_default }} 
-            {column.name}: {column.type}, {{ endfor }}
-        }
-    }
-}
+// TRACES
+{{- for air_group in air_groups }}{{ for air in air_group.airs }}
+trace!({ air.name }Fixed<F> \{ {{- for column in air.fixed }} { column.name }: { column.type },{{- endfor }} },  { air_group.airgroup_id }, { air.id }, { air.num_rows } );
+trace!({ air.name }Trace<F> \{ {{- for column in air.columns }} { column.name }: { column.type },{{ endfor }} },  { air_group.airgroup_id }, { air.id }, { air.num_rows } );
+{{ endfor }}{{ endfor }}
 
-values!({ project_name }PublicValues<F> \{
-{{ for column in public_values.values }} { column.name }: { column.type },{{ endfor }}
-});
-{{ endfor }} {{ for proof_vals in proof_values  }}
-values!({ project_name }ProofValues<F> \{
-{{ for column in proof_vals.values }} { column.name }: { column.type },{{ endfor }}
-});
-{{ endfor }} {{ for air_group in air_groups }}{{ for air in air_group.airs }}
-trace!({ air.name }Fixed<F> \{
-{{ for column in air.fixed }} { column.name }: { column.type },{{ endfor }}
-},  { air_group.airgroup_id }, { air.id }, { air.num_rows } );
+// CUSTOM COMMITS
+{{- for air_group in air_groups }}{{ for air in air_group.airs }}{{ for custom_commit in air.custom_columns  }}
+trace!({ air.name }{custom_commit.name}Trace<F> \{ {{- for column in custom_commit.custom_columns }} { column.name }: { column.type },{{ endfor }} }, { air_group.airgroup_id }, { air.id }, { air.num_rows }, { custom_commit.commit_id } );
+{{- endfor }}{{ endfor }}{{ endfor }}{{ for air_group in air_groups }}
 
-trace!({ air.name }Trace<F> \{
-{{ for column in air.columns }} { column.name }: { column.type },{{ endfor }}
-},  { air_group.airgroup_id }, { air.id }, { air.num_rows } );
-{{ endfor }}{{ endfor }}{{ for air_group in air_groups }}{{ for air in air_group.airs }}{{ for custom_commit in air.custom_columns  }}
-trace!({ air.name }{custom_commit.name}Trace<F> \{
-{{ for column in custom_commit.custom_columns }} { column.name }: { column.type },{{ endfor }}
-}, { air_group.airgroup_id }, { air.id }, { air.num_rows }, { custom_commit.commit_id } );
-{{ endfor }}{{ endfor }}{{ endfor }}{{ for air_group in air_groups }}{{ for air in air_group.airs }}{{ for air_values in air.air_values  }}
-values!({ air.name }AirValues<F> \{
-{{ for column in air_values.values }} { column.name }: { column.type },{{ endfor }}
-});
-{{ endfor }}{{ endfor }}{{ endfor }}{{ for air_group in air_groups }}{{ for air in air_group.airs }}{{ for air_groupvalues in air.airgroup_values  }}
-values!({ air.name }AirGroupValues<F> \{
-{{ for column in air_groupvalues.values }} { column.name }: { column.type },{{ endfor }}
-});
-{{ endfor }}{{ endfor }}{{ endfor }}
+// AIRGROUP VALUES
+{{- for air_group in air_groups }}{{ for air in air_group.airs }}{{ for air_groupvalues in air.airgroup_values  }}
+values!({ air.name }AirGroupValues<F> \{ {{- for column in air_groupvalues.values }} { column.name }: { column.type },{{ endfor }} });
+{{- endfor }}{{ endfor }}{{ endfor }}
+
+// AIR VALUES
+{{- for air in air_group.airs }}{{ for air_values in air.air_values  }}
+values!({ air.name }AirValues<F> \{ {{- for column in air_values.values }} { column.name }: { column.type },{{ endfor }} });
+{{- endfor }}{{ endfor }}{{ endfor }}
