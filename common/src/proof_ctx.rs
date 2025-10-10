@@ -520,9 +520,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_instance_no_assign(airgroup_id, air_id, threads_witness, weight)
     }
 
-    pub fn dctx_assign_instances(&self, minimal_memory: bool) {
+    pub fn dctx_assign_instances(&self) {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.assign_instances(minimal_memory);
+        dctx.assign_instances();
     }
 
     pub fn dctx_load_balance_info_process(&self) -> (f64, u64, u64, f64) {

@@ -338,7 +338,7 @@ where
         self.reset();
         self.pctx.dctx_reset();
 
-        self.exec(false)?;
+        self.exec()?;
 
         let mut air_info: HashMap<&String, CsvInfo> = HashMap::new();
 
@@ -493,7 +493,7 @@ where
         let (witness_handler, witness_handles) =
             self.calc_witness_handler(witness_done.clone(), memory_handler.clone(), options.minimal_memory, true);
 
-        self.exec(options.minimal_memory)?;
+        self.exec()?;
 
         let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
         let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
@@ -602,7 +602,7 @@ where
         self.reset();
         self.pctx.dctx_reset();
 
-        self.exec(false)?;
+        self.exec()?;
 
         let transcript = FFITranscript::new(2, true);
         let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
@@ -1146,7 +1146,7 @@ where
                 false,
             );
 
-            self.exec(options.minimal_memory)?;
+            self.exec()?;
 
             if !options.test_mode {
                 Self::initialize_publics_custom_commits(&self.sctx, &self.pctx)?;
@@ -1466,35 +1466,35 @@ where
             let proofs_finished_clone = proofs_finished.clone();
 
             let handle_recursive = std::thread::spawn(move || loop {
-                if stream_id < n_streams_non_recursive {
-                    if let Ok(instance_id) = proofs_rx.try_recv() {
-                        Self::gen_proof(
-                            &proofs_clone,
-                            &pctx_clone,
-                            &sctx_clone,
-                            instance_id,
-                            &output_dir_path_clone,
-                            &aux_trace_clone,
-                            &const_pols_clone,
-                            &const_tree_clone,
-                            &d_buffers_clone,
-                            None,
-                            options.save_proofs,
-                            preallocate,
-                        );
-                        let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
-                        if is_shared_buffer {
-                            memory_handler_clone.release_buffer(witness_buffer);
-                        }
-                        continue;
-                    }
-                }
-
                 // Handle proof witnesses (Proof<F> type)
                 let witness = rec2_rx.try_recv().or_else(|_| compressor_rx.try_recv()).or_else(|_| rec1_rx.try_recv());
 
                 // If not witness, check if there's a proof
                 if witness.is_err() {
+                    if stream_id < n_streams_non_recursive {
+                        if let Ok(instance_id) = proofs_rx.try_recv() {
+                            Self::gen_proof(
+                                &proofs_clone,
+                                &pctx_clone,
+                                &sctx_clone,
+                                instance_id,
+                                &output_dir_path_clone,
+                                &aux_trace_clone,
+                                &const_pols_clone,
+                                &const_tree_clone,
+                                &d_buffers_clone,
+                                None,
+                                options.save_proofs,
+                                preallocate,
+                            );
+                            let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
+                            if is_shared_buffer {
+                                memory_handler_clone.release_buffer(witness_buffer);
+                            }
+                            continue;
+                        }
+                    }
+
                     if proofs_finished_clone.load(Ordering::Relaxed) {
                         return;
                     }
@@ -2088,14 +2088,14 @@ where
         }
     }
 
-    fn exec(&self, minimal_memory: bool) -> Result<(), Box<dyn std::error::Error>> {
+    fn exec(&self) -> Result<(), Box<dyn std::error::Error>> {
         timer_start_info!(EXECUTE);
 
         if !self.wcm.is_init_witness() {
             return Err("Witness computation dynamic library not initialized".into());
         }
 
-        self.wcm.execute(minimal_memory);
+        self.wcm.execute();
 
         print_summary_info(&self.pctx, &self.sctx, &self.mpi_ctx);
 
