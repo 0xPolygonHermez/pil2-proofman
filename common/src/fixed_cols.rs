@@ -1,7 +1,4 @@
-use std::{
-    os::raw::c_void,
-    path::{PathBuf, Path},
-};
+use std::{os::raw::c_void, path::PathBuf};
 
 use fields::PrimeField64;
 use proofman_starks_lib_c::{
@@ -11,6 +8,7 @@ use proofman_starks_lib_c::{
 use proofman_util::{create_buffer_fast, timer_start_info, timer_stop_and_log_info};
 
 use crate::Setup;
+// use crate::transpose;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -70,7 +68,7 @@ pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
     let const_tree: Vec<F> = create_buffer_fast(const_pols_tree_size);
 
     let const_pols_path = setup.setup_path.display().to_string() + ".const";
-    let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+    let const_pols_tree_path = &setup.const_pols_tree_path.clone();
 
     tracing::info!("··· Loading const pols for AIR {} of type {:?}", setup.air_name, setup.setup_type);
 
@@ -84,7 +82,7 @@ pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
 
     let valid_root = if PathBuf::from(&const_pols_tree_path).exists() {
         let const_pols_tree_size = setup.const_tree_size;
-        let valid_file = match std::fs::metadata(&const_pols_tree_path) {
+        let valid_file = match std::fs::metadata(const_pols_tree_path) {
             Ok(metadata) => {
                 let actual_size = metadata.len() as usize;
                 actual_size == const_pols_tree_size * 8
@@ -110,8 +108,26 @@ pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
     if !valid_root {
         timer_start_info!(WRITING_CONST_TREE);
         if setup.stark_info.stark_struct.verification_hash_type == "GL" {
-            calculate_const_tree_c(p_stark_info, const_pols.as_ptr() as *mut u8, const_tree.as_ptr() as *mut u8);
-            write_const_tree_c(p_stark_info, const_tree.as_ptr() as *mut u8, const_pols_tree_path.as_str());
+            if cfg!(feature = "gpu") {
+                // let const_pols_transposed = transpose(&const_pols, setup.stark_info.n_constants as usize, 1 << setup.stark_info.stark_struct.n_bits);
+                let const_pols_transposed = &const_pols;
+                std::fs::write(&setup.const_pols_path, unsafe {
+                    std::slice::from_raw_parts(
+                        const_pols_transposed.as_ptr() as *const u8,
+                        const_pols_transposed.len() * std::mem::size_of::<F>(),
+                    )
+                })
+                .unwrap();
+                calculate_const_tree_c(
+                    p_stark_info,
+                    const_pols_transposed.as_ptr() as *mut u8,
+                    const_tree.as_ptr() as *mut u8,
+                );
+                write_const_tree_c(p_stark_info, const_tree.as_ptr() as *mut u8, const_pols_tree_path.as_str());
+            } else {
+                calculate_const_tree_c(p_stark_info, const_pols.as_ptr() as *mut u8, const_tree.as_ptr() as *mut u8);
+                write_const_tree_c(p_stark_info, const_tree.as_ptr() as *mut u8, const_pols_tree_path.as_str());
+            }
         } else {
             calculate_const_tree_bn128_c(p_stark_info, const_pols.as_ptr() as *mut u8, const_tree.as_ptr() as *mut u8);
             write_const_tree_bn128_c(p_stark_info, const_tree.as_ptr() as *mut u8, const_pols_tree_path.as_str());
@@ -120,13 +136,14 @@ pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
     }
 }
 
-pub fn load_const_pols<F: PrimeField64>(setup_path: &Path, const_pols_size: usize, const_pols: &[F]) {
-    let const_pols_path = setup_path.to_string_lossy().to_string() + ".const";
+pub fn load_const_pols<F: PrimeField64>(setup: &Setup<F>, const_pols: &[F]) {
+    let const_pols_path = &setup.const_pols_path;
+    let const_pols_size = setup.const_pols_size;
     load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_pols_size as u64 * 8);
 }
 
 pub fn load_const_pols_tree<F: PrimeField64>(setup: &Setup<F>, const_tree: &[F]) {
-    let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+    let const_pols_tree_path = &setup.const_pols_tree_path;
     let const_pols_tree_size = setup.const_tree_size;
 
     tracing::debug!("FixedCol   : ··· Loading const tree for AIR {} of type {:?}", setup.air_name, setup.setup_type);

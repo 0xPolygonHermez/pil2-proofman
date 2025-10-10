@@ -184,7 +184,7 @@ fn check_const_tree<F: PrimeField64>(
     aggregation: bool,
     final_snark: bool,
 ) -> Result<(), Box<dyn Error>> {
-    let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+    let const_pols_tree_path = &setup.const_pols_tree_path;
     let mut flags = String::new();
     if aggregation {
         flags.push_str(" -a");
@@ -193,11 +193,16 @@ fn check_const_tree<F: PrimeField64>(
         flags.push_str(" -f");
     }
 
+    let is_gpu = match cfg!(feature = "gpu") {
+        true => "--features gpu ",
+        false => "",
+    };
+
     if !PathBuf::from(&const_pols_tree_path).exists() {
         let error_message = format!(
             "Error: Unable to find the constant tree at '{const_pols_tree_path}'.\n\
             Please run the following command:\n\
-            \x1b[1mcargo run --bin proofman-cli check-setup --proving-key <PROVING_KEY>{flags}\x1b[0m"
+            \x1b[1mcargo run {is_gpu}--bin proofman-cli check-setup --proving-key <PROVING_KEY>{flags}\x1b[0m"
         );
         return Err(error_message.into());
     }
@@ -205,11 +210,11 @@ fn check_const_tree<F: PrimeField64>(
     let error_message = format!(
         "Error: The constant tree file at '{const_pols_tree_path}' exists but is invalid or corrupted.\n\
         Please regenerate it by running:\n\
-        \x1b[1mcargo run --bin proofman-cli check-setup --proving-key <PROVING_KEY>{flags}\x1b[0m"
+        \x1b[1mcargo run {is_gpu}--bin proofman-cli check-setup --proving-key <PROVING_KEY>{flags}\x1b[0m"
     );
 
     let const_pols_tree_size = setup.const_tree_size;
-    match fs::metadata(&const_pols_tree_path) {
+    match fs::metadata(const_pols_tree_path) {
         Ok(metadata) => {
             let actual_size = metadata.len() as usize;
             if actual_size != const_pols_tree_size * 8 {
@@ -229,7 +234,7 @@ fn check_const_tree<F: PrimeField64>(
         let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read verkey path file: {err}"));
         let verkey_u64: Vec<u64> = serde_json::from_str(&contents).unwrap();
 
-        let mut file = File::open(&const_pols_tree_path)?;
+        let mut file = File::open(const_pols_tree_path)?;
         file.seek(SeekFrom::End(-32))?; // Move to 32 bytes before the end
 
         let mut buffer = [0u8; 32];
@@ -410,17 +415,17 @@ pub fn initialize_setup_info<F: PrimeField64>(
                 n_streams,
             );
             if cfg!(feature = "gpu") && gpu_params.preallocate {
-                let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
-                let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+                let const_pols_path = &setup.const_pols_path;
+                let const_pols_tree_path = &setup.const_pols_tree_path;
                 tracing::info!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
                 load_device_const_pols_c(
                     airgroup_id as u64,
                     air_id as u64,
                     offset,
                     d_buffers.get_ptr(),
-                    &const_pols_path,
+                    const_pols_path,
                     setup.const_pols_size as u64,
-                    &const_pols_tree_path,
+                    const_pols_tree_path,
                     setup.const_tree_size as u64,
                     proof_type,
                 );
@@ -452,17 +457,17 @@ pub fn initialize_setup_info<F: PrimeField64>(
                         1,
                     );
                     if cfg!(feature = "gpu") && gpu_params.preallocate {
-                        let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
-                        let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+                        let const_pols_path = &setup.const_pols_path;
+                        let const_pols_tree_path = &setup.const_pols_tree_path;
                         tracing::info!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
                         load_device_const_pols_c(
                             airgroup_id as u64,
                             air_id as u64,
                             _offset_aggregation,
                             d_buffers.get_ptr(),
-                            &const_pols_path,
+                            const_pols_path,
                             setup.const_pols_size as u64,
-                            &const_pols_tree_path,
+                            const_pols_tree_path,
                             setup.const_tree_size as u64,
                             proof_type,
                         );
@@ -492,17 +497,17 @@ pub fn initialize_setup_info<F: PrimeField64>(
                     1,
                 );
                 if cfg!(feature = "gpu") && gpu_params.preallocate {
-                    let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
-                    let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+                    let const_pols_path = &setup.const_pols_path;
+                    let const_pols_tree_path = &setup.const_pols_tree_path;
                     tracing::info!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
                     load_device_const_pols_c(
                         airgroup_id as u64,
                         air_id as u64,
                         _offset_aggregation,
                         d_buffers.get_ptr(),
-                        &const_pols_path,
+                        const_pols_path,
                         setup.const_pols_size as u64,
-                        &const_pols_tree_path,
+                        const_pols_tree_path,
                         setup.const_tree_size as u64,
                         proof_type,
                     );
@@ -531,17 +536,17 @@ pub fn initialize_setup_info<F: PrimeField64>(
                 1,
             );
             if cfg!(feature = "gpu") && gpu_params.preallocate {
-                let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
-                let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+                let const_pols_path = &setup.const_pols_path;
+                let const_pols_tree_path = &setup.const_pols_tree_path;
                 tracing::info!(airgroup_id, air_id = 0, proof_type, "Loading const pols in GPU");
                 load_device_const_pols_c(
                     airgroup_id as u64,
                     0_u64,
                     _offset_aggregation,
                     d_buffers.get_ptr(),
-                    &const_pols_path,
+                    const_pols_path,
                     setup.const_pols_size as u64,
-                    &const_pols_tree_path,
+                    const_pols_tree_path,
                     setup.const_tree_size as u64,
                     proof_type,
                 );
