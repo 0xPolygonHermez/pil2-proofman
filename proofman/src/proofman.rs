@@ -4,7 +4,7 @@ use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
     DebugInfo, MemoryHandler, MpiCtx, PackedInfo, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx,
-    SetupsVadcop, VerboseMode, MAX_INSTANCES,
+    SetupsVadcop, VerboseMode, MAX_INSTANCES, shutdown_mpi,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -205,6 +205,7 @@ pub enum ProvePhaseResult {
 impl<F: PrimeField64> Drop for ProofMan<F> {
     fn drop(&mut self) {
         free_device_buffers_c(self.d_buffers.get_ptr());
+        shutdown_mpi();
     }
 }
 impl<F: PrimeField64> ProofMan<F>
