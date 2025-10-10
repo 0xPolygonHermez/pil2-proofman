@@ -42,7 +42,7 @@ public:
         bool allocateNodes = setupCtx.starkInfo.starkStruct.verificationHashType == "GL" ? false : true;
         treesGL = new MerkleTreeType*[setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2];
         if (pConstPolsExtendedTreeAddress != nullptr) {
-            treesGL[setupCtx.starkInfo.nStages + 1] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, pConstPolsExtendedTreeAddress);
+            treesGL[setupCtx.starkInfo.nStages + 1] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, pConstPolsExtendedTreeAddress, NExtended, setupCtx.starkInfo.nConstants);
         } else {
             treesGL[setupCtx.starkInfo.nStages + 1] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, NExtended, setupCtx.starkInfo.nConstants, initializeTrees, allocateNodes || initializeTrees);
         }
@@ -307,7 +307,7 @@ void Starks<ElementType>::evmap(StepsParams& params, Goldilocks::Element *LEv, s
         string type = ev.type == EvMap::eType::cm ? "cm" : ev.type == EvMap::eType::custom ? "custom" : "fixed";
         Goldilocks::Element *pAddress = type == "cm" ? params.aux_trace : type == "custom"
             ? params.pCustomCommitsFixed
-            : &params.pConstPolsExtendedTreeAddress[2];
+            : params.pConstPolsExtendedTreeAddress;
         PolMap polInfo = type == "cm" ? setupCtx.starkInfo.cmPolsMap[ev.id] : type == "custom" ? setupCtx.starkInfo.customCommitsMap[ev.commitId][ev.id] : setupCtx.starkInfo.constPolsMap[ev.id];
         dims[nEvals] = polInfo.dim;
         std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? setupCtx.starkInfo.customCommits[polInfo.commitId].name + "0" : "const";

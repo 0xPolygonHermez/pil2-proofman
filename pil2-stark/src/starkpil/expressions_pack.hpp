@@ -24,7 +24,7 @@ public:
 #endif  
         if (type == 0) {
             if(dim == FIELD_EXTENSION) { exit(-1); }
-            Goldilocks::Element *constPols = domainExtended ? &params.pConstPolsExtendedTreeAddress[2] : params.pConstPolsAddress;
+            Goldilocks::Element *constPols = domainExtended ? params.pConstPolsExtendedTreeAddress : params.pConstPolsAddress;
             uint64_t stagePos = args[i_args + 1];
             int64_t o = nextStridesExps[args[i_args + 2]];
             uint64_t nCols = mapSectionsN[0];

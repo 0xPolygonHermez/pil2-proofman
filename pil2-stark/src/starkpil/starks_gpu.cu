@@ -272,7 +272,7 @@ void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPol
     NTT_Goldilocks_GPU ntt;
 
     Goldilocks::Element *src = d_fixedPols;
-    Goldilocks::Element *dst = d_fixedPolsExtended + 2;
+    Goldilocks::Element *dst = d_fixedPolsExtended;
     Goldilocks::Element *pNodes = dst + nCols * NExtended;
     ntt.LDE_MerkleTree_GPU_inplace(pNodes, (gl64_t *)dst, 0, (gl64_t *)src, 0, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, setupCtx.starkInfo.nConstants, timer, stream);
 }
@@ -469,7 +469,7 @@ __global__ void computeEvals_v2(
         }
         else
         {
-            pol = &d_fixedPols[2];
+            pol = d_fixedPols;
         }
 
         for (int i = 0; i < FIELD_EXTENSION; i++)
@@ -815,7 +815,7 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
         }
         else if (k == nStages + 1)
         {
-            getTreeTracePols<<<nBlocks, nThreads, 0, stream>>>(&d_constTree[2], trees[k]->getMerkleTreeWidth(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize); // rick: this last should be done in the CPU
+            getTreeTracePols<<<nBlocks, nThreads, 0, stream>>>(d_constTree, trees[k]->getMerkleTreeWidth(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize); // rick: this last should be done in the CPU
         } else{
             uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[0].name + "0"];
@@ -1151,7 +1151,7 @@ __global__  void computeFRIExpression(uint64_t domainSize, uint64_t nOpeningPoin
                 }
                 else
                 {
-                    pol = &d_fixedPols[2];
+                    pol = d_fixedPols;
                 }
     
                 gl64_t *out = (j == 0) ? accum : res;

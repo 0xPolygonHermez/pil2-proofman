@@ -385,7 +385,6 @@ uint64_t get_const_tree_size(void *pStarkInfo) {
     } else {
         return constTree.getConstTreeSizeBN128(*(StarkInfo *)pStarkInfo);
     }
-    
 };
 
 uint64_t get_const_size(void *pStarkInfo) {
@@ -394,23 +393,32 @@ uint64_t get_const_size(void *pStarkInfo) {
 }
 
 
+// #ifndef __USE_CUDA__
 void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress) {
+    assert(((StarkInfo *)pStarkInfo)->starkStruct.verificationHashType == "GL");
     ConstTree constTree;
-    if(((StarkInfo *)pStarkInfo)->starkStruct.verificationHashType == "GL") {
-        constTree.calculateConstTreeGL(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress);
-    } else {
-        constTree.calculateConstTreeBN128(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress);
-    }
+    constTree.calculateConstTreeGL(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress);
+};
+// #endif
+
+
+void calculate_const_tree_bn128(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress) {
+    assert(((StarkInfo *)pStarkInfo)->starkStruct.verificationHashType == "BN128");
+    ConstTree constTree;
+    constTree.calculateConstTreeBN128(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress);
 };
 
 void write_const_tree(void *pStarkInfo, void *pConstTreeAddress, char *treeFilename) {
+    assert(((StarkInfo *)pStarkInfo)->starkStruct.verificationHashType == "GL");
     ConstTree constTree;
-    if(((StarkInfo *)pStarkInfo)->starkStruct.verificationHashType == "GL") {
-        constTree.writeConstTreeFileGL(*(StarkInfo *)pStarkInfo, pConstTreeAddress, treeFilename);
-    } else {
-        constTree.writeConstTreeFileBN128(*(StarkInfo *)pStarkInfo, pConstTreeAddress, treeFilename);
-    }
+    constTree.writeConstTreeFileGL(*(StarkInfo *)pStarkInfo, pConstTreeAddress, treeFilename);
 };
+
+void write_const_tree_bn128(void *pStarkInfo, void *pConstTreeAddress, char *treeFilename) {
+    assert(((StarkInfo *)pStarkInfo)->starkStruct.verificationHashType == "BN128");
+    ConstTree constTree;
+    constTree.writeConstTreeFileBN128(*(StarkInfo *)pStarkInfo, pConstTreeAddress, treeFilename);
+}
 
 // Expressions Bin
 // ========================================================================================

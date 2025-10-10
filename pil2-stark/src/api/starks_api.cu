@@ -652,6 +652,47 @@ void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
 
 }
 
+// void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress_) {
+//     StarkInfo &starkInfo = *((StarkInfo *)pStarkInfo);
+//     assert(starkInfo.starkStruct.verificationHashType == "GL");
+
+//     cudaStream_t stream;
+//     cudaStreamCreate(&stream);
+//     TimerGPU timer;
+//     TimerStartGPU(timer, STARK_GPU_CONST_TREE);
+
+//     uint64_t N = 1 << starkInfo.starkStruct.nBits;
+//     uint64_t NExtended = 1 << starkInfo.starkStruct.nBitsExt;
+//     MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, true, NExtended, starkInfo.nConstants);
+//     uint64_t treeSize = (NExtended * starkInfo.nConstants) + mt.numNodes;
+
+//     Goldilocks::Element* d_fixedPols;
+//     Goldilocks::Element* d_fixedTree;
+//     cudaMalloc((void**)&d_fixedPols, N * starkInfo.nConstants * sizeof(Goldilocks::Element));
+//     cudaMalloc((void**)&d_fixedTree, treeSize * sizeof(Goldilocks::Element));
+//     cudaMemcpy(d_fixedPols, pConstPolsAddress, N * starkInfo.nConstants * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+//     cudaMemset(d_fixedTree, 0, treeSize * sizeof(Goldilocks::Element));
+
+//     uint32_t my_gpu_ids[1] = {0};
+//     cudaSetDevice(0);
+//     init_gpu_const_2(my_gpu_ids, 1);
+//     NTT_Goldilocks_GPU::init_twiddle_factors_and_r(starkInfo.starkStruct.nBitsExt, 1, my_gpu_ids);
+
+//     NTT_Goldilocks_GPU ntt;
+
+//     Goldilocks::Element *pNodes = d_fixedTree + starkInfo.nConstants * NExtended;
+//     ntt.LDE_MerkleTree_GPU_inplace(pNodes, (gl64_t *)d_fixedTree, 0, (gl64_t *)d_fixedPols, 0, starkInfo.starkStruct.nBits, starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, timer, stream);
+
+//     Goldilocks::Element *pConstTreeAddress = (Goldilocks::Element *)pConstTreeAddress_;
+//     cudaMemcpy(pConstTreeAddress, d_fixedTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+//     cudaFree(d_fixedPols);
+//     cudaFree(d_fixedTree);
+//     TimerStopGPU(timer, STARK_GPU_CONST_TREE);
+//     TimerSyncAndLogAllGPU(timer);
+//     cudaStreamSynchronize(stream);
+//     cudaStreamDestroy(stream);
+// };
+
 uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size) {
     int deviceCount;
     cudaGetDeviceCount(&deviceCount);

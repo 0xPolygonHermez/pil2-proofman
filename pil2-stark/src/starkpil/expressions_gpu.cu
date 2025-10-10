@@ -233,7 +233,7 @@ __device__ __forceinline__ Goldilocks::Element* load__(
     // ConstPols
     if (type == 0) {
         const Goldilocks::Element* basePtr = dExpsArgs->domainExtended
-            ? &dParams->pConstPolsExtendedTreeAddress[2]
+            ? dParams->pConstPolsExtendedTreeAddress
             : dParams->pConstPolsAddress;
 
 #if DEBUG 
