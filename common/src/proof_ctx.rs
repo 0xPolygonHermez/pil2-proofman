@@ -175,9 +175,9 @@ impl Default for ParamsGPU {
             preallocate: false,
             max_number_streams: usize::MAX,
             number_threads_pools_witness: 4,
-            #[cfg(all(feature = "gpu", feature = "packed"))]
+            #[cfg(feature = "packed")]
             max_witness_stored: 10,
-            #[cfg(any(not(feature = "gpu"), not(feature = "packed")))]
+            #[cfg(not(feature = "packed"))]
             max_witness_stored: 4,
             single_instances: Vec::new(),
             pack_trace: true,

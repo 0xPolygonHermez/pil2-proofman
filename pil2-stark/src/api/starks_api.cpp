@@ -599,19 +599,26 @@ void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nC
 }
 
 #ifndef __USE_CUDA__
-uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *trace, void *auxTrace, void *d_buffers, void *pSetupCtx_) {
+uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *trace, void *auxTrace, void *d_buffers_, void *pSetupCtx_) {
+    DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
+    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
-    Goldilocks::Element *traceGL = (Goldilocks::Element *)trace;
     Goldilocks::Element *auxTraceGL = (Goldilocks::Element *)auxTrace;
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
 
     MerkleTreeGL mt(arity, true, NExtended, nCols);
 
+    PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
+    if (packed_info != nullptr && packed_info->is_packed) {
+        d_buffers->unpack_cpu((uint64_t *)trace, (uint64_t*)&auxTraceGL[0], N, nCols, packed_info->num_packed_words, packed_info->unpack_info);
+    } else {
+        memcpy(auxTraceGL, trace, N * nCols * sizeof(Goldilocks::Element));
+    }
+    
     NTT_Goldilocks ntt(N);
-    ntt.extendPol(auxTraceGL, traceGL, NExtended, N, nCols, &auxTraceGL[NExtended * nCols + mt.numNodes]);
-
-    mt.setSource(auxTraceGL);
+    ntt.extendPol(&auxTraceGL[0], &auxTraceGL[0], NExtended, N, nCols, &auxTraceGL[NExtended * nCols]);
+    mt.setSource(&auxTraceGL[0]);
     mt.setNodes(&auxTraceGL[NExtended * nCols]);
     mt.merkelize();
     mt.getRoot(rootGL);
@@ -749,9 +756,10 @@ uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx;
     StepsParams *params = (StepsParams *)params_;
-    
+    uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
+    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
+    uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
     if (d_buffers->airgroupId != airgroupId || d_buffers->airId != airId || d_buffers->proofType != "basic") {
-        uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
         uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
         uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
         loadFileParallel(params->pConstPolsAddress, constPolsPath, sizeConstPols);
@@ -762,7 +770,29 @@ uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_
     d_buffers->airId = airId;
     d_buffers->proofType = "basic";
 
-    genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile));
+    PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
+    if (packed_info != nullptr && packed_info->is_packed) {
+        d_buffers->unpack_cpu((uint64_t *)params->trace, (uint64_t*)&params->aux_trace[offsetCm1], N, nCols, packed_info->num_packed_words, packed_info->unpack_info);
+    } else {
+        memcpy(&params->aux_trace[offsetCm1], params->trace, N * nCols * sizeof(Goldilocks::Element));
+    }
+
+     StepsParams paramsProof = {
+        .trace = &params->aux_trace[offsetCm1],
+        .aux_trace = params->aux_trace,
+        .publicInputs = params->publicInputs,
+        .proofValues = params->proofValues,
+        .challenges = params->challenges,
+        .airgroupValues = params->airgroupValues,
+        .airValues = params->airValues,
+        .evals = params->evals,
+        .xDivXSub = params->xDivXSub,
+        .pConstPolsAddress = params->pConstPolsAddress,
+        .pConstPolsExtendedTreeAddress = params->pConstPolsExtendedTreeAddress,
+        .pCustomCommitsFixed = params->pCustomCommitsFixed,
+    };
+
+    genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, paramsProof, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile));
     
     return 0;
 }
@@ -793,7 +823,16 @@ void free_device_buffers(void *d_buffers_) {
     delete d_buffers;
 }
 
-void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo, uint64_t nStreams) {}
+void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo_, uint64_t nStreams) {
+    DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
+    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+
+    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
+    PackedInfo *packedInfo = (PackedInfo *)packedInfo_;
+    if (packedInfo != nullptr) {
+        d_buffers->addPackedInfoCPU(airgroupId, airId, nCols, packedInfo->is_packed, packedInfo->num_packed_words, packedInfo->unpack_info);
+    }
+}
 
 void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType) {}
 

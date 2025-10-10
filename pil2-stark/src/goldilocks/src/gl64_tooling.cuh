@@ -12,11 +12,6 @@
 #include <limits.h>
 #include "gl64_t.cuh"
 
-struct PackedInfo {
-    bool is_packed;
-    uint64_t num_packed_words;
-    uint64_t *unpack_info;
-};
 
 class gl64_gpu
 {

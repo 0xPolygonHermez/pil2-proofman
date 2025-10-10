@@ -43,7 +43,7 @@ use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
-use crate::{calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, initialize_setup_gpu};
+use crate::{calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, initialize_setup_info};
 use crate::{verify_constraints_proof, verify_basic_proof, verify_final_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
@@ -2567,9 +2567,7 @@ where
             sctx.max_n_bits_ext as u64,
         );
 
-        if cfg!(feature = "gpu") {
-            initialize_setup_gpu(pctx, sctx, setups_vadcop, &d_buffers, aggregation, packed_info, gpu_params);
-        }
+        initialize_setup_info(pctx, sctx, setups_vadcop, &d_buffers, aggregation, packed_info, gpu_params);
 
         (d_buffers, n_streams_per_gpu as u64, n_recursive_streams_per_gpu as u64, n_gpus)
     }
