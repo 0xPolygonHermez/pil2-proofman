@@ -598,6 +598,10 @@ where
         debug_info: &DebugInfo,
         test_mode: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        if cfg!(feature = "packed") {
+            return Err("Packed witness are not supported in this mode".into());
+        }
+
         self.pctx.set_debug_info(debug_info);
 
         self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize);
