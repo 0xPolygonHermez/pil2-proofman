@@ -88,8 +88,20 @@ extern "C" {
         pConstPolsAddress: *mut ::std::os::raw::c_void,
         pConstTree: *mut ::std::os::raw::c_void,
     );
+
+    pub fn calculate_const_tree_bn128(
+        pStarkInfo: *mut ::std::os::raw::c_void,
+        pConstPolsAddress: *mut ::std::os::raw::c_void,
+        pConstTree: *mut ::std::os::raw::c_void,
+    );
     
     pub fn write_const_tree(
+        pStarkInfo: *mut ::std::os::raw::c_void,
+        pConstTreeAddress: *mut ::std::os::raw::c_void,
+        treeFilename: *mut ::std::os::raw::c_char,
+    );
+
+    pub fn write_const_tree_bn128(
         pStarkInfo: *mut ::std::os::raw::c_void,
         pConstTreeAddress: *mut ::std::os::raw::c_void,
         treeFilename: *mut ::std::os::raw::c_char,
