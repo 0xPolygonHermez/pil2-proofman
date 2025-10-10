@@ -7,7 +7,7 @@ use crate::commands::field::Field;
 use fields::Goldilocks;
 
 use proofman::ProofMan;
-use proofman_common::VerboseMode;
+use proofman_common::initialize_logger;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -25,6 +25,10 @@ pub struct CheckSetupCmd {
 
     #[clap(short = 'f', long, default_value_t = false)]
     pub final_snark: bool,
+
+    /// Verbosity (-v, -vv)
+    #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
+    pub verbose: u8, // Using u8 to hold the number of `-v`
 }
 
 impl CheckSetupCmd {
@@ -32,14 +36,14 @@ impl CheckSetupCmd {
         println!("{} CheckSetup", format!("{: >12}", "Command").bright_green().bold());
         println!();
 
-        let verbose_mode = VerboseMode::Debug;
+        initialize_logger(self.verbose.into(), None);
 
         match self.field {
             Field::Goldilocks => ProofMan::<Goldilocks>::check_setup(
                 self.proving_key.clone(),
                 self.aggregation,
                 self.final_snark,
-                verbose_mode,
+                self.verbose.into(),
             )?,
         };
 

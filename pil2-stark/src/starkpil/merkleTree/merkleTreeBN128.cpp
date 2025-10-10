@@ -22,11 +22,11 @@ MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, bool _custom, uint64_t _height
    
 }
 
-MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, bool _custom, Goldilocks::Element *tree)
+MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, bool _custom, Goldilocks::Element *tree, uint64_t height_, uint64_t width_)
 {
-    width = Goldilocks::toU64(tree[0]);
-    height = Goldilocks::toU64(tree[1]);
-    source = &tree[2];
+    width = width_;
+    height = height_;
+    source = tree;
     arity = _arity;
     custom = _custom;
     numNodes = getNumNodes(height);
@@ -356,8 +356,6 @@ void MerkleTreeBN128::merkelize()
 
 void MerkleTreeBN128::writeFile(std::string constTreeFile) {
     std::ofstream fw(constTreeFile.c_str(), std::fstream::out | std::fstream::binary);
-    fw.write((const char *)&(width), sizeof(width));
-    fw.write((const char *)&(height), sizeof(height));
     fw.write((const char *)source, width * height * sizeof(Goldilocks::Element));
     fw.write((const char *)nodes, numNodes * sizeof(RawFr::Element));
     fw.close();

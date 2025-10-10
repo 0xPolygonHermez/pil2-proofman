@@ -53,7 +53,7 @@ impl GenCustomCommitsFixedCmd {
             }
         }
 
-        let mpi_ctx = Arc::new(MpiCtx::new());
+        let mpi_ctx = MpiCtx::global();
         let pctx = Arc::new(ProofCtx::create_ctx(
             self.proving_key.clone(),
             custom_commits_map,

@@ -12,6 +12,7 @@
 #include <limits.h>
 #include "gl64_t.cuh"
 
+
 class gl64_gpu
 {
 public:
@@ -67,9 +68,13 @@ struct AirInstanceInfo {
 
     Goldilocks::Element *verkeyRoot;
 
+    bool is_packed = false;
+    uint64_t num_packed_words = 0;
+    uint64_t *unpack_info = nullptr;
+
     uint64_t nStreams = 1;
 
-    AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_, uint64_t nStreams_): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId), nStreams(nStreams_) {
+    AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_, PackedInfo *packedInfo, uint64_t nStreams_): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId), nStreams(nStreams_) {
         int64_t *d_openingPoints;
         CHECKCUDAERR(cudaMalloc(&d_openingPoints, setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t)));
         CHECKCUDAERR(cudaMemcpy(d_openingPoints, setupCtx->starkInfo.openingPoints.data(), setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t), cudaMemcpyHostToDevice));
@@ -187,6 +192,16 @@ struct AirInstanceInfo {
         
         delete[] evalsInfoFRISizes_;
         delete[] evalsInfoByOpeningPos;
+
+        if (packedInfo != nullptr) {
+            is_packed = packedInfo->is_packed;
+            num_packed_words = packedInfo->num_packed_words;
+            uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
+            if (is_packed && num_packed_words > 0) {
+                CHECKCUDAERR(cudaMalloc(&unpack_info, nCols * sizeof(uint64_t)));
+                CHECKCUDAERR(cudaMemcpy(unpack_info, packedInfo->unpack_info, nCols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+            }
+        }
     }
 
     ~AirInstanceInfo() {
@@ -228,6 +243,10 @@ struct AirInstanceInfo {
 
         if (evalsInfoFRISizes != nullptr) {
             CHECKCUDAERR(cudaFree(evalsInfoFRISizes));
+        }
+
+        if (unpack_info != nullptr) {
+            CHECKCUDAERR(cudaFree(unpack_info));
         }
     }
 };
@@ -370,9 +389,9 @@ void copy_to_device_in_chunks(
     const void* src,
     void* dst,
     uint64_t total_size,
-    uint64_t streamId
+    uint64_t streamId,
+    TimerGPU &timer
     );
-
 
 void load_and_copy_to_device_in_chunks(
     DeviceCommitBuffers* d_buffers,

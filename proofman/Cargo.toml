@@ -46,6 +46,7 @@ default = []
 no_lib_link = ["proofman-common/no_lib_link"]
 disable_distributed = []
 diagnostic = ["proofman-macros/diagnostic"]
+packed = ["proofman-common/packed"]
 gpu = ["proofman-common/gpu", "proofman-starks-lib-c/gpu"]
 
 [lints.rust]

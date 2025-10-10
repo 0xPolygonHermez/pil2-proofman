@@ -156,7 +156,6 @@ pub struct SetupRepository<F: PrimeField64> {
     max_const_size: usize,
     max_prover_buffer_size: usize,
     max_prover_trace_size: usize,
-    max_witness_trace_size: usize,
     max_pinned_proof_size: usize,
     max_single_buffer_size: usize,
     total_const_size: usize,
@@ -202,7 +201,6 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut max_n_bits_ext = 0;
         let mut max_prover_buffer_size = 0;
         let mut max_prover_trace_size = 0;
-        let mut max_witness_trace_size = 0;
         let mut max_pinned_proof_size = 0;
         let mut total_const_size = 0;
         let mut max_single_buffer_size = 0;
@@ -249,7 +247,6 @@ impl<F: PrimeField64> SetupRepository<F> {
                         } else if max_single_buffer_size < setup.prover_buffer_size {
                             max_single_buffer_size = setup.prover_buffer_size;
                         }
-                        max_witness_trace_size = max_witness_trace_size.max(trace_size as usize);
 
                         total_const_size += setup.const_pols_size + setup.const_tree_size;
                         max_pinned_proof_size = max_pinned_proof_size.max(setup.pinned_proof_size);
@@ -276,7 +273,6 @@ impl<F: PrimeField64> SetupRepository<F> {
             max_const_size,
             max_prover_buffer_size: max_prover_buffer_size as usize,
             max_prover_trace_size,
-            max_witness_trace_size,
             max_single_buffer_size: max_single_buffer_size as usize,
             max_pinned_proof_size: max_pinned_proof_size as usize,
             total_const_size,
@@ -293,7 +289,6 @@ pub struct SetupCtx<F: PrimeField64> {
     pub max_const_size: usize,
     pub max_prover_buffer_size: usize,
     pub max_prover_trace_size: usize,
-    pub max_witness_trace_size: usize,
     pub max_pinned_proof_size: usize,
     pub max_n_bits_ext: usize,
     pub max_single_buffer_size: usize,
@@ -313,7 +308,6 @@ impl<F: PrimeField64> SetupCtx<F> {
         let max_const_size = setup_repository.max_const_size;
         let max_prover_buffer_size = setup_repository.max_prover_buffer_size;
         let max_prover_trace_size = setup_repository.max_prover_trace_size;
-        let max_witness_trace_size = setup_repository.max_witness_trace_size;
         let max_pinned_proof_size = setup_repository.max_pinned_proof_size;
         let max_single_buffer_size = setup_repository.max_single_buffer_size;
         let total_const_size = setup_repository.total_const_size;
@@ -324,7 +318,6 @@ impl<F: PrimeField64> SetupCtx<F> {
             max_const_size,
             max_prover_buffer_size,
             max_prover_trace_size,
-            max_witness_trace_size,
             max_pinned_proof_size,
             max_n_bits_ext,
             max_single_buffer_size,
@@ -349,7 +342,7 @@ impl<F: PrimeField64> SetupCtx<F> {
         match self.setup_repository.setups.get(&(airgroup_id, air_id)) {
             Some(setup) => {
                 let const_pols: Vec<F> = vec![F::ZERO; setup.const_pols_size];
-                load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
+                load_const_pols(setup, &const_pols);
                 const_pols
             }
             None => {

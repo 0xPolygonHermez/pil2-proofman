@@ -29,6 +29,7 @@ env = "1.0.1"
 
 tracing-subscriber = { version = "0.3.19" }
 crossbeam-queue = "0.3.12"
+lazy_static = "1.5.0"
 
 # Distributed mode (mpi) is only supported on Linux x86_64
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
@@ -40,6 +41,7 @@ no_lib_link = ["proofman-starks-lib-c/no_lib_link"]
 disable_distributed = []
 diagnostic = ["proofman-macros/diagnostic"]
 gpu = ["proofman-starks-lib-c/gpu"]
+packed = []
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(distributed)'] }

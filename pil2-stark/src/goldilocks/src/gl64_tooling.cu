@@ -1,14 +1,14 @@
 #include "gl64_tooling.cuh"
 
-
 void copy_to_device_in_chunks(
     DeviceCommitBuffers* d_buffers,
     const void* src,
     void* dst,
     uint64_t total_size,
-    uint64_t streamId
+    uint64_t streamId,
+    TimerGPU &timer
     ){
-
+    TimerStartCategoryGPU(timer, CPU_2_GPU_COPY);
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
 
     cudaSetDevice(gpuId);
@@ -62,6 +62,7 @@ void copy_to_device_in_chunks(
     ));
 
     CHECKCUDAERR(cudaStreamSynchronize(stream));
+    TimerStopCategoryGPU(timer, CPU_2_GPU_COPY);
 }
 
 void load_and_copy_to_device_in_chunks(

@@ -41,6 +41,123 @@ Goldilocks::Element omegas_inv_[33] = {
     0x16d265893b5b7e85,
 };
 
+__global__ void unpack(
+    const uint64_t* src,
+    uint64_t* dst,
+    uint64_t nRows,
+    uint64_t nCols,
+    uint64_t words_per_row,
+    const uint64_t *d_unpack_info,
+    bool col_major
+) {
+    extern __shared__ uint64_t shared_mem[];
+    uint64_t* shared_unpack_info = shared_mem;
+
+    // Load unpack info
+    if (threadIdx.x < nCols)
+        shared_unpack_info[threadIdx.x] = d_unpack_info[threadIdx.x];
+    __syncthreads();
+
+    uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= nRows) return;
+    const uint64_t* packed_row = src + row * words_per_row;
+
+    uint64_t word = packed_row[0];
+    uint64_t word_idx = 0;
+    uint64_t bit_offset = 0;
+
+    #pragma unroll
+    for (uint64_t c = 0; c < nCols; c++) {
+        uint64_t nbits = shared_unpack_info[c];
+        uint64_t val;
+        uint64_t bits_left = 64 - bit_offset;
+
+        if (nbits <= bits_left) {
+            uint64_t mask = (nbits == 64) ? ~0ULL : ((1ULL << nbits) - 1ULL);
+            val = (word >> bit_offset) & mask;
+            bit_offset += nbits;
+            if (bit_offset == 64 && word_idx + 1 < words_per_row) {
+                word = packed_row[++word_idx];
+                bit_offset = 0;
+            }
+        } else {
+            uint64_t low = word >> bit_offset;
+            word = packed_row[++word_idx];
+            uint64_t high = word & ((1ULL << (nbits - bits_left)) - 1ULL);
+            val = (high << bits_left) | low;
+            bit_offset = nbits - bits_left;
+        }
+
+        if (col_major) {
+            dst[c * nRows + row] = val;
+        } else {
+            dst[row * nCols + c] = val;
+        }
+    }
+}
+
+__global__ void transpose(
+    const uint64_t* src,
+    uint64_t* dst,
+    uint64_t nRows,
+    uint64_t nCols
+) {
+    uint64_t row = blockIdx.y * blockDim.y + threadIdx.y;
+    uint64_t col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < nRows && col < nCols) {
+        uint64_t src_idx = row * nCols + col; // Row-major index
+        uint64_t dst_idx = col * nRows + row; // Column-major index
+        dst[dst_idx] = src[src_idx];
+    }
+}
+
+void transpose_trace(
+    AirInstanceInfo *air_instance_info,
+    uint64_t* src,
+    uint64_t* aux,
+    uint64_t nCols,
+    uint64_t nRows,
+    cudaStream_t stream,
+    TimerGPU &timer
+) {
+    dim3 blockDim(16, 16);
+    dim3 gridDim((nCols + blockDim.x - 1) / blockDim.x,
+                 (nRows + blockDim.y - 1) / blockDim.y);
+    TimerStartCategoryGPU(timer, TRANSPOSE_TRACE);
+    transpose<<<gridDim, blockDim, 0, stream>>>(src, aux, nRows, nCols);
+    CHECKCUDAERR(cudaMemcpyAsync(src, aux, nRows * nCols * sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
+    TimerStopCategoryGPU(timer, TRANSPOSE_TRACE);
+    CHECKCUDAERR(cudaGetLastError());
+}
+
+void unpack_trace(
+    AirInstanceInfo *air_instance_info,
+    uint64_t* src,
+    uint64_t* dst,
+    uint64_t nCols,
+    uint64_t nRows,
+    cudaStream_t stream,
+    TimerGPU &timer
+) {
+    dim3 threads(512);
+    dim3 blocks((nRows + threads.x - 1) / threads.x);
+
+    size_t sharedMemSize = nCols * sizeof(uint64_t);
+    TimerStartCategoryGPU(timer, UNPACK_TRACE);
+    unpack<<<blocks, threads, sharedMemSize, stream>>>(
+        src,
+        dst,
+        nRows,
+        nCols,
+        air_instance_info->num_packed_words,
+        air_instance_info->unpack_info,
+        false
+    );
+    TimerStopCategoryGPU(timer, UNPACK_TRACE);
+    CHECKCUDAERR(cudaGetLastError());
+}
+
 void computeZerofier(Goldilocks::Element *d_zi, uint64_t nBits, uint64_t nBitsExt, cudaStream_t stream) {
     uint64_t NExtended = 1 << nBitsExt;
     uint64_t extendBits = nBitsExt - nBits;
@@ -155,7 +272,7 @@ void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPol
     NTT_Goldilocks_GPU ntt;
 
     Goldilocks::Element *src = d_fixedPols;
-    Goldilocks::Element *dst = d_fixedPolsExtended + 2;
+    Goldilocks::Element *dst = d_fixedPolsExtended;
     Goldilocks::Element *pNodes = dst + nCols * NExtended;
     ntt.LDE_MerkleTree_GPU_inplace(pNodes, (gl64_t *)dst, 0, (gl64_t *)src, 0, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, setupCtx.starkInfo.nConstants, timer, stream);
 }
@@ -352,7 +469,7 @@ __global__ void computeEvals_v2(
         }
         else
         {
-            pol = &d_fixedPols[2];
+            pol = d_fixedPols;
         }
 
         for (int i = 0; i < FIELD_EXTENSION; i++)
@@ -698,7 +815,7 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
         }
         else if (k == nStages + 1)
         {
-            getTreeTracePols<<<nBlocks, nThreads, 0, stream>>>(&d_constTree[2], trees[k]->getMerkleTreeWidth(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize); // rick: this last should be done in the CPU
+            getTreeTracePols<<<nBlocks, nThreads, 0, stream>>>(d_constTree, trees[k]->getMerkleTreeWidth(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize); // rick: this last should be done in the CPU
         } else{
             uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[0].name + "0"];
@@ -1019,7 +1136,6 @@ __global__  void computeFRIExpression(uint64_t domainSize, uint64_t nOpeningPoin
 
         uint64_t i = chunk_idx * blockDim.x;
         uint64_t r = i + threadIdx.x;
-        uint64_t nOp = 0;
         for(uint64_t o = 0; o < nOpeningPoints; ++o) {
             for(uint64_t j = 0; j < d_countsPerOpeningPos[o]; ++j) {
                 EvalInfo evalInfo = d_evalInfoPerOpening[o][j];
@@ -1035,7 +1151,7 @@ __global__  void computeFRIExpression(uint64_t domainSize, uint64_t nOpeningPoin
                 }
                 else
                 {
-                    pol = &d_fixedPols[2];
+                    pol = d_fixedPols;
                 }
     
                 gl64_t *out = (j == 0) ? accum : res;

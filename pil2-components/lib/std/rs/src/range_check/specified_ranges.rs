@@ -240,8 +240,14 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
                         chunk[col] = F::from_u64(vec[row].load(Ordering::Relaxed));
                     }
                 });
-                let air_instance =
-                    AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, self.num_rows, buffer, false));
+                let air_instance = AirInstance::new(TraceInfo::new(
+                    self.airgroup_id,
+                    self.air_id,
+                    self.num_rows,
+                    buffer,
+                    false,
+                    false,
+                ));
                 pctx.add_air_instance(air_instance, instance_id);
             }
         }

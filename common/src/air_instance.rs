@@ -2,7 +2,9 @@ use std::ptr;
 use fields::Field;
 use proofman_util::create_buffer_fast;
 
-use crate::{trace::Trace, trace::Values};
+use crate::{
+    trace::{Trace, Values},
+};
 
 #[repr(C)]
 pub struct StepsParams {
@@ -59,10 +61,18 @@ pub struct TraceInfo<F> {
     air_values: Option<Vec<F>>,
     airgroup_values: Option<Vec<F>>,
     shared_buffer: bool,
+    is_packed: bool,
 }
 
 impl<F> TraceInfo<F> {
-    pub fn new(airgroup_id: usize, air_id: usize, num_rows: usize, trace: Vec<F>, shared_buffer: bool) -> Self {
+    pub fn new(
+        airgroup_id: usize,
+        air_id: usize,
+        num_rows: usize,
+        trace: Vec<F>,
+        shared_buffer: bool,
+        is_packed: bool,
+    ) -> Self {
         Self {
             airgroup_id,
             air_id,
@@ -72,7 +82,13 @@ impl<F> TraceInfo<F> {
             air_values: None,
             airgroup_values: None,
             shared_buffer,
+            is_packed,
         }
+    }
+
+    pub fn is_packed(mut self, is_packed: bool) -> Self {
+        self.is_packed = is_packed;
+        self
     }
 
     pub fn with_custom_traces(mut self, custom_traces: Vec<CustomCommitInfo<F>>) -> Self {
@@ -136,6 +152,7 @@ pub struct AirInstance<F> {
     pub evals: Vec<F>,
     pub fixed: Vec<F>,
     pub shared_buffer: bool,
+    pub is_packed: bool,
 }
 
 impl<F: Field> AirInstance<F> {
@@ -161,6 +178,7 @@ impl<F: Field> AirInstance<F> {
             challenges: Vec::new(),
             shared_buffer: trace_info.shared_buffer,
             fixed: Vec::new(),
+            is_packed: trace_info.is_packed,
         }
     }
 
@@ -171,6 +189,7 @@ impl<F: Field> AirInstance<F> {
             traces.trace.num_rows(),
             traces.trace.get_buffer(),
             traces.trace.is_shared_buffer(),
+            traces.trace.is_packed(),
         );
 
         if let Some(custom_traces) = traces.custom_traces.as_mut() {

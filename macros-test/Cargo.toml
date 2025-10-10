@@ -9,9 +9,9 @@ categories.workspace = true
 
 [dependencies]
 proofman-macros = { path = "../macros" }
-rayon = { workspace = true}
+rayon = { workspace = true }
 proofman-common = { path = "../common" }
-
+fields = { workspace = true }
 
 
 proofman = { workspace = true }

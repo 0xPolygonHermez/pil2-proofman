@@ -516,46 +516,12 @@ impl DistributionCtx {
     }
 
     /// Assign instances to partitions and processes
-    pub fn assign_instances(&mut self, minimal_memory: bool) {
+    pub fn assign_instances(&mut self) {
         if self.assignation_done {
             panic!("Instances already assigned");
         }
         //assign instances
         self.validate_static_config().expect("Static configuration invalid or incomplete");
-        if minimal_memory {
-            // Sort unassigned instances according to n_chunks
-            let mut unassigned_instances = Vec::new();
-            for (gid, &partition_id) in self.instance_partition.iter().enumerate() {
-                if partition_id == -1 {
-                    unassigned_instances.push((gid, self.instances[gid].n_chunks));
-                }
-            }
-
-            // Sort the unassigned instances by weight
-            unassigned_instances.sort_by(|a, b| b.1.cmp(&a.1));
-
-            // Assign half of the unassigned instances in round-robin fashion
-            let mut partition_id: usize = 0;
-            let mut process_id: usize = 0;
-            for (gid, _) in unassigned_instances.iter().take(unassigned_instances.len() / 2) {
-                self.instance_partition[*gid] = partition_id as i32;
-                self.partition_count[partition_id] += 1;
-                self.partition_weight[partition_id] += self.instances[*gid].weight;
-                if self.partition_mask[partition_id] {
-                    self.worker_instances.push(*gid);
-                    let lid = self.process_count[process_id];
-                    self.process_count[process_id] += 1;
-                    self.process_weight[process_id] += self.instances[*gid].weight;
-                    if process_id == self.process_id {
-                        self.process_instances.push(*gid);
-                    }
-                    self.instance_process[*gid].0 = process_id as i32;
-                    self.instance_process[*gid].1 = lid;
-                    process_id = (process_id + 1) % self.n_processes;
-                }
-                partition_id = (partition_id + 1) % self.n_partitions;
-            }
-        }
 
         // Sort the unassigned instances by proof weight
         let mut unassigned_instances = Vec::new();

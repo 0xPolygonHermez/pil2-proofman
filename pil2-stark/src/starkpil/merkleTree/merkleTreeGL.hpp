@@ -14,7 +14,7 @@ private:
 
 public:
     MerkleTreeGL(){};
-    MerkleTreeGL(uint64_t _arity, bool custom, Goldilocks::Element *tree);
+    MerkleTreeGL(uint64_t _arity, bool custom, Goldilocks::Element *tree, uint64_t height, uint64_t width);
     MerkleTreeGL(uint64_t _arity, bool custom, uint64_t _height, uint64_t _width, bool allocateSource = false, bool allocateNodes = false);
     ~MerkleTreeGL();
 

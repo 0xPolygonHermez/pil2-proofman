@@ -20,7 +20,7 @@ impl<F: PrimeField64> Module<F> {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
-    execute!(ModuleTrace, FibonacciSquareTrace::<usize>::NUM_ROWS / ModuleTrace::<usize>::NUM_ROWS);
+    execute!(ModuleTrace, FibonacciSquareTrace::<F>::NUM_ROWS / ModuleTrace::<F>::NUM_ROWS);
 
     fn calculate_witness(
         &self,

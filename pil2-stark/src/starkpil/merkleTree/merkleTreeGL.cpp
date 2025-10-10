@@ -18,15 +18,15 @@ MerkleTreeGL::MerkleTreeGL(uint64_t _arity, bool _custom, uint64_t _height, uint
     }
 };
 
-MerkleTreeGL::MerkleTreeGL(uint64_t _arity, bool _custom, Goldilocks::Element *tree)
+MerkleTreeGL::MerkleTreeGL(uint64_t _arity, bool _custom, Goldilocks::Element *tree, uint64_t height_, uint64_t width_)
 {
-    width = Goldilocks::toU64(tree[0]);
-    height = Goldilocks::toU64(tree[1]);
-    source = &tree[2];
+    width = width_;
+    height = height_;
+    source = tree;
     arity = _arity;
     custom = _custom;
     numNodes = getNumNodes(height);
-    nodes = &tree[2 + height * width];
+    nodes = &tree[height * width];
 };
 
 MerkleTreeGL::~MerkleTreeGL()
@@ -208,15 +208,8 @@ void MerkleTreeGL::merkelize()
 void MerkleTreeGL::writeFile(std::string constTreeFile)
 {
     ofstream fw(constTreeFile.c_str(), std::fstream::out | std::fstream::binary);
-    fw.write((const char *)&(width), sizeof(uint64_t));
-    fw.write((const char *)&(height), sizeof(uint64_t)); 
-    // fw.write((const char *)source, width * height * sizeof(Goldilocks::Element));
-    // fw.write((const char *)nodes, numNodes * sizeof(Goldilocks::Element));
-    // fw.close();
-
-    uint64_t sourceOffset = sizeof(uint64_t) * 2;
-    uint64_t nodesOffset = sourceOffset + width * height * sizeof(Goldilocks::Element);
+    uint64_t nodesOffset = width * height * sizeof(Goldilocks::Element);
     fw.close();
-    writeFileParallel(constTreeFile, source, width * height * sizeof(Goldilocks::Element), sourceOffset);
+    writeFileParallel(constTreeFile, source, width * height * sizeof(Goldilocks::Element), 0);
     writeFileParallel(constTreeFile, nodes, numNodes * sizeof(Goldilocks::Element), nodesOffset);
 }

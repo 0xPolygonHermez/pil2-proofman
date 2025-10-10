@@ -6,12 +6,12 @@
 #![allow(dead_code)]
 
 use proofman_common as common;
-pub use proofman_macros::trace;
+use proofman_common::GenericTrace;
+use proofman_common::PackedInfoConst;
+pub use proofman_macros::trace_row;
 pub use proofman_macros::values;
-
+use fields::PrimeField64;
 use std::fmt;
-
-use rayon::prelude::*;
 
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
@@ -77,33 +77,44 @@ values!(BuildProofValues<F> {
  value1: F, value2: F,
 });
  
-trace!(FibonacciSquareFixed<F> {
+trace_row!(FibonacciSquareFixedRow<F> {
  L1: F, __L1__: F,
-},  0, 0, 4194304 );
+});
+pub type FibonacciSquareFixed<F> = GenericTrace<FibonacciSquareFixedRow<F>, 4194304, 0, 0>;
 
-trace!(FibonacciSquareTrace<F> {
- a: F, b: F,
-},  0, 0, 4194304 );
+trace_row!(FibonacciSquareTraceRow<F> {
+ a:F, b:F,
+});
+pub type FibonacciSquareTrace<F> = GenericTrace<FibonacciSquareTraceRow<F>, 4194304, 0, 0>;
 
-trace!(ModuleFixed<F> {
+
+trace_row!(ModuleFixedRow<F> {
  SEGMENT_LN: F, __L1__: F,
-},  0, 1, 1048576 );
+});
+pub type ModuleFixed<F> = GenericTrace<ModuleFixedRow<F>, 1048576, 0, 1>;
 
-trace!(ModuleTrace<F> {
- x: F, q: F, x_mod: F,
-},  0, 1, 1048576 );
+trace_row!(ModuleTraceRow<F> {
+ x:F, q:F, x_mod:F,
+});
+pub type ModuleTrace<F> = GenericTrace<ModuleTraceRow<F>, 1048576, 0, 1>;
 
-trace!(SpecifiedRangesFixed<F> {
+
+trace_row!(SpecifiedRangesFixedRow<F> {
  RANGE: [F; 1], __L1__: F,
-},  0, 2, 256 );
+});
+pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 256, 0, 2>;
 
-trace!(SpecifiedRangesTrace<F> {
- mul: [F; 1],
-},  0, 2, 256 );
+trace_row!(SpecifiedRangesTraceRow<F> {
+ mul:[F; 1],
+});
+pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 256, 0, 2>;
 
-trace!(FibonacciSquareRomTrace<F> {
+
+trace_row!(FibonacciSquareRomTraceRow<F> {
  line: F, flags: F,
-}, 0, 0, 4194304, 0 );
+});
+pub type FibonacciSquareRomTrace<F> = GenericTrace<FibonacciSquareRomTraceRow<F>, 4194304, 0, 0, 0>;
+
 
 values!(FibonacciSquareAirValues<F> {
  fibo1: [F; 2], fibo3: FieldExtension<F>,
@@ -124,3 +135,6 @@ values!(ModuleAirGroupValues<F> {
 values!(SpecifiedRangesAirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
+
+pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
+];

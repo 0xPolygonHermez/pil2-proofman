@@ -125,8 +125,14 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC42 {
                 pctx.set_public_value(F::as_canonical_u64(public), index);
             }
 
-            let air_instance =
-                AirInstance::new(TraceInfo::new(0, 0, 1 << (setup.stark_info.stark_struct.n_bits), trace, false));
+            let air_instance = AirInstance::new(TraceInfo::new(
+                0,
+                0,
+                1 << (setup.stark_info.stark_struct.n_bits),
+                trace,
+                false,
+                false,
+            ));
             pctx.add_air_instance(air_instance, 0);
         }
     }

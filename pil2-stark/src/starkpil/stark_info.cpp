@@ -406,7 +406,7 @@ void StarkInfo::setMapOffsets() {
 
     uint64_t numNodes = getNumNodesMT(NExtended);
 
-    if(!preallocate) {    
+    if(!preallocate && gpu) {    
         mapOffsets[std::make_pair("const", true)] = mapTotalN;
         MerkleTreeGL mt(starkStruct.merkleTreeArity, true, NExtended, nConstants);
         uint64_t constTreeSize = (2 + (NExtended * nConstants) + numNodes);
@@ -487,6 +487,8 @@ void StarkInfo::setMapOffsets() {
     
     assert(nStages <= 2);
 
+    mapOffsets[std::make_pair("cm1", false)] = mapTotalN;
+    mapTotalN += N * mapSectionsN["cm1"];
     uint64_t maxTotalN = 0;
     // Set offsets for all stages in the extended field (cm1, cm2, ..., cmN)
     for(uint64_t stage = 1; stage <= nStages + 1; stage++) {
@@ -498,13 +500,7 @@ void StarkInfo::setMapOffsets() {
         }
     }
 
-    uint64_t offsetTraces = mapOffsets[std::make_pair("cm2", true)];
-    for(uint64_t stage = nStages; stage >= 1; stage--) {
-        mapOffsets[std::make_pair("cm" + to_string(stage), false)] = offsetTraces;
-        offsetTraces += N * mapSectionsN["cm" + to_string(stage)]; 
-    }
-    
-    mapTotalN = std::max(mapTotalN, offsetTraces);
+    mapOffsets[std::make_pair("cm2", false)] = mapOffsets[std::make_pair("cm2", true)];
 
     if(!gpu) {
         mapOffsets[std::make_pair("evals", true)] = mapTotalN;
