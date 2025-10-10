@@ -47,7 +47,8 @@ __global__ void unpack(
     uint64_t nRows,
     uint64_t nCols,
     uint64_t words_per_row,
-    const uint64_t *d_unpack_info
+    const uint64_t *d_unpack_info,
+    bool col_major
 ) {
     extern __shared__ uint64_t shared_mem[];
     uint64_t* shared_unpack_info = shared_mem;
@@ -60,7 +61,6 @@ __global__ void unpack(
     uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
     if (row >= nRows) return;
     const uint64_t* packed_row = src + row * words_per_row;
-    uint64_t* unpacked_row = dst + row * nCols;
 
     uint64_t word = packed_row[0];
     uint64_t word_idx = 0;
@@ -88,8 +88,47 @@ __global__ void unpack(
             bit_offset = nbits - bits_left;
         }
 
-        unpacked_row[c] = val;
+        if (col_major) {
+            dst[c * nRows + row] = val;
+        } else {
+            dst[row * nCols + c] = val;
+        }
     }
+}
+
+__global__ void transpose(
+    const uint64_t* src,
+    uint64_t* dst,
+    uint64_t nRows,
+    uint64_t nCols
+) {
+    uint64_t row = blockIdx.y * blockDim.y + threadIdx.y;
+    uint64_t col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < nRows && col < nCols) {
+        uint64_t src_idx = row * nCols + col; // Row-major index
+        uint64_t dst_idx = col * nRows + row; // Column-major index
+        dst[dst_idx] = src[src_idx];
+    }
+}
+
+void transpose_trace(
+    AirInstanceInfo *air_instance_info,
+    uint64_t* src,
+    uint64_t* aux,
+    uint64_t nCols,
+    uint64_t nRows,
+    cudaStream_t stream,
+    TimerGPU &timer
+) {
+    dim3 blockDim(16, 16);
+    dim3 gridDim((nCols + blockDim.x - 1) / blockDim.x,
+                 (nRows + blockDim.y - 1) / blockDim.y);
+    TimerStartCategoryGPU(timer, TRANSPOSE_TRACE);
+    transpose<<<gridDim, blockDim, 0, stream>>>(src, aux, nRows, nCols);
+    CHECKCUDAERR(cudaMemcpyAsync(src, aux, nRows * nCols * sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
+    TimerStopCategoryGPU(timer, TRANSPOSE_TRACE);
+    CHECKCUDAERR(cudaGetLastError());
 }
 
 void unpack_trace(
@@ -112,7 +151,8 @@ void unpack_trace(
         nRows,
         nCols,
         air_instance_info->num_packed_words,
-        air_instance_info->unpack_info
+        air_instance_info->unpack_info,
+        false
     );
     TimerStopCategoryGPU(timer, UNPACK_TRACE);
     CHECKCUDAERR(cudaGetLastError());
