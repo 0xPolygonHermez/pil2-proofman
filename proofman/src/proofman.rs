@@ -8,7 +8,7 @@ use proofman_common::{
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{free_device_buffers_c, gen_device_buffers_c, get_num_gpus_c};
+use proofman_starks_lib_c::{free_device_buffers_c, gen_device_buffers_c, get_num_gpus_c, init_gpu_setup_c};
 use proofman_starks_lib_c::{
     save_challenges_c, save_proof_values_c, save_publics_c, check_device_memory_c, gen_device_streams_c,
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c, reset_device_streams_c,
@@ -250,18 +250,19 @@ where
             mpi_ctx,
         );
 
-        Self::check_setup_(&pctx, aggregation, final_snark)
-    }
-
-    pub fn check_setup_(
-        pctx: &ProofCtx<F>,
-        aggregation: bool,
-        final_snark: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
         let setups_aggregation =
             Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, false, &ParamsGPU::new(false)));
 
         let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &ParamsGPU::new(false));
+
+        if cfg!(feature = "gpu") {
+            let n_gpus = get_num_gpus_c();
+            if n_gpus == 0 {
+                return Err("No GPUs found".into());
+            }
+
+            init_gpu_setup_c(sctx.max_n_bits_ext as u64);
+        }
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
@@ -2619,8 +2620,8 @@ where
             false => String::from(""),
         };
 
-        let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
-        let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+        let const_pols_path = &setup.const_pols_path;
+        let const_pols_tree_path = &setup.const_pols_tree_path;
 
         let (skip_recalculation, stream_id) = match stream_id_ {
             Some(stream_id) => (true, stream_id),
@@ -2643,8 +2644,8 @@ where
             d_buffers.get_ptr(),
             skip_recalculation,
             stream_id as u64,
-            &const_pols_path,
-            &const_pols_tree_path,
+            const_pols_path,
+            const_pols_tree_path,
         );
 
         if cfg!(not(feature = "gpu")) {
@@ -2776,7 +2777,7 @@ where
 
         if verify_constraints {
             let const_pols: Vec<F> = create_buffer_fast(setup.const_pols_size);
-            load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
+            load_const_pols(setup, &const_pols);
             air_instance.init_fixed(const_pols);
         }
         air_instance.init_custom_commit_fixed_trace(setup.custom_commits_fixed_buffer_size as usize);

@@ -309,8 +309,6 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         publics_aggregation
     };
 
-    let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
-    let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
     let proof_type: &str = setup.setup_type.clone().into();
 
     if witness.proof_type != ProofType::VadcopFinal {
@@ -343,8 +341,8 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         instance_id as u64,
         vadcop,
         d_buffers,
-        &const_pols_path,
-        &const_pols_tree_path,
+        &setup.const_pols_path,
+        &setup.const_pols_tree_path,
         proof_type,
     );
 
@@ -594,13 +592,12 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
 
     let trace: Vec<F> =
         create_buffer_fast(setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize);
-    let setup_path = pctx.global_info.get_setup_path("recursivef");
 
     let const_tree_size = setup.const_tree_size;
     let const_tree = vec![F::ZERO; const_tree_size];
     let const_pols: Vec<F> = vec![F::ZERO; setup.const_pols_size];
 
-    load_const_pols(&setup_path, setup.const_pols_size, &const_pols);
+    load_const_pols(setup, &const_pols);
     load_const_pols_tree(setup, &const_tree);
 
     let mut vadcop_final_proof: Vec<u64> = vec![0; proof.len() + pctx.global_info.n_publics];

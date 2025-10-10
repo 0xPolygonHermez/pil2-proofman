@@ -393,13 +393,14 @@ uint64_t get_const_size(void *pStarkInfo) {
 }
 
 
-// #ifndef __USE_CUDA__
+#ifndef __USE_CUDA__
+void init_gpu_setup(uint64_t maxBitsExt) {}
 void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress) {
     assert(((StarkInfo *)pStarkInfo)->starkStruct.verificationHashType == "GL");
     ConstTree constTree;
     constTree.calculateConstTreeGL(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress);
 };
-// #endif
+#endif
 
 
 void calculate_const_tree_bn128(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress) {

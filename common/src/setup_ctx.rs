@@ -342,7 +342,7 @@ impl<F: PrimeField64> SetupCtx<F> {
         match self.setup_repository.setups.get(&(airgroup_id, air_id)) {
             Some(setup) => {
                 let const_pols: Vec<F> = vec![F::ZERO; setup.const_pols_size];
-                load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
+                load_const_pols(setup, &const_pols);
                 const_pols
             }
             None => {

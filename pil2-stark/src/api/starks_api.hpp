@@ -42,6 +42,7 @@ extern "C" {
 
     // Const Pols
     // ========================================================================================
+    void init_gpu_setup(uint64_t maxBitsExt);
     bool load_const_tree(void *pStarkInfo, void *pConstTree, char *treeFilename, uint64_t constTreeSize, char *verkeyFilename);
     void load_const_pols(void *pConstPols, char *constFilename, uint64_t constSize);
     uint64_t get_const_tree_size(void *pStarkInfo);

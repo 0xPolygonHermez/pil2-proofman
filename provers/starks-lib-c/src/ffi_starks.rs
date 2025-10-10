@@ -237,6 +237,13 @@ pub fn load_const_tree_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn init_gpu_setup_c(maxBitsExt: u64) {
+    unsafe {
+        init_gpu_setup(maxBitsExt);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn calculate_const_tree_c(pStarkInfo: *mut c_void, pConstPols: *mut u8, pConstPolsTreeAddress: *mut u8) {
     unsafe {
         calculate_const_tree(
@@ -1469,6 +1476,11 @@ pub fn load_const_tree_c(
 ) -> bool {
     trace!("··· {}", "load_const_tree: This is a mock call because there is no linked library");
     true
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn init_gpu_setup_c(_maxBitsExt: u64) {
+    trace!("··· {}", "init_gpu_setup: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]

@@ -82,7 +82,9 @@ extern "C" {
     pub fn get_const_tree_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
     
     pub fn get_const_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
-    
+
+    pub fn init_gpu_setup(maxBitsExt: u64);
+
     pub fn calculate_const_tree(
         pStarkInfo: *mut ::std::os::raw::c_void,
         pConstPolsAddress: *mut ::std::os::raw::c_void,

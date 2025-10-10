@@ -74,6 +74,7 @@
         "list": "cpp",
         "ranges": "cpp",
         "span": "cpp",
-        "__nullptr": "cpp"
+        "__nullptr": "cpp",
+        "format": "cpp"
     }
 }
