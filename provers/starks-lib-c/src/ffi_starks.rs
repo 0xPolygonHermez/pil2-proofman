@@ -1036,6 +1036,7 @@ pub fn get_committed_pols_c(
     N: u64,
     nPublics: u64,
     nCols: u64,
+    row_major: bool,
 ) {
     unsafe {
         get_committed_pols(
@@ -1047,6 +1048,7 @@ pub fn get_committed_pols_c(
             N,
             nPublics,
             nCols,
+            row_major,
         );
     }
 }
@@ -1959,6 +1961,7 @@ pub fn get_committed_pols_c(
     _N: u64,
     _nPublics: u64,
     _nCols: u64,
+    _row_major: bool,
 ) {
     trace!("··· {}", "get_committed_pols: This is a mock call because there is no linked library");
 }

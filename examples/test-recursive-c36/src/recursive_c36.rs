@@ -119,6 +119,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
                 1 << (setup.stark_info.stark_struct.n_bits),
                 setup.stark_info.n_publics,
                 n_cols,
+                true,
             );
 
             for (index, public) in publics.iter().enumerate() {

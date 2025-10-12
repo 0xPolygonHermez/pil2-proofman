@@ -10,7 +10,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include "utils.hpp"
-#include "commit_pols_starks.hpp"
 
 void readExecFile(uint64_t *exec_data, std::string execFile, uint64_t nCommitedPols) {
     uint64_t nAdds;
@@ -23,8 +22,7 @@ void readExecFile(uint64_t *exec_data, std::string execFile, uint64_t nCommitedP
     loadFileParallel(exec_data, execFile, (2 + nAdds * 4 + nSMap * nCommitedPols) * sizeof(uint64_t));
 }
 
-void getCommitedPols(Goldilocks::Element *circomWitness, uint64_t *exec_data, Goldilocks::Element *witness, Goldilocks::Element* publics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCommitedPols)  {
-    CommitPolsStarks commitPols((uint8_t *)witness, N, nCommitedPols);
+void getCommitedPols(Goldilocks::Element *circomWitness, uint64_t *exec_data, Goldilocks::Element *witness, Goldilocks::Element* publics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCommitedPols, bool row_major)  {
 
     uint64_t nAdds = exec_data[0];
     uint64_t nSMap = exec_data[1];
@@ -44,12 +42,24 @@ void getCommitedPols(Goldilocks::Element *circomWitness, uint64_t *exec_data, Go
         circomWitness[sizeWitness + i] = c + d;
     }
 
-    for (uint i = 0; i < N; i++) {
-        for (uint j = 0; j < nCommitedPols; j++) {
-            if (i < nSMap && p_sMap[nCommitedPols * i + j] != 0) {
-                commitPols.Compressor.a[j][i] = circomWitness[p_sMap[nCommitedPols * i + j]];
-            } else {
-                commitPols.Compressor.a[j][i] = Goldilocks::zero();
+    if (row_major) {
+        for (uint i = 0; i < N; i++) {
+            for (uint j = 0; j < nCommitedPols; j++) {
+                if (i < nSMap && p_sMap[nCommitedPols * i + j] != 0) {
+                    witness[i * nCommitedPols + j] = circomWitness[p_sMap[nCommitedPols * i + j]];
+                } else {
+                    witness[i * nCommitedPols + j] = Goldilocks::zero();
+                }
+            }
+        } 
+    } else {
+        for (uint i = 0; i < N; i++) {
+            for (uint j = 0; j < nCommitedPols; j++) {
+                if (i < nSMap && p_sMap[nCommitedPols * i + j] != 0) {
+                    witness[j * N + i] = circomWitness[p_sMap[nCommitedPols * i + j]];
+                } else {
+                    witness[j * N + i] = Goldilocks::zero();
+                }
             }
         }
     }
