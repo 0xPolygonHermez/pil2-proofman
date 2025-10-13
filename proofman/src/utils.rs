@@ -745,3 +745,18 @@ pub fn register_std_dev<F: PrimeField64>(
 
     wcm.register_component_std(std.virtual_table.clone());
 }
+
+pub fn print_roots<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[[F; 4]]) {
+    let instances = pctx.dctx_get_instances();
+    for (instance_id, &instance_info) in instances.iter().enumerate() {
+        let (airgroup_id, air_id) = (instance_info.airgroup_id, instance_info.air_id);
+        let contribution = roots_contributions[instance_id];
+        tracing::info!(
+            "Contribution for instance id {} [{}:{}] is: {:?}",
+            instance_id,
+            airgroup_id,
+            air_id,
+            contribution,
+        );
+    }
+}

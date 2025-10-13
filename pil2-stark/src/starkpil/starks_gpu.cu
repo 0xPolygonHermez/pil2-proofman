@@ -5,9 +5,6 @@
 #include "goldilocks_cubic_extension.cuh"
 #include "proof2zkinStark.hpp"
 
-#define COLS_PER_CHUNK 4
-#define ROWS_PER_CHUNK 256
-
 Goldilocks::Element omegas_inv_[33] = {
     0x1,
     0xffffffff00000000,
@@ -43,28 +40,6 @@ Goldilocks::Element omegas_inv_[33] = {
     0x8958579f296dac7a,
     0x16d265893b5b7e85,
 };
-
-__device__ __forceinline__ uint64_t get_col_major_idx(
-    uint64_t row, uint64_t col,
-    uint64_t nRows
-) {
-    uint64_t rows_per_chunk = (ROWS_PER_CHUNK < nRows) ? ROWS_PER_CHUNK : nRows;
-    uint64_t total_row_chunks = (nRows + rows_per_chunk - 1) / rows_per_chunk;
-
-    uint64_t chunk_idx = col / COLS_PER_CHUNK;
-    uint64_t col_in_chunk = col % COLS_PER_CHUNK;
-    uint64_t row_chunk = row / rows_per_chunk;
-    uint64_t row_in_chunk = row % rows_per_chunk;
-
-    uint64_t chunk_start = chunk_idx * COLS_PER_CHUNK * total_row_chunks * rows_per_chunk;
-
-    uint64_t dst_idx = chunk_start
-                     + col_in_chunk * total_row_chunks * rows_per_chunk
-                     + row_chunk * rows_per_chunk
-                     + row_in_chunk;
-
-    return dst_idx;
-}
 
 __global__ void unpack(
     const uint64_t* src,
@@ -112,7 +87,11 @@ __global__ void unpack(
             bit_offset = nbits - bits_left;
         }
 
-        uint64_t dst_idx = get_col_major_idx(row, c, nRows);
+        uint32_t blockY = c >> 2;
+        uint32_t ncols_block = nCols - 4 * blockY < 4 ? nCols - 4 * blockY : 4;
+        uint32_t colId_block = (c - 4 * blockY);
+        uint32_t dst_idx = blockY * 4 * nRows + blockIdx.x * 256 * ncols_block + colId_block * 256 + threadIdx.x;
+
         dst[dst_idx] = val;
     }
 }
@@ -126,7 +105,7 @@ void unpack_trace(
     cudaStream_t stream,
     TimerGPU &timer
 ) {
-    dim3 threads(512);
+    dim3 threads(256);
     dim3 blocks((nRows + threads.x - 1) / threads.x);
 
     size_t sharedMemSize = nCols * sizeof(uint64_t);

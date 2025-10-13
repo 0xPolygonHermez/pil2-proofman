@@ -142,7 +142,7 @@ public:
 
     static void init_twiddle_factors_and_r(uint64_t maxLogDomainSize_, uint32_t nGPUs_input = 0, uint32_t* gpu_ids = nullptr);
 
-    void prepare_blocks_trace(gl64_t* src,gl64_t* aux,uint64_t nCols,uint64_t nRows,cudaStream_t stream,TimerGPU &timer);
+    void prepare_blocks_trace(gl64_t* dst, gl64_t* src,uint64_t nCols,uint64_t nRows,cudaStream_t stream,TimerGPU &timer);
 
     // IMPORTANT: Memory management is manual. Call free_twiddle_factors_and_r() explicitly
     // at application shutdown to release GPU memory. Twiddle factors persist across
