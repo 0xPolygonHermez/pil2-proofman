@@ -132,24 +132,23 @@ __global__ void prepareBlocksInput(gl64_t * dst, gl64_t * src, uint64_t n, uint6
     dst[blockIdx.y * 4 * ndest + row_write * block_ncols + col_write + n * block_ncols] = gl64_t(uint64_t(0));
 }
 
-__global__ void prepareBlocksInputRowMajor(gl64_t * dst, gl64_t * src, uint64_t n, uint64_t ncols)
+__global__ void prepareBlocksInputRowMajor(gl64_t * dst, uint64_t n_dst, gl64_t * src, uint64_t n_src, uint64_t ncols)
 {
     extern __shared__ gl64_t shared[];
 
     int row = blockIdx.x * blockDim.x + threadIdx.x;
     int col = blockIdx.y * blockDim.y + threadIdx.y;
-    if (row >= n || col >= ncols)
+    if (row >= n_src || col >= ncols)
         return;
     int row_base = blockIdx.x * blockDim.x;
     int col_base = blockIdx.y * blockDim.y;
-    int ndest = n << 1;
     int block_ncols = (ncols - col_base) < 4 ? ncols - col_base : 4;
     int sharedIdx = threadIdx.y * blockDim.x + threadIdx.x;
     shared[sharedIdx] = src[row * ncols + col];
     __syncthreads();
-    int out_idx = blockIdx.y * 4 * ndest + row * block_ncols + threadIdx.y;
+    int out_idx = blockIdx.y * 4 * n_dst + row * block_ncols + threadIdx.y;
     dst[out_idx] = shared[sharedIdx];
-    dst[out_idx + n * block_ncols] = gl64_t(uint64_t(0));
+    if(n_dst > n_src) dst[out_idx + n_src * block_ncols] = gl64_t(uint64_t(0));
     
 }
 
