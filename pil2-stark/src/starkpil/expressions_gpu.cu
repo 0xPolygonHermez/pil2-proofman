@@ -449,7 +449,8 @@ __device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArg
 #if DEBUG
             if(print) printf("Expression debug constPols\n");
 #endif
-            destVals[threadIdx.x] = d_params->pConstPolsAddress[l * nCols + stagePos];
+            uint64_t pos = getBufferOffset(l, stagePos, d_expsArgs->domainSize, nCols);
+            destVals[threadIdx.x] = d_params->pConstPolsAddress[pos];
         }
         else
         {
@@ -460,7 +461,8 @@ __device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArg
 #if DEBUG
                 if(print) printf("Expression debug trace\n");
 #endif
-                destVals[threadIdx.x] = d_params->trace[l * nCols + stagePos];
+                uint64_t pos = getBufferOffset(l, stagePos, d_expsArgs->domainSize, nCols); 
+                destVals[threadIdx.x] = d_params->trace[pos];
             }
             else
             {
@@ -469,7 +471,8 @@ __device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArg
 #endif
                 for (uint64_t d = 0; d < d_destParams[k].dim; ++d)
                 {
-                    destVals[threadIdx.x + d * blockDim.x] = d_params->aux_trace[offset + l * nCols + stagePos + d];
+                    uint64_t pos = getBufferOffset(l, stagePos + d, d_expsArgs->domainSize, nCols);
+                    destVals[threadIdx.x + d * blockDim.x] = d_params->aux_trace[offset + pos];
                 }
             }
         }
@@ -536,6 +539,7 @@ __device__ __forceinline__ void printRes(Goldilocks::Element *res, uint32_t dimR
         }
     }
 }
+
 __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, const bool debug)
 {
 
