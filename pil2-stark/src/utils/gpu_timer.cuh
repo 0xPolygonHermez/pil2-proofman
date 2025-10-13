@@ -113,7 +113,8 @@ public:
         return total;
     }
 
-    void syncAndLogAll() {
+    void syncAndLogAll(std::string instance_id, std::string airgroup_id, std::string air_id) {
+        zklog.trace("TIMERS FOR INSTANCE ID " + instance_id + " [" + airgroup_id + ":" + air_id + "]");
         for (const auto& name : order) {
             auto& entry = timers[name];
             if (entry.timeMs < 0.0f) syncAndCompute(name);
@@ -214,7 +215,7 @@ inline std::string makeTimerName(const std::string& base, int id) {
 
 #define TimerGetElapsedGPU(timer, name) (timer.getTimeSec(#name))
 
-#define TimerSyncAndLogAllGPU(timer) (timer.syncAndLogAll())
+#define TimerSyncAndLogAllGPU(timer, instance_id, airgroup_id, air_id) (timer.syncAndLogAll(std::to_string(instance_id), std::to_string(airgroup_id), std::to_string(air_id)))
 
 #define TimerSyncCategoriesGPU(timer) (timer.syncCategories())
 
@@ -235,12 +236,11 @@ inline std::string makeTimerName(const std::string& base, int id) {
 #define TimerStopGPU(timer, name)
 #define TimerStopAndLogGPU(timer, name)
 #define TimerGetElapsedGPU(timer, name) 0.0
-#define TimerSyncAndLogAllGPU(timer)
+#define TimerSyncAndLogAllGPU(timer, instance_id, airgroup_id, air_id)
 #define TimerSyncCategoriesGPU(timer)
 #define TimerResetGPU(timer)
 #define TimerGetElapsedCategoryGPU(timer, category) 0.0
 #define TimerLogCategoryContributionsGPU(timer, total_name)
-#define TimerSyncAndLogAllGPU(timer)
 #define TimerSyncCategoriesGPU(timer)
 #define TimerResetGPU(timer)
 #define TimerGetElapsedCategoryGPU(timer, category) 0.0
