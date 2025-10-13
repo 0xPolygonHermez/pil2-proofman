@@ -89,6 +89,16 @@ ExpressionsGPU::~ExpressionsGPU()
     CHECKCUDAERR(cudaFree(d_deviceArgs));
 }
 
+__device__ __forceinline__ offset getBufferOffset( uint64_t row, uint64_t col, uint64_t nRows, uint64_t nCols){
+    uint64_t blockY = col >> 2;
+    uint64_t blockX = row >> 8;
+    uint64_t nCols_block = nCols - 4*blockY < 4 ? nCols - 4*blockY : 4;
+    uint64_t col_block = col & 3;
+    uint64_t row_block = row & 255;
+
+    return blockY * 4 * nRows + blockX * nCols_block * 256 + col_block * 256 + row_block;
+}
+
 void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool debug)
 {
     ExpsArguments h_expsArgs;
@@ -245,7 +255,8 @@ __device__ __forceinline__ Goldilocks::Element* load__(
                 }
             }
 #endif
-        const uint64_t pos = logicalRow * dArgs->mapSectionsN[0] + argIdx;
+        //const uint64_t pos = logicalRow * dArgs->mapSectionsN[0] + argIdx;
+        const uint64_t pos = getBufferOffset(logicalRow, argIdx, domainSize, dArgs->mapSectionsN[0]);
         temp[threadIdx.x] = basePtr[pos];
         return temp;
     }
@@ -254,7 +265,8 @@ __device__ __forceinline__ Goldilocks::Element* load__(
     if (type >= 1 && type <= 3) {
         const uint64_t offset = dExpsArgs->mapOffsetsExps[type];
         const uint64_t nCols = dArgs->mapSectionsN[type];
-        const uint64_t pos = logicalRow * nCols + argIdx;
+        //const uint64_t pos = logicalRow * nCols + argIdx;
+        const uint64_t pos = getBufferOffset(logicalRow, argIdx, domainSize, nCols);
 
         if (type == 1 && !dExpsArgs->domainExtended) {
 #if DEBUG
@@ -279,8 +291,9 @@ __device__ __forceinline__ Goldilocks::Element* load__(
 #endif
             #pragma unroll
             for (uint64_t d = 0; d < dim; d++) {
+                const uint64_t pos_ = getBufferOffset(logicalRow, argIdx+d, domainSize, nCols);
                 temp[threadIdx.x + d * blockDim.x] =
-                    dParams->aux_trace[offset + pos + d];
+                    dParams->aux_trace[offset + pos_];
             }
         }
         return temp;
@@ -335,7 +348,8 @@ __device__ __forceinline__ Goldilocks::Element* load__(
     const uint64_t idx = type - (dArgs->nStages + 4);
     const uint64_t offset = dExpsArgs->mapOffsetsCustomExps[idx];
     const uint64_t nCols = dArgs->mapSectionsNCustomFixed[idx];
-    const uint64_t pos = logicalRow * nCols + argIdx;
+    //const uint64_t pos = logicalRow * nCols + argIdx;
+    const uint64_t pos = getBufferOffset(logicalRow, argIdx, domainSize, nCols);
 
     temp[threadIdx.x] = dParams->pCustomCommitsFixed[offset + pos];
     return temp;
