@@ -660,6 +660,28 @@ void init_gpu_setup(uint64_t maxBitsExt) {
     NTT_Goldilocks_GPU::init_twiddle_factors_and_r(maxBitsExt, 1, my_gpu_ids);
 }
 
+void prepare_blocks(uint64_t *pol, uint64_t N, uint64_t nCols) {
+    gl64_t *d_pol;
+    gl64_t *d_aux;
+    cudaMalloc(&d_pol, N * nCols * sizeof(gl64_t));
+    cudaMalloc(&d_aux, N * nCols * sizeof(gl64_t));
+    cudaMemcpy(d_pol, pol, N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice);
+
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
+
+    TimerGPU timer;
+    cudaSetDevice(0);
+    NTT_Goldilocks_GPU ntt;
+    cout << nCols << " " << N << endl;
+    ntt.prepare_blocks_trace(d_pol, d_aux, nCols, N, stream, timer);
+
+    cudaMemcpy(pol, d_pol, N * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost);
+    cudaFree(d_pol);
+    cudaFree(d_aux);
+    cudaStreamDestroy(stream);
+}
+
 void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress_) {
     cudaSetDevice(0);
 
@@ -689,12 +711,12 @@ void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pCons
     ntt.LDE_MerkleTree_GPU_inplace(pNodes, (gl64_t *)d_fixedTree, 0, (gl64_t *)d_fixedPols, 0, starkInfo.starkStruct.nBits, starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, timer, stream);
 
     Goldilocks::Element *pConstTreeAddress = (Goldilocks::Element *)pConstTreeAddress_;
+    cudaStreamSynchronize(stream);
     cudaMemcpy(pConstTreeAddress, d_fixedTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
     cudaFree(d_fixedPols);
     cudaFree(d_fixedTree);
     TimerStopGPU(timer, STARK_GPU_CONST_TREE);
     TimerSyncAndLogAllGPU(timer);
-    cudaStreamSynchronize(stream);
     cudaStreamDestroy(stream);
 }
 

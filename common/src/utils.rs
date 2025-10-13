@@ -313,13 +313,3 @@ pub fn configured_num_threads(n_local_processes: usize) -> usize {
     tracing::info!("Using {num} threads based on physical cores per process, considering there are {n_local_processes} processes per node");
     num
 }
-
-pub fn transpose<F: PrimeField64>(input: &[F], rows: usize, cols: usize) -> Vec<F> {
-    let mut output = vec![F::ZERO; rows * cols];
-    for r in 0..rows {
-        for c in 0..cols {
-            output[c * rows + r] = input[r * cols + c];
-        }
-    }
-    output
-}

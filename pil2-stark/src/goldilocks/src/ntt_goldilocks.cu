@@ -148,8 +148,26 @@ __global__ void prepareBlocksInputRowMajor(gl64_t * dst, uint64_t n_dst, gl64_t 
     __syncthreads();
     int out_idx = blockIdx.y * 4 * n_dst + row * block_ncols + threadIdx.y;
     dst[out_idx] = shared[sharedIdx];
-    if(n_dst > n_src) dst[out_idx + n_src * block_ncols] = gl64_t(uint64_t(0));
-    
+    if(n_dst > n_src) dst[out_idx + n_src * block_ncols] = gl64_t(uint64_t(0));    
+}
+
+void NTT_Goldilocks_GPU::prepare_blocks_trace(
+    gl64_t* src,
+    gl64_t* aux,
+    uint64_t nCols,
+    uint64_t nRows,
+    cudaStream_t stream,
+    TimerGPU &timer
+) {
+    if (nCols == 0 || nRows == 0) return;
+
+    dim3 block(32, 4);
+    dim3 grid((nRows + block.x - 1) / block.x,
+             (nCols + block.y - 1) / block.y);
+    size_t sharedMemSize = block.x * block.y * sizeof(gl64_t);
+    prepareBlocksInputRowMajor<<<grid, block, sharedMemSize, stream>>>(aux, nRows, src, nRows, nCols);
+    CHECKCUDAERR(cudaMemcpyAsync(src, aux, nCols * nRows * sizeof(gl64_t), cudaMemcpyDeviceToDevice, stream));
+    CHECKCUDAERR(cudaGetLastError());
 }
 
 //assume blocks are in 32 x 4
@@ -214,22 +232,19 @@ __global__ void compareResults_col(gl64_t* res1, gl64_t* res2, uint64_t n, uint6
 }
 
 //assume is launched in blocks of 256x4 that cover the whole matrix
-__global__ void transposeSubBlocksInPlace(gl64_t * data, uint64_t n, uint64_t n_ext, uint64_t ncols)
+__global__ void transposeSubBlocksInPlace(gl64_t * data, uint64_t n_ext, uint64_t ncols)
 {
     int sublock_ncols = (ncols - blockIdx.y * 4) < 4 ? (ncols - blockIdx.y * 4) : 4;
     int offset = blockIdx.y * 4 * n_ext + blockIdx.x * 256 * sublock_ncols;
     if( threadIdx.y >= sublock_ncols)
         return;
-    extern __shared__ gl64_t shared[];   
+    extern __shared__ gl64_t shared[];
+    assert(offset + threadIdx.x * sublock_ncols + threadIdx.y < n_ext * ncols);
     shared[threadIdx.x * 4 + threadIdx.y] = data[offset + threadIdx.x * sublock_ncols + threadIdx.y];
     __syncthreads();
     data[offset + threadIdx.y*256 + threadIdx.x] = shared[threadIdx.x * 4 + threadIdx.y];
-    if( n != n_ext){
-        int offset2 = offset + gridDim.x * 256 * sublock_ncols;
-        data[offset2 + threadIdx.y*256 + threadIdx.x] = gl64_t(uint64_t(0));
-    }
-
 }
+
 __global__ void transposeSubBlocksInPlaceBack(gl64_t * data, uint64_t n, uint64_t n_ext, uint64_t ncols)
 {
     int sublock_ncols = (ncols - blockIdx.y * 4) < 4 ? (ncols - blockIdx.y * 4) : 4;
@@ -279,8 +294,8 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
     dim3 grid((size + block.x - 1) / block.x,
              (ncols + block.y - 1) / block.y);
     size_t sharedMemSize = block.x * block.y * sizeof(gl64_t);
-    prepareBlocksInputRowMajor<<<grid, block, sharedMemSize, stream>>>(d_aux, d_src_ntt_, size, ncols);
-    transposeSubBlocksInPlace<<<grid_0, block_0, sharedMemSize_0, stream>>>(d_aux, size, ext_size, ncols);
+    prepareBlocksInputRowMajor<<<grid, block, sharedMemSize, stream>>>(d_aux, ext_size, d_src_ntt_, size, ncols);
+    transposeSubBlocksInPlace<<<grid_0, block_0, sharedMemSize_0, stream>>>(d_aux, ext_size, ncols);
     transposeSubBlocksInPlaceBack<<<grid_0, block_0, sharedMemSize_0, stream>>>(d_aux, size, ext_size, ncols);
 
     CHECKCUDAERR(cudaMemcpyAsync(d_dst_ntt_, d_src_ntt_, size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice, stream));
@@ -301,7 +316,7 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
     dim3 grid_1((ext_size + block_1.x - 1) / block_1.x,
              (ncols + block_1.y - 1) / block_1.y);
     int sharedMemSize_1 = block_1.x * block_1.y * sizeof(gl64_t);
-    transposeSubBlocksInPlace<<<grid_1, block_1, sharedMemSize_1, stream>>>(d_aux, ext_size, ext_size, ncols);
+    transposeSubBlocksInPlace<<<grid_1, block_1, sharedMemSize_1, stream>>>(d_aux, ext_size, ncols);
     compareResults_col<<<grid_, block_, 0, stream>>>(d_dst_ntt_, d_aux, ext_size, ncols);
 
     cudaStreamSynchronize(stream);
@@ -319,7 +334,7 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
     dim3 grid_1((ext_size + block_1.x - 1) / block_1.x,
              (ncols + block_1.y - 1) / block_1.y);
     int sharedMemSize_ = block_1.x * block_1.y * sizeof(gl64_t);
-    transposeSubBlocksInPlace<<<grid_1, block_1, sharedMemSize_, stream>>>(d_src_ntt, ext_size, ext_size, ncols);
+    transposeSubBlocksInPlace<<<grid_1, block_1, sharedMemSize_, stream>>>(d_dst_ntt, ext_size, ncols);
 
 #endif
     
@@ -332,7 +347,7 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
 
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    Poseidon2GoldilocksGPU::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_dst_ntt_, ncols, ext_size, stream);
+    Poseidon2GoldilocksGPU::merkletree_cuda_coalesced_blocks(3, (uint64_t*) d_tree, (uint64_t *)d_dst_ntt_, ncols, ext_size, stream);
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 
@@ -1124,3 +1139,45 @@ void ntt_cuda_blocks( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factor
 }
 
 void ntt_cuda_blocks_par( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size_in, uint32_t log_domain_size_out, uint32_t ncols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize, gl64_t* aux_data)
+{   
+
+    uint32_t domain_size_in = 1 << log_domain_size_in;
+    uint32_t domain_size_out = 1 << log_domain_size_out;
+
+    dim3 blockDim;
+    dim3 gridDim;
+    blockDim = dim3(4);
+    gridDim = dim3(1024,(ncols + 3) / 4);
+
+    reverse_permutation_blocks<<<gridDim, blockDim, 0, stream>>>(data, log_domain_size_in, domain_size_out, ncols);
+    CHECKCUDAERR(cudaGetLastError());
+
+    // Get device ID and twiddle factors once
+    int device_id;
+    cudaGetDevice(&device_id);
+    if (d_fwd_twiddle_factors[device_id] == nullptr || d_inv_twiddle_factors[device_id] == nullptr)
+    {
+        fprintf(stderr, "[NTT] ERROR: Twiddle factors not initialized for device %d. Did you call init_twiddle_factors()?\n", device_id);
+        abort();
+    }
+
+    gl64_t *d_twiddles = inverse ? d_inv_twiddle_factors[device_id] : d_fwd_twiddle_factors[device_id];
+    gl64_t *d_r = d_r_[device_id];
+    
+
+    if(log_domain_size_in >= 8 ) {
+         for(uint32_t step = 0; step < log_domain_size_in; step+=8){
+                dim3 blocks = dim3(domain_size_in / 256, (ncols+3)/4, 1);
+                dim3 threads = dim3(256,1,1);
+                br_ntt_8_steps_blocks_par<<<blocks, threads, 0, stream>>>(data, d_twiddles, d_r, domain_size_in, log_domain_size_in, domain_size_out, ncols, step, true, inverse, extend, maxLogDomainSize);
+                CHECKCUDAERR(cudaGetLastError());
+        }
+    } else {
+        for (uint32_t stage = 0; stage < log_domain_size_in; stage++)
+        {
+            br_ntt_group_blocks<<<domain_size_in / 2, ncols, 0, stream>>>(data, d_twiddles, d_r, stage, domain_size_in, log_domain_size_in, domain_size_out, ncols, inverse, extend, maxLogDomainSize);
+            CHECKCUDAERR(cudaGetLastError());
+        }
+    }
+
+}
