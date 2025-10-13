@@ -19,13 +19,7 @@
 #define TPB_NTT_y 16
 #define SHIFT 7
 
-//TODO:
-// 2. Millora temps llençar tots els blocks a la fegada en cada iteracio del BBR?si
-//////
-// 3. usar buffer per acabar bé, empitjora el temps?
-// 4. treure la bit reversal
-///
-// 1. primera coia amb reversal
+
 // #ifdef GPU_TIMING
 #include "timer_gl.hpp"
 // #endif
@@ -53,7 +47,6 @@ void eval_r(gl64_t *r, uint32_t log_domain_size, cudaStream_t stream);
 void ntt_cuda( gl64_t *data, gl64_t **d_r, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize);
 void ntt_cuda_blocks( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size_in, uint32_t log_domain_size_out, uint32_t ncols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize, gl64_t *aux_data);
 void ntt_cuda_blocks_par( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size_in, uint32_t log_domain_size_out, uint32_t ncols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize, gl64_t *aux_data);
-
 
 __global__ void printDataKernel_(gl64_t *data, uint32_t domain_size, uint32_t ncols){
     Goldilocks::Element * data_print = (Goldilocks::Element *) data;
@@ -244,16 +237,37 @@ __global__ void compareResults_col(gl64_t* res1, gl64_t* res2, uint64_t n, uint6
 }
 
 //assume is launched in blocks of 256x4 that cover the whole matrix
-__global__ void transposeSubBlocksInPlace(gl64_t * data, uint64_t n, uint64_t ncols)
+__global__ void transposeSubBlocksInPlace(gl64_t * data, uint64_t n, uint64_t n_ext, uint64_t ncols)
 {
     int sublock_ncols = (ncols - blockIdx.y * 4) < 4 ? (ncols - blockIdx.y * 4) : 4;
-    int offset = blockIdx.y * 4 * n + blockIdx.x * 256 * sublock_ncols;
+    int offset = blockIdx.y * 4 * n_ext + blockIdx.x * 256 * sublock_ncols;
     if( threadIdx.y >= sublock_ncols)
         return;
     extern __shared__ gl64_t shared[];   
     shared[threadIdx.x * 4 + threadIdx.y] = data[offset + threadIdx.x * sublock_ncols + threadIdx.y];
     __syncthreads();
     data[offset + threadIdx.y*256 + threadIdx.x] = shared[threadIdx.x * 4 + threadIdx.y];
+    if( n != n_ext){
+        int offset2 = offset + gridDim.x * 256 * sublock_ncols;
+        data[offset2 + threadIdx.y*256 + threadIdx.x] = gl64_t(uint64_t(0));
+    }
+
+}
+__global__ void transposeSubBlocksInPlaceBack(gl64_t * data, uint64_t n, uint64_t n_ext, uint64_t ncols)
+{
+    int sublock_ncols = (ncols - blockIdx.y * 4) < 4 ? (ncols - blockIdx.y * 4) : 4;
+    int offset = blockIdx.y * 4 * n_ext + blockIdx.x * 256 * sublock_ncols;
+    if( threadIdx.y >= sublock_ncols)
+        return;
+    extern __shared__ gl64_t shared[];   
+    shared[threadIdx.x * 4 + threadIdx.y] = data[offset + threadIdx.y*256 + threadIdx.x];
+    __syncthreads();
+    data[offset + threadIdx.x * sublock_ncols + threadIdx.y] = shared[threadIdx.x * 4 + threadIdx.y];
+    
+    if( n != n_ext){
+        int offset2 = offset + gridDim.x * 256 * sublock_ncols;
+        data[offset2 + threadIdx.y*256 + threadIdx.x] = gl64_t(uint64_t(0));
+    }
 
 }
 
@@ -275,16 +289,23 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
     gl64_t *d_dst_ntt_ = &d_dst_ntt[offset_dst_ntt];
     gl64_t *d_src_ntt_ = &d_src_ntt[offset_src_ntt];
 
-#if 1
+#if 0
     gl64_t *d_aux;
     cudaMalloc(&d_aux, ext_size * ncols * sizeof(gl64_t));
     cudaMemset(d_aux, 0, ext_size * ncols * sizeof(gl64_t));
+    dim3 block_0(256, 4);
+    dim3 grid_0((size + block_0.x - 1) / block_0.x,
+             (ncols + block_0.y - 1) / block_0.y);
+    int sharedMemSize_0 = block_0.x * block_0.y * sizeof(gl64_t);
 
     dim3 block(32, 4);
     dim3 grid((size + block.x - 1) / block.x,
              (ncols + block.y - 1) / block.y);
     size_t sharedMemSize = block.x * block.y * sizeof(gl64_t);
     prepareBlocksInputRowMajor<<<grid, block, sharedMemSize, stream>>>(d_aux, d_src_ntt_, size, ncols);
+    transposeSubBlocksInPlace<<<grid_0, block_0, sharedMemSize_0, stream>>>(d_aux, size, ext_size, ncols);
+    transposeSubBlocksInPlaceBack<<<grid_0, block_0, sharedMemSize_0, stream>>>(d_aux, size, ext_size, ncols);
+
     CHECKCUDAERR(cudaMemcpyAsync(d_dst_ntt_, d_src_ntt_, size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice, stream));
     CHECKCUDAERR(cudaMemsetAsync(d_dst_ntt_ + size * ncols, 0, (ext_size - size) * ncols * sizeof(gl64_t), stream));
 
@@ -299,30 +320,29 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
 
     ntt_cuda(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, ncols, false, false, stream, maxLogDomainSize);
     ntt_cuda_blocks_par(d_aux, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, ncols, false, false, stream, maxLogDomainSize, d_src_ntt);
-
     dim3 block_1(256, 4);
     dim3 grid_1((ext_size + block_1.x - 1) / block_1.x,
              (ncols + block_1.y - 1) / block_1.y);
-    int sharedMemSize_ = block_1.x * block_1.y * sizeof(gl64_t);
-    transposeSubBlocksInPlace<<<grid_1, block_1, sharedMemSize_, stream>>>(d_aux, ext_size, ncols);
+    int sharedMemSize_1 = block_1.x * block_1.y * sizeof(gl64_t);
+    transposeSubBlocksInPlace<<<grid_1, block_1, sharedMemSize_1, stream>>>(d_aux, ext_size, ext_size, ncols);
     compareResults_col<<<grid_, block_, 0, stream>>>(d_dst_ntt_, d_aux, ext_size, ncols);
 
     cudaStreamSynchronize(stream);
     cudaFree(d_aux);
 #endif
-#if 0
-    dim3 block(32, 4);
-    dim3 grid((size + block.x - 1) / block.x,
-             (ncols + block.y - 1) / block.y);
-    size_t sharedMemSize = block.x * block.y * sizeof(gl64_t);
-    prepareBlocksInputRowMajor<<<grid, block, sharedMemSize, stream>>>(d_dst_ntt, d_src_ntt_, size, ncols);        
+#if 1
+    dim3 block_0(256, 4);
+    dim3 grid_0((size + block_0.x - 1) / block_0.x,
+             (ncols + block_0.y - 1) / block_0.y);
+    int sharedMemSize_0 = block_0.x * block_0.y * sizeof(gl64_t);
+    transposeSubBlocksInPlaceBack<<<grid_0, block_0, sharedMemSize_0, stream>>>(d_dst_ntt, size, ext_size, ncols);
     ntt_cuda_blocks_par(d_dst_ntt, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, n_bits_ext, ncols, true, true, stream, maxLogDomainSize, d_src_ntt); 
     ntt_cuda_blocks_par(d_dst_ntt, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, ncols, false, false, stream, maxLogDomainSize, d_src_ntt);
     dim3 block_1(256, 4);
     dim3 grid_1((ext_size + block_1.x - 1) / block_1.x,
              (ncols + block_1.y - 1) / block_1.y);
     int sharedMemSize_ = block_1.x * block_1.y * sizeof(gl64_t);
-    transposeSubBlocksInPlace<<<grid_1, block_1, sharedMemSize_, stream>>>(d_src_ntt, ext_size, ncols);
+    transposeSubBlocksInPlace<<<grid_1, block_1, sharedMemSize_, stream>>>(d_src_ntt, ext_size, ext_size, ncols);
 
 #endif
     
@@ -456,7 +476,6 @@ void NTT_Goldilocks_GPU::free_twiddle_factors_and_r() {
     d_inv_twiddle_factors = nullptr;
     d_r = nullptr;
 }
-
 
 __global__ void br_ntt_group(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t stage, uint32_t domain_size, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend, uint64_t maxLogDomainSize)
 {
@@ -1030,7 +1049,6 @@ __global__ void eval_r_second_step(gl64_t *r, uint32_t log_domain_size)
     }
 }
 
-
 void eval_r(gl64_t *r, uint32_t log_domain_size, cudaStream_t stream)
 {
     if (log_domain_size <= 12)
@@ -1087,7 +1105,6 @@ void ntt_cuda( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64
 
 }
 
-
 void ntt_cuda_blocks( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size_in, uint32_t log_domain_size_out, uint32_t ncols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize, gl64_t* aux_data)
 {   
 
@@ -1128,7 +1145,6 @@ void ntt_cuda_blocks( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factor
     }
 
 }
-
 
 void ntt_cuda_blocks_par( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size_in, uint32_t log_domain_size_out, uint32_t ncols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize, gl64_t* aux_data)
 {   
