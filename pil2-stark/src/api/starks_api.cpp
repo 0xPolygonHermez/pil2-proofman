@@ -395,6 +395,7 @@ uint64_t get_const_size(void *pStarkInfo) {
 
 #ifndef __USE_CUDA__
 void init_gpu_setup(uint64_t maxBitsExt) {}
+void prepare_blocks(uint64_t* pol, uint64_t N, uint64_t nCols) {}
 void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress) {
     assert(((StarkInfo *)pStarkInfo)->starkStruct.verificationHashType == "GL");
     ConstTree constTree;

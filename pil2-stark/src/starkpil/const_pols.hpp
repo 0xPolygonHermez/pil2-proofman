@@ -90,6 +90,10 @@ public:
             Goldilocks::Element root[4];
             mt.getRoot(root);
 
+            cout << " STORED ROOT " << Goldilocks::toU64(root[0]) << " " << Goldilocks::toU64(root[1]) << " " << Goldilocks::toU64(root[2]) << " " << Goldilocks::toU64(root[3]) << endl;
+
+            cout << " VALID ROOT " << verkeyJson[0] << " " << verkeyJson[1] << " " << verkeyJson[2] << " " << verkeyJson[3] << endl;
+
             if (Goldilocks::toU64(root[0]) != verkeyJson[0] ||
                 Goldilocks::toU64(root[1]) != verkeyJson[1] ||
                 Goldilocks::toU64(root[2]) != verkeyJson[2] ||

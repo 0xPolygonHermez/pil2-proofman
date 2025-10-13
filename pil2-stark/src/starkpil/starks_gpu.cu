@@ -5,6 +5,9 @@
 #include "goldilocks_cubic_extension.cuh"
 #include "proof2zkinStark.hpp"
 
+#define COLS_PER_CHUNK 4
+#define ROWS_PER_CHUNK 256
+
 Goldilocks::Element omegas_inv_[33] = {
     0x1,
     0xffffffff00000000,
@@ -41,14 +44,35 @@ Goldilocks::Element omegas_inv_[33] = {
     0x16d265893b5b7e85,
 };
 
+__device__ __forceinline__ uint64_t get_col_major_idx(
+    uint64_t row, uint64_t col,
+    uint64_t nRows
+) {
+    uint64_t rows_per_chunk = (ROWS_PER_CHUNK < nRows) ? ROWS_PER_CHUNK : nRows;
+    uint64_t total_row_chunks = (nRows + rows_per_chunk - 1) / rows_per_chunk;
+
+    uint64_t chunk_idx = col / COLS_PER_CHUNK;
+    uint64_t col_in_chunk = col % COLS_PER_CHUNK;
+    uint64_t row_chunk = row / rows_per_chunk;
+    uint64_t row_in_chunk = row % rows_per_chunk;
+
+    uint64_t chunk_start = chunk_idx * COLS_PER_CHUNK * total_row_chunks * rows_per_chunk;
+
+    uint64_t dst_idx = chunk_start
+                     + col_in_chunk * total_row_chunks * rows_per_chunk
+                     + row_chunk * rows_per_chunk
+                     + row_in_chunk;
+
+    return dst_idx;
+}
+
 __global__ void unpack(
     const uint64_t* src,
     uint64_t* dst,
     uint64_t nRows,
     uint64_t nCols,
     uint64_t words_per_row,
-    const uint64_t *d_unpack_info,
-    bool col_major
+    const uint64_t *d_unpack_info
 ) {
     extern __shared__ uint64_t shared_mem[];
     uint64_t* shared_unpack_info = shared_mem;
@@ -88,47 +112,9 @@ __global__ void unpack(
             bit_offset = nbits - bits_left;
         }
 
-        if (col_major) {
-            dst[c * nRows + row] = val;
-        } else {
-            dst[row * nCols + c] = val;
-        }
+        uint64_t dst_idx = get_col_major_idx(row, c, nRows);
+        dst[dst_idx] = val;
     }
-}
-
-__global__ void transpose(
-    const uint64_t* src,
-    uint64_t* dst,
-    uint64_t nRows,
-    uint64_t nCols
-) {
-    uint64_t row = blockIdx.y * blockDim.y + threadIdx.y;
-    uint64_t col = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (row < nRows && col < nCols) {
-        uint64_t src_idx = row * nCols + col; // Row-major index
-        uint64_t dst_idx = col * nRows + row; // Column-major index
-        dst[dst_idx] = src[src_idx];
-    }
-}
-
-void transpose_trace(
-    AirInstanceInfo *air_instance_info,
-    uint64_t* src,
-    uint64_t* aux,
-    uint64_t nCols,
-    uint64_t nRows,
-    cudaStream_t stream,
-    TimerGPU &timer
-) {
-    dim3 blockDim(16, 16);
-    dim3 gridDim((nCols + blockDim.x - 1) / blockDim.x,
-                 (nRows + blockDim.y - 1) / blockDim.y);
-    TimerStartCategoryGPU(timer, TRANSPOSE_TRACE);
-    transpose<<<gridDim, blockDim, 0, stream>>>(src, aux, nRows, nCols);
-    CHECKCUDAERR(cudaMemcpyAsync(src, aux, nRows * nCols * sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
-    TimerStopCategoryGPU(timer, TRANSPOSE_TRACE);
-    CHECKCUDAERR(cudaGetLastError());
 }
 
 void unpack_trace(
@@ -151,8 +137,7 @@ void unpack_trace(
         nRows,
         nCols,
         air_instance_info->num_packed_words,
-        air_instance_info->unpack_info,
-        false
+        air_instance_info->unpack_info
     );
     TimerStopCategoryGPU(timer, UNPACK_TRACE);
     CHECKCUDAERR(cudaGetLastError());

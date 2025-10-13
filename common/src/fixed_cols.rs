@@ -3,12 +3,11 @@ use std::{os::raw::c_void, path::PathBuf};
 use fields::PrimeField64;
 use proofman_starks_lib_c::{
     calculate_const_tree_c, calculate_const_tree_bn128_c, load_const_pols_c, load_const_tree_c, write_const_tree_c,
-    write_const_tree_bn128_c, write_fixed_cols_bin_c,
+    write_const_tree_bn128_c, write_fixed_cols_bin_c, prepare_blocks_c,
 };
 use proofman_util::{create_buffer_fast, timer_start_info, timer_stop_and_log_info};
 
 use crate::Setup;
-// use crate::transpose;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -109,8 +108,12 @@ pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
         timer_start_info!(WRITING_CONST_TREE);
         if setup.stark_info.stark_struct.verification_hash_type == "GL" {
             if cfg!(feature = "gpu") {
-                // let const_pols_transposed = transpose(&const_pols, setup.stark_info.n_constants as usize, 1 << setup.stark_info.stark_struct.n_bits);
-                let const_pols_transposed = &const_pols;
+                let mut const_pols_transposed = const_pols.clone();
+                prepare_blocks_c(
+                    const_pols_transposed.as_mut_ptr() as *mut u64,
+                    1 << setup.stark_info.stark_struct.n_bits,
+                    setup.stark_info.n_constants,
+                );
                 std::fs::write(&setup.const_pols_path, unsafe {
                     std::slice::from_raw_parts(
                         const_pols_transposed.as_ptr() as *const u8,
