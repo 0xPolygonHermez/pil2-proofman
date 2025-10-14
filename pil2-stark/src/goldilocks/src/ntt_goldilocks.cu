@@ -73,7 +73,7 @@ __global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, Goldilocks::Elem
         d_cmQ[getBufferOffsetRowMajor(row, p * qDim, NExtended, qDeg * qDim)] = dst[0];
         d_cmQ[getBufferOffsetRowMajor(row, p * qDim + 1, NExtended, qDeg * qDim)] = dst[1];
         d_cmQ[getBufferOffsetRowMajor(row, p * qDim + 2, NExtended, qDeg * qDim)] = dst[2];
-        for (uint64_t j = 1; j < extendBits; j++) {
+        for (uint64_t j = 1; j < (1 << extendBits); j++) {
             d_cmQ[getBufferOffsetRowMajor(row + j * N, p * qDim, NExtended, qDeg * qDim)] = gl64_t(uint64_t(0));
             d_cmQ[getBufferOffsetRowMajor(row + j * N, p * qDim + 1, NExtended, qDeg * qDim)] = gl64_t(uint64_t(0));
             d_cmQ[getBufferOffsetRowMajor(row + j * N, p * qDim + 2, NExtended, qDeg * qDim)] = gl64_t(uint64_t(0));
@@ -190,7 +190,7 @@ void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t 
     // Intt
     dim3 block_0(TILE_HEIGHT, TILE_WIDTH);
     dim3 grid_0((NExtended + block_0.x - 1) / block_0.x,
-             (ncols + block_0.y - 1) / block_0.y);
+             (qDim + block_0.y - 1) / block_0.y);
     int sharedMemSize_0 = block_0.x * block_0.y * sizeof(gl64_t);
     transposeSubBlocksBack<<<grid_0, block_0, sharedMemSize_0, stream>>>(d_q, NExtended, d_q, NExtended, qDim);
     ntt_cuda_blocks_par(d_q, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, qDim, true, false, stream, maxLogDomainSize);
@@ -200,7 +200,13 @@ void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t 
     applyS<<<blocks, threads, 0, stream>>>(d_cmQ, d_q, d_S, shiftIn, N, NExtended, n_bits_ext - n_bits, qDeg, qDim);
 
     ntt_cuda_blocks_par(d_cmQ, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, ncols, false, false, stream, maxLogDomainSize);
-    transposeSubBlocksInPlace<<<grid_0, block_0, sharedMemSize_0, stream>>>(d_cmQ, NExtended, ncols);
+
+    dim3 block_1(TILE_HEIGHT, TILE_WIDTH);
+    dim3 grid_1((NExtended + block_1.x - 1) / block_1.x,
+             (ncols + block_1.y - 1) / block_1.y);
+    int sharedMemSize_1 = block_1.x * block_1.y * sizeof(gl64_t);
+    transposeSubBlocksInPlace<<<grid_1, block_1, sharedMemSize_1, stream>>>(d_cmQ, NExtended, ncols);
+
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
     Poseidon2GoldilocksGPU::merkletree_cuda_coalesced_blocks(3, (uint64_t*) d_tree, (uint64_t *)d_cmQ, ncols, NExtended, stream);
