@@ -511,7 +511,7 @@ void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, uint64_t chunk, ui
 
     uint64_t extendBits = setupCtx.starkInfo.starkStruct.nBitsExt - setupCtx.starkInfo.starkStruct.nBits;
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     
     EvalInfo *d_evalsInfo = air_instance_info->evalsInfo[chunk];
     uint64_t nEvals = air_instance_info->evalsInfoSizes[chunk];
