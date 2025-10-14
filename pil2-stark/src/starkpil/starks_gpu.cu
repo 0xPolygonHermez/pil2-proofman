@@ -293,8 +293,8 @@ __global__ void fillLEv_2d(gl64_t *d_LEv,  uint64_t nOpeningPoints, uint64_t N, 
 {
     uint64_t i  = blockIdx.x;                  // opening point index
     uint64_t k0 = blockIdx.y * blockDim.y;     // start exponent for this block
-    uint64_t k  = k0 + threadIdx.y;            // this thread's exponent index
-    if (i >= nOpeningPoints || k >= N) return;
+    uint64_t row  = k0 + threadIdx.y;          // this thread's exponent index
+    if (i >= nOpeningPoints || row >= N) return;
 
     Goldilocks3GPU::Element xi;
     xi[0] = d_shiftedValues[i * FIELD_EXTENSION + 0];
@@ -314,10 +314,9 @@ __global__ void fillLEv_2d(gl64_t *d_LEv,  uint64_t nOpeningPoints, uint64_t N, 
     Goldilocks3GPU::Element res;
     Goldilocks3GPU::mul(res, basePow, xi_t);
 
-    uint64_t pos = (k * nOpeningPoints + i) * FIELD_EXTENSION;
-    d_LEv[pos + 0] = res[0];
-    d_LEv[pos + 1] = res[1];
-    d_LEv[pos + 2] = res[2];
+    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION, N, nOpeningPoints * FIELD_EXTENSION)] = res[0];
+    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION + 1, N, nOpeningPoints * FIELD_EXTENSION)] = res[1];
+    d_LEv[getBufferOffset(row, i*FIELD_EXTENSION + 2, N, nOpeningPoints * FIELD_EXTENSION)] = res[2];
 }
 
 __global__ void evalXiShifted(gl64_t* d_shiftedValues, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t invShift_)
@@ -366,7 +365,7 @@ void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint
 
     TimerStartCategoryGPU(timer, NTT);
     NTT_Goldilocks_GPU ntt;
-    ntt.INTT_inplace(0, nBits, FIELD_EXTENSION * nOpeningPoints, d_aux_trace, offset_helper + nOpeningPoints * FIELD_EXTENSION, d_LEv, stream);
+    ntt.INTT_inplace(d_LEv, nBits, FIELD_EXTENSION * nOpeningPoints, stream);
     TimerStopCategoryGPU(timer, NTT);
    
 }
@@ -402,7 +401,7 @@ void calculateXis_inplace(SetupCtx &setupCtx, StepsParams &h_params, int64_t *d_
 }
 
 __global__ void computeEvals_v2(
-    uint64_t domainSize,
+    uint64_t NExtended,
     uint64_t extendBits,
     uint64_t size_eval,
     uint64_t N,
@@ -445,19 +444,22 @@ __global__ void computeEvals_v2(
         while (tid < N)
         {
             uint64_t row = (tid << extendBits);
-            uint64_t pos = (evalInfo.openingPos + tid * openingsSize) * FIELD_EXTENSION;
+            Goldilocks3GPU::Element LEv;
+            LEv[0] = d_LEv[getBufferOffset(tid, evalInfo.openingPos * FIELD_EXTENSION, N, openingsSize * FIELD_EXTENSION)];
+            LEv[1] = d_LEv[getBufferOffset(tid, evalInfo.openingPos * FIELD_EXTENSION + 1, N, openingsSize * FIELD_EXTENSION)];
+            LEv[2] = d_LEv[getBufferOffset(tid, evalInfo.openingPos * FIELD_EXTENSION + 2, N, openingsSize * FIELD_EXTENSION)];
             Goldilocks3GPU::Element res;
             if (evalInfo.dim == 1)
             {
-                Goldilocks3GPU::mul(res, *((Goldilocks3GPU::Element *)&d_LEv[pos]), pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos, domainSize, evalInfo.stageCols)]);
+                Goldilocks3GPU::mul(res, LEv, pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos, NExtended, evalInfo.stageCols)]);
             }
             else
             {
                 Goldilocks3GPU::Element val;
-                val[0] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos, domainSize, evalInfo.stageCols)];
-                val[1] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos + 1, domainSize, evalInfo.stageCols)];
-                val[2] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos + 2, domainSize, evalInfo.stageCols)];
-                Goldilocks3GPU::mul(res, *((Goldilocks3GPU::Element *)&d_LEv[pos]), val);
+                val[0] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos, NExtended, evalInfo.stageCols)];
+                val[1] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos + 1, NExtended, evalInfo.stageCols)];
+                val[2] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos + 2, NExtended, evalInfo.stageCols)];
+                Goldilocks3GPU::mul(res, LEv, val);
             }
             Goldilocks3GPU::add(shared_sum[threadIdx.x], shared_sum[threadIdx.x], res);
             tid += blockDim.x * gridDim.y;
@@ -1125,14 +1127,14 @@ __global__  void computeFRIExpression(uint64_t domainSize, uint64_t nOpeningPoin
     
                 gl64_t *out = (j == 0) ? accum : res;
                 if(evalInfo.dim == 1) {
-                    out[threadIdx.x] = pol[getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols)];
+                    out[threadIdx.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols)];
                     // printArgs(out, 1, false, eval, 3, true, i, 3, nOp++, debug);
                     Goldilocks3GPU::sub_13_gpu_b_const(out, out, eval);
                     // printFRI(out, i, debug);
                 } else {
-                    out[threadIdx.x] = pol[getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols)];
-                    out[threadIdx.x + blockDim.x] = pol[getBufferOffset(r, evalInfo.stagePos + 1, domainSize, evalInfo.stageCols)];
-                    out[threadIdx.x + 2*blockDim.x] = pol[getBufferOffset(r, evalInfo.stagePos + 2, domainSize, evalInfo.stageCols)];
+                    out[threadIdx.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols)];
+                    out[threadIdx.x + blockDim.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 1, domainSize, evalInfo.stageCols)];
+                    out[threadIdx.x + 2*blockDim.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 2, domainSize, evalInfo.stageCols)];
                     // printArgs(out, 3, false, eval, 3, true, i, 1, nOp++, debug);
                     Goldilocks3GPU::sub_gpu_b_const(out, out, eval);
                     // printFRI(out, i, debug);
