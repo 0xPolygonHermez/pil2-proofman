@@ -123,7 +123,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
     Goldilocks::Element* vals_gpu_shifted = vals_gpu + FIELD_EXTENSION;
     Goldilocks::Element* helpers = h_params.aux_trace + offsetAuxTrace + FIELD_EXTENSION*N + FIELD_EXTENSION;  
 
-    Dest destStruct(nullptr, N);
+    Dest destStruct(nullptr, N, 0);
     destStruct.dest_gpu = vals_gpu_shifted;
     destStruct.addParams(numFieldId, setupCtx.expressionsBin.expressionsInfo[numFieldId].destDim);
     destStruct.addParams(denFieldId, setupCtx.expressionsBin.expressionsInfo[denFieldId].destDim, true);

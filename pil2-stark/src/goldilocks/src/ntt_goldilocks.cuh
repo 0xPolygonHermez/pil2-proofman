@@ -6,6 +6,7 @@
 #include <cuda_runtime.h>
 #include <sys/time.h>
 #include "ntt_goldilocks.hpp"
+#include "data_layout.cuh"
 #include "gpu_timer.cuh"
 
 __device__ __constant__ uint64_t omegas[33] = {

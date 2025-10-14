@@ -5,6 +5,7 @@
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 #include "poseidon2_goldilocks.hpp"
+#include "data_layout.cuh"
 
 __global__ void linear_hash_gpu_2_2_tree_2(uint64_t *output, uint64_t *input, uint32_t size, uint32_t num_rows);
 __global__ void linear_hash_gpu_coalesced_2(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t size, uint32_t num_rows);

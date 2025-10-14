@@ -56,6 +56,7 @@ __global__ void insertTracePol(Goldilocks::Element *d_aux_trace, uint64_t offset
 __global__ void fillLEv_2d(gl64_t* d_LEv, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t shift_, uint64_t N);
 
 __global__ void computeEvals_v2(
+    uint64_t domainSize,
     uint64_t extendBits,
     uint64_t size_eval,
     uint64_t N,
