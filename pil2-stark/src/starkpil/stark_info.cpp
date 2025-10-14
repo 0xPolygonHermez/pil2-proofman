@@ -639,22 +639,6 @@ uint64_t StarkInfo::getNumNodesMT(uint64_t height) {
     return numNodes * HASH_SIZE;
 }
 
-uint64_t StarkInfo::getTraceOffset(string type, PolMap &polInfo, bool domainExtended)
-{
-    std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? customCommits[polInfo.commitId].name + "0"
-                                                                                          : "const";
-    uint64_t offset = mapOffsets[std::make_pair(stage, domainExtended)];
-    offset += polInfo.stagePos;
-    return offset;
-}
-
-uint64_t StarkInfo::getTraceNColsSection(string type, PolMap &polInfo, bool domainExtended)
-{
-    std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? customCommits[polInfo.commitId].name + "0"
-                                                                                          : "const";
-    return mapSectionsN[stage];
-}
-
 opType string2opType(const string s) 
 {
     if(s == "const") 

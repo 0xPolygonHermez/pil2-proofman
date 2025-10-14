@@ -173,7 +173,7 @@ impl Default for ParamsGPU {
     fn default() -> Self {
         Self {
             preallocate: false,
-            max_number_streams: usize::MAX,
+            max_number_streams: 20,
             number_threads_pools_witness: 4,
             #[cfg(feature = "packed")]
             max_witness_stored: 10,

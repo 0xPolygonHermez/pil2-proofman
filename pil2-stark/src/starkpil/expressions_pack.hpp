@@ -3,7 +3,7 @@
 #include "expressions_ctx.hpp"
 
 #define DEBUG 0
-#define DEBUG_ROW 161699
+#define DEBUG_ROW 0
 
 #define NROWS_PACK 128
 class ExpressionsPack : public ExpressionsCtx {
@@ -503,6 +503,10 @@ public:
             
             storePolynomial(nrowsPack, dest, values, i, isConstant);
         }
+        // for(uint64_t k = 0; k < dest.dim * dest.domainSize; k++) {
+        //     cout << "result[" << k << "] = " << dest.dest[k].fe << endl;
+        // }
+        // cout << "----------------------------------------" << endl;
     }
 };
 

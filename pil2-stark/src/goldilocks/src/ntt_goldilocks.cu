@@ -105,33 +105,6 @@ void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t 
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 
-//assume inputs blocks are of size 32x4 by now
-__global__ void prepareBlocksInput(gl64_t * dst, gl64_t * src, uint64_t n, uint64_t ncols)
-{
-    extern __shared__ gl64_t shared[];
-    
-    int row_read = blockIdx.x * blockDim.x + threadIdx.x; 
-    int col_read= blockIdx.y * blockDim.y + threadIdx.y;
-    if (row_read >= n || col_read >= ncols)
-        return;
-    int row_base = blockIdx.x * blockDim.x;
-    int col_base = blockIdx.y * blockDim.y;
-    int ndest = n << 1;
-    int sharedIdx = threadIdx.y * blockDim.x + threadIdx.x;
-    shared[sharedIdx] = src[col_read * n + row_read];
-    __syncthreads();
-
-    int block_ncols = (ncols - col_base) < 4 ? ncols - col_base : 4;
-    int shared_row_write = sharedIdx / block_ncols;
-    int shared_col_write = sharedIdx % block_ncols;
-    int sharedIdx_write = shared_col_write * blockDim.x + shared_row_write;
-    int row_write = row_base + shared_row_write;
-    int col_write = col_base + shared_col_write;
-
-    dst[blockIdx.y * 4 * ndest + row_write * block_ncols + col_write] = shared[sharedIdx_write];
-    dst[blockIdx.y * 4 * ndest + row_write * block_ncols + col_write + n * block_ncols] = gl64_t(uint64_t(0));
-}
-
 __global__ void prepareBlockFromRowMajor(gl64_t * dst, uint64_t n_dst, gl64_t * src, uint64_t n_src, uint64_t ncols)
 {
     extern __shared__ gl64_t shared[];
@@ -140,37 +113,17 @@ __global__ void prepareBlockFromRowMajor(gl64_t * dst, uint64_t n_dst, gl64_t * 
     int col = blockIdx.y * blockDim.y + threadIdx.y;
     if (row >= n_src || col >= ncols)
         return;
-    int row_base = blockIdx.x * blockDim.x;
     int col_base = blockIdx.y * blockDim.y;
-    int block_ncols = (ncols - col_base) < 4 ? ncols - col_base : 4;
+    int block_ncols = (ncols - col_base) < TILE_WIDTH ? ncols - col_base : TILE_WIDTH;
     int sharedIdx = threadIdx.y * blockDim.x + threadIdx.x;
     shared[sharedIdx] = src[row * ncols + col];
     __syncthreads();
-    int out_idx = blockIdx.y * 4 * n_dst + blockIdx.x * block_ncols * 256 + 256 * threadIdx.y + threadIdx.x;
-    dst[out_idx] = shared[sharedIdx];
-    if(n_dst > n_src) dst[out_idx + n_src * block_ncols] = gl64_t(uint64_t(0));
-}
-
-__global__ void prepareBlocksInputRowMajor(gl64_t * dst, uint64_t n_dst, gl64_t * src, uint64_t n_src, uint64_t ncols)
-{
-    extern __shared__ gl64_t shared[];
-
-    int row = blockIdx.x * blockDim.x + threadIdx.x;
-    int col = blockIdx.y * blockDim.y + threadIdx.y;
-    if (row >= n_src || col >= ncols)
-        return;
-    int col_base = blockIdx.y * blockDim.y;
-    int block_ncols = (ncols - col_base) < 4 ? ncols - col_base : 4;
-    int sharedIdx = threadIdx.y * blockDim.x + threadIdx.x;
-    shared[sharedIdx] = src[row * ncols + col];
-    __syncthreads();
-    int out_idx = blockIdx.y * 4 * n_dst + row * block_ncols + threadIdx.y;
+    int out_idx = blockIdx.y * TILE_WIDTH * n_dst + blockIdx.x * block_ncols * TILE_HEIGHT + TILE_HEIGHT * threadIdx.y + threadIdx.x;
     dst[out_idx] = shared[sharedIdx];
     if(n_dst > n_src) dst[out_idx + n_src * block_ncols] = gl64_t(uint64_t(0));
 }
 
 
-// assume blocks are 256 x 4
 __global__ void fromBlocksColMajorToRowMajor(gl64_t *dst, gl64_t *src, uint64_t n, uint64_t ncols)
 {   
     extern __shared__ gl64_t shared[];
@@ -180,8 +133,8 @@ __global__ void fromBlocksColMajorToRowMajor(gl64_t *dst, gl64_t *src, uint64_t 
     if (row >= n || col >= ncols)
         return;
 
-    int block_ncols = (ncols - blockIdx.y * 4) < 4 ? ncols - blockIdx.y * 4 : 4;    
-    int in_idx = blockIdx.y * 4 * n + blockIdx.x * block_ncols * 256 + 256 * threadIdx.y + threadIdx.x;
+    int block_ncols = (ncols - blockIdx.y * TILE_WIDTH) < TILE_WIDTH ? ncols - blockIdx.y * TILE_WIDTH : TILE_WIDTH;    
+    int in_idx = blockIdx.y * TILE_WIDTH * n + blockIdx.x * block_ncols * TILE_HEIGHT + TILE_HEIGHT * threadIdx.y + threadIdx.x;
     dst[row * ncols + col] = src[in_idx];
 }
 
@@ -196,7 +149,7 @@ void NTT_Goldilocks_GPU::prepare_blocks_trace(
 ) {
     if (nCols == 0 || nRows == 0) return;
 
-    dim3 block_0(256, 4);
+    dim3 block_0(TILE_HEIGHT, TILE_WIDTH);
     dim3 grid_0((nRows + block_0.x - 1) / block_0.x,
              (nCols + block_0.y - 1) / block_0.y);
     int sharedMemSize_0 = block_0.x * block_0.y * sizeof(gl64_t);
@@ -204,96 +157,34 @@ void NTT_Goldilocks_GPU::prepare_blocks_trace(
     CHECKCUDAERR(cudaGetLastError());
 }
 
-//assume blocks are in 32 x 4
-__global__ void fromBlocksToRowMajor(gl64_t * dst, gl64_t * src, uint64_t n, uint64_t ncols)
-{    
-    uint32_t block_id = blockIdx.y;
-    uint32_t offset = block_id * 4 * (n * 2); 
-    int row = blockIdx.x * blockDim.x + threadIdx.x; 
-    int col = blockIdx.y * blockDim.y + threadIdx.y;
-    if (row >= n || col >= ncols)
-        return;
-    uint32_t block_ncols = (ncols - block_id * 4) < 4 ? (ncols - block_id * 4) : 4;
-    dst[row*ncols + col] = src[offset + row * block_ncols + threadIdx.y];
-    return;
-}
-
-__global__ void compareResults(gl64_t* res1, gl64_t* res2, uint64_t n, uint64_t ncols)
-{
-    int row = blockIdx.x * blockDim.x + threadIdx.x;
-    int col = blockIdx.y * blockDim.y + threadIdx.y;
-    int block_id = col >> 2;
-    int block_col = col & 3;
-    int block_ncols = (ncols - block_id * 4) < 4 ? (ncols - block_id * 4) : 4;
-    if (row >= n || col >= ncols)
-        return;
-    Goldilocks::Element * res1_data = (Goldilocks::Element *) res1;
-    Goldilocks::Element * res2_data = (Goldilocks::Element *) res2;
-    Goldilocks::Element val1 = res1_data[row * ncols + col];
-    Goldilocks::Element val2 = res2_data[block_id * 4 * n + row * block_ncols + block_col];
-
-    if (val1.fe != val2.fe)
-    {
-        printf("Difference at row %d, col %d, block_id %d, block_col %d: %lu != %lu\n", row, col, block_id, block_col, val1.fe, val2.fe);
-        assert(0);
-    }
-}
-
-__global__ void compareResults_col(gl64_t* res1, gl64_t* res2, uint64_t n, uint64_t ncols)
-{
-    int row = blockIdx.x * blockDim.x + threadIdx.x;
-    int col = blockIdx.y * blockDim.y + threadIdx.y;
-    int block_id = col >> 2;
-    int block_col = col & 3;
-    int sub_block_id = row >> 8;
-    int sub_block_row = row & 255;
-    int block_stride = n * 4;
-    int block_ncols = (ncols - block_id * 4) < 4 ? (ncols - block_id * 4) : 4;
-    int sub_block_stride = 256 * block_ncols;
-
-    if (row >= n || col >= ncols)
-        return;
-    Goldilocks::Element * res1_data = (Goldilocks::Element *) res1;
-    Goldilocks::Element * res2_data = (Goldilocks::Element *) res2;
-    Goldilocks::Element val1 = res1_data[row * ncols + col];
-    Goldilocks::Element val2 = res2_data[block_id * block_stride + sub_block_id * sub_block_stride + block_col * 256 + sub_block_row];
-
-    if (val1.fe != val2.fe)
-    {
-        printf("Difference at row %d, col %d, block_id %d, block_col %d: %lu != %lu\n", row, col, block_id, block_col, val1.fe, val2.fe);
-        assert(0);
-    }
-}
-
-//assume is launched in blocks of 256x4 that cover the whole matrix
 __global__ void transposeSubBlocksInPlace(gl64_t * data, uint64_t n_ext, uint64_t ncols)
 {
-    int subblock_ncols = (ncols - blockIdx.y * 4) < 4 ? (ncols - blockIdx.y * 4) : 4;
-    int offset = blockIdx.y * 4 * n_ext + blockIdx.x * 256 * subblock_ncols;
+    int subblock_ncols = (ncols - blockIdx.y * TILE_WIDTH) < TILE_WIDTH ? (ncols - blockIdx.y * TILE_WIDTH) : TILE_WIDTH;
+    int offset = blockIdx.y * TILE_WIDTH * n_ext + blockIdx.x * TILE_HEIGHT * subblock_ncols;
     if( threadIdx.y >= subblock_ncols)
         return;
     extern __shared__ gl64_t shared[];
     assert(offset + threadIdx.x * subblock_ncols + threadIdx.y < n_ext * ncols);
-    shared[threadIdx.x * 4 + threadIdx.y] = data[offset + threadIdx.x * subblock_ncols + threadIdx.y];
+    shared[threadIdx.x * TILE_WIDTH + threadIdx.y] = data[offset + threadIdx.x * subblock_ncols + threadIdx.y];
     __syncthreads();
-    data[offset + threadIdx.y*256 + threadIdx.x] = shared[threadIdx.x * 4 + threadIdx.y];
+    data[offset + threadIdx.y*TILE_HEIGHT + threadIdx.x] = shared[threadIdx.x * TILE_WIDTH + threadIdx.y];
 }
 
 __global__ void transposeSubBlocksBack(gl64_t *src, uint64_t n, gl64_t *dst, uint64_t n_ext, uint64_t ncols)
 {
-    int subblock_ncols = (ncols - blockIdx.y * 4) < 4 ? (ncols - blockIdx.y * 4) : 4;
+    int subblock_ncols = (ncols - blockIdx.y * TILE_WIDTH) < TILE_WIDTH ? (ncols - blockIdx.y * TILE_WIDTH) : TILE_WIDTH;
    
     if(threadIdx.y >= subblock_ncols)
         return;
     extern __shared__ gl64_t shared[];   
-    int offset_src = blockIdx.y * 4 * n + blockIdx.x * 256 * subblock_ncols;
-    shared[threadIdx.x * 4 + threadIdx.y] = src[offset_src + threadIdx.y*256 + threadIdx.x];
+    int offset_src = blockIdx.y * TILE_WIDTH * n + blockIdx.x * TILE_HEIGHT * subblock_ncols;
+    shared[threadIdx.x * TILE_WIDTH + threadIdx.y] = src[offset_src + threadIdx.y*TILE_HEIGHT + threadIdx.x];
     __syncthreads();
-    int offset_dst = blockIdx.y * 4 * n_ext + blockIdx.x * 256 * subblock_ncols;
-    dst[offset_dst + threadIdx.x * subblock_ncols + threadIdx.y] = shared[threadIdx.x * 4 + threadIdx.y];
+    int offset_dst = blockIdx.y * TILE_WIDTH * n_ext + blockIdx.x * TILE_HEIGHT * subblock_ncols;
+    dst[offset_dst + threadIdx.x * subblock_ncols + threadIdx.y] = shared[threadIdx.x * TILE_WIDTH + threadIdx.y];
     
     if(n != n_ext){
-        int offset_dst2 = offset_dst + gridDim.x * 256 * subblock_ncols;
+        int offset_dst2 = offset_dst + gridDim.x * TILE_HEIGHT * subblock_ncols;
         dst[offset_dst2 + threadIdx.x * subblock_ncols + threadIdx.y] = gl64_t(uint64_t(0));
     }
 }
@@ -316,69 +207,19 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
     gl64_t *d_dst_ntt_ = &d_dst_ntt[offset_dst_ntt];
     gl64_t *d_src_ntt_ = &d_src_ntt[offset_src_ntt];
 
-#if 0
-    gl64_t *d_aux;
-    cudaMalloc(&d_aux, ext_size * ncols * sizeof(gl64_t));
-    cudaMemset(d_aux, 0, ext_size * ncols * sizeof(gl64_t));
-    dim3 block_0(256, 4);
-    dim3 grid_0((size + block_0.x - 1) / block_0.x,
-             (ncols + block_0.y - 1) / block_0.y);
-    int sharedMemSize_0 = block_0.x * block_0.y * sizeof(gl64_t);
 
-    dim3 block(32, 4);
-    dim3 grid((size + block.x - 1) / block.x,
-             (ncols + block.y - 1) / block.y);
-    size_t sharedMemSize = block.x * block.y * sizeof(gl64_t);
-    prepareBlocksInputRowMajor<<<grid, block, sharedMemSize, stream>>>(d_aux, ext_size, d_src_ntt_, size, ncols);
-    transposeSubBlocksInPlace<<<grid_0, block_0, sharedMemSize_0, stream>>>(d_aux, ext_size, ncols);
-    transposeSubBlocksInPlaceBack<<<grid_0, block_0, sharedMemSize_0, stream>>>(d_aux, size, ext_size, ncols);
-
-    CHECKCUDAERR(cudaMemcpyAsync(d_dst_ntt_, d_src_ntt_, size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice, stream));
-    CHECKCUDAERR(cudaMemsetAsync(d_dst_ntt_ + size * ncols, 0, (ext_size - size) * ncols * sizeof(gl64_t), stream));
-
-    ntt_cuda(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, ncols, true, true, stream, maxLogDomainSize);
-    ntt_cuda_blocks_par(d_aux, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, n_bits_ext, ncols, true, true, stream, maxLogDomainSize, d_src_ntt);
-
-    
-    dim3 block_(16, 4);
-    dim3 grid_((ext_size + block_.x - 1) / block_.x,
-             (ncols + block_.y - 1) / block_.y);
-    compareResults<<<grid_, block_, 0, stream>>>(d_dst_ntt_, d_aux, ext_size, ncols);
-
-    ntt_cuda(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, ncols, false, false, stream, maxLogDomainSize);
-    ntt_cuda_blocks_par(d_aux, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, ncols, false, false, stream, maxLogDomainSize, d_src_ntt);
-    dim3 block_1(256, 4);
-    dim3 grid_1((ext_size + block_1.x - 1) / block_1.x,
-             (ncols + block_1.y - 1) / block_1.y);
-    int sharedMemSize_1 = block_1.x * block_1.y * sizeof(gl64_t);
-    transposeSubBlocksInPlace<<<grid_1, block_1, sharedMemSize_1, stream>>>(d_aux, ext_size, ncols);
-    compareResults_col<<<grid_, block_, 0, stream>>>(d_dst_ntt_, d_aux, ext_size, ncols);
-
-    cudaStreamSynchronize(stream);
-    cudaFree(d_aux);
-#endif
-#if 1
-    dim3 block_0(256, 4);
+    dim3 block_0(TILE_HEIGHT, TILE_WIDTH);
     dim3 grid_0((size + block_0.x - 1) / block_0.x,
              (ncols + block_0.y - 1) / block_0.y);
     int sharedMemSize_0 = block_0.x * block_0.y * sizeof(gl64_t);
     transposeSubBlocksBack<<<grid_0, block_0, sharedMemSize_0, stream>>>(d_src_ntt_, size, d_dst_ntt_, ext_size, ncols);
     ntt_cuda_blocks_par(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, n_bits_ext, ncols, true, true, stream, maxLogDomainSize); 
     ntt_cuda_blocks_par(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, ncols, false, false, stream, maxLogDomainSize);
-    dim3 block_1(256, 4);
+    dim3 block_1(TILE_HEIGHT, TILE_WIDTH);
     dim3 grid_1((ext_size + block_1.x - 1) / block_1.x,
              (ncols + block_1.y - 1) / block_1.y);
     int sharedMemSize_ = block_1.x * block_1.y * sizeof(gl64_t);
     transposeSubBlocksInPlace<<<grid_1, block_1, sharedMemSize_, stream>>>(d_dst_ntt_, ext_size, ncols);
-
-#endif
-    
-#if 0
-    CHECKCUDAERR(cudaMemcpyAsync(d_dst_ntt_, d_src_ntt_, size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice, stream));
-    CHECKCUDAERR(cudaMemsetAsync(d_dst_ntt_ + size * ncols, 0, (ext_size - size) * ncols * sizeof(gl64_t), stream));
-    ntt_cuda(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, ncols, true, true, stream, maxLogDomainSize);
-    ntt_cuda(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, ncols, false, false, stream, maxLogDomainSize);
-#endif
 
     cudaStreamSynchronize(stream);
     TimerStopCategoryGPU(timer, NTT);
@@ -924,9 +765,9 @@ __global__ void reverse_permutation_new(gl64_t *data, uint32_t log_domain_size, 
 __global__ void reverse_permutation_blocks(gl64_t *data, uint32_t log2_domain_size_in, uint64_t domain_size_out, uint32_t ncols)
 {
     uint64_t row = blockIdx.x;
-    uint64_t ncols_block = (ncols - 4*blockIdx.y) < 4 ? ncols - blockIdx.y * 4 : 4;
+    uint64_t ncols_block = (ncols - TILE_WIDTH*blockIdx.y) < TILE_WIDTH ? ncols - blockIdx.y * TILE_WIDTH : TILE_WIDTH;
     uint64_t domain_size_in = 1 << log2_domain_size_in;
-    uint64_t offset = blockIdx.y * 4 * domain_size_out;
+    uint64_t offset = blockIdx.y * TILE_WIDTH * domain_size_out;
     gl64_t *data_block = data + offset;
 
     if (threadIdx.x >= ncols_block) return;

@@ -2534,7 +2534,7 @@ where
         };
         let mut n_recursive_streams_per_gpu = 0;
         if aggregation {
-            while gpu_available_memory > 0 {
+            while gpu_available_memory > 0 && n_recursive_streams_per_gpu < gpu_params.max_number_streams {
                 gpu_available_memory -= setups_vadcop.max_prover_recursive_buffer_size as i64;
                 if gpu_available_memory < 0 {
                     break;

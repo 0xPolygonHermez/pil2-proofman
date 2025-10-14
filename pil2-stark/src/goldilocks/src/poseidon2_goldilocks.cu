@@ -261,11 +261,11 @@ void Poseidon2GoldilocksGPU::merkletree_cuda_coalesced_blocks(uint32_t arity, ui
     }
 
     // init_gpu_const_2(); // this needs to be done only once !!
-    u32 actual_tpb = 256;
-    u32 actual_blks = (num_rows + 256 - 1) / 256;
+    u32 actual_tpb = TPB;
+    u32 actual_blks = (num_rows + TPB - 1) / TPB;
 
 
-    if (num_rows < 256)
+    if (num_rows < TPB)
     {
         actual_tpb = num_rows;
         actual_blks = 1;
@@ -361,15 +361,14 @@ __device__ void poseidon2_load_blocks(const uint64_t *in, uint64_t num_rows, uin
 {
     gl64_t r[RATE];
 
+    uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
+
 #pragma unroll
     for (uint32_t i = 0; i < RATE; i++) {
         if (i < ncols){
-            uint32_t tcol = initial_col + i;
-            uint32_t blockY = tcol >> 2;
-            uint32_t ncols_block = num_cols - 4 * blockY < 4 ? num_cols - 4 * blockY : 4;
-            uint32_t colId_block = (tcol - 4 * blockY);
-            uint32_t offset = blockY * 4 * num_rows + blockIdx.x * 256 * ncols_block + colId_block * 256 + threadIdx.x;
-            r[i] = in[offset];
+            uint32_t col = initial_col + i;
+            uint64_t idx = getBufferOffset(row, col, num_rows, num_cols);
+            r[i] = in[idx];
         }
     }
 
