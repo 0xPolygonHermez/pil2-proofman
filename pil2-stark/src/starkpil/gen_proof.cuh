@@ -14,7 +14,6 @@
 // carregar-me els d_trees
 // _inplace not good name
 
-
 void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams *d_params, bool prod, ExpressionsGPU *expressionsCtxGPU, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream) {
 
     std::string name = prod ? "gprod_col" : "gsum_col";

@@ -265,7 +265,7 @@ void computeQ_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL,
     {
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft", false)];
         NTT_Goldilocks_GPU nttExtended;
-        nttExtended.computeQ_inplace(pNodes, offset_cmQ, offset_q, qDeg, qDim, shiftIn, N, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
+        nttExtended.computeQ_inplace(pNodes, offset_cmQ, offset_q, qDeg, qDim, shiftIn, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
         uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
         if(d_transcript != nullptr) {
             d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
@@ -449,14 +449,14 @@ __global__ void computeEvals_v2(
             Goldilocks3GPU::Element res;
             if (evalInfo.dim == 1)
             {
-                Goldilocks3GPU::mul(res, *((Goldilocks3GPU::Element *)&d_LEv[pos]), pol[getBufferOffset(row, evalInfo.stagePos, domainSize, evalInfo.stageCols)]);
+                Goldilocks3GPU::mul(res, *((Goldilocks3GPU::Element *)&d_LEv[pos]), pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos, domainSize, evalInfo.stageCols)]);
             }
             else
             {
                 Goldilocks3GPU::Element val;
-                val[0] = pol[getBufferOffset(row, evalInfo.stagePos, domainSize, evalInfo.stageCols)];
-                val[1] = pol[getBufferOffset(row, evalInfo.stagePos + 1, domainSize, evalInfo.stageCols)];
-                val[2] = pol[getBufferOffset(row, evalInfo.stagePos + 2, domainSize, evalInfo.stageCols)];
+                val[0] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos, domainSize, evalInfo.stageCols)];
+                val[1] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos + 1, domainSize, evalInfo.stageCols)];
+                val[2] = pol[evalInfo.offset + getBufferOffset(row, evalInfo.stagePos + 2, domainSize, evalInfo.stageCols)];
                 Goldilocks3GPU::mul(res, *((Goldilocks3GPU::Element *)&d_LEv[pos]), val);
             }
             Goldilocks3GPU::add(shared_sum[threadIdx.x], shared_sum[threadIdx.x], res);
@@ -849,8 +849,6 @@ void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU* expressionsC
     std::vector<Dest> dests;
     for(uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++) {
         if(setupCtx.starkInfo.cmPolsMap[i].imPol && setupCtx.starkInfo.cmPolsMap[i].stage == step) {
-            cudaStreamSynchronize(stream);
-            cout << "BOO " << endl;
             Goldilocks::Element* pAddress = step == 1 ? h_params.trace : h_params.aux_trace;
             Dest destStruct(NULL, domainSize, setupCtx.starkInfo.cmPolsMap[i].stagePos, setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)], false);
             destStruct.addParams(setupCtx.starkInfo.cmPolsMap[i].expId, setupCtx.starkInfo.cmPolsMap[i].dim, false);
@@ -878,7 +876,7 @@ void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, Ste
         domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
         domainExtended = false;
     }
-    Dest destStruct(NULL, domainSize, 0, expressionId);
+    Dest destStruct(NULL, domainSize, 0, 3, false, expressionId);
     destStruct.addParams(expressionId, setupCtx.expressionsBin.expressionsInfo[expressionId].destDim, inverse);
     destStruct.dest_gpu = dest_gpu;
     countId++;

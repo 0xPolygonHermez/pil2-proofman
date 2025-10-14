@@ -327,8 +327,6 @@ __device__ __noinline__ void storePolynomial__(ExpsArguments *d_expsArgs, Goldil
             uint64_t nRows = d_expsArgs->dest_domainSize;
             uint64_t nCols = d_expsArgs->dest_stageCols;
             uint64_t idx = getBufferOffset(row + threadIdx.x, col, nRows, nCols);
-            printf("Storing at row %lu, col %lu, nRows %lu, nCols %lu the value %llu in idx %lu\n", row + threadIdx.x, col, nRows, nCols, destVals[i * blockDim.x + threadIdx.x].fe, idx);
-
             d_expsArgs->dest_gpu[idx] = destVals[i * blockDim.x + threadIdx.x];
         } else {
             d_expsArgs->dest_gpu[(row + threadIdx.x) * d_expsArgs->dest_dim + i] = destVals[i * blockDim.x + threadIdx.x];

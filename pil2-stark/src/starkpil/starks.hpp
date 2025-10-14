@@ -218,7 +218,6 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
     for(uint64_t i = 0; i < (NExtended - N) * setupCtx.starkInfo.qDeg * setupCtx.starkInfo.qDim; ++i) {
         cmQ[N * setupCtx.starkInfo.qDeg * setupCtx.starkInfo.qDim + i] = Goldilocks::zero();
     }
-    
     if(pBuffHelper != nullptr) {
         nttExtended.NTT(cmQ, cmQ, NExtended, nCols, pBuffHelper);
     } else {

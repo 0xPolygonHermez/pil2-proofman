@@ -711,7 +711,6 @@ void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pCons
     ntt.LDE_MerkleTree_GPU_inplace(pNodes, (gl64_t *)d_fixedTree, 0, (gl64_t *)d_fixedPols, 0, starkInfo.starkStruct.nBits, starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, timer, stream);
 
     Goldilocks::Element *pConstTreeAddress = (Goldilocks::Element *)pConstTreeAddress_;
-    cudaStreamSynchronize(stream);
     cudaMemcpy(pConstTreeAddress, d_fixedTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
     cudaFree(d_fixedPols);
     cudaFree(d_fixedTree);
