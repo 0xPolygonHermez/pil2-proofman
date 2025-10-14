@@ -81,22 +81,21 @@ __global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, Goldilocks::Elem
     }
 }
 
-__global__ void prepareBlockFromRowMajor(gl64_t * dst, uint64_t n_dst, gl64_t * src, uint64_t n_src, uint64_t ncols)
+__global__ void prepareBlockFromRowMajor(gl64_t * dst, gl64_t * src, uint64_t nRows, uint64_t ncols)
 {
     extern __shared__ gl64_t shared[];
 
     int row = blockIdx.x * blockDim.x + threadIdx.x;
     int col = blockIdx.y * blockDim.y + threadIdx.y;
-    if (row >= n_src || col >= ncols)
+    if (row >= nRows || col >= ncols)
         return;
     int col_base = blockIdx.y * blockDim.y;
     int block_ncols = (ncols - col_base) < TILE_WIDTH ? ncols - col_base : TILE_WIDTH;
     int sharedIdx = threadIdx.y * blockDim.x + threadIdx.x;
     shared[sharedIdx] = src[row * ncols + col];
     __syncthreads();
-    int out_idx = blockIdx.y * TILE_WIDTH * n_dst + blockIdx.x * block_ncols * TILE_HEIGHT + TILE_HEIGHT * threadIdx.y + threadIdx.x;
+    int out_idx = blockIdx.y * TILE_WIDTH * nRows + blockIdx.x * block_ncols * TILE_HEIGHT + TILE_HEIGHT * threadIdx.y + threadIdx.x;
     dst[out_idx] = shared[sharedIdx];
-    if(n_dst > n_src) dst[out_idx + n_src * block_ncols] = gl64_t(uint64_t(0));
 }
 
 
@@ -129,7 +128,7 @@ void NTT_Goldilocks_GPU::prepare_blocks_trace(
     dim3 grid_0((nRows + block_0.x - 1) / block_0.x,
              (nCols + block_0.y - 1) / block_0.y);
     int sharedMemSize_0 = block_0.x * block_0.y * sizeof(gl64_t);
-    prepareBlockFromRowMajor<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, nRows, src, nRows, nCols);
+    prepareBlockFromRowMajor<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, src, nRows, nCols);
     CHECKCUDAERR(cudaGetLastError());
 }
 
@@ -146,8 +145,10 @@ __global__ void transposeSubBlocksInPlace(gl64_t * data, uint64_t n_ext, uint64_
     data[offset + threadIdx.y*TILE_HEIGHT + threadIdx.x] = shared[threadIdx.x * TILE_WIDTH + threadIdx.y];
 }
 
-__global__ void transposeSubBlocksBack(gl64_t *src, uint64_t n, gl64_t *dst, uint64_t n_ext, uint64_t ncols)
+__global__ void transposeSubBlocksBack(gl64_t *src, uint64_t n_bits, gl64_t *dst, uint64_t n_bits_ext, uint64_t ncols)
 {
+    int n = 1 << n_bits;
+    int n_ext = 1 << n_bits_ext;
     int subblock_ncols = (ncols - blockIdx.y * TILE_WIDTH) < TILE_WIDTH ? (ncols - blockIdx.y * TILE_WIDTH) : TILE_WIDTH;
    
     if(threadIdx.y >= subblock_ncols)
@@ -159,8 +160,8 @@ __global__ void transposeSubBlocksBack(gl64_t *src, uint64_t n, gl64_t *dst, uin
     int offset_dst = blockIdx.y * TILE_WIDTH * n_ext + blockIdx.x * TILE_HEIGHT * subblock_ncols;
     dst[offset_dst + threadIdx.x * subblock_ncols + threadIdx.y] = shared[threadIdx.x * TILE_WIDTH + threadIdx.y];
     
-    if(n != n_ext){
-        int offset_dst2 = offset_dst + gridDim.x * TILE_HEIGHT * subblock_ncols;
+    for (uint64_t j = 1; j < (1 << (n_bits_ext - n_bits)); j++) {
+        int offset_dst2 = offset_dst + j * gridDim.x * TILE_HEIGHT * subblock_ncols;
         dst[offset_dst2 + threadIdx.x * subblock_ncols + threadIdx.y] = gl64_t(uint64_t(0));
     }
 }
@@ -192,7 +193,7 @@ void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t 
     dim3 grid_0((NExtended + block_0.x - 1) / block_0.x,
              (qDim + block_0.y - 1) / block_0.y);
     int sharedMemSize_0 = block_0.x * block_0.y * sizeof(gl64_t);
-    transposeSubBlocksBack<<<grid_0, block_0, sharedMemSize_0, stream>>>(d_q, NExtended, d_q, NExtended, qDim);
+    transposeSubBlocksBack<<<grid_0, block_0, sharedMemSize_0, stream>>>(d_q, n_bits_ext, d_q, n_bits_ext, qDim);
     ntt_cuda_blocks_par(d_q, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, qDim, true, false, stream, maxLogDomainSize);
 
     dim3 threads(256, 1, 1);
@@ -236,7 +237,7 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
     dim3 grid_0((size + block_0.x - 1) / block_0.x,
              (ncols + block_0.y - 1) / block_0.y);
     int sharedMemSize_0 = block_0.x * block_0.y * sizeof(gl64_t);
-    transposeSubBlocksBack<<<grid_0, block_0, sharedMemSize_0, stream>>>(d_src_ntt_, size, d_dst_ntt_, ext_size, ncols);
+    transposeSubBlocksBack<<<grid_0, block_0, sharedMemSize_0, stream>>>(d_src_ntt_, n_bits, d_dst_ntt_, n_bits_ext, ncols);
     ntt_cuda_blocks_par(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, n_bits_ext, ncols, true, true, stream, maxLogDomainSize); 
     ntt_cuda_blocks_par(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, ncols, false, false, stream, maxLogDomainSize);
     dim3 block_1(TILE_HEIGHT, TILE_WIDTH);
@@ -269,7 +270,7 @@ void NTT_Goldilocks_GPU::INTT_inplace(gl64_t *dst, u_int64_t n_bits, u_int64_t n
     dim3 grid_0((N + block_0.x - 1) / block_0.x,
              (ncols + block_0.y - 1) / block_0.y);
     int sharedMemSize_0 = block_0.x * block_0.y * sizeof(gl64_t);
-    transposeSubBlocksBack<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, dst, N, ncols);    
+    transposeSubBlocksBack<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, n_bits, dst, n_bits, ncols);    
     ntt_cuda_blocks_par(dst, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, n_bits, ncols, true, false, stream, maxLogDomainSize);
     transposeSubBlocksInPlace<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, ncols);
 }
