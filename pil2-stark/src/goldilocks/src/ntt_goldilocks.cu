@@ -251,7 +251,7 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 
-void NTT_Goldilocks_GPU::INTT_inplace(uint64_t data_offset, u_int64_t n_bits, u_int64_t ncols, gl64_t *d_aux_trace, uint64_t offset_helper, gl64_t* d_data, cudaStream_t stream)
+void NTT_Goldilocks_GPU::INTT_inplace(gl64_t *dst, u_int64_t n_bits, u_int64_t ncols, cudaStream_t stream)
 {
     if (ncols == 0 || n_bits == 0)
     {
@@ -263,8 +263,15 @@ void NTT_Goldilocks_GPU::INTT_inplace(uint64_t data_offset, u_int64_t n_bits, u_
         abort();
     }
 
-    gl64_t *dst_src = d_data == nullptr ? d_aux_trace + data_offset : d_data;
-    ntt_cuda(dst_src, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, ncols, true, false, stream, maxLogDomainSize);
+    uint64_t N = 1 << n_bits;
+
+    dim3 block_0(TILE_HEIGHT, TILE_WIDTH);
+    dim3 grid_0((N + block_0.x - 1) / block_0.x,
+             (ncols + block_0.y - 1) / block_0.y);
+    int sharedMemSize_0 = block_0.x * block_0.y * sizeof(gl64_t);
+    transposeSubBlocksBack<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, dst, N, ncols);    
+    ntt_cuda_blocks_par(dst, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, n_bits, ncols, true, false, stream, maxLogDomainSize);
+    transposeSubBlocksInPlace<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, ncols);
 }
 
 // Static member definitions

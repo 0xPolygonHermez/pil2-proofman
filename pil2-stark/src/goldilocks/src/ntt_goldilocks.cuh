@@ -137,9 +137,7 @@ public:
                           uint64_t n_bits_ext, uint64_t nCols, gl64_t *d_aux_trace,
                           uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream);
 
-    void INTT_inplace(uint64_t data_offset, u_int64_t n_bits, u_int64_t ncols,
-                      gl64_t* d_aux_trace, uint64_t offset_helper,
-                      gl64_t* d_data, cudaStream_t stream);
+    void INTT_inplace(gl64_t *dst, u_int64_t n_bits, u_int64_t ncols, cudaStream_t stream);
 
     static void init_twiddle_factors_and_r(uint64_t maxLogDomainSize_, uint32_t nGPUs_input = 0, uint32_t* gpu_ids = nullptr);
 
