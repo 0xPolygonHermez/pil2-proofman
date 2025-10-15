@@ -786,26 +786,9 @@ uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_
     PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
     if (packed_info != nullptr && packed_info->is_packed) {
         d_buffers->unpack_cpu((uint64_t *)params->trace, (uint64_t*)&params->aux_trace[offsetCm1], N, nCols, packed_info->num_packed_words, packed_info->unpack_info);
-    } else {
-        memcpy(&params->aux_trace[offsetCm1], params->trace, N * nCols * sizeof(Goldilocks::Element));
+        memcpy(params->trace, &params->aux_trace[offsetCm1], N * nCols * sizeof(Goldilocks::Element));
     }
-
-     StepsParams paramsProof = {
-        .trace = &params->aux_trace[offsetCm1],
-        .aux_trace = params->aux_trace,
-        .publicInputs = params->publicInputs,
-        .proofValues = params->proofValues,
-        .challenges = params->challenges,
-        .airgroupValues = params->airgroupValues,
-        .airValues = params->airValues,
-        .evals = params->evals,
-        .xDivXSub = params->xDivXSub,
-        .pConstPolsAddress = params->pConstPolsAddress,
-        .pConstPolsExtendedTreeAddress = params->pConstPolsExtendedTreeAddress,
-        .pCustomCommitsFixed = params->pCustomCommitsFixed,
-    };
-
-    genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, paramsProof, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile));
+    genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile));
     
     return 0;
 }
