@@ -585,8 +585,12 @@ void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *buf
     loadFileParallel(&bufferGL[setupCtx.starkInfo.mapOffsets[std::make_pair(section, false)]], bufferFile, ((N + NExtended) * nCols + setupCtx.starkInfo.getNumNodesMT(NExtended)) * sizeof(Goldilocks::Element), true, 32);
 }
 
-void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nCols, void *buffer, char *bufferFile, bool check)
+#ifndef __USE_CUDA__
+void write_custom_commit(void* root, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *buffer, char *bufferFile, bool check)
 {   
+    uint64_t N = 1 << nBits;
+    uint64_t NExtended = 1 << nBitsExt;
+
     MerkleTreeGL mt(3, true, NExtended, nCols, true, true);
 
     NTT_Goldilocks ntt(N);
@@ -608,7 +612,6 @@ void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nC
     }
 }
 
-#ifndef __USE_CUDA__
 uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *trace, void *auxTrace, void *d_buffers_, void *pSetupCtx_) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;

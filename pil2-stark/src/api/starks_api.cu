@@ -682,6 +682,64 @@ void prepare_blocks(uint64_t *pol, uint64_t N, uint64_t nCols) {
     cudaStreamDestroy(stream);
 }
 
+void write_custom_commit(void* root, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *buffer, char *bufferFile, bool check)
+{   
+    cudaSetDevice(0);
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
+
+    TimerGPU timer;
+
+    uint64_t N = 1 << nBits;
+    uint64_t NExtended = 1 << nBitsExt;
+
+    MerkleTreeGL mt(3, true, NExtended, nCols);
+
+    uint64_t treeSize = (NExtended * nCols) + mt.numNodes;
+    Goldilocks::Element* customCommitsTree = new Goldilocks::Element[treeSize];
+    mt.setSource(customCommitsTree);
+    mt.setNodes(&customCommitsTree[NExtended * nCols]);
+
+    gl64_t* d_buffer;
+    gl64_t* d_customCommitsPols;
+    gl64_t* d_customCommitsTree;
+    cudaMalloc((void**)&d_buffer, N * nCols * sizeof(gl64_t));
+    cudaMalloc((void**)&d_customCommitsPols, N * nCols * sizeof(gl64_t));
+    cudaMalloc((void**)&d_customCommitsTree, treeSize * sizeof(gl64_t));
+    cudaMemset(d_customCommitsTree, 0, treeSize * sizeof(gl64_t));
+    cudaMemcpy(d_buffer, buffer, N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice);
+
+    NTT_Goldilocks_GPU ntt;
+    ntt.prepare_blocks_trace(d_customCommitsPols, d_buffer, nCols, N, stream, timer);
+
+    Goldilocks::Element *pNodes = (Goldilocks::Element *)&d_customCommitsTree[nCols * NExtended];
+    ntt.LDE_MerkleTree_GPU_inplace(pNodes, (gl64_t *)d_customCommitsTree, 0, (gl64_t *)d_customCommitsPols, 0, nBits, nBitsExt, nCols, timer, stream);
+
+    cudaMemcpy(customCommitsTree, d_customCommitsTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+
+    Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
+    mt.getRoot(&rootGL[0]);
+
+    Goldilocks::Element *customCommitsPols = new Goldilocks::Element[N * nCols];
+    cudaMemcpy(customCommitsPols, d_customCommitsPols, N * nCols * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+    if(!check) {
+        std::string buffFile = string(bufferFile);
+        ofstream fw(buffFile.c_str(), std::fstream::out | std::fstream::binary);
+        writeFileParallel(buffFile, root, 32, 0);
+        writeFileParallel(buffFile, customCommitsPols, N * nCols * sizeof(Goldilocks::Element), 32);
+        writeFileParallel(buffFile, mt.source, NExtended * nCols * sizeof(Goldilocks::Element), 32 + N * nCols * sizeof(Goldilocks::Element));
+        writeFileParallel(buffFile, mt.nodes, mt.numNodes * sizeof(Goldilocks::Element), 32 + (NExtended + N) * nCols * sizeof(Goldilocks::Element));
+        fw.close();
+    }
+
+    cudaFree(d_buffer);
+    cudaFree(d_customCommitsPols);
+    cudaFree(d_customCommitsTree);
+    delete[] customCommitsTree;
+    delete[] customCommitsPols;
+    cudaStreamDestroy(stream);
+}
+
 void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress_) {
     cudaSetDevice(0);
 
