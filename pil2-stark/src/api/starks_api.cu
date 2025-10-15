@@ -573,7 +573,7 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
     d_buffers->streamsData[streamId].proofType = string(proofType);
 
     uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
-    copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1), sizeTrace, streamId, timer);
+    copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1 + N*nCols), sizeTrace, streamId, timer);
     
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
     copy_to_device_in_chunks(d_buffers, pPublicInputs, (uint8_t*)(d_aux_trace + offsetPublicInputs), setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element), streamId, timer);

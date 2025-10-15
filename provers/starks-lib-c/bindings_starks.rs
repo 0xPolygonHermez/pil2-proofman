@@ -401,7 +401,6 @@ extern "C" {
         N: u64,
         nPublics: u64,
         nCols: u64,
-        row_major: bool,
     );
     
     pub fn gen_recursive_proof_final(
