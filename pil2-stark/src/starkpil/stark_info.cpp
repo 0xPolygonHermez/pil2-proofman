@@ -500,7 +500,8 @@ void StarkInfo::setMapOffsets() {
         }
     }
 
-    mapOffsets[std::make_pair("cm2", false)] = mapOffsets[std::make_pair("cm2", true)];
+    mapOffsets[std::make_pair("cm2", false)] = mapTotalN;
+    mapTotalN += N * mapSectionsN["cm2"];
 
     if(!gpu) {
         mapOffsets[std::make_pair("evals", true)] = mapTotalN;
