@@ -299,7 +299,6 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         1 << (setup.stark_info.stark_struct.n_bits),
         setup.stark_info.n_publics,
         witness.n_cols as u64,
-        true,
     );
 
     let publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
@@ -624,7 +623,6 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         1 << (setup.stark_info.stark_struct.n_bits),
         setup.stark_info.n_publics,
         13,
-        true,
     );
 
     let proof_file = match save_proofs {
