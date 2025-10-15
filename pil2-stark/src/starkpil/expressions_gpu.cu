@@ -255,7 +255,6 @@ __device__ __forceinline__ Goldilocks::Element* load__(
     if (type >= 1 && type <= 3) {
         const uint64_t offset = dExpsArgs->mapOffsetsExps[type];
         const uint64_t nCols = dArgs->mapSectionsN[type];
-        //const uint64_t pos = logicalRow * nCols + argIdx;
         const uint64_t pos = getBufferOffset(logicalRow, argIdx, domainSize, nCols);
 
         if (type == 1 && !dExpsArgs->domainExtended) {

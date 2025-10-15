@@ -151,12 +151,13 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     }
     
     if (!skipRecalculation) {
+        uint64_t offsetCm1Extended = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", true)];
         if (air_instance_info->is_packed) {
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm1"];
-            unpack_trace(air_instance_info, (uint64_t*)h_params.trace + N * nCols, (uint64_t*)h_params.trace, nCols, N, stream, timer); 
+            unpack_trace(air_instance_info, (uint64_t*)h_params.aux_trace + offsetCm1Extended, (uint64_t*)h_params.trace, nCols, N, stream, timer); 
         } else {
             NTT_Goldilocks_GPU ntt;
-            ntt.prepare_blocks_trace((gl64_t*)h_params.trace, (gl64_t *)h_params.trace + N * setupCtx.starkInfo.mapSectionsN["cm1"], setupCtx.starkInfo.mapSectionsN["cm1"], N, stream, timer);
+            ntt.prepare_blocks_trace((gl64_t*)h_params.trace, (gl64_t *)h_params.aux_trace + offsetCm1Extended, setupCtx.starkInfo.mapSectionsN["cm1"], N, stream, timer);
         } 
     }
     TimerStopGPU(timer, STARK_STEP_0);

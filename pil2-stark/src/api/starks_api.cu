@@ -386,6 +386,7 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     }
 
     uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
+    uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
     uint64_t offsetAirgroupValues = setupCtx->starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
     uint64_t offsetAirValues = setupCtx->starkInfo.mapOffsets[std::make_pair("airvalues", false)];
@@ -394,7 +395,7 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
 
     if (!skipRecalculation) {
         uint64_t total_size = air_instance_info->is_packed ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : N * nCols * sizeof(Goldilocks::Element);
-        uint64_t *dst = (uint64_t *)(d_aux_trace + offsetStage1 + N * nCols);
+        uint64_t *dst = (uint64_t *)(d_aux_trace + offsetStage1Extended);
         copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
     }
     
@@ -572,8 +573,8 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
     d_buffers->streamsData[streamId].instanceId = instanceId;
     d_buffers->streamsData[streamId].proofType = string(proofType);
 
-    uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
-    copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1 + N*nCols), sizeTrace, streamId, timer);
+    uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
+    copy_to_device_in_chunks(d_buffers, trace, (uint8_t*)(d_aux_trace + offsetStage1Extended), sizeTrace, streamId, timer);
     
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
     copy_to_device_in_chunks(d_buffers, pPublicInputs, (uint8_t*)(d_aux_trace + offsetPublicInputs), setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element), streamId, timer);
@@ -626,9 +627,9 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
     uint64_t nStreams = d_buffers->air_instances[key][proofType][gpuLocalId]->nStreams;
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
-    uint64_t offsetStage1 = nStreams == 1 ? setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)] : 0;
+    uint64_t offsetStage1Extended = nStreams == 1 ? setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)] : N * nCols;
     uint64_t total_size = air_instance_info->is_packed ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : sizeTrace;
-    uint64_t *dst = (uint64_t*)(d_aux_trace + offsetStage1 + N * nCols);
+    uint64_t *dst = (uint64_t*)(d_aux_trace + offsetStage1Extended);
     copy_to_device_in_chunks(d_buffers, trace, dst, total_size, streamId, timer);
     genCommit_gpu(arity, nBits, nBitsExt, nCols, d_aux_trace, d_buffers->streamsData[streamId].pinned_buffer_proof, setupCtx, air_instance_info, timer, stream, nStreams);
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
