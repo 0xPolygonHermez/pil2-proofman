@@ -65,7 +65,7 @@ ifdef PROOFMAN_HOST_COMPILER_BIN
     NVCCFLAGS += --compiler-bindir=$(PROOFMAN_HOST_COMPILER_BIN)
 endif
 # Debugging flags
-# NVCCFLAGS += -G -lineinfo -Xptxas=-v
+# NVCCFLAGS += -G -lineinfo -Xptxas=-v --maxrregcount=64
 
 INC_DIRS := $(shell find $(SRC_DIRS) -type d)
 INC_FLAGS := $(addprefix -I,$(INC_DIRS))
