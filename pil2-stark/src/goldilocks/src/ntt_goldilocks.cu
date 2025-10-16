@@ -1113,7 +1113,7 @@ void ntt_cuda_blocks_par( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_fa
     dim3 blockDim;
     dim3 gridDim;
     blockDim = dim3(4);
-    gridDim = dim3(1024,(ncols + 3) / 4);
+    gridDim = dim3(4096,(ncols + 3) / 4);
 
     reverse_permutation_blocks<<<gridDim, blockDim, 0, stream>>>(data, log_domain_size_in, domain_size_out, ncols);
     CHECKCUDAERR(cudaGetLastError());

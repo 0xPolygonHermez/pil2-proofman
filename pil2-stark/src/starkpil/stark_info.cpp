@@ -603,7 +603,7 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
                 maxNBlocks = NExtended / nrowsPack;
             } else {
                 nrowsPack = 256;
-                maxNBlocks = 1024;
+                maxNBlocks = 4096;
             }
         }
     }
