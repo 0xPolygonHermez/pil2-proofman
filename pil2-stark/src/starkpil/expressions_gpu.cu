@@ -607,7 +607,7 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
             }
             uint8_t *ops = &d_deviceArgs->ops[d_destParams[k].opsOffset];
             uint16_t *args = &d_deviceArgs->args[d_destParams[k].argsOffset];
-            gl64_t *a0, *a1, *a2, *b0, *b1, *b2, *c0, *c1, *c2;
+            gl64_t *a0, *a1, *a2, *b0, *b1, *b2;
 
             uint64_t i_args = 0;
             uint64_t nOps = d_destParams[k].nOps;

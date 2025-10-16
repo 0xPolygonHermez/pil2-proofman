@@ -279,6 +279,8 @@ struct StreamData{
     bool recursive;
     bool extraStream;
     uint64_t streamsUsed;
+
+    std::mutex mutex_stream_selection;
     
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_){
         uint64_t maxExps = 1000; // TODO: CALCULATE IT PROPERLY!
@@ -368,7 +370,6 @@ struct DeviceCommitBuffers
     uint32_t n_total_streams;
     uint32_t n_streams;
     uint32_t n_recursive_streams;
-    std::mutex mutex_slot_selection;
     std::mutex *mutex_pinned;
     StreamData *streamsData;
 
