@@ -878,26 +878,16 @@ void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU* expressionsC
         
 }
 
-void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, StepsParams *d_params, Goldilocks::Element* dest_gpu, uint64_t expressionId, bool inverse, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU& timer, cudaStream_t stream, bool debug){
+void calculateExpressionQ(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, StepsParams *d_params, Goldilocks::Element* dest_gpu, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU& timer, cudaStream_t stream, bool debug){
     
-    uint64_t domainSize;
-    bool domainExtended;
-    if (expressionId == setupCtx.starkInfo.cExpId || expressionId == setupCtx.starkInfo.friExpId)
-    {
-        setupCtx.expressionsBin.expressionsInfo[expressionId].destDim = 3;
-        domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-        domainExtended = true;
-    }
-    else
-    {
-        domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
-        domainExtended = false;
-    }
-    Dest destStruct(NULL, domainSize, 0, 3, false, expressionId);
-    destStruct.addParams(expressionId, setupCtx.expressionsBin.expressionsInfo[expressionId].destDim, inverse);
+    uint64_t domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    bool domainExtended = true;
+    setupCtx.expressionsBin.expressionsInfo[setupCtx.starkInfo.cExpId].destDim = 3;
+    Dest destStruct(NULL, domainSize, 0, 3, false, setupCtx.starkInfo.cExpId);
+    destStruct.addParams(setupCtx.starkInfo.cExpId, setupCtx.expressionsBin.expressionsInfo[setupCtx.starkInfo.cExpId].destDim, false);
     destStruct.dest_gpu = dest_gpu;
     countId++;
-    expressionsCtx->calculateExpressions_gpu(d_params, destStruct, domainSize, domainExtended, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, debug);
+    expressionsCtx->calculateExpressionsQ_gpu(d_params, destStruct, domainSize, domainExtended, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, debug);
 
 }
 
@@ -1188,10 +1178,9 @@ __global__  void computeFRIExpression(uint64_t domainSize, uint64_t nOpeningPoin
                 // printFRI(fri_pol, i, debug);
             }
         }
-
-        gl64_gpu::copy_gpu(d_fri + i * FIELD_EXTENSION, uint64_t(FIELD_EXTENSION), &fri_pol[0], false);
-        gl64_gpu::copy_gpu(d_fri + i * FIELD_EXTENSION + 1, uint64_t(FIELD_EXTENSION), &fri_pol[blockDim.x], false);
-        gl64_gpu::copy_gpu(d_fri + i * FIELD_EXTENSION + 2, uint64_t(FIELD_EXTENSION), &fri_pol[2*blockDim.x], false);
+        d_fri[r * FIELD_EXTENSION] = fri_pol[threadIdx.x];
+        d_fri[r * FIELD_EXTENSION + 1] = fri_pol[threadIdx.x + blockDim.x];
+        d_fri[r * FIELD_EXTENSION + 2] = fri_pol[threadIdx.x + 2*blockDim.x];
         chunk_idx += gridDim.x;
     }
 }
@@ -1219,7 +1208,7 @@ void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstan
         (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)],
         (gl64_t *)h_params.pConstPolsExtendedTreeAddress,
         (gl64_t *)h_params.pCustomCommitsFixed,
-        air_instance_info->airId == 0
+        false
     );
     CHECKCUDAERR(cudaGetLastError());
 }

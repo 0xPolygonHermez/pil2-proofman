@@ -16,19 +16,6 @@
 class gl64_gpu
 {
 public:
-    // GPU utilities
-    static __device__ __forceinline__ void copy_gpu(gl64_t *dst, const gl64_t *src, bool const_src)
-    {
-        int tid = const_src ? 0 : threadIdx.x;
-        dst[threadIdx.x] = src[tid];
-    }
-
-    static __device__ __forceinline__ void copy_gpu(gl64_t *dst, uint64_t stride_dst, const gl64_t *src, bool const_src)
-    {
-        int tid = const_src ? 0 : threadIdx.x;
-        dst[threadIdx.x * stride_dst] = src[tid];
-    }
-
     static __device__ __forceinline__ void op_gpu(uint64_t op, gl64_t *c, const gl64_t *a, bool const_a, const gl64_t *b, bool const_b)
     {
         int tida = const_a ? 0 : threadIdx.x;
