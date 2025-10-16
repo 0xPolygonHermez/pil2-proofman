@@ -8,14 +8,8 @@ extern __shared__ Goldilocks::Element scratchpad[];
 
 __device__ __noinline__ void storePolynomial__(ExpsArguments *d_expsArgs, gl64_t *destVals, uint64_t row);
 __device__ __noinline__ void multiplyPolynomials__(ExpsArguments *d_expsArgs,  DestParamsGPU *d_destParams, DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row);
-__device__ __noinline__ bool caseNoOperations__(StepsParams *h_params, DeviceArguments *d_deviceArgs, Goldilocks::Element *destVals, uint32_t k, uint64_t row, bool debug);
+__device__ __noinline__ bool caseNoOperations__(StepsParams *h_params, DeviceArguments *d_deviceArgs, Goldilocks::Element *destVals, uint32_t k, uint64_t row);
 __device__ __noinline__ void getInversePolinomial__(gl64_t *polynomial, uint64_t dim);
-__device__ __noinline__ void  load2__(DeviceArguments *d_deviceArgs, StepsParams* h_params, Goldilocks::Element** expressions_params, uint16_t* args, uint64_t i_args, uint64_t row, uint64_t dim, bool isCyclic, bool debug, gl64_t* out0, gl64_t* out1, gl64_t* out2);
-
-#define DEBUG 0
-#define DEBUG_ROW 0
-__device__ __forceinline__ void printArguments(Goldilocks::Element *a, uint32_t dimA,  bool constA, Goldilocks::Element *b, uint32_t dimB, bool constB, int i, uint64_t op_type, uint64_t op, uint64_t nOps, bool debug);
-__device__ __forceinline__ void printRes(Goldilocks::Element *res, uint32_t dimRes, int i, bool debug);
 
 ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t nBlocks) : ExpressionsCtx(setupCtx), nRowsPack(nRowsPack), nBlocks(nBlocks)
 {
@@ -87,7 +81,7 @@ ExpressionsGPU::~ExpressionsGPU()
     CHECKCUDAERR(cudaFree(d_deviceArgs));
 }
 
-void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool debug)
+void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream)
 {
     ExpsArguments h_expsArgs;
 
@@ -170,11 +164,11 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     size_t sharedMem = 32 * sizeof(Goldilocks::Element);
 
     TimerStartCategoryGPU(timer, EXPRESSIONS);
-    computeExpressions_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams, debug);
+    computeExpressions_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams);
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 }
 
-void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool debug)
+void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream)
 {
     ExpsArguments h_expsArgs;
 
@@ -255,12 +249,11 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     size_t sharedMem = 32 * sizeof(Goldilocks::Element);
 
     TimerStartCategoryGPU(timer, EXPRESSIONS);
-    computeExpressionsQ_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams, debug);
+    computeExpression_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams);
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 }
 
-
-__device__ __forceinline__ void load2__(
+__device__ __forceinline__ void load__(
     const DeviceArguments* __restrict__ dArgs,
     const ExpsArguments* __restrict__ dExpsArgs,
     const StepsParams* __restrict__ dParams,
@@ -271,16 +264,11 @@ __device__ __forceinline__ void load2__(
     const uint64_t row,
     const uint64_t dim,
     const bool isCyclic,
-    const bool debug,
     gl64_t*& out0,
     gl64_t*& out1,
     gl64_t*& out2
 
 ) {
-
-#if DEBUG 
-    bool print = debug && row + threadIdx.x == DEBUG_ROW;
-#endif
 
     const uint32_t r = row + threadIdx.x;
     const uint64_t base = dArgs->bufferCommitSize;
@@ -288,12 +276,6 @@ __device__ __forceinline__ void load2__(
 
     // Fast-path: temporary/intermediate buffers
     if (type == base || type == base + 1) {
-#if DEBUG
-        if(print){ 
-            if(type == dArgs->bufferCommitSize) printf("Expression debug tmp1\n");
-            if(type == dArgs->bufferCommitSize + 1) printf("Expression debug tmp3\n");
-        }
-#endif
         //return &exprParams[type][argIdx * blockDim.x];
         if(dim == 1 ){
             out0 = (gl64_t*)&exprParams[type][argIdx * blockDim.x + threadIdx.x];
@@ -310,18 +292,6 @@ __device__ __forceinline__ void load2__(
 
     // Fast-path: constants
     if (type >= base + 2) {
-#if DEBUG
-        if(print){
-            if(type == dArgs->bufferCommitSize + 2 ) printf("Expression debug publicInputs\n");
-            if(type == dArgs->bufferCommitSize + 3 ) printf("Expression debug numbers\n");
-            if(type == dArgs->bufferCommitSize + 4 ) printf("Expression debug airValues\n");
-            if(type == dArgs->bufferCommitSize + 5 ) printf("Expression debug proofValues\n");
-            if(type == dArgs->bufferCommitSize + 6 ) printf("Expression debug airgroupValues\n");
-            if(type == dArgs->bufferCommitSize + 7 ) printf("Expression debug challenges\n");
-            if(type == dArgs->bufferCommitSize + 8 ) printf("Expression debug evals\n");
-        }
-#endif
-        //return &exprParams[type][argIdx];
         if(dim == 1 ){
             out0 = (gl64_t*)&exprParams[type][argIdx];
             out1 = nullptr;
@@ -344,15 +314,6 @@ __device__ __forceinline__ void load2__(
             ? dParams->pConstPolsExtendedTreeAddress
             : dParams->pConstPolsAddress;
 
-#if DEBUG 
-            if(print) {
-                if(isCyclic) {
-                    printf("Expression debug constPols cyclic\n");
-                } else {
-                    printf("Expression debug constPols\n");   
-                }
-            }
-#endif
         //const uint64_t pos = logicalRow * dArgs->mapSectionsN[0] + argIdx;
         const uint64_t pos = getBufferOffset(logicalRow, argIdx, domainSize, dArgs->mapSectionsN[0]);
         out0 = (gl64_t*)&basePtr[pos];
@@ -368,29 +329,11 @@ __device__ __forceinline__ void load2__(
         const uint64_t pos = getBufferOffset(logicalRow, argIdx, domainSize, nCols);
 
         if (type == 1 && !dExpsArgs->domainExtended) {
-#if DEBUG
-        if(print) {
-            if(isCyclic) {
-                printf("Expression debug trace cyclic: %lu\n",logicalRow * nCols + argIdx );
-            } else {
-                printf("Expression debug trace\n");
-            }
-        }
-#endif
             out0 = (gl64_t*)&dParams->trace[pos];
             out1 = nullptr;
             out2 = nullptr;
             return;
         } else {
-#if DEBUG
-        if(print) {
-            if(isCyclic) {
-                printf("Expression debug aux_trace cyclic %lu\n", offset + logicalRow * nCols + argIdx);
-            } else {
-                printf("Expression debug aux_trace\n");
-            }
-        }
-#endif
             #pragma unroll
             for (uint64_t d = 0; d < dim; d++) {
                 const uint64_t pos_ = getBufferOffset(logicalRow, argIdx+d, domainSize, nCols);
@@ -404,28 +347,13 @@ __device__ __forceinline__ void load2__(
 
     // Special case: zi
     if (type == 4) {
-#if DEBUG
-            if(print) {
-                printf("Expression debug zi\n");
-            }
-#endif
         //return &dParams->aux_trace[dArgs->zi_offset + (argIdx - 1) * domainSize + row];
         out0 = (gl64_t*)&dParams->aux_trace[dArgs->zi_offset + (argIdx - 1) * domainSize + row + threadIdx.x];
         out1 = nullptr;
         out2 = nullptr;
         return;
     }
-
     // Custom commits
-#if DEBUG
-        if(print) {
-            if(isCyclic) {
-                printf("Expression debug customCommits cyclic\n");
-            } else {
-                printf("Expression debug customCommits\n");
-            }
-        }
-#endif
     const uint64_t idx = type - (dArgs->nStages + 4);
     const uint64_t offset = dExpsArgs->mapOffsetsCustomExps[idx];
     const uint64_t nCols = dArgs->mapSectionsNCustomFixed[idx];
@@ -500,12 +428,8 @@ __device__ __noinline__ void getInversePolinomial__(gl64_t *polynomial, uint64_t
     }
 }
 
-__device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *destVals, uint32_t k, uint64_t row, const bool debug)
+__device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *destVals, uint32_t k, uint64_t row)
 {
-
-#if DEBUG 
-    bool print = debug && row + threadIdx.x == DEBUG_ROW;
-#endif
 
     uint32_t r = row + threadIdx.x;
 
@@ -518,9 +442,6 @@ __device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArg
         uint64_t nCols = d_deviceArgs->mapSectionsN[0];
         if (d_destParams[k].op == opType::const_)
         {
-#if DEBUG
-            if(print) printf("Expression debug constPols\n");
-#endif
             uint64_t pos = getBufferOffset(l, stagePos, d_expsArgs->domainSize, nCols);
             destVals[threadIdx.x] = d_params->pConstPolsAddress[pos];
         }
@@ -530,17 +451,11 @@ __device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArg
             uint64_t nCols = d_deviceArgs->mapSectionsN[d_destParams[k].stage];
             if (d_destParams[k].stage == 1)
             {
-#if DEBUG
-                if(print) printf("Expression debug trace\n");
-#endif
                 uint64_t pos = getBufferOffset(l, stagePos, d_expsArgs->domainSize, nCols); 
                 destVals[threadIdx.x] = d_params->trace[pos];
             }
             else
             {
-#if DEBUG
-                if(print) printf("Expression debug aux_trace\n");
-#endif
                 for (uint64_t d = 0; d < d_destParams[k].dim; ++d)
                 {
                     uint64_t pos = getBufferOffset(l, stagePos + d, d_expsArgs->domainSize, nCols);
@@ -551,26 +466,17 @@ __device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArg
 
         if (d_destParams[k].inverse)
         {
-#if DEBUG
-            if(print) printf("Expression debug inverse\n");
-#endif
             getInversePolinomial__((gl64_t*) &destVals[k * FIELD_EXTENSION * blockDim.x], d_destParams[k].dim);
         }
         return true;
     }
     else if (d_destParams[k].op == opType::number)
     {
-#if DEBUG
-        if(print) printf("Expression debug number\n");
-#endif
         destVals[k * FIELD_EXTENSION * blockDim.x + threadIdx.x].fe = d_destParams[k].value;
         return true;
     }
     else if (d_destParams[k].op == opType::airvalue)
     {
-#if DEBUG
-        if(print) printf("Expression debug airvalue\n");
-#endif
         if(d_destParams[k].dim == 1) {
             destVals[k * FIELD_EXTENSION * blockDim.x + threadIdx.x] = d_params->airValues[d_destParams[k].polsMapId];
         } else {
@@ -581,35 +487,6 @@ __device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArg
         return true;
     }
     return false;
-}
-
-__device__ __forceinline__ void printArguments(Goldilocks::Element *a, uint32_t dimA, bool constA, Goldilocks::Element *b, uint32_t dimB, bool constB, int i, uint64_t op_type, uint64_t op, uint64_t nOps, const bool debug){
-    bool print = debug && i + threadIdx.x == DEBUG_ROW;
-    if(print){
-        printf("Expression debug op: %lu of %lu with type %lu\n", op, nOps, op_type);
-        if(a!= NULL){
-            for(uint32_t j = 0; j < dimA; j++){
-                Goldilocks::Element val = constA ? a[j] : a[j*blockDim.x + DEBUG_ROW%blockDim.x];
-                printf("Expression debug a[%d]: %lu (constant %u)\n", j, val.fe % GOLDILOCKS_PRIME, constA);
-            }
-        }
-        if(b!= NULL){
-            for(uint32_t j = 0; j < dimB; j++){
-                Goldilocks::Element val = constB ? b[j] : b[j*blockDim.x + DEBUG_ROW%blockDim.x];
-                printf("Expression debug b[%d]: %lu (constant %u)\n", j, val.fe % GOLDILOCKS_PRIME, constB);
-            }
-
-        }
-    }
-}
-
-__device__ __forceinline__ void printRes(Goldilocks::Element *res, uint32_t dimRes, int i, const bool debug){
-    bool print = debug && i + threadIdx.x == DEBUG_ROW;
-    if(print){
-        for(uint32_t j = 0; j < dimRes; j++){
-            printf("Expression debug res[%d]: %lu\n", j, res[j*blockDim.x + DEBUG_ROW%blockDim.x].fe % GOLDILOCKS_PRIME);
-        }
-    }
 }
 
 __device__ __forceinline__ void op_gpu_p2(uint64_t op, gl64_t *C, const gl64_t *a, const gl64_t *b)
@@ -694,10 +571,7 @@ __device__ __forceinline__ void op_33_gpu_p2(uint64_t op, gl64_t *C, const gl64_
     }
 }
 
-
-
-
-__global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, const bool debug)
+__global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams)
 {
 
     int chunk_idx = blockIdx.x;
@@ -728,12 +602,12 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
 #pragma unroll 1
         for (uint64_t k = 0; k < d_expsArgs->dest_nParams; ++k)
         {
-            if(caseNoOperations__(d_params, d_deviceArgs, d_expsArgs, d_destParams, destVals, k, i, debug)){
+            if(caseNoOperations__(d_params, d_deviceArgs, d_expsArgs, d_destParams, destVals, k, i)){
                 continue;
             }
             uint8_t *ops = &d_deviceArgs->ops[d_destParams[k].opsOffset];
             uint16_t *args = &d_deviceArgs->args[d_destParams[k].argsOffset];
-            gl64_t *a0, *a1, *a2, *b0, *b1, *b2;
+            gl64_t *a0, *a1, *a2, *b0, *b1, *b2, *c0, *c1, *c2;
 
             uint64_t i_args = 0;
             uint64_t nOps = d_destParams[k].nOps;
@@ -746,61 +620,41 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
                 case 0:
                 {
                     // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
-                    load2__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 1, isCyclic, debug, a0, a1, a2);
-                    load2__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic, debug, b0, b1, b2);
+                    load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 1, isCyclic, a0, a1, a2);
+                    load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic, b0, b1, b2);
                     gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize][args[i_args + 1] * blockDim.x]);
-                    #if DEBUG
-                    printArguments((Goldilocks::Element *)a, 1, isConstantA, (Goldilocks::Element *)b, 1, isConstantB, i, args[i_args], kk, nOps, debug);
-                    #endif
                     op_gpu_p2(args[i_args], res, a0, b0);
-                    #if DEBUG
-                    printRes((Goldilocks::Element *) res, 1, i, debug);
-                    #endif
                     i_args += 8;
                     break;
                 }
                 case 1:
                 {
                     // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
-                    load2__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, debug, a0, a1, a2);
-                    load2__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic, debug, b0, b1, b2);
+                    load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, a0, a1, a2);
+                    load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic, b0, b1, b2);
                     gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * blockDim.x]);
-                    #if DEBUG
-                    printArguments((Goldilocks::Element *)a, 3, isConstantA, (Goldilocks::Element *)b, 1, isConstantB, i, args[i_args], kk, nOps, debug);
-                    #endif
                     op_31_gpu_p2(args[i_args], res, a0, a1, a2, b0);
-                    #if DEBUG
-                    printRes((Goldilocks::Element *) res, 3, i, debug);
-                    #endif
                     i_args += 8;
                     break;
                 }
                 case 2:
                 {
                     // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
-                    load2__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, debug, a0, a1, a2);
-                    load2__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 3, isCyclic, debug, b0, b1, b2);
+                    load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, a0, a1, a2);
+                    load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 3, isCyclic, b0, b1, b2);
                     gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * blockDim.x]);
-                    #if DEBUG
-                    printArguments((Goldilocks::Element *)a, 3, isConstantA, (Goldilocks::Element *)b, 3, isConstantB, i, args[i_args], kk, nOps, debug);
-                    #endif
                     op_33_gpu_p2(args[i_args], res, a0, a1, a2, b0, b1, b2);
-                    #if DEBUG
-                    printRes((Goldilocks::Element *) res, 3, i, debug);
-                    #endif
                     i_args += 8;
                     break;
                 }
                 default:
                 {
                     printf(" Wrong operation! %d \n", ops[kk]);
-                    assert(0);
                 }
                 }
             }
             if (i_args !=  d_destParams[k].nArgs){
                 printf(" %lu consumed args - %lu expected args \n", i_args, d_destParams[k].nArgs);
-                assert(0);
             }
             if (d_destParams[k].inverse)
             {
@@ -823,7 +677,7 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
 }
 
 
-__global__  void computeExpressionsQ_(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, const bool debug)
+__global__  void computeExpression_(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams)
 {
 
     int chunk_idx = blockIdx.x;
@@ -866,61 +720,41 @@ __global__  void computeExpressionsQ_(StepsParams *d_params, DeviceArguments *d_
             case 0:
             {
                 // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
-                load2__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 1, isCyclic, debug, a0, a1, a2);
-                load2__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic, debug, b0, b1, b2);
+                load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 1, isCyclic, a0, a1, a2);
+                load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic, b0, b1, b2);
                 gl64_t *res = (gl64_t*) (kk == nOps - 1 ? destVals : &expressions_params[bufferCommitsSize][args[i_args + 1] * blockDim.x]);
-                #if DEBUG
-                printArguments((Goldilocks::Element *)a, 1, isConstantA, (Goldilocks::Element *)b, 1, isConstantB, i, args[i_args], kk, nOps, debug);
-                #endif
                 op_gpu_p2(args[i_args], res, a0, b0);
-                #if DEBUG
-                printRes((Goldilocks::Element *) res, 1, i, debug);
-                #endif
                 i_args += 8;
                 break;
             }
             case 1:
             {
                 // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
-                load2__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, debug, a0, a1, a2);
-                load2__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic, debug, b0, b1, b2);
+                load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, a0, a1, a2);
+                load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic, b0, b1, b2);
                 gl64_t *res = (gl64_t*) (kk == nOps - 1 ? destVals : &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * blockDim.x]);
-                #if DEBUG
-                printArguments((Goldilocks::Element *)a, 3, isConstantA, (Goldilocks::Element *)b, 1, isConstantB, i, args[i_args], kk, nOps, debug);
-                #endif
                 op_31_gpu_p2(args[i_args], res, a0, a1, a2, b0);
-                #if DEBUG
-                printRes((Goldilocks::Element *) res, 3, i, debug);
-                #endif
                 i_args += 8;
                 break;
             }
             case 2:
             {
                 // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
-                load2__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, debug, a0, a1, a2);
-                load2__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 3, isCyclic, debug, b0, b1, b2);
+                load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, a0, a1, a2);
+                load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 3, isCyclic, b0, b1, b2);
                 gl64_t *res = (gl64_t*) (kk == nOps - 1 ? destVals : &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * blockDim.x]);
-                #if DEBUG
-                printArguments((Goldilocks::Element *)a, 3, isConstantA, (Goldilocks::Element *)b, 3, isConstantB, i, args[i_args], kk, nOps, debug);
-                #endif
                 op_33_gpu_p2(args[i_args], res, a0, a1, a2, b0, b1, b2);
-                #if DEBUG
-                printRes((Goldilocks::Element *) res, 3, i, debug);
-                #endif
                 i_args += 8;
                 break;
             }
             default:
             {
                 printf(" Wrong operation! %d \n", ops[kk]);
-                assert(0);
             }
             }
         }
         if (i_args !=  d_destParams[0].nArgs){
             printf(" %lu consumed args - %lu expected args \n", i_args, d_destParams[0].nArgs);
-            assert(0);
         }
     
 
