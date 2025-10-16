@@ -93,7 +93,7 @@ pub fn print_summary<F: PrimeField64>(
         if !air_instance_map.contains_key(&air_name.clone()) {
             let setup = sctx.get_setup(airgroup_id, air_id);
             let n_bits = setup.stark_info.stark_struct.n_bits;
-            let memory_trace = if cfg!(feature = "packed") {
+            let memory_trace = if cfg!(feature = "gpu") && cfg!(feature = "packed") {
                 let num_packed_words = packed_info.get(&(airgroup_id, air_id)).map(|info| info.num_packed_words);
                 if let Some(num_packed_words) = num_packed_words {
                     (num_packed_words * (1 << setup.stark_info.stark_struct.n_bits)) as f64 * 8.0
@@ -366,7 +366,7 @@ pub fn calculate_max_witness_trace_size<F: PrimeField64>(
             let n = 1 << setup.stark_info.stark_struct.n_bits;
             let num_packed_words =
                 packed_info.get(&(airgroup_id, air_id)).map(|info| info.num_packed_words).unwrap_or(0);
-            let is_packed = cfg!(feature = "packed") && gpu_params.pack_trace && num_packed_words > 0;
+            let is_packed = cfg!(feature = "gpu") && cfg!(feature = "packed") && gpu_params.pack_trace && num_packed_words > 0;
             let trace_size = if !is_packed {
                 let n_cols = setup.stark_info.map_sections_n["cm1"];
                 n * n_cols
