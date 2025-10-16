@@ -878,7 +878,7 @@ void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU* expressionsC
         
 }
 
-void calculateExpressionQ(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, StepsParams *d_params, Goldilocks::Element* dest_gpu, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU& timer, cudaStream_t stream, bool debug){
+void calculateExpressionQ(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, StepsParams *d_params, Goldilocks::Element* dest_gpu, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU& timer, cudaStream_t stream){
     
     uint64_t domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     bool domainExtended = true;
@@ -887,7 +887,7 @@ void calculateExpressionQ(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, St
     destStruct.addParams(setupCtx.starkInfo.cExpId, setupCtx.expressionsBin.expressionsInfo[setupCtx.starkInfo.cExpId].destDim, false);
     destStruct.dest_gpu = dest_gpu;
     countId++;
-    expressionsCtx->calculateExpressionsQ_gpu(d_params, destStruct, domainSize, domainExtended, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, debug);
+    expressionsCtx->calculateExpressionsQ_gpu(d_params, destStruct, domainSize, domainExtended, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
 
 }
 
@@ -1060,44 +1060,6 @@ void calculateHash(TranscriptGL_GPU *d_transcript, Goldilocks::Element* hash, Se
     d_transcript->getState(hash, stream);
 };
 
-
-__device__ __forceinline__ void printArgs(gl64_t *a, uint32_t dimA,  bool constA, gl64_t *b, uint32_t dimB, bool constB, int i, uint64_t op_type, uint64_t op, bool debug = false);
-__device__ __forceinline__ void printFRI(gl64_t *res, uint32_t dimRes, int i, bool debug = false);
-
-
-__device__ __forceinline__ void printArgs(gl64_t *a, uint32_t dimA, bool constA, gl64_t *b, uint32_t dimB, bool constB, int i, uint64_t op_type, uint64_t op, bool debug) {
-    uint64_t debug_row = 0;
-    bool print = debug && (i + threadIdx.x == debug_row);
-    Goldilocks::Element *a_ = (Goldilocks::Element *)a; 
-    Goldilocks::Element *b_ = (Goldilocks::Element *)b; 
-    if(print){
-        printf("Expression debug op: %lu with type %lu\n", op, op_type);
-        if(a!= NULL){
-            for(uint32_t j = 0; j < dimA; j++){
-                Goldilocks::Element val = constA ? a_[j] : a_[j*blockDim.x + debug_row%blockDim.x];
-                printf("Expression debug a[%d]: %lu (constant %u)\n", j, val.fe % GOLDILOCKS_PRIME, constA);
-            }
-        }
-        if(b!= NULL){
-            for(uint32_t j = 0; j < dimB; j++){
-                Goldilocks::Element val = constB ? b_[j] : b_[j*blockDim.x + debug_row%blockDim.x];
-                printf("Expression debug b[%d]: %lu (constant %u)\n", j, val.fe % GOLDILOCKS_PRIME, constB);
-            }
-        }
-    }
-}
-
-__device__ __forceinline__ void printFRI(gl64_t *res, int i, bool debug){
-    uint64_t debug_row = 0;
-    bool print = debug && (i + threadIdx.x == debug_row);
-    Goldilocks::Element *res_ = (Goldilocks::Element *)res; 
-    if(print){
-        for(uint32_t j = 0; j < FIELD_EXTENSION; j++){
-            printf("Expression debug res[%d]: %lu\n", j, res_[j*blockDim.x + debug_row%blockDim.x].fe % GOLDILOCKS_PRIME);
-        }
-    }
-}
-
 __global__  void computeFRIExpression(uint64_t domainSize, uint64_t nOpeningPoints, gl64_t *d_fri, uint64_t* d_countsPerOpeningPos, EvalInfo **d_evalInfoPerOpening, gl64_t *d_evals, gl64_t *vf1, gl64_t *vf2, gl64_t *d_cmPols, gl64_t *d_xDivXSub, gl64_t *d_x, gl64_t *d_fixedPols, gl64_t *d_customComits, bool debug)
 {
     int chunk_idx = blockIdx.x;
@@ -1133,28 +1095,19 @@ __global__  void computeFRIExpression(uint64_t domainSize, uint64_t nOpeningPoin
                 gl64_t *out = (j == 0) ? accum : res;
                 if(evalInfo.dim == 1) {
                     out[threadIdx.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols)];
-                    // printArgs(out, 1, false, eval, 3, true, i, 3, nOp++, debug);
                     Goldilocks3GPU::sub_13_gpu_b_const(out, out, eval);
-                    // printFRI(out, i, debug);
                 } else {
                     out[threadIdx.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols)];
                     out[threadIdx.x + blockDim.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 1, domainSize, evalInfo.stageCols)];
                     out[threadIdx.x + 2*blockDim.x] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 2, domainSize, evalInfo.stageCols)];
-                    // printArgs(out, 3, false, eval, 3, true, i, 1, nOp++, debug);
                     Goldilocks3GPU::sub_gpu_b_const(out, out, eval);
-                    // printFRI(out, i, debug);
                 }
                 if(j != 0) {
-                    // printArgs(accum, 3, false, vf2, 3, true, i, 2, nOp++, debug);
                     Goldilocks3GPU::mul_gpu_b_const(accum, accum, vf2);
-                    // printFRI(accum, i, debug);
-                    // printArgs(accum, 3, false, out, 3, false, i, 0, nOp++, debug);
                     Goldilocks3GPU::add_gpu_no_const(accum, accum, (gl64_t *)out);
-                    // printFRI(accum, i, debug);
                 }
             }
 
-            // printArgs(d_x + i, 1, false, &d_xDivXSub[o * FIELD_EXTENSION], 3, true, i, 3, nOp, debug);
             Goldilocks3GPU::sub_13_gpu_b_const(res, d_x + i, &d_xDivXSub[o * FIELD_EXTENSION]);
             Goldilocks3GPU::Element aux;
             aux[0] = res[threadIdx.x];
@@ -1164,18 +1117,12 @@ __global__  void computeFRIExpression(uint64_t domainSize, uint64_t nOpeningPoin
             res[threadIdx.x] = aux[0];
             res[blockDim.x + threadIdx.x] = aux[1];
             res[2 * blockDim.x + threadIdx.x] = aux[2];
-            // printArgs(res, 3, false, accum, 3, false, i, 2, nOp++, debug);
 
             gl64_t *out = o == 0 ? fri_pol : accum;
             Goldilocks3GPU::mul_gpu_no_const(out, accum, res);
-            // printFRI(out, i, debug);
             if(o != 0) {
-                // printArgs(fri_pol, 3, false, accum, 3, false, i, 2, nOp++, debug);
                 Goldilocks3GPU::mul_gpu_b_const(fri_pol, fri_pol, vf1);
-                // printFRI(fri_pol, i, debug);
-                // printArgs(fri_pol, 3, false, accum, 3, false, i, 0, nOp++, debug);
                 Goldilocks3GPU::add_gpu_no_const(fri_pol, fri_pol, accum);
-                // printFRI(fri_pol, i, debug);
             }
         }
         d_fri[r * FIELD_EXTENSION] = fri_pol[threadIdx.x];
