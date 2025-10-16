@@ -9,6 +9,7 @@
 struct DestParamsGPU
 {
     uint64_t dim; 
+    uint64_t expId;
     uint64_t stage; 
     uint64_t stagePos; 
     uint64_t polsMapId; 
@@ -19,7 +20,9 @@ struct DestParamsGPU
     uint64_t nOps;
     uint64_t opsOffset; 
     uint64_t nArgs;
-    uint64_t argsOffset; 
+    uint64_t argsOffset;
+    uint64_t nTemp1;
+    uint64_t nTemp3; 
 };
 
 
@@ -217,7 +220,7 @@ public:
         delete[] mapSectionsNCustomFixed;
     };
     
-    virtual void calculateExpressions(StepsParams& params, Dest &dest, uint64_t domainSize, bool domainExtended, bool compilationTime = false, bool verify_constraints = false, bool debug = true) {};
+    virtual void calculateExpressions(StepsParams& params, Dest &dest, uint64_t domainSize, bool domainExtended, bool compilationTime = false, bool verify_constraints = false, bool debug = false) {};
  
     void calculateExpression(StepsParams& params, Goldilocks::Element* dest, uint64_t expressionId, bool inverse = false, bool compilation_time = false) {
         uint64_t domainSize;

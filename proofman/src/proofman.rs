@@ -2570,6 +2570,7 @@ where
             setups_vadcop.max_prover_recursive_buffer_size as u64,
             max_pinned_proof_size,
             sctx.max_n_bits_ext as u64,
+            sctx.max_n_constraints as u64,
         );
 
         initialize_setup_info(pctx, sctx, setups_vadcop, &d_buffers, aggregation, packed_info, gpu_params);

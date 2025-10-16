@@ -249,6 +249,7 @@ struct StreamData{
     cudaStream_t stream;
     uint32_t gpuId;
     uint64_t localStreamId;
+    uint64_t maxNConstraints;
     StepsParams *pinned_params;
     Goldilocks::Element *pinned_buffer_proof;
     Goldilocks::Element *pinned_buffer_exps_params;
@@ -265,6 +266,7 @@ struct StreamData{
     StepsParams *params;
     ExpsArguments *d_expsArgs;
     DestParamsGPU *d_destParams;
+    Goldilocks::Element *d_challengePowers;
 
     //callback inputs
     void *root;
@@ -280,13 +282,14 @@ struct StreamData{
     bool extraStream;
     uint64_t streamsUsed;
     
-    void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_){
+    void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_, uint64_t maxNConstraints_){
         uint64_t maxExps = 1000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
         timer.init(stream);
         gpuId = gpuId_;
         localStreamId = localStreamId_;
+        maxNConstraints = maxNConstraints_;
         recursive = recursive_;
         cudaEventCreate(&end_event);
         instanceId = -1;
@@ -313,8 +316,9 @@ struct StreamData{
                                            stream);
 
         CHECKCUDAERR(cudaMalloc(&params, sizeof(StepsParams)));
-        CHECKCUDAERR(cudaMalloc(&d_destParams, 2 * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(cudaMalloc(&d_destParams, maxNConstraints * sizeof(DestParamsGPU)));
         CHECKCUDAERR(cudaMalloc(&d_expsArgs, sizeof(ExpsArguments)));
+        CHECKCUDAERR(cudaMalloc(&d_challengePowers, maxNConstraints *3 * sizeof(Goldilocks::Element)));
     }
 
     ~StreamData() {
@@ -323,6 +327,7 @@ struct StreamData{
         CHECKCUDAERR(cudaFree(params));
         CHECKCUDAERR(cudaFree(d_destParams));
         CHECKCUDAERR(cudaFree(d_expsArgs));
+        CHECKCUDAERR(cudaFree(d_challengePowers));
     }
 
     void reset(bool reset_status){

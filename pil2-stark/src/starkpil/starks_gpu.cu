@@ -878,16 +878,18 @@ void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU* expressionsC
         
 }
 
-void calculateExpressionQ(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, StepsParams *d_params, Goldilocks::Element* dest_gpu, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU& timer, cudaStream_t stream){
-    
+void calculateExpressionQ(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, StepsParams *d_params, Goldilocks::Element* dest_gpu, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, Goldilocks::Element *d_challengePowers,  uint64_t& countId, TimerGPU& timer, cudaStream_t stream){
+
     uint64_t domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     bool domainExtended = true;
     setupCtx.expressionsBin.expressionsInfo[setupCtx.starkInfo.cExpId].destDim = 3;
     Dest destStruct(NULL, domainSize, 0, 3, false, setupCtx.starkInfo.cExpId);
-    destStruct.addParams(setupCtx.starkInfo.cExpId, setupCtx.expressionsBin.expressionsInfo[setupCtx.starkInfo.cExpId].destDim, false);
+    for (int i = setupCtx.expressionsBin.constraintsInfoDebug.size()-1; i >=0; i--) {
+        destStruct.addParams(i, setupCtx.expressionsBin.constraintsInfoDebug[i].destDim);
+    }
     destStruct.dest_gpu = dest_gpu;
     countId++;
-    expressionsCtx->calculateExpressionsQ_gpu(d_params, destStruct, domainSize, domainExtended, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+    expressionsCtx->calculateExpressionsQ_gpu(d_params, destStruct, domainSize, 2, domainExtended, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, d_challengePowers, countId, timer, stream);
 
 }
 

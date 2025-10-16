@@ -609,11 +609,11 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
     }
     
     
-    uint64_t memoryTmp1 = nTmp1 * nrowsPack * maxNBlocks;
+    uint64_t memoryTmp1 = 8 * nTmp1 * nrowsPack * maxNBlocks;
     mapOffsets[std::make_pair("tmp1", false)] = mapBuffHelper;
     mapBuffHelper += memoryTmp1;
 
-    uint64_t memoryTmp3 = nTmp3 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
+    uint64_t memoryTmp3 = 8 * nTmp3 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
     mapOffsets[std::make_pair("tmp3", false)] = mapBuffHelper;
     mapBuffHelper += memoryTmp3;
 
@@ -622,7 +622,7 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
         mapOffsets[std::make_pair("values", false)] = mapBuffHelper;
         mapBuffHelper += values;
     } else {
-        uint64_t destVals = 2 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
+        uint64_t destVals = 8 * 2 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
         mapOffsets[std::make_pair("destVals", false)] = mapBuffHelper;
         mapBuffHelper += destVals;
     }

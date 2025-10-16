@@ -530,6 +530,7 @@ extern "C" {
         maxSizeProverBufferAggregation: u64,
         maxProofSize: u64,
         max_n_bits_ext: u64,
+        max_n_constraints: u64,
     ) -> u64;
     
     pub fn get_instances_ready(
