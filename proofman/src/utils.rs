@@ -366,7 +366,8 @@ pub fn calculate_max_witness_trace_size<F: PrimeField64>(
             let n = 1 << setup.stark_info.stark_struct.n_bits;
             let num_packed_words =
                 packed_info.get(&(airgroup_id, air_id)).map(|info| info.num_packed_words).unwrap_or(0);
-            let is_packed = cfg!(feature = "gpu") && cfg!(feature = "packed") && gpu_params.pack_trace && num_packed_words > 0;
+            let is_packed =
+                cfg!(feature = "gpu") && cfg!(feature = "packed") && gpu_params.pack_trace && num_packed_words > 0;
             let trace_size = if !is_packed {
                 let n_cols = setup.stark_info.map_sections_n["cm1"];
                 n * n_cols
@@ -572,8 +573,8 @@ pub fn initialize_setup_info<F: PrimeField64>(
             1,
         );
         if cfg!(feature = "gpu") && gpu_params.preallocate {
-            let const_pols_path = setup_vadcop_final.setup_path.to_string_lossy().to_string() + ".const";
-            let const_pols_tree_path = setup_vadcop_final.setup_path.display().to_string() + ".consttree";
+            let const_pols_path = &setup_vadcop_final.const_pols_path;
+            let const_pols_tree_path = &setup_vadcop_final.const_pols_tree_path;
             tracing::info!(airgroup_id = 0, air_id = 0, proof_type, "Loading const pols in GPU");
             load_device_const_pols_c(
                 0_u64,
