@@ -581,9 +581,9 @@ pub fn initialize_setup_info<F: PrimeField64>(
                 0_u64,
                 _offset_aggregation,
                 d_buffers.get_ptr(),
-                &const_pols_path,
+                const_pols_path,
                 setup_vadcop_final.const_pols_size as u64,
-                &const_pols_tree_path,
+                const_pols_tree_path,
                 setup_vadcop_final.const_tree_size as u64,
                 proof_type,
             );

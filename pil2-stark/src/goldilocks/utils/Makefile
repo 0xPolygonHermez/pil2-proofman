@@ -292,12 +292,39 @@ LIBRARIES :=
 
 ################################################################################
 
-# Gencode arguments
-ifeq ($(TARGET_ARCH),$(filter $(TARGET_ARCH),armv7l aarch64 sbsa))
-SMS ?= 53 61 70 72 75 80 86 87 90
+# Gencode arguments - Dynamically detect supported architectures from NVCC
+# Try to use nvcc --list-gpu-code if available, otherwise fallback to parsing help
+NVCC_LIST_GPU_CODE_CHECK := $(shell $(NVCC) --list-gpu-code >/dev/null 2>&1 && echo 1 || echo 0)
+ifeq ($(NVCC_LIST_GPU_CODE_CHECK),1)
+    # Use the more reliable --list-gpu-code option
+    NVCC_ARCHS := $(shell $(NVCC) --list-gpu-code 2>/dev/null | grep -oE "sm_[0-9]+" | sed 's/sm_//g' | sort -n -u | tr '\n' ' ')
 else
-SMS ?= 50 52 60 61 70 75 80 86 89 90
+    # Fallback to parsing help text
+    NVCC_ARCHS := $(shell $(NVCC) --help 2>/dev/null | grep -oE "sm_[0-9]+" | sed 's/sm_//g' | sort -n -u | tr '\n' ' ')
 endif
+
+# Filter architectures based on target architecture
+ifeq ($(TARGET_ARCH),$(filter $(TARGET_ARCH),armv7l aarch64 sbsa))
+    # For ARM architectures, filter to commonly supported ones
+    SMS ?= $(filter 53 61 70 72 75 80 86 87 90,$(NVCC_ARCHS))
+else
+    # For x86_64 and other architectures, use all detected architectures
+    SMS ?= $(NVCC_ARCHS)
+endif
+
+# Fallback to hardcoded values if detection fails
+ifeq ($(SMS),)
+    $(info >>> WARNING - Could not detect GPU architectures, using fallback values <<<)
+    ifeq ($(TARGET_ARCH),$(filter $(TARGET_ARCH),armv7l aarch64 sbsa))
+        SMS := 53 61 70 72 75 80 86 87 90
+    else
+        SMS := 50 52 60 61 70 75 80 86 89 90
+    endif
+endif
+
+# Debug info: show detected architectures
+$(info NVCC detected architectures: $(NVCC_ARCHS))
+$(info Selected SMS architectures: $(SMS))
 
 ifeq ($(SMS),)
 $(info >>> WARNING - no SM architectures have been specified - waiving sample <<<)
