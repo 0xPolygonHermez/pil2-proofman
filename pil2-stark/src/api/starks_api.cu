@@ -659,7 +659,9 @@ void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
 }
 
 void init_gpu_setup(uint64_t maxBitsExt) {
-    cudaSetDevice(0);
+    int deviceId;
+    CHECKCUDAERR(cudaGetDevice(&deviceId));
+    cudaSetDevice(deviceId);
     uint32_t my_gpu_ids[1] = {0};
 
     init_gpu_const_2(my_gpu_ids, 1);
@@ -677,7 +679,9 @@ void prepare_blocks(uint64_t *pol, uint64_t N, uint64_t nCols) {
     cudaStreamCreate(&stream);
 
     TimerGPU timer;
-    cudaSetDevice(0);
+    int deviceId;
+    CHECKCUDAERR(cudaGetDevice(&deviceId));
+    cudaSetDevice(deviceId);
     NTT_Goldilocks_GPU ntt;
     ntt.prepare_blocks_trace(d_aux, d_pol, nCols, N, stream, timer);
 
@@ -689,7 +693,9 @@ void prepare_blocks(uint64_t *pol, uint64_t N, uint64_t nCols) {
 
 void write_custom_commit(void* root, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *buffer, char *bufferFile, bool check)
 {   
-    cudaSetDevice(0);
+    int deviceId;
+    CHECKCUDAERR(cudaGetDevice(&deviceId));
+    cudaSetDevice(deviceId);
     cudaStream_t stream;
     cudaStreamCreate(&stream);
 
@@ -720,13 +726,13 @@ void write_custom_commit(void* root, uint64_t nBits, uint64_t nBitsExt, uint64_t
     Goldilocks::Element *pNodes = (Goldilocks::Element *)&d_customCommitsTree[nCols * NExtended];
     ntt.LDE_MerkleTree_GPU_inplace(pNodes, (gl64_t *)d_customCommitsTree, 0, (gl64_t *)d_customCommitsPols, 0, nBits, nBitsExt, nCols, timer, stream);
 
-    cudaMemcpy(customCommitsTree, d_customCommitsTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+    cudaMemcpy(customCommitsTree, d_customCommitsTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
 
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     mt.getRoot(&rootGL[0]);
 
     Goldilocks::Element *customCommitsPols = new Goldilocks::Element[N * nCols];
-    cudaMemcpy(customCommitsPols, d_customCommitsPols, N * nCols * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+    cudaMemcpy(customCommitsPols, d_customCommitsPols, N * nCols * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
     if(!check) {
         std::string buffFile = string(bufferFile);
         ofstream fw(buffFile.c_str(), std::fstream::out | std::fstream::binary);
@@ -746,7 +752,9 @@ void write_custom_commit(void* root, uint64_t nBits, uint64_t nBitsExt, uint64_t
 }
 
 void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress_) {
-    cudaSetDevice(0);
+    int deviceId;
+    CHECKCUDAERR(cudaGetDevice(&deviceId));
+    cudaSetDevice(deviceId);
 
     StarkInfo &starkInfo = *((StarkInfo *)pStarkInfo);
     assert(starkInfo.starkStruct.verificationHashType == "GL");

@@ -140,7 +140,7 @@ fn run_command(cmd: &str, args: &[&str], dir: &Path) {
 fn track_file_changes(pil2_stark_path: &Path) {
     let source_files = find_source_files(pil2_stark_path);
     let lib_file: PathBuf = if cfg!(feature = "gpu") {
-        pil2_stark_path.join("lib-gpu/lib-gpu/libstarksgpu.a")
+        pil2_stark_path.join("lib-gpu/libstarksgpu.a")
     } else {
         pil2_stark_path.join("lib/libstarks.a")
     };
@@ -217,7 +217,7 @@ fn find_source_files(dir: &Path) -> Vec<PathBuf> {
             } else if let Some(ext) = path.extension() {
                 if cfg!(feature = "gpu") {
                     if (ext == "cpp" || ext == "h" || ext == "hpp" || ext == "cu" || ext == "cuh" || ext == "asm")
-                        && path.file_name() != Some(std::ffi::OsStr::new("starks_lib.h"))
+                        && path.file_name() != Some(std::ffi::OsStr::new("starks_lib_gpu.h"))
                     {
                         source_files.push(path);
                     }
