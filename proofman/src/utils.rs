@@ -218,7 +218,6 @@ fn check_const_tree<F: PrimeField64>(
         Ok(metadata) => {
             let actual_size = metadata.len() as usize;
             if actual_size != const_pols_tree_size * 8 {
-                println!("REGEN");
                 return Err(error_message.into());
             }
         }
@@ -244,7 +243,6 @@ fn check_const_tree<F: PrimeField64>(
             let byte_range = i * 8..(i + 1) * 8;
             let value = u64::from_le_bytes(buffer[byte_range].try_into()?);
             if value != *verkey_val {
-                println!("BOO");
                 return Err(error_message.into());
             }
         }

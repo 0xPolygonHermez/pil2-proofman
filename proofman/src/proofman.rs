@@ -600,7 +600,7 @@ where
         test_mode: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if cfg!(feature = "packed") {
-            return Err("Packed witness are not supported in this mode".into());
+            return Err("Packed witnesses are not supported in this mode".into());
         }
 
         self.pctx.set_debug_info(debug_info);
