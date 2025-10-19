@@ -217,7 +217,7 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
 
         if (nCols > 0)
         {
-            ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream);
+            ntt.LDE_MerkleTree_GPU(pNodes, dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream);
         }
     }
 
@@ -238,7 +238,7 @@ void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPol
     Goldilocks::Element *src = d_fixedPols;
     Goldilocks::Element *dst = d_fixedPolsExtended;
     Goldilocks::Element *pNodes = dst + nCols * NExtended;
-    ntt.LDE_MerkleTree_GPU_inplace(pNodes, (gl64_t *)dst, 0, (gl64_t *)src, 0, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, setupCtx.starkInfo.nConstants, timer, stream);
+    ntt.LDE_MerkleTree_GPU(pNodes, (gl64_t *)dst, 0, (gl64_t *)src, 0, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, setupCtx.starkInfo.nConstants, timer, stream);
 }
 
 void computeQ_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_aux_trace,TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream)

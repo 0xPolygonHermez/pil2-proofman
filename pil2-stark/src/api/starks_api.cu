@@ -724,7 +724,7 @@ void write_custom_commit(void* root, uint64_t nBits, uint64_t nBitsExt, uint64_t
     ntt.prepare_blocks_trace(d_customCommitsPols, d_buffer, nCols, N, stream, timer);
 
     Goldilocks::Element *pNodes = (Goldilocks::Element *)&d_customCommitsTree[nCols * NExtended];
-    ntt.LDE_MerkleTree_GPU_inplace(pNodes, (gl64_t *)d_customCommitsTree, 0, (gl64_t *)d_customCommitsPols, 0, nBits, nBitsExt, nCols, timer, stream);
+    ntt.LDE_MerkleTree_GPU(pNodes, (gl64_t *)d_customCommitsTree, 0, (gl64_t *)d_customCommitsPols, 0, nBits, nBitsExt, nCols, timer, stream);
 
     cudaMemcpy(customCommitsTree, d_customCommitsTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
 
@@ -779,7 +779,7 @@ void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pCons
     NTT_Goldilocks_GPU ntt;
 
     Goldilocks::Element *pNodes = d_fixedTree + starkInfo.nConstants * NExtended;
-    ntt.LDE_MerkleTree_GPU_inplace(pNodes, (gl64_t *)d_fixedTree, 0, (gl64_t *)d_fixedPols, 0, starkInfo.starkStruct.nBits, starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, timer, stream);
+    ntt.LDE_MerkleTree_GPU(pNodes, (gl64_t *)d_fixedTree, 0, (gl64_t *)d_fixedPols, 0, starkInfo.starkStruct.nBits, starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, timer, stream);
 
     Goldilocks::Element *pConstTreeAddress = (Goldilocks::Element *)pConstTreeAddress_;
     cudaMemcpy(pConstTreeAddress, d_fixedTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
