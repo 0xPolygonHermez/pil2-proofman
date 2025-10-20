@@ -253,6 +253,57 @@ void Poseidon2GoldilocksGPU::merkletree_cuda_coalesced(uint32_t arity, uint64_t 
     CHECKCUDAERR(cudaGetLastError());
 }
 
+void Poseidon2GoldilocksGPU::merkletree_cuda_coalesced_blocks(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim)
+{
+    if (num_rows == 0)
+    {
+        return;
+    }
+
+    // init_gpu_const_2(); // this needs to be done only once !!
+    u32 actual_tpb = TPB;
+    u32 actual_blks = (num_rows + TPB - 1) / TPB;
+
+
+    if (num_rows < TPB)
+    {
+        actual_tpb = num_rows;
+        actual_blks = 1;
+    }
+    linear_hash_gpu_coalesced_2_blocks<<<actual_blks, actual_tpb, actual_tpb * 12 * 8, stream>>>(d_tree, d_input, num_cols * dim, num_rows); // rick: el 12 aqeust harcoded no please!!
+    CHECKCUDAERR(cudaGetLastError());
+
+    // Build the merkle tree
+    uint64_t pending = num_rows;
+    uint64_t nextN = (pending + (arity - 1)) / arity;
+    uint64_t nextIndex = 0;
+
+    while (pending > 1)
+    {
+        uint64_t extraZeros = (arity - (pending % arity)) % arity;
+        if (extraZeros > 0){
+
+            //std::memset(&cursor[nextIndex + pending * CAPACITY], 0, extraZeros * CAPACITY * sizeof(Goldilocks::Element));
+            CHECKCUDAERR(cudaMemsetAsync((uint64_t *)(d_tree + nextIndex + pending * CAPACITY), 0, extraZeros * CAPACITY * sizeof(uint64_t), stream));
+        }
+        if (nextN < TPB)
+        {
+            actual_tpb = nextN;
+            actual_blks = 1;
+        }
+        else
+        {
+            actual_tpb = TPB;
+            actual_blks = nextN / TPB + 1;
+        }
+        hash_gpu_3<<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);       
+        nextIndex += (pending + extraZeros) * CAPACITY;
+        pending = (pending + (arity - 1)) / arity;
+        nextN = (pending + (arity - 1)) / arity;
+    }
+    CHECKCUDAERR(cudaGetLastError());
+}
+
 __global__ void hash_gpu_2(uint32_t nextN, uint64_t *cursor_in, uint64_t *cursor_out)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -284,19 +335,42 @@ __device__ __noinline__ void add_state_2(gl64_t *x)
        x[0]= x[0] + scratchpad[i * blockDim.x + threadIdx.x];
 }
 
-__device__ __forceinline__ void poseidon2_load(const uint64_t *in, uint32_t col, uint32_t ncols,
+__device__ __forceinline__ void poseidon2_load(const uint64_t *in, uint32_t initial_col, uint32_t ncols,
                                                uint32_t col_stride, size_t row_stride = 1)
 {
     gl64_t r[RATE];
 
     const size_t tid = threadIdx.x + blockDim.x * (size_t)blockIdx.x;
-    in += tid * col_stride + col * row_stride;
+    in += tid * col_stride + initial_col * row_stride;
 
 #pragma unroll
     for (uint32_t i = 0; i < RATE; i++, in += row_stride)
         if (i < ncols){
             r[i] = __ldcv((uint64_t *)in);
         }
+
+    __syncwarp();
+
+    for (uint32_t i = 0; i < RATE; i++)
+        scratchpad[i * blockDim.x + threadIdx.x] = r[i];
+
+    __syncwarp();
+}
+
+__device__ void poseidon2_load_blocks(const uint64_t *in, uint64_t num_rows, uint64_t num_cols, uint32_t initial_col, uint32_t ncols)
+{
+    gl64_t r[RATE];
+
+    uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
+
+#pragma unroll
+    for (uint32_t i = 0; i < RATE; i++) {
+        if (i < ncols){
+            uint32_t col = initial_col + i;
+            uint64_t idx = getBufferOffset(row, col, num_rows, num_cols);
+            r[i] = in[idx];
+        }
+    }
 
     __syncwarp();
 
@@ -361,6 +435,59 @@ __device__ __forceinline__ void poseidon2_hash_loop(const uint64_t *__restrict__
             }*/
 
             if ((col += RATE) >= ncols)
+                break;
+
+            gl64_t tmp[CAPACITY];
+
+#pragma unroll
+            for (uint32_t i = 0; i < CAPACITY; i++)
+                tmp[i] = scratchpad[i * blockDim.x + threadIdx.x];
+            __syncwarp();
+
+#pragma unroll
+
+            for (uint32_t i = 0; i < CAPACITY; i++)
+                scratchpad[(i + RATE) * blockDim.x + threadIdx.x] = tmp[i];
+            __syncwarp();
+        }
+    }
+}
+
+__device__ __forceinline__ void poseidon2_hash_loop_blocks(const uint64_t *__restrict__ in, uint32_t num_cols, uint32_t num_rows)
+{
+    if (num_cols <= CAPACITY)
+    {
+        poseidon2_load_blocks(in, num_rows, num_cols, 0, num_cols);
+        for (uint32_t i = num_cols; i < CAPACITY; i++)
+        {
+            scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0)); 
+        }
+    }
+    else
+    {
+        for (uint32_t col = 0;;)
+        {
+            uint32_t delta = min(num_cols - col, RATE);
+            poseidon2_load_blocks(in, num_rows, num_cols, col, delta);
+            if (delta < RATE)
+            {
+                for (uint32_t i = delta; i < RATE; i++)
+                {
+                    scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0)); 
+                }
+            }
+            /*if(blockIdx.x == 0 && threadIdx.x == 0){
+                for (uint32_t i = 0; i < SPONGE_WIDTH; i++)
+                    printf("tmp abans[%d] = %lu col=%d ncols=%d\n", i, scratchpad[i * blockDim.x + threadIdx.x][0], col, ncols);
+            }*/
+            poseidon2_hash();
+            
+            /*if(blockIdx.x == 0 && threadIdx.x == 0){
+                for (uint32_t i = 0; i < CAPACITY; i++)
+                    printf("tmp[%d] = %lu col=%d ncols=%d\n", i, scratchpad[i * blockDim.x + threadIdx.x][0], col, ncols);
+            }*/
+
+            if ((col += RATE) >= num_cols)
                 break;
 
             gl64_t tmp[CAPACITY];
@@ -473,12 +600,22 @@ __device__ __forceinline__ void poseidon2_hash()
     }
 }
 
-__global__ void linear_hash_gpu_coalesced_2(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t size, uint32_t num_rows)
+__global__ void linear_hash_gpu_coalesced_2(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows)
 {
 #pragma unroll
     for (uint32_t i = 0; i < CAPACITY; i++)
         scratchpad[(i + RATE) * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0)); 
 
-    poseidon2_hash_loop(input, size);
+    poseidon2_hash_loop(input, num_cols);
+    poseidon2_store(output, CAPACITY);
+}
+
+__global__ void linear_hash_gpu_coalesced_2_blocks(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows)
+{
+#pragma unroll
+    for (uint32_t i = 0; i < CAPACITY; i++)
+        scratchpad[(i + RATE) * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0)); 
+
+    poseidon2_hash_loop_blocks(input, num_cols, num_rows);
     poseidon2_store(output, CAPACITY);
 }

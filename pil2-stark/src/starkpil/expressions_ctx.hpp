@@ -41,9 +41,12 @@ struct ExpsArguments
 
     Goldilocks::Element *dest_gpu = nullptr;
     uint64_t dest_domainSize;
-    uint64_t dest_offset = 0;
+    uint64_t dest_stageCols = 0;
+    uint64_t dest_stagePos = 0;
     uint64_t dest_dim = 1;
     uint32_t dest_nParams;
+
+    bool dest_expr = false;
 };
 
 
@@ -81,11 +84,16 @@ struct Dest {
     Goldilocks::Element *dest_gpu = nullptr;
     int64_t expId = -1;
     uint64_t offset = 0;
+    uint64_t stagePos = 0;
+    uint64_t stageCols = 0;
+    bool expr = false;
     uint64_t dim = 1;
     uint64_t domainSize;
     std::vector<Params> params;
 
-    Dest(Goldilocks::Element *dest_, uint64_t domainSize_, uint64_t offset_ = 0, int64_t expId_ = -1) : dest(dest_), expId(expId_), offset(offset_), domainSize(domainSize_) {}
+    Dest(Goldilocks::Element *dest_, uint64_t domainSize_, uint64_t offset_, int64_t expId_ = -1) : dest(dest_), expId(expId_), offset(offset_), domainSize(domainSize_) {}
+
+    Dest(Goldilocks::Element *dest_, uint64_t domainSize_, uint64_t stagePos_, uint64_t stageCols_, bool expr_, int64_t expId_ = -1) : dest(dest_), expId(expId_),stagePos(stagePos_), stageCols(stageCols_), expr(expr_), domainSize(domainSize_) {}
 
     void addParams(uint64_t expId, uint64_t dimExp, bool inverse_ = false, bool batch_ = true) {
         params.push_back(Params(expId, dimExp, inverse_, batch_));
@@ -209,7 +217,7 @@ public:
         delete[] mapSectionsNCustomFixed;
     };
     
-    virtual void calculateExpressions(StepsParams& params, Dest &dest, uint64_t domainSize, bool domainExtended, bool compilationTime = false, bool verify_constraints = false, bool debug = false) {};
+    virtual void calculateExpressions(StepsParams& params, Dest &dest, uint64_t domainSize, bool domainExtended, bool compilationTime = false, bool verify_constraints = false, bool debug = true) {};
  
     void calculateExpression(StepsParams& params, Goldilocks::Element* dest, uint64_t expressionId, bool inverse = false, bool compilation_time = false) {
         uint64_t domainSize;

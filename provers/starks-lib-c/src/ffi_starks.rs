@@ -237,9 +237,34 @@ pub fn load_const_tree_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn init_gpu_setup_c(maxBitsExt: u64) {
+    unsafe {
+        init_gpu_setup(maxBitsExt);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn prepare_blocks_c(pol: *mut u64, N: u64, nCols: u64) {
+    unsafe {
+        prepare_blocks(pol, N, nCols);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn calculate_const_tree_c(pStarkInfo: *mut c_void, pConstPols: *mut u8, pConstPolsTreeAddress: *mut u8) {
     unsafe {
         calculate_const_tree(
+            pStarkInfo,
+            pConstPols as *mut std::os::raw::c_void,
+            pConstPolsTreeAddress as *mut std::os::raw::c_void,
+        );
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn calculate_const_tree_bn128_c(pStarkInfo: *mut c_void, pConstPols: *mut u8, pConstPolsTreeAddress: *mut u8) {
+    unsafe {
+        calculate_const_tree_bn128(
             pStarkInfo,
             pConstPols as *mut std::os::raw::c_void,
             pConstPolsTreeAddress as *mut std::os::raw::c_void,
@@ -253,6 +278,19 @@ pub fn write_const_tree_c(pStarkInfo: *mut c_void, pConstPolsTreeAddress: *mut u
         let tree_filename: CString = CString::new(tree_filename).unwrap();
 
         write_const_tree(
+            pStarkInfo,
+            pConstPolsTreeAddress as *mut std::os::raw::c_void,
+            tree_filename.as_ptr() as *mut std::os::raw::c_char,
+        );
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn write_const_tree_bn128_c(pStarkInfo: *mut c_void, pConstPolsTreeAddress: *mut u8, tree_filename: &str) {
+    unsafe {
+        let tree_filename: CString = CString::new(tree_filename).unwrap();
+
+        write_const_tree_bn128(
             pStarkInfo,
             pConstPolsTreeAddress as *mut std::os::raw::c_void,
             tree_filename.as_ptr() as *mut std::os::raw::c_char,
@@ -560,8 +598,8 @@ pub fn load_custom_commit_c(setup: *mut c_void, commit_id: u64, buffer: *mut u8,
 #[cfg(not(feature = "no_lib_link"))]
 pub fn write_custom_commit_c(
     root: *mut u8,
-    n: u64,
-    n_extended: u64,
+    n_bits: u64,
+    n_bits_ext: u64,
     n_cols: u64,
     buffer: *mut u8,
     buffer_file: &str,
@@ -571,8 +609,8 @@ pub fn write_custom_commit_c(
     unsafe {
         write_custom_commit(
             root as *mut std::os::raw::c_void,
-            n,
-            n_extended,
+            n_bits,
+            n_bits_ext,
             n_cols,
             buffer as *mut std::os::raw::c_void,
             buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
@@ -1224,6 +1262,7 @@ pub fn load_device_setup_c(
     p_setup: *mut ::std::os::raw::c_void,
     d_buffers: *mut ::std::os::raw::c_void,
     verkey_root: *mut u8,
+    packed_info: *mut ::std::os::raw::c_void,
     n_streams: u64,
 ) {
     let proof_type_name = CString::new(proof_type).unwrap();
@@ -1237,6 +1276,7 @@ pub fn load_device_setup_c(
             p_setup,
             d_buffers,
             verkey_root as *mut std::os::raw::c_void,
+            packed_info,
             n_streams,
         );
     }
@@ -1446,13 +1486,33 @@ pub fn load_const_tree_c(
 }
 
 #[cfg(feature = "no_lib_link")]
+pub fn init_gpu_setup_c(_maxBitsExt: u64) {
+    trace!("··· {}", "init_gpu_setup: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn prepare_blocks_c(_pol: *mut u64, _N: u64, _nCols: u64) {
+    trace!("··· {}", "prepare_blocks: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
 pub fn calculate_const_tree_c(_pStarkInfo: *mut c_void, _pConstPols: *mut u8, _pConstPolsTreeAddress: *mut u8) {
+    trace!("··· {}", "calculate_const_tree: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn calculate_const_tree_bn128_c(_pStarkInfo: *mut c_void, _pConstPols: *mut u8, _pConstPolsTreeAddress: *mut u8) {
     trace!("··· {}", "calculate_const_tree: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn write_const_tree_c(_pStarkInfo: *mut c_void, _pConstPolsTreeAddress: *mut u8, _tree_filename: &str) {
     trace!("··· {}", "write_const_tree: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn write_const_tree_bn128_c(_pStarkInfo: *mut c_void, _pConstPolsTreeAddress: *mut u8, _tree_filename: &str) {
+    trace!("··· {}", "write_const_tree_bn128: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1629,8 +1689,8 @@ pub fn load_custom_commit_c(_p_setup: *mut c_void, _commit_id: u64, _buffer: *mu
 #[cfg(feature = "no_lib_link")]
 pub fn write_custom_commit_c(
     _root: *mut u8,
-    _n: u64,
-    _n_extended: u64,
+    _n_bits: u64,
+    _n_bits_ext: u64,
     _n_cols: u64,
     _buffer: *mut u8,
     _buffer_file: &str,
@@ -2058,6 +2118,7 @@ pub fn load_device_setup_c(
     _p_setup: *mut ::std::os::raw::c_void,
     _d_buffers: *mut ::std::os::raw::c_void,
     _verkey_root: *mut u8,
+    _packed_info: *mut ::std::os::raw::c_void,
     _n_streams: u64,
 ) {
     trace!("{}: ··· {}", "ffi     ", "load_device_setup: This is a mock call because there is no linked library");

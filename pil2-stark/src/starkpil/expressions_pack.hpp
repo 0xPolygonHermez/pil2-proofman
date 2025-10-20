@@ -3,7 +3,7 @@
 #include "expressions_ctx.hpp"
 
 #define DEBUG 0
-#define DEBUG_ROW 161699
+#define DEBUG_ROW 0
 
 #define NROWS_PACK 128
 class ExpressionsPack : public ExpressionsCtx {
@@ -24,7 +24,7 @@ public:
 #endif  
         if (type == 0) {
             if(dim == FIELD_EXTENSION) { exit(-1); }
-            Goldilocks::Element *constPols = domainExtended ? &params.pConstPolsExtendedTreeAddress[2] : params.pConstPolsAddress;
+            Goldilocks::Element *constPols = domainExtended ? params.pConstPolsExtendedTreeAddress : params.pConstPolsAddress;
             uint64_t stagePos = args[i_args + 1];
             int64_t o = nextStridesExps[args[i_args + 2]];
             uint64_t nCols = mapSectionsN[0];
@@ -503,6 +503,10 @@ public:
             
             storePolynomial(nrowsPack, dest, values, i, isConstant);
         }
+        // for(uint64_t k = 0; k < dest.dim * dest.domainSize; k++) {
+        //     cout << "result[" << k << "] = " << dest.dest[k].fe << endl;
+        // }
+        // cout << "----------------------------------------" << endl;
     }
 };
 

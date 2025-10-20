@@ -2,9 +2,9 @@
 UNAME_S := $(shell uname -s)
 ifneq ($(UNAME_S),Darwin)
     ifndef CUDA_ARCH
-        INFO := $(shell cd src/goldilocks && ./configure.sh && cd ../.. && sleep 2)
-        include src/goldilocks/CudaArch.mk
-        $(info CUDA_ARCH was not defined externally, using value from CudaArch.mk: $(CUDA_ARCH))
+        ROOT_DIR := $(dir $(realpath $(firstword $(MAKEFILE_LIST))))
+        INFO := $(shell cd $(ROOT_DIR)/src/goldilocks && ./configure.sh && sleep 2)
+        include $(ROOT_DIR)/src/goldilocks/CudaArch.mk
     else
         $(info CUDA_ARCH defined externally: $(CUDA_ARCH))
     endif
@@ -65,7 +65,7 @@ ifdef PROOFMAN_HOST_COMPILER_BIN
     NVCCFLAGS += --compiler-bindir=$(PROOFMAN_HOST_COMPILER_BIN)
 endif
 # Debugging flags
-# NVCCFLAGS += -G -lineinfo -Xptxas=-v
+# NVCCFLAGS += -G -lineinfo -Xptxas=-v --maxrregcount=64
 
 INC_DIRS := $(shell find $(SRC_DIRS) -type d)
 INC_FLAGS := $(addprefix -I,$(INC_DIRS))

@@ -83,7 +83,7 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, json& globalInfo, uint64_t airg
     uint64_t numFieldId = setupCtx.expressionsBin.hints[0].fields[1].values[0].id;
     uint64_t denFieldId = setupCtx.expressionsBin.hints[0].fields[2].values[0].id;
 
-    Dest destStruct(res, N);
+    Dest destStruct(res, N, 0);
     destStruct.addParams(numFieldId, setupCtx.expressionsBin.expressionsInfo[numFieldId].destDim);
     destStruct.addParams(denFieldId, setupCtx.expressionsBin.expressionsInfo[denFieldId].destDim, true);
 

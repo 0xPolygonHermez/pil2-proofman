@@ -56,6 +56,7 @@ __global__ void insertTracePol(Goldilocks::Element *d_aux_trace, uint64_t offset
 __global__ void fillLEv_2d(gl64_t* d_LEv, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t shift_, uint64_t N);
 
 __global__ void computeEvals_v2(
+    uint64_t domainSize,
     uint64_t extendBits,
     uint64_t size_eval,
     uint64_t N,
@@ -84,6 +85,7 @@ __global__ void buildZHInv_kernel(gl64_t *d_zi, uint64_t extend, uint64_t NExten
 
 __global__ void moduleQueries(uint64_t* d_friQueries, uint64_t nQueries, uint64_t currentBits);
 
+void unpack_trace(AirInstanceInfo *air_instance_info, uint64_t* src, uint64_t* dst, uint64_t nCols, uint64_t nRows, cudaStream_t stream, TimerGPU &timer);
 void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *d_openingPoints, gl64_t *d_aux_trace, uint64_t offset_helper, gl64_t* d_LEv, TimerGPU &timer, cudaStream_t stream);
 
 void calculateXis_inplace(SetupCtx &setupCtx, StepsParams &h_params, int64_t *d_openingPoints, Goldilocks::Element *d_xiChallenge, cudaStream_t stream);
@@ -106,7 +108,7 @@ void proveFRIQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_
 
 void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU *expressionsCtx, StepsParams &h_params, StepsParams *d_params, int64_t step, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU& timer, cudaStream_t stream);
 
-void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, StepsParams* d_params, Goldilocks::Element* dest_gpu, uint64_t expressionId, bool inverse, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU& timer, cudaStream_t stream, bool debug = false);
+void calculateExpressionQ(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, StepsParams* d_params, Goldilocks::Element* dest_gpu, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU& timer, cudaStream_t stream);
 
 void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstanceInfo *air_instance_info, cudaStream_t stream);
 

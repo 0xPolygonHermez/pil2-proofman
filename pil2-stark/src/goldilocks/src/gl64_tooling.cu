@@ -1,14 +1,13 @@
 #include "gl64_tooling.cuh"
 
-
 void copy_to_device_in_chunks(
     DeviceCommitBuffers* d_buffers,
     const void* src,
     void* dst,
     uint64_t total_size,
-    uint64_t streamId
+    uint64_t streamId,
+    TimerGPU &timer
     ){
-
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
 
     cudaSetDevice(gpuId);

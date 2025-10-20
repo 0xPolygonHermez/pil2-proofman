@@ -58,6 +58,8 @@ pub struct Setup<F: PrimeField64> {
     pub stark_info: StarkInfo,
     pub const_pols_size: usize,
     pub const_tree_size: usize,
+    pub const_pols_path: String,
+    pub const_pols_tree_path: String,
     pub const_pols: Vec<F>,
     pub const_pols_tree: Vec<F>,
     pub prover_buffer_size: u64,
@@ -114,10 +116,18 @@ impl<F: PrimeField64> Setup<F> {
             _ => global_info.get_air_setup_path(airgroup_id, air_id, setup_type),
         };
 
+        let gpu = cfg!(feature = "gpu");
+
         let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
         let expressions_bin_path = setup_path.display().to_string() + ".bin";
-
-        let gpu = cfg!(feature = "gpu");
+        let const_pols_path = match !gpu {
+            true => setup_path.display().to_string() + ".const",
+            false => setup_path.display().to_string() + ".const_gpu",
+        };
+        let const_pols_tree_path = match !gpu {
+            true => setup_path.display().to_string() + ".consttree",
+            false => setup_path.display().to_string() + ".consttree_gpu",
+        };
 
         let (
             stark_info,
@@ -253,6 +263,8 @@ impl<F: PrimeField64> Setup<F> {
             setup_path: setup_path.clone(),
             setup_type: setup_type.clone(),
             air_name: global_info.airs[airgroup_id][air_id].name.clone(),
+            const_pols_path,
+            const_pols_tree_path,
             n_cols,
             n_operations_quotient,
             single_instance,
@@ -260,22 +272,20 @@ impl<F: PrimeField64> Setup<F> {
     }
 
     pub fn load_const_pols(&self) {
-        let const_pols_path = self.setup_path.to_string_lossy().to_string() + ".const";
         load_const_pols_c(
             self.const_pols.as_ptr() as *mut u8,
-            const_pols_path.as_str(),
+            self.const_pols_path.as_str(),
             self.const_pols_size as u64 * 8,
         );
     }
 
     pub fn load_const_pols_tree(&self) {
-        let const_pols_tree_path = self.setup_path.display().to_string() + ".consttree";
         let const_pols_tree_size = self.const_tree_size;
 
         load_const_tree_c(
             self.p_setup.p_stark_info,
             self.const_pols_tree.as_ptr() as *mut u8,
-            const_pols_tree_path.as_str(),
+            self.const_pols_tree_path.as_str(),
             (const_pols_tree_size * 8) as u64,
             &(self.setup_path.display().to_string() + ".verkey.json"),
         );

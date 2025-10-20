@@ -19,19 +19,18 @@
 #define TPB_NTT_y 16
 #define SHIFT 7
 
+
 // #ifdef GPU_TIMING
 #include "timer_gl.hpp"
 // #endif
 
-__global__ void br_ntt_8_steps(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t domain_size, uint32_t log_domain_size, uint32_t ncols, uint32_t base_step, bool suffle, bool inverse, bool extend, uint64_t maxLogDomainSize, uint32_t col_min, uint32_t col_max);
-__global__ void br_ntt_group(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t stage, uint32_t domain_size, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend, uint64_t maxLogDomainSize);
-__global__ void br_ntt_group_new(gl64_t *data, gl64_t *twiddles, uint32_t i, uint32_t domain_size, uint32_t ncols, uint64_t maxLogDomainSize);
-__global__ void intt_scale(gl64_t *data, gl64_t *r, uint32_t domain_size, uint32_t log_domain_size, uint32_t ncols, bool extend);
-__global__ void reverse_permutation_new(gl64_t *data, uint32_t log_domain_size, uint32_t ncols);
-__global__ void reverse_permutation_column(gl64_t *data, uint32_t log_domain_size, uint32_t ncols);
-__global__ void reverse_permutation(gl64_t *data, uint32_t log_domain_size, uint32_t ncols);
-__global__ void reverse_permutation_1d(gl64_t *data, uint32_t log_domain_size, uint32_t ncols);
-__global__ void reverse_permutation_2d(gl64_t *data, uint32_t log_domain_size, uint32_t ncols);
+__global__ void br_ntt_8_steps(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t domain_size, uint32_t log_domain_size, uint32_t nCols, uint32_t base_step, bool suffle, bool inverse, bool extend, uint64_t maxLogDomainSize, uint32_t col_min, uint32_t col_max);
+__global__ void br_ntt_8_steps_blocks(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t domain_size_in, uint32_t log_domain_size_in, uint32_t domain_size_out, uint32_t nCols, uint32_t base_step, bool suffle, bool inverse, bool extend, uint64_t maxLogDomainSize);
+__global__ void br_ntt_batch_steps_blocks_par(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t domain_size_in, uint32_t log_domain_size_in, uint32_t domain_size_out, uint32_t nCols, uint32_t base_step, bool suffle, bool inverse, bool extend, uint64_t maxLogDomainSize);
+
+__global__ void br_ntt_group(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t stage, uint32_t domain_size, uint32_t log_domain_size, uint32_t nCols, bool inverse, bool extend, uint64_t maxLogDomainSize);
+
+__global__ void reverse_permutation_new(gl64_t *data, uint32_t log_domain_size, uint32_t nCols);
 __global__ void eval_twiddle_factors_small_size(gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size);
 __global__ void eval_twiddle_factors_first_step(gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size);
 __global__ void eval_twiddle_factors_second_step(gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size);
@@ -40,30 +39,134 @@ __global__ void eval_r_small_size(gl64_t *r, uint32_t log_domain_size);
 __global__ void eval_r_first_step(gl64_t *r, uint32_t log_domain_size);
 __global__ void eval_r_second_step(gl64_t *r, uint32_t log_domain_size);
 void eval_r(gl64_t *r, uint32_t log_domain_size, cudaStream_t stream);
-void ntt_cuda( gl64_t *data, gl64_t **d_r, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize);
+void ntt_cuda( gl64_t *data, gl64_t **d_r, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size, uint32_t nCols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize);
+void ntt_cuda_blocks_par( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size_in, uint32_t log_domain_size_out, uint32_t nCols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize);
 
-__global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, Goldilocks::Element shiftIn, uint64_t N, uint64_t qDeg, uint64_t qDim)
+__global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, Goldilocks::Element shiftIn, uint64_t N, uint64_t NExtended, uint64_t extendBits, uint64_t qDeg, uint64_t qDim)
 {
     d_S[0] = gl64_t(uint64_t(1));
     for(uint64_t i = 1; i < qDeg; ++i) {
         d_S[i] = gl64_t(shiftIn.fe) * d_S[i - 1];
     }
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= N)
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= N)
         return;
 
     for (uint64_t p = 0; p < qDeg; p++)
-    {        
-        Goldilocks3GPU::mul((Goldilocks3GPU::Element &)d_cmQ[(i * qDeg + p) * FIELD_EXTENSION],
-                            (Goldilocks3GPU::Element &)d_q[(p * N + i) * FIELD_EXTENSION],
+    {      
+        Goldilocks3GPU::Element src;
+        src[0] = d_q[getBufferOffsetRowMajor(row + p * N, 0, NExtended, qDim)];
+        src[1] = d_q[getBufferOffsetRowMajor(row + p * N, 1, NExtended, qDim)];
+        src[2] = d_q[getBufferOffsetRowMajor(row + p * N, 2, NExtended, qDim)];
+
+        Goldilocks3GPU::Element dst;
+        
+        Goldilocks3GPU::mul((Goldilocks3GPU::Element &)dst,
+                            (Goldilocks3GPU::Element &)src,
                             d_S[p]);
+        d_cmQ[getBufferOffsetRowMajor(row, p * qDim, NExtended, qDeg * qDim)] = dst[0];
+        d_cmQ[getBufferOffsetRowMajor(row, p * qDim + 1, NExtended, qDeg * qDim)] = dst[1];
+        d_cmQ[getBufferOffsetRowMajor(row, p * qDim + 2, NExtended, qDeg * qDim)] = dst[2];
+        for (uint64_t j = 1; j < (1 << extendBits); j++) {
+            d_cmQ[getBufferOffsetRowMajor(row + j * N, p * qDim, NExtended, qDeg * qDim)] = gl64_t(uint64_t(0));
+            d_cmQ[getBufferOffsetRowMajor(row + j * N, p * qDim + 1, NExtended, qDeg * qDim)] = gl64_t(uint64_t(0));
+            d_cmQ[getBufferOffsetRowMajor(row + j * N, p * qDim + 2, NExtended, qDeg * qDim)] = gl64_t(uint64_t(0));
+        }
     }
 }
 
-void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t N, uint64_t n_bits_ext, uint64_t ncols, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream)
+__global__ void prepareBlockFromRowMajor(gl64_t * dst, gl64_t * src, uint64_t nRows, uint64_t nCols)
+{
+    extern __shared__ gl64_t shared[];
+
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    int col = blockIdx.y * blockDim.y + threadIdx.y;
+    if (row >= nRows || col >= nCols)
+        return;
+    shared[threadIdx.y * blockDim.x + threadIdx.x] = src[row * nCols + col];
+    __syncthreads();
+    int out_idx = getBufferOffset(row, col, nRows, nCols);
+    dst[out_idx] = shared[threadIdx.y * blockDim.x + threadIdx.x];
+}
+
+void NTT_Goldilocks_GPU::prepare_blocks_trace(
+    gl64_t* dst,
+    gl64_t* src,
+    uint64_t nCols,
+    uint64_t nRows,
+    cudaStream_t stream,
+    TimerGPU &timer
+) {
+    if (nCols == 0 || nRows == 0) return;
+    dim3 block(TILE_HEIGHT, TILE_WIDTH);
+    dim3 grid((nRows + block.x - 1) / block.x,
+             (nCols + block.y - 1) / block.y);
+    int sharedMemSize = block.x * block.y * sizeof(gl64_t);
+    prepareBlockFromRowMajor<<<grid, block, sharedMemSize, stream>>>(dst, src, nRows, nCols);
+    CHECKCUDAERR(cudaGetLastError());
+}
+
+__global__ void transposeSubBlocksInPlace(gl64_t * data, uint64_t nRows, uint64_t nCols)
+{ 
+    extern __shared__ gl64_t shared[];
+
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    int col = blockIdx.y * blockDim.y + threadIdx.y;
+    if (row >= nRows || col >= nCols)
+        return;
+
+    uint64_t offset_src = getBufferOffsetRowMajor(row, col, nRows, nCols);
+    shared[threadIdx.y * blockDim.x + threadIdx.x] = data[offset_src];
+    __syncthreads();
+    uint64_t offset_dst = getBufferOffset(row, col, nRows, nCols);
+    data[offset_dst] = shared[threadIdx.y * blockDim.x + threadIdx.x];
+}
+
+__global__ void transposeSubBlocksBackInPlace(gl64_t *data, uint64_t nRows, uint64_t nCols)
+{
+    extern __shared__ gl64_t shared[];
+
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    int col = blockIdx.y * blockDim.y + threadIdx.y;
+    if (row >= nRows || col >= nCols)
+        return;
+
+    uint64_t offset_src = getBufferOffset(row, col, nRows, nCols);
+    shared[threadIdx.y * blockDim.x + threadIdx.x] = data[offset_src];
+    __syncthreads();
+    uint64_t offset_dst = getBufferOffsetRowMajor(row, col, nRows, nCols);
+    data[offset_dst] = shared[threadIdx.y * blockDim.x + threadIdx.x];
+}
+
+//Assumes src and dst buffers are disjoint
+__global__ void transposeSubBlocksBack(gl64_t *src, uint64_t n_bits_src, gl64_t *dst, uint64_t n_bits_dst, uint64_t nCols)
+{
+    extern __shared__ gl64_t shared[];   
+    int n_src = 1 << n_bits_src;
+    int n_dst = 1 << n_bits_dst;
+
+    uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
+    uint32_t col = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if(row >= n_src || col >= nCols)
+        return;
+
+    uint64_t offset_src = getBufferOffset(row, col, n_src, nCols);
+    shared[threadIdx.y * blockDim.x + threadIdx.x] = src[offset_src];
+    __syncthreads();
+    uint64_t offset_dst = getBufferOffsetRowMajor(row, col, n_dst, nCols);
+    dst[offset_dst] = shared[threadIdx.y * blockDim.x + threadIdx.x];
+
+    for (uint64_t j = 1; j < (1 << (n_bits_dst - n_bits_src)); j++) {
+        int offset_dst2 = getBufferOffset(row + j * n_src, col, n_dst, nCols);
+        dst[offset_dst2] = gl64_t(uint64_t(0));
+    }
+}
+
+void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t n_bits, uint64_t n_bits_ext, uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream)
 {
    
-    if (ncols == 0 || n_bits_ext == 0)
+    if (nCols == 0 || n_bits_ext == 0)
     {
         return;
     }
@@ -76,32 +179,38 @@ void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t 
         abort();
     }
 
+    uint64_t N = 1 << n_bits;
     uint64_t NExtended = 1 << n_bits_ext;
     gl64_t* d_S = d_aux_trace + offset_helper;
     gl64_t *d_q = d_aux_trace + offset_q;
     gl64_t *d_cmQ = d_aux_trace + offset_cmQ;
 
-
     // Intt
-    ntt_cuda(d_q, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, qDim, true, false, stream, maxLogDomainSize);
+    dim3 block(TILE_HEIGHT, TILE_WIDTH);
+    dim3 grid0((NExtended + block.x - 1) / block.x,
+             (qDim + block.y - 1) / block.y);
+    int sharedMemSize = block.x * block.y * sizeof(gl64_t);
+    transposeSubBlocksBackInPlace<<<grid0, block, sharedMemSize, stream>>>(d_q, NExtended, qDim);
+    ntt_cuda_blocks_par(d_q, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, qDim, true, false, stream, maxLogDomainSize);
 
-
-    dim3 threads(128, 1, 1);
+    dim3 threads(TILE_HEIGHT, 1, 1);
     dim3 blocks((N + threads.x - 1) / threads.x, 1, 1);
-    applyS<<<blocks, threads, 0, stream>>>(d_cmQ, d_q, d_S, shiftIn, N, qDeg, qDim);
-    CHECKCUDAERR(cudaMemsetAsync(d_cmQ + N * qDeg * qDim, 0, (NExtended - N) * qDeg * qDim * sizeof(gl64_t), stream));
+    applyS<<<blocks, threads, 0, stream>>>(d_cmQ, d_q, d_S, shiftIn, N, NExtended, n_bits_ext - n_bits, qDeg, qDim);
 
+    dim3 grid1((NExtended + block.x - 1) / block.x,
+             (nCols + block.y - 1) / block.y);
+    ntt_cuda_blocks_par(d_cmQ, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, nCols, false, false, stream, maxLogDomainSize);
+    transposeSubBlocksInPlace<<<grid1, block, sharedMemSize, stream>>>(d_cmQ, NExtended, nCols);
 
-    ntt_cuda(d_cmQ, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, ncols, false, false, stream, maxLogDomainSize);
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    Poseidon2GoldilocksGPU::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_cmQ, ncols, NExtended, stream);
+    Poseidon2GoldilocksGPU::merkletree_cuda_coalesced_blocks(3, (uint64_t*) d_tree, (uint64_t *)d_cmQ, nCols, NExtended, stream);
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 
-void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits, u_int64_t n_bits_ext, u_int64_t ncols, TimerGPU &timer, cudaStream_t stream)
+void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits, u_int64_t n_bits_ext, u_int64_t nCols, TimerGPU &timer, cudaStream_t stream)
 {
-    if (ncols == 0 || n_bits == 0)
+    if (nCols == 0 || n_bits == 0)
     {
         return;
     }
@@ -117,22 +226,25 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree,
     gl64_t *d_dst_ntt_ = &d_dst_ntt[offset_dst_ntt];
     gl64_t *d_src_ntt_ = &d_src_ntt[offset_src_ntt];
 
-
-    CHECKCUDAERR(cudaMemcpyAsync(d_dst_ntt_, d_src_ntt_, size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice, stream));
-    CHECKCUDAERR(cudaMemsetAsync(d_dst_ntt_ + size * ncols, 0, (ext_size - size) * ncols * sizeof(gl64_t), stream));
-
-    ntt_cuda(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, ncols, true, true, stream, maxLogDomainSize);
-    ntt_cuda(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, ncols, false, false, stream, maxLogDomainSize);
-
+    dim3 block(TILE_HEIGHT, TILE_WIDTH);
+    dim3 grid0((size + block.x - 1) / block.x,
+             (nCols + block.y - 1) / block.y);
+    int sharedMemSize = block.x * block.y * sizeof(gl64_t);
+    transposeSubBlocksBack<<<grid0, block, sharedMemSize, stream>>>(d_src_ntt_, n_bits, d_dst_ntt_, n_bits_ext, nCols);
+    ntt_cuda_blocks_par(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, n_bits_ext, nCols, true, true, stream, maxLogDomainSize); 
+    ntt_cuda_blocks_par(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, nCols, false, false, stream, maxLogDomainSize);
+    dim3 grid1((ext_size + block.x - 1) / block.x,
+             (nCols + block.y - 1) / block.y);
+    transposeSubBlocksInPlace<<<grid1, block, sharedMemSize, stream>>>(d_dst_ntt_, ext_size, nCols);
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    Poseidon2GoldilocksGPU::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_dst_ntt_, ncols, ext_size, stream);
+    Poseidon2GoldilocksGPU::merkletree_cuda_coalesced_blocks(3, (uint64_t*) d_tree, (uint64_t *)d_dst_ntt_, nCols, ext_size, stream);
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 
-void NTT_Goldilocks_GPU::INTT_inplace(uint64_t data_offset, u_int64_t n_bits, u_int64_t ncols, gl64_t *d_aux_trace, uint64_t offset_helper, gl64_t* d_data, cudaStream_t stream)
+void NTT_Goldilocks_GPU::INTT_inplace(gl64_t *dst, u_int64_t n_bits, u_int64_t nCols, cudaStream_t stream)
 {
-    if (ncols == 0 || n_bits == 0)
+    if (nCols == 0 || n_bits == 0)
     {
         return;
     }
@@ -142,8 +254,15 @@ void NTT_Goldilocks_GPU::INTT_inplace(uint64_t data_offset, u_int64_t n_bits, u_
         abort();
     }
 
-    gl64_t *dst_src = d_data == nullptr ? d_aux_trace + data_offset : d_data;
-    ntt_cuda(dst_src, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, ncols, true, false, stream, maxLogDomainSize);
+    uint64_t N = 1 << n_bits;
+
+    dim3 block_0(TILE_HEIGHT, TILE_WIDTH);
+    dim3 grid_0((N + block_0.x - 1) / block_0.x,
+             (nCols + block_0.y - 1) / block_0.y);
+    int sharedMemSize_0 = block_0.x * block_0.y * sizeof(gl64_t);
+    transposeSubBlocksBackInPlace<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, nCols);
+    ntt_cuda_blocks_par(dst, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, n_bits, nCols, true, false, stream, maxLogDomainSize);
+    transposeSubBlocksInPlace<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, nCols);
 }
 
 // Static member definitions
@@ -248,13 +367,12 @@ void NTT_Goldilocks_GPU::free_twiddle_factors_and_r() {
     d_r = nullptr;
 }
 
-
-__global__ void br_ntt_group(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t stage, uint32_t domain_size, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend, uint64_t maxLogDomainSize)
+__global__ void br_ntt_group(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t stage, uint32_t domain_size, uint32_t log_domain_size, uint32_t nCols, bool inverse, bool extend, uint64_t maxLogDomainSize)
 {
     uint32_t i = blockIdx.x;
     uint32_t col = threadIdx.x;
 
-    if (i < domain_size / 2 && col < ncols)
+    if (i < domain_size / 2 && col < nCols)
     {
         uint32_t half_group_size = 1 << stage;
         uint32_t group = i >> stage;                          // i/(half_group_size)
@@ -262,9 +380,9 @@ __global__ void br_ntt_group(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32
         uint32_t index1 = (group << (stage + 1)) + group_pos; // stage + 1 is sizeof of group
         uint32_t index2 = index1 + half_group_size;
         gl64_t factor = twiddles[group_pos * ((1 << maxLogDomainSize) >> (stage + 1))];  // Use actual domain size
-        gl64_t odd_sub = gl64_t((uint64_t)data[index2 * ncols + col]) * factor;
-        gl64_t result1 = gl64_t((uint64_t)data[index1 * ncols + col]) + odd_sub;
-        gl64_t result2 = gl64_t((uint64_t)data[index1 * ncols + col]) - odd_sub;
+        gl64_t odd_sub = gl64_t((uint64_t)data[index2 * nCols + col]) * factor;
+        gl64_t result1 = gl64_t((uint64_t)data[index1 * nCols + col]) + odd_sub;
+        gl64_t result2 = gl64_t((uint64_t)data[index1 * nCols + col]) - odd_sub;
         
         // Apply scaling only on the last stage for inverse NTT
         if(inverse && stage == log_domain_size - 1){
@@ -278,12 +396,50 @@ __global__ void br_ntt_group(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32
             }
         }
         
-        data[index1 * ncols + col] = result1;
-        data[index2 * ncols + col] = result2;
+        data[index1 * nCols + col] = result1;
+        data[index2 * nCols + col] = result2;
     }
 }
 
-__global__ void br_ntt_8_steps(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t domain_size, uint32_t log_domain_size, uint32_t ncols, uint32_t base_step, bool suffle, bool inverse, bool extend, uint64_t maxLogDomainSize, uint32_t col_min, uint32_t col_max)
+__global__ void br_ntt_group_blocks(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t stage, uint32_t domain_size, uint32_t log_domain_size, uint32_t domain_size_out, uint32_t nCols, bool inverse, bool extend, uint64_t maxLogDomainSize)
+{
+    uint32_t i = blockIdx.x;
+    uint32_t col = threadIdx.x;
+    uint32_t block_idx = col / BATCH_WIDTH;
+    uint32_t block_col = col % BATCH_WIDTH;
+    uint32_t ncols_block = (nCols - block_idx * BATCH_WIDTH) < BATCH_WIDTH ? (nCols - block_idx * BATCH_WIDTH) : BATCH_WIDTH;
+    gl64_t* data_block = data + block_idx * BATCH_WIDTH * domain_size_out;
+
+    if (i < domain_size / 2 && col < nCols)
+    {
+        uint32_t half_group_size = 1 << stage;
+        uint32_t group = i >> stage;                          // i/(half_group_size)
+        uint32_t group_pos = i & (half_group_size - 1);       // i%(half_group_size)
+        uint32_t index1 = (group << (stage + 1)) + group_pos; // stage + 1 is sizeof of group
+        uint32_t index2 = index1 + half_group_size;
+        gl64_t factor = twiddles[group_pos * ((1 << maxLogDomainSize) >> (stage + 1))];  // Use actual domain size
+        gl64_t odd_sub = gl64_t((uint64_t)data_block[index2 * ncols_block + block_col]) * factor;
+        gl64_t result1 = gl64_t((uint64_t)data_block[index1 * ncols_block + block_col]) + odd_sub;
+        gl64_t result2 = gl64_t((uint64_t)data_block[index1 * ncols_block + block_col]) - odd_sub;
+        
+        // Apply scaling only on the last stage for inverse NTT
+        if(inverse && stage == log_domain_size - 1){
+            gl64_t inv_factor = gl64_t(domain_size_inverse[log_domain_size]);
+            if(extend) {
+                result1 *= inv_factor * d_r[index1];
+                result2 *= inv_factor * d_r[index2];
+            } else {
+                result1 *= inv_factor;
+                result2 *= inv_factor;
+            }
+        }
+
+        data_block[index1 * ncols_block + block_col] = result1;
+        data_block[index2 * ncols_block + block_col] = result2;
+    }
+}
+
+__global__ void br_ntt_8_steps(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t domain_size, uint32_t log_domain_size, uint32_t nCols, uint32_t base_step, bool suffle, bool inverse, bool extend, uint64_t maxLogDomainSize, uint32_t col_min, uint32_t col_max)
 {
     __shared__ gl64_t tile[1024];
 
@@ -305,16 +461,16 @@ __global__ void br_ntt_8_steps(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint
     for(int col_base = col_min; col_base <= col_max; col_base +=4){
         
         //copy data to tile 
-        tile[threadIdx.x*4] = data[row*ncols + col_base];
-        if(col_base + 3 < ncols){
-            tile[threadIdx.x*4+1] = data[row*ncols + col_base+1];
-            tile[threadIdx.x*4+2] = data[row*ncols + col_base+2];
-            tile[threadIdx.x*4+3] = data[row*ncols + col_base+3];
-        } else if(col_base + 2 < ncols){
-            tile[threadIdx.x*4+1] = data[row*ncols + col_base+1];
-            tile[threadIdx.x*4+2] = data[row*ncols + col_base+2];
-        } else if(col_base + 1 < ncols){
-            tile[threadIdx.x*4+1] = data[row*ncols + col_base+1];
+        tile[threadIdx.x*4] = data[row*nCols + col_base];
+        if(col_base + 3 < nCols){
+            tile[threadIdx.x*4+1] = data[row*nCols + col_base+1];
+            tile[threadIdx.x*4+2] = data[row*nCols + col_base+2];
+            tile[threadIdx.x*4+3] = data[row*nCols + col_base+3];
+        } else if(col_base + 2 < nCols){
+            tile[threadIdx.x*4+1] = data[row*nCols + col_base+1];
+            tile[threadIdx.x*4+2] = data[row*nCols + col_base+2];
+        } else if(col_base + 1 < nCols){
+            tile[threadIdx.x*4+1] = data[row*nCols + col_base+1];
         }
         
         __syncthreads();
@@ -370,90 +526,182 @@ __global__ void br_ntt_8_steps(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint
         if(inverse && (base_step + n_loc_steps) >= log_domain_size){
             gl64_t inv_factor = gl64_t(domain_size_inverse[log_domain_size]);
             if(extend) inv_factor = inv_factor * d_r[row];
-            data[row*ncols + col_base] = tile[threadIdx.x*4] * inv_factor;
-            if(col_base + 3 < ncols){
-                data[row*ncols + col_base+1] = tile[threadIdx.x*4+1] * inv_factor;
-                data[row*ncols + col_base+2] = tile[threadIdx.x*4+2] * inv_factor;
-                data[row*ncols + col_base+3] = tile[threadIdx.x*4+3] * inv_factor;
-            } else if(col_base + 2 < ncols){
-                data[row*ncols + col_base+1] = tile[threadIdx.x*4+1] * inv_factor;
-                data[row*ncols + col_base+2] = tile[threadIdx.x*4+2] * inv_factor;
-            } else if(col_base + 1 < ncols){
-                data[row*ncols + col_base+1] = tile[threadIdx.x*4+1] * inv_factor;
+            data[row*nCols + col_base] = tile[threadIdx.x*4] * inv_factor;
+            if(col_base + 3 < nCols){
+                data[row*nCols + col_base+1] = tile[threadIdx.x*4+1] * inv_factor;
+                data[row*nCols + col_base+2] = tile[threadIdx.x*4+2] * inv_factor;
+                data[row*nCols + col_base+3] = tile[threadIdx.x*4+3] * inv_factor;
+            } else if(col_base + 2 < nCols){
+                data[row*nCols + col_base+1] = tile[threadIdx.x*4+1] * inv_factor;
+                data[row*nCols + col_base+2] = tile[threadIdx.x*4+2] * inv_factor;
+            } else if(col_base + 1 < nCols){
+                data[row*nCols + col_base+1] = tile[threadIdx.x*4+1] * inv_factor;
             }
         }else{
-            data[row*ncols + col_base] = tile[threadIdx.x*4];
-            if(col_base + 3 < ncols){
-                data[row*ncols + col_base+1] = tile[threadIdx.x*4+1];
-                data[row*ncols + col_base+2] = tile[threadIdx.x*4+2];
-                data[row*ncols + col_base+3] = tile[threadIdx.x*4+3];
-            } else if(col_base + 2 < ncols){
-                data[row*ncols + col_base+1] = tile[threadIdx.x*4+1];
-                data[row*ncols + col_base+2] = tile[threadIdx.x*4+2];
-            } else if(col_base + 1 < ncols){
-                data[row*ncols + col_base+1] = tile[threadIdx.x*4+1];
+            data[row*nCols + col_base] = tile[threadIdx.x*4];
+            if(col_base + 3 < nCols){
+                data[row*nCols + col_base+1] = tile[threadIdx.x*4+1];
+                data[row*nCols + col_base+2] = tile[threadIdx.x*4+2];
+                data[row*nCols + col_base+3] = tile[threadIdx.x*4+3];
+            } else if(col_base + 2 < nCols){
+                data[row*nCols + col_base+1] = tile[threadIdx.x*4+1];
+                data[row*nCols + col_base+2] = tile[threadIdx.x*4+2];
+            } else if(col_base + 1 < nCols){
+                data[row*nCols + col_base+1] = tile[threadIdx.x*4+1];
             }
         }
     }   
 }
-__global__ void br_ntt_group_new(gl64_t *data, gl64_t *twiddles, uint32_t i, uint32_t domain_size, uint32_t ncols)
-{
-    uint32_t start = domain_size >> 1;
-    twiddles = twiddles + start;
 
-    for (uint32_t j = blockIdx.x; j < domain_size / 2; j += gridDim.x)
-    {
-        for (uint32_t col = threadIdx.x; col < ncols; col += blockDim.x)
-        {
-            uint32_t half_group_size = 1 << i;
-            uint32_t group = j >> i;                     // j/(group_size/2);
-            uint32_t offset = j & (half_group_size - 1); // j%(half_group_size);
-            uint32_t index1 = (group << (i + 1)) + offset;
+__global__ void br_ntt_batch_steps_blocks_par(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t domain_size_in, uint32_t log_domain_size_in, uint32_t domain_size_out, uint32_t nCols, uint32_t base_step, bool suffle, bool inverse, bool extend, uint64_t maxLogDomainSize)
+{
+    __shared__ gl64_t tile[BATCH_HEIGHT * BATCH_WIDTH];
+
+    uint32_t n_loc_steps = min(log_domain_size_in - base_step, BATCH_HEIGHT_LOG2);    
+    uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    //evaluate row as if I shited 8 bits after each batch
+    uint32_t accumBatchSize = 1 << base_step;
+    uint32_t nBatches = domain_size_in / accumBatchSize;
+    uint32_t low_bits = row / nBatches;
+    uint32_t up_bits = row % nBatches;
+    row = up_bits * accumBatchSize + low_bits;
+
+    //remaining steps
+    uint32_t remaining_steps = log_domain_size_in - (base_step+1); 
+    uint32_t remaining_msk = (1 << remaining_steps) - 1; 
+    uint32_t offset = domain_size_out * BATCH_WIDTH;
+
+    uint32_t block=blockIdx.y;
+    gl64_t *data_block = data + block*offset;
+    uint32_t col_base = block * BATCH_WIDTH;
+    uint32_t ncols_block = (nCols - col_base) < BATCH_WIDTH ? nCols - col_base : BATCH_WIDTH;
+    //copy data to tile 
+    for(int i=0; i<ncols_block; i++){
+        tile[BATCH_HEIGHT*i+threadIdx.x] = data_block[row*ncols_block+i];
+    }
+    
+    __syncthreads();
+
+    for(int loc_step=0; loc_step<n_loc_steps; loc_step++){
+        uint32_t i = threadIdx.x;
+        if (threadIdx.x < BATCH_HEIGHT_DIV2){ // Only process first (half of them)
+            uint32_t half_group_size = 1 << loc_step;   
+            uint32_t group = i >> loc_step;                           // i/(half_group_size)    
+            uint32_t group_pos = i & (half_group_size - 1);   // i%(half_group_size)  
+            uint32_t index1 = (group << (loc_step + 1)) + group_pos; // stage + 1 is size of group
             uint32_t index2 = index1 + half_group_size;
-            gl64_t factor = twiddles[offset * (domain_size >> (i + 1))];
-            gl64_t odd_sub = gl64_t((uint64_t)data[index2 * ncols + col]) * factor;
-            data[index2 * ncols + col] = gl64_t((uint64_t)data[index1 * ncols + col]) - odd_sub;
-            data[index1 * ncols + col] = gl64_t((uint64_t)data[index1 * ncols + col]) + odd_sub;
+            gl64_t factor;
+            {
+                //global_step
+                uint32_t gs = base_step + loc_step;
+                //global_half_group_size
+                uint32_t ghgs = 1 << gs; //group half
+                //global_group_pos
+                uint32_t ggp = blockIdx.x* BATCH_HEIGHT_DIV2 + i;
+                ggp = ((ggp & remaining_msk)<< base_step) + (ggp >> remaining_steps);
+                ggp = ggp & (ghgs - 1);
+                factor = twiddles[ggp*((1 << maxLogDomainSize) >> (gs + 1))];  // Use actual domain size
+            }
+            for(int j=0; j<ncols_block; j++){
+                gl64_t odd_sub = tile[ j*BATCH_HEIGHT + index2] * factor;
+                tile[j*BATCH_HEIGHT +index2] = tile[j*BATCH_HEIGHT + index1] - odd_sub;               
+                tile[j*BATCH_HEIGHT +index1] = tile[j*BATCH_HEIGHT + index1] + odd_sub;                
+            }                             
         }
+        __syncthreads();
     }
-}
-
-__global__ void intt_scale(gl64_t *data, gl64_t *d_r, uint32_t domain_size, uint32_t log_domain_size, uint32_t ncols, bool extend)
-{
-    uint32_t j = blockIdx.x;    // domain_size
-    uint32_t col = threadIdx.x; // cols
-    uint32_t index = j * ncols + col;
-    gl64_t factor = gl64_t(domain_size_inverse[log_domain_size]);
-    if (extend)
-    {
-        factor = factor * d_r[j];
-    }
-    if (index < domain_size * ncols)
-    {
-        data[index] = gl64_t((uint64_t)data[index]) * factor;
-    }
-}
-
-__global__ void reverse_permutation_column(gl64_t *data, uint32_t log_domain_size, uint32_t ncols)
-{
-    uint64_t r = blockIdx.x * blockDim.x + threadIdx.x; 
-    uint64_t c = blockIdx.y * blockDim.y + threadIdx.y;   
-    uint64_t domain_size = 1 << log_domain_size;
-    gl64_t *column = &data[c * domain_size];
-
-    if(r < domain_size && c < ncols)
-    {
-        uint64_t rr = __brev(r) >> (32 - log_domain_size);
-        if (r < rr)
-        {
-            gl64_t tmp = column[r];
-            column[r] = data[rr];
-            column[rr] = tmp;
+    // copy values to data with scaling applied when this iteration includes the final stage
+    if(inverse && (base_step + n_loc_steps) >= log_domain_size_in){
+        gl64_t inv_factor = gl64_t(domain_size_inverse[log_domain_size_in]);
+        if(extend) inv_factor = inv_factor * d_r[row];
+        for(int i=0; i<ncols_block; i++){
+            data_block[row*ncols_block+i] = tile[i*BATCH_HEIGHT+threadIdx.x] * inv_factor;
         }
-    }
+    }else{
+        for(int i=0; i<ncols_block; i++){
+            data_block[row*ncols_block+i] = tile[i*BATCH_HEIGHT+threadIdx.x];
+        }
+    } 
 }
 
-__global__ void reverse_permutation_new(gl64_t *data, uint32_t log_domain_size, uint32_t ncols)
+__global__ void br_ntt_8_steps_blocks(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t domain_size_in, uint32_t log_domain_size_in, uint32_t domain_size_out, uint32_t nCols, uint32_t base_step, bool suffle, bool inverse, bool extend, uint64_t maxLogDomainSize)
+{
+    __shared__ gl64_t tile[BATCH_HEIGHT * BATCH_WIDTH];
+
+    uint32_t n_loc_steps = min(log_domain_size_in - base_step, BATCH_HEIGHT_LOG2);    
+    uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    //evaluate row as if I shited 8 bits after each batch
+    uint32_t accumBatchSize = 1 << base_step;
+    uint32_t nBatches = domain_size_in / accumBatchSize;
+    uint32_t low_bits = row / nBatches;
+    uint32_t up_bits = row % nBatches;
+    row = up_bits * accumBatchSize + low_bits;
+
+    //remaining steps
+    uint32_t remaining_steps = log_domain_size_in - (base_step+1); 
+    uint32_t remaining_msk = (1 << remaining_steps) - 1; 
+    uint32_t nblocks = (nCols + BATCH_WIDTH - 1) / BATCH_WIDTH;
+    uint32_t offset = domain_size_out * BATCH_WIDTH; 
+
+    for(int block = 0; block < nblocks; block++){
+        gl64_t *data_block = data + block*offset;
+        uint32_t col_base = block * BATCH_WIDTH;
+        uint32_t ncols_block = (nCols - col_base) < BATCH_WIDTH ? nCols - col_base : BATCH_WIDTH;
+        //copy data to tile 
+       for(int i=0; i<ncols_block; i++){
+            tile[threadIdx.x*BATCH_WIDTH+i] = data_block[row*ncols_block+i];
+       }
+        
+        __syncthreads();
+
+        for(int loc_step=0; loc_step<n_loc_steps; loc_step++){
+            uint32_t i = threadIdx.x;
+            if (threadIdx.x < BATCH_HEIGHT_DIV2){ // Only process first(half of them)
+                uint32_t half_group_size = 1 << loc_step;   
+                uint32_t group = i >> loc_step;                           // i/(half_group_size)    
+                uint32_t group_pos = i & (half_group_size - 1);   // i%(half_group_size)  
+                uint32_t index1 = (group << (loc_step + 1)) + group_pos; // stage + 1 is size of group
+                uint32_t index2 = index1 + half_group_size;
+                gl64_t factor;
+                {
+                    //global_step
+                    uint32_t gs = base_step + loc_step;
+                    //global_half_group_size
+                    uint32_t ghgs = 1 << gs; //group half
+                    //global_group_pos
+                    uint32_t ggp =blockIdx.x* BATCH_HEIGHT_DIV2 + i;
+                    ggp = ((ggp & remaining_msk)<< base_step) + (ggp >> remaining_steps);
+                    ggp = ggp & (ghgs - 1);
+                    factor = twiddles[ggp*((1 << maxLogDomainSize) >> (gs + 1))];  // Use actual domain size
+                }
+                index1 = index1 * BATCH_WIDTH;
+                index2 = index2 * BATCH_WIDTH;
+                for(int j=0; j<ncols_block; j++){
+                    gl64_t odd_sub = tile[index2 + j] * factor;
+                    tile[index2 + j] = tile[index1 + j] - odd_sub;               
+                    tile[index1 + j] = tile[index1 + j] + odd_sub;                
+                }                             
+            }
+            __syncthreads();
+        }
+        // copy values to data with scaling applied when this iteration includes the final stage
+        if(inverse && (base_step + n_loc_steps) >= log_domain_size_in){
+            gl64_t inv_factor = gl64_t(domain_size_inverse[log_domain_size_in]);
+            if(extend) inv_factor = inv_factor * d_r[row];
+           for(int i=0; i<ncols_block; i++){
+                data_block[row*ncols_block+i] = tile[threadIdx.x*BATCH_WIDTH+i] * inv_factor;
+           }
+        }else{
+           for(int i=0; i<ncols_block; i++){
+                data_block[row*ncols_block+i] = tile[threadIdx.x*BATCH_WIDTH+i];
+           }
+        }
+    }   
+}
+
+__global__ void reverse_permutation_new(gl64_t *data, uint32_t log_domain_size, uint32_t nCols)
 {
     uint64_t row = blockIdx.x;
     uint64_t col = threadIdx.x;
@@ -464,63 +712,34 @@ __global__ void reverse_permutation_new(gl64_t *data, uint32_t log_domain_size, 
         uint64_t rowr = __brev(r) >> (32 - log_domain_size);
         if (rowr > r)
         {
-            for (uint64_t c = col; c < ncols; c += blockDim.x)
+            for (uint64_t c = col; c < nCols; c += blockDim.x)
             {
-                gl64_t tmp = data[r * ncols + c];
-                data[r * ncols + c] = data[rowr * ncols + c];
-                data[rowr * ncols + c] = tmp;
+                gl64_t tmp = data[r * nCols + c];
+                data[r * nCols + c] = data[rowr * nCols + c];
+                data[rowr * nCols + c] = tmp;
             }
         }
     }
 }
 
-__global__ void reverse_permutation(gl64_t *data, uint32_t log_domain_size, uint32_t ncols)
+__global__ void reverse_permutation_blocks(gl64_t *data, uint32_t log2_domain_size_in, uint64_t domain_size_out, uint32_t nCols)
 {
-    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    uint32_t ibr = __brev(idx) >> (32 - log_domain_size);
-    if (ibr > idx)
+    uint64_t row = blockIdx.x;
+    uint64_t ncols_block = (nCols - BATCH_WIDTH*blockIdx.y) < BATCH_WIDTH ? nCols - blockIdx.y * BATCH_WIDTH : BATCH_WIDTH;
+    uint64_t domain_size_in = 1 << log2_domain_size_in;
+    uint64_t offset = blockIdx.y * BATCH_WIDTH * domain_size_out;
+    gl64_t *data_block = data + offset;
+
+    if (threadIdx.x >= ncols_block) return;
+
+    for (uint64_t r = row; r < domain_size_in; r += gridDim.x)
     {
-        gl64_t tmp;
-        for (uint32_t i = 0; i < ncols; i++)
+        uint64_t rowr = (__brev(r) >> (32 - log2_domain_size_in));
+        if (rowr > r) 
         {
-            tmp = data[idx * ncols + i];
-            data[idx * ncols + i] = data[ibr * ncols + i];
-            data[ibr * ncols + i] = tmp;
-        }
-    }
-}
-
-__global__ void reverse_permutation_1d(gl64_t *data, uint32_t log_domain_size, uint32_t ncols)
-{
-    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    uint32_t row = idx / ncols;
-    uint32_t col = idx % ncols;
-
-    if (row < (1 << log_domain_size) && col < ncols)
-    {
-        uint32_t ibr = __brev(row) >> (32 - log_domain_size);
-        if (ibr > row)
-        {
-            gl64_t tmp = data[row * ncols + col];
-            data[row * ncols + col] = data[ibr * ncols + col];
-            data[ibr * ncols + col] = tmp;
-        }
-    }
-}
-
-__global__ void reverse_permutation_2d(gl64_t *data, uint32_t log_domain_size, uint32_t ncols)
-{
-    uint32_t col = blockIdx.x * blockDim.x + threadIdx.x;
-    uint32_t row = blockIdx.y * blockDim.y + threadIdx.y;
-
-    if (row < (1 << log_domain_size) && col < ncols)
-    {
-        uint32_t ibr = __brev(row) >> (32 - log_domain_size);
-        if (ibr > row)
-        {
-            gl64_t tmp = data[row * ncols + col];
-            data[row * ncols + col] = data[ibr * ncols + col];
-            data[ibr * ncols + col] = tmp;
+            gl64_t tmp = data_block[r * ncols_block + threadIdx.x];
+            data_block[r * ncols_block + threadIdx.x] = data_block[rowr * ncols_block + threadIdx.x];
+            data_block[rowr * ncols_block + threadIdx.x] = tmp;   
         }
     }
 }
@@ -609,7 +828,6 @@ __global__ void eval_r_second_step(gl64_t *r, uint32_t log_domain_size)
     }
 }
 
-
 void eval_r(gl64_t *r, uint32_t log_domain_size, cudaStream_t stream)
 {
     if (log_domain_size <= 12)
@@ -626,9 +844,8 @@ void eval_r(gl64_t *r, uint32_t log_domain_size, cudaStream_t stream)
     }
 }
 
-void ntt_cuda( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize)
+void ntt_cuda( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size, uint32_t nCols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize)
 {   
-
     uint32_t domain_size = 1 << log_domain_size;
 
     dim3 blockDim;
@@ -636,9 +853,9 @@ void ntt_cuda( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64
     
     blockDim = dim3(TPB_NTT);
     gridDim = dim3(8192);
-    reverse_permutation_new<<<gridDim, blockDim, 0, stream>>>(data, log_domain_size, ncols);
+    reverse_permutation_new<<<gridDim, blockDim, 0, stream>>>(data, log_domain_size, nCols);
     CHECKCUDAERR(cudaGetLastError());
-    
+
     // Get device ID and twiddle factors once
     int device_id;
     cudaGetDevice(&device_id);
@@ -651,16 +868,58 @@ void ntt_cuda( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64
     gl64_t *d_twiddles = inverse ? d_inv_twiddle_factors[device_id] : d_fwd_twiddle_factors[device_id];
     gl64_t *d_r = d_r_[device_id];
 
-
     if(log_domain_size >= 8) {
          for(uint32_t step = 0; step < log_domain_size; step+=8){
-                br_ntt_8_steps<<<domain_size / 256, 256, 0, stream>>>(data, d_twiddles, d_r, domain_size, log_domain_size, ncols, step, true, inverse, extend, maxLogDomainSize, 0, ncols-1);
+                br_ntt_8_steps<<<domain_size / 256, 256, 0, stream>>>(data, d_twiddles, d_r, domain_size, log_domain_size, nCols, step, true, inverse, extend, maxLogDomainSize, 0, nCols-1);
                 CHECKCUDAERR(cudaGetLastError());
         }
     } else {
         for (uint32_t stage = 0; stage < log_domain_size; stage++)
         {
-            br_ntt_group<<<domain_size / 2, ncols, 0, stream>>>(data, d_twiddles, d_r, stage, domain_size, log_domain_size, ncols, inverse, extend, maxLogDomainSize);
+            br_ntt_group<<<domain_size / 2, nCols, 0, stream>>>(data, d_twiddles, d_r, stage, domain_size, log_domain_size, nCols, inverse, extend, maxLogDomainSize);
+            CHECKCUDAERR(cudaGetLastError());
+        }
+    }
+
+}
+
+void ntt_cuda_blocks_par( gl64_t *data, gl64_t **d_r_, gl64_t **d_fwd_twiddle_factors, gl64_t **d_inv_twiddle_factors, uint32_t log_domain_size_in, uint32_t log_domain_size_out, uint32_t nCols, bool inverse, bool extend, cudaStream_t stream, uint64_t maxLogDomainSize)
+{   
+
+    uint32_t domain_size_in = 1 << log_domain_size_in;
+    uint32_t domain_size_out = 1 << log_domain_size_out;
+
+    dim3 blockDim;
+    dim3 gridDim;
+    blockDim = dim3(BATCH_WIDTH);
+    gridDim = dim3(4096,(nCols + BATCH_WIDTH - 1) / BATCH_WIDTH);
+    reverse_permutation_blocks<<<gridDim, blockDim, 0, stream>>>(data, log_domain_size_in, domain_size_out, nCols);
+    CHECKCUDAERR(cudaGetLastError());
+
+    // Get device ID and twiddle factors once
+    int device_id;
+    cudaGetDevice(&device_id);
+    if (d_fwd_twiddle_factors[device_id] == nullptr || d_inv_twiddle_factors[device_id] == nullptr)
+    {
+        fprintf(stderr, "[NTT] ERROR: Twiddle factors not initialized for device %d. Did you call init_twiddle_factors()?\n", device_id);
+        abort();
+    }
+
+    gl64_t *d_twiddles = inverse ? d_inv_twiddle_factors[device_id] : d_fwd_twiddle_factors[device_id];
+    gl64_t *d_r = d_r_[device_id];
+    
+
+    if(log_domain_size_in >= BATCH_HEIGHT_LOG2 ) {
+         for(uint32_t step = 0; step < log_domain_size_in; step+=BATCH_HEIGHT_LOG2){
+                dim3 blocks = dim3(domain_size_in / BATCH_HEIGHT, (nCols + BATCH_WIDTH - 1) / BATCH_WIDTH, 1);
+                dim3 threads = dim3(BATCH_HEIGHT,1,1);
+                br_ntt_batch_steps_blocks_par<<<blocks, threads, 0, stream>>>(data, d_twiddles, d_r, domain_size_in, log_domain_size_in, domain_size_out, nCols, step, true, inverse, extend, maxLogDomainSize);
+                CHECKCUDAERR(cudaGetLastError());
+        }
+    } else {
+        for (uint32_t stage = 0; stage < log_domain_size_in; stage++)
+        {
+            br_ntt_group_blocks<<<domain_size_in / 2, nCols, 0, stream>>>(data, d_twiddles, d_r, stage, domain_size_in, log_domain_size_in, domain_size_out, nCols, inverse, extend, maxLogDomainSize);
             CHECKCUDAERR(cudaGetLastError());
         }
     }

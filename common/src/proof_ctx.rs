@@ -166,16 +166,21 @@ pub struct ParamsGPU {
     pub number_threads_pools_witness: usize,
     pub max_witness_stored: usize,
     pub single_instances: Vec<(usize, usize)>, // (airgroup_id, air_id)
+    pub pack_trace: bool,
 }
 
 impl Default for ParamsGPU {
     fn default() -> Self {
         Self {
             preallocate: false,
-            max_number_streams: usize::MAX,
+            max_number_streams: 20,
             number_threads_pools_witness: 4,
+            #[cfg(feature = "packed")]
+            max_witness_stored: 10,
+            #[cfg(not(feature = "packed"))]
             max_witness_stored: 4,
             single_instances: Vec::new(),
+            pack_trace: true,
         }
     }
 }
@@ -197,6 +202,10 @@ impl ParamsGPU {
     }
     pub fn with_single_instance(&mut self, single_instance: (usize, usize)) {
         self.single_instances.push(single_instance);
+    }
+
+    pub fn with_pack_trace(&mut self, pack_trace: bool) {
+        self.pack_trace = pack_trace;
     }
 }
 
@@ -520,9 +529,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_instance_no_assign(airgroup_id, air_id, threads_witness, weight)
     }
 
-    pub fn dctx_assign_instances(&self, minimal_memory: bool) {
+    pub fn dctx_assign_instances(&self) {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.assign_instances(minimal_memory);
+        dctx.assign_instances();
     }
 
     pub fn dctx_load_balance_info_process(&self) -> (f64, u64, u64, f64) {

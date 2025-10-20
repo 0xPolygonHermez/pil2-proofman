@@ -111,7 +111,7 @@ void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *
         constraintsInfo[i].imPol = setupCtx.expressionsBin.constraintsInfoDebug[i].imPol;
 
         if(!constraintsInfo[i].skip) {
-            Dest constraintDest(pBuffer, N);
+            Dest constraintDest(pBuffer, N, 0);
             constraintDest.addParams(i, setupCtx.expressionsBin.constraintsInfoDebug[i].destDim);
             expressionsCtx.calculateExpressions(params, constraintDest, N, false, false, true);
             verifyConstraint(setupCtx, pBuffer, i, constraintsInfo[i]);

@@ -406,7 +406,7 @@ void StarkInfo::setMapOffsets() {
 
     uint64_t numNodes = getNumNodesMT(NExtended);
 
-    if(!preallocate) {    
+    if(!preallocate && gpu) {    
         mapOffsets[std::make_pair("const", true)] = mapTotalN;
         MerkleTreeGL mt(starkStruct.merkleTreeArity, true, NExtended, nConstants);
         uint64_t constTreeSize = (2 + (NExtended * nConstants) + numNodes);
@@ -484,33 +484,36 @@ void StarkInfo::setMapOffsets() {
         // TODO: ADD EXPRESSIONS MEM
     }
 
-    
-    assert(nStages <= 2);
+    assert(nStages == 2);
 
     uint64_t maxTotalN = 0;
-    // Set offsets for all stages in the extended field (cm1, cm2, ..., cmN)
-    for(uint64_t stage = 1; stage <= nStages + 1; stage++) {
-        mapOffsets[std::make_pair("cm" + to_string(stage), true)] = mapTotalN;
-        mapTotalN += NExtended * mapSectionsN["cm" + to_string(stage)];
-        if(starkStruct.verificationHashType == "GL") {
-            mapOffsets[std::make_pair("mt" + to_string(stage), true)] = mapTotalN;
-            mapTotalN += numNodes;
-        }
-    }
-
-    uint64_t offsetTraces = mapOffsets[std::make_pair("cm2", true)];
-    for(uint64_t stage = nStages; stage >= 1; stage--) {
-        mapOffsets[std::make_pair("cm" + to_string(stage), false)] = offsetTraces;
-        offsetTraces += N * mapSectionsN["cm" + to_string(stage)]; 
-    }
     
-    mapTotalN = std::max(mapTotalN, offsetTraces);
+    mapOffsets[std::make_pair("cm1", true)] = mapTotalN;
+    mapTotalN += NExtended * mapSectionsN["cm1"];
+    mapOffsets[std::make_pair("mt1", true)] = mapTotalN;
+    mapTotalN += numNodes;
+
+    mapOffsets[std::make_pair("cm1", false)] = mapTotalN;
+
+    mapOffsets[std::make_pair("cm2", true)] = mapTotalN;
+    mapTotalN += NExtended * mapSectionsN["cm2"];
+    mapOffsets[std::make_pair("mt2", true)] = mapTotalN;
+    mapTotalN += numNodes;
+    mapTotalN = std::max(mapOffsets[std::make_pair("cm1", false)] + N * mapSectionsN["cm1"], mapTotalN);
+
+    mapOffsets[std::make_pair("cm2", false)] = mapTotalN;
+    
+    mapOffsets[std::make_pair("cm3", true)] = mapTotalN;
+    mapTotalN += NExtended * mapSectionsN["cm3"];
+    mapOffsets[std::make_pair("mt3", true)] = mapTotalN;
+    mapTotalN += numNodes;
 
     if(!gpu) {
         mapOffsets[std::make_pair("evals", true)] = mapTotalN;
         mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
     }
 
+    mapTotalN = std::max(mapOffsets[std::make_pair("cm2", false)] + N * mapSectionsN["cm2"], mapTotalN);
     mapOffsets[std::make_pair("f", true)] = mapTotalN;
     mapOffsets[std::make_pair("q", true)] = mapTotalN;
     mapTotalN += NExtended * FIELD_EXTENSION;
@@ -546,12 +549,15 @@ void StarkInfo::setMapOffsets() {
     }
 
     if (!gpu) {
-        for(uint64_t stage = 1; stage <= nStages; stage++) {
-            uint64_t maxTotalNStage = mapOffsets[std::make_pair("mt" + to_string(stage), true)];
-            mapOffsets[std::make_pair("buff_helper_fft_" + to_string(stage), false)] = maxTotalNStage;
-            maxTotalNStage += NExtended * mapSectionsN["cm" + to_string(stage)];
-            maxTotalN = std::max(maxTotalN, maxTotalNStage);
-        }
+        uint64_t maxTotalNStage2 = mapOffsets[std::make_pair("cm2", false)] + N * mapSectionsN["cm2"];
+        mapOffsets[std::make_pair("buff_helper_fft_2", false)] = maxTotalNStage2;
+        maxTotalNStage2 += NExtended * mapSectionsN["cm2"];
+        maxTotalN = std::max(maxTotalN, maxTotalNStage2);
+        
+        uint64_t maxTotalNStage1 = mapOffsets[std::make_pair("cm1", false)] + N * mapSectionsN["cm1"];
+        mapOffsets[std::make_pair("buff_helper_fft_1", false)] = maxTotalNStage1;
+        maxTotalNStage1 += NExtended * mapSectionsN["cm1"];
+        maxTotalN = std::max(maxTotalN, maxTotalNStage1);
 
         uint64_t maxTotalNStageQ = mapOffsets[std::make_pair("q", true)] + NExtended * FIELD_EXTENSION;
         mapOffsets[std::make_pair("buff_helper_fft_" + to_string(nStages + 1), false)] = maxTotalNStageQ;
@@ -562,9 +568,7 @@ void StarkInfo::setMapOffsets() {
         mapOffsets[std::make_pair("extra_helper_fft", false)] = maxTotalNStageQ;
         maxTotalNStageQ += NExtended * FIELD_EXTENSION + qDeg;
         maxTotalN = std::max(maxTotalN, maxTotalNStageQ);
-    }    
-    
-
+    }
  
     for(uint64_t step = 0; step < starkStruct.steps.size() - 1; ++step) {
         uint64_t height = 1 << starkStruct.steps[step + 1].nBits;
@@ -599,7 +603,7 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
                 maxNBlocks = NExtended / nrowsPack;
             } else {
                 nrowsPack = 256;
-                maxNBlocks = 1024;
+                maxNBlocks = 4096;
             }
         }
     }
@@ -641,22 +645,6 @@ uint64_t StarkInfo::getNumNodesMT(uint64_t height) {
     }
 
     return numNodes * HASH_SIZE;
-}
-
-uint64_t StarkInfo::getTraceOffset(string type, PolMap &polInfo, bool domainExtended)
-{
-    std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? customCommits[polInfo.commitId].name + "0"
-                                                                                          : "const";
-    uint64_t offset = mapOffsets[std::make_pair(stage, domainExtended)];
-    offset += polInfo.stagePos;
-    return offset;
-}
-
-uint64_t StarkInfo::getTraceNColsSection(string type, PolMap &polInfo, bool domainExtended)
-{
-    std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? customCommits[polInfo.commitId].name + "0"
-                                                                                          : "const";
-    return mapSectionsN[stage];
 }
 
 opType string2opType(const string s) 

@@ -9,6 +9,7 @@ use mpi::environment::Universe;
 #[cfg(distributed)]
 use mpi::topology::Communicator;
 
+use std::sync::Mutex;
 use std::sync::atomic::{Ordering, AtomicU64, AtomicI32};
 use fields::PrimeField64;
 #[cfg(distributed)]
@@ -17,10 +18,16 @@ use crate::GlobalInfo;
 #[cfg(distributed)]
 use crate::Proof;
 
+use std::sync::Arc;
+
 #[cfg(distributed)]
 use proofman_starks_lib_c::{
     initialize_agg_readiness_tracker_c, free_agg_readiness_tracker_c, agg_is_ready_c, reset_agg_readiness_tracker_c,
 };
+
+lazy_static::lazy_static! {
+    static ref GLOBAL_MPI_CTX: Mutex<Option<Arc<MpiCtx>>> = Mutex::new(None);
+}
 
 pub struct MpiCtx {
     #[cfg(distributed)]
@@ -41,7 +48,18 @@ impl Default for MpiCtx {
 }
 
 impl MpiCtx {
-    pub fn new() -> Self {
+    pub fn global() -> Arc<MpiCtx> {
+        let mut lock = GLOBAL_MPI_CTX.lock().unwrap();
+        if let Some(ctx) = &*lock {
+            ctx.clone()
+        } else {
+            let ctx = Arc::new(MpiCtx::new());
+            *lock = Some(ctx.clone());
+            ctx
+        }
+    }
+
+    fn new() -> Self {
         #[cfg(distributed)]
         {
             let (universe, _threading) = mpi::initialize_with_threading(mpi::Threading::Multiple)
@@ -467,6 +485,16 @@ impl MpiCtx {
                     }
                 }
             }
+        }
+    }
+}
+
+pub fn shutdown_mpi() {
+    #[cfg(distributed)]
+    {
+        let maybe_ctx = GLOBAL_MPI_CTX.lock().unwrap().take();
+        if let Some(ctx) = maybe_ctx {
+            drop(ctx);
         }
     }
 }
