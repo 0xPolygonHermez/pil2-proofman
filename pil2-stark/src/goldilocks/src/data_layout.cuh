@@ -3,8 +3,8 @@
 
 #include <stdint.h>
 
-#define TILE_HEIGHT 256
 #define TILE_HEIGHT_LOG2 8
+#define TILE_HEIGHT (1 << TILE_HEIGHT_LOG2)
 #define TILE_WIDTH  4
 
 __device__ __forceinline__ uint64_t getBufferOffset(

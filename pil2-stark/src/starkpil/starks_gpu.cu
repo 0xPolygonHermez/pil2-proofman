@@ -87,12 +87,7 @@ __global__ void unpack(
             bit_offset = nbits - bits_left;
         }
 
-        uint32_t blockY = c >> 2;
-        uint32_t ncols_block = nCols - 4 * blockY < 4 ? nCols - 4 * blockY : 4;
-        uint32_t colId_block = (c - 4 * blockY);
-        uint32_t dst_idx = blockY * 4 * nRows + blockIdx.x * 256 * ncols_block + colId_block * 256 + threadIdx.x;
-
-        dst[dst_idx] = val;
+        dst[getBufferOffset(row, c, nRows, nCols)] = val;
     }
 }
 
