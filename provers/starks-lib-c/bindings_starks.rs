@@ -40,6 +40,7 @@ extern "C" {
     // ========================================================================================
     pub fn stark_info_new(
         filename: *mut ::std::os::raw::c_char,
+        recursive_final: bool,
         recursive: bool,
         verify_constraints: bool,
         verify: bool,

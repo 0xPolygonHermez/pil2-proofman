@@ -250,8 +250,13 @@ where
             mpi_ctx,
         );
 
-        let setups_aggregation =
-            Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, false, &ParamsGPU::new(false)));
+        let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(
+            &pctx.global_info,
+            false,
+            aggregation,
+            final_snark,
+            &ParamsGPU::new(false),
+        ));
 
         let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &ParamsGPU::new(false));
 
@@ -1740,7 +1745,9 @@ where
                         &self.pctx,
                         &self.setups,
                         vadcop_final_ref,
-                        &self.prover_buffer_recursive,
+                        &self.aux_trace,
+                        &self.const_pols,
+                        &self.const_tree,
                         &options.output_dir_path,
                         false,
                     )?;
@@ -1918,25 +1925,7 @@ where
                 )
                 .unwrap();
 
-                if options.final_snark {
-                    timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
-                    let recursivef_proof = generate_recursivef_proof(
-                        &self.pctx,
-                        &self.setups,
-                        &vadcop_proof_final.proof,
-                        &self.prover_buffer_recursive,
-                        &options.output_dir_path,
-                        false,
-                    )
-                    .unwrap();
-                    timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
-
-                    timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
-                    let _ = generate_fflonk_snark_proof(&self.pctx, recursivef_proof, &options.output_dir_path);
-                    timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
-                } else {
-                    return Some(vec![AggProofs::new(0, vadcop_proof_final.proof, vec![])]);
-                }
+                return Some(vec![AggProofs::new(0, vadcop_proof_final.proof, vec![])]);
             }
         }
 

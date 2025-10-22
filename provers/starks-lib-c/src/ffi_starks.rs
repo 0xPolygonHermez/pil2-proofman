@@ -127,6 +127,7 @@ pub fn save_proof_values_c(proof_values: *mut u8, global_info_file: &str, output
 #[cfg(not(feature = "no_lib_link"))]
 pub fn stark_info_new_c(
     filename: &str,
+    recursive_final: bool,
     recursive: bool,
     verify_constraints: bool,
     verify: bool,
@@ -138,6 +139,7 @@ pub fn stark_info_new_c(
 
         stark_info_new(
             filename.as_ptr() as *mut std::os::raw::c_char,
+            recursive_final,
             recursive,
             verify_constraints,
             verify,
@@ -1394,6 +1396,7 @@ pub fn save_proof_values_c(_proof_values: *mut u8, _global_info_file: &str, _out
 #[cfg(feature = "no_lib_link")]
 pub fn stark_info_new_c(
     _filename: &str,
+    _recursive_final: bool,
     _recursive: bool,
     _verify_constraints: bool,
     _verify: bool,
