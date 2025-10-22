@@ -7,8 +7,8 @@
 static int initialized = 0;
 
 
-__device__ __constant__ gl64_t GPU_C[118];
-__device__ __constant__ gl64_t GPU_D[12];
+__device__ __constant__ gl64_t POSEIDON2_GPU_C[118];
+__device__ __constant__ gl64_t POSEIDON2_GPU_D[12];
 
 __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor) 
 {
@@ -26,7 +26,7 @@ __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pe
     {
         inputs[i + TRANSCRIPT_PENDING_SIZE] = state[i];
     }
-    hash_full_result_seq_2((gl64_t*)out, (gl64_t*)inputs, GPU_C, GPU_D);
+    poseidon2_hash_shared((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
 
     *out_cursor = TRANSCRIPT_OUT_SIZE;
     for (int i = 0; i < TRANSCRIPT_PENDING_SIZE; i++)
@@ -124,7 +124,6 @@ __global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Gol
 
 TranscriptGL_GPU::TranscriptGL_GPU(uint64_t arity, bool custom, cudaStream_t stream){
 
-        assert(initialized == 1);
         CHECKCUDAERR(cudaMalloc((void**)&state, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMalloc((void**)&pending, TRANSCRIPT_PENDING_SIZE * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMalloc((void**)&out, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element)));
@@ -146,8 +145,8 @@ void TranscriptGL_GPU::init_const(uint32_t* gpu_ids, uint32_t num_gpu_ids)
         for(int i = 0; i < num_gpu_ids; i++)
         { 
             CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));    
-            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON2_GPU_C, Poseidon2GoldilocksConstants::C, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON2_GPU_D, Poseidon2GoldilocksConstants::D, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
         }   
         initialized = 1;
        
@@ -157,24 +156,29 @@ void TranscriptGL_GPU::init_const(uint32_t* gpu_ids, uint32_t num_gpu_ids)
 
 void TranscriptGL_GPU::put(Goldilocks::Element *input, uint64_t size, cudaStream_t stream)
 {
-   _add<<<1,1, 0, stream>>>(input, size, state, pending, out, pending_cursor, out_cursor, state_cursor);
+    size_t sharedMem = SPONGE_WIDTH * sizeof(gl64_t);
+    _add<<<1,1, sharedMem, stream>>>(input, size, state, pending, out, pending_cursor, out_cursor, state_cursor);
 }
 
 void TranscriptGL_GPU::getField(uint64_t* output, cudaStream_t stream)
 {
-    _getField<<<1, 1, 0, stream>>>(output, state, pending, out, pending_cursor, out_cursor, state_cursor);
+    size_t sharedMem = SPONGE_WIDTH * sizeof(gl64_t);
+    _getField<<<1, 1, sharedMem, stream>>>(output, state, pending, out, pending_cursor, out_cursor, state_cursor);
     
 } 
 
 void TranscriptGL_GPU::getState(Goldilocks::Element* output, cudaStream_t stream) {
-    __getState<<<1, 1, 0, stream>>>(output, TRANSCRIPT_STATE_SIZE, state, pending, out, pending_cursor, out_cursor, state_cursor);
+    size_t sharedMem = SPONGE_WIDTH * sizeof(gl64_t);
+    __getState<<<1, 1, sharedMem, stream>>>(output, TRANSCRIPT_STATE_SIZE, state, pending, out, pending_cursor, out_cursor, state_cursor);
 }
 
 void TranscriptGL_GPU::getState(Goldilocks::Element* output, uint64_t nOutputs, cudaStream_t stream) {
-    __getState<<<1, 1, 0, stream>>>(output, nOutputs, state, pending, out, pending_cursor, out_cursor, state_cursor);
+    size_t sharedMem = SPONGE_WIDTH * sizeof(gl64_t);
+    __getState<<<1, 1, sharedMem, stream>>>(output, nOutputs, state, pending, out, pending_cursor, out_cursor, state_cursor);
 }
 
 void TranscriptGL_GPU::getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, cudaStream_t stream)
 {
-   __getPermutations<<<1, 1, 0, stream>>>(res, n, nBits, state, pending, out, pending_cursor, out_cursor, state_cursor);
+    size_t sharedMem = SPONGE_WIDTH * sizeof(gl64_t);
+    __getPermutations<<<1, 1, sharedMem, stream>>>(res, n, nBits, state, pending, out, pending_cursor, out_cursor, state_cursor);
 }
