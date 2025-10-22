@@ -544,9 +544,6 @@ void StarkInfo::setMapOffsets() {
 
     mapOffsets[std::make_pair("buff_helper", false)] = mapTotalN;
     mapTotalN += NExtended * FIELD_EXTENSION;
-    if(starkStruct.steps.size() > 1) {
-        mapTotalN += (1 << (starkStruct.steps[0].nBits - starkStruct.steps[1].nBits)) >> 1;
-    }
 
     if (!gpu) {
         uint64_t maxTotalNStage2 = mapOffsets[std::make_pair("cm2", false)] + N * mapSectionsN["cm2"];

@@ -237,8 +237,10 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
     for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size(); step++)
     {
         uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
-        uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
-        fold_inplace(step, friPol_offset, offset_helper, challenge_gpu, nBitsExt, prevBits, currentBits, d_aux_trace, timer, stream);
+        if (step > 0) {
+            uint64_t prevBits = setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
+            fold_inplace(step, friPol_offset, offset_helper, challenge_gpu, nBitsExt, prevBits, currentBits, d_aux_trace, timer, stream);
+        }
 
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {

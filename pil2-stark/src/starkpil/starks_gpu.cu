@@ -569,15 +569,19 @@ __device__ void intt_tinny(gl64_t *data, uint32_t N, uint32_t logN, gl64_t *d_tw
     }
 }
 
-__global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t *d_ppar, Goldilocks::Element omega_inv, gl64_t *d_twiddles, uint64_t shift_, uint64_t W_, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits)
+__global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t *d_ppar, Goldilocks::Element omega_inv, uint64_t shift_, uint64_t W_, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits)
 {
 
-    uint64_t halfRatio = (1 << (prevBits - currentBits)) >> 1;
-    d_twiddles[0] = gl64_t(uint64_t(1));
-    for (uint32_t i = 1; i < halfRatio; i++)
-    {
-        d_twiddles[i] = d_twiddles[i - 1] * gl64_t(omega_inv.fe);
+    extern __shared__ gl64_t s_twiddles[];
+    if (threadIdx.x == 0) {
+        uint64_t halfRatio = (1 << (prevBits - currentBits)) >> 1;
+        s_twiddles[0] = gl64_t(uint64_t(1));
+        for (uint32_t i = 1; i < halfRatio; i++) {
+            s_twiddles[i] = s_twiddles[i - 1] * gl64_t(omega_inv.fe);
+        }
     }
+    __syncthreads();
+
     uint32_t polBits = prevBits;
     uint64_t sizePol = 1 << polBits;
     uint32_t foldedPolBits = currentBits;
@@ -589,8 +593,6 @@ __global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t 
     if (id < sizeFoldedPol)
     {
 
-        if (step == 0)
-            return;
         gl64_t shift(shift_);
         gl64_t invShift = shift.reciprocal();
         for (uint32_t j = 0; j < nBitsExt - prevBits; j++)
@@ -624,7 +626,7 @@ __global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t 
                 ppar[ind + k] = gl64_t(friPol[(i * sizeFoldedPol + id) * FIELD_EXTENSION + k]);
             }
         }
-        intt_tinny(ppar, ratio, prevBits - currentBits, d_twiddles, FIELD_EXTENSION);
+        intt_tinny(ppar, ratio, prevBits - currentBits, s_twiddles, FIELD_EXTENSION);
 
         // Multiply coefs by 1, shiftInv, shiftInv^2, shiftInv^3, ......
         gl64_t r(1);
@@ -664,8 +666,7 @@ void fold_inplace(uint64_t step, uint64_t friPol_offset, uint64_t offset_helper,
     uint32_t ratio = 1 << (prevBits - currentBits);
     uint64_t halfRatio = ratio >> 1;
     gl64_t *d_friPol = (gl64_t *)(d_aux_trace + friPol_offset);
-    gl64_t *d_twiddles = (gl64_t *)d_aux_trace + offset_helper;
-    gl64_t *d_ppar = (gl64_t *)d_aux_trace + offset_helper + halfRatio;
+    gl64_t *d_ppar = (gl64_t *)d_aux_trace + offset_helper;
 
     uint64_t sizeFoldedPol = 1 << currentBits;
 
@@ -673,8 +674,9 @@ void fold_inplace(uint64_t step, uint64_t friPol_offset, uint64_t offset_helper,
     
     dim3 nThreads(256);
     dim3 nBlocks((sizeFoldedPol) + nThreads.x - 1 / nThreads.x);
+    size_t sharedMem = halfRatio * sizeof(gl64_t);
     TimerStartCategoryGPU(timer, FRI);
-    fold<<<nBlocks, nThreads, 0, stream>>>(step, d_friPol, (gl64_t *)d_challenge, d_ppar, omega_inv, d_twiddles, Goldilocks::shift().fe, Goldilocks::w(prevBits).fe, nBitsExt, prevBits, currentBits);
+    fold<<<nBlocks, nThreads, sharedMem, stream>>>(step, d_friPol, (gl64_t *)d_challenge, d_ppar, omega_inv, Goldilocks::shift().fe, Goldilocks::w(prevBits).fe, nBitsExt, prevBits, currentBits);
     TimerStopCategoryGPU(timer, FRI);
     CHECKCUDAERR(cudaGetLastError());
 }
