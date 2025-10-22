@@ -72,7 +72,7 @@ pub fn initialize_logger(verbose_mode: VerboseMode, rank: Option<i32>) {
     let stdout_layer = tracing_subscriber::fmt::layer()
         .event_format(RankFormatter)
         .with_writer(std::io::stdout)
-        .with_ansi(true)
+        .with_ansi(false)
         .with_filter(LevelFilter::from(verbose_mode));
 
     tracing_subscriber::registry().with(stdout_layer).init();
