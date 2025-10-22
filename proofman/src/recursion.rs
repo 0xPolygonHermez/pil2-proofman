@@ -581,6 +581,8 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     setups: &SetupsVadcop<F>,
     proof: &[u64],
     prover_buffer: &[F],
+    const_pols: &[F],
+    const_tree: &[F],
     output_dir_path: &Path,
     save_proofs: bool,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
@@ -593,15 +595,13 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     let trace: Vec<F> =
         create_buffer_fast(setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize);
 
-    let const_tree_size = setup.const_tree_size;
-    let const_tree = vec![F::ZERO; const_tree_size];
-    let const_pols: Vec<F> = vec![F::ZERO; setup.const_pols_size];
+    load_const_pols(setup, const_pols);
+    load_const_pols_tree(setup, const_tree);
 
-    load_const_pols(setup, &const_pols);
-    load_const_pols_tree(setup, &const_tree);
-
-    let mut vadcop_final_proof: Vec<u64> = vec![0; proof.len() + pctx.global_info.n_publics];
-    vadcop_final_proof[pctx.global_info.n_publics..].copy_from_slice(proof);
+    let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
+    let vadcop_proof: &[u64] = &proof[1 + setup_vadcop_final.stark_info.n_publics as usize..];
+    let mut vadcop_final_proof: Vec<u64> = vec![0; vadcop_proof.len() + pctx.global_info.n_publics];
+    vadcop_final_proof[pctx.global_info.n_publics..].copy_from_slice(vadcop_proof);
 
     let public_inputs = pctx.get_publics();
     for p in 0..pctx.global_info.n_publics {
@@ -622,7 +622,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         setup.size_witness.read().unwrap().unwrap(),
         1 << (setup.stark_info.stark_struct.n_bits),
         setup.stark_info.n_publics,
-        13,
+        setup.stark_info.map_sections_n["cm1"],
     );
 
     let proof_file = match save_proofs {
@@ -746,6 +746,8 @@ pub fn get_recursive_buffer_sizes<F: PrimeField64>(
         let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0);
         max_prover_size = max_prover_size.max(setup.prover_buffer_size);
     }
+
+    max_prover_size = max_prover_size.max(setups.setup_vadcop_final.as_ref().unwrap().prover_buffer_size);
 
     Ok(max_prover_size as usize)
 }

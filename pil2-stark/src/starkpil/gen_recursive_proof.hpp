@@ -1,6 +1,6 @@
 #include "starks.hpp"
 
-void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx &expressionsCtx, bool prod) {
+void calculateWitnessSTD_BN128(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx &expressionsCtx, bool prod) {
     std::string name = prod ? "gprod_col" : "gsum_col";
     if(setupCtx.expressionsBin.getNumberHintIdsByName(name) == 0) return;
     uint64_t hint[1];
@@ -119,8 +119,8 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, json& globalInfo, uint64_t airg
     }
 
     TimerStart(STARK_CALCULATE_WITNESS_STD);
-    calculateWitnessSTD(setupCtx, params, expressionsCtx, true);
-    calculateWitnessSTD(setupCtx, params, expressionsCtx, false);
+    calculateWitnessSTD_BN128(setupCtx, params, expressionsCtx, true);
+    calculateWitnessSTD_BN128(setupCtx, params, expressionsCtx, false);
     TimerStopAndLog(STARK_CALCULATE_WITNESS_STD);
     
     TimerStart(CALCULATE_IM_POLS);

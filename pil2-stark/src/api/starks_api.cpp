@@ -321,9 +321,9 @@ void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintN
 
 // StarkInfo
 // ========================================================================================
-void *stark_info_new(char *filename, bool recursive, bool verify_constraints, bool verify, bool gpu, bool preallocate)
+void *stark_info_new(char *filename, bool recursive_final, bool recursive, bool verify_constraints, bool verify, bool gpu, bool preallocate)
 {
-    auto starkInfo = new StarkInfo(filename, recursive, verify_constraints, verify, gpu, preallocate);
+    auto starkInfo = new StarkInfo(filename, recursive_final, recursive, verify_constraints, verify, gpu, preallocate);
 
     return starkInfo;
 }
@@ -610,7 +610,6 @@ void write_custom_commit(void* root, uint64_t nBits, uint64_t nBitsExt, uint64_t
 
 uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *trace, void *auxTrace, void *d_buffers_, void *pSetupCtx_) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
-    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     Goldilocks::Element *auxTraceGL = (Goldilocks::Element *)auxTrace;
     uint64_t N = 1 << nBits;

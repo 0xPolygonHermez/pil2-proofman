@@ -168,9 +168,11 @@ impl<F: PrimeField64> Setup<F> {
                 .unwrap_or_else(|_| panic!("Failed to read file {}", &stark_info_path));
             let stark_info = StarkInfo::from_json(&stark_info_json);
             let recursive = setup_type != &ProofType::Basic;
+            let recursive_final = setup_type == &ProofType::RecursiveF;
             let preallocate_const = preallocate && gpu;
             let p_stark_info = stark_info_new_c(
                 stark_info_path.as_str(),
+                recursive_final,
                 recursive,
                 verify_constraints,
                 false,
@@ -193,12 +195,15 @@ impl<F: PrimeField64> Setup<F> {
 
             let verkey_file = setup_path.with_extension("verkey.json");
 
-            let mut file = File::open(&verkey_file).expect("Unable to open file");
-            let mut json_str = String::new();
-            file.read_to_string(&mut json_str).expect("Unable to read file");
-            let vk: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
-
-            let verkey = vk.iter().map(|&x| F::from_u64(x)).collect::<Vec<F>>();
+            let verkey = if setup_type == &ProofType::RecursiveF {
+                vec![]
+            } else {
+                let mut file = File::open(&verkey_file).expect("Unable to open file");
+                let mut json_str = String::new();
+                file.read_to_string(&mut json_str).expect("Unable to read file");
+                let vk: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
+                vk.iter().map(|&x| F::from_u64(x)).collect::<Vec<F>>()
+            };
 
             let n_cols = stark_info.map_sections_n["cm1"];
 
