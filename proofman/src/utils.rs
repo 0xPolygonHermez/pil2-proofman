@@ -202,7 +202,7 @@ fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool, final_
             Please run the following command:\n\
             \x1b[1mcargo run {is_gpu}--bin proofman-cli check-setup --proving-key <PROVING_KEY>{flags}\x1b[0m"
         ));
-        return Err(error_message.into());
+        return Err(error_message);
     }
 
     let error_message = ProofmanError::InvalidSetup(format!(

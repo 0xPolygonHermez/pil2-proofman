@@ -443,7 +443,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     self.specified_ranges_air.as_ref().unwrap().update_inputs(id, values);
                 }
             }
-            StdRangeType::U8AirDouble | StdRangeType::U16AirDouble => unreachable!()
+            StdRangeType::U8AirDouble | StdRangeType::U16AirDouble => unreachable!(),
         }
     }
 

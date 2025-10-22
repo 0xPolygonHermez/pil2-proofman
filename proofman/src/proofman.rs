@@ -277,17 +277,19 @@ where
     }
 
     fn check_cancel(&self) -> ProofmanResult<()> {
-        let mut cancellation_info = self.cancellation_info.write().unwrap();
-        if cancellation_info.token.is_cancelled() {
-            let error = cancellation_info.error.take();
-            self.reset()?;
-            if let Some(e) = error {
-                return Err(e);
-            } else {
-                return Err(ProofmanError::Cancelled);
+        let error = {
+            let mut cancellation_info = self.cancellation_info.write().unwrap();
+            if !cancellation_info.token.is_cancelled() {
+                return Ok(());
             }
+            cancellation_info.error.take()
+        };
+        self.reset()?;
+        if let Some(e) = error {
+            Err(e)
+        } else {
+            Err(ProofmanError::Cancelled)
         }
-        Ok(())
     }
 
     pub fn cancel(&self) {
@@ -1378,12 +1380,15 @@ where
 
         let n_workers =
             all_partial_contributions_u64.iter().map(|contribution| contribution.worker_index).max().unwrap_or(0) + 1;
-        let mut worker_contributions = self.worker_contributions.write().unwrap();
-        for contribution in all_partial_contributions_u64 {
-            if contribution.worker_index < n_workers {
-                worker_contributions.push(contribution.clone());
-            } else {
-                return Err(ProofmanError::ProofmanError("Invalid worker index in contributions".into()));
+
+        {
+            let mut worker_contributions = self.worker_contributions.write().unwrap();
+            for contribution in all_partial_contributions_u64 {
+                if contribution.worker_index < n_workers {
+                    worker_contributions.push(contribution.clone());
+                } else {
+                    return Err(ProofmanError::ProofmanError("Invalid worker index in contributions".into()));
+                }
             }
         }
 
