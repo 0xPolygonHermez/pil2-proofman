@@ -4,7 +4,7 @@ use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
     DebugInfo, MemoryHandler, MpiCtx, PackedInfo, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx,
-    SetupsVadcop, VerboseMode, MAX_INSTANCES, shutdown_mpi,
+    SetupsVadcop, VerboseMode, MAX_INSTANCES,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -28,6 +28,9 @@ use csv::Writer;
 
 use rand::{SeedableRng, seq::SliceRandom};
 use rand::rngs::StdRng;
+
+#[cfg(distributed)]
+use mpi::topology::Communicator;
 
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c, clear_proof_done_callback_c,
@@ -205,7 +208,6 @@ pub enum ProvePhaseResult {
 impl<F: PrimeField64> Drop for ProofMan<F> {
     fn drop(&mut self) {
         free_device_buffers_c(self.d_buffers.get_ptr());
-        shutdown_mpi();
     }
 }
 impl<F: PrimeField64> ProofMan<F>
@@ -220,12 +222,30 @@ where
         (self.pctx.mpi_ctx.n_processes > 1).then(|| self.mpi_ctx.rank)
     }
 
-    pub fn get_mpi_info() -> Arc<MpiCtx> {
-        MpiCtx::global()
-    }
-
     pub fn mpi_broadcast(&self, buf: &mut Vec<u8>) {
         self.pctx.dctx_broadcast(buf);
+    }
+
+    pub fn get_world_rank(&self) -> i32 {
+        self.pctx.mpi_ctx.rank
+    }
+
+    pub fn get_local_rank(&self) -> i32 {
+        self.pctx.mpi_ctx.node_rank
+    }
+
+    pub fn get_n_processes(&self) -> i32 {
+        self.pctx.mpi_ctx.n_processes
+    }
+
+    pub fn split_active_processes(&self, is_active: bool) {
+        #[cfg(distributed)]
+        {
+            let color = if is_active { mpi::topology::Color::with_value(1) } else { mpi::topology::Color::undefined() };
+
+            let _sub_comm = self.pctx.mpi_ctx.world.split_by_color(color);
+            self.pctx.mpi_ctx.world.split_shared(self.pctx.mpi_ctx.rank);
+        }
     }
 
     pub fn check_setup(
@@ -239,7 +259,7 @@ where
             return Err(format!("Proving key folder not found at path: {proving_key_path:?}").into());
         }
 
-        let mpi_ctx = MpiCtx::global();
+        let mpi_ctx = Arc::new(MpiCtx::new());
 
         let pctx = ProofCtx::<F>::create_ctx(
             proving_key_path,
@@ -868,7 +888,7 @@ where
             return Err(format!("Proving key parameter must be a folder: {proving_key_path:?}").into());
         }
 
-        let mpi_ctx = MpiCtx::global();
+        let mpi_ctx = Arc::new(MpiCtx::new());
 
         initialize_logger(verbose_mode, Some(mpi_ctx.rank));
 
