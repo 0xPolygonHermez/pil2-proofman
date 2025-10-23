@@ -674,6 +674,8 @@ where
             return Err(ProofmanError::InvalidConfiguration("Packed witnesses are not supported in this mode".into()));
         }
 
+        self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize)?;
+
         self.pctx.set_debug_info(debug_info);
         self.reset()?;
         self.pctx.dctx_reset();
