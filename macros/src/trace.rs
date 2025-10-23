@@ -228,32 +228,6 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 }
             }
 
-            pub fn from_vec(mut buffer: Vec<#generics>) -> Self {
-                let row_size = #row_struct_name::<#generics>::ROW_SIZE;
-                let num_rows = Self::NUM_ROWS;
-                let expected_len = num_rows * row_size;
-
-                assert!(buffer.len() >= expected_len, "Flat buffer too small");
-                assert!(num_rows >= 2);
-                assert!(num_rows & (num_rows - 1) == 0);
-
-                let ptr = buffer.as_mut_ptr();
-                std::mem::forget(buffer);
-                let buffer = unsafe {
-                    Vec::from_raw_parts(ptr as *mut #row_struct_name<#generics>, num_rows, num_rows)
-                };
-
-                Self {
-                    buffer,
-                    num_rows,
-                    row_size,
-                    airgroup_id: Self::AIRGROUP_ID,
-                    air_id: Self::AIR_ID,
-                    commit_id: #commit_id,
-                    shared_buffer: true,
-                }
-            }
-
             pub fn par_iter_mut_chunks(&mut self, n: usize) -> impl rayon::iter::IndexedParallelIterator<Item = &mut [#row_struct_name<#generics>]> {
                 assert!(n > 0 && (n & (n - 1)) == 0, "n must be a power of two");
                 assert!(n <= self.num_rows, "n must be less than or equal to NUM_ROWS");
@@ -489,22 +463,6 @@ fn values_impl(input: TokenStream2) -> Result<TokenStream2> {
 
                 #values_struct_name {
                     buffer: buffer,
-                    slice_values,
-                }
-            }
-
-            pub fn from_vec(
-                mut external_buffer: Vec<#generics>,
-            ) -> Self {
-                let slice_values = unsafe {
-                    // Create a mutable slice from the raw pointer of external_buffer
-                    let ptr = external_buffer.as_mut_ptr() as *mut #row_struct_name<#generics>;
-                    &mut *ptr
-                };
-
-                // Return the struct with the owned buffers and borrowed slices
-                #values_struct_name {
-                    buffer: external_buffer,
                     slice_values,
                 }
             }

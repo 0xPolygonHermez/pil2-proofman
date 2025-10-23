@@ -375,7 +375,7 @@ mod tests {
     fn from_vec_alias() {
         let flat_len = 16 * SampleTestRow::ROW_SIZE;
         let buf = make_buffer(flat_len);
-        let t = GenericTrace::<SampleTestRow, 16, 0, 0>::from_vec(buf);
+        let t = GenericTrace::<SampleTestRow, 16, 0, 0>::new_from_vec(buf);
         assert!(t.is_shared_buffer());
     }
 
