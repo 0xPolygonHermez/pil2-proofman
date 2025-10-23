@@ -149,27 +149,6 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
         Self { buffer, src_buffer_len, src_buffer_capacity, src_element_size, shared_buffer: true }
     }
 
-    pub fn from_vec<F>(mut buffer: Vec<F>) -> Self {
-        let row_size = R::ROW_SIZE;
-        let num_rows = NUM_ROWS;
-        let expected_len = num_rows * row_size;
-
-        assert!(buffer.len() >= expected_len, "Flat buffer too small");
-        assert!(num_rows >= 2);
-        assert!(num_rows & (num_rows - 1) == 0);
-
-        let ptr = buffer.as_mut_ptr();
-        let src_buffer_len = buffer.len();
-        let src_buffer_capacity = buffer.capacity();
-        let src_element_size = std::mem::size_of::<F>();
-
-        std::mem::forget(buffer);
-
-        let buffer = unsafe { Vec::from_raw_parts(ptr as *mut R, num_rows, num_rows) };
-
-        Self { buffer, src_buffer_len, src_buffer_capacity, src_element_size, shared_buffer: true }
-    }
-
     pub fn par_iter_mut_chunks(&mut self, n: usize) -> impl IndexedParallelIterator<Item = &mut [R]> {
         assert!(n > 0 && (n & (n - 1)) == 0, "n must be a power of two");
         assert!(n <= NUM_ROWS, "n must be less than or equal to NUM_ROWS");
@@ -298,7 +277,7 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
     for GenericTrace<R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
 {
     fn drop(&mut self) {
-        if !self.shared_buffer {
+        if !self.shared_buffer || self.src_buffer_len == 0 {
             // Buffer was created internally, drop normally
             // The Vec<R> will handle its own cleanup
         } else {
