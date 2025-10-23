@@ -35,7 +35,7 @@ where
 {
     fn format_event(
         &self,
-        ctx: &fmt::FmtContext<'_, S, N>,
+        _ctx: &fmt::FmtContext<'_, S, N>,
         mut writer: Writer<'_>,
         event: &tracing::Event<'_>,
     ) -> std::fmt::Result {
@@ -47,12 +47,43 @@ where
             write!(writer, "[rank={rank}] ")?;
         }
 
-        // Print level and event fields
+        // Print level
         write!(writer, "{}: ", event.metadata().level())?;
-        ctx.format_fields(writer.by_ref(), event)?;
+
+        let mut visitor = MessageVisitor::new();
+        event.record(&mut visitor);
+        write!(writer, "{}", visitor.message)?;
         writeln!(writer)?;
 
         Ok(())
+    }
+}
+
+// Add this visitor struct
+struct MessageVisitor {
+    message: String,
+}
+
+impl MessageVisitor {
+    fn new() -> Self {
+        Self { message: String::new() }
+    }
+}
+
+impl tracing::field::Visit for MessageVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.message = format!("{:?}", value);
+            if self.message.starts_with('"') && self.message.ends_with('"') {
+                self.message = self.message[1..self.message.len() - 1].to_string();
+            }
+        }
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "message" {
+            self.message = value.to_string();
+        }
     }
 }
 
