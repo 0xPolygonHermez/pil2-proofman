@@ -94,10 +94,10 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
     }
 
     fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) {
-        // let trace = FibonacciSquareTrace::from_vec(_pctx.get_air_instance_trace(0, 0, 0));
-        // let fixed = FibonacciSquareFixed::from_vec(_sctx.get_fixed(0, 0));
-        // let air_values = FibonacciSquareAirValues::from_vec(pctx.get_air_instance_air_values(0, 0, 0));
-        // let airgroup_values = FibonacciSquareAirGroupValues::from_vec(pctx.get_air_instance_airgroup_values(0, 0, 0));
+        // let trace = FibonacciSquareTrace::new_from_vec(_pctx.get_air_instance_trace(0, 0, 0));
+        // let fixed = FibonacciSquareFixed::new_from_vec(_sctx.get_fixed(0, 0));
+        // let air_values = FibonacciSquareAirValues::new_from_vec(pctx.get_air_instance_air_values(0, 0, 0));
+        // let airgroup_values = FibonacciSquareAirGroupValues::new_from_vec(pctx.get_air_instance_airgroup_values(0, 0, 0));
 
         // let publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
         // let proof_values = BuildProofValues::from_vec_guard(pctx.get_proof_values());
