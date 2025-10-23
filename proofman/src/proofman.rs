@@ -1479,35 +1479,35 @@ where
             let proofs_finished_clone = proofs_finished.clone();
 
             let handle_recursive = std::thread::spawn(move || loop {
+                if stream_id < n_streams_non_recursive {
+                    if let Ok(instance_id) = proofs_rx.try_recv() {
+                        Self::gen_proof(
+                            &proofs_clone,
+                            &pctx_clone,
+                            &sctx_clone,
+                            instance_id,
+                            &output_dir_path_clone,
+                            &aux_trace_clone,
+                            &const_pols_clone,
+                            &const_tree_clone,
+                            &d_buffers_clone,
+                            None,
+                            options.save_proofs,
+                            preallocate,
+                        );
+                        let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
+                        if is_shared_buffer {
+                            memory_handler_clone.release_buffer(witness_buffer);
+                        }
+                        continue;
+                    }
+                }
+
                 // Handle proof witnesses (Proof<F> type)
                 let witness = rec2_rx.try_recv().or_else(|_| compressor_rx.try_recv()).or_else(|_| rec1_rx.try_recv());
 
                 // If not witness, check if there's a proof
                 if witness.is_err() {
-                    if stream_id < n_streams_non_recursive {
-                        if let Ok(instance_id) = proofs_rx.try_recv() {
-                            Self::gen_proof(
-                                &proofs_clone,
-                                &pctx_clone,
-                                &sctx_clone,
-                                instance_id,
-                                &output_dir_path_clone,
-                                &aux_trace_clone,
-                                &const_pols_clone,
-                                &const_tree_clone,
-                                &d_buffers_clone,
-                                None,
-                                options.save_proofs,
-                                preallocate,
-                            );
-                            let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
-                            if is_shared_buffer {
-                                memory_handler_clone.release_buffer(witness_buffer);
-                            }
-                            continue;
-                        }
-                    }
-
                     if proofs_finished_clone.load(Ordering::Relaxed) {
                         return;
                     }
