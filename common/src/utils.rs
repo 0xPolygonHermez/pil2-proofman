@@ -23,6 +23,9 @@ use tracing_subscriber::fmt::FormatEvent;
 use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::fmt;
 use std::sync::OnceLock;
+use yansi::Color;
+use yansi::Paint;
+use colored::Colorize;
 
 static GLOBAL_RANK: OnceLock<i32> = OnceLock::new();
 
@@ -40,15 +43,28 @@ where
         event: &tracing::Event<'_>,
     ) -> std::fmt::Result {
         let timer = SystemTime;
-        timer.format_time(&mut writer)?;
-        write!(writer, " ")?;
 
-        if let Some(rank) = GLOBAL_RANK.get().copied() {
-            write!(writer, "[rank={rank}] ")?;
+        let mut time_str = String::new();
+        {
+            let mut fake_writer = Writer::new(&mut time_str);
+            timer.format_time(&mut fake_writer)?;
         }
 
-        // Print level
-        write!(writer, "{}: ", event.metadata().level())?;
+        write!(writer, "{} ", time_str.dimmed())?;
+
+        if let Some(rank) = GLOBAL_RANK.get().copied() {
+            let rank_str = format!("[rank={rank}]").dimmed();
+            write!(writer, "{} ", rank_str)?;
+        }
+
+        let level_str = match *event.metadata().level() {
+            tracing::Level::TRACE => "TRACE".paint(Color::Cyan),
+            tracing::Level::DEBUG => "DEBUG".paint(Color::Blue),
+            tracing::Level::INFO => "INFO".paint(Color::Green),
+            tracing::Level::WARN => "WARN".paint(Color::Yellow),
+            tracing::Level::ERROR => "ERROR".paint(Color::Red),
+        };
+        write!(writer, "{}: ", level_str)?;
 
         let mut visitor = MessageVisitor::new();
         event.record(&mut visitor);
