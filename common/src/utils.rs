@@ -23,6 +23,9 @@ use tracing_subscriber::fmt::FormatEvent;
 use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::fmt;
 use std::sync::OnceLock;
+use yansi::Color;
+use yansi::Paint;
+use colored::Colorize;
 
 static GLOBAL_RANK: OnceLock<i32> = OnceLock::new();
 
@@ -35,24 +38,68 @@ where
 {
     fn format_event(
         &self,
-        ctx: &fmt::FmtContext<'_, S, N>,
+        _ctx: &fmt::FmtContext<'_, S, N>,
         mut writer: Writer<'_>,
         event: &tracing::Event<'_>,
     ) -> std::fmt::Result {
         let timer = SystemTime;
-        timer.format_time(&mut writer)?;
-        write!(writer, " ")?;
 
-        if let Some(rank) = GLOBAL_RANK.get().copied() {
-            write!(writer, "[rank={rank}] ")?;
+        let mut time_str = String::new();
+        {
+            let mut fake_writer = Writer::new(&mut time_str);
+            timer.format_time(&mut fake_writer)?;
         }
 
-        // Print level and event fields
-        write!(writer, "{}: ", event.metadata().level())?;
-        ctx.format_fields(writer.by_ref(), event)?;
+        write!(writer, "{} ", time_str.dimmed())?;
+
+        if let Some(rank) = GLOBAL_RANK.get().copied() {
+            let rank_str = format!("[rank={rank}]").dimmed();
+            write!(writer, "{} ", rank_str)?;
+        }
+
+        let level_str = match *event.metadata().level() {
+            tracing::Level::TRACE => "TRACE".paint(Color::Cyan),
+            tracing::Level::DEBUG => "DEBUG".paint(Color::Blue),
+            tracing::Level::INFO => "INFO".paint(Color::Green),
+            tracing::Level::WARN => "WARN".paint(Color::Yellow),
+            tracing::Level::ERROR => "ERROR".paint(Color::Red),
+        };
+        write!(writer, "{}: ", level_str)?;
+
+        let mut visitor = MessageVisitor::new();
+        event.record(&mut visitor);
+        write!(writer, "{}", visitor.message)?;
         writeln!(writer)?;
 
         Ok(())
+    }
+}
+
+// Add this visitor struct
+struct MessageVisitor {
+    message: String,
+}
+
+impl MessageVisitor {
+    fn new() -> Self {
+        Self { message: String::new() }
+    }
+}
+
+impl tracing::field::Visit for MessageVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.message = format!("{:?}", value);
+            if self.message.starts_with('"') && self.message.ends_with('"') {
+                self.message = self.message[1..self.message.len() - 1].to_string();
+            }
+        }
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "message" {
+            self.message = value.to_string();
+        }
     }
 }
 
