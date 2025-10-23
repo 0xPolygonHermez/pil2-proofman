@@ -410,7 +410,7 @@ void StarkInfo::setMapOffsets() {
     if(!preallocate && gpu && !recursive_final) {    
         mapOffsets[std::make_pair("const", true)] = mapTotalN;
         MerkleTreeGL mt(starkStruct.merkleTreeArity, true, NExtended, nConstants);
-        uint64_t constTreeSize = (2 + (NExtended * nConstants) + numNodes);
+        uint64_t constTreeSize = (NExtended * nConstants) + numNodes;
         mapTotalN += constTreeSize;
 
         if (!recursive &&  (N * nConstants * 8.0 / (1024 * 1024)) >= 256) {
