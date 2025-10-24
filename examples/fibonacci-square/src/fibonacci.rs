@@ -19,7 +19,7 @@ impl FibonacciSquare {
 
 impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
     fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {
-        let global_id = pctx.add_instance(FibonacciSquareTrace::<F>::AIRGROUP_ID, FibonacciSquareTrace::<F>::AIR_ID, 1);
+        let global_id = pctx.add_instance(FibonacciSquareTrace::<F>::AIRGROUP_ID, FibonacciSquareTrace::<F>::AIR_ID);
         let instance_ids = vec![global_id];
         *self.instance_ids.write().unwrap() = instance_ids.clone();
         global_ids.write().unwrap().push(global_id);

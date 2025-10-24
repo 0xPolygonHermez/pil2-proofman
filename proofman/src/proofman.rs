@@ -105,6 +105,7 @@ pub struct ProofMan<F: PrimeField64> {
     const_tree: Arc<Vec<F>>,
     prover_buffer_recursive: Arc<Vec<F>>,
     max_num_threads: usize,
+    num_threads_per_witness: usize,
     tx_threads: Sender<()>,
     rx_threads: Receiver<()>,
     witness_tx: Sender<usize>,
@@ -953,6 +954,30 @@ where
 
         let max_num_threads = configured_num_threads(mpi_ctx.node_n_processes as usize);
 
+        let num_threads_per_witness = match gpu_params.are_threads_per_witness_set {
+            true => gpu_params.number_threads_pools_witness,
+            false => {
+                let num_threads_8 = max_num_threads / 8;
+                let num_threads_4 = max_num_threads / 4;
+                let num_threads_2 = max_num_threads / 2;
+
+                let total_cores_8 = 8 * num_threads_8;
+                let total_cores_4 = 4 * num_threads_4;
+                let total_cores_2 = 2 * num_threads_2;
+
+                if total_cores_8 >= total_cores_4 && total_cores_8 >= total_cores_2 && num_threads_8 > 0 {
+                    num_threads_8
+                } else if total_cores_4 >= total_cores_2 && num_threads_4 > 0 {
+                    num_threads_4
+                } else if num_threads_2 > 0 {
+                    num_threads_2
+                } else {
+                    1
+                }
+            }
+        };
+        tracing::info!("Using {num_threads_per_witness} threads per witness computation");
+
         let prover_buffer_recursive = if aggregation {
             let prover_buffer_size = get_recursive_buffer_sizes(&pctx, &setups_vadcop)?;
             Arc::new(create_buffer_fast(prover_buffer_size))
@@ -998,6 +1023,7 @@ where
             n_streams,
             n_streams_non_recursive,
             max_num_threads,
+            num_threads_per_witness,
             memory_handler,
             proofs,
             compressor_proofs,
@@ -2286,6 +2312,7 @@ where
         let witness_handles_clone = witness_handles.clone();
         let witness_rx = self.witness_rx.clone();
         let witness_rx_priority = self.witness_rx_priority.clone();
+        let n_threads_witness = self.num_threads_per_witness;
         let witness_handler = if !minimal_memory && (cfg!(feature = "gpu") || stats) {
             Some(std::thread::spawn(move || loop {
                 let instance_id = match witness_rx_priority.try_recv() {
@@ -2318,8 +2345,6 @@ where
                 };
 
                 let (airgroup_id, air_id) = pctx_clone.dctx_get_instance_info(instance_id);
-
-                let n_threads_witness = pctx_clone.dctx_instance_threads_witness(instance_id);
 
                 let tx_threads_clone: Sender<()> = tx_threads_clone.clone();
                 let wcm = wcm_clone.clone();
@@ -2381,7 +2406,7 @@ where
             timer_stop_and_log_info!(PRE_CALCULATE_WC);
         } else {
             for &instance_id in instances.iter() {
-                let n_threads_witness = self.pctx.dctx_instance_threads_witness(instance_id);
+                let n_threads_witness = self.num_threads_per_witness;
 
                 let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id);
                 let threads_to_use_collect = match cfg!(feature = "gpu") || stats {

@@ -15,21 +15,13 @@ pub struct InstanceInfo {
     pub air_id: usize,
     pub table: bool,
     pub shared: bool,
-    pub threads_witness: usize,
     pub n_chunks: usize,
     pub weight: u64,
 }
 
 impl InstanceInfo {
-    pub fn new(
-        airgroup_id: usize,
-        air_id: usize,
-        table: bool,
-        shared: bool,
-        threads_witness: usize,
-        weight: u64,
-    ) -> Self {
-        Self { airgroup_id, air_id, table, threads_witness, shared, n_chunks: 0, weight }
+    pub fn new(airgroup_id: usize, air_id: usize, table: bool, shared: bool, weight: u64) -> Self {
+        Self { airgroup_id, air_id, table, shared, n_chunks: 0, weight }
     }
 }
 
@@ -387,13 +379,13 @@ impl DistributionCtx {
     /// add an instance and assign it to a partition/process based only in the gid
     /// the instance added is not a table
     #[inline]
-    pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, threads_witness: usize, weight: u64) -> usize {
+    pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
         if self.assignation_done {
             panic!("Instances already assigned");
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let gid: usize = self.instances.len();
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness, weight));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, weight));
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
         self.instances_calculated.push(AtomicBool::new(false));
         self.n_instances += 1;
@@ -422,19 +414,13 @@ impl DistributionCtx {
     /// add an instance and assign it to a partition/process based only in the gid
     /// the instance added is not a table
     #[inline]
-    pub fn add_instance_first_partition(
-        &mut self,
-        airgroup_id: usize,
-        air_id: usize,
-        threads_witness: usize,
-        weight: u64,
-    ) -> usize {
+    pub fn add_instance_first_partition(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
         if self.assignation_done {
             panic!("Instances already assigned");
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let gid: usize = self.instances.len();
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness, weight));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, weight));
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
         self.instances_calculated.push(AtomicBool::new(false));
         self.n_instances += 1;
@@ -464,18 +450,12 @@ impl DistributionCtx {
     /// It will be assigned later by assign_instances()
     /// the instance added is not a table
     #[inline]
-    pub fn add_instance_no_assign(
-        &mut self,
-        airgroup_id: usize,
-        air_id: usize,
-        threads_witness: usize,
-        weight: u64,
-    ) -> usize {
+    pub fn add_instance_no_assign(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
         if self.assignation_done {
             panic!("Instances already assigned");
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, threads_witness, weight));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, weight));
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
         self.instances_calculated.push(AtomicBool::new(false));
         self.instance_partition.push(-1);
@@ -491,7 +471,7 @@ impl DistributionCtx {
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let lid = self.aux_tables.len();
-        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, true, 1, weight));
+        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, true, weight));
         self.aux_table_map.push(-1);
         self.n_tables += 1;
         lid
@@ -509,7 +489,7 @@ impl DistributionCtx {
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let lid = self.aux_tables.len();
-        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, false, 1, weight));
+        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, false, weight));
         self.aux_table_map.push(-1);
         self.n_tables += 1;
         lid
@@ -681,14 +661,7 @@ impl DistributionCtx {
             } else {
                 for rank in 0..self.n_processes {
                     let gid = self.instances.len();
-                    self.instances.push(InstanceInfo::new(
-                        table.airgroup_id,
-                        table.air_id,
-                        true,
-                        false,
-                        table.threads_witness,
-                        table.weight,
-                    ));
+                    self.instances.push(InstanceInfo::new(table.airgroup_id, table.air_id, true, false, table.weight));
                     self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
                     self.n_instances += 1;
                     self.n_tables += 1;
