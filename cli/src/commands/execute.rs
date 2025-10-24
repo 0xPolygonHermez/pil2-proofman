@@ -50,7 +50,7 @@ pub struct ExecuteCmd {
 }
 
 impl ExecuteCmd {
-    pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("{} Stats", format!("{: >12}", "Command").bright_green().bold());
         println!();
 

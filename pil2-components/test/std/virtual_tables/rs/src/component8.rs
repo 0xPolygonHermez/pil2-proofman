@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use witness::{define_wc_with_std, execute, WitnessComponent};
-use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx, ProofmanResult};
 
 use fields::PrimeField64;
 use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -23,7 +23,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Component8<F> {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> ProofmanResult<()> {
         if stage == 1 {
             let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 
@@ -33,7 +33,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Component8<F> {
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
             // Get the virtual table ID
-            let id = self.std_lib.get_virtual_table_id(8);
+            let id = self.std_lib.get_virtual_table_id(8)?;
 
             // Assumes
             for i in 0..num_rows {
@@ -54,5 +54,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Component8<F> {
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
             pctx.add_air_instance(air_instance, instance_ids[0]);
         }
+        Ok(())
     }
 }

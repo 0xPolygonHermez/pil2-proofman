@@ -13,9 +13,11 @@ use std::sync::atomic::{Ordering, AtomicU64, AtomicI32};
 use fields::PrimeField64;
 #[cfg(distributed)]
 use fields::CubicExtensionField;
-use crate::GlobalInfo;
+use crate::{GlobalInfo, ProofmanError};
 #[cfg(distributed)]
 use crate::Proof;
+
+use crate::ProofmanResult;
 
 #[cfg(distributed)]
 use proofman_starks_lib_c::{
@@ -82,11 +84,13 @@ impl MpiCtx {
         }
     }
 
-    pub fn get_outer_agg_rank(&self) -> i32 {
+    pub fn get_outer_agg_rank(&self) -> ProofmanResult<i32> {
         if self.outer_agg_rank.load(Ordering::SeqCst) == -1 {
-            panic!("Aggregation rank not yet determined. Call process_ready_for_aggregation() first.");
+            return Err(ProofmanError::InvalidAssignation(
+                "Aggregation rank not yet determined. Call process_ready_for_aggregation() first.".into(),
+            ));
         }
-        self.outer_agg_rank.load(Ordering::SeqCst)
+        Ok(self.outer_agg_rank.load(Ordering::SeqCst))
     }
 
     pub fn reset_outer_agg_tracker(&self) {
@@ -267,15 +271,15 @@ impl MpiCtx {
     }
 
     #[cfg(distributed)]
-    pub fn send_proof_to_rank(&self, proof: &Vec<u64>, rank: i32) {
+    pub fn send_proof_to_rank(&self, proof: &Vec<u64>, airgroup_id: usize, rank: i32) {
         // Send the proof directly - the vector already contains its length information
-        self.world.process_at_rank(rank).send(proof);
+        self.world.process_at_rank(rank).send_with_tag(proof, airgroup_id as i32);
     }
 
     #[cfg(distributed)]
-    pub fn recv_proof_from_rank(&self, rank: i32) -> Vec<u64> {
+    pub fn recv_proof_from_rank(&self, airgroup_id: usize, rank: i32) -> Vec<u64> {
         // Receive the proof directly as a vector
-        let (proof_buffer, _) = self.world.process_at_rank(rank).receive_vec::<u64>();
+        let (proof_buffer, _) = self.world.process_at_rank(rank).receive_vec_with_tag::<u64>(airgroup_id as i32);
         proof_buffer
     }
     #[cfg(distributed)]

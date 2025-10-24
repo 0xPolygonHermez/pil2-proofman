@@ -16,7 +16,7 @@ pub struct PiloutInspectCmd {
 }
 
 impl PiloutInspectCmd {
-    pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("{} Pilout inspect subcommand", format!("{: >12}", "Command").bright_green().bold());
         println!();
 

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use witness::{WitnessComponent, execute, define_wc};
-use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx, ProofmanResult};
 
 use fields::PrimeField64;
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -21,7 +21,7 @@ impl<F: PrimeField64> WitnessComponent<F> for DirectUpdateSumLocal {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> ProofmanResult<()> {
         if stage == 1 {
             let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 
@@ -73,5 +73,6 @@ impl<F: PrimeField64> WitnessComponent<F> for DirectUpdateSumLocal {
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace).with_air_values(&mut air_values));
             pctx.add_air_instance(air_instance, instance_ids[0]);
         }
+        Ok(())
     }
 }

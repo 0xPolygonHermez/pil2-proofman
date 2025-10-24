@@ -51,14 +51,14 @@ pub struct VerifyConstraintsCmd {
 }
 
 impl VerifyConstraintsCmd {
-    pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("{} VerifyConstraints", format!("{: >12}", "Command").bright_green().bold());
         println!();
 
         let debug_info = match &self.debug {
             None => DebugInfo::default(),
             Some(None) => DebugInfo::new_debug(),
-            Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone()),
+            Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone())?,
         };
 
         let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();

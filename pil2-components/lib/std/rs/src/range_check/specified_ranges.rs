@@ -1,4 +1,3 @@
-use core::panic;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, RwLock,
@@ -10,7 +9,7 @@ use fields::PrimeField64;
 use std::path::PathBuf;
 
 use witness::WitnessComponent;
-use proofman_common::{AirInstance, BufferPool, ProofCtx, SetupCtx, TraceInfo};
+use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanError, ProofmanResult, SetupCtx, TraceInfo};
 use proofman_hints::{get_hint_field_constant_a, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
 
 use crate::{get_hint_field_constant_as, validate_binary_field, AirComponent};
@@ -42,25 +41,25 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
         airgroup_id: usize,
         air_id: usize,
         shared_tables: bool,
-    ) -> Arc<Self> {
+    ) -> ProofmanResult<Arc<Self>> {
         let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
 
-        let setup = sctx.get_setup(airgroup_id, air_id);
+        let setup = sctx.get_setup(airgroup_id, air_id)?;
         let hint_opt = HintFieldOptions::default();
         let hint_id = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "specified_ranges_data")[0] as usize;
 
         // Get the relevant data
         let col_num =
-            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint_id, "col_num", hint_opt.clone());
+            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint_id, "col_num", hint_opt.clone())?;
 
-        let mins = get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "mins", hint_opt.clone()).values;
+        let mins = get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "mins", hint_opt.clone())?.values;
         let mins_neg =
-            get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "mins_neg", hint_opt.clone()).values;
+            get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "mins_neg", hint_opt.clone())?.values;
 
         let opids_count =
-            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint_id, "opids_count", hint_opt.clone());
+            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint_id, "opids_count", hint_opt.clone())?;
         let opids_len =
-            get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "opids_len", hint_opt).values;
+            get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "opids_len", hint_opt)?.values;
 
         // Get and store the ranges
         let mut ranges = Vec::with_capacity(opids_count as usize);
@@ -68,19 +67,19 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
         for ((min_hint, min_neg_hint), opid_len_hint) in mins.iter().zip(mins_neg.iter()).zip(opids_len.iter()) {
             let min = match min_hint {
                 HintFieldValue::Field(f) => f.as_canonical_u64(),
-                _ => panic!("Opid hint must be a field element"),
+                _ => return Err(ProofmanError::StdError("min hint must be a field element".to_string())),
             };
 
             let min_neg = match min_neg_hint {
-                HintFieldValue::Field(f) => validate_binary_field(*f, "Min neg"),
-                _ => panic!("Opid hint must be a field element"),
+                HintFieldValue::Field(f) => validate_binary_field(*f, "Min neg")?,
+                _ => return Err(ProofmanError::StdError("min neg hint must be a field element".to_string())),
             };
 
             let min = if min_neg { min as i128 - F::ORDER_U64 as i128 } else { min as i128 };
 
             let opid_len = match opid_len_hint {
                 HintFieldValue::Field(f) => f.as_canonical_u64() as usize,
-                _ => panic!("Opid hint must be a field element"),
+                _ => return Err(ProofmanError::StdError("Opid len hint must be a field element".to_string())),
             };
 
             // In this conversion we assume that min is at most of 63 bits
@@ -96,7 +95,7 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
             .map(|_| (0..num_rows).into_par_iter().map(|_| AtomicU64::new(0)).collect())
             .collect();
 
-        Arc::new(Self {
+        Ok(Arc::new(Self {
             airgroup_id,
             air_id,
             shift: num_rows.trailing_zeros() as usize,
@@ -108,7 +107,7 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
             calculated: AtomicBool::new(false),
             ranges,
             shared_tables,
-        })
+        }))
     }
 }
 
@@ -176,14 +175,19 @@ impl SpecifiedRanges {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, _global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {
-        let (instance_found, mut table_instance_id) = pctx.dctx_find_process_table(self.airgroup_id, self.air_id);
+    fn execute(
+        &self,
+        pctx: Arc<ProofCtx<F>>,
+        _global_ids: &RwLock<Vec<usize>>,
+        _input_data_path: Option<PathBuf>,
+    ) -> ProofmanResult<()> {
+        let (instance_found, mut table_instance_id) = pctx.dctx_find_process_table(self.airgroup_id, self.air_id)?;
 
         if !instance_found {
             if !self.shared_tables {
-                table_instance_id = pctx.add_table_all(self.airgroup_id, self.air_id);
+                table_instance_id = pctx.add_table_all(self.airgroup_id, self.air_id)?;
             } else {
-                table_instance_id = pctx.add_table(self.airgroup_id, self.air_id);
+                table_instance_id = pctx.add_table(self.airgroup_id, self.air_id)?;
             }
         }
 
@@ -194,6 +198,7 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
             }
         });
         self.table_instance_id.store(table_instance_id as u64, Ordering::SeqCst);
+        Ok(())
     }
 
     fn pre_calculate_witness(
@@ -204,7 +209,8 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> ProofmanResult<()> {
+        Ok(())
     }
 
     fn calculate_witness(
@@ -215,24 +221,24 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> ProofmanResult<()> {
         if stage == 1 {
             let table_instance_id = self.table_instance_id.load(Ordering::Relaxed) as usize;
 
-            let instance_id = pctx.dctx_get_table_instance_idx(table_instance_id);
+            let instance_id = pctx.dctx_get_table_instance_idx(table_instance_id)?;
 
             if !_instance_ids.contains(&instance_id) {
-                return;
+                return Ok(());
             }
 
             self.calculated.store(true, Ordering::Relaxed);
 
             if self.shared_tables {
-                let owner_idx = pctx.dctx_get_process_owner_instance(instance_id);
+                let owner_idx = pctx.dctx_get_process_owner_instance(instance_id)?;
                 pctx.mpi_ctx.distribute_multiplicities(&self.multiplicities, owner_idx);
             }
 
-            if !self.shared_tables || pctx.dctx_is_my_process_instance(instance_id) {
+            if !self.shared_tables || pctx.dctx_is_my_process_instance(instance_id)? {
                 let buffer_size = self.num_cols * self.num_rows;
                 let mut buffer = create_buffer_fast(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
@@ -251,5 +257,6 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
                 pctx.add_air_instance(air_instance, instance_id);
             }
         }
+        Ok(())
     }
 }

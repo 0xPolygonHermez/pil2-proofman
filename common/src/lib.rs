@@ -17,6 +17,7 @@ pub mod constraints;
 pub mod fixed_cols;
 pub mod memory_handler;
 pub mod packed_info;
+pub mod error_manager;
 
 pub use air_instance::*;
 pub use verbose_mode::*;
@@ -37,3 +38,4 @@ pub use memory_handler::*;
 pub use mpi_ctx::*;
 pub use packed_info::*;
 pub use trace::GenericTrace;
+pub use error_manager::*;
