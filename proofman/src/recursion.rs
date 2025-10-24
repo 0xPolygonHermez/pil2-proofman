@@ -19,10 +19,10 @@ use proofman_util::{
 use crate::{add_publics_circom, add_publics_aggregation};
 
 type GetWitnessFunc =
-    unsafe extern "C" fn(zkin: *mut u64, circom_circuit: *mut c_void, witness: *mut c_void, n_mutexes: u64);
+    unsafe extern "C" fn(zkin: *mut u64, circom_circuit: *mut c_void, witness: *mut c_void, n_mutexes: u64) -> i64;
 
 type GetWitnessFinalFunc =
-    unsafe extern "C" fn(zkin: *mut c_void, dat_file: *const c_char, witness: *mut c_void, n_mutexes: u64);
+    unsafe extern "C" fn(zkin: *mut c_void, dat_file: *const c_char, witness: *mut c_void, n_mutexes: u64) -> i64;
 
 type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
@@ -75,7 +75,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
         let mut updated_proof: Vec<u64> = vec![0; proof.proof.len() + publics_circom_size];
         updated_proof[publics_circom_size..].copy_from_slice(&proof.proof);
         add_publics_circom(&mut updated_proof, 0, pctx, "", false);
-        let circom_witness = generate_witness::<F>(setup, &updated_proof)?;
+        let circom_witness = generate_witness::<F>(setup, &updated_proof, proof.global_idx.unwrap())?;
         timer_stop_and_log_info!(
             GENERATE_COMPRESSOR_WITNESS,
             "GENERATING_COMPRESSOR_WITNESS_{} [{}:{}]",
@@ -123,7 +123,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
             add_publics_circom(&mut updated_proof, 0, pctx, &recursive2_verkey, true);
         }
 
-        let circom_witness = generate_witness::<F>(setup, &updated_proof)?;
+        let circom_witness = generate_witness::<F>(setup, &updated_proof, proof.global_idx.unwrap())?;
         timer_stop_and_log_info!(
             GENERATE_RECURSIVE1_WITNESS,
             "GENERATING_RECURSIVE1_WITNESS_{} [{}:{}]",
@@ -175,7 +175,7 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
             + ".verkey.json";
 
     add_publics_circom(&mut updated_proof_recursive2, 0, pctx, &recursive2_verkey, true);
-    let circom_witness = generate_witness::<F>(setup_recursive2, &updated_proof_recursive2)?;
+    let circom_witness = generate_witness::<F>(setup_recursive2, &updated_proof_recursive2, 0)?;
 
     timer_stop_and_log_info!(GENERATE_WITNESS_AGGREGATION);
     Ok(Proof::new_witness(
@@ -542,7 +542,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     }
 
     let setup = setups.setup_vadcop_final.as_ref().unwrap();
-    let circom_witness_vadcop_final = generate_witness::<F>(setup, &updated_proof)?;
+    let circom_witness_vadcop_final = generate_witness::<F>(setup, &updated_proof, 0)?;
     let witness_final_proof =
         Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, setup.n_cols as usize);
     tracing::info!("··· Generating vadcop final proof");
@@ -608,7 +608,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         vadcop_final_proof[p] = (public_inputs[p].as_canonical_biguint()).to_u64().unwrap();
     }
 
-    let circom_witness = generate_witness::<F>(setup, &vadcop_final_proof)?;
+    let circom_witness = generate_witness::<F>(setup, &vadcop_final_proof, 0)?;
 
     let publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
@@ -701,7 +701,11 @@ pub fn generate_fflonk_snark_proof<F: PrimeField64>(
     Ok(())
 }
 
-fn generate_witness<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) -> Result<Vec<F>, Box<dyn std::error::Error>> {
+fn generate_witness<F: PrimeField64>(
+    setup: &Setup<F>,
+    zkin: &[u64],
+    instance_id: usize,
+) -> Result<Vec<F>, Box<dyn std::error::Error>> {
     let mut witness_size = setup.size_witness.read().unwrap().unwrap();
     witness_size += *setup.exec_data.read().unwrap().as_ref().unwrap().first().unwrap();
 
@@ -713,11 +717,19 @@ fn generate_witness<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) -> Result<V
         None => panic!("circom_circuit is not initialized"),
     };
 
-    unsafe {
+    let res = unsafe {
         let library_guard = setup.circom_library.read().unwrap();
         let library = library_guard.as_ref().ok_or("Circom library not loaded")?;
         let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-        get_witness(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_ptr() as *mut c_void, 1);
+        get_witness(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_ptr() as *mut c_void, 1)
+    };
+
+    if res != 0 {
+        return Err(format!(
+            "Error generating witness for instance id {} [{}:{}] of type {:?}",
+            instance_id, setup.airgroup_id, setup.air_id, setup.setup_type
+        )
+        .into());
     }
 
     Ok(witness)
