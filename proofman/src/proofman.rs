@@ -29,6 +29,8 @@ use csv::Writer;
 use rand::{SeedableRng, seq::SliceRandom};
 use rand::rngs::StdRng;
 
+use std::sync::Condvar;
+
 #[cfg(distributed)]
 use mpi::topology::Communicator;
 
@@ -80,6 +82,7 @@ struct CsvInfo {
 
 pub struct ProofMan<F: PrimeField64> {
     pctx: Arc<ProofCtx<F>>,
+    pctx_lite: Arc<ProofCtx<F>>,
     sctx: Arc<SetupCtx<F>>,
     mpi_ctx: Arc<MpiCtx>,
     setups: Arc<SetupsVadcop<F>>,
@@ -132,10 +135,15 @@ pub struct ProofMan<F: PrimeField64> {
     worker_contributions: Arc<RwLock<Vec<ContributionsInfo>>>,
     max_witness_trace_size: usize,
     packed_info: HashMap<(usize, usize), PackedInfo>,
+    execute_condvar: Arc<Condvar>,
+    execute_mutex: Arc<Mutex<()>>,
+    execute: Arc<AtomicBool>,
+    execution_stored: Arc<AtomicBool>,
 }
 
 #[derive(Debug, PartialEq, Clone, BorshSerialize, BorshDeserialize)]
 pub enum ProvePhase {
+    Execution,
     Contributions,
     Internal,
     Full,
@@ -144,6 +152,7 @@ pub enum ProvePhase {
 #[derive(Debug, Clone)]
 pub struct ProofInfo {
     pub input_data_path: Option<PathBuf>,
+    pub force_execution: bool,
     pub n_partitions: usize,
     pub partition_ids: Vec<u32>,
     pub worker_index: usize,
@@ -155,6 +164,7 @@ impl BorshSerialize for ProofInfo {
         let path_string = self.input_data_path.as_ref().map(|p| p.to_string_lossy().to_string());
 
         BorshSerialize::serialize(&path_string, writer)?;
+        BorshSerialize::serialize(&self.force_execution, writer)?;
         BorshSerialize::serialize(&self.n_partitions, writer)?;
         BorshSerialize::serialize(&self.partition_ids, writer)?;
         BorshSerialize::serialize(&self.worker_index, writer)?;
@@ -166,21 +176,23 @@ impl BorshDeserialize for ProofInfo {
     fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
         let input_data_path_string: Option<String> = BorshDeserialize::deserialize_reader(reader)?;
         let input_data_path = input_data_path_string.map(PathBuf::from);
+        let force_execution: bool = BorshDeserialize::deserialize_reader(reader)?;
         let n_partitions = usize::deserialize_reader(reader)?;
         let partition_ids = Vec::<u32>::deserialize_reader(reader)?;
         let worker_index = usize::deserialize_reader(reader)?;
-        Ok(Self { input_data_path, n_partitions, partition_ids, worker_index })
+        Ok(Self { force_execution, input_data_path, n_partitions, partition_ids, worker_index })
     }
 }
 
 impl ProofInfo {
     pub fn new(
         input_data_path: Option<PathBuf>,
+        force_execution: bool,
         n_partitions: usize,
         partition_ids: Vec<u32>,
         worker_index: usize,
     ) -> Self {
-        Self { input_data_path, n_partitions, partition_ids, worker_index }
+        Self { input_data_path, force_execution, n_partitions, partition_ids, worker_index }
     }
 }
 
@@ -193,6 +205,7 @@ pub struct ContributionsInfo {
 
 #[derive(Debug, BorshSerialize, BorshDeserialize)]
 pub enum ProvePhaseInputs {
+    Execution(ProofInfo),
     Contributions(ProofInfo),
     Internal(Vec<ContributionsInfo>),
     Full(ProofInfo),
@@ -200,6 +213,7 @@ pub enum ProvePhaseInputs {
 
 #[derive(Debug)]
 pub enum ProvePhaseResult {
+    Execution(),
     Contributions(Vec<ContributionsInfo>),
     Internal(Vec<AggProofs>),
     Full(Option<String>, Option<Vec<u64>>),
@@ -247,6 +261,11 @@ where
             let _sub_comm = self.pctx.mpi_ctx.world.split_by_color(color);
             self.pctx.mpi_ctx.world.split_shared(self.pctx.mpi_ctx.rank);
         }
+    }
+
+    pub fn is_execution_done(&self) {
+        let _guard = self.execute_mutex.lock().unwrap();
+        let _guard = self.execute_condvar.wait_while(_guard, |_| !self.execute.load(Ordering::SeqCst)).unwrap();
     }
 
     pub fn check_setup(
@@ -365,8 +384,8 @@ where
     pub fn execute_(&self, output_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize);
 
-        self.reset();
         self.pctx.dctx_reset();
+        self.reset();
 
         self.exec()?;
 
@@ -504,8 +523,8 @@ where
     pub fn compute_witness_(&self, options: ProofOptions) -> Result<(), Box<dyn std::error::Error>> {
         self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize);
 
-        self.reset();
         self.pctx.dctx_reset();
+        self.reset();
 
         let memory_handler = Arc::new(MemoryHandler::new(
             self.pctx.clone(),
@@ -633,8 +652,8 @@ where
 
         self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize);
 
-        self.reset();
         self.pctx.dctx_reset();
+        self.reset();
 
         self.exec()?;
 
@@ -837,7 +856,7 @@ where
             return Err("Proofman has not been initialized in final snark mode".into());
         }
 
-        let phase_inputs = ProvePhaseInputs::Full(ProofInfo::new(input_data_path, 1, vec![0], 0));
+        let phase_inputs = ProvePhaseInputs::Full(ProofInfo::new(input_data_path, true, 1, vec![0], 0));
         self._generate_proof(phase_inputs, options, ProvePhase::Full)
     }
 
@@ -983,8 +1002,11 @@ where
 
         let received_agg_proofs = Arc::new(RwLock::new((0..n_airgroups).map(|_| Vec::new()).collect::<Vec<Vec<_>>>()));
 
+        let pctx_lite = Arc::new(ProofCtx::create_ctx_lite(&pctx.global_info, pctx.weights.clone(), mpi_ctx.clone()));
+
         Ok(Self {
             pctx,
+            pctx_lite,
             sctx,
             mpi_ctx,
             wcm,
@@ -1037,12 +1059,16 @@ where
             n_gpus: n_gpus as usize,
             max_witness_trace_size,
             packed_info,
+            execute: Arc::new(AtomicBool::new(true)),
+            execute_condvar: Arc::new(Condvar::new()),
+            execute_mutex: Arc::new(Mutex::new(())),
+            execution_stored: Arc::new(AtomicBool::new(false)),
         })
     }
 
     pub fn reset(&self) {
-        self.wcm.reset();
-        self.pctx.dctx_reset();
+        self.execute.store(false, Ordering::SeqCst);
+        self.execution_stored.store(false, Ordering::SeqCst);
 
         for proof_lock in self.proofs.iter() {
             let mut proof = proof_lock.write().unwrap();
@@ -1105,6 +1131,30 @@ where
         timer_start_info!(GENERATING_VADCOP_PROOF);
         timer_start_info!(GENERATING_PROOFS);
 
+        if phase == ProvePhase::Execution {
+            let proof_info = match phase_inputs {
+                ProvePhaseInputs::Execution(proof_info) => proof_info,
+                _ => panic!("Invalid phase inputs for execution"),
+            };
+
+            self.is_execution_done();
+            self.execute.store(false, Ordering::SeqCst);
+            self.wcm.set_input_data_path(proof_info.input_data_path.clone());
+
+            self.pctx_lite.dctx_reset();
+            self.pctx_lite.dctx_setup(
+                proof_info.n_partitions,
+                proof_info.partition_ids.clone(),
+                proof_info.worker_index,
+                self.mpi_ctx.n_processes as usize,
+                self.mpi_ctx.rank as usize,
+            );
+
+            self.exec_with_pctx(self.pctx_lite.clone())?;
+            self.execution_stored.store(true, Ordering::SeqCst);
+            return Ok(ProvePhaseResult::Execution());
+        }
+
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
             let proof_info = match phase_inputs {
                 ProvePhaseInputs::Full(proof_info) => proof_info,
@@ -1112,17 +1162,21 @@ where
                 _ => panic!("Invalid phase inputs for contributions"),
             };
 
-            self.pctx.dctx_setup(
-                proof_info.n_partitions,
-                proof_info.partition_ids.clone(),
-                proof_info.worker_index,
-                self.mpi_ctx.n_processes as usize,
-                self.mpi_ctx.rank as usize,
-            );
-            self.wcm.set_input_data_path(proof_info.input_data_path.clone());
-
-            self.reset();
-            self.pctx.dctx_reset();
+            if !self.execution_stored.load(Ordering::SeqCst) || proof_info.force_execution {
+                self.wcm.set_input_data_path(proof_info.input_data_path.clone());
+                self.pctx.dctx_reset();
+                self.pctx.dctx_setup(
+                    proof_info.n_partitions,
+                    proof_info.partition_ids.clone(),
+                    proof_info.worker_index,
+                    self.mpi_ctx.n_processes as usize,
+                    self.mpi_ctx.rank as usize,
+                );
+                self.exec()?;
+            } else {
+                self.reset();
+                self.pctx.move_from_ctx_lite(self.pctx_lite.clone());
+            }
 
             if !options.minimal_memory && cfg!(feature = "gpu") {
                 self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
@@ -1179,8 +1233,6 @@ where
                 options.minimal_memory,
                 false,
             );
-
-            self.exec()?;
 
             if !options.test_mode {
                 Self::initialize_publics_custom_commits(&self.sctx, &self.pctx)?;
@@ -1649,6 +1701,9 @@ where
             false,
         );
 
+        self.execute.store(true, Ordering::SeqCst);
+        self.execute_condvar.notify_all();
+
         if !options.minimal_memory && cfg!(feature = "gpu") {
             self.pctx.set_witness_tx(None);
             self.pctx.set_witness_tx_priority(None);
@@ -1783,6 +1838,26 @@ where
 
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
 
+        if options.save_proofs {
+            let global_info_path = self.pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
+            let global_info_file = global_info_path.to_str().unwrap();
+            save_challenges_c(
+                self.pctx.get_challenges_ptr(),
+                global_info_file,
+                options.output_dir_path.to_string_lossy().as_ref(),
+            );
+            save_proof_values_c(
+                self.pctx.get_proof_values_ptr(),
+                global_info_file,
+                options.output_dir_path.to_string_lossy().as_ref(),
+            );
+            save_publics_c(
+                self.pctx.global_info.n_publics as u64,
+                self.pctx.get_publics_ptr(),
+                options.output_dir_path.to_string_lossy().as_ref(),
+            );
+        }
+
         if options.verify_proofs {
             if options.aggregation {
                 if self.mpi_ctx.rank == 0 {
@@ -1810,26 +1885,6 @@ where
             tracing::info!(
                 "··· {}",
                 "All proofs were successfully generated. Verification Skipped".bright_yellow().bold()
-            );
-        }
-
-        if options.save_proofs {
-            let global_info_path = self.pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
-            let global_info_file = global_info_path.to_str().unwrap();
-            save_challenges_c(
-                self.pctx.get_challenges_ptr(),
-                global_info_file,
-                options.output_dir_path.to_string_lossy().as_ref(),
-            );
-            save_proof_values_c(
-                self.pctx.get_proof_values_ptr(),
-                global_info_file,
-                options.output_dir_path.to_string_lossy().as_ref(),
-            );
-            save_publics_c(
-                self.pctx.global_info.n_publics as u64,
-                self.pctx.get_publics_ptr(),
-                options.output_dir_path.to_string_lossy().as_ref(),
             );
         }
 
@@ -2104,6 +2159,23 @@ where
         } else {
             Err("Basic proofs were not verified".into())
         }
+    }
+
+    fn exec_with_pctx(&self, pctx: Arc<ProofCtx<F>>) -> Result<(), Box<dyn std::error::Error>> {
+        timer_start_info!(EXECUTE);
+
+        self.execute.store(false, Ordering::SeqCst);
+
+        if !self.wcm.is_init_witness() {
+            return Err("Witness computation dynamic library not initialized".into());
+        }
+
+        self.wcm.execute_with_pctx(pctx.clone());
+
+        print_summary_info(&pctx, &self.sctx, &self.mpi_ctx, &self.packed_info);
+
+        timer_stop_and_log_info!(EXECUTE);
+        Ok(())
     }
 
     fn exec(&self) -> Result<(), Box<dyn std::error::Error>> {

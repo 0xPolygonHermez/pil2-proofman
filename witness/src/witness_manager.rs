@@ -81,6 +81,7 @@ impl<F: PrimeField64> WitnessManager<F> {
     }
 
     pub fn execute(&self) {
+        self.components_instance_ids.iter().for_each(|ids| ids.write().unwrap().clear());
         self.execution_done.store(false, Ordering::SeqCst);
         let n_components = self.components_std.read().unwrap().len();
         for (idx, component) in self.components_std.read().unwrap().iter().enumerate() {
@@ -104,8 +105,30 @@ impl<F: PrimeField64> WitnessManager<F> {
         self.execution_done.store(true, Ordering::SeqCst);
     }
 
-    pub fn reset(&self) {
+    pub fn execute_with_pctx(&self, pctx: Arc<ProofCtx<F>>) {
         self.components_instance_ids.iter().for_each(|ids| ids.write().unwrap().clear());
+
+        self.execution_done.store(false, Ordering::SeqCst);
+        let n_components = self.components_std.read().unwrap().len();
+        for (idx, component) in self.components_std.read().unwrap().iter().enumerate() {
+            component.execute(
+                pctx.clone(),
+                &self.components_instance_ids[n_components + idx],
+                self.input_data_path.read().unwrap().clone(),
+            );
+        }
+
+        for (idx, component) in self.components.read().unwrap().iter().enumerate() {
+            component.execute(
+                pctx.clone(),
+                &self.components_instance_ids[idx],
+                self.input_data_path.read().unwrap().clone(),
+            );
+        }
+
+        self.pctx.dctx_assign_instances();
+
+        self.execution_done.store(true, Ordering::SeqCst);
     }
 
     pub fn debug(&self, instance_ids: &[usize], debug_info: &DebugInfo) {

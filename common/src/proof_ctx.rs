@@ -279,6 +279,50 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
+    pub fn create_ctx_lite(
+        global_info: &GlobalInfo,
+        weights: HashMap<(usize, usize), u64>,
+        mpi_ctx: Arc<MpiCtx>,
+    ) -> Self {
+        let dctx = DistributionCtx::new();
+        let n_publics = global_info.n_publics;
+        let n_proof_values = global_info
+            .proof_values_map
+            .as_ref()
+            .map(|map| map.iter().filter(|entry| entry.stage == 1).count())
+            .unwrap_or(0);
+        let n_challenges = global_info.n_challenges.iter().sum::<usize>();
+
+        Self {
+            mpi_ctx,
+            global_info: GlobalInfo::default(),
+            public_inputs: Values::new(n_publics),
+            proof_values: Values::new(n_proof_values),
+            challenges: Values::new(n_challenges * 3),
+            global_challenge: Values::new(3),
+            air_instances: Vec::new(),
+            dctx: RwLock::new(dctx),
+            debug_info: RwLock::new(DebugInfo::default()),
+            custom_commits_fixed: HashMap::new(),
+            weights,
+            aggregation: false,
+            final_snark: false,
+            witness_tx: RwLock::new(None),
+            witness_tx_priority: RwLock::new(None),
+            proof_tx: RwLock::new(None),
+        }
+    }
+
+    pub fn move_from_ctx_lite(&self, other: Arc<ProofCtx<F>>) {
+        let other_public_values = std::mem::take(&mut *other.public_inputs.values.write().unwrap());
+        let other_proof_values = std::mem::take(&mut *other.proof_values.values.write().unwrap());
+        let other_dctx = std::mem::take(&mut *other.dctx.write().unwrap());
+
+        *self.public_inputs.values.write().unwrap() = other_public_values;
+        *self.proof_values.values.write().unwrap() = other_proof_values;
+        *self.dctx.write().unwrap() = other_dctx;
+    }
+
     pub fn set_debug_info(&self, debug_info: &DebugInfo) {
         let mut debug_info_guard = self.debug_info.write().unwrap();
         *debug_info_guard = debug_info.clone();

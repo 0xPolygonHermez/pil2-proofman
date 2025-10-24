@@ -23,15 +23,16 @@ pub struct PublicMap {
     pub lengths: Vec<u64>,
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Default, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub enum CurveType {
+    #[default]
     None,
     EcGFp5,
     EcMasFp5,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Default, Clone, Deserialize)]
 pub struct GlobalInfo {
     pub folder_path: String,
     pub name: String,
