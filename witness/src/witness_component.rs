@@ -57,7 +57,7 @@ macro_rules! execute {
         ) {
             let mut instance_ids = Vec::new();
             for _ in 0..$num_instances {
-                let global_id = pctx.add_instance($Trace::<F>::AIRGROUP_ID, $Trace::<F>::AIR_ID, 1);
+                let global_id = pctx.add_instance($Trace::<F>::AIRGROUP_ID, $Trace::<F>::AIR_ID);
                 instance_ids.push(global_id);
                 global_ids.write().unwrap().push(global_id);
             }
