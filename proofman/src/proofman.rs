@@ -241,7 +241,8 @@ where
     pub fn split_active_processes(&self, _is_active: bool) {
         #[cfg(distributed)]
         {
-            let color = if _is_active { mpi::topology::Color::with_value(1) } else { mpi::topology::Color::undefined() };
+            let color =
+                if _is_active { mpi::topology::Color::with_value(1) } else { mpi::topology::Color::undefined() };
 
             let _sub_comm = self.pctx.mpi_ctx.world.split_by_color(color);
             self.pctx.mpi_ctx.world.split_shared(self.pctx.mpi_ctx.rank);

@@ -26,6 +26,7 @@ use std::sync::OnceLock;
 use yansi::Color;
 use yansi::Paint;
 use colored::Colorize;
+use std::io::IsTerminal;
 
 static GLOBAL_RANK: OnceLock<i32> = OnceLock::new();
 
@@ -50,21 +51,32 @@ where
             timer.format_time(&mut fake_writer)?;
         }
 
-        write!(writer, "{} ", time_str.dimmed())?;
+        if std::io::stdout().is_terminal() {
+            write!(writer, "{} ", time_str.dimmed())?;
+        } else {
+            write!(writer, "{} ", time_str)?;
+        }
 
         if let Some(rank) = GLOBAL_RANK.get().copied() {
-            let rank_str = format!("[rank={rank}]").dimmed();
+            let rank_str = match std::io::stdout().is_terminal() {
+                true => format!("[rank={rank}]").dimmed(),
+                false => format!("[rank={rank}]").into(),
+            };
             write!(writer, "{} ", rank_str)?;
         }
 
-        let level_str = match *event.metadata().level() {
-            tracing::Level::TRACE => "TRACE".paint(Color::Cyan),
-            tracing::Level::DEBUG => "DEBUG".paint(Color::Blue),
-            tracing::Level::INFO => "INFO".paint(Color::Green),
-            tracing::Level::WARN => "WARN".paint(Color::Yellow),
-            tracing::Level::ERROR => "ERROR".paint(Color::Red),
-        };
-        write!(writer, "{}: ", level_str)?;
+        if std::io::stdout().is_terminal() {
+            let level_str = match *event.metadata().level() {
+                tracing::Level::TRACE => "TRACE".paint(Color::Cyan),
+                tracing::Level::DEBUG => "DEBUG".paint(Color::Blue),
+                tracing::Level::INFO => "INFO".paint(Color::Green),
+                tracing::Level::WARN => "WARN".paint(Color::Yellow),
+                tracing::Level::ERROR => "ERROR".paint(Color::Red),
+            };
+            write!(writer, "{}: ", level_str)?;
+        } else {
+            write!(writer, "{}: ", event.metadata().level())?;
+        }
 
         let mut visitor = MessageVisitor::new();
         event.record(&mut visitor);
