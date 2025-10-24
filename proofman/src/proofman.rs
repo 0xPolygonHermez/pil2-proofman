@@ -957,8 +957,24 @@ where
         let num_threads_per_witness = match gpu_params.are_threads_per_witness_set {
             true => gpu_params.number_threads_pools_witness,
             false => {
-                max_num_threads.saturating_div(8).max(1)
-            } 
+                let num_threads_8 = max_num_threads / 8;
+                let num_threads_4 = max_num_threads / 4;
+                let num_threads_2 = max_num_threads / 2;
+
+                let total_cores_8 = 8 * num_threads_8;
+                let total_cores_4 = 4 * num_threads_4;
+                let total_cores_2 = 2 * num_threads_2;
+
+                if total_cores_8 >= total_cores_4 && total_cores_8 >= total_cores_2 && num_threads_8 > 0 {
+                    num_threads_8
+                } else if total_cores_4 >= total_cores_2 && num_threads_4 > 0 {
+                    num_threads_4
+                } else if num_threads_2 > 0 {
+                    num_threads_2
+                } else {
+                    1
+                }
+            }
         };
         tracing::info!("Using {num_threads_per_witness} threads per witness computation");
 
