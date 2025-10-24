@@ -18,42 +18,30 @@ type FieldExtension<F> = [F; 3];
 
 pub const PILOUT_HASH: &str = "7ccecda867483cf9f137fc5110e9be1b9f93ed0ae7fce6d2808da1a8ffbf6dfd";
 
-//AIRGROUP CONSTANTS
-
+// AIRGROUP CONSTANTS
 pub const FIBO_CPU_AIRGROUP_ID: usize = 0;
 
-//AIR CONSTANTS
-
+// AIR CONSTANTS
 pub const FIBONACCI_SQUARE_AIR_IDS: &[usize] = &[0];
-
 pub const MODULE_AIR_IDS: &[usize] = &[1];
-
 pub const SPECIFIED_RANGES_AIR_IDS: &[usize] = &[2];
 
-
-//PUBLICS
+// PUBLICS
 use serde::Deserialize;
 use serde::Serialize;
 use serde_arrays;
-
-
 fn default_array_rom_root() -> [u64; 4] {
     [0; 4]
 }
 
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BuildPublics {
-    #[serde(default)]
-    pub module: u64,
-    #[serde(default)]
-    pub in1: u64,
-    #[serde(default)]
-    pub in2: u64,
-    #[serde(default)]
-    pub out: u64,
-    #[serde(default = "default_array_rom_root", with = "serde_arrays")]
-    pub rom_root: [u64; 4],
+    #[serde(default)] pub module: u64,
+    #[serde(default)] pub in1: u64,
+    #[serde(default)] pub in2: u64,
+    #[serde(default)] pub out: u64,
+    
+    #[serde(default = "default_array_rom_root", with = "serde_arrays")] pub rom_root: [u64; 4],
     
 }
 
@@ -69,72 +57,46 @@ impl Default for BuildPublics {
     }
 }
 
-values!(BuildPublicValues<F> {
- module: F, in1: F, in2: F, out: F, rom_root: [F; 4],
-});
- 
-values!(BuildProofValues<F> {
- value1: F, value2: F,
-});
- 
-trace_row!(FibonacciSquareFixedRow<F> {
- L1: F, __L1__: F,
-});
+// PUBLIC VALUES
+values!(BuildPublicValues<F> { module: F, in1: F, in2: F, out: F, rom_root: [F; 4], });
+
+// PROOF VALUES
+values!(BuildProofValues<F> { value1: F, value2: F, });
+
+// TRACES
+trace_row!(FibonacciSquareFixedRow<F> { L1: F, __L1__: F,});
 pub type FibonacciSquareFixed<F> = GenericTrace<FibonacciSquareFixedRow<F>, 4194304, 0, 0>;
 
-trace_row!(FibonacciSquareTraceRow<F> {
- a:F, b:F,
-});
+trace_row!(FibonacciSquareTraceRow<F> { a:F, b:F,});
 pub type FibonacciSquareTrace<F> = GenericTrace<FibonacciSquareTraceRow<F>, 4194304, 0, 0>;
 
 
-trace_row!(ModuleFixedRow<F> {
- SEGMENT_LN: F, __L1__: F,
-});
+trace_row!(ModuleFixedRow<F> { SEGMENT_LN: F, __L1__: F,});
 pub type ModuleFixed<F> = GenericTrace<ModuleFixedRow<F>, 1048576, 0, 1>;
 
-trace_row!(ModuleTraceRow<F> {
- x:F, q:F, x_mod:F,
-});
+trace_row!(ModuleTraceRow<F> { x:F, q:F, x_mod:F,});
 pub type ModuleTrace<F> = GenericTrace<ModuleTraceRow<F>, 1048576, 0, 1>;
 
 
-trace_row!(SpecifiedRangesFixedRow<F> {
- RANGE: [F; 1], __L1__: F,
-});
+trace_row!(SpecifiedRangesFixedRow<F> { RANGE: [F; 1], __L1__: F,});
 pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 256, 0, 2>;
 
-trace_row!(SpecifiedRangesTraceRow<F> {
- mul:[F; 1],
-});
+trace_row!(SpecifiedRangesTraceRow<F> { mul:[F; 1],});
 pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 256, 0, 2>;
 
 
-trace_row!(FibonacciSquareRomTraceRow<F> {
- line: F, flags: F,
-});
+// CUSTOM COMMITS
+trace_row!(FibonacciSquareRomTraceRow<F> { line: F, flags: F,});
 pub type FibonacciSquareRomTrace<F> = GenericTrace<FibonacciSquareRomTraceRow<F>, 4194304, 0, 0, 0>;
 
+// AIRGROUP VALUES
+values!(FibonacciSquareAirGroupValues<F> { gsum_result: FieldExtension<F>,});
+values!(ModuleAirGroupValues<F> { gsum_result: FieldExtension<F>,});
+values!(SpecifiedRangesAirGroupValues<F> { gsum_result: FieldExtension<F>,});
 
-values!(FibonacciSquareAirValues<F> {
- fibo1: [F; 2], fibo3: FieldExtension<F>,
-});
-
-values!(ModuleAirValues<F> {
- last_segment: F,
-});
-
-values!(FibonacciSquareAirGroupValues<F> {
- gsum_result: FieldExtension<F>,
-});
-
-values!(ModuleAirGroupValues<F> {
- gsum_result: FieldExtension<F>,
-});
-
-values!(SpecifiedRangesAirGroupValues<F> {
- gsum_result: FieldExtension<F>,
-});
+// AIR VALUES
+values!(FibonacciSquareAirValues<F> { fibo1: [F; 2], fibo3: FieldExtension<F>, });
+values!(ModuleAirValues<F> { last_segment: F, });
 
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
 ];
