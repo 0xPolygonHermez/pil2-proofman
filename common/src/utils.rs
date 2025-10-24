@@ -26,8 +26,6 @@ use std::sync::OnceLock;
 use yansi::Color;
 use yansi::Paint;
 use colored::Colorize;
-use std::fs::File;
-use std::sync::Arc;
 use std::io::IsTerminal;
 
 static GLOBAL_RANK: OnceLock<i32> = OnceLock::new();
