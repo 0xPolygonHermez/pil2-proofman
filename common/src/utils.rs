@@ -30,7 +30,7 @@ use std::io::IsTerminal;
 
 static GLOBAL_RANK: OnceLock<i32> = OnceLock::new();
 
-struct RankFormatter;
+pub struct RankFormatter;
 
 impl<S, N> FormatEvent<S, N> for RankFormatter
 where
