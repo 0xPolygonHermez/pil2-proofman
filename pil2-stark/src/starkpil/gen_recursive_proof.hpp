@@ -1,5 +1,48 @@
 #include "starks.hpp"
 
+void calculateWitnessSTD_BN128(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx &expressionsCtx, bool prod) {
+    std::string name = prod ? "gprod_col" : "gsum_col";
+    if(setupCtx.expressionsBin.getNumberHintIdsByName(name) == 0) return;
+    uint64_t hint[1];
+    setupCtx.expressionsBin.getHintIdsByName(hint, name);
+
+    uint64_t nImHints = setupCtx.expressionsBin.getNumberHintIdsByName("im_col");
+    uint64_t nImHintsAirVals = setupCtx.expressionsBin.getNumberHintIdsByName("im_airval");
+    uint64_t nImTotalHints = nImHints + nImHintsAirVals;
+    if(nImTotalHints > 0) {
+        uint64_t imHints[nImHints + nImHintsAirVals];
+        setupCtx.expressionsBin.getHintIdsByName(imHints, "im_col");
+        setupCtx.expressionsBin.getHintIdsByName(&imHints[nImHints], "im_airval");
+        std::string hintFieldDest[nImTotalHints];
+        std::string hintField1[nImTotalHints];
+        std::string hintField2[nImTotalHints];
+        HintFieldOptions hintOptions1[nImTotalHints];
+        HintFieldOptions hintOptions2[nImTotalHints];
+        for(uint64_t i = 0; i < nImTotalHints; i++) {
+            hintFieldDest[i] = "reference";
+            hintField1[i] = "numerator";
+            hintField2[i] = "denominator";
+            HintFieldOptions options1;
+            HintFieldOptions options2;
+            options2.inverse = true;
+            hintOptions1[i] = options1;
+            hintOptions2[i] = options2;
+        }
+
+        multiplyHintFields(setupCtx, params, expressionsCtx, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2);
+        
+    }
+
+    HintFieldOptions options1;
+    HintFieldOptions options2;
+    options2.inverse = true;
+
+    std::string hintFieldNameAirgroupVal = setupCtx.starkInfo.airgroupValuesMap.size() > 0 ? "result" : "";
+
+    accMulHintFields(setupCtx, params, expressionsCtx, hint[0], "reference", hintFieldNameAirgroupVal, "numerator_air", "denominator_air", options1, options2, !prod);
+    updateAirgroupValue(setupCtx, params, hint[0], hintFieldNameAirgroupVal, "numerator_direct", "denominator_direct", options1, options2, !prod);
+}
+
 void *genRecursiveProofBN128(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *witness, Goldilocks::Element *aux_trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, uint64_t *proofBuffer, std::string proofFile) {
     TimerStart(STARK_PROOF);
 
@@ -75,32 +118,10 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, json& globalInfo, uint64_t airg
         }
     }
 
-    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    Goldilocks::Element *res = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]];
-    Goldilocks::Element *gprod = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("q", true)] + N*FIELD_EXTENSION];
-
-    uint64_t gprodFieldId = setupCtx.expressionsBin.hints[0].fields[0].values[0].id;
-    uint64_t numFieldId = setupCtx.expressionsBin.hints[0].fields[1].values[0].id;
-    uint64_t denFieldId = setupCtx.expressionsBin.hints[0].fields[2].values[0].id;
-
-    Dest destStruct(res, N);
-    destStruct.addParams(numFieldId, setupCtx.expressionsBin.expressionsInfo[numFieldId].destDim);
-    destStruct.addParams(denFieldId, setupCtx.expressionsBin.expressionsInfo[denFieldId].destDim, true);
-
-    expressionsCtx.calculateExpressions(params, destStruct, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false, false);
-
-    Goldilocks3::copy((Goldilocks3::Element *)&gprod[0], &Goldilocks3::one());
-    for(uint64_t i = 1; i < N; ++i) {
-        Goldilocks3::mul((Goldilocks3::Element *)&gprod[i * FIELD_EXTENSION], (Goldilocks3::Element *)&gprod[(i - 1) * FIELD_EXTENSION], (Goldilocks3::Element *)&res[(i - 1) * FIELD_EXTENSION]);
-    }
-
-
-    uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair("cm2", false)] + setupCtx.starkInfo.cmPolsMap[gprodFieldId].stagePos;
-    uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm2"];
-#pragma omp parallel for
-    for(uint64_t j = 0; j < N; ++j) {
-        std::memcpy(&params.aux_trace[offset + nCols*j], &gprod[j*FIELD_EXTENSION], FIELD_EXTENSION * sizeof(Goldilocks::Element));
-    }
+    TimerStart(STARK_CALCULATE_WITNESS_STD);
+    calculateWitnessSTD_BN128(setupCtx, params, expressionsCtx, true);
+    calculateWitnessSTD_BN128(setupCtx, params, expressionsCtx, false);
+    TimerStopAndLog(STARK_CALCULATE_WITNESS_STD);
     
     TimerStart(CALCULATE_IM_POLS);
     starks.calculateImPolsExpressions(2, params, expressionsCtx);

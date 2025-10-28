@@ -12,22 +12,10 @@
 #include <limits.h>
 #include "gl64_t.cuh"
 
+
 class gl64_gpu
 {
 public:
-    // GPU utilities
-    static __device__ __forceinline__ void copy_gpu(gl64_t *dst, const gl64_t *src, bool const_src)
-    {
-        int tid = const_src ? 0 : threadIdx.x;
-        dst[threadIdx.x] = src[tid];
-    }
-
-    static __device__ __forceinline__ void copy_gpu(gl64_t *dst, uint64_t stride_dst, const gl64_t *src, bool const_src)
-    {
-        int tid = const_src ? 0 : threadIdx.x;
-        dst[threadIdx.x * stride_dst] = src[tid];
-    }
-
     static __device__ __forceinline__ void op_gpu(uint64_t op, gl64_t *c, const gl64_t *a, bool const_a, const gl64_t *b, bool const_b)
     {
         int tida = const_a ? 0 : threadIdx.x;
@@ -67,9 +55,13 @@ struct AirInstanceInfo {
 
     Goldilocks::Element *verkeyRoot;
 
+    bool is_packed = false;
+    uint64_t num_packed_words = 0;
+    uint64_t *unpack_info = nullptr;
+
     uint64_t nStreams = 1;
 
-    AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_, uint64_t nStreams_): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId), nStreams(nStreams_) {
+    AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_, PackedInfo *packedInfo, uint64_t nStreams_): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId), nStreams(nStreams_) {
         int64_t *d_openingPoints;
         CHECKCUDAERR(cudaMalloc(&d_openingPoints, setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t)));
         CHECKCUDAERR(cudaMemcpy(d_openingPoints, setupCtx->starkInfo.openingPoints.data(), setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t), cudaMemcpyHostToDevice));
@@ -112,9 +104,11 @@ struct AirInstanceInfo {
                 PolMap polInfo = type == "cm" ? setupCtx->starkInfo.cmPolsMap[ev.id] : type == "custom" ? setupCtx->starkInfo.customCommitsMap[ev.commitId][ev.id]
                                                                                                             : setupCtx->starkInfo.constPolsMap[ev.id];
                 evalsInfoHost[nEvals].type = type == "cm" ? 0 : type == "custom" ? 1
-                                                                        : 2; //rick: harcoded
-                evalsInfoHost[nEvals].offset = setupCtx->starkInfo.getTraceOffset(type, polInfo, true);
-                evalsInfoHost[nEvals].stride = setupCtx->starkInfo.getTraceNColsSection(type, polInfo, true);
+                                                                        : 2;
+                std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? setupCtx->starkInfo.customCommits[polInfo.commitId].name + "0" : "const";
+                evalsInfoHost[nEvals].stagePos = polInfo.stagePos;
+                evalsInfoHost[nEvals].offset = setupCtx->starkInfo.mapOffsets[std::make_pair(stage, true)];
+                evalsInfoHost[nEvals].stageCols = setupCtx->starkInfo.mapSectionsN[stage];
                 evalsInfoHost[nEvals].dim = polInfo.dim;
                 evalsInfoHost[nEvals].openingPos = std::distance(openingPoints.begin(), it);
                 evalsInfoHost[nEvals].evalPos = k;
@@ -160,8 +154,10 @@ struct AirInstanceInfo {
 
             EvalInfo* evInfo = &evalsInfoByOpeningPos[pos][evalsInfoFRISizes_[pos]];
             evInfo->type = (type == "cm") ? 0 : (type == "custom") ? 1 : 2;
-            evInfo->offset = setupCtx->starkInfo.getTraceOffset(type, polInfo, true);
-            evInfo->stride = setupCtx->starkInfo.getTraceNColsSection(type, polInfo, true);
+            std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? setupCtx->starkInfo.customCommits[polInfo.commitId].name + "0" : "const";
+            evInfo->stagePos = polInfo.stagePos;
+            evInfo->offset = setupCtx->starkInfo.mapOffsets[std::make_pair(stage, true)];
+            evInfo->stageCols = setupCtx->starkInfo.mapSectionsN[stage];
             evInfo->dim = polInfo.dim;
             evInfo->evalPos = i;
             evInfo->openingPos = pos;
@@ -187,6 +183,16 @@ struct AirInstanceInfo {
         
         delete[] evalsInfoFRISizes_;
         delete[] evalsInfoByOpeningPos;
+
+        if (packedInfo != nullptr) {
+            is_packed = packedInfo->is_packed;
+            num_packed_words = packedInfo->num_packed_words;
+            uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
+            if (is_packed && num_packed_words > 0) {
+                CHECKCUDAERR(cudaMalloc(&unpack_info, nCols * sizeof(uint64_t)));
+                CHECKCUDAERR(cudaMemcpy(unpack_info, packedInfo->unpack_info, nCols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+            }
+        }
     }
 
     ~AirInstanceInfo() {
@@ -229,6 +235,10 @@ struct AirInstanceInfo {
         if (evalsInfoFRISizes != nullptr) {
             CHECKCUDAERR(cudaFree(evalsInfoFRISizes));
         }
+
+        if (unpack_info != nullptr) {
+            CHECKCUDAERR(cudaFree(unpack_info));
+        }
     }
 };
 
@@ -269,6 +279,8 @@ struct StreamData{
     bool recursive;
     bool extraStream;
     uint64_t streamsUsed;
+
+    std::mutex mutex_stream_selection;
     
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_){
         uint64_t maxExps = 1000; // TODO: CALCULATE IT PROPERLY!
@@ -358,7 +370,6 @@ struct DeviceCommitBuffers
     uint32_t n_total_streams;
     uint32_t n_streams;
     uint32_t n_recursive_streams;
-    std::mutex mutex_slot_selection;
     std::mutex *mutex_pinned;
     StreamData *streamsData;
 
@@ -370,9 +381,9 @@ void copy_to_device_in_chunks(
     const void* src,
     void* dst,
     uint64_t total_size,
-    uint64_t streamId
+    uint64_t streamId,
+    TimerGPU &timer
     );
-
 
 void load_and_copy_to_device_in_chunks(
     DeviceCommitBuffers* d_buffers,

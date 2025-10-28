@@ -39,6 +39,14 @@ impl<F: PrimeField64> WitnessManager<F> {
         }
     }
 
+    pub fn get_world_rank(&self) -> i32 {
+        self.pctx.mpi_ctx.rank
+    }
+
+    pub fn get_local_rank(&self) -> i32 {
+        self.pctx.mpi_ctx.node_rank
+    }
+
     pub fn set_init_witness(&self, init: bool, library: Library) {
         self.init.store(init, Ordering::SeqCst);
         self.library.lock().unwrap().replace(library);
@@ -72,7 +80,7 @@ impl<F: PrimeField64> WitnessManager<F> {
         Ok(())
     }
 
-    pub fn execute(&self, minimal_memory: bool) {
+    pub fn execute(&self) {
         self.execution_done.store(false, Ordering::SeqCst);
         let n_components = self.components_std.read().unwrap().len();
         for (idx, component) in self.components_std.read().unwrap().iter().enumerate() {
@@ -91,7 +99,7 @@ impl<F: PrimeField64> WitnessManager<F> {
             );
         }
 
-        self.pctx.dctx_assign_instances(minimal_memory);
+        self.pctx.dctx_assign_instances();
 
         self.execution_done.store(true, Ordering::SeqCst);
     }

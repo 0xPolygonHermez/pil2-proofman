@@ -32,7 +32,7 @@ type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mu
 
 impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
     fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {
-        pctx.add_instance(0, 0, 1);
+        pctx.add_instance(0, 0);
         global_ids.write().unwrap().push(0);
     }
 
@@ -125,8 +125,14 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
                 pctx.set_public_value(F::as_canonical_u64(public), index);
             }
 
-            let air_instance =
-                AirInstance::new(TraceInfo::new(0, 0, 1 << (setup.stark_info.stark_struct.n_bits), trace, false));
+            let air_instance = AirInstance::new(TraceInfo::new(
+                0,
+                0,
+                1 << (setup.stark_info.stark_struct.n_bits),
+                trace,
+                false,
+                false,
+            ));
             pctx.add_air_instance(air_instance, 0);
         }
     }
