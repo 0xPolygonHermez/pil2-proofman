@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.12.0"
+version = "0.13.0"
 edition = "2021"
 license = "Apache-2.0 or MIT"
 keywords = ["pil2-proofman", "prover", "zero-knowledge"]
@@ -36,6 +36,7 @@ members = [
     # break and dev experience will be bad since repo
     # won't build with a fresh clone
     "examples/fibonacci-square",
+    "examples/test-recursive-c12",
     "examples/test-recursive-c36",
     "examples/test-recursive-c42",
     "macros-test",

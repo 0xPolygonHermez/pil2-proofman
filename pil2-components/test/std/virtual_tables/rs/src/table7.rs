@@ -23,7 +23,7 @@ impl Table7 {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             instance_ids: std::sync::RwLock::new(Vec::new()),
-            multiplicity: create_atomic_vec(Table7Trace::<usize>::NUM_ROWS),
+            multiplicity: create_atomic_vec(Table7Trace::<F>::NUM_ROWS),
             calculated: AtomicBool::new(false),
         })
     }
@@ -73,7 +73,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Table7
                 }
             });
 
-            let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer, false));
+            let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer, false, false));
             pctx.add_air_instance(air_instance, instance_id);
             
         }

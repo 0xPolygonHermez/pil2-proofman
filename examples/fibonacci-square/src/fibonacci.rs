@@ -19,8 +19,7 @@ impl FibonacciSquare {
 
 impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
     fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {
-        let global_id =
-            pctx.add_instance(FibonacciSquareTrace::<usize>::AIRGROUP_ID, FibonacciSquareTrace::<usize>::AIR_ID, 1);
+        let global_id = pctx.add_instance(FibonacciSquareTrace::<F>::AIRGROUP_ID, FibonacciSquareTrace::<F>::AIR_ID);
         let instance_ids = vec![global_id];
         *self.instance_ids.write().unwrap() = instance_ids.clone();
         global_ids.write().unwrap().push(global_id);
@@ -78,8 +77,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         sctx: Arc<SetupCtx<F>>,
         check: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let buffer =
-            vec![F::ZERO; FibonacciSquareRomTrace::<usize>::ROW_SIZE * FibonacciSquareRomTrace::<usize>::NUM_ROWS];
+        let buffer = vec![F::ZERO; FibonacciSquareRomTrace::<F>::ROW_SIZE * FibonacciSquareRomTrace::<F>::NUM_ROWS];
         let mut trace_rom = FibonacciSquareRomTrace::new_from_vec_zeroes(buffer);
 
         for i in 0..trace_rom.num_rows() {
@@ -91,15 +89,15 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
 
         let setup = sctx.get_setup(trace_rom.airgroup_id(), trace_rom.air_id());
         let blowup_factor = 1 << (setup.stark_info.stark_struct.n_bits_ext - setup.stark_info.stark_struct.n_bits);
-        write_custom_commit_trace(&mut trace_rom, blowup_factor, &file_name, check)?;
+        write_custom_commit_trace::<F>(&mut trace_rom, blowup_factor, &file_name, check)?;
         Ok(())
     }
 
     fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) {
-        // let trace = FibonacciSquareTrace::from_vec(_pctx.get_air_instance_trace(0, 0, 0));
-        // let fixed = FibonacciSquareFixed::from_vec(_sctx.get_fixed(0, 0));
-        // let air_values = FibonacciSquareAirValues::from_vec(pctx.get_air_instance_air_values(0, 0, 0));
-        // let airgroup_values = FibonacciSquareAirGroupValues::from_vec(pctx.get_air_instance_airgroup_values(0, 0, 0));
+        // let trace = FibonacciSquareTrace::new_from_vec(_pctx.get_air_instance_trace(0, 0, 0));
+        // let fixed = FibonacciSquareFixed::new_from_vec(_sctx.get_fixed(0, 0));
+        // let air_values = FibonacciSquareAirValues::new_from_vec(pctx.get_air_instance_air_values(0, 0, 0));
+        // let airgroup_values = FibonacciSquareAirGroupValues::new_from_vec(pctx.get_air_instance_airgroup_values(0, 0, 0));
 
         // let publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
         // let proof_values = BuildProofValues::from_vec_guard(pctx.get_proof_values());

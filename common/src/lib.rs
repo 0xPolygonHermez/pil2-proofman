@@ -16,6 +16,7 @@ pub mod custom_commits;
 pub mod constraints;
 pub mod fixed_cols;
 pub mod memory_handler;
+pub mod packed_info;
 
 pub use air_instance::*;
 pub use verbose_mode::*;
@@ -34,3 +35,5 @@ pub use constraints::*;
 pub use fixed_cols::*;
 pub use memory_handler::*;
 pub use mpi_ctx::*;
+pub use packed_info::*;
+pub use trace::GenericTrace;

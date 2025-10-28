@@ -37,8 +37,8 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
     Goldilocks::Element *pConstPolsExtendedTreeAddress = (Goldilocks::Element *)d_const_tree;
 
     Starks<Goldilocks::Element> starks(setupCtx, nullptr, nullptr, false);
-    starks.treesGL[setupCtx.starkInfo.nStages + 1]->setSource(&pConstPolsExtendedTreeAddress[2]);
-    starks.treesGL[setupCtx.starkInfo.nStages + 1]->setNodes(&pConstPolsExtendedTreeAddress[2 + setupCtx.starkInfo.nConstants * NExtended]);
+    starks.treesGL[setupCtx.starkInfo.nStages + 1]->setSource(pConstPolsExtendedTreeAddress);
+    starks.treesGL[setupCtx.starkInfo.nStages + 1]->setNodes(&pConstPolsExtendedTreeAddress[setupCtx.starkInfo.nConstants * NExtended]);
 
     uint64_t offsetPublicInputs = setupCtx.starkInfo.mapOffsets[std::make_pair("publics", false)];
     uint64_t offsetEvals = setupCtx.starkInfo.mapOffsets[std::make_pair("evals", false)];
@@ -123,7 +123,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
     Goldilocks::Element* vals_gpu_shifted = vals_gpu + FIELD_EXTENSION;
     Goldilocks::Element* helpers = h_params.aux_trace + offsetAuxTrace + FIELD_EXTENSION*N + FIELD_EXTENSION;  
 
-    Dest destStruct(nullptr, N);
+    Dest destStruct(nullptr, N, 0);
     destStruct.dest_gpu = vals_gpu_shifted;
     destStruct.addParams(numFieldId, setupCtx.expressionsBin.expressionsInfo[numFieldId].destDim);
     destStruct.addParams(denFieldId, setupCtx.expressionsBin.expressionsInfo[denFieldId].destDim, true);
@@ -164,7 +164,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
     dim3 threads_x(256);
     dim3 blocks_x((NExtended + threads_x.x - 1) / threads_x.x);
     computeX_kernel<<<blocks_x, threads_x, 0, stream>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));            
-    calculateExpression(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId, false, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+    calculateExpressionQ(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
 
     commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, nullptr, d_aux_trace, d_transcript, false, timer, stream);
     TimerStopGPU(timer, STARK_STEP_Q);
@@ -217,7 +217,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
     calculateXis_inplace(setupCtx, h_params, air_instance_info->opening_points, d_xiChallenge, stream);    
 
     computeX_kernel<<<blocks_x, threads_x, 0, stream>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));
-    calculateExpression(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId, false, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+    calculateFRIExpression(setupCtx, h_params, air_instance_info, stream);
     for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) { 
         Goldilocks::Element *src = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)];
         starks.treesFRI[step]->setSource(src);
@@ -237,8 +237,10 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
     for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size(); step++)
     {
         uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
-        uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
-        fold_inplace(step, friPol_offset, offset_helper, challenge_gpu, nBitsExt, prevBits, currentBits, d_aux_trace, timer, stream);
+        if (step > 0) {
+            uint64_t prevBits = setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
+            fold_inplace(step, friPol_offset, offset_helper, challenge_gpu, nBitsExt, prevBits, currentBits, d_aux_trace, timer, stream);
+        }
 
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {

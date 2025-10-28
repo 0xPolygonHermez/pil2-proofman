@@ -294,7 +294,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     ExpressionsPack expressionsPack(setupCtx, &proverHelpers, 1);
     
     Goldilocks::Element buff[FIELD_EXTENSION];
-    Dest dest(buff, 1);
+    Dest dest(buff, 1, 0);
     dest.addParams(starkInfo.cExpId, setupCtx.expressionsBin.expressionsInfo[starkInfo.cExpId].destDim);
     
     expressionsPack.calculateExpressions(params, dest, 1, false, false);
@@ -330,7 +330,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
 
     zklog.trace("Verifying FRI queries consistency");
     Goldilocks::Element buffQueries[FIELD_EXTENSION*starkInfo.starkStruct.nQueries];
-    Dest destQueries(buffQueries, starkInfo.starkStruct.nQueries);
+    Dest destQueries(buffQueries, starkInfo.starkStruct.nQueries, 0);
     destQueries.addParams(starkInfo.friExpId, setupCtx.expressionsBin.expressionsInfo[starkInfo.friExpId].destDim);
     expressionsPack.calculateExpressions(params, destQueries, starkInfo.starkStruct.nQueries, false, false);
     bool isValidFRIConsistency = true;

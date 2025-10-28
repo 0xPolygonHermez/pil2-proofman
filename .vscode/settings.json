@@ -69,6 +69,13 @@
         "cinttypes": "cpp",
         "typeinfo": "cpp",
         "valarray": "cpp",
-        "variant": "cpp"
+        "variant": "cpp",
+        "bitset": "cpp",
+        "list": "cpp",
+        "ranges": "cpp",
+        "span": "cpp",
+        "__nullptr": "cpp",
+        "format": "cpp",
+        "filesystem": "cpp"
     }
 }

@@ -271,21 +271,6 @@ public:
     }
 
     // ======== EXPRESSIONS ========
-    static __device__ __forceinline__ void copy_gpu(gl64_t *c_, const gl64_t *a_, bool const_a)
-    {
-        if (const_a)
-        {
-            c_[threadIdx.x] = a_[0];
-            c_[blockDim.x + threadIdx.x] = a_[1];
-            c_[2 * blockDim.x + threadIdx.x] = a_[2];
-        }
-        else
-        {
-            c_[threadIdx.x] = a_[threadIdx.x];
-            c_[blockDim.x + threadIdx.x] = a_[blockDim.x + threadIdx.x];
-            c_[2 * blockDim.x + threadIdx.x] = a_[2 * blockDim.x + threadIdx.x];
-        }
-    }
     static __device__ __forceinline__ void add_gpu(gl64_t *c_, const gl64_t *a_, bool const_a, const gl64_t *b_, bool const_b)
     {
 
@@ -388,30 +373,8 @@ public:
         c_[blockDim.x + threadIdx.x] = ((((A + C) - E) - E) - D);
         c_[2 * blockDim.x + threadIdx.x] = B - G;
     }
-
-    static __device__ __forceinline__ void op_gpu(uint64_t op, gl64_t *c, const gl64_t *a, bool const_a, const gl64_t *b, bool const_b)
-    {
-        switch (op)
-        {
-        case 0:
-            add_gpu(c, a, const_a, b, const_b);
-            break;
-        case 1:
-            sub_gpu(c, a, const_a, b, const_b);
-            break;
-        case 2:
-            mul_gpu(c, a, const_a, b, const_b);
-            break;
-        case 3:
-            sub_gpu(c, b, const_b, a, const_a);
-            break;
-        default:
-            assert(0);
-            break;
-        }
-    }
-
-       static __device__ __forceinline__ void add_31_gpu_no_const(gl64_t *c, const gl64_t *a, const gl64_t *b) {
+    
+    static __device__ __forceinline__ void add_31_gpu_no_const(gl64_t *c, const gl64_t *a, const gl64_t *b) {
         c[threadIdx.x] = a[threadIdx.x] + b[threadIdx.x];
         c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x];
         c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x];

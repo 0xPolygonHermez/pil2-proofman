@@ -40,6 +40,7 @@ extern "C" {
     // ========================================================================================
     pub fn stark_info_new(
         filename: *mut ::std::os::raw::c_char,
+        recursive_final: bool,
         recursive: bool,
         verify_constraints: bool,
         verify: bool,
@@ -82,14 +83,30 @@ extern "C" {
     pub fn get_const_tree_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
     
     pub fn get_const_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
-    
+
+    pub fn init_gpu_setup(maxBitsExt: u64);
+
+    pub fn prepare_blocks(pol: *mut u64, N: u64, nCols: u64);
+
     pub fn calculate_const_tree(
+        pStarkInfo: *mut ::std::os::raw::c_void,
+        pConstPolsAddress: *mut ::std::os::raw::c_void,
+        pConstTree: *mut ::std::os::raw::c_void,
+    );
+
+    pub fn calculate_const_tree_bn128(
         pStarkInfo: *mut ::std::os::raw::c_void,
         pConstPolsAddress: *mut ::std::os::raw::c_void,
         pConstTree: *mut ::std::os::raw::c_void,
     );
     
     pub fn write_const_tree(
+        pStarkInfo: *mut ::std::os::raw::c_void,
+        pConstTreeAddress: *mut ::std::os::raw::c_void,
+        treeFilename: *mut ::std::os::raw::c_char,
+    );
+
+    pub fn write_const_tree_bn128(
         pStarkInfo: *mut ::std::os::raw::c_void,
         pConstTreeAddress: *mut ::std::os::raw::c_void,
         treeFilename: *mut ::std::os::raw::c_char,
@@ -222,8 +239,8 @@ extern "C" {
     
     pub fn write_custom_commit(
         root: *mut ::std::os::raw::c_void,
-        N: u64,
-        NExtended: u64,
+        nBits: u64,
+        nBitsExt: u64,
         nCols: u64,
         buffer: *mut ::std::os::raw::c_void,
         bufferFile: *mut ::std::os::raw::c_char,
@@ -504,6 +521,7 @@ extern "C" {
         pSetupCtx_: *mut ::std::os::raw::c_void,
         d_buffers_: *mut ::std::os::raw::c_void,
         verkeyRoot_: *mut ::std::os::raw::c_void,
+        packedInfo_: *mut ::std::os::raw::c_void,
         n_streams: u64,
     );
     

@@ -20,7 +20,8 @@ struct EvalInfo
 {
     uint64_t type; // 0: cm, 1: custom, 2: fixed
     uint64_t offset;
-    uint64_t stride;
+    uint64_t stagePos;
+    uint64_t stageCols;
     uint64_t dim;
     uint64_t openingPos;
     uint64_t evalPos;
@@ -178,6 +179,7 @@ public:
     bool verify_constraints = false;
     bool verify = false;
     bool gpu = false;
+    bool recursive_final = false;
     bool preallocate = false;
 
     bool calculateFixedExtended = false;
@@ -194,7 +196,7 @@ public:
     uint64_t proofValuesSize;
 
     /* Constructor */
-    StarkInfo(string file, bool recursive = false, bool verify_constraints = false, bool verify = false, bool gpu = false, bool preallocate = false);
+    StarkInfo(string file, bool recursive_final = false, bool recursive = false, bool verify_constraints = false, bool verify = false, bool gpu = false, bool preallocate = false);
     StarkInfo() {};
     
     /* Loads data from a json object */
@@ -209,10 +211,6 @@ public:
     uint64_t getPinnedProofSize();
 
     uint64_t getNumNodesMT(uint64_t height);
-
-    /* Returns a polynomial specified by its ID */
-    uint64_t getTraceOffset(string type, PolMap& polInfo, bool domainExtended);
-    uint64_t getTraceNColsSection(string type, PolMap& polInfo, bool domainExtended);
 };
 
 #endif
