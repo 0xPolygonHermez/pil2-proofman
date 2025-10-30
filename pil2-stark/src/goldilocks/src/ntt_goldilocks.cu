@@ -824,7 +824,7 @@ __global__ void br_ntt_batch_steps_blocks_par_dif( gl64_t *data, gl64_t *twiddle
             // compute twiddle using the batched->global mapping (same as DIT)
             gl64_t factor; 
             {
-                 //global_step
+                //global_step
                 uint32_t gs = base_step -(n_loc_steps -1 - loc_step);
                 //global_group_size
                 uint32_t ggs = 1 << gs;
