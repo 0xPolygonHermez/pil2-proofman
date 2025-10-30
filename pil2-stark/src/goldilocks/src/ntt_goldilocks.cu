@@ -749,7 +749,7 @@ __global__ void br_ntt_batch_steps_blocks_par_noBR(gl64_t *data, gl64_t *twiddle
             uint32_t index2 = index1 + group_size;
             gl64_t factor; 
             {
-                 //global_step
+                //global_step
                 uint32_t gs = base_step + loc_step;
                 //global_group_size
                 uint32_t ggs = 1 << gs;
