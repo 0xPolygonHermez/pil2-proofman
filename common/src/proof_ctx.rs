@@ -2,7 +2,7 @@ use std::os::raw::c_void;
 use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 use std::sync::Arc;
-use crate::MpiCtx;
+use crate::{MpiCtx, ProofmanError};
 use borsh::{BorshDeserialize, BorshSerialize};
 
 use fields::PrimeField64;
@@ -10,7 +10,7 @@ use transcript::FFITranscript;
 
 use crate::{
     initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode, StepsParams,
-    VerboseMode,
+    VerboseMode, ProofmanResult,
 };
 
 #[derive(Debug)]
@@ -40,6 +40,7 @@ pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
 pub struct ProofOptions {
     pub verify_constraints: bool,
     pub aggregation: bool,
+    pub rma: bool,
     pub final_snark: bool,
     pub verify_proofs: bool,
     pub save_proofs: bool,
@@ -52,6 +53,7 @@ impl BorshSerialize for ProofOptions {
     fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
         BorshSerialize::serialize(&self.verify_constraints, writer)?;
         BorshSerialize::serialize(&self.aggregation, writer)?;
+        BorshSerialize::serialize(&self.rma, writer)?;
         BorshSerialize::serialize(&self.final_snark, writer)?;
         BorshSerialize::serialize(&self.verify_proofs, writer)?;
         BorshSerialize::serialize(&self.save_proofs, writer)?;
@@ -66,6 +68,7 @@ impl BorshDeserialize for ProofOptions {
     fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
         let verify_constraints = bool::deserialize_reader(reader)?;
         let aggregation = bool::deserialize_reader(reader)?;
+        let rma = bool::deserialize_reader(reader)?;
         let final_snark = bool::deserialize_reader(reader)?;
         let verify_proofs = bool::deserialize_reader(reader)?;
         let save_proofs = bool::deserialize_reader(reader)?;
@@ -76,6 +79,7 @@ impl BorshDeserialize for ProofOptions {
         Ok(Self {
             verify_constraints,
             aggregation,
+            rma,
             final_snark,
             verify_proofs,
             save_proofs,
@@ -116,9 +120,11 @@ impl DebugInfo {
     }
 }
 impl ProofOptions {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         verify_constraints: bool,
         aggregation: bool,
+        rma: bool,
         final_snark: bool,
         verify_proofs: bool,
         minimal_memory: bool,
@@ -128,6 +134,7 @@ impl ProofOptions {
         Self {
             verify_constraints,
             aggregation,
+            rma,
             final_snark,
             verify_proofs,
             minimal_memory,
@@ -137,9 +144,11 @@ impl ProofOptions {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_test(
         verify_constraints: bool,
         aggregation: bool,
+        rma: bool,
         final_snark: bool,
         verify_proofs: bool,
         minimal_memory: bool,
@@ -149,6 +158,7 @@ impl ProofOptions {
         Self {
             verify_constraints,
             aggregation,
+            rma,
             final_snark,
             verify_proofs,
             save_proofs,
@@ -164,7 +174,6 @@ pub struct ParamsGPU {
     pub preallocate: bool,
     pub max_number_streams: usize,
     pub number_threads_pools_witness: usize,
-    pub are_threads_per_witness_set: bool,
     pub max_witness_stored: usize,
     pub single_instances: Vec<(usize, usize)>, // (airgroup_id, air_id)
     pub pack_trace: bool,
@@ -182,7 +191,6 @@ impl Default for ParamsGPU {
             max_witness_stored: 4,
             single_instances: Vec::new(),
             pack_trace: true,
-            are_threads_per_witness_set: false,
         }
     }
 }
@@ -198,7 +206,6 @@ impl ParamsGPU {
 
     pub fn with_number_threads_pools_witness(&mut self, number_threads_pools_witness: usize) {
         self.number_threads_pools_witness = number_threads_pools_witness;
-        self.are_threads_per_witness_set = true;
     }
     pub fn with_max_witness_stored(&mut self, max_witness_stored: usize) {
         self.max_witness_stored = max_witness_stored;
@@ -242,13 +249,13 @@ impl<F: PrimeField64> ProofCtx<F> {
         final_snark: bool,
         verbose_mode: VerboseMode,
         mpi_ctx: Arc<MpiCtx>,
-    ) -> Self {
+    ) -> ProofmanResult<Self> {
         tracing::info!("Creating proof context");
 
         let dctx = DistributionCtx::new();
 
         initialize_logger(verbose_mode, None);
-        let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
+        let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path)?;
         let n_publics = global_info.n_publics;
         let n_proof_values = global_info
             .proof_values_map
@@ -262,7 +269,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         let air_instances: Vec<RwLock<AirInstance<F>>> =
             (0..MAX_INSTANCES).map(|_| RwLock::new(AirInstance::<F>::default())).collect();
 
-        Self {
+        Ok(Self {
             mpi_ctx,
             global_info,
             public_inputs: Values::new(n_publics),
@@ -279,7 +286,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             witness_tx: RwLock::new(None),
             witness_tx_priority: RwLock::new(None),
             proof_tx: RwLock::new(None),
-        }
+        })
     }
 
     pub fn set_debug_info(&self, debug_info: &DebugInfo) {
@@ -316,10 +323,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn set_weights(&mut self, sctx: &SetupCtx<F>) {
+    pub fn set_weights(&mut self, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
         for (airgroup_id, air_group) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
-                let setup = sctx.get_setup(airgroup_id, air_id);
+                let setup = sctx.get_setup(airgroup_id, air_id)?;
                 let mut total_cols = setup
                     .stark_info
                     .map_sections_n
@@ -335,26 +342,20 @@ impl<F: PrimeField64> ProofCtx<F> {
                 self.weights.insert((airgroup_id, air_id), weight);
             }
         }
+        Ok(())
     }
 
     pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
     }
 
-    pub fn get_custom_commits_fixed_buffer(
-        &self,
-        name: &str,
-        return_error: bool,
-    ) -> Result<PathBuf, Box<std::io::Error>> {
+    pub fn get_custom_commits_fixed_buffer(&self, name: &str, return_error: bool) -> ProofmanResult<PathBuf> {
         let file_name = self.custom_commits_fixed.get(name);
         match file_name {
             Some(path) => Ok(path.to_path_buf()),
             None => {
                 if return_error {
-                    Err(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("Custom Commit Fixed {file_name:?} not found"),
-                    )))
+                    Err(ProofmanError::ProofmanError(format!("Custom Commit Fixed {file_name:?} not found")))
                 } else {
                     tracing::warn!("Custom Commit Fixed {file_name:?} not found");
                     Ok(PathBuf::new())
@@ -381,6 +382,11 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn dctx_get_instances(&self) -> Vec<InstanceInfo> {
         let dctx = self.dctx.read().unwrap();
         dctx.instances.clone()
+    }
+
+    pub fn dctx_get_worker_instances(&self) -> Vec<usize> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.worker_instances.clone()
     }
 
     pub fn dctx_is_first_partition(&self) -> bool {
@@ -420,27 +426,27 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.process_instances.clone()
     }
 
-    pub fn dctx_get_process_owner_instance(&self, instance_id: usize) -> i32 {
+    pub fn dctx_get_process_owner_instance(&self, instance_id: usize) -> ProofmanResult<i32> {
         let dctx = self.dctx.read().unwrap();
         dctx.get_process_owner_instance(instance_id)
     }
 
-    pub fn dctx_get_instance_info(&self, global_idx: usize) -> (usize, usize) {
+    pub fn dctx_get_instance_info(&self, global_idx: usize) -> ProofmanResult<(usize, usize)> {
         let dctx = self.dctx.read().unwrap();
         dctx.get_instance_info(global_idx)
     }
 
-    pub fn dctx_get_instance_chunks(&self, global_idx: usize) -> usize {
+    pub fn dctx_get_instance_chunks(&self, global_idx: usize) -> ProofmanResult<usize> {
         let dctx = self.dctx.read().unwrap();
         dctx.get_instance_chunks(global_idx)
     }
 
-    pub fn dctx_get_instance_local_idx(&self, global_idx: usize) -> usize {
+    pub fn dctx_get_instance_local_idx(&self, global_idx: usize) -> ProofmanResult<usize> {
         let dctx = self.dctx.read().unwrap();
         dctx.get_instance_local_idx(global_idx)
     }
 
-    pub fn dctx_is_my_process_instance(&self, global_idx: usize) -> bool {
+    pub fn dctx_is_my_process_instance(&self, global_idx: usize) -> ProofmanResult<bool> {
         let dctx = self.dctx.read().unwrap();
         dctx.is_my_process_instance(global_idx)
     }
@@ -450,22 +456,27 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances[global_idx].table
     }
 
-    pub fn dctx_find_air_instance_id(&self, global_idx: usize) -> usize {
+    pub fn dctx_instance_threads_witness(&self, global_idx: usize) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        dctx.instances[global_idx].threads_witness
+    }
+
+    pub fn dctx_find_air_instance_id(&self, global_idx: usize) -> ProofmanResult<usize> {
         let dctx = self.dctx.read().unwrap();
         dctx.find_air_instance_id(global_idx)
     }
 
-    pub fn dctx_find_process_instance(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
+    pub fn dctx_find_process_instance(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<(bool, usize)> {
         let dctx = self.dctx.read().unwrap();
         dctx.find_process_instance(airgroup_id, air_id)
     }
 
-    pub fn dctx_find_process_table(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
+    pub fn dctx_find_process_table(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<(bool, usize)> {
         let dctx = self.dctx.read().unwrap();
         dctx.find_process_table(airgroup_id, air_id)
     }
 
-    pub fn dctx_get_table_instance_idx(&self, table_idx: usize) -> usize {
+    pub fn dctx_get_table_instance_idx(&self, table_idx: usize) -> ProofmanResult<usize> {
         let dctx = self.dctx.read().unwrap();
         dctx.get_table_instance_idx(table_idx)
     }
@@ -475,50 +486,60 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.set_chunks(global_idx, chunks, slow);
     }
 
-    pub fn add_instance_assign(&self, airgroup_id: usize, air_id: usize) -> usize {
+    pub fn add_instance_assign(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        threads_witness: usize,
+    ) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance(airgroup_id, air_id, weight)
+        dctx.add_instance(airgroup_id, air_id, threads_witness, weight)
     }
 
-    pub fn dctx_get_airgroup_instances_alives(&self) -> Vec<Vec<usize>> {
-        // let dctx = self.dctx.read().unwrap();
-        // dctx.airgroup_instances_alives.clone()
-        Vec::new()
-    }
-
-    pub fn add_instance_assign_first_partition(&self, airgroup_id: usize, air_id: usize) -> usize {
+    pub fn add_instance_assign_first_partition(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        threads_witness: usize,
+    ) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_first_partition(airgroup_id, air_id, weight)
+        dctx.add_instance_first_partition(airgroup_id, air_id, threads_witness, weight)
     }
 
-    pub fn add_instance(&self, airgroup_id: usize, air_id: usize) -> usize {
+    pub fn add_instance(&self, airgroup_id: usize, air_id: usize, threads_witness: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign(airgroup_id, air_id, weight)
+        dctx.add_instance_no_assign(airgroup_id, air_id, threads_witness, weight)
     }
 
-    pub fn add_table(&self, airgroup_id: usize, air_id: usize) -> usize {
+    pub fn add_table(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_table(airgroup_id, air_id, weight)
     }
 
-    pub fn add_table_all(&self, airgroup_id: usize, air_id: usize) -> usize {
+    pub fn add_table_all(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_table_all(airgroup_id, air_id, weight)
     }
 
-    pub fn dctx_add_instance_no_assign(&self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+    pub fn dctx_add_instance_no_assign(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        threads_witness: usize,
+        weight: u64,
+    ) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.add_instance_no_assign(airgroup_id, air_id, weight)
+        dctx.add_instance_no_assign(airgroup_id, air_id, threads_witness, weight)
     }
 
-    pub fn dctx_assign_instances(&self) {
+    pub fn dctx_assign_instances(&self) -> ProofmanResult<()> {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.assign_instances();
+        dctx.assign_instances()
     }
 
     pub fn dctx_load_balance_info_process(&self) -> (f64, u64, u64, f64) {
@@ -537,11 +558,12 @@ impl<F: PrimeField64> ProofCtx<F> {
         worker_index: usize,
         n_processes: usize,
         process_id: usize,
-    ) {
+    ) -> ProofmanResult<()> {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.setup_partitions(n_partitions, partition_ids);
-        dctx.setup_processes(n_processes, process_id);
+        dctx.setup_partitions(n_partitions, partition_ids)?;
+        dctx.setup_processes(n_processes, process_id)?;
         dctx.setup_worker_index(worker_index);
+        Ok(())
     }
 
     pub fn get_n_partitions(&self) -> usize {
@@ -549,10 +571,12 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.n_partitions
     }
 
-    pub fn get_worker_index(&self) -> usize {
+    pub fn get_worker_index(&self) -> ProofmanResult<usize> {
         let dctx = self.dctx.read().unwrap();
-        assert!(dctx.worker_index >= 0, "Worker index not set");
-        dctx.worker_index as usize
+        if dctx.worker_index < 0 {
+            return Err(ProofmanError::InvalidAssignation("Worker index not set".into()));
+        }
+        Ok(dctx.worker_index as usize)
     }
 
     pub fn get_proof_values_ptr(&self) -> *mut u8 {
@@ -674,23 +698,37 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.air_instances[instance_id].read().unwrap().get_trace_ptr()
     }
 
-    pub fn get_air_instance_trace(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Vec<F> {
+    pub fn get_air_instance_trace(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        air_instance_id: usize,
+    ) -> ProofmanResult<Vec<F>> {
         let dctx = self.dctx.read().unwrap();
         let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
-            return self.air_instances[index].read().unwrap().get_trace();
+            Ok(self.air_instances[index].read().unwrap().get_trace())
         } else {
-            panic!("Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found");
+            Err(ProofmanError::OutOfBounds(format!(
+                "Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found"
+            )))
         }
     }
 
-    pub fn get_air_instance_air_values(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Vec<F> {
+    pub fn get_air_instance_air_values(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        air_instance_id: usize,
+    ) -> ProofmanResult<Vec<F>> {
         let dctx = self.dctx.read().unwrap();
         let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
-            return self.air_instances[index].read().unwrap().get_air_values();
+            Ok(self.air_instances[index].read().unwrap().get_air_values())
         } else {
-            panic!("Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found");
+            Err(ProofmanError::OutOfBounds(format!(
+                "Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found"
+            )))
         }
     }
 
@@ -699,13 +737,15 @@ impl<F: PrimeField64> ProofCtx<F> {
         airgroup_id: usize,
         air_id: usize,
         air_instance_id: usize,
-    ) -> Vec<F> {
+    ) -> ProofmanResult<Vec<F>> {
         let dctx = self.dctx.read().unwrap();
         let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
-            return self.air_instances[index].read().unwrap().get_airgroup_values();
+            Ok(self.air_instances[index].read().unwrap().get_airgroup_values())
         } else {
-            panic!("Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found");
+            Err(ProofmanError::OutOfBounds(format!(
+                "Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found"
+            )))
         }
     }
 
