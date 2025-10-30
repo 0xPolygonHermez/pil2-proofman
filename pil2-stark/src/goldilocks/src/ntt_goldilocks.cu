@@ -192,7 +192,7 @@ __global__ void transposeSubBlocksBack_noBR(gl64_t *src, uint64_t n_bits_src, gl
     uint64_t offset_dst = getBufferOffsetRowMajor(target_row, col, n_dst, nCols);
     dst[offset_dst] = shared[threadIdx.y * blockDim.x + threadIdx.x];
     for (uint64_t j = 1; j < (1 << (n_bits_dst - n_bits_src)); j++) {
-        int offset_dst2 = getBufferOffsetRowMajor(target_row + j, col, n_dst, nCols);
+        uint64_t offset_dst2 = getBufferOffsetRowMajor(target_row + j, col, n_dst, nCols);
         dst[offset_dst2] = gl64_t(uint64_t(0));
     }
 }
