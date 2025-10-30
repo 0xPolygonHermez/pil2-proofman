@@ -528,7 +528,7 @@ __global__ void br_ntt_8_steps(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint
     uint32_t n_loc_steps = min(log_domain_size - base_step, 8);    
     uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
     
-    //evaluate row as if I shited BATCH_WIDTH bits after each batch
+    // Reorganize row indices for batched processing based on base_step (shift base_step bits after each batch)
     uint32_t groupSize = 1 << base_step;
     uint32_t nGroups = domain_size / groupSize;
     uint32_t low_bits = row / nGroups;
