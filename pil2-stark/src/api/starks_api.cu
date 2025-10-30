@@ -799,7 +799,11 @@ void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pCons
 
 uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size) {
     int deviceCount;
-    cudaGetDeviceCount(&deviceCount);
+    cudaError_t err = cudaGetDeviceCount(&deviceCount);
+    if (err != cudaSuccess) {
+        std::cerr << "CUDA error getting device count: " << cudaGetErrorString(err) << std::endl;
+        return 0;
+    }
 
     uint32_t device_id;
 
@@ -815,7 +819,7 @@ uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size) {
     cudaSetDevice(device_id);
 
     uint64_t freeMem, totalMem;
-    cudaError_t err = cudaMemGetInfo(&freeMem, &totalMem);
+    err = cudaMemGetInfo(&freeMem, &totalMem);
     if (err != cudaSuccess) {
         std::cerr << "CUDA error: " << cudaGetErrorString(err) << std::endl;
         return 0;
@@ -831,7 +835,11 @@ uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size) {
 
 uint64_t get_num_gpus() {
     int deviceCount;
-    cudaGetDeviceCount(&deviceCount);
+    cudaError_t err = cudaGetDeviceCount(&deviceCount);
+    if (err != cudaSuccess) {
+        std::cerr << "CUDA error getting device count: " << cudaGetErrorString(err) << std::endl;
+        return 0;
+    }
     return deviceCount;
 }
 
