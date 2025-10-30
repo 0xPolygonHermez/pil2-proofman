@@ -174,9 +174,9 @@ checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 
 [[package]]
 name = "cc"
-version = "1.2.41"
+version = "1.2.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac9fe6cdbb24b6ade63616c0a0688e45bb56732262c158df3c0c4bea4ca47cb7"
+checksum = "739eb0f94557554b3ca9a86d2d37bebd49c5e6d0c1d2bda35ba5bdac830befc2"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -361,7 +361,7 @@ dependencies = [
 
 [[package]]
 name = "curves"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "fields",
  "num-bigint",
@@ -414,7 +414,7 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "fibonacci-square"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "fields",
  "num-bigint",
@@ -432,7 +432,7 @@ dependencies = [
 
 [[package]]
 name = "fields"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "num-bigint",
  "paste",
@@ -636,7 +636,7 @@ checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 
 [[package]]
 name = "macros-test"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "fields",
  "proofman",
@@ -849,7 +849,7 @@ dependencies = [
 
 [[package]]
 name = "pil-std-lib"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "colored",
  "fields",
@@ -865,7 +865,7 @@ dependencies = [
 
 [[package]]
 name = "pilout"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "bytes",
  "prost",
@@ -924,7 +924,7 @@ dependencies = [
 
 [[package]]
 name = "proofman"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "blake3",
  "borsh",
@@ -958,7 +958,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-cli"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "blake3",
  "bytemuck",
@@ -983,9 +983,10 @@ dependencies = [
 
 [[package]]
 name = "proofman-common"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "borsh",
+ "colored",
  "crossbeam-channel",
  "crossbeam-queue",
  "csv",
@@ -1006,11 +1007,12 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "transcript",
+ "yansi",
 ]
 
 [[package]]
 name = "proofman-hints"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "fields",
  "proofman-common",
@@ -1021,7 +1023,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-macros"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1031,7 +1033,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-starks-lib-c"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "crossbeam-channel",
  "tracing",
@@ -1039,7 +1041,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-util"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "colored",
  "fields",
@@ -1049,7 +1051,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-verifier"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "bytemuck",
  "fields",
@@ -1399,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "test-c12"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "bytemuck",
  "fields",
@@ -1420,7 +1422,7 @@ dependencies = [
 
 [[package]]
 name = "test-c36"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "bytemuck",
  "fields",
@@ -1441,7 +1443,7 @@ dependencies = [
 
 [[package]]
 name = "test-c42"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "bytemuck",
  "fields",
@@ -1649,7 +1651,7 @@ dependencies = [
 
 [[package]]
 name = "transcript"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "proofman-starks-lib-c",
 ]
@@ -2017,7 +2019,7 @@ checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
 
 [[package]]
 name = "witness"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "colored",
  "fields",
@@ -2027,6 +2029,12 @@ dependencies = [
  "serde_json",
  "tracing",
 ]
+
+[[package]]
+name = "yansi"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "zerocopy"
