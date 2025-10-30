@@ -771,7 +771,7 @@ __global__ void br_ntt_batch_steps_blocks_par_noBR(gl64_t *data, gl64_t *twiddle
     // copy values to data with scaling applied when this iteration includes the final stage
     if(inverse && (base_step + n_loc_steps) >= log_domain_size_in){
         gl64_t inv_factor = gl64_t(domain_size_inverse[log_domain_size_in]);
-        if(extend) inv_factor = inv_factor * d_r[row]; //rick: aqui
+        if(extend) inv_factor = inv_factor * d_r[row];
         for(int i=0; i<ncols_block; i++){
             data_block[rowbf*ncols_block+i] = tile[i*BATCH_HEIGHT+threadIdx.x] * inv_factor;
         }
