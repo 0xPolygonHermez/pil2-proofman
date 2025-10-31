@@ -2162,8 +2162,8 @@ where
         let airgroup_instances_alive = &self.pctx.dctx_get_airgroup_instances_alives();
         let mut alives = vec![0; n_airgroups];
         let mut n_proofs_to_be_received = 0;
-        for airgroup in 0..n_airgroups {   
-            for p in 0..n_processes {
+        for airgroup in 0..n_airgroups {
+            for airgroup in 0..n_airgroups {
                 alives[airgroup] += airgroup_instances_alive[airgroup][p];
                 if p != my_rank {
                     n_proofs_to_be_received += airgroup_instances_alive[airgroup][p];
