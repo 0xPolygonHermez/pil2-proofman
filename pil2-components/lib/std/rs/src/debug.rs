@@ -137,7 +137,6 @@ pub fn update_local_debug_data<F: PrimeField64>(
         bus_val.shared_data.num_proves += times;
         local_data.row_proves.push(row);
     } else {
-        assert!(times.is_one(), "The selector value is invalid: expected 1, but received {times:?}.");
         bus_val.shared_data.num_assumes += times;
         local_data.row_assumes.push(row);
     }
