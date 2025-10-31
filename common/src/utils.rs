@@ -54,7 +54,7 @@ where
         if std::io::stdout().is_terminal() {
             write!(writer, "{} ", time_str.dimmed())?;
         } else {
-            write!(writer, "{} ", time_str)?;
+            write!(writer, "{time_str} ")?;
         }
 
         if let Some(rank) = GLOBAL_RANK.get().copied() {
@@ -62,7 +62,7 @@ where
                 true => format!("[rank={rank}]").dimmed(),
                 false => format!("[rank={rank}]").into(),
             };
-            write!(writer, "{} ", rank_str)?;
+            write!(writer, "{rank_str} ")?;
         }
 
         if std::io::stdout().is_terminal() {
@@ -73,7 +73,7 @@ where
                 tracing::Level::WARN => "WARN".paint(Color::Yellow),
                 tracing::Level::ERROR => "ERROR".paint(Color::Red),
             };
-            write!(writer, "{}: ", level_str)?;
+            write!(writer, "{level_str}: ")?;
         } else {
             write!(writer, "{}: ", event.metadata().level())?;
         }
@@ -101,7 +101,7 @@ impl MessageVisitor {
 impl tracing::field::Visit for MessageVisitor {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
         if field.name() == "message" {
-            self.message = format!("{:?}", value);
+            self.message = format!("{value:?}");
             if self.message.starts_with('"') && self.message.ends_with('"') {
                 self.message = self.message[1..self.message.len() - 1].to_string();
             }

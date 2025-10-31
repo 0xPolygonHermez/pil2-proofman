@@ -2148,6 +2148,7 @@ where
     }
 
     #[allow(clippy::type_complexity)]
+    #[allow(clippy::needless_range_loop)]
     fn _worker_aggregations(&self, options: &ProofOptions) -> Result<(), Box<dyn std::error::Error>> {
         let my_rank = self.mpi_ctx.rank as usize;
         let n_processes = self.mpi_ctx.n_processes as usize;

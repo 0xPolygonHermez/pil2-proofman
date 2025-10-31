@@ -196,8 +196,8 @@ impl ProveCmd {
                 let compression_ratio = compressed_size as f64 / original_size as f64;
 
                 println!("Vadcop final proof saved:");
-                println!("  Original: {} bytes", original_size);
-                println!("  Compressed: {} bytes (ratio: {:.2}x)", compressed_size, compression_ratio);
+                println!("  Original: {original_size} bytes");
+                println!("  Compressed: {compressed_size} bytes (ratio: {compression_ratio:.2}x)");
             }
         }
 

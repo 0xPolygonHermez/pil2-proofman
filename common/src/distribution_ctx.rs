@@ -227,7 +227,7 @@ impl DistributionCtx {
             panic!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len());
         }
         let owner = self.instance_process[instance_id].0;
-        assert!(owner != -1, "Instance {} is not owned by any process", instance_id);
+        assert!(owner != -1, "Instance {instance_id} is not owned by any process");
         owner
     }
 
