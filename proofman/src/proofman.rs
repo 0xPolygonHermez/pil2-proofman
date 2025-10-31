@@ -2148,6 +2148,7 @@ where
     }
 
     #[allow(clippy::type_complexity)]
+    #[allow(clippy::needless_range_loop)]
     fn _worker_aggregations(&self, options: &ProofOptions) -> Result<(), Box<dyn std::error::Error>> {
         let my_rank = self.mpi_ctx.rank as usize;
         let n_processes = self.mpi_ctx.n_processes as usize;
@@ -2161,7 +2162,7 @@ where
         let airgroup_instances_alive = &self.pctx.dctx_get_airgroup_instances_alives();
         let mut alives = vec![0; n_airgroups];
         let mut n_proofs_to_be_received = 0;
-        for airgroup in 0..n_airgroups {
+        for airgroup in 0..n_airgroups {   
             for p in 0..n_processes {
                 alives[airgroup] += airgroup_instances_alive[airgroup][p];
                 if p != my_rank {
