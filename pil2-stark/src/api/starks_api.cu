@@ -44,7 +44,11 @@ void get_instances_ready(void *d_buffers_, int64_t* instances_ready) {
 void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size)
 {
     int deviceCount;
-    cudaGetDeviceCount(&deviceCount);
+    cudaError_t err = cudaGetDeviceCount(&deviceCount);
+    if (err != cudaSuccess) {
+        std::cerr << "CUDA error getting device count: " << cudaGetErrorString(err) << std::endl;
+        return 0;
+    }
     MaxSizes *maxSizes = (MaxSizes *)maxSizes_;
 
 
