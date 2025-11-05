@@ -389,6 +389,7 @@ extern "C" {
         constPolsPath: *mut ::std::os::raw::c_char,
         constTreePath: *mut ::std::os::raw::c_char,
         proofType: *mut ::std::os::raw::c_char,
+        force_recursive_stream: bool,
     ) -> u64;
     
     pub fn read_exec_file(exec_data: *mut u64, exec_file: *mut ::std::os::raw::c_char, nCommitedPols: u64);

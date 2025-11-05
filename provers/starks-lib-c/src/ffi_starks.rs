@@ -950,6 +950,7 @@ pub fn gen_recursive_proof_c(
     const_pols_path: &str,
     const_tree_path: &str,
     proof_type: &str,
+    force_recursive_stream: bool,
 ) -> u64 {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -985,6 +986,7 @@ pub fn gen_recursive_proof_c(
             const_filename_ptr,
             const_tree_filename_ptr,
             proof_type_ptr,
+            force_recursive_stream,
         )
     }
 }
@@ -1934,6 +1936,7 @@ pub fn gen_recursive_proof_c(
     _const_pols_path: &str,
     _const_tree_path: &str,
     _proof_type: &str,
+    _force_recursive_stream: bool,
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "gen_recursive_proof: This is a mock call because there is no linked library");
     0

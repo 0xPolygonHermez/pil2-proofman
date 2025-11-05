@@ -1528,7 +1528,8 @@ where
             let proofs_finished_clone = proofs_finished.clone();
 
             let handle_recursive = std::thread::spawn(move || loop {
-                if stream_id < n_streams_non_recursive {
+                let force_recursive_stream = stream_id >= n_streams_non_recursive;
+                if !force_recursive_stream {
                     if let Ok(instance_id) = proofs_rx.try_recv() {
                         Self::gen_proof(
                             &proofs_clone,
@@ -1553,7 +1554,10 @@ where
                 }
 
                 // Handle proof witnesses (Proof<F> type)
-                let witness = rec2_rx.try_recv().or_else(|_| compressor_rx.try_recv()).or_else(|_| rec1_rx.try_recv());
+                let witness = match force_recursive_stream {
+                    true => rec2_rx.try_recv().or_else(|_| rec1_rx.try_recv()),
+                    false => rec2_rx.try_recv().or_else(|_| compressor_rx.try_recv()).or_else(|_| rec1_rx.try_recv()),
+                };
 
                 // If not witness, check if there's a proof
                 if witness.is_err() {
@@ -1563,6 +1567,8 @@ where
                     std::thread::sleep(std::time::Duration::from_micros(100));
                     continue;
                 }
+
+                let force_recursive_stream = stream_id >= n_streams_non_recursive;
 
                 let mut witness = witness.unwrap();
                 if witness.proof_type == ProofType::Recursive2 {
@@ -1605,6 +1611,7 @@ where
                         &const_tree_clone,
                         &const_pols_clone,
                         options.save_proofs,
+                        force_recursive_stream,
                     );
                 } else if *new_proof_type == ProofType::Compressor {
                     let compressor_lock = compressor_proofs_clone[id].read().unwrap();
@@ -1620,6 +1627,7 @@ where
                         &const_tree_clone,
                         &const_pols_clone,
                         options.save_proofs,
+                        force_recursive_stream,
                     );
                 } else {
                     let recursive1_lock = recursive1_proofs_clone[id].read().unwrap();
@@ -1635,6 +1643,7 @@ where
                         &const_tree_clone,
                         &const_pols_clone,
                         options.save_proofs,
+                        force_recursive_stream,
                     );
                 }
 
@@ -2070,6 +2079,7 @@ where
                 &const_tree_clone,
                 &const_pols_clone,
                 save_proofs,
+                false,
             );
 
             if cfg!(not(feature = "gpu")) {
@@ -2228,6 +2238,7 @@ where
                     &const_tree_clone,
                     &const_pols_clone,
                     save_proofs,
+                    false,
                 );
 
                 if cfg!(not(feature = "gpu")) {
