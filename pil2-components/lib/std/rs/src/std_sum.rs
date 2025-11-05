@@ -110,7 +110,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                     let im_total_hints: Vec<u64> = im_hints.iter().chain(im_airval_hints.iter()).cloned().collect();
 
                     let n_im_total_hints = im_total_hints.len();
-                    if n_im_total_hints > 0 {
+                    if !im_total_hints.is_empty() {
                         mul_hint_fields(
                             &sctx,
                             &pctx,
@@ -125,9 +125,12 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                         );
                     }
 
-                    // We know that at most one sumuct hint exists
-                    let gsum_hint =
-                        get_hint_ids_by_name(p_expressions_bin, "gsum_col").first().cloned().unwrap() as usize;
+                    // We know that at one gsum hint must exist
+                    let gsum_hint = get_hint_ids_by_name(p_expressions_bin, "gsum_col")
+                        .first()
+                        .cloned()
+                        .expect("No 'gsum_col' hint found in p_expressions_bin")
+                        as usize;
 
                     let std_mode = self.std_mode[i];
                     let result = match std_mode {
