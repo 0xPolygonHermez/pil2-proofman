@@ -125,12 +125,15 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                         );
                     }
 
-                    // We know that at one gsum hint must exist
-                    let gsum_hint = get_hint_ids_by_name(p_expressions_bin, "gsum_col")
-                        .first()
-                        .cloned()
-                        .expect("No 'gsum_col' hint found in p_expressions_bin")
-                        as usize;
+                    // We know that exactly one gsum hint must exist
+                    let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
+                    let gsum_hints = get_hint_ids_by_name(p_expressions_bin, "gsum_col");
+
+                    let gsum_hint = match gsum_hints.as_slice() {
+                        [] => panic!("No 'gsum_col' hint found for air: {}", air_name),
+                        [single] => *single as usize,
+                        _ => panic!("Multiple 'gsum_col' hints found for air: {}", air_name),
+                    };
 
                     let std_mode = self.std_mode[i];
                     let result = match std_mode {
