@@ -68,8 +68,7 @@ pub fn update_debug_data_fast<F: PrimeField64>(
     if is_proves {
         bus_opid_times.num_proves += hash_value * times.as_canonical_biguint();
     } else {
-        //assert!(times.is_one(), "The selector value is invalid: expected 1, but received {times:?}.");
-        bus_opid_times.num_assumes += hash_value;
+        bus_opid_times.num_assumes += hash_value * times.as_canonical_biguint();
     }
 }
 

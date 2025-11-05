@@ -102,26 +102,20 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                         continue;
                     }
 
-                    // Get the air associated with the air_instance
-                    let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
-
                     let setup = sctx.get_setup(airgroup_id, air_id);
                     let p_expressions_bin = setup.p_setup.p_expressions_bin;
 
                     let im_hints = get_hint_ids_by_name(p_expressions_bin, "im_col");
                     let im_airval_hints = get_hint_ids_by_name(p_expressions_bin, "im_airval");
-                    let gsum_hints = get_hint_ids_by_name(p_expressions_bin, "gsum_col");
-
                     let im_total_hints: Vec<u64> = im_hints.iter().chain(im_airval_hints.iter()).cloned().collect();
 
                     let n_im_total_hints = im_total_hints.len();
-
                     if !im_total_hints.is_empty() {
                         mul_hint_fields(
                             &sctx,
                             &pctx,
                             *instance_id,
-                            im_total_hints.len() as u64,
+                            n_im_total_hints as u64,
                             im_total_hints,
                             vec!["reference"; n_im_total_hints],
                             vec!["numerator"; n_im_total_hints],
@@ -131,11 +125,14 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                         );
                     }
 
-                    // We know that at most one sumuct hint exists
-                    let gsum_hint = if gsum_hints.len() > 1 {
-                        panic!("Multiple sumuct hints found for AIR '{air_name}'");
-                    } else {
-                        gsum_hints[0] as usize
+                    // We know that exactly one gsum hint must exist
+                    let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
+                    let gsum_hints = get_hint_ids_by_name(p_expressions_bin, "gsum_col");
+
+                    let gsum_hint = match gsum_hints.as_slice() {
+                        [] => panic!("No 'gsum_col' hint found for air: {}", air_name),
+                        [single] => *single as usize,
+                        _ => panic!("Multiple 'gsum_col' hints found for air: {}", air_name),
                     };
 
                     let std_mode = self.std_mode[i];
