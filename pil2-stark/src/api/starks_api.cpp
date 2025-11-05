@@ -392,6 +392,34 @@ uint64_t get_const_size(void *pStarkInfo) {
     return N * (*(StarkInfo *)pStarkInfo).nConstants;
 }
 
+void pack_const_pols(void *pStarkinfo, void *pConstPols, char *constFile) {
+    StarkInfo &starkInfo = *(StarkInfo *)pStarkinfo;
+    uint64_t *constPols = (uint64_t *)pConstPols;
+    std::vector<uint64_t> pack_info(starkInfo.nConstants, 0);
+    uint64_t nCols = starkInfo.nConstants;
+    uint64_t nRows = 1ULL << starkInfo.starkStruct.nBits;
+    uint64_t total_bits = 0;
+    for (uint64_t i = 0; i < starkInfo.nConstants; ++i) {
+        for (uint64_t row = 0; row < nRows; ++row) {
+            uint64_t val = constPols[row * nCols + i];
+            uint64_t bits = val == 0 ? 1 : 64 - __builtin_clzll(val);
+            if (bits > pack_info[i]) {
+                pack_info[i] = bits;
+            }
+        }
+        total_bits += pack_info[i];
+    }
+    uint64_t words_per_row = (total_bits + 63) / 64;
+    uint64_t *dst = (uint64_t *)malloc((1 << starkInfo.starkStruct.nBits) * words_per_row * sizeof(uint64_t));
+    pack_cpu(constPols, dst, 1 << starkInfo.starkStruct.nBits, starkInfo.nConstants, pack_info.data(), words_per_row);
+
+    ofstream fw(constFile, std::fstream::out | std::fstream::binary);
+    fw.write((const char *)&(words_per_row), sizeof(uint64_t));
+    fw.write((const char *)pack_info.data(), pack_info.size() * sizeof(uint64_t));
+    fw.write((const char *)dst, (1 << starkInfo.starkStruct.nBits) * words_per_row * sizeof(uint64_t));
+    fw.close();
+    free(dst);
+}
 
 #ifndef __USE_CUDA__
 void init_gpu_setup(uint64_t maxBitsExt) {}

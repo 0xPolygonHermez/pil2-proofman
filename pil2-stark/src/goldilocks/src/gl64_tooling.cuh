@@ -39,7 +39,7 @@ struct AirInstanceInfo {
     uint64_t const_pols_offset;
     uint64_t const_tree_offset;
 
-    bool stored = false;
+    bool stored_tree = false;
 
     ExpressionsGPU *expressions_gpu;
     int64_t *opening_points;

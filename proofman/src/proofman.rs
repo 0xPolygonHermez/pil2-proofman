@@ -4,7 +4,7 @@ use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
     DebugInfo, MemoryHandler, MpiCtx, PackedInfo, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx,
-    SetupsVadcop, VerboseMode, MAX_INSTANCES,
+    SetupsVadcop, VerboseMode, MAX_INSTANCES, format_bytes,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -2516,7 +2516,7 @@ where
     ) -> (Arc<DeviceBuffer>, u64, u64, u64) {
         let mut free_memory_gpu = match cfg!(feature = "gpu") {
             true => {
-                check_device_memory_c(mpi_ctx.node_rank as u32, mpi_ctx.node_n_processes as usize as u32) as f64 * 0.98
+                check_device_memory_c(mpi_ctx.node_rank as u32, mpi_ctx.node_n_processes as usize as u32) as f64 * 0.99
             }
             false => 0.0,
         };
@@ -2539,23 +2539,39 @@ where
 
         free_memory_gpu /= n_partitions as f64;
 
-        let total_const_area = match gpu_params.preallocate {
-            true => sctx.total_const_size as u64,
-            false => 0,
-        };
+        let mut total_const_area = 0;
+        let mut total_const_area_aggregation = 0;
 
-        let total_const_area_aggregation = match aggregation && gpu_params.preallocate {
-            true => setups_vadcop.total_const_size as u64,
-            false => 0,
-        };
-
-        let mut max_size_buffer = (free_memory_gpu / 8.0).floor() as u64; //measured in GL elements
-        if gpu_params.preallocate {
-            max_size_buffer -= sctx.total_const_size as u64;
+        if cfg!(feature = "gpu") {
+            total_const_area += sctx.total_const_pols_size as u64;
+            total_const_area += sctx.total_const_tree_size as u64;
             if aggregation {
-                max_size_buffer -= setups_vadcop.total_const_size as u64;
+                total_const_area_aggregation += setups_vadcop.total_const_pols_size as u64;
+                total_const_area_aggregation += setups_vadcop.total_const_tree_size as u64;
+            }
+
+            if !gpu_params.preallocate {
+                let basic = sctx.get_setup(0, 0);
+                total_const_area += basic.const_tree_size as u64;
+                if aggregation {
+                    if pctx.global_info.get_air_has_compressor(0, 0) {
+                        let compressor = setups_vadcop.get_setup(0, 0, &ProofType::Compressor);
+                        total_const_area_aggregation += compressor.const_tree_size as u64;
+                    }
+
+                    let recursive1 = setups_vadcop.get_setup(0, 0, &ProofType::Recursive1);
+                    total_const_area_aggregation += recursive1.const_tree_size as u64;
+
+                    let recursive2 = setups_vadcop.get_setup(0, 0, &ProofType::Recursive2);
+                    total_const_area_aggregation += recursive2.const_tree_size as u64;
+
+                    total_const_area_aggregation +=
+                        setups_vadcop.setup_vadcop_final.as_ref().unwrap().const_tree_size as u64;
+                }
             }
         }
+
+        let max_size_buffer = (free_memory_gpu / 8.0).floor() as u64 - total_const_area - total_const_area_aggregation;
 
         let n_streams_per_gpu = match cfg!(feature = "gpu") {
             true => {
@@ -2591,6 +2607,13 @@ where
                 n_recursive_streams_per_gpu += 1;
             }
         }
+
+        tracing::info!(
+            "Using {} streams per GPU for basic proofs and {} streams per GPU for recursive proofs. Using {} for fixed pols",
+            n_streams_per_gpu,
+            n_recursive_streams_per_gpu,
+            format_bytes((total_const_area + total_const_area_aggregation) as f64 * 8.0)
+        );
 
         let max_sizes = MaxSizes {
             total_const_area,

@@ -86,6 +86,12 @@ extern "C" {
 
     pub fn init_gpu_setup(maxBitsExt: u64);
 
+    pub fn pack_const_pols(
+        pStarkinfo: *mut ::std::os::raw::c_void,
+        pConstPols: *mut ::std::os::raw::c_void,
+        constFile: *mut ::std::os::raw::c_char,
+    );
+
     pub fn prepare_blocks(pol: *mut u64, N: u64, nCols: u64);
 
     pub fn calculate_const_tree(

@@ -53,5 +53,14 @@ void writeFileParallel(const std::string &fileName, const void* buffer, uint64_t
 
 bool loadFileParallel_block(void* buffer, const std::string &fileName, uint64_t block_size, bool exit, uint32_t skip_blocks);
 
+void pack_cpu(
+    const uint64_t *src,
+    uint64_t *dst,
+    uint64_t nRows,
+    uint64_t nCols,
+    const uint64_t *pack_info,
+    uint64_t words_per_row
+);
+
 
 #endif

@@ -246,6 +246,18 @@ pub fn init_gpu_setup_c(maxBitsExt: u64) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn pack_const_pols_c(pStarkinfo: *mut c_void, pConstPols: *mut u8, constFile: &str) {
+    let const_file_cstr: CString = CString::new(constFile).unwrap();
+    unsafe {
+        pack_const_pols(
+            pStarkinfo,
+            pConstPols as *mut std::os::raw::c_void,
+            const_file_cstr.as_ptr() as *mut std::os::raw::c_char,
+        );
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn prepare_blocks_c(pol: *mut u64, N: u64, nCols: u64) {
     unsafe {
         prepare_blocks(pol, N, nCols);
@@ -1493,6 +1505,11 @@ pub fn load_const_tree_c(
 #[cfg(feature = "no_lib_link")]
 pub fn init_gpu_setup_c(_maxBitsExt: u64) {
     trace!("··· {}", "init_gpu_setup: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn pack_const_pols_c(_pStarkinfo: *mut c_void, _pConstPols: *mut u8, _constFile: &str) {
+    trace!("··· {}", "pack_const_pols: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
