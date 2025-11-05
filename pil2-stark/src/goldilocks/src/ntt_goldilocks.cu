@@ -207,7 +207,6 @@ __global__ void transposeSubBlocksBack_noBR_compact(gl64_t *src, uint64_t n_bits
     extern __shared__ gl64_t shared[];   
     uint32_t n_src = 1 << n_bits_src;
     uint32_t n_dst = 1 << n_bits_dst;
-    uint32_t blowup = 1 << (n_bits_dst - n_bits_src);
 
     uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
     uint32_t col = blockIdx.y * blockDim.y + threadIdx.y;
