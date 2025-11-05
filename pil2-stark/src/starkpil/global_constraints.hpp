@@ -328,7 +328,12 @@ uint64_t setHintFieldGlobalConstraint(json& globalInfo, ExpressionsBin &globalCo
 
     auto hintFieldVal = hintField->values[0];
     if(hintFieldVal.operand == opType::proofvalue) {
-        std::memcpy(&proofValues[FIELD_EXTENSION*hintFieldVal.id], values, FIELD_EXTENSION * sizeof(Goldilocks::Element));
+        uint64_t pos = 0;
+        for(uint64_t i = 0; i < hintFieldVal.id; ++i) {
+            pos += globalInfo["proofValuesMap"][i]["stage"] == 1 ? 1 : FIELD_EXTENSION;
+        }
+        uint64_t dim = globalInfo["proofValuesMap"][hintFieldVal.id]["stage"] == 1 ? 1 : FIELD_EXTENSION;
+        std::memcpy(&proofValues[pos], values, dim * sizeof(Goldilocks::Element));
     } else {
         zklog.error("Only committed pols and airgroupvalues can be set");
         exitProcess();
