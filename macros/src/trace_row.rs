@@ -123,7 +123,7 @@ pub fn get_bit_count(input: &syn::parse::ParseBuffer<'_>, field_type: &str, min:
     if bit_count < min || bit_count > max {
         return Err(syn::Error::new_spanned(
             bits,
-            format!("`{}` fields must be between {} and {} bits wide", field_type, min, max),
+            format!("`{field_type}` fields must be between {min} and {max} bits wide"),
         ));
     }
     Ok(bit_count)

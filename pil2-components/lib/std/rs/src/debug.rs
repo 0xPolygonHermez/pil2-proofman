@@ -315,7 +315,7 @@ pub fn print_debug_info<F: PrimeField64>(
         // Print global data first
         for (airgroup_id, airgroup_data) in global_data.iter() {
             let airgroup_name = pctx.global_info.get_air_group_name(*airgroup_id);
-            writeln!(output, "\t        - Airgroup: {} (id: {})", airgroup_name, airgroup_id).expect("Write error");
+            writeln!(output, "\t        - Airgroup: {airgroup_name} (id: {airgroup_id})").expect("Write error");
             writeln!(output, "\t          PIOP: {}", airgroup_data.name_piop).expect("Write error");
             writeln!(output, "\t          Expression: {:?}", airgroup_data.name_exprs).expect("Write error");
             writeln!(output, "\t          Num: 1").expect("Write error");
