@@ -1637,28 +1637,18 @@ where
             my_instances_calculated[*instance_id as usize] = true;
         }
 
-        let keys: Vec<ProofmanResult<_>> = my_instances_sorted
-            .iter()
-            .map(|&id| {
-                let setup = self.sctx.get_setup(instances[id].airgroup_id, instances[id].air_id)?;
-                Ok((
-                    if setup.single_instance { 1 } else { 0 },
-                    if self.pctx.is_air_instance_stored(id) { 0 } else { 1 },
-                    if self.pctx.global_info.get_air_has_compressor(instances[id].airgroup_id, instances[id].air_id) {
-                        0
-                    } else {
-                        1
-                    },
-                ))
-            })
-            .collect();
-
-        if keys.iter().any(|k| k.is_err()) {
-            return Err(keys.into_iter().find_map(|k| k.err()).unwrap());
-        }
-
-        let keys: Vec<_> = keys.into_iter().map(Result::unwrap).collect();
-        my_instances_sorted.sort_by_key(|&id| keys[id]);
+        my_instances_sorted.sort_by_key(|&id| {
+            let setup = self.sctx.get_setup(instances[id].airgroup_id, instances[id].air_id).unwrap();
+            (
+                if setup.single_instance { 1 } else { 0 },
+                if self.pctx.is_air_instance_stored(id) { 0 } else { 1 },
+                if self.pctx.global_info.get_air_has_compressor(instances[id].airgroup_id, instances[id].air_id) {
+                    0
+                } else {
+                    1
+                },
+            )
+        });
 
         let proofs_finished = Arc::new(AtomicBool::new(false));
         for stream_id in 0..self.n_streams {

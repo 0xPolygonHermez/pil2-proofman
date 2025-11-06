@@ -408,15 +408,17 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
     let instances = pctx.dctx_get_instances();
     let mut airgroup_instances_alive = vec![vec![0; n_processes]; n_airgroups];
     for global_id in pctx.dctx_get_worker_instances().iter() {
-        let owner = pctx.dctx_get_process_owner_instance(*global_id)? as usize;
-        if is_distributed {
-            airgroup_instances_alive[instances[*global_id].airgroup_id][owner] += 1;
-            if airgroup_instances_alive[instances[*global_id].airgroup_id][owner] == N_RECURSIVE_PROOFS_PER_AGGREGATION
-            {
-                airgroup_instances_alive[instances[*global_id].airgroup_id][owner] = 1;
+        if let Ok(owner) = pctx.dctx_get_process_owner_instance(*global_id) {
+            if is_distributed {
+                airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize] += 1;
+                if airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize]
+                    == N_RECURSIVE_PROOFS_PER_AGGREGATION
+                {
+                    airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize] = 1;
+                }
+            } else {
+                airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize] = 1;
             }
-        } else {
-            airgroup_instances_alive[instances[*global_id].airgroup_id][owner] = 1;
         }
     }
 
