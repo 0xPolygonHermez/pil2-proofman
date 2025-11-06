@@ -337,7 +337,7 @@ where
         witness_lib_path: PathBuf,
         public_inputs_path: Option<PathBuf>,
         input_data_path: Option<PathBuf>,
-        output_path: PathBuf,
+        output_path: Option<PathBuf>,
         verbose_mode: VerboseMode,
     ) -> Result<(), Box<dyn std::error::Error>> {
         timer_start_info!(CREATE_WITNESS_LIB);
@@ -357,13 +357,13 @@ where
     pub fn execute_from_lib(
         &self,
         input_data_path: Option<PathBuf>,
-        output_path: PathBuf,
+        output_path: Option<PathBuf>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.wcm.set_input_data_path(input_data_path);
         self.execute_(output_path)
     }
 
-    pub fn execute_(&self, output_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn execute_(&self, output_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
         self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize);
 
         self.reset();
@@ -422,45 +422,47 @@ where
             });
         }
 
-        let mut wtr = Writer::from_path(output_path)?;
+        if let Some(output_path) = output_path {
+            let mut wtr = Writer::from_path(output_path)?;
 
-        for info in air_info.values_mut() {
-            info.percentage_area = info.total_area as f64 / total_area as f64 * 100f64;
-            info.percentage_instances = info.instance_count as f64 / total_instances as f64 * 100f64;
-        }
-
-        for (airgroup_id, air_group) in self.pctx.global_info.airs.iter().enumerate() {
-            for (air_id, _) in air_group.iter().enumerate() {
-                let air_name = &self.pctx.global_info.airs[airgroup_id][air_id].name;
-                let info = air_info.get_mut(air_name).unwrap();
-                wtr.serialize(&info)?;
+            for info in air_info.values_mut() {
+                info.percentage_area = info.total_area as f64 / total_area as f64 * 100f64;
+                info.percentage_instances = info.instance_count as f64 / total_instances as f64 * 100f64;
             }
+
+            for (airgroup_id, air_group) in self.pctx.global_info.airs.iter().enumerate() {
+                for (air_id, _) in air_group.iter().enumerate() {
+                    let air_name = &self.pctx.global_info.airs[airgroup_id][air_id].name;
+                    let info = air_info.get_mut(air_name).unwrap();
+                    wtr.serialize(&info)?;
+                }
+            }
+
+            #[derive(Serialize)]
+            struct Summary {
+                version: String,
+                airgroup_id: Option<usize>,
+                air_id: Option<usize>,
+                name: String,
+                total_instances: usize,
+                percentage_instances: f64,
+                total_area: u64,
+                percentage_area: f64,
+            }
+
+            wtr.serialize(Summary {
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                name: "TOTAL".into(),
+                airgroup_id: None,
+                air_id: None,
+                percentage_area: 100f64,
+                total_area,
+                percentage_instances: 100f64,
+                total_instances,
+            })?;
+
+            wtr.flush()?;
         }
-
-        #[derive(Serialize)]
-        struct Summary {
-            version: String,
-            airgroup_id: Option<usize>,
-            air_id: Option<usize>,
-            name: String,
-            total_instances: usize,
-            percentage_instances: f64,
-            total_area: u64,
-            percentage_area: f64,
-        }
-
-        wtr.serialize(Summary {
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            name: "TOTAL".into(),
-            airgroup_id: None,
-            air_id: None,
-            percentage_area: 100f64,
-            total_area,
-            percentage_instances: 100f64,
-            total_instances,
-        })?;
-
-        wtr.flush()?;
 
         Ok(())
     }
