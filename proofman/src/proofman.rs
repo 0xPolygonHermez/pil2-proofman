@@ -2905,12 +2905,14 @@ where
             }
         }
 
-        tracing::info!(
-            "Using {} streams per GPU for basic proofs and {} streams per GPU for recursive proofs. Using {} for fixed pols",
-            n_streams_per_gpu,
-            n_recursive_streams_per_gpu,
-            format_bytes((total_const_area + total_const_area_aggregation) as f64 * 8.0)
-        );
+        if cfg!(feature = "gpu") {
+            tracing::info!(
+                "Using {} streams per GPU for basic proofs and {} streams per GPU for recursive proofs. Using {} for fixed pols",
+                n_streams_per_gpu,
+                n_recursive_streams_per_gpu,
+                format_bytes((total_const_area + total_const_area_aggregation) as f64 * 8.0)
+            );
+        }
 
         let max_sizes = MaxSizes {
             total_const_area,
