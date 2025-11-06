@@ -36,7 +36,7 @@ pub struct ExecuteCmd {
     pub proving_key: PathBuf,
 
     #[clap(short = 'o', long)]
-    pub output_path: PathBuf,
+    pub output_path: Option<PathBuf>,
 
     #[clap(long, default_value_t = Field::Goldilocks)]
     pub field: Field,

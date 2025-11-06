@@ -7,7 +7,7 @@ use colored::Colorize;
 use fields::PrimeField64;
 use num_bigint::BigUint;
 use num_traits::Zero;
-use proofman_common::{ProofCtx, ProofmanError, ProofmanResult};
+use proofman_common::{ProofCtx, ProofmanResult};
 use proofman_hints::HintFieldOutput;
 
 use crate::normalize_vals;
@@ -68,12 +68,7 @@ pub fn update_debug_data_fast<F: PrimeField64>(
     if is_proves {
         bus_opid_times.num_proves += hash_value * times.as_canonical_biguint();
     } else {
-        if !times.is_one() {
-            return Err(ProofmanError::StdError(format!(
-                "The selector value is invalid: expected 1, but received {times:?}."
-            )));
-        }
-        bus_opid_times.num_assumes += hash_value;
+        bus_opid_times.num_assumes += hash_value * times.as_canonical_biguint();
     }
     Ok(())
 }

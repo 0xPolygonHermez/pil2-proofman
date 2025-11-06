@@ -174,6 +174,7 @@ pub struct ParamsGPU {
     pub preallocate: bool,
     pub max_number_streams: usize,
     pub number_threads_pools_witness: usize,
+    pub are_threads_per_witness_set: bool,
     pub max_witness_stored: usize,
     pub single_instances: Vec<(usize, usize)>, // (airgroup_id, air_id)
     pub pack_trace: bool,
@@ -191,6 +192,7 @@ impl Default for ParamsGPU {
             max_witness_stored: 4,
             single_instances: Vec::new(),
             pack_trace: true,
+            are_threads_per_witness_set: false,
         }
     }
 }
@@ -206,6 +208,7 @@ impl ParamsGPU {
 
     pub fn with_number_threads_pools_witness(&mut self, number_threads_pools_witness: usize) {
         self.number_threads_pools_witness = number_threads_pools_witness;
+        self.are_threads_per_witness_set = true;
     }
     pub fn with_max_witness_stored(&mut self, max_witness_stored: usize) {
         self.max_witness_stored = max_witness_stored;
@@ -456,11 +459,6 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances[global_idx].table
     }
 
-    pub fn dctx_instance_threads_witness(&self, global_idx: usize) -> usize {
-        let dctx = self.dctx.read().unwrap();
-        dctx.instances[global_idx].threads_witness
-    }
-
     pub fn dctx_find_air_instance_id(&self, global_idx: usize) -> ProofmanResult<usize> {
         let dctx = self.dctx.read().unwrap();
         dctx.find_air_instance_id(global_idx)
@@ -486,32 +484,22 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.set_chunks(global_idx, chunks, slow);
     }
 
-    pub fn add_instance_assign(
-        &self,
-        airgroup_id: usize,
-        air_id: usize,
-        threads_witness: usize,
-    ) -> ProofmanResult<usize> {
+    pub fn add_instance_assign(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance(airgroup_id, air_id, threads_witness, weight)
+        dctx.add_instance(airgroup_id, air_id, weight)
     }
 
-    pub fn add_instance_assign_first_partition(
-        &self,
-        airgroup_id: usize,
-        air_id: usize,
-        threads_witness: usize,
-    ) -> ProofmanResult<usize> {
+    pub fn add_instance_assign_first_partition(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_first_partition(airgroup_id, air_id, threads_witness, weight)
+        dctx.add_instance_first_partition(airgroup_id, air_id, weight)
     }
 
-    pub fn add_instance(&self, airgroup_id: usize, air_id: usize, threads_witness: usize) -> ProofmanResult<usize> {
+    pub fn add_instance(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign(airgroup_id, air_id, threads_witness, weight)
+        dctx.add_instance_no_assign(airgroup_id, air_id, weight)
     }
 
     pub fn add_table(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
@@ -526,15 +514,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_table_all(airgroup_id, air_id, weight)
     }
 
-    pub fn dctx_add_instance_no_assign(
-        &self,
-        airgroup_id: usize,
-        air_id: usize,
-        threads_witness: usize,
-        weight: u64,
-    ) -> ProofmanResult<usize> {
+    pub fn dctx_add_instance_no_assign(&self, airgroup_id: usize, air_id: usize, weight: u64) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.add_instance_no_assign(airgroup_id, air_id, threads_witness, weight)
+        dctx.add_instance_no_assign(airgroup_id, air_id, weight)
     }
 
     pub fn dctx_assign_instances(&self) -> ProofmanResult<()> {

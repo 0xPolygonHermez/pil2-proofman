@@ -142,11 +142,6 @@ pub fn update_local_debug_data<F: PrimeField64>(
         bus_val.shared_data.num_proves += times;
         local_data.row_proves.push(row);
     } else {
-        if !times.is_one() {
-            return Err(ProofmanError::StdError(format!(
-                "The selector value is invalid: expected 1, but received {times:?}."
-            )));
-        }
         bus_val.shared_data.num_assumes += times;
         local_data.row_assumes.push(row);
     }
@@ -326,7 +321,7 @@ pub fn print_debug_info<F: PrimeField64>(
         // Print global data first
         for (airgroup_id, airgroup_data) in global_data.iter() {
             let airgroup_name = pctx.global_info.get_air_group_name(*airgroup_id);
-            writeln!(output, "\t        - Airgroup: {} (id: {})", airgroup_name, airgroup_id).expect("Write error");
+            writeln!(output, "\t        - Airgroup: {airgroup_name} (id: {airgroup_id})").expect("Write error");
             writeln!(output, "\t          PIOP: {}", airgroup_data.name_piop).expect("Write error");
             writeln!(output, "\t          Expression: {:?}", airgroup_data.name_exprs).expect("Write error");
             writeln!(output, "\t          Num: 1").expect("Write error");

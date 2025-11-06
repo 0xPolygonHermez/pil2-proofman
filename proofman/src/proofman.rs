@@ -131,6 +131,7 @@ pub struct ProofMan<F: PrimeField64> {
     const_tree: Arc<Vec<F>>,
     prover_buffer_recursive: Arc<Vec<F>>,
     max_num_threads: usize,
+    num_threads_per_witness: usize,
     tx_threads: Sender<()>,
     rx_threads: Receiver<()>,
     witness_tx: Sender<usize>,
@@ -386,7 +387,7 @@ where
         witness_lib_path: PathBuf,
         public_inputs_path: Option<PathBuf>,
         input_data_path: Option<PathBuf>,
-        output_path: PathBuf,
+        output_path: Option<PathBuf>,
         verbose_mode: VerboseMode,
     ) -> ProofmanResult<()> {
         timer_start_info!(CREATE_WITNESS_LIB);
@@ -403,12 +404,16 @@ where
         self.execute_(output_path)
     }
 
-    pub fn execute_from_lib(&self, input_data_path: Option<PathBuf>, output_path: PathBuf) -> ProofmanResult<()> {
+    pub fn execute_from_lib(
+        &self,
+        input_data_path: Option<PathBuf>,
+        output_path: Option<PathBuf>,
+    ) -> ProofmanResult<()> {
         self.wcm.set_input_data_path(input_data_path);
         self.execute_(output_path)
     }
 
-    pub fn execute_(&self, output_path: PathBuf) -> ProofmanResult<()> {
+    pub fn execute_(&self, output_path: Option<PathBuf>) -> ProofmanResult<()> {
         self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize)?;
 
         self.reset()?;
@@ -466,45 +471,47 @@ where
             });
         }
 
-        let mut wtr = Writer::from_path(output_path)?;
+        if let Some(output_path) = output_path {
+            let mut wtr = Writer::from_path(output_path)?;
 
-        for info in air_info.values_mut() {
-            info.percentage_area = info.total_area as f64 / total_area as f64 * 100f64;
-            info.percentage_instances = info.instance_count as f64 / total_instances as f64 * 100f64;
-        }
-
-        for (airgroup_id, air_group) in self.pctx.global_info.airs.iter().enumerate() {
-            for (air_id, _) in air_group.iter().enumerate() {
-                let air_name = &self.pctx.global_info.airs[airgroup_id][air_id].name;
-                let info = air_info.get_mut(air_name).unwrap();
-                wtr.serialize(&info)?;
+            for info in air_info.values_mut() {
+                info.percentage_area = info.total_area as f64 / total_area as f64 * 100f64;
+                info.percentage_instances = info.instance_count as f64 / total_instances as f64 * 100f64;
             }
+
+            for (airgroup_id, air_group) in self.pctx.global_info.airs.iter().enumerate() {
+                for (air_id, _) in air_group.iter().enumerate() {
+                    let air_name = &self.pctx.global_info.airs[airgroup_id][air_id].name;
+                    let info = air_info.get_mut(air_name).unwrap();
+                    wtr.serialize(&info)?;
+                }
+            }
+
+            #[derive(Serialize)]
+            struct Summary {
+                version: String,
+                airgroup_id: Option<usize>,
+                air_id: Option<usize>,
+                name: String,
+                total_instances: usize,
+                percentage_instances: f64,
+                total_area: u64,
+                percentage_area: f64,
+            }
+
+            wtr.serialize(Summary {
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                name: "TOTAL".into(),
+                airgroup_id: None,
+                air_id: None,
+                percentage_area: 100f64,
+                total_area,
+                percentage_instances: 100f64,
+                total_instances,
+            })?;
+
+            wtr.flush()?;
         }
-
-        #[derive(Serialize)]
-        struct Summary {
-            version: String,
-            airgroup_id: Option<usize>,
-            air_id: Option<usize>,
-            name: String,
-            total_instances: usize,
-            percentage_instances: f64,
-            total_area: u64,
-            percentage_area: f64,
-        }
-
-        wtr.serialize(Summary {
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            name: "TOTAL".into(),
-            airgroup_id: None,
-            air_id: None,
-            percentage_area: 100f64,
-            total_area,
-            percentage_instances: 100f64,
-            total_instances,
-        })?;
-
-        wtr.flush()?;
 
         Ok(())
     }
@@ -1017,6 +1024,30 @@ where
 
         let max_num_threads = configured_num_threads(mpi_ctx.node_n_processes as usize);
 
+        let num_threads_per_witness = match gpu_params.are_threads_per_witness_set {
+            true => gpu_params.number_threads_pools_witness,
+            false => {
+                let num_threads_8 = max_num_threads / 8;
+                let num_threads_4 = max_num_threads / 4;
+                let num_threads_2 = max_num_threads / 2;
+
+                let total_cores_8 = 8 * num_threads_8;
+                let total_cores_4 = 4 * num_threads_4;
+                let total_cores_2 = 2 * num_threads_2;
+
+                if total_cores_8 >= total_cores_4 && total_cores_8 >= total_cores_2 && num_threads_8 > 0 {
+                    num_threads_8
+                } else if total_cores_4 >= total_cores_2 && num_threads_4 > 0 {
+                    num_threads_4
+                } else if num_threads_2 > 0 {
+                    num_threads_2
+                } else {
+                    1
+                }
+            }
+        };
+        tracing::info!("Using {num_threads_per_witness} threads per witness computation");
+
         let prover_buffer_recursive = if aggregation {
             let prover_buffer_size = get_recursive_buffer_sizes(&pctx, &setups_vadcop)?;
             Arc::new(create_buffer_fast(prover_buffer_size))
@@ -1062,6 +1093,7 @@ where
             n_streams,
             n_streams_non_recursive,
             max_num_threads,
+            num_threads_per_witness,
             memory_handler,
             proofs,
             compressor_proofs,
@@ -2401,11 +2433,11 @@ where
         }
         let mut alives = vec![0; n_airgroups];
         let mut n_proofs_to_be_received = 0;
-        for airgroup in 0..n_airgroups {
-            for p in 0..n_processes {
-                alives[airgroup] += airgroup_instances_alive[airgroup][p];
+        for (airgroup, instances) in airgroup_instances_alive.iter().enumerate().take(n_airgroups) {
+            for (p, &alive) in instances.iter().enumerate().take(n_processes) {
+                alives[airgroup] += alive;
                 if p != my_rank {
-                    n_proofs_to_be_received += airgroup_instances_alive[airgroup][p];
+                    n_proofs_to_be_received += alive;
                 }
             }
         }
@@ -2585,6 +2617,7 @@ where
         let witness_rx = self.witness_rx.clone();
         let witness_rx_priority = self.witness_rx_priority.clone();
         let cancellation_info_clone = self.cancellation_info.clone();
+        let n_threads_witness = self.num_threads_per_witness;
         let witness_handler = if !minimal_memory && (cfg!(feature = "gpu") || stats) {
             Some(std::thread::spawn(move || loop {
                 if cancellation_info_clone.read().unwrap().token.is_cancelled() {
@@ -2626,8 +2659,6 @@ where
                         break;
                     }
                 };
-
-                let n_threads_witness = pctx_clone.dctx_instance_threads_witness(instance_id);
 
                 let tx_threads_clone: Sender<()> = tx_threads_clone.clone();
                 let wcm = wcm_clone.clone();
@@ -2698,7 +2729,7 @@ where
                 if self.cancellation_info.read().unwrap().token.is_cancelled() {
                     break;
                 }
-                let n_threads_witness = self.pctx.dctx_instance_threads_witness(instance_id);
+                let n_threads_witness = self.num_threads_per_witness;
 
                 let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
                 let threads_to_use_collect = match cfg!(feature = "gpu") || stats {

@@ -37,7 +37,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
         global_ids: &RwLock<Vec<usize>>,
         _input_data_path: Option<PathBuf>,
     ) -> ProofmanResult<()> {
-        pctx.add_instance(0, 0, 1)?;
+        pctx.add_instance(0, 0)?;
         global_ids.write().unwrap().push(0);
         Ok(())
     }

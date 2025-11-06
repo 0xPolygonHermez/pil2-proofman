@@ -421,13 +421,13 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
     }
 
     // Pre-process data before starting recursion loop
-    for airgroup in 0..n_airgroups {
+    for (airgroup, instances) in airgroup_instances_alive.iter().enumerate().take(n_airgroups) {
         let mut current_pos = 0;
-        for p in 0..n_processes {
+        for (p, &alive) in instances.iter().enumerate().take(n_processes) {
             if p < rank {
-                current_pos += airgroup_instances_alive[airgroup][p];
+                current_pos += alive;
             }
-            alives[airgroup] += airgroup_instances_alive[airgroup][p];
+            alives[airgroup] += alive;
         }
         let setup = setups.get_setup(airgroup, 0, &ProofType::Recursive2)?;
         let publics_aggregation = n_publics_aggregation(pctx, airgroup);
@@ -547,11 +547,10 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
 
     if pctx.mpi_ctx.rank == 0 {
         let worker_index = pctx.get_worker_index()?;
-        for (airgroup_id, alive) in alives.iter().enumerate() {
-            for i in 0..*alive {
-                let proof = airgroup_proofs[airgroup_id][i].take().expect("Expected proof");
+        for (airgroup_id, (&alive, proofs)) in alives.iter().zip(airgroup_proofs.iter_mut()).enumerate() {
+            proofs.iter_mut().take(alive).filter_map(|p| p.take()).for_each(|proof| {
                 agg_proofs.push(AggProofs::new(airgroup_id as u64, proof, vec![worker_index]));
-            }
+            });
         }
     }
 
