@@ -104,7 +104,9 @@ pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
         false
     };
 
-    pack_const_pols_c(p_stark_info, const_pols.as_ptr() as *mut u8, setup.const_pols_path.as_str());
+    if cfg!(feature = "gpu") {
+        pack_const_pols_c(p_stark_info, const_pols.as_ptr() as *mut u8, setup.const_pols_path.as_str());
+    }
 
     if !valid_root {
         timer_start_info!(WRITING_CONST_TREE);
