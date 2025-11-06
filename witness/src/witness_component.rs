@@ -1,13 +1,16 @@
 use std::sync::{RwLock, Arc};
 
 use fields::PrimeField64;
-use proofman_common::{BufferPool, ProofCtx, SetupCtx, DebugInfo};
-use std::path::PathBuf;
+use proofman_common::{BufferPool, DebugInfo, ProofCtx, ProofmanResult, SetupCtx};
 
 pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
-    fn execute(&self, _pctx: Arc<ProofCtx<F>>, _global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {}
+    fn execute(&self, _pctx: Arc<ProofCtx<F>>, _global_ids: &RwLock<Vec<usize>>) -> ProofmanResult<()> {
+        Ok(())
+    }
 
-    fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) {}
+    fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) -> ProofmanResult<()> {
+        Ok(())
+    }
 
     fn calculate_witness(
         &self,
@@ -17,7 +20,8 @@ pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> ProofmanResult<()> {
+        Ok(())
     }
 
     fn pre_calculate_witness(
@@ -28,20 +32,23 @@ pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
         instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> ProofmanResult<()> {
         for instance_id in instance_ids {
             pctx.set_witness_ready(*instance_id, false);
         }
+        Ok(())
     }
 
-    fn end(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _debug_info: &DebugInfo) {}
+    fn end(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _debug_info: &DebugInfo) -> ProofmanResult<()> {
+        Ok(())
+    }
 
     fn gen_custom_commits_fixed(
         &self,
         _pctx: Arc<ProofCtx<F>>,
         _sctx: Arc<SetupCtx<F>>,
         _check: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> ProofmanResult<()> {
         Ok(())
     }
 }
@@ -49,19 +56,15 @@ pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
 #[macro_export]
 macro_rules! execute {
     ($Trace:ident, $num_instances: expr) => {
-        fn execute(
-            &self,
-            pctx: Arc<ProofCtx<F>>,
-            global_ids: &std::sync::RwLock<Vec<usize>>,
-            _input_data_path: Option<std::path::PathBuf>,
-        ) {
+        fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &std::sync::RwLock<Vec<usize>>) -> ProofmanResult<()> {
             let mut instance_ids = Vec::new();
             for _ in 0..$num_instances {
-                let global_id = pctx.add_instance($Trace::<F>::AIRGROUP_ID, $Trace::<F>::AIR_ID);
+                let global_id = pctx.add_instance($Trace::<F>::AIRGROUP_ID, $Trace::<F>::AIR_ID)?;
                 instance_ids.push(global_id);
                 global_ids.write().unwrap().push(global_id);
             }
             *self.instance_ids.write().unwrap() = instance_ids.clone();
+            Ok(())
         }
     };
 }

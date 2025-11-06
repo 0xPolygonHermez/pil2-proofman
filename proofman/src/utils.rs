@@ -6,9 +6,9 @@ use std::{collections::HashMap, path::PathBuf};
 
 use colored::*;
 
-use std::error::Error;
-
-use proofman_common::{format_bytes, MpiCtx, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop, ParamsGPU};
+use proofman_common::{
+    format_bytes, MpiCtx, ParamsGPU, ProofCtx, ProofType, ProofmanError, ProofmanResult, Setup, SetupCtx, SetupsVadcop,
+};
 use proofman_util::DeviceBuffer;
 use proofman_starks_lib_c::load_device_const_pols_c;
 use proofman_starks_lib_c::custom_commit_size_c;
@@ -23,9 +23,9 @@ pub fn print_summary_info<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     mpi_ctx: &MpiCtx,
     packed_info: &HashMap<(usize, usize), PackedInfo>,
-) {
+) -> ProofmanResult<()> {
     if mpi_ctx.rank == 0 {
-        print_summary(pctx, sctx, packed_info, true);
+        print_summary(pctx, sctx, packed_info, true)?;
     }
 
     if mpi_ctx.n_processes > 1 {
@@ -38,7 +38,7 @@ pub fn print_summary_info<F: PrimeField64>(
             max_deviation
         );
 
-        print_summary(pctx, sctx, packed_info, false);
+        print_summary(pctx, sctx, packed_info, false)?;
     }
 
     if pctx.get_n_partitions() > 1 {
@@ -51,8 +51,9 @@ pub fn print_summary_info<F: PrimeField64>(
             max_deviation
         );
 
-        print_summary(pctx, sctx, packed_info, false);
+        print_summary(pctx, sctx, packed_info, false)?;
     }
+    Ok(())
 }
 
 pub fn print_summary<F: PrimeField64>(
@@ -60,7 +61,7 @@ pub fn print_summary<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     packed_info: &HashMap<(usize, usize), PackedInfo>,
     global: bool,
-) {
+) -> ProofmanResult<()> {
     //todo_distributed: no tens totes les taules nomes les dels teu worker
     let mut air_info = HashMap::new();
 
@@ -91,7 +92,7 @@ pub fn print_summary<F: PrimeField64>(
         let air_group_name = pctx.global_info.air_groups[airgroup_id].clone();
         let air_instance_map = air_instances.entry(air_group_name).or_insert_with(HashMap::new);
         if !air_instance_map.contains_key(&air_name.clone()) {
-            let setup = sctx.get_setup(airgroup_id, air_id);
+            let setup = sctx.get_setup(airgroup_id, air_id)?;
             let n_bits = setup.stark_info.stark_struct.n_bits;
             let memory_trace = if cfg!(feature = "gpu") && cfg!(feature = "packed") {
                 let num_packed_words = packed_info.get(&(airgroup_id, air_id)).map(|info| info.num_packed_words);
@@ -177,13 +178,10 @@ pub fn print_summary<F: PrimeField64>(
     tracing::info!("----------------------------------------------------------");
     tracing::info!("      Extra memory tables (CPU): {}", format_bytes(memory_tables));
     tracing::info!("----------------------------------------------------------");
+    Ok(())
 }
 
-fn check_const_tree<F: PrimeField64>(
-    setup: &Setup<F>,
-    aggregation: bool,
-    final_snark: bool,
-) -> Result<(), Box<dyn Error>> {
+fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool, final_snark: bool) -> ProofmanResult<()> {
     let const_pols_tree_path = &setup.const_pols_tree_path;
     let mut flags = String::new();
     if aggregation {
@@ -199,30 +197,30 @@ fn check_const_tree<F: PrimeField64>(
     };
 
     if !PathBuf::from(&const_pols_tree_path).exists() {
-        let error_message = format!(
+        let error_message = ProofmanError::InvalidSetup(format!(
             "Error: Unable to find the constant tree at '{const_pols_tree_path}'.\n\
             Please run the following command:\n\
             \x1b[1mcargo run {is_gpu}--bin proofman-cli check-setup --proving-key <PROVING_KEY>{flags}\x1b[0m"
-        );
-        return Err(error_message.into());
+        ));
+        return Err(error_message);
     }
 
-    let error_message = format!(
+    let error_message = ProofmanError::InvalidSetup(format!(
         "Error: The constant tree file at '{const_pols_tree_path}' exists but is invalid or corrupted.\n\
         Please regenerate it by running:\n\
         \x1b[1mcargo run {is_gpu}--bin proofman-cli check-setup --proving-key <PROVING_KEY>{flags}\x1b[0m"
-    );
+    ));
 
     let const_pols_tree_size = setup.const_tree_size;
     match fs::metadata(const_pols_tree_path) {
         Ok(metadata) => {
             let actual_size = metadata.len() as usize;
             if actual_size != const_pols_tree_size * 8 {
-                return Err(error_message.into());
+                return Err(error_message);
             }
         }
         Err(err) => {
-            return Err(format!("Failed to get metadata for {}: {}", setup.air_name, err).into());
+            return Err(ProofmanError::InvalidSetup(format!("Failed to get metadata for {}: {}", setup.air_name, err)));
         }
     }
     if setup.setup_type != ProofType::RecursiveF {
@@ -243,17 +241,17 @@ fn check_const_tree<F: PrimeField64>(
             let byte_range = i * 8..(i + 1) * 8;
             let value = u64::from_le_bytes(buffer[byte_range].try_into()?);
             if value != *verkey_val {
-                return Err(error_message.into());
+                return Err(error_message);
             }
         }
     }
     Ok(())
 }
 
-pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> Result<(), Box<dyn Error>> {
+pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
-            let setup = sctx.get_setup(airgroup_id, air_id);
+            let setup = sctx.get_setup(airgroup_id, air_id)?;
             check_const_tree(setup, false, false)?;
 
             let n_custom_commits = setup.stark_info.custom_commits.len();
@@ -314,12 +312,12 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     final_snark: bool,
-) -> Result<(), Box<dyn Error>> {
+) -> ProofmanResult<()> {
     let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                let setup = sctx_compressor.get_setup(airgroup_id, air_id);
+                let setup = sctx_compressor.get_setup(airgroup_id, air_id)?;
                 check_const_tree(setup, true, false)?;
             }
         }
@@ -328,7 +326,7 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
-            let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
+            let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
             check_const_tree(setup, true, false)?;
         }
     }
@@ -336,7 +334,7 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap();
     let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup in 0..n_airgroups {
-        let setup = sctx_recursive2.get_setup(airgroup, 0);
+        let setup = sctx_recursive2.get_setup(airgroup, 0)?;
         check_const_tree(setup, true, false)?;
     }
 
@@ -356,11 +354,11 @@ pub fn calculate_max_witness_trace_size<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     packed_info: &HashMap<(usize, usize), PackedInfo>,
     gpu_params: &ParamsGPU,
-) -> usize {
+) -> ProofmanResult<usize> {
     let mut max_witness_trace_size = 0;
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
-            let setup = sctx.get_setup(airgroup_id, air_id);
+            let setup = sctx.get_setup(airgroup_id, air_id)?;
             let n = 1 << setup.stark_info.stark_struct.n_bits;
             let num_packed_words =
                 packed_info.get(&(airgroup_id, air_id)).map(|info| info.num_packed_words).unwrap_or(0);
@@ -376,7 +374,7 @@ pub fn calculate_max_witness_trace_size<F: PrimeField64>(
             max_witness_trace_size = max_witness_trace_size.max(trace_size as usize);
         }
     }
-    max_witness_trace_size
+    Ok(max_witness_trace_size)
 }
 
 pub fn initialize_setup_info<F: PrimeField64>(
@@ -387,11 +385,11 @@ pub fn initialize_setup_info<F: PrimeField64>(
     aggregation: bool,
     packed_info: &HashMap<(usize, usize), PackedInfo>,
     gpu_params: &ParamsGPU,
-) {
+) -> ProofmanResult<()> {
     let mut offset = 0;
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
-            let setup = sctx.get_setup(airgroup_id, air_id);
+            let setup = sctx.get_setup(airgroup_id, air_id)?;
             let proof_type: &str = setup.setup_type.clone().into();
             if cfg!(feature = "gpu") {
                 tracing::info!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
@@ -445,7 +443,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                    let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+                    let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
 
                     let proof_type: &str = setup.setup_type.clone().into();
                     if cfg!(feature = "gpu") {
@@ -491,7 +489,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
-                let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
+                let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
 
                 let proof_type: &str = setup.setup_type.clone().into();
                 if cfg!(feature = "gpu") {
@@ -536,7 +534,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
 
         let n_airgroups = pctx.global_info.air_groups.len();
         for airgroup_id in 0..n_airgroups {
-            let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0);
+            let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?;
 
             let proof_type: &str = setup.setup_type.clone().into();
             if cfg!(feature = "gpu") {
@@ -619,21 +617,22 @@ pub fn initialize_setup_info<F: PrimeField64>(
             }
         }
     }
+    Ok(())
 }
 
 pub fn initialize_witness_circom<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     final_snark: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> ProofmanResult<()> {
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+                let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
                 setup.set_exec_file_data()?;
                 setup.set_circom_circuit()?;
             }
-            let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
+            let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
             setup.set_exec_file_data()?;
             setup.set_circom_circuit()?;
         }
@@ -641,7 +640,7 @@ pub fn initialize_witness_circom<F: PrimeField64>(
 
     let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup in 0..n_airgroups {
-        let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0);
+        let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0)?;
         setup.set_circom_circuit()?;
         setup.set_exec_file_data()?;
     }

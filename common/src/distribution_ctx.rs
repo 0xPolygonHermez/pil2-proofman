@@ -1,7 +1,7 @@
-use core::panic;
 use std::collections::HashSet;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
+use crate::{ProofmanResult, ProofmanError};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceChunks {
@@ -129,7 +129,7 @@ impl DistributionCtx {
     /// - `n_partitions`: Total number of partitions in the distributed system
     /// - `partition_ids`: Which partition IDs are assigned to this worker
     /// - `balance`: Whether to balance load across partitions or use round-robin
-    pub fn setup_partitions(&mut self, n_partitions: usize, partition_ids: Vec<u32>) {
+    pub fn setup_partitions(&mut self, n_partitions: usize, partition_ids: Vec<u32>) -> ProofmanResult<()> {
         self.n_partitions = n_partitions;
         self.partition_mask = vec![false; n_partitions];
 
@@ -137,25 +137,33 @@ impl DistributionCtx {
             if *id < n_partitions as u32 {
                 self.partition_mask[*id as usize] = true;
             } else {
-                panic!("Partition ID {} exceeds total partitions {}", id, n_partitions);
+                return Err(ProofmanError::InvalidConfiguration(format!(
+                    "Partition ID {} exceeds total partitions {}",
+                    id, n_partitions
+                )));
             }
         }
 
         self.partition_count = vec![0; n_partitions];
         self.partition_weight = vec![0; n_partitions];
+        Ok(())
     }
 
     /// Configure the static processes parameters
     /// - `n_processes`: Number of processes available to this worker
     /// - `process_id`: The rank/ID of the current process (must be < n_processes)
-    pub fn setup_processes(&mut self, n_processes: usize, process_id: usize) {
+    pub fn setup_processes(&mut self, n_processes: usize, process_id: usize) -> ProofmanResult<()> {
         if process_id >= n_processes {
-            panic!("Process rank {} exceeds total processes {}", process_id, n_processes);
+            return Err(ProofmanError::InvalidConfiguration(format!(
+                "Process rank {} exceeds total processes {}",
+                process_id, n_processes
+            )));
         }
         self.n_processes = n_processes;
         self.process_id = process_id;
         self.process_count = vec![0; n_processes];
         self.process_weight = vec![0; n_processes];
+        Ok(())
     }
 
     pub fn setup_worker_index(&mut self, worker_index: usize) {
@@ -192,21 +200,30 @@ impl DistributionCtx {
 
     /// Verify that the static configuration has been properly set up
     #[inline]
-    pub fn validate_static_config(&self) -> Result<(), String> {
+    pub fn validate_static_config(&self) -> Result<(), ProofmanError> {
         // Check partition configuration
         if self.n_partitions == 0 {
-            return Err("Partition configuration not set. Call setup_partitions() first.".to_string());
+            return Err(ProofmanError::InvalidConfiguration(
+                "Partition configuration not set. Call setup_partitions() first.".to_string(),
+            ));
         }
         if self.partition_mask.len() != self.n_partitions {
-            return Err("Partition mask size mismatch with n_partitions".to_string());
+            return Err(ProofmanError::InvalidConfiguration(
+                "Partition mask size mismatch with n_partitions".to_string(),
+            ));
         }
 
         // Check process configuration
         if self.n_processes == 0 {
-            return Err("Process configuration not set. Call setup_processes() first.".to_string());
+            return Err(ProofmanError::InvalidConfiguration(
+                "Process configuration not set. Call setup_processes() first.".to_string(),
+            ));
         }
         if self.process_id >= self.n_processes {
-            return Err(format!("Invalid process rank {} >= {}", self.process_id, self.n_processes));
+            return Err(ProofmanError::InvalidConfiguration(format!(
+                "Invalid process rank {} >= {}",
+                self.process_id, self.n_processes
+            )));
         }
 
         Ok(())
@@ -214,109 +231,147 @@ impl DistributionCtx {
 
     /// Check if the current process is the owner of a given instance
     #[inline]
-    pub fn is_my_process_instance(&self, instance_id: usize) -> bool {
+    pub fn is_my_process_instance(&self, instance_id: usize) -> ProofmanResult<bool> {
         if instance_id >= self.instance_process.len() {
-            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len());
+            return Err(ProofmanError::OutOfBounds(format!(
+                "Instance index {} out of bounds (max: {})",
+                instance_id,
+                self.instance_process.len()
+            )));
         }
-        self.instance_process[instance_id].0 == self.process_id as i32
+        Ok(self.instance_process[instance_id].0 == self.process_id as i32)
     }
 
     #[inline]
-    pub fn get_process_owner_instance(&self, instance_id: usize) -> i32 {
+    pub fn get_process_owner_instance(&self, instance_id: usize) -> ProofmanResult<i32> {
         if instance_id >= self.instance_process.len() {
-            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len());
+            return Err(ProofmanError::OutOfBounds(format!(
+                "Instance index {} out of bounds (max: {})",
+                instance_id,
+                self.instance_process.len()
+            )));
         }
         let owner = self.instance_process[instance_id].0;
-        assert!(owner != -1, "Instance {instance_id} is not owned by any process");
-        owner
+        if owner == -1 {
+            return Err(ProofmanError::InvalidAssignation(format!(
+                "Instance {} is not owned by any process",
+                instance_id
+            )));
+        }
+        Ok(owner)
     }
 
     /// Get the airgroup and air ID for a given instance
     /// Returns (airgroup_id, air_id)
     #[inline]
-    pub fn get_instance_info(&self, instance_id: usize) -> (usize, usize) {
+    pub fn get_instance_info(&self, instance_id: usize) -> ProofmanResult<(usize, usize)> {
         if instance_id >= self.instances.len() {
-            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len());
+            return Err(ProofmanError::OutOfBounds(format!(
+                "Instance index {} out of bounds (max: {})",
+                instance_id,
+                self.instances.len()
+            )));
         }
-        (self.instances[instance_id].airgroup_id, self.instances[instance_id].air_id)
+        Ok((self.instances[instance_id].airgroup_id, self.instances[instance_id].air_id))
     }
 
     /// Get the airgroup and air ID of a given table
     /// Returns (airgroup_id, air_id)
     #[inline]
-    pub fn get_table_info(&self, table_idx: usize) -> (usize, usize) {
+    pub fn get_table_info(&self, table_idx: usize) -> ProofmanResult<(usize, usize)> {
         if self.assignation_done {
             let instance_id = self.aux_table_map[table_idx] as usize;
             self.get_instance_info(instance_id)
         } else {
             if table_idx >= self.aux_tables.len() {
-                panic!("Table index {} out of bounds (max: {})", table_idx, self.aux_tables.len());
+                return Err(ProofmanError::OutOfBounds(format!(
+                    "Table index {} out of bounds (max: {})",
+                    table_idx,
+                    self.aux_tables.len()
+                )));
             }
-            (self.aux_tables[table_idx].airgroup_id, self.aux_tables[table_idx].air_id)
+            Ok((self.aux_tables[table_idx].airgroup_id, self.aux_tables[table_idx].air_id))
         }
     }
 
-    pub fn get_table_instance_idx(&self, table_idx: usize) -> usize {
+    pub fn get_table_instance_idx(&self, table_idx: usize) -> ProofmanResult<usize> {
         if self.assignation_done {
-            self.aux_table_map[table_idx] as usize
+            Ok(self.aux_table_map[table_idx] as usize)
         } else {
-            panic!("Table instances not yet assigned");
+            Err(ProofmanError::InvalidAssignation("Table instances not yet assigned".into()))
         }
     }
 
     /// Get the local index of the instance within its owner process
     #[inline]
-    pub fn get_instance_local_idx(&self, instance_id: usize) -> usize {
+    pub fn get_instance_local_idx(&self, instance_id: usize) -> ProofmanResult<usize> {
         if instance_id >= self.instance_process.len() {
-            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len());
+            return Err(ProofmanError::OutOfBounds(format!(
+                "Instance index {} out of bounds (max: {})",
+                instance_id,
+                self.instance_process.len()
+            )));
         }
-        self.instance_process[instance_id].1
+        Ok(self.instance_process[instance_id].1)
     }
 
     /// Get the number of Minimum Trace chunks to be processes for a given global instance
     #[inline]
-    pub fn get_instance_chunks(&self, instance_id: usize) -> usize {
+    pub fn get_instance_chunks(&self, instance_id: usize) -> ProofmanResult<usize> {
         if instance_id >= self.instances.len() {
-            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len());
+            return Err(ProofmanError::OutOfBounds(format!(
+                "Instance index {} out of bounds (max: {})",
+                instance_id,
+                self.instances.len()
+            )));
         }
-        self.instances_chunks[instance_id].chunks.len()
+        Ok(self.instances_chunks[instance_id].chunks.len())
     }
 
     /// Set the number of chunks for a given instance (these may be used for balancing purposes)
-    pub fn set_n_chunks(&mut self, instance_id: usize, n_chunks: usize) {
+    pub fn set_n_chunks(&mut self, instance_id: usize, n_chunks: usize) -> ProofmanResult<()> {
         if instance_id >= self.instances.len() {
-            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instances.len());
+            return Err(ProofmanError::OutOfBounds(format!(
+                "Instance index {} out of bounds (max: {})",
+                instance_id,
+                self.instances.len()
+            )));
         }
         let instance_info = &mut self.instances[instance_id];
         instance_info.n_chunks = n_chunks;
+        Ok(())
     }
 
     /// Check if the current worker is the owner of a given instance
     #[inline]
-    pub fn is_my_worker_instance(&self, instance_id: usize) -> bool {
+    pub fn is_my_worker_instance(&self, instance_id: usize) -> ProofmanResult<bool> {
         if instance_id >= self.instance_process.len() {
-            panic!("Instance index {} out of bounds (max: {})", instance_id, self.instance_process.len());
+            return Err(ProofmanError::OutOfBounds(format!(
+                "Instance index {} out of bounds (max: {})",
+                instance_id,
+                self.instance_process.len()
+            )));
         }
-        self.instance_process[instance_id].0 >= 0
+        Ok(self.instance_process[instance_id].0 >= 0)
     }
 
     #[inline]
-    pub fn find_air_instance_id(&self, instance_id: usize) -> usize {
+    pub fn find_air_instance_id(&self, instance_id: usize) -> ProofmanResult<usize> {
         let mut air_instance_id = 0;
-        let (airgroup_id, air_id) = self.get_instance_info(instance_id);
+        let (airgroup_id, air_id) = self.get_instance_info(instance_id)?;
         for idx in 0..instance_id {
-            let (instance_airgroup_id, instance_air_id) = self.get_instance_info(idx);
+            let (instance_airgroup_id, instance_air_id) = self.get_instance_info(idx)?;
             if (instance_airgroup_id, instance_air_id) == (airgroup_id, air_id) {
                 air_instance_id += 1;
             }
         }
-        air_instance_id
+        Ok(air_instance_id)
     }
 
     /// Find an instance with the given airgroup_id and air_id among the current process's instances
     /// Returns (found, local_index)
     #[inline]
-    pub fn find_process_instance(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
+    pub fn find_process_instance(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<(bool, usize)> {
         let mut matches = self
             .process_instances
             .iter()
@@ -328,18 +383,18 @@ impl DistributionCtx {
             .map(|(pos, _)| pos);
 
         match (matches.next(), matches.next()) {
-            (None, _) => (false, 0),
-            (Some(pos), None) => (true, pos),
-            (Some(_), Some(_)) => {
-                panic!("Multiple instances found for airgroup_id: {airgroup_id}, air_id: {air_id}");
-            }
+            (None, _) => Ok((false, 0)),
+            (Some(pos), None) => Ok((true, pos)),
+            (Some(_), Some(_)) => Err(ProofmanError::InvalidAssignation(format!(
+                "Multiple instances found for airgroup_id: {airgroup_id}, air_id: {air_id}"
+            ))),
         }
     }
 
     /// Find a table with the given airgroup_id and air_id among the current process's tables
     /// Returns (found, local_index)
     #[inline]
-    pub fn find_process_table(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
+    pub fn find_process_table(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<(bool, usize)> {
         if self.assignation_done {
             self.find_process_instance(airgroup_id, air_id)
         } else {
@@ -351,11 +406,11 @@ impl DistributionCtx {
                 .map(|(pos, _)| pos);
 
             match (matches.next(), matches.next()) {
-                (None, _) => (false, 0),
-                (Some(pos), None) => (true, pos),
-                (Some(_), Some(_)) => {
-                    panic!("Multiple tables found for airgroup_id: {airgroup_id}, air_id: {air_id}");
-                }
+                (None, _) => Ok((false, 0)),
+                (Some(pos), None) => Ok((true, pos)),
+                (Some(_), Some(_)) => Err(ProofmanError::InvalidAssignation(format!(
+                    "Multiple tables found for airgroup_id: {airgroup_id}, air_id: {air_id}"
+                ))),
             }
         }
     }
@@ -379,9 +434,9 @@ impl DistributionCtx {
     /// add an instance and assign it to a partition/process based only in the gid
     /// the instance added is not a table
     #[inline]
-    pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+    pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> ProofmanResult<usize> {
         if self.assignation_done {
-            panic!("Instances already assigned");
+            return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let gid: usize = self.instances.len();
@@ -408,15 +463,20 @@ impl DistributionCtx {
             }
         }
         self.instance_process.push((owner, local_idx));
-        gid
+        Ok(gid)
     }
 
     /// add an instance and assign it to a partition/process based only in the gid
     /// the instance added is not a table
     #[inline]
-    pub fn add_instance_first_partition(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+    pub fn add_instance_first_partition(
+        &mut self,
+        airgroup_id: usize,
+        air_id: usize,
+        weight: u64,
+    ) -> ProofmanResult<usize> {
         if self.assignation_done {
-            panic!("Instances already assigned");
+            return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let gid: usize = self.instances.len();
@@ -443,16 +503,16 @@ impl DistributionCtx {
             }
         }
         self.instance_process.push((owner, local_idx));
-        gid
+        Ok(gid)
     }
 
     /// add an instance without assigning it to any partition/process
     /// It will be assigned later by assign_instances()
     /// the instance added is not a table
     #[inline]
-    pub fn add_instance_no_assign(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+    pub fn add_instance_no_assign(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> ProofmanResult<usize> {
         if self.assignation_done {
-            panic!("Instances already assigned");
+            return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, weight));
@@ -461,20 +521,20 @@ impl DistributionCtx {
         self.instance_partition.push(-1);
         self.instance_process.push((-1, 0_usize));
         self.n_instances += 1;
-        self.n_instances - 1
+        Ok(self.n_instances - 1)
     }
 
     /// Add local table instances
-    pub fn add_table(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+    pub fn add_table(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> ProofmanResult<usize> {
         if self.assignation_done {
-            panic!("Instances already assigned");
+            return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let lid = self.aux_tables.len();
         self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, true, weight));
         self.aux_table_map.push(-1);
         self.n_tables += 1;
-        lid
+        Ok(lid)
     }
 
     pub fn set_chunks(&mut self, global_idx: usize, chunks: Vec<usize>, slow: bool) {
@@ -483,22 +543,22 @@ impl DistributionCtx {
         instance_info.slow = slow;
     }
 
-    pub fn add_table_all(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+    pub fn add_table_all(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> ProofmanResult<usize> {
         if self.assignation_done {
-            panic!("Instances already assigned");
+            return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let lid = self.aux_tables.len();
         self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, false, weight));
         self.aux_table_map.push(-1);
         self.n_tables += 1;
-        lid
+        Ok(lid)
     }
 
     /// Assign instances to partitions and processes
-    pub fn assign_instances(&mut self) {
+    pub fn assign_instances(&mut self) -> ProofmanResult<()> {
         if self.assignation_done {
-            panic!("Instances already assigned");
+            return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
         //assign instances
         self.validate_static_config().expect("Static configuration invalid or incomplete");
@@ -532,7 +592,7 @@ impl DistributionCtx {
                     min_weight_idx = i;
                 }
             }
-            let (airgroup_id, air_id) = self.get_instance_info(*gid);
+            let (airgroup_id, air_id) = self.get_instance_info(*gid)?;
             *instances_assigned_partition[min_weight_idx].entry((airgroup_id, air_id)).or_insert(0) += 1;
             self.partition_count[min_weight_idx] += 1;
             self.partition_weight[min_weight_idx] += self.instances[*gid].weight;
@@ -567,7 +627,7 @@ impl DistributionCtx {
 
         for (gid, _) in &unassigned_instances {
             let chunks = &self.instances_chunks[*gid].chunks;
-            let (airgroup_id, air_id) = self.get_instance_info(*gid);
+            let (airgroup_id, air_id) = self.get_instance_info(*gid)?;
             let mut min_chunks = usize::MAX;
             let mut min_chunks_idx = 0;
             for partition_id in 0..self.n_partitions {
@@ -680,6 +740,7 @@ impl DistributionCtx {
         }
         self.aux_tables.clear();
         self.assignation_done = true;
+        Ok(())
     }
 
     ///  Load balance info for partitions

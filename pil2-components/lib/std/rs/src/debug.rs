@@ -7,7 +7,7 @@ use std::{
 
 use colored::Colorize;
 use fields::PrimeField64;
-use proofman_common::ProofCtx;
+use proofman_common::{ProofCtx, ProofmanError, ProofmanResult};
 use proofman_hints::{format_hint_field_output_vec, HintFieldOutput};
 
 use crate::normalize_vals;
@@ -65,7 +65,7 @@ pub fn update_global_debug_data<F: PrimeField64>(
     airgroup_id: usize,
     is_proves: bool,
     times: F,
-) {
+) -> ProofmanResult<()> {
     let bus_opid = debug_data.entry(opid).or_default();
     let norm_vals = normalize_vals(&vals);
     let bus_val = bus_opid.entry(norm_vals).or_insert_with(|| BusValue {
@@ -76,7 +76,7 @@ pub fn update_global_debug_data<F: PrimeField64>(
 
     // Skip if already processed
     if bus_val.shared_data.direct_was_called {
-        return;
+        return Ok(());
     }
 
     bus_val.shared_data.direct_was_called = true;
@@ -90,9 +90,14 @@ pub fn update_global_debug_data<F: PrimeField64>(
     if is_proves {
         bus_val.shared_data.num_proves += times;
     } else {
-        assert!(times.is_one(), "The selector value is invalid: expected 1, but received {times:?}.");
+        if !times.is_one() {
+            return Err(ProofmanError::StdError(format!(
+                "The selector value is invalid: expected 1, but received {times:?}."
+            )));
+        }
         bus_val.shared_data.num_assumes += times;
     }
+    Ok(())
 }
 
 /// Handle local debug data updates (specific to airgroup/air/instance)
@@ -109,7 +114,7 @@ pub fn update_local_debug_data<F: PrimeField64>(
     row: usize,
     is_proves: bool,
     times: F,
-) {
+) -> ProofmanResult<()> {
     let bus_opid = debug_data.entry(opid).or_default();
     let norm_vals = normalize_vals(&vals);
     let bus_val = bus_opid.entry(norm_vals).or_insert_with(|| BusValue {
@@ -140,6 +145,7 @@ pub fn update_local_debug_data<F: PrimeField64>(
         bus_val.shared_data.num_assumes += times;
         local_data.row_assumes.push(row);
     }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -156,9 +162,9 @@ pub fn update_debug_data<F: PrimeField64>(
     is_proves: bool,
     times: F,
     is_global: bool,
-) {
+) -> ProofmanResult<()> {
     if is_global {
-        update_global_debug_data(debug_data, name_piop, name_exprs, opid, vals, airgroup_id, is_proves, times);
+        update_global_debug_data(debug_data, name_piop, name_exprs, opid, vals, airgroup_id, is_proves, times)
     } else {
         update_local_debug_data(
             debug_data,
@@ -172,7 +178,7 @@ pub fn update_debug_data<F: PrimeField64>(
             row,
             is_proves,
             times,
-        );
+        )
     }
 }
 

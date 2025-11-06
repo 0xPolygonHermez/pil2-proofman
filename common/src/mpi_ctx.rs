@@ -13,9 +13,10 @@ use std::sync::atomic::{Ordering, AtomicU64, AtomicI32};
 use fields::PrimeField64;
 #[cfg(distributed)]
 use fields::CubicExtensionField;
-use crate::GlobalInfo;
-#[cfg(distributed)]
+use crate::{GlobalInfo, ProofmanError};
 use crate::Proof;
+
+use crate::ProofmanResult;
 
 #[cfg(distributed)]
 use proofman_starks_lib_c::{
@@ -82,11 +83,13 @@ impl MpiCtx {
         }
     }
 
-    pub fn get_outer_agg_rank(&self) -> i32 {
+    pub fn get_outer_agg_rank(&self) -> ProofmanResult<i32> {
         if self.outer_agg_rank.load(Ordering::SeqCst) == -1 {
-            panic!("Aggregation rank not yet determined. Call process_ready_for_aggregation() first.");
+            return Err(ProofmanError::InvalidAssignation(
+                "Aggregation rank not yet determined. Call process_ready_for_aggregation() first.".into(),
+            ));
         }
-        self.outer_agg_rank.load(Ordering::SeqCst)
+        Ok(self.outer_agg_rank.load(Ordering::SeqCst))
     }
 
     pub fn reset_outer_agg_tracker(&self) {
@@ -266,23 +269,30 @@ impl MpiCtx {
         }
     }
 
-    #[cfg(distributed)]
-    pub fn send_proof_to_rank(&self, proof: &Vec<u64>, rank: i32) {
+    pub fn send_proof_to_rank(&self, _proof: &Vec<u64>, _airgroup_id: usize, _rank: i32) {
+        #[cfg(distributed)]
         // Send the proof directly - the vector already contains its length information
-        self.world.process_at_rank(rank).send(proof);
+        self.world.process_at_rank(_rank).send_with_tag(_proof, _airgroup_id as i32);
     }
 
-    #[cfg(distributed)]
-    pub fn recv_proof_from_rank(&self, rank: i32) -> Vec<u64> {
-        // Receive the proof directly as a vector
-        let (proof_buffer, _) = self.world.process_at_rank(rank).receive_vec::<u64>();
-        proof_buffer
+    pub fn recv_proof_from_rank(&self, _airgroup_id: usize, _rank: i32) -> Vec<u64> {
+        #[cfg(distributed)]
+        {
+            // Receive the proof directly as a vector
+            let (proof_buffer, _) = self.world.process_at_rank(_rank).receive_vec_with_tag::<u64>(_airgroup_id as i32);
+            proof_buffer
+        }
+        #[cfg(not(distributed))]
+        {
+            Vec::new()
+        }
     }
-    #[cfg(distributed)]
-    pub fn send_proof_agg_rank<F: PrimeField64>(&self, proof: &Proof<F>) {
+
+    pub fn send_proof_agg_rank<F: PrimeField64>(&self, _proof: &Proof<F>) {
+        #[cfg(distributed)]
         self.world
             .process_at_rank(self.outer_agg_rank.load(Ordering::SeqCst))
-            .send_with_tag(&proof.proof[..], proof.airgroup_id as i32);
+            .send_with_tag(&_proof.proof[..], _proof.airgroup_id as i32);
     }
 
     pub fn check_incoming_proofs(&self, airgroup_id: usize) -> Option<Vec<u64>> {

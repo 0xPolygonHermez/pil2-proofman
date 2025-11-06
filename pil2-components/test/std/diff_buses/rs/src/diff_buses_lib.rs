@@ -1,4 +1,5 @@
 use pil_std_lib::Std;
+use proofman_common::ProofmanResult;
 use witness::{witness_library, WitnessLibrary, WitnessManager};
 
 use fields::PrimeField64;
@@ -9,8 +10,8 @@ use crate::{ProdBus, BothBuses, SumBus};
 witness_library!(WitnessLib, Goldilocks);
 
 impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
-    fn register_witness(&mut self, wcm: &WitnessManager<F>) {
-        Std::new(wcm.get_pctx(), wcm.get_sctx(), false);
+    fn register_witness(&mut self, wcm: &WitnessManager<F>) -> ProofmanResult<()> {
+        Std::new(wcm.get_pctx(), wcm.get_sctx(), false)?;
         let prod_bus = ProdBus::new();
         let sum_bus = SumBus::new();
         let both_buses = BothBuses::new();
@@ -18,5 +19,6 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
         wcm.register_component(prod_bus.clone());
         wcm.register_component(sum_bus.clone());
         wcm.register_component(both_buses.clone());
+        Ok(())
     }
 }

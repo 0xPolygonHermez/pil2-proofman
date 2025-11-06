@@ -36,7 +36,7 @@ pub struct ExecuteCmd {
     pub proving_key: PathBuf,
 
     #[clap(short = 'o', long)]
-    pub output_path: PathBuf,
+    pub output_path: Option<PathBuf>,
 
     #[clap(long, default_value_t = Field::Goldilocks)]
     pub field: Field,
@@ -50,7 +50,7 @@ pub struct ExecuteCmd {
 }
 
 impl ExecuteCmd {
-    pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("{} Stats", format!("{: >12}", "Command").bright_green().bold());
         println!();
 
@@ -78,8 +78,7 @@ impl ExecuteCmd {
             Field::Goldilocks => proofman.execute(
                 self.witness_lib.clone(),
                 self.public_inputs.clone(),
-                self.input_data.clone(),
-                Some(self.output_path.clone()),
+                self.output_path.clone(),
                 self.verbose.into(),
             )?,
         };

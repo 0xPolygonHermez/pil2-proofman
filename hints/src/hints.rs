@@ -8,11 +8,11 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 
 use fields::{CubicExtensionField, PrimeField64};
-use proofman_common::{ProofCtx, SetupCtx, StepsParams};
+use proofman_common::{ProofCtx, ProofmanError, ProofmanResult, SetupCtx, StepsParams};
 
 use std::ops::{Add, Div, Mul, Sub, AddAssign, DivAssign, MulAssign, SubAssign};
 
-use std::fmt::{Display, Debug, Formatter, Result};
+use std::fmt::{Display, Debug, Formatter};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
@@ -183,7 +183,7 @@ pub enum HintFieldValue<F: PrimeField64> {
 }
 
 impl<F: PrimeField64> Display for HintFieldValue<F> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             HintFieldValue::Field(value) => write!(f, "{value}"),
             HintFieldValue::FieldExtended(ext_field) => write!(f, "{ext_field}"),
@@ -222,7 +222,7 @@ impl<F: PrimeField64> HintFieldValuesVec<F> {
 }
 
 impl<F: PrimeField64> Display for HintFieldValuesVec<F> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "[")?;
         for (i, value) in self.values.iter().enumerate() {
             if i > 0 {
@@ -242,7 +242,7 @@ pub enum HintFieldOutput<F: PrimeField64> {
 }
 
 impl<F: PrimeField64> Display for HintFieldOutput<F> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             HintFieldOutput::Field(value) => write!(f, "{value}"),
             HintFieldOutput::FieldExtended(ext_field) => write!(f, "{ext_field}"),
@@ -755,10 +755,10 @@ pub fn mul_hint_fields<F: PrimeField64>(
     mut options1: Vec<HintFieldOptions>,
     hint_field_name2: Vec<&str>,
     mut options2: Vec<HintFieldOptions>,
-) {
-    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
+) -> ProofmanResult<()> {
+    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
 
-    let setup = sctx.get_setup(airgroup_id, air_id);
+    let setup = sctx.get_setup(airgroup_id, air_id)?;
 
     let steps_params = pctx.get_air_instance_params(instance_id, false);
 
@@ -777,6 +777,7 @@ pub fn mul_hint_fields<F: PrimeField64>(
         hint_options1.as_mut_ptr(),
         hint_options2.as_mut_ptr(),
     );
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -789,9 +790,9 @@ pub fn acc_hint_field<F: PrimeField64>(
     hint_field_airgroupvalue: &str,
     hint_field_name: &str,
     add: bool,
-) -> (u64, u64) {
-    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
-    let setup = sctx.get_setup(airgroup_id, air_id);
+) -> ProofmanResult<(u64, u64)> {
+    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
+    let setup = sctx.get_setup(airgroup_id, air_id)?;
 
     let steps_params = pctx.get_air_instance_params(instance_id, false);
 
@@ -808,7 +809,7 @@ pub fn acc_hint_field<F: PrimeField64>(
     let dest_id = get_hint_field_id_c((&setup.p_setup).into(), hint_id as u64, hint_field_dest);
     let airgroup_value_id = get_hint_field_id_c((&setup.p_setup).into(), hint_id as u64, hint_field_airgroupvalue);
 
-    (dest_id, airgroup_value_id)
+    Ok((dest_id, airgroup_value_id))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -824,9 +825,9 @@ pub fn acc_mul_hint_fields<F: PrimeField64>(
     options1: HintFieldOptions,
     options2: HintFieldOptions,
     add: bool,
-) -> (u64, u64) {
-    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
-    let setup = sctx.get_setup(airgroup_id, air_id);
+) -> ProofmanResult<(u64, u64)> {
+    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
+    let setup = sctx.get_setup(airgroup_id, air_id)?;
 
     let steps_params = pctx.get_air_instance_params(instance_id, false);
 
@@ -849,9 +850,9 @@ pub fn acc_mul_hint_fields<F: PrimeField64>(
         let dest_id = get_hint_field_id_c((&setup.p_setup).into(), hint_id as u64, hint_field_dest);
         let airgroup_value_id = get_hint_field_id_c((&setup.p_setup).into(), hint_id as u64, hint_field_airgroupvalue);
 
-        (dest_id, airgroup_value_id)
+        Ok((dest_id, airgroup_value_id))
     } else {
-        (0, 0)
+        Ok((0, 0))
     }
 }
 
@@ -867,15 +868,15 @@ pub fn update_airgroupvalue<F: PrimeField64>(
     options1: HintFieldOptions,
     options2: HintFieldOptions,
     add: bool,
-) -> u64 {
-    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
-    let setup = sctx.get_setup(airgroup_id, air_id);
+) -> ProofmanResult<u64> {
+    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
+    let setup = sctx.get_setup(airgroup_id, air_id)?;
 
     let steps_params = pctx.get_air_instance_params(instance_id, false);
 
     let field_airgroupvalue = hint_field_airgroupvalue.unwrap_or("");
 
-    update_airgroupvalue_c(
+    Ok(update_airgroupvalue_c(
         (&setup.p_setup).into(),
         (&steps_params).into(),
         hint_id as u64,
@@ -885,7 +886,7 @@ pub fn update_airgroupvalue<F: PrimeField64>(
         (&options1).into(),
         (&options2).into(),
         add,
-    )
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -898,8 +899,8 @@ fn get_hint_f<F: PrimeField64>(
     hint_id: usize,
     hint_field_name: &str,
     options: HintFieldOptions,
-) -> Vec<HintFieldInfo<F>> {
-    let setup = sctx.get_setup(airgroup_id, air_id);
+) -> ProofmanResult<Vec<HintFieldInfo<F>>> {
+    let setup = sctx.get_setup(airgroup_id, air_id)?;
 
     let steps_params = if let Some(instance_id) = instance_id {
         pctx.unwrap().get_air_instance_params(instance_id, false)
@@ -940,7 +941,7 @@ fn get_hint_f<F: PrimeField64>(
         (&options).into(),
     );
 
-    hint_field_values
+    Ok(hint_field_values)
 }
 pub fn get_hint_field<F: PrimeField64>(
     sctx: &SetupCtx<F>,
@@ -949,21 +950,31 @@ pub fn get_hint_field<F: PrimeField64>(
     hint_id: usize,
     hint_field_name: &str,
     options: HintFieldOptions,
-) -> HintFieldValue<F> {
-    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
+) -> ProofmanResult<HintFieldValue<F>> {
+    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
 
-    let hint_info =
-        get_hint_f(sctx, Some(pctx), airgroup_id, air_id, Some(instance_id), hint_id, hint_field_name, options.clone());
+    let hint_info = get_hint_f(
+        sctx,
+        Some(pctx),
+        airgroup_id,
+        air_id,
+        Some(instance_id),
+        hint_id,
+        hint_field_name,
+        options.clone(),
+    )?;
 
     if hint_info[0].matrix_size != 0 {
-        panic!("get_hint_field can only be called with single expressions, but {hint_field_name} is an array");
+        return Err(ProofmanError::InvalidHints(format!(
+            "get_hint_field can only be called with single expressions, but {hint_field_name} is an array"
+        )));
     }
 
     if options.print_expression {
         tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info[0].expression_line).unwrap());
     }
 
-    HintCol::from_hint_field(&hint_info[0])
+    Ok(HintCol::from_hint_field(&hint_info[0]))
 }
 
 pub fn get_hint_field_a<F: PrimeField64>(
@@ -973,16 +984,26 @@ pub fn get_hint_field_a<F: PrimeField64>(
     hint_id: usize,
     hint_field_name: &str,
     options: HintFieldOptions,
-) -> HintFieldValuesVec<F> {
-    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
+) -> ProofmanResult<HintFieldValuesVec<F>> {
+    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
 
-    let hint_infos =
-        get_hint_f(sctx, Some(pctx), airgroup_id, air_id, Some(instance_id), hint_id, hint_field_name, options.clone());
+    let hint_infos = get_hint_f(
+        sctx,
+        Some(pctx),
+        airgroup_id,
+        air_id,
+        Some(instance_id),
+        hint_id,
+        hint_field_name,
+        options.clone(),
+    )?;
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.iter().enumerate() {
         if v == 0 && hint_info.matrix_size != 1 {
-            panic!("get_hint_field_m can only be called with an array of expressions!");
+            return Err(ProofmanError::InvalidHints(
+                "get_hint_field_m can only be called with an array of expressions!".to_string(),
+            ));
         }
         if options.print_expression {
             tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
@@ -991,7 +1012,7 @@ pub fn get_hint_field_a<F: PrimeField64>(
         hint_field_values.push(hint_value);
     }
 
-    HintFieldValuesVec { values: hint_field_values }
+    Ok(HintFieldValuesVec { values: hint_field_values })
 }
 
 pub fn get_hint_field_m<F: PrimeField64>(
@@ -1001,17 +1022,27 @@ pub fn get_hint_field_m<F: PrimeField64>(
     hint_id: usize,
     hint_field_name: &str,
     options: HintFieldOptions,
-) -> HintFieldValues<F> {
-    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
+) -> ProofmanResult<HintFieldValues<F>> {
+    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
 
-    let hint_infos =
-        get_hint_f(sctx, Some(pctx), airgroup_id, air_id, Some(instance_id), hint_id, hint_field_name, options.clone());
+    let hint_infos = get_hint_f(
+        sctx,
+        Some(pctx),
+        airgroup_id,
+        air_id,
+        Some(instance_id),
+        hint_id,
+        hint_field_name,
+        options.clone(),
+    )?;
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 
     for (v, hint_info) in hint_infos.iter().enumerate() {
         if v == 0 && hint_info.matrix_size > 2 {
-            panic!("get_hint_field_m can only be called with a matrix of expressions!",);
+            return Err(ProofmanError::InvalidHints(
+                "get_hint_field_m can only be called with a matrix of expressions!".to_string(),
+            ));
         }
         let hint_value = HintCol::from_hint_field(hint_info);
         let mut pos = Vec::new();
@@ -1024,7 +1055,7 @@ pub fn get_hint_field_m<F: PrimeField64>(
         hint_field_values.insert(pos, hint_value);
     }
 
-    HintFieldValues { values: hint_field_values }
+    Ok(HintFieldValues { values: hint_field_values })
 }
 
 pub fn get_hint_field_constant<F: PrimeField64>(
@@ -1034,20 +1065,22 @@ pub fn get_hint_field_constant<F: PrimeField64>(
     hint_id: usize,
     hint_field_name: &str,
     mut options: HintFieldOptions,
-) -> HintFieldValue<F> {
+) -> ProofmanResult<HintFieldValue<F>> {
     options.compilation_time = true;
 
-    let hint_info = get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone());
+    let hint_info = get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone())?;
 
     if hint_info[0].matrix_size != 0 {
-        panic!("get_hint_field can only be called with single expressions, but {hint_field_name} is an array");
+        return Err(ProofmanError::InvalidHints(format!(
+            "get_hint_field can only be called with single expressions, but {hint_field_name} is an array"
+        )));
     }
 
     if options.print_expression {
         tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info[0].expression_line).unwrap());
     }
 
-    HintCol::from_hint_field(&hint_info[0])
+    Ok(HintCol::from_hint_field(&hint_info[0]))
 }
 
 pub fn get_hint_field_constant_a<F: PrimeField64>(
@@ -1057,15 +1090,17 @@ pub fn get_hint_field_constant_a<F: PrimeField64>(
     hint_id: usize,
     hint_field_name: &str,
     mut options: HintFieldOptions,
-) -> HintFieldValuesVec<F> {
+) -> ProofmanResult<HintFieldValuesVec<F>> {
     options.compilation_time = true;
 
-    let hint_infos = get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone());
+    let hint_infos = get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone())?;
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.iter().enumerate() {
         if v == 0 && hint_info.matrix_size != 1 {
-            panic!("get_hint_field_m can only be called with an array of expressions!");
+            return Err(ProofmanError::InvalidHints(
+                "get_hint_field_m can only be called with an array of expressions!".to_string(),
+            ));
         }
         if options.print_expression {
             tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
@@ -1074,7 +1109,7 @@ pub fn get_hint_field_constant_a<F: PrimeField64>(
         hint_field_values.push(hint_value);
     }
 
-    HintFieldValuesVec { values: hint_field_values }
+    Ok(HintFieldValuesVec { values: hint_field_values })
 }
 
 pub fn get_hint_field_constant_m<F: PrimeField64>(
@@ -1084,16 +1119,18 @@ pub fn get_hint_field_constant_m<F: PrimeField64>(
     hint_id: usize,
     hint_field_name: &str,
     mut options: HintFieldOptions,
-) -> HintFieldValues<F> {
+) -> ProofmanResult<HintFieldValues<F>> {
     options.compilation_time = true;
 
-    let hint_infos = get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone());
+    let hint_infos = get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone())?;
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 
     for (v, hint_info) in hint_infos.iter().enumerate() {
         if v == 0 && hint_info.matrix_size > 2 {
-            panic!("get_hint_field_m can only be called with a matrix of expressions!",);
+            return Err(ProofmanError::InvalidHints(
+                "get_hint_field_m can only be called with a matrix of expressions!".to_string(),
+            ));
         }
         let hint_value = HintCol::from_hint_field(hint_info);
         let mut pos = Vec::new();
@@ -1106,7 +1143,7 @@ pub fn get_hint_field_constant_m<F: PrimeField64>(
         hint_field_values.insert(pos, hint_value);
     }
 
-    HintFieldValues { values: hint_field_values }
+    Ok(HintFieldValues { values: hint_field_values })
 }
 
 pub fn set_hint_field<F: PrimeField64>(
@@ -1116,19 +1153,22 @@ pub fn set_hint_field<F: PrimeField64>(
     hint_id: u64,
     hint_field_name: &str,
     values: &HintFieldValue<F>,
-) {
-    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
-    let setup = sctx.get_setup(airgroup_id, air_id);
+) -> ProofmanResult<()> {
+    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
+    let setup = sctx.get_setup(airgroup_id, air_id)?;
 
     let steps_params = pctx.get_air_instance_params(instance_id, false);
 
     let values_ptr: *mut u8 = match values {
         HintFieldValue::Column(vec) => vec.as_ptr() as *mut u8,
         HintFieldValue::ColumnExtended(vec) => vec.as_ptr() as *mut u8,
-        _ => panic!("Only column and column extended are accepted"),
+        _ => {
+            return Err(ProofmanError::InvalidHints("Only column and column extended are accepted".to_string()));
+        }
     };
 
     set_hint_field_c((&setup.p_setup).into(), (&steps_params).into(), values_ptr, hint_id, hint_field_name);
+    Ok(())
 }
 
 pub fn set_hint_field_val<F: PrimeField64>(
@@ -1138,9 +1178,9 @@ pub fn set_hint_field_val<F: PrimeField64>(
     hint_id: u64,
     hint_field_name: &str,
     value: HintFieldOutput<F>,
-) {
-    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
-    let setup = sctx.get_setup(airgroup_id, air_id);
+) -> ProofmanResult<()> {
+    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
+    let setup = sctx.get_setup(airgroup_id, air_id)?;
 
     let steps_params = pctx.get_air_instance_params(instance_id, false);
 
@@ -1160,4 +1200,5 @@ pub fn set_hint_field_val<F: PrimeField64>(
     let values_ptr = value_array.as_ptr() as *mut u8;
 
     set_hint_field_c((&setup.p_setup).into(), (&steps_params).into(), values_ptr, hint_id, hint_field_name);
+    Ok(())
 }
