@@ -79,7 +79,7 @@ impl ExecuteCmd {
                 self.witness_lib.clone(),
                 self.public_inputs.clone(),
                 self.input_data.clone(),
-                self.output_path.clone(),
+                Some(self.output_path.clone()),
                 self.verbose.into(),
             )?,
         };
