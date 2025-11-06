@@ -9,7 +9,6 @@ use proofman_util::create_buffer_fast;
 use rayon::prelude::*;
 
 use fields::PrimeField64;
-use std::path::PathBuf;
 
 use witness::WitnessComponent;
 use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanResult, ProofmanError, SetupCtx, TraceInfo};
@@ -290,12 +289,7 @@ impl VirtualTableAir {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
-    fn execute(
-        &self,
-        pctx: Arc<ProofCtx<F>>,
-        _global_ids: &RwLock<Vec<usize>>,
-        _input_data_path: Option<PathBuf>,
-    ) -> ProofmanResult<()> {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>, _global_ids: &RwLock<Vec<usize>>) -> ProofmanResult<()> {
         let (instance_found, mut table_instance_id) = pctx.dctx_find_process_table(self.airgroup_id, self.air_id)?;
 
         if !instance_found {

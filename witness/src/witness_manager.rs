@@ -17,7 +17,6 @@ pub struct WitnessManager<F: PrimeField64> {
     pctx: Arc<ProofCtx<F>>,
     sctx: Arc<SetupCtx<F>>,
     public_inputs_path: RwLock<Option<PathBuf>>,
-    input_data_path: RwLock<Option<PathBuf>>,
     init: AtomicBool,
     library: Mutex<Option<Library>>,
     execution_done: AtomicBool,
@@ -32,7 +31,6 @@ impl<F: PrimeField64> WitnessManager<F> {
             pctx,
             sctx,
             public_inputs_path: RwLock::new(None),
-            input_data_path: RwLock::new(None),
             init: AtomicBool::new(false),
             library: Mutex::new(None),
             execution_done: AtomicBool::new(false),
@@ -60,10 +58,6 @@ impl<F: PrimeField64> WitnessManager<F> {
         *self.public_inputs_path.write().unwrap() = path;
     }
 
-    pub fn set_input_data_path(&self, path: Option<PathBuf>) {
-        *self.input_data_path.write().unwrap() = path;
-    }
-
     pub fn register_component(&self, component: Arc<dyn WitnessComponent<F>>) {
         self.components.write().unwrap().push(component);
     }
@@ -84,19 +78,11 @@ impl<F: PrimeField64> WitnessManager<F> {
         self.execution_done.store(false, Ordering::SeqCst);
         let n_components = self.components_std.read().unwrap().len();
         for (idx, component) in self.components_std.read().unwrap().iter().enumerate() {
-            component.execute(
-                self.pctx.clone(),
-                &self.components_instance_ids[n_components + idx],
-                self.input_data_path.read().unwrap().clone(),
-            )?;
+            component.execute(self.pctx.clone(), &self.components_instance_ids[n_components + idx])?;
         }
 
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
-            component.execute(
-                self.pctx.clone(),
-                &self.components_instance_ids[idx],
-                self.input_data_path.read().unwrap().clone(),
-            )?;
+            component.execute(self.pctx.clone(), &self.components_instance_ids[idx])?;
         }
 
         self.pctx.dctx_assign_instances()?;
@@ -252,9 +238,5 @@ impl<F: PrimeField64> WitnessManager<F> {
 
     pub fn get_public_inputs_path(&self) -> Option<PathBuf> {
         self.public_inputs_path.read().unwrap().clone()
-    }
-
-    pub fn get_input_data_path(&self) -> Option<PathBuf> {
-        self.input_data_path.read().unwrap().clone()
     }
 }

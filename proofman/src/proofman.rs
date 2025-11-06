@@ -386,7 +386,6 @@ where
         &self,
         witness_lib_path: PathBuf,
         public_inputs_path: Option<PathBuf>,
-        input_data_path: Option<PathBuf>,
         output_path: Option<PathBuf>,
         verbose_mode: VerboseMode,
     ) -> ProofmanResult<()> {
@@ -397,19 +396,13 @@ where
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
-        self.wcm.set_input_data_path(input_data_path);
 
         self.register_witness(&mut *witness_lib, library)?;
 
         self.execute_(output_path)
     }
 
-    pub fn execute_from_lib(
-        &self,
-        input_data_path: Option<PathBuf>,
-        output_path: Option<PathBuf>,
-    ) -> ProofmanResult<()> {
-        self.wcm.set_input_data_path(input_data_path);
+    pub fn execute_from_lib(&self, output_path: Option<PathBuf>) -> ProofmanResult<()> {
         self.execute_(output_path)
     }
 
@@ -520,7 +513,6 @@ where
         &self,
         witness_lib_path: PathBuf,
         public_inputs_path: Option<PathBuf>,
-        input_data_path: Option<PathBuf>,
         debug_info: &DebugInfo,
         verbose_mode: VerboseMode,
         options: ProofOptions,
@@ -532,7 +524,6 @@ where
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
-        self.wcm.set_input_data_path(input_data_path);
         self.pctx.set_debug_info(debug_info);
 
         self.register_witness(&mut *witness_lib, library)?;
@@ -542,14 +533,8 @@ where
 
     /// Computes only the witness without generating a proof neither verifying constraints.
     /// This is useful for debugging or benchmarking purposes.
-    pub fn compute_witness_from_lib(
-        &self,
-        input_data_path: Option<PathBuf>,
-        debug_info: &DebugInfo,
-        options: ProofOptions,
-    ) -> ProofmanResult<()> {
+    pub fn compute_witness_from_lib(&self, debug_info: &DebugInfo, options: ProofOptions) -> ProofmanResult<()> {
         self.pctx.set_debug_info(debug_info);
-        self.wcm.set_input_data_path(input_data_path);
         self.compute_witness_(options)
     }
 
@@ -658,21 +643,13 @@ where
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
-        self.wcm.set_input_data_path(input_data_path);
 
         self.register_witness(&mut *witness_lib, library)?;
 
         self._verify_proof_constraints(debug_info, test_mode)
     }
 
-    pub fn verify_proof_constraints_from_lib(
-        &self,
-        input_data_path: Option<PathBuf>,
-        debug_info: &DebugInfo,
-        test_mode: bool,
-    ) -> ProofmanResult<()> {
-        self.wcm.set_input_data_path(input_data_path);
-
+    pub fn verify_proof_constraints_from_lib(&self, debug_info: &DebugInfo, test_mode: bool) -> ProofmanResult<()> {
         self._verify_proof_constraints(debug_info, test_mode)
     }
 
@@ -1227,8 +1204,6 @@ where
                 self.mpi_ctx.n_processes as usize,
                 self.mpi_ctx.rank as usize,
             )?;
-            self.wcm.set_input_data_path(proof_info.input_data_path.clone());
-
             self.reset()?;
 
             if !options.minimal_memory && cfg!(feature = "gpu") {

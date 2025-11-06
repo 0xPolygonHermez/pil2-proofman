@@ -2,15 +2,9 @@ use std::sync::{RwLock, Arc};
 
 use fields::PrimeField64;
 use proofman_common::{BufferPool, DebugInfo, ProofCtx, ProofmanResult, SetupCtx};
-use std::path::PathBuf;
 
 pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
-    fn execute(
-        &self,
-        _pctx: Arc<ProofCtx<F>>,
-        _global_ids: &RwLock<Vec<usize>>,
-        _input_data_path: Option<PathBuf>,
-    ) -> ProofmanResult<()> {
+    fn execute(&self, _pctx: Arc<ProofCtx<F>>, _global_ids: &RwLock<Vec<usize>>) -> ProofmanResult<()> {
         Ok(())
     }
 
@@ -62,12 +56,7 @@ pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
 #[macro_export]
 macro_rules! execute {
     ($Trace:ident, $num_instances: expr) => {
-        fn execute(
-            &self,
-            pctx: Arc<ProofCtx<F>>,
-            global_ids: &std::sync::RwLock<Vec<usize>>,
-            _input_data_path: Option<std::path::PathBuf>,
-        ) -> ProofmanResult<()> {
+        fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &std::sync::RwLock<Vec<usize>>) -> ProofmanResult<()> {
             let mut instance_ids = Vec::new();
             for _ in 0..$num_instances {
                 let global_id = pctx.add_instance($Trace::<F>::AIRGROUP_ID, $Trace::<F>::AIR_ID)?;

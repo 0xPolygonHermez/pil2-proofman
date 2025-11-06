@@ -4,7 +4,6 @@ use std::env;
 use std::ffi::{c_void, c_char};
 use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanResult, SetupCtx, TraceInfo};
 use witness::WitnessComponent;
-use std::path::PathBuf;
 use fields::PrimeField64;
 use proofman_starks_lib_c::{read_exec_file_c, get_committed_pols_c};
 
@@ -31,12 +30,7 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
 impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
-    fn execute(
-        &self,
-        pctx: Arc<ProofCtx<F>>,
-        global_ids: &RwLock<Vec<usize>>,
-        _input_data_path: Option<PathBuf>,
-    ) -> ProofmanResult<()> {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &RwLock<Vec<usize>>) -> ProofmanResult<()> {
         pctx.add_instance(0, 0)?;
         global_ids.write().unwrap().push(0);
         Ok(())

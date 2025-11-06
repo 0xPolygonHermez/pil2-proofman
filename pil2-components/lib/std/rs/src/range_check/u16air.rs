@@ -4,7 +4,6 @@ use std::sync::{
 };
 
 use fields::PrimeField64;
-use std::path::PathBuf;
 use proofman_util::create_buffer_fast;
 use rayon::{
     iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator},
@@ -120,12 +119,7 @@ impl U16Air {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for U16Air {
-    fn execute(
-        &self,
-        pctx: Arc<ProofCtx<F>>,
-        _global_ids: &RwLock<Vec<usize>>,
-        _input_data_path: Option<PathBuf>,
-    ) -> ProofmanResult<()> {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>, _global_ids: &RwLock<Vec<usize>>) -> ProofmanResult<()> {
         let (instance_found, mut table_instance_id) = pctx.dctx_find_process_table(self.airgroup_id, self.air_id)?;
 
         if !instance_found {

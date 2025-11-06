@@ -24,10 +24,6 @@ pub struct StatsCmd {
     #[clap(short = 'e', long)]
     pub elf: Option<PathBuf>,
 
-    /// Inputs path
-    #[clap(short = 'i', long)]
-    pub input_data: Option<PathBuf>,
-
     /// Public inputs path
     #[clap(short = 'p', long)]
     pub public_inputs: Option<PathBuf>,
@@ -102,7 +98,6 @@ impl StatsCmd {
             Field::Goldilocks => proofman.compute_witness(
                 self.witness_lib.clone(),
                 self.public_inputs.clone(),
-                self.input_data.clone(),
                 &debug_info,
                 self.verbose.into(),
                 ProofOptions::new(false, false, false, false, false, self.minimal_memory, false, PathBuf::new()),
