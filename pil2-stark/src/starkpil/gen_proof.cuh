@@ -76,7 +76,6 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
-    Goldilocks::Element *pConstPolsAddress = (Goldilocks::Element *)d_const_pols;
     Goldilocks::Element *pConstPolsExtendedTreeAddress = (Goldilocks::Element *)d_const_tree;
     Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
     
@@ -102,7 +101,16 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     uint64_t offsetFriQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("fri_queries", false)];
     uint64_t offsetChallenge = setupCtx.starkInfo.mapOffsets[std::make_pair("challenge", false)];
     uint64_t offsetProofQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("proof_queries", false)];
+    uint64_t offsetConstPols = setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)];
 
+    Goldilocks::Element *packed_const_pols = (Goldilocks::Element *)d_const_pols;
+    Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
+    if(!reuse_constants) {
+        uint64_t num_packed_words = 0;
+        cudaMemcpyAsync(&num_packed_words, d_const_pols, sizeof(uint64_t), cudaMemcpyDeviceToHost, stream);
+        unpack_fixed(num_packed_words, (uint64_t*)(packed_const_pols + 1), (uint64_t*)(packed_const_pols + 1 + setupCtx.starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx.starkInfo.nConstants, N, stream, timer);
+        CHECKCUDAERR(cudaGetLastError());
+    }
 
     StepsParams h_params = {
         trace : (Goldilocks::Element *)d_aux_trace + offsetCm1,
@@ -114,7 +122,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         airValues : (Goldilocks::Element *)d_aux_trace + offsetAirValues,
         evals : (Goldilocks::Element *)d_aux_trace + offsetEvals,
         xDivXSub : (Goldilocks::Element *)d_aux_trace + offsetXDivXSub,
-        pConstPolsAddress,
+        pConstPolsAddress: d_const_pols_unpacked,
         pConstPolsExtendedTreeAddress,
         pCustomCommitsFixed,
     };
@@ -208,7 +216,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, stream);
 
     if (setupCtx.starkInfo.calculateFixedExtended && !reuse_constants) {
-        extendAndMerkelizeFixed(setupCtx, pConstPolsAddress, pConstPolsExtendedTreeAddress, timer, stream);
+        extendAndMerkelizeFixed(setupCtx, h_params.pConstPolsAddress, pConstPolsExtendedTreeAddress, timer, stream);
     }
 
     TimerStartGPU(timer, STARK_QUOTIENT_POLYNOMIAL);

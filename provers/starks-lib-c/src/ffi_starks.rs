@@ -246,6 +246,18 @@ pub fn init_gpu_setup_c(maxBitsExt: u64) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn pack_const_pols_c(pStarkinfo: *mut c_void, pConstPols: *mut u8, constFile: &str) {
+    let const_file_cstr: CString = CString::new(constFile).unwrap();
+    unsafe {
+        pack_const_pols(
+            pStarkinfo,
+            pConstPols as *mut std::os::raw::c_void,
+            const_file_cstr.as_ptr() as *mut std::os::raw::c_char,
+        );
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn prepare_blocks_c(pol: *mut u64, N: u64, nCols: u64) {
     unsafe {
         prepare_blocks(pol, N, nCols);
@@ -950,6 +962,7 @@ pub fn gen_recursive_proof_c(
     const_pols_path: &str,
     const_tree_path: &str,
     proof_type: &str,
+    force_recursive_stream: bool,
 ) -> u64 {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -985,6 +998,7 @@ pub fn gen_recursive_proof_c(
             const_filename_ptr,
             const_tree_filename_ptr,
             proof_type_ptr,
+            force_recursive_stream,
         )
     }
 }
@@ -1494,6 +1508,11 @@ pub fn init_gpu_setup_c(_maxBitsExt: u64) {
 }
 
 #[cfg(feature = "no_lib_link")]
+pub fn pack_const_pols_c(_pStarkinfo: *mut c_void, _pConstPols: *mut u8, _constFile: &str) {
+    trace!("··· {}", "pack_const_pols: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
 pub fn prepare_blocks_c(_pol: *mut u64, _N: u64, _nCols: u64) {
     trace!("··· {}", "prepare_blocks: This is a mock call because there is no linked library");
 }
@@ -1934,6 +1953,7 @@ pub fn gen_recursive_proof_c(
     _const_pols_path: &str,
     _const_tree_path: &str,
     _proof_type: &str,
+    _force_recursive_stream: bool,
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "gen_recursive_proof: This is a mock call because there is no linked library");
     0
