@@ -269,6 +269,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     const_tree: &[F],
     const_pols: &[F],
     save_proofs: bool,
+    force_recursive_stream: bool,
 ) -> ProofmanResult<u64> {
     timer_start_info!(
         GEN_RECURSIVE_PROOF,
@@ -369,6 +370,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         &setup.const_pols_path,
         &setup.const_pols_tree_path,
         proof_type,
+        force_recursive_stream,
     );
 
     timer_stop_and_log_info!(
@@ -511,6 +513,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                             const_tree,
                             const_pols,
                             save_proofs,
+                            false,
                         )?;
 
                         get_stream_id_proof_c(d_buffers, stream_id);
@@ -627,6 +630,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         const_tree,
         const_pols,
         save_proof,
+        false,
     )?;
     get_stream_id_proof_c(d_buffers, stream_id);
 

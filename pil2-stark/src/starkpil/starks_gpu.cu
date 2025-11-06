@@ -91,6 +91,33 @@ __global__ void unpack(
     }
 }
 
+void unpack_fixed(
+    uint64_t num_packed_words,
+    uint64_t* d_unpack_info,
+    uint64_t* src,
+    uint64_t* dst,
+    uint64_t nCols,
+    uint64_t nRows,
+    cudaStream_t stream,
+    TimerGPU &timer
+) {
+    dim3 threads(256);
+    dim3 blocks((nRows + threads.x - 1) / threads.x);
+
+    size_t sharedMemSize = nCols * sizeof(uint64_t);
+    TimerStartCategoryGPU(timer, UNPACK_FIXED);
+    unpack<<<blocks, threads, sharedMemSize, stream>>>(
+        src,
+        dst,
+        nRows,
+        nCols,
+        num_packed_words,
+        d_unpack_info
+    );
+    TimerStopCategoryGPU(timer, UNPACK_FIXED);
+    CHECKCUDAERR(cudaGetLastError());
+}
+
 void unpack_trace(
     AirInstanceInfo *air_instance_info,
     uint64_t* src,

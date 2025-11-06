@@ -3,6 +3,7 @@ use fields::PrimeField64;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use std::fs::File;
+use std::fs;
 use std::io::Read;
 use libloading::{Library, Symbol};
 use std::ffi::CString;
@@ -58,6 +59,7 @@ pub struct Setup<F: PrimeField64> {
     pub p_setup: SetupC,
     pub stark_info: StarkInfo,
     pub const_pols_size: usize,
+    pub const_pols_size_packed: usize,
     pub const_tree_size: usize,
     pub const_pols_path: String,
     pub const_pols_tree_path: String,
@@ -138,6 +140,7 @@ impl<F: PrimeField64> Setup<F> {
             const_pols_tree,
             verkey,
             const_pols_size,
+            const_pols_size_packed,
             const_tree_size,
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
@@ -154,6 +157,7 @@ impl<F: PrimeField64> Setup<F> {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                0,
                 0,
                 0,
                 0,
@@ -218,6 +222,7 @@ impl<F: PrimeField64> Setup<F> {
                     Vec::new(),
                     verkey,
                     const_pols_size,
+                    0,
                     const_tree_size,
                     prover_buffer_size,
                     custom_commits_fixed_buffer_size,
@@ -229,6 +234,21 @@ impl<F: PrimeField64> Setup<F> {
             } else {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
                 let const_pols_tree: Vec<F> = create_buffer_fast(const_tree_size);
+                let mut const_pols_size_packed = 0;
+                if gpu {
+                    let words_per_row: u64 = if Path::new(&const_pols_path).exists() {
+                        let bytes = fs::read(&const_pols_path).expect("Failed to read const_pols file");
+                        if bytes.len() >= 8 {
+                            u64::from_le_bytes(bytes[..8].try_into().unwrap())
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+                    const_pols_size_packed =
+                        (words_per_row * (1 << stark_info.stark_struct.n_bits) + 1 + stark_info.n_constants) as usize;
+                }
                 (
                     stark_info,
                     p_stark_info,
@@ -237,6 +257,7 @@ impl<F: PrimeField64> Setup<F> {
                     const_pols_tree,
                     verkey,
                     const_pols_size,
+                    const_pols_size_packed,
                     const_tree_size,
                     prover_buffer_size,
                     custom_commits_fixed_buffer_size,
@@ -254,6 +275,7 @@ impl<F: PrimeField64> Setup<F> {
             stark_info,
             p_setup: SetupC { p_stark_info, p_expressions_bin },
             const_pols_size,
+            const_pols_size_packed,
             const_tree_size,
             const_pols,
             const_pols_tree,
