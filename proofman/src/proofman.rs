@@ -1894,7 +1894,7 @@ where
                     self.d_buffers.get_ptr(),
                     false,
                     &mut agg_proofs,
-                    phase == ProvePhase::Internal || self.mpi_ctx.n_processes > 1,
+                    phase == ProvePhase::Internal && self.mpi_ctx.n_processes > 1,
                 )?;
                 timer_stop_and_log_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
             } else {
@@ -1907,7 +1907,7 @@ where
                     self.worker_aggregations_rma(
                         &options,
                         outer_rank != 0,
-                        phase == ProvePhase::Internal || self.mpi_ctx.n_processes > 1,
+                        phase == ProvePhase::Internal && self.mpi_ctx.n_processes > 1,
                     )?;
                 } else {
                     for airgroup in 0..self.pctx.global_info.air_groups.len() {
