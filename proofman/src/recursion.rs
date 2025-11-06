@@ -397,7 +397,6 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
     d_buffers: *mut c_void,
     save_proofs: bool,
     agg_proofs: &mut Vec<AggProofs>,
-    is_distributed: bool,
 ) -> ProofmanResult<()> {
     let n_processes = mpi_ctx.n_processes as usize;
     let rank = mpi_ctx.rank as usize;
@@ -411,16 +410,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
     let mut airgroup_instances_alive = vec![vec![0; n_processes]; n_airgroups];
     for global_id in pctx.dctx_get_worker_instances().iter() {
         if let Ok(owner) = pctx.dctx_get_process_owner_instance(*global_id) {
-            if is_distributed {
-                airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize] += 1;
-                if airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize]
-                    == N_RECURSIVE_PROOFS_PER_AGGREGATION
-                {
-                    airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize] = 1;
-                }
-            } else {
-                airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize] = 1;
-            }
+            airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize] = 1;
         }
     }
 
@@ -447,7 +437,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
         }
     }
 
-    let min_alive = if is_distributed { 2 } else { 1 };
+    let min_alive = 1;
 
     // agregation loop
     loop {
@@ -858,7 +848,7 @@ impl Recursive2Proofs {
     }
 }
 
-pub fn total_recursive_proofs(mut n: usize, is_distributed: bool) -> Recursive2Proofs {
+pub fn total_recursive_proofs(mut n: usize) -> Recursive2Proofs {
     let mut total = 0;
     let mut rem = n % N_RECURSIVE_PROOFS_PER_AGGREGATION;
     while n > 1 {
@@ -873,11 +863,7 @@ pub fn total_recursive_proofs(mut n: usize, is_distributed: bool) -> Recursive2P
     }
 
     if rem == 2 {
-        if is_distributed {
-            Recursive2Proofs::new(total, false)
-        } else {
-            Recursive2Proofs::new(total + 1, true)
-        }
+        Recursive2Proofs::new(total + 1, true)
     } else {
         Recursive2Proofs::new(total, false)
     }

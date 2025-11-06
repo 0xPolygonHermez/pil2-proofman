@@ -1424,10 +1424,7 @@ where
 
         if options.aggregation {
             for (airgroup, &n_proofs) in n_airgroup_proofs.iter().enumerate().take(n_airgroups) {
-                let n_recursive2_proofs = total_recursive_proofs(
-                    n_proofs,
-                    phase == ProvePhase::Internal && self.pctx.mpi_ctx.n_processes > 1,
-                );
+                let n_recursive2_proofs = total_recursive_proofs(n_proofs);
                 if n_recursive2_proofs.has_remaining {
                     let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2)?;
                     let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup);
@@ -1902,7 +1899,6 @@ where
                     self.d_buffers.get_ptr(),
                     false,
                     &mut agg_proofs,
-                    phase == ProvePhase::Internal && self.mpi_ctx.n_processes > 1,
                 )?;
                 timer_stop_and_log_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
             } else {
@@ -1912,11 +1908,7 @@ where
                 let outer_rank = self.mpi_ctx.get_outer_agg_rank()? as usize;
                 tracing::info!("    Outer aggregation rank: {}", outer_rank);
                 if self.pctx.mpi_ctx.rank as usize == outer_rank {
-                    self.worker_aggregations_rma(
-                        &options,
-                        outer_rank != 0,
-                        phase == ProvePhase::Internal && self.mpi_ctx.n_processes > 1,
-                    )?;
+                    self.worker_aggregations_rma(&options, outer_rank != 0)?;
                 } else {
                     for airgroup in 0..self.pctx.global_info.air_groups.len() {
                         let mut write_lock = self.recursive2_proofs[airgroup].write().unwrap();
@@ -2116,7 +2108,7 @@ where
                 if n_agg_proofs == 0 {
                     continue;
                 }
-                let n_agg_proofs_to_be_done = total_recursive_proofs(n_agg_proofs + 1, false);
+                let n_agg_proofs_to_be_done = total_recursive_proofs(n_agg_proofs + 1);
                 if n_agg_proofs_to_be_done.has_remaining {
                     let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
                     let id = rec2_proofs.len();
@@ -2373,12 +2365,7 @@ where
     }
 
     #[allow(clippy::type_complexity)]
-    fn worker_aggregations_rma(
-        &self,
-        options: &ProofOptions,
-        send_proofs: bool,
-        is_distributed: bool,
-    ) -> ProofmanResult<()> {
+    fn worker_aggregations_rma(&self, options: &ProofOptions, send_proofs: bool) -> ProofmanResult<()> {
         timer_start_info!(GENERATING_WORKER_RMA_COMPRESSED_PROOFS);
 
         let my_rank = self.mpi_ctx.rank as usize;
@@ -2394,16 +2381,7 @@ where
         let mut airgroup_instances_alive = vec![vec![0; n_processes]; n_airgroups];
         for global_id in self.pctx.dctx_get_worker_instances().iter() {
             let owner = self.pctx.dctx_get_process_owner_instance(*global_id)?;
-            if is_distributed {
-                airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize] += 1;
-                if airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize]
-                    == N_RECURSIVE_PROOFS_PER_AGGREGATION
-                {
-                    airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize] = 1;
-                }
-            } else {
-                airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize] = 1;
-            }
+            airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize] = 1;
         }
         let mut alives = vec![0; n_airgroups];
         let mut n_proofs_to_be_received = 0;
@@ -2418,8 +2396,8 @@ where
 
         let mut total_proofs: usize = 0;
         for (airgroup, &n_proofs) in alives.iter().enumerate() {
-            let n_recursive2_proofs = total_recursive_proofs(n_proofs, is_distributed);
-            if n_recursive2_proofs.has_remaining && !is_distributed {
+            let n_recursive2_proofs = total_recursive_proofs(n_proofs);
+            if n_recursive2_proofs.has_remaining {
                 let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2)?;
                 let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup);
                 let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
