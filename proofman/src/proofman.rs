@@ -1426,7 +1426,7 @@ where
             for (airgroup, &n_proofs) in n_airgroup_proofs.iter().enumerate().take(n_airgroups) {
                 let n_recursive2_proofs = total_recursive_proofs(
                     n_proofs,
-                    phase == ProvePhase::Internal || self.pctx.mpi_ctx.n_processes > 1,
+                    phase == ProvePhase::Internal && self.pctx.mpi_ctx.n_processes > 1,
                 );
                 if n_recursive2_proofs.has_remaining {
                     let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2)?;
