@@ -410,6 +410,7 @@ where
         self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize)?;
 
         self.reset()?;
+        self.pctx.dctx_reset();
 
         self.exec()?;
 
@@ -542,6 +543,7 @@ where
         self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize)?;
 
         self.reset()?;
+        self.pctx.dctx_reset();
 
         let memory_handler = Arc::new(MemoryHandler::new(
             self.pctx.clone(),
@@ -1118,7 +1120,6 @@ where
         self.cancellation_info.write().unwrap().reset();
 
         self.wcm.reset();
-        self.pctx.dctx_reset();
 
         for proof_lock in self.proofs.iter() {
             let mut proof = proof_lock.write().unwrap();
@@ -1205,6 +1206,7 @@ where
                 self.mpi_ctx.rank as usize,
             )?;
             self.reset()?;
+            self.pctx.dctx_reset();
 
             if !options.minimal_memory && cfg!(feature = "gpu") {
                 self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
