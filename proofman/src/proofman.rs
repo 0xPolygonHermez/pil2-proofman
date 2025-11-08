@@ -285,6 +285,7 @@ where
             }
             cancellation_info.error.take()
         };
+        self.mpi_ctx.notify_cancellation();
         self.reset()?;
         if let Some(e) = error {
             Err(e)
@@ -1191,6 +1192,17 @@ where
         timer_start_info!(GENERATING_VADCOP_PROOF);
         timer_start_info!(GENERATING_PROOFS);
 
+        let _ = std::thread::spawn({
+            let cancellation_info = self.cancellation_info.clone();
+            let mpi_ctx = self.mpi_ctx.clone();
+            move || loop {
+                if let Some(error) = mpi_ctx.check_cancellation() {
+                    cancellation_info.write().unwrap().cancel(Some(error));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        });
+
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
             let proof_info = match phase_inputs {
                 ProvePhaseInputs::Full(proof_info) => proof_info,
@@ -1852,7 +1864,6 @@ where
             || get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()),
             &self.cancellation_info,
         );
-        self.check_cancel()?;
         get_stream_proofs_c(self.d_buffers.get_ptr());
         proofs_finished.store(true, Ordering::Relaxed);
         clear_proof_done_callback_c();
@@ -1864,6 +1875,8 @@ where
         for handle in handles {
             handle.join().unwrap();
         }
+
+        self.check_cancel()?;
 
         timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
 
@@ -2136,7 +2149,6 @@ where
                 || get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()),
                 &self.cancellation_info,
             );
-            self.check_cancel()?;
             get_stream_proofs_c(self.d_buffers.get_ptr());
 
             if self.outer_aggregations_handle.lock().unwrap().is_some() {
@@ -2155,6 +2167,8 @@ where
                     handle.join().unwrap();
                 }
             }
+
+            self.check_cancel()?;
 
             let agg_proofs_data: Vec<AggProofs> = (0..self.pctx.global_info.air_groups.len())
                 .map(|airgroup_id| {

@@ -35,6 +35,8 @@ pub struct MpiCtx {
     pub outer_agg_rank: AtomicI32,
 }
 
+const MPI_TAG_CANCEL_JOB: i32 = 999999;
+
 impl Default for MpiCtx {
     fn default() -> Self {
         MpiCtx::new()
@@ -478,6 +480,41 @@ impl MpiCtx {
                 }
             }
         }
+    }
+
+    /// Notify all other MPI processes to cancel their current job
+    /// This sends a cancellation message to all ranks except the current one
+    pub fn notify_cancellation(&self) {
+        #[cfg(distributed)]
+        {
+            if self.n_processes > 1 {
+                // Include the sender’s rank in the cancel message
+                let cancel_msg: [i32; 1] = [self.rank];
+                for rank in 0..self.n_processes {
+                    if rank != self.rank {
+                        self.world.process_at_rank(rank).send_with_tag(&cancel_msg, MPI_TAG_CANCEL_JOB);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Check for incoming cancellation messages
+    pub fn check_cancellation(&self) -> Option<ProofmanError> {
+        #[cfg(distributed)]
+        {
+            if let Some(_status) = self.world.any_process().immediate_probe_with_tag(MPI_TAG_CANCEL_JOB) {
+                let (msg, _) = self.world.any_process().receive_vec_with_tag::<i32>(MPI_TAG_CANCEL_JOB);
+
+                if let Some(&failed_rank) = msg.first() {
+                    return Some(ProofmanError::InvalidProof(format!(
+                        "Process {} received cancellation message from failed rank {}.",
+                        self.rank, failed_rank
+                    )));
+                }
+            }
+        }
+        None
     }
 }
 
