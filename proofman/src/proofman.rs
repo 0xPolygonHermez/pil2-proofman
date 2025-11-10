@@ -2079,6 +2079,7 @@ where
             self.outer_aggregations(options);
         }
 
+        timer_start_info!(RECEIVING_AGGREGATED_PROOFS);
         for proof in agg_proofs {
             let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
             let mut stored_contributions = Vec::new();
@@ -2167,6 +2168,8 @@ where
                 })
                 .collect();
 
+            timer_stop_and_log_info!(RECEIVING_AGGREGATED_PROOFS);
+            
             if !final_proof {
                 return Ok(Some(agg_proofs_data));
             } else {
