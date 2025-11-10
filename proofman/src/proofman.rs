@@ -1321,6 +1321,10 @@ where
         let mut worker_contributions = self.worker_contributions.write().unwrap();
         for contribution in all_partial_contributions_u64 {
             if contribution.worker_index < n_workers {
+                println!(
+                    "Adding contribution: worker_index = {}, full contribution = {:?}",
+                    contribution.worker_index, contribution
+                );
                 worker_contributions.push(contribution.clone());
             } else {
                 panic!("Invalid worker index in contributions");
@@ -1880,11 +1884,13 @@ where
         for proof in agg_proofs {
             let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
             let mut stored_contributions = Vec::new();
+            let mut worker_ids = Vec::new();
             for w in &proof.worker_indexes {
                 if let Some(contrib) = self.worker_contributions.read().unwrap().iter().find(|contrib| {
                     contrib.worker_index == *w as u32 && contrib.airgroup_id == proof.airgroup_id as usize
                 }) {
                     stored_contributions.push(contrib.challenge.iter().map(|&x| F::from_u64(x)).collect());
+                    worker_ids.push(contrib.worker_index);
                 } else {
                     panic!("Missing contribution from worker {} and airgroup id {}", w, proof.airgroup_id);
                 }
@@ -1894,8 +1900,24 @@ where
 
             let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
             for (c, value) in workers_acc_challenge.iter().enumerate() {
-                if value.as_canonical_u64() != proof_acc_challenge[c] {
-                    panic!("Aggregated proof challenge does not match the expected challenge");
+                let expected = proof_acc_challenge[c];
+                if value.as_canonical_u64() != expected {
+                   
+                    panic!(
+                        "Aggregated proof challenge mismatch!\n\
+                    Position: {}\n\
+                    Worker IDs: {:?}\n\
+                    Computed value: {}\n\
+                    Expected value: {}\n\
+                    Full computed challenge: {:?}\n\
+                    Full expected challenge: {:?}",
+                        c,
+                        worker_ids,
+                        value.as_canonical_u64(),
+                        expected,
+                        workers_acc_challenge.iter().map(|v| v.as_canonical_u64()).collect::<Vec<_>>(),
+                        proof_acc_challenge
+                    );
                 }
             }
             self.received_agg_proofs.write().unwrap()[proof.airgroup_id as usize].extend(proof.worker_indexes);
