@@ -45,7 +45,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
             let mut a = F::as_canonical_u64(&publics.in1);
             let mut b = F::as_canonical_u64(&publics.in2);
 
-            let mut trace = FibonacciSquareTrace::new_from_vec_zeroes(buffer_pool.take_buffer());
+            let mut trace = FibonacciSquareTrace::new_from_vec_zeroes(buffer_pool.take_buffer())?;
 
             trace[0].a = F::from_u64(a);
             trace[0].b = F::from_u64(b);
@@ -79,7 +79,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         check: bool,
     ) -> ProofmanResult<()> {
         let buffer = vec![F::ZERO; FibonacciSquareRomTrace::<F>::ROW_SIZE * FibonacciSquareRomTrace::<F>::NUM_ROWS];
-        let mut trace_rom = FibonacciSquareRomTrace::new_from_vec_zeroes(buffer);
+        let mut trace_rom = FibonacciSquareRomTrace::new_from_vec_zeroes(buffer)?;
 
         for i in 0..trace_rom.num_rows() {
             trace_rom[i].line = F::from_u64(3 + i as u64);

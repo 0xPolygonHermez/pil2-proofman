@@ -59,7 +59,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
                 }
                 let mut x_mods = Vec::new();
 
-                let mut trace = ModuleTrace::new_from_vec(buffer_pool.take_buffer());
+                let mut trace = ModuleTrace::new_from_vec(buffer_pool.take_buffer())?;
 
                 let start = j * num_rows;
                 let end = ((j + 1) * num_rows).min(modules.len());

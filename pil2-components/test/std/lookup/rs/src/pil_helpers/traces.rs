@@ -6,17 +6,17 @@
 #![allow(dead_code)]
 
 use proofman_common as common;
-pub use proofman_macros::trace;
+use proofman_common::GenericTrace;
+use proofman_common::PackedInfoConst;
+pub use proofman_macros::trace_row;
 pub use proofman_macros::values;
-
+use fields::PrimeField64;
 use std::fmt;
-
-use rayon::prelude::*;
 
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "c3be1919b4998750aa5125b7b3906428f9d704580550fcd811cceac330525886";
+pub const PILOUT_HASH: &str = "92ea27a8bb7817cad24ce5ad0cedd7732696c08cb79de9f9f913079e95ddd4c4";
 
 //AIRGROUP CONSTANTS
 
@@ -37,53 +37,71 @@ pub const LOOKUP_2_15_AIR_IDS: &[usize] = &[4];
 pub const LOOKUP_3_AIR_IDS: &[usize] = &[5];
 
   
-trace!(Lookup0Fixed<F> {
+trace_row!(Lookup0FixedRow<F> {
  __L1__: F,
-},  0, 0, 1024 );
+});
+pub type Lookup0Fixed<F> = GenericTrace<Lookup0FixedRow<F>, 1024, 0, 0>;
 
-trace!(Lookup0Trace<F> {
- f: [F; 4], t: [F; 4], sel: [F; 2], mul: [F; 2],
-},  0, 0, 1024 );
+trace_row!(Lookup0TraceRow<F> {
+ f:[F; 4], t:[F; 4], sel:[F; 2], mul:[F; 2],
+});
+pub type Lookup0Trace<F> = GenericTrace<Lookup0TraceRow<F>, 1024, 0, 0>;
 
-trace!(Lookup1Fixed<F> {
+
+trace_row!(Lookup1FixedRow<F> {
  __L1__: F,
-},  0, 1, 1024 );
+});
+pub type Lookup1Fixed<F> = GenericTrace<Lookup1FixedRow<F>, 1024, 0, 1>;
 
-trace!(Lookup1Trace<F> {
- f: [F; 2], t: F, sel: [F; 2], mul: F,
-},  0, 1, 1024 );
+trace_row!(Lookup1TraceRow<F> {
+ f:[F; 2], t:F, sel:[F; 2], mul:F,
+});
+pub type Lookup1Trace<F> = GenericTrace<Lookup1TraceRow<F>, 1024, 0, 1>;
 
-trace!(Lookup2_12Fixed<F> {
+
+trace_row!(Lookup2_12FixedRow<F> {
  __L1__: F,
-},  0, 2, 4096 );
+});
+pub type Lookup2_12Fixed<F> = GenericTrace<Lookup2_12FixedRow<F>, 4096, 0, 2>;
 
-trace!(Lookup2_12Trace<F> {
- a1: F, b1: F, a2: F, b2: F, a3: F, b3: F, a4: F, b4: F, c1: F, d1: F, c2: F, d2: F, sel1: F, sel2: F, mul: F,
-},  0, 2, 4096 );
+trace_row!(Lookup2_12TraceRow<F> {
+ a1:F, b1:F, a2:F, b2:F, a3:F, b3:F, a4:F, b4:F, c1:F, d1:F, c2:F, d2:F, sel1:F, sel2:F, mul:F,
+});
+pub type Lookup2_12Trace<F> = GenericTrace<Lookup2_12TraceRow<F>, 4096, 0, 2>;
 
-trace!(Lookup2_13Fixed<F> {
+
+trace_row!(Lookup2_13FixedRow<F> {
  __L1__: F,
-},  0, 3, 8192 );
+});
+pub type Lookup2_13Fixed<F> = GenericTrace<Lookup2_13FixedRow<F>, 8192, 0, 3>;
 
-trace!(Lookup2_13Trace<F> {
- a1: F, b1: F, a2: F, b2: F, a3: F, b3: F, a4: F, b4: F, c1: F, d1: F, c2: F, d2: F, sel1: F, sel2: F, mul: F,
-},  0, 3, 8192 );
+trace_row!(Lookup2_13TraceRow<F> {
+ a1:F, b1:F, a2:F, b2:F, a3:F, b3:F, a4:F, b4:F, c1:F, d1:F, c2:F, d2:F, sel1:F, sel2:F, mul:F,
+});
+pub type Lookup2_13Trace<F> = GenericTrace<Lookup2_13TraceRow<F>, 8192, 0, 3>;
 
-trace!(Lookup2_15Fixed<F> {
+
+trace_row!(Lookup2_15FixedRow<F> {
  __L1__: F,
-},  0, 4, 32768 );
+});
+pub type Lookup2_15Fixed<F> = GenericTrace<Lookup2_15FixedRow<F>, 32768, 0, 4>;
 
-trace!(Lookup2_15Trace<F> {
- a1: F, b1: F, a2: F, b2: F, a3: F, b3: F, a4: F, b4: F, c1: F, d1: F, c2: F, d2: F, sel1: F, sel2: F, mul: F,
-},  0, 4, 32768 );
+trace_row!(Lookup2_15TraceRow<F> {
+ a1:F, b1:F, a2:F, b2:F, a3:F, b3:F, a4:F, b4:F, c1:F, d1:F, c2:F, d2:F, sel1:F, sel2:F, mul:F,
+});
+pub type Lookup2_15Trace<F> = GenericTrace<Lookup2_15TraceRow<F>, 32768, 0, 4>;
 
-trace!(Lookup3Fixed<F> {
+
+trace_row!(Lookup3FixedRow<F> {
  __L1__: F,
-},  0, 5, 16384 );
+});
+pub type Lookup3Fixed<F> = GenericTrace<Lookup3FixedRow<F>, 16384, 0, 5>;
 
-trace!(Lookup3Trace<F> {
- c1: F, d1: F, c2: F, d2: F, mul1: F, mul2: F,
-},  0, 5, 16384 );
+trace_row!(Lookup3TraceRow<F> {
+ c1:F, d1:F, c2:F, d2:F, mul1:F, mul2:F,
+});
+pub type Lookup3Trace<F> = GenericTrace<Lookup3TraceRow<F>, 16384, 0, 5>;
+
 
 values!(Lookup0AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
@@ -108,3 +126,6 @@ values!(Lookup2_15AirGroupValues<F> {
 values!(Lookup3AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
+
+pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
+];

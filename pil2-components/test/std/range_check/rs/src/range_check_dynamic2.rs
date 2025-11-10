@@ -26,7 +26,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic2<F> {
         if stage == 1 {
             let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 
-            let mut trace = RangeCheckDynamic2Trace::new_from_vec(buffer_pool.take_buffer());
+            let mut trace = RangeCheckDynamic2Trace::new_from_vec(buffer_pool.take_buffer())?;
             let num_rows = trace.num_rows();
 
             tracing::debug!("··· Starting witness computation stage {}", 1);

@@ -5,16 +5,16 @@
 #![allow(non_upper_case_globals)]
 #![allow(dead_code)]
 
-use proofman_common as common;
-pub use proofman_macros::trace;
+use proofman_common::GenericTrace;
+use proofman_common::PackedInfoConst;
+pub use proofman_macros::trace_row;
 pub use proofman_macros::values;
-
-use rayon::prelude::*;
+use fields::PrimeField64;
 
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "ab1f4cece7f2f1e2b27e4f098629e2f75ba1f7a9b53fcd87c57e1bf066a853ac";
+pub const PILOUT_HASH: &str = "f062d33e5eb950c3349f17351458b712db877cc17e60f02ac0d0b15b22e447ec";
 
 //AIRGROUP CONSTANTS
 
@@ -29,18 +29,27 @@ pub const AIR_PROD_AIR_IDS: &[usize] = &[0];
 pub const AIR_SUM_AIR_IDS: &[usize] = &[0];
 
   
-trace!(AirProdFixed<F> {
+trace_row!(AirProdFixedRow<F> {
  __L1__: F,
-},  0, 0, 256 );
+});
+pub type AirProdFixed<F> = GenericTrace<AirProdFixedRow<F>, 256, 0, 0>;
 
-trace!(AirProdTrace<F> {
- a: F, b: F, c: F,
-},  0, 0, 256 );
+trace_row!(AirProdTraceRow<F> {
+ a:F, b:F, c:F,
+});
+pub type AirProdTrace<F> = GenericTrace<AirProdTraceRow<F>, 256, 0, 0>;
 
-trace!(AirSumFixed<F> {
+
+trace_row!(AirSumFixedRow<F> {
  __L1__: F,
-},  1, 0, 256 );
+});
+pub type AirSumFixed<F> = GenericTrace<AirSumFixedRow<F>, 256, 1, 0>;
 
-trace!(AirSumTrace<F> {
- a: F, b: F, c: F,
-},  1, 0, 256 );
+trace_row!(AirSumTraceRow<F> {
+ a:F, b:F, c:F,
+});
+pub type AirSumTrace<F> = GenericTrace<AirSumTraceRow<F>, 256, 1, 0>;
+
+
+pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
+];

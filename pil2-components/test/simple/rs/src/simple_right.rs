@@ -22,7 +22,7 @@ impl<F: PrimeField64> WitnessComponent<F> for SimpleRight {
         buffer_pool: &dyn BufferPool<F>,
     ) -> ProofmanResult<()> {
         if stage == 1 {
-            let mut trace = SimpleRightTrace::new_from_vec(buffer_pool.take_buffer());
+            let mut trace = SimpleRightTrace::new_from_vec(buffer_pool.take_buffer())?;
             let num_rows = trace.num_rows();
 
             tracing::debug!("··· Starting witness computation stage {}", 1);

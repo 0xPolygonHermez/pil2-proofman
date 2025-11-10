@@ -6,17 +6,17 @@
 #![allow(dead_code)]
 
 use proofman_common as common;
-pub use proofman_macros::trace;
+use proofman_common::GenericTrace;
+use proofman_common::PackedInfoConst;
+pub use proofman_macros::trace_row;
 pub use proofman_macros::values;
-
+use fields::PrimeField64;
 use std::fmt;
-
-use rayon::prelude::*;
 
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "a5d87dd0398ca0f065d823557c023dbc69c44bb59eb2e94c8b39926a6b18b195";
+pub const PILOUT_HASH: &str = "d21dd31e9fbe7cdf7dcf055cd6d129529f21870512d9c659b51a96eb7ced18ae";
 
 //AIRGROUP CONSTANTS
 
@@ -31,29 +31,38 @@ pub const CONNECTION_2_AIR_IDS: &[usize] = &[1];
 pub const CONNECTION_NEW_AIR_IDS: &[usize] = &[2];
 
   
-trace!(Connection1Fixed<F> {
+trace_row!(Connection1FixedRow<F> {
  S1: F, S2: F, S3: F, ID: F, __L1__: F,
-},  0, 0, 8 );
+});
+pub type Connection1Fixed<F> = GenericTrace<Connection1FixedRow<F>, 8, 0, 0>;
 
-trace!(Connection1Trace<F> {
- a: F, b: F, c: F,
-},  0, 0, 8 );
+trace_row!(Connection1TraceRow<F> {
+ a:F, b:F, c:F,
+});
+pub type Connection1Trace<F> = GenericTrace<Connection1TraceRow<F>, 8, 0, 0>;
 
-trace!(Connection2Fixed<F> {
+
+trace_row!(Connection2FixedRow<F> {
  S1: F, S2: F, S3: F, ID: F, __L1__: F,
-},  0, 1, 16 );
+});
+pub type Connection2Fixed<F> = GenericTrace<Connection2FixedRow<F>, 16, 0, 1>;
 
-trace!(Connection2Trace<F> {
- a: F, b: F, c: F,
-},  0, 1, 16 );
+trace_row!(Connection2TraceRow<F> {
+ a:F, b:F, c:F,
+});
+pub type Connection2Trace<F> = GenericTrace<Connection2TraceRow<F>, 16, 0, 1>;
 
-trace!(ConnectionNewFixed<F> {
+
+trace_row!(ConnectionNewFixedRow<F> {
  ID: F, CONN_2: [F; 3], CONN_3: [F; 3], CONN_4: [F; 3], CONN_5: [F; 3], CONN_6: [F; 4], CONN_7: [F; 4], __L1__: F,
-},  0, 2, 16 );
+});
+pub type ConnectionNewFixed<F> = GenericTrace<ConnectionNewFixedRow<F>, 16, 0, 2>;
 
-trace!(ConnectionNewTrace<F> {
- a: [F; 6], b: [F; 6], c: [F; 6], d: [F; 6],
-},  0, 2, 16 );
+trace_row!(ConnectionNewTraceRow<F> {
+ a:[F; 6], b:[F; 6], c:[F; 6], d:[F; 6],
+});
+pub type ConnectionNewTrace<F> = GenericTrace<ConnectionNewTraceRow<F>, 16, 0, 2>;
+
 
 values!(Connection1AirGroupValues<F> {
  gprod_result: FieldExtension<F>,
@@ -66,3 +75,6 @@ values!(Connection2AirGroupValues<F> {
 values!(ConnectionNewAirGroupValues<F> {
  gprod_result: FieldExtension<F>,
 });
+
+pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
+];
