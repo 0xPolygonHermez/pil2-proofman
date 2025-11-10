@@ -123,7 +123,7 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
         let num_rows = NUM_ROWS;
         let expected_len = num_rows * row_size;
 
-        assert!(buffer.len() >= expected_len, "Flat buffer too small");
+        assert!(buffer.len() >= expected_len, "{}", format!("Flat buffer too small: got {}, expected at least {}", buffer.len(), expected_len));
         assert!(num_rows >= 2);
         assert!(num_rows & (num_rows - 1) == 0);
 
