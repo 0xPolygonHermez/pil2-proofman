@@ -37,8 +37,6 @@ where
     F: PrimeField64,
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
-    print_challenges(pctx, roots_contributions);
-
     timer_start_info!(CALCULATE_INTERNAL_CONTRIBUTION);
     let my_instances = pctx.dctx_get_process_instances();
 

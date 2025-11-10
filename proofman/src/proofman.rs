@@ -1407,9 +1407,11 @@ where
         {
             let mut worker_contributions = self.worker_contributions.write().unwrap();
             for contribution in all_partial_contributions_u64 {
-                println!(
-                    "Worker contribution received: worker_index={}, airgroup_id={} challenge={:?}",
-                    contribution.worker_index, contribution.airgroup_id, contribution.challenge
+                tracing::info!(
+                    "Worker contribution received: worker_index={}, airgroup_id={}, challenge(first 10)={:?}",
+                    contribution.worker_index,
+                    contribution.airgroup_id,
+                    &contribution.challenge[..contribution.challenge.len().min(10)]
                 );
                 if contribution.worker_index < n_workers {
                     worker_contributions.push(contribution.clone());
