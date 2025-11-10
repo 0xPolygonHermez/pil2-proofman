@@ -2174,7 +2174,7 @@ where
                 .collect();
 
             timer_stop_and_log_info!(RECEIVING_AGGREGATED_PROOFS);
-            
+
             if !final_proof {
                 return Ok(Some(agg_proofs_data));
             } else {
