@@ -312,6 +312,10 @@ impl<F: Field> AirInstance<F> {
         self.custom_commits_fixed = Vec::new();
     }
 
+    pub fn is_shared_buffer(&self) -> bool {
+        self.shared_buffer && !self.trace.is_empty()
+    }
+
     pub fn reset(&mut self) -> (bool, Vec<F>) {
         self.airgroup_id = 0;
         self.air_id = 0;

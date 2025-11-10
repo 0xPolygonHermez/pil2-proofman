@@ -459,6 +459,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances[global_idx].table
     }
 
+    pub fn is_shared_buffer(&self, global_idx: usize) -> bool {
+        self.air_instances[global_idx].read().unwrap().is_shared_buffer()
+    }
+
     pub fn dctx_find_air_instance_id(&self, global_idx: usize) -> ProofmanResult<usize> {
         let dctx = self.dctx.read().unwrap();
         dctx.find_air_instance_id(global_idx)

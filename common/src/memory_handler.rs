@@ -4,12 +4,15 @@ use std::sync::Arc;
 use crossbeam_queue::SegQueue;
 use crate::ProofCtx;
 use fields::PrimeField64;
+use crate::{ProofmanError, ProofmanResult};
 
 pub struct MemoryHandler<F: PrimeField64 + Send + Sync + 'static> {
     pctx: Arc<ProofCtx<F>>,
     instance_ids_to_be_released: Arc<SegQueue<usize>>,
     sender: Sender<Vec<F>>,
     receiver: Receiver<Vec<F>>,
+    n_buffers: usize,
+    buffer_size: usize,
 }
 
 impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
@@ -20,7 +23,50 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
             tx_buffer_pool.send(create_buffer_fast(buffer_size)).unwrap();
         }
 
-        Self { pctx, sender: tx_buffer_pool, receiver: rx_buffer_pool, instance_ids_to_be_released }
+        Self {
+            pctx,
+            sender: tx_buffer_pool,
+            receiver: rx_buffer_pool,
+            instance_ids_to_be_released,
+            n_buffers,
+            buffer_size,
+        }
+    }
+
+    pub fn reset(&self) -> ProofmanResult<()> {
+        self.empty_queue_to_be_released();
+
+        while !self.instance_ids_to_be_released.is_empty() {
+            self.instance_ids_to_be_released.pop();
+        }
+
+        let mut current_buffers = Vec::new();
+        while let Ok(buffer) = self.receiver.try_recv() {
+            current_buffers.push(buffer);
+        }
+
+        let mut valid_buffers: Vec<Vec<F>> = Vec::with_capacity(self.n_buffers);
+        for buf in current_buffers.into_iter() {
+            if buf.len() == self.buffer_size {
+                valid_buffers.push(buf);
+            } else {
+                return Err(ProofmanError::ProofmanError(format!(
+                    "MemoryHandler::reset - found buffer with unexpected size {} (expected {}), replacing it.",
+                    buf.len(),
+                    self.buffer_size
+                )));
+            }
+        }
+
+        while valid_buffers.len() < self.n_buffers {
+            valid_buffers.push(create_buffer_fast(self.buffer_size));
+        }
+
+        for buf in valid_buffers.into_iter() {
+            self.sender.send(buf).unwrap();
+        }
+
+        Ok(())
     }
 
     pub fn take_buffer(&self) -> Vec<F> {
@@ -29,8 +75,10 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
                 return buffer;
             }
             if let Some(stored_instance_id) = self.instance_ids_to_be_released.pop() {
-                let (_, witness_buffer) = self.pctx.free_instance_traces(stored_instance_id);
-                return witness_buffer;
+                let (is_shared_buffer, witness_buffer) = self.pctx.free_instance_traces(stored_instance_id);
+                if is_shared_buffer {
+                    return witness_buffer;
+                }
             }
             std::thread::sleep(std::time::Duration::from_micros(10));
         }

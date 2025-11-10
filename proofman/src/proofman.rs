@@ -1170,6 +1170,9 @@ where
 
         self.total_outer_agg_proofs.reset();
         self.pctx.dctx_reset();
+
+        self.memory_handler.reset()?;
+
         Ok(())
     }
 
@@ -1261,7 +1264,8 @@ where
                                 break;
                             }
 
-                            if !pctx_clone.dctx_is_table(instance_id) {
+                            let is_shared_buffer = pctx_clone.is_shared_buffer(instance_id);
+                            if is_shared_buffer {
                                 memory_handler_clone.to_be_released_buffer(instance_id);
                             }
                         }
