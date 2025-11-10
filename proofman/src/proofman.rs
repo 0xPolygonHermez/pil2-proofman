@@ -1407,6 +1407,12 @@ where
         {
             let mut worker_contributions = self.worker_contributions.write().unwrap();
             for contribution in all_partial_contributions_u64 {
+                tracing::info!(
+                    "Worker contribution received: worker_index={}, airgroup_id={}, challenge(first 10)={:?}",
+                    contribution.worker_index,
+                    contribution.airgroup_id,
+                    &contribution.challenge[..contribution.challenge.len().min(10)]
+                );
                 if contribution.worker_index < n_workers {
                     worker_contributions.push(contribution.clone());
                 } else {
@@ -1940,10 +1946,7 @@ where
                     let mut airgroup_instances_to_receive = vec![0; n_airgroups];
                     for global_id in self.pctx.dctx_get_worker_instances().iter() {
                         let airgroup_id = instances[*global_id].airgroup_id;
-                        airgroup_instances_to_receive[airgroup_id] += 1;
-                        if airgroup_instances_to_receive[airgroup_id] == N_RECURSIVE_PROOFS_PER_AGGREGATION {
-                            airgroup_instances_to_receive[airgroup_id] = 1;
-                        }
+                        airgroup_instances_to_receive[airgroup_id] = 1;
                     }
 
                     for (airgroup, instances) in airgroup_instances_to_receive.iter_mut().take(n_airgroups).enumerate()
@@ -1973,6 +1976,7 @@ where
                     self.recursive2_proofs[proof.airgroup_id as usize].write().unwrap().push(agg_proof);
                 }
                 if phase == ProvePhase::Internal {
+                    timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
                     return Ok(ProvePhaseResult::Internal(agg_proofs));
                 }
             }
@@ -2082,6 +2086,7 @@ where
             self.outer_aggregations(options);
         }
 
+        timer_start_info!(RECEIVING_AGGREGATED_PROOFS);
         for proof in agg_proofs {
             let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
             let mut stored_contributions = Vec::new();
@@ -2169,6 +2174,8 @@ where
                     AggProofs::new(airgroup_id as u64, proof, vec![])
                 })
                 .collect();
+
+            timer_stop_and_log_info!(RECEIVING_AGGREGATED_PROOFS);
 
             if !final_proof {
                 return Ok(Some(agg_proofs_data));

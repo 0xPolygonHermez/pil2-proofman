@@ -12,6 +12,22 @@ use std::ffi::c_void;
 use crate::ContributionsInfo;
 use rayon::prelude::*;
 
+fn _print_challenges<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[[F; 4]]) {
+    let my_instances = pctx.dctx_get_process_instances();
+
+    for instance_id in my_instances.iter() {
+        let root_contribution = roots_contributions[*instance_id];
+        tracing::info!(
+            "··· Instance {}: Root contribution: [{}, {}, {}, {}]",
+            instance_id,
+            root_contribution[0],
+            root_contribution[1],
+            root_contribution[2],
+            root_contribution[3]
+        );
+    }
+}
+
 pub fn calculate_internal_contributions<F>(
     pctx: &ProofCtx<F>,
     roots_contributions: &[[F; 4]],
