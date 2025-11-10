@@ -1407,6 +1407,10 @@ where
         {
             let mut worker_contributions = self.worker_contributions.write().unwrap();
             for contribution in all_partial_contributions_u64 {
+                println!(
+                    "Worker contribution received: worker_index={}, airgroup_id={} challenge={:?}",
+                    contribution.worker_index, contribution.airgroup_id, contribution.challenge
+                );
                 if contribution.worker_index < n_workers {
                     worker_contributions.push(contribution.clone());
                 } else {
@@ -1970,6 +1974,7 @@ where
                     self.recursive2_proofs[proof.airgroup_id as usize].write().unwrap().push(agg_proof);
                 }
                 if phase == ProvePhase::Internal {
+                    timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
                     return Ok(ProvePhaseResult::Internal(agg_proofs));
                 }
             }
