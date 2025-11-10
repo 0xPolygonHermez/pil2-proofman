@@ -1940,10 +1940,7 @@ where
                     let mut airgroup_instances_to_receive = vec![0; n_airgroups];
                     for global_id in self.pctx.dctx_get_worker_instances().iter() {
                         let airgroup_id = instances[*global_id].airgroup_id;
-                        airgroup_instances_to_receive[airgroup_id] += 1;
-                        if airgroup_instances_to_receive[airgroup_id] == N_RECURSIVE_PROOFS_PER_AGGREGATION {
-                            airgroup_instances_to_receive[airgroup_id] = 1;
-                        }
+                        airgroup_instances_to_receive[airgroup_id] = 1;
                     }
 
                     for (airgroup, instances) in airgroup_instances_to_receive.iter_mut().take(n_airgroups).enumerate()
