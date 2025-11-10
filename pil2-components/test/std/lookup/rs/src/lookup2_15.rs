@@ -26,7 +26,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Lookup2_15 {
             let seed = if cfg!(feature = "debug") { 0 } else { rng().random::<u64>() };
             let mut rng = StdRng::seed_from_u64(seed);
 
-            let mut trace = Lookup2_15Trace::new_from_vec(buffer_pool.take_buffer());
+            let mut trace = Lookup2_15Trace::new_from_vec(buffer_pool.take_buffer())?;
             let num_rows = trace.num_rows();
 
             tracing::debug!("··· Starting witness computation stage {}", 1);

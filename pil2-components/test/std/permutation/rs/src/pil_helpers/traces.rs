@@ -6,17 +6,17 @@
 #![allow(dead_code)]
 
 use proofman_common as common;
-pub use proofman_macros::trace;
+use proofman_common::GenericTrace;
+use proofman_common::PackedInfoConst;
+pub use proofman_macros::trace_row;
 pub use proofman_macros::values;
-
+use fields::PrimeField64;
 use std::fmt;
-
-use rayon::prelude::*;
 
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "3e2c0e22b7b1658e6abc7e8844e15279f62de30212edf7cb421d19ded8474260";
+pub const PILOUT_HASH: &str = "622f58eebcfcc6171179d3f777cdb289f59dae1789a6757fab9ef679e55fdd3f";
 
 //AIRGROUP CONSTANTS
 
@@ -33,37 +33,49 @@ pub const PERMUTATION_1_8_AIR_IDS: &[usize] = &[2];
 pub const PERMUTATION_2_6_AIR_IDS: &[usize] = &[3];
 
   
-trace!(Permutation1_6Fixed<F> {
+trace_row!(Permutation1_6FixedRow<F> {
  __L1__: F,
-},  0, 0, 64 );
+});
+pub type Permutation1_6Fixed<F> = GenericTrace<Permutation1_6FixedRow<F>, 64, 0, 0>;
 
-trace!(Permutation1_6Trace<F> {
- a1: F, b1: F, a2: F, b2: F, a3: F, b3: F, a4: F, b4: F, c1: F, d1: F, c2: F, d2: F, sel1: F, sel2: F, sel3: F,
-},  0, 0, 64 );
+trace_row!(Permutation1_6TraceRow<F> {
+ a1:F, b1:F, a2:F, b2:F, a3:F, b3:F, a4:F, b4:F, c1:F, d1:F, c2:F, d2:F, sel1:F, sel2:F, sel3:F,
+});
+pub type Permutation1_6Trace<F> = GenericTrace<Permutation1_6TraceRow<F>, 64, 0, 0>;
 
-trace!(Permutation1_7Fixed<F> {
+
+trace_row!(Permutation1_7FixedRow<F> {
  __L1__: F,
-},  0, 1, 128 );
+});
+pub type Permutation1_7Fixed<F> = GenericTrace<Permutation1_7FixedRow<F>, 128, 0, 1>;
 
-trace!(Permutation1_7Trace<F> {
- a1: F, b1: F, a2: F, b2: F, a3: F, b3: F, a4: F, b4: F, c1: F, d1: F, c2: F, d2: F, sel1: F, sel2: F, sel3: F,
-},  0, 1, 128 );
+trace_row!(Permutation1_7TraceRow<F> {
+ a1:F, b1:F, a2:F, b2:F, a3:F, b3:F, a4:F, b4:F, c1:F, d1:F, c2:F, d2:F, sel1:F, sel2:F, sel3:F,
+});
+pub type Permutation1_7Trace<F> = GenericTrace<Permutation1_7TraceRow<F>, 128, 0, 1>;
 
-trace!(Permutation1_8Fixed<F> {
+
+trace_row!(Permutation1_8FixedRow<F> {
  __L1__: F,
-},  0, 2, 256 );
+});
+pub type Permutation1_8Fixed<F> = GenericTrace<Permutation1_8FixedRow<F>, 256, 0, 2>;
 
-trace!(Permutation1_8Trace<F> {
- a1: F, b1: F, a2: F, b2: F, a3: F, b3: F, a4: F, b4: F, c1: F, d1: F, c2: F, d2: F, sel1: F, sel2: F, sel3: F,
-},  0, 2, 256 );
+trace_row!(Permutation1_8TraceRow<F> {
+ a1:F, b1:F, a2:F, b2:F, a3:F, b3:F, a4:F, b4:F, c1:F, d1:F, c2:F, d2:F, sel1:F, sel2:F, sel3:F,
+});
+pub type Permutation1_8Trace<F> = GenericTrace<Permutation1_8TraceRow<F>, 256, 0, 2>;
 
-trace!(Permutation2_6Fixed<F> {
+
+trace_row!(Permutation2_6FixedRow<F> {
  __L1__: F,
-},  0, 3, 512 );
+});
+pub type Permutation2_6Fixed<F> = GenericTrace<Permutation2_6FixedRow<F>, 512, 0, 3>;
 
-trace!(Permutation2_6Trace<F> {
- c1: F, d1: F, c2: F, d2: F, sel: F,
-},  0, 3, 512 );
+trace_row!(Permutation2_6TraceRow<F> {
+ c1:F, d1:F, c2:F, d2:F, sel:F,
+});
+pub type Permutation2_6Trace<F> = GenericTrace<Permutation2_6TraceRow<F>, 512, 0, 3>;
+
 
 values!(Permutation1_6AirGroupValues<F> {
  gsum_result: FieldExtension<F>, gprod_result: FieldExtension<F>,
@@ -80,3 +92,6 @@ values!(Permutation1_8AirGroupValues<F> {
 values!(Permutation2_6AirGroupValues<F> {
  gsum_result: FieldExtension<F>, gprod_result: FieldExtension<F>,
 });
+
+pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
+];

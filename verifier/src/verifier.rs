@@ -31,7 +31,7 @@ pub struct VerifierInfo {
 
 #[inline]
 pub fn log2(mut n: u64) -> u32 {
-    assert!(n != 0, "log2(0) is undefined");
+    debug_assert!(n != 0, "log2(0) is undefined");
     let mut res: u32 = 0;
     while n != 1 {
         n >>= 1; // divide by 2
@@ -216,7 +216,7 @@ pub fn stark_verify(
         final_pol.push(pol);
     }
 
-    assert!(p == proof.len() as u64, "Proof length mismatch: expected {}, got {}", p, proof.len());
+    debug_assert!(p == proof.len() as u64, "Proof length mismatch: expected {}, got {}", p, proof.len());
 
     let mut challenges = vec![
         CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };

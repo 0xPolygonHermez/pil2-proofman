@@ -23,7 +23,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Lookup3 {
     ) -> ProofmanResult<()> {
         if stage == 1 {
             // For simplicity, add a single instance of each air
-            let mut trace = Lookup3Trace::new_from_vec(buffer_pool.take_buffer());
+            let mut trace = Lookup3Trace::new_from_vec(buffer_pool.take_buffer())?;
             let num_rows = trace.num_rows();
 
             tracing::debug!("··· Starting witness computation stage {}", 1);

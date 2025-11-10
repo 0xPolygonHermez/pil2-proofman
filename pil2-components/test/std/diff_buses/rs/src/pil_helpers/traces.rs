@@ -6,17 +6,17 @@
 #![allow(dead_code)]
 
 use proofman_common as common;
-pub use proofman_macros::trace;
+use proofman_common::GenericTrace;
+use proofman_common::PackedInfoConst;
+pub use proofman_macros::trace_row;
 pub use proofman_macros::values;
-
+use fields::PrimeField64;
 use std::fmt;
-
-use rayon::prelude::*;
 
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "ceb6a39876343ad4f10fa0a745e9c3e1ab8c3adea137a8a80aad94e0ae5d48d8";
+pub const PILOUT_HASH: &str = "f5d11b901c7e54e9ef0507bbfbed3c450c4a799c77868ca80bc1039b5ea8fdaf";
 
 //AIRGROUP CONSTANTS
 
@@ -31,29 +31,38 @@ pub const SUM_BUS_AIR_IDS: &[usize] = &[1];
 pub const BOTH_BUSES_AIR_IDS: &[usize] = &[2];
 
   
-trace!(ProdBusFixed<F> {
+trace_row!(ProdBusFixedRow<F> {
  __L1__: F,
-},  0, 0, 16 );
+});
+pub type ProdBusFixed<F> = GenericTrace<ProdBusFixedRow<F>, 16, 0, 0>;
 
-trace!(ProdBusTrace<F> {
- a: F, b: F,
-},  0, 0, 16 );
+trace_row!(ProdBusTraceRow<F> {
+ a:F, b:F,
+});
+pub type ProdBusTrace<F> = GenericTrace<ProdBusTraceRow<F>, 16, 0, 0>;
 
-trace!(SumBusFixed<F> {
+
+trace_row!(SumBusFixedRow<F> {
  __L1__: F,
-},  0, 1, 32 );
+});
+pub type SumBusFixed<F> = GenericTrace<SumBusFixedRow<F>, 32, 0, 1>;
 
-trace!(SumBusTrace<F> {
- a: F, b: F,
-},  0, 1, 32 );
+trace_row!(SumBusTraceRow<F> {
+ a:F, b:F,
+});
+pub type SumBusTrace<F> = GenericTrace<SumBusTraceRow<F>, 32, 0, 1>;
 
-trace!(BothBusesFixed<F> {
+
+trace_row!(BothBusesFixedRow<F> {
  __L1__: F,
-},  0, 2, 16 );
+});
+pub type BothBusesFixed<F> = GenericTrace<BothBusesFixedRow<F>, 16, 0, 2>;
 
-trace!(BothBusesTrace<F> {
- a: F, b: F, c: F, d: F,
-},  0, 2, 16 );
+trace_row!(BothBusesTraceRow<F> {
+ a:F, b:F, c:F, d:F,
+});
+pub type BothBusesTrace<F> = GenericTrace<BothBusesTraceRow<F>, 16, 0, 2>;
+
 
 values!(ProdBusAirGroupValues<F> {
  gprod_result: FieldExtension<F>, gsum_result: FieldExtension<F>,
@@ -66,3 +75,6 @@ values!(SumBusAirGroupValues<F> {
 values!(BothBusesAirGroupValues<F> {
  gprod_result: FieldExtension<F>, gsum_result: FieldExtension<F>,
 });
+
+pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
+];
