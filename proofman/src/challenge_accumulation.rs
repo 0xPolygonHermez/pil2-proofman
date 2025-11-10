@@ -12,7 +12,7 @@ use std::ffi::c_void;
 use crate::ContributionsInfo;
 use rayon::prelude::*;
 
-fn print_challenges<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[[F; 4]]) {
+fn _print_challenges<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[[F; 4]]) {
     let my_instances = pctx.dctx_get_process_instances();
 
     for instance_id in my_instances.iter() {
