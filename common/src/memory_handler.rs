@@ -51,7 +51,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
                 valid_buffers.push(buf);
             } else {
                 return Err(ProofmanError::ProofmanError(format!(
-                    "MemoryHandler::reset - found buffer with unexpected size {} (expected {}), replacing it.",
+                    "MemoryHandler::Found buffer with unexpected size {} (expected {}), replacing it.",
                     buf.len(),
                     self.buffer_size
                 )));

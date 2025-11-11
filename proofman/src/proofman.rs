@@ -84,6 +84,44 @@ struct CsvInfo {
     percentage_area: f64,
 }
 
+struct CancellationThread {
+    stop_flag: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl CancellationThread {
+    fn new(cancellation_info: Arc<RwLock<CancellationInfo>>, mpi_ctx: Arc<MpiCtx>) -> Self {
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let stop_flag_clone = stop_flag.clone();
+
+        let handle = std::thread::spawn(move || loop {
+            if stop_flag_clone.load(Ordering::Relaxed) {
+                break;
+            }
+
+            if cancellation_info.read().unwrap().token.is_cancelled() {
+                break;
+            }
+            if let Some(error) = mpi_ctx.check_cancellation() {
+                cancellation_info.write().unwrap().cancel(Some(error));
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        });
+
+        Self { stop_flag, handle: Some(handle) }
+    }
+}
+
+impl Drop for CancellationThread {
+    fn drop(&mut self) {
+        self.stop_flag.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct CancellationInfo {
     pub token: CancellationToken,
@@ -1195,16 +1233,7 @@ where
         timer_start_info!(GENERATING_VADCOP_PROOF);
         timer_start_info!(GENERATING_PROOFS);
 
-        // let _ = std::thread::spawn({
-        //     let cancellation_info = self.cancellation_info.clone();
-        //     let mpi_ctx = self.mpi_ctx.clone();
-        //     move || loop {
-        //         if let Some(error) = mpi_ctx.check_cancellation() {
-        //             cancellation_info.write().unwrap().cancel(Some(error));
-        //         }
-        //         std::thread::sleep(std::time::Duration::from_millis(100));
-        //     }
-        // });
+        let _cancellation_thread = CancellationThread::new(self.cancellation_info.clone(), self.mpi_ctx.clone());
 
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
             let proof_info = match phase_inputs {

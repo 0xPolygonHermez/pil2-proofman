@@ -319,16 +319,10 @@ impl<F: Field> AirInstance<F> {
     pub fn reset(&mut self) -> (bool, Vec<F>) {
         self.airgroup_id = 0;
         self.air_id = 0;
-        let trace = std::mem::take(&mut self.trace);
-        let shared_buffer = self.shared_buffer && !trace.is_empty();
-        self.shared_buffer = false;
-        self.aux_trace = Vec::new();
-        self.custom_commits_fixed = Vec::new();
         self.airgroup_values = Vec::new();
         self.airvalues = Vec::new();
         self.evals = Vec::new();
         self.challenges = Vec::new();
-        self.fixed = Vec::new();
-        (shared_buffer, trace)
+        self.clear_traces()
     }
 }
