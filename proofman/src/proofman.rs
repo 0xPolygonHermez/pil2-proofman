@@ -846,7 +846,7 @@ where
             airgroup_values;
         let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(instance_id);
         if is_shared_buffer {
-            self.memory_handler.release_buffer(witness_buffer);
+            self.memory_handler.release_buffer(witness_buffer)?;
         }
         Ok(())
     }
@@ -1653,7 +1653,10 @@ where
 
             let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(*instance_id as usize);
             if is_shared_buffer {
-                self.memory_handler.release_buffer(witness_buffer);
+                if let Err(e) = self.memory_handler.release_buffer(witness_buffer) {
+                    self.cancellation_info.write().unwrap().cancel(Some(e));
+                    return;
+                }
             }
         });
 
@@ -1726,7 +1729,10 @@ where
                         }
                         let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
                         if is_shared_buffer {
-                            memory_handler_clone.release_buffer(witness_buffer);
+                            if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
+                                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                return;
+                            }
                         }
                         continue;
                     }
@@ -2702,7 +2708,10 @@ where
                     if stats {
                         let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
                         if is_shared_buffer {
-                            memory_handler_clone.release_buffer(witness_buffer);
+                            if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
+                                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                return;
+                            }
                         }
                     }
                 });
@@ -2807,7 +2816,10 @@ where
                     if stats {
                         let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
                         if is_shared_buffer {
-                            memory_handler_clone.release_buffer(witness_buffer);
+                            if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
+                                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                return;
+                            }
                         }
                     }
                 });

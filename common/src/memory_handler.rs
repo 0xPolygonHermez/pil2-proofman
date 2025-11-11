@@ -84,8 +84,16 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
         }
     }
 
-    pub fn release_buffer(&self, buffer: Vec<F>) {
+    pub fn release_buffer(&self, buffer: Vec<F>) -> ProofmanResult<()> {
+        if buffer.len() != self.buffer_size {
+            return Err(ProofmanError::ProofmanError(format!(
+                "MemoryHandler::Trying to release buffer with unexpected size {} (expected {}).",
+                buffer.len(),
+                self.buffer_size
+            )));
+        }
         self.sender.send(buffer).expect("Failed to send buffer back to pool");
+        Ok(())
     }
 
     pub fn to_be_released_buffer(&self, instance_id: usize) {
