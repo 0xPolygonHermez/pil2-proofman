@@ -2988,6 +2988,21 @@ where
             )));
         }
 
+        let max_prover_buffer_size =
+            sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_recursive_buffer_size) as u64;
+
+        let max_prover_recursive2_buffer_size = setups_vadcop.max_prover_recursive2_buffer_size as u64;
+
+        tracing::info!("Max prover buffer size: {}", format_bytes(sctx.max_prover_buffer_size as f64 * 8.0));
+        tracing::info!(
+            "Max prover recursive buffer size: {}",
+            format_bytes(setups_vadcop.max_prover_recursive_buffer_size as f64 * 8.0)
+        );
+        tracing::info!(
+            "Max prover recursive1/recursive2 buffer size: {}",
+            format_bytes(setups_vadcop.max_prover_recursive2_buffer_size as f64 * 8.0)
+        );
+
         let mut gpu_available_memory = match cfg!(feature = "gpu") {
             true => max_size_buffer as i64 - (n_streams_per_gpu * sctx.max_prover_buffer_size) as i64,
             false => 0,
@@ -2995,7 +3010,7 @@ where
         let mut n_recursive_streams_per_gpu = 0;
         if aggregation {
             while gpu_available_memory > 0 && n_recursive_streams_per_gpu < gpu_params.max_number_streams {
-                gpu_available_memory -= setups_vadcop.max_prover_recursive_buffer_size as i64;
+                gpu_available_memory -= max_prover_recursive2_buffer_size as i64;
                 if gpu_available_memory < 0 {
                     break;
                 }
@@ -3011,21 +3026,6 @@ where
                 format_bytes((total_const_area + total_const_area_aggregation) as f64 * 8.0)
             );
         }
-
-        let max_prover_buffer_size =
-            sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_recursive_buffer_size) as u64;
-
-        let max_prover_recursive2_buffer_size = setups_vadcop.max_prover_recursive2_buffer_size as u64;
-
-        tracing::info!("Max prover buffer size: {}", format_bytes(sctx.max_prover_buffer_size as f64 * 8.0));
-        tracing::info!(
-            "Max prover recursive buffer size: {}",
-            format_bytes(setups_vadcop.max_prover_recursive_buffer_size as f64 * 8.0)
-        );
-        tracing::info!(
-            "Max prover recursive1/recursive2 buffer size: {}",
-            format_bytes(setups_vadcop.max_prover_recursive2_buffer_size as f64 * 8.0)
-        );
 
         let max_sizes = MaxSizes {
             total_const_area,
