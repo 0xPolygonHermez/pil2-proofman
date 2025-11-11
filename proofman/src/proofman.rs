@@ -2889,7 +2889,7 @@ where
             match tx.try_send(()) {
                 Ok(_) => (),
                 Err(crossbeam_channel::TrySendError::Full(_)) => {
-                    std::thread::sleep(Duration::from_micros(10));
+                    std::thread::sleep(std::time::Duration::from_micros(10));
                 }
                 Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
                     break;
