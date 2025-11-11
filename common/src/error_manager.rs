@@ -4,6 +4,9 @@ pub enum ProofmanError {
     #[error("Proof error: {0}")]
     InvalidProof(String),
 
+    #[error("MPI cancellation detected: {0}")]
+    MpiCancellation(String),
+
     #[error("Invalid configuration: {0}")]
     InvalidConfiguration(String),
 

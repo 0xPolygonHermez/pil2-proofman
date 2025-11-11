@@ -323,13 +323,18 @@ where
             }
             cancellation_info.error.take()
         };
-        self.mpi_ctx.notify_cancellation();
-        self.reset()?;
-        if let Some(e) = error {
+
+        let error = if let Some(e) = error {
+            if !matches!(e, ProofmanError::MpiCancellation(_)) {
+                tracing::info!("Notifying error to other MPI processes: {:?}", e);
+                self.mpi_ctx.notify_cancellation();
+            }
             Err(e)
         } else {
             Err(ProofmanError::Cancelled)
-        }
+        };
+        self.reset()?;
+        error
     }
 
     pub fn cancel(&self) {
@@ -1156,8 +1161,6 @@ where
     }
 
     pub fn reset(&self) -> ProofmanResult<()> {
-        self.cancellation_info.write().unwrap().reset();
-
         self.wcm.reset();
 
         for proof_lock in self.proofs.iter() {
@@ -1195,7 +1198,6 @@ where
         while self.rec2_witness_rx.try_recv().is_ok() {}
 
         self.worker_contributions.write().unwrap().clear();
-        get_stream_proofs_c(self.d_buffers.get_ptr());
         reset_device_streams_c(self.d_buffers.get_ptr());
 
         for inner_vec in self.received_agg_proofs.write().unwrap().iter_mut() {
@@ -1207,10 +1209,9 @@ where
         }
 
         self.total_outer_agg_proofs.reset();
-        self.pctx.dctx_reset();
-
         self.memory_handler.reset()?;
 
+        self.cancellation_info.write().unwrap().reset();
         Ok(())
     }
 
@@ -1577,6 +1578,10 @@ where
                                 ) {
                                     Ok(witness) => Some(witness),
                                     Err(e) => {
+                                        tracing::info!(
+                                            "Error generating recursive2 witness from recursive proofs: {}",
+                                            e
+                                        );
                                         cancellation_info_clone.write().unwrap().cancel(Some(e));
                                         break;
                                     }
@@ -1590,6 +1595,7 @@ where
                         match w {
                             Ok(witness) => Some(witness),
                             Err(e) => {
+                                tracing::info!("Error generating recursive1 witness from compressor proof: {}", e);
                                 cancellation_info_clone.write().unwrap().cancel(Some(e));
                                 break;
                             }
@@ -1600,6 +1606,7 @@ where
                         match w {
                             Ok(witness) => Some(witness),
                             Err(e) => {
+                                tracing::info!("Error generating recursive1 witness from basic proof: {}", e);
                                 cancellation_info_clone.write().unwrap().cancel(Some(e));
                                 break;
                             }
@@ -1702,38 +1709,50 @@ where
             let proofs_finished_clone = proofs_finished.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
             let handle_recursive = std::thread::spawn(move || loop {
-                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
-                    break;
-                }
                 let force_recursive_stream = stream_id >= n_streams_non_recursive;
                 if !force_recursive_stream {
                     if let Ok(instance_id) = proofs_rx.try_recv() {
-                        if let Err(e) = Self::gen_proof(
-                            &proofs_clone,
-                            &pctx_clone,
-                            &sctx_clone,
-                            instance_id,
-                            &output_dir_path_clone,
-                            &aux_trace_clone,
-                            &const_pols_clone,
-                            &const_tree_clone,
-                            &d_buffers_clone,
-                            None,
-                            options.save_proofs,
-                            preallocate,
-                        ) {
-                            cancellation_info_clone.write().unwrap().cancel(Some(e));
-                            break;
-                        }
-                        let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
-                        if is_shared_buffer {
-                            if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
-                                cancellation_info_clone.write().unwrap().cancel(Some(e));
-                                return;
+                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                            let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
+                            if is_shared_buffer {
+                                if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
+                                    cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                    return;
+                                }
                             }
+                            continue;
+                        } else {
+                            if let Err(e) = Self::gen_proof(
+                                &proofs_clone,
+                                &pctx_clone,
+                                &sctx_clone,
+                                instance_id,
+                                &output_dir_path_clone,
+                                &aux_trace_clone,
+                                &const_pols_clone,
+                                &const_tree_clone,
+                                &d_buffers_clone,
+                                None,
+                                options.save_proofs,
+                                preallocate,
+                            ) {
+                                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                break;
+                            }
+                            let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
+                            if is_shared_buffer {
+                                if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
+                                    cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                    return;
+                                }
+                            }
+                            continue;
                         }
-                        continue;
                     }
+                }
+
+                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                    break;
                 }
 
                 // Handle proof witnesses (Proof<F> type)
@@ -2633,9 +2652,6 @@ where
         let n_threads_witness = self.num_threads_per_witness;
         let witness_handler = if !minimal_memory && (cfg!(feature = "gpu") || stats) {
             Some(std::thread::spawn(move || loop {
-                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
-                    break;
-                }
                 let instance_id = match witness_rx_priority.try_recv() {
                     Ok(id) => id,
                     Err(crossbeam_channel::TryRecvError::Empty) => match witness_rx.try_recv() {
@@ -2679,7 +2695,23 @@ where
 
                 let witness_done_clone = witness_done_clone.clone();
                 for _ in 0..n_threads_witness {
-                    rx_threads_clone.recv().unwrap();
+                    loop {
+                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                            break;
+                        }
+
+                        match rx_threads_clone.try_recv() {
+                            Ok(_) => break,
+                            Err(crossbeam_channel::TryRecvError::Empty) => {
+                                std::thread::sleep(std::time::Duration::from_micros(10));
+                            }
+                            Err(crossbeam_channel::TryRecvError::Disconnected) => break,
+                        }
+                    }
+                }
+
+                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                    break;
                 }
 
                 let pctx_clone = pctx_clone.clone();
@@ -2690,10 +2722,21 @@ where
                         wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
                     {
                         cancellation_info_clone.write().unwrap().cancel(Some(e));
-                        return;
                     }
                     for _ in 0..n_threads_witness {
-                        tx_threads_clone.send(()).unwrap();
+                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                            break;
+                        }
+
+                        match tx_threads_clone.try_send(()) {
+                            Ok(_) => (), // successfully sent
+                            Err(crossbeam_channel::TrySendError::Full(_)) => {
+                                std::thread::sleep(std::time::Duration::from_micros(10));
+                            }
+                            Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
+                                break;
+                            }
+                        }
                     }
                     timer_stop_and_log_info!(
                         GENERATING_WC,
@@ -2741,9 +2784,6 @@ where
             timer_stop_and_log_info!(PRE_CALCULATE_WC);
         } else {
             for &instance_id in instances.iter() {
-                if self.cancellation_info.read().unwrap().token.is_cancelled() {
-                    break;
-                }
                 let n_threads_witness = self.num_threads_per_witness;
 
                 let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
@@ -2756,7 +2796,23 @@ where
                 };
 
                 for _ in 0..threads_to_use_collect {
-                    self.rx_threads.recv().unwrap();
+                    loop {
+                        if self.cancellation_info.read().unwrap().token.is_cancelled() {
+                            break;
+                        }
+
+                        match self.rx_threads.try_recv() {
+                            Ok(_) => break,
+                            Err(crossbeam_channel::TryRecvError::Empty) => {
+                                std::thread::sleep(std::time::Duration::from_micros(10));
+                            }
+                            Err(crossbeam_channel::TryRecvError::Disconnected) => break,
+                        }
+                    }
+                }
+
+                if self.cancellation_info.read().unwrap().token.is_cancelled() {
+                    break;
                 }
 
                 let threads_to_use_witness = match cfg!(feature = "gpu") || stats {
@@ -2786,8 +2842,21 @@ where
                     }
                     timer_stop_and_log_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     for _ in 0..threads_to_return {
-                        tx_threads_clone.send(()).unwrap();
+                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                            break;
+                        }
+
+                        match tx_threads_clone.try_send(()) {
+                            Ok(_) => (),
+                            Err(crossbeam_channel::TrySendError::Full(_)) => {
+                                std::thread::sleep(std::time::Duration::from_micros(10));
+                            }
+                            Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
+                                break;
+                            }
+                        }
                     }
+
                     timer_start_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     if let Err(e) = wcm_clone.calculate_witness(
                         1,
@@ -2800,7 +2869,19 @@ where
                     }
                     timer_stop_and_log_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     for _ in 0..threads_to_use_witness {
-                        tx_threads_clone.send(()).unwrap();
+                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                            break;
+                        }
+
+                        match tx_threads_clone.try_send(()) {
+                            Ok(_) => (),
+                            Err(crossbeam_channel::TrySendError::Full(_)) => {
+                                std::thread::sleep(std::time::Duration::from_micros(10));
+                            }
+                            Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
+                                break;
+                            }
+                        }
                     }
                     timer_stop_and_log_info!(
                         GENERATING_WC,
@@ -2836,8 +2917,6 @@ where
         for handle in witness_minimal_memory_handles {
             handle.join().unwrap();
         }
-
-        self.check_cancel()?;
 
         timer_stop_and_log_info!(CALCULATING_WITNESS);
         Ok(())

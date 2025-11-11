@@ -300,6 +300,7 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn dctx_reset(&self) {
         let mut dctx = self.dctx.write().unwrap();
         dctx.reset_instances();
+        self.mpi_ctx.reset();
     }
 
     pub fn set_proof_tx(&self, proof_tx: Option<crossbeam_channel::Sender<usize>>) {
