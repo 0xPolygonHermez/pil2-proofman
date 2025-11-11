@@ -1648,14 +1648,12 @@ where
                 self.gpu_params.preallocate,
             ) {
                 self.cancellation_info.write().unwrap().cancel(Some(e));
-                return;
             }
 
             let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(*instance_id as usize);
             if is_shared_buffer {
                 if let Err(e) = self.memory_handler.release_buffer(witness_buffer) {
                     self.cancellation_info.write().unwrap().cancel(Some(e));
-                    return;
                 }
             }
         });
@@ -2710,7 +2708,6 @@ where
                         if is_shared_buffer {
                             if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
                                 cancellation_info_clone.write().unwrap().cancel(Some(e));
-                                return;
                             }
                         }
                     }
@@ -2818,7 +2815,6 @@ where
                         if is_shared_buffer {
                             if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
                                 cancellation_info_clone.write().unwrap().cancel(Some(e));
-                                return;
                             }
                         }
                     }
@@ -2960,10 +2956,25 @@ where
             );
         }
 
+        let max_prover_buffer_size =
+            sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_recursive_buffer_size) as u64;
+
+        let max_prover_recursive2_buffer_size = setups_vadcop.max_prover_recursive2_buffer_size as u64;
+
+        tracing::info!("Max prover buffer size: {}", format_bytes(sctx.max_prover_buffer_size as f64 * 8.0));
+        tracing::info!(
+            "Max prover recursive buffer size: {}",
+            format_bytes(setups_vadcop.max_prover_recursive_buffer_size as f64 * 8.0)
+        );
+        tracing::info!(
+            "Max prover recursive1/recursive2 buffer size: {}",
+            format_bytes(setups_vadcop.max_prover_recursive2_buffer_size as f64 * 8.0)
+        );
+
         let max_sizes = MaxSizes {
             total_const_area,
-            aux_trace_area: sctx.max_prover_buffer_size as u64,
-            aux_trace_recursive_area: setups_vadcop.max_prover_recursive_buffer_size as u64,
+            aux_trace_area: max_prover_buffer_size,
+            aux_trace_recursive_area: max_prover_recursive2_buffer_size,
             total_const_area_aggregation,
             n_streams: n_streams_per_gpu as u64,
             n_recursive_streams: n_recursive_streams_per_gpu as u64,
@@ -2983,8 +2994,8 @@ where
 
         let n_gpus: u64 = gen_device_streams_c(
             d_buffers.get_ptr(),
-            sctx.max_prover_buffer_size as u64,
-            setups_vadcop.max_prover_recursive_buffer_size as u64,
+            max_prover_buffer_size,
+            max_prover_recursive2_buffer_size,
             max_pinned_proof_size,
             sctx.max_n_bits_ext as u64,
         );
