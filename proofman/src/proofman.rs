@@ -68,7 +68,10 @@ use crate::aggregate_worker_proofs;
 
 use std::ffi::c_void;
 
-use proofman_util::{create_buffer_fast, timer_start_info, timer_stop_and_log_info, DeviceBuffer};
+use proofman_util::{
+    create_buffer_fast, timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug,
+    DeviceBuffer,
+};
 
 use serde::Serialize;
 
@@ -2718,14 +2721,14 @@ where
                 let pctx_clone = pctx_clone.clone();
                 let cancellation_info_clone = cancellation_info_clone.clone();
                 let handle = std::thread::spawn(move || {
-                    timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    timer_start_debug!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     if let Err(e) =
                         wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
                     {
                         cancellation_info_clone.write().unwrap().cancel(Some(e));
                     }
                     Self::try_send_threads(&tx_threads_clone, n_threads_witness, &cancellation_info_clone);
-                    timer_stop_and_log_info!(
+                    timer_stop_and_log_debug!(
                         GENERATING_WC,
                         "GENERATING_WC_{} [{}:{}]",
                         instance_id,
@@ -2816,8 +2819,8 @@ where
                 let witness_done_clone = witness_done.clone();
                 let cancellation_info_clone = self.cancellation_info.clone();
                 let handle = std::thread::spawn(move || {
-                    timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                    timer_start_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    timer_start_debug!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    timer_start_debug!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     if let Err(e) = wcm_clone.pre_calculate_witness(
                         1,
                         &[instance_id],
@@ -2827,10 +2830,16 @@ where
                         cancellation_info_clone.write().unwrap().cancel(Some(e));
                         return;
                     }
-                    timer_stop_and_log_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    timer_stop_and_log_debug!(
+                        PREPARING_WC,
+                        "PREPARING_WC_{} [{}:{}]",
+                        instance_id,
+                        airgroup_id,
+                        air_id
+                    );
                     Self::try_send_threads(&tx_threads_clone, threads_to_return, &cancellation_info_clone);
 
-                    timer_start_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    timer_start_debug!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     if let Err(e) = wcm_clone.calculate_witness(
                         1,
                         &[instance_id],
@@ -2840,9 +2849,15 @@ where
                         cancellation_info_clone.write().unwrap().cancel(Some(e));
                         return;
                     }
-                    timer_stop_and_log_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    timer_stop_and_log_debug!(
+                        COMPUTING_WC,
+                        "COMPUTING_WC_{} [{}:{}]",
+                        instance_id,
+                        airgroup_id,
+                        air_id
+                    );
                     Self::try_send_threads(&tx_threads_clone, threads_to_use_witness, &cancellation_info_clone);
-                    timer_stop_and_log_info!(
+                    timer_stop_and_log_debug!(
                         GENERATING_WC,
                         "GENERATING_WC_{} [{}:{}]",
                         instance_id,
@@ -3077,7 +3092,7 @@ where
         gpu_preallocate: bool,
     ) -> ProofmanResult<()> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
-        timer_start_info!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
+        timer_start_debug!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
         Self::initialize_air_instance(pctx, sctx, instance_id, false, false)?;
 
         let setup = sctx.get_setup(airgroup_id, air_id)?;
@@ -3136,7 +3151,7 @@ where
             launch_callback_c(instance_id as u64, "basic");
         }
 
-        timer_stop_and_log_info!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
+        timer_stop_and_log_debug!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
         Ok(())
     }
 
@@ -3365,7 +3380,7 @@ where
         let n_field_elements = 4;
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
 
-        timer_start_info!(GET_CONTRIBUTION_AIR, "GET_CONTRIBUTION_AIR_{} [{}:{}]", instance_id, airgroup_id, air_id);
+        timer_start_debug!(GET_CONTRIBUTION_AIR, "GET_CONTRIBUTION_AIR_{} [{}:{}]", instance_id, airgroup_id, air_id);
 
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
         let setup = sctx.get_setup(airgroup_id, air_id)?;
@@ -3413,7 +3428,7 @@ where
 
         *values_contributions[instance_id].lock().unwrap() = values_hash;
 
-        timer_stop_and_log_info!(
+        timer_stop_and_log_debug!(
             GET_CONTRIBUTION_AIR,
             "GET_CONTRIBUTION_AIR_{} [{}:{}]",
             instance_id,

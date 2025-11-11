@@ -17,7 +17,8 @@ use proofman_common::{
 use std::os::raw::{c_void, c_char};
 
 use proofman_util::{
-    timer_start_info, timer_stop_and_log_info, timer_stop_and_log_trace, timer_start_trace, create_buffer_fast,
+    timer_start_info, timer_stop_and_log_info, timer_stop_and_log_trace, timer_start_trace, timer_start_debug,
+    timer_stop_and_log_debug, create_buffer_fast,
 };
 
 use crate::{add_publics_circom, add_publics_aggregation};
@@ -72,7 +73,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
 
     let has_compressor = pctx.global_info.get_air_has_compressor(airgroup_id, air_id);
     if proof.proof_type == ProofType::Basic && has_compressor {
-        timer_start_info!(
+        timer_start_debug!(
             GENERATE_COMPRESSOR_WITNESS,
             "GENERATING_COMPRESSOR_WITNESS_{} [{}:{}]",
             proof.global_idx.unwrap(),
@@ -88,7 +89,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
         updated_proof[publics_circom_size..].copy_from_slice(&proof.proof);
         add_publics_circom(&mut updated_proof, 0, pctx, "", false);
         let circom_witness = generate_witness::<F>(setup, proof.global_idx.unwrap(), &updated_proof, output_dir_path)?;
-        timer_stop_and_log_info!(
+        timer_stop_and_log_debug!(
             GENERATE_COMPRESSOR_WITNESS,
             "GENERATING_COMPRESSOR_WITNESS_{} [{}:{}]",
             proof.global_idx.unwrap(),
@@ -104,7 +105,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
             setup.n_cols as usize,
         ))
     } else {
-        timer_start_info!(
+        timer_start_debug!(
             GENERATE_RECURSIVE1_WITNESS,
             "GENERATING_RECURSIVE1_WITNESS_{} [{}:{}]",
             proof.global_idx.unwrap(),
@@ -136,7 +137,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
         }
 
         let circom_witness = generate_witness::<F>(setup, proof.global_idx.unwrap(), &updated_proof, output_dir_path)?;
-        timer_stop_and_log_info!(
+        timer_stop_and_log_debug!(
             GENERATE_RECURSIVE1_WITNESS,
             "GENERATING_RECURSIVE1_WITNESS_{} [{}:{}]",
             proof.global_idx.unwrap(),
@@ -162,7 +163,7 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
     proof3: &Proof<F>,
     output_dir_path: &Path,
 ) -> ProofmanResult<Proof<F>> {
-    timer_start_info!(GENERATE_WITNESS_AGGREGATION);
+    timer_start_debug!(GENERATE_WITNESS_AGGREGATION);
     let proof_len = proof1.proof.len();
     if proof_len != proof2.proof.len() || proof_len != proof3.proof.len() {
         return Err(ProofmanError::ProofmanError(format!(
@@ -202,7 +203,7 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
     add_publics_circom(&mut updated_proof_recursive2, 0, pctx, &recursive2_verkey, true);
     let circom_witness = generate_witness::<F>(setup_recursive2, 0, &updated_proof_recursive2, output_dir_path)?;
 
-    timer_stop_and_log_info!(GENERATE_WITNESS_AGGREGATION);
+    timer_stop_and_log_debug!(GENERATE_WITNESS_AGGREGATION);
     Ok(Proof::new_witness(
         ProofType::Recursive2,
         airgroup_id,
@@ -271,7 +272,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     save_proofs: bool,
     force_recursive_stream: bool,
 ) -> ProofmanResult<u64> {
-    timer_start_info!(
+    timer_start_debug!(
         GEN_RECURSIVE_PROOF,
         "GEN_RECURSIVE_PROOF_{:?} [{}:{}]",
         witness.proof_type,
@@ -373,7 +374,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         force_recursive_stream,
     );
 
-    timer_stop_and_log_info!(
+    timer_stop_and_log_debug!(
         GEN_RECURSIVE_PROOF,
         "GEN_RECURSIVE_PROOF_{:?} [{}:{}]",
         witness.proof_type,
@@ -508,7 +509,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
 
                         airgroup_proofs[airgroup][j] = Some(recursive2_proof.proof);
 
-                        tracing::info!("··· Recursive 2 Proof generated.");
+                        tracing::debug!("··· Recursive 2 Proof generated.");
                     }
                 }
                 if n_agg_proofs > 0 {

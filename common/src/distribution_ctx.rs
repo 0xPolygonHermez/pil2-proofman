@@ -741,7 +741,6 @@ impl DistributionCtx {
         self.aux_tables.clear();
         self.assignation_done = true;
 
-        tracing::info!("DistributionCtx assignment done. My instances are: {:?}", self.process_instances);
         Ok(())
     }
 
