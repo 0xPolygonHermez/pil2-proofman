@@ -394,11 +394,6 @@ pub fn initialize_setup_info<F: PrimeField64>(
             if cfg!(feature = "gpu") {
                 tracing::info!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
             }
-            let mut n_streams = 1;
-            if setup.single_instance {
-                let max_prover_buffer_size = sctx.max_prover_buffer_size;
-                n_streams = setup.prover_buffer_size.div_ceil(max_prover_buffer_size as u64);
-            }
             let packed_info_air =
                 packed_info.get(&(airgroup_id, air_id)).cloned().unwrap_or_else(|| PackedInfo::new(false, 0, vec![]));
             load_device_setup_c(
@@ -409,7 +404,6 @@ pub fn initialize_setup_info<F: PrimeField64>(
                 d_buffers.get_ptr(),
                 setup.verkey.as_ptr() as *mut u8,
                 packed_info_air.as_ffi().get_ptr(),
-                n_streams,
             );
             if cfg!(feature = "gpu") {
                 let const_pols_path = &setup.const_pols_path;
@@ -457,7 +451,6 @@ pub fn initialize_setup_info<F: PrimeField64>(
                         d_buffers.get_ptr(),
                         setup.verkey.as_ptr() as *mut u8,
                         std::ptr::null_mut(),
-                        1,
                     );
                     if cfg!(feature = "gpu") {
                         let const_pols_path = &setup.const_pols_path;
@@ -503,7 +496,6 @@ pub fn initialize_setup_info<F: PrimeField64>(
                     d_buffers.get_ptr(),
                     setup.verkey.as_ptr() as *mut u8,
                     std::ptr::null_mut(),
-                    1,
                 );
                 if cfg!(feature = "gpu") {
                     let const_pols_path = &setup.const_pols_path;
@@ -548,7 +540,6 @@ pub fn initialize_setup_info<F: PrimeField64>(
                 d_buffers.get_ptr(),
                 setup.verkey.as_ptr() as *mut u8,
                 std::ptr::null_mut(),
-                1,
             );
             if cfg!(feature = "gpu") {
                 let const_pols_path = &setup.const_pols_path;
@@ -590,7 +581,6 @@ pub fn initialize_setup_info<F: PrimeField64>(
             d_buffers.get_ptr(),
             setup_vadcop_final.verkey.as_ptr() as *mut u8,
             std::ptr::null_mut(),
-            1,
         );
         if cfg!(feature = "gpu") {
             let const_pols_path = &setup_vadcop_final.const_pols_path;

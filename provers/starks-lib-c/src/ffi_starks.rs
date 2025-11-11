@@ -1280,7 +1280,6 @@ pub fn load_device_setup_c(
     d_buffers: *mut ::std::os::raw::c_void,
     verkey_root: *mut u8,
     packed_info: *mut ::std::os::raw::c_void,
-    n_streams: u64,
 ) {
     let proof_type_name = CString::new(proof_type).unwrap();
     let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1294,7 +1293,6 @@ pub fn load_device_setup_c(
             d_buffers,
             verkey_root as *mut std::os::raw::c_void,
             packed_info,
-            n_streams,
         );
     }
 }
@@ -2144,7 +2142,6 @@ pub fn load_device_setup_c(
     _d_buffers: *mut ::std::os::raw::c_void,
     _verkey_root: *mut u8,
     _packed_info: *mut ::std::os::raw::c_void,
-    _n_streams: u64,
 ) {
     trace!("{}: ··· {}", "ffi     ", "load_device_setup: This is a mock call because there is no linked library");
 }

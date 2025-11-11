@@ -1059,15 +1059,18 @@ where
                 let total_cores_4 = 4 * num_threads_4;
                 let total_cores_2 = 2 * num_threads_2;
 
-                if total_cores_8 >= total_cores_4 && total_cores_8 >= total_cores_2 && num_threads_8 > 0 {
-                    num_threads_8
-                } else if total_cores_4 >= total_cores_2 && num_threads_4 > 0 {
-                    num_threads_4
-                } else if num_threads_2 > 0 {
-                    num_threads_2
-                } else {
-                    1
-                }
+                let num_threads =
+                    if total_cores_8 >= total_cores_4 && total_cores_8 >= total_cores_2 && num_threads_8 > 0 {
+                        num_threads_8
+                    } else if total_cores_4 >= total_cores_2 && num_threads_4 > 0 {
+                        num_threads_4
+                    } else if num_threads_2 > 0 {
+                        num_threads_2
+                    } else {
+                        1
+                    };
+
+                num_threads.min(8)
             }
         };
         tracing::info!("Using {num_threads_per_witness} threads per witness computation");
@@ -1672,9 +1675,7 @@ where
         }
 
         my_instances_sorted.sort_by_key(|&id| {
-            let setup = self.sctx.get_setup(instances[id].airgroup_id, instances[id].air_id).unwrap();
             (
-                if setup.single_instance { 1 } else { 0 },
                 if self.pctx.is_air_instance_stored(id) { 0 } else { 1 },
                 if self.pctx.global_info.get_air_has_compressor(instances[id].airgroup_id, instances[id].air_id) {
                     0
@@ -2147,11 +2148,13 @@ where
         for proof in agg_proofs {
             let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
             let mut stored_contributions = Vec::new();
+            let mut worker_ids = Vec::new();
             for w in &proof.worker_indexes {
                 if let Some(contrib) = self.worker_contributions.read().unwrap().iter().find(|contrib| {
                     contrib.worker_index == *w as u32 && contrib.airgroup_id == proof.airgroup_id as usize
                 }) {
                     stored_contributions.push(contrib.challenge.iter().map(|&x| F::from_u64(x)).collect());
+                    worker_ids.push(contrib.worker_index);
                 } else {
                     return Err(ProofmanError::ProofmanError(format!(
                         "Missing contribution from worker {} and airgroup id {}",
@@ -2164,10 +2167,23 @@ where
 
             let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
             for (c, value) in workers_acc_challenge.iter().enumerate() {
-                if value.as_canonical_u64() != proof_acc_challenge[c] {
-                    return Err(ProofmanError::InvalidProof(
-                        "Aggregated proof challenge does not match the expected challenge".into(),
-                    ));
+                let expected = proof_acc_challenge[c];
+                if value.as_canonical_u64() != expected {
+                    return Err(ProofmanError::InvalidProof(format!(
+                        "Aggregated proof challenge mismatch!\n\
+                        Position: {}\n\
+                        Worker IDs: {:?}\n\
+                        Computed value: {}\n\
+                        Expected value: {}\n\
+                        Full computed challenge: {:?}\n\
+                        Full expected challenge: {:?}",
+                        c,
+                        worker_ids,
+                        value.as_canonical_u64(),
+                        expected,
+                        workers_acc_challenge.iter().map(|v| v.as_canonical_u64()).collect::<Vec<_>>(),
+                        proof_acc_challenge
+                    )));
                 }
             }
             self.received_agg_proofs.write().unwrap()[proof.airgroup_id as usize].extend(proof.worker_indexes);
@@ -2910,9 +2926,7 @@ where
         packed_info: &HashMap<(usize, usize), PackedInfo>,
     ) -> ProofmanResult<(Arc<DeviceBuffer>, u64, u64, u64)> {
         let mut free_memory_gpu = match cfg!(feature = "gpu") {
-            true => {
-                check_device_memory_c(mpi_ctx.node_rank as u32, mpi_ctx.node_n_processes as usize as u32) as f64 * 0.99
-            }
+            true => check_device_memory_c(mpi_ctx.node_rank as u32, mpi_ctx.node_n_processes as usize as u32) as f64,
             false => 0.0,
         };
 
@@ -2980,13 +2994,21 @@ where
             false => 1,
         };
 
-        if sctx.max_single_buffer_size > n_streams_per_gpu * sctx.max_prover_buffer_size {
-            return Err(ProofmanError::InvalidConfiguration(format!(
-                "Not enough GPU memory to run the proof. At least: {} are required but only {} is available.",
-                sctx.max_single_buffer_size / sctx.max_prover_buffer_size,
-                n_streams_per_gpu
-            )));
-        }
+        let max_prover_buffer_size =
+            sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_recursive_buffer_size) as u64;
+
+        let max_prover_recursive2_buffer_size = setups_vadcop.max_prover_recursive2_buffer_size as u64;
+
+        tracing::info!("Max prover buffer size: {}", format_bytes(sctx.max_prover_buffer_size as f64 * 8.0));
+        tracing::info!(
+            "Max prover recursive buffer size: {}",
+            format_bytes(setups_vadcop.max_prover_recursive_buffer_size as f64 * 8.0)
+        );
+        tracing::info!(
+            "Max prover recursive1/recursive2 buffer size: {}",
+            format_bytes(setups_vadcop.max_prover_recursive2_buffer_size as f64 * 8.0)
+        );
+
 
         let max_prover_buffer_size =
             sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_recursive_buffer_size) as u64;
@@ -3009,7 +3031,7 @@ where
         };
         let mut n_recursive_streams_per_gpu = 0;
         if aggregation {
-            while gpu_available_memory > 0 && n_recursive_streams_per_gpu < gpu_params.max_number_streams {
+            while gpu_available_memory > 0 && n_streams_per_gpu + n_recursive_streams_per_gpu < 20 {
                 gpu_available_memory -= max_prover_recursive2_buffer_size as i64;
                 if gpu_available_memory < 0 {
                     break;

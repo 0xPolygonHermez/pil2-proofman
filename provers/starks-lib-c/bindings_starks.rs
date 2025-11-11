@@ -529,7 +529,6 @@ extern "C" {
         d_buffers_: *mut ::std::os::raw::c_void,
         verkeyRoot_: *mut ::std::os::raw::c_void,
         packedInfo_: *mut ::std::os::raw::c_void,
-        n_streams: u64,
     );
     
     pub fn gen_device_streams(

@@ -406,8 +406,8 @@ void StarkInfo::setMapOffsets() {
     mapTotalN = 0;
 
     uint64_t numNodes = getNumNodesMT(NExtended);
-
-    if(!preallocate && gpu && !recursive_final) {    
+    
+    if(!preallocate && gpu && !recursive_final) {
         mapOffsets[std::make_pair("const", true)] = mapTotalN;
         MerkleTreeGL mt(starkStruct.merkleTreeArity, true, NExtended, nConstants);
         uint64_t constTreeSize = (NExtended * nConstants) + numNodes;
@@ -416,12 +416,10 @@ void StarkInfo::setMapOffsets() {
         if (!recursive &&  (N * nConstants * 8.0 / (1024 * 1024)) >= 256) {
             calculateFixedExtended = true;
         }
-        
-        // NOTE: We could overwrite fixed but we would need to remove height and width from fixed file
-        mapOffsets[std::make_pair("const", false)] = mapTotalN;
-        mapTotalN += N * nConstants;
-        
     }
+
+    mapOffsets[std::make_pair("const", false)] = mapTotalN;
+    mapTotalN += N * nConstants;
 
     if(gpu && !recursive_final) {
         mapOffsets[std::make_pair("custom_fixed", false)] = mapTotalN;
