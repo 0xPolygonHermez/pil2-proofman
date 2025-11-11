@@ -274,6 +274,10 @@ impl MpiCtx {
             if self.n_processes > 1 {
                 let root = self.world.process_at_rank(0);
 
+                // 0) Initiate broadcast
+                tracing::info!("MPI broadcast initiated by rank {}", self.rank);
+                self.world.barrier();
+
                 // 1) Broadcast the length as u64
                 let mut len: u64 = if self.rank == 0 { _buf.len() as u64 } else { 0 };
                 root.broadcast_into(&mut len);
@@ -285,6 +289,10 @@ impl MpiCtx {
 
                 // 3) Broadcast bytes into place
                 root.broadcast_into(&mut _buf[..]);
+
+                // 4) Final barrier to ensure all processes have received the data
+                self.world.barrier();
+                tracing::info!("MPI broadcast completed by rank {}", self.rank);
             }
         }
     }
