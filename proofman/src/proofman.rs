@@ -334,6 +334,7 @@ where
             Err(ProofmanError::Cancelled)
         };
         self.reset()?;
+        self.set_barrier();
         error
     }
 
