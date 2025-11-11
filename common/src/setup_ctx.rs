@@ -23,6 +23,7 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub max_prover_trace_size: usize,
     pub max_prover_buffer_size: usize,
     pub max_prover_recursive_buffer_size: usize,
+    pub max_prover_recursive2_buffer_size: usize,
     pub max_pinned_proof_size: usize,
     pub max_n_bits_ext: usize,
     pub total_const_pols_size: usize,
@@ -91,9 +92,14 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive2.max_prover_buffer_size)
                 .max(setup_vadcop_final.prover_buffer_size as usize);
 
-            let max_prover_recursive_buffer_size = (sctx_recursive1.max_prover_buffer_size
-                + sctx_recursive1.max_prover_trace_size)
-                .max(sctx_recursive2.max_prover_buffer_size + sctx_recursive2.max_prover_trace_size);
+            let max_prover_recursive2_buffer_size =
+                sctx_recursive2.max_prover_buffer_size + sctx_recursive2.max_prover_trace_size;
+
+            let max_prover_recursive_buffer_size = (sctx_recursive2.max_prover_buffer_size
+                + sctx_recursive2.max_prover_trace_size)
+                .max(sctx_recursive1.max_prover_buffer_size + sctx_recursive1.max_prover_trace_size)
+                .max(sctx_compressor.max_prover_buffer_size + sctx_compressor.max_prover_trace_size)
+                .max(setup_vadcop_final.prover_buffer_size as usize + vadcop_final_trace_size as usize);
 
             let max_pinned_proof_size = sctx_compressor
                 .max_pinned_proof_size
@@ -128,6 +134,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_prover_trace_size,
                 max_prover_buffer_size,
                 max_prover_recursive_buffer_size,
+                max_prover_recursive2_buffer_size,
                 max_pinned_proof_size,
                 max_n_bits_ext,
                 total_const_pols_size,
@@ -147,6 +154,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_prover_trace_size: 0,
                 max_prover_buffer_size: 0,
                 max_prover_recursive_buffer_size: 0,
+                max_prover_recursive2_buffer_size: 0,
                 max_pinned_proof_size: 0,
                 max_n_bits_ext: 0,
             }

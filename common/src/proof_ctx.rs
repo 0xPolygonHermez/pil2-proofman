@@ -300,6 +300,7 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn dctx_reset(&self) {
         let mut dctx = self.dctx.write().unwrap();
         dctx.reset_instances();
+        self.mpi_ctx.reset();
     }
 
     pub fn set_proof_tx(&self, proof_tx: Option<crossbeam_channel::Sender<usize>>) {
@@ -457,6 +458,10 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn dctx_is_table(&self, global_idx: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
         dctx.instances[global_idx].table
+    }
+
+    pub fn is_shared_buffer(&self, global_idx: usize) -> bool {
+        self.air_instances[global_idx].read().unwrap().is_shared_buffer()
     }
 
     pub fn dctx_find_air_instance_id(&self, global_idx: usize) -> ProofmanResult<usize> {

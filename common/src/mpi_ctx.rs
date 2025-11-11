@@ -9,7 +9,7 @@ use mpi::environment::Universe;
 #[cfg(distributed)]
 use mpi::topology::Communicator;
 
-use std::sync::atomic::{Ordering, AtomicU64, AtomicI32};
+use std::sync::atomic::{Ordering, AtomicU64, AtomicI32, AtomicU32};
 use fields::PrimeField64;
 #[cfg(distributed)]
 use fields::CubicExtensionField;
@@ -33,6 +33,7 @@ pub struct MpiCtx {
     pub node_rank: i32,
     pub node_n_processes: i32,
     pub outer_agg_rank: AtomicI32,
+    pub cancelled: AtomicU32,
 }
 
 const MPI_TAG_CANCEL_JOB: i32 = 999999;
@@ -67,6 +68,7 @@ impl MpiCtx {
                 node_rank,
                 node_n_processes,
                 outer_agg_rank: AtomicI32::new(-1),
+                cancelled: AtomicU32::new(0),
             }
         }
         #[cfg(not(distributed))]
@@ -102,9 +104,9 @@ impl MpiCtx {
         }
     }
 
-    pub fn reset_outer_agg_rank(&self) {
+    pub fn reset(&self) {
         self.reset_outer_agg_tracker();
-        self.outer_agg_rank.store(-1, Ordering::SeqCst);
+        self.cancelled.store(0, Ordering::SeqCst);
     }
 
     #[cfg(distributed)]
@@ -116,7 +118,16 @@ impl MpiCtx {
         let node_rank = local_comm.rank();
         let node_n_processes = local_comm.size();
 
-        MpiCtx { rank, n_processes, universe, world, node_rank, node_n_processes, outer_agg_rank: AtomicI32::new(-1) }
+        MpiCtx {
+            rank,
+            n_processes,
+            universe,
+            world,
+            node_rank,
+            node_n_processes,
+            outer_agg_rank: AtomicI32::new(-1),
+            cancelled: AtomicU32::new(0),
+        }
     }
 
     #[inline]
@@ -487,6 +498,11 @@ impl MpiCtx {
     pub fn notify_cancellation(&self) {
         #[cfg(distributed)]
         {
+            if self.cancelled.load(Ordering::SeqCst) == 1 {
+                // Already cancelled, no need to send again
+                return;
+            }
+            self.cancelled.store(1, Ordering::SeqCst);
             if self.n_processes > 1 {
                 // Include the sender’s rank in the cancel message
                 let cancel_msg: [i32; 1] = [self.rank];
@@ -503,14 +519,16 @@ impl MpiCtx {
     pub fn check_cancellation(&self) -> Option<ProofmanError> {
         #[cfg(distributed)]
         {
-            if let Some(_status) = self.world.any_process().immediate_probe_with_tag(MPI_TAG_CANCEL_JOB) {
-                let (msg, _) = self.world.any_process().receive_vec_with_tag::<i32>(MPI_TAG_CANCEL_JOB);
+            if self.cancelled.load(Ordering::SeqCst) == 0 {
+                if let Some(_status) = self.world.any_process().immediate_probe_with_tag(MPI_TAG_CANCEL_JOB) {
+                    let (msg, _) = self.world.any_process().receive_vec_with_tag::<i32>(MPI_TAG_CANCEL_JOB);
 
-                if let Some(&failed_rank) = msg.first() {
-                    return Some(ProofmanError::InvalidProof(format!(
-                        "Process {} received cancellation message from failed rank {}.",
-                        self.rank, failed_rank
-                    )));
+                    if let Some(&failed_rank) = msg.first() {
+                        return Some(ProofmanError::MpiCancellation(format!(
+                            "Process {} received cancellation message from failed rank {}.",
+                            self.rank, failed_rank
+                        )));
+                    }
                 }
             }
         }

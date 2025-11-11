@@ -84,6 +84,44 @@ struct CsvInfo {
     percentage_area: f64,
 }
 
+struct CancellationThread {
+    stop_flag: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl CancellationThread {
+    fn new(cancellation_info: Arc<RwLock<CancellationInfo>>, mpi_ctx: Arc<MpiCtx>) -> Self {
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let stop_flag_clone = stop_flag.clone();
+
+        let handle = std::thread::spawn(move || loop {
+            if stop_flag_clone.load(Ordering::Relaxed) {
+                break;
+            }
+
+            if cancellation_info.read().unwrap().token.is_cancelled() {
+                break;
+            }
+            if let Some(error) = mpi_ctx.check_cancellation() {
+                cancellation_info.write().unwrap().cancel(Some(error));
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        });
+
+        Self { stop_flag, handle: Some(handle) }
+    }
+}
+
+impl Drop for CancellationThread {
+    fn drop(&mut self) {
+        self.stop_flag.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct CancellationInfo {
     pub token: CancellationToken,
@@ -285,13 +323,19 @@ where
             }
             cancellation_info.error.take()
         };
-        self.mpi_ctx.notify_cancellation();
-        self.reset()?;
-        if let Some(e) = error {
+
+        let error = if let Some(e) = error {
+            if !matches!(e, ProofmanError::MpiCancellation(_)) {
+                tracing::info!("Notifying error to other MPI processes: {:?}", e);
+                self.mpi_ctx.notify_cancellation();
+            }
             Err(e)
         } else {
             Err(ProofmanError::Cancelled)
-        }
+        };
+        self.reset()?;
+        self.set_barrier();
+        error
     }
 
     pub fn cancel(&self) {
@@ -808,7 +852,7 @@ where
             airgroup_values;
         let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(instance_id);
         if is_shared_buffer {
-            self.memory_handler.release_buffer(witness_buffer);
+            self.memory_handler.release_buffer(witness_buffer)?;
         }
         Ok(())
     }
@@ -1118,8 +1162,6 @@ where
     }
 
     pub fn reset(&self) -> ProofmanResult<()> {
-        self.cancellation_info.write().unwrap().reset();
-
         self.wcm.reset();
 
         for proof_lock in self.proofs.iter() {
@@ -1157,7 +1199,6 @@ where
         while self.rec2_witness_rx.try_recv().is_ok() {}
 
         self.worker_contributions.write().unwrap().clear();
-        get_stream_proofs_c(self.d_buffers.get_ptr());
         reset_device_streams_c(self.d_buffers.get_ptr());
 
         for inner_vec in self.received_agg_proofs.write().unwrap().iter_mut() {
@@ -1169,7 +1210,9 @@ where
         }
 
         self.total_outer_agg_proofs.reset();
-        self.pctx.dctx_reset();
+        self.memory_handler.reset()?;
+
+        self.cancellation_info.write().unwrap().reset();
         Ok(())
     }
 
@@ -1192,16 +1235,7 @@ where
         timer_start_info!(GENERATING_VADCOP_PROOF);
         timer_start_info!(GENERATING_PROOFS);
 
-        // let _ = std::thread::spawn({
-        //     let cancellation_info = self.cancellation_info.clone();
-        //     let mpi_ctx = self.mpi_ctx.clone();
-        //     move || loop {
-        //         if let Some(error) = mpi_ctx.check_cancellation() {
-        //             cancellation_info.write().unwrap().cancel(Some(error));
-        //         }
-        //         std::thread::sleep(std::time::Duration::from_millis(100));
-        //     }
-        // });
+        let _cancellation_thread = CancellationThread::new(self.cancellation_info.clone(), self.mpi_ctx.clone());
 
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
             let proof_info = match phase_inputs {
@@ -1261,7 +1295,8 @@ where
                                 break;
                             }
 
-                            if !pctx_clone.dctx_is_table(instance_id) {
+                            let is_shared_buffer = pctx_clone.is_shared_buffer(instance_id);
+                            if is_shared_buffer {
                                 memory_handler_clone.to_be_released_buffer(instance_id);
                             }
                         }
@@ -1544,6 +1579,10 @@ where
                                 ) {
                                     Ok(witness) => Some(witness),
                                     Err(e) => {
+                                        tracing::info!(
+                                            "Error generating recursive2 witness from recursive proofs: {}",
+                                            e
+                                        );
                                         cancellation_info_clone.write().unwrap().cancel(Some(e));
                                         break;
                                     }
@@ -1557,6 +1596,7 @@ where
                         match w {
                             Ok(witness) => Some(witness),
                             Err(e) => {
+                                tracing::info!("Error generating recursive1 witness from compressor proof: {}", e);
                                 cancellation_info_clone.write().unwrap().cancel(Some(e));
                                 break;
                             }
@@ -1567,6 +1607,7 @@ where
                         match w {
                             Ok(witness) => Some(witness),
                             Err(e) => {
+                                tracing::info!("Error generating recursive1 witness from basic proof: {}", e);
                                 cancellation_info_clone.write().unwrap().cancel(Some(e));
                                 break;
                             }
@@ -1615,12 +1656,13 @@ where
                 self.gpu_params.preallocate,
             ) {
                 self.cancellation_info.write().unwrap().cancel(Some(e));
-                return;
             }
 
             let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(*instance_id as usize);
             if is_shared_buffer {
-                self.memory_handler.release_buffer(witness_buffer);
+                if let Err(e) = self.memory_handler.release_buffer(witness_buffer) {
+                    self.cancellation_info.write().unwrap().cancel(Some(e));
+                }
             }
         });
 
@@ -1668,35 +1710,50 @@ where
             let proofs_finished_clone = proofs_finished.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
             let handle_recursive = std::thread::spawn(move || loop {
-                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
-                    break;
-                }
                 let force_recursive_stream = stream_id >= n_streams_non_recursive;
                 if !force_recursive_stream {
                     if let Ok(instance_id) = proofs_rx.try_recv() {
-                        if let Err(e) = Self::gen_proof(
-                            &proofs_clone,
-                            &pctx_clone,
-                            &sctx_clone,
-                            instance_id,
-                            &output_dir_path_clone,
-                            &aux_trace_clone,
-                            &const_pols_clone,
-                            &const_tree_clone,
-                            &d_buffers_clone,
-                            None,
-                            options.save_proofs,
-                            preallocate,
-                        ) {
-                            cancellation_info_clone.write().unwrap().cancel(Some(e));
-                            break;
+                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                            let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
+                            if is_shared_buffer {
+                                if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
+                                    cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                    return;
+                                }
+                            }
+                            continue;
+                        } else {
+                            if let Err(e) = Self::gen_proof(
+                                &proofs_clone,
+                                &pctx_clone,
+                                &sctx_clone,
+                                instance_id,
+                                &output_dir_path_clone,
+                                &aux_trace_clone,
+                                &const_pols_clone,
+                                &const_tree_clone,
+                                &d_buffers_clone,
+                                None,
+                                options.save_proofs,
+                                preallocate,
+                            ) {
+                                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                break;
+                            }
+                            let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
+                            if is_shared_buffer {
+                                if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
+                                    cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                    return;
+                                }
+                            }
+                            continue;
                         }
-                        let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
-                        if is_shared_buffer {
-                            memory_handler_clone.release_buffer(witness_buffer);
-                        }
-                        continue;
                     }
+                }
+
+                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                    break;
                 }
 
                 // Handle proof witnesses (Proof<F> type)
@@ -2596,9 +2653,6 @@ where
         let n_threads_witness = self.num_threads_per_witness;
         let witness_handler = if !minimal_memory && (cfg!(feature = "gpu") || stats) {
             Some(std::thread::spawn(move || loop {
-                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
-                    break;
-                }
                 let instance_id = match witness_rx_priority.try_recv() {
                     Ok(id) => id,
                     Err(crossbeam_channel::TryRecvError::Empty) => match witness_rx.try_recv() {
@@ -2642,7 +2696,23 @@ where
 
                 let witness_done_clone = witness_done_clone.clone();
                 for _ in 0..n_threads_witness {
-                    rx_threads_clone.recv().unwrap();
+                    loop {
+                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                            break;
+                        }
+
+                        match rx_threads_clone.try_recv() {
+                            Ok(_) => break,
+                            Err(crossbeam_channel::TryRecvError::Empty) => {
+                                std::thread::sleep(std::time::Duration::from_micros(10));
+                            }
+                            Err(crossbeam_channel::TryRecvError::Disconnected) => break,
+                        }
+                    }
+                }
+
+                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                    break;
                 }
 
                 let pctx_clone = pctx_clone.clone();
@@ -2653,11 +2723,8 @@ where
                         wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
                     {
                         cancellation_info_clone.write().unwrap().cancel(Some(e));
-                        return;
                     }
-                    for _ in 0..n_threads_witness {
-                        tx_threads_clone.send(()).unwrap();
-                    }
+                    Self::try_send_threads(&tx_threads_clone, n_threads_witness, &cancellation_info_clone);
                     timer_stop_and_log_info!(
                         GENERATING_WC,
                         "GENERATING_WC_{} [{}:{}]",
@@ -2669,7 +2736,9 @@ where
                     if stats {
                         let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
                         if is_shared_buffer {
-                            memory_handler_clone.release_buffer(witness_buffer);
+                            if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
+                                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                            }
                         }
                     }
                 });
@@ -2702,9 +2771,6 @@ where
             timer_stop_and_log_info!(PRE_CALCULATE_WC);
         } else {
             for &instance_id in instances.iter() {
-                if self.cancellation_info.read().unwrap().token.is_cancelled() {
-                    break;
-                }
                 let n_threads_witness = self.num_threads_per_witness;
 
                 let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
@@ -2717,7 +2783,23 @@ where
                 };
 
                 for _ in 0..threads_to_use_collect {
-                    self.rx_threads.recv().unwrap();
+                    loop {
+                        if self.cancellation_info.read().unwrap().token.is_cancelled() {
+                            break;
+                        }
+
+                        match self.rx_threads.try_recv() {
+                            Ok(_) => break,
+                            Err(crossbeam_channel::TryRecvError::Empty) => {
+                                std::thread::sleep(std::time::Duration::from_micros(10));
+                            }
+                            Err(crossbeam_channel::TryRecvError::Disconnected) => break,
+                        }
+                    }
+                }
+
+                if self.cancellation_info.read().unwrap().token.is_cancelled() {
+                    break;
                 }
 
                 let threads_to_use_witness = match cfg!(feature = "gpu") || stats {
@@ -2746,9 +2828,8 @@ where
                         return;
                     }
                     timer_stop_and_log_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                    for _ in 0..threads_to_return {
-                        tx_threads_clone.send(()).unwrap();
-                    }
+                    Self::try_send_threads(&tx_threads_clone, threads_to_return, &cancellation_info_clone);
+
                     timer_start_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     if let Err(e) = wcm_clone.calculate_witness(
                         1,
@@ -2760,9 +2841,7 @@ where
                         return;
                     }
                     timer_stop_and_log_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                    for _ in 0..threads_to_use_witness {
-                        tx_threads_clone.send(()).unwrap();
-                    }
+                    Self::try_send_threads(&tx_threads_clone, threads_to_use_witness, &cancellation_info_clone);
                     timer_stop_and_log_info!(
                         GENERATING_WC,
                         "GENERATING_WC_{} [{}:{}]",
@@ -2774,7 +2853,9 @@ where
                     if stats {
                         let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
                         if is_shared_buffer {
-                            memory_handler_clone.release_buffer(witness_buffer);
+                            if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
+                                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                            }
                         }
                     }
                 });
@@ -2796,10 +2877,26 @@ where
             handle.join().unwrap();
         }
 
-        self.check_cancel()?;
-
         timer_stop_and_log_info!(CALCULATING_WITNESS);
         Ok(())
+    }
+
+    fn try_send_threads(tx: &Sender<()>, n_threads: usize, cancellation_info: &RwLock<CancellationInfo>) {
+        for _ in 0..n_threads {
+            if cancellation_info.read().unwrap().token.is_cancelled() {
+                break;
+            }
+
+            match tx.try_send(()) {
+                Ok(_) => (),
+                Err(crossbeam_channel::TrySendError::Full(_)) => {
+                    std::thread::sleep(std::time::Duration::from_micros(10));
+                }
+                Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
+                    break;
+                }
+            }
+        }
     }
 
     #[allow(clippy::type_complexity)]
@@ -2915,10 +3012,25 @@ where
             );
         }
 
+        let max_prover_buffer_size =
+            sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_recursive_buffer_size) as u64;
+
+        let max_prover_recursive2_buffer_size = setups_vadcop.max_prover_recursive2_buffer_size as u64;
+
+        tracing::info!("Max prover buffer size: {}", format_bytes(sctx.max_prover_buffer_size as f64 * 8.0));
+        tracing::info!(
+            "Max prover recursive buffer size: {}",
+            format_bytes(setups_vadcop.max_prover_recursive_buffer_size as f64 * 8.0)
+        );
+        tracing::info!(
+            "Max prover recursive1/recursive2 buffer size: {}",
+            format_bytes(setups_vadcop.max_prover_recursive2_buffer_size as f64 * 8.0)
+        );
+
         let max_sizes = MaxSizes {
             total_const_area,
-            aux_trace_area: sctx.max_prover_buffer_size as u64,
-            aux_trace_recursive_area: setups_vadcop.max_prover_recursive_buffer_size as u64,
+            aux_trace_area: max_prover_buffer_size,
+            aux_trace_recursive_area: max_prover_recursive2_buffer_size,
             total_const_area_aggregation,
             n_streams: n_streams_per_gpu as u64,
             n_recursive_streams: n_recursive_streams_per_gpu as u64,
@@ -2938,8 +3050,8 @@ where
 
         let n_gpus: u64 = gen_device_streams_c(
             d_buffers.get_ptr(),
-            sctx.max_prover_buffer_size as u64,
-            setups_vadcop.max_prover_recursive_buffer_size as u64,
+            max_prover_buffer_size,
+            max_prover_recursive2_buffer_size,
             max_pinned_proof_size,
             sctx.max_n_bits_ext as u64,
         );
