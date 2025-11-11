@@ -73,7 +73,14 @@ impl MpiCtx {
         }
         #[cfg(not(distributed))]
         {
-            MpiCtx { rank: 0, n_processes: 1, node_rank: 0, node_n_processes: 1, outer_agg_rank: AtomicI32::new(0) }
+            MpiCtx {
+                rank: 0,
+                n_processes: 1,
+                node_rank: 0,
+                node_n_processes: 1,
+                outer_agg_rank: AtomicI32::new(0),
+                cancelled: AtomicU32::new(0),
+            }
         }
     }
 
