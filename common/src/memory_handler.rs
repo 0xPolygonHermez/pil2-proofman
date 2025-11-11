@@ -36,10 +36,6 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
     pub fn reset(&self) -> ProofmanResult<()> {
         self.empty_queue_to_be_released();
 
-        while !self.instance_ids_to_be_released.is_empty() {
-            self.instance_ids_to_be_released.pop();
-        }
-
         let mut current_buffers = Vec::new();
         while let Ok(buffer) = self.receiver.try_recv() {
             current_buffers.push(buffer);
@@ -59,6 +55,10 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
         }
 
         while valid_buffers.len() < self.n_buffers {
+            tracing::warn!(
+                "MemoryHandler::Not enough valid buffers (found {}), creating a new one.",
+                valid_buffers.len()
+            );
             valid_buffers.push(create_buffer_fast(self.buffer_size));
         }
 

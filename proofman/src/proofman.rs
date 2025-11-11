@@ -2723,21 +2723,7 @@ where
                     {
                         cancellation_info_clone.write().unwrap().cancel(Some(e));
                     }
-                    for _ in 0..n_threads_witness {
-                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
-                            break;
-                        }
-
-                        match tx_threads_clone.try_send(()) {
-                            Ok(_) => (), // successfully sent
-                            Err(crossbeam_channel::TrySendError::Full(_)) => {
-                                std::thread::sleep(std::time::Duration::from_micros(10));
-                            }
-                            Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
-                                break;
-                            }
-                        }
-                    }
+                    Self::try_send_threads(&tx_threads_clone, n_threads_witness, &cancellation_info_clone);
                     timer_stop_and_log_info!(
                         GENERATING_WC,
                         "GENERATING_WC_{} [{}:{}]",
@@ -2841,21 +2827,7 @@ where
                         return;
                     }
                     timer_stop_and_log_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                    for _ in 0..threads_to_return {
-                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
-                            break;
-                        }
-
-                        match tx_threads_clone.try_send(()) {
-                            Ok(_) => (),
-                            Err(crossbeam_channel::TrySendError::Full(_)) => {
-                                std::thread::sleep(std::time::Duration::from_micros(10));
-                            }
-                            Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
-                                break;
-                            }
-                        }
-                    }
+                    Self::try_send_threads(&tx_threads_clone, threads_to_return, &cancellation_info_clone);
 
                     timer_start_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                     if let Err(e) = wcm_clone.calculate_witness(
@@ -2868,21 +2840,7 @@ where
                         return;
                     }
                     timer_stop_and_log_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                    for _ in 0..threads_to_use_witness {
-                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
-                            break;
-                        }
-
-                        match tx_threads_clone.try_send(()) {
-                            Ok(_) => (),
-                            Err(crossbeam_channel::TrySendError::Full(_)) => {
-                                std::thread::sleep(std::time::Duration::from_micros(10));
-                            }
-                            Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
-                                break;
-                            }
-                        }
-                    }
+                    Self::try_send_threads(&tx_threads_clone, threads_to_use_witness, &cancellation_info_clone);
                     timer_stop_and_log_info!(
                         GENERATING_WC,
                         "GENERATING_WC_{} [{}:{}]",
@@ -2920,6 +2878,24 @@ where
 
         timer_stop_and_log_info!(CALCULATING_WITNESS);
         Ok(())
+    }
+
+    fn try_send_threads(tx: &Sender<()>, n_threads: usize, cancellation_info: &RwLock<CancellationInfo>) {
+        for _ in 0..n_threads {
+            if cancellation_info.read().unwrap().token.is_cancelled() {
+                break;
+            }
+
+            match tx.try_send(()) {
+                Ok(_) => (),
+                Err(crossbeam_channel::TrySendError::Full(_)) => {
+                    std::thread::sleep(Duration::from_micros(10));
+                }
+                Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
+                    break;
+                }
+            }
+        }
     }
 
     #[allow(clippy::type_complexity)]
