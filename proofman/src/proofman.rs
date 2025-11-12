@@ -201,6 +201,7 @@ pub struct ProofMan<F: PrimeField64> {
     max_witness_trace_size: usize,
     packed_info: HashMap<(usize, usize), PackedInfo>,
     cancellation_info: Arc<RwLock<CancellationInfo>>,
+    verbose_mode: VerboseMode,
 }
 
 #[derive(Debug, PartialEq, Clone, BorshSerialize, BorshDeserialize)]
@@ -292,7 +293,7 @@ where
     }
 
     pub fn mpi_broadcast(&self, buf: &mut Vec<u8>) {
-        self.pctx.dctx_broadcast(buf);
+        self.pctx.mpi_ctx.broadcast(buf);
     }
 
     pub fn get_world_rank(&self) -> i32 {
@@ -455,7 +456,7 @@ where
     }
 
     pub fn execute_(&self, output_path: Option<PathBuf>) -> ProofmanResult<()> {
-        self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize)?;
+        self.pctx.dctx_setup(1, vec![0], 0)?;
 
         self.reset()?;
         self.pctx.dctx_reset();
@@ -588,7 +589,7 @@ where
     }
 
     pub fn compute_witness_(&self, options: ProofOptions) -> ProofmanResult<()> {
-        self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize)?;
+        self.pctx.dctx_setup(1, vec![0], 0)?;
 
         self.reset()?;
         self.pctx.dctx_reset();
@@ -708,7 +709,7 @@ where
             return Err(ProofmanError::InvalidConfiguration("Packed witnesses are not supported in this mode".into()));
         }
 
-        self.pctx.dctx_setup(1, vec![0], 0, self.mpi_ctx.n_processes as usize, self.mpi_ctx.rank as usize)?;
+        self.pctx.dctx_setup(1, vec![0], 0)?;
 
         self.pctx.set_debug_info(debug_info);
         self.reset()?;
@@ -1161,6 +1162,7 @@ where
             max_witness_trace_size,
             packed_info,
             cancellation_info: Arc::new(RwLock::new(CancellationInfo::default())),
+            verbose_mode,
         })
     }
 
@@ -1247,13 +1249,7 @@ where
                 _ => return Err(ProofmanError::InvalidParameters("Invalid phase inputs for contributions".into())),
             };
 
-            self.pctx.dctx_setup(
-                proof_info.n_partitions,
-                proof_info.partition_ids.clone(),
-                proof_info.worker_index,
-                self.mpi_ctx.n_processes as usize,
-                self.mpi_ctx.rank as usize,
-            )?;
+            self.pctx.dctx_setup(proof_info.n_partitions, proof_info.partition_ids.clone(), proof_info.worker_index)?;
             self.reset()?;
             self.pctx.dctx_reset();
 
@@ -1330,7 +1326,7 @@ where
 
             timer_start_info!(CALCULATING_CONTRIBUTIONS);
             timer_start_info!(CALCULATING_INNER_CONTRIBUTIONS);
-            timer_start_info!(PREPARING_CONTRIBUTIONS);
+            timer_start_debug!(PREPARING_CONTRIBUTIONS);
 
             let my_instances_tables = self.pctx.dctx_get_my_tables();
 
@@ -1338,7 +1334,7 @@ where
             let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
             my_instances_sorted.shuffle(&mut rng);
 
-            timer_stop_and_log_info!(PREPARING_CONTRIBUTIONS);
+            timer_stop_and_log_debug!(PREPARING_CONTRIBUTIONS);
 
             let my_instances_sorted_no_tables =
                 my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
@@ -1445,7 +1441,7 @@ where
         {
             let mut worker_contributions = self.worker_contributions.write().unwrap();
             for contribution in all_partial_contributions_u64 {
-                tracing::info!(
+                tracing::debug!(
                     "Worker contribution received: worker_index={}, airgroup_id={}, challenge(first 10)={:?}",
                     contribution.worker_index,
                     contribution.airgroup_id,
@@ -2441,7 +2437,7 @@ where
 
         self.wcm.execute()?;
 
-        print_summary_info(&self.pctx, &self.sctx, &self.mpi_ctx, &self.packed_info)?;
+        print_summary_info(&self.pctx, &self.sctx, &self.mpi_ctx, &self.packed_info, self.verbose_mode)?;
 
         timer_stop_and_log_info!(EXECUTE);
         Ok(())
@@ -2769,9 +2765,9 @@ where
 
         let mut witness_minimal_memory_handles = Vec::new();
         if !minimal_memory && (cfg!(feature = "gpu") || stats) {
-            timer_start_info!(PRE_CALCULATE_WC);
+            timer_start_debug!(PRE_CALCULATE_WC);
             self.wcm.pre_calculate_witness(1, instances, self.max_num_threads, memory_handler.as_ref())?;
-            timer_stop_and_log_info!(PRE_CALCULATE_WC);
+            timer_stop_and_log_debug!(PRE_CALCULATE_WC);
         } else {
             for &instance_id in instances.iter() {
                 let n_threads_witness = self.num_threads_per_witness;
@@ -3182,6 +3178,7 @@ where
         pctx.set_weights(&sctx)?;
 
         let pctx = Arc::new(pctx);
+
         if !verify_constraints {
             check_tree_paths(&pctx, &sctx)?;
         }

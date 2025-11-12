@@ -605,7 +605,6 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     let circom_witness_vadcop_final = generate_witness::<F>(setup, 0, &updated_proof, output_dir_path)?;
     let witness_final_proof =
         Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, setup.n_cols as usize);
-    tracing::info!("··· Generating vadcop final proof");
     timer_start_info!(GENERATE_VADCOP_FINAL_PROOF);
     let mut final_proof = gen_recursive_proof_size::<F>(pctx, setups, &witness_final_proof)?;
     let stream_id = generate_recursive_proof::<F>(
@@ -630,7 +629,6 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         final_proof.proof[1 + p] = publics[p].as_canonical_u64();
     }
 
-    tracing::info!("··· Vadcop final Proof generated.");
     timer_stop_and_log_info!(GENERATE_VADCOP_FINAL_PROOF);
 
     Ok(final_proof)
@@ -691,7 +689,6 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         false => String::from(""),
     };
 
-    tracing::info!("··· Generating recursiveF proof");
     timer_start_trace!(GENERATE_RECURSIVEF_PROOF);
     // prove
     let p_prove = gen_recursive_proof_final_c(
@@ -707,7 +704,6 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         0,
         0,
     );
-    tracing::info!("··· RecursiveF Proof generated.");
     timer_stop_and_log_trace!(GENERATE_RECURSIVEF_PROOF);
 
     Ok(p_prove)

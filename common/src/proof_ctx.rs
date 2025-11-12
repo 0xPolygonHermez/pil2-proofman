@@ -255,7 +255,9 @@ impl<F: PrimeField64> ProofCtx<F> {
     ) -> ProofmanResult<Self> {
         tracing::info!("Creating proof context");
 
-        let dctx = DistributionCtx::new();
+        let mut dctx = DistributionCtx::new();
+
+        dctx.setup_processes(mpi_ctx.n_processes as usize, mpi_ctx.rank as usize)?;
 
         initialize_logger(verbose_mode, None);
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path)?;
@@ -377,10 +379,6 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn is_air_instance_stored(&self, global_idx: usize) -> bool {
         !self.air_instances[global_idx].read().unwrap().trace.is_empty()
-    }
-
-    pub fn dctx_broadcast(&self, buf: &mut Vec<u8>) {
-        self.mpi_ctx.broadcast(buf);
     }
 
     pub fn dctx_get_instances(&self) -> Vec<InstanceInfo> {
@@ -538,17 +536,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.load_balance_info_partition()
     }
 
-    pub fn dctx_setup(
-        &self,
-        n_partitions: usize,
-        partition_ids: Vec<u32>,
-        worker_index: usize,
-        n_processes: usize,
-        process_id: usize,
-    ) -> ProofmanResult<()> {
+    pub fn dctx_setup(&self, n_partitions: usize, partition_ids: Vec<u32>, worker_index: usize) -> ProofmanResult<()> {
         let mut dctx = self.dctx.write().unwrap();
         dctx.setup_partitions(n_partitions, partition_ids)?;
-        dctx.setup_processes(n_processes, process_id)?;
         dctx.setup_worker_index(worker_index);
         Ok(())
     }

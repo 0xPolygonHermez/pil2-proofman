@@ -13,7 +13,7 @@ use proofman_util::DeviceBuffer;
 use proofman_starks_lib_c::load_device_const_pols_c;
 use proofman_starks_lib_c::custom_commit_size_c;
 use proofman_starks_lib_c::load_device_setup_c;
-use proofman_common::PackedInfo;
+use proofman_common::{PackedInfo, VerboseMode};
 
 use pil_std_lib::Std;
 use witness::WitnessManager;
@@ -23,9 +23,10 @@ pub fn print_summary_info<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     mpi_ctx: &MpiCtx,
     packed_info: &HashMap<(usize, usize), PackedInfo>,
+    verbose_mode: VerboseMode,
 ) -> ProofmanResult<()> {
     if mpi_ctx.rank == 0 {
-        print_summary(pctx, sctx, packed_info, true)?;
+        print_summary(pctx, sctx, packed_info, true, verbose_mode)?;
     }
 
     if mpi_ctx.n_processes > 1 {
@@ -38,20 +39,7 @@ pub fn print_summary_info<F: PrimeField64>(
             max_deviation
         );
 
-        print_summary(pctx, sctx, packed_info, false)?;
-    }
-
-    if pctx.get_n_partitions() > 1 {
-        let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info_process();
-        tracing::info!(
-            "Load balance. Average: {} max: {} min: {} deviation: {}",
-            average_weight,
-            max_weight,
-            min_weight,
-            max_deviation
-        );
-
-        print_summary(pctx, sctx, packed_info, false)?;
+        print_summary(pctx, sctx, packed_info, false, verbose_mode)?;
     }
     Ok(())
 }
@@ -61,8 +49,8 @@ pub fn print_summary<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     packed_info: &HashMap<(usize, usize), PackedInfo>,
     global: bool,
+    verbose_mode: VerboseMode,
 ) -> ProofmanResult<()> {
-    //todo_distributed: no tens totes les taules nomes les dels teu worker
     let mut air_info = HashMap::new();
 
     let mut air_instances = HashMap::new();
@@ -128,56 +116,81 @@ pub fn print_summary<F: PrimeField64>(
     let mut air_groups: Vec<_> = air_instances.keys().collect();
     air_groups.sort();
 
-    tracing::info!("{}", "--- TOTAL PROOF INSTANCES SUMMARY ------------------------".bright_white().bold());
-    tracing::info!("    ► {} Air instances found:", n_instances);
-    for air_group in air_groups.clone() {
-        let air_group_instances = air_instances.get(air_group).unwrap();
-        let mut air_names: Vec<_> = air_group_instances.keys().collect();
-        air_names.sort();
+    if verbose_mode != VerboseMode::Info {
+        tracing::info!("{}", "--- TOTAL PROOF INSTANCES SUMMARY ------------------------".bright_white().bold());
+        tracing::info!("    ► {} Air instances found:", n_instances);
+        for air_group in &air_groups {
+            let air_group_instances = air_instances.get(*air_group).unwrap();
+            let mut air_names: Vec<_> = air_group_instances.keys().collect();
+            air_names.sort();
 
-        tracing::info!("      Air Group [{}]", air_group);
-        for air_name in air_names {
-            let count = air_group_instances.get(air_name).unwrap();
-            let (n_bits, total_cols, _, _, _) = air_info.get(air_name).unwrap();
-            tracing::info!(
-                "      {}",
-                format!("· {count} x Air [{air_name}] ({total_cols} x 2^{n_bits})").bright_white().bold()
-            );
-        }
-    }
-    tracing::info!("{}", "--- TOTAL PROVER MEMORY USAGE ----------------------------".bright_white().bold());
-    for air_group in air_groups {
-        let air_group_instances = air_instances.get(air_group).unwrap();
-        let mut air_names: Vec<_> = air_group_instances.keys().collect();
-        air_names.sort();
-
-        for air_name in air_names {
-            let count = air_group_instances.get(air_name).unwrap();
-            let (_, _, _, memory_trace, memory_instance) = air_info.get(air_name).unwrap();
-            let gpu = cfg!(feature = "gpu");
-            if gpu {
+            tracing::info!("      Air Group [{}]", air_group);
+            for air_name in air_names {
+                let count = air_group_instances.get(air_name).unwrap();
+                let (n_bits, total_cols, _, _, _) = air_info.get(air_name).unwrap();
                 tracing::info!(
-                    "      · {}: {} GPU per each of {} instance | Witness CPU: {}",
-                    air_name,
-                    format_bytes(*memory_instance),
-                    count,
-                    format_bytes(*memory_trace),
-                );
-            } else {
-                tracing::info!(
-                    "      · {}: {} per each of {} instance | Witness : {}",
-                    air_name,
-                    format_bytes(*memory_instance),
-                    count,
-                    format_bytes(*memory_trace),
+                    "      {}",
+                    format!("· {count} x Air [{air_name}] ({total_cols} x 2^{n_bits})").bright_white().bold()
                 );
             }
         }
+        tracing::info!("{}", "--- TOTAL PROVER MEMORY USAGE ----------------------------".bright_white().bold());
+        for air_group in &air_groups {
+            let air_group_instances = air_instances.get(*air_group).unwrap();
+            let mut air_names: Vec<_> = air_group_instances.keys().collect();
+            air_names.sort();
+
+            for air_name in air_names {
+                let count = air_group_instances.get(air_name).unwrap();
+                let (_, _, _, memory_trace, memory_instance) = air_info.get(air_name).unwrap();
+                let gpu = cfg!(feature = "gpu");
+                if gpu {
+                    tracing::info!(
+                        "      · {}: {} GPU per each of {} instance | Witness CPU: {}",
+                        air_name,
+                        format_bytes(*memory_instance),
+                        count,
+                        format_bytes(*memory_trace),
+                    );
+                } else {
+                    tracing::info!(
+                        "      · {}: {} per each of {} instance | Witness : {}",
+                        air_name,
+                        format_bytes(*memory_instance),
+                        count,
+                        format_bytes(*memory_trace),
+                    );
+                }
+            }
+        }
+        tracing::info!("      Total memory required by proofman: {}", format_bytes(max_prover_memory));
+        tracing::info!("----------------------------------------------------------");
+        tracing::info!("      Extra memory tables (CPU): {}", format_bytes(memory_tables));
+        tracing::info!("----------------------------------------------------------");
+    } else {
+        tracing::info!("{}", "--- PROOF INSTANCES SUMMARY ---".bright_white().bold());
+
+        for air_group in &air_groups {
+            let air_group_instances = air_instances.get(*air_group).unwrap();
+            let mut air_names: Vec<_> = air_group_instances.keys().collect();
+            air_names.sort();
+
+            let mut summary: Vec<String> = air_names
+                .iter()
+                .map(|air_name| {
+                    let count = air_group_instances.get(*air_name).unwrap();
+                    format!("{air_name}: {count}")
+                })
+                .collect();
+
+            summary.push(format!("Total instances: {}", n_instances));
+
+            tracing::info!("{} | {}", air_group.bright_white().bold(), summary.join(" | "));
+        }
+
+        tracing::info!("{}", "--------------------------------".bright_white().bold());
     }
-    tracing::info!("      Total memory required by proofman: {}", format_bytes(max_prover_memory));
-    tracing::info!("----------------------------------------------------------");
-    tracing::info!("      Extra memory tables (CPU): {}", format_bytes(memory_tables));
-    tracing::info!("----------------------------------------------------------");
+
     Ok(())
 }
 
@@ -392,7 +405,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
             let setup = sctx.get_setup(airgroup_id, air_id)?;
             let proof_type: &str = setup.setup_type.clone().into();
             if cfg!(feature = "gpu") {
-                tracing::info!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
+                tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
             }
             let mut n_streams = 1;
             if setup.single_instance {
@@ -413,7 +426,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
             );
             if cfg!(feature = "gpu") {
                 let const_pols_path = &setup.const_pols_path;
-                tracing::info!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
+                tracing::debug!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
                 let load_tree = gpu_params.preallocate || (airgroup_id == 0 && air_id == 0);
                 let tree_path = match load_tree {
                     true => &setup.const_pols_tree_path,
@@ -447,7 +460,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
 
                     let proof_type: &str = setup.setup_type.clone().into();
                     if cfg!(feature = "gpu") {
-                        tracing::info!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
+                        tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
                     }
                     load_device_setup_c(
                         airgroup_id as u64,
@@ -461,7 +474,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                     );
                     if cfg!(feature = "gpu") {
                         let const_pols_path = &setup.const_pols_path;
-                        tracing::info!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
+                        tracing::debug!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
                         let load_tree = gpu_params.preallocate || (airgroup_id == 0 && air_id == 0);
                         let tree_path = match load_tree {
                             true => &setup.const_pols_tree_path,
@@ -493,7 +506,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
 
                 let proof_type: &str = setup.setup_type.clone().into();
                 if cfg!(feature = "gpu") {
-                    tracing::info!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
+                    tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
                 }
                 load_device_setup_c(
                     airgroup_id as u64,
@@ -507,7 +520,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                 );
                 if cfg!(feature = "gpu") {
                     let const_pols_path = &setup.const_pols_path;
-                    tracing::info!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
+                    tracing::debug!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
                     let load_tree = gpu_params.preallocate || (airgroup_id == 0 && air_id == 0);
                     let tree_path = match load_tree {
                         true => &setup.const_pols_tree_path,
@@ -538,7 +551,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
 
             let proof_type: &str = setup.setup_type.clone().into();
             if cfg!(feature = "gpu") {
-                tracing::info!(airgroup_id, air_id = 0, proof_type, "Loading expressions setup in GPU");
+                tracing::debug!(airgroup_id, air_id = 0, proof_type, "Loading expressions setup in GPU");
             }
             load_device_setup_c(
                 airgroup_id as u64,
@@ -552,7 +565,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
             );
             if cfg!(feature = "gpu") {
                 let const_pols_path = &setup.const_pols_path;
-                tracing::info!(airgroup_id, air_id = 0, proof_type, "Loading const pols in GPU");
+                tracing::debug!(airgroup_id, air_id = 0, proof_type, "Loading const pols in GPU");
                 let load_tree = gpu_params.preallocate || airgroup_id == 0;
                 let tree_path = match load_tree {
                     true => &setup.const_pols_tree_path,
@@ -580,7 +593,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
 
         let proof_type: &str = setup_vadcop_final.setup_type.clone().into();
         if cfg!(feature = "gpu") {
-            tracing::info!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
+            tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
         }
         load_device_setup_c(
             0_u64,
@@ -594,7 +607,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
         );
         if cfg!(feature = "gpu") {
             let const_pols_path = &setup_vadcop_final.const_pols_path;
-            tracing::info!(airgroup_id = 0, air_id = 0, proof_type, "Loading const pols in GPU");
+            tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading const pols in GPU");
             let load_tree = true;
             let tree_path = match load_tree {
                 true => &setup_vadcop_final.const_pols_tree_path,
