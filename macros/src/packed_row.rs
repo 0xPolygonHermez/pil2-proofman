@@ -167,14 +167,14 @@ fn add_packed_array_setter_getter(
     offset: &mut usize,
     setter_getters: &mut Vec<TokenStream>,
 ) {
-    let (bit_width, dims) = collect_dimensions(field_type);
+    let (bit_width, dims, acc_dims) = collect_dimensions(field_type);
     let total_len: usize = dims.iter().product();
     let base_offset = *offset;
     *offset += bit_width * total_len;
 
     let rust_type = type_for_bitwidth(bit_width);
-    let args = dimension_args(&dims);
-    let flat = flatten_index_expr(&args, &dims);
+    let args = dimension_args(&acc_dims);
+    let flat = flatten_index_expr(&args, &acc_dims);
     let setter_name = format_ident!("set_{}", field_name);
     let getter_name = format_ident!("get_{}", field_name);
 
