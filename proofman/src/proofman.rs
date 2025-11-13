@@ -2434,8 +2434,12 @@ where
         if !self.wcm.is_init_witness() {
             return Err(ProofmanError::ProofmanError("Witness computation dynamic library not initialized".into()));
         }
+        
+        if let Err(e) = self.wcm.execute() {
+            self.cancellation_info.write().unwrap().cancel(Some(e));
+        }
 
-        self.wcm.execute()?;
+        self.check_cancel()?;
 
         print_summary_info(&self.pctx, &self.sctx, &self.mpi_ctx, &self.packed_info, self.verbose_mode)?;
 
