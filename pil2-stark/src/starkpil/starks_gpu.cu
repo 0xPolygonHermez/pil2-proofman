@@ -511,7 +511,7 @@ __global__ void computeEvals_v2(
 }
 
 __global__ void computeEvalsReduction(gl64_t *d_evals, gl64_t *d_helper, EvalInfo *d_evalInfo, uint64_t size_eval, uint64_t n_eval_chunks) {
-    uint64_t evalIdx = threadIdx.x;
+    uint64_t evalIdx = blockIdx.x * blockDim.x + threadIdx.x;
     if (evalIdx < size_eval) {
         uint64_t base = evalIdx * n_eval_chunks * FIELD_EXTENSION;
         d_evals[d_evalInfo[evalIdx].evalPos * FIELD_EXTENSION] = d_helper[base + 0];
@@ -545,7 +545,9 @@ void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, uint64_t chunk, ui
     dim3 nThreads(256);
     dim3 nBlocks(nEvals, n_eval_chunks);
     computeEvals_v2<<<nBlocks, nThreads, nThreads.x * sizeof(Goldilocks3GPU::Element), stream>>>(NExtended, extendBits, nEvals, N, nOpeningPoints, (gl64_t *)h_params.evals, d_evalsInfo, (gl64_t *)h_params.aux_trace, d_constTree, (gl64_t *)h_params.pCustomCommitsFixed, (gl64_t *)d_LEv, d_helper);
-    computeEvalsReduction<<<1, nEvals, 0, stream>>>((gl64_t *)h_params.evals, d_helper, d_evalsInfo, nEvals, n_eval_chunks);
+
+    dim3 nBlocks_2((nEvals + nThreads.x - 1) / nThreads.x);
+    computeEvalsReduction<<<nBlocks_2, nThreads, 0, stream>>>((gl64_t *)h_params.evals, d_helper, d_evalsInfo, nEvals, n_eval_chunks);
     CHECKCUDAERR(cudaGetLastError());
     TimerStopCategoryGPU(timer, EVALS);
 }
