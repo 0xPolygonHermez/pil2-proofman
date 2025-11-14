@@ -93,7 +93,7 @@ else ifeq ($(UNAME_S),Linux)
     CPPFLAGS = -I/usr/include -I/usr/local/include -MMD -MP $(INC_FLAGS)
     CXXFLAGS = -std=c++17 -Wall -pthread -Wno-unused-label -fPIC -fopenmp
     LDFLAGS  = -rdynamic -fopenmp -lsodium -lpthread -lgmp -lstdc++
-    LDFLAGS_GPU := -lcudart -lsodium -lpthread -lgmp -lstdc++
+    LDFLAGS_GPU := -lcudart -lsodium -lpthread -lgmp -lstdc++ -fsanitize=address
     CFLAGS   = -fopenmp
 
     # Add MPI include path and libraries - use C bindings only
@@ -118,11 +118,11 @@ else
 endif
 
 # Debug vs Release build flags
-ifeq ($(dbg),1)
+# ifeq ($(dbg),1)
     CXXFLAGS += -g -D__DEBUG__ -O0
-else
-    CXXFLAGS += -O3
-endif
+# else
+#     CXXFLAGS += -O3
+# endif
 
 # Define source files based on platform
 ifeq ($(UNAME_S),Darwin)
