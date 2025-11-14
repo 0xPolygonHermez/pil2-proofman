@@ -1977,6 +1977,9 @@ where
                     false,
                     &mut agg_proofs,
                 )?;
+
+                self.check_cancel()?;
+
                 timer_stop_and_log_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
             } else {
                 timer_start_info!(GET_OUTER_RANK);
@@ -2630,12 +2633,13 @@ where
             || get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()),
             &self.cancellation_info,
         );
-        self.check_cancel()?;
         clear_proof_done_callback_c();
         drop(recursive_tx);
         drop(rec2_witness_tx);
 
         recursive2_handle.join().unwrap();
+
+        self.check_cancel()?;
 
         if send_proofs {
             self.recursive2_proofs.iter().enumerate().for_each(|(airgroup_id, lock)| {
