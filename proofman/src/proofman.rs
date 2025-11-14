@@ -1977,6 +1977,9 @@ where
                     false,
                     &mut agg_proofs,
                 )?;
+
+                self.check_cancel()?;
+
                 timer_stop_and_log_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
             } else {
                 timer_start_info!(GET_OUTER_RANK);
@@ -2246,8 +2249,7 @@ where
                     &self.const_tree,
                     self.d_buffers.get_ptr(),
                     false,
-                )
-                .unwrap();
+                )?;
 
                 return Ok(Some(vec![AggProofs::new(0, vadcop_proof_final.proof, vec![])]));
             }
@@ -2290,9 +2292,16 @@ where
                         let p2 = recursive2_airgroup_proofs.pop().unwrap();
                         let p3 = recursive2_airgroup_proofs.pop().unwrap();
 
-                        let witness =
-                            gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3, &output_dir_path)
-                                .unwrap();
+                        let w = gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3, &output_dir_path);
+
+                        let witness = match w {
+                            Ok(witness) => witness,
+                            Err(e) => {
+                                tracing::info!("Error generating recursive2 witness from recursive proofs: {}", e);
+                                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                break;
+                            }
+                        };
                         total_outer_agg_proofs.increment();
                         rec2_witness_tx_clone.send(witness).unwrap();
                     }
@@ -2352,7 +2361,7 @@ where
             let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
             let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
 
-            let _ = generate_recursive_proof(
+            if let Err(e) = generate_recursive_proof(
                 &pctx_clone,
                 &setups_clone,
                 &witness,
@@ -2364,7 +2373,10 @@ where
                 &const_pols_clone,
                 save_proofs,
                 false,
-            );
+            ) {
+                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                break;
+            }
 
             if cfg!(not(feature = "gpu")) {
                 launch_callback_c(id as u64, ProofType::Recursive2.into());
@@ -2531,7 +2543,7 @@ where
                 let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
                 let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
 
-                let _ = generate_recursive_proof(
+                if let Err(e) = generate_recursive_proof(
                     &pctx_clone,
                     &setups_clone,
                     &witness,
@@ -2543,7 +2555,10 @@ where
                     &const_pols_clone,
                     save_proofs,
                     false,
-                );
+                ) {
+                    cancellation_info_clone.write().unwrap().cancel(Some(e));
+                    break;
+                };
 
                 if cfg!(not(feature = "gpu")) {
                     launch_callback_c(id as u64, ProofType::Recursive2.into());
@@ -2582,9 +2597,15 @@ where
                         let p1 = recursive2_airgroup_proofs.pop().unwrap();
                         let p2 = recursive2_airgroup_proofs.pop().unwrap();
                         let p3 = recursive2_airgroup_proofs.pop().unwrap();
-                        let witness =
-                            gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3, &output_dir_path)
-                                .unwrap();
+                        let w = gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3, &output_dir_path);
+                        let witness = match w {
+                            Ok(witness) => witness,
+                            Err(e) => {
+                                tracing::info!("Error generating recursive2 witness from recursive proofs: {}", e);
+                                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                break;
+                            }
+                        };
                         rec2_witness_tx_clone.send(witness).unwrap();
                     }
                 }
@@ -2612,12 +2633,13 @@ where
             || get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()),
             &self.cancellation_info,
         );
-        self.check_cancel()?;
         clear_proof_done_callback_c();
         drop(recursive_tx);
         drop(rec2_witness_tx);
 
         recursive2_handle.join().unwrap();
+
+        self.check_cancel()?;
 
         if send_proofs {
             self.recursive2_proofs.iter().enumerate().for_each(|(airgroup_id, lock)| {
