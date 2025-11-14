@@ -1237,9 +1237,6 @@ where
         options: ProofOptions,
         phase: ProvePhase,
     ) -> ProofmanResult<ProvePhaseResult> {
-        timer_start_info!(GENERATING_VADCOP_PROOF);
-        timer_start_info!(GENERATING_PROOFS);
-
         let _cancellation_thread = CancellationThread::new(self.cancellation_info.clone(), self.mpi_ctx.clone());
 
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
@@ -1457,6 +1454,8 @@ where
 
         calculate_global_challenge(&self.pctx, all_partial_contributions_u64);
 
+        timer_start_info!(GENERATING_PROOFS);
+        
         timer_start_info!(GENERATING_INNER_PROOFS);
 
         self.pctx.dctx_reset_instances_calculated();
@@ -1939,8 +1938,6 @@ where
 
         timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
 
-        timer_stop_and_log_info!(GENERATING_PROOFS);
-
         let mut proof_id = None;
         let mut vadcop_final_proof = None;
         if options.aggregation {
@@ -2035,7 +2032,7 @@ where
                     self.recursive2_proofs[proof.airgroup_id as usize].write().unwrap().push(agg_proof);
                 }
                 if phase == ProvePhase::Internal {
-                    timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
+                    timer_stop_and_log_info!(GENERATING_PROOFS);
                     return Ok(ProvePhaseResult::Internal(agg_proofs));
                 }
             }
@@ -2074,8 +2071,6 @@ where
                 }
             }
         }
-
-        timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
 
         if options.verify_proofs {
             if options.aggregation {
