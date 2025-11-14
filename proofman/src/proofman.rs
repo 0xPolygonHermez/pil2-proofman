@@ -619,6 +619,7 @@ where
         let my_instances_sorted_no_tables =
             my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
 
+        timer_start_info!(CALCULATING_WITNESS);
         self.calculate_witness(
             &my_instances_sorted_no_tables,
             memory_handler.clone(),
@@ -626,6 +627,7 @@ where
             options.minimal_memory,
             true,
         )?;
+        timer_stop_and_log_info!(CALCULATING_WITNESS);
 
         if !options.minimal_memory {
             self.pctx.set_witness_tx(None);
@@ -1215,6 +1217,11 @@ where
         }
 
         self.total_outer_agg_proofs.reset();
+
+        for instance_id in 0..MAX_INSTANCES as usize {
+            self.pctx.free_instance(instance_id);
+        }
+
         self.memory_handler.reset()?;
 
         self.cancellation_info.write().unwrap().reset();
@@ -1336,6 +1343,7 @@ where
             let my_instances_sorted_no_tables =
                 my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
 
+            timer_start_debug!(CALCULATING_WITNESS);
             self.calculate_witness(
                 &my_instances_sorted_no_tables,
                 self.memory_handler.clone(),
@@ -1343,6 +1351,7 @@ where
                 options.minimal_memory,
                 false,
             )?;
+            timer_stop_and_log_debug!(CALCULATING_WITNESS);
 
             if !options.minimal_memory && cfg!(feature = "gpu") {
                 self.pctx.set_witness_tx(None);
@@ -1362,7 +1371,7 @@ where
 
             drop(witness_handles);
 
-            timer_start_info!(CALCULATING_TABLES);
+            timer_start_debug!(CALCULATING_TABLES);
 
             //evaluate witness for instances of type "tables"
             for instance_id in my_instances_tables.iter() {
@@ -1375,7 +1384,7 @@ where
                 self.wcm.calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
             }
 
-            timer_stop_and_log_info!(CALCULATING_TABLES);
+            timer_stop_and_log_debug!(CALCULATING_TABLES);
 
             self.pctx.set_proof_tx(None);
 
@@ -1455,7 +1464,7 @@ where
         calculate_global_challenge(&self.pctx, all_partial_contributions_u64);
 
         timer_start_info!(GENERATING_PROOFS);
-        
+
         timer_start_info!(GENERATING_INNER_PROOFS);
 
         self.pctx.dctx_reset_instances_calculated();
@@ -1893,6 +1902,7 @@ where
 
         let (witness_handler, witness_handles) =
             self.calc_witness_handler(witness_done.clone(), self.memory_handler.clone(), options.minimal_memory, false);
+        timer_start_debug!(CALCULATING_WITNESS);
         self.calculate_witness(
             &instances_to_be_calculated,
             self.memory_handler.clone(),
@@ -1900,6 +1910,7 @@ where
             options.minimal_memory,
             false,
         )?;
+        timer_stop_and_log_debug!(CALCULATING_WITNESS);
 
         if !options.minimal_memory && cfg!(feature = "gpu") {
             self.pctx.set_witness_tx(None);
@@ -1979,11 +1990,10 @@ where
 
                 timer_stop_and_log_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
             } else {
-                timer_start_info!(GET_OUTER_RANK);
+                timer_start_debug!(GET_OUTER_RANK);
                 self.mpi_ctx.process_ready_for_outer_agg();
-                timer_stop_and_log_info!(GET_OUTER_RANK);
+                timer_stop_and_log_debug!(GET_OUTER_RANK);
                 let outer_rank = self.mpi_ctx.get_outer_agg_rank()? as usize;
-                tracing::info!("    Outer aggregation rank: {}", outer_rank);
                 if self.pctx.mpi_ctx.rank as usize == outer_rank {
                     self.worker_aggregations_rma(&options, outer_rank != 0)?;
                 } else {
@@ -2095,7 +2105,7 @@ where
             } else {
                 return self.verify_proofs(options.test_mode);
             }
-        } else {
+        } else if phase == ProvePhase::Full {
             tracing::info!(
                 "··· {}",
                 "All proofs were successfully generated. Verification Skipped".bright_yellow().bold()
@@ -2140,7 +2150,6 @@ where
             self.outer_aggregations(options);
         }
 
-        timer_start_info!(RECEIVING_AGGREGATED_PROOFS);
         for proof in agg_proofs {
             let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
             let mut stored_contributions = Vec::new();
@@ -2228,8 +2237,6 @@ where
                     AggProofs::new(airgroup_id as u64, proof, vec![])
                 })
                 .collect();
-
-            timer_stop_and_log_info!(RECEIVING_AGGREGATED_PROOFS);
 
             if !final_proof {
                 return Ok(Some(agg_proofs_data));
@@ -2782,8 +2789,6 @@ where
         minimal_memory: bool,
         stats: bool,
     ) -> ProofmanResult<()> {
-        timer_start_info!(CALCULATING_WITNESS);
-
         let mut witness_minimal_memory_handles = Vec::new();
         if !minimal_memory && (cfg!(feature = "gpu") || stats) {
             timer_start_debug!(PRE_CALCULATE_WC);
@@ -2909,7 +2914,6 @@ where
             handle.join().unwrap();
         }
 
-        timer_stop_and_log_info!(CALCULATING_WITNESS);
         Ok(())
     }
 
