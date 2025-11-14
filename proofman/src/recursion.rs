@@ -788,10 +788,15 @@ fn generate_witness<F: PrimeField64>(
     };
 
     if res != 0 {
-        let debug_file_path = output_dir_path.join("bad_zkin.bin");
+        let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+        let debug_file_path = output_dir_path.join(format!(
+            "proof_{instance_id}_ag{}_air{}_t{:?}_{}.bin",
+            setup.airgroup_id, setup.air_id, setup.setup_type, ts
+        ));
         let mut file = File::create(&debug_file_path)?;
         let proof_data = cast_slice(zkin);
         file.write_all(proof_data)?;
+        file.flush()?;
 
         return Err(ProofmanError::InvalidProof(format!(
             "Error generating witness for instance id {} [{}:{}] of type {:?}",

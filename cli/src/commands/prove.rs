@@ -187,12 +187,14 @@ impl ProveCmd {
                 let output_file_path = self.output_dir.join("proofs/vadcop_final_proof.bin");
                 let mut file = File::create(&output_file_path)?;
                 file.write_all(proof_data)?;
+                file.flush()?;
 
                 // Save the compressed vadcop final proof using zstd (fastest compression level)
                 let compressed_output_path = self.output_dir.join("proofs/vadcop_final_proof.compressed.bin");
                 let compressed_file = File::create(&compressed_output_path)?;
                 let mut encoder = Encoder::new(compressed_file, 1)?;
                 encoder.write_all(proof_data)?;
+                encoder.flush()?;
                 encoder.finish()?;
 
                 let original_size = vadcop_final_proof.len() * 8;

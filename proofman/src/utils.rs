@@ -90,9 +90,7 @@ pub fn print_summary<F: PrimeField64>(
                     (setup.stark_info.map_sections_n["cm1"] * (1 << setup.stark_info.stark_struct.n_bits)) as f64 * 8.0
                 }
             } else {
-                (*setup.stark_info.map_sections_n.get("cm1").unwrap() * (1 << (setup.stark_info.stark_struct.n_bits)))
-                    as f64
-                    * 8.0
+                (setup.stark_info.map_sections_n["cm1"] * (1 << (setup.stark_info.stark_struct.n_bits))) as f64 * 8.0
             };
             let memory_instance = setup.prover_buffer_size as f64 * 8.0;
             let memory_fixed =
