@@ -2165,10 +2165,10 @@ where
                 }) {
                     stored_contributions.push(contrib.challenge.iter().map(|&x| F::from_u64(x)).collect());
                 } else {
-                    return Err(ProofmanError::ProofmanError(format!(
+                    self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::ProofmanError(format!(
                         "Missing contribution from worker {} and airgroup id {}",
                         w, proof.airgroup_id
-                    )));
+                    ))));
                 }
             }
 
@@ -2196,16 +2196,19 @@ where
             let valid_recursive_proof = verify_recursive2(proof_bytes, vk_bytes);
 
             if !valid_recursive_proof {
-                return Err(ProofmanError::InvalidProof("Received aggregated proof is invalid!".into()));
+                self.cancellation_info
+                    .write()
+                    .unwrap()
+                    .cancel(Some(ProofmanError::InvalidProof("Received aggregated proof is invalid!".into())));
             }
             timer_stop_and_log_info!(VERIFYING_OUTER_AGGREGATED_PROOF);
 
             let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
             for (c, value) in workers_acc_challenge.iter().enumerate() {
                 if value.as_canonical_u64() != proof_acc_challenge[c] {
-                    return Err(ProofmanError::InvalidProof(
+                    self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(
                         "Aggregated proof challenge does not match the expected challenge".into(),
-                    ));
+                    )));
                 }
             }
             self.received_agg_proofs.write().unwrap()[proof.airgroup_id as usize].extend(proof.worker_indexes);
