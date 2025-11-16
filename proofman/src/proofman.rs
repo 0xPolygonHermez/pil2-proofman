@@ -2258,6 +2258,7 @@ where
             self.total_outer_agg_proofs.increment();
             launch_callback_c(id as u64, ProofType::Recursive2.into());
         }
+
         if last_proof || self.cancellation_info.read().unwrap().token.is_cancelled() {
             if !self.cancellation_info.read().unwrap().token.is_cancelled() {
                 for (airgroup_id, worker_indexes) in self.received_agg_proofs.read().unwrap().iter().enumerate() {
