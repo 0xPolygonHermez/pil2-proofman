@@ -2203,40 +2203,44 @@ where
             }
             timer_stop_and_log_info!(VERIFYING_OUTER_AGGREGATED_PROOF);
 
-            let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
-            for (c, value) in workers_acc_challenge.iter().enumerate() {
-                if value.as_canonical_u64() != proof_acc_challenge[c] {
-                    self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(
-                        "Aggregated proof challenge does not match the expected challenge".into(),
-                    )));
+            if !cancellation_info.read().unwrap().token.is_cancelled() {
+                let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
+                for (c, value) in workers_acc_challenge.iter().enumerate() {
+                    if value.as_canonical_u64() != proof_acc_challenge[c] {
+                        self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(
+                            "Aggregated proof challenge does not match the expected challenge".into(),
+                        )));
+                    }
                 }
+                self.received_agg_proofs.write().unwrap()[proof.airgroup_id as usize].extend(proof.worker_indexes);
+                let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
+                let id = rec2_proofs.len();
+                let agg_proof = Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, Some(id), proof.proof);
+                rec2_proofs.push(Some(agg_proof));
+                self.total_outer_agg_proofs.increment();
+                launch_callback_c(id as u64, ProofType::Recursive2.into());
             }
-            self.received_agg_proofs.write().unwrap()[proof.airgroup_id as usize].extend(proof.worker_indexes);
-            let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
-            let id = rec2_proofs.len();
-            let agg_proof = Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, Some(id), proof.proof);
-            rec2_proofs.push(Some(agg_proof));
-            self.total_outer_agg_proofs.increment();
-            launch_callback_c(id as u64, ProofType::Recursive2.into());
         }
 
-        if last_proof {
-            for (airgroup_id, worker_indexes) in self.received_agg_proofs.read().unwrap().iter().enumerate() {
-                let n_agg_proofs = worker_indexes.len();
-                if n_agg_proofs == 0 {
-                    continue;
-                }
-                let n_agg_proofs_to_be_done = total_recursive_proofs(n_agg_proofs + 1);
-                if n_agg_proofs_to_be_done.has_remaining {
-                    let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
-                    let id = rec2_proofs.len();
-                    let setup = self.setups.get_setup(airgroup_id, 0, &ProofType::Recursive2)?;
-                    let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
-                    let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
-                    let null_proof = Proof::new(ProofType::Recursive2, airgroup_id, 0, Some(id), null_proof_buffer);
-                    self.total_outer_agg_proofs.increment();
-                    rec2_proofs.push(Some(null_proof));
-                    launch_callback_c(id as u64, ProofType::Recursive2.into());
+        if last_proof || cancellation_info.read().unwrap().token.is_cancelled() {
+            if !cancellation_info.read().unwrap().token.is_cancelled() {
+                for (airgroup_id, worker_indexes) in self.received_agg_proofs.read().unwrap().iter().enumerate() {
+                    let n_agg_proofs = worker_indexes.len();
+                    if n_agg_proofs == 0 {
+                        continue;
+                    }
+                    let n_agg_proofs_to_be_done = total_recursive_proofs(n_agg_proofs + 1);
+                    if n_agg_proofs_to_be_done.has_remaining {
+                        let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
+                        let id = rec2_proofs.len();
+                        let setup = self.setups.get_setup(airgroup_id, 0, &ProofType::Recursive2)?;
+                        let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
+                        let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
+                        let null_proof = Proof::new(ProofType::Recursive2, airgroup_id, 0, Some(id), null_proof_buffer);
+                        self.total_outer_agg_proofs.increment();
+                        rec2_proofs.push(Some(null_proof));
+                        launch_callback_c(id as u64, ProofType::Recursive2.into());
+                    }
                 }
             }
 
