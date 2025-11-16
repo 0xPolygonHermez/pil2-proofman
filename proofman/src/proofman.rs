@@ -2206,7 +2206,6 @@ where
                         "Missing contribution from worker {} and airgroup id {}",
                         w, proof.airgroup_id
                     ))));
-                    break;
                 }
             }
 
@@ -2234,7 +2233,10 @@ where
             let valid_recursive_proof = verify_recursive2(proof_bytes, vk_bytes);
 
             if !valid_recursive_proof {
-                return Err(ProofmanError::InvalidProof("Received aggregated proof is invalid!".into()));
+                self.cancellation_info
+                    .write()
+                    .unwrap()
+                    .cancel(Some(ProofmanError::InvalidProof("Received aggregated proof is invalid!".into())));
             }
             timer_stop_and_log_info!(VERIFYING_OUTER_AGGREGATED_PROOF);
 
