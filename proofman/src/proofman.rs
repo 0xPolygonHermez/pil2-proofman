@@ -324,7 +324,7 @@ where
         }
     }
 
-    fn check_cancel(&self) -> ProofmanResult<()> {
+    fn check_cancel(&self, notify_mpi: bool) -> ProofmanResult<()> {
         let error = {
             let mut cancellation_info = self.cancellation_info.write().unwrap();
             if !cancellation_info.token.is_cancelled() {
@@ -334,7 +334,7 @@ where
         };
 
         let error = if let Some(e) = error {
-            if !matches!(e, ProofmanError::MpiCancellation(_)) {
+            if !matches!(e, ProofmanError::MpiCancellation(_)) && notify_mpi {
                 tracing::info!("Notifying error to other MPI processes: {:?}", e);
                 self.mpi_ctx.notify_cancellation();
             }
@@ -343,7 +343,9 @@ where
             Err(ProofmanError::Cancelled)
         };
         self.reset()?;
-        self.set_barrier();
+        if notify_mpi {
+            self.set_barrier();
+        }
         error
     }
 
@@ -1402,7 +1404,7 @@ where
                 handle.join().unwrap();
             }
 
-            self.check_cancel()?;
+            self.check_cancel(true)?;
 
             // get roots still in the gpu
             get_stream_proofs_c(self.d_buffers.get_ptr());
@@ -1950,7 +1952,7 @@ where
             handle.join().unwrap();
         }
 
-        self.check_cancel()?;
+        self.check_cancel(true)?;
 
         timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
 
@@ -1991,7 +1993,7 @@ where
                     &mut agg_proofs,
                 )?;
 
-                self.check_cancel()?;
+                self.check_cancel(true)?;
 
                 timer_stop_and_log_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
             } else {
@@ -2224,6 +2226,7 @@ where
             self.total_outer_agg_proofs.increment();
             launch_callback_c(id as u64, ProofType::Recursive2.into());
         }
+
         if last_proof || self.cancellation_info.read().unwrap().token.is_cancelled() {
             if !self.cancellation_info.read().unwrap().token.is_cancelled() {
                 for (airgroup_id, worker_indexes) in self.received_agg_proofs.read().unwrap().iter().enumerate() {
@@ -2268,7 +2271,7 @@ where
                 }
             }
 
-            self.check_cancel()?;
+            self.check_cancel(false)?;
 
             let agg_proofs_data: Vec<AggProofs> = (0..self.pctx.global_info.air_groups.len())
                 .map(|airgroup_id| {
@@ -2493,7 +2496,7 @@ where
             self.cancellation_info.write().unwrap().cancel(Some(e));
         }
 
-        self.check_cancel()?;
+        self.check_cancel(true)?;
 
         print_summary_info(&self.pctx, &self.sctx, &self.mpi_ctx, &self.packed_info, self.verbose_mode)?;
 
@@ -2681,7 +2684,7 @@ where
 
         recursive2_handle.join().unwrap();
 
-        self.check_cancel()?;
+        self.check_cancel(false)?;
 
         if send_proofs {
             self.recursive2_proofs.iter().enumerate().for_each(|(airgroup_id, lock)| {
