@@ -2240,7 +2240,7 @@ where
             }
             timer_stop_and_log_info!(VERIFYING_OUTER_AGGREGATED_PROOF);
 
-            if !cancellation_info.read().unwrap().token.is_cancelled() {
+            if !self.cancellation_info.read().unwrap().token.is_cancelled() {
                 let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
                 for (c, value) in workers_acc_challenge.iter().enumerate() {
                     if value.as_canonical_u64() != proof_acc_challenge[c] {
@@ -2259,8 +2259,8 @@ where
             }
         }
 
-        if last_proof || cancellation_info.read().unwrap().token.is_cancelled() {
-            if !cancellation_info.read().unwrap().token.is_cancelled() {
+        if last_proof || self.cancellation_info.read().unwrap().token.is_cancelled() {
+            if !self.cancellation_info.read().unwrap().token.is_cancelled() {
                 for (airgroup_id, worker_indexes) in self.received_agg_proofs.read().unwrap().iter().enumerate() {
                     let n_agg_proofs = worker_indexes.len();
                     if n_agg_proofs == 0 {
