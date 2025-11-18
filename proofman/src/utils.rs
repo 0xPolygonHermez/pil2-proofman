@@ -24,9 +24,10 @@ pub fn print_summary_info<F: PrimeField64>(
     mpi_ctx: &MpiCtx,
     packed_info: &HashMap<(usize, usize), PackedInfo>,
     verbose_mode: VerboseMode,
-) -> ProofmanResult<()> {
+) -> ProofmanResult<String> {
+    let mut summary = String::new();
     if mpi_ctx.rank == 0 {
-        print_summary(pctx, sctx, packed_info, true, verbose_mode)?;
+        summary = print_summary(pctx, sctx, packed_info, true, verbose_mode)?;
     }
 
     if mpi_ctx.n_processes > 1 {
@@ -39,9 +40,9 @@ pub fn print_summary_info<F: PrimeField64>(
             max_deviation
         );
 
-        print_summary(pctx, sctx, packed_info, false, verbose_mode)?;
+        let _ = print_summary(pctx, sctx, packed_info, false, verbose_mode)?;
     }
-    Ok(())
+    Ok(summary)
 }
 
 pub fn print_summary<F: PrimeField64>(
@@ -50,7 +51,9 @@ pub fn print_summary<F: PrimeField64>(
     packed_info: &HashMap<(usize, usize), PackedInfo>,
     global: bool,
     verbose_mode: VerboseMode,
-) -> ProofmanResult<()> {
+) -> ProofmanResult<String> {
+    let mut summary_info = String::new();
+
     let mut air_info = HashMap::new();
 
     let mut air_instances = HashMap::new();
@@ -181,15 +184,20 @@ pub fn print_summary<F: PrimeField64>(
                 })
                 .collect();
 
-            summary.push(format!("Total instances: {}", n_instances));
+            summary.push(format!("Total {} instances: {}", if global { "global" } else { "local" }, n_instances));
 
             tracing::info!("{} | {}", air_group.bright_white().bold(), summary.join(" | "));
+
+            if global {                
+                summary_info = summary.join(" | ");
+            }
+            
         }
 
         tracing::info!("{}", "--------------------------------".bright_white().bold());
     }
 
-    Ok(())
+    Ok(summary_info)
 }
 
 fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool, final_snark: bool) -> ProofmanResult<()> {
