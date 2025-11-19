@@ -6,17 +6,17 @@
 #![allow(dead_code)]
 
 use proofman_common as common;
-pub use proofman_macros::trace;
+use proofman_common::GenericTrace;
+use proofman_common::PackedInfoConst;
+pub use proofman_macros::trace_row;
 pub use proofman_macros::values;
-
+use fields::PrimeField64;
 use std::fmt;
-
-use rayon::prelude::*;
 
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "9d2300fc201aca871cec5e470b95c60255c67e0735425fe2520067d77e0416c5";
+pub const PILOUT_HASH: &str = "fc0250e2437478d6945d9451a2563b399234cddcb0d215cc7087055dc43077d1";
 
 //AIRGROUP CONSTANTS
 
@@ -35,45 +35,60 @@ pub const U_16_AIR_AIR_IDS: &[usize] = &[3];
 pub const SPECIFIED_RANGES_AIR_IDS: &[usize] = &[4];
 
   
-trace!(SimpleLeftFixed<F> {
+trace_row!(SimpleLeftFixedRow<F> {
  __L1__: F,
-},  0, 0, 8 );
+});
+pub type SimpleLeftFixed<F> = GenericTrace<SimpleLeftFixedRow<F>, 8, 0, 0>;
 
-trace!(SimpleLeftTrace<F> {
- a: F, b: F, c: F, d: F, e: F, f: F, g: F, h: F, k: [F; 7],
-},  0, 0, 8 );
+trace_row!(SimpleLeftTraceRow<F> {
+ a:F, b:F, c:F, d:F, e:F, f:F, g:F, h:F, k:[F; 7],
+});
+pub type SimpleLeftTrace<F> = GenericTrace<SimpleLeftTraceRow<F>, 8, 0, 0>;
 
-trace!(SimpleRightFixed<F> {
+
+trace_row!(SimpleRightFixedRow<F> {
  __L1__: F,
-},  0, 1, 8 );
+});
+pub type SimpleRightFixed<F> = GenericTrace<SimpleRightFixedRow<F>, 8, 0, 1>;
 
-trace!(SimpleRightTrace<F> {
- a: F, b: F, c: F, d: F, mul: F,
-},  0, 1, 8 );
+trace_row!(SimpleRightTraceRow<F> {
+ a:F, b:F, c:F, d:F, mul:F,
+});
+pub type SimpleRightTrace<F> = GenericTrace<SimpleRightTraceRow<F>, 8, 0, 1>;
 
-trace!(U8AirFixed<F> {
+
+trace_row!(U8AirFixedRow<F> {
  RANGE: [F; 2], __L1__: F,
-},  0, 2, 128 );
+});
+pub type U8AirFixed<F> = GenericTrace<U8AirFixedRow<F>, 128, 0, 2>;
 
-trace!(U8AirTrace<F> {
- mul: [F; 2],
-},  0, 2, 128 );
+trace_row!(U8AirTraceRow<F> {
+ mul:[F; 2],
+});
+pub type U8AirTrace<F> = GenericTrace<U8AirTraceRow<F>, 128, 0, 2>;
 
-trace!(U16AirFixed<F> {
+
+trace_row!(U16AirFixedRow<F> {
  RANGE: [F; 4], __L1__: F,
-},  0, 3, 16384 );
+});
+pub type U16AirFixed<F> = GenericTrace<U16AirFixedRow<F>, 16384, 0, 3>;
 
-trace!(U16AirTrace<F> {
- mul: [F; 4],
-},  0, 3, 16384 );
+trace_row!(U16AirTraceRow<F> {
+ mul:[F; 4],
+});
+pub type U16AirTrace<F> = GenericTrace<U16AirTraceRow<F>, 16384, 0, 3>;
 
-trace!(SpecifiedRangesFixed<F> {
+
+trace_row!(SpecifiedRangesFixedRow<F> {
  RANGE: [F; 11], __L1__: F,
-},  0, 4, 64 );
+});
+pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 64, 0, 4>;
 
-trace!(SpecifiedRangesTrace<F> {
- mul: [F; 11],
-},  0, 4, 64 );
+trace_row!(SpecifiedRangesTraceRow<F> {
+ mul:[F; 11],
+});
+pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 64, 0, 4>;
+
 
 values!(SimpleLeftAirGroupValues<F> {
  gsum_result: FieldExtension<F>,
@@ -94,3 +109,6 @@ values!(U16AirAirGroupValues<F> {
 values!(SpecifiedRangesAirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
+
+pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
+];

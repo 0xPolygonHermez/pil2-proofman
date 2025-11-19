@@ -11,7 +11,7 @@ pub struct PilOutProxy {
 }
 
 impl PilOutProxy {
-    pub fn new(pilout_filename: &str) -> Result<PilOutProxy, Box<dyn std::error::Error>> {
+    pub fn new(pilout_filename: &str) -> Result<PilOutProxy, Box<dyn std::error::Error + Send + Sync>> {
         let pilout = Self::load_pilout(pilout_filename)?;
         Ok(PilOutProxy { pilout })
     }

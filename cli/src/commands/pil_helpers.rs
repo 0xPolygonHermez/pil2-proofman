@@ -114,7 +114,7 @@ struct StageColumnCtx {
 }
 
 impl PilHelpersCmd {
-    pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         initialize_logger(self.verbose.into(), None);
 
         tracing::info!("{}", format!("{} Pil-helpers", format!("{: >12}", "Command").bright_green().bold()));
@@ -368,7 +368,7 @@ impl PilHelpersCmd {
                                             }
                                         })
                                 })
-                                .unwrap_or_else(|| panic!("hint not found for name {}", name));
+                                .unwrap_or_else(|| panic!("hint not found for name {name}"));
 
                             let bits = hint
                                 .hint_fields
@@ -399,7 +399,7 @@ impl PilHelpersCmd {
                                 16 => "u16".to_string(),
                                 32 => "u32".to_string(),
                                 64 => "u64".to_string(),
-                                _ => format!("ubit({})", bits), // dynamically include bits
+                                _ => format!("ubit({bits})"), // dynamically include bits
                             };
 
                             let total_lengths = symbol.lengths.iter().product::<u32>();

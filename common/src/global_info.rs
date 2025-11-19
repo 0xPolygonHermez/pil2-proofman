@@ -5,6 +5,7 @@ use serde_json::Value;
 use std::fs;
 
 use crate::ProofType;
+use crate::{ProofmanResult, ProofmanError};
 
 #[derive(Clone, Deserialize)]
 pub struct ProofValueMap {
@@ -82,37 +83,33 @@ pub struct GlobalInfoStepsFRI {
 }
 
 impl GlobalInfo {
-    pub fn new(proving_key_path: &Path) -> Self {
+    pub fn new(proving_key_path: &Path) -> ProofmanResult<Self> {
         tracing::debug!("··· Loading GlobalInfo JSON {}", proving_key_path.display());
 
-        let global_info = Self::from_file(&proving_key_path.display().to_string());
-
-        global_info
+        Self::from_file(&proving_key_path.display().to_string())
     }
 
-    pub fn from_file(folder_path: &String) -> Self {
-        let file_path = folder_path.to_string() + "/pilout.globalInfo.json";
-        let global_info_json =
-            fs::read_to_string(&file_path).unwrap_or_else(|_| panic!("Failed to read file {file_path}"));
+    pub fn from_file(folder_path: &String) -> ProofmanResult<Self> {
+        let file_path = Path::new(folder_path).join("pilout.globalInfo.json");
 
-        let mut global_info_value: Value = serde_json::from_str(&global_info_json)
-            .unwrap_or_else(|err| panic!("Failed to parse JSON file: {file_path}: {err}"));
+        // Read the JSON file
+        let global_info_json = fs::read_to_string(&file_path)?;
+
+        // Parse the JSON into a Value
+        let mut global_info_value: Value = serde_json::from_str(&global_info_json)?;
 
         // Add the folder_path to the JSON object
         if let Some(obj) = global_info_value.as_object_mut() {
             obj.insert("folder_path".to_string(), Value::String(folder_path.to_string()));
         } else {
-            panic!("JSON is not an object: {file_path}");
+            return Err(ProofmanError::InvalidConfiguration(format!("JSON is not an object: {}", file_path.display())));
         }
 
         // Serialize the updated JSON object back to a string
-        let updated_global_info_json = serde_json::to_string(&global_info_value)
-            .unwrap_or_else(|err| panic!("Failed to serialize updated JSON: {err}"));
-
-        // Deserialize the updated JSON string into the `GlobalInfo` struct
-        let global_info: GlobalInfo = serde_json::from_str(&updated_global_info_json)
-            .unwrap_or_else(|err| panic!("Failed to parse updated JSON file: {file_path}: {err}"));
-        global_info
+        let updated_global_info_json = serde_json::to_string(&global_info_value)?;
+        // Deserialize into GlobalInfo
+        let global_info: GlobalInfo = serde_json::from_str(&updated_global_info_json)?;
+        Ok(global_info)
     }
 
     pub fn get_proving_key_path(&self) -> PathBuf {

@@ -3,7 +3,7 @@ use std::{os::raw::c_void, path::PathBuf};
 use fields::PrimeField64;
 use proofman_starks_lib_c::{
     calculate_const_tree_c, calculate_const_tree_bn128_c, load_const_pols_c, load_const_tree_c, write_const_tree_c,
-    write_const_tree_bn128_c, write_fixed_cols_bin_c, prepare_blocks_c,
+    write_const_tree_bn128_c, write_fixed_cols_bin_c, prepare_blocks_c, pack_const_pols_c,
 };
 use proofman_util::{create_buffer_fast, timer_start_info, timer_stop_and_log_info};
 
@@ -73,7 +73,7 @@ pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
 
     load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_pols.len() as u64 * 8);
 
-    tracing::info!("··· Loading const tree for AIR {} of type {:?}", setup.air_name, setup.setup_type);
+    tracing::debug!("··· Loading const tree for AIR {} of type {:?}", setup.air_name, setup.setup_type);
 
     let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
 
@@ -104,6 +104,10 @@ pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
         false
     };
 
+    if cfg!(feature = "gpu") {
+        pack_const_pols_c(p_stark_info, const_pols.as_ptr() as *mut u8, setup.const_pols_path.as_str());
+    }
+
     if !valid_root {
         timer_start_info!(WRITING_CONST_TREE);
         if setup.stark_info.stark_struct.verification_hash_type == "GL" {
@@ -114,13 +118,6 @@ pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
                     1 << setup.stark_info.stark_struct.n_bits,
                     setup.stark_info.n_constants,
                 );
-                std::fs::write(&setup.const_pols_path, unsafe {
-                    std::slice::from_raw_parts(
-                        const_pols_transposed.as_ptr() as *const u8,
-                        const_pols_transposed.len() * std::mem::size_of::<F>(),
-                    )
-                })
-                .unwrap();
                 calculate_const_tree_c(
                     p_stark_info,
                     const_pols_transposed.as_ptr() as *mut u8,

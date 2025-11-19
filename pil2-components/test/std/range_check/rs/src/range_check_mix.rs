@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use witness::{WitnessComponent, execute, define_wc_with_std};
 
-use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanError, ProofmanResult, SetupCtx};
 
 use fields::PrimeField64;
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -21,28 +21,28 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckMix<F> {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> ProofmanResult<()> {
         if stage == 1 {
             let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 
-            let mut trace = RangeCheckMixTrace::new_from_vec(buffer_pool.take_buffer());
+            let mut trace = RangeCheckMixTrace::new_from_vec(buffer_pool.take_buffer())?;
             let num_rows = trace.num_rows();
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
-            let range1 = self.std_lib.get_range_id(0, (1 << 8) - 1, Some(true));
-            let range2 = self.std_lib.get_range_id(50, (1 << 7) - 1, Some(true));
-            let range3 = self.std_lib.get_range_id(-1, 1 << 3, Some(true));
-            let range4 = self.std_lib.get_range_id(-(1 << 7) + 1, -50, Some(true));
+            let range1 = self.std_lib.get_range_id(0, (1 << 8) - 1, Some(true))?;
+            let range2 = self.std_lib.get_range_id(50, (1 << 7) - 1, Some(true))?;
+            let range3 = self.std_lib.get_range_id(-1, 1 << 3, Some(true))?;
+            let range4 = self.std_lib.get_range_id(-(1 << 7) + 1, -50, Some(true))?;
 
-            let range5 = self.std_lib.get_range_id(0, (1 << 7) - 1, Some(false));
-            let range6 = self.std_lib.get_range_id(0, (1 << 4) - 1, Some(false));
-            let range7 = self.std_lib.get_range_id(1 << 5, (1 << 8) - 1, Some(false));
-            let range8 = self.std_lib.get_range_id(1 << 8, (1 << 9) - 1, Some(false));
+            let range5 = self.std_lib.get_range_id(0, (1 << 7) - 1, Some(false))?;
+            let range6 = self.std_lib.get_range_id(0, (1 << 4) - 1, Some(false))?;
+            let range7 = self.std_lib.get_range_id(1 << 5, (1 << 8) - 1, Some(false))?;
+            let range8 = self.std_lib.get_range_id(1 << 8, (1 << 9) - 1, Some(false))?;
 
-            let range9 = self.std_lib.get_range_id(5225, 29023, Some(false));
+            let range9 = self.std_lib.get_range_id(5225, 29023, Some(false))?;
             // let range10 = self.std_lib.get_range_id(-8719, -7269, Some(false));
-            let range11 = self.std_lib.get_range_id(-10, 10, Some(false));
+            let range11 = self.std_lib.get_range_id(-10, 10, Some(false))?;
 
             for i in 0..num_rows {
                 // First interface
@@ -132,12 +132,13 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckMix<F> {
 
                         self.std_lib.range_check(range5, val as i64, 1);
                     }
-                    _ => panic!("Invalid range"),
+                    _ => return Err(ProofmanError::StdError("Invalid range".to_string())),
                 }
             }
 
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
             pctx.add_air_instance(air_instance, instance_ids[0]);
         }
+        Ok(())
     }
 }

@@ -91,17 +91,19 @@ uint64_t setHintFieldGPU(SetupCtx& setupCtx, StepsParams& params, Goldilocks::El
     if(hintFieldVal.operand == opType::cm) {
         setPolynomialGPU(setupCtx, params.aux_trace, values, hintFieldVal.id, stream);
     } else if(hintFieldVal.operand == opType::airgroupvalue) {
-        if(setupCtx.starkInfo.airgroupValuesMap[hintFieldVal.id].stage > 1) {
-            copyValueGPU(params.airgroupValues + FIELD_EXTENSION*hintFieldVal.id, values, FIELD_EXTENSION, stream);      
-        } else {
-            copyValueGPU(params.airgroupValues + FIELD_EXTENSION*hintFieldVal.id, values, 1, stream);
+        uint64_t pos = 0;
+        for(uint64_t i = 0; i < hintFieldVal.id; ++i) {
+            pos += setupCtx.starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
         }
+        uint64_t dim = setupCtx.starkInfo.airgroupValuesMap[hintFieldVal.id].stage == 1 ? 1 : FIELD_EXTENSION;
+        copyValueGPU(params.airgroupValues + pos, values, dim, stream);
     } else if(hintFieldVal.operand == opType::airvalue) {
-        if(setupCtx.starkInfo.airValuesMap[hintFieldVal.id].stage > 1) {
-            copyValueGPU(params.airValues + FIELD_EXTENSION*hintFieldVal.id, values, FIELD_EXTENSION, stream);
-        } else {
-            copyValueGPU(params.airValues + FIELD_EXTENSION*hintFieldVal.id, values, 1, stream);
+        uint64_t pos = 0;
+        for(uint64_t i = 0; i < hintFieldVal.id; ++i) {
+            pos += setupCtx.starkInfo.airValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
         }
+        uint64_t dim = setupCtx.starkInfo.airValuesMap[hintFieldVal.id].stage == 1 ? 1 : FIELD_EXTENSION;
+        copyValueGPU(params.airValues + pos, values, dim, stream);
     } else {
         zklog.error("Only committed pols and airgroupvalues can be set");
         exitProcess();

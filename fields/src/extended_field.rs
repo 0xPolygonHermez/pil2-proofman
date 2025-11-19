@@ -82,7 +82,7 @@ impl<F: Field> CubicExtensionField<F> {
 
     pub fn from_array(arr: &[F]) -> Self {
         // Ensure the array has the correct size
-        assert!(arr.len() == 3, "Array must have length 3");
+        debug_assert!(arr.len() == 3, "Array must have length 3");
 
         let mut value: [F; 3] = Default::default();
         value.copy_from_slice(arr);

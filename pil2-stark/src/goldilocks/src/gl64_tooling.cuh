@@ -39,7 +39,7 @@ struct AirInstanceInfo {
     uint64_t const_pols_offset;
     uint64_t const_tree_offset;
 
-    bool stored = false;
+    bool stored_tree = false;
 
     ExpressionsGPU *expressions_gpu;
     int64_t *opening_points;
@@ -283,7 +283,7 @@ struct StreamData{
     std::mutex mutex_stream_selection;
     
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_){
-        uint64_t maxExps = 1000; // TODO: CALCULATE IT PROPERLY!
+        uint64_t maxExps = 20000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
         timer.init(stream);

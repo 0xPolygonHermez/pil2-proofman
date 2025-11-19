@@ -6,17 +6,17 @@
 #![allow(dead_code)]
 
 use proofman_common as common;
-pub use proofman_macros::trace;
+use proofman_common::GenericTrace;
+use proofman_common::PackedInfoConst;
+pub use proofman_macros::trace_row;
 pub use proofman_macros::values;
-
+use fields::PrimeField64;
 use std::fmt;
-
-use rayon::prelude::*;
 
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "fcab6ab9f984eb632640756a5a327dc425a49e79d8d893095ab0cc4bce19f0e6";
+pub const PILOUT_HASH: &str = "17fe0ee6eb2371ca772bfa7b4cd07f73568133ee7955bba4d0425e7489453f97";
 
 //AIRGROUP CONSTANTS
 
@@ -90,37 +90,49 @@ values!(DirectUpdateProofValues<F> {
  b_proofval_0: F, b_proofval_1: F, d_proofval_0: F, d_proofval_1: F, perform_global_update_0: F, perform_global_update_1: F, b_proofval_0_s: F, b_proofval_1_s: F, d_proofval_0_s: F, d_proofval_1_s: F, perform_global_update_0_s: F, perform_global_update_1_s: F,
 });
  
-trace!(DirectUpdateProdLocalFixed<F> {
+trace_row!(DirectUpdateProdLocalFixedRow<F> {
  __L1__: F,
-},  0, 0, 16 );
+});
+pub type DirectUpdateProdLocalFixed<F> = GenericTrace<DirectUpdateProdLocalFixedRow<F>, 16, 0, 0>;
 
-trace!(DirectUpdateProdLocalTrace<F> {
- a: [F; 2], b: [F; 2], c: [F; 2], perform_operation: F,
-},  0, 0, 16 );
+trace_row!(DirectUpdateProdLocalTraceRow<F> {
+ a:[F; 2], b:[F; 2], c:[F; 2], perform_operation:F,
+});
+pub type DirectUpdateProdLocalTrace<F> = GenericTrace<DirectUpdateProdLocalTraceRow<F>, 16, 0, 0>;
 
-trace!(DirectUpdateProdGlobalFixed<F> {
+
+trace_row!(DirectUpdateProdGlobalFixedRow<F> {
  __L1__: F,
-},  0, 1, 16 );
+});
+pub type DirectUpdateProdGlobalFixed<F> = GenericTrace<DirectUpdateProdGlobalFixedRow<F>, 16, 0, 1>;
 
-trace!(DirectUpdateProdGlobalTrace<F> {
- c: [F; 2], d: [F; 2], perform_operation: F,
-},  0, 1, 16 );
+trace_row!(DirectUpdateProdGlobalTraceRow<F> {
+ c:[F; 2], d:[F; 2], perform_operation:F,
+});
+pub type DirectUpdateProdGlobalTrace<F> = GenericTrace<DirectUpdateProdGlobalTraceRow<F>, 16, 0, 1>;
 
-trace!(DirectUpdateSumLocalFixed<F> {
+
+trace_row!(DirectUpdateSumLocalFixedRow<F> {
  __L1__: F,
-},  1, 0, 32 );
+});
+pub type DirectUpdateSumLocalFixed<F> = GenericTrace<DirectUpdateSumLocalFixedRow<F>, 32, 1, 0>;
 
-trace!(DirectUpdateSumLocalTrace<F> {
- a: [F; 2], b: [F; 2], c: [F; 2], perform_operation: F,
-},  1, 0, 32 );
+trace_row!(DirectUpdateSumLocalTraceRow<F> {
+ a:[F; 2], b:[F; 2], c:[F; 2], perform_operation:F,
+});
+pub type DirectUpdateSumLocalTrace<F> = GenericTrace<DirectUpdateSumLocalTraceRow<F>, 32, 1, 0>;
 
-trace!(DirectUpdateSumGlobalFixed<F> {
+
+trace_row!(DirectUpdateSumGlobalFixedRow<F> {
  __L1__: F,
-},  1, 1, 32 );
+});
+pub type DirectUpdateSumGlobalFixed<F> = GenericTrace<DirectUpdateSumGlobalFixedRow<F>, 32, 1, 1>;
 
-trace!(DirectUpdateSumGlobalTrace<F> {
- c: [F; 2], d: [F; 2], perform_operation: F,
-},  1, 1, 32 );
+trace_row!(DirectUpdateSumGlobalTraceRow<F> {
+ c:[F; 2], d:[F; 2], perform_operation:F,
+});
+pub type DirectUpdateSumGlobalTrace<F> = GenericTrace<DirectUpdateSumGlobalTraceRow<F>, 32, 1, 1>;
+
 
 values!(DirectUpdateProdLocalAirValues<F> {
  c_airval: [F; 2], perform_direct_update: [F; 2],
@@ -145,3 +157,6 @@ values!(DirectUpdateSumLocalAirGroupValues<F> {
 values!(DirectUpdateSumGlobalAirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
+
+pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
+];

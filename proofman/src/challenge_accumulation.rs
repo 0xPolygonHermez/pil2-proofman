@@ -4,13 +4,29 @@ use fields::{poseidon2_hash, ExtensionField, GoldilocksQuinticExtension, PrimeFi
 use std::ops::Add;
 use proofman_starks_lib_c::{calculate_hash_c};
 use transcript::FFITranscript;
-use proofman_util::{timer_start_info, timer_stop_and_log_info};
+use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug};
 use std::sync::Mutex;
 
 use std::ffi::c_void;
 
 use crate::ContributionsInfo;
 use rayon::prelude::*;
+
+fn _print_challenges<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[[F; 4]]) {
+    let my_instances = pctx.dctx_get_process_instances();
+
+    for instance_id in my_instances.iter() {
+        let root_contribution = roots_contributions[*instance_id];
+        tracing::info!(
+            "··· Instance {}: Root contribution: [{}, {}, {}, {}]",
+            instance_id,
+            root_contribution[0],
+            root_contribution[1],
+            root_contribution[2],
+            root_contribution[3]
+        );
+    }
+}
 
 pub fn calculate_internal_contributions<F>(
     pctx: &ProofCtx<F>,
@@ -21,7 +37,7 @@ where
     F: PrimeField64,
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
-    timer_start_info!(CALCULATE_INTERNAL_CONTRIBUTION);
+    timer_start_debug!(CALCULATE_INTERNAL_CONTRIBUTION);
     let my_instances = pctx.dctx_get_process_instances();
 
     let contributions_size = match pctx.global_info.curve {
@@ -67,7 +83,7 @@ where
 
     let partial_contribution_u64: Vec<u64> = partial_contribution.iter().map(|&x| x.as_canonical_u64()).collect();
 
-    timer_stop_and_log_info!(CALCULATE_INTERNAL_CONTRIBUTION);
+    timer_stop_and_log_debug!(CALCULATE_INTERNAL_CONTRIBUTION);
 
     partial_contribution_u64
 }

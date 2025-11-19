@@ -6,17 +6,17 @@
 #![allow(dead_code)]
 
 use proofman_common as common;
-pub use proofman_macros::trace;
+use proofman_common::GenericTrace;
+use proofman_common::PackedInfoConst;
+pub use proofman_macros::trace_row;
 pub use proofman_macros::values;
-
+use fields::PrimeField64;
 use std::fmt;
-
-use rayon::prelude::*;
 
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "9df5bb06383f9395f55412e494d511dad9ef223a1e7a3e5d960604b60334214d";
+pub const PILOUT_HASH: &str = "b39d81aebd22ea033cfe3665f9740c5597e8552dd023a9484747e9e59ab44302";
 
 //AIRGROUP CONSTANTS
 
@@ -47,93 +47,126 @@ pub const VIRTUAL_TABLE_0_AIR_IDS: &[usize] = &[9];
 pub const VIRTUAL_TABLE_1_AIR_IDS: &[usize] = &[10];
 
   
-trace!(Component1Fixed<F> {
+trace_row!(Component1FixedRow<F> {
  __L1__: F,
-},  0, 0, 32 );
+});
+pub type Component1Fixed<F> = GenericTrace<Component1FixedRow<F>, 32, 0, 0>;
 
-trace!(Component1Trace<F> {
- a: [F; 5],
-},  0, 0, 32 );
+trace_row!(Component1TraceRow<F> {
+ a:[F; 5],
+});
+pub type Component1Trace<F> = GenericTrace<Component1TraceRow<F>, 32, 0, 0>;
 
-trace!(Component2Fixed<F> {
+
+trace_row!(Component2FixedRow<F> {
  __L1__: F,
-},  0, 1, 16 );
+});
+pub type Component2Fixed<F> = GenericTrace<Component2FixedRow<F>, 16, 0, 1>;
 
-trace!(Component2Trace<F> {
- a: [F; 3],
-},  0, 1, 16 );
+trace_row!(Component2TraceRow<F> {
+ a:[F; 3],
+});
+pub type Component2Trace<F> = GenericTrace<Component2TraceRow<F>, 16, 0, 1>;
 
-trace!(Component3Fixed<F> {
+
+trace_row!(Component3FixedRow<F> {
  __L1__: F,
-},  0, 2, 4 );
+});
+pub type Component3Fixed<F> = GenericTrace<Component3FixedRow<F>, 4, 0, 2>;
 
-trace!(Component3Trace<F> {
- a: [F; 3],
-},  0, 2, 4 );
+trace_row!(Component3TraceRow<F> {
+ a:[F; 3],
+});
+pub type Component3Trace<F> = GenericTrace<Component3TraceRow<F>, 4, 0, 2>;
 
-trace!(Component4Fixed<F> {
+
+trace_row!(Component4FixedRow<F> {
  __L1__: F,
-},  0, 3, 128 );
+});
+pub type Component4Fixed<F> = GenericTrace<Component4FixedRow<F>, 128, 0, 3>;
 
-trace!(Component4Trace<F> {
- a: [F; 2], b: [F; 3],
-},  0, 3, 128 );
+trace_row!(Component4TraceRow<F> {
+ a:[F; 2], b:[F; 3],
+});
+pub type Component4Trace<F> = GenericTrace<Component4TraceRow<F>, 128, 0, 3>;
 
-trace!(Component5Fixed<F> {
+
+trace_row!(Component5FixedRow<F> {
  __L1__: F,
-},  0, 4, 64 );
+});
+pub type Component5Fixed<F> = GenericTrace<Component5FixedRow<F>, 64, 0, 4>;
 
-trace!(Component5Trace<F> {
- a: [F; 6],
-},  0, 4, 64 );
+trace_row!(Component5TraceRow<F> {
+ a:[F; 6],
+});
+pub type Component5Trace<F> = GenericTrace<Component5TraceRow<F>, 64, 0, 4>;
 
-trace!(Component6Fixed<F> {
+
+trace_row!(Component6FixedRow<F> {
  __L1__: F,
-},  0, 5, 1024 );
+});
+pub type Component6Fixed<F> = GenericTrace<Component6FixedRow<F>, 1024, 0, 5>;
 
-trace!(Component6Trace<F> {
- a: [F; 2],
-},  0, 5, 1024 );
+trace_row!(Component6TraceRow<F> {
+ a:[F; 2],
+});
+pub type Component6Trace<F> = GenericTrace<Component6TraceRow<F>, 1024, 0, 5>;
 
-trace!(Component7Fixed<F> {
+
+trace_row!(Component7FixedRow<F> {
  __L1__: F,
-},  0, 6, 512 );
+});
+pub type Component7Fixed<F> = GenericTrace<Component7FixedRow<F>, 512, 0, 6>;
 
-trace!(Component7Trace<F> {
- a: [F; 9],
-},  0, 6, 512 );
+trace_row!(Component7TraceRow<F> {
+ a:[F; 9],
+});
+pub type Component7Trace<F> = GenericTrace<Component7TraceRow<F>, 512, 0, 6>;
 
-trace!(Table7Fixed<F> {
+
+trace_row!(Table7FixedRow<F> {
  A: [F; 9], __L1__: F,
-},  0, 7, 512 );
+});
+pub type Table7Fixed<F> = GenericTrace<Table7FixedRow<F>, 512, 0, 7>;
 
-trace!(Table7Trace<F> {
- multiplicity: F,
-},  0, 7, 512 );
+trace_row!(Table7TraceRow<F> {
+ multiplicity:F,
+});
+pub type Table7Trace<F> = GenericTrace<Table7TraceRow<F>, 512, 0, 7>;
 
-trace!(Component8Fixed<F> {
+
+trace_row!(Component8FixedRow<F> {
  __L1__: F,
-},  0, 8, 1024 );
+});
+pub type Component8Fixed<F> = GenericTrace<Component8FixedRow<F>, 1024, 0, 8>;
 
-trace!(Component8Trace<F> {
- a: [F; 3],
-},  0, 8, 1024 );
+trace_row!(Component8TraceRow<F> {
+ a:[F; 3],
+});
+pub type Component8Trace<F> = GenericTrace<Component8TraceRow<F>, 1024, 0, 8>;
 
-trace!(VirtualTable0Fixed<F> {
+
+trace_row!(VirtualTable0FixedRow<F> {
  UID: [F; 1], column: [F; 6], __L1__: F,
-},  0, 9, 65536 );
+});
+pub type VirtualTable0Fixed<F> = GenericTrace<VirtualTable0FixedRow<F>, 65536, 0, 9>;
 
-trace!(VirtualTable0Trace<F> {
- multiplicity: [F; 1],
-},  0, 9, 65536 );
+trace_row!(VirtualTable0TraceRow<F> {
+ multiplicity:[F; 1],
+});
+pub type VirtualTable0Trace<F> = GenericTrace<VirtualTable0TraceRow<F>, 65536, 0, 9>;
 
-trace!(VirtualTable1Fixed<F> {
+
+trace_row!(VirtualTable1FixedRow<F> {
  UID: [F; 2], column: [F; 6], __L1__: F,
-},  0, 10, 65536 );
+});
+pub type VirtualTable1Fixed<F> = GenericTrace<VirtualTable1FixedRow<F>, 65536, 0, 10>;
 
-trace!(VirtualTable1Trace<F> {
- multiplicity: [F; 2],
-},  0, 10, 65536 );
+trace_row!(VirtualTable1TraceRow<F> {
+ multiplicity:[F; 2],
+});
+pub type VirtualTable1Trace<F> = GenericTrace<VirtualTable1TraceRow<F>, 65536, 0, 10>;
+
 
 values!(Component1AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
@@ -178,3 +211,6 @@ values!(VirtualTable0AirGroupValues<F> {
 values!(VirtualTable1AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
+
+pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
+];

@@ -2,9 +2,8 @@ use std::sync::{Arc, RwLock};
 use std::env;
 
 use std::ffi::{c_void, c_char};
-use proofman_common::{AirInstance, BufferPool, ProofCtx, SetupCtx, TraceInfo};
+use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanResult, SetupCtx, TraceInfo};
 use witness::WitnessComponent;
-use std::path::PathBuf;
 use fields::PrimeField64;
 use proofman_starks_lib_c::{read_exec_file_c, get_committed_pols_c};
 
@@ -31,9 +30,10 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
 impl<F: PrimeField64> WitnessComponent<F> for RecursiveC42 {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &RwLock<Vec<usize>>, _input_data_path: Option<PathBuf>) {
-        pctx.add_instance(0, 0);
+    fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &RwLock<Vec<usize>>) -> ProofmanResult<()> {
+        pctx.add_instance(0, 0)?;
         global_ids.write().unwrap().push(0);
+        Ok(())
     }
 
     fn calculate_witness(
@@ -44,9 +44,9 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC42 {
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> ProofmanResult<()> {
         if stage == 1 {
-            let setup = sctx.get_setup(0, 0);
+            let setup = sctx.get_setup(0, 0)?;
             let current_dir =
                 env::current_dir().expect("Failed to get current directory").join("examples/test-recursive-c42");
             let proof_path = current_dir.join("proof.bin");
@@ -135,5 +135,6 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC42 {
             ));
             pctx.add_air_instance(air_instance, 0);
         }
+        Ok(())
     }
 }

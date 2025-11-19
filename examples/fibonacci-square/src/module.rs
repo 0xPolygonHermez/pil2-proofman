@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use proofman_common::{BufferPool, AirInstance, FromTrace, ProofCtx, SetupCtx};
+use proofman_common::{AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanResult, SetupCtx};
 use witness::{WitnessComponent, execute};
 use pil_std_lib::Std;
 use fields::PrimeField64;
@@ -30,7 +30,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> ProofmanResult<()> {
         if stage == 1 {
             tracing::debug!("··· Starting witness computation stage 1");
             let publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
@@ -39,7 +39,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
             let mut b = F::as_canonical_u64(&publics.in2);
 
             //range_check(colu: mod - x_mod, min: 1, max: 2**8-1);
-            let range = self.std_lib.get_range_id(1, (1 << 8) - 1, None);
+            let range = self.std_lib.get_range_id(1, (1 << 8) - 1, None)?;
 
             let mut modules = Vec::new();
             for _ in 1..self.fibonacci_rows {
@@ -59,7 +59,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
                 }
                 let mut x_mods = Vec::new();
 
-                let mut trace = ModuleTrace::new_from_vec(buffer_pool.take_buffer());
+                let mut trace = ModuleTrace::new_from_vec(buffer_pool.take_buffer())?;
 
                 let start = j * num_rows;
                 let end = ((j + 1) * num_rows).min(modules.len());
@@ -101,5 +101,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
                 pctx.add_air_instance(air_instance, instance_id);
             }
         }
+        Ok(())
     }
 }

@@ -12,7 +12,7 @@ impl Table8 {
         let offset_c = c * P2_4;
 
         let row = (offset_a + offset_b + offset_c) as u64;
-        assert!(row < Self::N, "Row index out of bounds: {}", row);
+        debug_assert!(row < Self::N, "Row index out of bounds: {}", row);
 
         row
     }
