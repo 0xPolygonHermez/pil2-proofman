@@ -1196,6 +1196,38 @@ where
         let mut ongoing_proofs = self.recursive2_proofs_ongoing.write().unwrap();
         ongoing_proofs.clear();
 
+        clear_proof_done_callback_c();
+        self.pctx.set_witness_tx(None);
+        self.pctx.set_witness_tx_priority(None);
+        self.pctx.set_proof_tx(None);
+
+        for _ in 0..self.n_streams {
+            self.recursive_tx.send((u64::MAX - 1, "Recursive2".to_string())).unwrap();
+        }
+
+        let handles = self.handle_recursives.lock().unwrap().drain(..).collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        for _ in 0..self.n_streams {
+            self.contributions_tx.send(usize::MAX).ok();
+        }
+
+        let handles = self.handle_contributions.lock().unwrap().drain(..).collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        if self.outer_aggregations_handle.lock().unwrap().is_some() {
+            self.outer_agg_proofs_finished.store(true, Ordering::SeqCst);
+
+            let mut outer_aggregations_handle = self.outer_aggregations_handle.lock().unwrap();
+            if let Some(handle) = outer_aggregations_handle.take() {
+                handle.join().unwrap();
+            }
+        }
+
         // Drain all relevant channels to ensure they are empty
         while self.rx_threads.try_recv().is_ok() {}
         while self.witness_rx.try_recv().is_ok() {}
