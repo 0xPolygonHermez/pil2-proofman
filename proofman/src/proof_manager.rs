@@ -1,7 +1,9 @@
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Condvar, Mutex,
+    Condvar, Mutex, RwLock,
 };
+
+use crate::CancellationInfo;
 
 pub struct Counter {
     counter: AtomicUsize,
@@ -49,9 +51,16 @@ impl Counter {
         new_val
     }
 
-    pub fn wait_until_threshold_and_check_streams<F: FnMut()>(&self, mut check_streams: F) {
+    pub fn wait_until_threshold_and_check_streams<F: FnMut()>(
+        &self,
+        mut check_streams: F,
+        cancellation_info: &RwLock<CancellationInfo>,
+    ) {
         let mut guard = self.wait_lock.lock().unwrap();
         loop {
+            if cancellation_info.read().unwrap().token.is_cancelled() {
+                break;
+            }
             if self.counter.load(Ordering::Acquire) >= self.threshold {
                 break;
             }
@@ -61,16 +70,26 @@ impl Counter {
         }
     }
 
-    pub fn wait_until_threshold(&self) {
+    pub fn wait_until_threshold(&self, cancellation_info: &RwLock<CancellationInfo>) {
         let mut guard = self.wait_lock.lock().unwrap();
-        while self.counter.load(Ordering::Acquire) < self.threshold {
+        while self.counter.load(Ordering::Acquire) < self.threshold
+            && !cancellation_info.read().unwrap().token.is_cancelled()
+        {
             guard = self.cvar.wait(guard).unwrap();
         }
     }
 
-    pub fn wait_until_value_and_check_streams<F: FnMut()>(&self, value: usize, mut check_streams: F) {
+    pub fn wait_until_value_and_check_streams<F: FnMut()>(
+        &self,
+        value: usize,
+        mut check_streams: F,
+        cancellation_info: &RwLock<CancellationInfo>,
+    ) {
         let mut guard = self.wait_lock.lock().unwrap();
         loop {
+            if cancellation_info.read().unwrap().token.is_cancelled() {
+                break;
+            }
             if self.counter.load(Ordering::Acquire) >= value {
                 break;
             }
@@ -84,16 +103,23 @@ impl Counter {
         self.counter.store(0, Ordering::Release);
     }
 
-    pub fn wait_until_zero(&self) {
+    pub fn wait_until_zero(&self, cancellation_info: &RwLock<CancellationInfo>) {
         let mut guard = self.wait_lock.lock().unwrap();
-        while self.counter.load(Ordering::Acquire) > 0 {
+        while self.counter.load(Ordering::Acquire) > 0 && !cancellation_info.read().unwrap().token.is_cancelled() {
             guard = self.cvar.wait(guard).unwrap();
         }
     }
 
-    pub fn wait_until_zero_and_check_streams<F: FnMut()>(&self, mut check_streams: F) {
+    pub fn wait_until_zero_and_check_streams<F: FnMut()>(
+        &self,
+        mut check_streams: F,
+        cancellation_info: &RwLock<CancellationInfo>,
+    ) {
         let mut guard = self.wait_lock.lock().unwrap();
         loop {
+            if cancellation_info.read().unwrap().token.is_cancelled() {
+                break;
+            }
             if self.counter.load(Ordering::Acquire) == 0 {
                 break;
             }

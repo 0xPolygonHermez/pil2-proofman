@@ -107,7 +107,7 @@ struct Dest {
 
     void addAirValue(uint64_t stage, uint64_t id, bool inverse_ = false) {
         uint64_t airvalueDim = stage == 1 ? 1 : FIELD_EXTENSION;
-        params.push_back(Params(stage, dim, id, opType::airvalue, inverse_));
+        params.push_back(Params(stage, airvalueDim, id, opType::airvalue, inverse_));
         dim = std::max(dim, airvalueDim);
     }
 
@@ -217,7 +217,7 @@ public:
         delete[] mapSectionsNCustomFixed;
     };
     
-    virtual void calculateExpressions(StepsParams& params, Dest &dest, uint64_t domainSize, bool domainExtended, bool compilationTime = false, bool verify_constraints = false, bool debug = true) {};
+    virtual void calculateExpressions(StepsParams& params, Dest &dest, uint64_t domainSize, bool domainExtended, bool compilationTime = false, bool verify_constraints = false, bool debug = false) {};
  
     void calculateExpression(StepsParams& params, Goldilocks::Element* dest, uint64_t expressionId, bool inverse = false, bool compilation_time = false) {
         uint64_t domainSize;

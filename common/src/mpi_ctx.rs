@@ -9,13 +9,14 @@ use mpi::environment::Universe;
 #[cfg(distributed)]
 use mpi::topology::Communicator;
 
-use std::sync::atomic::{Ordering, AtomicU64, AtomicI32};
+use std::sync::atomic::{Ordering, AtomicU64, AtomicI32, AtomicU32};
 use fields::PrimeField64;
 #[cfg(distributed)]
 use fields::CubicExtensionField;
-use crate::GlobalInfo;
-#[cfg(distributed)]
+use crate::{GlobalInfo, ProofmanError};
 use crate::Proof;
+
+use crate::ProofmanResult;
 
 #[cfg(distributed)]
 use proofman_starks_lib_c::{
@@ -32,7 +33,10 @@ pub struct MpiCtx {
     pub node_rank: i32,
     pub node_n_processes: i32,
     pub outer_agg_rank: AtomicI32,
+    pub cancelled: AtomicU32,
 }
+
+const MPI_TAG_CANCEL_JOB: i32 = 999999;
 
 impl Default for MpiCtx {
     fn default() -> Self {
@@ -64,11 +68,19 @@ impl MpiCtx {
                 node_rank,
                 node_n_processes,
                 outer_agg_rank: AtomicI32::new(-1),
+                cancelled: AtomicU32::new(0),
             }
         }
         #[cfg(not(distributed))]
         {
-            MpiCtx { rank: 0, n_processes: 1, node_rank: 0, node_n_processes: 1, outer_agg_rank: AtomicI32::new(0) }
+            MpiCtx {
+                rank: 0,
+                n_processes: 1,
+                node_rank: 0,
+                node_n_processes: 1,
+                outer_agg_rank: AtomicI32::new(0),
+                cancelled: AtomicU32::new(0),
+            }
         }
     }
 
@@ -82,11 +94,13 @@ impl MpiCtx {
         }
     }
 
-    pub fn get_outer_agg_rank(&self) -> i32 {
+    pub fn get_outer_agg_rank(&self) -> ProofmanResult<i32> {
         if self.outer_agg_rank.load(Ordering::SeqCst) == -1 {
-            panic!("Aggregation rank not yet determined. Call process_ready_for_aggregation() first.");
+            return Err(ProofmanError::InvalidAssignation(
+                "Aggregation rank not yet determined. Call process_ready_for_aggregation() first.".into(),
+            ));
         }
-        self.outer_agg_rank.load(Ordering::SeqCst)
+        Ok(self.outer_agg_rank.load(Ordering::SeqCst))
     }
 
     pub fn reset_outer_agg_tracker(&self) {
@@ -97,9 +111,9 @@ impl MpiCtx {
         }
     }
 
-    pub fn reset_outer_agg_rank(&self) {
+    pub fn reset(&self) {
         self.reset_outer_agg_tracker();
-        self.outer_agg_rank.store(-1, Ordering::SeqCst);
+        self.cancelled.store(0, Ordering::SeqCst);
     }
 
     #[cfg(distributed)]
@@ -111,7 +125,16 @@ impl MpiCtx {
         let node_rank = local_comm.rank();
         let node_n_processes = local_comm.size();
 
-        MpiCtx { rank, n_processes, universe, world, node_rank, node_n_processes, outer_agg_rank: AtomicI32::new(-1) }
+        MpiCtx {
+            rank,
+            n_processes,
+            universe,
+            world,
+            node_rank,
+            node_n_processes,
+            outer_agg_rank: AtomicI32::new(-1),
+            cancelled: AtomicU32::new(0),
+        }
     }
 
     #[inline]
@@ -266,23 +289,30 @@ impl MpiCtx {
         }
     }
 
-    #[cfg(distributed)]
-    pub fn send_proof_to_rank(&self, proof: &Vec<u64>, rank: i32) {
+    pub fn send_proof_to_rank(&self, _proof: &Vec<u64>, _airgroup_id: usize, _rank: i32) {
+        #[cfg(distributed)]
         // Send the proof directly - the vector already contains its length information
-        self.world.process_at_rank(rank).send(proof);
+        self.world.process_at_rank(_rank).send_with_tag(_proof, _airgroup_id as i32);
     }
 
-    #[cfg(distributed)]
-    pub fn recv_proof_from_rank(&self, rank: i32) -> Vec<u64> {
-        // Receive the proof directly as a vector
-        let (proof_buffer, _) = self.world.process_at_rank(rank).receive_vec::<u64>();
-        proof_buffer
+    pub fn recv_proof_from_rank(&self, _airgroup_id: usize, _rank: i32) -> Vec<u64> {
+        #[cfg(distributed)]
+        {
+            // Receive the proof directly as a vector
+            let (proof_buffer, _) = self.world.process_at_rank(_rank).receive_vec_with_tag::<u64>(_airgroup_id as i32);
+            proof_buffer
+        }
+        #[cfg(not(distributed))]
+        {
+            Vec::new()
+        }
     }
-    #[cfg(distributed)]
-    pub fn send_proof_agg_rank<F: PrimeField64>(&self, proof: &Proof<F>) {
+
+    pub fn send_proof_agg_rank<F: PrimeField64>(&self, _proof: &Proof<F>) {
+        #[cfg(distributed)]
         self.world
             .process_at_rank(self.outer_agg_rank.load(Ordering::SeqCst))
-            .send_with_tag(&proof.proof[..], proof.airgroup_id as i32);
+            .send_with_tag(&_proof.proof[..], _proof.airgroup_id as i32);
     }
 
     pub fn check_incoming_proofs(&self, airgroup_id: usize) -> Option<Vec<u64>> {
@@ -468,6 +498,48 @@ impl MpiCtx {
                 }
             }
         }
+    }
+
+    /// Notify all other MPI processes to cancel their current job
+    /// This sends a cancellation message to all ranks except the current one
+    pub fn notify_cancellation(&self) {
+        #[cfg(distributed)]
+        {
+            if self.cancelled.load(Ordering::SeqCst) == 1 {
+                // Already cancelled, no need to send again
+                return;
+            }
+            self.cancelled.store(1, Ordering::SeqCst);
+            if self.n_processes > 1 {
+                // Include the sender’s rank in the cancel message
+                let cancel_msg: [i32; 1] = [self.rank];
+                for rank in 0..self.n_processes {
+                    if rank != self.rank {
+                        self.world.process_at_rank(rank).send_with_tag(&cancel_msg, MPI_TAG_CANCEL_JOB);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Check for incoming cancellation messages
+    pub fn check_cancellation(&self) -> Option<ProofmanError> {
+        #[cfg(distributed)]
+        {
+            if self.cancelled.load(Ordering::SeqCst) == 0 {
+                if let Some(_status) = self.world.any_process().immediate_probe_with_tag(MPI_TAG_CANCEL_JOB) {
+                    let (msg, _) = self.world.any_process().receive_vec_with_tag::<i32>(MPI_TAG_CANCEL_JOB);
+
+                    if let Some(&failed_rank) = msg.first() {
+                        return Some(ProofmanError::MpiCancellation(format!(
+                            "Process {} received cancellation message from failed rank {}.",
+                            self.rank, failed_rank
+                        )));
+                    }
+                }
+            }
+        }
+        None
     }
 }
 

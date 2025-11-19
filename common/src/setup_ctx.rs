@@ -6,6 +6,8 @@ use proofman_starks_lib_c::{expressions_bin_new_c, expressions_bin_free_c};
 
 use crate::load_const_pols;
 use crate::GlobalInfo;
+use crate::ProofmanError;
+use crate::ProofmanResult;
 use crate::Setup;
 use crate::ProofType;
 use crate::ParamsGPU;
@@ -21,9 +23,11 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub max_prover_trace_size: usize,
     pub max_prover_buffer_size: usize,
     pub max_prover_recursive_buffer_size: usize,
+    pub max_prover_recursive2_buffer_size: usize,
     pub max_pinned_proof_size: usize,
     pub max_n_bits_ext: usize,
-    pub total_const_size: usize,
+    pub total_const_pols_size: usize,
+    pub total_const_tree_size: usize,
 }
 
 unsafe impl<F: PrimeField64> Send for SetupsVadcop<F> {}
@@ -51,11 +55,17 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 false,
             );
 
-            let total_const_size = sctx_compressor.total_const_size
-                + sctx_recursive1.total_const_size
-                + sctx_recursive2.total_const_size
-                + setup_vadcop_final.const_pols_size
-                + setup_vadcop_final.const_tree_size;
+            let total_const_pols_size = sctx_compressor.total_const_pols_size
+                + sctx_recursive1.total_const_pols_size
+                + sctx_recursive2.total_const_pols_size
+                + setup_vadcop_final.const_pols_size_packed;
+
+            let mut total_const_tree_size = sctx_compressor.total_const_tree_size
+                + sctx_recursive1.total_const_tree_size
+                + sctx_recursive2.total_const_tree_size;
+            if gpu_params.preallocate {
+                total_const_tree_size += setup_vadcop_final.const_tree_size;
+            }
 
             let vadcop_final_trace_size = setup_vadcop_final.stark_info.map_sections_n["cm1"]
                 * (1 << setup_vadcop_final.stark_info.stark_struct.n_bits)
@@ -82,9 +92,14 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive2.max_prover_buffer_size)
                 .max(setup_vadcop_final.prover_buffer_size as usize);
 
-            let max_prover_recursive_buffer_size = (sctx_recursive1.max_prover_buffer_size
-                + sctx_recursive1.max_prover_trace_size)
-                .max(sctx_recursive2.max_prover_buffer_size + sctx_recursive2.max_prover_trace_size);
+            let max_prover_recursive2_buffer_size =
+                sctx_recursive2.max_prover_buffer_size + sctx_recursive2.max_prover_trace_size;
+
+            let max_prover_recursive_buffer_size = (sctx_recursive2.max_prover_buffer_size
+                + sctx_recursive2.max_prover_trace_size)
+                .max(sctx_recursive1.max_prover_buffer_size + sctx_recursive1.max_prover_trace_size)
+                .max(sctx_compressor.max_prover_buffer_size + sctx_compressor.max_prover_trace_size)
+                .max(setup_vadcop_final.prover_buffer_size as usize + vadcop_final_trace_size as usize);
 
             let max_pinned_proof_size = sctx_compressor
                 .max_pinned_proof_size
@@ -119,9 +134,11 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_prover_trace_size,
                 max_prover_buffer_size,
                 max_prover_recursive_buffer_size,
+                max_prover_recursive2_buffer_size,
                 max_pinned_proof_size,
                 max_n_bits_ext,
-                total_const_size,
+                total_const_pols_size,
+                total_const_tree_size,
             }
         } else {
             SetupsVadcop {
@@ -130,26 +147,28 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 sctx_recursive2: None,
                 setup_vadcop_final: None,
                 setup_recursivef: None,
-                total_const_size: 0,
+                total_const_pols_size: 0,
+                total_const_tree_size: 0,
                 max_const_tree_size: 0,
                 max_const_size: 0,
                 max_prover_trace_size: 0,
                 max_prover_buffer_size: 0,
                 max_prover_recursive_buffer_size: 0,
+                max_prover_recursive2_buffer_size: 0,
                 max_pinned_proof_size: 0,
                 max_n_bits_ext: 0,
             }
         }
     }
 
-    pub fn get_setup(&self, airgroup_id: usize, air_id: usize, setup_type: &ProofType) -> &Setup<F> {
+    pub fn get_setup(&self, airgroup_id: usize, air_id: usize, setup_type: &ProofType) -> ProofmanResult<&Setup<F>> {
         match setup_type {
             ProofType::Compressor => self.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id),
             ProofType::Recursive1 => self.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id),
             ProofType::Recursive2 => self.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, air_id),
-            ProofType::VadcopFinal => self.setup_vadcop_final.as_ref().unwrap(),
-            ProofType::RecursiveF => self.setup_recursivef.as_ref().unwrap(),
-            _ => panic!("Invalid setup type"),
+            ProofType::VadcopFinal => Ok(self.setup_vadcop_final.as_ref().unwrap()),
+            ProofType::RecursiveF => Ok(self.setup_recursivef.as_ref().unwrap()),
+            _ => Err(ProofmanError::InvalidSetup("Invalid setup type".into())),
         }
     }
 }
@@ -163,7 +182,8 @@ pub struct SetupRepository<F: PrimeField64> {
     max_prover_trace_size: usize,
     max_pinned_proof_size: usize,
     max_single_buffer_size: usize,
-    total_const_size: usize,
+    total_const_pols_size: usize,
+    total_const_tree_size: usize,
     global_bin: Option<*mut c_void>,
     global_info_file: String,
     max_n_bits_ext: usize,
@@ -207,7 +227,8 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut max_prover_buffer_size = 0;
         let mut max_prover_trace_size = 0;
         let mut max_pinned_proof_size = 0;
-        let mut total_const_size = 0;
+        let mut total_const_pols_size = 0;
+        let mut total_const_tree_size = 0;
         let mut max_single_buffer_size = 0;
 
         // Initialize Hashmap for each airgroup_id, air_id
@@ -253,7 +274,12 @@ impl<F: PrimeField64> SetupRepository<F> {
                             max_single_buffer_size = setup.prover_buffer_size;
                         }
 
-                        total_const_size += setup.const_pols_size + setup.const_tree_size;
+                        if cfg!(feature = "gpu") {
+                            total_const_pols_size += setup.const_pols_size_packed;
+                            if gpu_params.preallocate {
+                                total_const_tree_size += setup.const_tree_size;
+                            }
+                        }
                         max_pinned_proof_size = max_pinned_proof_size.max(setup.pinned_proof_size);
                         max_n_bits_ext = max_n_bits_ext.max(n_bits_ext);
                     }
@@ -280,7 +306,8 @@ impl<F: PrimeField64> SetupRepository<F> {
             max_prover_trace_size,
             max_single_buffer_size: max_single_buffer_size as usize,
             max_pinned_proof_size: max_pinned_proof_size as usize,
-            total_const_size,
+            total_const_pols_size,
+            total_const_tree_size,
             max_n_bits_ext: max_n_bits_ext as usize,
         }
     }
@@ -297,7 +324,8 @@ pub struct SetupCtx<F: PrimeField64> {
     pub max_pinned_proof_size: usize,
     pub max_n_bits_ext: usize,
     pub max_single_buffer_size: usize,
-    pub total_const_size: usize,
+    pub total_const_pols_size: usize,
+    pub total_const_tree_size: usize,
     setup_type: ProofType,
 }
 
@@ -315,7 +343,8 @@ impl<F: PrimeField64> SetupCtx<F> {
         let max_prover_trace_size = setup_repository.max_prover_trace_size;
         let max_pinned_proof_size = setup_repository.max_pinned_proof_size;
         let max_single_buffer_size = setup_repository.max_single_buffer_size;
-        let total_const_size = setup_repository.total_const_size;
+        let total_const_pols_size = setup_repository.total_const_pols_size;
+        let total_const_tree_size = setup_repository.total_const_tree_size;
         let max_n_bits_ext = setup_repository.max_n_bits_ext;
         SetupCtx {
             setup_repository,
@@ -326,36 +355,33 @@ impl<F: PrimeField64> SetupCtx<F> {
             max_pinned_proof_size,
             max_n_bits_ext,
             max_single_buffer_size,
-            total_const_size,
+            total_const_pols_size,
+            total_const_tree_size,
             setup_type: setup_type.clone(),
         }
     }
 
-    pub fn get_setup(&self, airgroup_id: usize, air_id: usize) -> &Setup<F> {
+    pub fn get_setup(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<&Setup<F>> {
         match self.setup_repository.setups.get(&(airgroup_id, air_id)) {
-            Some(setup) => setup,
-            None => {
-                // Handle the error case as needed
-                tracing::error!("Setup not found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
-                // You might want to return a default value or panic
-                panic!("Setup not found"); // or return a default value if applicable
-            }
+            Some(setup) => Ok(setup),
+            None => Err(ProofmanError::InvalidSetup(format!(
+                "Setup not found for airgroup_id: {}, air_id: {}",
+                airgroup_id, air_id
+            ))),
         }
     }
 
-    pub fn get_fixed(&self, airgroup_id: usize, air_id: usize) -> Vec<F> {
+    pub fn get_fixed(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<Vec<F>> {
         match self.setup_repository.setups.get(&(airgroup_id, air_id)) {
             Some(setup) => {
                 let const_pols: Vec<F> = vec![F::ZERO; setup.const_pols_size];
                 load_const_pols(setup, &const_pols);
-                const_pols
+                Ok(const_pols)
             }
-            None => {
-                // Handle the error case as needed
-                tracing::error!("Setup not found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
-                // You might want to return a default value or panic
-                panic!("Setup not found"); // or return a default value if applicable
-            }
+            None => Err(ProofmanError::InvalidSetup(format!(
+                "Setup not found for airgroup_id: {}, air_id: {}",
+                airgroup_id, air_id
+            ))),
         }
     }
 

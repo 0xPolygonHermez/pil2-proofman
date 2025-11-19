@@ -1,10 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use proofman_macros::trace;
-    use proofman_common as common;
-
-    trace!(SampleTrace<F> { field1: F, field2: [F; 2] },  0, 0, 32 );
-
     use proofman_common::GenericTrace;
     use proofman_macros::trace_row;
     use fields::{Goldilocks, PrimeField64};
@@ -13,8 +8,9 @@ mod tests {
         MainRow<F> {
             field0: F,
             field1: u8,
-            field2: [[u32; 2]; 3],
             field3: [[[u16; 4]; 2]; 3],
+            field2: [[u32; 2]; 3],
+
         }
     );
 

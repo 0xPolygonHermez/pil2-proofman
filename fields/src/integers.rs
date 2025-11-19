@@ -28,7 +28,7 @@ macro_rules! quotient_map_small_internals {
         #[inline]
         fn from_int(int: $small_int) -> Self {
             // Should be removed by the compiler.
-            assert!(size_of::<$small_int>() < size_of::<$field_size>());
+            debug_assert!(size_of::<$small_int>() < size_of::<$field_size>());
             unsafe {
                 Self::from_canonical_unchecked(int as $field_size)
             }
@@ -39,7 +39,7 @@ macro_rules! quotient_map_small_internals {
         #[inline]
         fn from_canonical_checked(int: $small_int) -> Option<Self> {
             // Should be removed by the compiler.
-            assert!(size_of::<$small_int>() < size_of::<$field_size>());
+            debug_assert!(size_of::<$small_int>() < size_of::<$field_size>());
             Some(unsafe {
                 Self::from_canonical_unchecked(int as $field_size)
             })

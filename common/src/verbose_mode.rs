@@ -1,6 +1,6 @@
 use tracing_subscriber::filter::LevelFilter;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerboseMode {
     Info,
     Debug,

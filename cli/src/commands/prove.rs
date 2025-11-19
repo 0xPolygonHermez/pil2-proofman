@@ -64,8 +64,11 @@ pub struct ProveCmd {
     #[clap(short = 'c', long, value_name="KEY=VALUE", num_args(1..))]
     pub custom_commits: Vec<String>,
 
-    #[clap(short = 'r', long, default_value_t = false)]
+    #[clap(short = 'z', long, default_value_t = false)]
     pub preallocate: bool,
+
+    #[clap(short = 'r', long, default_value_t = false)]
+    pub rma: bool,
 
     #[clap(short = 'm', long, default_value_t = false)]
     pub minimal_memory: bool,
@@ -84,7 +87,7 @@ pub struct ProveCmd {
 }
 
 impl ProveCmd {
-    pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("{} Prove", format!("{: >12}", "Command").bright_green().bold());
         println!();
 
@@ -92,7 +95,7 @@ impl ProveCmd {
             // In distributed mode two different processes may enter here at the same time and try to remove the same directory
             if let Err(e) = fs::remove_dir_all(self.output_dir.join("proofs")) {
                 if e.kind() != std::io::ErrorKind::NotFound {
-                    panic!("Failed to remove the proofs directory: {e:?}");
+                    return Err(format!("Failed to remove the proofs directory: {e:?}").into());
                 }
             }
         }
@@ -100,14 +103,14 @@ impl ProveCmd {
         if let Err(e) = fs::create_dir_all(self.output_dir.join("proofs")) {
             if e.kind() != std::io::ErrorKind::AlreadyExists {
                 // prevent collision in distributed mode
-                panic!("Failed to create the proofs directory: {e:?}");
+                return Err(format!("Failed to create the proofs directory: {e:?}").into());
             }
         }
 
         let debug_info = match &self.debug {
             None => DebugInfo::default(),
             Some(None) => DebugInfo::new_debug(),
-            Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone()),
+            Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone())?,
         };
 
         let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
@@ -167,6 +170,7 @@ impl ProveCmd {
                     ProofOptions::new(
                         false,
                         self.aggregation,
+                        self.rma,
                         self.final_snark,
                         self.verify_proofs,
                         self.minimal_memory,
@@ -183,21 +187,23 @@ impl ProveCmd {
                 let output_file_path = self.output_dir.join("proofs/vadcop_final_proof.bin");
                 let mut file = File::create(&output_file_path)?;
                 file.write_all(proof_data)?;
+                file.flush()?;
 
                 // Save the compressed vadcop final proof using zstd (fastest compression level)
                 let compressed_output_path = self.output_dir.join("proofs/vadcop_final_proof.compressed.bin");
                 let compressed_file = File::create(&compressed_output_path)?;
                 let mut encoder = Encoder::new(compressed_file, 1)?;
                 encoder.write_all(proof_data)?;
+                encoder.flush()?;
                 encoder.finish()?;
 
                 let original_size = vadcop_final_proof.len() * 8;
                 let compressed_size = std::fs::metadata(&compressed_output_path)?.len();
                 let compression_ratio = compressed_size as f64 / original_size as f64;
 
-                println!("Vadcop final proof saved:");
-                println!("  Original: {} bytes", original_size);
-                println!("  Compressed: {} bytes (ratio: {:.2}x)", compressed_size, compression_ratio);
+                tracing::info!("Vadcop final proof saved:");
+                tracing::info!("  Original: {} bytes", original_size);
+                tracing::info!("  Compressed: {} bytes (ratio: {:.2}x)", compressed_size, compression_ratio);
             }
         }
 

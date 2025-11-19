@@ -408,17 +408,20 @@ uint64_t setHintField(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Eleme
     if(hintFieldVal.operand == opType::cm) {
         setPolynomial(setupCtx, params.aux_trace, values, hintFieldVal.id);
     } else if(hintFieldVal.operand == opType::airgroupvalue) {
-        if(setupCtx.starkInfo.airgroupValuesMap[hintFieldVal.id].stage > 1) {
-            std::memcpy(&params.airgroupValues[FIELD_EXTENSION*hintFieldVal.id], values, FIELD_EXTENSION * sizeof(Goldilocks::Element));
-        } else {
-            params.airgroupValues[FIELD_EXTENSION*hintFieldVal.id] = values[0]; 
+        uint64_t pos = 0;
+        for(uint64_t i = 0; i < hintFieldVal.id; ++i) {
+            pos += setupCtx.starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
         }
+        uint64_t dim = setupCtx.starkInfo.airgroupValuesMap[hintFieldVal.id].stage == 1 ? 1 : FIELD_EXTENSION;
+        std::memcpy(&params.airgroupValues[pos], values, dim * sizeof(Goldilocks::Element));
     } else if(hintFieldVal.operand == opType::airvalue) {
-        if(setupCtx.starkInfo.airValuesMap[hintFieldVal.id].stage > 1) {
-            std::memcpy(&params.airValues[FIELD_EXTENSION*hintFieldVal.id], values, FIELD_EXTENSION * sizeof(Goldilocks::Element));
-        } else {
-            params.airValues[FIELD_EXTENSION*hintFieldVal.id] = values[0]; 
+        uint64_t pos = 0;
+        for(uint64_t i = 0; i < hintFieldVal.id; ++i) {
+            pos += setupCtx.starkInfo.airValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
         }
+        uint64_t dim = setupCtx.starkInfo.airValuesMap[hintFieldVal.id].stage == 1 ? 1 : FIELD_EXTENSION;
+        cout << "hintFieldVal.id = " << hintFieldVal.id << " pos = " << pos << " dim = " << dim << endl;
+        std::memcpy(&params.airValues[pos], values, dim * sizeof(Goldilocks::Element));
     } else {
         zklog.error("Only committed pols and airgroupvalues can be set");
         exitProcess();

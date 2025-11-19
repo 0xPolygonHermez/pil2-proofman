@@ -1,4 +1,5 @@
 use pil_std_lib::Std;
+use proofman_common::ProofmanResult;
 use witness::{witness_library, WitnessLibrary, WitnessManager};
 
 use fields::PrimeField64;
@@ -10,10 +11,11 @@ use proofman::register_std;
 witness_library!(WitnessLib, Goldilocks);
 
 impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
-    fn register_witness(&mut self, wcm: &WitnessManager<F>) {
-        let std = Std::new(wcm.get_pctx(), wcm.get_sctx(), false);
+    fn register_witness(&mut self, wcm: &WitnessManager<F>) -> ProofmanResult<()> {
+        let std = Std::new(wcm.get_pctx(), wcm.get_sctx(), false)?;
         register_std(wcm, &std);
         wcm.register_component(AirProd::new());
         wcm.register_component(AirSum::new());
+        Ok(())
     }
 }

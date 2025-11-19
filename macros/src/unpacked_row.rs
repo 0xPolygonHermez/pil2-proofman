@@ -139,10 +139,10 @@ fn add_unpacked_setter_getter(field_name: &Ident, field_type: &BitType, setter_g
 }
 
 fn add_unpacked_array_setter_getter(field_name: &Ident, field_type: &BitType, setter_getters: &mut Vec<TokenStream>) {
-    let (bit_width, dims) = collect_dimensions(field_type);
+    let (bit_width, _, acc_dims) = collect_dimensions(field_type);
     let rust_type = type_for_bitwidth(bit_width);
     let from_method = method_name_for_bitwidth(bit_width);
-    let args = dimension_args(&dims);
+    let args = dimension_args(&acc_dims);
     let array_access = generate_array_access(&args);
 
     let setter_name = format_ident!("set_{}", field_name);

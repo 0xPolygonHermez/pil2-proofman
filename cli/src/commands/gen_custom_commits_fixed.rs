@@ -2,7 +2,7 @@
 use clap::Parser;
 use libloading::{Library, Symbol};
 use std::sync::Arc;
-use proofman_common::{ProofCtx, ProofType, SetupCtx, ParamsGPU, MpiCtx};
+use proofman_common::{MpiCtx, ParamsGPU, ProofCtx, ProofType, SetupCtx};
 use std::{collections::HashMap, path::PathBuf};
 use colored::Colorize;
 use crate::commands::field::Field;
@@ -43,7 +43,7 @@ pub struct GenCustomCommitsFixedCmd {
 }
 
 impl GenCustomCommitsFixedCmd {
-    pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
         for commit in &self.custom_commits {
             if let Some((key, value)) = commit.split_once('=') {
@@ -61,7 +61,7 @@ impl GenCustomCommitsFixedCmd {
             false,
             self.verbose.into(),
             mpi_ctx,
-        ));
+        )?);
 
         tracing::info!("{}", format!("{} GenCustomCommitsFixed", format!("{: >12}", "Command").bright_green().bold()));
         tracing::info!("");
@@ -76,8 +76,8 @@ impl GenCustomCommitsFixedCmd {
 
         let witness_lib: Symbol<WitnessLibInitFn<Goldilocks>> = unsafe { library.get(b"init_library")? };
         let mut witness_lib = witness_lib(self.verbose.into(), None)?;
-        witness_lib.register_witness(&wcm);
+        witness_lib.register_witness(&wcm)?;
 
-        wcm.gen_custom_commits_fixed(self.check)
+        wcm.gen_custom_commits_fixed(self.check).map_err(|e| e.into())
     }
 }

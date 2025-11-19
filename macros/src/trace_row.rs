@@ -123,7 +123,7 @@ pub fn get_bit_count(input: &syn::parse::ParseBuffer<'_>, field_type: &str, min:
     if bit_count < min || bit_count > max {
         return Err(syn::Error::new_spanned(
             bits,
-            format!("`{}` fields must be between {} and {} bits wide", field_type, min, max),
+            format!("`{field_type}` fields must be between {min} and {max} bits wide"),
         ));
     }
     Ok(bit_count)
@@ -170,7 +170,7 @@ pub fn is_array(ty: &BitType) -> bool {
     matches!(ty, BitType::Array(_, _))
 }
 
-pub fn collect_dimensions(mut ty: &BitType) -> (usize, Vec<usize>) {
+pub fn collect_dimensions(mut ty: &BitType) -> (usize, Vec<usize>, Vec<usize>) {
     let mut dims = vec![];
     while let BitType::Array(inner, len) = ty {
         dims.push(*len);
@@ -185,5 +185,5 @@ pub fn collect_dimensions(mut ty: &BitType) -> (usize, Vec<usize>) {
     if let Some(last) = dims.first() {
         accumulated_dims[dims.len() - 1] = *last;
     }
-    (compute_total_bits(ty), accumulated_dims)
+    (compute_total_bits(ty), dims, accumulated_dims)
 }

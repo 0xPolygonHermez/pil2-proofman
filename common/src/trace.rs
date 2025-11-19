@@ -1,3 +1,5 @@
+use crate::{ProofmanError, ProofmanResult};
+
 pub trait Trace<F>: Send {
     fn num_rows(&self) -> usize;
     fn n_cols(&self) -> usize;
@@ -59,8 +61,8 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
     pub fn new_zeroes() -> Self {
         let num_rows = NUM_ROWS;
 
-        assert!(num_rows >= 2);
-        assert!(num_rows & (num_rows - 1) == 0);
+        debug_assert!(num_rows >= 2);
+        debug_assert!(num_rows & (num_rows - 1) == 0);
 
         let buffer: Vec<R> = vec![R::default(); num_rows];
 
@@ -68,8 +70,8 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
     }
 
     pub fn with_capacity(num_rows: usize) -> Self {
-        assert!(num_rows >= 2);
-        assert!(num_rows & (num_rows - 1) == 0);
+        debug_assert!(num_rows >= 2);
+        debug_assert!(num_rows & (num_rows - 1) == 0);
 
         let mut vec: Vec<std::mem::MaybeUninit<R>> = Vec::with_capacity(num_rows);
         let buffer: Vec<R> = unsafe {
@@ -90,18 +92,18 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
         Self { buffer, src_buffer_len: 0, src_buffer_capacity: 0, src_element_size: 0, shared_buffer: false }
     }
 
-    pub fn new_from_vec_zeroes<F: Default + Clone + Send>(mut buffer: Vec<F>) -> Self {
+    pub fn new_from_vec_zeroes<F: Default + Clone + Send>(mut buffer: Vec<F>) -> ProofmanResult<Self> {
         let row_size = R::ROW_SIZE;
         let num_rows = NUM_ROWS;
         let used_len = num_rows * row_size;
 
-        assert!(
-            buffer.len() >= used_len,
-            "Provided buffer too small: got {}, expected at least {}",
-            buffer.len(),
-            used_len
-        );
-
+        if buffer.len() < used_len {
+            return Err(ProofmanError::InvalidParameters(format!(
+                "Provided buffer too small: got {}, expected at least {}",
+                buffer.len(),
+                used_len
+            )));
+        }
         buffer[..used_len].par_iter_mut().for_each(|x| {
             *x = <F>::default();
         });
@@ -115,17 +117,24 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
 
         let buffer = unsafe { Vec::from_raw_parts(ptr as *mut R, num_rows, num_rows) };
 
-        Self { buffer, src_buffer_len, src_buffer_capacity, src_element_size, shared_buffer: true }
+        Ok(Self { buffer, src_buffer_len, src_buffer_capacity, src_element_size, shared_buffer: true })
     }
 
-    pub fn new_from_vec<F>(mut buffer: Vec<F>) -> Self {
+    pub fn new_from_vec<F>(mut buffer: Vec<F>) -> ProofmanResult<Self> {
         let row_size = R::ROW_SIZE;
         let num_rows = NUM_ROWS;
         let expected_len = num_rows * row_size;
 
-        assert!(buffer.len() >= expected_len, "Flat buffer too small");
-        assert!(num_rows >= 2);
-        assert!(num_rows & (num_rows - 1) == 0);
+        if buffer.len() < expected_len {
+            return Err(ProofmanError::InvalidParameters(format!(
+                "Provided buffer too small: got {}, expected at least {}",
+                buffer.len(),
+                expected_len
+            )));
+        }
+
+        debug_assert!(num_rows >= 2);
+        debug_assert!(num_rows & (num_rows - 1) == 0);
 
         if cfg!(feature = "diagnostic") {
             unsafe {
@@ -146,14 +155,14 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
 
         let buffer = unsafe { Vec::from_raw_parts(ptr as *mut R, num_rows, num_rows) };
 
-        Self { buffer, src_buffer_len, src_buffer_capacity, src_element_size, shared_buffer: true }
+        Ok(Self { buffer, src_buffer_len, src_buffer_capacity, src_element_size, shared_buffer: true })
     }
 
     pub fn par_iter_mut_chunks(&mut self, n: usize) -> impl IndexedParallelIterator<Item = &mut [R]> {
-        assert!(n > 0 && (n & (n - 1)) == 0, "n must be a power of two");
-        assert!(n <= NUM_ROWS, "n must be less than or equal to NUM_ROWS");
+        debug_assert!(n > 0 && (n & (n - 1)) == 0, "n must be a power of two");
+        debug_assert!(n <= NUM_ROWS, "n must be less than or equal to NUM_ROWS");
         let chunk_size = NUM_ROWS / n;
-        assert!(chunk_size > 0, "Chunk size must be greater than zero");
+        debug_assert!(chunk_size > 0, "Chunk size must be greater than zero");
         self.buffer.par_chunks_mut(chunk_size)
     }
 
@@ -341,7 +350,7 @@ mod tests {
     fn new_from_vec_zeroes_sets_all_zero_and_marks_shared() {
         // Provide larger buffer than needed to ensure slicing works
         let buf = vec![123u64; 16 * SampleTestRow::ROW_SIZE + 10];
-        let mut t = GenericTrace::<SampleTestRow, 16, 0, 0>::new_from_vec_zeroes(buf.clone());
+        let mut t = GenericTrace::<SampleTestRow, 16, 0, 0>::new_from_vec_zeroes(buf.clone()).unwrap();
         assert!(t.is_shared_buffer());
         assert_eq!(t.buffer.len(), 16);
         // Convert back to flat representation safely via get_buffer()
@@ -364,7 +373,7 @@ mod tests {
     fn new_from_vec_keeps_shared_flag() {
         let flat_len = 16 * SampleTestRow::ROW_SIZE;
         let buf = make_buffer(flat_len);
-        let t = GenericTrace::<SampleTestRow, 16, 2, 7>::new_from_vec(buf);
+        let t = GenericTrace::<SampleTestRow, 16, 2, 7>::new_from_vec(buf).unwrap();
         assert!(t.is_shared_buffer());
         assert_eq!(t.airgroup_id(), 2);
         assert_eq!(t.air_id(), 7);
@@ -375,7 +384,7 @@ mod tests {
     fn from_vec_alias() {
         let flat_len = 16 * SampleTestRow::ROW_SIZE;
         let buf = make_buffer(flat_len);
-        let t = GenericTrace::<SampleTestRow, 16, 0, 0>::new_from_vec(buf);
+        let t = GenericTrace::<SampleTestRow, 16, 0, 0>::new_from_vec(buf).unwrap();
         assert!(t.is_shared_buffer());
     }
 
@@ -412,7 +421,7 @@ mod tests {
     fn get_buffer_converts_back_to_flat() {
         let flat_len = 16 * SampleTestRow::ROW_SIZE;
         let buf = make_buffer(flat_len);
-        let mut t = GenericTrace::<SampleTestRow, 16, 0, 0>::new_from_vec(buf.clone());
+        let mut t = GenericTrace::<SampleTestRow, 16, 0, 0>::new_from_vec(buf.clone()).unwrap();
         let recovered: Vec<u64> = t.get_buffer();
         assert_eq!(recovered.len(), flat_len);
         // We can't guarantee ordering semantics without knowing row representation layout, but we can at least

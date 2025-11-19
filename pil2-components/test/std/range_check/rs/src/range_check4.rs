@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use witness::{WitnessComponent, execute, define_wc_with_std};
 
-use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx, ProofmanResult};
 
 use fields::PrimeField64;
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -22,23 +22,23 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheck4<F> {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> ProofmanResult<()> {
         if stage == 1 {
             let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
-            let mut trace = RangeCheck4Trace::new_from_vec(buffer_pool.take_buffer());
+            let mut trace = RangeCheck4Trace::new_from_vec(buffer_pool.take_buffer())?;
             let num_rows = trace.num_rows();
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
-            let range1 = self.std_lib.get_range_id(0, (1 << 16) - 1, Some(true));
-            let range2 = self.std_lib.get_range_id(0, (1 << 8) - 1, Some(true));
-            let range3 = self.std_lib.get_range_id(50, (1 << 7) - 1, Some(true));
-            let range4 = self.std_lib.get_range_id(127, 1 << 8, Some(true));
-            let range5 = self.std_lib.get_range_id(1, (1 << 16) + 1, Some(true));
-            let range6 = self.std_lib.get_range_id(127, 1 << 16, Some(true));
-            let range7 = self.std_lib.get_range_id(-1, 1 << 3, Some(true));
-            let range8 = self.std_lib.get_range_id(-(1 << 7) + 1, -50, Some(true));
-            let range9 = self.std_lib.get_range_id(-(1 << 8) + 1, -127, Some(true));
+            let range1 = self.std_lib.get_range_id(0, (1 << 16) - 1, Some(true))?;
+            let range2 = self.std_lib.get_range_id(0, (1 << 8) - 1, Some(true))?;
+            let range3 = self.std_lib.get_range_id(50, (1 << 7) - 1, Some(true))?;
+            let range4 = self.std_lib.get_range_id(127, 1 << 8, Some(true))?;
+            let range5 = self.std_lib.get_range_id(1, (1 << 16) + 1, Some(true))?;
+            let range6 = self.std_lib.get_range_id(127, 1 << 16, Some(true))?;
+            let range7 = self.std_lib.get_range_id(-1, 1 << 3, Some(true))?;
+            let range8 = self.std_lib.get_range_id(-(1 << 7) + 1, -50, Some(true))?;
+            let range9 = self.std_lib.get_range_id(-(1 << 8) + 1, -127, Some(true))?;
 
             for i in 0..num_rows {
                 let selected1 = rng.random::<bool>();
@@ -107,5 +107,6 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheck4<F> {
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
             pctx.add_air_instance(air_instance, instance_ids[0]);
         }
+        Ok(())
     }
 }

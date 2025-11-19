@@ -19,13 +19,13 @@ pub struct GetConstraintsCmd {
 }
 
 impl GetConstraintsCmd {
-    pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         initialize_logger(proofman_common::VerboseMode::Info, None);
 
         tracing::info!("{}", format!("{} GetConstraints", format!("{: >12}", "Command").bright_green().bold()));
         tracing::info!("");
 
-        let global_info = GlobalInfo::new(&self.proving_key);
+        let global_info = GlobalInfo::new(&self.proving_key)?;
         let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&global_info, &ProofType::Basic, false, &ParamsGPU::new(false));
 
         for airgroup_id in 0..global_info.air_groups.len() {
@@ -39,7 +39,7 @@ impl GetConstraintsCmd {
                     .bright_white()
                     .bold()
                 );
-                let constraints_lines = get_constraints_lines_str(&sctx, airgroup_id, air_id);
+                let constraints_lines = get_constraints_lines_str(&sctx, airgroup_id, air_id)?;
                 for (idx, line) in constraints_lines.iter().enumerate() {
                     tracing::info!("        · Constraint #{} : {}", idx, line);
                 }

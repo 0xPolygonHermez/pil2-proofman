@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use witness::{WitnessComponent, execute, define_wc_with_std};
-use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx, ProofmanResult};
 
 use fields::PrimeField64;
 use rand::{rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
@@ -21,23 +21,23 @@ impl<F: PrimeField64> WitnessComponent<F> for SimpleLeft<F> {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> ProofmanResult<()> {
         if stage == 1 {
             let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 
-            let mut trace = SimpleLeftTrace::new_from_vec(buffer_pool.take_buffer());
+            let mut trace = SimpleLeftTrace::new_from_vec(buffer_pool.take_buffer())?;
             let num_rows = trace.num_rows();
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
 
             let range = [
-                self.std_lib.get_range_id(0, (1 << 8) - 1, Some(true)),
-                self.std_lib.get_range_id(0, (1 << 16) - 1, Some(true)),
-                self.std_lib.get_range_id(1, (1 << 8) - 1, Some(true)),
-                self.std_lib.get_range_id(0, 1 << 8, Some(true)),
-                self.std_lib.get_range_id(0, (1 << 8) - 1, Some(false)),
-                self.std_lib.get_range_id(-(1 << 7), -1, Some(false)),
-                self.std_lib.get_range_id(-(1 << 7) - 1, (1 << 7) - 1, Some(false)),
+                self.std_lib.get_range_id(0, (1 << 8) - 1, Some(true))?,
+                self.std_lib.get_range_id(0, (1 << 16) - 1, Some(true))?,
+                self.std_lib.get_range_id(1, (1 << 8) - 1, Some(true))?,
+                self.std_lib.get_range_id(0, 1 << 8, Some(true))?,
+                self.std_lib.get_range_id(0, (1 << 8) - 1, Some(false))?,
+                self.std_lib.get_range_id(-(1 << 7), -1, Some(false))?,
+                self.std_lib.get_range_id(-(1 << 7) - 1, (1 << 7) - 1, Some(false))?,
             ];
 
             // Assumes
@@ -153,5 +153,6 @@ impl<F: PrimeField64> WitnessComponent<F> for SimpleLeft<F> {
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
             pctx.add_air_instance(air_instance, instance_ids[0]);
         }
+        Ok(())
     }
 }

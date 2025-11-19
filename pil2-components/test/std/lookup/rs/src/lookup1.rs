@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use witness::{WitnessComponent, execute, define_wc};
-use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx, ProofmanResult};
 
 use fields::PrimeField64;
 use rand::{Rng, SeedableRng, rngs::StdRng, rng};
@@ -21,12 +21,12 @@ impl<F: PrimeField64> WitnessComponent<F> for Lookup1 {
         instance_ids: &[usize],
         _n_cores: usize,
         buffer_pool: &dyn BufferPool<F>,
-    ) {
+    ) -> ProofmanResult<()> {
         if stage == 1 {
             let seed = if cfg!(feature = "debug") { 0 } else { rng().random::<u64>() };
             let mut rng = StdRng::seed_from_u64(seed);
 
-            let mut trace = Lookup1Trace::new_from_vec(buffer_pool.take_buffer());
+            let mut trace = Lookup1Trace::new_from_vec(buffer_pool.take_buffer())?;
             let num_rows = trace.num_rows();
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
@@ -51,5 +51,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Lookup1 {
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
             pctx.add_air_instance(air_instance, instance_ids[0]);
         }
+        Ok(())
     }
 }

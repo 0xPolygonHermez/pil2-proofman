@@ -1,7 +1,6 @@
 [book]
 authors = ["Xavier Pinsach"]
 language = "en"
-multilingual = false
 src = "book"
 title = "PIL2 Proofman"
 
