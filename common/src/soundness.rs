@@ -3,6 +3,7 @@ use serde::Serialize;
 use proofman_starks_lib_c::get_n_constraints_c;
 use tabled::{Tabled, Table};
 use std::collections::HashMap;
+use indexmap::IndexMap;
 use crate::ProofType;
 use crate::ParamsGPU;
 use crate::VerboseMode;
@@ -25,32 +26,22 @@ pub struct AirTableRow {
     pub d: u64,
     pub fixed: u64,
     pub witness: u64,
+    pub witness_normalized: u64,
     pub constraints: u64,
     pub opening_points: u64,
     pub pols: u64,
     pub queries: u64,
     pub fri_fa: String,
-    pub prover_mem: String,
+    pub grinding_query_phase: u64,
     pub proof_size: String,
-    pub grinding: String, // flattened as string
 }
 
 #[derive(Serialize)]
 pub struct SoundnessYaml {
-    pub basics: HashMap<String, AirYaml>,
-    pub compressor: Option<HashMap<String, AirYaml>>,
-    pub recursive2: Option<HashMap<String, AirYaml>>,
+    pub basics: IndexMap<String, AirYaml>,
+    pub compressor: Option<IndexMap<String, AirYaml>>,
+    pub recursive2: Option<IndexMap<String, AirYaml>>,
     pub vadcop_final: Option<AirYaml>,
-}
-
-#[derive(Serialize, Clone)]
-pub struct GrindingYaml {
-    pub aai: u64,
-    pub ali: u64,
-    pub deep: u64,
-    pub batching: u64,
-    pub commit_phase: Vec<u64>,
-    pub query_phase: u64,
 }
 
 #[derive(Serialize, Clone)]
@@ -60,14 +51,14 @@ pub struct AirYaml {
     pub d: u64,
     pub fixed: u64,
     pub witness: u64,
+    pub witness_normalized: u64,
     pub constraints: u64,
     pub opening_points: u64,
     pub pols: u64,
     pub queries: u64,
     pub fri_fa: Vec<u64>,
+    pub grinding_query_phase: u64,
     pub proof_size: String,
-    pub grinding: GrindingYaml,
-    pub prover_mem: String,
 }
 
 impl AirTableRow {
@@ -79,22 +70,14 @@ impl AirTableRow {
             d: air.d,
             fixed: air.fixed,
             witness: air.witness,
+            witness_normalized: air.witness_normalized,
             constraints: air.constraints,
             opening_points: air.opening_points,
             pols: air.pols,
             queries: air.queries,
             fri_fa: format!("{:?}", air.fri_fa),
-            prover_mem: air.prover_mem.clone(),
+            grinding_query_phase: air.grinding_query_phase,
             proof_size: air.proof_size.clone(),
-            grinding: format!(
-                "aai:{} ali:{} deep:{} batching:{} commit_phase:{:?} query_phase:{}",
-                air.grinding.aai,
-                air.grinding.ali,
-                air.grinding.deep,
-                air.grinding.batching,
-                air.grinding.commit_phase,
-                air.grinding.query_phase
-            ),
         }
     }
 }
@@ -137,7 +120,8 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
             blowup_factor: setup.stark_info.stark_struct.n_bits_ext - setup.stark_info.stark_struct.n_bits,
             d: setup.stark_info.q_deg + 1,
             fixed: setup.stark_info.n_constants,
-            witness: setup.stark_info.map_sections_n["cm1"]
+            witness: setup.stark_info.cm_pols_map.as_ref().unwrap().len() as u64,
+            witness_normalized: setup.stark_info.map_sections_n["cm1"]
                 + setup.stark_info.map_sections_n["cm2"]
                 + setup.stark_info.map_sections_n["cm3"],
             constraints: get_n_constraints_c(p_setup),
@@ -145,16 +129,8 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
             pols: setup.stark_info.ev_map.len() as u64,
             queries: setup.stark_info.stark_struct.n_queries,
             fri_fa: setup.stark_info.stark_struct.steps.iter().map(|s| s.n_bits).collect(),
-            prover_mem: format_bytes(8.0 * setup.prover_buffer_size as f64),
+            grinding_query_phase: 0,
             proof_size: format_bytes(8.0 * setup.proof_size as f64),
-            grinding: GrindingYaml {
-                aai: 0,
-                ali: 0,
-                deep: 0,
-                batching: 0,
-                commit_phase: vec![0; setup.stark_info.stark_struct.steps.len()],
-                query_phase: 0,
-            },
         },
     )
 }
@@ -180,9 +156,9 @@ pub fn soundness_info<F: PrimeField64>(
 
     let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &ParamsGPU::new(false));
 
-    let mut basics = HashMap::new();
-    let mut compressor = HashMap::new();
-    let mut recursive2 = HashMap::new();
+    let mut basics = IndexMap::new();
+    let mut compressor = IndexMap::new();
+    let mut recursive2 = IndexMap::new();
     let mut vadcop_final = None;
 
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
@@ -208,11 +184,11 @@ pub fn soundness_info<F: PrimeField64>(
         if n_airgroups > 1 {
             for airgroup in 0..n_airgroups {
                 let (_, air_info) = get_soundness_air_info(sctx_recursive2.get_setup(airgroup, 0)?);
-                recursive2.insert(format!("Recursive1 / Recursive2 - Airgroup_{}", airgroup), air_info);
+                recursive2.insert(format!("Recursive2 - Airgroup_{}", airgroup), air_info);
             }
         } else {
             let (_, air_info) = get_soundness_air_info(sctx_recursive2.get_setup(0, 0)?);
-            recursive2.insert("Recursive1 / Recursive2".to_string(), air_info);
+            recursive2.insert("Recursive2".to_string(), air_info);
         }
 
         let setup_vadcop_final = setups_aggregation.setup_vadcop_final.as_ref().unwrap();
