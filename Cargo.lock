@@ -1124,6 +1124,7 @@ version = "0.14.0"
 dependencies = [
  "bytemuck",
  "fields",
+ "rayon",
  "tracing",
  "zstd",
 ]
