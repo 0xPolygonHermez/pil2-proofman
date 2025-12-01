@@ -23,9 +23,7 @@ use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::fs;
 use std::collections::HashMap;
-use std::fs::File;
 use std::fmt::Write as FmtWrite;
-use std::io::Read;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
@@ -1367,11 +1365,11 @@ where
             self.exec()?;
 
             if !options.test_mode {
-                Self::initialize_publics_custom_commits(&self.sctx, &self.pctx)?;
+                Self::set_publics_custom_commits(&self.sctx, &self.pctx)?;
             }
 
             timer_start_info!(CALCULATING_CONTRIBUTIONS);
-            timer_start_info!(CALCULATING_INNER_CONTRIBUTIONS);
+            timer_start_debug!(CALCULATING_INNER_CONTRIBUTIONS);
             timer_start_debug!(PREPARING_CONTRIBUTIONS);
 
             let my_instances_tables = self.pctx.dctx_get_my_tables();
@@ -1444,7 +1442,7 @@ where
             // get roots still in the gpu
             get_stream_proofs_c(self.d_buffers.get_ptr());
 
-            timer_stop_and_log_info!(CALCULATING_INNER_CONTRIBUTIONS);
+            timer_stop_and_log_debug!(CALCULATING_INNER_CONTRIBUTIONS);
 
             //calculate-challenge
             let internal_contribution =
@@ -1507,7 +1505,7 @@ where
 
         timer_start_info!(GENERATING_PROOFS);
 
-        timer_start_info!(GENERATING_INNER_PROOFS);
+        timer_start_debug!(GENERATING_INNER_PROOFS);
 
         self.pctx.dctx_reset_instances_calculated();
         self.memory_handler.empty_queue_to_be_released();
@@ -1989,7 +1987,7 @@ where
 
         self.check_cancel(true)?;
 
-        timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
+        timer_stop_and_log_debug!(GENERATING_INNER_PROOFS);
 
         let mut proof_id = None;
         let mut vadcop_final_proof = None;
@@ -1997,10 +1995,10 @@ where
             let mut agg_proofs = Vec::new();
 
             if !options.rma {
-                timer_start_info!(WAITING_FOR_COMPRESSED_PROOFS);
+                timer_start_debug!(WAITING_FOR_COMPRESSED_PROOFS);
                 self.mpi_ctx.barrier();
-                timer_stop_and_log_info!(WAITING_FOR_COMPRESSED_PROOFS);
-                timer_start_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
+                timer_stop_and_log_debug!(WAITING_FOR_COMPRESSED_PROOFS);
+                timer_start_debug!(GENERATING_WORKER_COMPRESSED_PROOFS);
                 let recursive2_proofs_data: Vec<Vec<Proof<F>>> = self
                     .recursive2_proofs
                     .iter()
@@ -2030,7 +2028,7 @@ where
 
                 self.check_cancel(true)?;
 
-                timer_stop_and_log_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
+                timer_stop_and_log_debug!(GENERATING_WORKER_COMPRESSED_PROOFS);
             } else {
                 timer_start_debug!(GET_OUTER_RANK);
                 self.mpi_ctx.process_ready_for_outer_agg();
@@ -2216,7 +2214,7 @@ where
                 }
             }
 
-            timer_start_info!(VERIFYING_OUTER_AGGREGATED_PROOF);
+            timer_start_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
             let setup = self.setups.sctx_recursive2.as_ref().unwrap().get_setup(proof.airgroup_id as usize, 0)?;
             let publics_aggregation = n_publics_aggregation(&self.pctx, proof.airgroup_id as usize);
             let (publics, rec_proof) = proof.proof.split_at(publics_aggregation);
@@ -2228,7 +2226,7 @@ where
             add_publics_circom(&mut publics_extended, publics_aggregation, &self.pctx, &verkey_path, true);
 
             let mut recursive2_proof = create_buffer_fast_u64(1 + publics_extended.len() + rec_proof.len());
-            recursive2_proof[0] = 1;
+            recursive2_proof[0] = publics_extended.len() as u64;
             recursive2_proof[1..1 + publics_extended.len()].copy_from_slice(&publics_extended);
             recursive2_proof[1 + publics_extended.len()..].copy_from_slice(rec_proof);
 
@@ -2246,7 +2244,7 @@ where
                     .cancel(Some(ProofmanError::InvalidProof("Received aggregated proof is invalid!".into())));
                 break;
             }
-            timer_stop_and_log_info!(VERIFYING_OUTER_AGGREGATED_PROOF);
+            timer_stop_and_log_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
 
             let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
             for (c, value) in workers_acc_challenge.iter().enumerate() {
@@ -2553,7 +2551,7 @@ where
 
     #[allow(clippy::type_complexity)]
     fn worker_aggregations_rma(&self, options: &ProofOptions, send_proofs: bool) -> ProofmanResult<()> {
-        timer_start_info!(GENERATING_WORKER_RMA_COMPRESSED_PROOFS);
+        timer_start_debug!(GENERATING_WORKER_RMA_COMPRESSED_PROOFS);
 
         let my_rank = self.mpi_ctx.rank as usize;
         let n_processes = self.mpi_ctx.n_processes as usize;
@@ -2744,7 +2742,7 @@ where
             });
         }
 
-        timer_stop_and_log_info!(GENERATING_WORKER_RMA_COMPRESSED_PROOFS);
+        timer_stop_and_log_debug!(GENERATING_WORKER_RMA_COMPRESSED_PROOFS);
 
         Ok(())
     }
@@ -3292,13 +3290,13 @@ where
         let sctx: Arc<SetupCtx<F>> =
             Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, verify_constraints, gpu_params));
         pctx.set_weights(&sctx)?;
+        pctx.initialize_custom_commits(&sctx)?;
 
         let pctx = Arc::new(pctx);
 
         if !verify_constraints {
             check_tree_paths(&pctx, &sctx)?;
         }
-        Self::initialize_publics_custom_commits(&sctx, &pctx)?;
 
         let setups_vadcop =
             Arc::new(SetupsVadcop::new(&pctx.global_info, verify_constraints, aggregation, final_snark, gpu_params));
@@ -3437,19 +3435,14 @@ where
         Ok(())
     }
 
-    fn initialize_publics_custom_commits(sctx: &SetupCtx<F>, pctx: &ProofCtx<F>) -> ProofmanResult<()> {
-        tracing::info!("Initializing publics custom_commits");
+    fn set_publics_custom_commits(sctx: &SetupCtx<F>, pctx: &ProofCtx<F>) -> ProofmanResult<()> {
+        tracing::debug!("Initializing publics custom_commits");
         for (airgroup_id, airs) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in airs.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id)?;
                 for custom_commit in &setup.stark_info.custom_commits {
                     if custom_commit.stage_widths[0] > 0 {
-                        // Handle the possibility that this returns None
-                        let custom_file_path = pctx.get_custom_commits_fixed_buffer(&custom_commit.name, true)?;
-
-                        let mut file = File::open(custom_file_path)?;
-                        let mut root_bytes = [0u8; 32];
-                        file.read_exact(&mut root_bytes)?;
+                        let root_bytes = pctx.get_custom_commit_root(&custom_commit.name)?;
 
                         for (idx, p) in custom_commit.public_values.iter().enumerate() {
                             let public_id = p.idx as usize;
