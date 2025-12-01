@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use colored::Colorize;
 use std::fs::File;
 use std::io::Write;
-
+use toml;
 use fields::Goldilocks;
 
 use proofman_common::{initialize_logger, print_soundness_table, soundness_info};
@@ -39,7 +39,7 @@ impl SoundnessCmd {
             soundness_info::<Goldilocks>(self.proving_key.clone(), self.aggregation, self.verbose.into())?;
 
         print_soundness_table(&soundness_info);
-        let soundness_yaml = serde_yaml::to_string(&soundness_info).unwrap();
+        let soundness_yaml = toml::to_string(&soundness_info).unwrap();
 
         if let Some(output_path) = &self.output_path {
             let mut file = File::create(output_path)?;
