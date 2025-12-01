@@ -1,4 +1,6 @@
-// TODO: AGRAIR PLONKY3
+// This file includes code adapted from the Plonky3 project.
+// Original source: https://github.com/Plonky3/Plonky3.git, licensed under MIT/Apache-2.0.
+// Copyright © The Plonky3 Authors.
 
 use core::hint::unreachable_unchecked;
 

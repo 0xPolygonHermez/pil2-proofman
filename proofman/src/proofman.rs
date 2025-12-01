@@ -2252,6 +2252,7 @@ where
                     self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(
                         "Aggregated proof challenge does not match the expected challenge".into(),
                     )));
+                    break;
                 }
             }
             self.received_agg_proofs.write().unwrap()[proof.airgroup_id as usize].extend(proof.worker_indexes);
