@@ -139,6 +139,9 @@ pub struct CancellationInfo {
 impl CancellationInfo {
     pub fn cancel(&mut self, error: Option<ProofmanError>) {
         self.token.cancel();
+        if self.error.is_some() {
+            return;
+        }
         if let Some(err) = error {
             self.error = Some(err);
         }
@@ -2186,7 +2189,10 @@ where
         final_proof: bool,
         options: &ProofOptions,
     ) -> ProofmanResult<Option<Vec<AggProofs>>> {
-        if !agg_proofs.is_empty() && self.outer_aggregations_handle.lock().unwrap().is_none() {
+        if !agg_proofs.is_empty()
+            && !self.cancellation_info.read().unwrap().token.is_cancelled()
+            && self.outer_aggregations_handle.lock().unwrap().is_none()
+        {
             self.outer_aggregations(options);
         }
 
@@ -2251,10 +2257,14 @@ where
                 }
             }
             self.received_agg_proofs.write().unwrap()[proof.airgroup_id as usize].extend(proof.worker_indexes);
-            let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
-            let id = rec2_proofs.len();
-            let agg_proof = Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, Some(id), proof.proof);
-            rec2_proofs.push(Some(agg_proof));
+            let id = {
+                let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
+                let id = rec2_proofs.len();
+                let agg_proof = Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, Some(id), proof.proof);
+                rec2_proofs.push(Some(agg_proof));
+                id
+            };
+
             self.total_outer_agg_proofs.increment();
             launch_callback_c(id as u64, ProofType::Recursive2.into());
         }
@@ -2268,14 +2278,20 @@ where
                     }
                     let n_agg_proofs_to_be_done = total_recursive_proofs(n_agg_proofs + 1);
                     if n_agg_proofs_to_be_done.has_remaining {
-                        let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
-                        let id = rec2_proofs.len();
                         let setup = self.setups.get_setup(airgroup_id, 0, &ProofType::Recursive2)?;
                         let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
                         let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
-                        let null_proof = Proof::new(ProofType::Recursive2, airgroup_id, 0, Some(id), null_proof_buffer);
+
+                        let id = {
+                            let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
+                            let id = rec2_proofs.len();
+                            let null_proof =
+                                Proof::new(ProofType::Recursive2, airgroup_id, 0, Some(id), null_proof_buffer);
+                            rec2_proofs.push(Some(null_proof));
+                            id
+                        };
+
                         self.total_outer_agg_proofs.increment();
-                        rec2_proofs.push(Some(null_proof));
                         launch_callback_c(id as u64, ProofType::Recursive2.into());
                     }
                 }
@@ -2432,7 +2448,6 @@ where
                 }
             };
 
-            let id = new_proof.global_idx.unwrap();
             recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
 
             let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
@@ -2552,8 +2567,9 @@ where
         let n_airgroups = self.pctx.global_info.air_groups.len();
         let mut airgroup_instances_alive = vec![vec![0; n_processes]; n_airgroups];
         for global_id in self.pctx.dctx_get_worker_instances().iter() {
-            let owner = self.pctx.dctx_get_process_owner_instance(*global_id)?;
-            airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize] = 1;
+            if let Ok(owner) = self.pctx.dctx_get_process_owner_instance(*global_id) {
+                airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize] = 1;
+            }
         }
         let mut alives = vec![0; n_airgroups];
         let mut n_proofs_to_be_received = 0;
