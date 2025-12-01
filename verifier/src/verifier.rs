@@ -63,7 +63,7 @@ pub fn stark_verify(
     let mut leaves: u64 = 1 << verifier_info.n_bits_ext;
     let mut n_siblings: u64 = 0;
 
-    let root_c = [Goldilocks::new(vk[0]), Goldilocks::new(vk[1]), Goldilocks::new(vk[2]), Goldilocks::new(vk[3])];
+    let mut root_c = [Goldilocks::new(vk[0]), Goldilocks::new(vk[1]), Goldilocks::new(vk[2]), Goldilocks::new(vk[3])];
 
     while leaves > 1 {
         leaves = leaves.div_ceil(verifier_info.arity);
@@ -227,7 +227,7 @@ pub fn stark_verify(
     let mut zi = Vec::new();
 
     let mut transcript = Transcript::new();
-    transcript.put(&mut root_c.clone());
+    transcript.put(&mut root_c);
     if n_publics > 0 {
         if !verifier_info.hash_commits {
             transcript.put(&mut publics);
@@ -335,7 +335,10 @@ pub fn stark_verify(
         .collect();
 
     tracing::debug!("Verifying proof");
-    for q in 0..verifier_info.n_fri_queries as usize {
+
+    let queries: Vec<_> = (0..verifier_info.n_fri_queries as usize).collect();
+    let all_valid = queries.par_iter().all(|_q| {
+        let q = *_q;
         // 1) Fixed MT
         if !verify_mt(&root_c, &s0_siblings[q][0], fri_queries[q], &s0_vals[q][0], verifier_info.arity) {
             tracing::error!("Fixed MT verification failed for query {}", q);
@@ -350,22 +353,7 @@ pub fn stark_verify(
             }
         }
 
-        // 3) FRI step MTs
-        for s in 0..(verifier_info.n_fri_steps - 1) {
-            let idx = fri_queries[q] % (1 << verifier_info.fri_steps[s as usize + 1]);
-            if !verify_mt(
-                &roots_fri[s as usize],
-                &siblings_fri[q][s as usize],
-                idx,
-                &vals_fri[q][s as usize],
-                verifier_info.arity,
-            ) {
-                tracing::error!("FRI step MT verification failed for query {}", q);
-                return false;
-            }
-        }
-
-        // 4) FRI Queries
+        // 3) FRI Query
         let idx = fri_queries[q] % (1 << verifier_info.fri_steps[0]);
         let query_fri = queries_fri_verify(&challenges, &evals, &s0_vals[q], &xdivxsub[q]);
 
@@ -382,22 +370,34 @@ pub fn stark_verify(
             return false;
         }
 
-        // 5) FRI foldings
-        for s in 1..verifier_info.n_fri_steps as usize {
-            let idx = fri_queries[q] % (1 << verifier_info.fri_steps[s]);
+        // 4) FRI folding && MT
+        for s in 0..verifier_info.n_fri_steps - 1 {
+            let idx = fri_queries[q] % (1 << verifier_info.fri_steps[s as usize + 1]);
+            if !verify_mt(
+                &roots_fri[s as usize],
+                &siblings_fri[q][s as usize],
+                idx,
+                &vals_fri[q][s as usize],
+                verifier_info.arity,
+            ) {
+                tracing::error!("FRI step MT verification failed for query {}", q);
+                return false;
+            }
+
             let value = verify_fold(
                 verifier_info.n_bits_ext,
-                verifier_info.fri_steps[s],
-                verifier_info.fri_steps[s - 1],
-                challenges[verifier_info.n_challenges as usize + s],
-                fri_queries[q] % (1 << verifier_info.fri_steps[s]),
-                &vals_fri[q][s - 1],
+                verifier_info.fri_steps[s as usize + 1],
+                verifier_info.fri_steps[s as usize],
+                challenges[verifier_info.n_challenges as usize + s as usize + 1],
+                idx,
+                &vals_fri[q][s as usize],
             );
-            if s < verifier_info.n_fri_steps as usize - 1 {
-                let group_idx = (idx / (1 << verifier_info.fri_steps[s + 1])) as usize;
+
+            if s as usize + 1 < verifier_info.n_fri_steps as usize - 1 {
+                let group_idx = (idx / (1 << verifier_info.fri_steps[s as usize + 2])) as usize;
                 for (i, val) in value.iter().enumerate().take(3usize) {
-                    if vals_fri[q][s][group_idx * 3 + i] != *val {
-                        tracing::error!("FRI foldings verification failed at step {} for query {}", s, q,);
+                    if vals_fri[q][s as usize + 1][group_idx * 3 + i] != *val {
+                        tracing::error!("FRI foldings verification failed at step {} for query {}", s as usize + 1, q,);
                         return false;
                     }
                 }
@@ -410,6 +410,12 @@ pub fn stark_verify(
                 }
             }
         }
+
+        true
+    });
+
+    if !all_valid {
+        return false;
     }
 
     tracing::debug!("Verifying Quotient polynomial");
