@@ -9,3 +9,4 @@ pub mod verify_stark;
 pub mod gen_custom_commits_fixed;
 pub mod stats;
 pub mod execute;
+pub mod gen_witness;

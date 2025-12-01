@@ -11,25 +11,23 @@ use std::io::Write;
 
 use proofman_common::{
     load_const_pols, load_const_pols_tree, CurveType, MpiCtx, Proof, ProofCtx, ProofType, ProofmanResult,
-    ProofmanError, Setup, SetupsVadcop,
+    ProofmanError, Setup, SetupsVadcop, GetSizeWitnessFunc,
 };
 
 use std::os::raw::{c_void, c_char};
 
 use proofman_util::{
     timer_start_info, timer_stop_and_log_info, timer_stop_and_log_trace, timer_start_trace, timer_start_debug,
-    timer_stop_and_log_debug, create_buffer_fast,
+    timer_stop_and_log_debug,
 };
 
 use crate::{add_publics_circom, add_publics_aggregation};
 
-type GetWitnessFunc =
+pub type GetWitnessFunc =
     unsafe extern "C" fn(zkin: *mut u64, circom_circuit: *mut c_void, witness: *mut c_void, n_mutexes: u64) -> i64;
 
-type GetWitnessFinalFunc =
+pub type GetWitnessFinalFunc =
     unsafe extern "C" fn(zkin: *mut c_void, dat_file: *const c_char, witness: *mut c_void, n_mutexes: u64) -> i64;
-
-type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
 pub const N_RECURSIVE_PROOFS_PER_AGGREGATION: usize = 3;
 
@@ -308,8 +306,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 
     let setup = setups.get_setup(airgroup_id, air_id, &witness.proof_type)?;
 
-    let trace: Vec<F> =
-        create_buffer_fast(setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize);
+    let trace: Vec<F> = vec![F::ZERO; setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize];
 
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
@@ -651,8 +648,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     let setup = setups.setup_recursivef.as_ref().unwrap();
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
-    let trace: Vec<F> =
-        create_buffer_fast(setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize);
+    let trace: Vec<F> = vec![F::ZERO; setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize];
 
     load_const_pols(setup, const_pols);
     load_const_pols_tree(setup, const_tree);

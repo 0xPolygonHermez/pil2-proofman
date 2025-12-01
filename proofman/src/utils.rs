@@ -281,7 +281,7 @@ pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>)
                             setup.stark_info.custom_commits[commit_id].name,
                             custom_commit_file_path.display(),
                         );
-                        tracing::warn!(error_message);
+                        tracing::warn!("{}", error_message);
                         return Ok(());
                     }
 
@@ -299,7 +299,7 @@ pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>)
                         Ok(metadata) => {
                             let actual_size = metadata.len() as usize;
                             if actual_size != (size + 4) * 8 {
-                                tracing::warn!(error_message);
+                                tracing::warn!("{}", error_message);
                                 return Ok(());
                             }
                         }

@@ -17,7 +17,6 @@ use proofman_starks_lib_c::{
 };
 use proofman_verifier::verify_recursive2;
 use crate::add_publics_circom;
-use proofman_util::create_buffer_fast_u64;
 use proofman_verifier::verify;
 use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
@@ -466,6 +465,7 @@ where
     pub fn execute_(&self, output_path: Option<PathBuf>) -> ProofmanResult<()> {
         self.pctx.dctx_setup(1, vec![0], 0)?;
 
+        self.cancellation_info.write().unwrap().reset();
         self.reset()?;
         self.pctx.dctx_reset();
 
@@ -599,6 +599,7 @@ where
     pub fn compute_witness_(&self, options: ProofOptions) -> ProofmanResult<()> {
         self.pctx.dctx_setup(1, vec![0], 0)?;
 
+        self.cancellation_info.write().unwrap().reset();
         self.reset()?;
         self.pctx.dctx_reset();
 
@@ -722,6 +723,7 @@ where
         self.pctx.dctx_setup(1, vec![0], 0)?;
 
         self.pctx.set_debug_info(debug_info);
+        self.cancellation_info.write().unwrap().reset();
         self.reset()?;
         self.pctx.dctx_reset();
 
@@ -1264,7 +1266,6 @@ where
 
         self.memory_handler.reset()?;
 
-        self.cancellation_info.write().unwrap().reset();
         Ok(())
     }
 
@@ -1294,6 +1295,7 @@ where
             };
 
             self.pctx.dctx_setup(proof_info.n_partitions, proof_info.partition_ids.clone(), proof_info.worker_index)?;
+            self.cancellation_info.write().unwrap().reset();
             self.reset()?;
             self.pctx.dctx_reset();
 
@@ -2225,7 +2227,7 @@ where
 
             add_publics_circom(&mut publics_extended, publics_aggregation, &self.pctx, &verkey_path, true);
 
-            let mut recursive2_proof = create_buffer_fast_u64(1 + publics_extended.len() + rec_proof.len());
+            let mut recursive2_proof = vec![0; 1 + publics_extended.len() + rec_proof.len()];
             recursive2_proof[0] = publics_extended.len() as u64;
             recursive2_proof[1..1 + publics_extended.len()].copy_from_slice(&publics_extended);
             recursive2_proof[1 + publics_extended.len()..].copy_from_slice(rec_proof);
@@ -3238,7 +3240,7 @@ where
             None => (false, 0),
         };
 
-        let proof = create_buffer_fast(setup.proof_size as usize);
+        let proof = vec![0; setup.proof_size as usize];
         *proofs[instance_id].write().unwrap() =
             Some(Proof::new(ProofType::Basic, airgroup_id, air_id, Some(instance_id), proof));
 

@@ -1042,6 +1042,7 @@ dependencies = [
  "proofman-common",
  "proofman-util",
  "proofman-verifier",
+ "regex",
  "serde",
  "serde_json",
  "tinytemplate",
