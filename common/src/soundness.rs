@@ -24,6 +24,7 @@ pub struct AirTableRow {
     pub num_columns: u64,
     pub opening_points: u64,
     pub num_pols: u64,
+    pub power_batching: bool,
     pub num_queries: u64,
     pub fri_folding_factors: String,
     pub fri_early_stop_degree: u64,
@@ -33,10 +34,7 @@ pub struct AirTableRow {
 #[derive(Serialize)]
 pub struct SoundnessToml {
     pub zkevm: ZkevmConfig,
-    pub basic_circuits: Vec<TomlCircuit>,
-    pub compressor_circuits: Option<Vec<TomlCircuit>>,
-    pub aggregation_circuits: Option<Vec<TomlCircuit>>,
-    pub vadcop_final: Option<TomlCircuit>,
+    pub circuits: Vec<TomlCircuit>,
 }
 
 #[derive(Serialize)]
@@ -51,6 +49,7 @@ pub struct ZkevmConfig {
 #[derive(Serialize)]
 pub struct TomlCircuit {
     pub name: String,
+    pub group: String,
     #[serde(flatten)]
     pub air: AirInfo,
 }
@@ -63,6 +62,7 @@ pub struct AirInfo {
     pub num_columns: u64,
     pub opening_points: u64,
     pub num_pols: u64,
+    pub power_batching: bool,
     pub num_queries: u64,
     pub fri_folding_factors: Vec<u64>,
     pub fri_early_stop_degree: u64,
@@ -79,6 +79,7 @@ impl AirTableRow {
             num_columns: air.num_columns,
             opening_points: air.opening_points,
             num_pols: air.num_pols,
+            power_batching: air.power_batching,
             num_queries: air.num_queries,
             fri_folding_factors: format!("{:?}", air.fri_folding_factors),
             fri_early_stop_degree: air.fri_early_stop_degree,
@@ -90,31 +91,45 @@ impl AirTableRow {
 pub fn print_soundness_table(soundness: &SoundnessToml) {
     println!("=== Basics ===");
     let basics_rows: Vec<AirTableRow> = soundness
-        .basic_circuits
+        .circuits
         .iter()
+        .filter(|circuit| circuit.group == "basic")
         .map(|circuit| AirTableRow::from_air_info(&circuit.name, &circuit.air))
         .collect();
     let basics_table = Table::new(basics_rows);
     println!("{}", basics_table);
-
-    if let Some(compressor) = &soundness.compressor_circuits {
+    
+    let compressor_rows: Vec<AirTableRow> = soundness
+        .circuits
+        .iter()
+        .filter(|circuit| circuit.group == "compression")
+        .map(|circuit| AirTableRow::from_air_info(&circuit.name, &circuit.air))
+        .collect();
+    if !compressor_rows.is_empty() {
         println!("=== Compressor ===");
-        let compressor_rows: Vec<AirTableRow> =
-            compressor.iter().map(|circuit| AirTableRow::from_air_info(&circuit.name, &circuit.air)).collect();
         println!("{}", Table::new(compressor_rows));
     }
 
-    if let Some(aggregation) = &soundness.aggregation_circuits {
+    let aggregation_rows: Vec<AirTableRow> = soundness
+        .circuits
+        .iter()
+        .filter(|circuit| circuit.group == "aggregation")
+        .map(|circuit| AirTableRow::from_air_info(&circuit.name, &circuit.air))
+        .collect();
+    if !aggregation_rows.is_empty() {
         println!("=== Aggregation ===");
-        let aggregation_rows: Vec<AirTableRow> =
-            aggregation.iter().map(|circuit| AirTableRow::from_air_info(&circuit.name, &circuit.air)).collect();
         println!("{}", Table::new(aggregation_rows));
     }
 
-    if let Some(vadcop) = &soundness.vadcop_final {
-        println!("=== Vadcop Final ===");
-        let row = AirTableRow::from_air_info("vadcop_final", &vadcop.air);
-        println!("{}", Table::new(vec![row]));
+    let final_rows: Vec<AirTableRow> = soundness
+        .circuits
+        .iter()
+        .filter(|circuit| circuit.group == "final")
+        .map(|circuit| AirTableRow::from_air_info(&circuit.name, &circuit.air))
+        .collect();
+    if !final_rows.is_empty() {
+        println!("=== Final Circuit ===");
+        println!("{}", Table::new(final_rows));
     }
 }
 
@@ -128,6 +143,7 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
             num_columns: setup.stark_info.n_constants + setup.stark_info.cm_pols_map.as_ref().unwrap().len() as u64,
             opening_points: setup.stark_info.opening_points.len() as u64,
             num_pols: setup.stark_info.ev_map.len() as u64,
+            power_batching: true,
             num_queries: setup.stark_info.stark_struct.n_queries,
             fri_folding_factors: setup
                 .stark_info
@@ -163,15 +179,12 @@ pub fn soundness_info<F: PrimeField64>(
 
     let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &ParamsGPU::new(false));
 
-    let mut basics = Vec::new();
-    let mut compressor = Vec::new();
-    let mut recursive2 = Vec::new();
-    let mut vadcop_final = None;
+    let mut circuits = Vec::new();
 
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let (air_name, air_info) = get_soundness_air_info(sctx.get_setup(airgroup_id, air_id)?);
-            basics.push(TomlCircuit { name: air_name, air: air_info });
+            circuits.push(TomlCircuit { name: air_name, group: "basic".to_string(), air: air_info });
         }
     }
 
@@ -181,7 +194,7 @@ pub fn soundness_info<F: PrimeField64>(
             for (air_id, _) in air_group.iter().enumerate() {
                 if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let (air_name, air_info) = get_soundness_air_info(sctx_compressor.get_setup(airgroup_id, air_id)?);
-                    compressor.push(TomlCircuit { name: air_name, air: air_info });
+                    circuits.push(TomlCircuit { name: format!("{}-compressor", air_name), group: "compression".to_string(), air: air_info });
                 }
             }
         }
@@ -191,29 +204,26 @@ pub fn soundness_info<F: PrimeField64>(
         if n_airgroups > 1 {
             for airgroup in 0..n_airgroups {
                 let (_, air_info) = get_soundness_air_info(sctx_recursive2.get_setup(airgroup, 0)?);
-                recursive2.push(TomlCircuit { name: format!("Recursive2 - Airgroup_{}", airgroup), air: air_info });
+                circuits.push(TomlCircuit { name: format!("Recursive2 - Airgroup_{}", airgroup), group: "aggregation".to_string(), air: air_info });
             }
         } else {
             let (_, air_info) = get_soundness_air_info(sctx_recursive2.get_setup(0, 0)?);
-            recursive2.push(TomlCircuit { name: "Recursive2".to_string(), air: air_info });
+            circuits.push(TomlCircuit { name: "Recursive2".to_string(), group: "aggregation".to_string(), air: air_info });
         }
 
-        let setup_vadcop_final = setups_aggregation.setup_vadcop_final.as_ref().unwrap();
-        let (_, final_air_info) = get_soundness_air_info(setup_vadcop_final);
-        vadcop_final = Some(TomlCircuit { name: "Vadcop Final".to_string(), air: final_air_info });
+        let setup_final_circuit = setups_aggregation.setup_vadcop_final.as_ref().unwrap();
+        let (_, final_air_info) = get_soundness_air_info(setup_final_circuit);
+        circuits.push(TomlCircuit { name: "Final".to_string(), group: "final".to_string(), air: final_air_info });
     }
 
     Ok(SoundnessToml {
         zkevm: ZkevmConfig {
-            name: "Zisk".to_string(),
+            name: "ZisK".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             protocol_family: "FRI_STARK".to_string(),
             field: "Goldilocks^3".to_string(),
             hash_size_bits: 256,
         },
-        basic_circuits: basics,
-        compressor_circuits: if aggregation { Some(compressor) } else { None },
-        aggregation_circuits: if aggregation { Some(recursive2) } else { None },
-        vadcop_final: vadcop_final,
+        circuits,
     })
 }
