@@ -10,9 +10,9 @@
 
 extern __shared__ gl64_t scratchpad[];
 
-// Constants defined in "poseidon2_goldilocks_constants.hpp"
-__device__ __constant__ uint64_t GPU_C[SPONGE_WIDTH * N_FULL_ROUNDS_TOTAL + N_PARTIAL_ROUNDS];
-__device__ __constant__ uint64_t GPU_D[SPONGE_WIDTH];
+// Constants defined in poseidon2_constants_device.cu
+extern __device__ __constant__ uint64_t GPU_C[SPONGE_WIDTH * N_FULL_ROUNDS_TOTAL + N_PARTIAL_ROUNDS];
+extern __device__ __constant__ uint64_t GPU_D[SPONGE_WIDTH];
 
 __global__ void linear_hash_gpu_coalesced_2(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t size, uint32_t num_rows);
 __global__ void linear_hash_gpu_coalesced_2_blocks(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows);

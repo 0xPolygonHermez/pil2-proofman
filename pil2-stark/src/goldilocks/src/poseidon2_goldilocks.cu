@@ -70,8 +70,8 @@ void Poseidon2GoldilocksGPU::init_gpu_const_2(uint32_t* gpu_ids, uint32_t num_gp
                 CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D12, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
             }else if( SPONGE_WIDTH == 16 ){
                 CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
-                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C16, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D16, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C16, 150 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D16, 16 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
             }
                 
         }

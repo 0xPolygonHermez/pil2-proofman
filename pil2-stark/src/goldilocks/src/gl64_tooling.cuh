@@ -4,12 +4,14 @@
 #include <cstdint>
 #include <cassert>
 #include "goldilocks_base_field.hpp"
+#ifndef __GOLDILOCKS_ENV__
 #include "gpu_timer.cuh"
 #include <mutex>
 #include "cuda_utils.cuh"
 #include "transcriptGL.cuh"
 #include "expressions_gpu.cuh"
 #include <limits.h>
+#endif
 #include "gl64_t.cuh"
 
 
@@ -32,6 +34,7 @@ public:
     }
 };
 
+#ifndef __GOLDILOCKS_ENV__
 struct AirInstanceInfo {
     uint64_t airgroupId;
     uint64_t airId;
@@ -392,5 +395,5 @@ void load_and_copy_to_device_in_chunks(
     uint64_t total_size,
     uint64_t streamId
     );
-
+#endif
 #endif
