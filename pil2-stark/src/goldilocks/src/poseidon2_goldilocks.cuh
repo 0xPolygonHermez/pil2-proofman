@@ -11,8 +11,8 @@
 extern __shared__ gl64_t scratchpad[];
 
 // Constants defined in "poseidon2_goldilocks_constants.hpp"
-__device__ __constant__ uint64_t GPU_C[118];
-__device__ __constant__ uint64_t GPU_D[12];
+__device__ __constant__ uint64_t GPU_C[SPONGE_WIDTH * N_FULL_ROUNDS_TOTAL + N_PARTIAL_ROUNDS];
+__device__ __constant__ uint64_t GPU_D[SPONGE_WIDTH];
 
 __global__ void linear_hash_gpu_coalesced_2(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t size, uint32_t num_rows);
 __global__ void linear_hash_gpu_coalesced_2_blocks(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows);
@@ -68,20 +68,23 @@ __device__ __forceinline__ void pow7add_2(gl64_t *x, const gl64_t C[SPONGE_WIDTH
 
 __device__ __forceinline__ void matmul_external_(gl64_t *x)
 {
-    matmul_m4_(&x[0]);
-    matmul_m4_(&x[4]);
-    matmul_m4_(&x[8]);
-
-    gl64_t stored[4] = {
-        x[0] + x[4] + x[8],
-        x[1] + x[5] + x[9],
-        x[2] + x[6] + x[10],
-        x[3] + x[7] + x[11],
-    };
 #pragma unroll
-    for (int i = 0; i < SPONGE_WIDTH; ++i)
-    {
-        x[i] = x[i] + stored[i % 4];
+    for(int i=0; i<SPONGE_WIDTH; i+=4)
+        matmul_m4_(&x[i]);
+
+    if( SPONGE_WIDTH > 4 ){
+        gl64_t stored[4]={gl64_t(uint64_t(0)), gl64_t(uint64_t(0)), gl64_t(uint64_t(0)), gl64_t(uint64_t(0))};
+        for(int i=0; i<SPONGE_WIDTH; i+=4){
+            stored[0] = stored[0] + x[i + 0];
+            stored[1] = stored[1] + x[i + 1];
+            stored[2] = stored[2] + x[i + 2];
+            stored[3] = stored[3] + x[i + 3];
+        }
+    #pragma unroll
+        for (int i = 0; i < SPONGE_WIDTH; ++i)
+        {
+            x[i] = x[i] + stored[i & 3];
+        }
     }
 }
 
@@ -171,20 +174,22 @@ __device__ __forceinline__ void matmul_m4_state_(uint32_t offset)
 
 __device__ __forceinline__ void matmul_external_state_()
 {
-    matmul_m4_state_(0);
-    matmul_m4_state_(4);
-    matmul_m4_state_(8);
 
-    gl64_t stored[4] = {
-       scratchpad[0 * blockDim.x + threadIdx.x] + scratchpad[4 * blockDim.x + threadIdx.x] + scratchpad[8 * blockDim.x + threadIdx.x],
-       scratchpad[1 * blockDim.x + threadIdx.x] + scratchpad[5 * blockDim.x + threadIdx.x] + scratchpad[9 * blockDim.x + threadIdx.x],
-       scratchpad[2 * blockDim.x + threadIdx.x] + scratchpad[6 * blockDim.x + threadIdx.x] + scratchpad[10 * blockDim.x + threadIdx.x],
-       scratchpad[3 * blockDim.x + threadIdx.x] + scratchpad[7 * blockDim.x + threadIdx.x] + scratchpad[11 * blockDim.x + threadIdx.x],
-    };
+#pragma unroll
+    for(int i=0; i<SPONGE_WIDTH; i+=4){
+        matmul_m4_state_(i);
+    }
+    gl64_t stored[4]={gl64_t(uint64_t(0)), gl64_t(uint64_t(0)), gl64_t(uint64_t(0)), gl64_t(uint64_t(0))};
+    for(int i=0; i<SPONGE_WIDTH; i+=4){
+        stored[0] = stored[0] + scratchpad[(i + 0) * blockDim.x + threadIdx.x];
+        stored[1] = stored[1] + scratchpad[(i + 1) * blockDim.x + threadIdx.x];
+        stored[2] = stored[2] + scratchpad[(i + 2) * blockDim.x + threadIdx.x];
+        stored[3] = stored[3] + scratchpad[(i + 3) * blockDim.x + threadIdx.x];
+    }
 #pragma unroll
     for (int i = 0; i < SPONGE_WIDTH; ++i)
     {
-        scratchpad[i * blockDim.x + threadIdx.x] = scratchpad[i * blockDim.x + threadIdx.x] + stored[i % 4];
+        scratchpad[i * blockDim.x + threadIdx.x] = scratchpad[i * blockDim.x + threadIdx.x] + stored[i & 3];
     }
 }
 

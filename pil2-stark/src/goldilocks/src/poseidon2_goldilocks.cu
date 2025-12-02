@@ -17,18 +17,16 @@ typedef uint64_t u64;
 // CUDA Threads per Block
 #define TPB 128
 
-#define MAX_WIDTH 12
-
 /* --- integration --- */
 __device__ void hash_one_2(gl64_t *state, gl64_t *const input, int tid)
 {
-    __shared__ gl64_t GPU_C_SM[118];
-    __shared__ gl64_t GPU_D_SM[12];
+    __shared__ gl64_t GPU_C_SM[SPONGE_WIDTH * N_FULL_ROUNDS_TOTAL + N_PARTIAL_ROUNDS];
+    __shared__ gl64_t GPU_D_SM[SPONGE_WIDTH];
 
     if (tid == 0)
     {
-        mymemcpy((uint64_t *)GPU_C_SM, GPU_C, 118);
-        mymemcpy((uint64_t *)GPU_D_SM, GPU_D, 12);
+        mymemcpy((uint64_t *)GPU_C_SM, GPU_C, SPONGE_WIDTH * N_FULL_ROUNDS_TOTAL + N_PARTIAL_ROUNDS); //rick_pos: why mymemcpy?
+        mymemcpy((uint64_t *)GPU_D_SM, GPU_D, SPONGE_WIDTH);
     }
     __syncthreads();
 
@@ -45,7 +43,7 @@ __global__ void hash_gpu_3(uint32_t nextN, uint32_t nextIndex, uint32_t pending,
         return;
 
     gl64_t pol_input[SPONGE_WIDTH];
-    mymemset((uint64_t *)pol_input, 0, SPONGE_WIDTH);
+    mymemset((uint64_t *)pol_input, 0, SPONGE_WIDTH); //rick_pos: ineficient
     mymemcpy((uint64_t *)pol_input, (uint64_t *)&cursor[nextIndex + tid * SPONGE_WIDTH], SPONGE_WIDTH);
     hash_one_2((gl64_t *)(&cursor[nextIndex + (pending + tid) * CAPACITY]), pol_input, threadIdx.x);
 }
@@ -57,6 +55,8 @@ __global__ void hash_gpu_3(uint32_t nextN, uint32_t nextIndex, uint32_t pending,
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 void Poseidon2GoldilocksGPU::init_gpu_const_2(uint32_t* gpu_ids, uint32_t num_gpu_ids)
 {
+    static_assert(SPONGE_WIDTH == 12 || SPONGE_WIDTH==16, "Error: Unsupported SPONGE_WIDTH.");
+    
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
     static int initialized = 0;
@@ -64,9 +64,15 @@ void Poseidon2GoldilocksGPU::init_gpu_const_2(uint32_t* gpu_ids, uint32_t num_gp
     {
         for(int i = 0; i < num_gpu_ids; i++)
         {
-        CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
-        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            if( SPONGE_WIDTH == 12){
+                CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C12, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D12, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            }else if( SPONGE_WIDTH == 16 ){
+                CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C16, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D16, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            }
                 
         }
         initialized = 1;        
@@ -90,7 +96,7 @@ void Poseidon2GoldilocksGPU::merkletree_cuda_coalesced(uint32_t arity, uint64_t 
         actual_tpb = num_rows;
         actual_blks = 1;
     }
-    linear_hash_gpu_coalesced_2<<<actual_blks, actual_tpb, actual_tpb * 12 * 8, stream>>>(d_tree, d_input, num_cols * dim, num_rows); // rick: el 12 aqeust harcoded no please!!
+    linear_hash_gpu_coalesced_2<<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * 8, stream>>>(d_tree, d_input, num_cols * dim, num_rows);
     CHECKCUDAERR(cudaGetLastError());
 
     // Build the merkle tree
@@ -140,7 +146,7 @@ void Poseidon2GoldilocksGPU::merkletree_cuda_coalesced_blocks(uint32_t arity, ui
         actual_tpb = num_rows;
         actual_blks = 1;
     }
-    linear_hash_gpu_coalesced_2_blocks<<<actual_blks, actual_tpb, actual_tpb * 12 * sizeof(gl64_t), stream>>>(d_tree, d_input, num_cols * dim, num_rows); // rick: el 12 aqeust harcoded no please!!
+    linear_hash_gpu_coalesced_2_blocks<<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_tree, d_input, num_cols * dim, num_rows);
     CHECKCUDAERR(cudaGetLastError());
 
     // Build the merkle tree
