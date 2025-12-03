@@ -6,9 +6,16 @@
 
 static int initialized = 0;
 
-
-__device__ __constant__ gl64_t POSEIDON2_GPU_C[118];
-__device__ __constant__ gl64_t POSEIDON2_GPU_D[12];
+#if SPONGE_WIDTH == 4
+__device__ __constant__ gl64_t POSEIDON2_GPU_C[(4 * Poseidon2GoldilocksConstants::ROUNDS_F + Poseidon2GoldilocksConstants::ROUNDS_P_4)];
+#elif SPONGE_WIDTH == 12
+__device__ __constant__ gl64_t POSEIDON2_GPU_C[(12 * Poseidon2GoldilocksConstants::ROUNDS_F + Poseidon2GoldilocksConstants::ROUNDS_P_12)];
+#elif SPONGE_WIDTH == 16
+__device__ __constant__ gl64_t POSEIDON2_GPU_C[(16 * Poseidon2GoldilocksConstants::ROUNDS_F + Poseidon2GoldilocksConstants::ROUNDS_P_16)];
+#else
+#error "Unsupported SPONGE_WIDTH for TranscriptGL_GPU"
+#endif
+__device__ __constant__ gl64_t POSEIDON2_GPU_D[SPONGE_WIDTH];
 
 __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor) 
 {
@@ -144,16 +151,20 @@ void TranscriptGL_GPU::init_const(uint32_t* gpu_ids, uint32_t num_gpu_ids)
     {
         for(int i = 0; i < num_gpu_ids; i++)
         {     
-            
-            if( SPONGE_WIDTH == 12){
+#if SPONGE_WIDTH == 4
+                CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON2_GPU_C, Poseidon2GoldilocksConstants::C4,  (4 * Poseidon2GoldilocksConstants::ROUNDS_F + Poseidon2GoldilocksConstants::ROUNDS_P_4) * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON2_GPU_D, Poseidon2GoldilocksConstants::D4, 4 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+#elif SPONGE_WIDTH == 12
                 CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
-                CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON2_GPU_C, Poseidon2GoldilocksConstants::C12, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON2_GPU_C, Poseidon2GoldilocksConstants::C12, (12 * Poseidon2GoldilocksConstants::ROUNDS_F + Poseidon2GoldilocksConstants::ROUNDS_P_12) * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
                 CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON2_GPU_D, Poseidon2GoldilocksConstants::D12, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            }else if( SPONGE_WIDTH == 16 ){
+#elif SPONGE_WIDTH == 16
                 CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
-                CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON2_GPU_C, Poseidon2GoldilocksConstants::C16, 150 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON2_GPU_C, Poseidon2GoldilocksConstants::C16, (16 * Poseidon2GoldilocksConstants::ROUNDS_F + Poseidon2GoldilocksConstants::ROUNDS_P_16) * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
                 CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON2_GPU_D, Poseidon2GoldilocksConstants::D16, 16 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            }
+#else
+#error "Unsupported SPONGE_WIDTH for TranscriptGL_GPU::init_const"
+#endif
         }   
         initialized = 1;
        

@@ -5,7 +5,7 @@
 #include <math.h> /* floor */
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_cubic_extension.hpp"
-#include "poseidon_goldilocks.hpp"
+#include "poseidon2_goldilocks.hpp"
 
 #define MERKLEHASHGOLDILOCKS_HEADER_SIZE 2
 #define MERKLEHASHGOLDILOCKS_ARITY 3

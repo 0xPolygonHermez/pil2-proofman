@@ -5,8 +5,76 @@
 
 namespace Poseidon2GoldilocksConstants
 {
+    const int ROUNDS_F = 8;
+    const int ROUNDS_P_4 = 21;
+    const int ROUNDS_P_12 = 22;
+    const int ROUNDS_P_16 = 22;
 
-    inline constexpr static Goldilocks::Element C12[118] = {
+
+    inline constexpr static Goldilocks::Element C4[4*ROUNDS_F+ROUNDS_P_4] = {
+        {0x5098165ee28e503e},
+        {0x41b84edfee6c0590},
+        {0xdda6bc081661f7b8},
+        {0xb56f892b5fc6d76c},
+        {0xb2b7e92b1f70399f},
+        {0x7075cc44042536e9},
+        {0xd5aae31b4968adb1},
+        {0x0713f06eb5e40337},
+        {0x80dccd8a419cc2d5},
+        {0x89ae3f75c9b53e2c},
+        {0x8aac5449eff27e1d},
+        {0xef29b2b24bf503f9},
+        {0xa1d4f9eaaa62e9fc},
+        {0x2f215d5c5a0aa622},
+        {0x7b3447f34ae22dd9},
+        {0x4b614218a8e81eef},
+        {0xe063343114e0f434},
+        {0x2cdedf7f0717ad4e},
+        {0x4662c297f2537cf5},
+        {0x8fe48eee51761f3d},
+        {0x616aead4ae0ebf00},
+        {0x9b40b73022b3089b},
+        {0xa051e1646094b036},
+        {0xf69b2c13f377ff8e},
+        {0x96f7dec4549af9be},
+        {0x858371686234c707},
+        {0x8483ec4d5e3e8114},
+        {0x21aea04a4066e649},
+        {0xbed21bd95c72ec7e},
+        {0x948655aafad4b757},
+        {0xd4b2ed65735823e2},
+        {0x1930ef5f54c40462},
+        {0xb3cc1696b1d3811e},
+        {0xafe0336077202599},
+        {0x11da6a906ef66e3e},
+        {0xd7abdf7d347fb43f},
+        {0x65e7d3c9f0e8da86},
+        {0x0b73bdafed7f79f4},
+        {0x619b24eb14c29f0f},
+        {0x85904bd8db9e3cd9},
+        {0x4c9c28e673abb589},
+        {0x73b20f643717949f},
+        {0x832ab3faa2c0639a},
+        {0xfa1d702bafb65207},
+        {0x03f5f17b0409003c},
+        {0x2c3ff110b39f84d5},
+        {0x4cdfd3ff34ce6f4f},
+        {0xd3acf5807f208db4},
+        {0x13d28634ce48e600},
+        {0xb065f0e667d7caf9},
+        {0x44f6f3d6b12825ca},
+        {0x243a64c03f36ea35},
+        {0x470a3b7c2f6a6a7a}
+    };
+
+    inline constexpr static Goldilocks::Element D4[4] = {
+        {0xf0ce126fe8a83094},
+        {0x60f87e0b59fb4ee6},
+        {0xa8106c221cd6d882},
+        {0x5529eddc46e372e7}
+    };
+
+    inline constexpr static Goldilocks::Element C12[12*ROUNDS_F+ROUNDS_P_12] = {
         {0x13dcf33aba214f46},
         {0x30b3b654a1da6d83},
         {0x1fc634ada6159b56},
@@ -142,7 +210,7 @@ namespace Poseidon2GoldilocksConstants
         {0xd27dbb6944917b60},
     };
 
-    inline constexpr static Goldilocks::Element C16[150] = {
+    inline constexpr static Goldilocks::Element C16[16*ROUNDS_F+ROUNDS_P_16] = {
         {0x15ebea3fc73397c3},
         {0xd73cd9fbfe8e275c},
         {0x8c096bfce77f6c26},

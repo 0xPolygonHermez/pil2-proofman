@@ -55,7 +55,7 @@ __global__ void hash_gpu_3(uint32_t nextN, uint32_t nextIndex, uint32_t pending,
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 void Poseidon2GoldilocksGPU::init_gpu_const_2(uint32_t* gpu_ids, uint32_t num_gpu_ids)
 {
-    static_assert(SPONGE_WIDTH == 12 || SPONGE_WIDTH==16, "Error: Unsupported SPONGE_WIDTH.");
+    static_assert(SPONGE_WIDTH == 4 ||SPONGE_WIDTH == 12 || SPONGE_WIDTH==16, "Error: Unsupported SPONGE_WIDTH.");
     
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
@@ -64,13 +64,16 @@ void Poseidon2GoldilocksGPU::init_gpu_const_2(uint32_t* gpu_ids, uint32_t num_gp
     {
         for(int i = 0; i < num_gpu_ids; i++)
         {
-            if( SPONGE_WIDTH == 12){
-                CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
-                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C12, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
+            if( SPONGE_WIDTH == 4){
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C4,  (4 * Poseidon2GoldilocksConstants::ROUNDS_F + Poseidon2GoldilocksConstants::ROUNDS_P_4) * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D4, 4 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+
+            }else if( SPONGE_WIDTH == 12){
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C12, (12 * Poseidon2GoldilocksConstants::ROUNDS_F + Poseidon2GoldilocksConstants::ROUNDS_P_12) * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
                 CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D12, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
             }else if( SPONGE_WIDTH == 16 ){
-                CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
-                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C16, 150 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C16, (16 * Poseidon2GoldilocksConstants::ROUNDS_F + Poseidon2GoldilocksConstants::ROUNDS_P_16) * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
                 CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D16, 16 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
             }
                 
@@ -354,17 +357,11 @@ __device__ __forceinline__ void poseidon2_hash_loop_blocks(const uint64_t *__res
 __global__ void hash_full_result_2(uint64_t *__restrict__ output, const uint64_t *__restrict__ input){
     for (uint32_t i = 0; i < SPONGE_WIDTH; i++){
         scratchpad[i * blockDim.x + threadIdx.x] = input[i * blockDim.x + threadIdx.x];
-        //printf("input[%d] = %lu\n", i, input[i * blockDim.x + threadIdx.x]);
-        //printf("scratchpad[%d] = %lu\n", i, scratchpad[i * blockDim.x + threadIdx.x]);
-        //printf("index = %d\n", i * blockDim.x + threadIdx.x);
     }
     __syncwarp();
     poseidon2_hash();
     for (uint32_t i = 0; i < SPONGE_WIDTH; i++){
-        //printf("scratchpad after hash[%d] = %lu\n", i, scratchpad[i * blockDim.x + threadIdx.x]);
-        //printf("index after hash = %d\n", i * blockDim.x + threadIdx.x);
         output[i * blockDim.x + threadIdx.x] = scratchpad[i * blockDim.x + threadIdx.x];
-        //printf("output[%d] = %lu\n", i, output[i * blockDim.x + threadIdx.x]);
     }
     __syncwarp();
 

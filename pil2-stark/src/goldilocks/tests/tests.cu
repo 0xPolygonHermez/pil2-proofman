@@ -23,8 +23,14 @@ TEST(GOLDILOCKS_TEST, poseidon2)
     cudaMemcpy(a, d_a, SPONGE_WIDTH * sizeof(gl64_t), cudaMemcpyDeviceToHost);
     cudaFree(d_a);
     cudaStreamDestroy(stream);
+#if SPONGE_WIDTH == 4
+    std::cout << "POSEIDON2 TESTS FOR SPONGE WIDTH 4" << std::endl;
+    ASSERT_EQ(a[0].fe, uint64_t(0x758085b0af0a16aa));   
+    ASSERT_EQ(a[1].fe, uint64_t(0x85141acc29c479de));
+    ASSERT_EQ(a[2].fe, uint64_t(0x50127371e2b77ae5));
+    ASSERT_EQ(a[3].fe, uint64_t(0xefee3a8033630029));
 
-#if SPONGE_WIDTH == 12
+#elif SPONGE_WIDTH == 12
     std::cout << "POSEIDON2 TESTS FOR SPONGE WIDTH 12" << std::endl;
     ASSERT_EQ(a[0].fe, uint64_t(0x01eaef96bdf1c0c1));   
     ASSERT_EQ(a[1].fe, uint64_t(0x1f0d2cc525b2540c));
@@ -57,6 +63,8 @@ TEST(GOLDILOCKS_TEST, poseidon2)
     ASSERT_EQ(a[13].fe,uint64_t(0x2e8f3af37c434dec));
     ASSERT_EQ(a[14].fe,uint64_t(0xc80831bb6e09da01));
     ASSERT_EQ(a[15].fe,uint64_t(0x3a7d670bf1a86ee8));
+#else
+#error "Unsupported SPONGE_WIDTH for Poseidon2 tests"
 #endif
 }
 

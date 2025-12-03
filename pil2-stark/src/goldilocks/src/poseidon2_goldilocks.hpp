@@ -10,9 +10,9 @@
 #define CAPACITY 4
 #define HASH_SIZE 4
 #define SPONGE_WIDTH (RATE + CAPACITY)
-#define HALF_N_FULL_ROUNDS 4
+#define HALF_N_FULL_ROUNDS (Poseidon2GoldilocksConstants::ROUNDS_F/2)
 #define N_FULL_ROUNDS_TOTAL (2 * HALF_N_FULL_ROUNDS)
-#define N_PARTIAL_ROUNDS 22
+#define N_PARTIAL_ROUNDS (SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::ROUNDS_P_4 : (SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::ROUNDS_P_12 : Poseidon2GoldilocksConstants::ROUNDS_P_16))
 #define N_ROUNDS (N_FULL_ROUNDS_TOTAL + N_PARTIAL_ROUNDS)
 
 class Poseidon2Goldilocks

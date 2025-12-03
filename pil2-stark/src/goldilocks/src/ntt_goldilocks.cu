@@ -6,7 +6,7 @@
 #include "ntt_goldilocks.cuh"
 #include "goldilocks_cubic_extension.cuh"
 #include "omp.h"
-#include "poseidon_goldilocks.hpp"
+#include "poseidon2_goldilocks.hpp"
 #include <atomic>
 #include <mutex>
 

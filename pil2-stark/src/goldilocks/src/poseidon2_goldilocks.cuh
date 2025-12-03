@@ -182,6 +182,7 @@ __device__ __forceinline__ void matmul_external_state_()
     for(int i=0; i<SPONGE_WIDTH; i+=4){
         matmul_m4_state_(i);
     }
+#if SPONGE_WIDTH > 4
     gl64_t stored[4]={gl64_t(uint64_t(0)), gl64_t(uint64_t(0)), gl64_t(uint64_t(0)), gl64_t(uint64_t(0))};
     for(int i=0; i<SPONGE_WIDTH; i+=4){
         stored[0] = stored[0] + scratchpad[(i + 0) * blockDim.x + threadIdx.x];
@@ -194,6 +195,7 @@ __device__ __forceinline__ void matmul_external_state_()
     {
         scratchpad[i * blockDim.x + threadIdx.x] = scratchpad[i * blockDim.x + threadIdx.x] + stored[i & 3];
     }
+#endif
 }
 
 __device__ __forceinline__ void pow7add_state_(const gl64_t C[SPONGE_WIDTH])
