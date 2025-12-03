@@ -351,6 +351,26 @@ __device__ __forceinline__ void poseidon2_hash_loop_blocks(const uint64_t *__res
     }
 }
 
+__global__ void hash_full_result_2(uint64_t *__restrict__ output, const uint64_t *__restrict__ input){
+    for (uint32_t i = 0; i < SPONGE_WIDTH; i++){
+        scratchpad[i * blockDim.x + threadIdx.x] = input[i * blockDim.x + threadIdx.x];
+        //printf("input[%d] = %lu\n", i, input[i * blockDim.x + threadIdx.x]);
+        //printf("scratchpad[%d] = %lu\n", i, scratchpad[i * blockDim.x + threadIdx.x]);
+        //printf("index = %d\n", i * blockDim.x + threadIdx.x);
+    }
+    __syncwarp();
+    poseidon2_hash();
+    for (uint32_t i = 0; i < SPONGE_WIDTH; i++){
+        //printf("scratchpad after hash[%d] = %lu\n", i, scratchpad[i * blockDim.x + threadIdx.x]);
+        //printf("index after hash = %d\n", i * blockDim.x + threadIdx.x);
+        output[i * blockDim.x + threadIdx.x] = scratchpad[i * blockDim.x + threadIdx.x];
+        //printf("output[%d] = %lu\n", i, output[i * blockDim.x + threadIdx.x]);
+    }
+    __syncwarp();
+
+}
+
+
 __global__ void linear_hash_gpu_coalesced_2(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows)
 {
 #pragma unroll
