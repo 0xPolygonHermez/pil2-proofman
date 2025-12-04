@@ -68,16 +68,16 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     }
 
     if(recursive) {
-        Goldilocks::Element verkey[HASH_SIZE];
+        Goldilocks::Element verkey[Poseidon2GoldilocksCommit::HASH_SIZE];
         starks.treesGL[setupCtx.starkInfo.nStages + 1]->getRoot(verkey);
-        starks.addTranscript(transcript, &verkey[0], HASH_SIZE);
+        starks.addTranscript(transcript, &verkey[0], Poseidon2GoldilocksCommit::HASH_SIZE);
         if(setupCtx.starkInfo.nPublics > 0) {
             if(!setupCtx.starkInfo.starkStruct.hashCommits) {
                 starks.addTranscriptGL(transcript, &params.publicInputs[0], setupCtx.starkInfo.nPublics);
             } else {
-                Goldilocks::Element hash[HASH_SIZE];
+                Goldilocks::Element hash[Poseidon2GoldilocksCommit::HASH_SIZE];
                 starks.calculateHash(hash, &params.publicInputs[0], setupCtx.starkInfo.nPublics);
-                starks.addTranscript(transcript, hash, HASH_SIZE);
+                starks.addTranscript(transcript, hash, Poseidon2GoldilocksCommit::HASH_SIZE);
             }
         }
     } else {
@@ -89,7 +89,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     TimerStart(STARK_STEP_1);
     if(recursive) {
         starks.commitStage(1, params.trace, params.aux_trace, proof, ntt);
-        starks.addTranscript(transcript, &proof.proof.roots[0][0], HASH_SIZE);
+        starks.addTranscript(transcript, &proof.proof.roots[0][0], Poseidon2GoldilocksCommit::HASH_SIZE);
     } else {
         starks.commitStage(1, params.trace, params.aux_trace, proof, ntt, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_1", false)]]);
     }
@@ -118,7 +118,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
         starks.commitStage(2, nullptr, params.aux_trace, proof, ntt, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_2", false)]]);
     }
     TimerStopAndLog(STARK_COMMIT_STAGE_2);
-    starks.addTranscript(transcript, &proof.proof.roots[1][0], HASH_SIZE);
+    starks.addTranscript(transcript, &proof.proof.roots[1][0], Poseidon2GoldilocksCommit::HASH_SIZE);
 
     uint64_t a = 0;
     for(uint64_t i = 0; i < setupCtx.starkInfo.airValuesMap.size(); i++) {
@@ -151,7 +151,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
         starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof, nttExtended, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_3", false)]]);
     }
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
-    starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], HASH_SIZE);
+    starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], Poseidon2GoldilocksCommit::HASH_SIZE);
     TimerStopAndLog(STARK_STEP_Q);
 
     TimerStart(STARK_STEP_EVALS);
@@ -183,9 +183,9 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
         starks.addTranscriptGL(transcript, params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
     } else {
-        Goldilocks::Element hash[HASH_SIZE];
+        Goldilocks::Element hash[Poseidon2GoldilocksCommit::HASH_SIZE];
         starks.calculateHash(hash, params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
-        starks.addTranscript(transcript, hash, HASH_SIZE);
+        starks.addTranscript(transcript, hash, Poseidon2GoldilocksCommit::HASH_SIZE);
     }
     // Challenges for FRI polynomial
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
@@ -219,16 +219,16 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {
             FRI<Goldilocks::Element>::merkelize(step, proof, friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits);
-            starks.addTranscript(transcript, &proof.proof.fri.treesFRI[step].root[0], HASH_SIZE);
+            starks.addTranscript(transcript, &proof.proof.fri.treesFRI[step].root[0], Poseidon2GoldilocksCommit::HASH_SIZE);
         }
         else
         {
             if(!setupCtx.starkInfo.starkStruct.hashCommits) {
                 starks.addTranscriptGL(transcript, friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION);
             } else {
-                Goldilocks::Element hash[HASH_SIZE];
+                Goldilocks::Element hash[Poseidon2GoldilocksCommit::HASH_SIZE];
                 starks.calculateHash(hash, friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION);
-                starks.addTranscript(transcript, hash, HASH_SIZE);
+                starks.addTranscript(transcript, hash, Poseidon2GoldilocksCommit::HASH_SIZE);
             } 
             
         }

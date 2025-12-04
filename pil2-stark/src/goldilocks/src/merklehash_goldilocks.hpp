@@ -14,12 +14,12 @@ class MerklehashGoldilocks
 public:
     inline static void root(Goldilocks::Element *root, Goldilocks::Element *tree, uint64_t numElementsTree)
     {
-        std::memcpy(root, &tree[numElementsTree - HASH_SIZE], HASH_SIZE * sizeof(Goldilocks::Element));
+        std::memcpy(root, &tree[numElementsTree - Poseidon2GoldilocksCommit::HASH_SIZE], Poseidon2GoldilocksCommit::HASH_SIZE * sizeof(Goldilocks::Element));
     }
 
-    static void root(Goldilocks::Element (&root)[HASH_SIZE], Goldilocks::Element *tree, uint64_t numElementsTree)
+    static void root(Goldilocks::Element (&root)[Poseidon2GoldilocksCommit::HASH_SIZE], Goldilocks::Element *tree, uint64_t numElementsTree)
     {
-        std::memcpy(root, &tree[numElementsTree - HASH_SIZE], HASH_SIZE * sizeof(Goldilocks::Element));
+        std::memcpy(root, &tree[numElementsTree - Poseidon2GoldilocksCommit::HASH_SIZE], Poseidon2GoldilocksCommit::HASH_SIZE * sizeof(Goldilocks::Element));
     }
 
     static inline uint64_t getTreeNumElements(uint64_t degree, uint32_t arity=2)
@@ -35,7 +35,7 @@ public:
             nodesLevel = nextN;
         }
 
-        return numNodes * HASH_SIZE;
+        return numNodes * Poseidon2GoldilocksCommit::HASH_SIZE;
     };
 
     static inline uint64_t getTreeNumElementsArity(uint64_t degree)
@@ -53,7 +53,7 @@ public:
         }
 
 
-        return numNodes * HASH_SIZE;
+        return numNodes * Poseidon2GoldilocksCommit::HASH_SIZE;
     };
 };
 

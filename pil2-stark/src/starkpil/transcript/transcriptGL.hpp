@@ -7,8 +7,8 @@
 #include "zklog.hpp"
 
 #define TRANSCRIPT_STATE_SIZE 4
-#define TRANSCRIPT_PENDING_SIZE (SPONGE_WIDTH - CAPACITY)
-#define TRANSCRIPT_OUT_SIZE SPONGE_WIDTH
+#define TRANSCRIPT_PENDING_SIZE (Poseidon2GoldilocksCommit::SPONGE_WIDTH - Poseidon2GoldilocksCommit::CAPACITY)
+#define TRANSCRIPT_OUT_SIZE Poseidon2GoldilocksCommit::SPONGE_WIDTH
 
 class TranscriptGL
 {

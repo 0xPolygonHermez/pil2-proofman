@@ -158,7 +158,7 @@ void MerkleTreeGL::genMerkleProof(Goldilocks::Element *proof, uint64_t idx, uint
 bool MerkleTreeGL::verifyGroupProof(Goldilocks::Element* root, std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v) {
     Goldilocks::Element value[4] = { Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero() };
     
-    Poseidon2Goldilocks::linear_hash_seq(value, v.data(), v.size());
+    Poseidon2GoldilocksCommit::linear_hash_seq(value, v.data(), v.size());
 
     calculateRootFromProof(value, mp, idx, 0);
     for(uint64_t i = 0; i < 4; ++i) {
@@ -176,8 +176,8 @@ void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::
     uint64_t currIdx = idx % arity;
     uint64_t nextIdx = idx / arity;
 
-    Goldilocks::Element inputs[SPONGE_WIDTH];
-    for(uint64_t i = 0; i < SPONGE_WIDTH; ++i) {
+    Goldilocks::Element inputs[Poseidon2GoldilocksCommit::SPONGE_WIDTH];
+    for(uint64_t i = 0; i < Poseidon2GoldilocksCommit:: SPONGE_WIDTH; ++i) {
         inputs[i] = Goldilocks::zero();
     }
 
@@ -189,7 +189,7 @@ void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::
 
     std::memcpy(&inputs[currIdx*4], value, nFieldElements * sizeof(Goldilocks::Element));
 
-    Poseidon2Goldilocks::hash_seq(value, inputs);
+    Poseidon2GoldilocksCommit::hash_seq(value, inputs);
 
     calculateRootFromProof(value, mp, nextIdx, offset + 1);
 }
@@ -198,11 +198,11 @@ void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::
 void MerkleTreeGL::merkelize()
 {
 #ifdef __AVX512__
-    Poseidon2Goldilocks::merkletree_batch_avx512(nodes, source, width, height, arity);
+    Poseidon2GoldilocksCommit::merkletree_batch_avx512(nodes, source, width, height, arity);
 #elif defined(__AVX2__)
-    Poseidon2Goldilocks::merkletree_batch_avx(nodes, source, width, height, arity);
+    Poseidon2GoldilocksCommit::merkletree_batch_avx(nodes, source, width, height, arity);
 #else
-    Poseidon2Goldilocks::merkletree_seq(nodes, source, width, height, arity);
+    Poseidon2GoldilocksCommit::merkletree_seq(nodes, source, width, height, arity);
 #endif
 }
 

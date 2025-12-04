@@ -31,7 +31,7 @@ public:
     bool isSourceAllocated = false;
     bool isNodesAllocated = false;
 
-    uint64_t nFieldElements = HASH_SIZE;
+    uint64_t nFieldElements = Poseidon2GoldilocksCommit::HASH_SIZE;
 
     uint64_t getNumSiblings(); 
     uint64_t getMerkleTreeWidth(); 

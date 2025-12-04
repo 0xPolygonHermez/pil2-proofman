@@ -7,17 +7,20 @@
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif
-#define RATE 8
-#define CAPACITY 4
-#define HASH_SIZE 4
-#define SPONGE_WIDTH (RATE + CAPACITY)
-#define HALF_N_FULL_ROUNDS (Poseidon2GoldilocksConstants::ROUNDS_F/2)
-#define N_FULL_ROUNDS_TOTAL (2 * HALF_N_FULL_ROUNDS)
-#define N_PARTIAL_ROUNDS (SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::ROUNDS_P_4 : (SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::ROUNDS_P_12 : Poseidon2GoldilocksConstants::ROUNDS_P_16))
-#define N_ROUNDS (N_FULL_ROUNDS_TOTAL + N_PARTIAL_ROUNDS)
 
+template<uint32_t SPONGE_WIDTH_T>
 class Poseidon2Goldilocks
 {
+public:
+    static constexpr uint32_t RATE = SPONGE_WIDTH_T == 4 ? 2 : SPONGE_WIDTH_T-4;
+    static constexpr uint32_t CAPACITY = SPONGE_WIDTH_T == 4 ? 2 : 4;
+    static constexpr uint32_t SPONGE_WIDTH = SPONGE_WIDTH_T;
+    static constexpr uint32_t HASH_SIZE = 4;
+    static constexpr uint32_t N_FULL_ROUNDS_TOTAL = 8;
+    static constexpr uint32_t HALF_N_FULL_ROUNDS = N_FULL_ROUNDS_TOTAL / 2;
+    static constexpr uint32_t N_PARTIAL_ROUNDS = SPONGE_WIDTH_T == 4 ? 21 : 22;
+    static constexpr uint32_t N_ROUNDS = N_FULL_ROUNDS_TOTAL + N_PARTIAL_ROUNDS;
+
 private:
     inline void static pow7(Goldilocks::Element &x);
     inline void static pow7_(Goldilocks::Element *x);
@@ -87,9 +90,14 @@ public:
     inline void static merkletree_batch(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t batch_size, int nThreads = 0, uint64_t dim = 1);
 };
 
-// WRAPPERS
+// Type aliases
+//using Poseidon2GoldilocksCommit = Poseidon2Goldilocks<8, 4, 8, 22>;   // SPONGE_WIDTH = 12
+//using Poseidon2GoldilocksGrinding = Poseidon2Goldilocks<2, 2, 8, 21>;  // SPONGE_WIDTH = 4
 
-inline void Poseidon2Goldilocks::merkletree(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity,int nThreads, uint64_t dim)
+// WRAPPERS - Template specializations for Poseidon2GoldilocksCommit
+
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity,int nThreads, uint64_t dim)
 {
 //#ifdef __AVX512__
     // needs to be tested
@@ -101,7 +109,8 @@ inline void Poseidon2Goldilocks::merkletree(Goldilocks::Element *tree, Goldilock
 #endif
     
 }
-inline void Poseidon2Goldilocks::merkletree_batch(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t batch_size, int nThreads, uint64_t dim)
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t batch_size, int nThreads, uint64_t dim)
 {
 //#ifdef __AVX512__
     // needs to be tested
@@ -113,17 +122,20 @@ inline void Poseidon2Goldilocks::merkletree_batch(Goldilocks::Element *tree, Gol
 #endif
 }
 
-inline void Poseidon2Goldilocks::pow7(Goldilocks::Element &x)
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::pow7(Goldilocks::Element &x)
 {
     Goldilocks::Element x2 = x * x;
     Goldilocks::Element x3 = x * x2;
     Goldilocks::Element x4 = x2 * x2;
     x = x3 * x4;
 };
-inline void Poseidon2Goldilocks::pow7_(Goldilocks::Element *x)
+
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::pow7_(Goldilocks::Element *x)
 {
     Goldilocks::Element x2[SPONGE_WIDTH], x3[SPONGE_WIDTH], x4[SPONGE_WIDTH];
-    for (int i = 0; i < SPONGE_WIDTH; ++i)
+    for (uint32_t i = 0; i < SPONGE_WIDTH; ++i)
     {
         x2[i] = x[i] * x[i];
         x3[i] = x[i] * x2[i];
@@ -132,26 +144,30 @@ inline void Poseidon2Goldilocks::pow7_(Goldilocks::Element *x)
     }
 };
 
-inline void Poseidon2Goldilocks::add_(Goldilocks::Element &x, const Goldilocks::Element *st)
+    
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::add_(Goldilocks::Element &x, const Goldilocks::Element *st)
 {
-    for (int i = 0; i < SPONGE_WIDTH; ++i)
+    for (uint32_t i = 0; i < SPONGE_WIDTH; ++i)
     {
         x = x + st[i];
     }
 }
-inline void Poseidon2Goldilocks::prodadd_(Goldilocks::Element *x, const Goldilocks::Element D[SPONGE_WIDTH], const Goldilocks::Element &sum)
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::prodadd_(Goldilocks::Element *x, const Goldilocks::Element D[SPONGE_WIDTH], const Goldilocks::Element &sum)
 {
-    for (int i = 0; i < SPONGE_WIDTH; ++i)
+    for (uint32_t i = 0; i < SPONGE_WIDTH; ++i)
     {
         x[i] = x[i]*D[i] + sum;
     }
 }
 
-inline void Poseidon2Goldilocks::pow7add_(Goldilocks::Element *x, const Goldilocks::Element C[SPONGE_WIDTH])
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::pow7add_(Goldilocks::Element *x, const Goldilocks::Element C[SPONGE_WIDTH])
 {
     Goldilocks::Element x2[SPONGE_WIDTH], x3[SPONGE_WIDTH], x4[SPONGE_WIDTH];
     
-    for (int i = 0; i < SPONGE_WIDTH; ++i)
+    for (uint32_t i = 0; i < SPONGE_WIDTH; ++i)
     {
         Goldilocks::Element xi = x[i] + C[i];
         x2[i] = xi * xi;
@@ -161,7 +177,9 @@ inline void Poseidon2Goldilocks::pow7add_(Goldilocks::Element *x, const Goldiloc
     }
 };
 
-inline void Poseidon2Goldilocks::matmul_m4_(Goldilocks::Element *x) {
+    
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_m4_(Goldilocks::Element *x) {
     Goldilocks::Element t0 = x[0] + x[1];
     Goldilocks::Element t1 = x[2] + x[3];
     Goldilocks::Element t2 = x[1] + x[1] + t1;
@@ -179,29 +197,27 @@ inline void Poseidon2Goldilocks::matmul_m4_(Goldilocks::Element *x) {
     x[3] = t4;
 }
 
-inline void Poseidon2Goldilocks::matmul_external_(Goldilocks::Element *x) {
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_external_(Goldilocks::Element *x) {
+    matmul_m4_(&x[0]);
+    matmul_m4_(&x[4]);
+    matmul_m4_(&x[8]);
     
-    for(int i=0; i < SPONGE_WIDTH; i+=4){
-        matmul_m4_(&x[i]);
-    }
-#if SPONGE_WIDTH > 4    
-    Goldilocks::Element stored[4] = {Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero()};
-    for (int i = 0; i < SPONGE_WIDTH; i+=4)
-    {
-        stored[0] = stored[0] + x[i];
-        stored[1] = stored[1] + x[i + 1];
-        stored[2] = stored[2] + x[i + 2];
-        stored[3] = stored[3] + x[i + 3];
-    }
+    Goldilocks::Element stored[4] = {
+        x[0] + x[4] + x[8],
+        x[1] + x[5] + x[9],
+        x[2] + x[6] + x[10],
+        x[3] + x[7] + x[11],
+    };
     
-    for (int i = 0; i < SPONGE_WIDTH; ++i)
+    for (uint32_t i = 0; i < SPONGE_WIDTH; ++i)
     {
         x[i] = x[i] + stored[i % 4];
     }
-#endif
 }
 
-inline void Poseidon2Goldilocks::hash_seq(Goldilocks::Element (&state)[CAPACITY], Goldilocks::Element const (&input)[SPONGE_WIDTH])
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_seq(Goldilocks::Element (&state)[CAPACITY], Goldilocks::Element const (&input)[SPONGE_WIDTH])
 {
     Goldilocks::Element aux[SPONGE_WIDTH];
     hash_full_result_seq(aux, input);
@@ -214,3 +230,6 @@ inline void Poseidon2Goldilocks::hash_seq(Goldilocks::Element (&state)[CAPACITY]
  #include "poseidon2_goldilocks_avx512.hpp"
  #endif
 #endif
+
+using Poseidon2GoldilocksCommit = Poseidon2Goldilocks<12>;   // SPONGE_WIDTH = 12
+using Poseidon2GoldilocksGrinding = Poseidon2Goldilocks<4>;  // SPONGE_WIDTH = 4

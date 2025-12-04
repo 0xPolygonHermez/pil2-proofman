@@ -94,11 +94,11 @@ public:
     std::vector<std::vector<Goldilocks::Element>> pol;
    
 
-    Fri(StarkInfo &starkInfo) :  trees((starkInfo.starkStruct.verificationHashType == "GL") ? HASH_SIZE : 1, starkInfo.starkStruct.nQueries),
+    Fri(StarkInfo &starkInfo) :  trees((starkInfo.starkStruct.verificationHashType == "GL") ? Poseidon2GoldilocksCommit::HASH_SIZE : 1, starkInfo.starkStruct.nQueries),
                                  treesFRI(),
                                  pol(1 << starkInfo.starkStruct.steps[starkInfo.starkStruct.steps.size() - 1].nBits, std::vector<Goldilocks::Element>(FIELD_EXTENSION, Goldilocks::zero())) {
         uint64_t nQueries = starkInfo.starkStruct.nQueries;
-        uint64_t nFieldElements = (starkInfo.starkStruct.verificationHashType == "GL") ? HASH_SIZE : 1;
+        uint64_t nFieldElements = (starkInfo.starkStruct.verificationHashType == "GL") ? Poseidon2GoldilocksCommit::HASH_SIZE : 1;
        
         for (size_t i = 0; i < starkInfo.starkStruct.steps.size() - 1; i++)
         {
@@ -140,7 +140,7 @@ public:
             nStages = starkInfo_.nStages + 1;
             nCustomCommits = starkInfo_.customCommits.size();
             roots = new ElementType*[nStages + nCustomCommits];
-            nFieldElements = starkInfo_.starkStruct.verificationHashType == "GL" ? HASH_SIZE : 1;
+            nFieldElements = starkInfo_.starkStruct.verificationHashType == "GL" ? Poseidon2GoldilocksCommit::HASH_SIZE : 1;
             for(uint64_t i = 0; i < nStages + nCustomCommits; i++)
             {
                 roots[i] = new ElementType[nFieldElements];

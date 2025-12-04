@@ -1502,47 +1502,46 @@ TEST(GOLDILOCKS_TEST, inv)
 
 TEST(GOLDILOCKS_TEST, poseidon2_seq)
 {
-    Goldilocks::Element x[SPONGE_WIDTH];
-    Goldilocks::Element result[CAPACITY];
+    Goldilocks::Element x[Poseidon2GoldilocksCommit::SPONGE_WIDTH];
+    Goldilocks::Element result[Poseidon2GoldilocksCommit::CAPACITY];
 
-    for (uint64_t i = 0; i < SPONGE_WIDTH; i++)
+    for (uint64_t i = 0; i < Poseidon2GoldilocksCommit::SPONGE_WIDTH; i++)
     {
         x[i] = Goldilocks::fromU64(i);
     }
 
-    Poseidon2Goldilocks::hash_seq(result, x);
+    Poseidon2GoldilocksCommit::hash_seq(result, x);
 
-#if SPONGE_WIDTH == 4
-    ASSERT_EQ(Goldilocks::toU64(result[0]), 0x758085b0af0a16aa);
-    ASSERT_EQ(Goldilocks::toU64(result[1]), 0x85141acc29c479de);
-    ASSERT_EQ(Goldilocks::toU64(result[2]), 0x50127371e2b77ae5);
-    ASSERT_EQ(Goldilocks::toU64(result[3]), 0xefee3a8033630029);
-#elif SPONGE_WIDTH == 12
-    ASSERT_EQ(Goldilocks::toU64(result[0]), 0X1EAEF96BDF1C0C1 );
-    ASSERT_EQ(Goldilocks::toU64(result[1]), 0X1F0D2CC525B2540C);
-    ASSERT_EQ(Goldilocks::toU64(result[2]), 0X6282C1DFE1E0358D);
-    ASSERT_EQ(Goldilocks::toU64(result[3]), 0XE780D721F698E1E6);  
-#elif SPONGE_WIDTH == 16
-    ASSERT_EQ(Goldilocks::toU64(result[0]), 0x85c54702470d9756);
-    ASSERT_EQ(Goldilocks::toU64(result[1]), 0xaa53c7a7d52d9898);
-    ASSERT_EQ(Goldilocks::toU64(result[2]), 0x285128096efb0dd7);
-    ASSERT_EQ(Goldilocks::toU64(result[3]), 0xf3fde5edd3050ac8);
-#else
-#error "Unsupported SPONGE_WIDTH"
-#endif
+    if(Poseidon2GoldilocksCommit::SPONGE_WIDTH == 4){
+        ASSERT_EQ(Goldilocks::toU64(result[0]), 0x758085b0af0a16aa);
+        ASSERT_EQ(Goldilocks::toU64(result[1]), 0x85141acc29c479de);
+        ASSERT_EQ(Goldilocks::toU64(result[2]), 0x50127371e2b77ae5);
+        ASSERT_EQ(Goldilocks::toU64(result[3]), 0xefee3a8033630029);
+    } else if(Poseidon2GoldilocksCommit::SPONGE_WIDTH == 12){
+        ASSERT_EQ(Goldilocks::toU64(result[0]), 0X1EAEF96BDF1C0C1 );
+        ASSERT_EQ(Goldilocks::toU64(result[1]), 0X1F0D2CC525B2540C);
+        ASSERT_EQ(Goldilocks::toU64(result[2]), 0X6282C1DFE1E0358D);
+        ASSERT_EQ(Goldilocks::toU64(result[3]), 0XE780D721F698E1E6);  
+    } else if(Poseidon2GoldilocksCommit::SPONGE_WIDTH == 16){
+        ASSERT_EQ(Goldilocks::toU64(result[0]), 0x85c54702470d9756);
+        ASSERT_EQ(Goldilocks::toU64(result[1]), 0xaa53c7a7d52d9898);
+        ASSERT_EQ(Goldilocks::toU64(result[2]), 0x285128096efb0dd7);
+        ASSERT_EQ(Goldilocks::toU64(result[3]), 0xf3fde5edd3050ac8);
+    }
+
 }
 #ifdef __AVX2__
 TEST(GOLDILOCKS_TEST, poseidon2_avx_batch)
 {
-    Goldilocks::Element x[SPONGE_WIDTH * 4];
-    Goldilocks::Element result[CAPACITY * 4];
+    Goldilocks::Element x[Poseidon2GoldilocksCommit::SPONGE_WIDTH * 4];
+    Goldilocks::Element result[Poseidon2GoldilocksCommit::CAPACITY * 4];
 
-    for (uint64_t i = 0; i < SPONGE_WIDTH; i++)
+    for (uint64_t i = 0; i < Poseidon2GoldilocksCommit::SPONGE_WIDTH; i++)
     {
         x[i] = Goldilocks::fromU64(i);
-        x[i + SPONGE_WIDTH] = Goldilocks::fromU64(i);
-        x[i + 2*SPONGE_WIDTH] = Goldilocks::fromU64(i);
-        x[i + 3*SPONGE_WIDTH] = Goldilocks::fromU64(i);
+        x[i + Poseidon2GoldilocksCommit::SPONGE_WIDTH] = Goldilocks::fromU64(i);
+        x[i + 2*Poseidon2GoldilocksCommit::SPONGE_WIDTH] = Goldilocks::fromU64(i);
+        x[i + 3*Poseidon2GoldilocksCommit::SPONGE_WIDTH] = Goldilocks::fromU64(i);
     }
 
     Poseidon2Goldilocks::hash_batch_avx(result, x);
@@ -1568,10 +1567,10 @@ TEST(GOLDILOCKS_TEST, poseidon2_avx_batch)
 #ifdef __AVX2__
 TEST(GOLDILOCKS_TEST, poseidon2_avx)
 {
-    Goldilocks::Element x[SPONGE_WIDTH];
-    Goldilocks::Element result[CAPACITY];
+    Goldilocks::Element x[Poseidon2GoldilocksCommit::SPONGE_WIDTH];
+    Goldilocks::Element result[Poseidon2GoldilocksCommit::CAPACITY];
 
-    for (uint64_t i = 0; i < SPONGE_WIDTH; i++)
+    for (uint64_t i = 0; i < Poseidon2GoldilocksCommit::SPONGE_WIDTH; i++)
     {
         x[i] = Goldilocks::fromU64(i);
     }
@@ -1590,13 +1589,13 @@ TEST(GOLDILOCKS_TEST, poseidon2_avx)
 TEST(GOLDILOCKS_TEST, poseidon_avx)
 {
 
-    Goldilocks::Element fibonacci[SPONGE_WIDTH];
-    Goldilocks::Element result[CAPACITY];
+    Goldilocks::Element fibonacci[Poseidon2GoldilocksCommit::SPONGE_WIDTH];
+    Goldilocks::Element result[Poseidon2GoldilocksCommit::CAPACITY];
 
     fibonacci[0] = Goldilocks::zero();
     fibonacci[1] = Goldilocks::one();
 
-    for (uint64_t i = 2; i < SPONGE_WIDTH; i++)
+    for (uint64_t i = 2; i < Poseidon2GoldilocksCommit::SPONGE_WIDTH; i++)
     {
         fibonacci[i] = fibonacci[i - 1] + fibonacci[i - 2];
     }
@@ -1608,8 +1607,8 @@ TEST(GOLDILOCKS_TEST, poseidon_avx)
     ASSERT_EQ(Goldilocks::toU64(result[2]), 0X8129DB5EC75C3226);
     ASSERT_EQ(Goldilocks::toU64(result[3]), 0X8EC2B67AFB6B87ED);
 
-    Goldilocks::Element zero[SPONGE_WIDTH] = {Goldilocks::zero()};
-    Goldilocks::Element result0[CAPACITY];
+    Goldilocks::Element zero[Poseidon2GoldilocksCommit::SPONGE_WIDTH] = {Goldilocks::zero()};
+    Goldilocks::Element result0[Poseidon2GoldilocksCommit::CAPACITY];
 
     PoseidonGoldilocks::hash_avx(result0, zero);
 
@@ -1623,19 +1622,19 @@ TEST(GOLDILOCKS_TEST, poseidon_avx)
 TEST(GOLDILOCKS_TEST, poseidon_avx512)
 {
 
-    Goldilocks::Element input[2 * SPONGE_WIDTH];
-    Goldilocks::Element fibonacci[SPONGE_WIDTH];
-    Goldilocks::Element zero[SPONGE_WIDTH];
-    Goldilocks::Element result[2 * CAPACITY];
-    Goldilocks::Element result0[CAPACITY];
-    Goldilocks::Element result1[CAPACITY];
+    Goldilocks::Element input[2 * Poseidon2GoldilocksCommit::SPONGE_WIDTH];
+    Goldilocks::Element fibonacci[Poseidon2GoldilocksCommit::SPONGE_WIDTH];
+    Goldilocks::Element zero[Poseidon2GoldilocksCommit::SPONGE_WIDTH];
+    Goldilocks::Element result[2 * Poseidon2GoldilocksCommit::CAPACITY];
+    Goldilocks::Element result0[Poseidon2GoldilocksCommit::CAPACITY];
+    Goldilocks::Element result1[Poseidon2GoldilocksCommit::CAPACITY];
 
     fibonacci[0] = Goldilocks::zero();
     fibonacci[1] = Goldilocks::one();
     zero[0] = Goldilocks::zero();
     zero[1] = Goldilocks::zero();
 
-    for (uint64_t i = 2; i < SPONGE_WIDTH; i++)
+    for (uint64_t i = 2; i < Poseidon2GoldilocksCommit::SPONGE_WIDTH; i++)
     {
         fibonacci[i] = fibonacci[i - 1] + fibonacci[i - 2];
         zero[i] = Goldilocks::zero();
@@ -1671,13 +1670,13 @@ TEST(GOLDILOCKS_TEST, poseidon_avx512)
 TEST(GOLDILOCKS_TEST, poseidon_full_avx)
 {
 
-    Goldilocks::Element fibonacci[SPONGE_WIDTH];
-    Goldilocks::Element result[SPONGE_WIDTH];
+    Goldilocks::Element fibonacci[Poseidon2GoldilocksCommit::SPONGE_WIDTH];
+    Goldilocks::Element result[Poseidon2GoldilocksCommit::SPONGE_WIDTH];
 
     fibonacci[0] = Goldilocks::zero();
     fibonacci[1] = Goldilocks::one();
 
-    for (uint64_t i = 2; i < SPONGE_WIDTH; i++)
+    for (uint64_t i = 2; i < Poseidon2GoldilocksCommit::SPONGE_WIDTH; i++)
     {
         fibonacci[i] = fibonacci[i - 1] + fibonacci[i - 2];
     }
@@ -1697,8 +1696,8 @@ TEST(GOLDILOCKS_TEST, poseidon_full_avx)
     ASSERT_EQ(Goldilocks::toU64(result[10]), 0X921456F6D2D11E27);
     ASSERT_EQ(Goldilocks::toU64(result[11]), 0XF58A41D4028C66A5);
 
-    Goldilocks::Element zero[SPONGE_WIDTH] = {Goldilocks::zero()};
-    Goldilocks::Element result0[SPONGE_WIDTH];
+    Goldilocks::Element zero[Poseidon2GoldilocksCommit::SPONGE_WIDTH] = {Goldilocks::zero()};
+    Goldilocks::Element result0[Poseidon2GoldilocksCommit::SPONGE_WIDTH];
 
     PoseidonGoldilocks::hash_full_result_avx(result0, zero);
 
@@ -1720,14 +1719,14 @@ TEST(GOLDILOCKS_TEST, poseidon_full_avx)
 TEST(GOLDILOCKS_TEST, poseidon_full_avx512)
 {
 
-    Goldilocks::Element fibonacci[SPONGE_WIDTH];
-    Goldilocks::Element fibonacciAndZero[2 * SPONGE_WIDTH];
-    Goldilocks::Element result[2 * SPONGE_WIDTH];
+    Goldilocks::Element fibonacci[Poseidon2GoldilocksCommit::SPONGE_WIDTH];
+    Goldilocks::Element fibonacciAndZero[2 * Poseidon2GoldilocksCommit::SPONGE_WIDTH];
+    Goldilocks::Element result[2 * Poseidon2GoldilocksCommit::SPONGE_WIDTH];
 
     // Evaluate fibonacci
     fibonacci[0] = Goldilocks::zero();
     fibonacci[1] = Goldilocks::one();
-    for (uint64_t i = 2; i < SPONGE_WIDTH; i++)
+    for (uint64_t i = 2; i < Poseidon2GoldilocksCommit::SPONGE_WIDTH; i++)
     {
         fibonacci[i] = fibonacci[i - 1] + fibonacci[i - 2];
     }
@@ -1776,7 +1775,7 @@ TEST(GOLDILOCKS_TEST, linear_hash_seq)
 {
 
     /*Goldilocks::Element fibonacci[NCOLS_HASH];
-    Goldilocks::Element result[CAPACITY];
+    Goldilocks::Element result[Poseidon2GoldilocksCommit::CAPACITY];
 
     fibonacci[0] = Goldilocks::zero();
     fibonacci[1] = Goldilocks::one();
@@ -1797,7 +1796,7 @@ TEST(GOLDILOCKS_TEST, linear_hash_avx)
 {
 
     Goldilocks::Element fibonacci[NCOLS_HASH];
-    Goldilocks::Element result[CAPACITY];
+    Goldilocks::Element result[Poseidon2GoldilocksCommit::CAPACITY];
 
     fibonacci[0] = Goldilocks::zero();
     fibonacci[1] = Goldilocks::one();
@@ -1819,7 +1818,7 @@ TEST(GOLDILOCKS_TEST, linear_hash_avx512)
 {
 
     Goldilocks::Element fibonacci[2 * NCOLS_HASH];
-    Goldilocks::Element result[2 * CAPACITY];
+    Goldilocks::Element result[2 * Poseidon2GoldilocksCommit::CAPACITY];
 
     fibonacci[0] = Goldilocks::zero();
     fibonacci[1] = Goldilocks::one();

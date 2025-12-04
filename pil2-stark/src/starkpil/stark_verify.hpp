@@ -28,7 +28,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
 
     using MerkleTreeType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, MerkleTreeGL, MerkleTreeBN128>;
 
-    uint64_t nFieldElements = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
+    uint64_t nFieldElements = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : Poseidon2GoldilocksCommit::HASH_SIZE;
 
     ElementType verkey[nFieldElements];
     if(starkInfo.starkStruct.verificationHashType == "GL") {
