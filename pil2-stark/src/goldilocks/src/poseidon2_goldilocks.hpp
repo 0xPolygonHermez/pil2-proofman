@@ -3,6 +3,7 @@
 
 #include "poseidon2_goldilocks_constants.hpp"
 #include "goldilocks_base_field.hpp"
+#undef __AVX2__
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif
@@ -179,21 +180,25 @@ inline void Poseidon2Goldilocks::matmul_m4_(Goldilocks::Element *x) {
 }
 
 inline void Poseidon2Goldilocks::matmul_external_(Goldilocks::Element *x) {
-    matmul_m4_(&x[0]);
-    matmul_m4_(&x[4]);
-    matmul_m4_(&x[8]);
     
-    Goldilocks::Element stored[4] = {
-        x[0] + x[4] + x[8],
-        x[1] + x[5] + x[9],
-        x[2] + x[6] + x[10],
-        x[3] + x[7] + x[11],
-    };
+    for(int i=0; i < SPONGE_WIDTH; i+=4){
+        matmul_m4_(&x[i]);
+    }
+#if SPONGE_WIDTH > 4    
+    Goldilocks::Element stored[4] = {Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero()};
+    for (int i = 0; i < SPONGE_WIDTH; i+=4)
+    {
+        stored[0] = stored[0] + x[i];
+        stored[1] = stored[1] + x[i + 1];
+        stored[2] = stored[2] + x[i + 2];
+        stored[3] = stored[3] + x[i + 3];
+    }
     
     for (int i = 0; i < SPONGE_WIDTH; ++i)
     {
         x[i] = x[i] + stored[i % 4];
     }
+#endif
 }
 
 inline void Poseidon2Goldilocks::hash_seq(Goldilocks::Element (&state)[CAPACITY], Goldilocks::Element const (&input)[SPONGE_WIDTH])

@@ -1,32 +1,35 @@
 #include "poseidon2_goldilocks.hpp"
 #include <math.h> /* floor */
 #include "merklehash_goldilocks.hpp"
+#undef __AVX2__
 
 void Poseidon2Goldilocks::hash_full_result_seq(Goldilocks::Element *state, const Goldilocks::Element *input)
 {
     const int length = SPONGE_WIDTH * sizeof(Goldilocks::Element);
     std::memcpy(state, input, length);
+    const Goldilocks::Element* C = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::C4 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::C12 : Poseidon2GoldilocksConstants::C16;
+    const Goldilocks::Element* D = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::D4 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::D12 : Poseidon2GoldilocksConstants::D16;
 
     matmul_external_(state);
   
     for (int r = 0; r < HALF_N_FULL_ROUNDS; r++)
     {
-        pow7add_(state, &(Poseidon2GoldilocksConstants::C12[r * SPONGE_WIDTH]));
+        pow7add_(state, &(C[r * SPONGE_WIDTH]));
         matmul_external_(state);
     }
 
     for (int r = 0; r < N_PARTIAL_ROUNDS; r++)
     {
-        state[0] = state[0] + Poseidon2GoldilocksConstants::C12[HALF_N_FULL_ROUNDS * SPONGE_WIDTH + r];
+        state[0] = state[0] + C[HALF_N_FULL_ROUNDS * SPONGE_WIDTH + r];
         pow7(state[0]);
         Goldilocks::Element sum_ = Goldilocks::zero();
         add_(sum_, state);
-        prodadd_(state, Poseidon2GoldilocksConstants::D12, sum_);
+        prodadd_(state, D, sum_);
     }
 
     for (int r = 0; r < HALF_N_FULL_ROUNDS; r++)
     {
-        pow7add_(state, &(Poseidon2GoldilocksConstants::C12[HALF_N_FULL_ROUNDS * SPONGE_WIDTH + N_PARTIAL_ROUNDS + r * SPONGE_WIDTH]));
+        pow7add_(state, &(C[HALF_N_FULL_ROUNDS * SPONGE_WIDTH + N_PARTIAL_ROUNDS + r * SPONGE_WIDTH]));
         matmul_external_(state);
     }
 }

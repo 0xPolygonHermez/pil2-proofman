@@ -27,16 +27,16 @@ ifeq ($(UNAME_S),Linux)
     LDFLAGS  = -L/usr/lib -L/usr/local/lib
     LDLIBS   = -fopenmp -lbenchmark -lbenchmark_main -lgtest -lgtest_main -lgmpxx -lgmp -lpthread -lstdc++
 
-	  CXXFLAGS += -D__AVX2__
+	  #CXXFLAGS += -D__AVX2__
   	CXXFLAGS += -D__USE_ASSEMBLY__
     # Auto-enable AVX512 if supported, or allow override
-    ifndef USE_AVX512
-      AVX512_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx512' -m 1)
-      USE_AVX512 := $(if $(AVX512_SUPPORTED),1,0)
-    endif
-    ifeq ($(USE_AVX512),1)
-      CXXFLAGS += -mavx512f
-    endif
+    #ifndef USE_AVX512
+    #  AVX512_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx512' -m 1)
+    #  USE_AVX512 := $(if $(AVX512_SUPPORTED),1,0)
+    #endif
+    #ifeq ($(USE_AVX512),1)
+    #  CXXFLAGS += -mavx512f
+    #endif
 
     # CUDA/GPU build options (Linux only)
     NVCC := /usr/local/cuda/bin/nvcc

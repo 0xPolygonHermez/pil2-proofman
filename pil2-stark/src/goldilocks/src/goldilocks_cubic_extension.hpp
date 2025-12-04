@@ -3,6 +3,7 @@
 
 #include <stdint.h> // for uint64_t
 #include "goldilocks_base_field.hpp"
+#undef __AVX2__
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif

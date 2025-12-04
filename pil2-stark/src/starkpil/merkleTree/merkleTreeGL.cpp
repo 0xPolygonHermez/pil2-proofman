@@ -1,6 +1,7 @@
 #include "merkleTreeGL.hpp"
 #include <cassert>
 #include <algorithm> // std::max
+#undef __AVX2__
 
 
 MerkleTreeGL::MerkleTreeGL(uint64_t _arity, bool _custom, uint64_t _height, uint64_t _width, bool allocateSource, bool allocateNodes) : height(_height), width(_width)
@@ -175,8 +176,8 @@ void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::
     uint64_t currIdx = idx % arity;
     uint64_t nextIdx = idx / arity;
 
-    Goldilocks::Element inputs[12];
-    for(uint64_t i = 0; i < 12; ++i) {
+    Goldilocks::Element inputs[SPONGE_WIDTH];
+    for(uint64_t i = 0; i < SPONGE_WIDTH; ++i) {
         inputs[i] = Goldilocks::zero();
     }
 
