@@ -791,7 +791,7 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
     return (void *)d_buffers;
 };
 
-uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t max_n_bits_ext) { return 1; }
+uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t max_n_bits_ext, uint64_t merkleTreeArity) { return 1; }
 
 void get_instances_ready(void *d_buffers, int64_t* instances_ready) {}
 

@@ -285,7 +285,7 @@ struct StreamData{
 
     std::mutex mutex_stream_selection;
     
-    void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_){
+    void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_, uint64_t merkleTreeArity){
         uint64_t maxExps = 20000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -309,12 +309,11 @@ struct StreamData{
         airgroupId = UINT64_MAX;
         airId = UINT64_MAX;
 
-        // TODO: SHOULD NOT BE HARDCODED
-        transcript = new TranscriptGL_GPU(4,
+        transcript = new TranscriptGL_GPU(merkleTreeArity,
                                     true,
                                     stream);
 
-        transcript_helper = new TranscriptGL_GPU(4,
+        transcript_helper = new TranscriptGL_GPU(merkleTreeArity,
                                            true,
                                            stream);
 

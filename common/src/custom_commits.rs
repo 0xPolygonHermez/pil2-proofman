@@ -11,11 +11,12 @@ use crate::{ProofmanResult, ProofmanError};
 pub fn write_custom_commit_trace<F: PrimeField64>(
     custom_trace: &mut dyn Trace<F>,
     blowup_factor: u64,
+    merkle_tree_arity: u64,
     file_name: &Path,
     check: bool,
 ) -> ProofmanResult<Vec<F>> {
     let buffer = custom_trace.get_buffer();
-    let arity = 4; // TODO: SHOULD NOT BE HARDCODED
+    let arity = merkle_tree_arity;
     let n = custom_trace.num_rows() as u64;
     let n_extended = blowup_factor * custom_trace.num_rows() as u64;
     let n_bits = n.trailing_zeros() as u64;

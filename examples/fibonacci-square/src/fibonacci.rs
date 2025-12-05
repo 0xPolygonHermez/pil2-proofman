@@ -4,7 +4,7 @@ use proofman_common::{write_custom_commit_trace, AirInstance, BufferPool, FromTr
 use witness::WitnessComponent;
 use fields::PrimeField64;
 
-use crate::{BuildPublicValues, FibonacciSquareAirValues, FibonacciSquareRomTrace, FibonacciSquareTrace};
+use crate::{BuildPublicValues, FibonacciSquareAirValues, FibonacciSquareRomTrace, FibonacciSquareTrace, MERKLE_TREE_ARITY};
 
 pub struct FibonacciSquare {
     instance_ids: RwLock<Vec<usize>>,
@@ -90,7 +90,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
 
         let setup = sctx.get_setup(trace_rom.airgroup_id(), trace_rom.air_id())?;
         let blowup_factor = 1 << (setup.stark_info.stark_struct.n_bits_ext - setup.stark_info.stark_struct.n_bits);
-        write_custom_commit_trace::<F>(&mut trace_rom, blowup_factor, &file_name, check)?;
+        write_custom_commit_trace::<F>(&mut trace_rom, blowup_factor, MERKLE_TREE_ARITY, &file_name, check)?;
         Ok(())
     }
 

@@ -58,6 +58,9 @@ pub struct GlobalInfo {
 
     #[serde(rename = "publicsMap")]
     pub publics_map: Option<Vec<PublicMap>>,
+
+    #[serde(rename = "merkleTreeArity")]
+    pub merkle_tree_arity: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]

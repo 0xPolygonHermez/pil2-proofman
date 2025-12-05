@@ -3128,6 +3128,7 @@ where
             max_prover_recursive2_buffer_size,
             max_pinned_proof_size,
             sctx.max_n_bits_ext as u64,
+            pctx.global_info.merkle_tree_arity as u64,
         );
 
         initialize_setup_info(pctx, sctx, setups_vadcop, &d_buffers, aggregation, packed_info, gpu_params)?;
