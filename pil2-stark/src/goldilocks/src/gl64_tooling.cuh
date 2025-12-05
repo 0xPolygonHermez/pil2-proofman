@@ -309,11 +309,12 @@ struct StreamData{
         airgroupId = UINT64_MAX;
         airId = UINT64_MAX;
 
-        transcript = new TranscriptGL_GPU(3,
+        // TODO: SHOULD NOT BE HARDCODED
+        transcript = new TranscriptGL_GPU(4,
                                     true,
                                     stream);
 
-        transcript_helper = new TranscriptGL_GPU(3,
+        transcript_helper = new TranscriptGL_GPU(4,
                                            true,
                                            stream);
 

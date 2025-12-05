@@ -15,6 +15,7 @@ pub fn write_custom_commit_trace<F: PrimeField64>(
     check: bool,
 ) -> ProofmanResult<Vec<F>> {
     let buffer = custom_trace.get_buffer();
+    let arity = 4; // TODO: SHOULD NOT BE HARDCODED
     let n = custom_trace.num_rows() as u64;
     let n_extended = blowup_factor * custom_trace.num_rows() as u64;
     let n_bits = n.trailing_zeros() as u64;
@@ -51,6 +52,7 @@ pub fn write_custom_commit_trace<F: PrimeField64>(
         n_bits,
         n_bits_ext,
         n_cols,
+        arity,
         buffer.as_ptr() as *mut u8,
         file_name.to_str().expect("Invalid file name"),
         check,

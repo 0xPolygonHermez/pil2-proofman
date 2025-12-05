@@ -8,11 +8,7 @@
 #include "zklog.hpp"
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
-
-#define TRANSCRIPT_STATE_SIZE 4
-#define TRANSCRIPT_PENDING_SIZE 8
-#define TRANSCRIPT_OUT_SIZE 12
-
+#include "transcriptGL.hpp"
 
 __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);
 __device__ Goldilocks::Element _getFields1(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);__global__ void _add(Goldilocks::Element* input, uint64_t size, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);

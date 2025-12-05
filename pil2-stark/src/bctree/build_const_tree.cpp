@@ -29,7 +29,8 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
     uint64_t NExtended = 1 << nBitsExt;
     uint64_t nPols = starkInfoJson["nConstants"];
     std::string verificationHashType = starkInfoJson["starkStruct"]["verificationHashType"];
-
+    uint64_t arity = starkInfoJson["starkStruct"]["merkleTreeArity"];
+    bool custom = starkInfoJson["starkStruct"]["merkleTreeCustom"].get<bool>();
     uintmax_t constPolsSize = nPols * sizeof(Goldilocks::Element) * N;
     
     TimerStart(LOADING_CONST_POLS);
@@ -45,7 +46,7 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
     if (verificationHashType == "GL") {
         TimerStart(MERKELIZE_CONST_TREE);
         Goldilocks::Element root[4];
-        MerkleTreeGL mt(3, true, NExtended, nPols);
+        MerkleTreeGL mt(arity, custom, NExtended, nPols);
         Goldilocks::Element *buffNodes = new Goldilocks::Element[mt.numNodes];
         mt.setSource(pConstPolsExt);
         mt.setNodes(buffNodes);

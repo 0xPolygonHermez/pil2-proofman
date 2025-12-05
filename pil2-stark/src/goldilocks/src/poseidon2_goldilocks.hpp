@@ -7,7 +7,7 @@
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif
-#define RATE 8
+#define RATE 12
 #define CAPACITY 4
 #define HASH_SIZE 4
 #define SPONGE_WIDTH (RATE + CAPACITY)
