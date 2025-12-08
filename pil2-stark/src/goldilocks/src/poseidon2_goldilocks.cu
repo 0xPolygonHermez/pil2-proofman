@@ -198,7 +198,111 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::linearHashCoalescedBlocks(uint64_t 
     CHECKCUDAERR(cudaGetLastError());
 }
 
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
+__global__ void grinding_calc_(uint64_t *__restrict__ indxBlock, uint64_t *__restrict__ input, uint32_t n_bits, uint32_t hashes_per_thread, uint64_t offset)
+{
+    // scratchpad is declared globally, shared_nonces is allocated right after it
+    uint64_t* shared_nonces = (uint64_t*)&scratchpad[SPONGE_WIDTH_T * blockDim.x];
+    
+    indxBlock[blockIdx.x] = UINT64_MAX;
+    uint64_t idx = offset + (blockIdx.x * blockDim.x + threadIdx.x) * hashes_per_thread;
+    uint64_t level = 1ULL << (64 - n_bits);
+    uint64_t locId = UINT64_MAX;
 
+    for(uint32_t k=0; k<hashes_per_thread; k++){
+        uint64_t idx_k = idx + k;        
+        #pragma unroll
+        for (uint32_t i = 0; i < SPONGE_WIDTH_T-1; i++)
+            scratchpad[i * blockDim.x + threadIdx.x] = input[i];
+        scratchpad[(SPONGE_WIDTH_T-1) * blockDim.x + threadIdx.x] = idx_k;
+        poseidon2_hash<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
+        // Compare the raw uint64 value, not the field element
+        uint64_t hash_val = (uint64_t)scratchpad[threadIdx.x];
+        if(hash_val < level){
+            locId = idx_k;
+            break;
+        }
+    } 
+    shared_nonces[threadIdx.x] = locId;
+    __syncthreads();
+    //reduce to find the minimum nonce value
+    uint32_t alive = blockDim.x >> 1;
+    while(alive > 0){
+        if(threadIdx.x < alive && shared_nonces[threadIdx.x + alive] < shared_nonces[threadIdx.x]){
+            shared_nonces[threadIdx.x] = shared_nonces[threadIdx.x + alive];
+        }
+        __syncthreads();
+        alive >>= 1;
+    }
+    if(threadIdx.x == 0){
+        indxBlock[blockIdx.x] = shared_nonces[0];
+    }
+    
+}
+
+__global__ void grinding_check_(uint64_t* indx, uint64_t *__restrict__ indxBlock, uint32_t n_blocks)
+{
+    if(threadIdx.x > 31 || blockIdx.x > 0){
+        return;
+    }
+    uint32_t stride = min(blockDim.x, 32);
+    __shared__  uint64_t local_indxBlock[32];
+    local_indxBlock[threadIdx.x] = UINT64_MAX;
+    for(uint32_t i=threadIdx.x; i<n_blocks; i+=stride){
+        if(indxBlock[i] != UINT64_MAX && local_indxBlock[threadIdx.x] == UINT64_MAX){
+            local_indxBlock[threadIdx.x] = indxBlock[i];
+        }
+    }
+    __syncthreads();
+    indx[0] = UINT64_MAX;
+    if(threadIdx.x == 0){
+        for(uint32_t i=0; i<stride; i++){
+            if(local_indxBlock[i] < indx[0]){
+                indx[0] = local_indxBlock[i];
+            }
+       }
+    }
+}
+
+template<uint32_t SPONGE_WIDTH_T>
+void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_out, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream){
+    uint32_t hashesPerThread = 4;
+    uint64_t N = 1 << n_bits;
+    dim3 blockSize( 1024 );
+    dim3 gridSize( (N/hashesPerThread + blockSize.x - 1) / blockSize.x );
+
+    uint64_t* d_indxBlock;
+    cudaMalloc((void**)&d_indxBlock, sizeof(uint64_t)*gridSize.x);
+    bool found = false;
+    uint64_t offset = 0;
+    uint64_t nonces_per_iteration = gridSize.x * blockSize.x * hashesPerThread;
+    uint64_t iteration_count = 0;
+    uint64_t max_iterations = 10000; // Prevent infinite loop
+    
+    while (found == false && iteration_count < max_iterations)
+    {
+        size_t shared_mem_size = blockSize.x * SPONGE_WIDTH * sizeof(gl64_t) + blockSize.x * sizeof(uint64_t);
+        grinding_calc_<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<gridSize, blockSize, shared_mem_size, stream>>>((uint64_t *)d_indxBlock, (uint64_t *)d_in, n_bits, hashesPerThread, offset);
+
+        grinding_check_<<<1, 32, 0, stream>>>((uint64_t *)d_out, (uint64_t *)d_indxBlock, gridSize.x);
+        CHECKCUDAERR(cudaGetLastError());
+
+        uint64_t h_indx;
+        CHECKCUDAERR(cudaMemcpyAsync(&h_indx, d_out, sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
+        iteration_count++;
+        if (h_indx != UINT64_MAX)
+        {
+            found = true;
+        }
+        else
+        {
+            offset += nonces_per_iteration;
+        }
+    }
+    CHECKCUDAERR(cudaGetLastError());
+    cudaFree(d_indxBlock);
+}
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__  void poseidon2_hash()
@@ -245,6 +349,7 @@ template void Poseidon2GoldilocksGPU<16>::linearHashCoalescedBlocks(uint64_t * d
 template void Poseidon2GoldilocksGPU<16>::merkletreeCoalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim);
 template void Poseidon2GoldilocksGPU<16>::merkletreeCoalescedBlocks(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim);
 template void Poseidon2GoldilocksGPU<16>::hashFullResult(uint64_t * output, const uint64_t * input);
+template void Poseidon2GoldilocksGPU<4>::grinding(uint64_t * d_out, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream);
 #endif
 
 

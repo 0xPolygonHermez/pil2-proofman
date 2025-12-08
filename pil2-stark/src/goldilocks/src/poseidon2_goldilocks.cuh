@@ -46,6 +46,10 @@ __device__ __forceinline__ void poseidon2_hash_shared(gl64_t *out, const gl64_t 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ void hash_one_2(gl64_t *state, gl64_t *const input, int tid);
 
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
+__global__ void grinding_calc_(uint64_t *__restrict__ indxBlock, uint64_t *__restrict__ input, uint32_t n_bits, uint32_t hashes_per_thread, uint64_t offset);
+__global__ void grinding_check_(uint64_t* indx, uint64_t *__restrict__ indxBlock, uint32_t n_blocks);
+
 __device__ __forceinline__ void pow7_2(gl64_t &x);
 
 __device__ __forceinline__ void matmul_m4_(gl64_t *x);
@@ -318,6 +322,8 @@ public:
 
 
     void static hashFullResult(uint64_t * output, const uint64_t * input);
+
+    void static grinding(uint64_t * d_out, const uint64_t * d_in, const uint32_t n_bits, cudaStream_t stream);
     
 };
 

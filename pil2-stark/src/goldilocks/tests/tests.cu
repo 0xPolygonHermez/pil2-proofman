@@ -65,6 +65,67 @@ TEST(GOLDILOCKS_TEST, poseidon2)
 
 }
 
+TEST(GOLDILOCKS_TEST, grinding)
+{
+    uint32_t gpu_id = 0;
+    cudaGetDevice((int*)&gpu_id);
+    Poseidon2GoldilocksGPUGrinding::initPoseidon2GPUConstants(&gpu_id, 1);
+
+    // Input data for grinding (4 elements for SPONGE_WIDTH=4)
+    Goldilocks::Element in[4];
+    for (int i = 0; i < 3; i++)
+    {
+        in[i] = Goldilocks::fromU64(i * 7); 
+    }
+
+    gl64_t *d_in, *d_out;
+    cudaMalloc((void **)&d_in, 4 * sizeof(gl64_t));
+    cudaMemcpy(d_in, in, 4 * sizeof(gl64_t), cudaMemcpyHostToDevice);
+    cudaMalloc((void **)&d_out, sizeof(gl64_t));
+
+    uint32_t n_bits = 8; // Looking for hash with 8 leading zero bits
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
+
+    Poseidon2GoldilocksGPUGrinding::grinding((uint64_t *)d_out, (uint64_t *)d_in, n_bits, stream);
+    
+    uint64_t result_index;
+    cudaMemcpy(&result_index, d_out, sizeof(uint64_t), cudaMemcpyDeviceToHost);
+    
+    // Verify the result is not UINT64_MAX (meaning a valid nonce was found)
+    ASSERT_NE(result_index, UINT64_MAX);
+    
+    // Verify the hash at this index actually satisfies the grinding requirement
+    Goldilocks::Element test_in[4];
+    for (int i = 0; i < 3; i++)
+    {
+        test_in[i] = in[i];
+    }
+    test_in[3] = Goldilocks::fromU64(result_index);
+    
+    gl64_t *d_test_in, *d_hash_out;
+    cudaMalloc((void **)&d_test_in, 4 * sizeof(gl64_t));
+    cudaMemcpy(d_test_in, test_in, 4 * sizeof(gl64_t), cudaMemcpyHostToDevice);
+    cudaMalloc((void **)&d_hash_out, 4 * sizeof(gl64_t));
+    
+    // Use hash_full_result_2 with grinding parameters: RATE=4, CAPACITY=0, SPONGE_WIDTH=4, N_PARTIAL_ROUNDS=21
+    Poseidon2GoldilocksGPU<4>::hashFullResult((uint64_t *)d_hash_out, (uint64_t *)d_test_in);
+    cudaStreamSynchronize(stream);
+    
+    Goldilocks::Element hash_result[4];
+    cudaMemcpy(hash_result, d_hash_out, 4 * sizeof(gl64_t), cudaMemcpyDeviceToHost);
+    
+    // Check that the first element of the hash satisfies the grinding requirement
+    uint64_t level = 1ULL << (64 - n_bits);
+    ASSERT_LT(hash_result[0].fe, level) << "Hash does not satisfy grinding requirement";
+
+    cudaFree(d_in);
+    cudaFree(d_out);
+    cudaFree(d_test_in);
+    cudaFree(d_hash_out);
+    cudaStreamDestroy(stream);
+}
+
 int main(int argc, char **argv)
 {
     ::testing::InitGoogleTest(&argc, argv);
