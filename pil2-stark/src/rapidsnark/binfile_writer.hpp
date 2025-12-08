@@ -5,6 +5,7 @@
 #include <vector>
 #include <memory>
 #include <fstream>
+#include <cstdint>
 
 
 namespace BinFileUtils
