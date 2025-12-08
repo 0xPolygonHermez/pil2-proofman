@@ -227,7 +227,7 @@ $(BUILD_DIR)/$(TARGET_BINFILE): $(OBJS_BINFILE)
 # cuda source
 $(BUILD_DIR_GPU)/%.cu.o: %.cu
 	$(MKDIR_P) $(dir $@)
-	$(NVCC) -D__USE_CUDA__  $(NVCCFLAGS) $(CPPFLAGS) -c $< -o $@
+	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -c $< -o $@
 
 .PHONY: clean
 

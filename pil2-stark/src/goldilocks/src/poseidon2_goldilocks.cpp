@@ -55,7 +55,11 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::linear_hash_seq(Goldilocks::Element *o
         }
         else
         {
+// avoid -Wrestrict warning, there is not overlapping in practice            
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wrestrict"
             std::memcpy(state + RATE, state, CAPACITY * sizeof(Goldilocks::Element));
+#pragma GCC diagnostic pop
         }
 
         uint64_t n = (remaining < RATE) ? remaining : RATE;
@@ -335,7 +339,11 @@ void Poseidon2Goldilocks::linear_hash_avx(Goldilocks::Element *output, Goldilock
         }
         else
         {
-            std::memcpy(state + RATE, state, CAPACITY * sizeof(Goldilocks::Element));
+// avoid -Wrestrict warning, there is not overlapping in practice            
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wrestrict"
+            std::memmove(state + RATE, state, CAPACITY * sizeof(Goldilocks::Element));
+#pragma GCC diagnostic pop
         }
 
         uint64_t n = (remaining < RATE) ? remaining : RATE;

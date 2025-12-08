@@ -88,7 +88,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
             starks.treesGL[setupCtx.starkInfo.nStages + 2 + i]->setNodes(&pCustomCommitsFixed[(N + NExtended) * nCols]);
     }
 
-    uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
+    uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : Poseidon2GoldilocksCommit::HASH_SIZE;
     
     uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", false)];
     uint64_t offsetPublicInputs = setupCtx.starkInfo.mapOffsets[std::make_pair("publics", false)];
@@ -141,7 +141,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
 
     d_transcript->reset(stream);
     if (recursive) {
-        d_transcript->put(starks.treesGL[setupCtx.starkInfo.nStages+1]->get_nodes_ptr() + starks.treesGL[setupCtx.starkInfo.nStages + 1]->numNodes - HASH_SIZE, HASH_SIZE, stream);
+        d_transcript->put(starks.treesGL[setupCtx.starkInfo.nStages+1]->get_nodes_ptr() + starks.treesGL[setupCtx.starkInfo.nStages + 1]->numNodes - Poseidon2GoldilocksCommit::HASH_SIZE, Poseidon2GoldilocksCommit::HASH_SIZE, stream);
         if (setupCtx.starkInfo.nPublics > 0)
         {
             if (!setupCtx.starkInfo.starkStruct.hashCommits)
@@ -151,7 +151,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
             else
             {
                 calculateHash(d_transcript_helper, h_params.challenges, setupCtx, h_params.publicInputs, setupCtx.starkInfo.nPublics, stream);
-                d_transcript->put(h_params.challenges, HASH_SIZE, stream);
+                d_transcript->put(h_params.challenges, Poseidon2GoldilocksCommit::HASH_SIZE, stream);
             }
         }
     } else {
@@ -256,7 +256,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         d_transcript->put(h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION, stream);
     } else {
         calculateHash(d_transcript_helper, d_challenge, setupCtx, h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION, stream);
-        d_transcript->put(d_challenge, HASH_SIZE, stream);
+        d_transcript->put(d_challenge, Poseidon2GoldilocksCommit::HASH_SIZE, stream);
     }
 
     // Challenges for FRI polynomial
@@ -313,7 +313,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
                 d_transcript->put((Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION, stream);
             } else {
                 calculateHash(d_transcript_helper, d_challenge, setupCtx, (Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION, stream);
-                d_transcript->put(d_challenge, HASH_SIZE, stream);
+                d_transcript->put(d_challenge, Poseidon2GoldilocksCommit::HASH_SIZE, stream);
             }
         }
         d_transcript->getField((uint64_t *)d_challenge, stream);

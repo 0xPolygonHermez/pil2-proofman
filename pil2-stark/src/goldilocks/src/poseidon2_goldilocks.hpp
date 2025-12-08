@@ -12,8 +12,8 @@ template<uint32_t SPONGE_WIDTH_T>
 class Poseidon2Goldilocks
 {
 public:
-    static constexpr uint32_t RATE = SPONGE_WIDTH_T == 4 ? 2 : SPONGE_WIDTH_T-4;
-    static constexpr uint32_t CAPACITY = SPONGE_WIDTH_T == 4 ? 2 : 4;
+    static constexpr uint32_t RATE = SPONGE_WIDTH_T-4;
+    static constexpr uint32_t CAPACITY = 4;
     static constexpr uint32_t SPONGE_WIDTH = SPONGE_WIDTH_T;
     static constexpr uint32_t HASH_SIZE = 4;
     static constexpr uint32_t N_FULL_ROUNDS_TOTAL = 8;
@@ -90,9 +90,6 @@ public:
     inline void static merkletree_batch(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t batch_size, int nThreads = 0, uint64_t dim = 1);
 };
 
-// Type aliases
-//using Poseidon2GoldilocksCommit = Poseidon2Goldilocks<8, 4, 8, 22>;   // SPONGE_WIDTH = 12
-//using Poseidon2GoldilocksGrinding = Poseidon2Goldilocks<2, 2, 8, 21>;  // SPONGE_WIDTH = 4
 
 // WRAPPERS - Template specializations for Poseidon2GoldilocksCommit
 

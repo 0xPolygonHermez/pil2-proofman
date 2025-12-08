@@ -263,7 +263,7 @@ void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t 
 
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    Poseidon2GoldilocksGPU::merkletree_cuda_coalesced_blocks(3, (uint64_t*) d_tree, (uint64_t *)d_cmQ, nCols, NExtended, stream);
+    Poseidon2GoldilocksGPUCommit::merkletreeCoalescedBlocks(3, (uint64_t*) d_tree, (uint64_t *)d_cmQ, nCols, NExtended, stream);
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 
@@ -310,7 +310,7 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU(Goldilocks::Element *d_tree, gl64_t 
     transposeSubBlocksInPlace<<<grid1, block, sharedMemSize, stream>>>(d_dst_ntt_, ext_size, nCols);
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    Poseidon2GoldilocksGPU::merkletree_cuda_coalesced_blocks(3, (uint64_t*) d_tree, (uint64_t *)d_dst_ntt_, nCols, ext_size, stream);
+    Poseidon2GoldilocksGPUCommit::merkletreeCoalescedBlocks(3, (uint64_t*) d_tree, (uint64_t *)d_dst_ntt_, nCols, ext_size, stream);
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 

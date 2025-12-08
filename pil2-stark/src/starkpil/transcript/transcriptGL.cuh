@@ -9,10 +9,9 @@
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 
-#define TRANSCRIPT_STATE_SIZE 4
-#define TRANSCRIPT_PENDING_SIZE 8
-#define TRANSCRIPT_OUT_SIZE 12
-
+#define TRANSCRIPT_STATE_SIZE_GPU 4
+#define TRANSCRIPT_PENDING_SIZE_GPU (Poseidon2GoldilocksCommit::SPONGE_WIDTH - Poseidon2GoldilocksCommit::CAPACITY)
+#define TRANSCRIPT_OUT_SIZE_GPU Poseidon2GoldilocksCommit::SPONGE_WIDTH
 
 __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);
 __device__ Goldilocks::Element _getFields1(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);__global__ void _add(Goldilocks::Element* input, uint64_t size, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);
@@ -45,9 +44,9 @@ public:
     }
     
     void reset(cudaStream_t stream) {
-        cudaMemsetAsync(state, 0, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element), stream);
-        cudaMemsetAsync(pending, 0, TRANSCRIPT_PENDING_SIZE * sizeof(Goldilocks::Element), stream);
-        cudaMemsetAsync(out, 0, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element), stream);
+        cudaMemsetAsync(state, 0, TRANSCRIPT_OUT_SIZE_GPU * sizeof(Goldilocks::Element), stream);
+        cudaMemsetAsync(pending, 0, TRANSCRIPT_PENDING_SIZE_GPU * sizeof(Goldilocks::Element), stream);
+        cudaMemsetAsync(out, 0, TRANSCRIPT_OUT_SIZE_GPU * sizeof(Goldilocks::Element), stream);
         cudaMemsetAsync(pending_cursor, 0, sizeof(uint), stream);
         cudaMemsetAsync(out_cursor, 0, sizeof(uint), stream);
         cudaMemsetAsync(state_cursor, 0, sizeof(uint), stream);

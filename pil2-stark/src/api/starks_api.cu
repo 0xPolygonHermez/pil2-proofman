@@ -11,7 +11,7 @@
 #include "gen_recursive_proof.cuh"
 #include "gen_proof.cuh"
 #include "gen_commit.cuh"
-#include "poseidon2_goldilocks.cu"
+#include "poseidon2_goldilocks.cuh"
 #include <cuda_runtime.h>
 #include <mutex>
 
@@ -100,7 +100,7 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
                 CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_traceAggregation[i][j], maxSizes->auxTraceRecursiveArea * sizeof(Goldilocks::Element)));
             }
         }
-        Poseidon2GoldilocksGPU::init_gpu_const_2(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+        Poseidon2GoldilocksGPUCommit::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
 
         TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus);
 
@@ -172,7 +172,7 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPolsAggregation[0], maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer[0], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer_extra[0], d_buffers->pinned_size * sizeof(Goldilocks::Element)));        
-        Poseidon2GoldilocksGPU::init_gpu_const_2(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+        Poseidon2GoldilocksGPUCommit::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
 
         TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus);
         return (void *)d_buffers;
@@ -654,7 +654,7 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
 void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
 
     Goldilocks::Element *root = (Goldilocks::Element *)d_buffers->streamsData[streamId].root;
-    memcpy((Goldilocks::Element *)root, d_buffers->streamsData[streamId].pinned_buffer_proof, HASH_SIZE * sizeof(uint64_t));
+    memcpy((Goldilocks::Element *)root, d_buffers->streamsData[streamId].pinned_buffer_proof, Poseidon2GoldilocksGPUCommit::HASH_SIZE * sizeof(uint64_t));
     uint64_t instanceId = d_buffers->streamsData[streamId].instanceId;
     uint64_t airgroupId = d_buffers->streamsData[streamId].airgroupId;
     uint64_t airId = d_buffers->streamsData[streamId].airId;
@@ -674,7 +674,7 @@ void init_gpu_setup(uint64_t maxBitsExt) {
     cudaSetDevice(deviceId);
     uint32_t my_gpu_ids[1] = {0};
 
-    Poseidon2GoldilocksGPU::init_gpu_const_2(my_gpu_ids, 1);
+    Poseidon2GoldilocksGPUCommit::initPoseidon2GPUConstants(my_gpu_ids, 1);
     NTT_Goldilocks_GPU::init_twiddle_factors_and_r(maxBitsExt, 1, my_gpu_ids);
 }
 
