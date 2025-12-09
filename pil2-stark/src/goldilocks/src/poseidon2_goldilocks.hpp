@@ -228,5 +228,5 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_seq(Goldilocks::Element (&
  #endif
 #endif
 
-using Poseidon2GoldilocksCommit = Poseidon2Goldilocks<12>;   // SPONGE_WIDTH = 12
+using Poseidon2GoldilocksCommit = Poseidon2Goldilocks<16>;   // SPONGE_WIDTH = 16
 using Poseidon2GoldilocksGrinding = Poseidon2Goldilocks<4>;  // SPONGE_WIDTH = 4

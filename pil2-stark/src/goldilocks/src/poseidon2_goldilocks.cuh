@@ -533,7 +533,7 @@ __global__ void hash_gpu_3(uint32_t nextN, uint32_t nextIndex, uint32_t pending,
     hash_one_2<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>((gl64_t *)(&cursor[nextIndex + (pending + tid) * CAPACITY_T]), pol_input, threadIdx.x);
 }
 
-using Poseidon2GoldilocksGPUCommit = Poseidon2GoldilocksGPU<12>;   // SPONGE_WIDTH = 12
+using Poseidon2GoldilocksGPUCommit = Poseidon2GoldilocksGPU<16>;   // SPONGE_WIDTH = 16
 using Poseidon2GoldilocksGPUGrinding = Poseidon2GoldilocksGPU<4>;  // SPONGE_WIDTH = 4
 
 #endif
