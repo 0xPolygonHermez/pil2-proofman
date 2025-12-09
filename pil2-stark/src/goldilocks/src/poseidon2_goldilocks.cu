@@ -301,6 +301,9 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_out, const ui
             offset += nonces_per_iteration;
         }
     }
+    if(found == false){
+        throw std::runtime_error("Poseidon2GoldilocksGPU::grinding: could not find a valid nonce on GPU");
+    }
     CHECKCUDAERR(cudaGetLastError());
     cudaFree(d_indxBlock);
 }

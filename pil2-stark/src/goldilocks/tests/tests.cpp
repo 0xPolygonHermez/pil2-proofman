@@ -2577,6 +2577,30 @@ TEST(GOLDILOCKS_TEST, merkletree_cuda)
 }
 #endif // __USE_CUDA__
 
+TEST(GOLDILOCKS_TEST, grinding_cpu)
+{
+    constexpr uint8_t n_bits = 8;
+    uint64_t in[3] = {0x1234567890abcdef, 0xfedcba0987654321, 0x0123456789abcdef};
+    uint64_t result_index = UINT64_MAX;
+
+    // Call CPU grinding function
+    Poseidon2GoldilocksGrinding::grinding(result_index, in, n_bits);
+
+    // Verify we found a valid nonce
+    ASSERT_NE(result_index, UINT64_MAX);
+
+    // Verify the hash at result_index satisfies the grinding requirement
+    uint64_t level = (1ULL << (64 - n_bits)) - 1ULL;
+    
+    // Compute the hash with the found nonce
+    Goldilocks::Element x[4] = {in[0], in[1], in[2], result_index};
+    Goldilocks::Element result[4];
+    Poseidon2GoldilocksGrinding::hash_full_result_seq(result, &x[0]);
+    
+    // Check that result[0] < level
+    ASSERT_LT(Goldilocks::toU64(result[0]), level);
+}
+
 int main(int argc, char **argv)
 {
     ::testing::InitGoogleTest(&argc, argv);

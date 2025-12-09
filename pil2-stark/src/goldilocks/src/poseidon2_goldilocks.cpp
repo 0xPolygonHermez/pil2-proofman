@@ -199,6 +199,59 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_seq(Goldilocks::Eleme
     }
 }
 
+template<uint32_t SPONGE_WIDTH_T>
+void Poseidon2Goldilocks<SPONGE_WIDTH_T>::grinding(uint64_t &out_idx, const uint64_t* in, const uint32_t n_bits)
+{
+    uint64_t checkChunk = omp_get_max_threads() * 512;
+    uint64_t level   = uint64_t(1) << (64 - n_bits);
+    uint64_t* chunkIdxs = new uint64_t[omp_get_max_threads()];
+    uint64_t offset = 0;
+    out_idx = UINT64_MAX;
+
+    for(int i = 0; i < omp_get_max_threads(); ++i)
+    {
+        chunkIdxs[i] = UINT64_MAX;
+    }
+
+    //we are trying (1 << n_bits) * 512 * num_threads possibilities maximum
+    for(int k = 0; k < (1 << n_bits); ++k)
+    {
+
+        #pragma omp parallel for
+        for (uint64_t i = 0; i < checkChunk; i++) {
+            if (chunkIdxs[omp_get_thread_num()] != UINT64_MAX)
+                continue;
+
+            Goldilocks::Element state[SPONGE_WIDTH];
+            std::memcpy(state, in, (SPONGE_WIDTH - 1) * sizeof(Goldilocks::Element));
+            state[SPONGE_WIDTH - 1] = Goldilocks::fromU64(offset + i);
+            hash_full_result_seq(state, state);
+            if (state[0].fe < level) {
+                chunkIdxs[omp_get_thread_num()] = offset + i;
+            }
+        }
+
+        for(int i = 0; i < omp_get_max_threads(); ++i)
+        {
+            if (chunkIdxs[i] != UINT64_MAX)
+            {
+                out_idx = chunkIdxs[i];
+                break;
+            }
+        }
+
+        if (out_idx != UINT64_MAX)
+            break;
+
+        offset += checkChunk;
+    }
+    if(out_idx == UINT64_MAX)
+    {
+        throw std::runtime_error("Poseidon2Goldilocks::grinding: could not find a valid nonce");
+    }
+    delete[] chunkIdxs;
+}
+
 #ifdef __AVX2__
 
 void Poseidon2Goldilocks::hash_full_result_batch_avx(Goldilocks::Element *state, const Goldilocks::Element *input) {

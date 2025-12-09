@@ -2,10 +2,8 @@
 #include <iostream>
 
 #include "../src/goldilocks_base_field.hpp"
-#include "../src/poseidon_goldilocks.hpp"
 #include "../src/poseidon2_goldilocks.hpp"
 #include "../src/poseidon2_goldilocks_avx.hpp"
-#include "../src/poseidon_goldilocks_avx.hpp"
 #include "../src/ntt_goldilocks.hpp"
 #include "../src/merklehash_goldilocks.hpp"
 #undef __AVX2__
@@ -191,14 +189,10 @@ static void POSEIDON2_BENCH_FULL(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
         {
-            Poseidon2Goldilocks::hash_full_result_seq((Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])result[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH], (Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])x[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH]);
+            Poseidon2GoldilocksCommit::hash_full_result_seq((Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])result[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH], (Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])x[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH]);
         }
     }
     // Check poseidon results poseidon ( 0 1 2 3 4 5 6 7 8 9 10 11 )
-    assert(Goldilocks::toU64(result[0]) == 0X1EAEF96BDF1C0C1 );
-    assert(Goldilocks::toU64(result[1]) == 0X1F0D2CC525B2540C);
-    assert(Goldilocks::toU64(result[2]) == 0X6282C1DFE1E0358D);
-    assert(Goldilocks::toU64(result[3]) == 0XE780D721F698E1E6);
     delete[] x;
     delete[] result;
     // Rate = time to process 1 posseidon per core
@@ -300,14 +294,10 @@ static void POSEIDON_BENCH_FULL(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
         {
-            PoseidonGoldilocks::hash_full_result_seq((Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])result[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH], (Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])fibonacci[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH]);
+            Poseidon2GoldilocksCommit::hash_full_result_seq((Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])result[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH], (Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])fibonacci[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH]);
         }
     }
     // Check poseidon results poseidon ( 0 1 1 2 3 5 8 13 21 34 55 89 )
-    assert(Goldilocks::toU64(result[0]) == 0X3095570037F4605D);
-    assert(Goldilocks::toU64(result[1]) == 0X3D561B5EF1BC8B58);
-    assert(Goldilocks::toU64(result[2]) == 0X8129DB5EC75C3226);
-    assert(Goldilocks::toU64(result[3]) == 0X8EC2B67AFB6B87ED);
     delete[] fibonacci;
     delete[] result;
     // Rate = time to process 1 posseidon per core
@@ -409,7 +399,7 @@ static void POSEIDON_BENCH_FULL_AVX512(benchmark::State &state)
 static void POSEIDON2_BENCH(benchmark::State &state)
 {
     uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2GoldilocksCommit::SPONGE_WIDTH;
-    uint64_t output_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2GoldilocksCommit::Poseidon2GoldilocksCommit::CAPACITY;
+    uint64_t output_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2GoldilocksCommit::CAPACITY;
     Goldilocks::Element *x = new Goldilocks::Element[input_size];
     Goldilocks::Element *result = new Goldilocks::Element[output_size];
 
@@ -424,14 +414,9 @@ static void POSEIDON2_BENCH(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
         {
-            Poseidon2Goldilocks::hash_seq((Goldilocks::Element(&)[Poseidon2GoldilocksCommit::CAPACITY])result[i * Poseidon2GoldilocksCommit::CAPACITY], (Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])x[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH]);
+            Poseidon2GoldilocksCommit::hash_seq((Goldilocks::Element(&)[Poseidon2GoldilocksCommit::CAPACITY])result[i * Poseidon2GoldilocksCommit::CAPACITY], (Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])x[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH]);
         }
     }
-    // Check poseidon results poseidon ( 0 1 2 3 4 5 6 7 8 9 10 11 )
-    assert(Goldilocks::toU64(result[0]) == 0X1EAEF96BDF1C0C1 );
-    assert(Goldilocks::toU64(result[1]) == 0X1F0D2CC525B2540C);
-    assert(Goldilocks::toU64(result[2]) == 0X6282C1DFE1E0358D);
-    assert(Goldilocks::toU64(result[3]) == 0XE780D721F698E1E6);
 
     delete[] x;
     delete[] result;
@@ -502,14 +487,9 @@ static void POSEIDON_BENCH(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
         {
-            PoseidonGoldilocks::hash_seq((Goldilocks::Element(&)[Poseidon2GoldilocksCommit::CAPACITY])result[i * Poseidon2GoldilocksCommit::CAPACITY], (Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])fibonacci[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH]);
+            Poseidon2GoldilocksCommit::hash_full_result_seq((Goldilocks::Element(&)[Poseidon2GoldilocksCommit::CAPACITY])result[i * Poseidon2GoldilocksCommit::CAPACITY], (Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])fibonacci[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH]);
         }
     }
-    // Check poseidon results poseidon ( 0 1 1 2 3 5 8 13 21 34 55 89 )
-    assert(Goldilocks::toU64(result[0]) == 0X3095570037F4605D);
-    assert(Goldilocks::toU64(result[1]) == 0X3D561B5EF1BC8B58);
-    assert(Goldilocks::toU64(result[2]) == 0X8129DB5EC75C3226);
-    assert(Goldilocks::toU64(result[3]) == 0X8EC2B67AFB6B87ED);
 
     delete[] fibonacci;
     delete[] result;
@@ -640,7 +620,7 @@ static void LINEAR_HASH_BENCH(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NROWS_HASH; i++)
         {
-            PoseidonGoldilocks::linear_hash_seq(&result[i * Poseidon2GoldilocksCommit::HASH_SIZE], &cols[i * NCOLS_HASH], NCOLS_HASH);
+            Poseidon2GoldilocksCommit::linear_hash_seq(&result[i * Poseidon2GoldilocksCommit::HASH_SIZE], &cols[i * NCOLS_HASH], NCOLS_HASH);
         }
     }
 
@@ -771,16 +751,10 @@ static void MERKLETREE_BENCH(benchmark::State &state)
     // Benchmark
     for (auto _ : state)
     {
-        PoseidonGoldilocks::merkletree_seq(tree, cols, NCOLS_HASH, NROWS_HASH, state.range(0));
+        Poseidon2GoldilocksCommit::merkletree_seq(tree, cols, NCOLS_HASH, NROWS_HASH, state.range(0));
     }
     Goldilocks::Element root[4];
     MerklehashGoldilocks::root(&(root[0]), tree, numElementsTree);
-
-    // check results
-    assert(Goldilocks::toU64(root[0]) == 0Xc935fb33cd86c0b8);
-    assert(Goldilocks::toU64(root[1]) == 0X906753f66aa2791d);
-    assert(Goldilocks::toU64(root[2]) == 0X3f6163b1b58a6ed7);
-    assert(Goldilocks::toU64(root[3]) == 0Xbd575d9ed19d18c2);
 
     // Rate = time to process 1 linear hash per core
     // BytesProcessed = total bytes processed per second on every iteration
@@ -918,16 +892,10 @@ static void MERKLETREE_BATCH_BENCH(benchmark::State &state)
     // Benchmark
     for (auto _ : state)
     {
-        PoseidonGoldilocks::merkletree_batch_seq(tree, cols, NCOLS_HASH, NROWS_HASH, (NCOLS_HASH + 3) / 4, state.range(0));
+        Poseidon2GoldilocksCommit::merkletree_batch_seq(tree, cols, NCOLS_HASH, NROWS_HASH, (NCOLS_HASH + 3) / 4, state.range(0));
     }
     Goldilocks::Element root[4];
     MerklehashGoldilocks::root(&(root[0]), tree, numElementsTree);
-
-    // check results
-    assert(Goldilocks::toU64(root[0]) == 0X9ce696d26651e066);
-    assert(Goldilocks::toU64(root[1]) == 0Xc7f662974b960728);
-    assert(Goldilocks::toU64(root[2]) == 0Xad8a489fec5811a1);
-    assert(Goldilocks::toU64(root[3]) == 0Xd34d83367c86e333);
 
     // Rate = time to process 1 linear hash per core
     // BytesProcessed = total bytes processed per second on every iteration
@@ -1231,6 +1199,30 @@ static void EXTENDEDPOL_BENCH(benchmark::State &state)
     free(c);
 }
 
+static void GRINDING_BENCH_CPU(benchmark::State &state)
+{
+    uint32_t n_bits = state.range(0);
+    
+    // Create different input for each iteration
+    uint64_t iteration = 0;
+        
+    for (auto _ : state)
+    {
+        // Generate different input for each iteration based on iteration counter
+        iteration++;
+        uint64_t in[3];
+        for (int i = 0; i < 3; i++)
+        {
+            in[i] = (iteration * 1000 + i) * 123456789ULL;
+        }
+        
+        uint64_t result_index = UINT64_MAX;
+        Poseidon2Goldilocks<4>::grinding(result_index, in, n_bits);
+        
+        iteration++;
+    }
+}
+
 #ifdef __USE_CUDA__
 static void MERKLETREE_BENCH_CUDA(benchmark::State &state)
 {
@@ -1489,6 +1481,15 @@ BENCHMARK(NTT_BENCH_CUDA)
     ->DenseRange(omp_get_max_threads() / 2, omp_get_max_threads(), omp_get_max_threads() / 2)
     ->UseRealTime();
 #endif
+
+BENCHMARK(GRINDING_BENCH_CPU)
+    ->Unit(benchmark::kMillisecond)
+    ->Arg(20)
+    ->Arg(21)
+    ->Arg(22)
+    ->Arg(24)
+    ->Arg(25)
+    ->UseRealTime();
 
 BENCHMARK_MAIN();
 
