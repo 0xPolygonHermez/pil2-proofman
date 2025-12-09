@@ -60,7 +60,7 @@ json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
         }
     }
 
-    uint64_t nSiblings = std::ceil(starkInfo.starkStruct.steps[0].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity));
+    uint64_t nSiblings = std::ceil(starkInfo.starkStruct.steps[0].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity)) - starkInfo.starkStruct.lastLevelVerification;
     uint64_t nSiblingsPerLevel = (starkInfo.starkStruct.merkleTreeArity - 1) * 4;
 
     j["s0_siblingsC"] = json::array();
@@ -70,6 +70,16 @@ json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
             j["s0_siblingsC"][i][l] = json::array();
             for(uint64_t k = 0; k < nSiblingsPerLevel; ++k) {
                 j["s0_siblingsC"][i][l][k] = std::to_string(pointer[p++]);
+            }
+        }
+    }
+
+    if (starkInfo.starkStruct.lastLevelVerification != 0) {
+        for (uint64_t k = 0; k < std::pow(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification); k++)
+        {
+            for (uint64_t l = 0; l < 4; l++)
+            {
+                j["s0_last_levelsC"][k][l] = std::to_string(pointer[p++]);
             }
         }
     }
@@ -89,6 +99,16 @@ json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
             for(uint64_t l = 0; l < nSiblings; ++l) {
                 for(uint64_t k = 0; k < nSiblingsPerLevel; ++k) {
                     j["s0_siblings_" + starkInfo.customCommits[c].name + "_0"][i][l][k] = std::to_string(pointer[p++]);
+                }
+            }
+        }
+
+        if (starkInfo.starkStruct.lastLevelVerification != 0) {
+            for (uint64_t k = 0; k < std::pow(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification); k++)
+            {
+                for (uint64_t l = 0; l < 4; l++)
+                {
+                    j["s0_last_levels_" + starkInfo.customCommits[c].name + "_0"][k][l] = std::to_string(pointer[p++]);
                 }
             }
         }
@@ -115,6 +135,16 @@ json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
                 }
             }
         }
+
+        if (starkInfo.starkStruct.lastLevelVerification != 0) {
+            for (uint64_t k = 0; k < std::pow(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification); k++)
+            {
+                for (uint64_t l = 0; l < 4; l++)
+                {
+                    j["s0_last_levels" + to_string(stage)][k][l] = std::to_string(pointer[p++]);
+                }
+            }
+        }
     }
 
     for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
@@ -134,11 +164,19 @@ json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
 
         for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
             j["s" + std::to_string(step) + "_siblings"][i] = json::array();
-            uint64_t nSiblings = std::ceil(starkInfo.starkStruct.steps[step].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity));
+            uint64_t nSiblings = std::ceil(starkInfo.starkStruct.steps[step].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity)) - starkInfo.starkStruct.lastLevelVerification;
             uint64_t nSiblingsPerLevel = (starkInfo.starkStruct.merkleTreeArity - 1) * 4;
             for(uint64_t l = 0; l < nSiblings; ++l) {
                 for(uint64_t k = 0; k < nSiblingsPerLevel; ++k) {
                     j["s" + std::to_string(step) + "_siblings"][i][l][k] = std::to_string(pointer[p++]);
+                }
+            }
+        }
+
+        if (starkInfo.starkStruct.lastLevelVerification != 0) {
+            for(uint64_t i = 0; i < std::pow(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification); i++) {
+                for (uint64_t l = 0; l < 4; l++) {
+                    j["s" + std::to_string(step) + "_last_levels"][i][l] = std::to_string(pointer[p++]);
                 }
             }
         }

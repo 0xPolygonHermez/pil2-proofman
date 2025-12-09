@@ -613,10 +613,10 @@ pub fn load_custom_commit_c(setup: *mut c_void, commit_id: u64, buffer: *mut u8,
 #[allow(clippy::too_many_arguments)]
 pub fn write_custom_commit_c(
     root: *mut u8,
+    arity: u64,
     n_bits: u64,
     n_bits_ext: u64,
     n_cols: u64,
-    arity: u64,
     buffer: *mut u8,
     buffer_file: &str,
     check: bool,
@@ -625,10 +625,10 @@ pub fn write_custom_commit_c(
     unsafe {
         write_custom_commit(
             root as *mut std::os::raw::c_void,
+            arity,
             n_bits,
             n_bits_ext,
             n_cols,
-            arity,
             buffer as *mut std::os::raw::c_void,
             buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
             check,
@@ -1687,10 +1687,10 @@ pub fn load_custom_commit_c(_p_setup: *mut c_void, _commit_id: u64, _buffer: *mu
 #[allow(clippy::too_many_arguments)]
 pub fn write_custom_commit_c(
     _root: *mut u8,
+    _arity: u64,
     _n_bits: u64,
     _n_bits_ext: u64,
     _n_cols: u64,
-    _arity: u64,
     _buffer: *mut u8,
     _buffer_file: &str,
     _check: bool,

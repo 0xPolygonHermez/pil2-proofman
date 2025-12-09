@@ -10,12 +10,12 @@ class MerkleTreeGL
 {
 private:
     Goldilocks::Element getElement(uint64_t idx, uint64_t subIdx);
-    void calculateRootFromProof(Goldilocks::Element (&value)[4], std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, uint64_t offset);
+    void calculateRootFromProof(Goldilocks::Element (&value)[4], std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t &idx, uint64_t offset);
 
 public:
     MerkleTreeGL(){};
-    MerkleTreeGL(uint64_t _arity, bool custom, Goldilocks::Element *tree, uint64_t height, uint64_t width);
-    MerkleTreeGL(uint64_t _arity, bool custom, uint64_t _height, uint64_t _width, bool allocateSource = false, bool allocateNodes = false);
+    MerkleTreeGL(uint64_t _arity, uint64_t _last_level_verification, bool custom, Goldilocks::Element *tree, uint64_t height, uint64_t width);
+    MerkleTreeGL(uint64_t _arity, uint64_t _last_level_verification, bool custom, uint64_t _height, uint64_t _width, bool allocateSource = false, bool allocateNodes = false);
     ~MerkleTreeGL();
 
     uint64_t numNodes;
@@ -26,6 +26,7 @@ public:
     Goldilocks::Element *nodes;
 
     uint64_t arity;
+    uint64_t last_level_verification;
     bool custom;
 
     bool isSourceAllocated = false;
@@ -48,6 +49,7 @@ public:
     }
 
     uint64_t getNumNodes(uint64_t height);
+    void getLevel(Goldilocks::Element *level);
     void getRoot(Goldilocks::Element *root);
     void setSource(Goldilocks::Element *_source);
     void setNodes(Goldilocks::Element *_nodes);
@@ -55,7 +57,7 @@ public:
     void initNodes();
 
     void getGroupProof(Goldilocks::Element *proof, uint64_t idx);
-    bool verifyGroupProof(Goldilocks::Element* root, std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v);
+    bool verifyGroupProof(Goldilocks::Element* root, Goldilocks::Element* level, std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v);
 
     void merkelize();
     Goldilocks::Element *get_nodes_ptr()
@@ -64,6 +66,23 @@ public:
     }
 
     void writeFile(std::string file);
+
+    bool static verifyMerkleRoot(Goldilocks::Element *root, Goldilocks::Element *level, uint64_t height, uint64_t lastLevelVerification, uint64_t arity, uint64_t nFieldElements) {
+        uint64_t numNodesLevel = height;
+        while (numNodesLevel > std::pow(arity, lastLevelVerification)) {
+            numNodesLevel = (numNodesLevel + (arity - 1)) / arity;
+        }
+        Goldilocks::Element computedRoot[nFieldElements];
+        Poseidon2GoldilocksCommit::partial_merkle_tree(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+
+        for (uint64_t i = 0; i < nFieldElements; ++i) {
+            if (Goldilocks::toU64(computedRoot[i]) != Goldilocks::toU64(root[i])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
 };
 
 #endif

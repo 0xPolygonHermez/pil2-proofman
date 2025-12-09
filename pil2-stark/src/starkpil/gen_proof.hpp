@@ -62,9 +62,12 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     for (uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {
         if(setupCtx.starkInfo.customCommits[i].stageWidths[0] != 0) {
             uint64_t pos = setupCtx.starkInfo.nStages + 2 + i;
-            starks.treesGL[pos]->getRoot(&proof.proof.roots[pos - 1][0]);
+            starks.treesGL[pos]->getRoot(&proof.proof.roots[setupCtx.starkInfo.nStages + 1 + i][0]);
+            starks.treesGL[pos]->getLevel(&proof.proof.last_levels[setupCtx.starkInfo.nStages + 2 + i][0]);
         }
     }
+
+    starks.treesGL[setupCtx.starkInfo.nStages + 1]->getLevel(&proof.proof.last_levels[setupCtx.starkInfo.nStages + 1][0]);
 
     if(recursive) {
         Goldilocks::Element verkey[HASH_SIZE];

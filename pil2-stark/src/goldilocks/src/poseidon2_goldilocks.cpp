@@ -77,7 +77,57 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::linear_hash_seq(Goldilocks::Element *o
         memset(output, 0, CAPACITY * sizeof(Goldilocks::Element));
     }
 }
+
+template<uint32_t SPONGE_WIDTH_T>
+void Poseidon2Goldilocks<SPONGE_WIDTH_T>::partial_merkle_tree(Goldilocks::Element *root,Goldilocks::Element *input, uint64_t num_elements, uint64_t arity)
+{
+    uint64_t numNodes = num_elements;
+    uint64_t nodesLevel = num_elements;
     
+    while (nodesLevel > 1) {
+        uint64_t extraZeros = (arity - (nodesLevel % arity)) % arity;
+        numNodes += extraZeros;
+        uint64_t nextN = (nodesLevel + (arity - 1))/arity;        
+        numNodes += nextN;
+        nodesLevel = nextN;
+    }
+
+    
+    Goldilocks::Element *cursor = new Goldilocks::Element[numNodes * CAPACITY];
+    memcpy(cursor, input, num_elements * CAPACITY * sizeof(Goldilocks::Element));
+
+    // Build the merkle tree
+    uint64_t pending = num_elements;
+    uint64_t nextN = (pending + (arity - 1)) / arity;
+    uint64_t nextIndex = 0;
+
+    while (pending > 1)
+    {
+        uint64_t extraZeros = (arity - (pending % arity)) % arity;
+        if (extraZeros > 0) 
+        {
+            std::memset(&cursor[nextIndex + pending * CAPACITY], 0, extraZeros * CAPACITY * sizeof(Goldilocks::Element));
+        }
+
+        for (uint64_t i = 0; i < nextN; i++)
+        {
+            Goldilocks::Element pol_input[SPONGE_WIDTH];
+            memset(pol_input, 0, SPONGE_WIDTH * sizeof(Goldilocks::Element));
+
+            std::memcpy(pol_input, &cursor[nextIndex + i * SPONGE_WIDTH], SPONGE_WIDTH * sizeof(Goldilocks::Element));
+
+            hash_seq((Goldilocks::Element(&)[CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
+        }
+
+        nextIndex += (pending + extraZeros) * CAPACITY;
+        pending = (pending + (arity - 1)) / arity;
+        nextN = (pending + (arity - 1)) / arity;
+    }
+
+    std::memcpy(root, &cursor[nextIndex], CAPACITY * sizeof(Goldilocks::Element));
+    delete[] cursor;
+}
+
 template<uint32_t SPONGE_WIDTH_T>
 void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_seq(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads, uint64_t dim)
 {

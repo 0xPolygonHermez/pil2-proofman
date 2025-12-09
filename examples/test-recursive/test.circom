@@ -174,17 +174,22 @@ template Recursive1() {
     signal input evals[20][3]; // Evaluations of the set polynomials at a challenge value z and gz
 
     signal input s0_valsC[128][2];
-    signal input s0_siblingsC[128][12][12];
+    signal input s0_siblingsC[128][11][12];
+    signal input s0_last_mt_levelsC[4][4];
 
     signal input s0_vals_rom_0[128][2];
-    signal input s0_siblings_rom_0[128][12][12];
+    signal input s0_siblings_rom_0[128][11][12];
+    signal input s0_last_mt_levels_rom_0[4][4];
 
     signal input s0_vals1[128][2];
-    signal input s0_siblings1[128][12][12];
+    signal input s0_siblings1[128][11][12];
+    signal input s0_last_mt_levels1[4][4];
     signal input s0_vals2[128][9];
-    signal input s0_siblings2[128][12][12];
+    signal input s0_siblings2[128][11][12];
+    signal input s0_last_mt_levels2[4][4];
     signal input s0_vals3[128][3];
-    signal input s0_siblings3[128][12][12];
+    signal input s0_siblings3[128][11][12];
+    signal input s0_last_mt_levels3[4][4];
 
     signal input s1_root[4];
     signal input s2_root[4];
@@ -194,17 +199,23 @@ template Recursive1() {
     signal input s6_root[4];
 
     signal input s1_vals[128][24];
-    signal input s1_siblings[128][10][12];
+    signal input s1_siblings[128][9][12];
+    signal input s1_last_mt_levels[4][4];
     signal input s2_vals[128][24];
-    signal input s2_siblings[128][9][12];
+    signal input s2_siblings[128][8][12];
+    signal input s2_last_mt_levels[4][4];
     signal input s3_vals[128][24];
-    signal input s3_siblings[128][7][12];
+    signal input s3_siblings[128][6][12];
+    signal input s3_last_mt_levels[4][4];
     signal input s4_vals[128][24];
-    signal input s4_siblings[128][6][12];
+    signal input s4_siblings[128][5][12];
+    signal input s4_last_mt_levels[4][4];
     signal input s5_vals[128][24];
-    signal input s5_siblings[128][4][12];
+    signal input s5_siblings[128][3][12];
+    signal input s5_last_mt_levels[4][4];
     signal input s6_vals[128][24];
-    signal input s6_siblings[128][3][12];
+    signal input s6_siblings[128][2][12];
+    signal input s6_last_mt_levels[4][4];
 
     signal input finalPol[32][3];
 
@@ -238,16 +249,21 @@ template Recursive1() {
 
     sV.s0_valsC <== s0_valsC;
     sV.s0_siblingsC <== s0_siblingsC;
+    sV.s0_last_mt_levelsC <== s0_last_mt_levelsC;
 
     sV.s0_vals_rom_0 <== s0_vals_rom_0;
     sV.s0_siblings_rom_0 <== s0_siblings_rom_0;
+    sV.s0_last_mt_levels_rom_0 <== s0_last_mt_levels_rom_0;
 
     sV.s0_vals1 <== s0_vals1;
     sV.s0_siblings1 <== s0_siblings1;
+    sV.s0_last_mt_levels1 <== s0_last_mt_levels1;
     sV.s0_vals2 <== s0_vals2;
     sV.s0_siblings2 <== s0_siblings2;
+    sV.s0_last_mt_levels2 <== s0_last_mt_levels2;
     sV.s0_vals3 <== s0_vals3;
     sV.s0_siblings3 <== s0_siblings3;
+    sV.s0_last_mt_levels3 <== s0_last_mt_levels3;
 
     sV.s1_root <== s1_root;
     sV.s2_root <== s2_root;
@@ -257,16 +273,22 @@ template Recursive1() {
     sV.s6_root <== s6_root;
     sV.s1_vals <== s1_vals;
     sV.s1_siblings <== s1_siblings;
+    sV.s1_last_mt_levels <== s1_last_mt_levels;
     sV.s2_vals <== s2_vals;
     sV.s2_siblings <== s2_siblings;
+    sV.s2_last_mt_levels <== s2_last_mt_levels;
     sV.s3_vals <== s3_vals;
     sV.s3_siblings <== s3_siblings;
+    sV.s3_last_mt_levels <== s3_last_mt_levels;
     sV.s4_vals <== s4_vals;
     sV.s4_siblings <== s4_siblings;
+    sV.s4_last_mt_levels <== s4_last_mt_levels;
     sV.s5_vals <== s5_vals;
     sV.s5_siblings <== s5_siblings;
+    sV.s5_last_mt_levels <== s5_last_mt_levels;
     sV.s6_vals <== s6_vals;
     sV.s6_siblings <== s6_siblings;
+    sV.s6_last_mt_levels <== s6_last_mt_levels;
 
     sV.finalPol <== finalPol;
 

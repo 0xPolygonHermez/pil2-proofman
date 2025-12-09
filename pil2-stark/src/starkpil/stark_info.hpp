@@ -79,6 +79,7 @@ public:
     uint64_t nQueries;
     bool hashCommits;
     string verificationHashType;
+    uint64_t lastLevelVerification;
     uint64_t merkleTreeArity;
     bool merkleTreeCustom;
     vector<StepStruct> steps;

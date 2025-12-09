@@ -1,7 +1,7 @@
 // extern crate env_logger;
 use clap::Parser;
 use proofman_verifier::verify;
-use proofman_common::{initialize_logger, VerboseMode};
+use proofman_common::initialize_logger;
 use std::fs::File;
 use std::io::Read;
 use colored::Colorize;
@@ -26,7 +26,7 @@ impl VerifyStark {
         println!("{} VerifyStark", format!("{: >12}", "Command").bright_green().bold());
         println!();
 
-        initialize_logger(VerboseMode::Info, None);
+        initialize_logger(self.verbose.into(), None);
 
         let mut proof_file = File::open(&self.proof)?;
         let mut proof = Vec::new();

@@ -19,14 +19,14 @@ public:
     uint64_t getConstTreeSizeBN128(StarkInfo& starkInfo)
     {   
         uint64_t NExtended = 1 << starkInfo.starkStruct.nBitsExt;
-        MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, NExtended, starkInfo.nConstants);
+        MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, NExtended, starkInfo.nConstants);
         return (NExtended * starkInfo.nConstants) + mt.numNodes * (sizeof(RawFr::Element) / sizeof(Goldilocks::Element));
     }
 
     uint64_t getConstTreeSizeGL(StarkInfo& starkInfo)
     {   
         uint64_t NExtended = 1 << starkInfo.starkStruct.nBitsExt;
-        MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, true, NExtended, starkInfo.nConstants);
+        MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, NExtended, starkInfo.nConstants);
         return (NExtended * starkInfo.nConstants) + mt.numNodes;
     }
 
@@ -36,7 +36,7 @@ public:
         NTT_Goldilocks ntt(N);
         Goldilocks::Element *treeAddressGL = (Goldilocks::Element *)treeAddress;
         ntt.extendPol(treeAddressGL, pConstPolsAddress, NExtended, N, starkInfo.nConstants);
-        MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, true, NExtended, starkInfo.nConstants);
+        MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, true, NExtended, starkInfo.nConstants);
         
         mt.setSource(treeAddressGL);
         mt.setNodes(&treeAddressGL[starkInfo.nConstants * NExtended]);
@@ -45,7 +45,7 @@ public:
 
     void writeConstTreeFileGL(StarkInfo& starkInfo, void *treeAddress, std::string constTreeFile) {
         TimerStart(WRITING_TREE_FILE);
-        MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, true, (Goldilocks::Element *)treeAddress, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants);
+        MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, true, (Goldilocks::Element *)treeAddress, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants);
         mt.writeFile(constTreeFile);
         TimerStopAndLog(WRITING_TREE_FILE);
     }
@@ -56,7 +56,7 @@ public:
         NTT_Goldilocks ntt(N);
         Goldilocks::Element *treeAddressGL = (Goldilocks::Element *)treeAddress;
         ntt.extendPol(treeAddressGL, pConstPolsAddress, NExtended, N, starkInfo.nConstants);
-        MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, NExtended, starkInfo.nConstants);
+        MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, NExtended, starkInfo.nConstants);
         mt.setSource(treeAddressGL);
         mt.setNodes((RawFr::Element *)(&treeAddressGL[starkInfo.nConstants * NExtended]));
         mt.merkelize();
@@ -79,14 +79,14 @@ public:
         file2json(verkeyFile, verkeyJson);
 
         if (starkInfo.starkStruct.verificationHashType == "BN128") {
-            MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, (Goldilocks::Element *)constTreePols, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants);
+            MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, (Goldilocks::Element *)constTreePols, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants);
             RawFr::Element root[1];
             mt.getRoot(root);
             if(RawFr::field.toString(root[0], 10) != verkeyJson) {
                 return false;
             }
         } else {
-            MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, true, (Goldilocks::Element *)constTreePols, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants);
+            MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, (Goldilocks::Element *)constTreePols, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants);
             Goldilocks::Element root[4];
             mt.getRoot(root);
 

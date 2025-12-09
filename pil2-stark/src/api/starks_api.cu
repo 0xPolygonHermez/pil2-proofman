@@ -740,7 +740,7 @@ void prepare_blocks(uint64_t *pol, uint64_t N, uint64_t nCols) {
     cudaStreamDestroy(stream);
 }
 
-void write_custom_commit(void* root, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t arity, void *buffer, char *bufferFile, bool check)
+void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *buffer, char *bufferFile, bool check)
 {   
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
@@ -753,7 +753,7 @@ void write_custom_commit(void* root, uint64_t nBits, uint64_t nBitsExt, uint64_t
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
 
-    MerkleTreeGL mt(arity, true, NExtended, nCols);
+    MerkleTreeGL mt(arity, 0, true, NExtended, nCols);
 
     uint64_t treeSize = (NExtended * nCols) + mt.numNodes;
     Goldilocks::Element* customCommitsTree = new Goldilocks::Element[treeSize];
@@ -815,7 +815,7 @@ void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pCons
 
     uint64_t N = 1 << starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << starkInfo.starkStruct.nBitsExt;
-    MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, true, NExtended, starkInfo.nConstants);
+    MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, true, NExtended, starkInfo.nConstants);
     uint64_t treeSize = (NExtended * starkInfo.nConstants) + mt.numNodes;
 
     Goldilocks::Element* d_fixedPols;

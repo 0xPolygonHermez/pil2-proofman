@@ -3,10 +3,11 @@
 #include <algorithm> // std::max
 #include <cassert>
 
-MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, bool _custom, uint64_t _height, uint64_t _width, bool allocateSource, bool allocateNodes) : height(_height), width(_width)
+MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, uint64_t _last_level_verification, bool _custom, uint64_t _height, uint64_t _width, bool allocateSource, bool allocateNodes) : height(_height), width(_width)
 {
 
     arity = _arity;
+    last_level_verification = _last_level_verification;
     custom = _custom;
     numNodes = getNumNodes(height);
     
@@ -22,12 +23,13 @@ MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, bool _custom, uint64_t _height
    
 }
 
-MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, bool _custom, Goldilocks::Element *tree, uint64_t height_, uint64_t width_)
+MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, uint64_t _last_level_verification, bool _custom, Goldilocks::Element *tree, uint64_t height_, uint64_t width_)
 {
     width = width_;
     height = height_;
     source = tree;
     arity = _arity;
+    last_level_verification = _last_level_verification;
     custom = _custom;
     numNodes = getNumNodes(height);
     nodes = (RawFr::Element *)&source[width * height];
@@ -56,7 +58,7 @@ uint64_t MerkleTreeBN128::getMerkleTreeWidth()
 
 uint64_t MerkleTreeBN128::getMerkleProofLength()
 {
-    return ceil((double)log(height) / log(arity));
+    return ceil((double)log(height) / log(arity)) - last_level_verification;
 }
 
 
@@ -86,6 +88,24 @@ uint64_t MerkleTreeBN128::getNumNodes(uint64_t n)
     }
 
     return acc;
+}
+
+
+void MerkleTreeBN128::getLevel(RawFr::Element *level)
+{
+    if (last_level_verification != 0) {
+        uint64_t n = height;
+        uint64_t offset = 0;
+        while (n > std::pow(arity, last_level_verification)) {
+            n = (std::floor((n - 1) / arity) + 1);
+            offset += n * arity;
+        }
+
+        std::memcpy(level, &nodes[offset], n * sizeof(RawFr::Element));
+        for (uint64_t i = n; i < std::pow(arity, last_level_verification); i++) {
+            level[i] = RawFr::field.zero();
+        }
+    }
 }
 
 
@@ -138,7 +158,7 @@ void MerkleTreeBN128::getGroupProof(RawFr::Element *proof, uint64_t idx)
 
 void MerkleTreeBN128::genMerkleProof(RawFr::Element *proof, uint64_t idx, uint64_t offset, uint64_t n)
 {
-    if (n <= 1) return;
+    if ((last_level_verification == 0 && n == 1) || (last_level_verification > 0 && n <= std::pow(arity, last_level_verification))) return;
 
     uint64_t nBitsArity = std::ceil(std::log2(arity));
 
@@ -285,7 +305,7 @@ void MerkleTreeBN128::linearHash()
     }
 }
 
-void MerkleTreeBN128::calculateRootFromProof(RawFr::Element *value, std::vector<std::vector<RawFr::Element>> &mp, uint64_t idx, uint64_t offset) {
+void MerkleTreeBN128::calculateRootFromProof(RawFr::Element *value, std::vector<std::vector<RawFr::Element>> &mp, uint64_t &idx, uint64_t offset) {
     if(offset == mp.size()) return;
 
     uint64_t nBitsArity = std::ceil(std::log2(arity));
@@ -309,17 +329,25 @@ void MerkleTreeBN128::calculateRootFromProof(RawFr::Element *value, std::vector<
 }
 
 
-bool MerkleTreeBN128::verifyGroupProof(RawFr::Element* root, std::vector<std::vector<RawFr::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v) {
+bool MerkleTreeBN128::verifyGroupProof(RawFr::Element* root, RawFr::Element* level, std::vector<std::vector<RawFr::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v) {
     RawFr::Element value[1];
     value[0] = RawFr::field.zero();
 
     linearHash(value, v.data());
 
-    calculateRootFromProof(&value[0], mp, idx, 0);
+    uint64_t queryIdx = idx;
+    calculateRootFromProof(&value[0], mp, queryIdx, 0);
 
-    if (RawFr::field.eq(root[0], value[0])) {
-        return false;
+    if (last_level_verification == 0) {
+        if (RawFr::field.eq(root[0], value[0])) {
+            return false;
+        }
+    } else {
+        if (RawFr::field.eq(level[queryIdx], value[0])) {
+            return false;
+        }
     }
+
     return true;
 }
 

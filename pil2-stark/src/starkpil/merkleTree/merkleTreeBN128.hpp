@@ -16,12 +16,12 @@ private:
 
     Goldilocks::Element getElement(uint64_t idx, uint64_t subIdx);
     void genMerkleProof(RawFr::Element *proof, uint64_t idx, uint64_t offset, uint64_t n);
-    void calculateRootFromProof(RawFr::Element *value, std::vector<std::vector<RawFr::Element>> &mp, uint64_t idx, uint64_t offset);
+    void calculateRootFromProof(RawFr::Element *value, std::vector<std::vector<RawFr::Element>> &mp, uint64_t &idx, uint64_t offset);
 
 public:
     MerkleTreeBN128(){};
-    MerkleTreeBN128(uint64_t arity, bool custom, Goldilocks::Element *tree, uint64_t height, uint64_t width);
-    MerkleTreeBN128(uint64_t arity, bool custom, uint64_t _height, uint64_t _width, bool allocateSource = false, bool allocateNodes = false);
+    MerkleTreeBN128(uint64_t arity, uint64_t last_level_verification, bool custom, Goldilocks::Element *tree, uint64_t height, uint64_t width);
+    MerkleTreeBN128(uint64_t arity, uint64_t last_level_verification, bool custom, uint64_t _height, uint64_t _width, bool allocateSource = false, bool allocateNodes = false);
     ~MerkleTreeBN128();
 
     uint64_t numNodes;
@@ -35,6 +35,7 @@ public:
     bool isNodesAllocated = false;
 
     uint64_t arity;
+    uint64_t last_level_verification = 0;
     bool custom;
     uint64_t nFieldElements = 1;
 
@@ -45,6 +46,7 @@ public:
 
     uint64_t getNumNodes(uint64_t height);
     void getRoot(RawFr::Element *root);
+    void getLevel(RawFr::Element *level);
     void setSource(Goldilocks::Element *source);
     void setNodes(RawFr::Element *nodes);
 
@@ -56,8 +58,13 @@ public:
         return source;
     }
 
-    bool verifyGroupProof(RawFr::Element* root, std::vector<std::vector<RawFr::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v);
+    bool verifyGroupProof(RawFr::Element* root, RawFr::Element* level, std::vector<std::vector<RawFr::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v);
 
     void writeFile(std::string constTreeFile);
+
+    bool static verifyMerkleRoot(RawFr::Element *root, RawFr::Element *level, uint64_t height, uint64_t lastLevelVerification, uint64_t arity, uint64_t nFieldElements) {
+        // TODO: implement
+        return true;
+    }
 };
 #endif

@@ -610,12 +610,12 @@ void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *buf
 }
 
 #ifndef __USE_CUDA__
-void write_custom_commit(void* root, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t arity, void *buffer, char *bufferFile, bool check)
-{   
+void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *buffer, char *bufferFile, bool check)
+{
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
 
-    MerkleTreeGL mt(arity, true, NExtended, nCols, true, true);
+    MerkleTreeGL mt(arity, 0, true, NExtended, nCols, true, true);
 
     NTT_Goldilocks ntt(N);
     ntt.extendPol(mt.source, (Goldilocks::Element *)buffer, NExtended, N, nCols);
@@ -643,7 +643,9 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
 
-    MerkleTreeGL mt(arity, true, NExtended, nCols);
+    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+
+    MerkleTreeGL mt(arity, setupCtx->starkInfo.starkStruct.lastLevelVerification, true, NExtended, nCols);
 
     PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
     if (packed_info != nullptr && packed_info->is_packed) {

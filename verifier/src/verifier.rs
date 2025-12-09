@@ -1,4 +1,4 @@
-use fields::{intt_tiny, verify_fold, verify_mt, CubicExtensionField, Field, Goldilocks, Transcript};
+use fields::{intt_tiny, verify_fold, verify_mt, partial_merkle_tree, CubicExtensionField, Field, Goldilocks, Transcript};
 use bytemuck::cast_slice;
 
 #[allow(dead_code)]
@@ -27,17 +27,7 @@ pub struct VerifierInfo {
     pub boundaries: Vec<Boundary>,
     pub q_deg: u64,
     pub q_index: u64,
-}
-
-#[inline]
-pub fn log2(mut n: u64) -> u32 {
-    debug_assert!(n != 0, "log2(0) is undefined");
-    let mut res: u32 = 0;
-    while n != 1 {
-        n >>= 1; // divide by 2
-        res += 1;
-    }
-    res
+    pub last_level_verification: u64,
 }
 
 #[allow(clippy::type_complexity)]
@@ -60,17 +50,11 @@ pub fn stark_verify(
 ) -> bool {
     let proof = cast_slice::<u8, u64>(proof);
     let vk = cast_slice::<u8, u64>(vk);
-    let mut leaves: u64 = 1 << verifier_info.n_bits_ext;
-    let mut n_siblings: u64 = 0;
+    let n_siblings: u64 = ((verifier_info.n_bits_ext as f64 / (verifier_info.arity as f64).log2()).ceil()) as u64
+        - verifier_info.last_level_verification;
+    let n_siblings_per_level = (verifier_info.arity - 1) * 4;
 
     let root_c = [Goldilocks::new(vk[0]), Goldilocks::new(vk[1]), Goldilocks::new(vk[2]), Goldilocks::new(vk[3])];
-
-    while leaves > 1 {
-        leaves = leaves.div_ceil(verifier_info.arity);
-        n_siblings += 1;
-    }
-
-    let n_siblings_per_level = (verifier_info.arity - 1) * 4;
 
     let mut p = 0;
 
@@ -108,6 +92,7 @@ pub fn stark_verify(
 
     let mut s0_vals = Vec::new();
     let mut s0_siblings = Vec::new();
+    let mut s0_last_levels = Vec::new();
 
     for q in 0..verifier_info.n_fri_queries {
         s0_vals.push(Vec::new());
@@ -131,6 +116,17 @@ pub fn stark_verify(
             siblings.push(sibling);
         }
         s0_siblings[q as usize].push(siblings);
+    }
+
+    let num_nodes_level = verifier_info.arity.pow(verifier_info.last_level_verification as u32) * 4;
+
+    if verifier_info.last_level_verification > 0 {
+        let mut last_level_nodes = Vec::new();
+        for _ in 0..num_nodes_level {
+            last_level_nodes.push(Goldilocks::new(proof[p as usize]));
+            p += 1;
+        }
+        s0_last_levels.push(last_level_nodes);
     }
 
     for i in 0..verifier_info.n_stages + 1 {
@@ -157,6 +153,15 @@ pub fn stark_verify(
             }
             s0_siblings[q as usize].push(siblings);
         }
+
+        if verifier_info.last_level_verification > 0 {
+            let mut last_level_nodes = Vec::new();
+            for _ in 0..num_nodes_level {
+                last_level_nodes.push(Goldilocks::new(proof[p as usize]));
+                p += 1;
+            }
+            s0_last_levels.push(last_level_nodes);
+        }
     }
 
     let mut roots_fri = Vec::new();
@@ -171,6 +176,7 @@ pub fn stark_verify(
 
     let mut siblings_fri = vec![Vec::new(); verifier_info.n_fri_queries as usize];
     let mut vals_fri = vec![Vec::new(); verifier_info.n_fri_queries as usize];
+    let mut last_levels_fri = Vec::new();
     for i in 1..verifier_info.n_fri_steps {
         for val_fri in vals_fri.iter_mut().take(verifier_info.n_fri_queries as usize) {
             let mut vals = Vec::new();
@@ -182,13 +188,10 @@ pub fn stark_verify(
         }
 
         for q in 0..verifier_info.n_fri_queries {
-            let mut leaves: u64 = 1 << verifier_info.fri_steps[i as usize];
-            let mut n_siblings_fri: u64 = 0;
+            let n_siblings_fri: u64 =
+                ((verifier_info.fri_steps[i as usize] as f64 / (verifier_info.arity as f64).log2()).ceil()) as u64
+                    - verifier_info.last_level_verification;
 
-            while leaves > 1 {
-                leaves = leaves.div_ceil(verifier_info.arity);
-                n_siblings_fri += 1;
-            }
             let n_siblings_per_level_fri = (verifier_info.arity - 1) * 4;
             let mut siblings = Vec::new();
             for _ in 0..n_siblings_fri {
@@ -200,6 +203,15 @@ pub fn stark_verify(
                 siblings.push(sibling);
             }
             siblings_fri[q as usize].push(siblings);
+        }
+
+        if verifier_info.last_level_verification > 0 {
+            let mut last_level_nodes = Vec::new();
+            for _ in 0..num_nodes_level {
+                last_level_nodes.push(Goldilocks::new(proof[p as usize]));
+                p += 1;
+            }
+            last_levels_fri.push(last_level_nodes);
         }
     }
 
@@ -337,14 +349,30 @@ pub fn stark_verify(
     tracing::debug!("Verifying proof");
     for q in 0..verifier_info.n_fri_queries as usize {
         // 1) Fixed MT
-        if !verify_mt(&root_c, &s0_siblings[q][0], fri_queries[q], &s0_vals[q][0], verifier_info.arity) {
+        if !verify_mt(
+            &root_c,
+            &s0_last_levels[0],
+            &s0_siblings[q][0],
+            fri_queries[q],
+            &s0_vals[q][0],
+            verifier_info.arity,
+            verifier_info.last_level_verification,
+        ) {
             tracing::error!("Fixed MT verification failed for query {}", q);
             return false;
         }
 
         // 2) stage MTs
         for (s, root) in roots.iter().enumerate().take(verifier_info.n_stages as usize + 1) {
-            if !verify_mt(root, &s0_siblings[q][s + 1], fri_queries[q], &s0_vals[q][s + 1], verifier_info.arity) {
+            if !verify_mt(
+                root,
+                &s0_last_levels[s + 1],
+                &s0_siblings[q][s + 1],
+                fri_queries[q],
+                &s0_vals[q][s + 1],
+                verifier_info.arity,
+                verifier_info.last_level_verification,
+            ) {
                 tracing::error!("Stage MT verification failed for query {}", q);
                 return false;
             }
@@ -355,10 +383,12 @@ pub fn stark_verify(
             let idx = fri_queries[q] % (1 << verifier_info.fri_steps[s as usize + 1]);
             if !verify_mt(
                 &roots_fri[s as usize],
+                &last_levels_fri[s as usize],
                 &siblings_fri[q][s as usize],
                 idx,
                 &vals_fri[q][s as usize],
                 verifier_info.arity,
+                verifier_info.last_level_verification,
             ) {
                 tracing::error!("FRI step MT verification failed for query {}", q);
                 return false;
@@ -407,6 +437,47 @@ pub fn stark_verify(
                         tracing::error!("Final polynomial verification failed at index {} for query {}", idx, q,);
                         return false;
                     }
+                }
+            }
+        }
+    }
+
+    if verifier_info.last_level_verification > 0 {
+        let mut num_nodes_level = 1 << verifier_info.n_bits_ext;
+        while num_nodes_level > verifier_info.arity.pow(verifier_info.last_level_verification as u32) {
+            num_nodes_level = num_nodes_level.div_ceil(verifier_info.arity);
+        }
+
+        for s in 0..verifier_info.n_stages + 1 {
+            let computed_root =
+                partial_merkle_tree(&s0_last_levels[s as usize + 1], num_nodes_level, verifier_info.arity);
+            for i in 0..4 {
+                if computed_root[i] != roots[s as usize][i] {
+                    tracing::error!("Stage {} Merkle tree root recomputation failed", s + 1);
+                    return false;
+                }
+            }
+        }
+
+        let computed_root_c = partial_merkle_tree(&s0_last_levels[0], num_nodes_level, verifier_info.arity);
+
+        for i in 0..4 {
+            if computed_root_c[i] != root_c[i] {
+                tracing::error!("Stage fixed Merkle tree root recomputation failed");
+                return false;
+            }
+        }
+
+        for s in 0..(verifier_info.n_fri_steps - 1) {
+            let mut num_nodes_level = 1 << verifier_info.fri_steps[s as usize + 1];
+            while num_nodes_level > verifier_info.arity.pow(verifier_info.last_level_verification as u32) {
+                num_nodes_level = num_nodes_level.div_ceil(verifier_info.arity);
+            }
+            let computed_root = partial_merkle_tree(&last_levels_fri[s as usize], num_nodes_level, verifier_info.arity);
+            for i in 0..4 {
+                if computed_root[i] != roots_fri[s as usize][i] {
+                    tracing::error!("Stage {} FRI Merkle tree root recomputation failed", s + 1);
+                    return false;
                 }
             }
         }

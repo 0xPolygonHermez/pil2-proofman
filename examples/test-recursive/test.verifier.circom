@@ -1097,14 +1097,18 @@ template StarkVerifier0() {
     signal input s0_vals_rom_0[128][2];
 
     // Merkle proofs for each of the evaluations
+    signal input s0_siblings1[128][11][12];
+    signal input s0_last_mt_levels1[4][4];
+    signal input s0_siblings2[128][11][12];
+    signal input s0_last_mt_levels2[4][4];
  
-    signal input s0_siblings1[128][12][12];
- 
-    signal input s0_siblings2[128][12][12];
- 
-    signal input s0_siblings3[128][12][12];
-    signal input s0_siblingsC[128][12][12];
-    signal input s0_siblings_rom_0[128][12][12];
+    signal input s0_siblings3[128][11][12];
+    signal input s0_last_mt_levels3[4][4];
+    signal input s0_siblingsC[128][11][12];
+    
+    signal input s0_last_mt_levelsC[4][4];
+    signal input s0_siblings_rom_0[128][11][12];
+    signal input s0_last_mt_levels_rom_0[4][4];
     // Contains the root of the original polynomial and all the intermediate FRI polynomials except for the last step
     signal input s1_root[4];
     signal input s2_root[4];
@@ -1117,17 +1121,23 @@ template StarkVerifier0() {
     // Given a query r,  the verifier needs b points to check it out, being b = 2^u, where u is the difference between two consecutive step
     // and the sibling paths for each query.
     signal input s1_vals[128][24];
-    signal input s1_siblings[128][10][12];
+    signal input s1_siblings[128][9][12];
+    signal input s1_last_mt_levels[4][4];
     signal input s2_vals[128][24];
-    signal input s2_siblings[128][9][12];
+    signal input s2_siblings[128][8][12];
+    signal input s2_last_mt_levels[4][4];
     signal input s3_vals[128][24];
-    signal input s3_siblings[128][7][12];
+    signal input s3_siblings[128][6][12];
+    signal input s3_last_mt_levels[4][4];
     signal input s4_vals[128][24];
-    signal input s4_siblings[128][6][12];
+    signal input s4_siblings[128][5][12];
+    signal input s4_last_mt_levels[4][4];
     signal input s5_vals[128][24];
-    signal input s5_siblings[128][4][12];
+    signal input s5_siblings[128][3][12];
+    signal input s5_last_mt_levels[4][4];
     signal input s6_vals[128][24];
-    signal input s6_siblings[128][3][12];
+    signal input s6_siblings[128][2][12];
+    signal input s6_last_mt_levels[4][4];
 
     // Evaluations of the final FRI polynomial over a set of points of size bounded its degree
     signal input finalPol[32][3];
@@ -1243,6 +1253,7 @@ template StarkVerifier0() {
     ///////////
     // Verify Merkle Roots
     ///////////
+
     signal {binary} queriesFRIBits[128][12][2];
     for(var i = 0; i < 128; i++) {
         for(var j = 0; j < 12; j++) {
@@ -1259,24 +1270,25 @@ template StarkVerifier0() {
     //Calculate merkle root for s0 vals
  
     for (var q=0; q<128; q++) {
-        VerifyMerkleHash(1, 2, 4, 12)(s0_vals1_p[q], s0_siblings1[q], queriesFRIBits[q], root1, enabled);
+        VerifyMerkleHashUntilLevel(1, 2, 4, 11, 1)(s0_vals1_p[q], s0_siblings1[q], queriesFRIBits[q], s0_last_mt_levels1, enabled);
     }
  
     for (var q=0; q<128; q++) {
-        VerifyMerkleHash(1, 9, 4, 12)(s0_vals2_p[q], s0_siblings2[q], queriesFRIBits[q], root2, enabled);
+        VerifyMerkleHashUntilLevel(1, 9, 4, 11, 1)(s0_vals2_p[q], s0_siblings2[q], queriesFRIBits[q], s0_last_mt_levels2, enabled);
     }
 
     for (var q=0; q<128; q++) {
-        VerifyMerkleHash(1, 3, 4, 12)(s0_vals3_p[q], s0_siblings3[q], queriesFRIBits[q], root3, enabled);
+        VerifyMerkleHashUntilLevel(1, 3, 4, 11, 1)(s0_vals3_p[q], s0_siblings3[q], queriesFRIBits[q], s0_last_mt_levels3, enabled);
     }
 
     for (var q=0; q<128; q++) {
-        VerifyMerkleHash(1, 2, 4, 12)(s0_valsC_p[q], s0_siblingsC[q], queriesFRIBits[q], rootC, enabled);                                    
+        VerifyMerkleHashUntilLevel(1, 2, 4, 11, 1)(s0_valsC_p[q], s0_siblingsC[q], queriesFRIBits[q], s0_last_mt_levelsC, enabled);
+                                    
     }
 
     signal root_rom_0[4] <== [publics[4], publics[5], publics[6], publics[7]];
     for (var q=0; q<128; q++) {
-        VerifyMerkleHash(1, 2, 4, 12)(s0_vals_rom_0_p[q], s0_siblings_rom_0[q], queriesFRIBits[q], root_rom_0, enabled);                                    
+        VerifyMerkleHashUntilLevel(1, 2, 4, 11, 1)(s0_vals_rom_0_p[q], s0_siblings_rom_0[q], queriesFRIBits[q], s0_last_mt_levels_rom_0, enabled);                                    
     }
 
     signal {binary} s1_keys_merkle_bits[128][10][2];
@@ -1292,7 +1304,7 @@ template StarkVerifier0() {
                 }
             }
         }
-        VerifyMerkleHash(3, 8, 4, 10)(s1_vals_p[q], s1_siblings[q], s1_keys_merkle_bits[q], s1_root, enabled);
+        VerifyMerkleHashUntilLevel(3, 8, 4, 9, 1)(s1_vals_p[q], s1_siblings[q], s1_keys_merkle_bits[q], s1_last_mt_levels, enabled);
     }
     signal {binary} s2_keys_merkle_bits[128][9][2];
     for (var q=0; q<128; q++) {
@@ -1307,7 +1319,7 @@ template StarkVerifier0() {
                 }
             }
         }
-        VerifyMerkleHash(3, 8, 4, 9)(s2_vals_p[q], s2_siblings[q], s2_keys_merkle_bits[q], s2_root, enabled);
+        VerifyMerkleHashUntilLevel(3, 8, 4, 8, 1)(s2_vals_p[q], s2_siblings[q], s2_keys_merkle_bits[q], s2_last_mt_levels, enabled);
     }
     signal {binary} s3_keys_merkle_bits[128][7][2];
     for (var q=0; q<128; q++) {
@@ -1322,7 +1334,7 @@ template StarkVerifier0() {
                 }
             }
         }
-        VerifyMerkleHash(3, 8, 4, 7)(s3_vals_p[q], s3_siblings[q], s3_keys_merkle_bits[q], s3_root, enabled);
+        VerifyMerkleHashUntilLevel(3, 8, 4, 6, 1)(s3_vals_p[q], s3_siblings[q], s3_keys_merkle_bits[q], s3_last_mt_levels, enabled);
     }
     signal {binary} s4_keys_merkle_bits[128][6][2];
     for (var q=0; q<128; q++) {
@@ -1337,7 +1349,7 @@ template StarkVerifier0() {
                 }
             }
         }
-        VerifyMerkleHash(3, 8, 4, 6)(s4_vals_p[q], s4_siblings[q], s4_keys_merkle_bits[q], s4_root, enabled);
+        VerifyMerkleHashUntilLevel(3, 8, 4, 5, 1)(s4_vals_p[q], s4_siblings[q], s4_keys_merkle_bits[q], s4_last_mt_levels, enabled);
     }
     signal {binary} s5_keys_merkle_bits[128][4][2];
     for (var q=0; q<128; q++) {
@@ -1352,7 +1364,7 @@ template StarkVerifier0() {
                 }
             }
         }
-        VerifyMerkleHash(3, 8, 4, 4)(s5_vals_p[q], s5_siblings[q], s5_keys_merkle_bits[q], s5_root, enabled);
+        VerifyMerkleHashUntilLevel(3, 8, 4, 3, 1)(s5_vals_p[q], s5_siblings[q], s5_keys_merkle_bits[q], s5_last_mt_levels, enabled);
     }
     signal {binary} s6_keys_merkle_bits[128][3][2];
     for (var q=0; q<128; q++) {
@@ -1367,8 +1379,24 @@ template StarkVerifier0() {
                 }
             }
         }
-        VerifyMerkleHash(3, 8, 4, 3)(s6_vals_p[q], s6_siblings[q], s6_keys_merkle_bits[q], s6_root, enabled);
+        VerifyMerkleHashUntilLevel(3, 8, 4, 2, 1)(s6_vals_p[q], s6_siblings[q], s6_keys_merkle_bits[q], s6_last_mt_levels, enabled);
     }
+
+    VerifyMerkleRoot(1, 4, 8388608)(s0_last_mt_levels1, root1, enabled);
+    VerifyMerkleRoot(1, 4, 8388608)(s0_last_mt_levels2, root2, enabled);
+
+    VerifyMerkleRoot(1, 4, 8388608)(s0_last_mt_levels3, root3, enabled);
+
+    VerifyMerkleRoot(1, 4, 8388608)(s0_last_mt_levelsC, rootC, enabled);
+
+    VerifyMerkleRoot(1, 4, 8388608)(s0_last_mt_levels_rom_0, root_rom_0, enabled);
+
+    VerifyMerkleRoot(1, 4, 1048576)(s1_last_mt_levels, s1_root, enabled);
+    VerifyMerkleRoot(1, 4, 131072)(s2_last_mt_levels, s2_root, enabled);
+    VerifyMerkleRoot(1, 4, 16384)(s3_last_mt_levels, s3_root, enabled);
+    VerifyMerkleRoot(1, 4, 2048)(s4_last_mt_levels, s4_root, enabled);
+    VerifyMerkleRoot(1, 4, 256)(s5_last_mt_levels, s5_root, enabled);
+    VerifyMerkleRoot(1, 4, 32)(s6_last_mt_levels, s6_root, enabled);
         
 
     ///////////

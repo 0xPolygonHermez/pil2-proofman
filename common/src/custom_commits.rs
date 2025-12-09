@@ -50,10 +50,10 @@ pub fn write_custom_commit_trace<F: PrimeField64>(
 
     write_custom_commit_c(
         root.as_mut_ptr() as *mut u8,
+        arity,
         n_bits,
         n_bits_ext,
         n_cols,
-        arity,
         buffer.as_ptr() as *mut u8,
         file_name.to_str().expect("Invalid file name"),
         check,

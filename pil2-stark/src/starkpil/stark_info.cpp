@@ -38,9 +38,11 @@ void StarkInfo::load(json j)
         } else {
             starkStruct.merkleTreeCustom = false;
         }
+        starkStruct.lastLevelVerification = 0;
     } else {
         starkStruct.merkleTreeArity = j["starkStruct"]["merkleTreeArity"];
         starkStruct.merkleTreeCustom = j["starkStruct"]["merkleTreeCustom"];
+        starkStruct.lastLevelVerification = j["starkStruct"]["lastLevelVerification"];
     }
     if(j["starkStruct"].contains("hashCommits")) {
         starkStruct.hashCommits = j["starkStruct"]["hashCommits"];
@@ -310,7 +312,7 @@ void StarkInfo::getProofSize() {
 
     proofSize += evMap.size() * FIELD_EXTENSION; // Evals
 
-    uint64_t nSiblings = std::ceil(starkStruct.steps[0].nBits / std::log2(starkStruct.merkleTreeArity));
+    uint64_t nSiblings = std::ceil(starkStruct.steps[0].nBits / std::log2(starkStruct.merkleTreeArity)) - starkStruct.lastLevelVerification;
     uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * 4;
 
     proofSize += starkStruct.nQueries * nConstants; // Constants Values
@@ -328,8 +330,14 @@ void StarkInfo::getProofSize() {
 
     proofSize += (starkStruct.steps.size() - 1) * 4; // Roots
 
+    if(starkStruct.lastLevelVerification > 0) {
+        uint64_t numNodesLevel = std::pow(starkStruct.merkleTreeArity, starkStruct.lastLevelVerification);
+        proofSize += (starkStruct.steps.size() - 1) * numNodesLevel * 4;
+        proofSize += (nStages + 2 + customCommits.size()) * numNodesLevel * 4;
+    }
+
     for(uint64_t i = 1; i < starkStruct.steps.size(); ++i) {
-        uint64_t nSiblings = std::ceil(starkStruct.steps[i].nBits / std::log2(starkStruct.merkleTreeArity));
+        uint64_t nSiblings = std::ceil(starkStruct.steps[i].nBits / std::log2(starkStruct.merkleTreeArity)) - starkStruct.lastLevelVerification;
         uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * 4;
         proofSize += starkStruct.nQueries * (1 << (starkStruct.steps[i-1].nBits - starkStruct.steps[i].nBits))*FIELD_EXTENSION;
         proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel;
@@ -345,6 +353,12 @@ uint64_t StarkInfo::getPinnedProofSize() {
     pinnedProofSize += customCommits.size() * 4; // Custom commits roots
     pinnedProofSize += (starkStruct.steps.size() - 1) * 4; // Steps roots
 
+    if(starkStruct.lastLevelVerification > 0) {
+        uint64_t numNodesLevel = std::pow(starkStruct.merkleTreeArity, starkStruct.lastLevelVerification);
+        pinnedProofSize += (nStages + 2 + customCommits.size()) * numNodesLevel * 4;
+        pinnedProofSize += (starkStruct.steps.size() - 1) * numNodesLevel * 4;
+    }
+    
     uint64_t maxTreeWidth = 0;
     for (auto it = mapSectionsN.begin(); it != mapSectionsN.end(); it++) 
     {
@@ -362,7 +376,9 @@ uint64_t StarkInfo::getPinnedProofSize() {
         }
     }
 
-    uint64_t maxProofSize = ceil(log10(1 << starkStruct.nBitsExt) / log10(starkStruct.merkleTreeArity)) * (starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+    uint64_t nSiblings = std::ceil(starkStruct.nBitsExt / std::log2(starkStruct.merkleTreeArity)) - starkStruct.lastLevelVerification;
+    uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+    uint64_t maxProofSize = nSiblings * nSiblingsPerLevel;
 
     uint64_t maxProofBuffSize = maxTreeWidth + maxProofSize;
 
@@ -409,7 +425,7 @@ void StarkInfo::setMapOffsets() {
 
     if(!preallocate && gpu && !recursive_final) {    
         mapOffsets[std::make_pair("const", true)] = mapTotalN;
-        MerkleTreeGL mt(starkStruct.merkleTreeArity, true, NExtended, nConstants);
+        MerkleTreeGL mt(starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.merkleTreeCustom, NExtended, nConstants);
         uint64_t constTreeSize = (NExtended * nConstants) + numNodes;
         mapTotalN += constTreeSize;
 
@@ -471,7 +487,9 @@ void StarkInfo::setMapOffsets() {
             }
         }
 
-        maxProofSize = ceil(log10(1 << starkStruct.nBitsExt) / log10(starkStruct.merkleTreeArity)) * (starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+        uint64_t nSiblings = std::ceil(starkStruct.nBitsExt / std::log2(starkStruct.merkleTreeArity)) - starkStruct.lastLevelVerification;
+        uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+        maxProofSize = nSiblings * nSiblingsPerLevel;
 
         maxProofBuffSize = maxTreeWidth + maxProofSize;
         uint64_t nTrees = 1 + (nStages + 1) + customCommits.size();

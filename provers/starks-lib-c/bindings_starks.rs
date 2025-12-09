@@ -245,10 +245,10 @@ extern "C" {
     
     pub fn write_custom_commit(
         root: *mut ::std::os::raw::c_void,
+        arity: u64,
         nBits: u64,
         nBitsExt: u64,
         nCols: u64,
-        arity: u64,
         buffer: *mut ::std::os::raw::c_void,
         bufferFile: *mut ::std::os::raw::c_char,
         check: bool,

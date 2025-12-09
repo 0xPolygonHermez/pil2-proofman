@@ -5,6 +5,7 @@ pub const HALF_ROUNDS: usize = 4;
 pub const N_PARTIAL_ROUNDS: usize = 22;
 pub const SPONGE_WIDTH: usize = 16;
 pub const RATE: usize = SPONGE_WIDTH - 4;
+pub const CAPACITY: usize = 4;
 
 pub fn matmul_m4<F: PrimeField64>(input: &mut [F]) {
     let t0 = input[0] + input[1];
@@ -123,13 +124,19 @@ pub fn linear_hash_seq<F: PrimeField64>(input: &[F]) -> Vec<F> {
     state
 }
 
-pub fn calculate_root_from_proof<F: PrimeField64>(value: &mut [F], mp: &[Vec<F>], idx: u64, offset: u64, arity: u64) {
+pub fn calculate_root_from_proof<F: PrimeField64>(
+    value: &mut [F],
+    mp: &[Vec<F>],
+    idx: &mut u64,
+    offset: u64,
+    arity: u64,
+) {
     if offset == mp.len() as u64 {
         return;
     }
 
-    let curr_idx = idx % arity;
-    let next_idx = idx / arity;
+    let curr_idx = *idx % arity;
+    *idx /= arity;
 
     let mut inputs = vec![F::ZERO; SPONGE_WIDTH];
     let mut p = 0;
@@ -149,16 +156,85 @@ pub fn calculate_root_from_proof<F: PrimeField64>(value: &mut [F], mp: &[Vec<F>]
     let outputs = poseidon2_hash(&inputs);
 
     value[..4].copy_from_slice(&outputs[..4]);
-    calculate_root_from_proof(value, mp, next_idx, offset + 1, arity);
+    calculate_root_from_proof(value, mp, idx, offset + 1, arity);
 }
 
-pub fn verify_mt<F: PrimeField64>(root: &[F], mp: &[Vec<F>], idx: u64, v: &[F], arity: u64) -> bool {
+pub fn partial_merkle_tree<F: PrimeField64>(input: &[F], num_elements: u64, arity: u64) -> [F; CAPACITY] {
+    let mut num_nodes = num_elements;
+    let mut nodes_level = num_elements;
+
+    while nodes_level > 1 {
+        let extra_zeros = (arity - (nodes_level % arity)) % arity;
+        num_nodes += extra_zeros;
+        let next_n = nodes_level.div_ceil(arity);
+        num_nodes += next_n;
+        nodes_level = next_n;
+    }
+
+    let mut cursor = vec![F::ZERO; (num_nodes * CAPACITY as u64) as usize];
+    cursor[..(num_elements * CAPACITY as u64) as usize]
+        .copy_from_slice(&input[..(num_elements * CAPACITY as u64) as usize]);
+
+    let mut pending = num_elements;
+    let mut next_n = pending.div_ceil(arity);
+    let mut next_index = 0;
+
+    while pending > 1 {
+        let extra_zeros = (arity - (pending % arity)) % arity;
+
+        if extra_zeros > 0 {
+            let start = (next_index + pending * CAPACITY as u64) as usize;
+            let end = start + (extra_zeros * CAPACITY as u64) as usize;
+            cursor[start..end].fill(F::ZERO);
+        }
+
+        for i in 0..next_n {
+            let mut pol_input = vec![F::ZERO; SPONGE_WIDTH];
+
+            let child_start = (next_index + i * SPONGE_WIDTH as u64) as usize;
+            pol_input[..SPONGE_WIDTH].copy_from_slice(&cursor[child_start..child_start + SPONGE_WIDTH]);
+
+            // Compute hash
+            let parent_start = (next_index + (pending + extra_zeros + i) * CAPACITY as u64) as usize;
+            let parent_hash = poseidon2_hash(&pol_input);
+            cursor[parent_start..parent_start + CAPACITY].copy_from_slice(&parent_hash[..CAPACITY]);
+        }
+
+        next_index += (pending + extra_zeros) * CAPACITY as u64;
+        pending = pending.div_ceil(arity);
+        next_n = pending.div_ceil(arity);
+    }
+
+    let mut root = [F::ZERO; CAPACITY];
+    root.copy_from_slice(&cursor[next_index as usize..next_index as usize + CAPACITY]);
+    root
+}
+
+pub fn verify_mt<F: PrimeField64>(
+    root: &[F],
+    last_level: &[F],
+    mp: &[Vec<F>],
+    idx: u64,
+    v: &[F],
+    arity: u64,
+    last_level_verification: u64,
+) -> bool {
     let mut value = linear_hash_seq(v);
 
-    calculate_root_from_proof(&mut value, mp, idx, 0, arity);
-    for i in 0..4 {
-        if value[i] != root[i] {
-            return false;
+    let mut query_idx = idx;
+    calculate_root_from_proof(&mut value, mp, &mut query_idx, 0, arity);
+
+    if last_level_verification == 0 {
+        for i in 0..4 {
+            if value[i] != root[i] {
+                return false;
+            }
+        }
+    } else {
+        for i in 0..4 {
+            if value[i] != last_level[query_idx as usize * 4 + i] {
+                return false;
+            }
         }
     }
     true
