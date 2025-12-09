@@ -266,9 +266,9 @@ __global__ void grinding_check_(uint64_t* indx, uint64_t *__restrict__ indxBlock
 
 template<uint32_t SPONGE_WIDTH_T>
 void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_out, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream){
-    uint32_t hashesPerThread = 4;
-    uint64_t N = 1 << n_bits;
-    dim3 blockSize( 1024 );
+    uint32_t hashesPerThread = 2;
+    uint64_t N = 1 << 21; // Search 2M x 2 nonces per iteration
+    dim3 blockSize( 128 );
     dim3 gridSize( (N/hashesPerThread + blockSize.x - 1) / blockSize.x );
 
     uint64_t* d_indxBlock;
@@ -283,6 +283,7 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_out, const ui
     {
         size_t shared_mem_size = blockSize.x * SPONGE_WIDTH * sizeof(gl64_t) + blockSize.x * sizeof(uint64_t);
         grinding_calc_<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<gridSize, blockSize, shared_mem_size, stream>>>((uint64_t *)d_indxBlock, (uint64_t *)d_in, n_bits, hashesPerThread, offset);
+        CHECKCUDAERR(cudaGetLastError());
 
         grinding_check_<<<1, 32, 0, stream>>>((uint64_t *)d_out, (uint64_t *)d_indxBlock, gridSize.x);
         CHECKCUDAERR(cudaGetLastError());

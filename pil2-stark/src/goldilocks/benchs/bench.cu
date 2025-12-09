@@ -169,8 +169,57 @@ static void MERKLETREE16_BENCH_GPU(benchmark::State &state)
     cudaStreamDestroy(stream);
 }
 
+static void GRINDING_BENCH_GPU(benchmark::State &state)
+{
+    // Initialize GPU constants
+    uint32_t gpu_id = 0;
+    CHECKCUDAERR(cudaGetDevice((int*)&gpu_id));
+    Poseidon2GoldilocksGPUGrinding::initPoseidon2GPUConstants(&gpu_id, 1);
+
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+
+    uint32_t n_bits = state.range(0);
+    
+    // Allocate device memory
+    gl64_t *d_in, *d_out;
+    CHECKCUDAERR(cudaMalloc((void **)&d_in, 4 * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_out, sizeof(gl64_t)));
+    
+    // Create different input for each iteration
+    Goldilocks::Element h_in[4];
+    uint64_t iteration = 0;
+    
+    // Initialize first input
+    for (int i = 0; i < 4; i++)
+    {
+        h_in[i] = Goldilocks::fromU64((iteration * 1000 + i) * 123456789ULL);
+    }
+    CHECKCUDAERR(cudaMemcpy(d_in, h_in, 4 * sizeof(gl64_t), cudaMemcpyHostToDevice));
+    
+    for (auto _ : state)
+    {
+        // Generate different input for each iteration based on iteration counter
+        iteration++;
+        for (int i = 0; i < 3; i++)
+        {
+            h_in[i] = Goldilocks::fromU64((iteration * 1000 + i) * 123456789ULL);
+        }
+        CHECKCUDAERR(cudaMemcpy(d_in, h_in, 4 * sizeof(gl64_t), cudaMemcpyHostToDevice));
+        
+        Poseidon2GoldilocksGPUGrinding::grinding((uint64_t *)d_out, (uint64_t *)d_in, n_bits, stream);
+        cudaStreamSynchronize(stream);
+        
+        iteration++;
+    }
+
+    cudaFree(d_in);
+    cudaFree(d_out);
+    cudaStreamDestroy(stream);
+}
+
 BENCHMARK(LINEAR_HASH12_BENCH_GPU)
-    ->Unit(benchmark::kMicrosecond)
+    ->Unit(benchmark::kMillisecond)
     ->Arg(24)
     ->Arg(36)
     ->Arg(38)
@@ -178,7 +227,7 @@ BENCHMARK(LINEAR_HASH12_BENCH_GPU)
     ->UseRealTime();
 
 BENCHMARK(LINEAR_HASH16_BENCH_GPU)
-    ->Unit(benchmark::kMicrosecond)
+    ->Unit(benchmark::kMillisecond)
     ->Arg(24)
     ->Arg(36)
     ->Arg(38)
@@ -186,7 +235,7 @@ BENCHMARK(LINEAR_HASH16_BENCH_GPU)
     ->UseRealTime();
 
 BENCHMARK(MERKLETREE12_BENCH_GPU)
-    ->Unit(benchmark::kMicrosecond)
+    ->Unit(benchmark::kMillisecond)
     ->Arg(24)
     ->Arg(36)
     ->Arg(38)
@@ -194,11 +243,20 @@ BENCHMARK(MERKLETREE12_BENCH_GPU)
     ->UseRealTime();
 
 BENCHMARK(MERKLETREE16_BENCH_GPU)
-    ->Unit(benchmark::kMicrosecond)
+    ->Unit(benchmark::kMillisecond)
     ->Arg(24)
     ->Arg(36)
     ->Arg(38)
     ->Arg(56)
+    ->UseRealTime();
+
+BENCHMARK(GRINDING_BENCH_GPU)
+    ->Unit(benchmark::kMillisecond)
+    ->Arg(20)   
+    ->Arg(21)   
+    ->Arg(22)   
+    ->Arg(24)  
+    ->Arg(25)  
     ->UseRealTime();
 
 BENCHMARK_MAIN();
