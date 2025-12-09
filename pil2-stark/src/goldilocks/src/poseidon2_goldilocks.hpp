@@ -196,20 +196,23 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_m4_(Goldilocks::Element 
 
 template<uint32_t SPONGE_WIDTH_T>
 inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_external_(Goldilocks::Element *x) {
-    matmul_m4_(&x[0]);
-    matmul_m4_(&x[4]);
-    matmul_m4_(&x[8]);
     
-    Goldilocks::Element stored[4] = {
-        x[0] + x[4] + x[8],
-        x[1] + x[5] + x[9],
-        x[2] + x[6] + x[10],
-        x[3] + x[7] + x[11],
-    };
-    
-    for (uint32_t i = 0; i < SPONGE_WIDTH; ++i)
-    {
-        x[i] = x[i] + stored[i % 4];
+    for(uint32_t i = 0; i < SPONGE_WIDTH; i +=4) {
+        matmul_m4_(&x[i]);
+    }
+    if(SPONGE_WIDTH > 4){
+        Goldilocks::Element stored[4] = {Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero()};
+        for (uint32_t i = 0; i < SPONGE_WIDTH; i+=4) {
+            stored[0] = stored[0] + x[i];
+            stored[1] = stored[1] + x[i+1];
+            stored[2] = stored[2] + x[i+2];
+            stored[3] = stored[3] + x[i+3];
+        }
+        
+        for (uint32_t i = 0; i < SPONGE_WIDTH; ++i)
+        {
+            x[i] = x[i] + stored[i % 4];
+        }
     }
 }
 

@@ -844,20 +844,20 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
     {
         dim3 nthreads(64);
         dim3 nblocks((nQueries + nthreads.x - 1) / nthreads.x);
-        genMerkleProof<<<nblocks, nthreads, 0, stream>>>((gl64_t *)trees[k]->get_nodes_ptr(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, setupCtx.starkInfo.starkStruct.merkleTreeArity, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, HASH_SIZE);
+        genMerkleProof<<<nblocks, nthreads, 0, stream>>>((gl64_t *)trees[k]->get_nodes_ptr(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, setupCtx.starkInfo.starkStruct.merkleTreeArity, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, Poseidon2GoldilocksCommit::HASH_SIZE);
         CHECKCUDAERR(cudaGetLastError());
     }
     CHECKCUDAERR(cudaGetLastError());
 
     dim3 nthreads(64);
     dim3 nblocks((nQueries + nthreads.x - 1) / nthreads.x);
-    genMerkleProof<<<nblocks, nthreads, 0, stream>>>((gl64_t *)trees[nStages + 1]->get_nodes_ptr(), trees[nStages + 1]->getMerkleTreeHeight(), d_friQueries, nQueries, setupCtx.starkInfo.starkStruct.merkleTreeArity, d_queries_buff + (nStages + 1) * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, HASH_SIZE);
+    genMerkleProof<<<nblocks, nthreads, 0, stream>>>((gl64_t *)trees[nStages + 1]->get_nodes_ptr(), trees[nStages + 1]->getMerkleTreeHeight(), d_friQueries, nQueries, setupCtx.starkInfo.starkStruct.merkleTreeArity, d_queries_buff + (nStages + 1) * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, Poseidon2GoldilocksCommit::HASH_SIZE);
     CHECKCUDAERR(cudaGetLastError());
 
     if(nTrees > nStages + 2){
         dim3 nthreads(64);
         dim3 nblocks((nQueries + nthreads.x - 1) / nthreads.x);
-        genMerkleProof<<<nblocks, nthreads, 0, stream>>>((gl64_t *)trees[nStages + 2]->get_nodes_ptr(), trees[nStages + 2]->getMerkleTreeHeight(), d_friQueries, nQueries, setupCtx.starkInfo.starkStruct.merkleTreeArity, d_queries_buff + (nStages + 2) * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, HASH_SIZE);
+        genMerkleProof<<<nblocks, nthreads, 0, stream>>>((gl64_t *)trees[nStages + 2]->get_nodes_ptr(), trees[nStages + 2]->getMerkleTreeHeight(), d_friQueries, nQueries, setupCtx.starkInfo.starkStruct.merkleTreeArity, d_queries_buff + (nStages + 2) * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, Poseidon2GoldilocksCommit::HASH_SIZE);
         CHECKCUDAERR(cudaGetLastError());
     }
 }
@@ -882,7 +882,7 @@ void proveFRIQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_
     dim3 nthreads(64);
     dim3 nblocks((nQueries + nthreads.x - 1) / nthreads.x);
 
-    genMerkleProof<<<nblocks, nthreads, 0, stream>>>((gl64_t *)treeFRI->nodes, treeFRI->getMerkleTreeHeight(), d_friQueries, nQueries, setupCtx.starkInfo.starkStruct.merkleTreeArity, d_queries_buff, buffSize, treeFRI->getMerkleTreeWidth(), HASH_SIZE);
+    genMerkleProof<<<nblocks, nthreads, 0, stream>>>((gl64_t *)treeFRI->nodes, treeFRI->getMerkleTreeHeight(), d_friQueries, nQueries, setupCtx.starkInfo.starkStruct.merkleTreeArity, d_queries_buff, buffSize, treeFRI->getMerkleTreeWidth(), Poseidon2GoldilocksCommit::HASH_SIZE);
 
     CHECKCUDAERR(cudaGetLastError());
 }
