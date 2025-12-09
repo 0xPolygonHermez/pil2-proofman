@@ -31,8 +31,8 @@ void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint6
             ntt.prepare_blocks_trace((gl64_t *)(src + offset_src), (gl64_t *)(src + offset_dst), nCols, N, stream, timer);
         }
         
-        ntt.LDE_MerkleTree_GPU(pNodes, dst, offset_dst, src, offset_src, nBits, nBitsExtended, nCols, timer, stream);
-        CHECKCUDAERR(cudaMemcpyAsync(root_pinned, &pNodes[tree_size - Poseidon2GoldilocksCommit::HASH_SIZE], Poseidon2GoldilocksCommit::HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
+        ntt.LDE_MerkleTree_GPU(pNodes, dst, offset_dst, src, offset_src, nBits, nBitsExtended, nCols, arity, timer, stream);
+        CHECKCUDAERR(cudaMemcpyAsync(root_pinned, &pNodes[tree_size - HASH_SIZE], HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     } else {
         std::cout << "nCols must be greater than 0" << std::endl;
         assert(0);

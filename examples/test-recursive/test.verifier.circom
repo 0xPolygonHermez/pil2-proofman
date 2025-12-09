@@ -24,7 +24,7 @@ template calculateFRIQueries0() {
 
 
     
-    signal transcriptHash_friQueries_0[12] <== Poseidon2(12)([challengeFRIQueries[0],challengeFRIQueries[1],challengeFRIQueries[2],0,0,0,0,0], [0,0,0,0]);
+    signal transcriptHash_friQueries_0[16] <== Poseidon2(4, 16)([challengeFRIQueries[0],challengeFRIQueries[1],challengeFRIQueries[2],0,0,0,0,0,0,0,0,0], [0,0,0,0]);
     signal {binary} transcriptN2b_0[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[0]);
     signal {binary} transcriptN2b_1[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[1]);
     signal {binary} transcriptN2b_2[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[2]);
@@ -37,49 +37,47 @@ template calculateFRIQueries0() {
     signal {binary} transcriptN2b_9[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[9]);
     signal {binary} transcriptN2b_10[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[10]);
     signal {binary} transcriptN2b_11[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[11]);
+    signal {binary} transcriptN2b_12[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[12]);
+    signal {binary} transcriptN2b_13[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[13]);
+    signal {binary} transcriptN2b_14[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[14]);
+    signal {binary} transcriptN2b_15[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[15]);
     
-    signal transcriptHash_friQueries_1[12] <== Poseidon2(12)([0,0,0,0,0,0,0,0], [transcriptHash_friQueries_0[0],transcriptHash_friQueries_0[1],transcriptHash_friQueries_0[2],transcriptHash_friQueries_0[3]]);
-    signal {binary} transcriptN2b_12[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[0]);
-    signal {binary} transcriptN2b_13[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[1]);
-    signal {binary} transcriptN2b_14[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[2]);
-    signal {binary} transcriptN2b_15[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[3]);
-    signal {binary} transcriptN2b_16[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[4]);
-    signal {binary} transcriptN2b_17[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[5]);
-    signal {binary} transcriptN2b_18[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[6]);
-    signal {binary} transcriptN2b_19[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[7]);
-    signal {binary} transcriptN2b_20[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[8]);
-    signal {binary} transcriptN2b_21[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[9]);
-    signal {binary} transcriptN2b_22[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[10]);
-    signal {binary} transcriptN2b_23[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[11]);
+    signal transcriptHash_friQueries_1[16] <== Poseidon2(4, 16)([0,0,0,0,0,0,0,0,0,0,0,0], [transcriptHash_friQueries_0[0],transcriptHash_friQueries_0[1],transcriptHash_friQueries_0[2],transcriptHash_friQueries_0[3]]);
+    signal {binary} transcriptN2b_16[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[0]);
+    signal {binary} transcriptN2b_17[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[1]);
+    signal {binary} transcriptN2b_18[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[2]);
+    signal {binary} transcriptN2b_19[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[3]);
+    signal {binary} transcriptN2b_20[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[4]);
+    signal {binary} transcriptN2b_21[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[5]);
+    signal {binary} transcriptN2b_22[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[6]);
+    signal {binary} transcriptN2b_23[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[7]);
+    signal {binary} transcriptN2b_24[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[8]);
+    signal {binary} transcriptN2b_25[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[9]);
+    signal {binary} transcriptN2b_26[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[10]);
+    signal {binary} transcriptN2b_27[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[11]);
+    signal {binary} transcriptN2b_28[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[12]);
+    signal {binary} transcriptN2b_29[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[13]);
+    signal {binary} transcriptN2b_30[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[14]);
+    signal {binary} transcriptN2b_31[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[15]);
     
-    signal transcriptHash_friQueries_2[12] <== Poseidon2(12)([0,0,0,0,0,0,0,0], [transcriptHash_friQueries_1[0],transcriptHash_friQueries_1[1],transcriptHash_friQueries_1[2],transcriptHash_friQueries_1[3]]);
-    signal {binary} transcriptN2b_24[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[0]);
-    signal {binary} transcriptN2b_25[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[1]);
-    signal {binary} transcriptN2b_26[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[2]);
-    signal {binary} transcriptN2b_27[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[3]);
-    signal {binary} transcriptN2b_28[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[4]);
-    signal {binary} transcriptN2b_29[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[5]);
-    signal {binary} transcriptN2b_30[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[6]);
-    signal {binary} transcriptN2b_31[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[7]);
-    signal {binary} transcriptN2b_32[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[8]);
-    signal {binary} transcriptN2b_33[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[9]);
-    signal {binary} transcriptN2b_34[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[10]);
-    signal {binary} transcriptN2b_35[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[11]);
-    
-    signal transcriptHash_friQueries_3[12] <== Poseidon2(12)([0,0,0,0,0,0,0,0], [transcriptHash_friQueries_2[0],transcriptHash_friQueries_2[1],transcriptHash_friQueries_2[2],transcriptHash_friQueries_2[3]]);
-    signal {binary} transcriptN2b_36[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[0]);
-    signal {binary} transcriptN2b_37[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[1]);
-    signal {binary} transcriptN2b_38[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[2]);
-    signal {binary} transcriptN2b_39[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[3]);
-    signal {binary} transcriptN2b_40[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[4]);
-    signal {binary} transcriptN2b_41[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[5]);
-    signal {binary} transcriptN2b_42[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[6]);
-    signal {binary} transcriptN2b_43[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[7]);
-    signal {binary} transcriptN2b_44[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[8]);
-    signal {binary} transcriptN2b_45[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[9]);
-    signal {binary} transcriptN2b_46[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[10]);
-    for(var i = 11; i < 12; i++){
-        _ <== transcriptHash_friQueries_3[i]; // Unused transcript values        
+    signal transcriptHash_friQueries_2[16] <== Poseidon2(4, 16)([0,0,0,0,0,0,0,0,0,0,0,0], [transcriptHash_friQueries_1[0],transcriptHash_friQueries_1[1],transcriptHash_friQueries_1[2],transcriptHash_friQueries_1[3]]);
+    signal {binary} transcriptN2b_32[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[0]);
+    signal {binary} transcriptN2b_33[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[1]);
+    signal {binary} transcriptN2b_34[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[2]);
+    signal {binary} transcriptN2b_35[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[3]);
+    signal {binary} transcriptN2b_36[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[4]);
+    signal {binary} transcriptN2b_37[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[5]);
+    signal {binary} transcriptN2b_38[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[6]);
+    signal {binary} transcriptN2b_39[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[7]);
+    signal {binary} transcriptN2b_40[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[8]);
+    signal {binary} transcriptN2b_41[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[9]);
+    signal {binary} transcriptN2b_42[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[10]);
+    signal {binary} transcriptN2b_43[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[11]);
+    signal {binary} transcriptN2b_44[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[12]);
+    signal {binary} transcriptN2b_45[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[13]);
+    signal {binary} transcriptN2b_46[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[14]);
+    for(var i = 15; i < 16; i++){
+        _ <== transcriptHash_friQueries_2[i]; // Unused transcript values        
     }
 
     // From each transcript hash converted to bits, we assign those bits to queriesFRI[q] to define the query positions
@@ -576,6 +574,7 @@ template Transcript0() {
     signal input s3_root[4];
     signal input s4_root[4];
     signal input s5_root[4];
+    signal input s6_root[4];
     signal input finalPol[32][3];
     
     signal output challengesStage2[2][3];
@@ -583,7 +582,7 @@ template Transcript0() {
     signal output challengeQ[3];
     signal output challengeXi[3];
     signal output challengesFRI[2][3];
-    signal output challengesFRISteps[7][3];
+    signal output challengesFRISteps[8][3];
     signal output {binary} queriesFRI[128][23];
 
     signal publicsHash[4];
@@ -592,165 +591,136 @@ template Transcript0() {
 
 
     
-    signal transcriptHash_0[12] <== Poseidon2(12)([globalChallenge[0],globalChallenge[1],globalChallenge[2],0,0,0,0,0], [0,0,0,0]);
+    signal transcriptHash_0[16] <== Poseidon2(4, 16)([globalChallenge[0],globalChallenge[1],globalChallenge[2],0,0,0,0,0,0,0,0,0], [0,0,0,0]);
     challengesStage2[0] <== [transcriptHash_0[0], transcriptHash_0[1], transcriptHash_0[2]];
     challengesStage2[1] <== [transcriptHash_0[3], transcriptHash_0[4], transcriptHash_0[5]];
-    for(var i = 6; i < 12; i++){
+    for(var i = 6; i < 16; i++){
         _ <== transcriptHash_0[i]; // Unused transcript values 
     }
     
-    signal transcriptHash_1[12] <== Poseidon2(12)([root2[0],root2[1],root2[2],root2[3],airValues[2][0],airValues[2][1],airValues[2][2],0], [transcriptHash_0[0],transcriptHash_0[1],transcriptHash_0[2],transcriptHash_0[3]]);
+    signal transcriptHash_1[16] <== Poseidon2(4, 16)([root2[0],root2[1],root2[2],root2[3],airValues[2][0],airValues[2][1],airValues[2][2],0,0,0,0,0], [transcriptHash_0[0],transcriptHash_0[1],transcriptHash_0[2],transcriptHash_0[3]]);
     challengeQ <== [transcriptHash_1[0], transcriptHash_1[1], transcriptHash_1[2]];
-    for(var i = 4; i < 12; i++){
+    for(var i = 4; i < 16; i++){
         _ <== transcriptHash_1[i]; // Unused transcript values 
     }
     
-    signal transcriptHash_2[12] <== Poseidon2(12)([root3[0],root3[1],root3[2],root3[3],0,0,0,0], [transcriptHash_1[0],transcriptHash_1[1],transcriptHash_1[2],transcriptHash_1[3]]);
+    signal transcriptHash_2[16] <== Poseidon2(4, 16)([root3[0],root3[1],root3[2],root3[3],0,0,0,0,0,0,0,0], [transcriptHash_1[0],transcriptHash_1[1],transcriptHash_1[2],transcriptHash_1[3]]);
     challengeXi <== [transcriptHash_2[0], transcriptHash_2[1], transcriptHash_2[2]];
     
-    signal transcriptHash_evals_0[12] <== Poseidon2(12)([evals[0][0],evals[0][1],evals[0][2],evals[1][0],evals[1][1],evals[1][2],evals[2][0],evals[2][1]], [0,0,0,0]);
-    for(var i = 4; i < 12; i++){
+    signal transcriptHash_evals_0[16] <== Poseidon2(4, 16)([evals[0][0],evals[0][1],evals[0][2],evals[1][0],evals[1][1],evals[1][2],evals[2][0],evals[2][1],evals[2][2],evals[3][0],evals[3][1],evals[3][2]], [0,0,0,0]);
+    for(var i = 4; i < 16; i++){
         _ <== transcriptHash_evals_0[i]; // Unused transcript values 
     }
     
-    signal transcriptHash_evals_1[12] <== Poseidon2(12)([evals[2][2],evals[3][0],evals[3][1],evals[3][2],evals[4][0],evals[4][1],evals[4][2],evals[5][0]], [transcriptHash_evals_0[0],transcriptHash_evals_0[1],transcriptHash_evals_0[2],transcriptHash_evals_0[3]]);
-    for(var i = 4; i < 12; i++){
+    signal transcriptHash_evals_1[16] <== Poseidon2(4, 16)([evals[4][0],evals[4][1],evals[4][2],evals[5][0],evals[5][1],evals[5][2],evals[6][0],evals[6][1],evals[6][2],evals[7][0],evals[7][1],evals[7][2]], [transcriptHash_evals_0[0],transcriptHash_evals_0[1],transcriptHash_evals_0[2],transcriptHash_evals_0[3]]);
+    for(var i = 4; i < 16; i++){
         _ <== transcriptHash_evals_1[i]; // Unused transcript values 
     }
     
-    signal transcriptHash_evals_2[12] <== Poseidon2(12)([evals[5][1],evals[5][2],evals[6][0],evals[6][1],evals[6][2],evals[7][0],evals[7][1],evals[7][2]], [transcriptHash_evals_1[0],transcriptHash_evals_1[1],transcriptHash_evals_1[2],transcriptHash_evals_1[3]]);
-    for(var i = 4; i < 12; i++){
+    signal transcriptHash_evals_2[16] <== Poseidon2(4, 16)([evals[8][0],evals[8][1],evals[8][2],evals[9][0],evals[9][1],evals[9][2],evals[10][0],evals[10][1],evals[10][2],evals[11][0],evals[11][1],evals[11][2]], [transcriptHash_evals_1[0],transcriptHash_evals_1[1],transcriptHash_evals_1[2],transcriptHash_evals_1[3]]);
+    for(var i = 4; i < 16; i++){
         _ <== transcriptHash_evals_2[i]; // Unused transcript values 
     }
     
-    signal transcriptHash_evals_3[12] <== Poseidon2(12)([evals[8][0],evals[8][1],evals[8][2],evals[9][0],evals[9][1],evals[9][2],evals[10][0],evals[10][1]], [transcriptHash_evals_2[0],transcriptHash_evals_2[1],transcriptHash_evals_2[2],transcriptHash_evals_2[3]]);
-    for(var i = 4; i < 12; i++){
+    signal transcriptHash_evals_3[16] <== Poseidon2(4, 16)([evals[12][0],evals[12][1],evals[12][2],evals[13][0],evals[13][1],evals[13][2],evals[14][0],evals[14][1],evals[14][2],evals[15][0],evals[15][1],evals[15][2]], [transcriptHash_evals_2[0],transcriptHash_evals_2[1],transcriptHash_evals_2[2],transcriptHash_evals_2[3]]);
+    for(var i = 4; i < 16; i++){
         _ <== transcriptHash_evals_3[i]; // Unused transcript values 
     }
     
-    signal transcriptHash_evals_4[12] <== Poseidon2(12)([evals[10][2],evals[11][0],evals[11][1],evals[11][2],evals[12][0],evals[12][1],evals[12][2],evals[13][0]], [transcriptHash_evals_3[0],transcriptHash_evals_3[1],transcriptHash_evals_3[2],transcriptHash_evals_3[3]]);
-    for(var i = 4; i < 12; i++){
-        _ <== transcriptHash_evals_4[i]; // Unused transcript values 
-    }
+    signal transcriptHash_evals_4[16] <== Poseidon2(4, 16)([evals[16][0],evals[16][1],evals[16][2],evals[17][0],evals[17][1],evals[17][2],evals[18][0],evals[18][1],evals[18][2],evals[19][0],evals[19][1],evals[19][2]], [transcriptHash_evals_3[0],transcriptHash_evals_3[1],transcriptHash_evals_3[2],transcriptHash_evals_3[3]]);
+    evalsHash <== [transcriptHash_evals_4[0], transcriptHash_evals_4[1], transcriptHash_evals_4[2], transcriptHash_evals_4[3]];
     
-    signal transcriptHash_evals_5[12] <== Poseidon2(12)([evals[13][1],evals[13][2],evals[14][0],evals[14][1],evals[14][2],evals[15][0],evals[15][1],evals[15][2]], [transcriptHash_evals_4[0],transcriptHash_evals_4[1],transcriptHash_evals_4[2],transcriptHash_evals_4[3]]);
-    for(var i = 4; i < 12; i++){
-        _ <== transcriptHash_evals_5[i]; // Unused transcript values 
-    }
-    
-    signal transcriptHash_evals_6[12] <== Poseidon2(12)([evals[16][0],evals[16][1],evals[16][2],evals[17][0],evals[17][1],evals[17][2],evals[18][0],evals[18][1]], [transcriptHash_evals_5[0],transcriptHash_evals_5[1],transcriptHash_evals_5[2],transcriptHash_evals_5[3]]);
-    for(var i = 4; i < 12; i++){
-        _ <== transcriptHash_evals_6[i]; // Unused transcript values 
-    }
-    
-    signal transcriptHash_evals_7[12] <== Poseidon2(12)([evals[18][2],evals[19][0],evals[19][1],evals[19][2],0,0,0,0], [transcriptHash_evals_6[0],transcriptHash_evals_6[1],transcriptHash_evals_6[2],transcriptHash_evals_6[3]]);
-    evalsHash <== [transcriptHash_evals_7[0], transcriptHash_evals_7[1], transcriptHash_evals_7[2], transcriptHash_evals_7[3]];
-    
-    for(var i = 4; i < 12; i++){
+    for(var i = 4; i < 16; i++){
         _ <== transcriptHash_2[i]; // Unused transcript values 
     }
     
-    signal transcriptHash_3[12] <== Poseidon2(12)([evalsHash[0],evalsHash[1],evalsHash[2],evalsHash[3],0,0,0,0], [transcriptHash_2[0],transcriptHash_2[1],transcriptHash_2[2],transcriptHash_2[3]]);
+    signal transcriptHash_3[16] <== Poseidon2(4, 16)([evalsHash[0],evalsHash[1],evalsHash[2],evalsHash[3],0,0,0,0,0,0,0,0], [transcriptHash_2[0],transcriptHash_2[1],transcriptHash_2[2],transcriptHash_2[3]]);
     challengesFRI[0] <== [transcriptHash_3[0], transcriptHash_3[1], transcriptHash_3[2]];
     challengesFRI[1] <== [transcriptHash_3[3], transcriptHash_3[4], transcriptHash_3[5]];
     challengesFRISteps[0] <== [transcriptHash_3[6], transcriptHash_3[7], transcriptHash_3[8]];
-    for(var i = 9; i < 12; i++){
+    for(var i = 9; i < 16; i++){
         _ <== transcriptHash_3[i]; // Unused transcript values 
     }
     
-    signal transcriptHash_4[12] <== Poseidon2(12)([s1_root[0],s1_root[1],s1_root[2],s1_root[3],0,0,0,0], [transcriptHash_3[0],transcriptHash_3[1],transcriptHash_3[2],transcriptHash_3[3]]);
+    signal transcriptHash_4[16] <== Poseidon2(4, 16)([s1_root[0],s1_root[1],s1_root[2],s1_root[3],0,0,0,0,0,0,0,0], [transcriptHash_3[0],transcriptHash_3[1],transcriptHash_3[2],transcriptHash_3[3]]);
     challengesFRISteps[1] <== [transcriptHash_4[0], transcriptHash_4[1], transcriptHash_4[2]];
-    for(var i = 4; i < 12; i++){
+    for(var i = 4; i < 16; i++){
         _ <== transcriptHash_4[i]; // Unused transcript values 
     }
     
-    signal transcriptHash_5[12] <== Poseidon2(12)([s2_root[0],s2_root[1],s2_root[2],s2_root[3],0,0,0,0], [transcriptHash_4[0],transcriptHash_4[1],transcriptHash_4[2],transcriptHash_4[3]]);
+    signal transcriptHash_5[16] <== Poseidon2(4, 16)([s2_root[0],s2_root[1],s2_root[2],s2_root[3],0,0,0,0,0,0,0,0], [transcriptHash_4[0],transcriptHash_4[1],transcriptHash_4[2],transcriptHash_4[3]]);
     challengesFRISteps[2] <== [transcriptHash_5[0], transcriptHash_5[1], transcriptHash_5[2]];
-    for(var i = 4; i < 12; i++){
+    for(var i = 4; i < 16; i++){
         _ <== transcriptHash_5[i]; // Unused transcript values 
     }
     
-    signal transcriptHash_6[12] <== Poseidon2(12)([s3_root[0],s3_root[1],s3_root[2],s3_root[3],0,0,0,0], [transcriptHash_5[0],transcriptHash_5[1],transcriptHash_5[2],transcriptHash_5[3]]);
+    signal transcriptHash_6[16] <== Poseidon2(4, 16)([s3_root[0],s3_root[1],s3_root[2],s3_root[3],0,0,0,0,0,0,0,0], [transcriptHash_5[0],transcriptHash_5[1],transcriptHash_5[2],transcriptHash_5[3]]);
     challengesFRISteps[3] <== [transcriptHash_6[0], transcriptHash_6[1], transcriptHash_6[2]];
-    for(var i = 4; i < 12; i++){
+    for(var i = 4; i < 16; i++){
         _ <== transcriptHash_6[i]; // Unused transcript values 
     }
     
-    signal transcriptHash_7[12] <== Poseidon2(12)([s4_root[0],s4_root[1],s4_root[2],s4_root[3],0,0,0,0], [transcriptHash_6[0],transcriptHash_6[1],transcriptHash_6[2],transcriptHash_6[3]]);
+    signal transcriptHash_7[16] <== Poseidon2(4, 16)([s4_root[0],s4_root[1],s4_root[2],s4_root[3],0,0,0,0,0,0,0,0], [transcriptHash_6[0],transcriptHash_6[1],transcriptHash_6[2],transcriptHash_6[3]]);
     challengesFRISteps[4] <== [transcriptHash_7[0], transcriptHash_7[1], transcriptHash_7[2]];
-    for(var i = 4; i < 12; i++){
+    for(var i = 4; i < 16; i++){
         _ <== transcriptHash_7[i]; // Unused transcript values 
     }
     
-    signal transcriptHash_8[12] <== Poseidon2(12)([s5_root[0],s5_root[1],s5_root[2],s5_root[3],0,0,0,0], [transcriptHash_7[0],transcriptHash_7[1],transcriptHash_7[2],transcriptHash_7[3]]);
+    signal transcriptHash_8[16] <== Poseidon2(4, 16)([s5_root[0],s5_root[1],s5_root[2],s5_root[3],0,0,0,0,0,0,0,0], [transcriptHash_7[0],transcriptHash_7[1],transcriptHash_7[2],transcriptHash_7[3]]);
     challengesFRISteps[5] <== [transcriptHash_8[0], transcriptHash_8[1], transcriptHash_8[2]];
-    
-    signal transcriptHash_lastPolFRI_0[12] <== Poseidon2(12)([finalPol[0][0],finalPol[0][1],finalPol[0][2],finalPol[1][0],finalPol[1][1],finalPol[1][2],finalPol[2][0],finalPol[2][1]], [0,0,0,0]);
-    for(var i = 4; i < 12; i++){
-        _ <== transcriptHash_lastPolFRI_0[i]; // Unused transcript values 
-    }
-    
-    signal transcriptHash_lastPolFRI_1[12] <== Poseidon2(12)([finalPol[2][2],finalPol[3][0],finalPol[3][1],finalPol[3][2],finalPol[4][0],finalPol[4][1],finalPol[4][2],finalPol[5][0]], [transcriptHash_lastPolFRI_0[0],transcriptHash_lastPolFRI_0[1],transcriptHash_lastPolFRI_0[2],transcriptHash_lastPolFRI_0[3]]);
-    for(var i = 4; i < 12; i++){
-        _ <== transcriptHash_lastPolFRI_1[i]; // Unused transcript values 
-    }
-    
-    signal transcriptHash_lastPolFRI_2[12] <== Poseidon2(12)([finalPol[5][1],finalPol[5][2],finalPol[6][0],finalPol[6][1],finalPol[6][2],finalPol[7][0],finalPol[7][1],finalPol[7][2]], [transcriptHash_lastPolFRI_1[0],transcriptHash_lastPolFRI_1[1],transcriptHash_lastPolFRI_1[2],transcriptHash_lastPolFRI_1[3]]);
-    for(var i = 4; i < 12; i++){
-        _ <== transcriptHash_lastPolFRI_2[i]; // Unused transcript values 
-    }
-    
-    signal transcriptHash_lastPolFRI_3[12] <== Poseidon2(12)([finalPol[8][0],finalPol[8][1],finalPol[8][2],finalPol[9][0],finalPol[9][1],finalPol[9][2],finalPol[10][0],finalPol[10][1]], [transcriptHash_lastPolFRI_2[0],transcriptHash_lastPolFRI_2[1],transcriptHash_lastPolFRI_2[2],transcriptHash_lastPolFRI_2[3]]);
-    for(var i = 4; i < 12; i++){
-        _ <== transcriptHash_lastPolFRI_3[i]; // Unused transcript values 
-    }
-    
-    signal transcriptHash_lastPolFRI_4[12] <== Poseidon2(12)([finalPol[10][2],finalPol[11][0],finalPol[11][1],finalPol[11][2],finalPol[12][0],finalPol[12][1],finalPol[12][2],finalPol[13][0]], [transcriptHash_lastPolFRI_3[0],transcriptHash_lastPolFRI_3[1],transcriptHash_lastPolFRI_3[2],transcriptHash_lastPolFRI_3[3]]);
-    for(var i = 4; i < 12; i++){
-        _ <== transcriptHash_lastPolFRI_4[i]; // Unused transcript values 
-    }
-    
-    signal transcriptHash_lastPolFRI_5[12] <== Poseidon2(12)([finalPol[13][1],finalPol[13][2],finalPol[14][0],finalPol[14][1],finalPol[14][2],finalPol[15][0],finalPol[15][1],finalPol[15][2]], [transcriptHash_lastPolFRI_4[0],transcriptHash_lastPolFRI_4[1],transcriptHash_lastPolFRI_4[2],transcriptHash_lastPolFRI_4[3]]);
-    for(var i = 4; i < 12; i++){
-        _ <== transcriptHash_lastPolFRI_5[i]; // Unused transcript values 
-    }
-    
-    signal transcriptHash_lastPolFRI_6[12] <== Poseidon2(12)([finalPol[16][0],finalPol[16][1],finalPol[16][2],finalPol[17][0],finalPol[17][1],finalPol[17][2],finalPol[18][0],finalPol[18][1]], [transcriptHash_lastPolFRI_5[0],transcriptHash_lastPolFRI_5[1],transcriptHash_lastPolFRI_5[2],transcriptHash_lastPolFRI_5[3]]);
-    for(var i = 4; i < 12; i++){
-        _ <== transcriptHash_lastPolFRI_6[i]; // Unused transcript values 
-    }
-    
-    signal transcriptHash_lastPolFRI_7[12] <== Poseidon2(12)([finalPol[18][2],finalPol[19][0],finalPol[19][1],finalPol[19][2],finalPol[20][0],finalPol[20][1],finalPol[20][2],finalPol[21][0]], [transcriptHash_lastPolFRI_6[0],transcriptHash_lastPolFRI_6[1],transcriptHash_lastPolFRI_6[2],transcriptHash_lastPolFRI_6[3]]);
-    for(var i = 4; i < 12; i++){
-        _ <== transcriptHash_lastPolFRI_7[i]; // Unused transcript values 
-    }
-    
-    signal transcriptHash_lastPolFRI_8[12] <== Poseidon2(12)([finalPol[21][1],finalPol[21][2],finalPol[22][0],finalPol[22][1],finalPol[22][2],finalPol[23][0],finalPol[23][1],finalPol[23][2]], [transcriptHash_lastPolFRI_7[0],transcriptHash_lastPolFRI_7[1],transcriptHash_lastPolFRI_7[2],transcriptHash_lastPolFRI_7[3]]);
-    for(var i = 4; i < 12; i++){
-        _ <== transcriptHash_lastPolFRI_8[i]; // Unused transcript values 
-    }
-    
-    signal transcriptHash_lastPolFRI_9[12] <== Poseidon2(12)([finalPol[24][0],finalPol[24][1],finalPol[24][2],finalPol[25][0],finalPol[25][1],finalPol[25][2],finalPol[26][0],finalPol[26][1]], [transcriptHash_lastPolFRI_8[0],transcriptHash_lastPolFRI_8[1],transcriptHash_lastPolFRI_8[2],transcriptHash_lastPolFRI_8[3]]);
-    for(var i = 4; i < 12; i++){
-        _ <== transcriptHash_lastPolFRI_9[i]; // Unused transcript values 
-    }
-    
-    signal transcriptHash_lastPolFRI_10[12] <== Poseidon2(12)([finalPol[26][2],finalPol[27][0],finalPol[27][1],finalPol[27][2],finalPol[28][0],finalPol[28][1],finalPol[28][2],finalPol[29][0]], [transcriptHash_lastPolFRI_9[0],transcriptHash_lastPolFRI_9[1],transcriptHash_lastPolFRI_9[2],transcriptHash_lastPolFRI_9[3]]);
-    for(var i = 4; i < 12; i++){
-        _ <== transcriptHash_lastPolFRI_10[i]; // Unused transcript values 
-    }
-    
-    signal transcriptHash_lastPolFRI_11[12] <== Poseidon2(12)([finalPol[29][1],finalPol[29][2],finalPol[30][0],finalPol[30][1],finalPol[30][2],finalPol[31][0],finalPol[31][1],finalPol[31][2]], [transcriptHash_lastPolFRI_10[0],transcriptHash_lastPolFRI_10[1],transcriptHash_lastPolFRI_10[2],transcriptHash_lastPolFRI_10[3]]);
-    lastPolFRIHash <== [transcriptHash_lastPolFRI_11[0], transcriptHash_lastPolFRI_11[1], transcriptHash_lastPolFRI_11[2], transcriptHash_lastPolFRI_11[3]];
-
-    for(var i = 4; i < 12; i++){
+    for(var i = 4; i < 16; i++){
         _ <== transcriptHash_8[i]; // Unused transcript values 
     }
     
-    signal transcriptHash_9[12] <== Poseidon2(12)([lastPolFRIHash[0],lastPolFRIHash[1],lastPolFRIHash[2],lastPolFRIHash[3],0,0,0,0], [transcriptHash_8[0],transcriptHash_8[1],transcriptHash_8[2],transcriptHash_8[3]]);
+    signal transcriptHash_9[16] <== Poseidon2(4, 16)([s6_root[0],s6_root[1],s6_root[2],s6_root[3],0,0,0,0,0,0,0,0], [transcriptHash_8[0],transcriptHash_8[1],transcriptHash_8[2],transcriptHash_8[3]]);
     challengesFRISteps[6] <== [transcriptHash_9[0], transcriptHash_9[1], transcriptHash_9[2]];
+    
+    signal transcriptHash_lastPolFRI_0[16] <== Poseidon2(4, 16)([finalPol[0][0],finalPol[0][1],finalPol[0][2],finalPol[1][0],finalPol[1][1],finalPol[1][2],finalPol[2][0],finalPol[2][1],finalPol[2][2],finalPol[3][0],finalPol[3][1],finalPol[3][2]], [0,0,0,0]);
+    for(var i = 4; i < 16; i++){
+        _ <== transcriptHash_lastPolFRI_0[i]; // Unused transcript values 
+    }
+    
+    signal transcriptHash_lastPolFRI_1[16] <== Poseidon2(4, 16)([finalPol[4][0],finalPol[4][1],finalPol[4][2],finalPol[5][0],finalPol[5][1],finalPol[5][2],finalPol[6][0],finalPol[6][1],finalPol[6][2],finalPol[7][0],finalPol[7][1],finalPol[7][2]], [transcriptHash_lastPolFRI_0[0],transcriptHash_lastPolFRI_0[1],transcriptHash_lastPolFRI_0[2],transcriptHash_lastPolFRI_0[3]]);
+    for(var i = 4; i < 16; i++){
+        _ <== transcriptHash_lastPolFRI_1[i]; // Unused transcript values 
+    }
+    
+    signal transcriptHash_lastPolFRI_2[16] <== Poseidon2(4, 16)([finalPol[8][0],finalPol[8][1],finalPol[8][2],finalPol[9][0],finalPol[9][1],finalPol[9][2],finalPol[10][0],finalPol[10][1],finalPol[10][2],finalPol[11][0],finalPol[11][1],finalPol[11][2]], [transcriptHash_lastPolFRI_1[0],transcriptHash_lastPolFRI_1[1],transcriptHash_lastPolFRI_1[2],transcriptHash_lastPolFRI_1[3]]);
+    for(var i = 4; i < 16; i++){
+        _ <== transcriptHash_lastPolFRI_2[i]; // Unused transcript values 
+    }
+    
+    signal transcriptHash_lastPolFRI_3[16] <== Poseidon2(4, 16)([finalPol[12][0],finalPol[12][1],finalPol[12][2],finalPol[13][0],finalPol[13][1],finalPol[13][2],finalPol[14][0],finalPol[14][1],finalPol[14][2],finalPol[15][0],finalPol[15][1],finalPol[15][2]], [transcriptHash_lastPolFRI_2[0],transcriptHash_lastPolFRI_2[1],transcriptHash_lastPolFRI_2[2],transcriptHash_lastPolFRI_2[3]]);
+    for(var i = 4; i < 16; i++){
+        _ <== transcriptHash_lastPolFRI_3[i]; // Unused transcript values 
+    }
+    
+    signal transcriptHash_lastPolFRI_4[16] <== Poseidon2(4, 16)([finalPol[16][0],finalPol[16][1],finalPol[16][2],finalPol[17][0],finalPol[17][1],finalPol[17][2],finalPol[18][0],finalPol[18][1],finalPol[18][2],finalPol[19][0],finalPol[19][1],finalPol[19][2]], [transcriptHash_lastPolFRI_3[0],transcriptHash_lastPolFRI_3[1],transcriptHash_lastPolFRI_3[2],transcriptHash_lastPolFRI_3[3]]);
+    for(var i = 4; i < 16; i++){
+        _ <== transcriptHash_lastPolFRI_4[i]; // Unused transcript values 
+    }
+    
+    signal transcriptHash_lastPolFRI_5[16] <== Poseidon2(4, 16)([finalPol[20][0],finalPol[20][1],finalPol[20][2],finalPol[21][0],finalPol[21][1],finalPol[21][2],finalPol[22][0],finalPol[22][1],finalPol[22][2],finalPol[23][0],finalPol[23][1],finalPol[23][2]], [transcriptHash_lastPolFRI_4[0],transcriptHash_lastPolFRI_4[1],transcriptHash_lastPolFRI_4[2],transcriptHash_lastPolFRI_4[3]]);
+    for(var i = 4; i < 16; i++){
+        _ <== transcriptHash_lastPolFRI_5[i]; // Unused transcript values 
+    }
+    
+    signal transcriptHash_lastPolFRI_6[16] <== Poseidon2(4, 16)([finalPol[24][0],finalPol[24][1],finalPol[24][2],finalPol[25][0],finalPol[25][1],finalPol[25][2],finalPol[26][0],finalPol[26][1],finalPol[26][2],finalPol[27][0],finalPol[27][1],finalPol[27][2]], [transcriptHash_lastPolFRI_5[0],transcriptHash_lastPolFRI_5[1],transcriptHash_lastPolFRI_5[2],transcriptHash_lastPolFRI_5[3]]);
+    for(var i = 4; i < 16; i++){
+        _ <== transcriptHash_lastPolFRI_6[i]; // Unused transcript values 
+    }
+    
+    signal transcriptHash_lastPolFRI_7[16] <== Poseidon2(4, 16)([finalPol[28][0],finalPol[28][1],finalPol[28][2],finalPol[29][0],finalPol[29][1],finalPol[29][2],finalPol[30][0],finalPol[30][1],finalPol[30][2],finalPol[31][0],finalPol[31][1],finalPol[31][2]], [transcriptHash_lastPolFRI_6[0],transcriptHash_lastPolFRI_6[1],transcriptHash_lastPolFRI_6[2],transcriptHash_lastPolFRI_6[3]]);
+    lastPolFRIHash <== [transcriptHash_lastPolFRI_7[0], transcriptHash_lastPolFRI_7[1], transcriptHash_lastPolFRI_7[2], transcriptHash_lastPolFRI_7[3]];
 
-    queriesFRI <== calculateFRIQueries0()(challengesFRISteps[6]);
+    for(var i = 4; i < 16; i++){
+        _ <== transcriptHash_9[i]; // Unused transcript values 
+    }
+    
+    signal transcriptHash_10[16] <== Poseidon2(4, 16)([lastPolFRIHash[0],lastPolFRIHash[1],lastPolFRIHash[2],lastPolFRIHash[3],0,0,0,0,0,0,0,0], [transcriptHash_9[0],transcriptHash_9[1],transcriptHash_9[2],transcriptHash_9[3]]);
+    challengesFRISteps[7] <== [transcriptHash_10[0], transcriptHash_10[1], transcriptHash_10[2]];
+
+    queriesFRI <== calculateFRIQueries0()(challengesFRISteps[7]);
 }
 
 /*
@@ -821,71 +791,71 @@ template VerifyEvaluations0() {
 
     // Using the evaluations committed and the challenges,
     // calculate the sum of q_i, i.e, q_0(X) + challenge * q_1(X) + challenge^2 * q_2(X) +  ... + challenge^(l-1) * q_l-1(X) evaluated at z 
-    signal tmp_65[3] <== [evals[8][0] - publics[1], evals[8][1], evals[8][2]];
-    signal tmp_66[3] <== CMul()(evals[2], tmp_65);
-    signal tmp_67[3] <== [evals[12][0] - publics[2], evals[12][1], evals[12][2]];
-    signal tmp_68[3] <== CMul()(evals[2], tmp_67);
-    signal tmp_69[3] <== [evals[12][0] - publics[3], evals[12][1], evals[12][2]];
-    signal tmp_70[3] <== CMul()(evals[3], tmp_69);
-    signal tmp_71[3] <== [evals[9][0] - evals[12][0], evals[9][1] - evals[12][1], evals[9][2] - evals[12][2]];
-    signal tmp_72[3] <== [1 - evals[3][0], -evals[3][1], -evals[3][2]];
-    signal tmp_73[3] <== CMul()(tmp_71, tmp_72);
-    signal tmp_74[3] <== [evals[10][0] - evals[13][0], evals[10][1] - evals[13][1], evals[10][2] - evals[13][2]];
-    signal tmp_75[3] <== [1 - evals[4][0], -evals[4][1], -evals[4][2]];
-    signal tmp_76[3] <== CMul()(tmp_74, tmp_75);
-    signal tmp_77[3] <== [evals[11][0] - evals[14][0], evals[11][1] - evals[14][1], evals[11][2] - evals[14][2]];
-    signal tmp_78[3] <== [1 - evals[5][0], -evals[5][1], -evals[5][2]];
-    signal tmp_79[3] <== CMul()(tmp_77, tmp_78);
-    signal tmp_80 <== publics[0] * proofvalues[0][0];
-    signal tmp_81 <== tmp_80 - proofvalues[1][0];
-    signal tmp_82 <== 2 * airvalues[0][0];
-    signal tmp_83 <== tmp_82 - airvalues[1][0];
-    signal tmp_84[3] <== [evals[1][0] + 1, evals[1][1], evals[1][2]];
-    signal tmp_85[3] <== [evals[0][0] - tmp_84[0], evals[0][1] - tmp_84[1], evals[0][2] - tmp_84[2]];
-    signal tmp_86[3] <== CMul()(evals[17], evals[18]);
-    signal tmp_87[3] <== [1 - evals[3][0], -evals[3][1], -evals[3][2]];
-    signal tmp_88[3] <== [0 - tmp_87[0], -tmp_87[1], -tmp_87[2]];
-    signal tmp_89[3] <== [tmp_86[0] - tmp_88[0], tmp_86[1] - tmp_88[1], tmp_86[2] - tmp_88[2]];
-    signal tmp_90[3] <== [1 - evals[6][0], -evals[6][1], -evals[6][2]];
-    signal tmp_91[3] <== CMul()(evals[15], tmp_90);
-    signal tmp_92[3] <== [evals[16][0] - tmp_91[0], evals[16][1] - tmp_91[1], evals[16][2] - tmp_91[2]];
-    signal tmp_93[3] <== [tmp_92[0] - evals[17][0], tmp_92[1] - evals[17][1], tmp_92[2] - evals[17][2]];
-    signal tmp_94[3] <== [airgroupvalues[0][0] - evals[16][0], airgroupvalues[0][1] - evals[16][1], airgroupvalues[0][2] - evals[16][2]];
-    signal tmp_95[3] <== CMul()(evals[7], tmp_94);
-    signal tmp_96[3] <== CMul()(evals[13], challengesStage2[0]);
-    signal tmp_97[3] <== CMul()(evals[8], evals[8]);
-    signal tmp_98[3] <== CMul()(evals[12], evals[12]);
-    signal tmp_99[3] <== [tmp_97[0] + tmp_98[0], tmp_97[1] + tmp_98[1], tmp_97[2] + tmp_98[2]];
-    signal tmp_100[3] <== [tmp_96[0] + tmp_99[0], tmp_96[1] + tmp_99[1], tmp_96[2] + tmp_99[2]];
-    signal tmp_101[3] <== CMul()(tmp_100, challengesStage2[0]);
-    signal tmp_102[3] <== [tmp_101[0] + 1, tmp_101[1], tmp_101[2]];
-    signal tmp_38[3] <== CMul()(challengeQ, tmp_66);
-    signal tmp_39[3] <== [tmp_38[0] + tmp_68[0], tmp_38[1] + tmp_68[1], tmp_38[2] + tmp_68[2]];
-    signal tmp_40[3] <== CMul()(challengeQ, tmp_39);
-    signal tmp_41[3] <== [tmp_40[0] + tmp_70[0], tmp_40[1] + tmp_70[1], tmp_40[2] + tmp_70[2]];
-    signal tmp_42[3] <== CMul()(challengeQ, tmp_41);
-    signal tmp_43[3] <== [tmp_42[0] + tmp_73[0], tmp_42[1] + tmp_73[1], tmp_42[2] + tmp_73[2]];
-    signal tmp_44[3] <== CMul()(challengeQ, tmp_43);
-    signal tmp_45[3] <== [tmp_44[0] + tmp_76[0], tmp_44[1] + tmp_76[1], tmp_44[2] + tmp_76[2]];
-    signal tmp_46[3] <== CMul()(challengeQ, tmp_45);
-    signal tmp_47[3] <== [tmp_46[0] + tmp_79[0], tmp_46[1] + tmp_79[1], tmp_46[2] + tmp_79[2]];
-    signal tmp_48[3] <== CMul()(challengeQ, tmp_47);
-    signal tmp_49[3] <== [tmp_48[0] + tmp_81, tmp_48[1], tmp_48[2]];
-    signal tmp_50[3] <== CMul()(challengeQ, tmp_49);
-    signal tmp_51[3] <== [tmp_50[0] + tmp_83, tmp_50[1], tmp_50[2]];
-    signal tmp_52[3] <== CMul()(challengeQ, tmp_51);
-    signal tmp_53[3] <== [tmp_52[0] + tmp_85[0], tmp_52[1] + tmp_85[1], tmp_52[2] + tmp_85[2]];
-    signal tmp_54[3] <== CMul()(challengeQ, tmp_53);
-    signal tmp_55[3] <== [tmp_54[0] + tmp_89[0], tmp_54[1] + tmp_89[1], tmp_54[2] + tmp_89[2]];
-    signal tmp_56[3] <== CMul()(challengeQ, tmp_55);
-    signal tmp_57[3] <== [tmp_56[0] + tmp_93[0], tmp_56[1] + tmp_93[1], tmp_56[2] + tmp_93[2]];
-    signal tmp_58[3] <== CMul()(challengeQ, tmp_57);
-    signal tmp_59[3] <== [tmp_58[0] + tmp_95[0], tmp_58[1] + tmp_95[1], tmp_58[2] + tmp_95[2]];
-    signal tmp_60[3] <== CMul()(challengeQ, tmp_59);
-    signal tmp_61[3] <== [tmp_102[0] + challengesStage2[1][0], tmp_102[1] + challengesStage2[1][1], tmp_102[2] + challengesStage2[1][2]];
-    signal tmp_62[3] <== [evals[18][0] - tmp_61[0], evals[18][1] - tmp_61[1], evals[18][2] - tmp_61[2]];
-    signal tmp_63[3] <== [tmp_60[0] + tmp_62[0], tmp_60[1] + tmp_62[1], tmp_60[2] + tmp_62[2]];
-    signal tmp_103[3] <== CMul()(tmp_63, Zh);
+    signal tmp_65[3] <== [evals[5][0] - publics[1], evals[5][1], evals[5][2]];
+    signal tmp_66[3] <== CMul()(evals[3], tmp_65);
+    signal tmp_67[3] <== CMul()(challengeQ, tmp_66);
+    signal tmp_68[3] <== [evals[6][0] - publics[2], evals[6][1], evals[6][2]];
+    signal tmp_69[3] <== CMul()(evals[3], tmp_68);
+    signal tmp_70[3] <== [tmp_67[0] + tmp_69[0], tmp_67[1] + tmp_69[1], tmp_67[2] + tmp_69[2]];
+    signal tmp_71[3] <== CMul()(challengeQ, tmp_70);
+    signal tmp_72[3] <== [evals[6][0] - publics[3], evals[6][1], evals[6][2]];
+    signal tmp_73[3] <== CMul()(evals[11], tmp_72);
+    signal tmp_74[3] <== [tmp_71[0] + tmp_73[0], tmp_71[1] + tmp_73[1], tmp_71[2] + tmp_73[2]];
+    signal tmp_75[3] <== CMul()(challengeQ, tmp_74);
+    signal tmp_76[3] <== [evals[13][0] - evals[6][0], evals[13][1] - evals[6][1], evals[13][2] - evals[6][2]];
+    signal tmp_77[3] <== [1 - evals[11][0], -evals[11][1], -evals[11][2]];
+    signal tmp_78[3] <== CMul()(tmp_76, tmp_77);
+    signal tmp_79[3] <== [tmp_75[0] + tmp_78[0], tmp_75[1] + tmp_78[1], tmp_75[2] + tmp_78[2]];
+    signal tmp_80[3] <== CMul()(challengeQ, tmp_79);
+    signal tmp_81[3] <== [evals[16][0] - evals[14][0], evals[16][1] - evals[14][1], evals[16][2] - evals[14][2]];
+    signal tmp_82[3] <== [1 - evals[15][0], -evals[15][1], -evals[15][2]];
+    signal tmp_83[3] <== CMul()(tmp_81, tmp_82);
+    signal tmp_84[3] <== [tmp_80[0] + tmp_83[0], tmp_80[1] + tmp_83[1], tmp_80[2] + tmp_83[2]];
+    signal tmp_85[3] <== CMul()(challengeQ, tmp_84);
+    signal tmp_86[3] <== [evals[19][0] - evals[17][0], evals[19][1] - evals[17][1], evals[19][2] - evals[17][2]];
+    signal tmp_87[3] <== [1 - evals[18][0], -evals[18][1], -evals[18][2]];
+    signal tmp_88[3] <== CMul()(tmp_86, tmp_87);
+    signal tmp_89[3] <== [tmp_85[0] + tmp_88[0], tmp_85[1] + tmp_88[1], tmp_85[2] + tmp_88[2]];
+    signal tmp_90[3] <== CMul()(challengeQ, tmp_89);
+    signal tmp_91 <== publics[0] * proofvalues[0][0];
+    signal tmp_92 <== tmp_91 - proofvalues[1][0];
+    signal tmp_93[3] <== [tmp_90[0] + tmp_92, tmp_90[1], tmp_90[2]];
+    signal tmp_94[3] <== CMul()(challengeQ, tmp_93);
+    signal tmp_95 <== 2 * airvalues[0][0];
+    signal tmp_96 <== tmp_95 - airvalues[1][0];
+    signal tmp_97[3] <== [tmp_94[0] + tmp_96, tmp_94[1], tmp_94[2]];
+    signal tmp_98[3] <== CMul()(challengeQ, tmp_97);
+    signal tmp_99[3] <== [evals[2][0] + 1, evals[2][1], evals[2][2]];
+    signal tmp_100[3] <== [evals[1][0] - tmp_99[0], evals[1][1] - tmp_99[1], evals[1][2] - tmp_99[2]];
+    signal tmp_101[3] <== [tmp_98[0] + tmp_100[0], tmp_98[1] + tmp_100[1], tmp_98[2] + tmp_100[2]];
+    signal tmp_102[3] <== CMul()(challengeQ, tmp_101);
+    signal tmp_103[3] <== CMul()(evals[8], evals[9]);
+    signal tmp_104[3] <== [1 - evals[11][0], -evals[11][1], -evals[11][2]];
+    signal tmp_105[3] <== [0 - tmp_104[0], -tmp_104[1], -tmp_104[2]];
+    signal tmp_106[3] <== [tmp_103[0] - tmp_105[0], tmp_103[1] - tmp_105[1], tmp_103[2] - tmp_105[2]];
+    signal tmp_107[3] <== [tmp_102[0] + tmp_106[0], tmp_102[1] + tmp_106[1], tmp_102[2] + tmp_106[2]];
+    signal tmp_108[3] <== CMul()(challengeQ, tmp_107);
+    signal tmp_109[3] <== [1 - evals[4][0], -evals[4][1], -evals[4][2]];
+    signal tmp_110[3] <== CMul()(evals[0], tmp_109);
+    signal tmp_111[3] <== [evals[7][0] - tmp_110[0], evals[7][1] - tmp_110[1], evals[7][2] - tmp_110[2]];
+    signal tmp_112[3] <== [tmp_111[0] - evals[8][0], tmp_111[1] - evals[8][1], tmp_111[2] - evals[8][2]];
+    signal tmp_113[3] <== [tmp_108[0] + tmp_112[0], tmp_108[1] + tmp_112[1], tmp_108[2] + tmp_112[2]];
+    signal tmp_114[3] <== CMul()(challengeQ, tmp_113);
+    signal tmp_115[3] <== [airgroupvalues[0][0] - evals[7][0], airgroupvalues[0][1] - evals[7][1], airgroupvalues[0][2] - evals[7][2]];
+    signal tmp_116[3] <== CMul()(evals[12], tmp_115);
+    signal tmp_117[3] <== [tmp_114[0] + tmp_116[0], tmp_114[1] + tmp_116[1], tmp_114[2] + tmp_116[2]];
+    signal tmp_118[3] <== CMul()(challengeQ, tmp_117);
+    signal tmp_119[3] <== CMul()(evals[14], challengesStage2[0]);
+    signal tmp_120[3] <== CMul()(evals[5], evals[5]);
+    signal tmp_121[3] <== CMul()(evals[6], evals[6]);
+    signal tmp_122[3] <== [tmp_120[0] + tmp_121[0], tmp_120[1] + tmp_121[1], tmp_120[2] + tmp_121[2]];
+    signal tmp_123[3] <== [tmp_119[0] + tmp_122[0], tmp_119[1] + tmp_122[1], tmp_119[2] + tmp_122[2]];
+    signal tmp_124[3] <== CMul()(tmp_123, challengesStage2[0]);
+    signal tmp_125[3] <== [tmp_124[0] + 1, tmp_124[1], tmp_124[2]];
+    signal tmp_61[3] <== [tmp_125[0] + challengesStage2[1][0], tmp_125[1] + challengesStage2[1][1], tmp_125[2] + challengesStage2[1][2]];
+    signal tmp_126[3] <== [evals[9][0] - tmp_61[0], evals[9][1] - tmp_61[1], evals[9][2] - tmp_61[2]];
+    signal tmp_63[3] <== [tmp_118[0] + tmp_126[0], tmp_118[1] + tmp_126[1], tmp_118[2] + tmp_126[2]];
+    signal tmp_127[3] <== CMul()(tmp_63, Zh);
 
     signal xAcc[1][3]; //Stores, at each step, x^i evaluated at z
     signal qStep[0][3]; // Stores the evaluations of Q_i
@@ -896,20 +866,20 @@ template VerifyEvaluations0() {
     for (var i=0; i< 1; i++) {
         if (i==0) {
             xAcc[0] <== [1, 0, 0];
-            qAcc[0] <== evals[19+i];
+            qAcc[0] <== evals[10+i];
         } else {
             xAcc[i] <== CMul()(xAcc[i-1], zMul[21]);
-            qStep[i-1] <== CMul()(xAcc[i], evals[19+i]);
+            qStep[i-1] <== CMul()(xAcc[i], evals[10+i]);
             qAcc[i][0] <== qAcc[i-1][0] + qStep[i-1][0];
             qAcc[i][1] <== qAcc[i-1][1] + qStep[i-1][1];
             qAcc[i][2] <== qAcc[i-1][2] + qStep[i-1][2];
         }
     }
 
-    // Final Verification. Check that Q(X)*Zh(X) = sum of linear combination of q_i, which is stored at tmp_103 
-    enable * (tmp_103[0] - qAcc[0][0]) === 0;
-    enable * (tmp_103[1] - qAcc[0][1]) === 0;
-    enable * (tmp_103[2] - qAcc[0][2]) === 0;
+    // Final Verification. Check that Q(X)*Zh(X) = sum of linear combination of q_i, which is stored at tmp_127 
+    enable * (tmp_127[0] - qAcc[0][0]) === 0;
+    enable * (tmp_127[1] - qAcc[0][1]) === 0;
+    enable * (tmp_127[2] - qAcc[0][2]) === 0;
 }
 
 /*  Calculate FRI polinomial */
@@ -945,80 +915,75 @@ template CalculateFRIPolValue0() {
 
     signal xDivXSubXi[5][3];
 
-    signal den0inv[3] <== CInv()([xacc[22] - 10420286214021487819 * challengeXi[0], - 10420286214021487819 * challengeXi[1], - 10420286214021487819 * challengeXi[2]]);
-    xDivXSubXi[0] <== [xacc[22] * den0inv[0], xacc[22] * den0inv[1],  xacc[22] * den0inv[2]];
-    signal den1inv[3] <== CInv()([xacc[22] - 1 * challengeXi[0], - 1 * challengeXi[1], - 1 * challengeXi[2]]);
-    xDivXSubXi[1] <== [xacc[22] * den1inv[0], xacc[22] * den1inv[1],  xacc[22] * den1inv[2]];
-    signal den2inv[3] <== CInv()([xacc[22] - 8124823329697072476 * challengeXi[0], - 8124823329697072476 * challengeXi[1], - 8124823329697072476 * challengeXi[2]]);
-    xDivXSubXi[2] <== [xacc[22] * den2inv[0], xacc[22] * den2inv[1],  xacc[22] * den2inv[2]];
-    signal den3inv[3] <== CInv()([xacc[22] - 6553637399136210105 * challengeXi[0], - 6553637399136210105 * challengeXi[1], - 6553637399136210105 * challengeXi[2]]);
-    xDivXSubXi[3] <== [xacc[22] * den3inv[0], xacc[22] * den3inv[1],  xacc[22] * den3inv[2]];
-    signal den4inv[3] <== CInv()([xacc[22] - 331116024603048646 * challengeXi[0], - 331116024603048646 * challengeXi[1], - 331116024603048646 * challengeXi[2]]);
-    xDivXSubXi[4] <== [xacc[22] * den4inv[0], xacc[22] * den4inv[1],  xacc[22] * den4inv[2]];
+    xDivXSubXi[0] <== CInv()([xacc[22] - 10420286214021487819 * challengeXi[0], - 10420286214021487819 * challengeXi[1], - 10420286214021487819 * challengeXi[2]]);
+    xDivXSubXi[1] <== CInv()([xacc[22] - 1 * challengeXi[0], - 1 * challengeXi[1], - 1 * challengeXi[2]]);
+    xDivXSubXi[2] <== CInv()([xacc[22] - 8124823329697072476 * challengeXi[0], - 8124823329697072476 * challengeXi[1], - 8124823329697072476 * challengeXi[2]]);
+    xDivXSubXi[3] <== CInv()([xacc[22] - 6553637399136210105 * challengeXi[0], - 6553637399136210105 * challengeXi[1], - 6553637399136210105 * challengeXi[2]]);
+    xDivXSubXi[4] <== CInv()([xacc[22] - 331116024603048646 * challengeXi[0], - 331116024603048646 * challengeXi[1], - 331116024603048646 * challengeXi[2]]);
 
-    signal tmp_0[3] <== [mapValues.custom_rom_0_0 - evals[0][0], -evals[0][1], -evals[0][2]];
-    signal tmp_1[3] <== CMul()(tmp_0, challengesFRI[1]);
-    signal tmp_2[3] <== [mapValues.custom_rom_0_1 - evals[1][0], -evals[1][1], -evals[1][2]];
-    signal tmp_3[3] <== [tmp_1[0] + tmp_2[0], tmp_1[1] + tmp_2[1], tmp_1[2] + tmp_2[2]];
+    signal tmp_0[3] <== [mapValues.cm2_0[0] - evals[0][0], mapValues.cm2_0[1] - evals[0][1], mapValues.cm2_0[2] - evals[0][2]];
+    signal tmp_1[3] <== CMul()(tmp_0, xDivXSubXi[0]);
+    signal tmp_2[3] <== CMul()(challengesFRI[0], tmp_1);
+    signal tmp_3[3] <== [mapValues.custom_rom_0_0 - evals[1][0], -evals[1][1], -evals[1][2]];
     signal tmp_4[3] <== CMul()(tmp_3, challengesFRI[1]);
-    signal tmp_5[3] <== [consts[0] - evals[2][0], -evals[2][1], -evals[2][2]];
+    signal tmp_5[3] <== [mapValues.custom_rom_0_1 - evals[2][0], -evals[2][1], -evals[2][2]];
     signal tmp_6[3] <== [tmp_4[0] + tmp_5[0], tmp_4[1] + tmp_5[1], tmp_4[2] + tmp_5[2]];
     signal tmp_7[3] <== CMul()(tmp_6, challengesFRI[1]);
-    signal tmp_8[3] <== [consts[1] - evals[6][0], -evals[6][1], -evals[6][2]];
+    signal tmp_8[3] <== [consts[0] - evals[3][0], -evals[3][1], -evals[3][2]];
     signal tmp_9[3] <== [tmp_7[0] + tmp_8[0], tmp_7[1] + tmp_8[1], tmp_7[2] + tmp_8[2]];
     signal tmp_10[3] <== CMul()(tmp_9, challengesFRI[1]);
-    signal tmp_11[3] <== [mapValues.cm1_0 - evals[8][0], -evals[8][1], -evals[8][2]];
+    signal tmp_11[3] <== [consts[1] - evals[4][0], -evals[4][1], -evals[4][2]];
     signal tmp_12[3] <== [tmp_10[0] + tmp_11[0], tmp_10[1] + tmp_11[1], tmp_10[2] + tmp_11[2]];
     signal tmp_13[3] <== CMul()(tmp_12, challengesFRI[1]);
-    signal tmp_14[3] <== [mapValues.cm1_1 - evals[12][0], -evals[12][1], -evals[12][2]];
+    signal tmp_14[3] <== [mapValues.cm1_0 - evals[5][0], -evals[5][1], -evals[5][2]];
     signal tmp_15[3] <== [tmp_13[0] + tmp_14[0], tmp_13[1] + tmp_14[1], tmp_13[2] + tmp_14[2]];
     signal tmp_16[3] <== CMul()(tmp_15, challengesFRI[1]);
-    signal tmp_17[3] <== [mapValues.cm2_0[0] - evals[16][0], mapValues.cm2_0[1] - evals[16][1], mapValues.cm2_0[2] - evals[16][2]];
+    signal tmp_17[3] <== [mapValues.cm1_1 - evals[6][0], -evals[6][1], -evals[6][2]];
     signal tmp_18[3] <== [tmp_16[0] + tmp_17[0], tmp_16[1] + tmp_17[1], tmp_16[2] + tmp_17[2]];
     signal tmp_19[3] <== CMul()(tmp_18, challengesFRI[1]);
-    signal tmp_20[3] <== [mapValues.cm2_1[0] - evals[17][0], mapValues.cm2_1[1] - evals[17][1], mapValues.cm2_1[2] - evals[17][2]];
+    signal tmp_20[3] <== [mapValues.cm2_0[0] - evals[7][0], mapValues.cm2_0[1] - evals[7][1], mapValues.cm2_0[2] - evals[7][2]];
     signal tmp_21[3] <== [tmp_19[0] + tmp_20[0], tmp_19[1] + tmp_20[1], tmp_19[2] + tmp_20[2]];
     signal tmp_22[3] <== CMul()(tmp_21, challengesFRI[1]);
-    signal tmp_23[3] <== [mapValues.cm2_2[0] - evals[18][0], mapValues.cm2_2[1] - evals[18][1], mapValues.cm2_2[2] - evals[18][2]];
+    signal tmp_23[3] <== [mapValues.cm2_1[0] - evals[8][0], mapValues.cm2_1[1] - evals[8][1], mapValues.cm2_1[2] - evals[8][2]];
     signal tmp_24[3] <== [tmp_22[0] + tmp_23[0], tmp_22[1] + tmp_23[1], tmp_22[2] + tmp_23[2]];
     signal tmp_25[3] <== CMul()(tmp_24, challengesFRI[1]);
-    signal tmp_26[3] <== [mapValues.cm3_0[0] - evals[19][0], mapValues.cm3_0[1] - evals[19][1], mapValues.cm3_0[2] - evals[19][2]];
+    signal tmp_26[3] <== [mapValues.cm2_2[0] - evals[9][0], mapValues.cm2_2[1] - evals[9][1], mapValues.cm2_2[2] - evals[9][2]];
     signal tmp_27[3] <== [tmp_25[0] + tmp_26[0], tmp_25[1] + tmp_26[1], tmp_25[2] + tmp_26[2]];
-    signal tmp_28[3] <== CMul()(tmp_27, xDivXSubXi[1]);
-    signal tmp_29[3] <== CMul()(challengesFRI[0], tmp_28);
-    signal tmp_30[3] <== [consts[0] - evals[3][0], -evals[3][1], -evals[3][2]];
-    signal tmp_31[3] <== CMul()(tmp_30, challengesFRI[1]);
-    signal tmp_32[3] <== [consts[1] - evals[7][0], -evals[7][1], -evals[7][2]];
-    signal tmp_33[3] <== [tmp_31[0] + tmp_32[0], tmp_31[1] + tmp_32[1], tmp_31[2] + tmp_32[2]];
-    signal tmp_34[3] <== CMul()(tmp_33, challengesFRI[1]);
-    signal tmp_35[3] <== [mapValues.cm1_0 - evals[9][0], -evals[9][1], -evals[9][2]];
-    signal tmp_36[3] <== [tmp_34[0] + tmp_35[0], tmp_34[1] + tmp_35[1], tmp_34[2] + tmp_35[2]];
-    signal tmp_37[3] <== CMul()(tmp_36, challengesFRI[1]);
-    signal tmp_38[3] <== [mapValues.cm1_1 - evals[13][0], -evals[13][1], -evals[13][2]];
-    signal tmp_39[3] <== [tmp_37[0] + tmp_38[0], tmp_37[1] + tmp_38[1], tmp_37[2] + tmp_38[2]];
-    signal tmp_40[3] <== CMul()(tmp_39, xDivXSubXi[2]);
-    signal tmp_41[3] <== [tmp_29[0] + tmp_40[0], tmp_29[1] + tmp_40[1], tmp_29[2] + tmp_40[2]];
-    signal tmp_42[3] <== CMul()(challengesFRI[0], tmp_41);
-    signal tmp_43[3] <== [consts[0] - evals[4][0], -evals[4][1], -evals[4][2]];
-    signal tmp_44[3] <== CMul()(tmp_43, challengesFRI[1]);
-    signal tmp_45[3] <== [mapValues.cm1_0 - evals[10][0], -evals[10][1], -evals[10][2]];
-    signal tmp_46[3] <== [tmp_44[0] + tmp_45[0], tmp_44[1] + tmp_45[1], tmp_44[2] + tmp_45[2]];
-    signal tmp_47[3] <== CMul()(tmp_46, challengesFRI[1]);
-    signal tmp_48[3] <== [mapValues.cm1_1 - evals[14][0], -evals[14][1], -evals[14][2]];
-    signal tmp_49[3] <== [tmp_47[0] + tmp_48[0], tmp_47[1] + tmp_48[1], tmp_47[2] + tmp_48[2]];
-    signal tmp_50[3] <== CMul()(tmp_49, xDivXSubXi[3]);
-    signal tmp_51[3] <== [tmp_42[0] + tmp_50[0], tmp_42[1] + tmp_50[1], tmp_42[2] + tmp_50[2]];
-    signal tmp_52[3] <== CMul()(challengesFRI[0], tmp_51);
-    signal tmp_53[3] <== [consts[0] - evals[5][0], -evals[5][1], -evals[5][2]];
-    signal tmp_54[3] <== CMul()(tmp_53, challengesFRI[1]);
-    signal tmp_55[3] <== [mapValues.cm1_0 - evals[11][0], -evals[11][1], -evals[11][2]];
-    signal tmp_56[3] <== [tmp_54[0] + tmp_55[0], tmp_54[1] + tmp_55[1], tmp_54[2] + tmp_55[2]];
-    signal tmp_57[3] <== CMul()(tmp_56, xDivXSubXi[4]);
-    signal tmp_58[3] <== [tmp_52[0] + tmp_57[0], tmp_52[1] + tmp_57[1], tmp_52[2] + tmp_57[2]];
-    signal tmp_59[3] <== CMul()(challengesFRI[0], tmp_58);
-    signal tmp_60[3] <== [mapValues.cm2_0[0] - evals[15][0], mapValues.cm2_0[1] - evals[15][1], mapValues.cm2_0[2] - evals[15][2]];
-    signal tmp_61[3] <== CMul()(tmp_60, xDivXSubXi[0]);
-    signal tmp_63[3] <== [tmp_59[0] + tmp_61[0], tmp_59[1] + tmp_61[1], tmp_59[2] + tmp_61[2]];
+    signal tmp_28[3] <== CMul()(tmp_27, challengesFRI[1]);
+    signal tmp_29[3] <== [mapValues.cm3_0[0] - evals[10][0], mapValues.cm3_0[1] - evals[10][1], mapValues.cm3_0[2] - evals[10][2]];
+    signal tmp_30[3] <== [tmp_28[0] + tmp_29[0], tmp_28[1] + tmp_29[1], tmp_28[2] + tmp_29[2]];
+    signal tmp_31[3] <== CMul()(tmp_30, xDivXSubXi[1]);
+    signal tmp_32[3] <== [tmp_2[0] + tmp_31[0], tmp_2[1] + tmp_31[1], tmp_2[2] + tmp_31[2]];
+    signal tmp_33[3] <== CMul()(challengesFRI[0], tmp_32);
+    signal tmp_34[3] <== [consts[0] - evals[11][0], -evals[11][1], -evals[11][2]];
+    signal tmp_35[3] <== CMul()(tmp_34, challengesFRI[1]);
+    signal tmp_36[3] <== [consts[1] - evals[12][0], -evals[12][1], -evals[12][2]];
+    signal tmp_37[3] <== [tmp_35[0] + tmp_36[0], tmp_35[1] + tmp_36[1], tmp_35[2] + tmp_36[2]];
+    signal tmp_38[3] <== CMul()(tmp_37, challengesFRI[1]);
+    signal tmp_39[3] <== [mapValues.cm1_0 - evals[13][0], -evals[13][1], -evals[13][2]];
+    signal tmp_40[3] <== [tmp_38[0] + tmp_39[0], tmp_38[1] + tmp_39[1], tmp_38[2] + tmp_39[2]];
+    signal tmp_41[3] <== CMul()(tmp_40, challengesFRI[1]);
+    signal tmp_42[3] <== [mapValues.cm1_1 - evals[14][0], -evals[14][1], -evals[14][2]];
+    signal tmp_43[3] <== [tmp_41[0] + tmp_42[0], tmp_41[1] + tmp_42[1], tmp_41[2] + tmp_42[2]];
+    signal tmp_44[3] <== CMul()(tmp_43, xDivXSubXi[2]);
+    signal tmp_45[3] <== [tmp_33[0] + tmp_44[0], tmp_33[1] + tmp_44[1], tmp_33[2] + tmp_44[2]];
+    signal tmp_46[3] <== CMul()(challengesFRI[0], tmp_45);
+    signal tmp_47[3] <== [consts[0] - evals[15][0], -evals[15][1], -evals[15][2]];
+    signal tmp_48[3] <== CMul()(tmp_47, challengesFRI[1]);
+    signal tmp_49[3] <== [mapValues.cm1_0 - evals[16][0], -evals[16][1], -evals[16][2]];
+    signal tmp_50[3] <== [tmp_48[0] + tmp_49[0], tmp_48[1] + tmp_49[1], tmp_48[2] + tmp_49[2]];
+    signal tmp_51[3] <== CMul()(tmp_50, challengesFRI[1]);
+    signal tmp_52[3] <== [mapValues.cm1_1 - evals[17][0], -evals[17][1], -evals[17][2]];
+    signal tmp_53[3] <== [tmp_51[0] + tmp_52[0], tmp_51[1] + tmp_52[1], tmp_51[2] + tmp_52[2]];
+    signal tmp_54[3] <== CMul()(tmp_53, xDivXSubXi[3]);
+    signal tmp_55[3] <== [tmp_46[0] + tmp_54[0], tmp_46[1] + tmp_54[1], tmp_46[2] + tmp_54[2]];
+    signal tmp_56[3] <== CMul()(challengesFRI[0], tmp_55);
+    signal tmp_57[3] <== [consts[0] - evals[18][0], -evals[18][1], -evals[18][2]];
+    signal tmp_58[3] <== CMul()(tmp_57, challengesFRI[1]);
+    signal tmp_59[3] <== [mapValues.cm1_0 - evals[19][0], -evals[19][1], -evals[19][2]];
+    signal tmp_60[3] <== [tmp_58[0] + tmp_59[0], tmp_58[1] + tmp_59[1], tmp_58[2] + tmp_59[2]];
+    signal tmp_61[3] <== CMul()(tmp_60, xDivXSubXi[4]);
+    signal tmp_63[3] <== [tmp_56[0] + tmp_61[0], tmp_56[1] + tmp_61[1], tmp_56[2] + tmp_61[2]];
 
     queryVals[0] <== tmp_63[0];
     queryVals[1] <== tmp_63[1];
@@ -1116,7 +1081,7 @@ template StarkVerifier0() {
     signal input root2[4]; // Merkle tree root of stage 2
     signal input root3[4]; // Merkle tree root of the evaluations of the quotient Q1 and Q2 polynomials
 
-    signal output rootC[4] <== [6937688178068921927,15008864101305609067,1549094540851172845,7448837168161214622 ]; // Merkle tree root of the evaluations of constant polynomials
+    signal output rootC[4] <== [15507134881363252830,6492804077567420353,17699491771792986691,14472882950742956038 ]; // Merkle tree root of the evaluations of constant polynomials
 
     signal input evals[20][3]; // Evaluations of the set polynomials at a challenge value z and gz
 
@@ -1133,33 +1098,36 @@ template StarkVerifier0() {
 
     // Merkle proofs for each of the evaluations
  
-    signal input s0_siblings1[128][15][8];
+    signal input s0_siblings1[128][12][12];
  
-    signal input s0_siblings2[128][15][8];
+    signal input s0_siblings2[128][12][12];
  
-    signal input s0_siblings3[128][15][8];
-    signal input s0_siblingsC[128][15][8];
-    signal input s0_siblings_rom_0[128][15][8];
+    signal input s0_siblings3[128][12][12];
+    signal input s0_siblingsC[128][12][12];
+    signal input s0_siblings_rom_0[128][12][12];
     // Contains the root of the original polynomial and all the intermediate FRI polynomials except for the last step
     signal input s1_root[4];
     signal input s2_root[4];
     signal input s3_root[4];
     signal input s4_root[4];
     signal input s5_root[4];
+    signal input s6_root[4];
 
     // For each intermediate FRI polynomial and the last one, we store at vals the values needed to check the queries.
     // Given a query r,  the verifier needs b points to check it out, being b = 2^u, where u is the difference between two consecutive step
     // and the sibling paths for each query.
-    signal input s1_vals[128][48];
-    signal input s1_siblings[128][12][8];
-    signal input s2_vals[128][48];
-    signal input s2_siblings[128][10][8];
-    signal input s3_vals[128][48];
-    signal input s3_siblings[128][7][8];
+    signal input s1_vals[128][24];
+    signal input s1_siblings[128][10][12];
+    signal input s2_vals[128][24];
+    signal input s2_siblings[128][9][12];
+    signal input s3_vals[128][24];
+    signal input s3_siblings[128][7][12];
     signal input s4_vals[128][24];
-    signal input s4_siblings[128][6][8];
+    signal input s4_siblings[128][6][12];
     signal input s5_vals[128][24];
-    signal input s5_siblings[128][4][8];
+    signal input s5_siblings[128][4][12];
+    signal input s6_vals[128][24];
+    signal input s6_siblings[128][3][12];
 
     // Evaluations of the final FRI polynomial over a set of points of size bounded its degree
     signal input finalPol[32][3];
@@ -1182,7 +1150,7 @@ template StarkVerifier0() {
     // the prover can commit the polynomial.
     // Remember that, when folding, the prover does as follows: f0 = g_0 + X*g_1 + ... + (X^b)*g_b and then the 
     // verifier provides a random X so that the prover can commit it. This value is stored here.
-    signal challengesFRISteps[7][3];
+    signal challengesFRISteps[8][3];
 
     // Challenges from which we derive all the queries
     signal {binary} queriesFRI[128][23];
@@ -1194,7 +1162,7 @@ template StarkVerifier0() {
 
  
 
-    (challengesStage2,challengeQ,challengeXi,challengesFRI,challengesFRISteps,queriesFRI) <== Transcript0()(globalChallenge,airvalues,root2,root3,evals,s1_root,s2_root,s3_root,s4_root,s5_root,finalPol);
+    (challengesStage2,challengeQ,challengeXi,challengesFRI,challengesFRISteps,queriesFRI) <== Transcript0()(globalChallenge,airvalues,root2,root3,evals,s1_root,s2_root,s3_root,s4_root,s5_root,s6_root,finalPol);
 
     ///////////
     // Check constraints polynomial in the evaluation point
@@ -1221,11 +1189,12 @@ template StarkVerifier0() {
     var s0_valsC_p[128][2][1];
     var s0_vals_rom_0_p[128][2][1];
     var s0_vals_p[128][1][3]; 
-    var s1_vals_p[128][16][3]; 
-    var s2_vals_p[128][16][3]; 
-    var s3_vals_p[128][16][3]; 
+    var s1_vals_p[128][8][3]; 
+    var s2_vals_p[128][8][3]; 
+    var s3_vals_p[128][8][3]; 
     var s4_vals_p[128][8][3]; 
     var s5_vals_p[128][8][3]; 
+    var s6_vals_p[128][8][3]; 
 
     for (var q=0; q<128; q++) {
         // Preprocess vals for the initial FRI polynomial
@@ -1250,13 +1219,13 @@ template StarkVerifier0() {
 
         // Preprocess vals for each folded polynomial
         for(var e=0; e < 3; e++) {
-            for(var c=0; c < 16; c++) {
+            for(var c=0; c < 8; c++) {
                 s1_vals_p[q][c][e] = s1_vals[q][c*3+e];
             }
-            for(var c=0; c < 16; c++) {
+            for(var c=0; c < 8; c++) {
                 s2_vals_p[q][c][e] = s2_vals[q][c*3+e];
             }
-            for(var c=0; c < 16; c++) {
+            for(var c=0; c < 8; c++) {
                 s3_vals_p[q][c][e] = s3_vals[q][c*3+e];
             }
             for(var c=0; c < 8; c++) {
@@ -1265,91 +1234,140 @@ template StarkVerifier0() {
             for(var c=0; c < 8; c++) {
                 s5_vals_p[q][c][e] = s5_vals[q][c*3+e];
             }
+            for(var c=0; c < 8; c++) {
+                s6_vals_p[q][c][e] = s6_vals[q][c*3+e];
+            }
         }
     }
     
     ///////////
     // Verify Merkle Roots
     ///////////
-    signal {binary} queriesFRITernary[128][15][2];
-    signal queriesFRINum[128];
+    signal {binary} queriesFRIBits[128][12][2];
     for(var i = 0; i < 128; i++) {
-        queriesFRINum[i] <== Bits2Num(23)(queriesFRI[i]);
-        queriesFRITernary[i] <== Num2Ternary(15)(queriesFRINum[i]);
+        for(var j = 0; j < 12; j++) {
+            for(var k = 0; k < 2; k++) {
+                if (k + j * 2 >= 23) {
+                    queriesFRIBits[i][j][k] <== 0;
+                } else {
+                    queriesFRIBits[i][j][k] <== queriesFRI[i][j*2 + k];
+                }
+            }
+        }
     }
 
     //Calculate merkle root for s0 vals
  
     for (var q=0; q<128; q++) {
-        VerifyMerkleHash(1, 2, 3, 15)(s0_vals1_p[q], s0_siblings1[q], queriesFRITernary[q], root1, enabled);
+        VerifyMerkleHash(1, 2, 4, 12)(s0_vals1_p[q], s0_siblings1[q], queriesFRIBits[q], root1, enabled);
     }
  
     for (var q=0; q<128; q++) {
-        VerifyMerkleHash(1, 9, 3, 15)(s0_vals2_p[q], s0_siblings2[q], queriesFRITernary[q], root2, enabled);
+        VerifyMerkleHash(1, 9, 4, 12)(s0_vals2_p[q], s0_siblings2[q], queriesFRIBits[q], root2, enabled);
     }
 
     for (var q=0; q<128; q++) {
-        VerifyMerkleHash(1, 3, 3, 15)(s0_vals3_p[q], s0_siblings3[q], queriesFRITernary[q], root3, enabled);
+        VerifyMerkleHash(1, 3, 4, 12)(s0_vals3_p[q], s0_siblings3[q], queriesFRIBits[q], root3, enabled);
     }
 
     for (var q=0; q<128; q++) {
-        VerifyMerkleHash(1, 2, 3, 15)(s0_valsC_p[q], s0_siblingsC[q], queriesFRITernary[q], rootC, enabled);                                    
+        VerifyMerkleHash(1, 2, 4, 12)(s0_valsC_p[q], s0_siblingsC[q], queriesFRIBits[q], rootC, enabled);                                    
     }
 
     signal root_rom_0[4] <== [publics[4], publics[5], publics[6], publics[7]];
     for (var q=0; q<128; q++) {
-        VerifyMerkleHash(1, 2, 3, 15)(s0_vals_rom_0_p[q], s0_siblings_rom_0[q], queriesFRITernary[q], root_rom_0, enabled);                                    
+        VerifyMerkleHash(1, 2, 4, 12)(s0_vals_rom_0_p[q], s0_siblings_rom_0[q], queriesFRIBits[q], root_rom_0, enabled);                                    
     }
 
-    signal {binary} s1_keys_merkle[128][19];
-    signal s1_keys_merkle_num[128];
-    signal {binary} s1_keys_merkle_ternary[128][12][2];
+    signal {binary} s1_keys_merkle_bits[128][10][2];
     for (var q=0; q<128; q++) {
         // Calculate merkle root for s1 vals
-        for(var i = 0; i < 19; i++) { s1_keys_merkle[q][i] <== queriesFRI[q][i]; }
-        s1_keys_merkle_num[q] <== Bits2Num(19)(s1_keys_merkle[q]);
-        s1_keys_merkle_ternary[q] <== Num2Ternary(12)(s1_keys_merkle_num[q]);
-        VerifyMerkleHash(3, 16, 3, 12)(s1_vals_p[q], s1_siblings[q], s1_keys_merkle_ternary[q], s1_root, enabled);
+
+        for(var j = 0; j < 10; j++) {
+            for(var k = 0; k < 2; k++) {
+                if (k + j * 2 >= 20) {
+                    s1_keys_merkle_bits[q][j][k] <== 0;
+                } else {
+                    s1_keys_merkle_bits[q][j][k] <== queriesFRI[q][j*2 + k];
+                }
+            }
+        }
+        VerifyMerkleHash(3, 8, 4, 10)(s1_vals_p[q], s1_siblings[q], s1_keys_merkle_bits[q], s1_root, enabled);
     }
-    signal {binary} s2_keys_merkle[128][15];
-    signal s2_keys_merkle_num[128];
-    signal {binary} s2_keys_merkle_ternary[128][10][2];
+    signal {binary} s2_keys_merkle_bits[128][9][2];
     for (var q=0; q<128; q++) {
         // Calculate merkle root for s2 vals
-        for(var i = 0; i < 15; i++) { s2_keys_merkle[q][i] <== queriesFRI[q][i]; }
-        s2_keys_merkle_num[q] <== Bits2Num(15)(s2_keys_merkle[q]);
-        s2_keys_merkle_ternary[q] <== Num2Ternary(10)(s2_keys_merkle_num[q]);
-        VerifyMerkleHash(3, 16, 3, 10)(s2_vals_p[q], s2_siblings[q], s2_keys_merkle_ternary[q], s2_root, enabled);
+
+        for(var j = 0; j < 9; j++) {
+            for(var k = 0; k < 2; k++) {
+                if (k + j * 2 >= 17) {
+                    s2_keys_merkle_bits[q][j][k] <== 0;
+                } else {
+                    s2_keys_merkle_bits[q][j][k] <== queriesFRI[q][j*2 + k];
+                }
+            }
+        }
+        VerifyMerkleHash(3, 8, 4, 9)(s2_vals_p[q], s2_siblings[q], s2_keys_merkle_bits[q], s2_root, enabled);
     }
-    signal {binary} s3_keys_merkle[128][11];
-    signal s3_keys_merkle_num[128];
-    signal {binary} s3_keys_merkle_ternary[128][7][2];
+    signal {binary} s3_keys_merkle_bits[128][7][2];
     for (var q=0; q<128; q++) {
         // Calculate merkle root for s3 vals
-        for(var i = 0; i < 11; i++) { s3_keys_merkle[q][i] <== queriesFRI[q][i]; }
-        s3_keys_merkle_num[q] <== Bits2Num(11)(s3_keys_merkle[q]);
-        s3_keys_merkle_ternary[q] <== Num2Ternary(7)(s3_keys_merkle_num[q]);
-        VerifyMerkleHash(3, 16, 3, 7)(s3_vals_p[q], s3_siblings[q], s3_keys_merkle_ternary[q], s3_root, enabled);
+
+        for(var j = 0; j < 7; j++) {
+            for(var k = 0; k < 2; k++) {
+                if (k + j * 2 >= 14) {
+                    s3_keys_merkle_bits[q][j][k] <== 0;
+                } else {
+                    s3_keys_merkle_bits[q][j][k] <== queriesFRI[q][j*2 + k];
+                }
+            }
+        }
+        VerifyMerkleHash(3, 8, 4, 7)(s3_vals_p[q], s3_siblings[q], s3_keys_merkle_bits[q], s3_root, enabled);
     }
-    signal {binary} s4_keys_merkle[128][8];
-    signal s4_keys_merkle_num[128];
-    signal {binary} s4_keys_merkle_ternary[128][6][2];
+    signal {binary} s4_keys_merkle_bits[128][6][2];
     for (var q=0; q<128; q++) {
         // Calculate merkle root for s4 vals
-        for(var i = 0; i < 8; i++) { s4_keys_merkle[q][i] <== queriesFRI[q][i]; }
-        s4_keys_merkle_num[q] <== Bits2Num(8)(s4_keys_merkle[q]);
-        s4_keys_merkle_ternary[q] <== Num2Ternary(6)(s4_keys_merkle_num[q]);
-        VerifyMerkleHash(3, 8, 3, 6)(s4_vals_p[q], s4_siblings[q], s4_keys_merkle_ternary[q], s4_root, enabled);
+
+        for(var j = 0; j < 6; j++) {
+            for(var k = 0; k < 2; k++) {
+                if (k + j * 2 >= 11) {
+                    s4_keys_merkle_bits[q][j][k] <== 0;
+                } else {
+                    s4_keys_merkle_bits[q][j][k] <== queriesFRI[q][j*2 + k];
+                }
+            }
+        }
+        VerifyMerkleHash(3, 8, 4, 6)(s4_vals_p[q], s4_siblings[q], s4_keys_merkle_bits[q], s4_root, enabled);
     }
-    signal {binary} s5_keys_merkle[128][5];
-    signal s5_keys_merkle_num[128];
-    signal {binary} s5_keys_merkle_ternary[128][4][2];
+    signal {binary} s5_keys_merkle_bits[128][4][2];
     for (var q=0; q<128; q++) {
         // Calculate merkle root for s5 vals
-        for(var i = 0; i < 5; i++) { s5_keys_merkle[q][i] <== queriesFRI[q][i]; }
-        s5_keys_merkle_num[q] <== Bits2Num(5)(s5_keys_merkle[q]);
-        s5_keys_merkle_ternary[q] <== Num2Ternary(4)(s5_keys_merkle_num[q]);
-        VerifyMerkleHash(3, 8, 3, 4)(s5_vals_p[q], s5_siblings[q], s5_keys_merkle_ternary[q], s5_root, enabled);
+
+        for(var j = 0; j < 4; j++) {
+            for(var k = 0; k < 2; k++) {
+                if (k + j * 2 >= 8) {
+                    s5_keys_merkle_bits[q][j][k] <== 0;
+                } else {
+                    s5_keys_merkle_bits[q][j][k] <== queriesFRI[q][j*2 + k];
+                }
+            }
+        }
+        VerifyMerkleHash(3, 8, 4, 4)(s5_vals_p[q], s5_siblings[q], s5_keys_merkle_bits[q], s5_root, enabled);
+    }
+    signal {binary} s6_keys_merkle_bits[128][3][2];
+    for (var q=0; q<128; q++) {
+        // Calculate merkle root for s6 vals
+
+        for(var j = 0; j < 3; j++) {
+            for(var k = 0; k < 2; k++) {
+                if (k + j * 2 >= 5) {
+                    s6_keys_merkle_bits[q][j][k] <== 0;
+                } else {
+                    s6_keys_merkle_bits[q][j][k] <== queriesFRI[q][j*2 + k];
+                }
+            }
+        }
+        VerifyMerkleHash(3, 8, 4, 3)(s6_vals_p[q], s6_siblings[q], s6_keys_merkle_bits[q], s6_root, enabled);
     }
         
 
@@ -1365,17 +1383,18 @@ template StarkVerifier0() {
     ///////////
     // Verify FRI Polinomial
     ///////////
-    signal {binary} s1_queriesFRI[128][19];
-    signal {binary} s2_queriesFRI[128][15];
-    signal {binary} s3_queriesFRI[128][11];
-    signal {binary} s4_queriesFRI[128][8];
-    signal {binary} s5_queriesFRI[128][5];
+    signal {binary} s1_queriesFRI[128][20];
+    signal {binary} s2_queriesFRI[128][17];
+    signal {binary} s3_queriesFRI[128][14];
+    signal {binary} s4_queriesFRI[128][11];
+    signal {binary} s5_queriesFRI[128][8];
+    signal {binary} s6_queriesFRI[128][5];
 
     for (var q=0; q<128; q++) {
       
         // Verify that the query is properly constructed. This is done by checking that the linear combination of the set of 
         // polynomials committed during the different rounds evaluated at z matches with the commitment of the FRI polynomial
-        VerifyQuery0(23, 19)(queriesFRI[q], queryVals[q], s1_vals_p[q], enabled);
+        VerifyQuery0(23, 20)(queriesFRI[q], queryVals[q], s1_vals_p[q], enabled);
 
         ///////////
         // Verify FRI construction
@@ -1385,24 +1404,28 @@ template StarkVerifier0() {
         // Remember that if the step between polynomials is b = 2^l, the next polynomial p_(i+1) will have degree deg(p_i) / b
 
         // Check S1
-        for(var i = 0; i < 19; i++) { s1_queriesFRI[q][i] <== queriesFRI[q][i]; }  
-        VerifyFRI0(23, 23, 19, 15, 2635249152773512046)(s1_queriesFRI[q], challengesFRISteps[1], s1_vals_p[q], s2_vals_p[q], enabled);
+        for(var i = 0; i < 20; i++) { s1_queriesFRI[q][i] <== queriesFRI[q][i]; }  
+        VerifyFRI0(23, 23, 20, 17, 2635249152773512046)(s1_queriesFRI[q], challengesFRISteps[1], s1_vals_p[q], s2_vals_p[q], enabled);
 
         // Check S2
-        for(var i = 0; i < 15; i++) { s2_queriesFRI[q][i] <== queriesFRI[q][i]; }  
-        VerifyFRI0(23, 19, 15, 11, 11131999729878195124)(s2_queriesFRI[q], challengesFRISteps[2], s2_vals_p[q], s3_vals_p[q], enabled);
+        for(var i = 0; i < 17; i++) { s2_queriesFRI[q][i] <== queriesFRI[q][i]; }  
+        VerifyFRI0(23, 20, 17, 14, 12421013511830570338)(s2_queriesFRI[q], challengesFRISteps[2], s2_vals_p[q], s3_vals_p[q], enabled);
 
         // Check S3
-        for(var i = 0; i < 11; i++) { s3_queriesFRI[q][i] <== queriesFRI[q][i]; }  
-        VerifyFRI0(23, 15, 11, 8, 16627473974463641638)(s3_queriesFRI[q], challengesFRISteps[3], s3_vals_p[q], s4_vals_p[q], enabled);
+        for(var i = 0; i < 14; i++) { s3_queriesFRI[q][i] <== queriesFRI[q][i]; }  
+        VerifyFRI0(23, 17, 14, 11, 11143297345130450484)(s3_queriesFRI[q], challengesFRISteps[3], s3_vals_p[q], s4_vals_p[q], enabled);
 
         // Check S4
-        for(var i = 0; i < 8; i++) { s4_queriesFRI[q][i] <== queriesFRI[q][i]; }  
-        VerifyFRI0(23, 11, 8, 5, 140704680260498080)(s4_queriesFRI[q], challengesFRISteps[4], s4_vals_p[q], s5_vals_p[q], enabled);
+        for(var i = 0; i < 11; i++) { s4_queriesFRI[q][i] <== queriesFRI[q][i]; }  
+        VerifyFRI0(23, 14, 11, 8, 1138102428757299658)(s4_queriesFRI[q], challengesFRISteps[4], s4_vals_p[q], s5_vals_p[q], enabled);
 
         // Check S5
-        for(var i = 0; i < 5; i++) { s5_queriesFRI[q][i] <== queriesFRI[q][i]; }  
-        VerifyFRI0(23, 8, 5, 0, 10193707927880991676)(s5_queriesFRI[q], challengesFRISteps[5], s5_vals_p[q], finalPol, enabled);
+        for(var i = 0; i < 8; i++) { s5_queriesFRI[q][i] <== queriesFRI[q][i]; }  
+        VerifyFRI0(23, 11, 8, 5, 140704680260498080)(s5_queriesFRI[q], challengesFRISteps[5], s5_vals_p[q], s6_vals_p[q], enabled);
+
+        // Check S6
+        for(var i = 0; i < 5; i++) { s6_queriesFRI[q][i] <== queriesFRI[q][i]; }  
+        VerifyFRI0(23, 8, 5, 0, 10193707927880991676)(s6_queriesFRI[q], challengesFRISteps[6], s6_vals_p[q], finalPol, enabled);
     }
 
     VerifyFinalPol0()(finalPol, enabled);

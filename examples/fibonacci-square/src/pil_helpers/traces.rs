@@ -18,6 +18,8 @@ type FieldExtension<F> = [F; 3];
 
 pub const PILOUT_HASH: &str = "7ccecda867483cf9f137fc5110e9be1b9f93ed0ae7fce6d2808da1a8ffbf6dfd";
 
+pub const MERKLE_TREE_ARITY: u64 = 4;
+
 //AIRGROUP CONSTANTS
 
 pub const FIBO_CPU_AIRGROUP_ID: usize = 0;

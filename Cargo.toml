@@ -17,7 +17,6 @@ members = [
     "proofman",
     "macros",
     "provers/starks-lib-c",
-    "transcript",
     "witness",
     "util",
     "verifier",
@@ -37,7 +36,7 @@ members = [
     # won't build with a fresh clone
     "examples/fibonacci-square",
     "examples/test-recursive-c12",
-    "examples/test-recursive-c36",
+    "examples/test-recursive",
     "examples/test-recursive-c42",
     "macros-test",
 ]

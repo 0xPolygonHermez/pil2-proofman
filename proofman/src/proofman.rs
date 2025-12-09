@@ -1,6 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use libloading::{Library, Symbol};
-use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
+use fields::{ExtensionField, Transcript, PrimeField64, GoldilocksQuinticExtension};
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
     DebugInfo, MemoryHandler, MpiCtx, PackedInfo, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx,
@@ -44,8 +44,6 @@ use std::{
     path::{PathBuf, Path},
     sync::Arc,
 };
-
-use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
@@ -721,14 +719,14 @@ where
 
         self.exec()?;
 
-        let transcript = FFITranscript::new(2, true);
+        let mut transcript = Transcript::new();
         let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
-        transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
+        transcript.put(&dummy_element);
 
-        let global_challenge = [F::ZERO; 3];
-        transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
-        self.pctx.set_global_challenge(2, &global_challenge);
-        transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
+        let mut global_challenge = [F::ZERO; 3];
+        transcript.get_field(&mut global_challenge);
+        self.pctx.set_global_challenge(2, &mut global_challenge);
+        transcript.put(&dummy_element);
 
         let instances = self.pctx.dctx_get_instances();
         let my_instances = self.pctx.dctx_get_process_instances();
@@ -3130,6 +3128,7 @@ where
             max_prover_recursive2_buffer_size,
             max_pinned_proof_size,
             sctx.max_n_bits_ext as u64,
+            pctx.global_info.merkle_tree_arity as u64,
         );
 
         initialize_setup_info(pctx, sctx, setups_vadcop, &d_buffers, aggregation, packed_info, gpu_params)?;
@@ -3450,7 +3449,7 @@ where
         let air_values = &pctx.get_air_instance_air_values(airgroup_id, air_id, air_instance_id)?;
 
         commit_witness_c(
-            3,
+            setup.stark_info.stark_struct.merkle_tree_arity,
             setup.stark_info.stark_struct.n_bits,
             setup.stark_info.stark_struct.n_bits_ext,
             *setup.stark_info.map_sections_n.get("cm1").unwrap(),

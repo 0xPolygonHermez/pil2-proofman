@@ -227,38 +227,38 @@ pub fn stark_verify(
     let mut zi = Vec::new();
 
     let mut transcript = Transcript::new();
-    transcript.put(&mut root_c.clone());
+    transcript.put(&root_c.clone());
     if n_publics > 0 {
         if !verifier_info.hash_commits {
-            transcript.put(&mut publics);
+            transcript.put(&publics);
         } else {
             let mut transcript_publics = Transcript::new();
-            transcript_publics.put(&mut publics);
-            let mut hash = transcript_publics.get_state();
-            transcript.put(&mut hash);
+            transcript_publics.put(&publics);
+            let hash = transcript_publics.get_state();
+            transcript.put(&hash);
         }
     }
-    transcript.put(&mut roots[0]);
+    transcript.put(&roots[0]);
     transcript.get_field(&mut challenges[0].value);
     transcript.get_field(&mut challenges[1].value);
 
-    transcript.put(&mut roots[1]);
+    transcript.put(&roots[1]);
     transcript.get_field(&mut challenges[2].value);
-    transcript.put(&mut roots[2]);
+    transcript.put(&roots[2]);
 
     transcript.get_field(&mut challenges[3].value);
 
     if !verifier_info.hash_commits {
         for i in 0..verifier_info.n_evals {
-            transcript.put(&mut evals[i as usize].value);
+            transcript.put(&evals[i as usize].value);
         }
     } else {
         let mut transcript_evals = Transcript::new();
         for i in 0..verifier_info.n_evals {
-            transcript_evals.put(&mut evals[i as usize].value);
+            transcript_evals.put(&evals[i as usize].value);
         }
-        let mut hash = transcript_evals.get_state();
-        transcript.put(&mut hash);
+        let hash = transcript_evals.get_state();
+        transcript.put(&hash);
     }
 
     transcript.get_field(&mut challenges[4].value);
@@ -269,20 +269,20 @@ pub fn stark_verify(
         transcript.get_field(&mut challenges[c].value);
         c += 1;
         if i < verifier_info.n_fri_steps - 1 {
-            transcript.put(&mut roots_fri[i as usize]);
+            transcript.put(&roots_fri[i as usize]);
         } else {
             let final_pol_size = 1 << verifier_info.fri_steps[i as usize];
             if !verifier_info.hash_commits {
                 for j in 0..final_pol_size {
-                    transcript.put(&mut final_pol[j as usize].value);
+                    transcript.put(&final_pol[j as usize].value);
                 }
             } else {
                 let mut transcript_final_pol = Transcript::new();
                 for j in 0..final_pol_size {
-                    transcript_final_pol.put(&mut final_pol[j as usize].value);
+                    transcript_final_pol.put(&final_pol[j as usize].value);
                 }
-                let mut hash = transcript_final_pol.get_state();
-                transcript.put(&mut hash);
+                let hash = transcript_final_pol.get_state();
+                transcript.put(&hash);
             }
         }
     }
@@ -290,7 +290,7 @@ pub fn stark_verify(
     transcript.get_field(&mut challenges[c].value);
     let mut transcript_permutation = Transcript::new();
     let last_challenge_index = challenges.len() - 1;
-    transcript_permutation.put(&mut challenges[last_challenge_index].value);
+    transcript_permutation.put(&challenges[last_challenge_index].value);
     let fri_queries = transcript_permutation.get_permutations(verifier_info.n_fri_queries, verifier_info.fri_steps[0]);
 
     let xi_challenge = challenges[verifier_info.n_challenges as usize - 3];
