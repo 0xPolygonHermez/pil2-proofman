@@ -50,9 +50,9 @@ where
             values_contributions[*instance_id].lock().expect("Missing values_contribution").clone();
         values_to_hash[4..8].copy_from_slice(&root_contribution[..4]);
 
-        let mut input: [F; 16] = [F::ZERO; 16];
-        input[..values_to_hash.len()].copy_from_slice(&values_to_hash);
-        let contribution = poseidon2_hash::<F, Poseidon16, 16>(&input);
+        let mut hash: Transcript<F, Poseidon16, 16> = Transcript::new();
+        hash.put(&values_to_hash);
+        let contribution = hash.get_state();
 
         if pctx.global_info.curve != CurveType::None {
             for (i, v) in contribution.iter().enumerate().take(10) {

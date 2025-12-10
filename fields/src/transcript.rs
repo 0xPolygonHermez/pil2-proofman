@@ -9,6 +9,12 @@ pub struct Transcript<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize>
     _marker: std::marker::PhantomData<C>,
 }
 
+impl<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize> Default for Transcript<F, C, W> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize> Transcript<F, C, W> {
     pub fn new() -> Self {
         Transcript {
@@ -59,8 +65,8 @@ impl<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize> Transcript<F, C,
         if self.pending_cursor > 0 {
             self.update_state();
         }
-        let mut state = Vec::with_capacity(4);
-        for i in 0..4 {
+        let mut state = Vec::with_capacity(W);
+        for i in 0..W {
             state.push(self.state[i]);
         }
         state

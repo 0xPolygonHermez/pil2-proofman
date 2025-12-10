@@ -78,8 +78,8 @@ pub fn poseidon2_hash<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize>
 
     for r in 0..C::HALF_ROUNDS {
         let mut c_slice = [F::ZERO; W];
-        for i in 0..W {
-            c_slice[i] = F::from_u64(C::RC[r * W + i]);
+        for (i, c) in c_slice.iter_mut().enumerate() {
+            *c = F::from_u64(C::RC[r * W + i]);
         }
         pow7add::<F, W>(&mut state, &c_slice);
         matmul_external::<F, W>(&mut state);
@@ -89,13 +89,13 @@ pub fn poseidon2_hash<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize>
         state[0] += F::from_u64(C::RC[C::HALF_ROUNDS * W + r]);
         state[0] = pow7(state[0]);
         let sum = add::<F, W>(&state);
-        prodadd::<F, W>(&mut state, &C::DIAG, sum);
+        prodadd::<F, W>(&mut state, C::DIAG, sum);
     }
 
     for r in 0..C::HALF_ROUNDS {
         let mut c_slice = [F::ZERO; W];
-        for i in 0..W {
-            c_slice[i] = F::from_u64(C::RC[C::HALF_ROUNDS * W + C::N_PARTIAL_ROUNDS + r * W + i]);
+        for (i, c) in c_slice.iter_mut().enumerate() {
+            *c = F::from_u64(C::RC[C::HALF_ROUNDS * W + C::N_PARTIAL_ROUNDS + r * W + i]);
         }
         pow7add::<F, W>(&mut state, &c_slice);
         matmul_external::<F, W>(&mut state);
@@ -312,7 +312,16 @@ mod tests {
 
     #[test]
     pub fn test_poseidon2_8() {
-        let mut input = [Goldilocks::new(0), Goldilocks::new(1), Goldilocks::new(2), Goldilocks::new(3), Goldilocks::new(4), Goldilocks::new(5), Goldilocks::new(6), Goldilocks::new(7)];
+        let mut input = [
+            Goldilocks::new(0),
+            Goldilocks::new(1),
+            Goldilocks::new(2),
+            Goldilocks::new(3),
+            Goldilocks::new(4),
+            Goldilocks::new(5),
+            Goldilocks::new(6),
+            Goldilocks::new(7),
+        ];
         let output = poseidon2_hash::<Goldilocks, Poseidon8, 8>(&mut input);
 
         assert_eq!(output[0], Goldilocks::new(14266028122062624699));
@@ -356,6 +365,4 @@ mod tests {
         assert_eq!(output[10], Goldilocks::new(17025428646788054631));
         assert_eq!(output[11], Goldilocks::new(7660698892044183277));
     }
-
-   
 }
