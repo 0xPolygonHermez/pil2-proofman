@@ -190,8 +190,18 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
 
     Goldilocks::Element *challenge = &challenges[(starkInfo.challengesMap.size() + starkInfo.starkStruct.steps.size()) * FIELD_EXTENSION];
 
+    Goldilocks::Element nonce = Goldilocks::fromString(jproof["nonce"]);
+    Goldilocks::Element result[4];
+    Goldilocks::Element x[4] = {challenge[0], challenge[1], challenge[2], nonce};
+    Poseidon2GoldilocksGrinding::hash_full_result_seq(result, &x[0]);
+    if (Goldilocks::toU64(result[0]) >= (1ULL << (64 - starkInfo.starkStruct.powBits))) {
+        zklog.error("starkVerify: PoW verification failed");
+        return false;
+    }
+
     TranscriptType transcriptPermutation(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom);
-    transcriptPermutation.put(challenge, FIELD_EXTENSION);
+    transcriptPermutation.put(challenge, FIELD_EXTENSION);    
+    transcriptPermutation.put(&nonce, 1);
     transcriptPermutation.getPermutations(friQueries, starkInfo.starkStruct.nQueries, starkInfo.starkStruct.steps[0].nBits);
 
     Goldilocks::Element constPolsVals[starkInfo.nConstants * starkInfo.starkStruct.nQueries];

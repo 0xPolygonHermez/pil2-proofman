@@ -241,8 +241,12 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     uint64_t friQueries[setupCtx.starkInfo.starkStruct.nQueries];
 
+    uint64_t nonce;
+    Poseidon2GoldilocksGrinding::grinding(nonce, (uint64_t *)challenge, setupCtx.starkInfo.starkStruct.powBits);
+
     TranscriptGL transcriptPermutation(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
     starks.addTranscriptGL(transcriptPermutation, challenge, FIELD_EXTENSION);
+    starks.addTranscriptGL(transcriptPermutation, (Goldilocks::Element *)&nonce, 1);
     transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits);
 
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
@@ -261,6 +265,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     proof.proof.setEvals(params.evals);
     proof.proof.setAirgroupValues(params.airgroupValues);
     proof.proof.setAirValues(params.airValues);
+    proof.proof.setNonce(nonce);
 
     proof.proof.proof2pointer(proofBuffer);
 

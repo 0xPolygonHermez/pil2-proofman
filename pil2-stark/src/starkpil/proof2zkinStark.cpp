@@ -190,6 +190,9 @@ json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
             j["finalPol"][i][l] = std::to_string(pointer[p++]);
         }
     }
+
+    j["nonce"] = std::to_string(pointer[p++]);
+    
     return j;
 }
 

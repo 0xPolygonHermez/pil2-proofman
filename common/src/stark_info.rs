@@ -39,6 +39,8 @@ pub struct StarkStruct {
     pub merkle_tree_custom: bool,
     #[serde(rename = "steps")]
     pub steps: Vec<StepStruct>,
+    #[serde(rename = "powBits")]
+    pub pow_bits: u64,
 }
 
 #[allow(dead_code)]

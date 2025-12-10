@@ -83,6 +83,7 @@ public:
     uint64_t merkleTreeArity;
     bool merkleTreeCustom;
     vector<StepStruct> steps;
+    uint64_t powBits;
 };
 
 opType string2opType (const string s);

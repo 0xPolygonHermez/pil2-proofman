@@ -27,6 +27,7 @@ void StarkInfo::load(json j)
     starkStruct.nBitsExt = j["starkStruct"]["nBitsExt"];
     starkStruct.nQueries = j["starkStruct"]["nQueries"];
     starkStruct.verificationHashType = j["starkStruct"]["verificationHashType"];
+    starkStruct.powBits = j["starkStruct"]["powBits"];
     if(starkStruct.verificationHashType == "BN128") {
         if(j["starkStruct"].contains("merkleTreeArity")) {
             starkStruct.merkleTreeArity = j["starkStruct"]["merkleTreeArity"];
@@ -344,6 +345,7 @@ void StarkInfo::getProofSize() {
     }
 
     proofSize += (1 << starkStruct.steps[starkStruct.steps.size()-1].nBits) * FIELD_EXTENSION;
+    proofSize += 1; // Nonce
 }
 
 uint64_t StarkInfo::getPinnedProofSize() {
@@ -395,6 +397,7 @@ uint64_t StarkInfo::getPinnedProofSize() {
 
     uint64_t finalPolDegree = 1 << starkStruct.steps[starkStruct.steps.size() - 1].nBits;
     pinnedProofSize += finalPolDegree * FIELD_EXTENSION; // Final polynomial values
+    pinnedProofSize += 1; // Nonce
     return pinnedProofSize;
 }
 
@@ -457,6 +460,12 @@ void StarkInfo::setMapOffsets() {
 
         mapOffsets[std::make_pair("challenge", false)] = mapTotalN;
         mapTotalN += HASH_SIZE;
+
+        mapOffsets[std::make_pair("nonce", false)] = mapTotalN;
+        mapTotalN += 1;
+
+        mapOffsets[std::make_pair("input_hash_nonce", false)] = mapTotalN;
+        mapTotalN += Poseidon2GoldilocksGrinding::HASH_SIZE;
 
         mapOffsets[std::make_pair("evals", false)] = mapTotalN;
         mapTotalN += evMap.size() * FIELD_EXTENSION;

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::{MpiCtx, ProofmanError};
 use borsh::{BorshDeserialize, BorshSerialize};
 
-use fields::{PrimeField64, Transcript};
+use fields::{PrimeField64, Transcript, Poseidon16};
 
 use crate::{
     initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode, StepsParams,
@@ -569,7 +569,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         global_challenge_guard[1] = global_challenge[1];
         global_challenge_guard[2] = global_challenge[2];
 
-        let mut transcript = Transcript::new();
+        let mut transcript: Transcript<F, Poseidon16, 16> = Transcript::new();
 
         transcript.put(global_challenge);
         let mut challenges_guard = self.challenges.values.write().unwrap();

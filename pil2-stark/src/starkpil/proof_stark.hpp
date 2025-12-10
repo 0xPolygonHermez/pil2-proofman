@@ -140,6 +140,7 @@ public:
     std::vector<std::vector<Goldilocks::Element>> airgroupValues;
     std::vector<std::vector<Goldilocks::Element>> airValues;
     std::vector<std::string> customCommits;
+    uint64_t nonce;
     Proofs(StarkInfo &starkInfo_) :
         starkInfo(starkInfo_),
         fri(starkInfo_),
@@ -226,7 +227,10 @@ public:
             }
         }
     }
-
+    
+    void setNonce(uint64_t _nonce) {
+        nonce = _nonce;
+    }
 
     uint64_t *proof2pointer(uint64_t *pointer) {
         uint64_t p = 0;
@@ -368,6 +372,8 @@ public:
             }
         }
 
+        pointer[p++] = nonce;
+
         return pointer;
     }
 
@@ -482,6 +488,7 @@ public:
         }
 
         // TODO: LAST LEVELS IN JSON
+        // TODO: POW BITS
 
         for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
             if(nFieldElements == 1) {

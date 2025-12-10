@@ -2602,7 +2602,7 @@ TEST(GOLDILOCKS_TEST, grinding_cpu)
     ASSERT_NE(result_index, UINT64_MAX);
 
     // Verify the hash at result_index satisfies the grinding requirement
-    uint64_t level = (1ULL << (64 - n_bits)) - 1ULL;
+    uint64_t level = (1ULL << (64 - n_bits));
     
     // Compute the hash with the found nonce
     Goldilocks::Element x[4] = {in[0], in[1], in[2], result_index};

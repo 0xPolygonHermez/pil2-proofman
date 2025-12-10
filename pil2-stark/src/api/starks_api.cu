@@ -115,7 +115,10 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
                 exit(1);
         }
 
-        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus, arity);
+        Poseidon2GoldilocksGPUGrinding::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+        
+
+        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus);
 
 
 #ifdef NUMA_NODE
@@ -200,7 +203,9 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
                 exit(1);
         }
 
-        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus, arity);
+        Poseidon2GoldilocksGPUGrinding::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+        
+        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus);
         return (void *)d_buffers;
     }
 }
@@ -433,10 +438,6 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
     uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
-    uint64_t offsetAirgroupValues = setupCtx->starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
-    uint64_t offsetAirValues = setupCtx->starkInfo.mapOffsets[std::make_pair("airvalues", false)];
-    uint64_t offsetProofValues = setupCtx->starkInfo.mapOffsets[std::make_pair("proofvalues", false)];
-    uint64_t offsetChallenge = setupCtx->starkInfo.mapOffsets[std::make_pair("challenge", false)];
 
     if (!skipRecalculation) {
         uint64_t total_size = air_instance_info->is_packed ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : N * nCols * sizeof(Goldilocks::Element);

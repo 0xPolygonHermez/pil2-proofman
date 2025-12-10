@@ -1,49 +1,50 @@
-use crate::{poseidon2_hash, PrimeField64, SPONGE_WIDTH, RATE};
+use crate::{poseidon2_hash, PrimeField64, Poseidon2Constants};
 
-#[derive(Default)]
-pub struct Transcript<F: PrimeField64> {
-    state: [F; SPONGE_WIDTH],
-    pending: [F; RATE],
-    out: [F; SPONGE_WIDTH],
+pub struct Transcript<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize> {
+    state: [F; W],
+    pending: Vec<F>,
+    out: [F; W],
     pending_cursor: usize,
     out_cursor: usize,
+    _marker: std::marker::PhantomData<C>,
 }
 
-impl<F: PrimeField64> Transcript<F> {
+impl<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize> Transcript<F, C, W> {
     pub fn new() -> Self {
         Transcript {
-            state: [F::ZERO; SPONGE_WIDTH],
-            pending: [F::ZERO; RATE],
-            out: [F::ZERO; SPONGE_WIDTH],
+            state: [F::ZERO; W],
+            pending: vec![F::ZERO; W - 4],
+            out: [F::ZERO; W],
             pending_cursor: 0,
             out_cursor: 0,
+            _marker: std::marker::PhantomData,
         }
     }
 
     pub fn update_state(&mut self) {
-        while self.pending_cursor < RATE {
+        while self.pending_cursor < (W - 4) {
             self.pending[self.pending_cursor] = F::ZERO;
             self.pending_cursor += 1;
         }
 
-        let mut inputs = vec![F::ZERO; SPONGE_WIDTH];
-        inputs[..RATE].copy_from_slice(&self.pending);
-        inputs[RATE..SPONGE_WIDTH].copy_from_slice(&self.state[..(SPONGE_WIDTH - RATE)]);
-        let output = poseidon2_hash(&inputs);
-        self.out_cursor = SPONGE_WIDTH;
-        for i in 0..RATE {
+        let mut inputs: [F; W] = [F::ZERO; W];
+        inputs[..W - 4].copy_from_slice(&self.pending);
+        inputs[W - 4..W].copy_from_slice(&self.state[..(W - (W - 4))]);
+        let output = poseidon2_hash::<F, C, W>(&inputs);
+        self.out_cursor = W;
+        for i in 0..W - 4 {
             self.pending[i] = F::ZERO;
         }
         self.pending_cursor = 0;
-        self.state.copy_from_slice(&output[..SPONGE_WIDTH]);
-        self.out.copy_from_slice(&output[..SPONGE_WIDTH]);
+        self.state.copy_from_slice(&output[..W]);
+        self.out.copy_from_slice(&output[..W]);
     }
 
     pub fn add1(&mut self, input: F) {
         self.pending[self.pending_cursor] = input;
         self.pending_cursor += 1;
         self.out_cursor = 0;
-        if self.pending_cursor == RATE {
+        if self.pending_cursor == W - 4 {
             self.update_state();
         }
     }
@@ -69,7 +70,7 @@ impl<F: PrimeField64> Transcript<F> {
         if self.out_cursor == 0 {
             self.update_state();
         }
-        let val = self.out[(SPONGE_WIDTH - self.out_cursor) % SPONGE_WIDTH];
+        let val = self.out[(W - self.out_cursor) % W];
         self.out_cursor -= 1;
         val
     }

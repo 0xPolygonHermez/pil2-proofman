@@ -1,4 +1,7 @@
-use fields::{intt_tiny, verify_fold, verify_mt, partial_merkle_tree, CubicExtensionField, Field, Goldilocks, Transcript};
+use fields::{
+    intt_tiny, verify_fold, verify_mt, partial_merkle_tree, CubicExtensionField, Field, Goldilocks, Transcript,
+    Poseidon16, Poseidon4, poseidon2_hash, PrimeField64,
+};
 use bytemuck::cast_slice;
 
 #[allow(dead_code)]
@@ -28,6 +31,7 @@ pub struct VerifierInfo {
     pub q_deg: u64,
     pub q_index: u64,
     pub last_level_verification: u64,
+    pub pow_bits: u64,
 }
 
 #[allow(clippy::type_complexity)]
@@ -228,6 +232,9 @@ pub fn stark_verify(
         final_pol.push(pol);
     }
 
+    let nonce = Goldilocks::new(proof[p as usize]);
+    p += 1;
+
     debug_assert!(p == proof.len() as u64, "Proof length mismatch: expected {}, got {}", p, proof.len());
 
     let mut challenges = vec![
@@ -238,13 +245,13 @@ pub fn stark_verify(
     let mut xdivxsub = Vec::new();
     let mut zi = Vec::new();
 
-    let mut transcript = Transcript::new();
+    let mut transcript: Transcript<Goldilocks, Poseidon16, 16> = Transcript::new();
     transcript.put(&root_c.clone());
     if n_publics > 0 {
         if !verifier_info.hash_commits {
             transcript.put(&publics);
         } else {
-            let mut transcript_publics = Transcript::new();
+            let mut transcript_publics: Transcript<Goldilocks, Poseidon16, 16> = Transcript::new();
             transcript_publics.put(&publics);
             let hash = transcript_publics.get_state();
             transcript.put(&hash);
@@ -265,7 +272,7 @@ pub fn stark_verify(
             transcript.put(&evals[i as usize].value);
         }
     } else {
-        let mut transcript_evals = Transcript::new();
+        let mut transcript_evals: Transcript<Goldilocks, Poseidon16, 16> = Transcript::new();
         for i in 0..verifier_info.n_evals {
             transcript_evals.put(&evals[i as usize].value);
         }
@@ -289,7 +296,7 @@ pub fn stark_verify(
                     transcript.put(&final_pol[j as usize].value);
                 }
             } else {
-                let mut transcript_final_pol = Transcript::new();
+                let mut transcript_final_pol: Transcript<Goldilocks, Poseidon16, 16> = Transcript::new();
                 for j in 0..final_pol_size {
                     transcript_final_pol.put(&final_pol[j as usize].value);
                 }
@@ -300,9 +307,20 @@ pub fn stark_verify(
     }
 
     transcript.get_field(&mut challenges[c].value);
-    let mut transcript_permutation = Transcript::new();
     let last_challenge_index = challenges.len() - 1;
+    let pow_hash = poseidon2_hash::<Goldilocks, Poseidon4, 4>(&[
+        challenges[last_challenge_index].value[0],
+        challenges[last_challenge_index].value[1],
+        challenges[last_challenge_index].value[2],
+        nonce,
+    ]);
+    if pow_hash[0].as_canonical_u64() >= 1 << (64 - verifier_info.pow_bits) {
+        tracing::error!("Proof of work verification failed");
+        return false;
+    }
+    let mut transcript_permutation: Transcript<Goldilocks, Poseidon16, 16> = Transcript::new();
     transcript_permutation.put(&challenges[last_challenge_index].value);
+    transcript_permutation.put(&[nonce]);
     let fri_queries = transcript_permutation.get_permutations(verifier_info.n_fri_queries, verifier_info.fri_steps[0]);
 
     let xi_challenge = challenges[verifier_info.n_challenges as usize - 3];
@@ -349,7 +367,7 @@ pub fn stark_verify(
     tracing::debug!("Verifying proof");
     for q in 0..verifier_info.n_fri_queries as usize {
         // 1) Fixed MT
-        if !verify_mt(
+        if !verify_mt::<Goldilocks, Poseidon16, 16>(
             &root_c,
             &s0_last_levels[0],
             &s0_siblings[q][0],
@@ -364,7 +382,7 @@ pub fn stark_verify(
 
         // 2) stage MTs
         for (s, root) in roots.iter().enumerate().take(verifier_info.n_stages as usize + 1) {
-            if !verify_mt(
+            if !verify_mt::<Goldilocks, Poseidon16, 16>(
                 root,
                 &s0_last_levels[s + 1],
                 &s0_siblings[q][s + 1],
@@ -381,7 +399,7 @@ pub fn stark_verify(
         // 3) FRI step MTs
         for s in 0..(verifier_info.n_fri_steps - 1) {
             let idx = fri_queries[q] % (1 << verifier_info.fri_steps[s as usize + 1]);
-            if !verify_mt(
+            if !verify_mt::<Goldilocks, Poseidon16, 16>(
                 &roots_fri[s as usize],
                 &last_levels_fri[s as usize],
                 &siblings_fri[q][s as usize],
@@ -449,8 +467,11 @@ pub fn stark_verify(
         }
 
         for s in 0..verifier_info.n_stages + 1 {
-            let computed_root =
-                partial_merkle_tree(&s0_last_levels[s as usize + 1], num_nodes_level, verifier_info.arity);
+            let computed_root = partial_merkle_tree::<Goldilocks, Poseidon16, 16>(
+                &s0_last_levels[s as usize + 1],
+                num_nodes_level,
+                verifier_info.arity,
+            );
             for i in 0..4 {
                 if computed_root[i] != roots[s as usize][i] {
                     tracing::error!("Stage {} Merkle tree root recomputation failed", s + 1);
@@ -459,7 +480,8 @@ pub fn stark_verify(
             }
         }
 
-        let computed_root_c = partial_merkle_tree(&s0_last_levels[0], num_nodes_level, verifier_info.arity);
+        let computed_root_c =
+            partial_merkle_tree::<Goldilocks, Poseidon16, 16>(&s0_last_levels[0], num_nodes_level, verifier_info.arity);
 
         for i in 0..4 {
             if computed_root_c[i] != root_c[i] {
@@ -473,7 +495,11 @@ pub fn stark_verify(
             while num_nodes_level > verifier_info.arity.pow(verifier_info.last_level_verification as u32) {
                 num_nodes_level = num_nodes_level.div_ceil(verifier_info.arity);
             }
-            let computed_root = partial_merkle_tree(&last_levels_fri[s as usize], num_nodes_level, verifier_info.arity);
+            let computed_root = partial_merkle_tree::<Goldilocks, Poseidon16, 16>(
+                &last_levels_fri[s as usize],
+                num_nodes_level,
+                verifier_info.arity,
+            );
             for i in 0..4 {
                 if computed_root[i] != roots_fri[s as usize][i] {
                     tracing::error!("Stage {} FRI Merkle tree root recomputation failed", s + 1);

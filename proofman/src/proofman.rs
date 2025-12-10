@@ -1,6 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use libloading::{Library, Symbol};
-use fields::{ExtensionField, Transcript, PrimeField64, GoldilocksQuinticExtension};
+use fields::{ExtensionField, Transcript, PrimeField64, GoldilocksQuinticExtension, Poseidon16};
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
     DebugInfo, MemoryHandler, MpiCtx, PackedInfo, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx,
@@ -719,7 +719,7 @@ where
 
         self.exec()?;
 
-        let mut transcript = Transcript::new();
+        let mut transcript: Transcript<F, Poseidon16, 16> = Transcript::new();
         let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
         transcript.put(&dummy_element);
 

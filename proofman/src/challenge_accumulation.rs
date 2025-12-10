@@ -1,6 +1,6 @@
 use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
 use proofman_common::{CurveType, ProofCtx};
-use fields::{poseidon2_hash, Transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64, SPONGE_WIDTH};
+use fields::{poseidon2_hash, Transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64, Poseidon16};
 use std::ops::Add;
 use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug};
 use std::sync::Mutex;
@@ -50,23 +50,24 @@ where
             values_contributions[*instance_id].lock().expect("Missing values_contribution").clone();
         values_to_hash[4..8].copy_from_slice(&root_contribution[..4]);
 
-        let mut input = vec![F::ZERO; 16];
+        let mut input: [F; 16] = [F::ZERO; 16];
         input[..values_to_hash.len()].copy_from_slice(&values_to_hash);
-        let contribution = poseidon2_hash(&input);
+        let contribution = poseidon2_hash::<F, Poseidon16, 16>(&input);
 
         if pctx.global_info.curve != CurveType::None {
             for (i, v) in contribution.iter().enumerate().take(10) {
                 values_row[i] = *v;
             }
         } else {
-            for (i, v) in contribution.iter().enumerate().take(SPONGE_WIDTH) {
+            for (i, v) in contribution.iter().enumerate().take(16) {
                 values_row[i] = *v;
             }
-            let n_hashes = contributions_size / SPONGE_WIDTH - 1;
+            let n_hashes = contributions_size / 16 - 1;
             for j in 0..n_hashes {
-                let input_slice = &mut values_row[(j * SPONGE_WIDTH)..((j + 1) * SPONGE_WIDTH)];
-                let output = poseidon2_hash(input_slice);
-                values_row[((j + 1) * SPONGE_WIDTH)..((j + 2) * SPONGE_WIDTH)].copy_from_slice(&output[..SPONGE_WIDTH]);
+                let mut input: [F; 16] = [F::ZERO; 16];
+                input.copy_from_slice(&values_row[(j * 16)..((j + 1) * 16)]);
+                let output = poseidon2_hash::<F, Poseidon16, 16>(&input);
+                values_row[((j + 1) * 16)..((j + 2) * 16)].copy_from_slice(&output[..16]);
             }
         }
     });
@@ -87,7 +88,7 @@ where
 {
     timer_start_info!(CALCULATE_GLOBAL_CHALLENGE);
 
-    let mut transcript = Transcript::new();
+    let mut transcript: Transcript<F, Poseidon16, 16> = Transcript::new();
 
     transcript.put(&pctx.get_publics());
 

@@ -1044,6 +1044,10 @@ void setProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, Goldilocks::
     initialOffset += setupCtx.starkInfo.airValuesSize;
     CHECKCUDAERR(cudaMemcpyAsync(&proof_buffer_pinned[initialOffset], d_fri_pol, finalPolDegree * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost, stream));
     initialOffset += finalPolDegree * FIELD_EXTENSION;
+
+    Goldilocks::Element *d_nonce = h_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("nonce", false)];
+    CHECKCUDAERR(cudaMemcpyAsync(&proof_buffer_pinned[initialOffset], d_nonce, sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost, stream));
+    initialOffset += 1;
 }
 
 void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, uint64_t *proof_buffer, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, std::string proofFile) {
@@ -1110,6 +1114,8 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, ui
     initialOffset += setupCtx.starkInfo.airValuesSize;
     Goldilocks::Element *finalPol = &proof_buffer_pinned[initialOffset];
     initialOffset += finalPolDegree * FIELD_EXTENSION;
+    Goldilocks::Element nonce = proof_buffer_pinned[initialOffset];
+    initialOffset += 1;
 
     uint64_t numSiblings = (uint64_t)ceil(setupCtx.starkInfo.starkStruct.nBitsExt / std::log2(arity)) - lastLevelVerification;
     uint64_t numSiblingsLevel = (arity - 1) * HASH_SIZE;
@@ -1164,6 +1170,7 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, ui
     proof.proof.setAirgroupValues(airgroupValues); 
     proof.proof.setAirValues(airValues);
     proof.proof.fri.setPol(finalPol, finalPolDegree);
+    proof.proof.setNonce(nonce.fe);
 
     proof.proof.proof2pointer(proof_buffer);
 
