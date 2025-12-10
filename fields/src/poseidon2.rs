@@ -254,7 +254,7 @@ pub fn verify_mt<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize>(
 
 #[cfg(test)]
 mod tests {
-    use crate::{Goldilocks, Poseidon16, Poseidon12, Poseidon4};
+    use crate::{Goldilocks, Poseidon16, Poseidon12, Poseidon4, Poseidon8};
 
     #[allow(unused_imports)]
     use super::*;
@@ -300,6 +300,32 @@ mod tests {
     }
 
     #[test]
+    pub fn test_poseidon2_4() {
+        let mut input = [Goldilocks::new(0), Goldilocks::new(1), Goldilocks::new(2), Goldilocks::new(3)];
+        let output = poseidon2_hash::<Goldilocks, Poseidon4, 4>(&mut input);
+
+        assert_eq!(output[0], Goldilocks::new(8466914293353944746));
+        assert_eq!(output[1], Goldilocks::new(9589318970755021278));
+        assert_eq!(output[2], Goldilocks::new(5769801005587200741));
+        assert_eq!(output[3], Goldilocks::new(17288820341814263849));
+    }
+
+    #[test]
+    pub fn test_poseidon2_8() {
+        let mut input = [Goldilocks::new(0), Goldilocks::new(1), Goldilocks::new(2), Goldilocks::new(3), Goldilocks::new(4), Goldilocks::new(5), Goldilocks::new(6), Goldilocks::new(7)];
+        let output = poseidon2_hash::<Goldilocks, Poseidon8, 8>(&mut input);
+
+        assert_eq!(output[0], Goldilocks::new(14266028122062624699));
+        assert_eq!(output[1], Goldilocks::new(5353147180106052723));
+        assert_eq!(output[2], Goldilocks::new(15203350112844181434));
+        assert_eq!(output[3], Goldilocks::new(17630919042639565165));
+        assert_eq!(output[4], Goldilocks::new(16601551015858213987));
+        assert_eq!(output[5], Goldilocks::new(10184091939013874068));
+        assert_eq!(output[6], Goldilocks::new(16774100645754596496));
+        assert_eq!(output[7], Goldilocks::new(12047415603622314780));
+    }
+
+    #[test]
     pub fn test_poseidon2_12() {
         let mut input = [
             Goldilocks::new(0),
@@ -331,14 +357,5 @@ mod tests {
         assert_eq!(output[11], Goldilocks::new(7660698892044183277));
     }
 
-    #[test]
-    pub fn test_poseidon2_4() {
-        let mut input = [Goldilocks::new(0), Goldilocks::new(1), Goldilocks::new(2), Goldilocks::new(3)];
-        let output = poseidon2_hash::<Goldilocks, Poseidon4, 4>(&mut input);
-
-        assert_eq!(output[0], Goldilocks::new(8466914293353944746));
-        assert_eq!(output[1], Goldilocks::new(9589318970755021278));
-        assert_eq!(output[2], Goldilocks::new(5769801005587200741));
-        assert_eq!(output[3], Goldilocks::new(17288820341814263849));
-    }
+   
 }

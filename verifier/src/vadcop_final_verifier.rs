@@ -1,4 +1,4 @@
-use fields::{Goldilocks, CubicExtensionField, Field};
+use fields::{Goldilocks, CubicExtensionField, Field, Poseidon16};
 use crate::{Boundary, VerifierInfo, stark_verify};
 
 #[rustfmt::skip]
@@ -4313,5 +4313,5 @@ pub fn verify(proof: &[u8], vk: &[u8]) -> bool {
     } else {
         proof
     };
-    stark_verify(proof_data, vk, &verifier_info(), q_verify, query_verify)
+    stark_verify::<Poseidon16, 16>(proof_data, vk, &verifier_info(), q_verify, query_verify)
 }
