@@ -200,13 +200,13 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_seq(Goldilocks::Eleme
 }
 
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2Goldilocks<SPONGE_WIDTH_T>::grinding(uint64_t &out_idx, const uint64_t* in, const uint32_t n_bits)
+void Poseidon2Goldilocks<SPONGE_WIDTH_T>::grinding(uint64_t &nonce, const uint64_t* in, const uint32_t n_bits)
 {
     uint64_t checkChunk = omp_get_max_threads() * 512;
     uint64_t level   = uint64_t(1) << (64 - n_bits);
     uint64_t* chunkIdxs = new uint64_t[omp_get_max_threads()];
     uint64_t offset = 0;
-    out_idx = UINT64_MAX;
+    nonce = UINT64_MAX;
 
     for(int i = 0; i < omp_get_max_threads(); ++i)
     {
@@ -235,17 +235,17 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::grinding(uint64_t &out_idx, const uint
         {
             if (chunkIdxs[i] != UINT64_MAX)
             {
-                out_idx = chunkIdxs[i];
+                nonce = chunkIdxs[i];
                 break;
             }
         }
 
-        if (out_idx != UINT64_MAX)
+        if (nonce != UINT64_MAX)
             break;
 
         offset += checkChunk;
     }
-    if(out_idx == UINT64_MAX)
+    if(nonce == UINT64_MAX)
     {
         throw std::runtime_error("Poseidon2Goldilocks::grinding: could not find a valid nonce");
     }

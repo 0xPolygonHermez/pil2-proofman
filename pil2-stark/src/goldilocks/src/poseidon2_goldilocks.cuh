@@ -14,13 +14,24 @@ extern __shared__ gl64_t scratchpad[];
 
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__global__ void linear_hash_gpu_coalesced_2(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t size, uint32_t num_rows);
+__global__ void linearHashGPU(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows);
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__global__ void linear_hash_gpu_coalesced_2_blocks(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows);
+__global__ void linearHashGPUTiles(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows);
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __global__ void hash_full_result_2(uint64_t * output, const uint64_t * input);
+
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
+__global__ void grinding_calc_(uint64_t *__restrict__ indxBlock, uint64_t *__restrict__ input, uint32_t n_bits, uint32_t hashes_per_thread, uint64_t offset);
+
+__global__ void grinding_check_(uint64_t* indx, uint64_t *__restrict__ indxBlock, uint32_t n_blocks);
+
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
+__global__ void hash_gpu_3(uint32_t nextN, uint32_t nextIndex, uint32_t pending, uint64_t *cursor);
+
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
+__global__ void hash_gpu_16(uint64_t* data, int N);
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void poseidon2_store(uint64_t *__restrict__ out, uint32_t col_stride, size_t row_stride);
@@ -45,10 +56,6 @@ __device__ __forceinline__ void poseidon2_hash_shared(gl64_t *out, const gl64_t 
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ void hash_one_2(gl64_t *state, gl64_t *const input, int tid);
-
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__global__ void grinding_calc_(uint64_t *__restrict__ indxBlock, uint64_t *__restrict__ input, uint32_t n_bits, uint32_t hashes_per_thread, uint64_t offset);
-__global__ void grinding_check_(uint64_t* indx, uint64_t *__restrict__ indxBlock, uint32_t n_blocks);
 
 __device__ __forceinline__ void pow7_2(gl64_t &x);
 
@@ -499,7 +506,7 @@ __global__ void hash_full_result_2(uint64_t * output, const uint64_t * input){
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__global__ void linear_hash_gpu_coalesced_2(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows)
+__global__ void linearHashGPU(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows)
 {
 #pragma unroll
     for (uint32_t i = 0; i < CAPACITY_T; i++)
@@ -510,7 +517,7 @@ __global__ void linear_hash_gpu_coalesced_2(uint64_t *__restrict__ output, uint6
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__global__ void linear_hash_gpu_coalesced_2_blocks(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows)
+__global__ void linearHashGPUTiles(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows)
 {
 #pragma unroll
     for (uint32_t i = 0; i < CAPACITY_T; i++)
@@ -527,11 +534,12 @@ __global__ void hash_gpu_3(uint32_t nextN, uint32_t nextIndex, uint32_t pending,
     if (tid >= nextN)
         return;
 
-    gl64_t pol_input[SPONGE_WIDTH_T];
-    mymemset((uint64_t *)pol_input, 0, SPONGE_WIDTH_T); //rick_pos: ineficient
-    mymemcpy((uint64_t *)pol_input, (uint64_t *)&cursor[nextIndex + tid * SPONGE_WIDTH_T], SPONGE_WIDTH_T);
-    hash_one_2<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>((gl64_t *)(&cursor[nextIndex + (pending + tid) * CAPACITY_T]), pol_input, threadIdx.x);
+    gl64_t* pol_input = (gl64_t *)(&cursor[nextIndex + tid * SPONGE_WIDTH_T]);
+    gl64_t* pol_output = (gl64_t *)(&cursor[nextIndex + (pending + tid) * CAPACITY_T]);
+    
+    hash_one_2<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(pol_output, pol_input, threadIdx.x);
 }
+
 
 using Poseidon2GoldilocksGPUCommit = Poseidon2GoldilocksGPU<16>;   // SPONGE_WIDTH = 16
 using Poseidon2GoldilocksGPUGrinding = Poseidon2GoldilocksGPU<4>;  // SPONGE_WIDTH = 4

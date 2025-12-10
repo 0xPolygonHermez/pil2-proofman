@@ -108,7 +108,6 @@ TEST(GOLDILOCKS_TEST, grinding)
     cudaMemcpy(d_test_in, test_in, 4 * sizeof(gl64_t), cudaMemcpyHostToDevice);
     cudaMalloc((void **)&d_hash_out, 4 * sizeof(gl64_t));
     
-    // Use hash_full_result_2 with grinding parameters: RATE=4, CAPACITY=0, SPONGE_WIDTH=4, N_PARTIAL_ROUNDS=21
     Poseidon2GoldilocksGPU<4>::hashFullResult((uint64_t *)d_hash_out, (uint64_t *)d_test_in);
     cudaStreamSynchronize(stream);
     

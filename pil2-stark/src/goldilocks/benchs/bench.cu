@@ -164,6 +164,17 @@ static void MERKLETREE16_BENCH_GPU(benchmark::State &state)
         cudaStreamSynchronize(stream);
     }
 
+    //print the root of the tree
+    uint64_t root[Poseidon2GoldilocksCommit::HASH_SIZE];
+    cudaMemcpy(&root[0], d_tree + (tree_size - Poseidon2GoldilocksCommit::HASH_SIZE), Poseidon2GoldilocksCommit::HASH_SIZE * sizeof(gl64_t), cudaMemcpyDeviceToHost);
+    //for(int i = 0; i < Poseidon2GoldilocksCommit::HASH_SIZE; i++)
+    //    std::cout << "Root[" << i << "]: " << root[i] << std::endl;
+    if(state.range(0) == 56){
+        assert(root[0] == uint64_t(0x9e1bd81a45f7dedb));
+        assert(root[1] == uint64_t(0x27268bc3f7feb493));
+        assert(root[2] == uint64_t(0x41618b1ff42048d1));
+        assert(root[3] == uint64_t(0x6e093bed170bcb8f));
+    }
     cudaFree(d_trace);
     cudaFree(d_tree);
     cudaStreamDestroy(stream);
@@ -182,9 +193,9 @@ static void GRINDING_BENCH_GPU(benchmark::State &state)
     uint32_t n_bits = state.range(0);
     
     // Allocate device memory
-    gl64_t *d_in, *d_out;
+    gl64_t *d_in, *d_nonce;
     CHECKCUDAERR(cudaMalloc((void **)&d_in, 4 * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc((void **)&d_out, sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_nonce, sizeof(gl64_t)));
     
     // Create different input for each iteration
     Goldilocks::Element h_in[Poseidon2GoldilocksGPUGrinding::SPONGE_WIDTH];
@@ -200,14 +211,14 @@ static void GRINDING_BENCH_GPU(benchmark::State &state)
         }
         CHECKCUDAERR(cudaMemcpy(d_in, h_in, (Poseidon2GoldilocksGPUGrinding::SPONGE_WIDTH-1) * sizeof(gl64_t), cudaMemcpyHostToDevice));
         
-        Poseidon2GoldilocksGPUGrinding::grinding((uint64_t *)d_out, (uint64_t *)d_in, n_bits, stream);
+        Poseidon2GoldilocksGPUGrinding::grinding((uint64_t *)d_nonce, (uint64_t *)d_in, n_bits, stream);
         cudaStreamSynchronize(stream);
         
         iteration++;
     }
 
     cudaFree(d_in);
-    cudaFree(d_out);
+    cudaFree(d_nonce);
     cudaStreamDestroy(stream);
 }
 
@@ -224,9 +235,9 @@ static void GRINDING16_BENCH_GPU(benchmark::State &state)
     uint32_t n_bits = state.range(0);
     
     // Allocate device memory
-    gl64_t *d_in, *d_out;
+    gl64_t *d_in, *d_nonce;
     CHECKCUDAERR(cudaMalloc((void **)&d_in, Poseidon2GoldilocksGPU<16>::SPONGE_WIDTH * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc((void **)&d_out, sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_nonce, sizeof(gl64_t)));
     
     // Create different input for each iteration
     Goldilocks::Element h_in[Poseidon2GoldilocksGPU<16>::SPONGE_WIDTH];
@@ -243,14 +254,14 @@ static void GRINDING16_BENCH_GPU(benchmark::State &state)
         }
         CHECKCUDAERR(cudaMemcpy(d_in, h_in, (Poseidon2GoldilocksGPU<16>::SPONGE_WIDTH-1) * sizeof(gl64_t), cudaMemcpyHostToDevice));
         
-        Poseidon2GoldilocksGPU<16>::grinding((uint64_t *)d_out, (uint64_t *)d_in, n_bits, stream);
+        Poseidon2GoldilocksGPU<16>::grinding((uint64_t *)d_nonce, (uint64_t *)d_in, n_bits, stream);
         cudaStreamSynchronize(stream);
         
         iteration++;
     }
 
     cudaFree(d_in);
-    cudaFree(d_out);
+    cudaFree(d_nonce);
     cudaStreamDestroy(stream);
 }
 
@@ -292,7 +303,11 @@ BENCHMARK(GRINDING_BENCH_GPU)
     ->Arg(21)   
     ->Arg(22)   
     ->Arg(24)  
-    ->Arg(25)  
+    ->Arg(25)
+    ->Arg(26)
+    ->Arg(27)
+    ->Arg(28)
+    ->Arg(29)  
     ->UseRealTime();
 
 BENCHMARK(GRINDING16_BENCH_GPU)
@@ -301,7 +316,11 @@ BENCHMARK(GRINDING16_BENCH_GPU)
     ->Arg(21)   
     ->Arg(22)   
     ->Arg(24)  
-    ->Arg(25)  
+    ->Arg(25)
+    ->Arg(26)
+    ->Arg(27)
+    ->Arg(28)
+    ->Arg(29)  
     ->UseRealTime();
 
 BENCHMARK_MAIN();

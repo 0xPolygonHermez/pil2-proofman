@@ -1216,8 +1216,8 @@ static void GRINDING_BENCH_CPU(benchmark::State &state)
             in[i] = (iteration * 1000 + i) * 123456789ULL;
         }
         
-        uint64_t result_index = UINT64_MAX;
-        Poseidon2Goldilocks<4>::grinding(result_index, in, n_bits);
+        uint64_t nonce = UINT64_MAX;
+        Poseidon2Goldilocks<4>::grinding(nonce, in, n_bits);
         
         iteration++;
     }
