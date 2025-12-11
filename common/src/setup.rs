@@ -121,8 +121,21 @@ impl<F: PrimeField64> Setup<F> {
 
         let gpu = cfg!(feature = "gpu");
 
-        let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
-        let expressions_bin_path = setup_path.display().to_string() + ".bin";
+        let stark_info_path = match setup_type {
+            ProofType::Recursive1 => {
+                let setup_path_recursive2 = global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive2);
+                setup_path_recursive2.display().to_string() + ".starkinfo.json"
+            }
+            _ => setup_path.display().to_string() + ".starkinfo.json",
+        };
+
+        let expressions_bin_path =  match setup_type {
+             ProofType::Recursive1 => {
+                let setup_path_recursive2 = global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive2);
+                setup_path_recursive2.display().to_string() + ".bin"
+             }
+            _ => setup_path.display().to_string() + ".bin",
+        };
         let const_pols_path = match !gpu {
             true => setup_path.display().to_string() + ".const",
             false => setup_path.display().to_string() + ".const_gpu",

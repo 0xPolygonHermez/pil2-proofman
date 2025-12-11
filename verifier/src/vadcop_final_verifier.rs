@@ -3907,6 +3907,7 @@ pub fn q_verify(challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicEx
     return tmp_3[0];
 }
 
+
 #[rustfmt::skip]
 #[allow(clippy::all)]
 pub fn query_verify(challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>], vals: &[Vec<Goldilocks>], xdivxsub: &[CubicExtensionField<Goldilocks>]) -> CubicExtensionField<Goldilocks> {
@@ -4381,14 +4382,14 @@ pub fn verifier_info() -> VerifierInfo {
         n_bits: 16,
         n_bits_ext: 20,
         arity: 4,
-        n_fri_queries: 56,
+        n_fri_queries: 55,
         n_fri_steps: 3,
         n_challenges: 6,
         n_challenges_total: 10,
         fri_steps: vec![20, 15, 10],
         hash_commits: true,
         last_level_verification: 3,
-        pow_bits: 19,
+        pow_bits: 21,
         num_vals: vec![62, 15, 21],
         opening_points: vec![-1, -2, 0, 1],
         boundaries: vec![Boundary { name: "everyRow".to_string(), offset_min: None, offset_max: None }],
@@ -4398,14 +4399,14 @@ pub fn verifier_info() -> VerifierInfo {
 }
 
 pub fn verify(proof: &[u8], vk: &[u8]) -> bool {
-    let mut buf = Vec::new();
-    let proof_data: &[u8] = if proof.len() >= 4 && proof[0..4] == [0x28, 0xB5, 0x2F, 0xFD] {
-        let cursor = std::io::Cursor::new(proof);
-        let mut decoder = zstd::stream::read::Decoder::new(cursor).expect("Invalid zstd stream");
-        std::io::Read::read_to_end(&mut decoder, &mut buf).expect("Failed to decompress zstd file");
-        &buf
-    } else {
-        proof
-    };
+let mut buf = Vec::new();
+let proof_data: &[u8] = if proof.len() >= 4 && proof[0..4] == [0x28, 0xB5, 0x2F, 0xFD] {
+    let cursor = std::io::Cursor::new(proof);
+    let mut decoder = zstd::stream::read::Decoder::new(cursor).expect("Invalid zstd stream");
+    std::io::Read::read_to_end(&mut decoder, &mut buf).expect("Failed to decompress zstd file");
+    &buf
+} else {
+    proof
+};
     stark_verify::<Poseidon16, 16>(proof_data, vk, &verifier_info(), q_verify, query_verify)
 }
