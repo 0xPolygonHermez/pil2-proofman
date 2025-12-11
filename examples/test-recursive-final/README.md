@@ -1,4 +1,4 @@
-## Execute the Recursive C42 Example
+## Execute the Recursive Final Example
 
 
 ## Platform Compatibility
@@ -14,7 +14,7 @@ After compiling the PIL files, generate the setup:
 
 ```bash
 node ../pil2-proofman-js/src/main_setup_recursive.js \
-     -b ./examples/test-recursive-c42/build -c ./examples/test-recursive-c42/test.circom -n test -t pil2-components/lib/std/pil -l 42
+     -b ./examples/test-recursive-final/build -c ./examples/test-recursive-final/test.circom -n test -t pil2-components/lib/std/pil -l 62
 ```
 
 To run the aggregated proof, need to add -r to the previous command
@@ -33,14 +33,14 @@ Verify the constraints by executing this command:
 
 ```bash
 cargo run --bin proofman-cli verify-constraints \
-     --witness-lib ./target/debug/libtest_c42${PIL2_PROOFMAN_EXT} \
-     --proving-key examples/test-recursive-c42/build/provingKey/
+     --witness-lib ./target/debug/libtest_final${PIL2_PROOFMAN_EXT} \
+     --proving-key examples/test-recursive-final/build/provingKey/
 ```
 
 ### Check setup
 
 ```bash
-cargo run --bin proofman-cli check-setup --proving-key examples/test-recursive-c42/build/provingKey
+cargo run --bin proofman-cli check-setup --proving-key examples/test-recursive-final/build/provingKey
 ```
 
 ### Generate Proof
@@ -49,7 +49,7 @@ Finally, generate the proof using the following command:
 
 ```bash
      cargo run --bin proofman-cli prove \
-     --witness-lib ./target/debug/libtest_c42${PIL2_PROOFMAN_EXT}\
-     --proving-key examples/test-recursive-c42/build/provingKey/ \
-     --output-dir examples/test-recursive-c42/build/proofs -y -vv
+     --witness-lib ./target/debug/libtest_final${PIL2_PROOFMAN_EXT}\
+     --proving-key examples/test-recursive-final/build/provingKey/ \
+     --output-dir examples/test-recursive-final/build/proofs -y -vv
 ```

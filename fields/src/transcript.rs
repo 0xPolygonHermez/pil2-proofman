@@ -35,7 +35,7 @@ impl<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize> Transcript<F, C,
 
         let mut inputs: [F; W] = [F::ZERO; W];
         inputs[..W - 4].copy_from_slice(&self.pending);
-        inputs[W - 4..W].copy_from_slice(&self.state[..(W - (W - 4))]);
+        inputs[W - 4..W].copy_from_slice(&self.state[..4]);
         let output = poseidon2_hash::<F, C, W>(&inputs);
         self.out_cursor = W;
         for i in 0..W - 4 {

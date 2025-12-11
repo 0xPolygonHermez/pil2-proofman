@@ -37,7 +37,7 @@ members = [
     "examples/fibonacci-square",
     "examples/test-recursive-c12",
     "examples/test-recursive",
-    "examples/test-recursive-c42",
+    "examples/test-recursive-final",
     "macros-test",
 ]
 

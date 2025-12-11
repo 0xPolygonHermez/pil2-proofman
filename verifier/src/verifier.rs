@@ -254,7 +254,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
             let mut transcript_publics: Transcript<Goldilocks, C, W> = Transcript::new();
             transcript_publics.put(&publics);
             let hash = transcript_publics.get_state();
-            transcript.put(&hash);
+            transcript.put(&hash[0..4]);
         }
     }
     transcript.put(&roots[0]);
@@ -277,7 +277,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
             transcript_evals.put(&evals[i as usize].value);
         }
         let hash = transcript_evals.get_state();
-        transcript.put(&hash);
+        transcript.put(&hash[0..4]);
     }
 
     transcript.get_field(&mut challenges[4].value);
@@ -301,7 +301,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
                     transcript_final_pol.put(&final_pol[j as usize].value);
                 }
                 let hash = transcript_final_pol.get_state();
-                transcript.put(&hash);
+                transcript.put(&hash[0..4]);
             }
         }
     }

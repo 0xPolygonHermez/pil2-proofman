@@ -14,9 +14,9 @@ use std::ffi::CString;
 use bytemuck::cast_slice;
 use libloading::{Library, Symbol};
 
-pub struct RecursiveC42 {}
+pub struct RecursiveFinal {}
 
-impl RecursiveC42 {
+impl RecursiveFinal {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {})
     }
@@ -29,7 +29,7 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
 type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
-impl<F: PrimeField64> WitnessComponent<F> for RecursiveC42 {
+impl<F: PrimeField64> WitnessComponent<F> for RecursiveFinal {
     fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &RwLock<Vec<usize>>) -> ProofmanResult<()> {
         pctx.add_instance(0, 0)?;
         global_ids.write().unwrap().push(0);
@@ -48,7 +48,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC42 {
         if stage == 1 {
             let setup = sctx.get_setup(0, 0)?;
             let current_dir =
-                env::current_dir().expect("Failed to get current directory").join("examples/test-recursive-c42");
+                env::current_dir().expect("Failed to get current directory").join("examples/test-recursive-final");
             let proof_path = current_dir.join("proof.bin");
 
             let mut file = File::open(proof_path).unwrap();
@@ -80,7 +80,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC42 {
             file.read_exact(&mut bytes).unwrap();
             let n_smap = u64::from_le_bytes(bytes);
 
-            let n_cols = 42;
+            let n_cols = 62;
 
             let exec_data_size = 2 + n_adds * 4 + n_smap * n_cols;
             let mut exec_file_data: Vec<u64> = vec![0; exec_data_size as usize];
