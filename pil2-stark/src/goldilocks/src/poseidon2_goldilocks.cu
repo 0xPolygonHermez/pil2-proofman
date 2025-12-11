@@ -9,6 +9,8 @@
 
 // #ifdef GPU_TIMING
 #include "timer_gl.hpp"
+#include <cooperative_groups.h>
+namespace cg = cooperative_groups;
 // #endif
 
 typedef uint32_t u32;
@@ -168,7 +170,8 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeCoalescedBlocks(uint32_t 
         actual_tpb = num_rows;
         actual_blks = 1;
     }
-    linearHashGPUTiles<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_tree, d_input, num_cols * dim, num_rows);
+    //linearHashGPUTiles_<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_tree, d_input, num_cols * dim, num_rows);
+    linearHashGPUTiles_<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb,(150+16)*8, stream>>>(d_tree, d_input, num_cols * dim, num_rows);
     CHECKCUDAERR(cudaGetLastError());
 
     // Build the merkle tree
@@ -206,11 +209,77 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeCoalescedBlocks(uint32_t 
     CHECKCUDAERR(cudaGetLastError());
 }
 
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
+__global__ void linearHashGPUTiles_(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows)
+{
+
+    //const gl64_t *GPU_C_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_C_4 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_C_12 : (gl64_t *)GPU_C_16);
+    //const gl64_t *GPU_D_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_D_4 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_D_12 : (gl64_t *)GPU_D_16);
+    for(int i=0; i<150; i+= blockDim.x){
+        scratchpad[i] = GPU_C_16[i];
+    }
+    for(int i=0; i<16; i+= blockDim.x){
+        scratchpad[150 + i] = GPU_D_16[i];
+    }
+    __syncthreads();
+    const gl64_t *GPU_C_GL = scratchpad;
+    const gl64_t *GPU_D_GL = scratchpad + 150;
+
+    uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
+    if( row >= num_rows)
+        return;
+
+    if (num_cols <= CAPACITY_T)
+    {
+        uint64_t out_idx = row*CAPACITY_T;
+        #pragma unroll
+        for (uint32_t i = 0; i < CAPACITY_T; i++) {
+            if (i < num_cols){
+                output[out_idx + i] = input[getBufferOffset(row, i, num_rows, num_cols)];
+            } else {
+                output[out_idx + i] = gl64_t(uint64_t(0));
+            }
+        }
+    }
+    else
+    {
+        gl64_t state[SPONGE_WIDTH_T];
+        #pragma unroll
+        for (uint32_t i = 0; i < CAPACITY_T; i++){
+            state[RATE_T+i] =  gl64_t(uint64_t(0));
+        }
+        for (uint32_t col = 0;;)
+        {
+            __syncwarp();
+            uint32_t delta = min(num_cols - col, RATE_T);
+            for (uint32_t i = 0; i < delta; i++) {
+                state[i] = input[getBufferOffset(row, col + i, num_rows, num_cols)];
+            }
+            for (uint32_t i = delta; i < RATE_T; i++) {
+                state[i] = gl64_t(uint64_t(0));
+            }
+            __syncwarp();
+            hash_full_result_seq_2_<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(state, GPU_C_GL, GPU_D_GL);
+
+            if ((col += RATE_T) >= num_cols)
+                break;
+            __syncwarp();
+            for (uint32_t i = 0; i < CAPACITY_T; i++)
+                state[i + RATE_T] = state[i];
+        }
+        uint64_t out_idx = row*CAPACITY_T;
+        for (uint32_t i = 0; i < CAPACITY_T; i++) {
+            output[out_idx+i] = state[i];            
+        }
+    }
+}
+
 template<uint32_t SPONGE_WIDTH_T>
 void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::hashFullResult(uint64_t * output, const uint64_t * input){
     hash_full_result_2<RATE,CAPACITY,SPONGE_WIDTH,N_FULL_ROUNDS_TOTAL,N_PARTIAL_ROUNDS ><<<1, 1, SPONGE_WIDTH*sizeof(gl64_t)>>>(output, input);
     CHECKCUDAERR(cudaGetLastError());
 }
+
 template<uint32_t SPONGE_WIDTH_T>
 void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::linearHashCoalescedBlocks(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream){
     u32 actual_tpb = TPB;
@@ -220,13 +289,16 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::linearHashCoalescedBlocks(uint64_t 
         actual_tpb = num_rows;
         actual_blks = 1;
     }
-    linearHashGPUTiles<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_hash_output, d_trace, num_cols, num_rows);
+    linearHashGPUTiles_<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, (150+16) * 8, stream>>>(d_hash_output, d_trace, num_cols, num_rows);
+    //linearHashGPUTiles_<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_hash_output, d_trace, num_cols, num_rows);
     CHECKCUDAERR(cudaGetLastError());
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__global__ void grinding_calc_(uint64_t *__restrict__ nonceBlock, uint64_t *__restrict__ input, uint32_t n_bits, uint32_t hashes_per_thread, uint64_t offset)
+__global__ void grinding_calc_(uint64_t* nonce, uint64_t *__restrict__ nonceBlock, uint64_t *__restrict__ input, uint32_t n_bits, uint32_t hashes_per_thread, uint64_t offset)
 {
+    if(nonce[0] != UINT64_MAX)
+        return;
     // scratchpad is declared globally, shared_nonces is allocated right after it
     uint64_t* shared_nonces = (uint64_t*)&scratchpad[SPONGE_WIDTH_T * blockDim.x];
     
@@ -266,8 +338,15 @@ __global__ void grinding_calc_(uint64_t *__restrict__ nonceBlock, uint64_t *__re
     
 }
 
+__global__ void setNonceToMax(uint64_t* nonce){
+    nonce[0] = UINT64_MAX;
+}
+
 __global__ void grinding_check_(uint64_t* nonce, uint64_t *__restrict__ nonceBlock, uint32_t n_blocks)
 {
+    
+    if(nonce[0] != UINT64_MAX)
+        return;
     if(threadIdx.x > 31 || blockIdx.x > 0){
         return;
     }
@@ -292,13 +371,14 @@ __global__ void grinding_check_(uint64_t* nonce, uint64_t *__restrict__ nonceBlo
 
 template<uint32_t SPONGE_WIDTH_T>
 void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_nonce, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream){
-    uint32_t hashesPerThread = 2;
-    uint64_t N = 1 << 21; // Search 2M x 2 nonces per iteration
+    uint32_t hashesPerThread = 4;
+    uint64_t N = 1 << 20; // Search 2M x 2 nonces per iteration
     dim3 blockSize( 128 );
-    dim3 gridSize( (N/hashesPerThread + blockSize.x - 1) / blockSize.x );
-
+    dim3 gridSize( (N + blockSize.x - 1) / blockSize.x );
     uint64_t* d_nonceBlock;
     cudaMalloc((void**)&d_nonceBlock, sizeof(uint64_t)*gridSize.x);
+
+#if 0
     bool found = false;
     uint64_t offset = 0;
     uint64_t nonces_per_iteration = gridSize.x * blockSize.x * hashesPerThread;
@@ -330,8 +410,33 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_nonce, const 
     if(found == false){
         throw std::runtime_error("Poseidon2GoldilocksGPU::grinding: could not find a valid nonce on GPU");
     }
+    
+
+    /*size_t shared_mem_size = blockSize.x * SPONGE_WIDTH * sizeof(gl64_t) + blockSize.x * sizeof(uint64_t);
+    grinding_persistent_kernel<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<gridSize, blockSize, shared_mem_size, stream>>>(
+        (uint64_t *)d_nonce,
+        (uint64_t *)d_nonceBlock,
+        (uint64_t *)d_in,
+        n_bits,
+        hashesPerThread,
+        UINT64_MAX  // max_iterations
+    );
     CHECKCUDAERR(cudaGetLastError());
-    cudaFree(d_nonceBlock);
+    cudaFree(d_nonceBlock);*/
+
+#else
+    size_t shared_mem_size = blockSize.x * SPONGE_WIDTH * sizeof(gl64_t) + blockSize.x * sizeof(uint64_t);
+    uint64_t offset = 0;
+    uint64_t nonces_per_iteration = gridSize.x * blockSize.x * hashesPerThread;
+
+    setNonceToMax<<<1,1,0,stream>>>((uint64_t *)d_nonce);
+    for(int i=0; i<100; ++i){
+        grinding_calc_<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<gridSize, blockSize, shared_mem_size, stream>>>((uint64_t *)d_nonce, (uint64_t *)d_nonceBlock, (uint64_t *)d_in, n_bits, hashesPerThread, offset);
+        grinding_check_<<<1, 32, 0, stream>>>((uint64_t *)d_nonce, (uint64_t *)d_nonceBlock, gridSize.x);
+        offset += nonces_per_iteration;
+    }
+
+#endif
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
@@ -363,6 +468,96 @@ __device__  void poseidon2_hash()
         matmul_external_state_<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
     }
 }
+
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
+__global__ void grinding_persistent_kernel(
+    uint64_t* __restrict__ d_nonce,           // global result (single uint64_t)
+    uint64_t* __restrict__ d_nonceBlock,      // per-block minima written here
+    const uint64_t* __restrict__ d_input,     
+    uint32_t n_bits,
+    uint32_t hashes_per_thread,
+    uint64_t max_iterations)
+{
+    cg::grid_group grid = cg::this_grid();
+
+    uint64_t* shared_nonces = reinterpret_cast<uint64_t*>(scratchpad + (size_t)SPONGE_WIDTH_T * (size_t)blockDim.x);
+    const uint64_t level = 1ULL << (64 - n_bits);
+    const uint64_t nonces_per_iteration = gridDim.x * blockDim.x * (uint64_t)hashes_per_thread;
+
+    if (blockIdx.x == 0 && threadIdx.x == 0) {
+        *d_nonce = UINT64_MAX;
+    }
+    grid.sync(); // ensure d_nonce initialized
+
+    uint64_t iteration = 0;
+    while (true) {
+        
+        uint64_t offset = iteration * nonces_per_iteration;
+
+        uint64_t nonce_base = offset + ( (uint64_t)blockIdx.x * (uint64_t)blockDim.x + (uint64_t)threadIdx.x ) * (uint64_t)hashes_per_thread;
+        uint64_t loc_nonce = UINT64_MAX;
+
+        for (uint32_t k = 0; k < hashes_per_thread; ++k) {
+            uint64_t nonce_k = nonce_base + k;
+
+            #pragma unroll
+            for (uint32_t i = 0; i < SPONGE_WIDTH_T - 1; ++i) {
+                scratchpad[(size_t)i * blockDim.x + threadIdx.x] = d_input[i];
+            }
+            scratchpad[(size_t)(SPONGE_WIDTH_T - 1) * blockDim.x + threadIdx.x] = nonce_k;
+            poseidon2_hash<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
+            uint64_t hash_val = (uint64_t)scratchpad[threadIdx.x];
+            if (hash_val < level) {
+                loc_nonce = nonce_k;
+                break;
+            }
+        }
+        shared_nonces[threadIdx.x] = loc_nonce;
+        __syncthreads();
+
+        // intra-block reduction to find minimum (same as original)
+        uint32_t alive = blockDim.x >> 1;
+        while (alive > 0) {
+            if (threadIdx.x < alive) {
+                uint64_t a = shared_nonces[threadIdx.x];
+                uint64_t b = shared_nonces[threadIdx.x + alive];
+                if (b < a) shared_nonces[threadIdx.x] = b;
+            }
+            __syncthreads();
+            alive >>= 1;
+        }
+
+        // thread 0 writes per-block minimum into global d_nonceBlock
+        if (threadIdx.x == 0) {
+            d_nonceBlock[blockIdx.x] = shared_nonces[0];
+        }
+
+        grid.sync(); // ensure all blocks have written their minima
+
+        // block 0 scans per-block minima to find global minimum and writes into d_nonce
+        if (blockIdx.x == 0 && threadIdx.x == 0) {
+            uint64_t found = UINT64_MAX;
+            for (uint32_t i = 0; i < gridDim.x; ++i) {
+                uint64_t v = d_nonceBlock[i];
+                if (v < found){
+                    found = v;
+                    break; // stop at first found (will be the minimum)
+                }
+            }
+            *d_nonce = found;
+        }
+
+        grid.sync(); // ensure all blocks see d_nonce
+
+        // if found or reached max iterations, exit
+        if (*d_nonce != UINT64_MAX) break;
+        ++iteration;
+        if (iteration >= max_iterations) break;
+
+    } 
+    grid.sync();
+}
+
 
 // Explicit instantiation for class methods
 template void Poseidon2GoldilocksGPUGrinding::initPoseidon2GPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);

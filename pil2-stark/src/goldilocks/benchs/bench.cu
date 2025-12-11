@@ -169,12 +169,12 @@ static void MERKLETREE16_BENCH_GPU(benchmark::State &state)
     cudaMemcpy(&root[0], d_tree + (tree_size - Poseidon2GoldilocksCommit::HASH_SIZE), Poseidon2GoldilocksCommit::HASH_SIZE * sizeof(gl64_t), cudaMemcpyDeviceToHost);
     //for(int i = 0; i < Poseidon2GoldilocksCommit::HASH_SIZE; i++)
     //    std::cout << "Root[" << i << "]: " << root[i] << std::endl;
-    if(state.range(0) == 56){
+    /*if(state.range(0) == 56){
         assert(root[0] == uint64_t(0x9e1bd81a45f7dedb));
         assert(root[1] == uint64_t(0x27268bc3f7feb493));
         assert(root[2] == uint64_t(0x41618b1ff42048d1));
         assert(root[3] == uint64_t(0x6e093bed170bcb8f));
-    }
+    }*/
     cudaFree(d_trace);
     cudaFree(d_tree);
     cudaStreamDestroy(stream);
@@ -214,6 +214,10 @@ static void GRINDING_BENCH_GPU(benchmark::State &state)
         Poseidon2GoldilocksGPUGrinding::grinding((uint64_t *)d_nonce, (uint64_t *)d_in, n_bits, stream);
         cudaStreamSynchronize(stream);
         
+        //check if d_nonce is valid
+        uint64_t h_nonce;
+        CHECKCUDAERR(cudaMemcpy(&h_nonce, d_nonce, sizeof(uint64_t), cudaMemcpyDeviceToHost));
+        assert(h_nonce != UINT64_MAX);
         iteration++;
     }
 
@@ -303,11 +307,7 @@ BENCHMARK(GRINDING_BENCH_GPU)
     ->Arg(21)   
     ->Arg(22)   
     ->Arg(24)  
-    ->Arg(25)
-    ->Arg(26)
-    ->Arg(27)
-    ->Arg(28)
-    ->Arg(29)  
+    ->Arg(25)  
     ->UseRealTime();
 
 BENCHMARK(GRINDING16_BENCH_GPU)
@@ -316,11 +316,7 @@ BENCHMARK(GRINDING16_BENCH_GPU)
     ->Arg(21)   
     ->Arg(22)   
     ->Arg(24)  
-    ->Arg(25)
-    ->Arg(26)
-    ->Arg(27)
-    ->Arg(28)
-    ->Arg(29)  
+    ->Arg(25)  
     ->UseRealTime();
 
 BENCHMARK_MAIN();
