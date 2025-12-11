@@ -295,15 +295,40 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::linearHashCoalescedBlocks(uint64_t 
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__global__ void grinding_calc_(uint64_t* nonce, uint64_t *__restrict__ nonceBlock, uint64_t *__restrict__ input, uint32_t n_bits, uint32_t hashes_per_thread, uint64_t offset)
+__global__ void grinding_calc_(uint64_t* nonce, uint64_t *__restrict__ nonceBlock, uint64_t *__restrict__ input, uint64_t n_bits, uint64_t hashes_per_thread, uint64_t nonces_offset)
 {
-    if(nonce[0] != UINT64_MAX)
+
+    if(nonces_offset != 0 && nonce[0] != UINT64_MAX)
         return;
-    // scratchpad is declared globally, shared_nonces is allocated right after it
+
     uint64_t* shared_nonces = (uint64_t*)&scratchpad[SPONGE_WIDTH_T * blockDim.x];
+
+    //check if was found in previous launch
+    if(threadIdx.x ==0){
+        shared_nonces[0] = UINT64_MAX;
+        if(blockIdx.x ==0){
+            nonce[0] = UINT64_MAX;
+        }
+        if(nonces_offset != 0) { //not first iteration
+            for(int i=0; i<gridDim.x; ++i){
+                if(nonceBlock[i] != UINT64_MAX){
+                    shared_nonces[0] = nonceBlock[i];
+                    if(blockIdx.x ==0){
+                        nonce[0] = nonceBlock[i];
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    __syncthreads();
+    if(shared_nonces[0] != UINT64_MAX){
+        return;
+    }
+    // scratchpad is declared globally, shared_nonces is allocated right after it
     
     nonceBlock[blockIdx.x] = UINT64_MAX;
-    uint64_t idx = offset + (blockIdx.x * blockDim.x + threadIdx.x) * hashes_per_thread;
+    uint64_t idx = nonces_offset + (blockIdx.x * blockDim.x + threadIdx.x) * hashes_per_thread;
     uint64_t level = 1ULL << (64 - n_bits);
     uint64_t locId = UINT64_MAX;
 
@@ -334,13 +359,9 @@ __global__ void grinding_calc_(uint64_t* nonce, uint64_t *__restrict__ nonceBloc
     }
     if(threadIdx.x == 0){
         nonceBlock[blockIdx.x] = shared_nonces[0];
-    }
-    
+    }   
 }
 
-__global__ void setNonceToMax(uint64_t* nonce){
-    nonce[0] = UINT64_MAX;
-}
 
 __global__ void grinding_check_(uint64_t* nonce, uint64_t *__restrict__ nonceBlock, uint32_t n_blocks)
 {
@@ -371,89 +392,39 @@ __global__ void grinding_check_(uint64_t* nonce, uint64_t *__restrict__ nonceBlo
 
 template<uint32_t SPONGE_WIDTH_T>
 void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_nonce, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream){
-    uint64_t log_launch_iters = 6;
+
+    uint64_t log_launch_iters = 6; //64 launch iterations
     uint64_t launch_iters = 1ULL << log_launch_iters;
-    uint64_t log_N = 19; 
+    uint64_t log_N = 19; //512K nonces per launch
     uint64_t N = 1 << log_N;
     uint64_t security = 128;
     // we need to determine log_hashesPerThread such that, suthat probabilty of not finding a valid nonce is lower
     // than 2^(-security)
     // (1-1/2^n_bits)^(totalHashesRequired) = 2^(-security)
     // totalHashesRequired = log(2^(-security)) / log(1-1/2^n_bits)
-    double totalHashesRequired =(double(-security)) * log(double(2.0))/log(double(1.0)-double(1.0)/double(1ULL << (n_bits)));
+    double totalHashesRequired =(double(-double(security))) * log(double(2.0))/log(double(1.0)-double(1.0)/double(1ULL << (n_bits)));
     uint64_t log_totalHashesRequired = ceil(log2(totalHashesRequired));
     uint64_t log_hashesPerThread;
     if(log_totalHashesRequired > log_launch_iters + log_N){
         log_hashesPerThread = log_totalHashesRequired - log_launch_iters - log_N;
     }else{
-        log_hashesPerThread = 1;
+        log_hashesPerThread = 0;
     }
     uint64_t hashesPerThread = 1ULL << log_hashesPerThread;
-
-    dim3 blockSize( 128 );
+    
+    dim3 blockSize( 512 );
     dim3 gridSize( (N + blockSize.x - 1) / blockSize.x );
     uint64_t* d_nonceBlock;
     cudaMalloc((void**)&d_nonceBlock, sizeof(uint64_t)*gridSize.x);
 
-#if 0
-    bool found = false;
-    uint64_t offset = 0;
-    uint64_t nonces_per_iteration = gridSize.x * blockSize.x * hashesPerThread;
-    uint64_t iteration_count = 0;
-    uint64_t max_iterations = 10000; // Prevent infinite loop
-    
-    while (found == false && iteration_count < max_iterations)
-    {
-        size_t shared_mem_size = blockSize.x * SPONGE_WIDTH * sizeof(gl64_t) + blockSize.x * sizeof(uint64_t);
-        grinding_calc_<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<gridSize, blockSize, shared_mem_size, stream>>>((uint64_t *)d_nonceBlock, (uint64_t *)d_in, n_bits, hashesPerThread, offset);
-        CHECKCUDAERR(cudaGetLastError());
-
-        grinding_check_<<<1, 32, 0, stream>>>((uint64_t *)d_nonce, (uint64_t *)d_nonceBlock, gridSize.x);
-        CHECKCUDAERR(cudaGetLastError());
-
-        uint64_t h_nonce;
-        CHECKCUDAERR(cudaMemcpyAsync(&h_nonce, d_nonce, sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
-        CHECKCUDAERR(cudaStreamSynchronize(stream));
-        iteration_count++;
-        if (h_nonce != UINT64_MAX)
-        {
-            found = true;
-        }
-        else
-        {
-            offset += nonces_per_iteration;
-        }
-    }
-    if(found == false){
-        throw std::runtime_error("Poseidon2GoldilocksGPU::grinding: could not find a valid nonce on GPU");
-    }
-    
-
-    /*size_t shared_mem_size = blockSize.x * SPONGE_WIDTH * sizeof(gl64_t) + blockSize.x * sizeof(uint64_t);
-    grinding_persistent_kernel<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<gridSize, blockSize, shared_mem_size, stream>>>(
-        (uint64_t *)d_nonce,
-        (uint64_t *)d_nonceBlock,
-        (uint64_t *)d_in,
-        n_bits,
-        hashesPerThread,
-        UINT64_MAX  // max_iterations
-    );
-    CHECKCUDAERR(cudaGetLastError());
-    cudaFree(d_nonceBlock);*/
-
-#else
     size_t shared_mem_size = blockSize.x * SPONGE_WIDTH * sizeof(gl64_t) + blockSize.x * sizeof(uint64_t);
-    uint64_t offset = 0;
-    uint64_t nonces_per_iteration = gridSize.x * blockSize.x * hashesPerThread;
+    uint64_t nonces_offset = 0;
+    uint64_t nonces_per_iteration = N * hashesPerThread;
 
-    setNonceToMax<<<1,1,0,stream>>>((uint64_t *)d_nonce);
     for(int i=0; i<launch_iters; ++i){
-        grinding_calc_<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<gridSize, blockSize, shared_mem_size, stream>>>((uint64_t *)d_nonce, (uint64_t *)d_nonceBlock, (uint64_t *)d_in, n_bits, hashesPerThread, offset);
-        grinding_check_<<<1, 32, 0, stream>>>((uint64_t *)d_nonce, (uint64_t *)d_nonceBlock, gridSize.x);
-        offset += nonces_per_iteration;
+        grinding_calc_<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<gridSize, blockSize, shared_mem_size, stream>>>((uint64_t *)d_nonce, (uint64_t *)d_nonceBlock, (uint64_t *)d_in, n_bits, hashesPerThread, nonces_offset);
+        nonces_offset += nonces_per_iteration;
     }
-
-#endif
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>

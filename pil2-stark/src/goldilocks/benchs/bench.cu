@@ -307,7 +307,6 @@ BENCHMARK(GRINDING_BENCH_GPU)
     ->Arg(20)   
     ->Arg(23)   
     ->Arg(24)   
-
     ->UseRealTime();
 
 BENCHMARK(GRINDING16_BENCH_GPU)
