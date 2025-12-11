@@ -11,6 +11,7 @@ include "bitify.circom";
 include "fft.circom";
 include "evalpol.circom";
 include "treeselector4.circom";
+include "pow.circom";
 include "merklehash.circom";
 
 
@@ -20,11 +21,16 @@ include "merklehash.circom";
 template calculateFRIQueries0() {
     
     signal input challengeFRIQueries[3];
-    signal output {binary} queriesFRI[128][23];
+    signal input nonce;
+    signal input {binary} enable;
+    signal output {binary} queriesFRI[229][23];
 
+    VerifyPoW(16)(challengeFRIQueries, nonce, enable);
 
     
-    signal transcriptHash_friQueries_0[16] <== Poseidon2(4, 16)([challengeFRIQueries[0],challengeFRIQueries[1],challengeFRIQueries[2],0,0,0,0,0,0,0,0,0], [0,0,0,0]);
+
+    
+    signal transcriptHash_friQueries_0[16] <== Poseidon2(4, 16)([challengeFRIQueries[0],challengeFRIQueries[1],challengeFRIQueries[2],nonce,0,0,0,0,0,0,0,0], [0,0,0,0]);
     signal {binary} transcriptN2b_0[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[0]);
     signal {binary} transcriptN2b_1[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[1]);
     signal {binary} transcriptN2b_2[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[2]);
@@ -76,8 +82,51 @@ template calculateFRIQueries0() {
     signal {binary} transcriptN2b_44[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[12]);
     signal {binary} transcriptN2b_45[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[13]);
     signal {binary} transcriptN2b_46[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[14]);
-    for(var i = 15; i < 16; i++){
-        _ <== transcriptHash_friQueries_2[i]; // Unused transcript values        
+    signal {binary} transcriptN2b_47[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[15]);
+    
+    signal transcriptHash_friQueries_3[16] <== Poseidon2(4, 16)([0,0,0,0,0,0,0,0,0,0,0,0], [transcriptHash_friQueries_2[0],transcriptHash_friQueries_2[1],transcriptHash_friQueries_2[2],transcriptHash_friQueries_2[3]]);
+    signal {binary} transcriptN2b_48[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[0]);
+    signal {binary} transcriptN2b_49[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[1]);
+    signal {binary} transcriptN2b_50[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[2]);
+    signal {binary} transcriptN2b_51[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[3]);
+    signal {binary} transcriptN2b_52[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[4]);
+    signal {binary} transcriptN2b_53[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[5]);
+    signal {binary} transcriptN2b_54[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[6]);
+    signal {binary} transcriptN2b_55[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[7]);
+    signal {binary} transcriptN2b_56[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[8]);
+    signal {binary} transcriptN2b_57[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[9]);
+    signal {binary} transcriptN2b_58[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[10]);
+    signal {binary} transcriptN2b_59[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[11]);
+    signal {binary} transcriptN2b_60[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[12]);
+    signal {binary} transcriptN2b_61[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[13]);
+    signal {binary} transcriptN2b_62[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[14]);
+    signal {binary} transcriptN2b_63[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[15]);
+    
+    signal transcriptHash_friQueries_4[16] <== Poseidon2(4, 16)([0,0,0,0,0,0,0,0,0,0,0,0], [transcriptHash_friQueries_3[0],transcriptHash_friQueries_3[1],transcriptHash_friQueries_3[2],transcriptHash_friQueries_3[3]]);
+    signal {binary} transcriptN2b_64[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[0]);
+    signal {binary} transcriptN2b_65[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[1]);
+    signal {binary} transcriptN2b_66[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[2]);
+    signal {binary} transcriptN2b_67[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[3]);
+    signal {binary} transcriptN2b_68[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[4]);
+    signal {binary} transcriptN2b_69[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[5]);
+    signal {binary} transcriptN2b_70[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[6]);
+    signal {binary} transcriptN2b_71[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[7]);
+    signal {binary} transcriptN2b_72[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[8]);
+    signal {binary} transcriptN2b_73[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[9]);
+    signal {binary} transcriptN2b_74[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[10]);
+    signal {binary} transcriptN2b_75[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[11]);
+    signal {binary} transcriptN2b_76[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[12]);
+    signal {binary} transcriptN2b_77[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[13]);
+    signal {binary} transcriptN2b_78[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[14]);
+    signal {binary} transcriptN2b_79[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[15]);
+    
+    signal transcriptHash_friQueries_5[16] <== Poseidon2(4, 16)([0,0,0,0,0,0,0,0,0,0,0,0], [transcriptHash_friQueries_4[0],transcriptHash_friQueries_4[1],transcriptHash_friQueries_4[2],transcriptHash_friQueries_4[3]]);
+    signal {binary} transcriptN2b_80[64] <== Num2Bits_strict()(transcriptHash_friQueries_5[0]);
+    signal {binary} transcriptN2b_81[64] <== Num2Bits_strict()(transcriptHash_friQueries_5[1]);
+    signal {binary} transcriptN2b_82[64] <== Num2Bits_strict()(transcriptHash_friQueries_5[2]);
+    signal {binary} transcriptN2b_83[64] <== Num2Bits_strict()(transcriptHash_friQueries_5[3]);
+    for(var i = 4; i < 16; i++){
+        _ <== transcriptHash_friQueries_5[i]; // Unused transcript values        
     }
 
     // From each transcript hash converted to bits, we assign those bits to queriesFRI[q] to define the query positions
@@ -543,7 +592,7 @@ template calculateFRIQueries0() {
     }
     _ <== transcriptN2b_45[63]; // Unused last bit
 
-    for(var j = 0; j < 46; j++) {
+    for(var j = 0; j < 63; j++) {
         queriesFRI[q][b] <== transcriptN2b_46[j];
         b++;
         if(b == 23) {
@@ -551,8 +600,378 @@ template calculateFRIQueries0() {
             q++;
         }
     }
-    for(var j = 46; j < 64; j++) {
-        _ <== transcriptN2b_46[j]; // Unused bits        
+    _ <== transcriptN2b_46[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_47[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_47[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_48[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_48[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_49[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_49[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_50[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_50[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_51[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_51[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_52[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_52[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_53[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_53[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_54[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_54[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_55[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_55[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_56[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_56[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_57[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_57[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_58[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_58[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_59[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_59[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_60[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_60[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_61[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_61[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_62[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_62[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_63[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_63[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_64[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_64[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_65[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_65[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_66[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_66[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_67[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_67[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_68[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_68[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_69[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_69[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_70[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_70[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_71[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_71[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_72[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_72[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_73[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_73[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_74[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_74[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_75[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_75[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_76[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_76[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_77[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_77[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_78[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_78[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_79[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_79[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_80[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_80[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_81[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_81[63]; // Unused last bit
+
+    for(var j = 0; j < 63; j++) {
+        queriesFRI[q][b] <== transcriptN2b_82[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    _ <== transcriptN2b_82[63]; // Unused last bit
+
+    for(var j = 0; j < 38; j++) {
+        queriesFRI[q][b] <== transcriptN2b_83[j];
+        b++;
+        if(b == 23) {
+            b = 0; 
+            q++;
+        }
+    }
+    for(var j = 38; j < 64; j++) {
+        _ <== transcriptN2b_83[j]; // Unused bits        
     }
 }
 
@@ -576,14 +995,16 @@ template Transcript0() {
     signal input s5_root[4];
     signal input s6_root[4];
     signal input finalPol[32][3];
-    
+    signal input nonce;
+    signal input {binary} enable;
+
     signal output challengesStage2[2][3];
 
     signal output challengeQ[3];
     signal output challengeXi[3];
     signal output challengesFRI[2][3];
     signal output challengesFRISteps[8][3];
-    signal output {binary} queriesFRI[128][23];
+    signal output {binary} queriesFRI[229][23];
 
     signal publicsHash[4];
     signal evalsHash[4];
@@ -720,7 +1141,7 @@ template Transcript0() {
     signal transcriptHash_10[16] <== Poseidon2(4, 16)([lastPolFRIHash[0],lastPolFRIHash[1],lastPolFRIHash[2],lastPolFRIHash[3],0,0,0,0,0,0,0,0], [transcriptHash_9[0],transcriptHash_9[1],transcriptHash_9[2],transcriptHash_9[3]]);
     challengesFRISteps[7] <== [transcriptHash_10[0], transcriptHash_10[1], transcriptHash_10[2]];
 
-    queriesFRI <== calculateFRIQueries0()(challengesFRISteps[7]);
+    queriesFRI <== calculateFRIQueries0()(challengesFRISteps[7], nonce, enable);
 }
 
 /*
@@ -1087,28 +1508,28 @@ template StarkVerifier0() {
 
     // Leaves values of the merkle tree used to check all the queries
  
-    signal input s0_vals1[128][2];
+    signal input s0_vals1[229][2];
  
-    signal input s0_vals2[128][9];
+    signal input s0_vals2[229][9];
                                        
-    signal input s0_vals3[128][3];
-    signal input s0_valsC[128][2];
+    signal input s0_vals3[229][3];
+    signal input s0_valsC[229][2];
 
-    signal input s0_vals_rom_0[128][2];
+    signal input s0_vals_rom_0[229][2];
 
     // Merkle proofs for each of the evaluations
-    signal input s0_siblings1[128][11][12];
-    signal input s0_last_mt_levels1[4][4];
-    signal input s0_siblings2[128][11][12];
-    signal input s0_last_mt_levels2[4][4];
+    signal input s0_siblings1[229][10][12];
+    signal input s0_last_mt_levels1[16][4];
+    signal input s0_siblings2[229][10][12];
+    signal input s0_last_mt_levels2[16][4];
  
-    signal input s0_siblings3[128][11][12];
-    signal input s0_last_mt_levels3[4][4];
-    signal input s0_siblingsC[128][11][12];
+    signal input s0_siblings3[229][10][12];
+    signal input s0_last_mt_levels3[16][4];
+    signal input s0_siblingsC[229][10][12];
     
-    signal input s0_last_mt_levelsC[4][4];
-    signal input s0_siblings_rom_0[128][11][12];
-    signal input s0_last_mt_levels_rom_0[4][4];
+    signal input s0_last_mt_levelsC[16][4];
+    signal input s0_siblings_rom_0[229][10][12];
+    signal input s0_last_mt_levels_rom_0[16][4];
     // Contains the root of the original polynomial and all the intermediate FRI polynomials except for the last step
     signal input s1_root[4];
     signal input s2_root[4];
@@ -1120,34 +1541,36 @@ template StarkVerifier0() {
     // For each intermediate FRI polynomial and the last one, we store at vals the values needed to check the queries.
     // Given a query r,  the verifier needs b points to check it out, being b = 2^u, where u is the difference between two consecutive step
     // and the sibling paths for each query.
-    signal input s1_vals[128][24];
-    signal input s1_siblings[128][9][12];
-    signal input s1_last_mt_levels[4][4];
-    signal input s2_vals[128][24];
-    signal input s2_siblings[128][8][12];
-    signal input s2_last_mt_levels[4][4];
-    signal input s3_vals[128][24];
-    signal input s3_siblings[128][6][12];
-    signal input s3_last_mt_levels[4][4];
-    signal input s4_vals[128][24];
-    signal input s4_siblings[128][5][12];
-    signal input s4_last_mt_levels[4][4];
-    signal input s5_vals[128][24];
-    signal input s5_siblings[128][3][12];
-    signal input s5_last_mt_levels[4][4];
-    signal input s6_vals[128][24];
-    signal input s6_siblings[128][2][12];
-    signal input s6_last_mt_levels[4][4];
+    signal input s1_vals[229][24];
+    signal input s1_siblings[229][8][12];
+    signal input s1_last_mt_levels[16][4];
+    signal input s2_vals[229][24];
+    signal input s2_siblings[229][7][12];
+    signal input s2_last_mt_levels[16][4];
+    signal input s3_vals[229][24];
+    signal input s3_siblings[229][5][12];
+    signal input s3_last_mt_levels[16][4];
+    signal input s4_vals[229][24];
+    signal input s4_siblings[229][4][12];
+    signal input s4_last_mt_levels[16][4];
+    signal input s5_vals[229][24];
+    signal input s5_siblings[229][2][12];
+    signal input s5_last_mt_levels[16][4];
+    signal input s6_vals[229][24];
+    signal input s6_siblings[229][1][12];
+    signal input s6_last_mt_levels[16][4];
 
     // Evaluations of the final FRI polynomial over a set of points of size bounded its degree
     signal input finalPol[32][3];
+
+    signal input nonce;
 
     signal {binary} enabled;
     enabled <== 1;
 
     signal input globalChallenge[3];
 
-    signal queryVals[128][3];
+    signal queryVals[229][3];
 
     signal challengesStage2[2][3];
 
@@ -1163,7 +1586,7 @@ template StarkVerifier0() {
     signal challengesFRISteps[8][3];
 
     // Challenges from which we derive all the queries
-    signal {binary} queriesFRI[128][23];
+    signal {binary} queriesFRI[229][23];
 
 
     ///////////
@@ -1172,7 +1595,7 @@ template StarkVerifier0() {
 
  
 
-    (challengesStage2,challengeQ,challengeXi,challengesFRI,challengesFRISteps,queriesFRI) <== Transcript0()(globalChallenge,airvalues,root2,root3,evals,s1_root,s2_root,s3_root,s4_root,s5_root,s6_root,finalPol);
+    (challengesStage2,challengeQ,challengeXi,challengesFRI,challengesFRISteps,queriesFRI) <== Transcript0()(globalChallenge,airvalues,root2,root3,evals,s1_root,s2_root,s3_root,s4_root,s5_root,s6_root,finalPol, nonce, enabled);
 
     ///////////
     // Check constraints polynomial in the evaluation point
@@ -1191,22 +1614,22 @@ template StarkVerifier0() {
     // For s0_vals, the arrays are transposed so that they fit MerkleHash template
     // For (s_i)_vals, the values are passed all together in a single array of length nVals*3. We convert them to vals[nVals][3]
  
-    var s0_vals1_p[128][2][1];
+    var s0_vals1_p[229][2][1];
  
-    var s0_vals2_p[128][9][1];
+    var s0_vals2_p[229][9][1];
  
-    var s0_vals3_p[128][3][1];
-    var s0_valsC_p[128][2][1];
-    var s0_vals_rom_0_p[128][2][1];
-    var s0_vals_p[128][1][3]; 
-    var s1_vals_p[128][8][3]; 
-    var s2_vals_p[128][8][3]; 
-    var s3_vals_p[128][8][3]; 
-    var s4_vals_p[128][8][3]; 
-    var s5_vals_p[128][8][3]; 
-    var s6_vals_p[128][8][3]; 
+    var s0_vals3_p[229][3][1];
+    var s0_valsC_p[229][2][1];
+    var s0_vals_rom_0_p[229][2][1];
+    var s0_vals_p[229][1][3]; 
+    var s1_vals_p[229][8][3]; 
+    var s2_vals_p[229][8][3]; 
+    var s3_vals_p[229][8][3]; 
+    var s4_vals_p[229][8][3]; 
+    var s5_vals_p[229][8][3]; 
+    var s6_vals_p[229][8][3]; 
 
-    for (var q=0; q<128; q++) {
+    for (var q=0; q<229; q++) {
         // Preprocess vals for the initial FRI polynomial
  
         for (var i = 0; i < 2; i++) {
@@ -1254,8 +1677,8 @@ template StarkVerifier0() {
     // Verify Merkle Roots
     ///////////
 
-    signal {binary} queriesFRIBits[128][12][2];
-    for(var i = 0; i < 128; i++) {
+    signal {binary} queriesFRIBits[229][12][2];
+    for(var i = 0; i < 229; i++) {
         for(var j = 0; j < 12; j++) {
             for(var k = 0; k < 2; k++) {
                 if (k + j * 2 >= 23) {
@@ -1269,30 +1692,30 @@ template StarkVerifier0() {
 
     //Calculate merkle root for s0 vals
  
-    for (var q=0; q<128; q++) {
-        VerifyMerkleHashUntilLevel(1, 2, 4, 11, 1)(s0_vals1_p[q], s0_siblings1[q], queriesFRIBits[q], s0_last_mt_levels1, enabled);
+    for (var q=0; q<229; q++) {
+        VerifyMerkleHashUntilLevel(1, 2, 4, 10, 2, 8388608)(s0_vals1_p[q], s0_siblings1[q], queriesFRIBits[q], s0_last_mt_levels1, enabled);
     }
  
-    for (var q=0; q<128; q++) {
-        VerifyMerkleHashUntilLevel(1, 9, 4, 11, 1)(s0_vals2_p[q], s0_siblings2[q], queriesFRIBits[q], s0_last_mt_levels2, enabled);
+    for (var q=0; q<229; q++) {
+        VerifyMerkleHashUntilLevel(1, 9, 4, 10, 2, 8388608)(s0_vals2_p[q], s0_siblings2[q], queriesFRIBits[q], s0_last_mt_levels2, enabled);
     }
 
-    for (var q=0; q<128; q++) {
-        VerifyMerkleHashUntilLevel(1, 3, 4, 11, 1)(s0_vals3_p[q], s0_siblings3[q], queriesFRIBits[q], s0_last_mt_levels3, enabled);
+    for (var q=0; q<229; q++) {
+        VerifyMerkleHashUntilLevel(1, 3, 4, 10, 2, 8388608)(s0_vals3_p[q], s0_siblings3[q], queriesFRIBits[q], s0_last_mt_levels3, enabled);
     }
 
-    for (var q=0; q<128; q++) {
-        VerifyMerkleHashUntilLevel(1, 2, 4, 11, 1)(s0_valsC_p[q], s0_siblingsC[q], queriesFRIBits[q], s0_last_mt_levelsC, enabled);
+    for (var q=0; q<229; q++) {
+        VerifyMerkleHashUntilLevel(1, 2, 4, 10, 2, 8388608)(s0_valsC_p[q], s0_siblingsC[q], queriesFRIBits[q], s0_last_mt_levelsC, enabled);
                                     
     }
 
     signal root_rom_0[4] <== [publics[4], publics[5], publics[6], publics[7]];
-    for (var q=0; q<128; q++) {
-        VerifyMerkleHashUntilLevel(1, 2, 4, 11, 1)(s0_vals_rom_0_p[q], s0_siblings_rom_0[q], queriesFRIBits[q], s0_last_mt_levels_rom_0, enabled);                                    
+    for (var q=0; q<229; q++) {
+        VerifyMerkleHashUntilLevel(1, 2, 4, 10, 2, 8388608)(s0_vals_rom_0_p[q], s0_siblings_rom_0[q], queriesFRIBits[q], s0_last_mt_levels_rom_0, enabled);                                    
     }
 
-    signal {binary} s1_keys_merkle_bits[128][10][2];
-    for (var q=0; q<128; q++) {
+    signal {binary} s1_keys_merkle_bits[229][10][2];
+    for (var q=0; q<229; q++) {
         // Calculate merkle root for s1 vals
 
         for(var j = 0; j < 10; j++) {
@@ -1304,10 +1727,10 @@ template StarkVerifier0() {
                 }
             }
         }
-        VerifyMerkleHashUntilLevel(3, 8, 4, 9, 1)(s1_vals_p[q], s1_siblings[q], s1_keys_merkle_bits[q], s1_last_mt_levels, enabled);
+        VerifyMerkleHashUntilLevel(3, 8, 4, 8, 2, 1048576)(s1_vals_p[q], s1_siblings[q], s1_keys_merkle_bits[q], s1_last_mt_levels, enabled);
     }
-    signal {binary} s2_keys_merkle_bits[128][9][2];
-    for (var q=0; q<128; q++) {
+    signal {binary} s2_keys_merkle_bits[229][9][2];
+    for (var q=0; q<229; q++) {
         // Calculate merkle root for s2 vals
 
         for(var j = 0; j < 9; j++) {
@@ -1319,10 +1742,10 @@ template StarkVerifier0() {
                 }
             }
         }
-        VerifyMerkleHashUntilLevel(3, 8, 4, 8, 1)(s2_vals_p[q], s2_siblings[q], s2_keys_merkle_bits[q], s2_last_mt_levels, enabled);
+        VerifyMerkleHashUntilLevel(3, 8, 4, 7, 2, 131072)(s2_vals_p[q], s2_siblings[q], s2_keys_merkle_bits[q], s2_last_mt_levels, enabled);
     }
-    signal {binary} s3_keys_merkle_bits[128][7][2];
-    for (var q=0; q<128; q++) {
+    signal {binary} s3_keys_merkle_bits[229][7][2];
+    for (var q=0; q<229; q++) {
         // Calculate merkle root for s3 vals
 
         for(var j = 0; j < 7; j++) {
@@ -1334,10 +1757,10 @@ template StarkVerifier0() {
                 }
             }
         }
-        VerifyMerkleHashUntilLevel(3, 8, 4, 6, 1)(s3_vals_p[q], s3_siblings[q], s3_keys_merkle_bits[q], s3_last_mt_levels, enabled);
+        VerifyMerkleHashUntilLevel(3, 8, 4, 5, 2, 16384)(s3_vals_p[q], s3_siblings[q], s3_keys_merkle_bits[q], s3_last_mt_levels, enabled);
     }
-    signal {binary} s4_keys_merkle_bits[128][6][2];
-    for (var q=0; q<128; q++) {
+    signal {binary} s4_keys_merkle_bits[229][6][2];
+    for (var q=0; q<229; q++) {
         // Calculate merkle root for s4 vals
 
         for(var j = 0; j < 6; j++) {
@@ -1349,10 +1772,10 @@ template StarkVerifier0() {
                 }
             }
         }
-        VerifyMerkleHashUntilLevel(3, 8, 4, 5, 1)(s4_vals_p[q], s4_siblings[q], s4_keys_merkle_bits[q], s4_last_mt_levels, enabled);
+        VerifyMerkleHashUntilLevel(3, 8, 4, 4, 2, 2048)(s4_vals_p[q], s4_siblings[q], s4_keys_merkle_bits[q], s4_last_mt_levels, enabled);
     }
-    signal {binary} s5_keys_merkle_bits[128][4][2];
-    for (var q=0; q<128; q++) {
+    signal {binary} s5_keys_merkle_bits[229][4][2];
+    for (var q=0; q<229; q++) {
         // Calculate merkle root for s5 vals
 
         for(var j = 0; j < 4; j++) {
@@ -1364,10 +1787,10 @@ template StarkVerifier0() {
                 }
             }
         }
-        VerifyMerkleHashUntilLevel(3, 8, 4, 3, 1)(s5_vals_p[q], s5_siblings[q], s5_keys_merkle_bits[q], s5_last_mt_levels, enabled);
+        VerifyMerkleHashUntilLevel(3, 8, 4, 2, 2, 256)(s5_vals_p[q], s5_siblings[q], s5_keys_merkle_bits[q], s5_last_mt_levels, enabled);
     }
-    signal {binary} s6_keys_merkle_bits[128][3][2];
-    for (var q=0; q<128; q++) {
+    signal {binary} s6_keys_merkle_bits[229][3][2];
+    for (var q=0; q<229; q++) {
         // Calculate merkle root for s6 vals
 
         for(var j = 0; j < 3; j++) {
@@ -1379,31 +1802,31 @@ template StarkVerifier0() {
                 }
             }
         }
-        VerifyMerkleHashUntilLevel(3, 8, 4, 2, 1)(s6_vals_p[q], s6_siblings[q], s6_keys_merkle_bits[q], s6_last_mt_levels, enabled);
+        VerifyMerkleHashUntilLevel(3, 8, 4, 1, 2, 32)(s6_vals_p[q], s6_siblings[q], s6_keys_merkle_bits[q], s6_last_mt_levels, enabled);
     }
 
-    VerifyMerkleRoot(1, 4, 8388608)(s0_last_mt_levels1, root1, enabled);
-    VerifyMerkleRoot(1, 4, 8388608)(s0_last_mt_levels2, root2, enabled);
+    VerifyMerkleRoot(2, 4, 8388608)(s0_last_mt_levels1, root1, enabled);
+    VerifyMerkleRoot(2, 4, 8388608)(s0_last_mt_levels2, root2, enabled);
 
-    VerifyMerkleRoot(1, 4, 8388608)(s0_last_mt_levels3, root3, enabled);
+    VerifyMerkleRoot(2, 4, 8388608)(s0_last_mt_levels3, root3, enabled);
 
-    VerifyMerkleRoot(1, 4, 8388608)(s0_last_mt_levelsC, rootC, enabled);
+    VerifyMerkleRoot(2, 4, 8388608)(s0_last_mt_levelsC, rootC, enabled);
 
-    VerifyMerkleRoot(1, 4, 8388608)(s0_last_mt_levels_rom_0, root_rom_0, enabled);
+    VerifyMerkleRoot(2, 4, 8388608)(s0_last_mt_levels_rom_0, root_rom_0, enabled);
 
-    VerifyMerkleRoot(1, 4, 1048576)(s1_last_mt_levels, s1_root, enabled);
-    VerifyMerkleRoot(1, 4, 131072)(s2_last_mt_levels, s2_root, enabled);
-    VerifyMerkleRoot(1, 4, 16384)(s3_last_mt_levels, s3_root, enabled);
-    VerifyMerkleRoot(1, 4, 2048)(s4_last_mt_levels, s4_root, enabled);
-    VerifyMerkleRoot(1, 4, 256)(s5_last_mt_levels, s5_root, enabled);
-    VerifyMerkleRoot(1, 4, 32)(s6_last_mt_levels, s6_root, enabled);
+    VerifyMerkleRoot(2, 4, 1048576)(s1_last_mt_levels, s1_root, enabled);
+    VerifyMerkleRoot(2, 4, 131072)(s2_last_mt_levels, s2_root, enabled);
+    VerifyMerkleRoot(2, 4, 16384)(s3_last_mt_levels, s3_root, enabled);
+    VerifyMerkleRoot(2, 4, 2048)(s4_last_mt_levels, s4_root, enabled);
+    VerifyMerkleRoot(2, 4, 256)(s5_last_mt_levels, s5_root, enabled);
+    VerifyMerkleRoot(2, 4, 32)(s6_last_mt_levels, s6_root, enabled);
         
 
     ///////////
     // Calculate FRI Polinomial
     ///////////
     
-    for (var q=0; q<128; q++) {
+    for (var q=0; q<229; q++) {
         // Reconstruct FRI polinomial from evaluations
         queryVals[q] <== CalculateFRIPolValue0()(queriesFRI[q], challengeXi, challengesFRI, evals, s0_vals1[q], s0_vals2[q], s0_vals3[q], s0_valsC[q], s0_vals_rom_0[q]);
     }
@@ -1411,14 +1834,14 @@ template StarkVerifier0() {
     ///////////
     // Verify FRI Polinomial
     ///////////
-    signal {binary} s1_queriesFRI[128][20];
-    signal {binary} s2_queriesFRI[128][17];
-    signal {binary} s3_queriesFRI[128][14];
-    signal {binary} s4_queriesFRI[128][11];
-    signal {binary} s5_queriesFRI[128][8];
-    signal {binary} s6_queriesFRI[128][5];
+    signal {binary} s1_queriesFRI[229][20];
+    signal {binary} s2_queriesFRI[229][17];
+    signal {binary} s3_queriesFRI[229][14];
+    signal {binary} s4_queriesFRI[229][11];
+    signal {binary} s5_queriesFRI[229][8];
+    signal {binary} s6_queriesFRI[229][5];
 
-    for (var q=0; q<128; q++) {
+    for (var q=0; q<229; q++) {
       
         // Verify that the query is properly constructed. This is done by checking that the linear combination of the set of 
         // polynomials committed during the different rounds evaluated at z matches with the commitment of the FRI polynomial
