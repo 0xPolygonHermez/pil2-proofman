@@ -303,11 +303,11 @@ BENCHMARK(MERKLETREE16_BENCH_GPU)
 
 BENCHMARK(GRINDING_BENCH_GPU)
     ->Unit(benchmark::kMillisecond)
+    ->Arg(16)   
     ->Arg(20)   
-    ->Arg(21)   
-    ->Arg(22)   
-    ->Arg(24)  
-    ->Arg(25)  
+    ->Arg(23)   
+    ->Arg(24)   
+
     ->UseRealTime();
 
 BENCHMARK(GRINDING16_BENCH_GPU)

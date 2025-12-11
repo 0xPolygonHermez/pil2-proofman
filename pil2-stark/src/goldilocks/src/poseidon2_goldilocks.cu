@@ -371,8 +371,25 @@ __global__ void grinding_check_(uint64_t* nonce, uint64_t *__restrict__ nonceBlo
 
 template<uint32_t SPONGE_WIDTH_T>
 void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_nonce, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream){
-    uint32_t hashesPerThread = 4;
-    uint64_t N = 1 << 20; // Search 2M x 2 nonces per iteration
+    uint64_t log_launch_iters = 6;
+    uint64_t launch_iters = 1ULL << log_launch_iters;
+    uint64_t log_N = 19; 
+    uint64_t N = 1 << log_N;
+    uint64_t security = 128;
+    // we need to determine log_hashesPerThread such that, suthat probabilty of not finding a valid nonce is lower
+    // than 2^(-security)
+    // (1-1/2^n_bits)^(totalHashesRequired) = 2^(-security)
+    // totalHashesRequired = log(2^(-security)) / log(1-1/2^n_bits)
+    double totalHashesRequired =(double(-security)) * log(double(2.0))/log(double(1.0)-double(1.0)/double(1ULL << (n_bits)));
+    uint64_t log_totalHashesRequired = ceil(log2(totalHashesRequired));
+    uint64_t log_hashesPerThread;
+    if(log_totalHashesRequired > log_launch_iters + log_N){
+        log_hashesPerThread = log_totalHashesRequired - log_launch_iters - log_N;
+    }else{
+        log_hashesPerThread = 1;
+    }
+    uint64_t hashesPerThread = 1ULL << log_hashesPerThread;
+
     dim3 blockSize( 128 );
     dim3 gridSize( (N + blockSize.x - 1) / blockSize.x );
     uint64_t* d_nonceBlock;
@@ -430,7 +447,7 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_nonce, const 
     uint64_t nonces_per_iteration = gridSize.x * blockSize.x * hashesPerThread;
 
     setNonceToMax<<<1,1,0,stream>>>((uint64_t *)d_nonce);
-    for(int i=0; i<100; ++i){
+    for(int i=0; i<launch_iters; ++i){
         grinding_calc_<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<gridSize, blockSize, shared_mem_size, stream>>>((uint64_t *)d_nonce, (uint64_t *)d_nonceBlock, (uint64_t *)d_in, n_bits, hashesPerThread, offset);
         grinding_check_<<<1, 32, 0, stream>>>((uint64_t *)d_nonce, (uint64_t *)d_nonceBlock, gridSize.x);
         offset += nonces_per_iteration;
