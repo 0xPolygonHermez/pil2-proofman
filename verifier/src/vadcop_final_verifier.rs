@@ -1,5 +1,7 @@
 use fields::{Goldilocks, CubicExtensionField, Field};
 use crate::{Boundary, VerifierInfo, stark_verify};
+extern crate alloc;
+use alloc::{vec, vec::Vec, string::ToString};
 
 #[rustfmt::skip]
 #[allow(clippy::all)]
@@ -3434,15 +3436,22 @@ pub fn verifier_info() -> VerifierInfo {
     }
 }
 
+#[cfg(feature = "std")]
+fn decompress_zstd(compressed_proof: &[u8]) -> Vec<u8> {
+    let mut buf: Vec<u8> = Vec::new();
+    let cursor = std::io::Cursor::new(compressed_proof);
+    let mut decoder = zstd::stream::read::Decoder::new(cursor).expect("Invalid zstd stream");
+    std::io::Read::read_to_end(&mut decoder, &mut buf).expect("Failed to decompress zstd file");
+    buf
+}
+
+#[cfg(not(feature = "std"))]
+fn decompress_zstd(_compressed_proof: &[u8]) -> Vec<u8> {
+    unimplemented!("Proof decompression needs feature std");
+}
+
 pub fn verify(proof: &[u8], vk: &[u8]) -> bool {
-    let mut buf = Vec::new();
-    let proof_data: &[u8] = if proof.len() >= 4 && proof[0..4] == [0x28, 0xB5, 0x2F, 0xFD] {
-        let cursor = std::io::Cursor::new(proof);
-        let mut decoder = zstd::stream::read::Decoder::new(cursor).expect("Invalid zstd stream");
-        std::io::Read::read_to_end(&mut decoder, &mut buf).expect("Failed to decompress zstd file");
-        &buf
-    } else {
-        proof
-    };
+    let proof_data: &[u8] =
+        if proof.len() >= 4 && proof[0..4] == [0x28, 0xB5, 0x2F, 0xFD] { &decompress_zstd(proof) } else { proof };
     stark_verify(proof_data, vk, &verifier_info(), q_verify, query_verify)
 }

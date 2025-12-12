@@ -16,5 +16,6 @@ bytemuck.workspace = true
 zstd.workspace = true
 
 [features]
-default = ["verify"]
+default = ["verify", "std"]
 verify = ["fields/verify"]
+std = []

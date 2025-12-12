@@ -1,8 +1,8 @@
-use std::{
-    array,
+use core::{
     fmt::{Display, Formatter, Result},
-    ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
+use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use core::array;
 use serde::{Deserialize, Serialize};
 
 use crate::{PrimeField64, Field, ExtensionField, Goldilocks};
