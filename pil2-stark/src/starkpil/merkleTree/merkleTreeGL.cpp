@@ -200,7 +200,7 @@ void MerkleTreeGL::merkelize()
 #ifdef __AVX512__
     Poseidon2GoldilocksCommit::merkletree_batch_avx512(nodes, source, width, height, arity);
 #elif defined(__AVX2__)
-    Poseidon2GoldilocksCommit::merkletree_batch_avx(nodes, source, width, height, arity);
+    Poseidon2GoldilocksCommit::merkletree_avx(nodes, source, width, height, arity);
 #else
     Poseidon2GoldilocksCommit::merkletree_seq(nodes, source, width, height, arity);
 #endif

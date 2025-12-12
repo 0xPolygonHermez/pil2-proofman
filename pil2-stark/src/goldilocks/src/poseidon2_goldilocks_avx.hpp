@@ -162,17 +162,17 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_external_avx(__m256i st[
     st[3] = _mm256_permute2f128_si256(t1_, t3_, 0b00110001); // Combine high halves
 #endif
     __m256i stored;
-#if SPONGE_WIDTH > 4
-    Goldilocks::add_avx(stored, st[0], st[1]);
-    for(int i = 2; i < (SPONGE_WIDTH >> 2); i++) {
-        Goldilocks::add_avx(stored, stored, st[i]);            
+    if(SPONGE_WIDTH > 4) {
+        Goldilocks::add_avx(stored, st[0], st[1]);
+        for(int i = 2; i < (SPONGE_WIDTH >> 2); i++) {
+            Goldilocks::add_avx(stored, stored, st[i]);            
+        }
+        for(int i = 0; i < (SPONGE_WIDTH >> 2); i++) {
+            Goldilocks::add_avx(st[i], st[i], stored);
+        }
+    } else {
+        exit(1);
     }
-    for(int i = 0; i < (SPONGE_WIDTH >> 2); i++) {
-        Goldilocks::add_avx(st[i], st[i], stored);
-    }
-#else
-    exit(1);
-#endif
 };
 
 template<uint32_t SPONGE_WIDTH_T>

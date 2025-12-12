@@ -308,6 +308,9 @@ template<uint32_t SPONGE_WIDTH_T>
 void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_avx(Goldilocks::Element *state, const Goldilocks::Element *input)
 {
 
+   const Goldilocks::Element* C = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::C4 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::C12 : Poseidon2GoldilocksConstants::C16;
+    const Goldilocks::Element* DIAG = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::D4 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::D12 : Poseidon2GoldilocksConstants::D16;
+ 
     const int length = SPONGE_WIDTH * sizeof(Goldilocks::Element);
     std::memcpy(state, input, length);
     __m256i st[(SPONGE_WIDTH >> 2)];
@@ -320,7 +323,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_avx(Goldilocks::Eleme
     
     for( uint32_t r = 0; r < HALF_N_FULL_ROUNDS; r++)
     {
-        add_avx_small(st, &(Poseidon2GoldilocksConstants::C12[r * SPONGE_WIDTH]));
+        add_avx_small(st, &(C[r * SPONGE_WIDTH]));
         pow7_avx(st);
         matmul_external_avx(st);
     }
@@ -329,7 +332,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_avx(Goldilocks::Eleme
     Goldilocks::Element state0 = state[0];
     __m256i D[(SPONGE_WIDTH >> 2)];
     for( uint32_t i = 0; i < (SPONGE_WIDTH >> 2); ++i) {
-        Goldilocks::load_avx(D[i], &(Poseidon2GoldilocksConstants::D12[i << 2]));
+        Goldilocks::load_avx(D[i], &(DIAG[i << 2]));
     }
 
     __m256i partial_sum_;
@@ -349,7 +352,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_avx(Goldilocks::Eleme
 
         Goldilocks::Element sum = partial_sum[0] + partial_sum[1] + partial_sum[2] + partial_sum[3];
         sum = sum - aux;
-        state0 = state0 + Poseidon2GoldilocksConstants::C12[HALF_N_FULL_ROUNDS * SPONGE_WIDTH + r];
+        state0 = state0 + C[HALF_N_FULL_ROUNDS * SPONGE_WIDTH + r];
         pow7(state0);
         sum = sum + state0;    
             
@@ -358,8 +361,8 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_avx(Goldilocks::Eleme
             Goldilocks::mult_avx(st[i], st[i], D[i]);
             Goldilocks::add_avx(st[i], st[i], scalar);
         }
-        state0 = state0 * Poseidon2GoldilocksConstants::D12[0] + sum;
-        aux = aux * Poseidon2GoldilocksConstants::D12[0] + sum;
+        state0 = state0 * DIAG[0] + sum;
+        aux = aux * DIAG[0] + sum;
     }
 
     Goldilocks::store_avx(&(state[0]), st[0]);
@@ -368,7 +371,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_avx(Goldilocks::Eleme
 
     for( uint32_t r = 0; r < HALF_N_FULL_ROUNDS; r++)
     {
-        add_avx_small(st, &(Poseidon2GoldilocksConstants::C12[HALF_N_FULL_ROUNDS * SPONGE_WIDTH + N_PARTIAL_ROUNDS + r * SPONGE_WIDTH]));
+        add_avx_small(st, &(C[HALF_N_FULL_ROUNDS * SPONGE_WIDTH + N_PARTIAL_ROUNDS + r * SPONGE_WIDTH]));
         pow7_avx(st);        
         matmul_external_avx(st);
     }
@@ -401,7 +404,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::linear_hash_avx(Goldilocks::Element *o
 // avoid -Wrestrict warning, there is not overlapping in practice            
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wrestrict"
-            std::memmove(state + RATE, state, CAPACITY * sizeof(Goldilocks::Element));
+            std::memcpy(state + RATE, state, CAPACITY * sizeof(Goldilocks::Element));
 #pragma GCC diagnostic pop
         }
 

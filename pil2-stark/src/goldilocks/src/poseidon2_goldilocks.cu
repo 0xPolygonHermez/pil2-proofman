@@ -393,7 +393,7 @@ __global__ void grinding_check_(uint64_t* nonce, uint64_t *__restrict__ nonceBlo
 template<uint32_t SPONGE_WIDTH_T>
 void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_nonce, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream){
 
-    uint64_t log_launch_iters = 6; //64 launch iterations
+    uint64_t log_launch_iters = 7; //64 launch iterations
     uint64_t launch_iters = 1ULL << log_launch_iters;
     uint64_t log_N = 19; //512K nonces per launch
     uint64_t N = 1 << log_N;
