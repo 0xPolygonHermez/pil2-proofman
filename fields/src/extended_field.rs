@@ -1,9 +1,9 @@
 use crate::Field;
 use core::array;
-use std::fmt::{Display, Formatter, Result};
+use core::fmt::{Display, Formatter, Result};
 use core::iter::{Product, Sum};
 use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-use std::ops::{Index, IndexMut};
+use core::ops::{Index, IndexMut};
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct CubicExtensionField<F: Display> {

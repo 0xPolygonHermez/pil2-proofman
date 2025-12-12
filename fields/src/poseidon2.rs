@@ -1,3 +1,5 @@
+extern crate alloc;
+use alloc::{vec, vec::Vec};
 use crate::PrimeField64;
 
 pub const HALF_ROUNDS: usize = 4;

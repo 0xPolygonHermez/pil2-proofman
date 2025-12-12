@@ -1,3 +1,5 @@
+#![no_std]
+
 mod goldilocks;
 mod integers;
 mod goldilocks_quintic_extension;

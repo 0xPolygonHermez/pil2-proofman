@@ -2,7 +2,7 @@ use core::fmt;
 use core::fmt::{Debug, Display, Formatter};
 use core::hash::{Hash, Hasher};
 use core::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
-use std::ops::DivAssign;
+use core::ops::DivAssign;
 
 use num_bigint::BigUint;
 

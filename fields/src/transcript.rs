@@ -1,3 +1,5 @@
+extern crate alloc;
+use alloc::{vec, vec::Vec};
 use crate::{poseidon2_hash, Field, Goldilocks, PrimeField64};
 
 #[derive(Default)]

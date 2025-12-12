@@ -1,5 +1,7 @@
 use fields::{intt_tiny, verify_fold, verify_mt, CubicExtensionField, Field, Goldilocks, Transcript};
 use bytemuck::cast_slice;
+extern crate alloc;
+use alloc::{vec, vec::Vec, string::String};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
