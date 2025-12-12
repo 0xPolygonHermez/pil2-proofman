@@ -3,7 +3,6 @@
 
 #include "poseidon2_goldilocks.hpp"
 #include "goldilocks_base_field.hpp"
-#define __AVX2__
 #ifdef __AVX2__
 #include <immintrin.h>
 
@@ -45,7 +44,6 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_m4_batch_avx(__m256i &st
     Goldilocks::add_avx(t5, t5, t2);
     Goldilocks::add_avx(t6, t3, t5);
     Goldilocks::add_avx(t7, t2, t4);
-
     Goldilocks::copy_avx(st0, t6);
     Goldilocks::copy_avx(st1, t5);
     Goldilocks::copy_avx(st2, t7);
@@ -54,23 +52,26 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_m4_batch_avx(__m256i &st
 
 template<uint32_t SPONGE_WIDTH_T>   
 inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_external_batch_avx(__m256i *x) {
-    matmul_m4_batch_avx(x[0], x[1], x[2], x[3]);
-    matmul_m4_batch_avx(x[4], x[5], x[6], x[7]);
-    matmul_m4_batch_avx(x[8], x[9], x[10], x[11]);
-
-    __m256i stored[4];
-    Goldilocks::add_avx(stored[0], x[0], x[4]);
-    Goldilocks::add_avx(stored[0], stored[0], x[8]);
-    Goldilocks::add_avx(stored[1], x[1], x[5]);
-    Goldilocks::add_avx(stored[1], stored[1], x[9]);
-    Goldilocks::add_avx(stored[2], x[2], x[6]);
-    Goldilocks::add_avx(stored[2], stored[2], x[10]);
-    Goldilocks::add_avx(stored[3], x[3], x[7]);
-    Goldilocks::add_avx(stored[3], stored[3], x[11]);
-
-    for(uint32_t i = 0; i < SPONGE_WIDTH; ++i)
-    {
-        Goldilocks::add_avx(x[i], x[i], stored[i % 4]);
+    
+    for(int i = 0; i < SPONGE_WIDTH; i +=4) {
+        matmul_m4_batch_avx(x[i], x[i+1], x[i+2], x[i+3]);
+    }
+    if( SPONGE_WIDTH > 4){
+        __m256i stored[4];
+        Goldilocks::add_avx(stored[0], x[0], x[4]);
+        Goldilocks::add_avx(stored[1], x[1], x[5]);
+        Goldilocks::add_avx(stored[2], x[2], x[6]);
+        Goldilocks::add_avx(stored[3], x[3], x[7]);
+        for(uint32_t i = 8; i < SPONGE_WIDTH; i +=4) {
+            Goldilocks::add_avx(stored[0], stored[0], x[i]);
+            Goldilocks::add_avx(stored[1], stored[1], x[i+1]);
+            Goldilocks::add_avx(stored[2], stored[2], x[i+2]);
+            Goldilocks::add_avx(stored[3], stored[3], x[i+3]);
+        }
+        for(uint32_t i = 0; i < SPONGE_WIDTH; ++i)
+        {
+            Goldilocks::add_avx(x[i], x[i], stored[i % 4]);
+        }
     }
 }
 
