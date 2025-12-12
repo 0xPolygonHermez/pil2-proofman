@@ -13,7 +13,7 @@ require "std_sum.pil";
 
     To generate stats:
     node ../pil2-compiler/src/pil.js ./pil2-components/test/special/intermediate_sums.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/special/build/intermediate_sums.pilout
-    node --max-old-space-size=131072 ../pil2-proofman-js/src/main_stats.js -a pil2-components/test/std/special/build/intermediate_sums.pilout -o pil2-components/test/std/special/build/intermediate_sums.stats
+    node --max-old-space-size=131072 ../pil2-proofman-js/src/main_stats.js -a pil2-components/test/special/build/intermediate_sums.pilout -o pil2-components/test/special/build/intermediate_sums.stats
 */
 
 airtemplate ImDummy(const int N = 2**8, const int deg_num = 1, const int deg_den = 1, const int M = 6) {

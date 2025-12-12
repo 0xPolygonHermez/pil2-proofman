@@ -165,6 +165,20 @@ function set_max_constraint_degree(const int degree) {
     MAX_CONSTRAINT_DEGREE = degree;
 }
 
+// Controls opid diagram print
+int PRINT_OPID_DIAGRAM = 0;
+
+function enable_opid_diagram() {
+    PRINT_OPID_DIAGRAM = 1;
+}
+
+// Controls range stats print
+int PRINT_RANGE_STATS = 0;
+
+function enable_range_stats() {
+    PRINT_RANGE_STATS = 1;
+}
+
 // Powers of 2
 const int P2_1 = 2**1;
 const int P2_2 = 2**2;

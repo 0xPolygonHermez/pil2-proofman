@@ -551,9 +551,13 @@ private function opid_process(const int min, const int max, const int predefined
         rcproof.air_count++;
     }
 
+    // Print range stats
+    if (PRINT_RANGE_STATS == 1) {
+        on final proof print_range_stats();
+    }
+
     // Generate global hints
     on final proof issue_rc_users_global(); 
-    on final proof print_range_stats();
 
     for (int i = 0; i < rcproof.opids_count; i++) {
         if (min == rcproof.mins[i] && max == rcproof.maxs[i]) {
