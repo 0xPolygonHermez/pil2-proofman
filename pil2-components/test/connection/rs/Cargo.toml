@@ -1,0 +1,36 @@
+[package]
+name = "connection"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+pil-std-lib = { path = "../../../lib/std/rs" }
+
+proofman.workspace = true
+proofman-common.workspace = true
+proofman-macros.workspace = true
+proofman-cli.workspace = true
+witness.workspace = true
+tracing.workspace = true
+rand.workspace = true
+num-bigint.workspace = true
+fields.workspace = true
+rayon.workspace = true
+
+[build-dependencies]
+proofman-cli.workspace = true
+
+[features]
+default = []
+no_lib_link = ["proofman-common/no_lib_link"]
+disable_distributed = ["proofman-common/disable_distributed"]
+diagnostic = ["proofman-macros/diagnostic"]
+debug = []
+dev = []

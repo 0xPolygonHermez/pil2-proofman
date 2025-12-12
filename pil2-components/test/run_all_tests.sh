@@ -46,7 +46,8 @@ test_pipeline() {
                 --pilout "$PILOUT_FILE" \
                 --path "$SRC" -o
 
-            cargo build 
+            # Compile in debug mode
+            cargo build --workspace
 
             cargo run --bin proofman-cli verify-constraints \
                 --witness-lib "$LIB" \
@@ -64,20 +65,20 @@ test_pipeline() {
 
 # Run tests
 test_pipeline "simple" "./pil2-components/test/simple" "simple"
-test_pipeline "connection" "./pil2-components/test/std/connection" "connection"
-# test_pipeline "diff_buses" "./pil2-components/test/std/diff_buses" "diff_buses" # It cannot work in the current state of the project
-test_pipeline "direct_update" "./pil2-components/test/std/direct_update" "direct_update"
-test_pipeline "lookup" "./pil2-components/test/std/lookup" "lookup"
-test_pipeline "one_instance" "./pil2-components/test/std/one_instance" "one_instance"
-test_pipeline "permutation" "./pil2-components/test/std/permutation" "permutation"
-test_pipeline "build" "./pil2-components/test/std/range_check" "range_check"
-test_pipeline "virtual_tables" "./pil2-components/test/std/virtual_tables" "virtual_tables"
+test_pipeline "connection" "./pil2-components/test/connection" "connection"
+# test_pipeline "diff_buses" "./pil2-components/test/diff_buses" "diff_buses" # It cannot work in the current state of the project
+test_pipeline "direct_update" "./pil2-components/test/direct_update" "direct_update"
+test_pipeline "lookup" "./pil2-components/test/lookup" "lookup"
+test_pipeline "one_instance" "./pil2-components/test/one_instance" "one_instance"
+test_pipeline "permutation" "./pil2-components/test/permutation" "permutation"
+test_pipeline "build" "./pil2-components/test/range_check" "range_check"
+test_pipeline "virtual_tables" "./pil2-components/test/virtual_tables" "virtual_tables"
 
-test_pipeline "array_size" "./pil2-components/test/std/special" "array_size" "true"
-test_pipeline "direct_optimizations" "./pil2-components/test/std/special" "direct_optimizations" "true"
-test_pipeline "expr_optimizations" "./pil2-components/test/std/special" "expr_optimizations" "true"
-test_pipeline "intermediate_prods" "./pil2-components/test/std/special" "intermediate_prods" "true"
-test_pipeline "intermediate_sums" "./pil2-components/test/std/special" "intermediate_sums" "true"
-test_pipeline "table" "./pil2-components/test/std/special" "table" "true"
+test_pipeline "array_size" "./pil2-components/test/special" "array_size" "true"
+test_pipeline "direct_optimizations" "./pil2-components/test/special" "direct_optimizations" "true"
+test_pipeline "expr_optimizations" "./pil2-components/test/special" "expr_optimizations" "true"
+test_pipeline "intermediate_prods" "./pil2-components/test/special" "intermediate_prods" "true"
+test_pipeline "intermediate_sums" "./pil2-components/test/special" "intermediate_sums" "true"
+test_pipeline "table" "./pil2-components/test/special" "table" "true"
 
 echo "✅ All tests completed."
