@@ -12,7 +12,7 @@ require "std_prod.pil";
         · ɣ is a challenge added to make the expression an extension-field expression.
 
     To audit and generate stats:
-    node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/intermediate_prods.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/special/build/intermediate_prods.pilout
+    node ../pil2-compiler/src/pil.js ./pil2-components/test/special/intermediate_prods.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/special/build/intermediate_prods.pilout
     node --max-old-space-size=131072 ../pil2-compiler/tools/audit.js pil2-components/test/std/special/build/intermediate_prods.pilout
     node --max-old-space-size=131072 ../pil2-proofman-js/src/main_stats.js -a pil2-components/test/std/special/build/intermediate_prods.pilout -s pil2-components/test/std/special/intermediate_prods.config.json -o pil2-components/test/std/special/build/intermediate_prods.stats
 */

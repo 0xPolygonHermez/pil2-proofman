@@ -2,7 +2,7 @@ require "std_constants.pil"
 require "std_connection.pil"
 
 // To audit:
-// node ../pil2-compiler/src/pil.js ./pil2-components/test/std/one_instance/one_instance.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/one_instance/build/build.pilout
+// node ../pil2-compiler/src/pil.js ./pil2-components/test/one_instance/one_instance.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/one_instance/build/build.pilout
 // node --max-old-space-size=131072 ../pil2-compiler/tools/audit.js pil2-components/test/std/one_instance/build/build.pilout
 
 // Set the std mode to one instance

@@ -12,7 +12,7 @@ require "std_sum.pil";
         · ɣ is a challenge added to make the denominator an extension-field expression.
 
     To generate stats:
-    node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/intermediate_sums.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/special/build/intermediate_sums.pilout
+    node ../pil2-compiler/src/pil.js ./pil2-components/test/special/intermediate_sums.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/special/build/intermediate_sums.pilout
     node --max-old-space-size=131072 ../pil2-proofman-js/src/main_stats.js -a pil2-components/test/std/special/build/intermediate_sums.pilout -o pil2-components/test/std/special/build/intermediate_sums.stats
 */
 
