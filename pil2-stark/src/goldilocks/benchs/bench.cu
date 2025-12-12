@@ -226,49 +226,6 @@ static void GRINDING_BENCH_GPU(benchmark::State &state)
     cudaStreamDestroy(stream);
 }
 
-static void GRINDING16_BENCH_GPU(benchmark::State &state)
-{
-    // Initialize GPU constants
-    uint32_t gpu_id = 0;
-    CHECKCUDAERR(cudaGetDevice((int*)&gpu_id));
-    Poseidon2GoldilocksGPU<16>::initPoseidon2GPUConstants(&gpu_id, 1);
-
-    cudaStream_t stream;
-    CHECKCUDAERR(cudaStreamCreate(&stream));
-
-    uint32_t n_bits = state.range(0);
-    
-    // Allocate device memory
-    gl64_t *d_in, *d_nonce;
-    CHECKCUDAERR(cudaMalloc((void **)&d_in, Poseidon2GoldilocksGPU<16>::SPONGE_WIDTH * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc((void **)&d_nonce, sizeof(gl64_t)));
-    
-    // Create different input for each iteration
-    Goldilocks::Element h_in[Poseidon2GoldilocksGPU<16>::SPONGE_WIDTH];
-    uint64_t iteration = 0;
-    
-    // Initialize first input
-    for (auto _ : state)
-    {
-        // Generate different input for each iteration based on iteration counter
-        iteration++;
-        for (int i = 0; i < (Poseidon2GoldilocksGPU<16>::SPONGE_WIDTH-1); i++)
-        {
-            h_in[i] = Goldilocks::fromU64((iteration * 1000 + i) * 123456789ULL);
-        }
-        CHECKCUDAERR(cudaMemcpy(d_in, h_in, (Poseidon2GoldilocksGPU<16>::SPONGE_WIDTH-1) * sizeof(gl64_t), cudaMemcpyHostToDevice));
-        
-        Poseidon2GoldilocksGPU<16>::grinding((uint64_t *)d_nonce, (uint64_t *)d_in, n_bits, stream);
-        cudaStreamSynchronize(stream);
-        
-        iteration++;
-    }
-
-    cudaFree(d_in);
-    cudaFree(d_nonce);
-    cudaStreamDestroy(stream);
-}
-
 BENCHMARK(LINEAR_HASH12_BENCH_GPU)
     ->Unit(benchmark::kMillisecond)
     ->Arg(24)
@@ -306,16 +263,8 @@ BENCHMARK(GRINDING_BENCH_GPU)
     ->Arg(16)   
     ->Arg(20)   
     ->Arg(23)   
-    ->Arg(24)   
-    ->UseRealTime();
-
-BENCHMARK(GRINDING16_BENCH_GPU)
-    ->Unit(benchmark::kMillisecond)
-    ->Arg(20)   
-    ->Arg(21)   
-    ->Arg(22)   
-    ->Arg(24)  
-    ->Arg(25)  
+    ->Arg(24)
+    ->Arg(25)    
     ->UseRealTime();
 
 BENCHMARK_MAIN();

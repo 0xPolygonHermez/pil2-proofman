@@ -6,7 +6,7 @@
 #include "../src/poseidon2_goldilocks_avx.hpp"
 #include "../src/ntt_goldilocks.hpp"
 #include "../src/merklehash_goldilocks.hpp"
-#undef __AVX2__
+
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif

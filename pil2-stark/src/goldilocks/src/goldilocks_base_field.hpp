@@ -6,7 +6,7 @@
 #include <gmpxx.h>
 #include <iostream> // string
 #include <omp.h>
-#undef __AVX2__
+
 #ifdef __AVX2__ 
 #include <immintrin.h>
 #endif

@@ -1,7 +1,7 @@
 #include "merkleTreeGL.hpp"
 #include <cassert>
 #include <algorithm> // std::max
-#undef __AVX2__
+
 
 
 MerkleTreeGL::MerkleTreeGL(uint64_t _arity, bool _custom, uint64_t _height, uint64_t _width, bool allocateSource, bool allocateNodes) : height(_height), width(_width)

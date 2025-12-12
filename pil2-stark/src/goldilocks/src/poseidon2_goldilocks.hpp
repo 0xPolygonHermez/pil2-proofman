@@ -3,7 +3,7 @@
 
 #include "poseidon2_goldilocks_constants.hpp"
 #include "goldilocks_base_field.hpp"
-#undef __AVX2__
+#define __AVX2__
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif
@@ -12,6 +12,7 @@ template<uint32_t SPONGE_WIDTH_T>
 class Poseidon2Goldilocks
 {
 public:
+    static_assert(SPONGE_WIDTH_T == 4 || SPONGE_WIDTH_T == 12 || SPONGE_WIDTH_T == 16, "SPONGE_WIDTH_T must be 4, 12, or 16");
     static constexpr uint32_t RATE = SPONGE_WIDTH_T-4;
     static constexpr uint32_t CAPACITY = 4;
     static constexpr uint32_t SPONGE_WIDTH = SPONGE_WIDTH_T;
@@ -30,11 +31,11 @@ private:
     inline void static matmul_m4_(Goldilocks::Element *x);
     inline void static matmul_external_(Goldilocks::Element *x);
 #ifdef __AVX2__
-    inline void static add_avx(__m256i &st0, __m256i &st1, __m256i &st2, const Goldilocks::Element C[SPONGE_WIDTH]);
-    inline void static pow7_avx(__m256i &st0, __m256i &st1, __m256i &st2);
-    inline void static add_avx_a(__m256i &st0, __m256i &st1, __m256i &st2, const Goldilocks::Element C[SPONGE_WIDTH]);
-    inline void static add_avx_small(__m256i &st0, __m256i &st1, __m256i &st2, const Goldilocks::Element C[SPONGE_WIDTH]);
-    inline void static matmul_external_avx(__m256i &st0, __m256i &st1, __m256i &st2);
+    inline void static add_avx(__m256i st[(SPONGE_WIDTH >> 2)], const Goldilocks::Element C[SPONGE_WIDTH]);
+    inline void static pow7_avx(__m256i st[(SPONGE_WIDTH >> 2)]);
+    inline void static add_avx_a(__m256i st[(SPONGE_WIDTH >> 2)], const Goldilocks::Element C[SPONGE_WIDTH]);
+    inline void static add_avx_small(__m256i st[(SPONGE_WIDTH >> 2)], const Goldilocks::Element C[SPONGE_WIDTH]);
+    inline void static matmul_external_avx(__m256i st[(SPONGE_WIDTH >> 2)]);
     inline void static matmul_external_batch_avx(__m256i *x);
     inline void static matmul_m4_batch_avx(__m256i &st0, __m256i &st1, __m256i &st2, __m256i &st3);
     inline void static pow7add_avx(__m256i *x, const Goldilocks::Element C_[SPONGE_WIDTH]);

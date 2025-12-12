@@ -345,7 +345,7 @@ __device__ __forceinline__ void poseidon2_hash_shared(gl64_t *out, const gl64_t 
 template<uint32_t SPONGE_WIDTH_T>
 class Poseidon2GoldilocksGPU  {
 public:
-
+    static_assert(SPONGE_WIDTH_T == 4 || SPONGE_WIDTH_T == 12 || SPONGE_WIDTH_T == 16, "SPONGE_WIDTH_T must be 4, 12, or 16");
     static constexpr uint32_t RATE = SPONGE_WIDTH_T-4;
     static constexpr uint32_t CAPACITY = 4;
     static constexpr uint32_t SPONGE_WIDTH = SPONGE_WIDTH_T;

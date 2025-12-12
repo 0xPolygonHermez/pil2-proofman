@@ -1,6 +1,6 @@
 #ifndef GOLDILOCKS_CUBIC_EXTENSION_AVX
 #define GOLDILOCKS_CUBIC_EXTENSION_AVX
-#undef __AVX2__
+
 #ifdef __AVX2__
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_cubic_extension.hpp"
