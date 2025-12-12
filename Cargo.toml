@@ -35,9 +35,7 @@ members = [
     # break and dev experience will be bad since repo
     # won't build with a fresh clone
     "examples/fibonacci-square",
-    "examples/test-recursive-c12",
     "examples/test-recursive",
-    "examples/test-recursive-final",
     "macros-test",
 ]
 

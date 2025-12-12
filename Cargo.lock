@@ -1473,48 +1473,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "test-c12"
-version = "0.14.0"
-dependencies = [
- "bytemuck",
- "fields",
- "libloading",
- "num-bigint",
- "pil-std-lib",
- "proofman",
- "proofman-common",
- "proofman-macros",
- "proofman-starks-lib-c",
- "rayon",
- "serde",
- "serde_arrays",
- "serde_json",
- "tracing",
- "witness",
-]
-
-[[package]]
-name = "test-final"
-version = "0.14.0"
-dependencies = [
- "bytemuck",
- "fields",
- "libloading",
- "num-bigint",
- "pil-std-lib",
- "proofman",
- "proofman-common",
- "proofman-macros",
- "proofman-starks-lib-c",
- "rayon",
- "serde",
- "serde_arrays",
- "serde_json",
- "tracing",
- "witness",
-]
-
-[[package]]
 name = "test-recursive"
 version = "0.14.0"
 dependencies = [
