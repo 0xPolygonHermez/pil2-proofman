@@ -29,6 +29,7 @@ pub struct AirTableRow {
     pub fri_folding_factors: String,
     pub fri_early_stop_degree: u64,
     pub grinding_query_phase: u64,
+    pub prover_size: String,
 }
 
 #[derive(Serialize)]
@@ -67,6 +68,7 @@ pub struct AirInfo {
     pub fri_folding_factors: Vec<u64>,
     pub fri_early_stop_degree: u64,
     pub grinding_query_phase: u64,
+    pub prover_size: String,
 }
 
 impl AirTableRow {
@@ -84,6 +86,7 @@ impl AirTableRow {
             fri_folding_factors: format!("{:?}", air.fri_folding_factors),
             fri_early_stop_degree: air.fri_early_stop_degree,
             grinding_query_phase: air.grinding_query_phase,
+            prover_size: air.prover_size.clone(),
         }
     }
 }
@@ -154,6 +157,7 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
                 .collect(),
             fri_early_stop_degree: 1 << setup.stark_info.stark_struct.steps.last().unwrap().n_bits,
             grinding_query_phase: 0,
+            prover_size: crate::format_bytes((setup.prover_buffer_size as f64 + setup.const_tree_size as f64 + setup.const_pols_size as f64) * 8.0),
         },
     )
 }
