@@ -259,7 +259,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_batch_avx(Goldilocks:
     const int length = SPONGE_WIDTH * sizeof(Goldilocks::Element);
     std::memcpy(state, input, 4 * length);
     __m256i st[SPONGE_WIDTH];
-    for(int i = 0; i < SPONGE_WIDTH; i++) {
+    for(uint32_t i = 0; i < SPONGE_WIDTH; i++) {
         Goldilocks::load_avx(st[i], &(state[i]), SPONGE_WIDTH);
     }
     
@@ -299,7 +299,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_batch_avx(Goldilocks:
         matmul_external_batch_avx(st);
     }
 
-    for(int i = 0; i < SPONGE_WIDTH; i++) {
+    for(uint32_t i = 0; i < SPONGE_WIDTH; i++) {
         Goldilocks::store_avx(&(state[i]), SPONGE_WIDTH, st[i]);
     }
 }
@@ -308,20 +308,20 @@ template<uint32_t SPONGE_WIDTH_T>
 void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_avx(Goldilocks::Element *state, const Goldilocks::Element *input)
 {
 
-   const Goldilocks::Element* C = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::C4 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::C12 : Poseidon2GoldilocksConstants::C16;
+    const Goldilocks::Element* C = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::C4 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::C12 : Poseidon2GoldilocksConstants::C16;
     const Goldilocks::Element* DIAG = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::D4 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::D12 : Poseidon2GoldilocksConstants::D16;
  
     const int length = SPONGE_WIDTH * sizeof(Goldilocks::Element);
     std::memcpy(state, input, length);
     __m256i st[(SPONGE_WIDTH >> 2)];
 
-    for(int i = 0; i < (SPONGE_WIDTH >> 2); i++) {
+    for(uint32_t i = 0; i < (SPONGE_WIDTH >> 2); i++) {
         Goldilocks::load_avx(st[i], &(state[i << 2]));
     }
 
     matmul_external_avx(st);
     
-    for( uint32_t r = 0; r < HALF_N_FULL_ROUNDS; r++)
+    for(uint32_t r = 0; r < HALF_N_FULL_ROUNDS; r++)
     {
         add_avx_small(st, &(C[r * SPONGE_WIDTH]));
         pow7_avx(st);
@@ -342,7 +342,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_avx(Goldilocks::Eleme
     {
         if( SPONGE_WIDTH > 4){
             Goldilocks::add_avx(partial_sum_, st[0], st[1]);
-            for(int i = 2; i < (SPONGE_WIDTH >> 2); i++) {
+            for(uint32_t i = 2; i < (SPONGE_WIDTH >> 2); i++) {
                 Goldilocks::add_avx(partial_sum_, partial_sum_, st[i]);            
             }
             Goldilocks::store_avx(partial_sum, partial_sum_);
@@ -357,7 +357,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_avx(Goldilocks::Eleme
         sum = sum + state0;    
             
         __m256i scalar = _mm256_set1_epi64x(sum.fe);
-        for(int i=0; i < (SPONGE_WIDTH >> 2); i++) {
+        for(uint32_t i = 0; i < (SPONGE_WIDTH >> 2); i++) {
             Goldilocks::mult_avx(st[i], st[i], D[i]);
             Goldilocks::add_avx(st[i], st[i], scalar);
         }
@@ -376,7 +376,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_avx(Goldilocks::Eleme
         matmul_external_avx(st);
     }
     
-    for(int i = 0; i < (SPONGE_WIDTH >> 2); i++) {
+    for(uint32_t i = 0; i < (SPONGE_WIDTH >> 2); i++) {
         Goldilocks::store_avx(&(state[i << 2]), st[i]);
     }
 }
@@ -589,7 +589,7 @@ void Poseidon2Goldilocks::hash_full_result_batch_avx512(Goldilocks::Element *sta
     const int length = SPONGE_WIDTH * sizeof(Goldilocks::Element);
     std::memcpy(state, input, 8 * length);
     __m512i st[SPONGE_WIDTH];
-    for(int i = 0; i < SPONGE_WIDTH; i++) {
+    for(uint32_t i = 0; i < SPONGE_WIDTH; i++) {
         Goldilocks::load_avx512(st[i], &(state[i]), SPONGE_WIDTH);
     }
     
@@ -629,7 +629,7 @@ void Poseidon2Goldilocks::hash_full_result_batch_avx512(Goldilocks::Element *sta
         matmul_external_batch_avx512(st);
     }
 
-    for(int i = 0; i < SPONGE_WIDTH; i++) {
+    for(uint32_t i = 0; i < SPONGE_WIDTH; i++) {
         Goldilocks::store_avx512(&(state[i]), SPONGE_WIDTH, st[i]);
     }
 }

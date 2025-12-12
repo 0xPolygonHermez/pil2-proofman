@@ -33,7 +33,6 @@ private:
 #ifdef __AVX2__
     inline void static add_avx(__m256i st[(SPONGE_WIDTH >> 2)], const Goldilocks::Element C[SPONGE_WIDTH]);
     inline void static pow7_avx(__m256i st[(SPONGE_WIDTH >> 2)]);
-    inline void static add_avx_a(__m256i st[(SPONGE_WIDTH >> 2)], const Goldilocks::Element C[SPONGE_WIDTH]);
     inline void static add_avx_small(__m256i st[(SPONGE_WIDTH >> 2)], const Goldilocks::Element C[SPONGE_WIDTH]);
     inline void static matmul_external_avx(__m256i st[(SPONGE_WIDTH >> 2)]);
     inline void static matmul_external_batch_avx(__m256i *x);
