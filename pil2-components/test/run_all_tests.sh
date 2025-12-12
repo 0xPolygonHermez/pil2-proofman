@@ -79,6 +79,7 @@ test_pipeline "direct_optimizations" "./pil2-components/test/special" "direct_op
 test_pipeline "expr_optimizations" "./pil2-components/test/special" "expr_optimizations" "true"
 test_pipeline "intermediate_prods" "./pil2-components/test/special" "intermediate_prods" "true"
 test_pipeline "intermediate_sums" "./pil2-components/test/special" "intermediate_sums" "true"
+test_pipeline "openings" "./pil2-components/test/special" "openings" "true"
 test_pipeline "table" "./pil2-components/test/special" "table" "true"
 
 echo "✅ All tests completed."

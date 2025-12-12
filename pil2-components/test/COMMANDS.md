@@ -295,6 +295,10 @@ rm -rf ./pil2-components/test/special/build/ \
      -I ./pil2-components/lib/std/pil \
      -u ./pil2-components/test/special/build/fixed_intermediate_sums -O fixed-to-file \
      -o ./pil2-components/test/special/build/intermediate_sums.pilout \
+&& node ../pil2-compiler/src/pil.js ./pil2-components/test/special/openings.pil \
+     -I ./pil2-components/lib/std/pil \
+     -u ./pil2-components/test/special/build/fixed_openings -O fixed-to-file \
+     -o ./pil2-components/test/special/build/openings.pilout \
 && node ../pil2-compiler/src/pil.js ./pil2-components/test/special/table.pil \
      -I ./pil2-components/lib/std/pil \
      -u ./pil2-components/test/special/build/fixed_table -O fixed-to-file \
@@ -320,6 +324,10 @@ rm -rf ./pil2-components/test/special/build/ \
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./pil2-components/test/special/build/intermediate_sums.pilout \
      -u ./pil2-components/test/special/build/fixed_intermediate_sums \
+     -b ./pil2-components/test/special/build \
+&& node ../pil2-proofman-js/src/main_setup.js \
+     -a ./pil2-components/test/special/build/openings.pilout \
+     -u ./pil2-components/test/special/build/fixed_openings \
      -b ./pil2-components/test/special/build \
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./pil2-components/test/special/build/table.pilout \

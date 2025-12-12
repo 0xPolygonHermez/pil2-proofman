@@ -1,0 +1,105 @@
+require "std_constants.pil"
+require "std_permutation.pil"
+
+airtemplate Openings(const int N, const int clocks, const int bits, const int bits_in_parallel, const int RC, const int RB) {
+    // Define the clocks
+    const int CLOCKS = clocks;
+    col fixed CLK_0 = [1, 0:(CLOCKS-1)]...;
+    expr CLK[CLOCKS];
+    for (int i = 0; i < CLOCKS; ++i) {
+        CLK[i] = (i)'CLK_0;
+    }
+
+    // Ensure that the clocks fit
+    assert(N >= CLOCKS);
+
+    // Compute some stats
+    const int NUM_OPS = N / CLOCKS;
+    const int NUM_NON_USABLE_STEPS = N % CLOCKS;
+    println(`The number of operations that fit wih N=2^${log2(N)} is ${NUM_OPS}`);
+    println(`The number of non-usable (padding) steps is ${NUM_NON_USABLE_STEPS}`);
+
+    // Parameters bits
+    const int BITS = bits;
+
+    col witness bit[bits_in_parallel];
+    expr val[RC];
+    for (int i = 0; i < RC; i++) {
+        val[i] = 0;
+    }
+    // Collect the bits into RC groups of RB bits each
+    const int RB_OFFSET = RB / bits_in_parallel;
+    for (int i = 0; i < RB; i++) {
+        const int val_bit = i % bits_in_parallel;
+        const int val_idx = i / bits_in_parallel;
+        for (int j = 0; j < RC; j++) {
+            val[j] += bit[val_bit]'(RB_OFFSET * j + val_idx) * 2**i;
+        }
+    }
+
+    col witness step_addr;
+
+    const int GROUP_BITS = RB * RC;
+    const int BLOCKS = BITS / GROUP_BITS;
+    const int GROUP_SIZE = GROUP_BITS / bits_in_parallel;
+
+    expr value[RC];
+    for (int i = 0; i < RC; i++) {
+        value[i] = clock_set(val[i], start: 0, end: BLOCKS, factor: GROUP_SIZE);
+    }
+
+    const int STEP_REF = 0;
+    const int ADDR_REF = STEP_REF + 1;
+    const expr step =  clock_map(step_addr, pos: STEP_REF, start: 0, end: BLOCKS, factor: GROUP_SIZE);
+    println(step);
+    const expr addr =  clock_map(step_addr, pos: ADDR_REF, start: 0, end: BLOCKS, delta: 8, factor: GROUP_SIZE);
+
+    col witness in_use;
+    in_use * (1 - in_use) === 0;
+
+    // if in_use is activated, it must be activated until there are not more blocks
+    (1 - (CLK_0 + (BLOCKS*GROUP_SIZE)'CLK_0)) * (in_use - (GROUP_SIZE)'in_use) === 0;
+
+    const expr sel = clock_set(in_use, start: 0, end: BLOCKS, factor: GROUP_SIZE);
+
+    const expr is_op = clock_set(start: 0, end: BLOCKS/2, offset: BLOCKS/2, factor: GROUP_SIZE);
+
+    // Perform an argument
+    permutation_assumes(0, [is_op, addr, step, ...value], sel, surname: PIOP_SURNAME_ISOLATED);
+
+    function clock_set(const expr cl = 1, int start = 0, int end = -1, int offset = 0, int factor = 1): const expr {
+        if (end == -1) {
+            end = start;
+        }
+        start += offset;
+        end += offset;
+        expr res = 0;
+        for (int index = start; index < end; index++) {
+            res += air.CLK[factor*index];
+        }
+        return res * cl;
+    }
+
+    function clock_map(const expr cl, int pos, int start = 0, int end = -1, int delta = 0, int factor = 1): const expr {
+        expr res = 0;
+        if (end == -1) {
+            end = start + 1;
+        }
+        int offset = 0;
+        for (int index = start; index < end; index++) {
+            int _index = index*factor;
+            int iclock = (pos - _index) % air.CLOCKS;
+            if (offset != 0) {
+                res += air.CLK[_index] * (cl'(iclock) + offset);
+            } else {
+                res += air.CLK[_index] * cl'(iclock);
+            }
+            offset += delta;
+        }
+        return res;
+    }
+}
+
+airgroup Openings {
+    Openings(N: 2**17, clocks: 100_000, bits: 3200, bits_in_parallel: 4, RC: 2, RB: 32);
+}
