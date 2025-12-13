@@ -53,7 +53,7 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_m4_batch_avx(__m256i &st
 template<uint32_t SPONGE_WIDTH_T>   
 inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_external_batch_avx(__m256i *x) {
     
-    for(int i = 0; i < SPONGE_WIDTH; i +=4) {
+    for(uint32_t i = 0; i < SPONGE_WIDTH; i +=4) {
         matmul_m4_batch_avx(x[i], x[i+1], x[i+2], x[i+3]);
     }
     if( SPONGE_WIDTH > 4){
@@ -168,10 +168,10 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_external_avx(__m256i st[
 
         __m256i stored;   
         Goldilocks::add_avx(stored, st[0], st[1]);
-        for(int i = 2; i < (SPONGE_WIDTH >> 2); i++) {
+        for(uint32_t i = 2; i < (SPONGE_WIDTH >> 2); i++) {
             Goldilocks::add_avx(stored, stored, st[i]);            
         }
-        for(int i = 0; i < (SPONGE_WIDTH >> 2); i++) {
+        for(uint32_t i = 0; i < (SPONGE_WIDTH >> 2); i++) {
             Goldilocks::add_avx(st[i], st[i], stored);
         }
     }

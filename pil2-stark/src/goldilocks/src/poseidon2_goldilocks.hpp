@@ -3,7 +3,6 @@
 
 #include "poseidon2_goldilocks_constants.hpp"
 #include "goldilocks_base_field.hpp"
-#define __AVX2__
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif
