@@ -125,10 +125,15 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_external_avx(__m256i st[
         x[3] = t4;
         Goldilocks::load_avx(st[0], &(x[0]));
     } else {
-        __m256i t0_ = _mm256_permute2f128_si256(st[0], st[2], 0b00100000);
-        __m256i t1_ = _mm256_permute2f128_si256(st[1], st[3], 0b00100000);
-        __m256i t2_ = _mm256_permute2f128_si256(st[0], st[2], 0b00110001);
-        __m256i t3_ = SPONGE_WIDTH == 12 ?  _mm256_permute2f128_si256(st[1], zero, 0b00110001) : _mm256_permute2f128_si256(st[1], st[(SPONGE_WIDTH >> 2) -1 ], 0b00110001);
+
+        const __m256i &st0 = st[0];
+        const __m256i &st1 = st[1];
+        const __m256i &st2 = SPONGE_WIDTH >= 12 ? st[2] : zero;
+        const __m256i &st3 = SPONGE_WIDTH == 16 ? st[3] : zero;
+        __m256i t0_ = _mm256_permute2f128_si256(st0, st2, 0b00100000);
+        __m256i t1_ = _mm256_permute2f128_si256(st1, st3, 0b00100000);
+        __m256i t2_ = _mm256_permute2f128_si256(st0, st2, 0b00110001);
+        __m256i t3_ = _mm256_permute2f128_si256(st1, st3, 0b00110001);
         __m256i x0 = _mm256_castpd_si256(_mm256_unpacklo_pd(_mm256_castsi256_pd(t0_), _mm256_castsi256_pd(t1_)));
         __m256i x1 = _mm256_castpd_si256(_mm256_unpackhi_pd(_mm256_castsi256_pd(t0_), _mm256_castsi256_pd(t1_)));
         __m256i x2 = _mm256_castpd_si256(_mm256_unpacklo_pd(_mm256_castsi256_pd(t2_), _mm256_castsi256_pd(t3_)));
@@ -157,19 +162,17 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_external_avx(__m256i st[
 
         // Step 2: Reverse _mm256_permute2f128_si256
         st[0] = _mm256_permute2f128_si256(t0_, t2_, 0b00100000); // Combine low halves
-        st[2] = _mm256_permute2f128_si256(t0_, t2_, 0b00110001); // Combine high halves
         st[1] = _mm256_permute2f128_si256(t1_, t3_, 0b00100000); // Combine low halves
-        if(SPONGE_WIDTH ==16) {
-            st[3] = _mm256_permute2f128_si256(t1_, t3_, 0b00110001); // Combine high halves
-        }
+        if(SPONGE_WIDTH >= 12) st[2] = _mm256_permute2f128_si256(t0_, t2_, 0b00110001); // Combine high halves
+        if(SPONGE_WIDTH == 16) st[3] = _mm256_permute2f128_si256(t1_, t3_, 0b00110001); // Combine high halves
 
         __m256i stored;   
         Goldilocks::add_avx(stored, st[0], st[1]);
         for(int i = 2; i < (SPONGE_WIDTH >> 2); i++) {
-        Goldilocks::add_avx(stored, stored, st[i]);            
+            Goldilocks::add_avx(stored, stored, st[i]);            
         }
         for(int i = 0; i < (SPONGE_WIDTH >> 2); i++) {
-        Goldilocks::add_avx(st[i], st[i], stored);
+            Goldilocks::add_avx(st[i], st[i], stored);
         }
     }
     

@@ -22,6 +22,8 @@ typedef uint64_t u64;
 
 __device__ __constant__ uint64_t GPU_C_4[53]; 
 __device__ __constant__ uint64_t GPU_D_4[4];
+__device__ __constant__ uint64_t GPU_C_8[86]; 
+__device__ __constant__ uint64_t GPU_D_8[8];
 __device__ __constant__ uint64_t GPU_C_12[118]; 
 __device__ __constant__ uint64_t GPU_D_12[12];
 __device__ __constant__ uint64_t GPU_C_16[150]; 
@@ -32,8 +34,8 @@ template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t
 __device__ void hash_one_2(gl64_t *out, gl64_t *const input, int tid)
 {
     
-    const gl64_t *GPU_C_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_C_4 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_C_12 : (gl64_t *)GPU_C_16);
-    const gl64_t *GPU_D_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_D_4 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_D_12 : (gl64_t *)GPU_D_16);
+    const gl64_t *GPU_C_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_C_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_C_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_C_12 : (gl64_t *)GPU_C_16));
+    const gl64_t *GPU_D_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_D_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_D_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_D_12 : (gl64_t *)GPU_D_16));
     
     gl64_t aux[SPONGE_WIDTH_T];
     hash_full_result_seq_2<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(aux, input, GPU_C_GL, GPU_D_GL);
@@ -53,6 +55,8 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::initPoseidon2GPUConstants(uint32_t*
             CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
             CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C_4, Poseidon2GoldilocksConstants::C4, 53 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
             CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D_4, Poseidon2GoldilocksConstants::D4, 4 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C_8, Poseidon2GoldilocksConstants::C8, 86 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D_8, Poseidon2GoldilocksConstants::D8, 8 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
             CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C_12, Poseidon2GoldilocksConstants::C12, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
             CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D_12, Poseidon2GoldilocksConstants::D12, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
             CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C_16, Poseidon2GoldilocksConstants::C16, 150 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
@@ -430,8 +434,8 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_nonce, const 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__  void poseidon2_hash()
 {
-    const gl64_t *GPU_C_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_C_4 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_C_12 : (gl64_t *)GPU_C_16);
-    const gl64_t *GPU_D_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_D_4 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_D_12 : (gl64_t *)GPU_D_16);
+    const gl64_t *GPU_C_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_C_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_C_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_C_12 : (gl64_t *)GPU_C_16));
+    const gl64_t *GPU_D_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_D_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_D_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_D_12 : (gl64_t *)GPU_D_16));
 
     matmul_external_state_<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
     for (int r = 0; r < (N_FULL_ROUNDS_TOTAL_T>>1); r++)
@@ -569,6 +573,7 @@ template void Poseidon2GoldilocksGPU<12>::grinding(uint64_t * d_out, const uint6
 
 template void Poseidon2GoldilocksGPUGrinding::hashFullResult(uint64_t * output, const uint64_t * input);
 
+template void Poseidon2GoldilocksGPU<8>::hashFullResult(uint64_t * output, const uint64_t * input);
 #endif
 
 

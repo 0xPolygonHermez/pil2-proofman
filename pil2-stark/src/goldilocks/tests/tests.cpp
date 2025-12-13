@@ -1502,32 +1502,59 @@ TEST(GOLDILOCKS_TEST, inv)
 
 TEST(GOLDILOCKS_TEST, poseidon2_seq)
 {
-    Goldilocks::Element x[Poseidon2GoldilocksCommit::SPONGE_WIDTH];
-    Goldilocks::Element result[Poseidon2GoldilocksCommit::CAPACITY];
-
-    for (uint64_t i = 0; i < Poseidon2GoldilocksCommit::SPONGE_WIDTH; i++)
+    Goldilocks::Element x4[Poseidon2Goldilocks<4>::SPONGE_WIDTH];
+    Goldilocks::Element result[Poseidon2Goldilocks<4>::CAPACITY];
+    for (uint64_t i = 0; i < Poseidon2Goldilocks<4>::SPONGE_WIDTH; i++)
     {
-        x[i] = Goldilocks::fromU64(i);
+        x4[i] = Goldilocks::fromU64(i);
     }
 
-    Poseidon2GoldilocksCommit::hash_seq(result, x);
+    Poseidon2Goldilocks<4>::hash_seq(result, x4);
 
-    if(Poseidon2GoldilocksCommit::SPONGE_WIDTH == 4){
-        ASSERT_EQ(Goldilocks::toU64(result[0]), 0x758085b0af0a16aa);
-        ASSERT_EQ(Goldilocks::toU64(result[1]), 0x85141acc29c479de);
-        ASSERT_EQ(Goldilocks::toU64(result[2]), 0x50127371e2b77ae5);
-        ASSERT_EQ(Goldilocks::toU64(result[3]), 0xefee3a8033630029);
-    } else if(Poseidon2GoldilocksCommit::SPONGE_WIDTH == 12){
-        ASSERT_EQ(Goldilocks::toU64(result[0]), 0X1EAEF96BDF1C0C1 );
-        ASSERT_EQ(Goldilocks::toU64(result[1]), 0X1F0D2CC525B2540C);
-        ASSERT_EQ(Goldilocks::toU64(result[2]), 0X6282C1DFE1E0358D);
-        ASSERT_EQ(Goldilocks::toU64(result[3]), 0XE780D721F698E1E6);  
-    } else if(Poseidon2GoldilocksCommit::SPONGE_WIDTH == 16){
-        ASSERT_EQ(Goldilocks::toU64(result[0]), 0x85c54702470d9756);
-        ASSERT_EQ(Goldilocks::toU64(result[1]), 0xaa53c7a7d52d9898);
-        ASSERT_EQ(Goldilocks::toU64(result[2]), 0x285128096efb0dd7);
-        ASSERT_EQ(Goldilocks::toU64(result[3]), 0xf3fde5edd3050ac8);
+    ASSERT_EQ(Goldilocks::toU64(result[0]), 0x758085b0af0a16aa);
+    ASSERT_EQ(Goldilocks::toU64(result[1]), 0x85141acc29c479de);
+    ASSERT_EQ(Goldilocks::toU64(result[2]), 0x50127371e2b77ae5);
+    ASSERT_EQ(Goldilocks::toU64(result[3]), 0xefee3a8033630029);
+
+    Goldilocks::Element x8[Poseidon2Goldilocks<8>::SPONGE_WIDTH];
+    for (uint64_t i = 0; i < Poseidon2Goldilocks<8>::SPONGE_WIDTH; i++)
+    {
+        x8[i] = Goldilocks::fromU64(i);
     }
+
+    Poseidon2Goldilocks<8>::hash_seq(result, x8);
+
+    ASSERT_EQ(Goldilocks::toU64(result[0]), 0xc5fb1cfe0b4697bb);
+    ASSERT_EQ(Goldilocks::toU64(result[1]), 0x4a4a32ff849af473);
+    ASSERT_EQ(Goldilocks::toU64(result[2]), 0xd2fd266077f8efba);
+    ASSERT_EQ(Goldilocks::toU64(result[3]), 0xf4ad9b74e833916d);
+
+    Goldilocks::Element x12[Poseidon2Goldilocks<12>::SPONGE_WIDTH];
+    for (uint64_t i = 0; i < Poseidon2Goldilocks<12>::SPONGE_WIDTH; i++)
+    {
+        x12[i] = Goldilocks::fromU64(i);
+    }
+
+    Poseidon2Goldilocks<12>::hash_seq(result, x12);
+
+    ASSERT_EQ(Goldilocks::toU64(result[0]), 0X1EAEF96BDF1C0C1 );
+    ASSERT_EQ(Goldilocks::toU64(result[1]), 0X1F0D2CC525B2540C);
+    ASSERT_EQ(Goldilocks::toU64(result[2]), 0X6282C1DFE1E0358D);
+    ASSERT_EQ(Goldilocks::toU64(result[3]), 0XE780D721F698E1E6);
+    
+    Goldilocks::Element x16[Poseidon2Goldilocks<16>::SPONGE_WIDTH];
+    for (uint64_t i = 0; i < Poseidon2Goldilocks<16>::SPONGE_WIDTH; i++)
+    {
+        x16[i] = Goldilocks::fromU64(i);
+    }
+
+    Poseidon2Goldilocks<16>::hash_seq(result, x16);
+    
+    ASSERT_EQ(Goldilocks::toU64(result[0]), 0x85c54702470d9756);
+    ASSERT_EQ(Goldilocks::toU64(result[1]), 0xaa53c7a7d52d9898);
+    ASSERT_EQ(Goldilocks::toU64(result[2]), 0x285128096efb0dd7);
+    ASSERT_EQ(Goldilocks::toU64(result[3]), 0xf3fde5edd3050ac8);
+    
 
 }
 #ifdef __AVX2__
@@ -1547,6 +1574,19 @@ TEST(GOLDILOCKS_TEST, poseidon2_avx)
     ASSERT_EQ(Goldilocks::toU64(result[1]), 0x85141acc29c479de);
     ASSERT_EQ(Goldilocks::toU64(result[2]), 0x50127371e2b77ae5);
     ASSERT_EQ(Goldilocks::toU64(result[3]), 0xefee3a8033630029);
+
+    Goldilocks::Element x8[Poseidon2Goldilocks<8>::SPONGE_WIDTH];
+
+    for (uint64_t i = 0; i < Poseidon2Goldilocks<8>::SPONGE_WIDTH; i++)
+    {
+        x8[i] = Goldilocks::fromU64(i);
+    }
+
+    Poseidon2Goldilocks<8>::hash_avx(result, x8);
+    ASSERT_EQ(Goldilocks::toU64(result[0]), 0xc5fb1cfe0b4697bb);
+    ASSERT_EQ(Goldilocks::toU64(result[1]), 0x4a4a32ff849af473);
+    ASSERT_EQ(Goldilocks::toU64(result[2]), 0xd2fd266077f8efba);
+    ASSERT_EQ(Goldilocks::toU64(result[3]), 0xf4ad9b74e833916d);
 
     Goldilocks::Element x12[Poseidon2Goldilocks<12>::SPONGE_WIDTH];
 
@@ -1607,6 +1647,34 @@ TEST(GOLDILOCKS_TEST, poseidon2_avx_batch){
     ASSERT_EQ(Goldilocks::toU64(result[13]), 0x85141acc29c479de);
     ASSERT_EQ(Goldilocks::toU64(result[14]), 0x50127371e2b77ae5);
     ASSERT_EQ(Goldilocks::toU64(result[15]), 0xefee3a8033630029);
+
+    Goldilocks::Element x8[Poseidon2Goldilocks<8>::SPONGE_WIDTH * 4];
+    for (uint64_t i = 0; i < Poseidon2Goldilocks<8>::SPONGE_WIDTH; i++)
+    {
+        x8[i] = Goldilocks::fromU64(i);
+        x8[i + Poseidon2Goldilocks<8>::SPONGE_WIDTH] = Goldilocks::fromU64(i);
+        x8[i + 2*Poseidon2Goldilocks<8>::SPONGE_WIDTH] = Goldilocks::fromU64(i);
+        x8[i + 3*Poseidon2Goldilocks<8>::SPONGE_WIDTH] = Goldilocks::fromU64(i);
+    }
+
+    Poseidon2Goldilocks<8>::hash_batch_avx(result, x8);
+
+    ASSERT_EQ(Goldilocks::toU64(result[0]), 0xc5fb1cfe0b4697bb);
+    ASSERT_EQ(Goldilocks::toU64(result[1]), 0x4a4a32ff849af473);
+    ASSERT_EQ(Goldilocks::toU64(result[2]), 0xd2fd266077f8efba);
+    ASSERT_EQ(Goldilocks::toU64(result[3]), 0xf4ad9b74e833916d);
+    ASSERT_EQ(Goldilocks::toU64(result[4]), 0xc5fb1cfe0b4697bb);
+    ASSERT_EQ(Goldilocks::toU64(result[5]), 0x4a4a32ff849af473);
+    ASSERT_EQ(Goldilocks::toU64(result[6]), 0xd2fd266077f8efba);
+    ASSERT_EQ(Goldilocks::toU64(result[7]), 0xf4ad9b74e833916d);
+    ASSERT_EQ(Goldilocks::toU64(result[8]), 0xc5fb1cfe0b4697bb);
+    ASSERT_EQ(Goldilocks::toU64(result[9]), 0x4a4a32ff849af473);
+    ASSERT_EQ(Goldilocks::toU64(result[10]), 0xd2fd266077f8efba);
+    ASSERT_EQ(Goldilocks::toU64(result[11]), 0xf4ad9b74e833916d);
+    ASSERT_EQ(Goldilocks::toU64(result[12]), 0xc5fb1cfe0b4697bb);
+    ASSERT_EQ(Goldilocks::toU64(result[13]), 0x4a4a32ff849af473);
+    ASSERT_EQ(Goldilocks::toU64(result[14]), 0xd2fd266077f8efba);
+    ASSERT_EQ(Goldilocks::toU64(result[15]), 0xf4ad9b74e833916d);
 
 
     Goldilocks::Element x12[Poseidon2Goldilocks<12>::SPONGE_WIDTH * 4];

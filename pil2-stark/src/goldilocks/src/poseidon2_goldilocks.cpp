@@ -9,8 +9,8 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_seq(Goldilocks::Eleme
 {
     const int length = SPONGE_WIDTH * sizeof(Goldilocks::Element);
     std::memcpy(state, input, length);
-    const Goldilocks::Element* C = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::C4 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::C12 : Poseidon2GoldilocksConstants::C16;
-    const Goldilocks::Element* D = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::D4 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::D12 : Poseidon2GoldilocksConstants::D16;
+    const Goldilocks::Element* C = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::C4 : SPONGE_WIDTH == 8 ? Poseidon2GoldilocksConstants::C8 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::C12 : Poseidon2GoldilocksConstants::C16;
+    const Goldilocks::Element* D = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::D4 : SPONGE_WIDTH == 8 ? Poseidon2GoldilocksConstants::D8 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::D12 : Poseidon2GoldilocksConstants::D16;
 
     matmul_external_(state);
   
@@ -257,8 +257,8 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::grinding(uint64_t &nonce, const uint64
 template<uint32_t SPONGE_WIDTH_T>
 void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_batch_avx(Goldilocks::Element *state, const Goldilocks::Element *input) {
 
-    const Goldilocks::Element* C = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::C4 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::C12 : Poseidon2GoldilocksConstants::C16;
-    const Goldilocks::Element* D = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::D4 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::D12 : Poseidon2GoldilocksConstants::D16;
+     const Goldilocks::Element* C = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::C4 : SPONGE_WIDTH == 8 ? Poseidon2GoldilocksConstants::C8 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::C12 : Poseidon2GoldilocksConstants::C16;
+    const Goldilocks::Element* D = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::D4 : SPONGE_WIDTH == 8 ? Poseidon2GoldilocksConstants::D8 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::D12 : Poseidon2GoldilocksConstants::D16;
 
     const int length = SPONGE_WIDTH * sizeof(Goldilocks::Element);
     std::memcpy(state, input, 4 * length);
@@ -312,8 +312,8 @@ template<uint32_t SPONGE_WIDTH_T>
 void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_avx(Goldilocks::Element *state, const Goldilocks::Element *input)
 {
 
-    const Goldilocks::Element* C = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::C4 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::C12 : Poseidon2GoldilocksConstants::C16;
-    const Goldilocks::Element* D = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::D4 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::D12 : Poseidon2GoldilocksConstants::D16;
+     const Goldilocks::Element* C = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::C4 : SPONGE_WIDTH == 8 ? Poseidon2GoldilocksConstants::C8 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::C12 : Poseidon2GoldilocksConstants::C16;
+    const Goldilocks::Element* D = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::D4 : SPONGE_WIDTH == 8 ? Poseidon2GoldilocksConstants::D8 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::D12 : Poseidon2GoldilocksConstants::D16;
  
     const int length = SPONGE_WIDTH * sizeof(Goldilocks::Element);
     std::memcpy(state, input, length);
@@ -917,5 +917,6 @@ void Poseidon2Goldilocks::merkletree_batch_avx512(Goldilocks::Element *tree, Gol
 
 // Explicit template instantiations
 template class Poseidon2Goldilocks<4>;
+template class Poseidon2Goldilocks<8>;
 template class Poseidon2Goldilocks<12>;  
 template class Poseidon2Goldilocks<16>;
