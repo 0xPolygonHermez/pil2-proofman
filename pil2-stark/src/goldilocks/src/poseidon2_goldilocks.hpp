@@ -114,9 +114,9 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch(Goldilocks::El
     // needs to be tested
     //merkletree_batch_avx512(tree, input, num_cols, num_rows, batch_size, nThreads, dim);
 #if defined(__AVX2__) || defined(__AVX512__)
-    merkletree_batch_avx(tree, input, num_cols, num_rows, batch_size, nThreads, dim);
+    merkletree_avx(tree, input, num_cols, num_rows, batch_size, nThreads, dim);
 #else
-    merkletree_batch_seq(tree, input, num_cols, num_rows, batch_size, nThreads, dim);
+    merkletree_seq(tree, input, num_cols, num_rows, batch_size, nThreads, dim);
 #endif
 }
 

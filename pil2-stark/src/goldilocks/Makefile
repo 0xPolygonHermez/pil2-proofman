@@ -27,7 +27,7 @@ ifeq ($(UNAME_S),Linux)
     LDFLAGS  = -L/usr/lib -L/usr/local/lib
     LDLIBS   = -fopenmp -lbenchmark -lbenchmark_main -lgtest -lgtest_main -lgmpxx -lgmp -lpthread -lstdc++
 
-	  #CXXFLAGS += -D__AVX2__
+	  CXXFLAGS += -D__AVX2__
   	CXXFLAGS += -D__USE_ASSEMBLY__
     # Auto-enable AVX512 if supported, or allow override
     #ifndef USE_AVX512
@@ -71,7 +71,7 @@ CPPFLAGS := $(INC_FLAGS) -MMD -MP
 # ----------------------
 # Default target
 # ----------------------
-.PHONY: all testscpu benchscpu testsgpu benchgpu clean help
+.PHONY: all testscpu benchscpu testsgpu benchsgpu clean help
 
 ifeq ($(UNAME_S),Linux)
 all: testscpu benchscpu
@@ -88,7 +88,7 @@ benchscpu: $(BUILD_DIR)/benchs/bench.o $(OBJS)
 testsgpu: $(BUILD_DIR_GPU)/tests/tests.cu.o $(BUILD_DIR_GPU)/src/goldilocks_base_field.cpp.o $(BUILD_DIR_GPU)/src/ntt_goldilocks.cu.o $(BUILD_DIR_GPU)/src/poseidon2_goldilocks.cu.o
 	$(NVCC) -Xcompiler -O3 -Xcompiler -fopenmp -arch=$(CUDA_ARCH) -o $@ $^ -lgtest -lgmp
 
-benchgpu: $(BUILD_DIR_GPU)/benchs/bench.cu.o $(BUILD_DIR_GPU)/src/goldilocks_base_field.cpp.o $(BUILD_DIR_GPU)/src/ntt_goldilocks.cu.o $(BUILD_DIR_GPU)/src/poseidon2_goldilocks.cu.o
+benchsgpu: $(BUILD_DIR_GPU)/benchs/bench.cu.o $(BUILD_DIR_GPU)/src/goldilocks_base_field.cpp.o $(BUILD_DIR_GPU)/src/ntt_goldilocks.cu.o $(BUILD_DIR_GPU)/src/poseidon2_goldilocks.cu.o
 	$(NVCC) -Xcompiler -O3 -Xcompiler -fopenmp -arch=$(CUDA_ARCH) -o $@ $^ -lgtest -lgmp -lbenchmark
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
@@ -118,7 +118,7 @@ $(BUILD_DIR_GPU)/%.cpp.o: %.cpp
 clean:
 	rm -rf ./build testscpu benchscpu
 ifeq ($(UNAME_S),Linux)
-	rm -rf ./build_gpu testsgpu benchgpu
+	rm -rf ./build_gpu testsgpu benchsgpu
 endif
 
 # ----------------------
@@ -134,7 +134,7 @@ help:
 	@echo "  benchscpu     - Build the CPU benchmark binary (Google Benchmark)"
 ifeq ($(UNAME_S),Linux) 
 	@echo "  testsgpu      - Build the GPU test binary (CUDA, Linux only)"
-	@echo "  benchgpu      - Build the GPU benchmark binary (CUDA, Linux only)"
+	@echo "  benchsgpu      - Build the GPU benchmark binary (CUDA, Linux only)"
 endif
 	@echo "  USE_AVX512   - Force AVX512 on/off (default: auto-detect on Linux)"
 
