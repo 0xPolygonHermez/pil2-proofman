@@ -1,4 +1,4 @@
-require "std_constants.pil";
+require "std_constants.pil"
 require "std_lookup.pil"
 
 const int OP_ID = 333;

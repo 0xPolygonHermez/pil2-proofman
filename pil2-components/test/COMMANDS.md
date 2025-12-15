@@ -19,7 +19,7 @@ rm -rf ./pil2-components/test/simple/build/ \
 && cargo run  --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/simple/build/build.pilout \
      --path ./pil2-components/test/simple/rs/src -o \
-&& cargo build  \
+&& cargo build --workspace \
 && cargo run  --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libsimple.so \
      --proving-key ./pil2-components/test/simple/build/provingKey \
@@ -49,7 +49,7 @@ rm -rf ./pil2-components/test/connection/build/ \
 && cargo run  --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/connection/build/build.pilout \
      --path ./pil2-components/test/connection/rs/src -o \
-&& cargo build  \
+&& cargo build --workspace \
 && cargo run  --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libconnection.so \
      --proving-key ./pil2-components/test/connection/build/provingKey \
@@ -79,7 +79,7 @@ rm -rf ./pil2-components/test/diff_buses/build/ \
 && cargo run  --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/diff_buses/build/diff_buses.pilout \
      --path ./pil2-components/test/diff_buses/rs/src -o \
-&& cargo build  \
+&& cargo build --workspace \
 && cargo run  --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libdiff_buses.so \
      --proving-key ./pil2-components/test/diff_buses/build/provingKey \
@@ -109,7 +109,7 @@ rm -rf ./pil2-components/test/direct_update/build/ \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/direct_update/build/direct_update.pilout \
      --path ./pil2-components/test/direct_update/rs/src -o \
-&& cargo build \
+&& cargo build --workspace \
 && cargo run --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libdirect_update.so \
      --proving-key ./pil2-components/test/direct_update/build/provingKey \
@@ -138,7 +138,7 @@ rm -rf ./pil2-components/test/lookup/build/ \
 && cargo run  --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/lookup/build/build.pilout \
      --path ./pil2-components/test/lookup/rs/src -o \
-&& cargo build  \
+&& cargo build --workspace \
 && cargo run  --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/liblookup.so \
      --proving-key ./pil2-components/test/lookup/build/provingKey \
@@ -168,7 +168,7 @@ rm -rf ./pil2-components/test/one_instance/build/ \
 && cargo run  --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/one_instance/build/build.pilout \
      --path ./pil2-components/test/one_instance/rs/src -o \
-&& cargo build  \
+&& cargo build --workspace \
 && cargo run  --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libone_instance.so \
      --proving-key ./pil2-components/test/one_instance/build/provingKey \
@@ -198,7 +198,7 @@ rm -rf ./pil2-components/test/permutation/build/ \
 && cargo run  --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/permutation/build/build.pilout \
      --path ./pil2-components/test/permutation/rs/src -o \
-&& cargo build  \
+&& cargo build --workspace \
 && cargo run  --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libpermutation.so \
      --proving-key ./pil2-components/test/permutation/build/provingKey \
@@ -228,7 +228,7 @@ rm -rf ./pil2-components/test/range_check/build/ \
 && cargo run  --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/range_check/build/build.pilout \
      --path ./pil2-components/test/range_check/rs/src -o \
-&& cargo build  \
+&& cargo build --workspace \
 && cargo run  --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/librange_check.so \
      --proving-key ./pil2-components/test/range_check/build/provingKey \
@@ -258,7 +258,7 @@ rm -rf ./pil2-components/test/virtual_tables/build/ \
 && cargo run  --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/virtual_tables/build/build.pilout \
      --path ./pil2-components/test/virtual_tables/rs/src -o \
-&& cargo build  \
+&& cargo build --workspace \
 && cargo run  --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libvirtual_tables.so \
      --proving-key ./pil2-components/test/virtual_tables/build/provingKey \

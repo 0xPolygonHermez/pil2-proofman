@@ -1,4 +1,4 @@
-require "goldilocks.pil";
+require "goldilocks.pil"
 
 /*
 Available std modes:

@@ -1,4 +1,4 @@
-require "std_lookup.pil";
+require "std_lookup.pil"
 
 int OPID = 0;
 int savedOPID[10];

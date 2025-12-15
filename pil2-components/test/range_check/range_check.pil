@@ -1,4 +1,4 @@
-require "std_range_check.pil";
+require "std_range_check.pil"
 
 airtemplate RangeCheck1(const int N = 2**3) {
 

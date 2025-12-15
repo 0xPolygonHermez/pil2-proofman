@@ -1,7 +1,7 @@
-require "std_range_check.pil";
-require "range_check.pil";
-require "multi_range_check.pil";
-require "range_check_dynamic.pil";
+require "std_range_check.pil"
+require "range_check.pil"
+require "multi_range_check.pil"
+require "range_check_dynamic.pil"
 
 set_max_specified_bits(15);
 

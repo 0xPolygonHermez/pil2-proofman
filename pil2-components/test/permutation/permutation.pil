@@ -1,5 +1,5 @@
-require "std_permutation.pil";
-require "std_constants.pil";
+require "std_permutation.pil"
+require "std_constants.pil"
 
 airtemplate Permutation1(const int N = 2**6) {
 

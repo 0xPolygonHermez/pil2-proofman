@@ -1,10 +1,10 @@
 
 require "std_constants.pil"
-require "gl_groups_small.pil";
-// require "gl_groups_big.pil";
+require "gl_groups_small.pil"
+// require "gl_groups_big.pil"
 
-require "std_permutation.pil";
-require "std_connection.pil";
+require "std_permutation.pil"
+require "std_connection.pil"
 
 const int TEST_OPID = 44;
 

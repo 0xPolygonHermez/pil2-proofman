@@ -1,6 +1,6 @@
-require "std_constants.pil";
-require "std_sum.pil";
-require "std_virtual_table.pil";
+require "std_constants.pil"
+require "std_sum.pil"
+require "std_virtual_table.pil"
 
 /*
  * Module for performing selected vector lookup checks using a sum check via the logup protocol https://eprint.iacr.org/2022/1530.
