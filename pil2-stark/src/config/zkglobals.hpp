@@ -9,7 +9,6 @@
 #include "ffiasm/fq.hpp"
 
 extern Goldilocks fr;
-extern Poseidon2Goldilocks poseidon;
 extern RawFec fec;
 extern RawFnec fnec;
 extern RawFr bn128;

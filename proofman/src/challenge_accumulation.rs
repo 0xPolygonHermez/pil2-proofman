@@ -1,13 +1,9 @@
 use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
 use proofman_common::{CurveType, ProofCtx};
-use fields::{poseidon2_hash, ExtensionField, GoldilocksQuinticExtension, PrimeField64};
+use fields::{poseidon2_hash, Transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64, SPONGE_WIDTH};
 use std::ops::Add;
-use proofman_starks_lib_c::{calculate_hash_c};
-use transcript::FFITranscript;
 use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug};
 use std::sync::Mutex;
-
-use std::ffi::c_void;
 
 use crate::ContributionsInfo;
 use rayon::prelude::*;
@@ -48,33 +44,29 @@ where
     let mut values = vec![vec![F::ZERO; contributions_size]; my_instances.len()];
 
     values.par_iter_mut().zip(my_instances.par_iter()).for_each(|(values_row, instance_id)| {
-        let mut contribution = vec![F::ZERO; 12];
         let root_contribution = roots_contributions[*instance_id];
 
         let mut values_to_hash =
             values_contributions[*instance_id].lock().expect("Missing values_contribution").clone();
         values_to_hash[4..8].copy_from_slice(&root_contribution[..4]);
 
-        calculate_hash_c(
-            contribution.as_mut_ptr() as *mut u8,
-            values_to_hash.as_mut_ptr() as *mut u8,
-            values_to_hash.len() as u64,
-            12,
-        );
+        let mut input = vec![F::ZERO; 16];
+        input[..values_to_hash.len()].copy_from_slice(&values_to_hash);
+        let contribution = poseidon2_hash(&input);
 
         if pctx.global_info.curve != CurveType::None {
             for (i, v) in contribution.iter().enumerate().take(10) {
                 values_row[i] = *v;
             }
         } else {
-            for (i, v) in contribution.iter().enumerate().take(12) {
+            for (i, v) in contribution.iter().enumerate().take(SPONGE_WIDTH) {
                 values_row[i] = *v;
             }
-            let n_hashes = contributions_size / 12 - 1;
+            let n_hashes = contributions_size / SPONGE_WIDTH - 1;
             for j in 0..n_hashes {
-                let input_slice = &mut values_row[(j * 12)..((j + 1) * 12)];
+                let input_slice = &mut values_row[(j * SPONGE_WIDTH)..((j + 1) * SPONGE_WIDTH)];
                 let output = poseidon2_hash(input_slice);
-                values_row[((j + 1) * 12)..((j + 2) * 12)].copy_from_slice(&output[..12]);
+                values_row[((j + 1) * SPONGE_WIDTH)..((j + 2) * SPONGE_WIDTH)].copy_from_slice(&output[..SPONGE_WIDTH]);
             }
         }
     });
@@ -95,13 +87,13 @@ where
 {
     timer_start_info!(CALCULATE_GLOBAL_CHALLENGE);
 
-    let transcript = FFITranscript::new(2, true);
+    let mut transcript = Transcript::new();
 
-    transcript.add_elements(pctx.get_publics_ptr(), pctx.global_info.n_publics);
+    transcript.put(&pctx.get_publics());
 
     let proof_values_stage = pctx.get_proof_values_by_stage(1);
     if !proof_values_stage.is_empty() {
-        transcript.add_elements(proof_values_stage.as_ptr() as *mut u8, proof_values_stage.len());
+        transcript.put(&proof_values_stage);
     }
 
     let all_partial_contributions: Vec<Vec<F>> = all_partial_contributions_u64
@@ -110,13 +102,13 @@ where
         .collect();
 
     let value = aggregate_contributions(pctx, &all_partial_contributions);
-    transcript.add_elements(value.as_ptr() as *mut u8, value.len());
+    transcript.put(&value);
 
-    let global_challenge = [F::ZERO; 3];
-    transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
+    let mut global_challenge = [F::ZERO; 3];
+    transcript.get_field(&mut global_challenge);
 
     tracing::info!("··· Global challenge: [{}, {}, {}]", global_challenge[0], global_challenge[1], global_challenge[2]);
-    pctx.set_global_challenge(2, &global_challenge);
+    pctx.set_global_challenge(2, &mut global_challenge);
 
     timer_stop_and_log_info!(CALCULATE_GLOBAL_CHALLENGE);
 }

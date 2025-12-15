@@ -1021,7 +1021,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "transcript",
  "witness",
 ]
 
@@ -1075,7 +1074,6 @@ dependencies = [
  "thiserror 2.0.17",
  "tracing",
  "tracing-subscriber",
- "transcript",
  "yansi",
 ]
 
@@ -1496,7 +1494,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "test-c36"
+name = "test-c42"
 version = "0.14.0"
 dependencies = [
  "bytemuck",
@@ -1517,7 +1515,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "test-c42"
+name = "test-recursive"
 version = "0.14.0"
 dependencies = [
  "bytemuck",
@@ -1722,13 +1720,6 @@ dependencies = [
  "thread_local",
  "tracing-core",
  "tracing-log",
-]
-
-[[package]]
-name = "transcript"
-version = "0.14.0"
-dependencies = [
- "proofman-starks-lib-c",
 ]
 
 [[package]]

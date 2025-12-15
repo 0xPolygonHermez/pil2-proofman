@@ -422,7 +422,7 @@ void pack_const_pols(void *pStarkinfo, void *pConstPols, char *constFile) {
 }
 
 #ifndef __USE_CUDA__
-void init_gpu_setup(uint64_t maxBitsExt) {}
+void init_gpu_setup(uint64_t maxBitsExt, uint32_t arity) {}
 void prepare_blocks(uint64_t* pol, uint64_t N, uint64_t nCols) {}
 void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress) {
     ConstTree constTree;
@@ -610,12 +610,12 @@ void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *buf
 }
 
 #ifndef __USE_CUDA__
-void write_custom_commit(void* root, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *buffer, char *bufferFile, bool check)
+void write_custom_commit(void* root, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t arity, void *buffer, char *bufferFile, bool check)
 {   
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
 
-    MerkleTreeGL mt(3, true, NExtended, nCols, true, true);
+    MerkleTreeGL mt(arity, true, NExtended, nCols, true, true);
 
     NTT_Goldilocks ntt(N);
     ntt.extendPol(mt.source, (Goldilocks::Element *)buffer, NExtended, N, nCols);
@@ -666,42 +666,6 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
     return 0;
 }
 #endif
-
-
-void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements, uint64_t nOutputs)
-{
-    TranscriptGL transcriptHash(2, true);
-    transcriptHash.put((Goldilocks::Element *)pBuffer, nElements);
-    transcriptHash.getState((Goldilocks::Element *)pValue, nOutputs);
-}
-
-// Transcript
-// =================================================================================
-void *transcript_new(uint64_t arity, bool custom)
-{
-    return new TranscriptGL(arity, custom);
-}
-
-void transcript_add(void *pTranscript, void *pInput, uint64_t size)
-{
-    auto transcript = (TranscriptGL *)pTranscript;
-    auto input = (Goldilocks::Element *)pInput;
-
-    transcript->put(input, size);
-}
-
-void transcript_free(void *pTranscript)
-{
-    delete (TranscriptGL *)pTranscript;
-}
-
-void get_challenge(void *pTranscript, void *pElement)
-{
-    TranscriptGL *transcript = (TranscriptGL *)pTranscript;
-    Goldilocks::Element &challenge = *(Goldilocks::Element *)pElement;
-    transcript->getField((uint64_t *)&challenge);
-}
-
 
 // Constraints
 // =================================================================================
@@ -821,13 +785,13 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {}
 
 // Recursive proof
 // ================================================================================= 
-void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size)
+void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size, uint32_t arity)
 {
     DeviceCommitBuffersCPU *d_buffers = new DeviceCommitBuffersCPU();
     return (void *)d_buffers;
 };
 
-uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t max_n_bits_ext) { return 1; }
+uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t max_n_bits_ext, uint64_t merkleTreeArity) { return 1; }
 
 void get_instances_ready(void *d_buffers, int64_t* instances_ready) {}
 

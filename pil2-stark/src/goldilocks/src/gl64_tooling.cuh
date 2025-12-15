@@ -4,12 +4,14 @@
 #include <cstdint>
 #include <cassert>
 #include "goldilocks_base_field.hpp"
+#ifndef __GOLDILOCKS_ENV__
 #include "gpu_timer.cuh"
 #include <mutex>
 #include "cuda_utils.cuh"
 #include "transcriptGL.cuh"
 #include "expressions_gpu.cuh"
 #include <limits.h>
+#endif
 #include "gl64_t.cuh"
 
 
@@ -32,6 +34,7 @@ public:
     }
 };
 
+#ifndef __GOLDILOCKS_ENV__
 struct AirInstanceInfo {
     uint64_t airgroupId;
     uint64_t airId;
@@ -282,7 +285,7 @@ struct StreamData{
 
     std::mutex mutex_stream_selection;
     
-    void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_){
+    void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_, uint64_t merkleTreeArity){
         uint64_t maxExps = 20000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -306,11 +309,11 @@ struct StreamData{
         airgroupId = UINT64_MAX;
         airId = UINT64_MAX;
 
-        transcript = new TranscriptGL_GPU(3,
+        transcript = new TranscriptGL_GPU(merkleTreeArity,
                                     true,
                                     stream);
 
-        transcript_helper = new TranscriptGL_GPU(3,
+        transcript_helper = new TranscriptGL_GPU(merkleTreeArity,
                                            true,
                                            stream);
 
@@ -392,5 +395,5 @@ void load_and_copy_to_device_in_chunks(
     uint64_t total_size,
     uint64_t streamId
     );
-
+#endif
 #endif

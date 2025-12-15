@@ -39,8 +39,8 @@ void StarkInfo::load(json j)
             starkStruct.merkleTreeCustom = false;
         }
     } else {
-        starkStruct.merkleTreeArity = 3;
-        starkStruct.merkleTreeCustom = true;
+        starkStruct.merkleTreeArity = j["starkStruct"]["merkleTreeArity"];
+        starkStruct.merkleTreeCustom = j["starkStruct"]["merkleTreeCustom"];
     }
     if(j["starkStruct"].contains("hashCommits")) {
         starkStruct.hashCommits = j["starkStruct"]["hashCommits"];

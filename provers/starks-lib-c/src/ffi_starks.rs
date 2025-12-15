@@ -239,9 +239,9 @@ pub fn load_const_tree_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn init_gpu_setup_c(maxBitsExt: u64) {
+pub fn init_gpu_setup_c(maxBitsExt: u64, arity: u32) {
     unsafe {
-        init_gpu_setup(maxBitsExt);
+        init_gpu_setup(maxBitsExt, arity);
     }
 }
 
@@ -610,11 +610,13 @@ pub fn load_custom_commit_c(setup: *mut c_void, commit_id: u64, buffer: *mut u8,
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
 pub fn write_custom_commit_c(
     root: *mut u8,
     n_bits: u64,
     n_bits_ext: u64,
     n_cols: u64,
+    arity: u64,
     buffer: *mut u8,
     buffer_file: &str,
     check: bool,
@@ -626,6 +628,7 @@ pub fn write_custom_commit_c(
             n_bits,
             n_bits_ext,
             n_cols,
+            arity,
             buffer as *mut std::os::raw::c_void,
             buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
             check,
@@ -664,39 +667,6 @@ pub fn commit_witness_c(
             d_buffers,
             setup,
         )
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn calculate_hash_c(pValue: *mut u8, pBuffer: *mut u8, nElements: u64, nOutputs: u64) {
-    unsafe {
-        calculate_hash(pValue as *mut std::os::raw::c_void, pBuffer as *mut std::os::raw::c_void, nElements, nOutputs);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn transcript_new_c(arity: u64, custom: bool) -> *mut c_void {
-    unsafe { transcript_new(arity, custom) }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn transcript_add_c(p_transcript: *mut c_void, p_input: *mut u8, size: u64) {
-    unsafe {
-        transcript_add(p_transcript, p_input as *mut std::os::raw::c_void, size);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn transcript_free_c(p_transcript: *mut c_void) {
-    unsafe {
-        transcript_free(p_transcript);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn get_challenge_c(p_transcript: *mut c_void, p_element: *mut c_void) {
-    unsafe {
-        get_challenge(p_transcript, p_element);
     }
 }
 
@@ -1214,8 +1184,9 @@ pub fn gen_device_buffers_c(
     max_sizes: *mut ::std::os::raw::c_void,
     node_rank: u32,
     node_n_processes: u32,
+    arity: u32,
 ) -> *mut ::std::os::raw::c_void {
-    unsafe { gen_device_buffers(max_sizes, node_rank, node_n_processes) }
+    unsafe { gen_device_buffers(max_sizes, node_rank, node_n_processes, arity) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1226,6 +1197,7 @@ pub fn gen_device_streams_c(
     max_size_buffer_aggregation: u64,
     max_pinned_proof_size: u64,
     max_n_bits_ext: u64,
+    merkle_tree_arity: u64,
 ) -> u64 {
     unsafe {
         gen_device_streams(
@@ -1234,6 +1206,7 @@ pub fn gen_device_streams_c(
             max_size_buffer_aggregation,
             max_pinned_proof_size,
             max_n_bits_ext,
+            merkle_tree_arity,
         )
     }
 }
@@ -1505,7 +1478,7 @@ pub fn load_const_tree_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn init_gpu_setup_c(_maxBitsExt: u64) {
+pub fn init_gpu_setup_c(_maxBitsExt: u64, _arity: u64) {
     trace!("··· {}", "init_gpu_setup: This is a mock call because there is no linked library");
 }
 
@@ -1711,11 +1684,13 @@ pub fn load_custom_commit_c(_p_setup: *mut c_void, _commit_id: u64, _buffer: *mu
 }
 
 #[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
 pub fn write_custom_commit_c(
     _root: *mut u8,
     _n_bits: u64,
     _n_bits_ext: u64,
     _n_cols: u64,
+    _arity: u64,
     _buffer: *mut u8,
     _buffer_file: &str,
     _check: bool,
@@ -1741,32 +1716,6 @@ pub fn commit_witness_c(
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "commit_witness: This is a mock call because there is no linked library");
     0
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn calculate_hash_c(_pValue: *mut u8, _pBuffer: *mut u8, _nElements: u64, _nOutputs: u64) {
-    trace!("··· {}", "calculate_hash: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn transcript_new_c(_arity: u64, _custom: bool) -> *mut c_void {
-    trace!("··· {}", "transcript_new: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn transcript_add_c(_p_transcript: *mut c_void, _p_input: *mut u8, _size: u64) {
-    trace!("··· {}", "transcript_add: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn transcript_free_c(_p_transcript: *mut c_void) {
-    trace!("··· {}", "transcript_free: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn get_challenge_c(_p_transcript: *mut c_void, _p_element: *mut c_void) {
-    trace!("··· {}", "get_challenges: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -2083,6 +2032,7 @@ pub fn gen_device_buffers_c(
     _max_sizes: *mut ::std::os::raw::c_void,
     _node_rank: u32,
     _node_n_processes: u32,
+    _arity: u32,
 ) -> *mut ::std::os::raw::c_void {
     trace!(
         "{}: ··· {}",
@@ -2100,6 +2050,7 @@ pub fn gen_device_streams_c(
     _max_size_buffer_aggregation: u64,
     _max_pinned_proof_size: u64,
     _max_n_bits_ext: u64,
+    _merkle_tree_arity: u64,
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "set_max_size_thread: This is a mock call because there is no linked library");
     0

@@ -6,7 +6,7 @@
 #include "ntt_goldilocks.cuh"
 #include "goldilocks_cubic_extension.cuh"
 #include "omp.h"
-#include "poseidon_goldilocks.hpp"
+#include "poseidon2_goldilocks.hpp"
 #include <atomic>
 #include <mutex>
 
@@ -222,7 +222,7 @@ __global__ void transposeSubBlocksBack_noBR_compact(gl64_t *src, uint64_t n_bits
     dst[offset_dst] = shared[threadIdx.y * blockDim.x + threadIdx.x];
 }
 
-void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t n_bits, uint64_t n_bits_ext, uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream)
+void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t n_bits, uint64_t n_bits_ext, uint64_t nCols, uint64_t arity, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream)
 {
    
     if (nCols == 0 || n_bits_ext == 0)
@@ -263,11 +263,28 @@ void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t 
 
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    Poseidon2GoldilocksGPU::merkletree_cuda_coalesced_blocks(3, (uint64_t*) d_tree, (uint64_t *)d_cmQ, nCols, NExtended, stream);
+    switch (arity)
+    {
+    case 2:
+        Poseidon2GoldilocksGPU<8>::merkletreeCoalescedBlocks(arity, (uint64_t*) d_tree, (uint64_t *)d_cmQ, nCols, NExtended, stream);
+        break;
+    case 3:
+        Poseidon2GoldilocksGPU<12>::merkletreeCoalescedBlocks(arity, (uint64_t*) d_tree, (uint64_t *)d_cmQ, nCols, NExtended, stream);
+        break;      
+    case 4:
+        Poseidon2GoldilocksGPU<16>::merkletreeCoalescedBlocks(arity, (uint64_t*) d_tree, (uint64_t *)d_cmQ, nCols, NExtended, stream);
+        break;
+    default:
+#ifndef __GOLDILOCKS_ENV__
+        zklog.error("MerkleTreeGL::calculateRootFromProof: Unsupported arity");
+        exitProcess();
+#endif
+        exit(-1);
+    }    
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 
-void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits, u_int64_t n_bits_ext, u_int64_t nCols, TimerGPU &timer, cudaStream_t stream)
+void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits, u_int64_t n_bits_ext, u_int64_t nCols, u_int64_t arity, TimerGPU &timer, cudaStream_t stream)
 {
     if (nCols == 0 || n_bits == 0)
     {
@@ -310,7 +327,24 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU(Goldilocks::Element *d_tree, gl64_t 
     transposeSubBlocksInPlace<<<grid1, block, sharedMemSize, stream>>>(d_dst_ntt_, ext_size, nCols);
     TimerStopCategoryGPU(timer, NTT);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    Poseidon2GoldilocksGPU::merkletree_cuda_coalesced_blocks(3, (uint64_t*) d_tree, (uint64_t *)d_dst_ntt_, nCols, ext_size, stream);
+    switch (arity)
+    {
+    case 2:
+        Poseidon2GoldilocksGPU<8>::merkletreeCoalescedBlocks(arity, (uint64_t*) d_tree, (uint64_t *)d_dst_ntt_, nCols, ext_size, stream);
+        break;
+    case 3:
+        Poseidon2GoldilocksGPU<12>::merkletreeCoalescedBlocks(arity, (uint64_t*) d_tree, (uint64_t *)d_dst_ntt_, nCols, ext_size, stream);
+        break;
+    case 4:
+        Poseidon2GoldilocksGPU<16>::merkletreeCoalescedBlocks(arity, (uint64_t*) d_tree, (uint64_t *)d_dst_ntt_, nCols, ext_size, stream);
+        break;
+    default:
+#ifndef __GOLDILOCKS_ENV__
+        zklog.error("MerkleTreeGL::calculateRootFromProof: Unsupported arity");
+        exitProcess();
+#endif
+        exit(-1);
+    }
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 

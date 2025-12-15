@@ -45,7 +45,6 @@ void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx
 
 void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, uint64_t *proofBuffer, std::string proofFile, bool recursive = false) {
     TimerStart(STARK_PROOF);
-
     NTT_Goldilocks ntt(1 << setupCtx.starkInfo.starkStruct.nBits);
     NTT_Goldilocks nttExtended(1 << setupCtx.starkInfo.starkStruct.nBitsExt);
 

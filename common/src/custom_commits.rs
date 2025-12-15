@@ -11,10 +11,12 @@ use crate::{ProofmanResult, ProofmanError};
 pub fn write_custom_commit_trace<F: PrimeField64>(
     custom_trace: &mut dyn Trace<F>,
     blowup_factor: u64,
+    merkle_tree_arity: u64,
     file_name: &Path,
     check: bool,
 ) -> ProofmanResult<Vec<F>> {
     let buffer = custom_trace.get_buffer();
+    let arity = merkle_tree_arity;
     let n = custom_trace.num_rows() as u64;
     let n_extended = blowup_factor * custom_trace.num_rows() as u64;
     let n_bits = n.trailing_zeros() as u64;
@@ -43,7 +45,7 @@ pub fn write_custom_commit_trace<F: PrimeField64>(
             return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
         }
 
-        init_gpu_setup_c(n_bits_ext);
+        init_gpu_setup_c(n_bits_ext, arity as u32);
     }
 
     write_custom_commit_c(
@@ -51,6 +53,7 @@ pub fn write_custom_commit_trace<F: PrimeField64>(
         n_bits,
         n_bits_ext,
         n_cols,
+        arity,
         buffer.as_ptr() as *mut u8,
         file_name.to_str().expect("Invalid file name"),
         check,

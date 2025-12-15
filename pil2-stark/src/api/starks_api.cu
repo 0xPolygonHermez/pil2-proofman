@@ -11,7 +11,7 @@
 #include "gen_recursive_proof.cuh"
 #include "gen_proof.cuh"
 #include "gen_commit.cuh"
-#include "poseidon2_goldilocks.cu"
+#include "poseidon2_goldilocks.cuh"
 #include <cuda_runtime.h>
 #include <mutex>
 
@@ -41,7 +41,7 @@ void get_instances_ready(void *d_buffers_, int64_t* instances_ready) {
     }
 }
 
-void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size)
+void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size, uint32_t arity)
 {
     int deviceCount;
     cudaError_t err = cudaGetDeviceCount(&deviceCount);
@@ -100,9 +100,22 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
                 CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_traceAggregation[i][j], maxSizes->auxTraceRecursiveArea * sizeof(Goldilocks::Element)));
             }
         }
-        Poseidon2GoldilocksGPU::init_gpu_const_2(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+        switch(arity){
+            case 2:
+                Poseidon2GoldilocksGPU<8>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+                break;
+            case 3:
+                Poseidon2GoldilocksGPU<12>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+                break;
+            case 4:
+                Poseidon2GoldilocksGPU<16>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+                break;
+            default:
+                zklog.error("Unsupported merkle tree arity. Supported arities are 2, 3 and 4.");
+                exit(1);
+        }
 
-        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus, arity);
 
 
 #ifdef NUMA_NODE
@@ -172,14 +185,27 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPolsAggregation[0], maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer[0], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer_extra[0], d_buffers->pinned_size * sizeof(Goldilocks::Element)));        
-        Poseidon2GoldilocksGPU::init_gpu_const_2(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+        switch(arity){
+            case 2:
+                Poseidon2GoldilocksGPU<8>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+                break;
+            case 3:
+                Poseidon2GoldilocksGPU<12>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+                break;
+            case 4:
+                Poseidon2GoldilocksGPU<16>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+                break;
+            default:
+                zklog.error("Unsupported merkle tree arity. Supported arities are 2, 3 and 4.");
+                exit(1);
+        }
 
-        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus, arity);
         return (void *)d_buffers;
     }
 }
 
-uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t max_n_bits_ext) {
+uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t max_n_bits_ext, uint64_t merkleTreeArity) {
     
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     d_buffers->max_size_proof = maxProofSize;
@@ -196,11 +222,11 @@ uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint
         uint64_t gpu_stream_start = i * (d_buffers->n_streams + d_buffers->n_recursive_streams);
 
         for (uint64_t j = 0; j < d_buffers->n_streams; j++) {
-            d_buffers->streamsData[gpu_stream_start + j].initialize(maxProofSize, d_buffers->my_gpu_ids[i], j, false);
+            d_buffers->streamsData[gpu_stream_start + j].initialize(maxProofSize, d_buffers->my_gpu_ids[i], j, false, merkleTreeArity);
         }
 
         for (uint64_t j = 0; j < d_buffers->n_recursive_streams; j++) {
-            d_buffers->streamsData[gpu_stream_start + d_buffers->n_streams + j].initialize(maxProofSize, d_buffers->my_gpu_ids[i], j, true);
+            d_buffers->streamsData[gpu_stream_start + d_buffers->n_streams + j].initialize(maxProofSize, d_buffers->my_gpu_ids[i], j, true, merkleTreeArity);
         }
     }
 
@@ -381,7 +407,6 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
     uint64_t sizeTrace = N * (setupCtx->starkInfo.mapSectionsN["cm1"]) * sizeof(Goldilocks::Element);
-    uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][proofType][gpuLocalId];
     
@@ -576,7 +601,6 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
         ? (gl64_t *)d_buffers->d_aux_traceAggregation[gpuLocalId][d_buffers->streamsData[streamId].localStreamId]
         : d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
-    uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
 
     auto key = std::make_pair(airgroupId, airId);
@@ -670,13 +694,26 @@ void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
 
 }
 
-void init_gpu_setup(uint64_t maxBitsExt) {
+void init_gpu_setup(uint64_t maxBitsExt, uint32_t arity) {
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
     cudaSetDevice(deviceId);
     uint32_t my_gpu_ids[1] = {0};
 
-    Poseidon2GoldilocksGPU::init_gpu_const_2(my_gpu_ids, 1);
+    switch(arity){
+        case 2:
+            Poseidon2GoldilocksGPU<8>::initPoseidon2GPUConstants(my_gpu_ids, 1);
+            break;
+        case 3:
+            Poseidon2GoldilocksGPU<12>::initPoseidon2GPUConstants(my_gpu_ids, 1);
+            break;
+        case 4:
+            Poseidon2GoldilocksGPU<16>::initPoseidon2GPUConstants(my_gpu_ids, 1);
+            break;
+        default:
+            zklog.error("Unsupported merkle tree arity. Supported arities are 2, 3 and 4.");
+            exit(1);
+    }
     NTT_Goldilocks_GPU::init_twiddle_factors_and_r(maxBitsExt, 1, my_gpu_ids);
 }
 
@@ -703,7 +740,7 @@ void prepare_blocks(uint64_t *pol, uint64_t N, uint64_t nCols) {
     cudaStreamDestroy(stream);
 }
 
-void write_custom_commit(void* root, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *buffer, char *bufferFile, bool check)
+void write_custom_commit(void* root, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t arity, void *buffer, char *bufferFile, bool check)
 {   
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
@@ -716,7 +753,7 @@ void write_custom_commit(void* root, uint64_t nBits, uint64_t nBitsExt, uint64_t
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
 
-    MerkleTreeGL mt(3, true, NExtended, nCols);
+    MerkleTreeGL mt(arity, true, NExtended, nCols);
 
     uint64_t treeSize = (NExtended * nCols) + mt.numNodes;
     Goldilocks::Element* customCommitsTree = new Goldilocks::Element[treeSize];
@@ -736,7 +773,7 @@ void write_custom_commit(void* root, uint64_t nBits, uint64_t nBitsExt, uint64_t
     ntt.prepare_blocks_trace(d_customCommitsPols, d_buffer, nCols, N, stream, timer);
 
     Goldilocks::Element *pNodes = (Goldilocks::Element *)&d_customCommitsTree[nCols * NExtended];
-    ntt.LDE_MerkleTree_GPU(pNodes, (gl64_t *)d_customCommitsTree, 0, (gl64_t *)d_customCommitsPols, 0, nBits, nBitsExt, nCols, timer, stream);
+    ntt.LDE_MerkleTree_GPU(pNodes, (gl64_t *)d_customCommitsTree, 0, (gl64_t *)d_customCommitsPols, 0, nBits, nBitsExt, nCols, arity, timer, stream);
 
     cudaMemcpy(customCommitsTree, d_customCommitsTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
 
@@ -791,7 +828,7 @@ void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pCons
     NTT_Goldilocks_GPU ntt;
 
     Goldilocks::Element *pNodes = d_fixedTree + starkInfo.nConstants * NExtended;
-    ntt.LDE_MerkleTree_GPU(pNodes, (gl64_t *)d_fixedTree, 0, (gl64_t *)d_fixedPols, 0, starkInfo.starkStruct.nBits, starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, timer, stream);
+    ntt.LDE_MerkleTree_GPU(pNodes, (gl64_t *)d_fixedTree, 0, (gl64_t *)d_fixedPols, 0, starkInfo.starkStruct.nBits, starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, starkInfo.starkStruct.merkleTreeArity, timer, stream);
 
     Goldilocks::Element *pConstTreeAddress = (Goldilocks::Element *)pConstTreeAddress_;
     cudaMemcpy(pConstTreeAddress, d_fixedTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);

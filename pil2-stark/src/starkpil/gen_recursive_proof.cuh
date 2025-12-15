@@ -244,7 +244,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
 
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {
-            merkelizeFRI_inplace(setupCtx, h_params, step, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, d_transcript, timer, stream);
+            merkelizeFRI_inplace(setupCtx, h_params, step, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, setupCtx.starkInfo.starkStruct.merkleTreeArity, d_transcript, timer, stream);
         }
         else
         {

@@ -11,18 +11,31 @@ void TranscriptGL::put(Goldilocks::Element *input, uint64_t size)
 
 void TranscriptGL::_updateState() 
 {
-    while(pending_cursor < TRANSCRIPT_PENDING_SIZE) {
+    while(pending_cursor < transcriptPendingSize) {
         pending[pending_cursor] = Goldilocks::zero();
         pending_cursor++;
     }
-    Goldilocks::Element inputs[TRANSCRIPT_OUT_SIZE];
-    std::memcpy(inputs, pending, TRANSCRIPT_PENDING_SIZE * sizeof(Goldilocks::Element));
-    std::memcpy(&inputs[TRANSCRIPT_PENDING_SIZE], state, TRANSCRIPT_STATE_SIZE * sizeof(Goldilocks::Element));
-    Poseidon2Goldilocks::hash_full_result_seq(out, inputs);
-    out_cursor = TRANSCRIPT_OUT_SIZE;
-    std::memset(pending, 0, TRANSCRIPT_PENDING_SIZE * sizeof(Goldilocks::Element));
+    std::memcpy(inputs, pending, transcriptPendingSize * sizeof(Goldilocks::Element));
+    std::memcpy(&inputs[transcriptPendingSize], state, transcriptStateSize * sizeof(Goldilocks::Element));
+    switch(arity) {
+        case 2:
+            Poseidon2Goldilocks<8>::hash_full_result_seq(out, inputs);
+            break;
+        case 3:
+            Poseidon2Goldilocks<12>::hash_full_result_seq(out, inputs);
+            break;
+        case 4:
+            Poseidon2Goldilocks<16>::hash_full_result_seq(out, inputs);
+            break;
+        default:
+            zklog.error("MerkleTreeGL::calculateRootFromProof: Unsupported arity");
+            exitProcess();
+            exit(-1);
+    }
+    out_cursor = transcriptOutSize;
+    std::memset(pending, 0, transcriptPendingSize * sizeof(Goldilocks::Element));
     pending_cursor = 0;
-    std::memcpy(state, out, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element));
+    std::memcpy(state, out, transcriptOutSize * sizeof(Goldilocks::Element));
 }
 
 void TranscriptGL::_add1(Goldilocks::Element input)
@@ -30,7 +43,7 @@ void TranscriptGL::_add1(Goldilocks::Element input)
     pending[pending_cursor] = input;
     pending_cursor++;
     out_cursor = 0;
-    if (pending_cursor == TRANSCRIPT_PENDING_SIZE)
+    if (pending_cursor == transcriptPendingSize)
     {
         _updateState();
     }
@@ -49,7 +62,7 @@ void TranscriptGL::getState(Goldilocks::Element* output) {
     if(pending_cursor > 0) {
         _updateState();
     }
-    std::memcpy(output, state, TRANSCRIPT_STATE_SIZE * sizeof(Goldilocks::Element));
+    std::memcpy(output, state, transcriptStateSize * sizeof(Goldilocks::Element));
 }
 
 void TranscriptGL::getState(Goldilocks::Element* output, uint64_t nOutputs) {
@@ -65,7 +78,7 @@ Goldilocks::Element TranscriptGL::getFields1()
     {
         _updateState();
     }
-    Goldilocks::Element res = out[(TRANSCRIPT_OUT_SIZE - out_cursor) % TRANSCRIPT_OUT_SIZE];
+    Goldilocks::Element res = out[(transcriptOutSize - out_cursor) % transcriptOutSize];
     out_cursor--;
     return res;
 }
