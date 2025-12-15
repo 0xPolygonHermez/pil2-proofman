@@ -149,7 +149,7 @@ In order to generate a proof in the GPU, the following commands needs to be exec
 ```bash
 cargo build --features gpu \
 && cargo run --features gpu --bin proofman-cli check-setup --proving-key \
-     examples/fibonacci-square/build/provingKey/ \
+     examples/fibonacci-square/build/provingKey/ -a \
 && cargo run --features gpu --bin proofman-cli gen-custom-commits-fixed \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
@@ -159,7 +159,7 @@ cargo build --features gpu \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --output-dir examples/fibonacci-square/build/proofs \
-     --custom-commits rom=examples/fibonacci-square/build/rom_gpu.bin -y
+     --custom-commits rom=examples/fibonacci-square/build/rom_gpu.bin -y -a
 ```
 ### 2.9 All at once
 

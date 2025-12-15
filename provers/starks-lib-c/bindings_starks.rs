@@ -84,7 +84,7 @@ extern "C" {
     
     pub fn get_const_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
-    pub fn init_gpu_setup(maxBitsExt: u64, arity: u32);
+    pub fn init_gpu_setup(maxBitsExt: u64);
 
     pub fn pack_const_pols(
         pStarkinfo: *mut ::std::os::raw::c_void,

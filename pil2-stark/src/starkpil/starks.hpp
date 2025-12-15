@@ -374,7 +374,7 @@ void Starks<ElementType>::getChallenge(TranscriptType &transcript, Goldilocks::E
 
 template <typename ElementType>
 void Starks<ElementType>::calculateHash(ElementType* hash, Goldilocks::Element* buffer, uint64_t nElements) {
-    TranscriptType transcriptHash(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
+    TranscriptType transcriptHash(setupCtx.starkInfo.starkStruct.transcriptArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
     transcriptHash.put(buffer, nElements);
     transcriptHash.getState(hash);
 };

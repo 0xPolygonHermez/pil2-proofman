@@ -387,7 +387,7 @@ where
                 return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
             }
 
-            init_gpu_setup_c(sctx.max_n_bits_ext as u64, pctx.global_info.merkle_tree_arity as u32);
+            init_gpu_setup_c(sctx.max_n_bits_ext as u64);
         }
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
@@ -3041,11 +3041,12 @@ where
         }
 
         let max_size_buffer = (free_memory_gpu / 8.0).floor() as u64 - total_const_area - total_const_area_aggregation;
+        let max_prover_buffer_size = sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size);
 
         let n_streams_per_gpu = match cfg!(feature = "gpu") {
             true => {
                 let max_number_proofs_per_gpu =
-                    gpu_params.max_number_streams.min(max_size_buffer as usize / sctx.max_prover_buffer_size);
+                    gpu_params.max_number_streams.min(max_size_buffer as usize / max_prover_buffer_size);
                 if max_number_proofs_per_gpu < 1 {
                     return Err(ProofmanError::InvalidConfiguration("Not enough GPU memory to run the proof".into()));
                 }
@@ -3054,10 +3055,10 @@ where
             false => 1,
         };
 
-        if sctx.max_single_buffer_size > n_streams_per_gpu * sctx.max_prover_buffer_size {
+        if sctx.max_single_buffer_size > n_streams_per_gpu * max_prover_buffer_size {
             return Err(ProofmanError::InvalidConfiguration(format!(
                 "Not enough GPU memory to run the proof. At least: {} are required but only {} is available.",
-                sctx.max_single_buffer_size / sctx.max_prover_buffer_size,
+                sctx.max_single_buffer_size / max_prover_buffer_size,
                 n_streams_per_gpu
             )));
         }
@@ -3067,7 +3068,7 @@ where
 
         let max_prover_recursive2_buffer_size = setups_vadcop.max_prover_recursive2_buffer_size as u64;
 
-        tracing::info!("Max prover buffer size: {}", format_bytes(sctx.max_prover_buffer_size as f64 * 8.0));
+        tracing::info!("Max prover buffer size: {}", format_bytes(max_prover_buffer_size as f64 * 8.0));
         tracing::info!(
             "Max prover recursive buffer size: {}",
             format_bytes(setups_vadcop.max_prover_recursive_buffer_size as f64 * 8.0)
@@ -3078,7 +3079,7 @@ where
         );
 
         let mut gpu_available_memory = match cfg!(feature = "gpu") {
-            true => max_size_buffer as i64 - (n_streams_per_gpu * sctx.max_prover_buffer_size) as i64,
+            true => max_size_buffer as i64 - (n_streams_per_gpu * max_prover_buffer_size as usize) as i64,
             false => 0,
         };
         let mut n_recursive_streams_per_gpu = 0;
@@ -3115,7 +3116,7 @@ where
             max_sizes_ptr,
             mpi_ctx.node_rank as u32,
             mpi_ctx.node_n_processes as usize as u32,
-            pctx.global_info.merkle_tree_arity as u32,
+            pctx.global_info.transcript_arity as u32,
         )));
 
         let max_pinned_proof_size = match aggregation {
@@ -3129,7 +3130,7 @@ where
             max_prover_recursive2_buffer_size,
             max_pinned_proof_size,
             sctx.max_n_bits_ext as u64,
-            pctx.global_info.merkle_tree_arity as u64,
+            pctx.global_info.transcript_arity as u64,
         );
 
         initialize_setup_info(pctx, sctx, setups_vadcop, &d_buffers, aggregation, packed_info, gpu_params)?;

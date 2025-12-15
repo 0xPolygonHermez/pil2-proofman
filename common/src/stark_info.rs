@@ -29,13 +29,15 @@ pub struct StarkStruct {
     pub n_bits_ext: u64,
     #[serde(rename = "nQueries")]
     pub n_queries: u64,
-    #[serde(default = "default_hash_commits", rename = "hashCommits")]
+    #[serde(rename = "hashCommits")]
     pub hash_commits: bool,
     #[serde(rename = "verificationHashType")]
     pub verification_hash_type: String,
-    #[serde(default = "default_merkle_tree_arity", rename = "merkleTreeArity")]
+    #[serde(rename = "merkleTreeArity")]
     pub merkle_tree_arity: u64,
-    #[serde(default = "default_merkle_tree_custom", rename = "merkleTreeCustom")]
+    #[serde(rename = "transcriptArity")]
+    pub transcript_arity: u64,
+    #[serde(rename = "merkleTreeCustom")]
     pub merkle_tree_custom: bool,
     #[serde(rename = "steps")]
     pub steps: Vec<StepStruct>,
@@ -178,7 +180,7 @@ pub struct StarkInfo {
     #[serde(rename = "customCommits")]
     pub custom_commits: Vec<CustomCommits>,
 
-    #[serde(default = "default_opening_points", rename = "openingPoints")]
+    #[serde(rename = "openingPoints")]
     pub opening_points: Vec<i64>,
 
     #[serde(default)]
@@ -201,22 +203,6 @@ pub struct StarkInfo {
     pub map_offsets: HashMap<(String, bool), u64>,
     #[serde(default, rename = "mapTotalN")]
     pub map_total_n: u64,
-}
-
-fn default_opening_points() -> Vec<i64> {
-    vec![0, 1]
-}
-
-fn default_merkle_tree_arity() -> u64 {
-    16
-}
-
-fn default_merkle_tree_custom() -> bool {
-    false
-}
-
-fn default_hash_commits() -> bool {
-    false
 }
 
 impl StarkInfo {

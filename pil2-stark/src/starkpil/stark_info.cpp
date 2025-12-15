@@ -31,8 +31,10 @@ void StarkInfo::load(json j)
     if(starkStruct.verificationHashType == "BN128") {
         if(j["starkStruct"].contains("merkleTreeArity")) {
             starkStruct.merkleTreeArity = j["starkStruct"]["merkleTreeArity"];
+            starkStruct.transcriptArity = j["starkStruct"]["transcriptArity"];
         } else {
             starkStruct.merkleTreeArity = 16;
+            starkStruct.transcriptArity = 16;
         }
         if(j["starkStruct"].contains("merkleTreeCustom")) {
             starkStruct.merkleTreeCustom = j["starkStruct"]["merkleTreeCustom"];
@@ -42,6 +44,7 @@ void StarkInfo::load(json j)
         starkStruct.lastLevelVerification = 0;
     } else {
         starkStruct.merkleTreeArity = j["starkStruct"]["merkleTreeArity"];
+        starkStruct.transcriptArity = j["starkStruct"]["transcriptArity"];
         starkStruct.merkleTreeCustom = j["starkStruct"]["merkleTreeCustom"];
         starkStruct.lastLevelVerification = j["starkStruct"]["lastLevelVerification"];
     }

@@ -1,6 +1,6 @@
 use fields::{
     intt_tiny, verify_fold, verify_mt, partial_merkle_tree, CubicExtensionField, Field, Goldilocks, Transcript,
-    Poseidon2Constants, Poseidon4, poseidon2_hash, PrimeField64,
+    Poseidon2Constants, Poseidon4, Poseidon16, poseidon2_hash, PrimeField64,
 };
 use bytemuck::cast_slice;
 
@@ -245,13 +245,13 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
     let mut xdivxsub = Vec::new();
     let mut zi = Vec::new();
 
-    let mut transcript: Transcript<Goldilocks, C, W> = Transcript::new();
+    let mut transcript: Transcript<Goldilocks, Poseidon16, 16> = Transcript::new();
     transcript.put(&root_c.clone());
     if n_publics > 0 {
         if !verifier_info.hash_commits {
             transcript.put(&publics);
         } else {
-            let mut transcript_publics: Transcript<Goldilocks, C, W> = Transcript::new();
+            let mut transcript_publics: Transcript<Goldilocks, Poseidon16, 16> = Transcript::new();
             transcript_publics.put(&publics);
             let hash = transcript_publics.get_state();
             transcript.put(&hash[0..4]);
@@ -272,7 +272,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
             transcript.put(&evals[i as usize].value);
         }
     } else {
-        let mut transcript_evals: Transcript<Goldilocks, C, W> = Transcript::new();
+        let mut transcript_evals: Transcript<Goldilocks, Poseidon16, 16> = Transcript::new();
         for i in 0..verifier_info.n_evals {
             transcript_evals.put(&evals[i as usize].value);
         }
@@ -298,7 +298,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
                     transcript.put(&final_pol[j as usize].value);
                 }
             } else {
-                let mut transcript_final_pol: Transcript<Goldilocks, C, W> = Transcript::new();
+                let mut transcript_final_pol: Transcript<Goldilocks, Poseidon16, 16> = Transcript::new();
                 for j in 0..final_pol_size {
                     transcript_final_pol.put(&final_pol[j as usize].value);
                 }
@@ -320,7 +320,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         tracing::error!("Proof of work verification failed");
         return false;
     }
-    let mut transcript_permutation: Transcript<Goldilocks, C, W> = Transcript::new();
+    let mut transcript_permutation: Transcript<Goldilocks, Poseidon16, 16> = Transcript::new();
     transcript_permutation.put(&challenges[last_challenge_index].value);
     transcript_permutation.put(&[nonce]);
     let fri_queries = transcript_permutation.get_permutations(verifier_info.n_fri_queries, verifier_info.fri_steps[0]);

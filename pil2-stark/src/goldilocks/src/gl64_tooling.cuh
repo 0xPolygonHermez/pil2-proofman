@@ -278,6 +278,7 @@ struct StreamData{
     uint64_t airId; 
     int64_t instanceId;
     string proofType;
+    uint64_t arity;
         
     bool recursive;
     bool extraStream;
@@ -308,6 +309,7 @@ struct StreamData{
         proofBuffer = nullptr;
         airgroupId = UINT64_MAX;
         airId = UINT64_MAX;
+        arity = merkleTreeArity;
 
         transcript = new TranscriptGL_GPU(merkleTreeArity,
                                     true,

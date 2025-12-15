@@ -118,7 +118,7 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         Poseidon2GoldilocksGPUGrinding::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
         
 
-        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus, arity);
 
 
 #ifdef NUMA_NODE
@@ -205,7 +205,7 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
 
         Poseidon2GoldilocksGPUGrinding::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
         
-        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus, arity);
         return (void *)d_buffers;
     }
 }
@@ -695,26 +695,14 @@ void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
 
 }
 
-void init_gpu_setup(uint64_t maxBitsExt, uint32_t arity) {
+void init_gpu_setup(uint64_t maxBitsExt) {
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
     cudaSetDevice(deviceId);
     uint32_t my_gpu_ids[1] = {0};
 
-    switch(arity){
-        case 2:
-            Poseidon2GoldilocksGPU<8>::initPoseidon2GPUConstants(my_gpu_ids, 1);
-            break;
-        case 3:
-            Poseidon2GoldilocksGPU<12>::initPoseidon2GPUConstants(my_gpu_ids, 1);
-            break;
-        case 4:
-            Poseidon2GoldilocksGPU<16>::initPoseidon2GPUConstants(my_gpu_ids, 1);
-            break;
-        default:
-            zklog.error("Unsupported merkle tree arity. Supported arities are 2, 3 and 4.");
-            exit(1);
-    }
+    // Uploads constants for all possible arities
+    Poseidon2GoldilocksGPU<16>::initPoseidon2GPUConstants(my_gpu_ids, 1);
     NTT_Goldilocks_GPU::init_twiddle_factors_and_r(maxBitsExt, 1, my_gpu_ids);
 }
 

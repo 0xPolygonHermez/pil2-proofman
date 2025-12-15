@@ -422,7 +422,7 @@ void pack_const_pols(void *pStarkinfo, void *pConstPols, char *constFile) {
 }
 
 #ifndef __USE_CUDA__
-void init_gpu_setup(uint64_t maxBitsExt, uint32_t arity) {}
+void init_gpu_setup(uint64_t maxBitsExt) {}
 void prepare_blocks(uint64_t* pol, uint64_t N, uint64_t nCols) {}
 void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress) {
     ConstTree constTree;

@@ -738,7 +738,7 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &h_params, uint64_t st
     transposeFRI<<<nBlocks, nThreads, 0, stream>>>((gl64_t *)treeFRI->source, (gl64_t *)pol, pol2N, width);
     
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    switch(arity) {
+    switch(setupCtx.starkInfo.starkStruct.merkleTreeArity) {
         case 2:
             Poseidon2GoldilocksGPU<8>::merkletreeCoalesced(2,(uint64_t*) treeFRI->nodes, (uint64_t *)treeFRI->source, treeFRI->width, treeFRI->height, stream);
             break;

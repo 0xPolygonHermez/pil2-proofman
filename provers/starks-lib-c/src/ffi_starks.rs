@@ -239,9 +239,9 @@ pub fn load_const_tree_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn init_gpu_setup_c(maxBitsExt: u64, arity: u32) {
+pub fn init_gpu_setup_c(maxBitsExt: u64) {
     unsafe {
-        init_gpu_setup(maxBitsExt, arity);
+        init_gpu_setup(maxBitsExt);
     }
 }
 
@@ -1478,7 +1478,7 @@ pub fn load_const_tree_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn init_gpu_setup_c(_maxBitsExt: u64, _arity: u64) {
+pub fn init_gpu_setup_c(_maxBitsExt: u64) {
     trace!("··· {}", "init_gpu_setup: This is a mock call because there is no linked library");
 }
 
