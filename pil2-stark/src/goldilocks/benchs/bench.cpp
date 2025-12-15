@@ -173,7 +173,7 @@ static void MUL_OP_AVX_BENCH(benchmark::State &state)
 
 static void POSEIDON2_BENCH_FULL(benchmark::State &state)
 {
-    uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2GoldilocksCommit::SPONGE_WIDTH;
+    uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2Goldilocks<16>::SPONGE_WIDTH;
     Goldilocks::Element *x = new Goldilocks::Element[input_size];
     Goldilocks::Element *result = new Goldilocks::Element[input_size];
 
@@ -188,7 +188,7 @@ static void POSEIDON2_BENCH_FULL(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
         {
-            Poseidon2GoldilocksCommit::hash_full_result_seq((Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])result[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH], (Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])x[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH]);
+            Poseidon2Goldilocks<16>::hash_full_result_seq((Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])result[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH], (Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH]);
         }
     }
     // Check poseidon results poseidon ( 0 1 2 3 4 5 6 7 8 9 10 11 )
@@ -204,7 +204,7 @@ static void POSEIDON2_BENCH_FULL(benchmark::State &state)
 #ifdef __AVX2__
 static void POSEIDON2_BENCH_FULL_AVX(benchmark::State &state)
 {
-    uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2GoldilocksCommit::SPONGE_WIDTH;
+    uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2Goldilocks<16>::SPONGE_WIDTH;
     Goldilocks::Element *x = new Goldilocks::Element[input_size];
     Goldilocks::Element *result = new Goldilocks::Element[input_size];
 
@@ -219,7 +219,7 @@ static void POSEIDON2_BENCH_FULL_AVX(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
         {
-            Poseidon2GoldilocksCommit::hash_full_result_avx((Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])result[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH], (Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])x[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH]);
+            Poseidon2Goldilocks<16>::hash_full_result_avx((Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])result[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH], (Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH]);
         }
     }
     delete[] x;
@@ -233,7 +233,7 @@ static void POSEIDON2_BENCH_FULL_AVX(benchmark::State &state)
 
 static void POSEIDON2_BENCH_FULL_AVX_BATCH(benchmark::State &state)
 {
-    uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2GoldilocksCommit::SPONGE_WIDTH;
+    uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2Goldilocks<16>::SPONGE_WIDTH;
     Goldilocks::Element *x = new Goldilocks::Element[input_size];
     Goldilocks::Element *result = new Goldilocks::Element[input_size];
 
@@ -248,7 +248,7 @@ static void POSEIDON2_BENCH_FULL_AVX_BATCH(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i+= 4)
         {
-            Poseidon2GoldilocksCommit::hash_full_result_batch_avx((Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])result[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH], (Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])x[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH]);
+            Poseidon2Goldilocks<16>::hash_full_result_batch_avx((Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])result[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH], (Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH]);
         }
     }
     delete[] x;
@@ -264,13 +264,13 @@ static void POSEIDON2_BENCH_FULL_AVX_BATCH(benchmark::State &state)
 #ifdef __AVX512__
 static void POSEIDON_BENCH_FULL_AVX512(benchmark::State &state)
 {
-    uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2GoldilocksCommit::SPONGE_WIDTH;
+    uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2Goldilocks<16>::SPONGE_WIDTH;
     Goldilocks::Element *fibonacci = new Goldilocks::Element[input_size];
     Goldilocks::Element *input = new Goldilocks::Element[2 * input_size];
     Goldilocks::Element *result = new Goldilocks::Element[2 * input_size];
 
     // Test vector: Fibonacci series
-    // 0 1 1 2 3 5 8 13 ... NUM_HASHES * Poseidon2GoldilocksCommit::SPONGE_WIDTH ...
+    // 0 1 1 2 3 5 8 13 ... NUM_HASHES * Poseidon2Goldilocks<16>::SPONGE_WIDTH ...
     fibonacci[0] = Goldilocks::zero();
     fibonacci[1] = Goldilocks::one();
     for (uint64_t i = 2; i < input_size; i++)
@@ -291,7 +291,7 @@ static void POSEIDON_BENCH_FULL_AVX512(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i += 2)
         {
-            PoseidonGoldilocks::hash_full_result_avx512((Goldilocks::Element(&)[2 * Poseidon2GoldilocksCommit::SPONGE_WIDTH]) result[2 * i * Poseidon2GoldilocksCommit::SPONGE_WIDTH], (Goldilocks::Element(&)[2 * Poseidon2GoldilocksCommit::SPONGE_WIDTH]) input[2 * i * Poseidon2GoldilocksCommit::SPONGE_WIDTH]);
+            PoseidonGoldilocks::hash_full_result_avx512((Goldilocks::Element(&)[2 * Poseidon2Goldilocks<16>::SPONGE_WIDTH]) result[2 * i * Poseidon2Goldilocks<16>::SPONGE_WIDTH], (Goldilocks::Element(&)[2 * Poseidon2Goldilocks<16>::SPONGE_WIDTH]) input[2 * i * Poseidon2Goldilocks<16>::SPONGE_WIDTH]);
         }
     }
     // Check poseidon results poseidon ( 0 1 1 2 3 5 8 13 21 34 55 89 )
@@ -313,8 +313,8 @@ static void POSEIDON_BENCH_FULL_AVX512(benchmark::State &state)
 
 static void POSEIDON2_BENCH(benchmark::State &state)
 {
-    uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2GoldilocksCommit::SPONGE_WIDTH;
-    uint64_t output_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2GoldilocksCommit::CAPACITY;
+    uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2Goldilocks<16>::SPONGE_WIDTH;
+    uint64_t output_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2Goldilocks<16>::CAPACITY;
     Goldilocks::Element *x = new Goldilocks::Element[input_size];
     Goldilocks::Element *result = new Goldilocks::Element[output_size];
 
@@ -329,7 +329,7 @@ static void POSEIDON2_BENCH(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
         {
-            Poseidon2GoldilocksCommit::hash_seq((Goldilocks::Element(&)[Poseidon2GoldilocksCommit::CAPACITY])result[i * Poseidon2GoldilocksCommit::CAPACITY], (Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])x[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH]);
+            Poseidon2Goldilocks<16>::hash_seq((Goldilocks::Element(&)[Poseidon2Goldilocks<16>::CAPACITY])result[i * Poseidon2Goldilocks<16>::CAPACITY], (Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH]);
         }
     }
 
@@ -345,8 +345,8 @@ static void POSEIDON2_BENCH(benchmark::State &state)
 #ifdef __AVX2__
 static void POSEIDON2_BENCH_AVX(benchmark::State &state)
 {
-    uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2GoldilocksCommit::SPONGE_WIDTH;
-    uint64_t output_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2GoldilocksCommit::CAPACITY;
+    uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2Goldilocks<16>::SPONGE_WIDTH;
+    uint64_t output_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2Goldilocks<16>::CAPACITY;
     Goldilocks::Element *x = new Goldilocks::Element[input_size];
     Goldilocks::Element *result = new Goldilocks::Element[output_size];
 
@@ -361,7 +361,7 @@ static void POSEIDON2_BENCH_AVX(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
         {
-            Poseidon2GoldilocksCommit::hash_avx((Goldilocks::Element(&)[Poseidon2GoldilocksCommit::CAPACITY])result[i * Poseidon2GoldilocksCommit::CAPACITY], (Goldilocks::Element(&)[Poseidon2GoldilocksCommit::SPONGE_WIDTH])x[i * Poseidon2GoldilocksCommit::SPONGE_WIDTH]);
+            Poseidon2Goldilocks<16>::hash_avx((Goldilocks::Element(&)[Poseidon2Goldilocks<16>::CAPACITY])result[i * Poseidon2Goldilocks<16>::CAPACITY], (Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH]);
         }
     }
 
@@ -378,7 +378,7 @@ static void POSEIDON2_BENCH_AVX(benchmark::State &state)
 static void LINEAR_HASH_BENCH(benchmark::State &state)
 {
     Goldilocks::Element *cols = new Goldilocks::Element[(uint64_t)NCOLS_HASH * (uint64_t)NROWS_HASH];
-    Goldilocks::Element *result = new Goldilocks::Element[(uint64_t)Poseidon2GoldilocksCommit::HASH_SIZE * (uint64_t)NROWS_HASH];
+    Goldilocks::Element *result = new Goldilocks::Element[(uint64_t)HASH_SIZE * (uint64_t)NROWS_HASH];
 
     // Test vector: Fibonacci series on the columns and increase the initial values to the right,
     // 1 2 3 4  5  6  ... NUM_COLS
@@ -404,14 +404,14 @@ static void LINEAR_HASH_BENCH(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NROWS_HASH; i++)
         {
-            Poseidon2GoldilocksCommit::linear_hash_seq(&result[i * Poseidon2GoldilocksCommit::HASH_SIZE], &cols[i * NCOLS_HASH], NCOLS_HASH);
+            Poseidon2Goldilocks<16>::linear_hash_seq(&result[i * HASH_SIZE], &cols[i * NCOLS_HASH], NCOLS_HASH);
         }
     }
 
     // Rate = time to process 1 linear hash per core
     // BytesProcessed = total bytes processed per second on every iteration
     int threads_core = 2 * state.range(0) / omp_get_max_threads(); // we assume hyperthreading
-    state.counters["Rate"] = benchmark::Counter(threads_core * (double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2GoldilocksCommit::RATE) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
+    state.counters["Rate"] = benchmark::Counter(threads_core * (double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2Goldilocks<16>::RATE) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
     state.counters["BytesProcessed"] = benchmark::Counter((uint64_t)NROWS_HASH * (uint64_t)NCOLS_HASH * sizeof(Goldilocks::Element), benchmark::Counter::kIsIterationInvariantRate, benchmark::Counter::OneK::kIs1024);
 
     delete[] cols;
@@ -422,7 +422,7 @@ static void LINEAR_HASH_BENCH(benchmark::State &state)
 static void LINEAR_HASH_BENCH_AVX(benchmark::State &state)
 {
     Goldilocks::Element *cols = new Goldilocks::Element[(uint64_t)NCOLS_HASH * (uint64_t)NROWS_HASH];
-    Goldilocks::Element *result = new Goldilocks::Element[(uint64_t)Poseidon2GoldilocksCommit::HASH_SIZE * (uint64_t)NROWS_HASH];
+    Goldilocks::Element *result = new Goldilocks::Element[(uint64_t)HASH_SIZE * (uint64_t)NROWS_HASH];
 
     // Test vector: Fibonacci series on the columns and increase the initial values to the right,
     // 1 2 3 4  5  6  ... NUM_COLS
@@ -448,14 +448,14 @@ static void LINEAR_HASH_BENCH_AVX(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NROWS_HASH; i++)
         {
-            Poseidon2GoldilocksCommit::linear_hash_avx(&result[i * Poseidon2GoldilocksCommit::HASH_SIZE], &cols[i * NCOLS_HASH], NCOLS_HASH);
+            Poseidon2Goldilocks<16>::linear_hash_avx(&result[i * HASH_SIZE], &cols[i * NCOLS_HASH], NCOLS_HASH);
         }
     }
 
     // Rate = time to process 1 linear hash per core
     // BytesProcessed = total bytes processed per second on every iteration
     int threads_core = 2 * state.range(0) / omp_get_max_threads(); // we assume hyperthreading
-    state.counters["Rate"] = benchmark::Counter(threads_core * (double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2GoldilocksCommit::RATE) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
+    state.counters["Rate"] = benchmark::Counter(threads_core * (double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2Goldilocks<16>::RATE) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
     state.counters["BytesProcessed"] = benchmark::Counter((uint64_t)NROWS_HASH * (uint64_t)NCOLS_HASH * sizeof(Goldilocks::Element), benchmark::Counter::kIsIterationInvariantRate, benchmark::Counter::OneK::kIs1024);
 
     delete[] cols;
@@ -466,7 +466,7 @@ static void LINEAR_HASH_BENCH_AVX(benchmark::State &state)
 static void LINEAR_HASH_BENCH_AVX512(benchmark::State &state)
 {
     Goldilocks::Element *cols = new Goldilocks::Element[(uint64_t)NCOLS_HASH * (uint64_t)NROWS_HASH];
-    Goldilocks::Element *result = new Goldilocks::Element[(uint64_t)Poseidon2GoldilocksCommit::HASH_SIZE * (uint64_t)NROWS_HASH];
+    Goldilocks::Element *result = new Goldilocks::Element[(uint64_t)HASH_SIZE * (uint64_t)NROWS_HASH];
 
     // Test vector: Fibonacci series on the columns and increase the initial values to the right,
     // 1 2 3 4  5  6  ... NUM_COLS
@@ -492,14 +492,14 @@ static void LINEAR_HASH_BENCH_AVX512(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NROWS_HASH; i += 2)
         {
-            PoseidonGoldilocks::linear_hash_avx512(&result[i * Poseidon2GoldilocksCommit::HASH_SIZE], &cols[i * NCOLS_HASH], NCOLS_HASH);
+            PoseidonGoldilocks::linear_hash_avx512(&result[i * HASH_SIZE], &cols[i * NCOLS_HASH], NCOLS_HASH);
         }
     }
 
     // Rate = time to process 1 linear hash per core
     // BytesProcessed = total bytes processed per second on every iteration
     int threads_core = 2 * state.range(0) / omp_get_max_threads(); // we assume hyperthreading
-    state.counters["Rate"] = benchmark::Counter(threads_core * (double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2GoldilocksCommit::RATE) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
+    state.counters["Rate"] = benchmark::Counter(threads_core * (double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2Goldilocks<16>::RATE) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
     state.counters["BytesProcessed"] = benchmark::Counter((uint64_t)NROWS_HASH * (uint64_t)NCOLS_HASH * sizeof(Goldilocks::Element), benchmark::Counter::kIsIterationInvariantRate, benchmark::Counter::OneK::kIs1024);
 
     delete[] cols;
@@ -535,7 +535,7 @@ static void MERKLETREE_BENCH(benchmark::State &state)
     // Benchmark
     for (auto _ : state)
     {
-        Poseidon2GoldilocksCommit::merkletree_seq(tree, cols, NCOLS_HASH, NROWS_HASH, state.range(0));
+        Poseidon2Goldilocks<16>::merkletree_seq(tree, cols, NCOLS_HASH, NROWS_HASH, state.range(0));
     }
     Goldilocks::Element root[4];
     MerklehashGoldilocks::root(&(root[0]), tree, numElementsTree);
@@ -543,7 +543,7 @@ static void MERKLETREE_BENCH(benchmark::State &state)
     // Rate = time to process 1 linear hash per core
     // BytesProcessed = total bytes processed per second on every iteration
     int threads_core = 2 * state.range(0) / omp_get_max_threads(); // we assume hyperthreading
-    state.counters["Rate"] = benchmark::Counter(threads_core * (((double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2GoldilocksCommit::RATE)) + log2(NROWS_HASH)) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
+    state.counters["Rate"] = benchmark::Counter(threads_core * (((double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2Goldilocks<16>::RATE)) + log2(NROWS_HASH)) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
     state.counters["BytesProcessed"] = benchmark::Counter((uint64_t)NROWS_HASH * (uint64_t)NCOLS_HASH * sizeof(Goldilocks::Element), benchmark::Counter::kIsIterationInvariantRate, benchmark::Counter::OneK::kIs1024);
     delete[] cols;
     delete[] tree;
@@ -578,7 +578,7 @@ static void MERKLETREE_BENCH_AVX(benchmark::State &state)
     // Benchmark
     for (auto _ : state)
     {
-        Poseidon2GoldilocksCommit::merkletree_avx(tree, cols, NCOLS_HASH, NROWS_HASH, 3);
+        Poseidon2Goldilocks<16>::merkletree_avx(tree, cols, NCOLS_HASH, NROWS_HASH, 3);
     }
     Goldilocks::Element root[4];
     MerklehashGoldilocks::root(&(root[0]), tree, numElementsTree);
@@ -592,7 +592,7 @@ static void MERKLETREE_BENCH_AVX(benchmark::State &state)
     // Rate = time to process 1 linear hash per core
     // BytesProcessed = total bytes processed per second on every iteration
     int threads_core = 2 * state.range(0) / omp_get_max_threads(); // we assume hyperthreading
-    state.counters["Rate"] = benchmark::Counter(threads_core * (((double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2GoldilocksCommit::RATE)) + log2(NROWS_HASH)) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
+    state.counters["Rate"] = benchmark::Counter(threads_core * (((double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2Goldilocks<16>::RATE)) + log2(NROWS_HASH)) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
     state.counters["BytesProcessed"] = benchmark::Counter((uint64_t)NROWS_HASH * (uint64_t)NCOLS_HASH * sizeof(Goldilocks::Element), benchmark::Counter::kIsIterationInvariantRate, benchmark::Counter::OneK::kIs1024);
     delete[] cols;
     delete[] tree;
@@ -641,7 +641,7 @@ static void MERKLETREE_BENCH_AVX512(benchmark::State &state)
     // Rate = time to process 1 linear hash per core
     // BytesProcessed = total bytes processed per second on every iteration
     int threads_core = 2 * state.range(0) / omp_get_max_threads(); // we assume hyperthreading
-    state.counters["Rate"] = benchmark::Counter(threads_core * (((double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2GoldilocksCommit::RATE)) + log2(NROWS_HASH)) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
+    state.counters["Rate"] = benchmark::Counter(threads_core * (((double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2Goldilocks<16>::RATE)) + log2(NROWS_HASH)) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
     state.counters["BytesProcessed"] = benchmark::Counter((uint64_t)NROWS_HASH * (uint64_t)NCOLS_HASH * sizeof(Goldilocks::Element), benchmark::Counter::kIsIterationInvariantRate, benchmark::Counter::OneK::kIs1024);
     delete[] cols;
     delete[] tree;
@@ -676,7 +676,7 @@ static void MERKLETREE_BATCH_BENCH(benchmark::State &state)
     // Benchmark
     for (auto _ : state)
     {
-        Poseidon2GoldilocksCommit::merkletree_batch_seq(tree, cols, NCOLS_HASH, NROWS_HASH, (NCOLS_HASH + 3) / 4, state.range(0));
+        Poseidon2Goldilocks<16>::merkletree_batch_seq(tree, cols, NCOLS_HASH, NROWS_HASH, (NCOLS_HASH + 3) / 4, state.range(0));
     }
     Goldilocks::Element root[4];
     MerklehashGoldilocks::root(&(root[0]), tree, numElementsTree);
@@ -684,7 +684,7 @@ static void MERKLETREE_BATCH_BENCH(benchmark::State &state)
     // Rate = time to process 1 linear hash per core
     // BytesProcessed = total bytes processed per second on every iteration
     int threads_core = 2 * state.range(0) / omp_get_max_threads(); // we assume hyperthreading
-    state.counters["Rate"] = benchmark::Counter(threads_core * (((double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2GoldilocksCommit::RATE)) + log2(NROWS_HASH)) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
+    state.counters["Rate"] = benchmark::Counter(threads_core * (((double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2Goldilocks<16>::RATE)) + log2(NROWS_HASH)) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
     state.counters["BytesProcessed"] = benchmark::Counter((uint64_t)NROWS_HASH * (uint64_t)NCOLS_HASH * sizeof(Goldilocks::Element), benchmark::Counter::kIsIterationInvariantRate, benchmark::Counter::OneK::kIs1024);
     delete[] cols;
     delete[] tree;
@@ -718,7 +718,7 @@ static void MERKLETREE_BATCH_BENCH_AVX(benchmark::State &state)
     // Benchmark
     for (auto _ : state)
     {
-        Poseidon2GoldilocksCommit::merkletree_batch_avx(tree, cols, NCOLS_HASH, NROWS_HASH, 3);
+        Poseidon2Goldilocks<16>::merkletree_batch_avx(tree, cols, NCOLS_HASH, NROWS_HASH, 3);
     }
     Goldilocks::Element root[4];
     MerklehashGoldilocks::root(&(root[0]), tree, numElementsTree);
@@ -732,7 +732,7 @@ static void MERKLETREE_BATCH_BENCH_AVX(benchmark::State &state)
     // Rate = time to process 1 linear hash per core
     // BytesProcessed = total bytes processed per second on every iteration
     int threads_core = 2 * state.range(0) / omp_get_max_threads(); // we assume hyperthreading
-    state.counters["Rate"] = benchmark::Counter(threads_core * (((double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2GoldilocksCommit::RATE)) + log2(NROWS_HASH)) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
+    state.counters["Rate"] = benchmark::Counter(threads_core * (((double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2Goldilocks<16>::RATE)) + log2(NROWS_HASH)) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
     state.counters["BytesProcessed"] = benchmark::Counter((uint64_t)NROWS_HASH * (uint64_t)NCOLS_HASH * sizeof(Goldilocks::Element), benchmark::Counter::kIsIterationInvariantRate, benchmark::Counter::OneK::kIs1024);
     delete[] cols;
     delete[] tree;
@@ -781,7 +781,7 @@ static void MERKLETREE_BATCH_BENCH_AVX512(benchmark::State &state)
     // Rate = time to process 1 linear hash per core
     // BytesProcessed = total bytes processed per second on every iteration
     int threads_core = 2 * state.range(0) / omp_get_max_threads(); // we assume hyperthreading
-    state.counters["Rate"] = benchmark::Counter(threads_core * (((double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2GoldilocksCommit::RATE)) + log2(NROWS_HASH)) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
+    state.counters["Rate"] = benchmark::Counter(threads_core * (((double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2Goldilocks<16>::RATE)) + log2(NROWS_HASH)) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
     state.counters["BytesProcessed"] = benchmark::Counter((uint64_t)NROWS_HASH * (uint64_t)NCOLS_HASH * sizeof(Goldilocks::Element), benchmark::Counter::kIsIterationInvariantRate, benchmark::Counter::OneK::kIs1024);
     delete[] cols;
     delete[] tree;

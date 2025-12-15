@@ -79,7 +79,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
     // 0.- Add const root and publics to transcript
     //--------------------------------
     d_transcript->reset(stream);
-    d_transcript->put(starks.treesGL[setupCtx.starkInfo.nStages+1]->get_nodes_ptr() + starks.treesGL[setupCtx.starkInfo.nStages + 1]->numNodes - Poseidon2GoldilocksCommit::HASH_SIZE, Poseidon2GoldilocksCommit::HASH_SIZE, stream);
+    d_transcript->put(starks.treesGL[setupCtx.starkInfo.nStages+1]->get_nodes_ptr() + starks.treesGL[setupCtx.starkInfo.nStages + 1]->numNodes - HASH_SIZE, HASH_SIZE, stream);
     if (setupCtx.starkInfo.nPublics > 0)
     {
         if (!setupCtx.starkInfo.starkStruct.hashCommits)
@@ -89,7 +89,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
         else
         {
             calculateHash(d_transcript_helper, challenge_gpu, setupCtx, h_params.publicInputs, setupCtx.starkInfo.nPublics, stream);
-            d_transcript->put(challenge_gpu, Poseidon2GoldilocksCommit::HASH_SIZE, stream);
+            d_transcript->put(challenge_gpu, HASH_SIZE, stream);
         }
     }
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
@@ -198,7 +198,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
         d_transcript->put(h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION, stream);
     } else {
         calculateHash(d_transcript_helper, challenge_gpu, setupCtx, h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION, stream);
-        d_transcript->put(challenge_gpu, Poseidon2GoldilocksCommit::HASH_SIZE, stream);
+        d_transcript->put(challenge_gpu, HASH_SIZE, stream);
     }
 
     // Challenges for FRI polynomial
@@ -252,7 +252,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
                 d_transcript->put((Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION, stream);
             } else {
                 calculateHash(d_transcript_helper, challenge_gpu, setupCtx, (Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION, stream);
-                d_transcript->put(challenge_gpu, Poseidon2GoldilocksCommit::HASH_SIZE, stream);
+                d_transcript->put(challenge_gpu, HASH_SIZE, stream);
             }
         }
         d_transcript->getField((uint64_t *)challenge_gpu, stream);

@@ -654,7 +654,7 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
 void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
 
     Goldilocks::Element *root = (Goldilocks::Element *)d_buffers->streamsData[streamId].root;
-    memcpy((Goldilocks::Element *)root, d_buffers->streamsData[streamId].pinned_buffer_proof, Poseidon2GoldilocksGPUCommit::HASH_SIZE * sizeof(uint64_t));
+    memcpy((Goldilocks::Element *)root, d_buffers->streamsData[streamId].pinned_buffer_proof, HASH_SIZE * sizeof(uint64_t));
     uint64_t instanceId = d_buffers->streamsData[streamId].instanceId;
     uint64_t airgroupId = d_buffers->streamsData[streamId].airgroupId;
     uint64_t airId = d_buffers->streamsData[streamId].airId;

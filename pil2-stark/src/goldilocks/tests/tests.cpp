@@ -1740,19 +1740,19 @@ TEST(GOLDILOCKS_TEST, poseidon2_avx_batch){
 TEST(GOLDILOCKS_TEST, poseidon_avx512)
 {
 
-    Goldilocks::Element input[2 * Poseidon2GoldilocksCommit::SPONGE_WIDTH];
-    Goldilocks::Element fibonacci[Poseidon2GoldilocksCommit::SPONGE_WIDTH];
-    Goldilocks::Element zero[Poseidon2GoldilocksCommit::SPONGE_WIDTH];
-    Goldilocks::Element result[2 * Poseidon2GoldilocksCommit::CAPACITY];
-    Goldilocks::Element result0[Poseidon2GoldilocksCommit::CAPACITY];
-    Goldilocks::Element result1[Poseidon2GoldilocksCommit::CAPACITY];
+    Goldilocks::Element input[2 * Poseidon2Goldilocks<16>::::SPONGE_WIDTH];
+    Goldilocks::Element fibonacci[Poseidon2Goldilocks<16>::::SPONGE_WIDTH];
+    Goldilocks::Element zero[Poseidon2Goldilocks<16>::::SPONGE_WIDTH];
+    Goldilocks::Element result[2 * Poseidon2Goldilocks<16>::::CAPACITY];
+    Goldilocks::Element result0[Poseidon2Goldilocks<16>::::CAPACITY];
+    Goldilocks::Element result1[Poseidon2Goldilocks<16>::::CAPACITY];
 
     fibonacci[0] = Goldilocks::zero();
     fibonacci[1] = Goldilocks::one();
     zero[0] = Goldilocks::zero();
     zero[1] = Goldilocks::zero();
 
-    for (uint64_t i = 2; i < Poseidon2GoldilocksCommit::SPONGE_WIDTH; i++)
+    for (uint64_t i = 2; i < Poseidon2Goldilocks<16>::::SPONGE_WIDTH; i++)
     {
         fibonacci[i] = fibonacci[i - 1] + fibonacci[i - 2];
         zero[i] = Goldilocks::zero();
@@ -1787,7 +1787,7 @@ TEST(GOLDILOCKS_TEST, linear_hash_seq)
 {
 
     /*Goldilocks::Element fibonacci[NCOLS_HASH];
-    Goldilocks::Element result[Poseidon2GoldilocksCommit::CAPACITY];
+    Goldilocks::Element result[Poseidon2Goldilocks<16>::::CAPACITY];
 
     fibonacci[0] = Goldilocks::zero();
     fibonacci[1] = Goldilocks::one();
@@ -1830,7 +1830,7 @@ TEST(GOLDILOCKS_TEST, linear_hash_avx512)
 {
 
     Goldilocks::Element fibonacci[2 * NCOLS_HASH];
-    Goldilocks::Element result[2 * Poseidon2GoldilocksCommit::CAPACITY];
+    Goldilocks::Element result[2 * Poseidon2Goldilocks<16>::::CAPACITY];
 
     fibonacci[0] = Goldilocks::zero();
     fibonacci[1] = Goldilocks::one();

@@ -165,9 +165,9 @@ static void MERKLETREE16_BENCH_GPU(benchmark::State &state)
     }
 
     //print the root of the tree
-    uint64_t root[Poseidon2GoldilocksCommit::HASH_SIZE];
-    cudaMemcpy(&root[0], d_tree + (tree_size - Poseidon2GoldilocksCommit::HASH_SIZE), Poseidon2GoldilocksCommit::HASH_SIZE * sizeof(gl64_t), cudaMemcpyDeviceToHost);
-    //for(int i = 0; i < Poseidon2GoldilocksCommit::HASH_SIZE; i++)
+    uint64_t root[HASH_SIZE];
+    cudaMemcpy(&root[0], d_tree + (tree_size - HASH_SIZE), HASH_SIZE * sizeof(gl64_t), cudaMemcpyDeviceToHost);
+    //for(int i = 0; i < HASH_SIZE; i++)
     //    std::cout << "Root[" << i << "]: " << root[i] << std::endl;
     /*if(state.range(0) == 56){
         assert(root[0] == uint64_t(0x9e1bd81a45f7dedb));

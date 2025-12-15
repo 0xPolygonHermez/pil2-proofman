@@ -7,6 +7,8 @@
 #include <immintrin.h>
 #endif
 
+#define HASH_SIZE 4
+
 template<uint32_t SPONGE_WIDTH_T>
 class Poseidon2Goldilocks
 {
@@ -15,7 +17,6 @@ public:
     static constexpr uint32_t RATE = SPONGE_WIDTH_T-4;
     static constexpr uint32_t CAPACITY = 4;
     static constexpr uint32_t SPONGE_WIDTH = SPONGE_WIDTH_T;
-    static constexpr uint32_t HASH_SIZE = 4;
     static constexpr uint32_t N_FULL_ROUNDS_TOTAL = 8;
     static constexpr uint32_t HALF_N_FULL_ROUNDS = N_FULL_ROUNDS_TOTAL / 2;
     static constexpr uint32_t N_PARTIAL_ROUNDS = SPONGE_WIDTH_T == 4 ? 21 : 22;

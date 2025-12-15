@@ -362,7 +362,7 @@ uint64_t StarkInfo::getPinnedProofSize() {
         }
     }
 
-    uint64_t maxProofSize = ceil(log10(1 << starkStruct.nBitsExt) / log10(starkStruct.merkleTreeArity)) * (starkStruct.merkleTreeArity - 1) * Poseidon2GoldilocksCommit::HASH_SIZE;
+    uint64_t maxProofSize = ceil(log10(1 << starkStruct.nBitsExt) / log10(starkStruct.merkleTreeArity)) * (starkStruct.merkleTreeArity - 1) * HASH_SIZE;
 
     uint64_t maxProofBuffSize = maxTreeWidth + maxProofSize;
 
@@ -440,7 +440,7 @@ void StarkInfo::setMapOffsets() {
         mapTotalN += airValuesSize;
 
         mapOffsets[std::make_pair("challenge", false)] = mapTotalN;
-        mapTotalN += Poseidon2GoldilocksCommit::HASH_SIZE;
+        mapTotalN += HASH_SIZE;
 
         mapOffsets[std::make_pair("evals", false)] = mapTotalN;
         mapTotalN += evMap.size() * FIELD_EXTENSION;
@@ -471,7 +471,7 @@ void StarkInfo::setMapOffsets() {
             }
         }
 
-        maxProofSize = ceil(log10(1 << starkStruct.nBitsExt) / log10(starkStruct.merkleTreeArity)) * (starkStruct.merkleTreeArity - 1) * Poseidon2GoldilocksCommit::HASH_SIZE;
+        maxProofSize = ceil(log10(1 << starkStruct.nBitsExt) / log10(starkStruct.merkleTreeArity)) * (starkStruct.merkleTreeArity - 1) * HASH_SIZE;
 
         maxProofBuffSize = maxTreeWidth + maxProofSize;
         uint64_t nTrees = 1 + (nStages + 1) + customCommits.size();
@@ -642,7 +642,7 @@ uint64_t StarkInfo::getNumNodesMT(uint64_t height) {
         nodesLevel = nextN;
     }
 
-    return numNodes * Poseidon2GoldilocksCommit::HASH_SIZE;
+    return numNodes * HASH_SIZE;
 }
 
 opType string2opType(const string s) 

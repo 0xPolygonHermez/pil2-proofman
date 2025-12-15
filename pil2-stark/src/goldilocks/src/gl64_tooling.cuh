@@ -72,8 +72,8 @@ struct AirInstanceInfo {
         expressions_gpu = new ExpressionsGPU(*setupCtx, setupCtx->starkInfo.nrowsPack, setupCtx->starkInfo.maxNBlocks);
 
         Goldilocks::Element *d_verkeyRoot;
-        CHECKCUDAERR(cudaMalloc(&d_verkeyRoot, Poseidon2GoldilocksCommit::HASH_SIZE * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMemcpy(d_verkeyRoot, verkeyRoot_, Poseidon2GoldilocksCommit::HASH_SIZE * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMalloc(&d_verkeyRoot, HASH_SIZE * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMemcpy(d_verkeyRoot, verkeyRoot_, HASH_SIZE * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
         verkeyRoot = d_verkeyRoot;
 
         uint64_t size_eval = setupCtx->starkInfo.evMap.size();
