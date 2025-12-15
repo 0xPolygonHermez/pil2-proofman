@@ -1,6 +1,6 @@
-require "std_constants.pil";
-require "std_permutation.pil";
-require "std_lookup.pil";
+require "std_constants.pil"
+require "std_permutation.pil"
+require "std_lookup.pil"
 
 airtemplate ProdBus(const int N = 2**4) {
     col witness a,b;
@@ -26,8 +26,20 @@ airtemplate BothBuses(const int N = 2**4) {
     lookup_proves(4, [d]);
 }
 
-airgroup Buses {
+// Option 1: Combine all buses into a single airgroup
+// TODO: This is not supported yet by the pil2 compiler
+airgroup Group1 {
     ProdBus();
     SumBus();
     BothBuses();
+}
+
+// Option 2: Separate airgroups for each bus
+// TODO: This is not supported yet by the proofman
+airgroup Group2 {
+    SumBus() alias SB;
+}
+
+airgroup Group3 {
+    ProdBus() alias PB;
 }
