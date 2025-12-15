@@ -465,7 +465,7 @@ void StarkInfo::setMapOffsets() {
         mapTotalN += 1;
 
         mapOffsets[std::make_pair("input_hash_nonce", false)] = mapTotalN;
-        mapTotalN += Poseidon2GoldilocksGrinding::HASH_SIZE;
+        mapTotalN += HASH_SIZE;
 
         mapOffsets[std::make_pair("evals", false)] = mapTotalN;
         mapTotalN += evMap.size() * FIELD_EXTENSION;

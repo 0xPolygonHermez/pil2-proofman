@@ -2288,7 +2288,7 @@ where
                     &self.const_pols,
                     &self.const_tree,
                     self.d_buffers.get_ptr(),
-                    false,
+                    options.save_proofs,
                 )?;
 
                 return Ok(Some(vec![AggProofs::new(0, vadcop_proof_final.proof, vec![])]));

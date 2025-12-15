@@ -1,12 +1,6 @@
 use crate::PrimeField64;
 use crate::Poseidon2Constants;
 
-pub const HALF_ROUNDS: usize = 4;
-pub const N_PARTIAL_ROUNDS: usize = 22;
-pub const SPONGE_WIDTH: usize = 16;
-pub const RATE: usize = SPONGE_WIDTH - 4;
-pub const CAPACITY: usize = 4;
-
 pub fn matmul_m4<F: PrimeField64>(input: &mut [F]) {
     let t0 = input[0] + input[1];
     let t1 = input[2] + input[3];
@@ -116,11 +110,11 @@ pub fn linear_hash_seq<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize
     while remaining > 0 {
         if remaining != size {
             for i in 0..4 {
-                state[RATE + i] = state[i];
+                state[C::RATE + i] = state[i];
             }
         }
-        let n = if remaining < RATE { remaining } else { RATE };
-        for i in 0..(RATE - n) {
+        let n = if remaining < C::RATE { remaining } else { C::RATE };
+        for i in 0..(C::RATE - n) {
             state[n + i] = F::ZERO;
         }
         for i in 0..n {
@@ -171,7 +165,7 @@ pub fn partial_merkle_tree<F: PrimeField64, C: Poseidon2Constants<W>, const W: u
     input: &[F],
     num_elements: u64,
     arity: u64,
-) -> [F; CAPACITY] {
+) -> [F; 4] {
     let mut num_nodes = num_elements;
     let mut nodes_level = num_elements;
 
@@ -183,9 +177,9 @@ pub fn partial_merkle_tree<F: PrimeField64, C: Poseidon2Constants<W>, const W: u
         nodes_level = next_n;
     }
 
-    let mut cursor = vec![F::ZERO; (num_nodes * CAPACITY as u64) as usize];
-    cursor[..(num_elements * CAPACITY as u64) as usize]
-        .copy_from_slice(&input[..(num_elements * CAPACITY as u64) as usize]);
+    let mut cursor = vec![F::ZERO; (num_nodes * C::CAPACITY as u64) as usize];
+    cursor[..(num_elements * C::CAPACITY as u64) as usize]
+        .copy_from_slice(&input[..(num_elements * C::CAPACITY as u64) as usize]);
 
     let mut pending = num_elements;
     let mut next_n = pending.div_ceil(arity);
@@ -195,30 +189,30 @@ pub fn partial_merkle_tree<F: PrimeField64, C: Poseidon2Constants<W>, const W: u
         let extra_zeros = (arity - (pending % arity)) % arity;
 
         if extra_zeros > 0 {
-            let start = (next_index + pending * CAPACITY as u64) as usize;
-            let end = start + (extra_zeros * CAPACITY as u64) as usize;
+            let start = (next_index + pending * C::CAPACITY as u64) as usize;
+            let end = start + (extra_zeros * C::CAPACITY as u64) as usize;
             cursor[start..end].fill(F::ZERO);
         }
 
         for i in 0..next_n {
             let mut pol_input: [F; W] = [F::ZERO; W];
 
-            let child_start = (next_index + i * SPONGE_WIDTH as u64) as usize;
-            pol_input[..SPONGE_WIDTH].copy_from_slice(&cursor[child_start..child_start + SPONGE_WIDTH]);
+            let child_start = (next_index + i * C::SPONGE_WIDTH as u64) as usize;
+            pol_input[..C::SPONGE_WIDTH].copy_from_slice(&cursor[child_start..child_start + C::SPONGE_WIDTH]);
 
             // Compute hash
-            let parent_start = (next_index + (pending + extra_zeros + i) * CAPACITY as u64) as usize;
+            let parent_start = (next_index + (pending + extra_zeros + i) * C::CAPACITY as u64) as usize;
             let parent_hash = poseidon2_hash::<F, C, W>(&pol_input);
-            cursor[parent_start..parent_start + CAPACITY].copy_from_slice(&parent_hash[..CAPACITY]);
+            cursor[parent_start..parent_start + C::CAPACITY].copy_from_slice(&parent_hash[..C::CAPACITY]);
         }
 
-        next_index += (pending + extra_zeros) * CAPACITY as u64;
+        next_index += (pending + extra_zeros) * C::CAPACITY as u64;
         pending = pending.div_ceil(arity);
         next_n = pending.div_ceil(arity);
     }
 
-    let mut root = [F::ZERO; CAPACITY];
-    root.copy_from_slice(&cursor[next_index as usize..next_index as usize + CAPACITY]);
+    let mut root = [F::ZERO; 4];
+    root.copy_from_slice(&cursor[next_index as usize..next_index as usize + 4]);
     root
 }
 

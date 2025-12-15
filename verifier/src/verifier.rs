@@ -285,7 +285,9 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
 
     let mut c = 6;
     for i in 0..verifier_info.n_fri_steps {
-        transcript.get_field(&mut challenges[c].value);
+        if i > 0 {
+            transcript.get_field(&mut challenges[c].value);
+        }
         c += 1;
         if i < verifier_info.n_fri_steps - 1 {
             transcript.put(&roots_fri[i as usize]);

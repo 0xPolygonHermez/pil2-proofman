@@ -73,7 +73,21 @@ public:
             numNodesLevel = (numNodesLevel + (arity - 1)) / arity;
         }
         Goldilocks::Element computedRoot[nFieldElements];
-        Poseidon2GoldilocksCommit::partial_merkle_tree(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+        switch(arity) {
+            case 2:
+                Poseidon2Goldilocks<8>::partial_merkle_tree(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+                break;
+            case 3:
+                Poseidon2Goldilocks<12>::partial_merkle_tree(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+                break;
+            case 4:
+                Poseidon2Goldilocks<16>::partial_merkle_tree(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+                break;
+            default:
+                zklog.error("MerkleTreeGL::verifyMerkleRoot: Unsupported arity");
+                exitProcess();
+                exit(-1);
+        }
 
         for (uint64_t i = 0; i < nFieldElements; ++i) {
             if (Goldilocks::toU64(computedRoot[i]) != Goldilocks::toU64(root[i])) {

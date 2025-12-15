@@ -5,6 +5,7 @@ use proofman_common::initialize_logger;
 use std::fs::File;
 use std::io::Read;
 use colored::Colorize;
+use proofman_util::{timer_start_info, timer_stop_and_log_info};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -36,7 +37,9 @@ impl VerifyStark {
         let mut vk = Vec::new();
         verkey_file.read_to_end(&mut vk)?;
 
+        timer_start_info!(VERIFY_STARK);
         let valid = verify(&proof, &vk);
+        timer_stop_and_log_info!(VERIFY_STARK);
 
         if !valid {
             tracing::info!("··· {}", "\u{2717} Stark proof was not verified".bright_red().bold());

@@ -151,7 +151,9 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     c++;
 
     for (uint64_t step=0; step<starkInfo.starkStruct.steps.size(); step++) {
-        transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
+        if (step > 0) {
+            transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
+        }
         c++;
         if (step < starkInfo.starkStruct.steps.size() - 1) {
             ElementType root[nFieldElements];
