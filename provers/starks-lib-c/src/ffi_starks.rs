@@ -239,9 +239,9 @@ pub fn load_const_tree_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn init_gpu_setup_c(maxBitsExt: u64) {
+pub fn init_gpu_setup_c(maxBitsExt: u64, arity: u32) {
     unsafe {
-        init_gpu_setup(maxBitsExt);
+        init_gpu_setup(maxBitsExt, arity);
     }
 }
 
@@ -1184,8 +1184,9 @@ pub fn gen_device_buffers_c(
     max_sizes: *mut ::std::os::raw::c_void,
     node_rank: u32,
     node_n_processes: u32,
+    arity: u32,
 ) -> *mut ::std::os::raw::c_void {
-    unsafe { gen_device_buffers(max_sizes, node_rank, node_n_processes) }
+    unsafe { gen_device_buffers(max_sizes, node_rank, node_n_processes, arity) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1477,7 +1478,7 @@ pub fn load_const_tree_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn init_gpu_setup_c(_maxBitsExt: u64) {
+pub fn init_gpu_setup_c(_maxBitsExt: u64, _arity: u64) {
     trace!("··· {}", "init_gpu_setup: This is a mock call because there is no linked library");
 }
 
@@ -2031,6 +2032,7 @@ pub fn gen_device_buffers_c(
     _max_sizes: *mut ::std::os::raw::c_void,
     _node_rank: u32,
     _node_n_processes: u32,
+    _arity: u32,
 ) -> *mut ::std::os::raw::c_void {
     trace!(
         "{}: ··· {}",

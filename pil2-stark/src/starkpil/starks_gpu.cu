@@ -738,8 +738,21 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &h_params, uint64_t st
     transposeFRI<<<nBlocks, nThreads, 0, stream>>>((gl64_t *)treeFRI->source, (gl64_t *)pol, pol2N, width);
     
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    Poseidon2GoldilocksGPUCommit::merkletreeCoalesced(arity, (uint64_t*) treeFRI->nodes, (uint64_t *)treeFRI->source, treeFRI->width, treeFRI->height, stream);
-    
+    switch(arity) {
+        case 2:
+            Poseidon2GoldilocksGPU<8>::merkletreeCoalesced(2,(uint64_t*) treeFRI->nodes, (uint64_t *)treeFRI->source, treeFRI->width, treeFRI->height, stream);
+            break;
+        case 3:
+            Poseidon2GoldilocksGPU<12>::merkletreeCoalesced(3,(uint64_t*) treeFRI->nodes, (uint64_t *)treeFRI->source, treeFRI->width, treeFRI->height, stream);
+            break;
+        case 4:
+            Poseidon2GoldilocksGPU<16>::merkletreeCoalesced(4,(uint64_t*) treeFRI->nodes, (uint64_t *)treeFRI->source, treeFRI->width, treeFRI->height, stream);
+            break;
+        default:
+            zklog.error("MerkleTreeGL::calculateRootFromProof: Unsupported arity");
+            exitProcess();
+            exit(-1);
+    }
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 
     uint64_t tree_size = treeFRI->numNodes;

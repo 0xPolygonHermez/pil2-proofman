@@ -45,7 +45,7 @@ pub fn write_custom_commit_trace<F: PrimeField64>(
             return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
         }
 
-        init_gpu_setup_c(n_bits_ext);
+        init_gpu_setup_c(n_bits_ext, arity as u32);
     }
 
     write_custom_commit_c(

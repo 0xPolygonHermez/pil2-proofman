@@ -92,9 +92,6 @@ public:
     inline void static merkletree_batch(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t batch_size, int nThreads = 0, uint64_t dim = 1);
 };
 
-
-// WRAPPERS - Template specializations for Poseidon2GoldilocksCommit
-
 template<uint32_t SPONGE_WIDTH_T>
 inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity,int nThreads, uint64_t dim)
 {
@@ -233,5 +230,4 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_seq(Goldilocks::Element (&
  #endif
 #endif
 
-using Poseidon2GoldilocksCommit = Poseidon2Goldilocks<16>;   // SPONGE_WIDTH = 16
 using Poseidon2GoldilocksGrinding = Poseidon2Goldilocks<4>;  // SPONGE_WIDTH = 4

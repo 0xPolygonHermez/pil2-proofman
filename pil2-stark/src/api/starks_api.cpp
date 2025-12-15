@@ -422,7 +422,7 @@ void pack_const_pols(void *pStarkinfo, void *pConstPols, char *constFile) {
 }
 
 #ifndef __USE_CUDA__
-void init_gpu_setup(uint64_t maxBitsExt) {}
+void init_gpu_setup(uint64_t maxBitsExt, uint32_t arity) {}
 void prepare_blocks(uint64_t* pol, uint64_t N, uint64_t nCols) {}
 void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress) {
     ConstTree constTree;
@@ -785,7 +785,7 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {}
 
 // Recursive proof
 // ================================================================================= 
-void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size)
+void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size, uint32_t arity)
 {
     DeviceCommitBuffersCPU *d_buffers = new DeviceCommitBuffersCPU();
     return (void *)d_buffers;

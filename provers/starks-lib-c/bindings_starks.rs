@@ -84,7 +84,7 @@ extern "C" {
     
     pub fn get_const_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
-    pub fn init_gpu_setup(maxBitsExt: u64);
+    pub fn init_gpu_setup(maxBitsExt: u64, arity: u32);
 
     pub fn pack_const_pols(
         pStarkinfo: *mut ::std::os::raw::c_void,
@@ -489,6 +489,7 @@ extern "C" {
         maxSizes_: *mut ::std::os::raw::c_void,
         node_rank: u32,
         node_size: u32,
+        arity: u32,
     ) -> *mut ::std::os::raw::c_void;
     
     pub fn free_device_buffers(d_buffers: *mut ::std::os::raw::c_void);

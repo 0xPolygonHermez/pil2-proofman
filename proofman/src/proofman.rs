@@ -387,7 +387,7 @@ where
                 return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
             }
 
-            init_gpu_setup_c(sctx.max_n_bits_ext as u64);
+            init_gpu_setup_c(sctx.max_n_bits_ext as u64, pctx.global_info.merkle_tree_arity as u32);
         }
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
@@ -3115,6 +3115,7 @@ where
             max_sizes_ptr,
             mpi_ctx.node_rank as u32,
             mpi_ctx.node_n_processes as usize as u32,
+            pctx.global_info.merkle_tree_arity as u32,
         )));
 
         let max_pinned_proof_size = match aggregation {
