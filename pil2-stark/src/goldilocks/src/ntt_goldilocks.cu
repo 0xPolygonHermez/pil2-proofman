@@ -275,8 +275,10 @@ void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t 
         Poseidon2GoldilocksGPU<16>::merkletreeCoalescedBlocks(arity, (uint64_t*) d_tree, (uint64_t *)d_cmQ, nCols, NExtended, stream);
         break;
     default:
+#ifndef __GOLDILOCKS_ENV__
         zklog.error("MerkleTreeGL::calculateRootFromProof: Unsupported arity");
         exitProcess();
+#endif
         exit(-1);
     }    
     TimerStopCategoryGPU(timer, MERKLE_TREE);
@@ -337,8 +339,10 @@ void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU(Goldilocks::Element *d_tree, gl64_t 
         Poseidon2GoldilocksGPU<16>::merkletreeCoalescedBlocks(arity, (uint64_t*) d_tree, (uint64_t *)d_dst_ntt_, nCols, ext_size, stream);
         break;
     default:
+#ifndef __GOLDILOCKS_ENV__
         zklog.error("MerkleTreeGL::calculateRootFromProof: Unsupported arity");
         exitProcess();
+#endif
         exit(-1);
     }
     TimerStopCategoryGPU(timer, MERKLE_TREE);
