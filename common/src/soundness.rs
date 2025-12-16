@@ -101,7 +101,7 @@ pub fn print_soundness_table(soundness: &SoundnessToml) {
         .collect();
     let basics_table = Table::new(basics_rows);
     println!("{}", basics_table);
-    
+
     let compressor_rows: Vec<AirTableRow> = soundness
         .circuits
         .iter()
@@ -157,7 +157,9 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
                 .collect(),
             fri_early_stop_degree: 1 << setup.stark_info.stark_struct.steps.last().unwrap().n_bits,
             grinding_query_phase: 0,
-            prover_size: crate::format_bytes((setup.prover_buffer_size as f64 + setup.const_tree_size as f64 + setup.const_pols_size as f64) * 8.0),
+            prover_size: crate::format_bytes(
+                (setup.prover_buffer_size as f64 + setup.const_tree_size as f64 + setup.const_pols_size as f64) * 8.0,
+            ),
         },
     )
 }
@@ -198,7 +200,11 @@ pub fn soundness_info<F: PrimeField64>(
             for (air_id, _) in air_group.iter().enumerate() {
                 if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let (air_name, air_info) = get_soundness_air_info(sctx_compressor.get_setup(airgroup_id, air_id)?);
-                    circuits.push(TomlCircuit { name: format!("{}-compressor", air_name), group: "compression".to_string(), air: air_info });
+                    circuits.push(TomlCircuit {
+                        name: format!("{}-compressor", air_name),
+                        group: "compression".to_string(),
+                        air: air_info,
+                    });
                 }
             }
         }
@@ -208,11 +214,19 @@ pub fn soundness_info<F: PrimeField64>(
         if n_airgroups > 1 {
             for airgroup in 0..n_airgroups {
                 let (_, air_info) = get_soundness_air_info(sctx_recursive2.get_setup(airgroup, 0)?);
-                circuits.push(TomlCircuit { name: format!("Recursive2 - Airgroup_{}", airgroup), group: "aggregation".to_string(), air: air_info });
+                circuits.push(TomlCircuit {
+                    name: format!("Recursive2 - Airgroup_{}", airgroup),
+                    group: "aggregation".to_string(),
+                    air: air_info,
+                });
             }
         } else {
             let (_, air_info) = get_soundness_air_info(sctx_recursive2.get_setup(0, 0)?);
-            circuits.push(TomlCircuit { name: "Recursive2".to_string(), group: "aggregation".to_string(), air: air_info });
+            circuits.push(TomlCircuit {
+                name: "Recursive2".to_string(),
+                group: "aggregation".to_string(),
+                air: air_info,
+            });
         }
 
         let setup_final_circuit = setups_aggregation.setup_vadcop_final.as_ref().unwrap();
