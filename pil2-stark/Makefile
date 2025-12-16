@@ -141,8 +141,8 @@ DEPS_STARKS_LIB_GPU := $(OBJS_STARKS_LIB_GPU:.o=.d)
 
 # Define BCT source files based on platform
 ifeq ($(UNAME_S),Darwin)
-    # macOS - exclude assembly files and merkleTreeBN128.cpp
-    SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.* ./src/poseidon_opt/poseidon_opt.cpp ./src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
+    # macOS - exclude assembly files
+    SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeBN128.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.* ./src/poseidon_opt/poseidon_opt.cpp ./src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
 else
     # Linux - include all files including assembly
     SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeBN128.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.*  ./src/poseidon_opt/poseidon_opt.cpp ./src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
