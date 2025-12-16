@@ -7,6 +7,7 @@ mod transcript;
 mod fri;
 mod extended_field;
 mod poseidon2_constants;
+mod utils;
 
 pub use goldilocks::*;
 pub use integers::*;
@@ -17,3 +18,4 @@ pub use transcript::*;
 pub use fri::*;
 pub use extended_field::*;
 pub use poseidon2_constants::*;
+pub use utils::*;

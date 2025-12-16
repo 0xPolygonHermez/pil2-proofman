@@ -101,7 +101,7 @@ cargo run --bin proofman-cli pil-helpers \
 Build the project with the following command:
 
 ```bash
-cargo build
+cargo build --workspace
 ```
 
 ### 2.5 Verify Constraints
@@ -147,7 +147,7 @@ cargo run --bin proofman-cli prove \
 In order to generate a proof in the GPU, the following commands needs to be executed after generating the setup and pil-helpers
 
 ```bash
-cargo build --features gpu \
+cargo build --features gpu --workspace \
 && cargo run --features gpu --bin proofman-cli check-setup --proving-key \
      examples/fibonacci-square/build/provingKey/ -a \
 && cargo run --features gpu --bin proofman-cli gen-custom-commits-fixed \
@@ -176,7 +176,7 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \
-&& cargo build \
+&& cargo build --workspace \
 && cargo run --bin proofman-cli check-setup --proving-key examples/fibonacci-square/build/provingKey/ \
 && cargo run --bin proofman-cli gen-custom-commits-fixed \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
@@ -209,7 +209,7 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \
-&& cargo build \
+&& cargo build --workspace \
 && cargo run --bin proofman-cli check-setup \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      -a \

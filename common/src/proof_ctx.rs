@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use crate::{MpiCtx, ProofmanError};
 use borsh::{BorshDeserialize, BorshSerialize};
+use std::fs::File;
+use std::io::Read;
 
 use fields::{PrimeField64, Transcript, Poseidon16};
 
@@ -231,6 +233,7 @@ pub struct ProofCtx<F: PrimeField64> {
     pub air_instances: Vec<RwLock<AirInstance<F>>>,
     pub weights: HashMap<(usize, usize), u64>,
     pub custom_commits_fixed: HashMap<String, PathBuf>,
+    pub custom_commits_values: HashMap<String, Vec<u8>>,
     pub dctx: RwLock<DistributionCtx>,
     pub debug_info: RwLock<DebugInfo>,
     pub aggregation: bool,
@@ -283,6 +286,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             dctx: RwLock::new(dctx),
             debug_info: RwLock::new(DebugInfo::default()),
             custom_commits_fixed,
+            custom_commits_values: HashMap::new(),
             weights,
             aggregation,
             final_snark,
@@ -324,6 +328,35 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
         if let Some(witness_tx) = &*self.witness_tx.read().unwrap() {
             witness_tx.send(global_id).unwrap();
+        }
+    }
+
+    pub fn initialize_custom_commits(&mut self, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
+        tracing::info!("Initializing publics custom_commits");
+        for (airgroup_id, airs) in self.global_info.airs.iter().enumerate() {
+            for (air_id, _) in airs.iter().enumerate() {
+                let setup = sctx.get_setup(airgroup_id, air_id)?;
+                for custom_commit in &setup.stark_info.custom_commits {
+                    if custom_commit.stage_widths[0] > 0 {
+                        let custom_file_path = self.get_custom_commits_fixed_buffer(&custom_commit.name, true)?;
+
+                        let mut file = File::open(custom_file_path)?;
+                        let mut root_bytes = [0u8; 32];
+                        file.read_exact(&mut root_bytes)?;
+
+                        self.custom_commits_values.insert(custom_commit.name.clone(), root_bytes.to_vec());
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_custom_commit_root(&self, name: &str) -> ProofmanResult<&[u8]> {
+        let root_bytes = self.custom_commits_values.get(name);
+        match root_bytes {
+            Some(bytes) => Ok(bytes.as_slice()),
+            None => Err(ProofmanError::ProofmanError(format!("Custom Commit {name} not found"))),
         }
     }
 

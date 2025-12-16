@@ -1,4 +1,4 @@
-require "std_range_check.pil";
+require "std_range_check.pil"
 
 const int MODULE_ID = 1;
 

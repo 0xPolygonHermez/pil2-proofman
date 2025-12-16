@@ -1,0 +1,8 @@
+{
+    "Intermediates": {
+        "ImDummyND_24_5": { "blowupFactor": 2 },
+        "ImCustomND_24_5": { "blowupFactor": 2 },
+        "ImDummyND_24_9": { "blowupFactor": 3 },
+        "ImCustomND_24_9": { "blowupFactor": 3 }
+    }
+}

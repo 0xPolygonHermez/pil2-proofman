@@ -9,9 +9,11 @@ use commands::prove::ProveCmd;
 use commands::verify_constraints::VerifyConstraintsCmd;
 use commands::stats::StatsCmd;
 use commands::verify_stark::VerifyStark;
+use commands::gen_witness::GenWitnessCmd;
 use commands::execute::ExecuteCmd;
 use commands::pilout::{PiloutSubcommands, PiloutCmd};
 use commands::setup::CheckSetupCmd;
+use commands::soundness::SoundnessCmd;
 use proofman_util::cli::print_banner;
 
 #[derive(Parser)]
@@ -26,6 +28,7 @@ pub struct Cli {
 pub enum Commands {
     Pilout(PiloutCmd),
     CheckSetup(CheckSetupCmd),
+    Soundness(SoundnessCmd),
     Prove(ProveCmd),
     PilHelpers(PilHelpersCmd),
     VerifyConstraints(VerifyConstraintsCmd),
@@ -34,6 +37,7 @@ pub enum Commands {
     VerifyStark(VerifyStark),
     GetConstraints(GetConstraintsCmd),
     GenCustomCommitsFixed(GenCustomCommitsFixedCmd),
+    GenWitness(GenWitnessCmd),
 }
 
 fn main() {
@@ -45,6 +49,7 @@ fn main() {
             PiloutSubcommands::Inspect(args) => args.run(),
         },
         Commands::CheckSetup(args) => args.run(),
+        Commands::Soundness(args) => args.run(),
         Commands::Prove(args) => args.run(),
         Commands::PilHelpers(args) => args.run(),
         Commands::VerifyConstraints(args) => args.run(),
@@ -53,6 +58,7 @@ fn main() {
         Commands::VerifyStark(args) => args.run(),
         Commands::Stats(args) => args.run(),
         Commands::Execute(args) => args.run(),
+        Commands::GenWitness(args) => args.run(),
     };
 
     if let Err(e) = result {

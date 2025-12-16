@@ -14,20 +14,10 @@ use proofman_starks_lib_c::{
 use serde::{Deserialize, Serialize};
 
 use crate::{quotient_map_small_int, Field, PrimeField, PrimeField64, QuotientMap};
+use crate::{branch_hint, reduce128};
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize)]
 pub struct Goldilocks(u64);
-
-#[inline(always)]
-pub fn branch_hint() {
-    // NOTE: These are the currently supported assembly architectures. See the
-    // [nightly reference](https://doc.rust-lang.org/nightly/reference/inline-assembly.html) for
-    // the most up-to-date list.
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        core::arch::asm!("", options(nomem, nostack, preserves_flags));
-    }
-}
 
 impl Goldilocks {
     const P: u64 = 0xFFFF_FFFF_0000_0001;
@@ -107,23 +97,7 @@ impl Goldilocks {
     #[inline(always)]
     #[allow(dead_code)]
     fn mul_internal(a: u64, b: u64) -> u64 {
-        let res = u128::from(a) * u128::from(b);
-        let rl = res as u64;
-        let rh = (res >> 64) as u64;
-
-        let rhh = rh >> 32;
-        let rhl = rh & Self::NEG_ORDER;
-
-        let (mut aux1, borrow) = rl.overflowing_sub(rhh);
-        if borrow {
-            branch_hint();
-            aux1 -= Self::NEG_ORDER;
-        }
-
-        let aux = rhl * Self::NEG_ORDER;
-
-        let (result, carry) = aux1.overflowing_add(aux);
-        result + Self::NEG_ORDER * u64::from(carry)
+        reduce128(u128::from(a) * u128::from(b))
     }
 }
 

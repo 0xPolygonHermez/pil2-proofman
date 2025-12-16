@@ -42,7 +42,7 @@ impl FromStr for ProofType {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.to_lowercase().as_str() {
             "basic" => Ok(ProofType::Basic),
             "compressor" => Ok(ProofType::Compressor),
             "recursive1" => Ok(ProofType::Recursive1),

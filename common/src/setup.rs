@@ -21,11 +21,11 @@ use crate::ProofType;
 use crate::StarkInfo;
 use crate::ProofmanResult;
 
-type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
+pub type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
-type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
+pub type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
-type FreeCircomCircuitFunc = unsafe extern "C" fn(circuit: *mut c_void);
+pub type FreeCircomCircuitFunc = unsafe extern "C" fn(circuit: *mut c_void);
 
 #[derive(Debug)]
 #[repr(C)]

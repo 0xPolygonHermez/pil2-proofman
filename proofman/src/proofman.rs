@@ -1,4 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
+use bytemuck::cast_slice;
 use libloading::{Library, Symbol};
 use fields::{ExtensionField, Transcript, PrimeField64, GoldilocksQuinticExtension, Poseidon16};
 use proofman_common::{
@@ -14,13 +15,13 @@ use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c, reset_device_streams_c,
     get_instances_ready_c,
 };
+use crate::add_publics_circom;
+use proofman_verifier::{verify_recursive2, verify};
 use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::fs;
 use std::collections::HashMap;
-use std::fs::File;
 use std::fmt::Write as FmtWrite;
-use std::io::Read;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
@@ -51,7 +52,7 @@ use crate::{
     calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, initialize_setup_info,
     N_RECURSIVE_PROOFS_PER_AGGREGATION,
 };
-use crate::{verify_constraints_proof, verify_basic_proof, verify_final_proof, verify_global_constraints_proof};
+use crate::{verify_constraints_proof, verify_basic_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
 use crate::{
@@ -132,6 +133,9 @@ pub struct CancellationInfo {
 impl CancellationInfo {
     pub fn cancel(&mut self, error: Option<ProofmanError>) {
         self.token.cancel();
+        if self.error.is_some() {
+            return;
+        }
         if let Some(err) = error {
             self.error = Some(err);
         }
@@ -458,6 +462,7 @@ where
     pub fn execute_(&self, output_path: Option<PathBuf>) -> ProofmanResult<()> {
         self.pctx.dctx_setup(1, vec![0], 0)?;
 
+        self.cancellation_info.write().unwrap().reset();
         self.reset()?;
         self.pctx.dctx_reset();
 
@@ -591,6 +596,7 @@ where
     pub fn compute_witness_(&self, options: ProofOptions) -> ProofmanResult<()> {
         self.pctx.dctx_setup(1, vec![0], 0)?;
 
+        self.cancellation_info.write().unwrap().reset();
         self.reset()?;
         self.pctx.dctx_reset();
 
@@ -714,6 +720,7 @@ where
         self.pctx.dctx_setup(1, vec![0], 0)?;
 
         self.pctx.set_debug_info(debug_info);
+        self.cancellation_info.write().unwrap().reset();
         self.reset()?;
         self.pctx.dctx_reset();
 
@@ -1256,7 +1263,6 @@ where
 
         self.memory_handler.reset()?;
 
-        self.cancellation_info.write().unwrap().reset();
         Ok(())
     }
 
@@ -1286,6 +1292,7 @@ where
             };
 
             self.pctx.dctx_setup(proof_info.n_partitions, proof_info.partition_ids.clone(), proof_info.worker_index)?;
+            self.cancellation_info.write().unwrap().reset();
             self.reset()?;
             self.pctx.dctx_reset();
 
@@ -1357,11 +1364,11 @@ where
             self.exec()?;
 
             if !options.test_mode {
-                Self::initialize_publics_custom_commits(&self.sctx, &self.pctx)?;
+                Self::set_publics_custom_commits(&self.sctx, &self.pctx)?;
             }
 
             timer_start_info!(CALCULATING_CONTRIBUTIONS);
-            timer_start_info!(CALCULATING_INNER_CONTRIBUTIONS);
+            timer_start_debug!(CALCULATING_INNER_CONTRIBUTIONS);
             timer_start_debug!(PREPARING_CONTRIBUTIONS);
 
             let my_instances_tables = self.pctx.dctx_get_my_tables();
@@ -1434,7 +1441,7 @@ where
             // get roots still in the gpu
             get_stream_proofs_c(self.d_buffers.get_ptr());
 
-            timer_stop_and_log_info!(CALCULATING_INNER_CONTRIBUTIONS);
+            timer_stop_and_log_debug!(CALCULATING_INNER_CONTRIBUTIONS);
 
             //calculate-challenge
             let internal_contribution =
@@ -1497,7 +1504,7 @@ where
 
         timer_start_info!(GENERATING_PROOFS);
 
-        timer_start_info!(GENERATING_INNER_PROOFS);
+        timer_start_debug!(GENERATING_INNER_PROOFS);
 
         self.pctx.dctx_reset_instances_calculated();
         self.memory_handler.empty_queue_to_be_released();
@@ -1979,7 +1986,7 @@ where
 
         self.check_cancel(true)?;
 
-        timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
+        timer_stop_and_log_debug!(GENERATING_INNER_PROOFS);
 
         let mut proof_id = None;
         let mut vadcop_final_proof = None;
@@ -1987,10 +1994,10 @@ where
             let mut agg_proofs = Vec::new();
 
             if !options.rma {
-                timer_start_info!(WAITING_FOR_COMPRESSED_PROOFS);
+                timer_start_debug!(WAITING_FOR_COMPRESSED_PROOFS);
                 self.mpi_ctx.barrier();
-                timer_stop_and_log_info!(WAITING_FOR_COMPRESSED_PROOFS);
-                timer_start_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
+                timer_stop_and_log_debug!(WAITING_FOR_COMPRESSED_PROOFS);
+                timer_start_debug!(GENERATING_WORKER_COMPRESSED_PROOFS);
                 let recursive2_proofs_data: Vec<Vec<Proof<F>>> = self
                     .recursive2_proofs
                     .iter()
@@ -2020,7 +2027,7 @@ where
 
                 self.check_cancel(true)?;
 
-                timer_stop_and_log_info!(GENERATING_WORKER_COMPRESSED_PROOFS);
+                timer_stop_and_log_debug!(GENERATING_WORKER_COMPRESSED_PROOFS);
             } else {
                 timer_start_debug!(GET_OUTER_RANK);
                 self.mpi_ctx.process_ready_for_outer_agg();
@@ -2117,15 +2124,16 @@ where
         if options.verify_proofs {
             if options.aggregation {
                 if self.mpi_ctx.rank == 0 {
-                    let setup_path = self.pctx.global_info.get_setup_path("vadcop_final");
-                    let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
-                    let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
-                    let verkey_path = setup_path.display().to_string() + ".verkey.json";
+                    let setup = self.setups.setup_vadcop_final.as_ref().unwrap();
 
                     timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
-                    let vadcop_proof_final_ref = vadcop_final_proof.as_ref().unwrap();
-                    let valid_proofs =
-                        verify_final_proof(vadcop_proof_final_ref, stark_info_path, expressions_bin_path, verkey_path);
+
+                    let proof_bytes: &[u8] = cast_slice(vadcop_final_proof.as_ref().unwrap());
+
+                    let verkey_u64: Vec<u64> = setup.verkey.iter().map(|x| x.as_canonical_u64()).collect();
+
+                    let vk_bytes: &[u8] = cast_slice(&verkey_u64);
+                    let valid_proofs = verify(proof_bytes, vk_bytes);
                     timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
                     if !valid_proofs {
                         tracing::info!("··· {}", "\u{2717} Vadcop Final proof was not verified".bright_red().bold());
@@ -2178,7 +2186,10 @@ where
         final_proof: bool,
         options: &ProofOptions,
     ) -> ProofmanResult<Option<Vec<AggProofs>>> {
-        if !agg_proofs.is_empty() && self.outer_aggregations_handle.lock().unwrap().is_none() {
+        if !agg_proofs.is_empty()
+            && !self.cancellation_info.read().unwrap().token.is_cancelled()
+            && self.outer_aggregations_handle.lock().unwrap().is_none()
+        {
             self.outer_aggregations(options);
         }
 
@@ -2202,7 +2213,37 @@ where
                 }
             }
 
-            // TODO: Verify proofs!
+            timer_start_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
+            let setup = self.setups.sctx_recursive2.as_ref().unwrap().get_setup(proof.airgroup_id as usize, 0)?;
+            let publics_aggregation = n_publics_aggregation(&self.pctx, proof.airgroup_id as usize);
+            let (publics, rec_proof) = proof.proof.split_at(publics_aggregation);
+
+            let mut publics_extended = vec![0; setup.stark_info.n_publics as usize];
+            publics_extended[0..publics.len()].copy_from_slice(publics);
+            let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
+
+            add_publics_circom(&mut publics_extended, publics_aggregation, &self.pctx, &verkey_path, true);
+
+            let mut recursive2_proof = vec![0; 1 + publics_extended.len() + rec_proof.len()];
+            recursive2_proof[0] = publics_extended.len() as u64;
+            recursive2_proof[1..1 + publics_extended.len()].copy_from_slice(&publics_extended);
+            recursive2_proof[1 + publics_extended.len()..].copy_from_slice(rec_proof);
+
+            let proof_bytes: &[u8] = cast_slice(&recursive2_proof);
+
+            let verkey_u64: Vec<u64> = setup.verkey.iter().map(|x| x.as_canonical_u64()).collect();
+            let vk_bytes: &[u8] = cast_slice(&verkey_u64);
+
+            let valid_recursive_proof = verify_recursive2(proof_bytes, vk_bytes);
+
+            if !valid_recursive_proof {
+                self.cancellation_info
+                    .write()
+                    .unwrap()
+                    .cancel(Some(ProofmanError::InvalidProof("Received aggregated proof is invalid!".into())));
+                break;
+            }
+            timer_stop_and_log_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
 
             let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
             for (c, value) in workers_acc_challenge.iter().enumerate() {
@@ -2210,13 +2251,18 @@ where
                     self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(
                         "Aggregated proof challenge does not match the expected challenge".into(),
                     )));
+                    break;
                 }
             }
             self.received_agg_proofs.write().unwrap()[proof.airgroup_id as usize].extend(proof.worker_indexes);
-            let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
-            let id = rec2_proofs.len();
-            let agg_proof = Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, Some(id), proof.proof);
-            rec2_proofs.push(Some(agg_proof));
+            let id = {
+                let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
+                let id = rec2_proofs.len();
+                let agg_proof = Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, Some(id), proof.proof);
+                rec2_proofs.push(Some(agg_proof));
+                id
+            };
+
             self.total_outer_agg_proofs.increment();
             launch_callback_c(id as u64, ProofType::Recursive2.into());
         }
@@ -2230,14 +2276,20 @@ where
                     }
                     let n_agg_proofs_to_be_done = total_recursive_proofs(n_agg_proofs + 1);
                     if n_agg_proofs_to_be_done.has_remaining {
-                        let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
-                        let id = rec2_proofs.len();
                         let setup = self.setups.get_setup(airgroup_id, 0, &ProofType::Recursive2)?;
                         let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
                         let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
-                        let null_proof = Proof::new(ProofType::Recursive2, airgroup_id, 0, Some(id), null_proof_buffer);
+
+                        let id = {
+                            let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
+                            let id = rec2_proofs.len();
+                            let null_proof =
+                                Proof::new(ProofType::Recursive2, airgroup_id, 0, Some(id), null_proof_buffer);
+                            rec2_proofs.push(Some(null_proof));
+                            id
+                        };
+
                         self.total_outer_agg_proofs.increment();
-                        rec2_proofs.push(Some(null_proof));
                         launch_callback_c(id as u64, ProofType::Recursive2.into());
                     }
                 }
@@ -2248,7 +2300,6 @@ where
                 &self.cancellation_info,
             );
             get_stream_proofs_c(self.d_buffers.get_ptr());
-
             if self.outer_aggregations_handle.lock().unwrap().is_some() {
                 self.outer_agg_proofs_finished.store(true, Ordering::SeqCst);
                 clear_proof_done_callback_c();
@@ -2395,7 +2446,6 @@ where
                 }
             };
 
-            let id = new_proof.global_idx.unwrap();
             recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
 
             let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
@@ -2501,7 +2551,7 @@ where
 
     #[allow(clippy::type_complexity)]
     fn worker_aggregations_rma(&self, options: &ProofOptions, send_proofs: bool) -> ProofmanResult<()> {
-        timer_start_info!(GENERATING_WORKER_RMA_COMPRESSED_PROOFS);
+        timer_start_debug!(GENERATING_WORKER_RMA_COMPRESSED_PROOFS);
 
         let my_rank = self.mpi_ctx.rank as usize;
         let n_processes = self.mpi_ctx.n_processes as usize;
@@ -2515,8 +2565,9 @@ where
         let n_airgroups = self.pctx.global_info.air_groups.len();
         let mut airgroup_instances_alive = vec![vec![0; n_processes]; n_airgroups];
         for global_id in self.pctx.dctx_get_worker_instances().iter() {
-            let owner = self.pctx.dctx_get_process_owner_instance(*global_id)?;
-            airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize] = 1;
+            if let Ok(owner) = self.pctx.dctx_get_process_owner_instance(*global_id) {
+                airgroup_instances_alive[instances[*global_id].airgroup_id][owner as usize] = 1;
+            }
         }
         let mut alives = vec![0; n_airgroups];
         let mut n_proofs_to_be_received = 0;
@@ -2691,7 +2742,7 @@ where
             });
         }
 
-        timer_stop_and_log_info!(GENERATING_WORKER_RMA_COMPRESSED_PROOFS);
+        timer_stop_and_log_debug!(GENERATING_WORKER_RMA_COMPRESSED_PROOFS);
 
         Ok(())
     }
@@ -3189,7 +3240,7 @@ where
             None => (false, 0),
         };
 
-        let proof = create_buffer_fast(setup.proof_size as usize);
+        let proof = vec![0; setup.proof_size as usize];
         *proofs[instance_id].write().unwrap() =
             Some(Proof::new(ProofType::Basic, airgroup_id, air_id, Some(instance_id), proof));
 
@@ -3242,13 +3293,13 @@ where
         let sctx: Arc<SetupCtx<F>> =
             Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, verify_constraints, gpu_params));
         pctx.set_weights(&sctx)?;
+        pctx.initialize_custom_commits(&sctx)?;
 
         let pctx = Arc::new(pctx);
 
         if !verify_constraints {
             check_tree_paths(&pctx, &sctx)?;
         }
-        Self::initialize_publics_custom_commits(&sctx, &pctx)?;
 
         let setups_vadcop =
             Arc::new(SetupsVadcop::new(&pctx.global_info, verify_constraints, aggregation, final_snark, gpu_params));
@@ -3387,19 +3438,14 @@ where
         Ok(())
     }
 
-    fn initialize_publics_custom_commits(sctx: &SetupCtx<F>, pctx: &ProofCtx<F>) -> ProofmanResult<()> {
-        tracing::info!("Initializing publics custom_commits");
+    fn set_publics_custom_commits(sctx: &SetupCtx<F>, pctx: &ProofCtx<F>) -> ProofmanResult<()> {
+        tracing::debug!("Initializing publics custom_commits");
         for (airgroup_id, airs) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in airs.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id)?;
                 for custom_commit in &setup.stark_info.custom_commits {
                     if custom_commit.stage_widths[0] > 0 {
-                        // Handle the possibility that this returns None
-                        let custom_file_path = pctx.get_custom_commits_fixed_buffer(&custom_commit.name, true)?;
-
-                        let mut file = File::open(custom_file_path)?;
-                        let mut root_bytes = [0u8; 32];
-                        file.read_exact(&mut root_bytes)?;
+                        let root_bytes = pctx.get_custom_commit_root(&custom_commit.name)?;
 
                         for (idx, p) in custom_commit.public_values.iter().enumerate() {
                             let public_id = p.idx as usize;

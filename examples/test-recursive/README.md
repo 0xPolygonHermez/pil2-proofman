@@ -24,7 +24,7 @@ To run the aggregated proof, need to add -r to the previous command
 Build the project with the following command:
 
 ```bash
-cargo build
+cargo build --workspace
 ```
 
 ### Verify Constraints
@@ -49,6 +49,23 @@ Finally, generate the proof using the following command:
 
 ```bash
      cargo run --bin proofman-cli --features gpu prove \
+     --witness-lib ./target/debug/libtest_recursive${PIL2_PROOFMAN_EXT}\
+     --proving-key examples/test-recursive/build/provingKey/ \
+     --output-dir examples/test-recursive/build/proofs -y -vv
+```
+
+### All at once
+
+```bash
+export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi) \
+&& node ../pil2-proofman-js/src/main_setup_recursive.js \
+     -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -p pil2-components/lib/std/pil \
+&& cargo build --workspace \
+&& cargo run --bin proofman-cli --features gpu check-setup --proving-key examples/test-recursive/build/provingKey \
+&& cargo run --bin proofman-cli verify-constraints \
+     --witness-lib ./target/debug/libtest_recursive${PIL2_PROOFMAN_EXT} \
+     --proving-key examples/test-recursive/build/provingKey/ \
+&& cargo run --bin proofman-cli --features gpu prove \
      --witness-lib ./target/debug/libtest_recursive${PIL2_PROOFMAN_EXT}\
      --proving-key examples/test-recursive/build/provingKey/ \
      --output-dir examples/test-recursive/build/proofs -y -vv

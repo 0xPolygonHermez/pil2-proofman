@@ -177,14 +177,6 @@ jobs:
           sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev nasm libsodium-dev cmake
           sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
 
-      - name: Modify Cargo.toml std
-        run: |
-          sed -i 's/# *"pil2-components\/lib\/std\/rs"/"pil2-components\/lib\/std\/rs"/' ./Cargo.toml
-          
-      - name: Modify Cargo.toml Fibonacci Square
-        run: |
-          sed -i 's/# *"examples\/fibonacci-square"/"examples\/fibonacci-square"/' ./Cargo.toml
-
       - name: Compile PIL Fibonacci Square
         run: |
           node --max-old-space-size=65536 pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil -I ./pil2-components/lib/std/pil -o ./examples/fibonacci-square/pil/build.pilout -u ./examples/fibonacci-square/build/fixed -O fixed-to-file
@@ -198,7 +190,7 @@ jobs:
           cargo run --bin proofman-cli pil-helpers --pilout ./examples/fibonacci-square/pil/build.pilout --path ./examples/fibonacci-square/src -o
 
       - name: Cargo build
-        run: RUST_BACKTRACE=1 cargo build -v
+        run: RUST_BACKTRACE=1 cargo build -v --workspace
 
       - name: Cargo check-setup
         run: cargo run --bin proofman-cli check-setup --proving-key examples/fibonacci-square/build/provingKey/ -a
@@ -309,7 +301,7 @@ jobs:
           node pil2-proofman-js/src/main_setup_recursive.js -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -p ./pil2-components/lib/std/pil -t compressor
 
       - name: Cargo build (Compressor)
-        run: RUST_BACKTRACE=1 cargo build -v
+        run: RUST_BACKTRACE=1 cargo build -v --workspace
 
       - name: Cargo check-setup (Compressor)
         run: cargo run --bin proofman-cli check-setup --proving-key examples/test-recursive/build/provingKey
@@ -327,7 +319,7 @@ jobs:
           node pil2-proofman-js/src/main_setup_recursive.js -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -p ./pil2-components/lib/std/pil -t aggregation
 
       - name: Cargo build (Aggregation)
-        run: RUST_BACKTRACE=1 cargo build -v
+        run: RUST_BACKTRACE=1 cargo build -v --workspace
 
       - name: Cargo check-setup (Aggregation)
         run: cargo run --bin proofman-cli check-setup --proving-key examples/test-recursive/build/provingKey
@@ -345,7 +337,7 @@ jobs:
           node pil2-proofman-js/src/main_setup_recursive.js -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -p ./pil2-components/lib/std/pil -t final_vadcop
 
       - name: Cargo build (Final)
-        run: RUST_BACKTRACE=1 cargo build -v
+        run: RUST_BACKTRACE=1 cargo build -v --workspace
 
       - name: Cargo check-setup (Final)
         run: cargo run --bin proofman-cli check-setup --proving-key examples/test-recursive/build/provingKey
@@ -422,173 +414,133 @@ jobs:
           sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev nasm libsodium-dev cmake
           sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
 
-      - name: Modify Cargo.toml std
-        run: |
-          sed -i 's/# *"pil2-components\/lib\/std\/rs"/"pil2-components\/lib\/std\/rs"/' ./Cargo.toml
-
-      - name: Modify Cargo.toml std lookup
-        run: |
-          sed -i 's/# *"pil2-components\/test\/std\/lookup\/rs"/"pil2-components\/test\/std\/lookup\/rs"/' ./Cargo.toml
-
-      - name: Modify Cargo.toml std permutation
-        run: |
-          sed -i 's/# *"pil2-components\/test\/std\/permutation\/rs"/"pil2-components\/test\/std\/permutation\/rs"/' ./Cargo.toml
-
-      - name: Modify Cargo.toml std connection
-        run: |
-          sed -i 's/# *"pil2-components\/test\/std\/connection\/rs"/"pil2-components\/test\/std\/connection\/rs"/' ./Cargo.toml
-
-      - name: Modify Cargo.toml std diff_buses
-        run: |
-          sed -i 's/# *"pil2-components\/test\/std\/diff_buses\/rs"/"pil2-components\/test\/std\/diff_buses\/rs"/' ./Cargo.toml
-
-      - name: Modify Cargo.toml std direct_update
-        run: |
-          sed -i 's/# *"pil2-components\/test\/std\/direct_update\/rs"/"pil2-components\/test\/std\/direct_update\/rs"/' ./Cargo.toml
-
-      - name: Modify Cargo.toml std range-check
-        run: |
-          sed -i 's/# *"pil2-components\/test\/std\/range_check\/rs"/"pil2-components\/test\/std\/range_check\/rs"/' ./Cargo.toml
-
-      - name: Modify Cargo.toml std one-instance
-        run: |
-          sed -i 's/# *"pil2-components\/test\/std\/one_instance\/rs"/"pil2-components\/test\/std\/one_instance\/rs"/' ./Cargo.toml
-
-      - name: Modify Cargo.toml std virtual-tables
-        run: |
-          sed -i 's/# *"pil2-components\/test\/std\/virtual_tables\/rs"/"pil2-components\/test\/std\/virtual_tables\/rs"/' ./Cargo.toml
-
-      - name: Modify Cargo.toml std simple
-        run: |
-          sed -i 's/# *"pil2-components\/test\/simple\/rs"/"pil2-components\/test\/simple\/rs"/' ./Cargo.toml
-
       - name: Create dir build lookup
         run: |
-          mkdir -p ./pil2-components/test/std/lookup/build/
+          mkdir -p ./pil2-components/test/lookup/build/
 
       - name: Compile PIL Lookup
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/std/lookup/lookup.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/lookup/build/build.pilout
+          node pil2-compiler/src/pil.js ./pil2-components/test/lookup/lookup.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/lookup/build/build.pilout
 
       - name: Generate setup Lookup
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/lookup/build/build.pilout -b ./pil2-components/test/std/lookup/build
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/lookup/build/build.pilout -b ./pil2-components/test/lookup/build
 
       - name: Generate PIL Helpers Lookup
         run: |
-          cargo run --bin proofman-cli pil-helpers --pilout ./pil2-components/test/std/lookup/build/build.pilout --path ./pil2-components/test/std/lookup/rs/src -o
+          cargo run --bin proofman-cli pil-helpers --pilout ./pil2-components/test/lookup/build/build.pilout --path ./pil2-components/test/lookup/rs/src -o
 
       - name: Create dir build permutation
         run: |
-          mkdir -p ./pil2-components/test/std/permutation/build/
+          mkdir -p ./pil2-components/test/permutation/build/
 
       - name: Compile PIL permutation
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/std/permutation/permutation.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/permutation/build/build.pilout
+          node pil2-compiler/src/pil.js ./pil2-components/test/permutation/permutation.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/permutation/build/build.pilout
 
       - name: Generate setup permutation
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/permutation/build/build.pilout -b ./pil2-components/test/std/permutation/build
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/permutation/build/build.pilout -b ./pil2-components/test/permutation/build
 
       - name: Generate PIL Helpers permutation
         run: |
-          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/std/permutation/build/build.pilout --path ./pil2-components/test/std/permutation/rs/src -o
+          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/permutation/build/build.pilout --path ./pil2-components/test/permutation/rs/src -o
         
       - name: Create dir build connection
         run: |
-          mkdir -p ./pil2-components/test/std/connection/build/
+          mkdir -p ./pil2-components/test/connection/build/
 
       - name: Compile PIL connection
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/std/connection/connection.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/connection/build/build.pilout
+          node pil2-compiler/src/pil.js ./pil2-components/test/connection/connection.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/connection/build/build.pilout
 
       - name: Generate setup connection
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/connection/build/build.pilout -b ./pil2-components/test/std/connection/build
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/connection/build/build.pilout -b ./pil2-components/test/connection/build
 
       - name: Generate PIL Helpers connection
         run: |
-          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/std/connection/build/build.pilout --path ./pil2-components/test/std/connection/rs/src -o
+          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/connection/build/build.pilout --path ./pil2-components/test/connection/rs/src -o
 
       - name: Create dir build diff_buses
         run: |
-          mkdir -p ./pil2-components/test/std/diff_buses/build/
+          mkdir -p ./pil2-components/test/diff_buses/build/
 
       - name: Compile PIL diff_buses
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/std/diff_buses/diff_buses.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/diff_buses/build/build.pilout
+          node pil2-compiler/src/pil.js ./pil2-components/test/diff_buses/diff_buses.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/diff_buses/build/build.pilout
 
       - name: Generate setup diff_buses
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/diff_buses/build/build.pilout -b ./pil2-components/test/std/diff_buses/build
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/diff_buses/build/build.pilout -b ./pil2-components/test/diff_buses/build
 
       - name: Generate PIL Helpers diff_buses
         run: |
-          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/std/diff_buses/build/build.pilout --path ./pil2-components/test/std/diff_buses/rs/src -o
+          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/diff_buses/build/build.pilout --path ./pil2-components/test/diff_buses/rs/src -o
 
       - name: Create dir build direct_update
         run: |
-          mkdir -p ./pil2-components/test/std/direct_update/build/
+          mkdir -p ./pil2-components/test/direct_update/build/
 
       - name: Compile PIL direct_update
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/std/direct_update/direct_update.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/direct_update/build/direct_update.pilout
+          node pil2-compiler/src/pil.js ./pil2-components/test/direct_update/direct_update.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/direct_update/build/direct_update.pilout
 
       - name: Generate setup direct_update
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/direct_update/build/direct_update.pilout -b ./pil2-components/test/std/direct_update/build
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/direct_update/build/direct_update.pilout -b ./pil2-components/test/direct_update/build
 
       - name: Generate PIL Helpers direct_update
         run: |
-          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/std/direct_update/build/direct_update.pilout --path ./pil2-components/test/std/direct_update/rs/src -o
+          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/direct_update/build/direct_update.pilout --path ./pil2-components/test/direct_update/rs/src -o
 
       - name: Create dir build range-check
         run: |
-          mkdir -p ./pil2-components/test/std/range_check/build/
+          mkdir -p ./pil2-components/test/range_check/build/
 
       - name: Compile PIL range-check
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/std/range_check/build.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/range_check/build/build.pilout
+          node pil2-compiler/src/pil.js ./pil2-components/test/range_check/build.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/range_check/build/build.pilout
 
       - name: Generate setup range-check
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/range_check/build/build.pilout -b ./pil2-components/test/std/range_check/build
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/range_check/build/build.pilout -b ./pil2-components/test/range_check/build
 
       - name: Generate PIL Helpers range-check
         run: |
-          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/std/range_check/build/build.pilout --path ./pil2-components/test/std/range_check/rs/src -o
+          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/range_check/build/build.pilout --path ./pil2-components/test/range_check/rs/src -o
 
       - name: Create dir build one-instance
         run: |
-          mkdir -p ./pil2-components/test/std/one_instance/build/
+          mkdir -p ./pil2-components/test/one_instance/build/
 
       - name: Compile PIL one-instance
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/std/one_instance/one_instance.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/one_instance/build/one_instance.pilout
+          node pil2-compiler/src/pil.js ./pil2-components/test/one_instance/one_instance.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/one_instance/build/one_instance.pilout
 
       - name: Generate setup one-instance
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/one_instance/build/one_instance.pilout -b ./pil2-components/test/std/one_instance/build
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/one_instance/build/one_instance.pilout -b ./pil2-components/test/one_instance/build
 
       - name: Generate PIL Helpers one-instance
         run: |
-          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/std/one_instance/build/one_instance.pilout --path ./pil2-components/test/std/one_instance/rs/src -o
+          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/one_instance/build/one_instance.pilout --path ./pil2-components/test/one_instance/rs/src -o
 
       - name: Create dir build virtual-tables
         run: |
-          mkdir -p ./pil2-components/test/std/virtual_tables/build/
+          mkdir -p ./pil2-components/test/virtual_tables/build/
 
       - name: Compile PIL virtual-tables
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/std/virtual_tables/virtual_tables.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/virtual_tables/build/build.pilout
+          node pil2-compiler/src/pil.js ./pil2-components/test/virtual_tables/virtual_tables.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/virtual_tables/build/build.pilout
 
       - name: Generate setup virtual-tables
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/virtual_tables/build/build.pilout -b ./pil2-components/test/std/virtual_tables/build
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/virtual_tables/build/build.pilout -b ./pil2-components/test/virtual_tables/build
 
       - name: Generate PIL Helpers virtual-tables
         run: |
-          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/std/virtual_tables/build/build.pilout --path ./pil2-components/test/std/virtual_tables/rs/src -o
+          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/virtual_tables/build/build.pilout --path ./pil2-components/test/virtual_tables/rs/src -o
 
       - name: Create dir build simple
         run: |
@@ -607,90 +559,90 @@ jobs:
           cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/simple/build/build.pilout --path ./pil2-components/test/simple/rs/src -o
 
       - name: Cargo build
-        run: RUST_BACKTRACE=1 cargo build -v 
+        run: RUST_BACKTRACE=1 cargo build -v --workspace
 
       - name: Cargo check-setup lookup
-        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/lookup/build/provingKey
+        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/lookup/build/provingKey
 
       - name: Cargo check-setup permutation
-        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/permutation/build/provingKey
+        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/permutation/build/provingKey
 
       - name: Cargo check-setup connection
-        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/connection/build/provingKey
+        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/connection/build/provingKey
 
       - name: Cargo check-setup direct_update
-        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/direct_update/build/provingKey
+        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/direct_update/build/provingKey
 
       - name: Cargo check-setup range-check
-        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/range_check/build/provingKey
+        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/range_check/build/provingKey
 
       - name: Cargo check-setup one-instance
-        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/one_instance/build/provingKey
+        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/one_instance/build/provingKey
 
       - name: Cargo check-setup virtual_tables
-        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/virtual_tables/build/provingKey
+        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/virtual_tables/build/provingKey
 
       - name: Cargo check-setup simple
         run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/simple/build/provingKey
 
       - name: Cargo check-setup diff_buses
-        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/diff_buses/build/provingKey
+        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/diff_buses/build/provingKey
 
       - name: Verify constraints Lookup
         run: |
-          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/liblookup.so --proving-key ./pil2-components/test/std/lookup/build/provingKey
+          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/liblookup.so --proving-key ./pil2-components/test/lookup/build/provingKey
 
       - name: Generate proof Lookup
         run: |
-          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/liblookup.so --proving-key ./pil2-components/test/std/lookup/build/provingKey --output-dir ./pil2-components/test/std/lookup/build -y
+          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/liblookup.so --proving-key ./pil2-components/test/lookup/build/provingKey --output-dir ./pil2-components/test/lookup/build -y
 
       - name: Verify constraints permutation
         run: |
-          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libpermutation.so --proving-key ./pil2-components/test/std/permutation/build/provingKey
+          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libpermutation.so --proving-key ./pil2-components/test/permutation/build/provingKey
 
       - name: Generate proof permutation
         run: |
-          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libpermutation.so --proving-key ./pil2-components/test/std/permutation/build/provingKey --output-dir ./pil2-components/test/std/permutation/build -y
+          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libpermutation.so --proving-key ./pil2-components/test/permutation/build/provingKey --output-dir ./pil2-components/test/permutation/build -y
 
       - name: Verify constraints connection
         run: |
-          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libconnection.so --proving-key ./pil2-components/test/std/connection/build/provingKey
+          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libconnection.so --proving-key ./pil2-components/test/connection/build/provingKey
 
       - name: Generate proof connection
         run: |
-          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libconnection.so --proving-key ./pil2-components/test/std/connection/build/provingKey --output-dir ./pil2-components/test/std/connection/build -y
+          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libconnection.so --proving-key ./pil2-components/test/connection/build/provingKey --output-dir ./pil2-components/test/connection/build -y
 
       - name: Verify constraints direct_update
         run: |
-          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey
+          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/direct_update/build/provingKey
 
       - name: Generate proof direct_update
         run: |
-          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey --output-dir ./pil2-components/test/std/direct_update/build -y
+          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/direct_update/build/provingKey --output-dir ./pil2-components/test/direct_update/build -y
 
       - name: Verify constraints range-check
         run: |
-          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/librange_check.so --proving-key ./pil2-components/test/std/range_check/build/provingKey
+          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/librange_check.so --proving-key ./pil2-components/test/range_check/build/provingKey
 
       - name: Generate proof range-check
         run: |
-          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/librange_check.so --proving-key ./pil2-components/test/std/range_check/build/provingKey --output-dir ./pil2-components/test/std/range_check/build -y
+          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/librange_check.so --proving-key ./pil2-components/test/range_check/build/provingKey --output-dir ./pil2-components/test/range_check/build -y
 
       - name: Verify constraints one-instance
         run: |
-          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libone_instance.so --proving-key ./pil2-components/test/std/one_instance/build/provingKey
+          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libone_instance.so --proving-key ./pil2-components/test/one_instance/build/provingKey
 
       - name: Generate proof one-instance
         run: |
-          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libone_instance.so --proving-key ./pil2-components/test/std/one_instance/build/provingKey --output-dir ./pil2-components/test/std/one_instance/build -y
+          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libone_instance.so --proving-key ./pil2-components/test/one_instance/build/provingKey --output-dir ./pil2-components/test/one_instance/build -y
 
       - name: Verify constraints virtual-tables
         run: |
-          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libvirtual_tables.so --proving-key ./pil2-components/test/std/virtual_tables/build/provingKey
+          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libvirtual_tables.so --proving-key ./pil2-components/test/virtual_tables/build/provingKey
 
       - name: Generate proof virtual-tables
         run: |
-          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libvirtual_tables.so --proving-key ./pil2-components/test/std/virtual_tables/build/provingKey --output-dir ./pil2-components/test/std/virtual_tables/build -y
+          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libvirtual_tables.so --proving-key ./pil2-components/test/virtual_tables/build/provingKey --output-dir ./pil2-components/test/virtual_tables/build -y
 
       - name: Verify constraints simple
         run: |
@@ -702,8 +654,8 @@ jobs:
        
       # - name: Verify constraints diff_buses
       #   run: |
-      #     cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey
+      #     cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/diff_buses/build/provingKey
 
       # - name: Generate proof diff_buses
       #   run: |
-      #     cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey --output-dir ./pil2-components/test/std/diff_buses/build
+      #     cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/diff_buses/build/provingKey --output-dir ./pil2-components/test/diff_buses/build
