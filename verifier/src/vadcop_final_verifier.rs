@@ -4398,14 +4398,5 @@ pub fn verifier_info() -> VerifierInfo {
 }
 
 pub fn verify(proof: &[u8], vk: &[u8]) -> bool {
-    let mut buf = Vec::new();
-    let proof_data: &[u8] = if proof.len() >= 4 && proof[0..4] == [0x28, 0xB5, 0x2F, 0xFD] {
-        let cursor = std::io::Cursor::new(proof);
-        let mut decoder = zstd::stream::read::Decoder::new(cursor).expect("Invalid zstd stream");
-        std::io::Read::read_to_end(&mut decoder, &mut buf).expect("Failed to decompress zstd file");
-        &buf
-    } else {
-        proof
-    };
-    stark_verify::<Poseidon8, 8>(proof_data, vk, &verifier_info(), q_verify, query_verify)
+    stark_verify::<Poseidon8, 8>(proof, vk, &verifier_info(), q_verify, query_verify)
 }

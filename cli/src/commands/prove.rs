@@ -8,7 +8,6 @@ use crate::commands::field::Field;
 use std::io::Write;
 use bytemuck::cast_slice;
 use fields::Goldilocks;
-use zstd::stream::write::Encoder;
 
 use proofman::ProofMan;
 use proofman::ProvePhaseResult;
@@ -188,22 +187,6 @@ impl ProveCmd {
                 let mut file = File::create(&output_file_path)?;
                 file.write_all(proof_data)?;
                 file.flush()?;
-
-                // Save the compressed vadcop final proof using zstd (fastest compression level)
-                let compressed_output_path = self.output_dir.join("proofs/vadcop_final_proof.compressed.bin");
-                let compressed_file = File::create(&compressed_output_path)?;
-                let mut encoder = Encoder::new(compressed_file, 1)?;
-                encoder.write_all(proof_data)?;
-                encoder.flush()?;
-                encoder.finish()?;
-
-                let original_size = vadcop_final_proof.len() * 8;
-                let compressed_size = std::fs::metadata(&compressed_output_path)?.len();
-                let compression_ratio = compressed_size as f64 / original_size as f64;
-
-                tracing::info!("Vadcop final proof saved:");
-                tracing::info!("  Original: {} bytes", original_size);
-                tracing::info!("  Compressed: {} bytes (ratio: {:.2}x)", compressed_size, compression_ratio);
             }
         }
 

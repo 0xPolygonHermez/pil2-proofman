@@ -1504,7 +1504,7 @@ where
 
         timer_start_info!(GENERATING_PROOFS);
 
-        timer_start_debug!(GENERATING_INNER_PROOFS);
+        timer_start_info!(GENERATING_INNER_PROOFS);
 
         self.pctx.dctx_reset_instances_calculated();
         self.memory_handler.empty_queue_to_be_released();
@@ -1986,7 +1986,7 @@ where
 
         self.check_cancel(true)?;
 
-        timer_stop_and_log_debug!(GENERATING_INNER_PROOFS);
+        timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
 
         let mut proof_id = None;
         let mut vadcop_final_proof = None;
