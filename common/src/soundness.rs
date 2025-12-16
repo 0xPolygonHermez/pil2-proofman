@@ -157,7 +157,7 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
                 .collect(),
             fri_early_stop_degree: 1 << setup.stark_info.stark_struct.steps.last().unwrap().n_bits,
             grinding_query_phase: setup.stark_info.stark_struct.pow_bits,
-            fri_proximity_parameter: setup.stark_info.security.proximity_gap,
+            fri_proximity_parameter: setup.stark_info.security.proximity_parameter,
         },
     )
 }
