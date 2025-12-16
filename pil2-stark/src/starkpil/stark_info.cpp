@@ -435,7 +435,7 @@ void StarkInfo::setMapOffsets() {
         uint64_t constTreeSize = (NExtended * nConstants) + numNodes;
         mapTotalN += constTreeSize;
 
-        if (!recursive &&  (N * nConstants * 8.0 / (1024 * 1024)) >= 256) {
+        if (!recursive &&  (NExtended * nConstants * 8.0 / (1024 * 1024)) >= 256) {
             calculateFixedExtended = true;
         }
         
@@ -625,17 +625,19 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
             nrowsPack = NROWS_PACK;
             maxNBlocks = omp_get_max_threads();
         } else {
-            if(recursive) {
-                uint64_t NExtended = (1 << starkStruct.nBitsExt);
-                nrowsPack = 32;
-                maxNBlocks = NExtended / nrowsPack;
-            } else {
-                nrowsPack = 256;
-                maxNBlocks = 4096;
+            nrowsPack = 512;
+            maxNBlocks = 512;
+
+            uint64_t tmpsUsed = nTmp1 + (nTmp3 + 2) * FIELD_EXTENSION;
+            while((mapBuffHelper + tmpsUsed * nrowsPack * maxNBlocks) > (mapTotalN + (1 << 25))) {
+                if (nrowsPack > 128) {
+                    nrowsPack /= 2;
+                } else {
+                    maxNBlocks /= 2;
+                }
             }
         }
     }
-    
     
     uint64_t memoryTmp1 = nTmp1 * nrowsPack * maxNBlocks;
     mapOffsets[std::make_pair("tmp1", false)] = mapBuffHelper;

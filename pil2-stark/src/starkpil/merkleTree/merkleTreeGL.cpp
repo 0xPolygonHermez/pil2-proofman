@@ -313,7 +313,6 @@ void MerkleTreeGL::merkelize()
 
 void MerkleTreeGL::writeFile(std::string constTreeFile)
 {
-    Goldilocks::Element *root = &nodes[numNodes - 4];
     ofstream fw(constTreeFile.c_str(), std::fstream::out | std::fstream::binary);
     uint64_t nodesOffset = width * height * sizeof(Goldilocks::Element);
     fw.close();

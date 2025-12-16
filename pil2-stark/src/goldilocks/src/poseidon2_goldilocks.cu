@@ -35,10 +35,21 @@ __device__ void hash_one_2(gl64_t *out, gl64_t *const input, int tid)
 {
     
     const gl64_t *GPU_C_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_C_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_C_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_C_12 : (gl64_t *)GPU_C_16));
+    const uint64_t N_VALS_C = SPONGE_WIDTH_T==4 ? 53 : (SPONGE_WIDTH_T==8 ? 86 : (SPONGE_WIDTH_T==12 ? 118 : 150));
     const gl64_t *GPU_D_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_D_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_D_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_D_12 : (gl64_t *)GPU_D_16));
     
+    __shared__ gl64_t GPU_C_SM[150];
+    __shared__ gl64_t GPU_D_SM[16];
+
+    if (tid == 0)
+    {
+        mymemcpy((uint64_t *)GPU_C_SM, (uint64_t *)GPU_C_GL, N_VALS_C);
+        mymemcpy((uint64_t *)GPU_D_SM, (uint64_t *)GPU_D_GL, SPONGE_WIDTH_T);
+    }
+    __syncthreads();
+
     gl64_t aux[SPONGE_WIDTH_T];
-    hash_full_result_seq_2<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(aux, input, GPU_C_GL, GPU_D_GL);
+    hash_full_result_seq_2<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(aux, input, GPU_C_SM, GPU_D_SM);
     mymemcpy((uint64_t *)out, (uint64_t *)aux, CAPACITY_T);
 }
 

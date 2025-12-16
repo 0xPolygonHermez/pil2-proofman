@@ -53,8 +53,9 @@ __global__ void unpack(
     uint64_t* shared_unpack_info = shared_mem;
 
     // Load unpack info
-    if (threadIdx.x < nCols)
-        shared_unpack_info[threadIdx.x] = d_unpack_info[threadIdx.x];
+    for (uint64_t i = threadIdx.x; i < nCols; i += blockDim.x) {
+        shared_unpack_info[i] = d_unpack_info[i];
+    }
     __syncthreads();
 
     uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
