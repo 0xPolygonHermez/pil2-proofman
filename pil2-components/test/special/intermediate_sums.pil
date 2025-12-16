@@ -1,0 +1,115 @@
+require "std_constants.pil"
+require "std_sum.pil"
+
+/*
+    Constraint to optimize:
+                                   NUMi
+                GL === GR + ∑ᵢ ----------
+                                 DENi + ɣ
+    Where:
+        · GL is an expression of degree 1.
+        · GR is an expression of degree 2.
+        · ɣ is a challenge added to make the denominator an extension-field expression.
+
+    To audit and generate stats:
+    node ../pil2-compiler/src/pil.js ./pil2-components/test/special/intermediate_sums.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/special/build/intermediate_sums.pilout
+    node --max-old-space-size=131072 ../pil2-compiler/tools/audit.js pil2-components/test/special/build/intermediate_sums.pilout
+    node --max-old-space-size=131072 ../pil2-proofman-js/src/main_stats.js -a pil2-components/test/special/build/intermediate_sums.pilout -s pil2-components/test/special/intermediate_sums.config.json -o pil2-components/test/special/build/intermediate_sums.stats
+*/
+airtemplate Im(const int N = 2**8, const int reductions, const int deg_num, const int deg_den, const int M) {
+    assert(M > 0);
+    assert(reductions == -1 || reductions == 0);
+    // -1 -> No reductions
+    // 0  -> Apply all reductions
+
+    sum_set_expressions_im_non_reduced(reductions);
+
+    // Enlarge the degree of the numerator
+    col witness num[M];
+    expr NUM[M] = increase_degree(num, deg_num);
+
+    // Enlarge the degree of the denominator
+    col witness den[M];
+    expr DEN[M] = increase_degree(den, deg_den);
+
+    for (int i = 0; i < M; i++) {
+        sum(surname: PIOP_SURNAME_ISOLATED, type: SUM_TYPE_ASSUMES, opids: [0], busid: 0, expressions: [DEN[i]], mul: NUM[i])
+    }
+}
+
+function increase_degree(expr exps[], const int deg): expr[] {
+    const int M = length(exps);
+    expr result[M];
+    for (int i = 0; i < M; i++) {
+        result[i] = (deg == 0) ? 1 : exps[i];
+        for (int j = 1; j < deg; j++) {
+            col witness _exp;
+            result[i] *= _exp;
+        }
+        assert(degree(result[i]) == deg);
+    }
+
+    return result;
+}
+
+airgroup Intermediates {
+    // Num and no den
+    Im(reductions: -1, deg_num: 1, deg_den: 0, M: 1) alias ImDummyN_1;
+    Im(reductions: 0,  deg_num: 1, deg_den: 0, M: 1) alias ImCustomN_1;
+
+    Im(reductions: -1, deg_num: 1, deg_den: 0, M: 2) alias ImDummyN_2;
+    Im(reductions: 0,  deg_num: 1, deg_den: 0, M: 2) alias ImCustomN_2;
+
+    Im(reductions: -1, deg_num: 1, deg_den: 0, M: 4) alias ImDummyN_4;
+    Im(reductions: 0,  deg_num: 1, deg_den: 0, M: 4) alias ImCustomN_4;
+
+    Im(reductions: -1, deg_num: 1, deg_den: 0, M: 8) alias ImDummyN_8;
+    Im(reductions: 0,  deg_num: 1, deg_den: 0, M: 8) alias ImCustomN_8;
+
+    Im(reductions: -1, deg_num: 1, deg_den: 0, M: 16) alias ImDummyN_16;
+    Im(reductions: 0,  deg_num: 1, deg_den: 0, M: 16) alias ImCustomN_16;
+
+    // No num and den
+    Im(reductions: -1, deg_num: 0, deg_den: 1, M: 1) alias ImDummyD_1;
+    Im(reductions: 0,  deg_num: 0, deg_den: 1, M: 1) alias ImCustomD_1;
+
+    Im(reductions: -1, deg_num: 0, deg_den: 1, M: 2) alias ImDummyD_2;
+    Im(reductions: 0,  deg_num: 0, deg_den: 1, M: 2) alias ImCustomD_2;
+
+    Im(reductions: -1, deg_num: 0, deg_den: 1, M: 4) alias ImDummyD_4;
+    Im(reductions: 0,  deg_num: 0, deg_den: 1, M: 4) alias ImCustomD_4;
+
+    Im(reductions: -1, deg_num: 0, deg_den: 1, M: 8) alias ImDummyD_8;
+    Im(reductions: 0,  deg_num: 0, deg_den: 1, M: 8) alias ImCustomD_8;
+
+    Im(reductions: -1, deg_num: 0, deg_den: 1, M: 16) alias ImDummyD_16;
+    Im(reductions: 0,  deg_num: 0, deg_den: 1, M: 16) alias ImCustomD_16;
+
+    // Num and den
+    Im(reductions: -1, deg_num: 1, deg_den: 1, M: 1) alias ImDummyND_1;
+    Im(reductions: 0,  deg_num: 1, deg_den: 1, M: 1) alias ImCustomND_1;
+
+    Im(reductions: -1, deg_num: 1, deg_den: 1, M: 2) alias ImDummyND_2;
+    Im(reductions: 0,  deg_num: 1, deg_den: 1, M: 2) alias ImCustomND_2;
+
+    Im(reductions: -1, deg_num: 1, deg_den: 1, M: 4) alias ImDummyND_4;
+    Im(reductions: 0,  deg_num: 1, deg_den: 1, M: 4) alias ImCustomND_4;
+
+    Im(reductions: -1, deg_num: 1, deg_den: 1, M: 8) alias ImDummyND_8;
+    Im(reductions: 0,  deg_num: 1, deg_den: 1, M: 8) alias ImCustomND_8;
+
+    Im(reductions: -1, deg_num: 1, deg_den: 1, M: 16) alias ImDummyND_16;
+    Im(reductions: 0,  deg_num: 1, deg_den: 1, M: 16) alias ImCustomND_16;
+
+    Im(reductions: -1, deg_num: 1, deg_den: 1, M: 24) alias ImDummyND_24;
+    Im(reductions: 0,  deg_num: 1, deg_den: 1, M: 24) alias ImCustomND_24;
+
+    // Test with different max constraint degrees
+    set_max_constraint_degree(5);
+    Im(reductions: -1, deg_num: 1, deg_den: 1, M: 24) alias ImDummyND_24_5;
+    Im(reductions: 0,  deg_num: 1, deg_den: 1, M: 24) alias ImCustomND_24_5;
+
+    set_max_constraint_degree(9);
+    Im(reductions: -1, deg_num: 1, deg_den: 1, M: 24) alias ImDummyND_24_9;
+    Im(reductions: 0,  deg_num: 1, deg_den: 1, M: 24) alias ImCustomND_24_9;
+}

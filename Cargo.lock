@@ -300,6 +300,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "connection"
+version = "0.14.0"
+dependencies = [
+ "fields",
+ "num-bigint",
+ "pil-std-lib",
+ "proofman",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-macros",
+ "rand",
+ "rayon",
+ "tracing",
+ "witness",
+]
+
+[[package]]
 name = "constant_time_eq"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -408,6 +425,45 @@ name = "custom_derive"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef8ae57c4978a2acd8b869ce6b9ca1dfe817bff704c220209fdef2c0b75a01b9"
+
+[[package]]
+name = "diff-buses"
+version = "0.14.0"
+dependencies = [
+ "fields",
+ "num-bigint",
+ "num-traits",
+ "pil-std-lib",
+ "proofman",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-macros",
+ "rand",
+ "rayon",
+ "tracing",
+ "witness",
+]
+
+[[package]]
+name = "direct-update"
+version = "0.14.0"
+dependencies = [
+ "fields",
+ "num-bigint",
+ "num-traits",
+ "pil-std-lib",
+ "proofman",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-macros",
+ "rand",
+ "rayon",
+ "serde",
+ "serde_arrays",
+ "serde_json",
+ "tracing",
+ "witness",
+]
 
 [[package]]
 name = "either"
@@ -703,6 +759,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 
 [[package]]
+name = "lookup"
+version = "0.14.0"
+dependencies = [
+ "fields",
+ "num-bigint",
+ "pil-std-lib",
+ "proofman",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-macros",
+ "rand",
+ "rayon",
+ "tracing",
+ "witness",
+]
+
+[[package]]
 name = "macros-test"
 version = "0.14.0"
 dependencies = [
@@ -877,6 +950,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "one-instance"
+version = "0.14.0"
+dependencies = [
+ "fields",
+ "num-bigint",
+ "pil-std-lib",
+ "proofman",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-macros",
+ "rand",
+ "rayon",
+ "tracing",
+ "witness",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -904,6 +994,23 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
+name = "permutation"
+version = "0.14.0"
+dependencies = [
+ "fields",
+ "num-bigint",
+ "pil-std-lib",
+ "proofman",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-macros",
+ "rand",
+ "rayon",
+ "tracing",
+ "witness",
+]
 
 [[package]]
 name = "petgraph"
@@ -1225,6 +1332,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "range-check"
+version = "0.14.0"
+dependencies = [
+ "fields",
+ "num-bigint",
+ "num-traits",
+ "pil-std-lib",
+ "proofman",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-macros",
+ "rand",
+ "rayon",
+ "tracing",
+ "witness",
+]
+
+[[package]]
 name = "rayon"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1412,6 +1537,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2a4719bff48cee6b39d12c020eeb490953ad2443b7055bd0b21fca26bd8c28b"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "simple"
+version = "0.14.0"
+dependencies = [
+ "fields",
+ "num-bigint",
+ "pil-std-lib",
+ "pilout",
+ "proofman",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-macros",
+ "rand",
+ "rayon",
+ "tracing",
+ "witness",
 ]
 
 [[package]]
@@ -1754,6 +1897,23 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
+
+[[package]]
+name = "virtual-tables"
+version = "0.14.0"
+dependencies = [
+ "fields",
+ "num-bigint",
+ "pil-std-lib",
+ "proofman",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-macros",
+ "rand",
+ "rayon",
+ "tracing",
+ "witness",
+]
 
 [[package]]
 name = "wasi"

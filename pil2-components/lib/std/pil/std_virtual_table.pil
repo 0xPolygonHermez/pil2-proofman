@@ -1,5 +1,5 @@
-require "std_constants.pil";
-require "std_lookup.pil";
+require "std_constants.pil"
+require "std_lookup.pil"
 
 // TODO: Add the possibility of different table sizes for the different virtual tables
 
