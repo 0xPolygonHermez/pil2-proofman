@@ -300,7 +300,6 @@ __device__ __forceinline__ void prodadd_state_(const gl64_t D[SPONGE_WIDTH_T], c
     }
 }
 
-
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void poseidon2_hash_with_constants(const gl64_t *GPU_C_GL, const gl64_t *GPU_D_GL)
 {

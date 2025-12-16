@@ -35,21 +35,10 @@ __device__ void hash_one_2(gl64_t *out, gl64_t *const input, int tid)
 {
     
     const gl64_t *GPU_C_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_C_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_C_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_C_12 : (gl64_t *)GPU_C_16));
-    const uint64_t N_VALS_C = SPONGE_WIDTH_T==4 ? 53 : (SPONGE_WIDTH_T==8 ? 86 : (SPONGE_WIDTH_T==12 ? 118 : 150));
     const gl64_t *GPU_D_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_D_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_D_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_D_12 : (gl64_t *)GPU_D_16));
     
-    __shared__ gl64_t GPU_C_SM[150];
-    __shared__ gl64_t GPU_D_SM[16];
-
-    if (tid == 0)
-    {
-        mymemcpy((uint64_t *)GPU_C_SM, (uint64_t *)GPU_C_GL, N_VALS_C);
-        mymemcpy((uint64_t *)GPU_D_SM, (uint64_t *)GPU_D_GL, SPONGE_WIDTH_T);
-    }
-    __syncthreads();
-
     gl64_t aux[SPONGE_WIDTH_T];
-    hash_full_result_seq_2<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(aux, input, GPU_C_SM, GPU_D_SM);
+    hash_full_result_seq_2<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(aux, input, GPU_C_GL, GPU_D_GL);
     mymemcpy((uint64_t *)out, (uint64_t *)aux, CAPACITY_T);
 }
 
@@ -168,6 +157,53 @@ __global__ void hash_gpu_16(uint64_t* data, int N)
     }
 }
 
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
+__global__ void hash_gpu_256(uint32_t nextN, uint32_t nextIndex, uint32_t pending, uint64_t *cursor)
+{
+    uint32_t blockDimX = blockDim.x;
+
+    for(int i=0; i<4; i++){
+        if( threadIdx.x >= blockDimX)
+            return;
+        int tid = blockIdx.x * blockDimX + threadIdx.x;
+        if (tid >= nextN)
+            return;
+
+        gl64_t* pol_input = (gl64_t *)(&cursor[nextIndex + tid * SPONGE_WIDTH_T]);
+        gl64_t* pol_output = (gl64_t *)(&cursor[nextIndex + (pending + tid) * CAPACITY_T]);
+        
+        hash_one_2<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(pol_output, pol_input, threadIdx.x);
+        nextIndex += pending  * CAPACITY_T;
+        pending = pending >> 2;
+        nextN = pending >> 2;
+        blockDimX = blockDimX >> 2;
+        __syncthreads();
+    }
+}
+
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
+__global__ void hash_gpu_last(uint32_t nextN, uint32_t nextIndex, uint32_t pending, uint64_t *cursor)
+{
+    while (pending > 1)
+    {
+        uint32_t extraZeros = (4 - (pending & 3)) & 3;
+        if ( threadIdx.x < extraZeros * CAPACITY_T){
+            cursor[ nextIndex + pending * CAPACITY_T + threadIdx.x] = gl64_t(uint64_t(0));
+        }
+        __syncthreads();
+        if( threadIdx.x < nextN){        
+            gl64_t* pol_input = (gl64_t *)(&cursor[nextIndex + threadIdx.x * SPONGE_WIDTH_T]);
+            gl64_t* pol_output = (gl64_t *)(&cursor[nextIndex + (pending + extraZeros + threadIdx.x) * CAPACITY_T]);
+            hash_one_2<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(pol_output, pol_input, threadIdx.x);        
+        }
+        nextIndex += (pending + extraZeros) *  CAPACITY_T;
+        pending = (pending + 3) / 4;
+        nextN = (pending + 3) / 4;  
+        
+    }
+}
+
+
 template<uint32_t SPONGE_WIDTH_T>
 void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeCoalescedBlocks(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim)
 {
@@ -185,43 +221,74 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeCoalescedBlocks(uint32_t 
         actual_tpb = num_rows;
         actual_blks = 1;
     }
-    //linearHashGPUTiles_<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_tree, d_input, num_cols * dim, num_rows);
     linearHashGPUTiles<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_tree, d_input, num_cols * dim, num_rows);
     CHECKCUDAERR(cudaGetLastError());
 
-    // Build the merkle tree
-    uint64_t pending = num_rows;
-    uint64_t nextN = (pending + (arity - 1)) / arity;
-    uint64_t nextIndex = 0;
-
-    while (pending > 1)
+    if(SPONGE_WIDTH_T != 16)
     {
-        uint64_t extraZeros = (arity - (pending % arity)) % arity;
-        if (extraZeros > 0){
+        uint64_t pending = num_rows;
+        uint64_t nextN = (pending + (arity - 1)) / arity;
+        uint64_t nextIndex = 0;
 
-            //std::memset(&cursor[nextIndex + pending * CAPACITY], 0, extraZeros * CAPACITY * sizeof(Goldilocks::Element));
-            CHECKCUDAERR(cudaMemsetAsync((uint64_t *)(d_tree + nextIndex + pending * CAPACITY), 0, extraZeros * CAPACITY * sizeof(uint64_t), stream));
-        }
-        if (nextN < TPB)
+        while (pending > 1)
         {
-            actual_tpb = nextN;
-            actual_blks = 1;
-        }
-        else
-        {
-            actual_tpb = TPB;
-            actual_blks = nextN / TPB + 1;
-        }
-        if(actual_tpb == TPB && SPONGE_WIDTH == 16 && nextN >=128 && 0){
-            hash_gpu_16<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS> <<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t)+ (150+16) * sizeof(gl64_t), stream>>>(d_tree + nextIndex, nextN);  
-        }else{
+            u32 actual_tpb, actual_blks;
+            uint64_t extraZeros = (arity - (pending % arity)) % arity;
+            if (extraZeros > 0){
+
+                CHECKCUDAERR(cudaMemsetAsync((uint64_t *)(d_tree + nextIndex + pending * CAPACITY), 0, extraZeros * CAPACITY * sizeof(uint64_t), stream));
+            }
+            if (nextN < TPB)
+            {
+                actual_tpb = nextN;
+                actual_blks = 1;
+            }
+            else
+            {
+                actual_tpb = TPB;
+                actual_blks = nextN / TPB + 1;
+            }
             hash_gpu_3<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);
+            nextIndex += (pending + extraZeros) * CAPACITY;
+            pending = (pending + (arity - 1)) / arity;
+            nextN = (pending + (arity - 1)) / arity;
         }
-        nextIndex += (pending + extraZeros) * CAPACITY;
-        pending = (pending + (arity - 1)) / arity;
-        nextN = (pending + (arity - 1)) / arity;
+    }else{
+        uint64_t pending = num_rows;
+        uint64_t nextN = (pending + (arity - 1)) / arity;
+        uint64_t nextIndex = 0;
+
+        while (pending > 1)
+        {
+            u32 actual_tpb, actual_blks;
+            uint64_t extraZeros = (arity - (pending % arity)) % arity;
+            if (extraZeros > 0){
+
+                CHECKCUDAERR(cudaMemsetAsync((uint64_t *)(d_tree + nextIndex + pending * CAPACITY), 0, extraZeros * CAPACITY * sizeof(uint64_t), stream));
+            }
+            if (nextN < 256)
+            {
+                actual_tpb = nextN;
+                actual_blks = 1;
+                hash_gpu_last<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending, d_tree);
+                break;
+            }
+            else
+            {
+                assert(extraZeros == 0); 
+                actual_tpb = 256;
+                actual_blks = nextN / 256;
+                hash_gpu_256<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending, d_tree);
+                for(int i=0; i<4; i++){
+                    nextIndex += pending * CAPACITY;
+                    pending = pending >> 2;
+                    nextN = pending >> 2;
+                }            
+            }                
+        }
     }
     CHECKCUDAERR(cudaGetLastError());
+    
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
