@@ -42,81 +42,6 @@ __device__ void hash_one_2(gl64_t *out, gl64_t *const input, int tid)
     mymemcpy((uint64_t *)out, (uint64_t *)aux, CAPACITY_T);
 }
 
-template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::initPoseidon2GPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids)
-{    
-    int deviceId;
-    CHECKCUDAERR(cudaGetDevice(&deviceId));
-    static int initialized = 0;
-    if (initialized == 0)
-    {
-        for(int i = 0; i < num_gpu_ids; i++)
-        {
-            CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
-            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C_4, Poseidon2GoldilocksConstants::C4, 53 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D_4, Poseidon2GoldilocksConstants::D4, 4 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C_8, Poseidon2GoldilocksConstants::C8, 86 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D_8, Poseidon2GoldilocksConstants::D8, 8 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C_12, Poseidon2GoldilocksConstants::C12, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D_12, Poseidon2GoldilocksConstants::D12, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C_16, Poseidon2GoldilocksConstants::C16, 150 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D_16, Poseidon2GoldilocksConstants::D16, 16 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-        }
-        initialized = 1;        
-    }
-    cudaSetDevice(deviceId);
-}
-
-template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeCoalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim)
-{
-    if (num_rows == 0)
-    {
-        return;
-    }
-
-    u32 actual_tpb = TPB;
-    u32 actual_blks = (num_rows + TPB - 1) / TPB;
-
-
-    if (num_rows < TPB)
-    {
-        actual_tpb = num_rows;
-        actual_blks = 1;
-    }
-    linearHashGPU<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * 8, stream>>>(d_tree, d_input, num_cols * dim, num_rows);
-    CHECKCUDAERR(cudaGetLastError());
-
-    // Build the merkle tree
-    uint64_t pending = num_rows;
-    uint64_t nextN = (pending + (arity - 1)) / arity;
-    uint64_t nextIndex = 0;
-
-    while (pending > 1)
-    {
-        uint64_t extraZeros = (arity - (pending % arity)) % arity;
-        if (extraZeros > 0){
-
-            //std::memset(&cursor[nextIndex + pending * CAPACITY], 0, extraZeros * CAPACITY * sizeof(Goldilocks::Element));
-            CHECKCUDAERR(cudaMemsetAsync((uint64_t *)(d_tree + nextIndex + pending * CAPACITY), 0, extraZeros * CAPACITY * sizeof(uint64_t), stream));
-        }
-        if (nextN < TPB)
-        {
-            actual_tpb = nextN;
-            actual_blks = 1;
-        }
-        else
-        {
-            actual_tpb = TPB;
-            actual_blks = nextN / TPB + 1;
-        }
-        hash_gpu_3<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);       
-        nextIndex += (pending + extraZeros) * CAPACITY;
-        pending = (pending + (arity - 1)) / arity;
-        nextN = (pending + (arity - 1)) / arity;
-    }
-    CHECKCUDAERR(cudaGetLastError());
-}
 
 
 //repassar assumtions que faig, sponge width es 16
@@ -204,6 +129,123 @@ __global__ void hash_gpu_last(uint32_t nextN, uint32_t nextIndex, uint32_t pendi
 }
 
 
+
+template<uint32_t SPONGE_WIDTH_T>
+void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::initPoseidon2GPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids)
+{    
+    int deviceId;
+    CHECKCUDAERR(cudaGetDevice(&deviceId));
+    static int initialized = 0;
+    if (initialized == 0)
+    {
+        for(int i = 0; i < num_gpu_ids; i++)
+        {
+            CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
+            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C_4, Poseidon2GoldilocksConstants::C4, 53 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D_4, Poseidon2GoldilocksConstants::D4, 4 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C_8, Poseidon2GoldilocksConstants::C8, 86 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D_8, Poseidon2GoldilocksConstants::D8, 8 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C_12, Poseidon2GoldilocksConstants::C12, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D_12, Poseidon2GoldilocksConstants::D12, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C_16, Poseidon2GoldilocksConstants::C16, 150 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D_16, Poseidon2GoldilocksConstants::D16, 16 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+        }
+        initialized = 1;        
+    }
+    cudaSetDevice(deviceId);
+}
+
+template<uint32_t SPONGE_WIDTH_T>
+void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeCoalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim)
+{
+    if (num_rows == 0)
+    {
+        return;
+    }
+
+    u32 actual_tpb = TPB;
+    u32 actual_blks = (num_rows + TPB - 1) / TPB;
+
+
+    if (num_rows < TPB)
+    {
+        actual_tpb = num_rows;
+        actual_blks = 1;
+    }
+    linearHashGPU<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * 8, stream>>>(d_tree, d_input, num_cols * dim, num_rows);
+    CHECKCUDAERR(cudaGetLastError());
+
+    // Build the merkle tree
+    if(SPONGE_WIDTH_T != 16)
+    {
+        uint64_t pending = num_rows;
+        uint64_t nextN = (pending + (arity - 1)) / arity;
+        uint64_t nextIndex = 0;
+
+        while (pending > 1)
+        {
+            u32 actual_tpb, actual_blks;
+            uint64_t extraZeros = (arity - (pending % arity)) % arity;
+            if (extraZeros > 0){
+
+                CHECKCUDAERR(cudaMemsetAsync((uint64_t *)(d_tree + nextIndex + pending * CAPACITY), 0, extraZeros * CAPACITY * sizeof(uint64_t), stream));
+            }
+            if (nextN < TPB)
+            {
+                actual_tpb = nextN;
+                actual_blks = 1;
+            }
+            else
+            {
+                actual_tpb = TPB;
+                actual_blks = nextN / TPB + 1;
+            }
+            hash_gpu_3<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);
+            nextIndex += (pending + extraZeros) * CAPACITY;
+            pending = (pending + (arity - 1)) / arity;
+            nextN = (pending + (arity - 1)) / arity;
+        }
+    }else{
+        uint64_t pending = num_rows;
+        uint64_t nextN = (pending + (arity - 1)) / arity;
+        uint64_t nextIndex = 0;
+
+        while (pending > 1)
+        {
+            u32 actual_tpb, actual_blks;
+            uint64_t extraZeros = (arity - (pending % arity)) % arity;
+            if (extraZeros > 0){
+
+                CHECKCUDAERR(cudaMemsetAsync((uint64_t *)(d_tree + nextIndex + pending * CAPACITY), 0, extraZeros * CAPACITY * sizeof(uint64_t), stream));
+            }
+            if (nextN < 256)
+            {
+                actual_tpb = nextN;
+                actual_blks = 1;
+                /*hash_gpu_last<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending, d_tree);
+                break;*/
+                hash_gpu_3<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);
+                nextIndex += (pending + extraZeros) * CAPACITY;
+                pending = (pending + (arity - 1)) / arity;
+                nextN = (pending + (arity - 1)) / arity;
+            }
+            else
+            {
+                assert(extraZeros == 0); 
+                actual_tpb = 256;
+                actual_blks = nextN / 256;
+                hash_gpu_256<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending, d_tree);
+                for(int i=0; i<4; i++){
+                    nextIndex += pending * CAPACITY;
+                    pending = pending >> 2;
+                    nextN = pending >> 2;
+                }            
+            }                
+        }
+    }
+    CHECKCUDAERR(cudaGetLastError());
+}
+
 template<uint32_t SPONGE_WIDTH_T>
 void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeCoalescedBlocks(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim)
 {
@@ -270,8 +312,12 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeCoalescedBlocks(uint32_t 
             {
                 actual_tpb = nextN;
                 actual_blks = 1;
-                hash_gpu_last<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending, d_tree);
-                break;
+                /*hash_gpu_last<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending, d_tree);
+                break;*/
+                hash_gpu_3<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);
+                nextIndex += (pending + extraZeros) * CAPACITY;
+                pending = (pending + (arity - 1)) / arity;
+                nextN = (pending + (arity - 1)) / arity;
             }
             else
             {
