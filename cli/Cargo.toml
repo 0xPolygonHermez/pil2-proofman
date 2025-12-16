@@ -33,6 +33,7 @@ clap = { version = "4.5.38", features = ["derive", "env"] }
 tinytemplate = "1.1"
 convert_case = "0.8"
 regex = "1.12.2"
+toml = "0.9.8"
 
 # Distributed mode (mpi) is only supported on Linux x86_64
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
