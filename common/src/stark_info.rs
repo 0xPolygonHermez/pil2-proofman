@@ -22,6 +22,14 @@ pub struct StepStruct {
 
 #[allow(dead_code)]
 #[derive(Default, Deserialize, Debug, Clone)]
+pub struct SecurityInfo {
+    #[serde(rename = "proximityParameter")]
+    pub proximity_parameter: f64,
+    pub regime: String,
+}
+
+#[allow(dead_code)]
+#[derive(Default, Deserialize, Debug, Clone)]
 pub struct StarkStruct {
     #[serde(rename = "nBits")]
     pub n_bits: u64,
@@ -203,6 +211,8 @@ pub struct StarkInfo {
     pub map_offsets: HashMap<(String, bool), u64>,
     #[serde(default, rename = "mapTotalN")]
     pub map_total_n: u64,
+
+    pub security: SecurityInfo,
 }
 
 impl StarkInfo {
