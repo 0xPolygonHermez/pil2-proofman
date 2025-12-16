@@ -86,23 +86,37 @@ template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t
 __global__ void hash_gpu_256(uint32_t nextN, uint32_t nextIndex, uint32_t pending, uint64_t *cursor)
 {
     uint32_t blockDimX = blockDim.x;
-
+    __shared__ uint64_t tmp[85*SPONGE_WIDTH_T]; //64+16+4+1
+    uint32_t pos = 0;
+    uint32_t pos_inc = 64;
     for(int i=0; i<4; i++){
-        if( threadIdx.x >= blockDimX)
-            return;
         int tid = blockIdx.x * blockDimX + threadIdx.x;
-        if (tid >= nextN)
-            return;
+        if( threadIdx.x <blockDimX && tid < nextN){           
 
-        gl64_t* pol_input = (gl64_t *)(&cursor[nextIndex + tid * SPONGE_WIDTH_T]);
-        gl64_t* pol_output = (gl64_t *)(&cursor[nextIndex + (pending + tid) * CAPACITY_T]);
-        
-        hash_one_2<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(pol_output, pol_input, threadIdx.x);
-        nextIndex += pending  * CAPACITY_T;
-        pending = pending >> 2;
-        nextN = pending >> 2;
-        blockDimX = blockDimX >> 2;
+            gl64_t* pol_input = (i == 0) ? (gl64_t*) &cursor[nextIndex + tid * SPONGE_WIDTH_T] 
+                                         : (gl64_t*) &(tmp[(pos+threadIdx.x)*SPONGE_WIDTH_T]);
+
+            gl64_t* pol_output =(i==0)  ? (gl64_t*) &(tmp[threadIdx.x * CAPACITY_T]) 
+                                        : (gl64_t*) &(tmp[(pos + blockDimX)* SPONGE_WIDTH_T + threadIdx.x * CAPACITY_T]);
+
+            hash_one_2<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(pol_output, pol_input, threadIdx.x);
+
+            cursor[nextIndex + (pending + tid) * CAPACITY_T] =pol_output[0];
+            cursor[nextIndex + (pending + tid) * CAPACITY_T+1] =pol_output[1];
+            cursor[nextIndex + (pending + tid) * CAPACITY_T+2] =pol_output[2];
+            cursor[nextIndex + (pending + tid) * CAPACITY_T+3] =pol_output[3];
+
+            nextIndex += pending  * CAPACITY_T;
+            pending = pending >> 2;
+            nextN = pending >> 2;
+            blockDimX = blockDimX >> 2;
+            if(i!=0) {
+                pos += pos_inc;
+                pos_inc = pos_inc >> 2;
+            }
+        }        
         __syncthreads();
+
     }
 }
 
@@ -222,12 +236,12 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeCoalesced(uint32_t arity,
             {
                 actual_tpb = nextN;
                 actual_blks = 1;
-                /*hash_gpu_last<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending, d_tree);
-                break;*/
-                hash_gpu_3<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);
+                hash_gpu_last<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending, d_tree);
+                break;
+                /*hash_gpu_3<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);
                 nextIndex += (pending + extraZeros) * CAPACITY;
                 pending = (pending + (arity - 1)) / arity;
-                nextN = (pending + (arity - 1)) / arity;
+                nextN = (pending + (arity - 1)) / arity;*/
             }
             else
             {
@@ -312,12 +326,12 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeCoalescedBlocks(uint32_t 
             {
                 actual_tpb = nextN;
                 actual_blks = 1;
-                /*hash_gpu_last<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending, d_tree);
-                break;*/
-                hash_gpu_3<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);
+                hash_gpu_last<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending, d_tree);
+                break;
+                /*hash_gpu_3<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);
                 nextIndex += (pending + extraZeros) * CAPACITY;
                 pending = (pending + (arity - 1)) / arity;
-                nextN = (pending + (arity - 1)) / arity;
+                nextN = (pending + (arity - 1)) / arity;*/
             }
             else
             {
