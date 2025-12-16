@@ -123,22 +123,36 @@ __global__ void hash_gpu_256(uint32_t nextN, uint32_t nextIndex, uint32_t pendin
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __global__ void hash_gpu_last(uint32_t nextN, uint32_t nextIndex, uint32_t pending, uint64_t *cursor)
 {
-    while (pending > 1)
-    {
+    __shared__ uint64_t tmp[85*SPONGE_WIDTH_T]; //64+16+4+1
+    uint32_t pos = 0;
+    for(int i=0; i<4; i++){
         uint32_t extraZeros = (4 - (pending & 3)) & 3;
         if ( threadIdx.x < extraZeros * CAPACITY_T){
+            //this will never happend for i==0 becouse have been added before calling this kernel at merkletreeCoalesced(Blocks)
             cursor[ nextIndex + pending * CAPACITY_T + threadIdx.x] = gl64_t(uint64_t(0));
+            tmp[pos * SPONGE_WIDTH_T + pending * CAPACITY_T + threadIdx.x] = gl64_t(uint64_t(0));
         }
         __syncthreads();
         if( threadIdx.x < nextN){        
-            gl64_t* pol_input = (gl64_t *)(&cursor[nextIndex + threadIdx.x * SPONGE_WIDTH_T]);
-            gl64_t* pol_output = (gl64_t *)(&cursor[nextIndex + (pending + extraZeros + threadIdx.x) * CAPACITY_T]);
+            gl64_t* pol_input = (i==0)  ? (gl64_t *)(&cursor[nextIndex + threadIdx.x * SPONGE_WIDTH_T]) 
+                                         : (gl64_t*) &(tmp[(pos+threadIdx.x)*SPONGE_WIDTH_T]);
+            gl64_t* pol_output =(i==0)  ? (gl64_t*) &(tmp[threadIdx.x * CAPACITY_T]) 
+                                        : (gl64_t*) &(tmp[(pos + nextN)* SPONGE_WIDTH_T + threadIdx.x * CAPACITY_T]);
             hash_one_2<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(pol_output, pol_input, threadIdx.x);        
+            cursor[nextIndex + (pending + extraZeros + threadIdx.x) * CAPACITY_T] =pol_output[0];
+            cursor[nextIndex + (pending + extraZeros + threadIdx.x) * CAPACITY_T+1] =pol_output[1];
+            cursor[nextIndex + (pending + extraZeros + threadIdx.x) * CAPACITY_T+2] =pol_output[2];
+            cursor[nextIndex + (pending + extraZeros + threadIdx.x) * CAPACITY_T+3] =pol_output[3];
+        }
+        if( i != 0 ) {
+            pos += nextN;
         }
         nextIndex += (pending + extraZeros) *  CAPACITY_T;
         pending = (pending + 3) / 4;
         nextN = (pending + 3) / 4;  
-        
+        if( pending <= 1) {
+            break;
+        }      
     }
 }
 
@@ -236,7 +250,7 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeCoalesced(uint32_t arity,
             {
                 actual_tpb = nextN;
                 actual_blks = 1;
-                hash_gpu_last<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending, d_tree);
+                hash_gpu_last<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);
                 break;
                 /*hash_gpu_3<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);
                 nextIndex += (pending + extraZeros) * CAPACITY;
@@ -326,7 +340,7 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeCoalescedBlocks(uint32_t 
             {
                 actual_tpb = nextN;
                 actual_blks = 1;
-                hash_gpu_last<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending, d_tree);
+                hash_gpu_last<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);
                 break;
                 /*hash_gpu_3<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);
                 nextIndex += (pending + extraZeros) * CAPACITY;
