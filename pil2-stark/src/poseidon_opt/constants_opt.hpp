@@ -7,7 +7,7 @@
 class Constants_opt
 {
 public:
-    const static inline std::vector<std::vector<RawFr::Element>> C = {
+    const static inline std::vector<std::vector<RawFrP::Element>> C = {
         {{0xA96C453DC58ACA67, 0x73EB0F4319A6FA1B, 0xC1584C4902CFEBE6, 0x0258FEAEAB003C81},
          {0x999F128F883214EE, 0x3812D56244476181, 0xF1C713591A60E735, 0x1D29E209ED432B39},
          {0xB12A21DDE55EE9AE, 0xE6FACBF5C7A0F667, 0x37AFDA6EC3FF5974, 0x1CF36C6ECD15C256},
@@ -2216,7 +2216,7 @@ public:
          {0xCE4121D1334F746A, 0x734CFF930B982FE6, 0xFF171BF961364555, 0x2210448713B5FD51},
          {0x9E8F73888F4394F2, 0x70C7CB0AF9B4998E, 0x057A19DDE16DCDB8, 0x3042984CD4AE0F27},
          {0x4FF54328BE63EC78, 0x59BAD23732EDEC67, 0x51E50441A92889E0, 0x23D439F3EC87C2A1}}};
-    const static inline std::vector<std::vector<std::vector<RawFr::Element>>> M = {
+    const static inline std::vector<std::vector<std::vector<RawFrP::Element>>> M = {
         {{{0xF8B2F47577922DA4, 0x49C37C46F4FA97B6, 0xEAD42BC5207CE75B, 0x1E6197B9DC74448B},
           {0x536D530E1905BE54, 0x53CC09060B99F372, 0xFE8B92243F7D9E58, 0x2E82E796DAEA67C3}},
          {{0xC91FEA8D2D7F6EAD, 0x4443F72E7C6FF1E2, 0x03A88BCE6AC257FF, 0x264B0B0F2FAD086D},
@@ -4002,7 +4002,7 @@ public:
           {0x6C50F87E95CD27BB, 0x2F71A0389F78CC90, 0xCFFE58496278B701, 0x06065956FAECE381},
           {0x9E4CB6B1FD7E6DC6, 0xA90715B6C2B887D2, 0xA5E20AC5B3A96452, 0x033D154FBB665859}}}};
 
-    const static inline std::vector<std::vector<std::vector<RawFr::Element>>> P = {{{{0xF8B2F47577922DA4, 0x49C37C46F4FA97B6, 0xEAD42BC5207CE75B, 0x1E6197B9DC74448B},
+    const static inline std::vector<std::vector<std::vector<RawFrP::Element>>> P = {{{{0xF8B2F47577922DA4, 0x49C37C46F4FA97B6, 0xEAD42BC5207CE75B, 0x1E6197B9DC74448B},
                                                                                      {0x67AD5D218A6E76B8, 0xEC80B1D05A8F56DA, 0xB99E1D7FFA456741, 0x07C7009203027010}},
                                                                                     {{0xC91FEA8D2D7F6EAD, 0x4443F72E7C6FF1E2, 0x03A88BCE6AC257FF, 0x264B0B0F2FAD086D},
                                                                                      {0xCC8539D7F05865E6, 0x8A9D84922E7D4576, 0xD26B5523D87CADFD, 0x1523D124A215D055}}},
@@ -5787,7 +5787,7 @@ public:
                                                                                      {0x62F9EBD3DCED7BFC, 0x4D424AE6DE17F782, 0x8ED3663C2B5B7A3D, 0x1B2280941577D1EA},
                                                                                      {0x331DEA8083DBF961, 0x204F544E0B568A60, 0x158DAF6D3948AF27, 0x288BD48EFC1162D2}}}};
 
-    const static inline std::vector<std::vector<RawFr::Element>> S = {
+    const static inline std::vector<std::vector<RawFrP::Element>> S = {
         {{0xF8B2F47577922DA4, 0x49C37C46F4FA97B6, 0xEAD42BC5207CE75B, 0x1E6197B9DC74448B},
          {0xFE0CDC1A0D6516F0, 0x5F44813D6C2210A9, 0x2A7B70CC77FDCE85, 0x0EDAE9561BB06338},
          {0xF27CEAEA8435A2BC, 0x6F4498CFF6E15BD6, 0x1C6C658890E0B273, 0x09B6A5EC44558837},

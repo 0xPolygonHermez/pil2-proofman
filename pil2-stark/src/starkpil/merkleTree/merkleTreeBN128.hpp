@@ -12,11 +12,11 @@ class MerkleTreeBN128
 {
 private:
     void linearHash();
-    void linearHash(RawFr::Element* result, Goldilocks::Element* values);
+    void linearHash(RawFrP::Element* result, Goldilocks::Element* values);
 
     Goldilocks::Element getElement(uint64_t idx, uint64_t subIdx);
-    void genMerkleProof(RawFr::Element *proof, uint64_t idx, uint64_t offset, uint64_t n);
-    void calculateRootFromProof(RawFr::Element *value, std::vector<std::vector<RawFr::Element>> &mp, uint64_t &idx, uint64_t offset);
+    void genMerkleProof(RawFrP::Element *proof, uint64_t idx, uint64_t offset, uint64_t n);
+    void calculateRootFromProof(RawFrP::Element *value, std::vector<std::vector<RawFrP::Element>> &mp, uint64_t &idx, uint64_t offset);
 
 public:
     MerkleTreeBN128(){};
@@ -29,7 +29,7 @@ public:
     uint64_t width;
 
     Goldilocks::Element *source;
-    RawFr::Element *nodes;
+    RawFrP::Element *nodes;
 
     bool isSourceAllocated = false;
     bool isNodesAllocated = false;
@@ -45,12 +45,12 @@ public:
     uint64_t getMerkleProofLength();
 
     uint64_t getNumNodes(uint64_t height);
-    void getRoot(RawFr::Element *root);
-    void getLevel(RawFr::Element *level);
+    void getRoot(RawFrP::Element *root);
+    void getLevel(RawFrP::Element *level);
     void setSource(Goldilocks::Element *source);
-    void setNodes(RawFr::Element *nodes);
+    void setNodes(RawFrP::Element *nodes);
 
-    void getGroupProof(RawFr::Element *proof, uint64_t idx);
+    void getGroupProof(RawFrP::Element *proof, uint64_t idx);
     
     void merkelize();
     Goldilocks::Element* get_nodes_ptr() {
@@ -58,11 +58,11 @@ public:
         return source;
     }
 
-    bool verifyGroupProof(RawFr::Element* root, RawFr::Element* level, std::vector<std::vector<RawFr::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v);
+    bool verifyGroupProof(RawFrP::Element* root, RawFrP::Element* level, std::vector<std::vector<RawFrP::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v);
 
     void writeFile(std::string constTreeFile);
 
-    bool static verifyMerkleRoot(RawFr::Element *root, RawFr::Element *level, uint64_t height, uint64_t lastLevelVerification, uint64_t arity, uint64_t nFieldElements) {
+    bool static verifyMerkleRoot(RawFrP::Element *root, RawFrP::Element *level, uint64_t height, uint64_t lastLevelVerification, uint64_t arity, uint64_t nFieldElements) {
         // TODO: implement
         return true;
     }

@@ -177,7 +177,7 @@ void Fr_fail() {
 #endif
 
 
-RawFr::RawFr() {
+RawFrP::RawFrP() {
 #ifdef __USE_ASSEMBLY__
     Fr_init();
     set(fZero, 0);
@@ -186,10 +186,10 @@ RawFr::RawFr() {
 #endif
 }
 
-RawFr::~RawFr() {
+RawFrP::~RawFrP() {
 }
 
-void RawFr::fromString(Element &r, const std::string &s, uint32_t radix) {
+void RawFrP::fromString(Element &r, const std::string &s, uint32_t radix) {
     mpz_t mr;
     mpz_init_set_str(mr, s.c_str(), radix);
     mpz_fdiv_r(mr, mr, q);
@@ -199,7 +199,7 @@ void RawFr::fromString(Element &r, const std::string &s, uint32_t radix) {
     mpz_clear(mr);
 }
 
-void RawFr::fromUI(Element &r, unsigned long int v) {
+void RawFrP::fromUI(Element &r, unsigned long int v) {
     mpz_t mr;
     mpz_init(mr);
     mpz_set_ui(mr, v);
@@ -209,13 +209,13 @@ void RawFr::fromUI(Element &r, unsigned long int v) {
     mpz_clear(mr);
 }
 
-RawFr::Element RawFr::set(int value) {
+RawFrP::Element RawFrP::set(int value) {
   Element r;
   set(r, value);
   return r;
 }
 
-void RawFr::set(Element &r, int value) {
+void RawFrP::set(Element &r, int value) {
   mpz_t mr;
   mpz_init(mr);
   mpz_set_si(mr, value);
@@ -231,7 +231,7 @@ void RawFr::set(Element &r, int value) {
   mpz_clear(mr);
 }
 
-std::string RawFr::toString(const Element &a, uint32_t radix) {
+std::string RawFrP::toString(const Element &a, uint32_t radix) {
     Element tmp;
     mpz_t r;
     Fr_rawFromMontgomery(tmp.v, a.v);
@@ -244,7 +244,7 @@ std::string RawFr::toString(const Element &a, uint32_t radix) {
     return resS;
 }
 
-void RawFr::inv(Element &r, const Element &a) {
+void RawFrP::inv(Element &r, const Element &a) {
     mpz_t mr;
     mpz_init(mr);
     mpz_import(mr, Fr_N64, -1, 8, -1, 0, (const void *)(a.v));
@@ -258,14 +258,14 @@ void RawFr::inv(Element &r, const Element &a) {
     mpz_clear(mr);
 }
 
-void RawFr::div(Element &r, const Element &a, const Element &b) {
+void RawFrP::div(Element &r, const Element &a, const Element &b) {
     Element tmp;
     inv(tmp, b);
     mul(r, a, tmp);
 }
 
 #define BIT_IS_SET(s, p) (s[p>>3] & (1 << (p & 0x7)))
-void RawFr::exp(Element &r, const Element &base, uint8_t* scalar, unsigned int scalarSize) {
+void RawFrP::exp(Element &r, const Element &base, uint8_t* scalar, unsigned int scalarSize) {
     bool oneFound = false;
     Element copyBase;
     copy(copyBase, base);
@@ -286,19 +286,19 @@ void RawFr::exp(Element &r, const Element &base, uint8_t* scalar, unsigned int s
     }
 }
 
-void RawFr::toMpz(mpz_t r, const Element &a) {
+void RawFrP::toMpz(mpz_t r, const Element &a) {
     Element tmp;
     Fr_rawFromMontgomery(tmp.v, a.v);
     mpz_import(r, Fr_N64, -1, 8, -1, 0, (const void *)tmp.v);
 }
 
-void RawFr::fromMpz(Element &r, const mpz_t a) {
+void RawFrP::fromMpz(Element &r, const mpz_t a) {
     for (int i=0; i<Fr_N64; i++) r.v[i] = 0;
     mpz_export((void *)(r.v), NULL, -1, 8, -1, 0, a);
     Fr_rawToMontgomery(r.v, r.v);
 }
 
-int RawFr::toRprBE(const Element &element, uint8_t *data, int bytes)
+int RawFrP::toRprBE(const Element &element, uint8_t *data, int bytes)
 {
     if (bytes < Fr_N64 * 8) {
       return -(Fr_N64 * 8);
@@ -315,7 +315,7 @@ int RawFr::toRprBE(const Element &element, uint8_t *data, int bytes)
     return Fr_N64 * 8;
 }
 
-int RawFr::fromRprBE(Element &element, const uint8_t *data, int bytes)
+int RawFrP::fromRprBE(Element &element, const uint8_t *data, int bytes)
 {
     if (bytes < Fr_N64 * 8) {
       return -(Fr_N64* 8);
@@ -330,7 +330,7 @@ int RawFr::fromRprBE(Element &element, const uint8_t *data, int bytes)
     return Fr_N64 * 8;
 }
 
-int RawFr::fromRprLE(Element &element, const uint8_t *data, int bytes) {
+int RawFrP::fromRprLE(Element &element, const uint8_t *data, int bytes) {
     if (bytes < Fr_N64 * 8) {
         return -(Fr_N64 * 8);
     }
@@ -344,4 +344,4 @@ int RawFr::fromRprLE(Element &element, const uint8_t *data, int bytes) {
 
 static bool init = Fr_init();
 
-RawFr RawFr::field;
+RawFrP RawFrP::field;

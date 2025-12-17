@@ -168,7 +168,7 @@ void Fq_fail() {
 }
 #endif
 
-RawFq::RawFq() {
+RawFqP::RawFqP() {
 #ifdef __USE_ASSEMBLY__
     Fq_init();
     set(fZero, 0);
@@ -177,10 +177,10 @@ RawFq::RawFq() {
 #endif
 }
 
-RawFq::~RawFq() {
+RawFqP::~RawFqP() {
 }
 
-void RawFq::fromString(Element &r, const std::string &s, uint32_t radix) {
+void RawFqP::fromString(Element &r, const std::string &s, uint32_t radix) {
     mpz_t mr;
     mpz_init_set_str(mr, s.c_str(), radix);
     mpz_fdiv_r(mr, mr, q);
@@ -190,7 +190,7 @@ void RawFq::fromString(Element &r, const std::string &s, uint32_t radix) {
     mpz_clear(mr);
 }
 
-void RawFq::fromUI(Element &r, unsigned long int v) {
+void RawFqP::fromUI(Element &r, unsigned long int v) {
     mpz_t mr;
     mpz_init(mr);
     mpz_set_ui(mr, v);
@@ -200,13 +200,13 @@ void RawFq::fromUI(Element &r, unsigned long int v) {
     mpz_clear(mr);
 }
 
-RawFq::Element RawFq::set(int value) {
+RawFqP::Element RawFqP::set(int value) {
   Element r;
   set(r, value);
   return r;
 }
 
-void RawFq::set(Element &r, int value) {
+void RawFqP::set(Element &r, int value) {
   mpz_t mr;
   mpz_init(mr);
   mpz_set_si(mr, value);
@@ -222,7 +222,7 @@ void RawFq::set(Element &r, int value) {
   mpz_clear(mr);
 }
 
-std::string RawFq::toString(const Element &a, uint32_t radix) {
+std::string RawFqP::toString(const Element &a, uint32_t radix) {
     Element tmp;
     mpz_t r;
     Fq_rawFromMontgomery(tmp.v, a.v);
@@ -235,7 +235,7 @@ std::string RawFq::toString(const Element &a, uint32_t radix) {
     return resS;
 }
 
-void RawFq::inv(Element &r, const Element &a) {
+void RawFqP::inv(Element &r, const Element &a) {
     mpz_t mr;
     mpz_init(mr);
     mpz_import(mr, Fq_N64, -1, 8, -1, 0, (const void *)(a.v));
@@ -249,14 +249,14 @@ void RawFq::inv(Element &r, const Element &a) {
     mpz_clear(mr);
 }
 
-void RawFq::div(Element &r, const Element &a, const Element &b) {
+void RawFqP::div(Element &r, const Element &a, const Element &b) {
     Element tmp;
     inv(tmp, b);
     mul(r, a, tmp);
 }
 
 #define BIT_IS_SET(s, p) (s[p>>3] & (1 << (p & 0x7)))
-void RawFq::exp(Element &r, const Element &base, uint8_t* scalar, unsigned int scalarSize) {
+void RawFqP::exp(Element &r, const Element &base, uint8_t* scalar, unsigned int scalarSize) {
     bool oneFound = false;
     Element copyBase;
     copy(copyBase, base);
@@ -277,19 +277,19 @@ void RawFq::exp(Element &r, const Element &base, uint8_t* scalar, unsigned int s
     }
 }
 
-void RawFq::toMpz(mpz_t r, const Element &a) {
+void RawFqP::toMpz(mpz_t r, const Element &a) {
     Element tmp;
     Fq_rawFromMontgomery(tmp.v, a.v);
     mpz_import(r, Fq_N64, -1, 8, -1, 0, (const void *)tmp.v);
 }
 
-void RawFq::fromMpz(Element &r, const mpz_t a) {
+void RawFqP::fromMpz(Element &r, const mpz_t a) {
     for (int i=0; i<Fq_N64; i++) r.v[i] = 0;
     mpz_export((void *)(r.v), NULL, -1, 8, -1, 0, a);
     Fq_rawToMontgomery(r.v, r.v);
 }
 
-int RawFq::toRprBE(const Element &element, uint8_t *data, int bytes)
+int RawFqP::toRprBE(const Element &element, uint8_t *data, int bytes)
 {
     if (bytes < Fq_N64 * 8) {
       return -(Fq_N64 * 8);
@@ -306,7 +306,7 @@ int RawFq::toRprBE(const Element &element, uint8_t *data, int bytes)
     return Fq_N64 * 8;
 }
 
-int RawFq::fromRprBE(Element &element, const uint8_t *data, int bytes)
+int RawFqP::fromRprBE(Element &element, const uint8_t *data, int bytes)
 {
     if (bytes < Fq_N64 * 8) {
       return -(Fq_N64* 8);
@@ -323,5 +323,5 @@ int RawFq::fromRprBE(Element &element, const uint8_t *data, int bytes)
 
 static bool init = Fq_init();
 
-RawFq RawFq::field;
+RawFqP RawFqP::field;
 

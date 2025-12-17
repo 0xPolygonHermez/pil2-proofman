@@ -20,7 +20,7 @@ public:
     {   
         uint64_t NExtended = 1 << starkInfo.starkStruct.nBitsExt;
         MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, NExtended, starkInfo.nConstants);
-        return (NExtended * starkInfo.nConstants) + mt.numNodes * (sizeof(RawFr::Element) / sizeof(Goldilocks::Element));
+        return (NExtended * starkInfo.nConstants) + mt.numNodes * (sizeof(RawFrP::Element) / sizeof(Goldilocks::Element));
     }
 
     uint64_t getConstTreeSizeGL(StarkInfo& starkInfo)
@@ -58,7 +58,7 @@ public:
         ntt.extendPol(treeAddressGL, pConstPolsAddress, NExtended, N, starkInfo.nConstants);
         MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, NExtended, starkInfo.nConstants);
         mt.setSource(treeAddressGL);
-        mt.setNodes((RawFr::Element *)(&treeAddressGL[starkInfo.nConstants * NExtended]));
+        mt.setNodes((RawFrP::Element *)(&treeAddressGL[starkInfo.nConstants * NExtended]));
         mt.merkelize();
     }
 
@@ -80,9 +80,9 @@ public:
 
         if (starkInfo.starkStruct.verificationHashType == "BN128") {
             MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, (Goldilocks::Element *)constTreePols, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants);
-            RawFr::Element root[1];
+            RawFrP::Element root[1];
             mt.getRoot(root);
-            if(RawFr::field.toString(root[0], 10) != verkeyJson) {
+            if(RawFrP::field.toString(root[0], 10) != verkeyJson) {
                 return false;
             }
         } else {

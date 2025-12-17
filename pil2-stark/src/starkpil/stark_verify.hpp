@@ -12,9 +12,9 @@ inline Goldilocks::Element fromString(const std::string& element) {
 }
 
 template<>
-inline RawFr::Element fromString(const std::string& element) {
-    RawFr::Element r;
-    RawFr::field.fromString(r, element, 10);
+inline RawFrP::Element fromString(const std::string& element) {
+    RawFrP::Element r;
+    RawFrP::field.fromString(r, element, 10);
     return r;
 }
 

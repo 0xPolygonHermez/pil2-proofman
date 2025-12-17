@@ -168,7 +168,7 @@ void Fec_fail() {
 }
 #endif
 
-RawFec::RawFec() {
+RawFecP::RawFecP() {
 #ifdef __USE_ASSEMBLY__
     Fec_init();
     set(fZero, 0);
@@ -177,10 +177,10 @@ RawFec::RawFec() {
 #endif
 }
 
-RawFec::~RawFec() {
+RawFecP::~RawFecP() {
 }
 
-void RawFec::fromString(Element &r, const std::string &s, uint32_t radix) {
+void RawFecP::fromString(Element &r, const std::string &s, uint32_t radix) {
     mpz_t mr;
     mpz_init_set_str(mr, s.c_str(), radix);
     mpz_fdiv_r(mr, mr, q);
@@ -190,7 +190,7 @@ void RawFec::fromString(Element &r, const std::string &s, uint32_t radix) {
     mpz_clear(mr);
 }
 
-void RawFec::fromUI(Element &r, unsigned long int v) {
+void RawFecP::fromUI(Element &r, unsigned long int v) {
     mpz_t mr;
     mpz_init(mr);
     mpz_set_ui(mr, v);
@@ -200,13 +200,13 @@ void RawFec::fromUI(Element &r, unsigned long int v) {
     mpz_clear(mr);
 }
 
-RawFec::Element RawFec::set(int value) {
+RawFecP::Element RawFecP::set(int value) {
   Element r;
   set(r, value);
   return r;
 }
 
-void RawFec::set(Element &r, int value) {
+void RawFecP::set(Element &r, int value) {
   mpz_t mr;
   mpz_init(mr);
   mpz_set_si(mr, value);
@@ -222,7 +222,7 @@ void RawFec::set(Element &r, int value) {
   mpz_clear(mr);
 }
 
-std::string RawFec::toString(const Element &a, uint32_t radix) {
+std::string RawFecP::toString(const Element &a, uint32_t radix) {
     Element tmp;
     mpz_t r;
     Fec_rawFromMontgomery(tmp.v, a.v);
@@ -235,7 +235,7 @@ std::string RawFec::toString(const Element &a, uint32_t radix) {
     return resS;
 }
 
-void RawFec::inv(Element &r, const Element &a) {
+void RawFecP::inv(Element &r, const Element &a) {
     mpz_t mr;
     mpz_init(mr);
     mpz_import(mr, Fec_N64, -1, 8, -1, 0, (const void *)(a.v));
@@ -249,14 +249,14 @@ void RawFec::inv(Element &r, const Element &a) {
     mpz_clear(mr);
 }
 
-void RawFec::div(Element &r, const Element &a, const Element &b) {
+void RawFecP::div(Element &r, const Element &a, const Element &b) {
     Element tmp;
     inv(tmp, b);
     mul(r, a, tmp);
 }
 
 #define BIT_IS_SET(s, p) (s[p>>3] & (1 << (p & 0x7)))
-void RawFec::exp(Element &r, const Element &base, uint8_t* scalar, unsigned int scalarSize) {
+void RawFecP::exp(Element &r, const Element &base, uint8_t* scalar, unsigned int scalarSize) {
     bool oneFound = false;
     Element copyBase;
     copy(copyBase, base);
@@ -277,19 +277,19 @@ void RawFec::exp(Element &r, const Element &base, uint8_t* scalar, unsigned int 
     }
 }
 
-void RawFec::toMpz(mpz_t r, const Element &a) {
+void RawFecP::toMpz(mpz_t r, const Element &a) {
     Element tmp;
     Fec_rawFromMontgomery(tmp.v, a.v);
     mpz_import(r, Fec_N64, -1, 8, -1, 0, (const void *)tmp.v);
 }
 
-void RawFec::fromMpz(Element &r, const mpz_t a) {
+void RawFecP::fromMpz(Element &r, const mpz_t a) {
     for (int i=0; i<Fec_N64; i++) r.v[i] = 0;
     mpz_export((void *)(r.v), NULL, -1, 8, -1, 0, a);
     Fec_rawToMontgomery(r.v, r.v);
 }
 
-int RawFec::toRprBE(const Element &element, uint8_t *data, int bytes)
+int RawFecP::toRprBE(const Element &element, uint8_t *data, int bytes)
 {
     if (bytes < Fec_N64 * 8) {
       return -(Fec_N64 * 8);
@@ -306,7 +306,7 @@ int RawFec::toRprBE(const Element &element, uint8_t *data, int bytes)
     return Fec_N64 * 8;
 }
 
-int RawFec::fromRprBE(Element &element, const uint8_t *data, int bytes)
+int RawFecP::fromRprBE(Element &element, const uint8_t *data, int bytes)
 {
     if (bytes < Fec_N64 * 8) {
       return -(Fec_N64* 8);
@@ -323,5 +323,5 @@ int RawFec::fromRprBE(Element &element, const uint8_t *data, int bytes)
 
 static bool init = Fec_init();
 
-RawFec RawFec::field;
+RawFecP RawFecP::field;
 
