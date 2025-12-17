@@ -46,11 +46,12 @@ __global__ void unpack(
     uint64_t* dst,
     uint64_t nRows,
     uint64_t nCols,
-    uint64_t words_per_row,
+    uint64_t* d_words_per_row,
     const uint64_t *d_unpack_info
 ) {
     extern __shared__ uint64_t shared_mem[];
     uint64_t* shared_unpack_info = shared_mem;
+    uint64_t words_per_row = *d_words_per_row;
 
     // Load unpack info
     for (uint64_t i = threadIdx.x; i < nCols; i += blockDim.x) {
@@ -93,7 +94,7 @@ __global__ void unpack(
 }
 
 void unpack_fixed(
-    uint64_t num_packed_words,
+    uint64_t* d_num_packed_words,
     uint64_t* d_unpack_info,
     uint64_t* src,
     uint64_t* dst,
@@ -112,7 +113,7 @@ void unpack_fixed(
         dst,
         nRows,
         nCols,
-        num_packed_words,
+        d_num_packed_words,
         d_unpack_info
     );
     TimerStopCategoryGPU(timer, UNPACK_FIXED);
@@ -138,7 +139,7 @@ void unpack_trace(
         dst,
         nRows,
         nCols,
-        air_instance_info->num_packed_words,
+        air_instance_info->d_num_packed_words,
         air_instance_info->unpack_info
     );
     TimerStopCategoryGPU(timer, UNPACK_TRACE);

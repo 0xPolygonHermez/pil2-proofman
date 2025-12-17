@@ -108,9 +108,8 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     Goldilocks::Element *packed_const_pols = (Goldilocks::Element *)d_const_pols;
     Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
     if(!reuse_constants) {
-        uint64_t num_packed_words = 0;
-        cudaMemcpyAsync(&num_packed_words, d_const_pols, sizeof(uint64_t), cudaMemcpyDeviceToHost, stream);
-        unpack_fixed(num_packed_words, (uint64_t*)(packed_const_pols + 1), (uint64_t*)(packed_const_pols + 1 + setupCtx.starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx.starkInfo.nConstants, N, stream, timer);
+        uint64_t* d_num_packed_words = (uint64_t*) d_const_pols;
+        unpack_fixed(d_num_packed_words, (uint64_t*)(packed_const_pols + 1), (uint64_t*)(packed_const_pols + 1 + setupCtx.starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx.starkInfo.nConstants, N, stream, timer);
         CHECKCUDAERR(cudaGetLastError());
     }
 

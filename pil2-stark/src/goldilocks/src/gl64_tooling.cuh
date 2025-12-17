@@ -64,6 +64,8 @@ struct AirInstanceInfo {
 
     uint64_t nStreams = 1;
 
+    uint64_t* d_num_packed_words;
+
     AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_, PackedInfo *packedInfo, uint64_t nStreams_): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId), nStreams(nStreams_) {
         int64_t *d_openingPoints;
         CHECKCUDAERR(cudaMalloc(&d_openingPoints, setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t)));
@@ -75,6 +77,9 @@ struct AirInstanceInfo {
         CHECKCUDAERR(cudaMalloc(&d_verkeyRoot, HASH_SIZE * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMemcpy(d_verkeyRoot, verkeyRoot_, HASH_SIZE * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
         verkeyRoot = d_verkeyRoot;
+
+        CHECKCUDAERR(cudaMalloc(&d_num_packed_words, sizeof(uint64_t)));
+
 
         uint64_t size_eval = setupCtx->starkInfo.evMap.size();
         uint64_t num_batches = (setupCtx->starkInfo.openingPoints.size() + 3) / 4;
@@ -195,6 +200,7 @@ struct AirInstanceInfo {
                 CHECKCUDAERR(cudaMalloc(&unpack_info, nCols * sizeof(uint64_t)));
                 CHECKCUDAERR(cudaMemcpy(unpack_info, packedInfo->unpack_info, nCols * sizeof(uint64_t), cudaMemcpyHostToDevice));
             }
+            cudaMemcpy(d_num_packed_words, &num_packed_words, sizeof(uint64_t), cudaMemcpyHostToDevice);
         }
     }
 
@@ -217,6 +223,7 @@ struct AirInstanceInfo {
 
         delete[] evalsInfoSizes;
         delete[] evalsInfo;
+        CHECKCUDAERR(cudaFree(d_num_packed_words));
 
         if (evalsInfoFRI != nullptr) {
             uint64_t nOpeningPoints = setupCtx->starkInfo.openingPoints.size();

@@ -86,7 +86,7 @@ __global__ void buildZHInv_kernel(gl64_t *d_zi, uint64_t extend, uint64_t NExten
 __global__ void moduleQueries(uint64_t* d_friQueries, uint64_t nQueries, uint64_t currentBits);
 
 void unpack_trace(AirInstanceInfo *air_instance_info, uint64_t* src, uint64_t* dst, uint64_t nCols, uint64_t nRows, cudaStream_t stream, TimerGPU &timer);
-void unpack_fixed(uint64_t num_packed_words,uint64_t* d_unpack_info,uint64_t* src,uint64_t* dst,uint64_t nCols,uint64_t nRows,cudaStream_t stream,TimerGPU &timer);
+void unpack_fixed(uint64_t* num_packed_words,uint64_t* d_unpack_info,uint64_t* src,uint64_t* dst,uint64_t nCols,uint64_t nRows,cudaStream_t stream,TimerGPU &timer);
 
 void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *d_openingPoints, gl64_t *d_aux_trace, uint64_t offset_helper, gl64_t* d_LEv, TimerGPU &timer, cudaStream_t stream);
 
