@@ -51,7 +51,7 @@ impl GenWitnessCmd {
         let gpu_params = ParamsGPU::new(false);
 
         let setups_vadcop: Arc<SetupsVadcop<Goldilocks>> =
-            Arc::new(SetupsVadcop::new(&pctx.global_info, false, true, false, &gpu_params));
+            Arc::new(SetupsVadcop::new(&pctx.global_info, false, true, false, &gpu_params, &[]));
         initialize_witness_circom(&pctx, &setups_vadcop, false)?;
 
         let mut zkin_file = File::open(&self.proof)?;

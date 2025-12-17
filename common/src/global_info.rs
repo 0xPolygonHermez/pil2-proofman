@@ -198,4 +198,8 @@ impl GlobalInfo {
     pub fn get_air_has_compressor(&self, airgroup_id: usize, air_id: usize) -> bool {
         self.airs[airgroup_id][air_id].has_compressor.unwrap_or(false)
     }
+
+    pub fn get_n_airs_for_airgroup(&self, airgroup_id: usize) -> usize {
+        self.airs[airgroup_id].len()
+    }
 }

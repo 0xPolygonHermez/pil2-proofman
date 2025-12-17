@@ -12,6 +12,29 @@ use crate::Setup;
 use crate::ProofType;
 use crate::ParamsGPU;
 
+pub struct PreLoadedConst {
+    pub airgroup_id: usize,
+    pub air_id: usize,
+    pub proof_type: ProofType,
+}
+
+impl PreLoadedConst {
+    pub fn new(airgroup_id: usize, air_id: usize, proof_type: ProofType) -> Self {
+        PreLoadedConst { airgroup_id, air_id, proof_type }
+    }
+}
+
+pub fn is_preload_fixed(
+    airgroup_id: usize,
+    air_id: usize,
+    proof_type: &ProofType,
+    preloaded_const: &[PreLoadedConst],
+) -> bool {
+    preloaded_const
+        .iter()
+        .any(|pc| pc.airgroup_id == airgroup_id && pc.air_id == air_id && pc.proof_type == *proof_type)
+}
+
 pub struct SetupsVadcop<F: PrimeField64> {
     pub sctx_compressor: Option<SetupCtx<F>>,
     pub sctx_recursive1: Option<SetupCtx<F>>,
@@ -40,14 +63,19 @@ impl<F: PrimeField64> SetupsVadcop<F> {
         aggregation: bool,
         final_snark: bool,
         gpu_params: &ParamsGPU,
+        preloaded_const: &[PreLoadedConst],
     ) -> Self {
         if aggregation {
-            let sctx_compressor = SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints, gpu_params);
-            let sctx_recursive1 = SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints, gpu_params);
-            let sctx_recursive2 = SetupCtx::new(global_info, &ProofType::Recursive2, verify_constraints, gpu_params);
+            let sctx_compressor =
+                SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints, gpu_params, preloaded_const);
+            let sctx_recursive1 =
+                SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints, gpu_params, preloaded_const);
+            let sctx_recursive2 =
+                SetupCtx::new(global_info, &ProofType::Recursive2, verify_constraints, gpu_params, preloaded_const);
+            let preallocate =
+                gpu_params.preallocate || is_preload_fixed(0, 0, &ProofType::VadcopFinal, preloaded_const);
             let setup_vadcop_final =
-                Setup::new(global_info, 0, 0, &ProofType::VadcopFinal, verify_constraints, gpu_params.preallocate);
-
+                Setup::new(global_info, 0, 0, &ProofType::VadcopFinal, verify_constraints, preallocate);
             let total_const_pols_size = sctx_compressor.total_const_pols_size
                 + sctx_recursive1.total_const_pols_size
                 + sctx_recursive2.total_const_pols_size
@@ -56,7 +84,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             let mut total_const_tree_size = sctx_compressor.total_const_tree_size
                 + sctx_recursive1.total_const_tree_size
                 + sctx_recursive2.total_const_tree_size;
-            if gpu_params.preallocate {
+            if preallocate {
                 total_const_tree_size += setup_vadcop_final.const_tree_size;
             }
 
@@ -85,8 +113,9 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive2.max_prover_buffer_size)
                 .max(setup_vadcop_final.prover_buffer_size as usize);
 
-            let max_prover_recursive2_buffer_size =
-                sctx_recursive2.max_prover_buffer_size + sctx_recursive2.max_prover_trace_size;
+            let max_prover_recursive2_buffer_size = (sctx_recursive2.max_prover_buffer_size
+                + sctx_recursive2.max_prover_trace_size)
+                .max(sctx_recursive1.max_prover_buffer_size + sctx_recursive1.max_prover_trace_size);
 
             let max_prover_recursive_buffer_size = (sctx_recursive2.max_prover_buffer_size
                 + sctx_recursive2.max_prover_trace_size)
@@ -198,6 +227,7 @@ impl<F: PrimeField64> SetupRepository<F> {
         setup_type: &ProofType,
         verify_constraints: bool,
         gpu_params: &ParamsGPU,
+        preloaded_const: &[PreLoadedConst],
     ) -> Self {
         let mut setups = HashMap::new();
 
@@ -226,14 +256,10 @@ impl<F: PrimeField64> SetupRepository<F> {
         if setup_type != &ProofType::VadcopFinal {
             for (airgroup_id, air_group) in global_info.airs.iter().enumerate() {
                 for (air_id, _) in air_group.iter().enumerate() {
-                    let setup = Setup::new(
-                        global_info,
-                        airgroup_id,
-                        air_id,
-                        setup_type,
-                        verify_constraints,
-                        gpu_params.preallocate,
-                    );
+                    let preallocate =
+                        gpu_params.preallocate || is_preload_fixed(airgroup_id, air_id, setup_type, preloaded_const);
+                    let setup =
+                        Setup::new(global_info, airgroup_id, air_id, setup_type, verify_constraints, preallocate);
                     if setup_type != &ProofType::Compressor || global_info.get_air_has_compressor(airgroup_id, air_id) {
                         let n = 1 << setup.stark_info.stark_struct.n_bits;
                         let n_bits_ext = setup.stark_info.stark_struct.n_bits_ext;
@@ -258,7 +284,7 @@ impl<F: PrimeField64> SetupRepository<F> {
 
                         if cfg!(feature = "gpu") {
                             total_const_pols_size += setup.const_pols_size_packed;
-                            if gpu_params.preallocate {
+                            if preallocate {
                                 total_const_tree_size += setup.const_tree_size;
                             }
                         }
@@ -272,8 +298,9 @@ impl<F: PrimeField64> SetupRepository<F> {
                 }
             }
         } else {
-            setups
-                .insert((0, 0), Setup::new(global_info, 0, 0, setup_type, verify_constraints, gpu_params.preallocate));
+            let preallocate =
+                gpu_params.preallocate || is_preload_fixed(0, 0, &ProofType::VadcopFinal, preloaded_const);
+            setups.insert((0, 0), Setup::new(global_info, 0, 0, setup_type, verify_constraints, preallocate));
         }
 
         Self {
@@ -313,8 +340,10 @@ impl<F: PrimeField64> SetupCtx<F> {
         setup_type: &ProofType,
         verify_constraints: bool,
         gpu_params: &ParamsGPU,
+        preloaded_const: &[PreLoadedConst],
     ) -> Self {
-        let setup_repository = SetupRepository::new(global_info, setup_type, verify_constraints, gpu_params);
+        let setup_repository =
+            SetupRepository::new(global_info, setup_type, verify_constraints, gpu_params, preloaded_const);
         let max_const_tree_size = setup_repository.max_const_tree_size;
         let max_const_size = setup_repository.max_const_size;
         let max_prover_buffer_size = setup_repository.max_prover_buffer_size;

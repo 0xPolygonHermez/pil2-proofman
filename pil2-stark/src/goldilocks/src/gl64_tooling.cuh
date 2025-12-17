@@ -61,12 +61,9 @@ struct AirInstanceInfo {
     bool is_packed = false;
     uint64_t num_packed_words = 0;
     uint64_t *unpack_info = nullptr;
-
-    uint64_t nStreams = 1;
-
     uint64_t* d_num_packed_words;
-
-    AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_, PackedInfo *packedInfo, uint64_t nStreams_): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId), nStreams(nStreams_) {
+    
+    AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_, PackedInfo *packedInfo): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId) {
         int64_t *d_openingPoints;
         CHECKCUDAERR(cudaMalloc(&d_openingPoints, setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t)));
         CHECKCUDAERR(cudaMemcpy(d_openingPoints, setupCtx->starkInfo.openingPoints.data(), setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t), cudaMemcpyHostToDevice));
@@ -288,15 +285,13 @@ struct StreamData{
     uint64_t arity;
         
     bool recursive;
-    bool extraStream;
-    uint64_t streamsUsed;
 
     std::mutex mutex_stream_selection;
     
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_, uint64_t merkleTreeArity){
         uint64_t maxExps = 20000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);
-        CHECKCUDAERR(cudaStreamCreate(&stream));
+        CHECKCUDAERR(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
         timer.init(stream);
         gpuId = gpuId_;
         localStreamId = localStreamId_;
@@ -309,8 +304,6 @@ struct StreamData{
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_args, maxExps * sizeof(ExpsArguments)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, sizeof(StepsParams)));
 
-        extraStream = false;
-        streamsUsed = 1;
         root = nullptr;
         pSetupCtx = nullptr;
         proofBuffer = nullptr;
@@ -344,9 +337,6 @@ struct StreamData{
         cudaEventDestroy(end_event);
         cudaEventCreate(&end_event);
         status = reset_status ? 0 : 3;
-
-        extraStream = false;
-        streamsUsed = 1;
 
         root = nullptr;
         pSetupCtx = nullptr;
@@ -383,6 +373,7 @@ struct DeviceCommitBuffers
     uint32_t n_streams;
     uint32_t n_recursive_streams;
     std::mutex *mutex_pinned;
+    std::mutex *mutex_pinned_extra;
     StreamData *streamsData;
 
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;
@@ -393,7 +384,8 @@ void copy_to_device_in_chunks(
     const void* src,
     void* dst,
     uint64_t total_size,
-    uint64_t streamId,
+    Goldilocks::Element *buffer_pinned,
+    cudaStream_t stream,
     TimerGPU &timer
     );
 
@@ -402,7 +394,9 @@ void load_and_copy_to_device_in_chunks(
     const char* bufferPath,
     void* dst,
     uint64_t total_size,
-    uint64_t streamId
+    Goldilocks::Element *buffer_pinned,
+    cudaStream_t stream
     );
+    
 #endif
 #endif

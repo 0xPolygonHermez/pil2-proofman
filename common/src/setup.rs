@@ -79,6 +79,7 @@ pub struct Setup<F: PrimeField64> {
     pub exec_data: RwLock<Option<Vec<u64>>>,
     pub n_cols: u64,
     pub n_operations_quotient: u64,
+    pub preallocate: bool,
 }
 
 impl<F: PrimeField64> Drop for Setup<F> {
@@ -306,6 +307,7 @@ impl<F: PrimeField64> Setup<F> {
             const_pols_tree_path,
             n_cols,
             n_operations_quotient,
+            preallocate,
         }
     }
 

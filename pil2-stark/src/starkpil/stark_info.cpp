@@ -435,15 +435,13 @@ void StarkInfo::setMapOffsets() {
         uint64_t constTreeSize = (NExtended * nConstants) + numNodes;
         mapTotalN += constTreeSize;
 
-        if (!recursive &&  (NExtended * nConstants * 8.0 / (1024 * 1024)) >= 256) {
+        if (!recursive && (NExtended * nConstants * 8.0 / (1024 * 1024)) >= 512) {
             calculateFixedExtended = true;
         }
-        
-        // NOTE: We could overwrite fixed but we would need to remove height and width from fixed file
-        mapOffsets[std::make_pair("const", false)] = mapTotalN;
-        mapTotalN += N * nConstants;
-        
     }
+
+    mapOffsets[std::make_pair("const", false)] = mapTotalN;
+    mapTotalN += N * nConstants;
 
     if(gpu && !recursive_final) {
         mapOffsets[std::make_pair("custom_fixed", false)] = mapTotalN;

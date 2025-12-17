@@ -5,7 +5,7 @@ use fields::{ExtensionField, Transcript, PrimeField64, GoldilocksQuinticExtensio
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
     DebugInfo, MemoryHandler, MpiCtx, PackedInfo, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx,
-    SetupsVadcop, VerboseMode, MAX_INSTANCES, format_bytes,
+    SetupsVadcop, VerboseMode, MAX_INSTANCES, format_bytes, PreLoadedConst,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -381,9 +381,10 @@ where
             aggregation,
             final_snark,
             &ParamsGPU::new(false),
+            &[],
         ));
 
-        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &ParamsGPU::new(false));
+        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &ParamsGPU::new(false), &[]);
 
         if cfg!(feature = "gpu") {
             let n_gpus = get_num_gpus_c();
@@ -1072,15 +1073,18 @@ where
                 let total_cores_4 = 4 * num_threads_4;
                 let total_cores_2 = 2 * num_threads_2;
 
-                if total_cores_8 >= total_cores_4 && total_cores_8 >= total_cores_2 && num_threads_8 > 0 {
-                    num_threads_8
-                } else if total_cores_4 >= total_cores_2 && num_threads_4 > 0 {
-                    num_threads_4
-                } else if num_threads_2 > 0 {
-                    num_threads_2
-                } else {
-                    1
-                }
+                let num_threads =
+                    if total_cores_8 >= total_cores_4 && total_cores_8 >= total_cores_2 && num_threads_8 > 0 {
+                        num_threads_8
+                    } else if total_cores_4 >= total_cores_2 && num_threads_4 > 0 {
+                        num_threads_4
+                    } else if num_threads_2 > 0 {
+                        num_threads_2
+                    } else {
+                        1
+                    };
+
+                num_threads.min(8)
             }
         };
         tracing::info!("Using {num_threads_per_witness} threads per witness computation");
@@ -1699,7 +1703,6 @@ where
                 &self.d_buffers,
                 Some(stream_id),
                 options.save_proofs,
-                self.gpu_params.preallocate,
             ) {
                 self.cancellation_info.write().unwrap().cancel(Some(e));
             }
@@ -1747,7 +1750,6 @@ where
             let compressor_rx = self.compressor_witness_rx.clone();
             let rec2_rx = self.rec2_witness_rx.clone();
             let rec1_rx = self.rec1_witness_rx.clone();
-            let preallocate = self.gpu_params.preallocate;
             let n_streams_non_recursive = self.n_streams_non_recursive;
             let memory_handler_clone = self.memory_handler.clone();
 
@@ -1779,7 +1781,6 @@ where
                                 &d_buffers_clone,
                                 None,
                                 options.save_proofs,
-                                preallocate,
                             ) {
                                 cancellation_info_clone.write().unwrap().cancel(Some(e));
                                 break;
@@ -3067,26 +3068,6 @@ where
                 total_const_area_aggregation += setups_vadcop.total_const_pols_size as u64;
                 total_const_area_aggregation += setups_vadcop.total_const_tree_size as u64;
             }
-
-            if !gpu_params.preallocate {
-                let basic = sctx.get_setup(0, 0)?;
-                total_const_area += basic.const_tree_size as u64;
-                if aggregation {
-                    if pctx.global_info.get_air_has_compressor(0, 0) {
-                        let compressor = setups_vadcop.get_setup(0, 0, &ProofType::Compressor)?;
-                        total_const_area_aggregation += compressor.const_tree_size as u64;
-                    }
-
-                    let recursive1 = setups_vadcop.get_setup(0, 0, &ProofType::Recursive1)?;
-                    total_const_area_aggregation += recursive1.const_tree_size as u64;
-
-                    let recursive2 = setups_vadcop.get_setup(0, 0, &ProofType::Recursive2)?;
-                    total_const_area_aggregation += recursive2.const_tree_size as u64;
-
-                    total_const_area_aggregation +=
-                        setups_vadcop.setup_vadcop_final.as_ref().unwrap().const_tree_size as u64;
-                }
-            }
         }
 
         let max_size_buffer = (free_memory_gpu / 8.0).floor() as u64 - total_const_area - total_const_area_aggregation;
@@ -3125,7 +3106,9 @@ where
         };
         let mut n_recursive_streams_per_gpu = 0;
         if aggregation {
-            while gpu_available_memory > 0 && n_recursive_streams_per_gpu < gpu_params.max_number_streams {
+            while gpu_available_memory > 0
+                && (n_streams_per_gpu + n_recursive_streams_per_gpu) < std::cmp::max(gpu_params.max_number_streams, 20)
+            {
                 gpu_available_memory -= max_prover_recursive2_buffer_size as i64;
                 if gpu_available_memory < 0 {
                     break;
@@ -3174,7 +3157,7 @@ where
             pctx.global_info.transcript_arity as u64,
         );
 
-        initialize_setup_info(pctx, sctx, setups_vadcop, &d_buffers, aggregation, packed_info, gpu_params)?;
+        initialize_setup_info(pctx, sctx, setups_vadcop, &d_buffers, aggregation, packed_info)?;
 
         Ok((d_buffers, n_streams_per_gpu as u64, n_recursive_streams_per_gpu as u64, n_gpus))
     }
@@ -3192,7 +3175,6 @@ where
         d_buffers: &DeviceBuffer,
         stream_id_: Option<usize>,
         save_proof: bool,
-        gpu_preallocate: bool,
     ) -> ProofmanResult<()> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         timer_start_debug!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -3208,9 +3190,6 @@ where
             steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
             steps_params.p_const_pols = const_pols.as_ptr() as *mut u8;
             steps_params.p_const_tree = const_tree.as_ptr() as *mut u8;
-        } else if !gpu_preallocate {
-            steps_params.p_const_pols = std::ptr::null_mut();
-            steps_params.p_const_tree = std::ptr::null_mut();
         }
 
         let p_steps_params: *mut u8 = (&steps_params).into();
@@ -3280,8 +3259,21 @@ where
         )?;
         timer_start_info!(INITIALIZING_PROOFMAN);
 
-        let sctx: Arc<SetupCtx<F>> =
-            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, verify_constraints, gpu_params));
+        let mut preloaded_const = Vec::new();
+        if cfg!(feature = "gpu") {
+            preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::Basic));
+            preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::Recursive1));
+            preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::Recursive2));
+            preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::VadcopFinal));
+        }
+
+        let sctx: Arc<SetupCtx<F>> = Arc::new(SetupCtx::new(
+            &pctx.global_info,
+            &ProofType::Basic,
+            verify_constraints,
+            gpu_params,
+            &preloaded_const,
+        ));
         pctx.set_weights(&sctx)?;
         pctx.initialize_custom_commits(&sctx)?;
 
@@ -3291,8 +3283,14 @@ where
             check_tree_paths(&pctx, &sctx)?;
         }
 
-        let setups_vadcop =
-            Arc::new(SetupsVadcop::new(&pctx.global_info, verify_constraints, aggregation, final_snark, gpu_params));
+        let setups_vadcop = Arc::new(SetupsVadcop::new(
+            &pctx.global_info,
+            verify_constraints,
+            aggregation,
+            final_snark,
+            gpu_params,
+            &preloaded_const,
+        ));
 
         if aggregation {
             check_tree_paths_vadcop(&pctx, &setups_vadcop, final_snark)?;
