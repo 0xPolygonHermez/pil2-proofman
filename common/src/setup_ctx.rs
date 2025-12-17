@@ -45,15 +45,8 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             let sctx_compressor = SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints, gpu_params);
             let sctx_recursive1 = SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints, gpu_params);
             let sctx_recursive2 = SetupCtx::new(global_info, &ProofType::Recursive2, verify_constraints, gpu_params);
-            let setup_vadcop_final = Setup::new(
-                global_info,
-                0,
-                0,
-                &ProofType::VadcopFinal,
-                verify_constraints,
-                gpu_params.preallocate,
-                false,
-            );
+            let setup_vadcop_final =
+                Setup::new(global_info, 0, 0, &ProofType::VadcopFinal, verify_constraints, gpu_params.preallocate);
 
             let total_const_pols_size = sctx_compressor.total_const_pols_size
                 + sctx_recursive1.total_const_pols_size
@@ -116,7 +109,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             let mut setup_recursivef = None;
             if final_snark {
                 let setup_recursive_final =
-                    Setup::new(global_info, 0, 0, &ProofType::RecursiveF, verify_constraints, false, false);
+                    Setup::new(global_info, 0, 0, &ProofType::RecursiveF, verify_constraints, false);
                 max_const_tree_size = max_const_tree_size.max(setup_recursive_final.const_tree_size);
                 max_const_size = max_const_size.max(setup_recursive_final.const_pols_size);
                 max_prover_buffer_size = max_prover_buffer_size.max(setup_recursive_final.prover_buffer_size as usize);
@@ -181,7 +174,6 @@ pub struct SetupRepository<F: PrimeField64> {
     max_prover_buffer_size: usize,
     max_prover_trace_size: usize,
     max_pinned_proof_size: usize,
-    max_single_buffer_size: usize,
     total_const_pols_size: usize,
     total_const_tree_size: usize,
     global_bin: Option<*mut c_void>,
@@ -229,16 +221,11 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut max_pinned_proof_size = 0;
         let mut total_const_pols_size = 0;
         let mut total_const_tree_size = 0;
-        let mut max_single_buffer_size = 0;
 
         // Initialize Hashmap for each airgroup_id, air_id
         if setup_type != &ProofType::VadcopFinal {
             for (airgroup_id, air_group) in global_info.airs.iter().enumerate() {
                 for (air_id, _) in air_group.iter().enumerate() {
-                    let single_instance = cfg!(feature = "gpu")
-                        && gpu_params.max_number_streams > 1
-                        && gpu_params.single_instances.contains(&(airgroup_id, air_id))
-                        && setup_type == &ProofType::Basic;
                     let setup = Setup::new(
                         global_info,
                         airgroup_id,
@@ -246,7 +233,6 @@ impl<F: PrimeField64> SetupRepository<F> {
                         setup_type,
                         verify_constraints,
                         gpu_params.preallocate,
-                        single_instance,
                     );
                     if setup_type != &ProofType::Compressor || global_info.get_air_has_compressor(airgroup_id, air_id) {
                         let n = 1 << setup.stark_info.stark_struct.n_bits;
@@ -259,20 +245,16 @@ impl<F: PrimeField64> SetupRepository<F> {
                             setup.stark_info.airgroupvalues_map.as_ref().map_or(0, |v| 3 * v.len());
                         total_prover_trace_size += global_info.proof_values_map.as_ref().map_or(0, |v| 3 * v.len());
                         total_prover_trace_size += 3;
-                        if !single_instance {
-                            if max_const_tree_size < setup.const_tree_size {
-                                max_const_tree_size = setup.const_tree_size;
-                            }
-                            if max_const_size < setup.const_pols_size {
-                                max_const_size = setup.const_pols_size;
-                            }
-                            if max_prover_buffer_size < setup.prover_buffer_size {
-                                max_prover_buffer_size = setup.prover_buffer_size;
-                            }
-                            max_prover_trace_size = max_prover_trace_size.max(total_prover_trace_size);
-                        } else if max_single_buffer_size < setup.prover_buffer_size {
-                            max_single_buffer_size = setup.prover_buffer_size;
+                        if max_const_tree_size < setup.const_tree_size {
+                            max_const_tree_size = setup.const_tree_size;
                         }
+                        if max_const_size < setup.const_pols_size {
+                            max_const_size = setup.const_pols_size;
+                        }
+                        if max_prover_buffer_size < setup.prover_buffer_size {
+                            max_prover_buffer_size = setup.prover_buffer_size;
+                        }
+                        max_prover_trace_size = max_prover_trace_size.max(total_prover_trace_size);
 
                         if cfg!(feature = "gpu") {
                             total_const_pols_size += setup.const_pols_size_packed;
@@ -290,10 +272,8 @@ impl<F: PrimeField64> SetupRepository<F> {
                 }
             }
         } else {
-            setups.insert(
-                (0, 0),
-                Setup::new(global_info, 0, 0, setup_type, verify_constraints, gpu_params.preallocate, false),
-            );
+            setups
+                .insert((0, 0), Setup::new(global_info, 0, 0, setup_type, verify_constraints, gpu_params.preallocate));
         }
 
         Self {
@@ -304,7 +284,6 @@ impl<F: PrimeField64> SetupRepository<F> {
             max_const_size,
             max_prover_buffer_size: max_prover_buffer_size as usize,
             max_prover_trace_size,
-            max_single_buffer_size: max_single_buffer_size as usize,
             max_pinned_proof_size: max_pinned_proof_size as usize,
             total_const_pols_size,
             total_const_tree_size,
@@ -323,7 +302,6 @@ pub struct SetupCtx<F: PrimeField64> {
     pub max_prover_trace_size: usize,
     pub max_pinned_proof_size: usize,
     pub max_n_bits_ext: usize,
-    pub max_single_buffer_size: usize,
     pub total_const_pols_size: usize,
     pub total_const_tree_size: usize,
     setup_type: ProofType,
@@ -342,7 +320,6 @@ impl<F: PrimeField64> SetupCtx<F> {
         let max_prover_buffer_size = setup_repository.max_prover_buffer_size;
         let max_prover_trace_size = setup_repository.max_prover_trace_size;
         let max_pinned_proof_size = setup_repository.max_pinned_proof_size;
-        let max_single_buffer_size = setup_repository.max_single_buffer_size;
         let total_const_pols_size = setup_repository.total_const_pols_size;
         let total_const_tree_size = setup_repository.total_const_tree_size;
         let max_n_bits_ext = setup_repository.max_n_bits_ext;
@@ -354,7 +331,6 @@ impl<F: PrimeField64> SetupCtx<F> {
             max_prover_trace_size,
             max_pinned_proof_size,
             max_n_bits_ext,
-            max_single_buffer_size,
             total_const_pols_size,
             total_const_tree_size,
             setup_type: setup_type.clone(),

@@ -2,7 +2,7 @@ use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
 use proofman_common::{CurveType, ProofCtx};
 use fields::{poseidon2_hash, Transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64, Poseidon16};
 use std::ops::Add;
-use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug};
+use proofman_util::{timer_start_debug, timer_stop_and_log_debug};
 use std::sync::Mutex;
 
 use crate::ContributionsInfo;
@@ -86,8 +86,6 @@ where
     F: PrimeField64,
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
-    timer_start_info!(CALCULATE_GLOBAL_CHALLENGE);
-
     let mut transcript: Transcript<F, Poseidon16, 16> = Transcript::new();
 
     transcript.put(&pctx.get_publics());
@@ -110,8 +108,6 @@ where
 
     tracing::info!("··· Global challenge: [{}, {}, {}]", global_challenge[0], global_challenge[1], global_challenge[2]);
     pctx.set_global_challenge(2, &mut global_challenge);
-
-    timer_stop_and_log_info!(CALCULATE_GLOBAL_CHALLENGE);
 }
 
 pub fn add_contributions<F>(pctx: &ProofCtx<F>, values: &[Vec<F>]) -> Vec<F>

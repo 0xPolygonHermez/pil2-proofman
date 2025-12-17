@@ -67,7 +67,7 @@ extern "C" void Fec_rawFromMontgomery(FecRawElement pRawResult, const FecRawElem
 extern "C" int Fec_rawIsEq(const FecRawElement pRawA, const FecRawElement pRawB);
 extern "C" int Fec_rawIsZero(const FecRawElement pRawB);
 
-extern "C" void Fec_fail();
+extern "C" void FecP_fail();
 
 #else
 
@@ -238,7 +238,7 @@ inline int Fec_rawIsZero(const FecRawElement pRawB) {
    assert(false);
     return 0; // Placeholder return value
 }
-inline void Fec_fail() {
+inline void FecP_fail() {
    assert(false);
 }
 #endif
@@ -249,13 +249,13 @@ inline void Fec_fail() {
 
 // Pending functions to convert
 
-void Fec_str2element(PFecElement pE, char const*s);
-char *Fec_element2str(PFecElement pE);
-void Fec_idiv(PFecElement r, PFecElement a, PFecElement b);
-void Fec_mod(PFecElement r, PFecElement a, PFecElement b);
-void Fec_inv(PFecElement r, PFecElement a);
-void Fec_div(PFecElement r, PFecElement a, PFecElement b);
-void Fec_pow(PFecElement r, PFecElement a, PFecElement b);
+void FecP_str2element(PFecElement pE, char const*s);
+char *FecP_element2str(PFecElement pE);
+void FecP_idiv(PFecElement r, PFecElement a, PFecElement b);
+void FecP_mod(PFecElement r, PFecElement a, PFecElement b);
+void FecP_inv(PFecElement r, PFecElement a);
+void FecP_div(PFecElement r, PFecElement a, PFecElement b);
+void FecP_pow(PFecElement r, PFecElement a, PFecElement b);
 
 class RawFecP {
 

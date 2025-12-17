@@ -1718,9 +1718,7 @@ where
         }
 
         my_instances_sorted.sort_by_key(|&id| {
-            let setup = self.sctx.get_setup(instances[id].airgroup_id, instances[id].air_id).unwrap();
             (
-                if setup.single_instance { 1 } else { 0 },
                 if self.pctx.is_air_instance_stored(id) { 0 } else { 1 },
                 if self.pctx.global_info.get_air_has_compressor(instances[id].airgroup_id, instances[id].air_id) {
                     0
@@ -3105,14 +3103,6 @@ where
             }
             false => 1,
         };
-
-        if sctx.max_single_buffer_size > n_streams_per_gpu * max_prover_buffer_size {
-            return Err(ProofmanError::InvalidConfiguration(format!(
-                "Not enough GPU memory to run the proof. At least: {} are required but only {} is available.",
-                sctx.max_single_buffer_size / max_prover_buffer_size,
-                n_streams_per_gpu
-            )));
-        }
 
         let max_prover_buffer_size =
             sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_recursive_buffer_size) as u64;

@@ -220,7 +220,9 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, stream);
 
     if (setupCtx.starkInfo.calculateFixedExtended && !reuse_constants) {
+        TimerStartGPU(timer, FIXED_POLS_TREE);
         extendAndMerkelizeFixed(setupCtx, h_params.pConstPolsAddress, pConstPolsExtendedTreeAddress, timer, stream);
+        TimerStopGPU(timer, FIXED_POLS_TREE);
     }
 
     TimerStartGPU(timer, STARK_QUOTIENT_POLYNOMIAL);

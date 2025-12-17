@@ -45,7 +45,7 @@
         global Fq_rawq
         global Fq_rawR3
 
-        extern Fq_fail
+        extern FqP_fail
         DEFAULT REL
 
         section .text
@@ -349,7 +349,7 @@ Fq_longNeg:
 Fq_longErr:
         push    rdi
         mov     rdi, 0
-        call    Fq_fail
+        call    FqP_fail
         pop     rdi
         mov rsp, rbp
         pop rdx

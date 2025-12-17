@@ -14,7 +14,7 @@ static size_t nBits;
 static bool initialized = false;
 
 
-void Fec_toMpz(mpz_t r, PFecElement pE) {
+void FecP_toMpz(mpz_t r, PFecElement pE) {
     FecElement tmp;
     Fec_toNormal(&tmp, pE);
     if (!(tmp.type & Fec_LONG)) {
@@ -27,7 +27,7 @@ void Fec_toMpz(mpz_t r, PFecElement pE) {
     }
 }
 
-void Fec_fromMpz(PFecElement pE, mpz_t v) {
+void FecP_fromMpz(PFecElement pE, mpz_t v) {
     if (mpz_fits_sint_p(v)) {
         pE->type = Fec_SHORT;
         pE->shortVal = mpz_get_si(v);
@@ -39,7 +39,7 @@ void Fec_fromMpz(PFecElement pE, mpz_t v) {
 }
 
 
-bool Fec_init() {
+bool FecP_init() {
     if (initialized) return false;
     initialized = true;
     mpz_init(q);
@@ -53,15 +53,15 @@ bool Fec_init() {
     return true;
 }
 
-void Fec_str2element(PFecElement pE, char const *s) {
+void FecP_str2element(PFecElement pE, char const *s) {
     mpz_t mr;
     mpz_init_set_str(mr, s, 10);
     mpz_fdiv_r(mr, mr, q);
-    Fec_fromMpz(pE, mr);
+    FecP_fromMpz(pE, mr);
     mpz_clear(mr);
 }
 
-char *Fec_element2str(PFecElement pE) {
+char *FecP_element2str(PFecElement pE) {
     FecElement tmp;
     mpz_t r;
     if (!(pE->type & Fec_LONG)) {
@@ -83,7 +83,7 @@ char *Fec_element2str(PFecElement pE) {
     return res;
 }
 
-void Fec_idiv(PFecElement r, PFecElement a, PFecElement b) {
+void FecP_idiv(PFecElement r, PFecElement a, PFecElement b) {
     mpz_t ma;
     mpz_t mb;
     mpz_t mr;
@@ -91,23 +91,23 @@ void Fec_idiv(PFecElement r, PFecElement a, PFecElement b) {
     mpz_init(mb);
     mpz_init(mr);
 
-    Fec_toMpz(ma, a);
+    FecP_toMpz(ma, a);
     // char *s1 = mpz_get_str (0, 10, ma);
     // printf("s1 %s\n", s1);
-    Fec_toMpz(mb, b);
+    FecP_toMpz(mb, b);
     // char *s2 = mpz_get_str (0, 10, mb);
     // printf("s2 %s\n", s2);
     mpz_fdiv_q(mr, ma, mb);
     // char *sr = mpz_get_str (0, 10, mr);
     // printf("r %s\n", sr);
-    Fec_fromMpz(r, mr);
+    FecP_fromMpz(r, mr);
 
     mpz_clear(ma);
     mpz_clear(mb);
     mpz_clear(mr);
 }
 
-void Fec_mod(PFecElement r, PFecElement a, PFecElement b) {
+void FecP_mod(PFecElement r, PFecElement a, PFecElement b) {
     mpz_t ma;
     mpz_t mb;
     mpz_t mr;
@@ -115,17 +115,17 @@ void Fec_mod(PFecElement r, PFecElement a, PFecElement b) {
     mpz_init(mb);
     mpz_init(mr);
 
-    Fec_toMpz(ma, a);
-    Fec_toMpz(mb, b);
+    FecP_toMpz(ma, a);
+    FecP_toMpz(mb, b);
     mpz_fdiv_r(mr, ma, mb);
-    Fec_fromMpz(r, mr);
+    FecP_fromMpz(r, mr);
 
     mpz_clear(ma);
     mpz_clear(mb);
     mpz_clear(mr);
 }
 
-void Fec_pow(PFecElement r, PFecElement a, PFecElement b) {
+void FecP_pow(PFecElement r, PFecElement a, PFecElement b) {
     mpz_t ma;
     mpz_t mb;
     mpz_t mr;
@@ -133,44 +133,44 @@ void Fec_pow(PFecElement r, PFecElement a, PFecElement b) {
     mpz_init(mb);
     mpz_init(mr);
 
-    Fec_toMpz(ma, a);
-    Fec_toMpz(mb, b);
+    FecP_toMpz(ma, a);
+    FecP_toMpz(mb, b);
     mpz_powm(mr, ma, mb, q);
-    Fec_fromMpz(r, mr);
+    FecP_fromMpz(r, mr);
 
     mpz_clear(ma);
     mpz_clear(mb);
     mpz_clear(mr);
 }
 
-void Fec_inv(PFecElement r, PFecElement a) {
+void FecP_inv(PFecElement r, PFecElement a) {
     mpz_t ma;
     mpz_t mr;
     mpz_init(ma);
     mpz_init(mr);
 
-    Fec_toMpz(ma, a);
+    FecP_toMpz(ma, a);
     mpz_invert(mr, ma, q);
-    Fec_fromMpz(r, mr);
+    FecP_fromMpz(r, mr);
     mpz_clear(ma);
     mpz_clear(mr);
 }
 
-void Fec_div(PFecElement r, PFecElement a, PFecElement b) {
+void FecP_div(PFecElement r, PFecElement a, PFecElement b) {
     FecElement tmp;
-    Fec_inv(&tmp, b);
+    FecP_inv(&tmp, b);
     Fec_mul(r, a, &tmp);
 }
 
 #ifdef __USE_ASSEMBLY__
-void Fec_fail() {
+void FecP_fail() {
     assert(false);
 }
 #endif
 
 RawFecP::RawFecP() {
 #ifdef __USE_ASSEMBLY__
-    Fec_init();
+    FecP_init();
     set(fZero, 0);
     set(fOne, 1);
     neg(fNegOne, fOne);
@@ -321,7 +321,7 @@ int RawFecP::fromRprBE(Element &element, const uint8_t *data, int bytes)
     return Fec_N64 * 8;
 }
 
-static bool init = Fec_init();
+static bool init = FecP_init();
 
 RawFecP RawFecP::field;
 
