@@ -25,7 +25,7 @@ pub struct StepStruct {
 pub struct SecurityInfo {
     #[serde(default, rename = "proximityParameter")]
     pub proximity_parameter: f64,
-    #[serde(rename = "proximityGap")]
+    #[serde(default, rename = "proximityGap")]
     pub proximity_gap: f64,
     pub regime: String,
 }

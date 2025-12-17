@@ -28,7 +28,7 @@ void TranscriptGL::_updateState()
             Poseidon2Goldilocks<16>::hash_full_result_seq(out, inputs);
             break;
         default:
-            zklog.error("MerkleTreeGL::calculateRootFromProof: Unsupported arity");
+            zklog.error("TranscriptGL::_updateState: Unsupported arity");
             exitProcess();
             exit(-1);
     }

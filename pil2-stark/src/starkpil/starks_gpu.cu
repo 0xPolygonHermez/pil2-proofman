@@ -750,7 +750,7 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &h_params, uint64_t st
             Poseidon2GoldilocksGPU<16>::merkletreeCoalesced(4,(uint64_t*) treeFRI->nodes, (uint64_t *)treeFRI->source, treeFRI->width, treeFRI->height, stream);
             break;
         default:
-            zklog.error("MerkleTreeGL::calculateRootFromProof: Unsupported arity");
+            zklog.error("merkelizeFRI_inplace: Unsupported arity");
             exitProcess();
             exit(-1);
     }

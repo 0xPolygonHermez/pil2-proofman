@@ -339,11 +339,11 @@ bool MerkleTreeBN128::verifyGroupProof(RawFrP::Element* root, RawFrP::Element* l
     calculateRootFromProof(&value[0], mp, queryIdx, 0);
 
     if (last_level_verification == 0) {
-        if (RawFrP::field.eq(root[0], value[0])) {
+        if (!RawFrP::field.eq(root[0], value[0])) {
             return false;
         }
     } else {
-        if (RawFrP::field.eq(level[queryIdx], value[0])) {
+        if (!RawFrP::field.eq(level[queryIdx], value[0])) {
             return false;
         }
     }
