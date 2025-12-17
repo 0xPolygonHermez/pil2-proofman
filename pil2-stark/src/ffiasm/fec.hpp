@@ -71,10 +71,10 @@ extern "C" void Fec_fail();
 
 #else
 
-FecElement Fec_q;
-FecElement Fec_R3;
-FecRawElement Fec_rawq;
-FecRawElement Fec_rawR3;
+extern FecElement Fec_q;
+extern FecElement Fec_R3;
+extern FecRawElement Fec_rawq;
+extern FecRawElement Fec_rawR3;
 
 inline void Fec_copy(PFecElement r, PFecElement a){
     std::cerr << "Fec_copy() not implemented in C++ code." << std::endl;
