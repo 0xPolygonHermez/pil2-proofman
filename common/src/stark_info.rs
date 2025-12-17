@@ -23,8 +23,10 @@ pub struct StepStruct {
 #[allow(dead_code)]
 #[derive(Default, Deserialize, Debug, Clone)]
 pub struct SecurityInfo {
-    #[serde(rename = "proximityParameter")]
+    #[serde(default, rename = "proximityParameter")]
     pub proximity_parameter: f64,
+    #[serde(rename = "proximityGap")]
+    pub proximity_gap: f64,
     pub regime: String,
 }
 
