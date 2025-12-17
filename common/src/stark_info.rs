@@ -214,6 +214,9 @@ pub struct StarkInfo {
     #[serde(default, rename = "mapTotalN")]
     pub map_total_n: u64,
 
+    #[serde(default, rename = "nConstraints")]
+    pub n_constraints: u64,
+    
     pub security: SecurityInfo,
 }
 

@@ -143,7 +143,7 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
             trace_length: 1 << setup.stark_info.stark_struct.n_bits,
             rho: 1.0 / (1 << (setup.stark_info.stark_struct.n_bits_ext - setup.stark_info.stark_struct.n_bits)) as f64,
             air_max_degree: setup.stark_info.q_deg + 1,
-            num_columns: setup.stark_info.n_constants + setup.stark_info.cm_pols_map.as_ref().unwrap().len() as u64,
+            num_columns: setup.stark_info.n_constraints as u64,
             opening_points: setup.stark_info.opening_points.len() as u64,
             batch_size: setup.stark_info.ev_map.len() as u64,
             power_batching: true,
