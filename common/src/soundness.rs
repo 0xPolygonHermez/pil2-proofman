@@ -29,7 +29,7 @@ pub struct AirTableRow {
     pub fri_folding_factors: String,
     pub fri_early_stop_degree: u64,
     pub grinding_query_phase: u64,
-    pub prover_size: String,
+    pub gap_to_radius: f64,
 }
 
 #[derive(Serialize)]
@@ -68,7 +68,7 @@ pub struct AirInfo {
     pub fri_folding_factors: Vec<u64>,
     pub fri_early_stop_degree: u64,
     pub grinding_query_phase: u64,
-    pub prover_size: String,
+    pub gap_to_radius: f64,
 }
 
 impl AirTableRow {
@@ -86,7 +86,7 @@ impl AirTableRow {
             fri_folding_factors: format!("{:?}", air.fri_folding_factors),
             fri_early_stop_degree: air.fri_early_stop_degree,
             grinding_query_phase: air.grinding_query_phase,
-            prover_size: air.prover_size.clone(),
+            gap_to_radius: air.gap_to_radius,
         }
     }
 }
@@ -156,10 +156,8 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
                 .map(|pair| 1 << (pair[0].n_bits - pair[1].n_bits))
                 .collect(),
             fri_early_stop_degree: 1 << setup.stark_info.stark_struct.steps.last().unwrap().n_bits,
-            grinding_query_phase: 0,
-            prover_size: crate::format_bytes(
-                (setup.prover_buffer_size as f64 + setup.const_tree_size as f64 + setup.const_pols_size as f64) * 8.0,
-            ),
+            grinding_query_phase: setup.stark_info.stark_struct.pow_bits,
+            gap_to_radius: setup.stark_info.security.proximity_gap,
         },
     )
 }
@@ -181,9 +179,9 @@ pub fn soundness_info<F: PrimeField64>(
     let pctx = ProofCtx::<F>::create_ctx(proving_key_path, HashMap::new(), aggregation, false, verbose_mode, mpi_ctx)?;
 
     let setups_aggregation =
-        Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, false, &ParamsGPU::new(false)));
+        Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, false, &ParamsGPU::new(false), &[]));
 
-    let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &ParamsGPU::new(false));
+    let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &ParamsGPU::new(false), &[]);
 
     let mut circuits = Vec::new();
 

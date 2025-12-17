@@ -2,11 +2,10 @@ use std::sync::{Arc, RwLock};
 use std::env;
 
 use std::ffi::{c_void, c_char};
-use proofman_common::{AirInstance, BufferPool, ProofCtx, SetupCtx, TraceInfo};
+use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanResult, SetupCtx, TraceInfo};
 use witness::WitnessComponent;
 use fields::PrimeField64;
 use proofman_starks_lib_c::{read_exec_file_c, get_committed_pols_c};
-use proofman_common::ProofmanResult;
 
 use std::fs::File;
 use std::io::Read;
@@ -15,9 +14,9 @@ use std::ffi::CString;
 use bytemuck::cast_slice;
 use libloading::{Library, Symbol};
 
-pub struct RecursiveC12 {}
+pub struct Compressor {}
 
-impl RecursiveC12 {
+impl Compressor {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {})
     }
@@ -30,7 +29,7 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
 type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
-impl<F: PrimeField64> WitnessComponent<F> for RecursiveC12 {
+impl<F: PrimeField64> WitnessComponent<F> for Compressor {
     fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &RwLock<Vec<usize>>) -> ProofmanResult<()> {
         pctx.add_instance(0, 0)?;
         global_ids.write().unwrap().push(0);
@@ -49,7 +48,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC12 {
         if stage == 1 {
             let setup = sctx.get_setup(0, 0)?;
             let current_dir =
-                env::current_dir().expect("Failed to get current directory").join("examples/test-recursive-c12");
+                env::current_dir().expect("Failed to get current directory").join("examples/test-recursive");
             let proof_path = current_dir.join("proof.bin");
 
             let mut file = File::open(proof_path).unwrap();
@@ -81,7 +80,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC12 {
             file.read_exact(&mut bytes).unwrap();
             let n_smap = u64::from_le_bytes(bytes);
 
-            let n_cols = 12;
+            let n_cols = setup.stark_info.map_sections_n["cm1"];
 
             let exec_data_size = 2 + n_adds * 4 + n_smap * n_cols;
             let mut exec_file_data: Vec<u64> = vec![0; exec_data_size as usize];

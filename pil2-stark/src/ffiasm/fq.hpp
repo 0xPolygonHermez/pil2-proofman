@@ -67,7 +67,7 @@ extern "C" void Fq_rawFromMontgomery(FqRawElement pRawResult, const FqRawElement
 extern "C" int Fq_rawIsEq(const FqRawElement pRawA, const FqRawElement pRawB);
 extern "C" int Fq_rawIsZero(const FqRawElement pRawB);
 
-extern "C" void Fq_fail();
+extern "C" void FqP_fail();
 #else
 static FqElement Fq_q;
 static FqElement Fq_R3;
@@ -234,7 +234,7 @@ inline int Fq_rawIsZero(const FqRawElement pRawB){
     assert(false);
     return 0; // Placeholder return value
 }
-inline void Fq_fail() {
+inline void FqP_fail() {
     assert(false);
 }
 #endif
@@ -242,15 +242,15 @@ inline void Fq_fail() {
 
 // Pending functions to convert
 
-void Fq_str2element(PFqElement pE, char const*s);
-char *Fq_element2str(PFqElement pE);
-void Fq_idiv(PFqElement r, PFqElement a, PFqElement b);
-void Fq_mod(PFqElement r, PFqElement a, PFqElement b);
-void Fq_inv(PFqElement r, PFqElement a);
-void Fq_div(PFqElement r, PFqElement a, PFqElement b);
-void Fq_pow(PFqElement r, PFqElement a, PFqElement b);
+void FqP_str2element(PFqElement pE, char const*s);
+char *FqP_element2str(PFqElement pE);
+void FqP_idiv(PFqElement r, PFqElement a, PFqElement b);
+void FqP_mod(PFqElement r, PFqElement a, PFqElement b);
+void FqP_inv(PFqElement r, PFqElement a);
+void FqP_div(PFqElement r, PFqElement a, PFqElement b);
+void FqP_pow(PFqElement r, PFqElement a, PFqElement b);
 
-class RawFq {
+class RawFqP {
 
 public:
     const static int N64 = Fq_N64;
@@ -268,8 +268,8 @@ private:
 
 public:
 
-    RawFq();
-    ~RawFq();
+    RawFqP();
+    ~RawFqP();
 
     const Element &zero() { return fZero; };
     const Element &one() { return fOne; };
@@ -323,7 +323,7 @@ public:
     
     void fromUI(Element &r, unsigned long int v);
 
-    static RawFq field;
+    static RawFqP field;
 
 };
 

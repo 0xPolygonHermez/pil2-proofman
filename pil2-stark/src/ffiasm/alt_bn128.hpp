@@ -8,28 +8,28 @@
 #include <string>
 namespace AltBn128 {
 
-    typedef RawFq::Element F1Element;
-    typedef F2Field<RawFq>::Element F2Element;
-    typedef RawFr::Element FrElement;
-    typedef Curve<RawFq>::Point G1Point;
-    typedef Curve<RawFq>::PointAffine G1PointAffine;
-    typedef Curve< F2Field<RawFq> >::Point G2Point;
-    typedef Curve< F2Field<RawFq> >::PointAffine G2PointAffine;
+    typedef RawFqP::Element F1Element;
+    typedef F2Field<RawFqP>::Element F2Element;
+    typedef RawFrP::Element FrElement;
+    typedef Curve<RawFqP>::Point G1Point;
+    typedef Curve<RawFqP>::PointAffine G1PointAffine;
+    typedef Curve< F2Field<RawFqP> >::Point G2Point;
+    typedef Curve< F2Field<RawFqP> >::PointAffine G2PointAffine;
 
-    extern RawFq F1;
-    extern F2Field<RawFq> F2;
-    extern RawFr Fr;
-    extern Curve<RawFq> G1;
-    extern Curve< F2Field<RawFq> > G2;
+    extern RawFqP F1;
+    extern F2Field<RawFqP> F2;
+    extern RawFrP Fr;
+    extern Curve<RawFqP> G1;
+    extern Curve< F2Field<RawFqP> > G2;
 
     class Engine {
     public:
 
-        typedef RawFq F1;
-        typedef F2Field<RawFq> F2;
-        typedef RawFr Fr;
-        typedef Curve<RawFq> G1;
-        typedef Curve< F2Field<RawFq> > G2;
+        typedef RawFqP F1;
+        typedef F2Field<RawFqP> F2;
+        typedef RawFrP Fr;
+        typedef Curve<RawFqP> G1;
+        typedef Curve< F2Field<RawFqP> > G2;
 
         F1 f1;
         F2 f2;

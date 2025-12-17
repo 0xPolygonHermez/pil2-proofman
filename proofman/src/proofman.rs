@@ -1,11 +1,11 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytemuck::cast_slice;
 use libloading::{Library, Symbol};
-use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
+use fields::{ExtensionField, Transcript, PrimeField64, GoldilocksQuinticExtension, Poseidon16};
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
     DebugInfo, MemoryHandler, MpiCtx, PackedInfo, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx,
-    SetupsVadcop, VerboseMode, MAX_INSTANCES, format_bytes,
+    SetupsVadcop, VerboseMode, MAX_INSTANCES, format_bytes, PreLoadedConst,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -15,9 +15,8 @@ use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c, reset_device_streams_c,
     get_instances_ready_c,
 };
-use proofman_verifier::verify_recursive2;
 use crate::add_publics_circom;
-use proofman_verifier::verify;
+use proofman_verifier::{verify_recursive2, verify};
 use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::fs;
@@ -46,8 +45,6 @@ use std::{
     path::{PathBuf, Path},
     sync::Arc,
 };
-
-use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
@@ -384,9 +381,10 @@ where
             aggregation,
             final_snark,
             &ParamsGPU::new(false),
+            &[],
         ));
 
-        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &ParamsGPU::new(false));
+        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &ParamsGPU::new(false), &[]);
 
         if cfg!(feature = "gpu") {
             let n_gpus = get_num_gpus_c();
@@ -729,14 +727,14 @@ where
 
         self.exec()?;
 
-        let transcript = FFITranscript::new(2, true);
+        let mut transcript: Transcript<F, Poseidon16, 16> = Transcript::new();
         let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
-        transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
+        transcript.put(&dummy_element);
 
-        let global_challenge = [F::ZERO; 3];
-        transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
-        self.pctx.set_global_challenge(2, &global_challenge);
-        transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
+        let mut global_challenge = [F::ZERO; 3];
+        transcript.get_field(&mut global_challenge);
+        self.pctx.set_global_challenge(2, &mut global_challenge);
+        transcript.put(&dummy_element);
 
         let instances = self.pctx.dctx_get_instances();
         let my_instances = self.pctx.dctx_get_process_instances();
@@ -1075,15 +1073,18 @@ where
                 let total_cores_4 = 4 * num_threads_4;
                 let total_cores_2 = 2 * num_threads_2;
 
-                if total_cores_8 >= total_cores_4 && total_cores_8 >= total_cores_2 && num_threads_8 > 0 {
-                    num_threads_8
-                } else if total_cores_4 >= total_cores_2 && num_threads_4 > 0 {
-                    num_threads_4
-                } else if num_threads_2 > 0 {
-                    num_threads_2
-                } else {
-                    1
-                }
+                let num_threads =
+                    if total_cores_8 >= total_cores_4 && total_cores_8 >= total_cores_2 && num_threads_8 > 0 {
+                        num_threads_8
+                    } else if total_cores_4 >= total_cores_2 && num_threads_4 > 0 {
+                        num_threads_4
+                    } else if num_threads_2 > 0 {
+                        num_threads_2
+                    } else {
+                        1
+                    };
+
+                num_threads.min(8)
             }
         };
         tracing::info!("Using {num_threads_per_witness} threads per witness computation");
@@ -1507,7 +1508,7 @@ where
 
         timer_start_info!(GENERATING_PROOFS);
 
-        timer_start_debug!(GENERATING_INNER_PROOFS);
+        timer_start_info!(GENERATING_INNER_PROOFS);
 
         self.pctx.dctx_reset_instances_calculated();
         self.memory_handler.empty_queue_to_be_released();
@@ -1702,7 +1703,6 @@ where
                 &self.d_buffers,
                 Some(stream_id),
                 options.save_proofs,
-                self.gpu_params.preallocate,
             ) {
                 self.cancellation_info.write().unwrap().cancel(Some(e));
             }
@@ -1721,9 +1721,7 @@ where
         }
 
         my_instances_sorted.sort_by_key(|&id| {
-            let setup = self.sctx.get_setup(instances[id].airgroup_id, instances[id].air_id).unwrap();
             (
-                if setup.single_instance { 1 } else { 0 },
                 if self.pctx.is_air_instance_stored(id) { 0 } else { 1 },
                 if self.pctx.global_info.get_air_has_compressor(instances[id].airgroup_id, instances[id].air_id) {
                     0
@@ -1752,7 +1750,6 @@ where
             let compressor_rx = self.compressor_witness_rx.clone();
             let rec2_rx = self.rec2_witness_rx.clone();
             let rec1_rx = self.rec1_witness_rx.clone();
-            let preallocate = self.gpu_params.preallocate;
             let n_streams_non_recursive = self.n_streams_non_recursive;
             let memory_handler_clone = self.memory_handler.clone();
 
@@ -1784,7 +1781,6 @@ where
                                 &d_buffers_clone,
                                 None,
                                 options.save_proofs,
-                                preallocate,
                             ) {
                                 cancellation_info_clone.write().unwrap().cancel(Some(e));
                                 break;
@@ -1989,7 +1985,7 @@ where
 
         self.check_cancel(true)?;
 
-        timer_stop_and_log_debug!(GENERATING_INNER_PROOFS);
+        timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
 
         let mut proof_id = None;
         let mut vadcop_final_proof = None;
@@ -2342,7 +2338,7 @@ where
                     &self.const_pols,
                     &self.const_tree,
                     self.d_buffers.get_ptr(),
-                    false,
+                    options.save_proofs,
                 )?;
 
                 return Ok(Some(vec![AggProofs::new(0, vadcop_proof_final.proof, vec![])]));
@@ -3072,34 +3068,15 @@ where
                 total_const_area_aggregation += setups_vadcop.total_const_pols_size as u64;
                 total_const_area_aggregation += setups_vadcop.total_const_tree_size as u64;
             }
-
-            if !gpu_params.preallocate {
-                let basic = sctx.get_setup(0, 0)?;
-                total_const_area += basic.const_tree_size as u64;
-                if aggregation {
-                    if pctx.global_info.get_air_has_compressor(0, 0) {
-                        let compressor = setups_vadcop.get_setup(0, 0, &ProofType::Compressor)?;
-                        total_const_area_aggregation += compressor.const_tree_size as u64;
-                    }
-
-                    let recursive1 = setups_vadcop.get_setup(0, 0, &ProofType::Recursive1)?;
-                    total_const_area_aggregation += recursive1.const_tree_size as u64;
-
-                    let recursive2 = setups_vadcop.get_setup(0, 0, &ProofType::Recursive2)?;
-                    total_const_area_aggregation += recursive2.const_tree_size as u64;
-
-                    total_const_area_aggregation +=
-                        setups_vadcop.setup_vadcop_final.as_ref().unwrap().const_tree_size as u64;
-                }
-            }
         }
 
         let max_size_buffer = (free_memory_gpu / 8.0).floor() as u64 - total_const_area - total_const_area_aggregation;
+        let max_prover_buffer_size = sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size);
 
         let n_streams_per_gpu = match cfg!(feature = "gpu") {
             true => {
                 let max_number_proofs_per_gpu =
-                    gpu_params.max_number_streams.min(max_size_buffer as usize / sctx.max_prover_buffer_size);
+                    gpu_params.max_number_streams.min(max_size_buffer as usize / max_prover_buffer_size);
                 if max_number_proofs_per_gpu < 1 {
                     return Err(ProofmanError::InvalidConfiguration("Not enough GPU memory to run the proof".into()));
                 }
@@ -3108,20 +3085,12 @@ where
             false => 1,
         };
 
-        if sctx.max_single_buffer_size > n_streams_per_gpu * sctx.max_prover_buffer_size {
-            return Err(ProofmanError::InvalidConfiguration(format!(
-                "Not enough GPU memory to run the proof. At least: {} are required but only {} is available.",
-                sctx.max_single_buffer_size / sctx.max_prover_buffer_size,
-                n_streams_per_gpu
-            )));
-        }
-
         let max_prover_buffer_size =
             sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_recursive_buffer_size) as u64;
 
         let max_prover_recursive2_buffer_size = setups_vadcop.max_prover_recursive2_buffer_size as u64;
 
-        tracing::info!("Max prover buffer size: {}", format_bytes(sctx.max_prover_buffer_size as f64 * 8.0));
+        tracing::info!("Max prover buffer size: {}", format_bytes(max_prover_buffer_size as f64 * 8.0));
         tracing::info!(
             "Max prover recursive buffer size: {}",
             format_bytes(setups_vadcop.max_prover_recursive_buffer_size as f64 * 8.0)
@@ -3132,12 +3101,14 @@ where
         );
 
         let mut gpu_available_memory = match cfg!(feature = "gpu") {
-            true => max_size_buffer as i64 - (n_streams_per_gpu * sctx.max_prover_buffer_size) as i64,
+            true => max_size_buffer as i64 - (n_streams_per_gpu * max_prover_buffer_size as usize) as i64,
             false => 0,
         };
         let mut n_recursive_streams_per_gpu = 0;
         if aggregation {
-            while gpu_available_memory > 0 && n_recursive_streams_per_gpu < gpu_params.max_number_streams {
+            while gpu_available_memory > 0
+                && (n_streams_per_gpu + n_recursive_streams_per_gpu) < std::cmp::max(gpu_params.max_number_streams, 20)
+            {
                 gpu_available_memory -= max_prover_recursive2_buffer_size as i64;
                 if gpu_available_memory < 0 {
                     break;
@@ -3169,6 +3140,7 @@ where
             max_sizes_ptr,
             mpi_ctx.node_rank as u32,
             mpi_ctx.node_n_processes as usize as u32,
+            pctx.global_info.transcript_arity as u32,
         )));
 
         let max_pinned_proof_size = match aggregation {
@@ -3182,9 +3154,10 @@ where
             max_prover_recursive2_buffer_size,
             max_pinned_proof_size,
             sctx.max_n_bits_ext as u64,
+            pctx.global_info.transcript_arity as u64,
         );
 
-        initialize_setup_info(pctx, sctx, setups_vadcop, &d_buffers, aggregation, packed_info, gpu_params)?;
+        initialize_setup_info(pctx, sctx, setups_vadcop, &d_buffers, aggregation, packed_info)?;
 
         Ok((d_buffers, n_streams_per_gpu as u64, n_recursive_streams_per_gpu as u64, n_gpus))
     }
@@ -3202,7 +3175,6 @@ where
         d_buffers: &DeviceBuffer,
         stream_id_: Option<usize>,
         save_proof: bool,
-        gpu_preallocate: bool,
     ) -> ProofmanResult<()> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         timer_start_debug!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -3218,9 +3190,6 @@ where
             steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
             steps_params.p_const_pols = const_pols.as_ptr() as *mut u8;
             steps_params.p_const_tree = const_tree.as_ptr() as *mut u8;
-        } else if !gpu_preallocate {
-            steps_params.p_const_pols = std::ptr::null_mut();
-            steps_params.p_const_tree = std::ptr::null_mut();
         }
 
         let p_steps_params: *mut u8 = (&steps_params).into();
@@ -3290,8 +3259,21 @@ where
         )?;
         timer_start_info!(INITIALIZING_PROOFMAN);
 
-        let sctx: Arc<SetupCtx<F>> =
-            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, verify_constraints, gpu_params));
+        let mut preloaded_const = Vec::new();
+        if cfg!(feature = "gpu") {
+            preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::Basic));
+            preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::Recursive1));
+            preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::Recursive2));
+            preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::VadcopFinal));
+        }
+
+        let sctx: Arc<SetupCtx<F>> = Arc::new(SetupCtx::new(
+            &pctx.global_info,
+            &ProofType::Basic,
+            verify_constraints,
+            gpu_params,
+            &preloaded_const,
+        ));
         pctx.set_weights(&sctx)?;
         pctx.initialize_custom_commits(&sctx)?;
 
@@ -3301,8 +3283,14 @@ where
             check_tree_paths(&pctx, &sctx)?;
         }
 
-        let setups_vadcop =
-            Arc::new(SetupsVadcop::new(&pctx.global_info, verify_constraints, aggregation, final_snark, gpu_params));
+        let setups_vadcop = Arc::new(SetupsVadcop::new(
+            &pctx.global_info,
+            verify_constraints,
+            aggregation,
+            final_snark,
+            gpu_params,
+            &preloaded_const,
+        ));
 
         if aggregation {
             check_tree_paths_vadcop(&pctx, &setups_vadcop, final_snark)?;
@@ -3497,7 +3485,7 @@ where
         let air_values = &pctx.get_air_instance_air_values(airgroup_id, air_id, air_instance_id)?;
 
         commit_witness_c(
-            3,
+            setup.stark_info.stark_struct.merkle_tree_arity,
             setup.stark_info.stark_struct.n_bits,
             setup.stark_info.stark_struct.n_bits_ext,
             *setup.stark_info.map_sections_n.get("cm1").unwrap(),

@@ -45,7 +45,6 @@ void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx
 
 void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, uint64_t *proofBuffer, std::string proofFile, bool recursive = false) {
     TimerStart(STARK_PROOF);
-
     NTT_Goldilocks ntt(1 << setupCtx.starkInfo.starkStruct.nBits);
     NTT_Goldilocks nttExtended(1 << setupCtx.starkInfo.starkStruct.nBitsExt);
 
@@ -57,15 +56,18 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     
     ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);
 
-    TranscriptGL transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
+    TranscriptGL transcript(setupCtx.starkInfo.starkStruct.transcriptArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 
     TimerStart(STARK_STEP_0);
     for (uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {
         if(setupCtx.starkInfo.customCommits[i].stageWidths[0] != 0) {
             uint64_t pos = setupCtx.starkInfo.nStages + 2 + i;
-            starks.treesGL[pos]->getRoot(&proof.proof.roots[pos - 1][0]);
+            starks.treesGL[pos]->getRoot(&proof.proof.roots[setupCtx.starkInfo.nStages + 1 + i][0]);
+            starks.treesGL[pos]->getLevel(&proof.proof.last_levels[setupCtx.starkInfo.nStages + 2 + i][0]);
         }
     }
+
+    starks.treesGL[setupCtx.starkInfo.nStages + 1]->getLevel(&proof.proof.last_levels[setupCtx.starkInfo.nStages + 1][0]);
 
     if(recursive) {
         Goldilocks::Element verkey[HASH_SIZE];
@@ -239,8 +241,12 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     uint64_t friQueries[setupCtx.starkInfo.starkStruct.nQueries];
 
-    TranscriptGL transcriptPermutation(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
+    uint64_t nonce;
+    Poseidon2GoldilocksGrinding::grinding(nonce, (uint64_t *)challenge, setupCtx.starkInfo.starkStruct.powBits);
+
+    TranscriptGL transcriptPermutation(setupCtx.starkInfo.starkStruct.transcriptArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
     starks.addTranscriptGL(transcriptPermutation, challenge, FIELD_EXTENSION);
+    starks.addTranscriptGL(transcriptPermutation, (Goldilocks::Element *)&nonce, 1);
     transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits);
 
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
@@ -259,6 +265,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     proof.proof.setEvals(params.evals);
     proof.proof.setAirgroupValues(params.airgroupValues);
     proof.proof.setAirValues(params.airValues);
+    proof.proof.setNonce(nonce);
 
     proof.proof.proof2pointer(proofBuffer);
 

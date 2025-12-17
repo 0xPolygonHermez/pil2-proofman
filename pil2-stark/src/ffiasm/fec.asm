@@ -45,7 +45,7 @@
         global Fec_rawq
         global Fec_rawR3
 
-        extern Fec_fail
+        extern FecP_fail
         DEFAULT REL
 
         section .text
@@ -349,7 +349,7 @@ Fec_longNeg:
 Fec_longErr:
         push    rdi
         mov     rdi, 0
-        call    Fec_fail
+        call    FecP_fail
         pop     rdi
         mov rsp, rbp
         pop rdx

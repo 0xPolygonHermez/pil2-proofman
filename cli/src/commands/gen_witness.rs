@@ -15,6 +15,7 @@ use bytemuck::cast_slice_mut;
 use std::sync::Arc;
 use std::error::Error;
 use std::str::FromStr;
+use proofman_util::{timer_start_info, timer_stop_and_log_info};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -50,7 +51,7 @@ impl GenWitnessCmd {
         let gpu_params = ParamsGPU::new(false);
 
         let setups_vadcop: Arc<SetupsVadcop<Goldilocks>> =
-            Arc::new(SetupsVadcop::new(&pctx.global_info, false, true, false, &gpu_params));
+            Arc::new(SetupsVadcop::new(&pctx.global_info, false, true, false, &gpu_params, &[]));
         initialize_witness_circom(&pctx, &setups_vadcop, false)?;
 
         let mut zkin_file = File::open(&self.proof)?;
@@ -88,6 +89,7 @@ impl GenWitnessCmd {
         // zkin[publics_circom_size + null_proof_size..publics_circom_size + 2*null_proof_size].fill(0);
         // zkin[publics_circom_size + 2*null_proof_size..].fill(0);
 
+        timer_start_info!(WITNESS_GENERATION);
         let res = unsafe {
             let library_guard = setup.circom_library.read().unwrap();
             let library =
@@ -95,6 +97,7 @@ impl GenWitnessCmd {
             let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
             get_witness(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_ptr() as *mut c_void, 1)
         };
+        timer_stop_and_log_info!(WITNESS_GENERATION);
 
         if res != 0 {
             Err(Box::new(ProofmanError::InvalidProof("Error generating witness".into())))

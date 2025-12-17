@@ -79,9 +79,12 @@ public:
     uint64_t nQueries;
     bool hashCommits;
     string verificationHashType;
+    uint64_t lastLevelVerification;
     uint64_t merkleTreeArity;
     bool merkleTreeCustom;
+    uint64_t transcriptArity;
     vector<StepStruct> steps;
+    uint64_t powBits;
 };
 
 opType string2opType (const string s);

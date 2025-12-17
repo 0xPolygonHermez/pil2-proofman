@@ -12,7 +12,6 @@ build = "build.rs"
 [dependencies]
 proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
 proofman-util = { path = "../util" }
-transcript = { path = "../transcript" }
 
 libloading.workspace = true
 serde.workspace = true
