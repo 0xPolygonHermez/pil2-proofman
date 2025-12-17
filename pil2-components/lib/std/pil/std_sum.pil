@@ -1,7 +1,5 @@
-require "std_constants.pil";
-require "std_tools.pil";
-
-// TODO: Parametrize with the maximum constraint degree instead of assuming it is 3
+require "std_constants.pil"
+require "std_tools.pil"
 
 const int SUM_TYPE_ASSUMES = 0;
 const int SUM_TYPE_PROVES = 1;
@@ -155,7 +153,7 @@ private function update_piop_sum(const int name, const int surname, const int ty
 
     // Print opid diagram
     if (PRINT_OPID_DIAGRAM == 1) {
-        on final proof print_opid_relationship_diagram();
+        on final proof print_opid_relationship_diagram_sum();
     }
 
     // Generate global hints
@@ -205,6 +203,7 @@ private function init_proof_containers_sum(const int name, const int surname, co
 private function init_air_containers_sum() {
     // AIR-specific data
     container air.std.gsum {
+        // Assumes and proves of the air
         int gsum_nargs = 0;
         expr gsum_s[ARRAY_SIZE];
         expr gsum_e[ARRAY_SIZE];
@@ -305,22 +304,49 @@ private function piop_gsum_air() {
     }
 
     /*
-                                          selᵢ
-        gsum === 'gsum * (1 - L1) + ∑ᵢ --------
-                                         fᵢ + ɣ
+    We need to check the constraint:
+                                           selᵢ
+        gsum === 'gsum * (1 - L1) + ∑ᵢ ----------
+                                         (fᵢ + ɣ)
+    where degree(gsum),degree(L1) = 1.
 
-        We transform some of the rational constraint to a polynomial one by 
-        substituting all the rational terms by individual terms (except for one to optimize):
-            gsum === 'gsum * (1 - L1) + ∑ⱼ imⱼ + num / den
+    For optimization purposes, we perform the reduction:
+           sel1         sel2               selN           sel              
+        ---------- + ---------- + ... + ---------- ==> --------- + im1 + ... + imN-1
+         (f1 + ɣ)     (f1 + ɣ)           (fN + ɣ)       (f + ɣ)
+    with degree(sel) <= MAX_CONSTRAINT_DEGREE and degree(f) <= MAX_CONSTRAINT_DEGREE-2
+    and each imⱼ is an intermediate polynomial of degree <= MAX_CONSTRAINT_DEGREE.
+
+    In order to derive the imⱼ, we first group the expressions in two clusters: low-degree
+    and high-degree terms; and then we create intermediates to perform the previous reduction.
+
+    LOW-DEGREE TERMS:
+    ==================
+    Low-degree terms are such that degree(selᵢ) <= MAX_CONSTRAINT_DEGREE and degree(fᵢ) <= MAX_CONSTRAINT_DEGREE-1.
+    There are two possible strategies to reduce low-degree terms:
+        1) We define intermediates im such that
+                           s1                 sN    
+                im === ---------- + ... + ----------,
+                        (f1 + ɣ)           (fN + ɣ) 
+            with d := degree(f1) + ... + degree(fN) <= MAX_CONSTRAINT_DEGREE-1, 
+                max{degree(s1) + d - degree(f1), ..., degree(sN) + d - degree(fN)} <= MAX_CONSTRAINT_DEGREE.
+        2) We define intermediates im such that:
+                1            s1                 sN    
+                ---- === ---------- + ... + ----------,
+                im        (f1 + ɣ)           (fN + ɣ) 
+            with d := degree(f1) + ... + degree(fN) <= MAX_CONSTRAINT_DEGREE, 
+                max{degree(s1) + d - degree(f1), ..., degree(sN) + d - degree(fN)} <= MAX_CONSTRAINT_DEGREE-1.
+
+    HIGH-DEGREE TERMS:
+    ==================
+    To reduce high-degree terms, we first reduce them to low-degree terms by replacing
+    each high-degree term by an intermediate. Then, we apply the low-degree strategy.
     */
 
     if (!defined(std_gamma)) {
         challenge stage(2) std_gamma;
     }
 
-    expr num = 0;
-    expr den = 1;
-    expr sum_ims = 0;
     // Compute the number of terms that are not reduced
     int num_non_reduced = SUM_EXPRESSIONS_IM_NON_REDUCED;
     if ((SUM_EXPRESSIONS_IM_NON_REDUCED == -1) || (gsum_nargs < SUM_EXPRESSIONS_IM_NON_REDUCED)) {
@@ -328,169 +354,245 @@ private function piop_gsum_air() {
     }
 
     // The first num_non_reduced terms are not reduced
+    expr direct_num = 0;
+    expr direct_den = 1;
     for (int i = 0; i < num_non_reduced; i++) {
-        den *= (gsum_e[i] + std_gamma);
+        direct_den *= (gsum_e[i] + std_gamma);
 
         expr _tmp = gsum_s[i];
         for (int j = 0; j < num_non_reduced; j++) {
             if (j != i) _tmp *= (gsum_e[j] + std_gamma);
         }
-        num += _tmp;
+        direct_num += _tmp;
     }
 
-    // The rest of the terms are grouped in clusters of size MAX_CONSTRAINT_DEGREE-1
+    // The rest of the terms are grouped in clusters of appropriate size
+    expr sum_ims = 0;
     const int num_terms = gsum_nargs - num_non_reduced;
     if (num_terms > 0) {
-        // Identify isolated terms of specific degrees
-        int isolated_term = -1;
+        // We want to find the maximum subset of terms that can be combined into
+        // a single fraction s/f where:
+        //   - deg(combined_num) <= MAX_CONSTRAINT_DEGREE
+        //   - deg(combined_den) <= MAX_CONSTRAINT_DEGREE-1
+        //
+        // When combining s1/f1 + s2/f2 + ... + sk/fk:
+        //   - combined_den = f1 * f2 * ... * fk  =>  deg = sum of deg(fi)
+        //   - combined_num = s1*f2*...*fk + s2*f1*f3*...*fk + ...
+        //                 => deg = max over i of (deg(si) + sum of deg(fj) for j != i)
+        //                        = max over i of (deg(si) + combined_den_deg - deg(fi))
+
+        // First, collect term degrees
+        int term_s_deg[num_terms];
+        int term_e_deg[num_terms];
+        int term_idx[num_terms];
+        int terms_count = 0;
         for (int i = num_non_reduced; i < gsum_nargs; i++) {
-            const int gsum_s_degree = degree(gsum_s[i]);
-            const int gsum_e_degree = degree(gsum_e[i]);
-            if ((gsum_s_degree == 3 && gsum_e_degree == 1) ||
-                (gsum_s_degree == 2 && gsum_e_degree == 1)) 
-            {
-                isolated_term = i;
-                break;
-            } 
-        }
+            const int s_deg = degree(gsum_s[i]);
+            const int e_deg = degree(gsum_e[i]);
 
-        // Identify the rest
-        int low_degree_term[num_terms];
-        int high_degree_term[num_terms];
-        int low_degree_len = 0;
-        int high_degree_len = 0;
-        for (int i = num_non_reduced; i < gsum_nargs; i++) {
-            // If the isolated term has already been identified, continue
-            if (i == isolated_term) {
-                continue;
-            }
-
-            const int gsum_s_degree = degree(gsum_s[i]);
-            const int gsum_e_degree = degree(gsum_e[i]);
-
-            if (gsum_s_degree == 0 && gsum_e_degree == 0)
-            {
-                // In the case that both the numerator and the denominator are constants, 
-                // we can directly add them through the direct terms
+            // Constants go directly to direct terms
+            if (s_deg == 0 && e_deg == 0) {
                 direct_gsum_s[direct_gsum_nargs] = gsum_s[i];
                 direct_gsum_e[direct_gsum_nargs] = gsum_e[i];
                 direct_gsum_nargs++;
-            } 
-            else if (gsum_s_degree > 2 || gsum_e_degree > 1) 
-            {
-                // Track high-degree terms
-                high_degree_term[high_degree_len] = i;
-                high_degree_len++;
-            } 
-            else 
-            {
-                // Handle low-degree terms
-                if (isolated_term == -1) {
-                    // If the isolated term has not been identified, assign
-                    isolated_term = i;
-                } else {
-                    // Otherwise, add it to the low-degree terms
-                    low_degree_term[low_degree_len] = i;
-                    low_degree_len++;
+            } else {
+                term_s_deg[terms_count] = s_deg;
+                term_e_deg[terms_count] = e_deg;
+                term_idx[terms_count] = i;
+                terms_count++;
+            }
+        }
+
+        // Sort terms by e_deg ascending (smaller denominators first helps grouping)
+        for (int i = 0; i < terms_count - 1; i++) {
+            for (int j = 0; j < terms_count - i - 1; j++) {
+                if (term_e_deg[j] > term_e_deg[j + 1]) {
+                    int tmp = term_s_deg[j];
+                    term_s_deg[j] = term_s_deg[j + 1];
+                    term_s_deg[j + 1] = tmp;
+
+                    tmp = term_e_deg[j];
+                    term_e_deg[j] = term_e_deg[j + 1];
+                    term_e_deg[j + 1] = tmp;
+
+                    tmp = term_idx[j];
+                    term_idx[j] = term_idx[j + 1];
+                    term_idx[j + 1] = tmp;
                 }
             }
         }
 
-        // Create an intermediate for clusters of low-degree terms so that
-        // the degree of the constraint is lower than the maximum allowed
-        if (low_degree_len > 0) {
-            const int nIm = low_degree_len/(MAX_CONSTRAINT_DEGREE-1);
-            if (nIm > 0) {
-                col witness stage(2) im[nIm];
-                for (int i = 0; i < nIm; i++) {
+        // Greedy grouping: try to add as many terms as possible to the direct fraction
+        int direct_terms[terms_count];
+        int direct_terms_count = 0;
+        int curr_den_deg = degree(direct_den);
+        int curr_num_deg = degree(direct_num);
 
-                    //              s[3*i]            s[3*i+1]            s[3*i+2]
-                    // im[i] = --------------- + ----------------- + -----------------
-                    //           e[3*i] + ɣ         e[3*i+1] + ɣ       e[3*i+2] + ɣ
+        // Also track which terms need intermediates
+        int needs_im[terms_count];
+        for (int i = 0; i < terms_count; i++) {
+            needs_im[i] = 1;  // assume all need intermediates initially
+        }
 
-                    expr prods = 1;
-                    expr sums = 0;
-                    const int factor_offset = (MAX_CONSTRAINT_DEGREE-1) * i;
-                    for (int j = 0; j < (MAX_CONSTRAINT_DEGREE-1); j++) {
-                        prods *= (gsum_e[low_degree_term[factor_offset + j]] + std_gamma);
+        // Try to add terms to the direct fraction
+        for (int i = 0; i < terms_count; i++) {
+            const int s_deg = term_s_deg[i];
+            const int e_deg = term_e_deg[i];
 
-                        expr _partial = gsum_s[low_degree_term[factor_offset + j]];
-                        for (int k = 0; k < (MAX_CONSTRAINT_DEGREE-1); k++) {
-                            if (k != j) _partial *= (gsum_e[low_degree_term[factor_offset + k]] + std_gamma);
-                        }
-                        sums += _partial;
+            // If we add this term:
+            //   deg(s1/f1 + s2/f2) = max(deg(s1) + deg(f2), deg(s2) + deg(f1)) / (deg(f1) + deg(f2))
+            const int new_den_deg = curr_den_deg + e_deg;
+            int new_num_deg = curr_num_deg + e_deg;
+            if (s_deg + curr_den_deg > new_num_deg) {
+                new_num_deg = s_deg + curr_den_deg;
+            }
+
+            // Check constraints:
+            //   - 2 + new_den_deg <= MAX_CONSTRAINT_DEGREE (left side of final constraint)
+            //   - new_num_deg <= MAX_CONSTRAINT_DEGREE (right side)
+            if (2 + new_den_deg <= MAX_CONSTRAINT_DEGREE && new_num_deg <= MAX_CONSTRAINT_DEGREE) {
+                direct_terms[direct_terms_count] = i;
+                direct_terms_count++;
+                curr_den_deg = new_den_deg;
+                curr_num_deg = new_num_deg;
+                needs_im[i] = 0;
+            }
+        }
+
+        // Add direct terms to the direct fraction
+        // direct_num     s1      s2       direct_num * f1 * f2 + s1 * direct_den * f2 + s2 * direct_den * f1
+        // ---------- + ------ + ------ = -------------------------------------------------------------------
+        // direct_den     f1      f2                          direct_den * f1 * f2
+
+        // First, multiply existing direct_num/direct_den by all new denominators
+        const expr original_den = direct_den;
+        for (int i = 0; i < direct_terms_count; i++) {
+            const int idx = term_idx[direct_terms[i]];
+            direct_num *= (gsum_e[idx] + std_gamma);
+            direct_den *= (gsum_e[idx] + std_gamma);
+        }
+
+        // Now add each new term's contribution
+        for (int i = 0; i < direct_terms_count; i++) {
+            const int idx = term_idx[direct_terms[i]];
+            expr _tmp = gsum_s[idx];
+            // Multiply by all previous denominators (from non_reduced terms)
+            _tmp *= original_den;
+            // Multiply by all other direct terms' denominators
+            for (int j = 0; j < direct_terms_count; j++) {
+                if (j != i) {
+                    const int other_idx = term_idx[direct_terms[j]];
+                    _tmp *= (gsum_e[other_idx] + std_gamma);
+                }
+            }
+            direct_num += _tmp;
+        }
+
+        // Collect remaining terms that need intermediates
+        int remaining_terms[terms_count];
+        int remaining_s_deg[terms_count];
+        int remaining_e_deg[terms_count];
+        int remaining_count = 0;
+
+        for (int i = 0; i < terms_count; i++) {
+            if (needs_im[i] == 1) {
+                remaining_terms[remaining_count] = term_idx[i];
+                remaining_s_deg[remaining_count] = term_s_deg[i];
+                remaining_e_deg[remaining_count] = term_e_deg[i];
+                remaining_count++;
+            }
+        }
+
+        // Group remaining terms into clusters that can share an intermediate
+        // For an intermediate: im * prod(fi + gamma) = sum of cross products
+        int processed[remaining_count];
+        for (int i = 0; i < remaining_count; i++) {
+            processed[i] = 0;
+        }
+
+        while (1) {
+            // Find unprocessed terms
+            int cluster[remaining_count];
+            int cluster_count = 0;
+            int cluster_den_deg = 0;
+            int cluster_num_deg = 0;
+
+            for (int i = 0; i < remaining_count; i++) {
+                if (processed[i] == 1) continue;
+
+                const int s_deg = remaining_s_deg[i];
+                const int e_deg = remaining_e_deg[i];
+
+                if (cluster_count == 0) {
+                    // First term in cluster
+                    cluster[cluster_count] = i;
+                    cluster_count++;
+                    cluster_den_deg = e_deg;
+                    cluster_num_deg = s_deg;
+                    processed[i] = 1;
+                } else {
+                    // Try to add to cluster
+                    // im constraint: im * prod(ei + gamma) === sum(si * prod(ej + gamma for j != i))
+                    // Degree of LHS: 1 + cluster_den_deg + e_deg
+                    // Degree of RHS: max over terms of (s_deg + cluster_den_deg + e_deg - term_e_deg)
+                    const int new_den_deg = cluster_den_deg + e_deg;
+                    int new_num_deg = cluster_num_deg + e_deg;
+                    if (s_deg + cluster_den_deg > new_num_deg) {
+                        new_num_deg = s_deg + cluster_den_deg;
                     }
-                    @im_col{reference: im[i], numerator: sums, denominator: prods};
 
-                    // im[i] * t[3*i] * t[3*i+1] * t[3*i+2] ===
-                    //                    mul[3*i]*t[3*i+1]*t[3*i+2] + mul[3*i+1]*t[3*i]*t[3*i+2] + mul[3*i+2]*t[3*i]*t[3*i+1];
-                    im[i] * prods === sums;
-
-                    sum_ims += im[i];
+                    // Check if fits: 1 + new_den_deg <= MAX and new_num_deg <= MAX
+                    if (1 + new_den_deg <= MAX_CONSTRAINT_DEGREE && new_num_deg <= MAX_CONSTRAINT_DEGREE) {
+                        cluster[cluster_count] = i;
+                        cluster_count++;
+                        cluster_den_deg = new_den_deg;
+                        cluster_num_deg = new_num_deg;
+                        processed[i] = 1;
+                    }
                 }
             }
 
-            const int nRemTerms = low_degree_len % (MAX_CONSTRAINT_DEGREE-1);
-            // If there are remaining terms, add an extra cluster
-            if (nRemTerms > 0) {
-                col witness stage(2) im_extra;
+            if (cluster_count == 0) break;
 
+            // Create intermediate for this cluster
+            if (cluster_count == 1) {
+                // Single term - create simple intermediate
+                const int idx = remaining_terms[cluster[0]];
+                col witness stage(2) im_single;
+                @im_col{reference: im_single, numerator: gsum_s[idx], denominator: gsum_e[idx] + std_gamma};
+                im_single * (gsum_e[idx] + std_gamma) === gsum_s[idx];
+                sum_ims += im_single;
+            } else {
+                // Multiple terms - create clustered intermediate
+                col witness stage(2) im_cluster;
                 expr prods = 1;
                 expr sums = 0;
-                const int low_degree_offset = (MAX_CONSTRAINT_DEGREE-1) * nIm;
-                for (int j = 0; j < nRemTerms; j++) {
-                    prods *= (gsum_e[low_degree_term[low_degree_offset + j]] + std_gamma);
 
-                    expr _partial = gsum_s[low_degree_term[low_degree_offset + j]];
-                    for (int k = 0; k < nRemTerms; k++) {
-                        if (k != j) _partial *= (gsum_e[low_degree_term[low_degree_offset + k]] + std_gamma);
+                for (int j = 0; j < cluster_count; j++) {
+                    const int idx = remaining_terms[cluster[j]];
+                    prods *= (gsum_e[idx] + std_gamma);
+
+                    expr _partial = gsum_s[idx];
+                    for (int k = 0; k < cluster_count; k++) {
+                        if (k != j) {
+                            const int other_idx = remaining_terms[cluster[k]];
+                            _partial *= (gsum_e[other_idx] + std_gamma);
+                        }
                     }
                     sums += _partial;
                 }
-                @im_col{reference: im_extra, numerator: sums, denominator: prods};
 
-                im_extra * prods === sums;
-
-                sum_ims += im_extra;
+                @im_col{reference: im_cluster, numerator: sums, denominator: prods};
+                im_cluster * prods === sums;
+                sum_ims += im_cluster;
             }
-        }
-
-        // Create a single intermediate for all the high-degree terms
-        if (high_degree_len > 0) {
-            /*
-                        s[i]   
-            im[i] = ----------
-                     e[i] + ɣ  
-            */
-            col witness stage(2) im_high_degree[high_degree_len];
-
-            for (int i = 0; i < high_degree_len; i++) {
-                const int index = high_degree_term[i];
-
-                @im_col{reference: im_high_degree[i], numerator: gsum_s[index], denominator: gsum_e[index] + std_gamma};
-
-                im_high_degree[i] * (gsum_e[index] + std_gamma) === gsum_s[index];
-
-                sum_ims += im_high_degree[i];
-            }
-        }
-
-        // Compute the isolated term numerator and denominator
-        if (isolated_term != -1) {
-            den *= (gsum_e[isolated_term] + std_gamma);
-
-            expr _tmp = gsum_s[isolated_term];
-            for (int j = 0; j < num_non_reduced; j++) {
-                _tmp *= (gsum_e[j] + std_gamma);
-            }
-            num += _tmp;
         }
     }
 
     //  At this point, the constraint has been transformed to:
-    //       gsum === 'gsum * (1 - L1) + ∑ⱼ imⱼ + num / den
+    //       gsum === 'gsum * (1 - L1) + ∑ⱼ imⱼ + direct_num / direct_den
     //  check that the constraint is satisfied
-    (gsum - 'gsum * (1 - L1) - sum_ims) * den - num === 0;
+    (gsum - 'gsum * (1 - L1) - sum_ims) * direct_den - direct_num === 0;
 
     /*
     At the very last row, it should be satisfied that:
@@ -505,8 +607,8 @@ private function piop_gsum_air() {
     */
 
     // Compute the direct terms numerator and denominator
-    expr direct_num = 0;
-    expr direct_den = 1;
+    expr direct_vals_num = 0;
+    expr direct_vals_den = 1;
     expr direct_sum_ims = 0;
     if (direct_gsum_nargs > 0) {
         int num_non_reduced = SUM_AIRVALS_IM_NON_REDUCED;
@@ -516,13 +618,13 @@ private function piop_gsum_air() {
 
         // The first num_non_reduced terms are not reduced
         for (int i = 0; i < num_non_reduced; i++) {
-            direct_den *= (direct_gsum_e[i] + std_gamma);
+            direct_vals_den *= (direct_gsum_e[i] + std_gamma);
 
             expr _tmp = direct_gsum_s[i];
             for (int j = 0; j < num_non_reduced; j++) {
                 if (j != i) _tmp *= (direct_gsum_e[j] + std_gamma);
             }
-            direct_num += _tmp;
+            direct_vals_num += _tmp;
         }
 
         // The rest of the terms are grouped in clusters of size SUM_AIRVALS_IM_REDUCE_FACTOR
@@ -533,10 +635,6 @@ private function piop_gsum_air() {
             if (num_im > 0) {
                 airval stage(2) im_direct[num_im];
                 for (int i = 0; i < num_im; i++) {
-                    //              s[3*i]            s[3*i+1]            s[3*i+2]
-                    // im[i] = --------------- + ----------------- + -----------------
-                    //              e[3*i]            e[3*i+1]            e[3*i+2]
-
                     expr prods = 1;
                     expr sums = 0;
                     const int factor_offset = SUM_AIRVALS_IM_REDUCE_FACTOR * i;
@@ -551,8 +649,6 @@ private function piop_gsum_air() {
                     }
                     @im_airval{reference: im_direct[i], numerator: sums, denominator: prods};
 
-                    // im[i] * t[3*i] * t[3*i+1] * t[3*i+2] ===
-                    //                    mul[3*i]*t[3*i+1]*t[3*i+2] + mul[3*i+1]*t[3*i]*t[3*i+2] + mul[3*i+2]*t[3*i]*t[3*i+1];
                     im_direct[i] * prods === sums;
 
                     direct_sum_ims += im_direct[i];
@@ -591,9 +687,9 @@ private function piop_gsum_air() {
     } else {
         result = gsum_result;
     }
-    @gsum_col{reference: gsum, numerator_air: sum_ims * den + num, denominator_air: den, 
-                               numerator_direct: direct_sum_ims * direct_den + direct_num, denominator_direct: direct_den, result: result};
-    L1' * ((result - gsum - direct_sum_ims) * direct_den - direct_num) === 0;
+    @gsum_col{reference: gsum, numerator_air: sum_ims * direct_den + direct_num, denominator_air: direct_den, 
+                               numerator_direct: direct_sum_ims * direct_vals_den + direct_vals_num, denominator_direct: direct_vals_den, result: result};
+    L1' * ((result - gsum - direct_sum_ims) * direct_vals_den - direct_vals_num) === 0;
 
     // Store the airgroup and air ids for global hints
     proof.std.gsum.airgroup_ids[proof.std.gsum.air_count] = AIRGROUP_ID;
@@ -665,7 +761,7 @@ private function check_opids_were_completed_sum() {
     }
 }
 
-function print_opid_relationship_diagram() {
+function print_opid_relationship_diagram_sum() {
     use proof.std.gsum;
 
     // Collect unique AIRs and their connections

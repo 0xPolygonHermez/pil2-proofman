@@ -16,11 +16,15 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "f5d11b901c7e54e9ef0507bbfbed3c450c4a799c77868ca80bc1039b5ea8fdaf";
+pub const PILOUT_HASH: &str = "c96dce34b3ac14aacb16b4c9d9102a02c50145c5ac8a11f81eea0a1bd61fe147";
 
 //AIRGROUP CONSTANTS
 
-pub const BUSES_AIRGROUP_ID: usize = 0;
+pub const GROUP_1_AIRGROUP_ID: usize = 0;
+
+pub const GROUP_2_AIRGROUP_ID: usize = 1;
+
+pub const GROUP_3_AIRGROUP_ID: usize = 2;
 
 //AIR CONSTANTS
 
@@ -29,6 +33,10 @@ pub const PROD_BUS_AIR_IDS: &[usize] = &[0];
 pub const SUM_BUS_AIR_IDS: &[usize] = &[1];
 
 pub const BOTH_BUSES_AIR_IDS: &[usize] = &[2];
+
+pub const SB_AIR_IDS: &[usize] = &[0];
+
+pub const PB_AIR_IDS: &[usize] = &[0];
 
   
 trace_row!(ProdBusFixedRow<F> {
@@ -64,6 +72,28 @@ trace_row!(BothBusesTraceRow<F> {
 pub type BothBusesTrace<F> = GenericTrace<BothBusesTraceRow<F>, 16, 0, 2>;
 
 
+trace_row!(SBFixedRow<F> {
+ __L1__: F,
+});
+pub type SBFixed<F> = GenericTrace<SBFixedRow<F>, 32, 1, 0>;
+
+trace_row!(SBTraceRow<F> {
+ a:F, b:F,
+});
+pub type SBTrace<F> = GenericTrace<SBTraceRow<F>, 32, 1, 0>;
+
+
+trace_row!(PBFixedRow<F> {
+ __L1__: F,
+});
+pub type PBFixed<F> = GenericTrace<PBFixedRow<F>, 16, 2, 0>;
+
+trace_row!(PBTraceRow<F> {
+ a:F, b:F,
+});
+pub type PBTrace<F> = GenericTrace<PBTraceRow<F>, 16, 2, 0>;
+
+
 values!(ProdBusAirGroupValues<F> {
  gprod_result: FieldExtension<F>, gsum_result: FieldExtension<F>,
 });
@@ -74,6 +104,14 @@ values!(SumBusAirGroupValues<F> {
 
 values!(BothBusesAirGroupValues<F> {
  gprod_result: FieldExtension<F>, gsum_result: FieldExtension<F>,
+});
+
+values!(SBAirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(PBAirGroupValues<F> {
+ gprod_result: FieldExtension<F>,
 });
 
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
