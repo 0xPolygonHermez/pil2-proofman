@@ -216,7 +216,7 @@ pub struct StarkInfo {
 
     #[serde(default, rename = "nConstraints")]
     pub n_constraints: u64,
-    
+
     pub security: SecurityInfo,
 }
 
