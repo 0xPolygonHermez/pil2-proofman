@@ -3190,6 +3190,9 @@ where
             steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
             steps_params.p_const_pols = const_pols.as_ptr() as *mut u8;
             steps_params.p_const_tree = const_tree.as_ptr() as *mut u8;
+        } else if !setup.preallocate {
+            steps_params.p_const_pols = std::ptr::null_mut();
+            steps_params.p_const_tree = std::ptr::null_mut();
         }
 
         let p_steps_params: *mut u8 = (&steps_params).into();

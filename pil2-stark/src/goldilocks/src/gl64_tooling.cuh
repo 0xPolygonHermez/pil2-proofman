@@ -291,7 +291,7 @@ struct StreamData{
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_, uint64_t merkleTreeArity){
         uint64_t maxExps = 20000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);
-        CHECKCUDAERR(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+        CHECKCUDAERR(cudaStreamCreate(&stream));
         timer.init(stream);
         gpuId = gpuId_;
         localStreamId = localStreamId_;
@@ -373,7 +373,6 @@ struct DeviceCommitBuffers
     uint32_t n_streams;
     uint32_t n_recursive_streams;
     std::mutex *mutex_pinned;
-    std::mutex *mutex_pinned_extra;
     StreamData *streamsData;
 
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;
@@ -384,8 +383,7 @@ void copy_to_device_in_chunks(
     const void* src,
     void* dst,
     uint64_t total_size,
-    Goldilocks::Element *buffer_pinned,
-    cudaStream_t stream,
+    uint64_t streamId,
     TimerGPU &timer
     );
 
@@ -394,9 +392,7 @@ void load_and_copy_to_device_in_chunks(
     const char* bufferPath,
     void* dst,
     uint64_t total_size,
-    Goldilocks::Element *buffer_pinned,
-    cudaStream_t stream
+    uint64_t streamId
     );
-    
 #endif
 #endif
