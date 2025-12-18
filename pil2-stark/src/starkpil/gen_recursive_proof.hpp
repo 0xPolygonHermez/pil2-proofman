@@ -238,8 +238,12 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, json& globalInfo, uint64_t airg
 
     uint64_t friQueries[setupCtx.starkInfo.starkStruct.nQueries];
 
+    uint64_t nonce;
+    // TODO: CALCULATE NONCE
+
     TranscriptBN128 transcriptPermutation(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
     starks.addTranscriptGL(transcriptPermutation, challenge, FIELD_EXTENSION);
+    starks.addTranscriptGL(transcriptPermutation, (Goldilocks::Element *)&nonce, 1);
     transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits);
 
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
@@ -254,6 +258,8 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, json& globalInfo, uint64_t airg
     TimerStopAndLog(STARK_STEP_FRI);
 
     proof.proof.setEvals(params.evals);
+    proof.proof.setNonce(nonce);
+
     nlohmann::json zkin = proof.proof.proof2json();
     zkin["publics"] = json::array();
     for(uint64_t i = 0; i < uint64_t(globalInfo["nPublics"]); ++i) {

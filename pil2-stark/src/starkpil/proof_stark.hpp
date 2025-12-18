@@ -488,7 +488,6 @@ public:
         }
 
         // TODO: LAST LEVELS IN JSON
-        // TODO: POW BITS
 
         for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
             if(nFieldElements == 1) {
@@ -532,6 +531,9 @@ public:
                 j["finalPol"][i][l] = Goldilocks::toString(fri.pol[i][l]);
             }
         }
+
+        j["nonce"] = nonce;
+        
         return j;
     }
 };
