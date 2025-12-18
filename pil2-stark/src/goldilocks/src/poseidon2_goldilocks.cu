@@ -19,7 +19,6 @@ typedef uint64_t u64;
 // CUDA Threads per Block
 #define TPB 128
 
-
 __device__ __constant__ uint64_t GPU_C_4[53]; 
 __device__ __constant__ uint64_t GPU_D_4[4];
 __device__ __constant__ uint64_t GPU_C_8[86]; 
@@ -406,11 +405,11 @@ __global__ void grinding_check_(uint64_t* nonce, uint64_t *__restrict__ nonceBlo
 }
 
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_nonce, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream){
+void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_nonce, uint64_t *d_nonceBlock, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream){
 
     uint64_t log_launch_iters = 7; //64 launch iterations
     uint64_t launch_iters = 1ULL << log_launch_iters;
-    uint64_t log_N = 19; //512K nonces per launch
+    uint64_t log_N = NONCES_LAUNCH_BITS; //512K nonces per launch
     uint64_t N = 1 << log_N;
     uint64_t security = 128;
     // we need to determine log_hashesPerThread such that, suthat probabilty of not finding a valid nonce is lower
@@ -427,10 +426,8 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_nonce, const 
     }
     uint64_t hashesPerThread = 1ULL << log_hashesPerThread;
     
-    dim3 blockSize( 512 );
-    dim3 gridSize( (N + blockSize.x - 1) / blockSize.x );
-    uint64_t* d_nonceBlock;
-    cudaMalloc((void**)&d_nonceBlock, sizeof(uint64_t)*gridSize.x);
+    dim3 blockSize( NONCES_LAUNCH_BLOCKS );
+    dim3 gridSize( NONCES_LAUNCH_GRID_SIZE );
 
     size_t shared_mem_size = blockSize.x * SPONGE_WIDTH * sizeof(gl64_t) + blockSize.x * sizeof(uint64_t);
     uint64_t nonces_offset = 0;
@@ -564,7 +561,7 @@ __global__ void grinding_persistent_kernel(
 
 // Explicit instantiation for class methods
 template void Poseidon2GoldilocksGPUGrinding::initPoseidon2GPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
-template void Poseidon2GoldilocksGPUGrinding::grinding(uint64_t * d_out, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream);
+template void Poseidon2GoldilocksGPUGrinding::grinding(uint64_t * d_nonce, uint64_t *d_nonceBlock, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream);
 
 template void Poseidon2GoldilocksGPU<8>::initPoseidon2GPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
 template void Poseidon2GoldilocksGPU<8>::merkletreeCoalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim);
@@ -581,10 +578,10 @@ template void Poseidon2GoldilocksGPU<16>::hashFullResult(uint64_t * output, cons
 
 #if __GOLDILOCKS_ENV__
 template void Poseidon2GoldilocksGPU<4>::hashFullResult(uint64_t * output, const uint64_t * input);
-template void Poseidon2GoldilocksGPU<16>::grinding(uint64_t * d_out, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<16>::grinding(uint64_t * d_nonce, uint64_t *d_nonceBlock, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream);
 template void Poseidon2GoldilocksGPU<16>::linearHashCoalescedBlocks(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
 template void Poseidon2GoldilocksGPU<12>::linearHashCoalescedBlocks(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
-template void Poseidon2GoldilocksGPU<12>::grinding(uint64_t * d_out, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<12>::grinding(uint64_t * d_nonce, uint64_t *d_nonceBlock, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream);
 
 #endif
 

@@ -9,6 +9,13 @@
 
 #define HASH_SIZE 4
 
+// GPU PARAMS
+#define NONCES_LAUNCH_BITS 19
+#define NONCES_LAUNCH_BLOCKS 512
+#define NONCES_LAUNCH_GRID_SIZE \
+    (((1ULL << NONCES_LAUNCH_BITS) + NONCES_LAUNCH_BLOCKS - 1) / NONCES_LAUNCH_BLOCKS)
+
+
 template<uint32_t SPONGE_WIDTH_T>
 class Poseidon2Goldilocks
 {

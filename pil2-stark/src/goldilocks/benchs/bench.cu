@@ -193,9 +193,10 @@ static void GRINDING_BENCH_GPU(benchmark::State &state)
     uint32_t n_bits = state.range(0);
     
     // Allocate device memory
-    gl64_t *d_in, *d_nonce;
+    gl64_t *d_in, *d_nonce, *d_nonceBlock;
     CHECKCUDAERR(cudaMalloc((void **)&d_in, 4 * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc((void **)&d_nonce, sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_nonceBlock, NONCES_LAUNCH_GRID_SIZE * sizeof(gl64_t)));
     
     // Create different input for each iteration
     Goldilocks::Element h_in[Poseidon2GoldilocksGPUGrinding::SPONGE_WIDTH];
@@ -211,7 +212,7 @@ static void GRINDING_BENCH_GPU(benchmark::State &state)
         }
         CHECKCUDAERR(cudaMemcpy(d_in, h_in, (Poseidon2GoldilocksGPUGrinding::SPONGE_WIDTH-1) * sizeof(gl64_t), cudaMemcpyHostToDevice));
         
-        Poseidon2GoldilocksGPUGrinding::grinding((uint64_t *)d_nonce, (uint64_t *)d_in, n_bits, stream);
+        Poseidon2GoldilocksGPUGrinding::grinding((uint64_t *)d_nonce, (uint64_t *)d_nonceBlock, (uint64_t *)d_in, n_bits, stream);
         cudaStreamSynchronize(stream);
         
         //check if d_nonce is valid
@@ -223,6 +224,7 @@ static void GRINDING_BENCH_GPU(benchmark::State &state)
 
     cudaFree(d_in);
     cudaFree(d_nonce);
+    cudaFree(d_nonceBlock);
     cudaStreamDestroy(stream);
 }
 

@@ -465,6 +465,9 @@ void StarkInfo::setMapOffsets() {
         mapOffsets[std::make_pair("nonce", false)] = mapTotalN;
         mapTotalN += 1;
 
+        mapOffsets[std::make_pair("nonce_blocks", false)] = mapTotalN;
+        mapTotalN += NONCES_LAUNCH_GRID_SIZE;
+
         mapOffsets[std::make_pair("input_hash_nonce", false)] = mapTotalN;
         mapTotalN += HASH_SIZE;
 

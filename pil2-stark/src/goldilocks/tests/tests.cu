@@ -89,16 +89,17 @@ TEST(GOLDILOCKS_TEST, grinding)
         in[i] = Goldilocks::fromU64(i * 7); 
     }
 
-    gl64_t *d_in, *d_out;
+    gl64_t *d_in, *d_out, *d_nonceBlock;
     cudaMalloc((void **)&d_in, 4 * sizeof(gl64_t));
     cudaMemcpy(d_in, in, 4 * sizeof(gl64_t), cudaMemcpyHostToDevice);
     cudaMalloc((void **)&d_out, sizeof(gl64_t));
+    CHECKCUDAERR(cudaMalloc((void **)&d_nonceBlock, NONCES_LAUNCH_GRID_SIZE * sizeof(gl64_t)));
 
     uint32_t n_bits = 8; // Looking for hash with 8 leading zero bits
     cudaStream_t stream;
     cudaStreamCreate(&stream);
 
-    Poseidon2GoldilocksGPUGrinding::grinding((uint64_t *)d_out, (uint64_t *)d_in, n_bits, stream);
+    Poseidon2GoldilocksGPUGrinding::grinding((uint64_t *)d_out, (uint64_t *)d_nonceBlock, (uint64_t *)d_in, n_bits, stream);
     
     uint64_t result_index;
     cudaMemcpy(&result_index, d_out, sizeof(uint64_t), cudaMemcpyDeviceToHost);
@@ -133,6 +134,7 @@ TEST(GOLDILOCKS_TEST, grinding)
     cudaFree(d_out);
     cudaFree(d_test_in);
     cudaFree(d_hash_out);
+    cudaFree(d_nonceBlock);
     cudaStreamDestroy(stream);
 }
 

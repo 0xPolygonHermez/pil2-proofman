@@ -365,7 +365,7 @@ public:
 
     void static hashFullResult(uint64_t * output, const uint64_t * input);
 
-    void static grinding(uint64_t * d_out, const uint64_t * d_in, const uint32_t n_bits, cudaStream_t stream);
+    void static grinding(uint64_t * d_nonce, uint64_t *d_nonceBlock, const uint64_t * d_in, const uint32_t n_bits, cudaStream_t stream);
     
 };
 
