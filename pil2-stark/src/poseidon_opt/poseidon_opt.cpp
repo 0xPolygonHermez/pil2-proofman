@@ -1,4 +1,5 @@
 #include "poseidon_opt.hpp"
+#include <omp.h>
 
 void Poseidon_opt::hash(vector<FrElement> &state, FrElement *result)
 {
@@ -97,4 +98,64 @@ void Poseidon_opt::mix(vector<FrElement> *new_state, vector<FrElement> state, co
 			field.add((*new_state)[i], (*new_state)[i], mji);
 		}
 	}
+}
+
+void Poseidon_opt::grinding(uint64_t nonce, vector<FrElement> &state, const uint32_t n_bits){
+	
+	uint64_t checkChunk = omp_get_max_threads() * 512;
+    uint64_t level   = uint64_t(1) << (64 - n_bits);
+    uint64_t* chunkIdxs = new uint64_t[omp_get_max_threads()];
+    uint64_t offset = 0;
+    nonce = UINT64_MAX;
+	mpz_t level_mpz;
+	mpz_init_set_ui(level_mpz, level);
+	
+
+    for(int i = 0; i < omp_get_max_threads(); ++i)
+    {
+        chunkIdxs[i] = UINT64_MAX;
+    }
+
+    //we are trying (1 << n_bits) * 512 * num_threads possibilities maximum
+    for(int k = 0; k < (1 << n_bits); ++k)
+    {
+
+        #pragma omp parallel for
+        for (uint64_t i = 0; i < checkChunk; i++) {
+            if (chunkIdxs[omp_get_thread_num()] != UINT64_MAX)
+                continue;
+			vector<FrElement> localState(state.size()+2);
+			for(size_t i = 0; i < state.size(); ++i) {
+				localState[i] = state[i];
+			}
+			field.set(localState[size_t(state.size())],int(offset + i));
+			field.set(localState[size_t(state.size())+1],0);
+			
+			hash(localState);
+			mpz_t val0;
+			field.toMpz(val0, localState[0]);
+			if (mpz_cmp(val0, level_mpz) < 0) {
+				chunkIdxs[omp_get_thread_num()] = offset + i;
+			}
+        }
+
+        for(int i = 0; i < omp_get_max_threads(); ++i)
+        {
+            if (chunkIdxs[i] != UINT64_MAX)
+            {
+                nonce = chunkIdxs[i];
+                break;
+            }
+        }
+
+        if (nonce != UINT64_MAX)
+            break;
+
+        offset += checkChunk;
+    }
+    if(nonce == UINT64_MAX)
+    {
+        throw std::runtime_error("Poseidon_opt::grinding: could not find a valid nonce");
+    }
+    delete[] chunkIdxs;
 }
