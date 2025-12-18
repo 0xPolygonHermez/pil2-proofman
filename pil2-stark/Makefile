@@ -97,7 +97,7 @@ else ifeq ($(UNAME_S),Linux)
     CFLAGS   = -fopenmp
 
     # Add MPI include path and libraries - use C bindings only
-    CPPFLAGS += $(MPI_CPPFLAGS) -DOMPI_SKIP_MPICXX -DMPICH_SKIP_MPICXX -D__USE_MPI_RMA__
+    CPPFLAGS += $(MPI_CPPFLAGS) -DOMPI_SKIP_MPICXX -DMPICH_SKIP_MPICXX -D__USE_MPI_RMA__ -D__USE_ASSEMBLY__
     LDFLAGS += $(MPI_LDFLAGS)
     # AVX512/AVX2 detection
     AVX512_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx512' -m 1)
@@ -105,12 +105,11 @@ else ifeq ($(UNAME_S),Linux)
         #CXXFLAGS += -mavx2 -D__AVX2__ -mavx512f -D__AVX512__ -D__USE_ASSEMBLY__
         #$(info AVX-512 is supported by the CPU)
         $(info AVX-512 is temporarily disabled in the build)
-    else
-        AVX2_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx2' -m 1)
-        ifneq ($(AVX2_SUPPORTED),)
-            CXXFLAGS += -mavx2 -D__AVX2__ -D__USE_ASSEMBLY__
-            $(info AVX2 is supported by the CPU)
-        endif
+    endif
+    AVX2_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx2' -m 1)
+    ifneq ($(AVX2_SUPPORTED),)
+        CXXFLAGS += -mavx2 -D__AVX2__
+        $(info AVX2 is supported by the CPU)
     endif
 
     GPU_TARGETS := $(BUILD_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
