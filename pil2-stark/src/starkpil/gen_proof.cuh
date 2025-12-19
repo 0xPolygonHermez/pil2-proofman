@@ -331,6 +331,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     Goldilocks::Element *d_input_hash_nonce = (Goldilocks::Element *)d_aux_trace + offsetInputHashNonce;
     CHECKCUDAERR(cudaMemcpyAsync(d_input_hash_nonce, d_challenge, FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToDevice, stream));
     Poseidon2GoldilocksGPUGrinding::grinding((uint64_t *)d_nonce, (uint64_t *)d_nonceBlocks, (uint64_t *)d_input_hash_nonce, setupCtx.starkInfo.starkStruct.powBits, stream);
+    CHECKCUDAERR(cudaGetLastError());
     TimerStopCategoryGPU(timer, GRINDING);
 
     TimerStartCategoryGPU(timer, FRI);

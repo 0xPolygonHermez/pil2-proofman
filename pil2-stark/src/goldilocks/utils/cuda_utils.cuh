@@ -9,7 +9,7 @@ __host__ inline void checkCudaError(cudaError_t code, const char* expr, const ch
 {
    if (code != cudaSuccess) {
         fprintf(stderr,
-                "[CUDA] %s failed: %s (%d) at %s:%d\n",
+                "[CUDA] %s failed due to: %s (%d) at %s:%d\n",
                 expr, cudaGetErrorString(code), static_cast<int>(code), file, line);
 
         // Also report the last sticky error (useful after kernel launches)
