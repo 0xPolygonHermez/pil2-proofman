@@ -1058,14 +1058,18 @@ pub fn add_publics_aggregation_c(proof: *mut u8, offset: u64, publics: *mut u8, 
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_final_snark_proof_c(circomWitnessFinal: *mut u8, zkeyFile: &str, outputDir: &str, fflonk: bool) {
+pub fn init_final_snark_prover_c(zkeyFile: &str, fflonk: bool) -> *mut c_void {
     let zkey_file_name = CString::new(zkeyFile).unwrap();
     let zkey_file_ptr = zkey_file_name.as_ptr() as *mut std::os::raw::c_char;
+    unsafe { init_final_snark_prover(zkey_file_ptr, fflonk) }
+}
 
+#[cfg(not(feature = "no_lib_link"))]
+pub fn gen_final_snark_proof_c(prover: *mut c_void, circomWitnessFinal: *mut u8, outputDir: &str, fflonk: bool) {
     let output_dir_name = CString::new(outputDir).unwrap();
     let output_dir_ptr = output_dir_name.as_ptr() as *mut std::os::raw::c_char;
     unsafe {
-        gen_final_snark_proof(circomWitnessFinal as *mut std::os::raw::c_void, zkey_file_ptr, output_dir_ptr, fflonk);
+        gen_final_snark_proof(prover, circomWitnessFinal as *mut std::os::raw::c_void, output_dir_ptr, fflonk);
     }
 }
 
@@ -1953,7 +1957,13 @@ pub fn add_publics_aggregation_c(_proof: *mut u8, _offset: u64, _publics: *mut u
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_final_snark_proof_c(_circomWitnessFinal: *mut u8, _zkeyFile: &str, _outputDir: &str, _fflonk: bool) {
+pub fn init_final_snark_prover_c(_zkeyFile: &str, _fflonk: bool) -> *mut c_void {
+    trace!("··· {}", "init_final_snark_prover: This is a mock call because there is no linked library");
+    std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn gen_final_snark_proof_c(_prover: *mut c_void, _circomWitnessFinal: *mut u8, _outputDir: &str, _fflonk: bool) {
     trace!("··· {}", "gen_final_snark_proof: This is a mock call because there is no linked library");
 }
 

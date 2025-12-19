@@ -117,7 +117,8 @@ extern "C" {
     void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint64_t nPublicsAggregation);
     // Final proof
     // =================================================================================
-    void gen_final_snark_proof(void *circomWitnessFinal, char *zkeyFile, char *outputDir, bool fflonk);
+    void *init_final_snark_prover(char* zkeyFile, bool fflonk);
+    void gen_final_snark_proof(void *prover, void *circomWitnessFinal, char *outputDir, bool fflonk);
 
     // Util calls
     // =================================================================================

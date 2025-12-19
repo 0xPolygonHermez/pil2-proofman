@@ -86,7 +86,16 @@ namespace Fflonk
     }
 
     template<typename Engine>
-    void FflonkProver<Engine>::setZkey(BinFileUtils::BinFile *fdZkey) {
+    void FflonkProver<Engine>::setZkey(std::string zkeyFile_) {
+            zkeyFile = BinFileUtils::openExisting(zkeyFile_, "zkey", 1);
+            BinFileUtils::BinFile *fdZkey = zkeyFile.get();
+            int protocolId = Zkey::getProtocolIdFromZkey(fdZkey);
+            if(protocolId != Zkey::FFLONK_PROTOCOL_ID) {
+                zklog.error("Zkey protocolId has to be Fflonk");
+                exitProcess();
+            }
+
+            
         //try
         //{
             if(NULL != zkey) {
@@ -406,16 +415,16 @@ namespace Fflonk
     }
 
     template<typename Engine>
-    std::tuple <json, json> FflonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns) {
+    std::tuple <json, json> FflonkProver<Engine>::prove(std::string zkeyFile, BinFileUtils::BinFile *fdWtns) {
 
-        this->setZkey(fdZkey);
+        this->setZkey(zkeyFile);
         return this->prove(fdWtns);
     }
 
     template <typename Engine>
-    std::tuple<json, json> FflonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, FrElement *buffWitness, WtnsUtils::Header* wtnsHeader)
+    std::tuple<json, json> FflonkProver<Engine>::prove(std::string zkeyFile, FrElement *buffWitness, WtnsUtils::Header* wtnsHeader)
     {
-        this->setZkey(fdZkey);
+        this->setZkey(zkeyFile);
         return this->prove(buffWitness, wtnsHeader);
     }
 

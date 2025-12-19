@@ -90,8 +90,16 @@ namespace Plonk
     }
 
     template <typename Engine>
-    void PlonkProver<Engine>::setZkey(BinFileUtils::BinFile *fdZkey)
+    void PlonkProver<Engine>::setZkey(std::string zkeyFile_)
     {
+        zkeyFile = BinFileUtils::openExisting(zkeyFile_, "zkey", 1);
+        BinFileUtils::BinFile *fdZkey = zkeyFile.get();
+        int protocolId = Zkey::getProtocolIdFromZkey(fdZkey);
+        if(protocolId != Zkey::PLONK_PROTOCOL_ID) {
+            zklog.error("Zkey protocolId has to be Fflonk");
+            exitProcess();
+        }
+
         // try
         // {
         if (NULL != zkey)
@@ -389,7 +397,6 @@ namespace Plonk
         // Reuses
         buffers["numArr"] = buffers["T"];
         polPtr["R"] = buffers["T"];
-        ;
 
         buffers["denArr"] = buffers["Tz"];
         polPtr["Wxi"] = buffers["Tz"];
@@ -404,16 +411,16 @@ namespace Plonk
     }
 
     template <typename Engine>
-    std::tuple<json, json> PlonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns)
+    std::tuple<json, json> PlonkProver<Engine>::prove(std::string zkeyFile, BinFileUtils::BinFile *fdWtns)
     {
-        this->setZkey(fdZkey);
+        this->setZkey(zkeyFile);
         return this->prove(fdWtns);
     }
 
     template <typename Engine>
-    std::tuple<json, json> PlonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, FrElement *buffWitness, WtnsUtils::Header *wtnsHeader)
+    std::tuple<json, json> PlonkProver<Engine>::prove(std::string zkeyFile, FrElement *buffWitness, WtnsUtils::Header *wtnsHeader)
     {
-        this->setZkey(fdZkey);
+        this->setZkey(zkeyFile);
         return this->prove(buffWitness, wtnsHeader);
     }
 

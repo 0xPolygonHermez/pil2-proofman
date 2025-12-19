@@ -39,7 +39,6 @@ pub enum SnarkType {
     Plonk,
 }
 
-
 #[derive(Clone, Deserialize)]
 pub struct GlobalInfo {
     pub folder_path: String,

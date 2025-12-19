@@ -7,7 +7,27 @@
 #include "utils.hpp"
 #include "alt_bn128.hpp"
 
-void genFinalSnarkProof(void *circomWitnessFinal, std::string zkeyFile, std::string outputDir, bool fflonk = true) {
+void *initFinalSnark(std::string zkeyFile, bool fflonk = true) {
+   if (fflonk) {
+        TimerStart(PROVER_INIT_FFLONK);
+
+        Fflonk::FflonkProver<AltBn128::Engine>* prover = new Fflonk::FflonkProver<AltBn128::Engine>(AltBn128::Engine::engine);
+
+        prover->setZkey(zkeyFile);
+        
+        TimerStopAndLog(PROVER_INIT_FFLONK);
+        return prover;
+    } else {
+        TimerStart(PROVER_INIT_PLONK);
+
+        Plonk::PlonkProver<AltBn128::Engine>* prover = new Plonk::PlonkProver<AltBn128::Engine>(AltBn128::Engine::engine);
+        prover->setZkey(zkeyFile);
+        
+        TimerStopAndLog(PROVER_INIT_PLONK);
+        return prover;
+    }
+}
+void genFinalSnarkProof(void *proverSnark, void *circomWitnessFinal,  std::string outputDir, bool fflonk = true) {
     TimerStart(PROVER_FINAL_SNARK_PROOF);
 
     AltBn128::FrElement *witnessFinal = (AltBn128::FrElement *)circomWitnessFinal;
@@ -18,24 +38,12 @@ void genFinalSnarkProof(void *circomWitnessFinal, std::string zkeyFile, std::str
     publicJson[0] = AltBn128::Fr.toString(aux);
     json2file(publicJson, outputDir + "/final_snark_publics.json");
 
-    if (fflonk) {
-        TimerStart(PROVER_INIT_FFLONK);
-
-        Fflonk::FflonkProver<AltBn128::Engine>* prover = new Fflonk::FflonkProver<AltBn128::Engine>(AltBn128::Engine::engine);
-
-        std::unique_ptr<BinFileUtils::BinFile> zkey = BinFileUtils::openExisting(zkeyFile, "zkey", 1);
-        int protocolId = Zkey::getProtocolIdFromZkey(zkey.get());
-        if(protocolId != Zkey::FFLONK_PROTOCOL_ID) {
-            zklog.error("Zkey protocolId has to be Fflonk");
-            exitProcess();
-        }
-        
-        TimerStopAndLog(PROVER_INIT_FFLONK);
-
+    if(fflonk) {
+        Fflonk::FflonkProver<AltBn128::Engine>* prover = (Fflonk::FflonkProver<AltBn128::Engine>*)proverSnark;
         try
         {
             TimerStart(FFLONK_PROOF);
-            auto [jsonProof, publicSignalsJson] = prover->prove(zkey.get(), witnessFinal);        
+            auto [jsonProof, publicSignalsJson] = prover->prove(witnessFinal);      
             json2file(jsonProof, outputDir + "/final_snark_proof.json");
             TimerStopAndLog(FFLONK_PROOF);
         }
@@ -45,23 +53,11 @@ void genFinalSnarkProof(void *circomWitnessFinal, std::string zkeyFile, std::str
             exitProcess();
         }
     } else {
-        TimerStart(PROVER_INIT_PLONK);
-
-        Plonk::PlonkProver<AltBn128::Engine>* prover = new Plonk::PlonkProver<AltBn128::Engine>(AltBn128::Engine::engine);
-
-        std::unique_ptr<BinFileUtils::BinFile> zkey = BinFileUtils::openExisting(zkeyFile, "zkey", 1);
-        int protocolId = Zkey::getProtocolIdFromZkey(zkey.get());
-        if(protocolId != Zkey::PLONK_PROTOCOL_ID) {
-            zklog.error("Zkey protocolId has to be Plonk");
-            exitProcess();
-        }
-        
-        TimerStopAndLog(PROVER_INIT_PLONK);
-
+        Plonk::PlonkProver<AltBn128::Engine>* prover = (Plonk::PlonkProver<AltBn128::Engine>*)proverSnark;
         try
         {
             TimerStart(PLONK_PROOF);
-            auto [jsonProof, publicSignalsJson] = prover->prove(zkey.get(), witnessFinal);        
+            auto [jsonProof, publicSignalsJson] = prover->prove(witnessFinal);        
             json2file(jsonProof, outputDir + "/final_snark_proof.json");
             TimerStopAndLog(PLONK_PROOF);
         }

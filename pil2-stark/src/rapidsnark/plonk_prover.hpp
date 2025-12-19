@@ -31,6 +31,7 @@ namespace Plonk {
         Engine &E;
         FFT<typename Engine::Fr> *fft = NULL;
 
+        std::unique_ptr<BinFileUtils::BinFile> zkeyFile;
         Zkey::PlonkZkeyHeader *zkey;
         u_int32_t zkeyPower;
         std::string curveName;
@@ -79,10 +80,10 @@ namespace Plonk {
 
         ~PlonkProver();
 
-        void setZkey(BinFileUtils::BinFile *fdZkey);
+        void setZkey(std::string zkeyFile);
 
-        std::tuple <json, json> prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns);
-        std::tuple <json, json> prove(BinFileUtils::BinFile *fdZkey, FrElement *wtns, WtnsUtils::Header* wtnsHeader = NULL);
+        std::tuple <json, json> prove(std::string zkeyFile, BinFileUtils::BinFile *fdWtns);
+        std::tuple <json, json> prove(std::string zkeyFile, FrElement *wtns, WtnsUtils::Header* wtnsHeader = NULL);
 
         std::tuple <json, json> prove(BinFileUtils::BinFile *fdWtns);
         std::tuple <json, json> prove(FrElement *wtns, WtnsUtils::Header* wtnsHeader = NULL);

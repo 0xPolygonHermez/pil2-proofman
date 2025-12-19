@@ -426,9 +426,11 @@ extern "C" {
         nPublicsAggregation: u64,
     );
     
+    pub fn init_final_snark_prover(zkeyFile: *mut ::std::os::raw::c_char, fflonk: bool) -> *mut ::std::os::raw::c_void;
+
     pub fn gen_final_snark_proof(
+        proverSnark: *mut ::std::os::raw::c_void,
         circomWitnessFinal: *mut ::std::os::raw::c_void,
-        zkeyFile: *mut ::std::os::raw::c_char,
         outputDir: *mut ::std::os::raw::c_char,
         fflonk: bool,
     );

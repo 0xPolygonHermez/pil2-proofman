@@ -897,8 +897,13 @@ void get_committed_pols(void *circomWitness, uint64_t* execData, void *witness, 
     getCommitedPols((Goldilocks::Element *)circomWitness, execData, (Goldilocks::Element *)witness, (Goldilocks::Element *)pPublics, sizeWitness, N, nPublics, nCommitedPols);
 }
 
-void gen_final_snark_proof(void *circomWitnessFinal, char* zkeyFile, char* outputDir, bool fflonk) {
-    genFinalSnarkProof(circomWitnessFinal, string(zkeyFile), string(outputDir), fflonk);
+
+void *init_final_snark_prover(char* zkeyFile, bool fflonk) {
+    return initFinalSnark(std::string(zkeyFile), fflonk);
+}
+
+void gen_final_snark_proof(void *prover, void *circomWitnessFinal, char* outputDir, bool fflonk) {
+    genFinalSnarkProof(prover, circomWitnessFinal, std::string(outputDir), fflonk);
 }
 
 void setLogLevel(uint64_t level) {
