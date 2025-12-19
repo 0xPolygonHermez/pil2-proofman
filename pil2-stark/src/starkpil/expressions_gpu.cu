@@ -6,11 +6,6 @@
 
 extern __shared__ Goldilocks::Element scratchpad[];
 
-__device__ __noinline__ void storePolynomial__(ExpsArguments *d_expsArgs, gl64_t *destVals, uint64_t row);
-__device__ __noinline__ void multiplyPolynomials__(ExpsArguments *d_expsArgs,  DestParamsGPU *d_destParams, DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row);
-__device__ __noinline__ bool caseNoOperations__(StepsParams *h_params, DeviceArguments *d_deviceArgs, Goldilocks::Element *destVals, uint32_t k, uint64_t row);
-__device__ __noinline__ void getInversePolinomial__(gl64_t *polynomial, uint64_t dim);
-
 ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t nBlocks) : ExpressionsCtx(setupCtx), nRowsPack(nRowsPack), nBlocks(nBlocks)
 {
     
@@ -699,7 +694,6 @@ __global__  void computeExpression_(StepsParams *d_params, DeviceArguments *d_de
         expressions_params[bufferCommitsSize + 8] = d_params->evals;
     }
     __syncthreads();
-    Goldilocks::Element *destVals = &(d_params->aux_trace[d_expsArgs->offsetDestVals + blockIdx.x * d_expsArgs->dest_nParams * blockDim.x * FIELD_EXTENSION]); 
 
     while (chunk_idx < nchunks)
     {
@@ -708,6 +702,7 @@ __global__  void computeExpression_(StepsParams *d_params, DeviceArguments *d_de
         uint8_t *ops = &d_deviceArgs->ops[d_destParams[0].opsOffset];
         uint16_t *args = &d_deviceArgs->args[d_destParams[0].argsOffset];
         gl64_t *a0, *a1, *a2, *b0, *b1, *b2;
+        gl64_t *res;
 
         uint64_t i_args = 0;
         uint64_t nOps = d_destParams[0].nOps;
@@ -722,7 +717,7 @@ __global__  void computeExpression_(StepsParams *d_params, DeviceArguments *d_de
                 // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
                 load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 1, isCyclic, a0, a1, a2);
                 load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic, b0, b1, b2);
-                gl64_t *res = (gl64_t*) (kk == nOps - 1 ? destVals : &expressions_params[bufferCommitsSize][args[i_args + 1] * blockDim.x]);
+                res = (gl64_t*)&expressions_params[bufferCommitsSize][args[i_args + 1] * blockDim.x];
                 op_gpu_p2(args[i_args], res, a0, b0);
                 i_args += 8;
                 break;
@@ -732,7 +727,7 @@ __global__  void computeExpression_(StepsParams *d_params, DeviceArguments *d_de
                 // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
                 load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, a0, a1, a2);
                 load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic, b0, b1, b2);
-                gl64_t *res = (gl64_t*) (kk == nOps - 1 ? destVals : &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * blockDim.x]);
+                res = (gl64_t*)&expressions_params[bufferCommitsSize + 1][args[i_args + 1] * blockDim.x];
                 op_31_gpu_p2(args[i_args], res, a0, a1, a2, b0);
                 i_args += 8;
                 break;
@@ -742,7 +737,7 @@ __global__  void computeExpression_(StepsParams *d_params, DeviceArguments *d_de
                 // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
                 load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, a0, a1, a2);
                 load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 3, isCyclic, b0, b1, b2);
-                gl64_t *res = (gl64_t*) (kk == nOps - 1 ? destVals : &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * blockDim.x]);
+                res = (gl64_t*)&expressions_params[bufferCommitsSize + 1][args[i_args + 1] * blockDim.x];
                 op_33_gpu_p2(args[i_args], res, a0, a1, a2, b0, b1, b2);
                 i_args += 8;
                 break;
@@ -758,7 +753,7 @@ __global__  void computeExpression_(StepsParams *d_params, DeviceArguments *d_de
         }
     
 
-        storePolynomial__(d_expsArgs, destVals, i);        
+        storePolynomial__(d_expsArgs, (Goldilocks::Element *)res, i);        
 
         chunk_idx += gridDim.x;
     }

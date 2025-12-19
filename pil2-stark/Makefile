@@ -77,7 +77,7 @@ ifeq ($(UNAME_S),Darwin)
     CPPFLAGS = -isysroot $(SDKPATH) -I$(HOMEBREW_PREFIX)/include -I$(HOMEBREW_PREFIX)/opt/libomp/include \
         -I$(HOMEBREW_PREFIX)/opt/libsodium/include -MMD -MP $(INC_FLAGS)
     CXXFLAGS = -std=c++17 -Wall -pthread -Wno-unused-label -Wno-vla-cxx-extension -fPIC \
-        -Xpreprocessor -fopenmp
+        -Xpreprocessor -fopenmp -D__DARWIN_ARCH__
     LDFLAGS  = -rdynamic -L$(HOMEBREW_PREFIX)/lib -L$(HOMEBREW_PREFIX)/opt/libomp/lib \
         -L$(HOMEBREW_PREFIX)/opt/libsodium/lib -L$(SDKPATH)/usr/lib \
         -lomp -lgmpxx -lgmp -lpthread -lsodium
@@ -97,19 +97,19 @@ else ifeq ($(UNAME_S),Linux)
     CFLAGS   = -fopenmp
 
     # Add MPI include path and libraries - use C bindings only
-    CPPFLAGS += $(MPI_CPPFLAGS) -DOMPI_SKIP_MPICXX -DMPICH_SKIP_MPICXX -D__USE_MPI_RMA__
+    CPPFLAGS += $(MPI_CPPFLAGS) -DOMPI_SKIP_MPICXX -DMPICH_SKIP_MPICXX -D__USE_MPI_RMA__ -D__USE_ASSEMBLY__
     LDFLAGS += $(MPI_LDFLAGS)
     # AVX512/AVX2 detection
     AVX512_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx512' -m 1)
     ifneq ($(AVX512_SUPPORTED),)
-        CXXFLAGS += -mavx2 -D__AVX2__ -mavx512f -D__AVX512__ -D__USE_ASSEMBLY__
-        $(info AVX-512 is supported by the CPU)
-    else
-        AVX2_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx2' -m 1)
-        ifneq ($(AVX2_SUPPORTED),)
-            CXXFLAGS += -mavx2 -D__AVX2__ -D__USE_ASSEMBLY__
-            $(info AVX2 is supported by the CPU)
-        endif
+        #CXXFLAGS += -mavx2 -D__AVX2__ -mavx512f -D__AVX512__ -D__USE_ASSEMBLY__
+        #$(info AVX-512 is supported by the CPU)
+        $(info AVX-512 is temporarily disabled in the build)
+    endif
+    AVX2_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx2' -m 1)
+    ifneq ($(AVX2_SUPPORTED),)
+        CXXFLAGS += -mavx2 -D__AVX2__
+        $(info AVX2 is supported by the CPU)
     endif
 
     GPU_TARGETS := $(BUILD_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
@@ -140,8 +140,8 @@ DEPS_STARKS_LIB_GPU := $(OBJS_STARKS_LIB_GPU:.o=.d)
 
 # Define BCT source files based on platform
 ifeq ($(UNAME_S),Darwin)
-    # macOS - exclude assembly files and merkleTreeBN128.cpp
-    SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.* ./src/poseidon_opt/poseidon_opt.cpp ./src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
+    # macOS - exclude assembly files
+    SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeBN128.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.* ./src/poseidon_opt/poseidon_opt.cpp ./src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
 else
     # Linux - include all files including assembly
     SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeBN128.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.*  ./src/poseidon_opt/poseidon_opt.cpp ./src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
@@ -227,7 +227,7 @@ $(BUILD_DIR)/$(TARGET_BINFILE): $(OBJS_BINFILE)
 # cuda source
 $(BUILD_DIR_GPU)/%.cu.o: %.cu
 	$(MKDIR_P) $(dir $@)
-	$(NVCC) -D__USE_CUDA__  $(NVCCFLAGS) $(CPPFLAGS) -c $< -o $@
+	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -c $< -o $@
 
 .PHONY: clean
 

@@ -255,7 +255,7 @@ void Fnec_inv(PFnecElement r, PFnecElement a);
 void Fnec_div(PFnecElement r, PFnecElement a, PFnecElement b);
 void Fnec_pow(PFnecElement r, PFnecElement a, PFnecElement b);
 
-class RawFnec {
+class RawFnecP {
 
 public:
     const static int N64 = Fnec_N64;
@@ -273,8 +273,8 @@ private:
 
 public:
 
-    RawFnec();
-    ~RawFnec();
+    RawFnecP();
+    ~RawFnecP();
 
     const Element &zero() { return fZero; };
     const Element &one() { return fOne; };
@@ -328,7 +328,7 @@ public:
     
     void fromUI(Element &r, unsigned long int v);
 
-    static RawFnec field;
+    static RawFnecP field;
 
 };
 

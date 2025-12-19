@@ -1,4 +1,4 @@
-require "goldilocks.pil";
+require "goldilocks.pil"
 
 /*
 Available std modes:
@@ -163,6 +163,20 @@ function set_max_constraint_degree(const int degree) {
 
     // Update the maximum constraint degree
     MAX_CONSTRAINT_DEGREE = degree;
+}
+
+// Controls opid diagram print
+int PRINT_OPID_DIAGRAM = 0;
+
+function enable_opid_diagram() {
+    PRINT_OPID_DIAGRAM = 1;
+}
+
+// Controls range stats print
+int PRINT_RANGE_STATS = 0;
+
+function enable_range_stats() {
+    PRINT_RANGE_STATS = 1;
 }
 
 // Powers of 2

@@ -1,5 +1,6 @@
 #ifndef GOLDILOCKS_AVX
 #define GOLDILOCKS_AVX
+
 #ifdef __AVX2__
 #include "goldilocks_base_field.hpp"
 #include <immintrin.h>

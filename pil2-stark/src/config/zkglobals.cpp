@@ -1,6 +1,5 @@
 #include "zkglobals.hpp"
 
 Goldilocks fr;
-Poseidon2Goldilocks poseidon;
-RawFr bn128;
-RawFq fq;
+RawFrP bn128;
+RawFqP fq;

@@ -4,12 +4,14 @@
 #include <cstdint>
 #include <cassert>
 #include "goldilocks_base_field.hpp"
+#ifndef __GOLDILOCKS_ENV__
 #include "gpu_timer.cuh"
 #include <mutex>
 #include "cuda_utils.cuh"
 #include "transcriptGL.cuh"
 #include "expressions_gpu.cuh"
 #include <limits.h>
+#endif
 #include "gl64_t.cuh"
 
 
@@ -32,6 +34,7 @@ public:
     }
 };
 
+#ifndef __GOLDILOCKS_ENV__
 struct AirInstanceInfo {
     uint64_t airgroupId;
     uint64_t airId;
@@ -58,10 +61,9 @@ struct AirInstanceInfo {
     bool is_packed = false;
     uint64_t num_packed_words = 0;
     uint64_t *unpack_info = nullptr;
-
-    uint64_t nStreams = 1;
-
-    AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_, PackedInfo *packedInfo, uint64_t nStreams_): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId), nStreams(nStreams_) {
+    uint64_t* d_num_packed_words;
+    
+    AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_, PackedInfo *packedInfo): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId) {
         int64_t *d_openingPoints;
         CHECKCUDAERR(cudaMalloc(&d_openingPoints, setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t)));
         CHECKCUDAERR(cudaMemcpy(d_openingPoints, setupCtx->starkInfo.openingPoints.data(), setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t), cudaMemcpyHostToDevice));
@@ -72,6 +74,9 @@ struct AirInstanceInfo {
         CHECKCUDAERR(cudaMalloc(&d_verkeyRoot, HASH_SIZE * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMemcpy(d_verkeyRoot, verkeyRoot_, HASH_SIZE * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
         verkeyRoot = d_verkeyRoot;
+
+        CHECKCUDAERR(cudaMalloc(&d_num_packed_words, sizeof(uint64_t)));
+
 
         uint64_t size_eval = setupCtx->starkInfo.evMap.size();
         uint64_t num_batches = (setupCtx->starkInfo.openingPoints.size() + 3) / 4;
@@ -192,6 +197,7 @@ struct AirInstanceInfo {
                 CHECKCUDAERR(cudaMalloc(&unpack_info, nCols * sizeof(uint64_t)));
                 CHECKCUDAERR(cudaMemcpy(unpack_info, packedInfo->unpack_info, nCols * sizeof(uint64_t), cudaMemcpyHostToDevice));
             }
+            cudaMemcpy(d_num_packed_words, &num_packed_words, sizeof(uint64_t), cudaMemcpyHostToDevice);
         }
     }
 
@@ -214,6 +220,7 @@ struct AirInstanceInfo {
 
         delete[] evalsInfoSizes;
         delete[] evalsInfo;
+        CHECKCUDAERR(cudaFree(d_num_packed_words));
 
         if (evalsInfoFRI != nullptr) {
             uint64_t nOpeningPoints = setupCtx->starkInfo.openingPoints.size();
@@ -275,14 +282,13 @@ struct StreamData{
     uint64_t airId; 
     int64_t instanceId;
     string proofType;
+    uint64_t arity;
         
     bool recursive;
-    bool extraStream;
-    uint64_t streamsUsed;
 
     std::mutex mutex_stream_selection;
     
-    void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_){
+    void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_, uint64_t merkleTreeArity){
         uint64_t maxExps = 20000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -298,19 +304,18 @@ struct StreamData{
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_args, maxExps * sizeof(ExpsArguments)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, sizeof(StepsParams)));
 
-        extraStream = false;
-        streamsUsed = 1;
         root = nullptr;
         pSetupCtx = nullptr;
         proofBuffer = nullptr;
         airgroupId = UINT64_MAX;
         airId = UINT64_MAX;
+        arity = merkleTreeArity;
 
-        transcript = new TranscriptGL_GPU(3,
+        transcript = new TranscriptGL_GPU(merkleTreeArity,
                                     true,
                                     stream);
 
-        transcript_helper = new TranscriptGL_GPU(3,
+        transcript_helper = new TranscriptGL_GPU(merkleTreeArity,
                                            true,
                                            stream);
 
@@ -332,9 +337,6 @@ struct StreamData{
         cudaEventDestroy(end_event);
         cudaEventCreate(&end_event);
         status = reset_status ? 0 : 3;
-
-        extraStream = false;
-        streamsUsed = 1;
 
         root = nullptr;
         pSetupCtx = nullptr;
@@ -392,5 +394,5 @@ void load_and_copy_to_device_in_chunks(
     uint64_t total_size,
     uint64_t streamId
     );
-
+#endif
 #endif

@@ -1,144 +1,5 @@
 use crate::PrimeField64;
-
-pub const HALF_ROUNDS: usize = 4;
-pub const N_PARTIAL_ROUNDS: usize = 22;
-pub const SPONGE_WIDTH: usize = 12;
-
-pub const D: [u64; 12] = [
-    0xc3b6c08e23ba9300,
-    0xd84b5de94a324fb6,
-    0x0d0c371c5b35b84f,
-    0x7964f570e7188037,
-    0x5daf18bbd996604b,
-    0x6743bc47b9595257,
-    0x5528b9362c59bb70,
-    0xac45e25b7127b68b,
-    0xa2077d7dfbb606b5,
-    0xf3faac6faee378ae,
-    0x0c6388b51545e883,
-    0xd27dbb6944917b60,
-];
-
-pub const C: [u64; 118] = [
-    0x13dcf33aba214f46,
-    0x30b3b654a1da6d83,
-    0x1fc634ada6159b56,
-    0x937459964dc03466,
-    0xedd2ef2ca7949924,
-    0xede9affde0e22f68,
-    0x8515b9d6bac9282d,
-    0x6b5c07b4e9e900d8,
-    0x1ec66368838c8a08,
-    0x9042367d80d1fbab,
-    0x400283564a3c3799,
-    0x4a00be0466bca75e,
-    0x7913beee58e3817f,
-    0xf545e88532237d90,
-    0x22f8cb8736042005,
-    0x6f04990e247a2623,
-    0xfe22e87ba37c38cd,
-    0xd20e32c85ffe2815,
-    0x117227674048fe73,
-    0x4e9fb7ea98a6b145,
-    0xe0866c232b8af08b,
-    0x00bbc77916884964,
-    0x7031c0fb990d7116,
-    0x240a9e87cf35108f,
-    0x2e6363a5a12244b3,
-    0x5e1c3787d1b5011c,
-    0x4132660e2a196e8b,
-    0x3a013b648d3d4327,
-    0xf79839f49888ea43,
-    0xfe85658ebafe1439,
-    0xb6889825a14240bd,
-    0x578453605541382b,
-    0x4508cda8f6b63ce9,
-    0x9c3ef35848684c91,
-    0x0812bde23c87178c,
-    0xfe49638f7f722c14,
-    0x8e3f688ce885cbf5,
-    0xb8e110acf746a87d,
-    0xb4b2e8973a6dabef,
-    0x9e714c5da3d462ec,
-    0x6438f9033d3d0c15,
-    0x24312f7cf1a27199,
-    0x23f843bb47acbf71,
-    0x9183f11a34be9f01,
-    0x839062fbb9d45dbf,
-    0x24b56e7e6c2e43fa,
-    0xe1683da61c962a72,
-    0xa95c63971a19bfa7,
-    0x4adf842aa75d4316,
-    0xf8fbb871aa4ab4eb,
-    0x68e85b6eb2dd6aeb,
-    0x07a0b06b2d270380,
-    0xd94e0228bd282de4,
-    0x8bdd91d3250c5278,
-    0x209c68b88bba778f,
-    0xb5e18cdab77f3877,
-    0xb296a3e808da93fa,
-    0x8370ecbda11a327e,
-    0x3f9075283775dad8,
-    0xb78095bb23c6aa84,
-    0x3f36b9fe72ad4e5f,
-    0x69bc96780b10b553,
-    0x3f1d341f2eb7b881,
-    0x4e939e9815838818,
-    0xda366b3ae2a31604,
-    0xbc89db1e7287d509,
-    0x6102f411f9ef5659,
-    0x58725c5e7ac1f0ab,
-    0x0df5856c798883e7,
-    0xf7bb62a8da4c961b,
-    0xc68be7c94882a24d,
-    0xaf996d5d5cdaedd9,
-    0x9717f025e7daf6a5,
-    0x6436679e6e7216f4,
-    0x8a223d99047af267,
-    0xbb512e35a133ba9a,
-    0xfbbf44097671aa03,
-    0xf04058ebf6811e61,
-    0x5cca84703fac7ffb,
-    0x9b55c7945de6469f,
-    0x8e05bf09808e934f,
-    0x2ea900de876307d7,
-    0x7748fff2b38dfb89,
-    0x6b99a676dd3b5d81,
-    0xac4bb7c627cf7c13,
-    0xadb6ebe5e9e2f5ba,
-    0x2d33378cafa24ae3,
-    0x1e5b73807543f8c2,
-    0x09208814bfebb10f,
-    0x782e64b6bb5b93dd,
-    0xadd5a48eac90b50f,
-    0xadd4c54c736ea4b1,
-    0xd58dbb86ed817fd8,
-    0x6d5ed1a533f34ddd,
-    0x28686aa3e36b7cb9,
-    0x591abd3476689f36,
-    0x047d766678f13875,
-    0xa2a11112625f5b49,
-    0x21fd10a3f8304958,
-    0xf9b40711443b0280,
-    0xd2697eb8b2bde88e,
-    0x3493790b51731b3f,
-    0x11caf9dd73764023,
-    0x7acfb8f72878164e,
-    0x744ec4db23cefc26,
-    0x1e00e58f422c6340,
-    0x21dd28d906a62dda,
-    0xf32a46ab5f465b5f,
-    0xbfce13201f3f7e6b,
-    0xf30d2e7adb5304e2,
-    0xecdf4ee4abad48e9,
-    0xf94e82182d395019,
-    0x4ee52e3744d887c5,
-    0xa1341c7cac0083b2,
-    0x2302fb26c30c834a,
-    0xaea3c587273bf7d3,
-    0xf798e24961823ec7,
-    0x962deba3e9a2cd94,
-];
+use crate::Poseidon2Constants;
 
 pub fn matmul_m4<F: PrimeField64>(input: &mut [F]) {
     let t0 = input[0] + input[1];
@@ -158,32 +19,34 @@ pub fn matmul_m4<F: PrimeField64>(input: &mut [F]) {
     input[3] = t4;
 }
 
-pub fn matmul_external<F: PrimeField64>(input: &mut [F]) {
-    matmul_m4(&mut input[0..4]);
-    matmul_m4(&mut input[4..8]);
-    matmul_m4(&mut input[8..12]);
+pub fn matmul_external<F: PrimeField64, const W: usize>(input: &mut [F; W]) {
+    for i in 0..W / 4 {
+        matmul_m4(&mut input[i * 4..(i + 1) * 4]);
+    }
 
-    let stored = [
-        input[0] + input[4] + input[8],
-        input[1] + input[5] + input[9],
-        input[2] + input[6] + input[10],
-        input[3] + input[7] + input[11],
-    ];
+    if W > 4 {
+        let mut stored = [F::ZERO; 4];
+        for i in 0..4 {
+            for j in 0..W / 4 {
+                stored[i] += input[j * 4 + i];
+            }
+        }
 
-    for (i, x) in input.iter_mut().enumerate() {
-        *x += stored[i % 4];
+        for (i, x) in input.iter_mut().enumerate() {
+            *x += stored[i % 4];
+        }
     }
 }
 
-pub fn prodadd<F: PrimeField64>(input: &mut [F], sum: F) {
-    for i in 0..SPONGE_WIDTH {
-        input[i] = input[i] * F::from_u64(D[i]) + sum;
+pub fn prodadd<F: PrimeField64, const W: usize>(input: &mut [F; W], d: &[u64], sum: F) {
+    for i in 0..W {
+        input[i] = input[i] * F::from_u64(d[i]) + sum;
     }
 }
-pub fn pow7add<F: PrimeField64>(input: &mut [F], c: &[F]) {
-    for (i, x) in input.iter_mut().enumerate() {
-        *x += c[i];
-        *x = pow7(*x);
+pub fn pow7add<F: PrimeField64, const W: usize>(input: &mut [F; W], c: &[F]) {
+    for i in 0..W {
+        input[i] += c[i];
+        input[i] = pow7(input[i]);
     }
 }
 
@@ -194,7 +57,7 @@ pub fn pow7<F: PrimeField64>(input: F) -> F {
     x6 * input
 }
 
-pub fn add<F: PrimeField64>(input: &mut [F]) -> F {
+pub fn add<F: PrimeField64, const W: usize>(input: &[F; W]) -> F {
     let mut sum = F::ZERO;
     for x in input.iter() {
         sum += *x;
@@ -202,36 +65,42 @@ pub fn add<F: PrimeField64>(input: &mut [F]) -> F {
     sum
 }
 
-pub fn poseidon2_hash<F: PrimeField64>(input: &[F]) -> Vec<F> {
-    let mut state = input.to_vec();
-    matmul_external(&mut state);
-    for r in 0..HALF_ROUNDS {
-        let c_slice: Vec<F> = C[r * SPONGE_WIDTH..(r + 1) * SPONGE_WIDTH].iter().map(|&x| F::from_u64(x)).collect();
-        pow7add(&mut state, &c_slice);
-        matmul_external(&mut state);
+pub fn poseidon2_hash<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize>(input: &[F; W]) -> [F; W] {
+    let mut state = *input;
+
+    matmul_external::<F, W>(&mut state);
+
+    for r in 0..C::HALF_ROUNDS {
+        let mut c_slice = [F::ZERO; W];
+        for (i, c) in c_slice.iter_mut().enumerate() {
+            *c = F::from_u64(C::RC[r * W + i]);
+        }
+        pow7add::<F, W>(&mut state, &c_slice);
+        matmul_external::<F, W>(&mut state);
     }
 
-    for r in 0..N_PARTIAL_ROUNDS {
-        state[0] += F::from_u64(C[HALF_ROUNDS * SPONGE_WIDTH + r]);
+    for r in 0..C::N_PARTIAL_ROUNDS {
+        state[0] += F::from_u64(C::RC[C::HALF_ROUNDS * W + r]);
         state[0] = pow7(state[0]);
-        let sum = add(&mut state);
-        prodadd(&mut state, sum);
+        let sum = add::<F, W>(&state);
+        prodadd::<F, W>(&mut state, C::DIAG, sum);
     }
 
-    for r in 0..HALF_ROUNDS {
-        let c_slice: Vec<F> = C[(HALF_ROUNDS * SPONGE_WIDTH + N_PARTIAL_ROUNDS + r * SPONGE_WIDTH)
-            ..(HALF_ROUNDS * SPONGE_WIDTH + N_PARTIAL_ROUNDS + (r + 1) * SPONGE_WIDTH)]
-            .iter()
-            .map(|&x| F::from_u64(x))
-            .collect();
-        pow7add(&mut state, &c_slice);
-        matmul_external(&mut state);
+    for r in 0..C::HALF_ROUNDS {
+        let mut c_slice = [F::ZERO; W];
+        for (i, c) in c_slice.iter_mut().enumerate() {
+            *c = F::from_u64(C::RC[C::HALF_ROUNDS * W + C::N_PARTIAL_ROUNDS + r * W + i]);
+        }
+        pow7add::<F, W>(&mut state, &c_slice);
+        matmul_external::<F, W>(&mut state);
     }
+
     state
 }
 
-pub fn linear_hash_seq<F: PrimeField64>(input: &[F]) -> Vec<F> {
-    let mut state = vec![F::ZERO; SPONGE_WIDTH];
+pub fn linear_hash_seq<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize>(input: &[F]) -> [F; W] {
+    assert!(W > 4);
+    let mut state: [F; W] = [F::ZERO; W];
     let size = input.len();
     if size <= 4 {
         state[..size].copy_from_slice(&input[..size]);
@@ -241,31 +110,37 @@ pub fn linear_hash_seq<F: PrimeField64>(input: &[F]) -> Vec<F> {
     while remaining > 0 {
         if remaining != size {
             for i in 0..4 {
-                state[8 + i] = state[i];
+                state[C::RATE + i] = state[i];
             }
         }
-        let n = if remaining < 8 { remaining } else { 8 };
-        for i in 0..(8 - n) {
+        let n = if remaining < C::RATE { remaining } else { C::RATE };
+        for i in 0..(C::RATE - n) {
             state[n + i] = F::ZERO;
         }
         for i in 0..n {
             state[i] = input[size - remaining + i];
         }
-        state = poseidon2_hash(&state);
+        state = poseidon2_hash::<F, C, W>(&state);
         remaining -= n;
     }
     state
 }
 
-pub fn calculate_root_from_proof<F: PrimeField64>(value: &mut [F], mp: &[Vec<F>], idx: u64, offset: u64, arity: u64) {
+pub fn calculate_root_from_proof<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize>(
+    value: &mut [F; W],
+    mp: &[Vec<F>],
+    idx: &mut u64,
+    offset: u64,
+    arity: u64,
+) {
     if offset == mp.len() as u64 {
         return;
     }
 
-    let curr_idx = idx % arity;
-    let next_idx = idx / arity;
+    let curr_idx = *idx % arity;
+    *idx /= arity;
 
-    let mut inputs = vec![F::ZERO; SPONGE_WIDTH];
+    let mut inputs: [F; W] = [F::ZERO; W];
     let mut p = 0;
     for i in 0..arity {
         if i == curr_idx {
@@ -280,19 +155,92 @@ pub fn calculate_root_from_proof<F: PrimeField64>(value: &mut [F], mp: &[Vec<F>]
         inputs[(curr_idx * 4 + j) as usize] = value[j as usize];
     }
 
-    let outputs = poseidon2_hash(&inputs);
+    let outputs = poseidon2_hash::<F, C, W>(&inputs);
 
     value[..4].copy_from_slice(&outputs[..4]);
-    calculate_root_from_proof(value, mp, next_idx, offset + 1, arity);
+    calculate_root_from_proof::<F, C, W>(value, mp, idx, offset + 1, arity);
 }
 
-pub fn verify_mt<F: PrimeField64>(root: &[F], mp: &[Vec<F>], idx: u64, v: &[F], arity: u64) -> bool {
-    let mut value = linear_hash_seq(v);
+pub fn partial_merkle_tree<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize>(
+    input: &[F],
+    num_elements: u64,
+    arity: u64,
+) -> [F; 4] {
+    let mut num_nodes = num_elements;
+    let mut nodes_level = num_elements;
 
-    calculate_root_from_proof(&mut value, mp, idx, 0, arity);
-    for i in 0..4 {
-        if value[i] != root[i] {
-            return false;
+    while nodes_level > 1 {
+        let extra_zeros = (arity - (nodes_level % arity)) % arity;
+        num_nodes += extra_zeros;
+        let next_n = nodes_level.div_ceil(arity);
+        num_nodes += next_n;
+        nodes_level = next_n;
+    }
+
+    let mut cursor = vec![F::ZERO; (num_nodes * C::CAPACITY as u64) as usize];
+    cursor[..(num_elements * C::CAPACITY as u64) as usize]
+        .copy_from_slice(&input[..(num_elements * C::CAPACITY as u64) as usize]);
+
+    let mut pending = num_elements;
+    let mut next_n = pending.div_ceil(arity);
+    let mut next_index = 0;
+
+    while pending > 1 {
+        let extra_zeros = (arity - (pending % arity)) % arity;
+
+        if extra_zeros > 0 {
+            let start = (next_index + pending * C::CAPACITY as u64) as usize;
+            let end = start + (extra_zeros * C::CAPACITY as u64) as usize;
+            cursor[start..end].fill(F::ZERO);
+        }
+
+        for i in 0..next_n {
+            let mut pol_input: [F; W] = [F::ZERO; W];
+
+            let child_start = (next_index + i * C::SPONGE_WIDTH as u64) as usize;
+            pol_input[..C::SPONGE_WIDTH].copy_from_slice(&cursor[child_start..child_start + C::SPONGE_WIDTH]);
+
+            // Compute hash
+            let parent_start = (next_index + (pending + extra_zeros + i) * C::CAPACITY as u64) as usize;
+            let parent_hash = poseidon2_hash::<F, C, W>(&pol_input);
+            cursor[parent_start..parent_start + C::CAPACITY].copy_from_slice(&parent_hash[..C::CAPACITY]);
+        }
+
+        next_index += (pending + extra_zeros) * C::CAPACITY as u64;
+        pending = pending.div_ceil(arity);
+        next_n = pending.div_ceil(arity);
+    }
+
+    let mut root = [F::ZERO; 4];
+    root.copy_from_slice(&cursor[next_index as usize..next_index as usize + 4]);
+    root
+}
+
+pub fn verify_mt<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize>(
+    root: &[F],
+    last_level: &[F],
+    mp: &[Vec<F>],
+    idx: u64,
+    v: &[F],
+    arity: u64,
+    last_level_verification: u64,
+) -> bool {
+    let mut value = linear_hash_seq::<F, C, W>(v);
+
+    let mut query_idx = idx;
+    calculate_root_from_proof::<F, C, W>(&mut value, mp, &mut query_idx, 0, arity);
+
+    if last_level_verification == 0 {
+        for i in 0..4 {
+            if value[i] != root[i] {
+                return false;
+            }
+        }
+    } else {
+        for i in 0..4 {
+            if value[i] != last_level[query_idx as usize * 4 + i] {
+                return false;
+            }
         }
     }
     true
@@ -300,13 +248,88 @@ pub fn verify_mt<F: PrimeField64>(root: &[F], mp: &[Vec<F>], idx: u64, v: &[F], 
 
 #[cfg(test)]
 mod tests {
-    use crate::Goldilocks;
+    use crate::{Goldilocks, Poseidon16, Poseidon12, Poseidon4, Poseidon8};
 
     #[allow(unused_imports)]
     use super::*;
 
     #[test]
-    pub fn test_poseidon2() {
+    pub fn test_poseidon2_16() {
+        let mut input = [
+            Goldilocks::new(0),
+            Goldilocks::new(1),
+            Goldilocks::new(2),
+            Goldilocks::new(3),
+            Goldilocks::new(4),
+            Goldilocks::new(5),
+            Goldilocks::new(6),
+            Goldilocks::new(7),
+            Goldilocks::new(8),
+            Goldilocks::new(9),
+            Goldilocks::new(10),
+            Goldilocks::new(11),
+            Goldilocks::new(12),
+            Goldilocks::new(13),
+            Goldilocks::new(14),
+            Goldilocks::new(15),
+        ];
+        let output = poseidon2_hash::<Goldilocks, Poseidon16, 16>(&mut input);
+
+        assert_eq!(output[0], Goldilocks::new(9639188652563994454));
+        assert_eq!(output[1], Goldilocks::new(12273372933164734616));
+        assert_eq!(output[2], Goldilocks::new(2905147255612444119));
+        assert_eq!(output[3], Goldilocks::new(17581461329934617288));
+        assert_eq!(output[4], Goldilocks::new(14390794100096760072));
+        assert_eq!(output[5], Goldilocks::new(5468485695976078057));
+        assert_eq!(output[6], Goldilocks::new(2832370985856357627));
+        assert_eq!(output[7], Goldilocks::new(1116111836864400812));
+        assert_eq!(output[8], Goldilocks::new(14997632823506024332));
+        assert_eq!(output[9], Goldilocks::new(3976503894892102369));
+        assert_eq!(output[10], Goldilocks::new(14874978986912301676));
+        assert_eq!(output[11], Goldilocks::new(12458748982184310703));
+        assert_eq!(output[12], Goldilocks::new(103345454961107931));
+        assert_eq!(output[13], Goldilocks::new(3354965064850558444));
+        assert_eq!(output[14], Goldilocks::new(14413825288474057217));
+        assert_eq!(output[15], Goldilocks::new(4214638127285300968));
+    }
+
+    #[test]
+    pub fn test_poseidon2_4() {
+        let mut input = [Goldilocks::new(0), Goldilocks::new(1), Goldilocks::new(2), Goldilocks::new(3)];
+        let output = poseidon2_hash::<Goldilocks, Poseidon4, 4>(&mut input);
+
+        assert_eq!(output[0], Goldilocks::new(8466914293353944746));
+        assert_eq!(output[1], Goldilocks::new(9589318970755021278));
+        assert_eq!(output[2], Goldilocks::new(5769801005587200741));
+        assert_eq!(output[3], Goldilocks::new(17288820341814263849));
+    }
+
+    #[test]
+    pub fn test_poseidon2_8() {
+        let mut input = [
+            Goldilocks::new(0),
+            Goldilocks::new(1),
+            Goldilocks::new(2),
+            Goldilocks::new(3),
+            Goldilocks::new(4),
+            Goldilocks::new(5),
+            Goldilocks::new(6),
+            Goldilocks::new(7),
+        ];
+        let output = poseidon2_hash::<Goldilocks, Poseidon8, 8>(&mut input);
+
+        assert_eq!(output[0], Goldilocks::new(14266028122062624699));
+        assert_eq!(output[1], Goldilocks::new(5353147180106052723));
+        assert_eq!(output[2], Goldilocks::new(15203350112844181434));
+        assert_eq!(output[3], Goldilocks::new(17630919042639565165));
+        assert_eq!(output[4], Goldilocks::new(16601551015858213987));
+        assert_eq!(output[5], Goldilocks::new(10184091939013874068));
+        assert_eq!(output[6], Goldilocks::new(16774100645754596496));
+        assert_eq!(output[7], Goldilocks::new(12047415603622314780));
+    }
+
+    #[test]
+    pub fn test_poseidon2_12() {
         let mut input = [
             Goldilocks::new(0),
             Goldilocks::new(1),
@@ -321,7 +344,7 @@ mod tests {
             Goldilocks::new(10),
             Goldilocks::new(11),
         ];
-        let output = poseidon2_hash(&mut input);
+        let output = poseidon2_hash::<Goldilocks, Poseidon12, 12>(&mut input);
 
         assert_eq!(output[0], Goldilocks::new(138186169299091649));
         assert_eq!(output[1], Goldilocks::new(2237493815125627916));

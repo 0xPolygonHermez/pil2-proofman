@@ -245,6 +245,7 @@ extern "C" {
     
     pub fn write_custom_commit(
         root: *mut ::std::os::raw::c_void,
+        arity: u64,
         nBits: u64,
         nBitsExt: u64,
         nCols: u64,
@@ -269,23 +270,6 @@ extern "C" {
         d_buffers: *mut ::std::os::raw::c_void,
         pSetupCtx_: *mut ::std::os::raw::c_void,
     ) -> u64;
-
-    // Hash & Transcript
-    // ========================================================================================
-    pub fn calculate_hash(
-        pValue: *mut ::std::os::raw::c_void,
-        pBuffer: *mut ::std::os::raw::c_void,
-        nElements: u64,
-        nOutputs: u64,
-    );
-    
-    pub fn transcript_new(arity: u64, custom: bool) -> *mut ::std::os::raw::c_void;
-    
-    pub fn transcript_add(pTranscript: *mut ::std::os::raw::c_void, pInput: *mut ::std::os::raw::c_void, size: u64);
-    
-    pub fn transcript_free(pTranscript: *mut ::std::os::raw::c_void);
-    
-    pub fn get_challenge(pTranscript: *mut ::std::os::raw::c_void, pElement: *mut ::std::os::raw::c_void);
 
     // Constraints Verification
     // ========================================================================================
@@ -505,6 +489,7 @@ extern "C" {
         maxSizes_: *mut ::std::os::raw::c_void,
         node_rank: u32,
         node_size: u32,
+        arity: u32,
     ) -> *mut ::std::os::raw::c_void;
     
     pub fn free_device_buffers(d_buffers: *mut ::std::os::raw::c_void);
@@ -529,7 +514,6 @@ extern "C" {
         d_buffers_: *mut ::std::os::raw::c_void,
         verkeyRoot_: *mut ::std::os::raw::c_void,
         packedInfo_: *mut ::std::os::raw::c_void,
-        n_streams: u64,
     );
     
     pub fn gen_device_streams(
@@ -538,6 +522,7 @@ extern "C" {
         maxSizeProverBufferAggregation: u64,
         maxProofSize: u64,
         max_n_bits_ext: u64,
+        merkle_tree_arity: u64,
     ) -> u64;
     
     pub fn get_instances_ready(

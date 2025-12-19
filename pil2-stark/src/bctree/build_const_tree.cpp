@@ -23,13 +23,15 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
     json starkInfoJson;
     file2json(starkInfoFile, starkInfoJson);
 
+    uint64_t lastLevelVerification = starkInfoJson["starkStruct"]["lastLevelVerification"];
     uint64_t nBits = starkInfoJson["starkStruct"]["nBits"];
     uint64_t nBitsExt = starkInfoJson["starkStruct"]["nBitsExt"];
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
     uint64_t nPols = starkInfoJson["nConstants"];
     std::string verificationHashType = starkInfoJson["starkStruct"]["verificationHashType"];
-
+    uint64_t arity = starkInfoJson["starkStruct"]["merkleTreeArity"];
+    bool custom = starkInfoJson["starkStruct"]["merkleTreeCustom"].get<bool>();
     uintmax_t constPolsSize = nPols * sizeof(Goldilocks::Element) * N;
     
     TimerStart(LOADING_CONST_POLS);
@@ -45,7 +47,7 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
     if (verificationHashType == "GL") {
         TimerStart(MERKELIZE_CONST_TREE);
         Goldilocks::Element root[4];
-        MerkleTreeGL mt(3, true, NExtended, nPols);
+        MerkleTreeGL mt(arity, lastLevelVerification, custom, NExtended, nPols);
         Goldilocks::Element *buffNodes = new Goldilocks::Element[mt.numNodes];
         mt.setSource(pConstPolsExt);
         mt.setNodes(buffNodes);
@@ -73,12 +75,12 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
 
     } else if(verificationHashType == "BN128"){
         TimerStart(MERKELIZE_CONST_TREE);
-        RawFr::Element rootC;
+        RawFrP::Element rootC;
         uint64_t merkleTreeArity = starkInfoJson["starkStruct"].contains("merkleTreeArity") ? starkInfoJson["starkStruct"]["merkleTreeArity"].get<uint64_t>() : 16;
         bool merkleTreeCustom = starkInfoJson["starkStruct"].contains("merkleTreeCustom") ? starkInfoJson["starkStruct"]["merkleTreeCustom"].get<bool>() : false;
 
-        MerkleTreeBN128 mt(merkleTreeArity, merkleTreeCustom, NExtended, nPols);
-        RawFr::Element *buffNodes = new RawFr::Element[mt.numNodes];
+        MerkleTreeBN128 mt(merkleTreeArity, 0, merkleTreeCustom, NExtended, nPols);
+        RawFrP::Element *buffNodes = new RawFrP::Element[mt.numNodes];
         mt.setSource(pConstPolsExt);
         mt.setNodes(buffNodes);
         mt.merkelize();
@@ -87,8 +89,8 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
 
         if (verKeyFile != "") {
             json value;
-            RawFr rawfr;
-            value = rawfr.toString(rootC);
+            RawFrP RawFrP;
+            value = RawFrP.toString(rootC);
             json2file(value, verKeyFile);
         }
 

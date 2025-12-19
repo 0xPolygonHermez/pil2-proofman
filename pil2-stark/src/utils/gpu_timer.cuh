@@ -5,7 +5,10 @@
 #include <unordered_map>
 #include <string>
 #include <cuda_runtime.h>
+#include <vector>
+#ifndef __GOLDILOCKS_ENV__
 #include "zklog.hpp"
+#endif
 
 #define LOG_TIME_GPU 1
 
@@ -31,7 +34,9 @@ public:
     bool createEvent(cudaEvent_t& event) {
         cudaError_t err = cudaEventCreate(&event);
         if (err != cudaSuccess) {
+#ifndef __GOLDILOCKS_ENV__
             zklog.error("cudaEventCreate failed: " + std::string(cudaGetErrorString(err)));
+#endif
             return false;
         }
         return true;
@@ -50,7 +55,9 @@ public:
     void stop(const std::string& name) {
         auto it = timers.find(name);
         if (it == timers.end()) {
+#ifndef __GOLDILOCKS_ENV__
             zklog.error("TimerGPU::stop called for unknown section: " + name);
+#endif
             return;
         }
         cudaEventRecord(it->second.stop, stream);
@@ -58,7 +65,9 @@ public:
 
     void startCategory(const std::string& name) {
         if (activeCategoryTimers.find(name) != activeCategoryTimers.end()) {
+#ifndef __GOLDILOCKS_ENV__
             zklog.error("TimerGPU::startCategory called without stop for previous timer: " + name);
+#endif
             return;
         }
 
@@ -75,7 +84,9 @@ public:
     void stopCategory(const std::string& name) {
         auto it = activeCategoryTimers.find(name);
         if (it == activeCategoryTimers.end()) {
+#ifndef __GOLDILOCKS_ENV__
             zklog.error("TimerGPU::stopCategory called without matching start: " + name);
+#endif
             return;
         }
         cudaEventRecord(it->second->stop, stream);
@@ -114,12 +125,14 @@ public:
     }
 
     void syncAndLogAll(std::string instance_id, std::string airgroup_id, std::string air_id) {
+#ifndef __GOLDILOCKS_ENV__
         zklog.trace("TIMERS FOR INSTANCE ID " + instance_id + " [" + airgroup_id + ":" + air_id + "]");
         for (const auto& name : order) {
             auto& entry = timers[name];
             if (entry.timeMs < 0.0f) syncAndCompute(name);
             zklog.trace("<-- " + name + " : " + std::to_string(entry.timeMs / 1000.0f) + " s");
         }
+#endif
     }
 
     void syncCategories() {
@@ -152,11 +165,11 @@ public:
     }
 
     void logCategoryContributions(const std::string& total_name) {
+#ifndef __GOLDILOCKS_ENV__
         if (timers.find(total_name) == timers.end()) return;
 
         double time_total = getTimeSec(total_name);
         if (multiTimers.empty()) return;
-
         zklog.trace("     KERNELS CONTRIBUTIONS:");
 
         std::vector<std::pair<std::string, double>> category_times;
@@ -170,7 +183,6 @@ public:
 
         std::sort(category_times.begin(), category_times.end(),
                   [](const auto& a, const auto& b) { return a.second > b.second; });
-
         std::ostringstream oss;
         for (const auto& [category, total_sec] : category_times) {
            oss << std::fixed << std::setprecision(4) << total_sec << "s (" << std::setprecision(2) << (total_sec / time_total) * 100.0 << "%)";
@@ -182,6 +194,7 @@ public:
         double other_time = std::max(0.0, time_total - accounted_time);
         oss << std::fixed << std::setprecision(4) << other_time << "s (" << std::setprecision(2)<< (other_time / time_total) * 100.0 << "%)";
         zklog.trace("        OTHER" + std::string(15 - 5, ' ') + ":  " + oss.str());
+#endif
     }
 
     ~TimerGPU() {
@@ -193,7 +206,7 @@ inline std::string makeTimerName(const std::string& base, int id) {
     return base + "_" + std::to_string(id);
 }
 
-#if LOG_TIME_GPU
+#if LOG_TIME_GPU && !defined(__GOLDILOCKS_ENV__) 
 #define TimerStartIdGPU(timer, name, id) \
     timer.start(makeTimerName(#name, id)); \
 

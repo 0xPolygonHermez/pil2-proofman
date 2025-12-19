@@ -21,11 +21,11 @@ use crate::ProofType;
 use crate::StarkInfo;
 use crate::ProofmanResult;
 
-type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
+pub type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
-type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
+pub type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
-type FreeCircomCircuitFunc = unsafe extern "C" fn(circuit: *mut c_void);
+pub type FreeCircomCircuitFunc = unsafe extern "C" fn(circuit: *mut c_void);
 
 #[derive(Debug)]
 #[repr(C)]
@@ -79,7 +79,7 @@ pub struct Setup<F: PrimeField64> {
     pub exec_data: RwLock<Option<Vec<u64>>>,
     pub n_cols: u64,
     pub n_operations_quotient: u64,
-    pub single_instance: bool,
+    pub preallocate: bool,
 }
 
 impl<F: PrimeField64> Drop for Setup<F> {
@@ -111,7 +111,6 @@ impl<F: PrimeField64> Setup<F> {
         setup_type: &ProofType,
         verify_constraints: bool,
         preallocate: bool,
-        single_instance: bool,
     ) -> Self {
         let setup_path = match setup_type {
             ProofType::VadcopFinal => global_info.get_setup_path("vadcop_final"),
@@ -121,8 +120,21 @@ impl<F: PrimeField64> Setup<F> {
 
         let gpu = cfg!(feature = "gpu");
 
-        let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
-        let expressions_bin_path = setup_path.display().to_string() + ".bin";
+        let stark_info_path = match setup_type {
+            ProofType::Recursive1 => {
+                let setup_path_recursive2 = global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive2);
+                setup_path_recursive2.display().to_string() + ".starkinfo.json"
+            }
+            _ => setup_path.display().to_string() + ".starkinfo.json",
+        };
+
+        let expressions_bin_path = match setup_type {
+            ProofType::Recursive1 => {
+                let setup_path_recursive2 = global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive2);
+                setup_path_recursive2.display().to_string() + ".bin"
+            }
+            _ => setup_path.display().to_string() + ".bin",
+        };
         let const_pols_path = match !gpu {
             true => setup_path.display().to_string() + ".const",
             false => setup_path.display().to_string() + ".const_gpu",
@@ -295,7 +307,7 @@ impl<F: PrimeField64> Setup<F> {
             const_pols_tree_path,
             n_cols,
             n_operations_quotient,
-            single_instance,
+            preallocate,
         }
     }
 

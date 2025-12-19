@@ -1,5 +1,5 @@
-require "std_constants.pil";
-require "std_tools.pil";
+require "std_constants.pil"
+require "std_tools.pil"
 
 const int PROD_TYPE_ASSUMES = 0;
 const int PROD_TYPE_PROVES = 1;
@@ -11,7 +11,7 @@ const int PROD_UPDATE_TYPE_LOCAL_DEFAULT = 0;
 const int PROD_UPDATE_TYPE_LOCAL_AIRVAL = 1;
 const int PROD_UPDATE_TYPE_GLOBAL = 2;
 
-const int two_inv = 1/2;
+const int ONE_HALF = 1/2;
 
 // Control how the expressions are grouped
 int PROD_EXPRESSIONS_IM_NON_REDUCED = 0; // Set to -1 to non-reduce all the terms
@@ -100,7 +100,7 @@ private function update_piop_prod(const int name, const int surname, const int t
         on final proof piop_gprod_issue_global_debug_hints();
     }
 
-    initial_checks_prod(name, surname, type, opid, exprs_num);
+    initial_checks_prod(name, surname, type, update_type, opid, exprs_num);
 
     // selected vector to simple expression reduction
     expr exprs_compressed = compress_exprs(opid, expressions);
@@ -131,8 +131,13 @@ private function update_piop_prod(const int name, const int surname, const int t
         on final proof piop_gprod_proof();
     }
 
-    // At the end, check consistency of all the opids
+    // Check consistency of all the opids
     on final proof check_opids_were_completed_prod();
+
+    // Print opid diagram
+    if (PRINT_OPID_DIAGRAM == 1) {
+        on final proof print_opid_relationship_diagram_prod();
+    }
 
     // Generate global hints
     on final proof piop_gprod_issue_global_hints(); 
@@ -170,6 +175,10 @@ private function init_proof_containers_prod(const int name, const int surname, c
         int expressions;
         int proves = 0;
         int assumes = 0;
+
+        // Track AIR names for diagram
+        string proves_airs[ARRAY_SIZE];
+        string assumes_airs[ARRAY_SIZE];
     }
 }
 
@@ -190,7 +199,7 @@ private function init_air_containers_prod(const int name) {
     }
 }
 
-private function initial_checks_prod(const int name, const int surname, const int type, const int opid, const int exprs_num) {
+private function initial_checks_prod(const int name, const int surname, const int type, const int update_type, const int opid, const int exprs_num) {
     // First time we see an opid
     if (proof.std.gprod.`id${opid}`.expressions == 0) {
         // Store the number of expressions
@@ -209,20 +218,25 @@ private function initial_checks_prod(const int name, const int surname, const in
 
     // The same opid can appear in different airs, so we keep track of the number of proves and assumes
     // for final checks
+    string air_name_to_use;
+    if (update_type == SUM_UPDATE_TYPE_GLOBAL) {
+        air_name_to_use = "GLOBAL";
+    } else {
+        air_name_to_use = AIR_NAME;
+    }
     if (type == PROD_TYPE_FREE) {
         // If the user is responsible for the use of proves and assumes, then mark both
+        proof.std.gprod.`id${opid}`.proves_airs[proof.std.gprod.`id${opid}`.proves] = air_name_to_use;
+        proof.std.gprod.`id${opid}`.assumes_airs[proof.std.gprod.`id${opid}`.assumes] = air_name_to_use;
         proof.std.gprod.`id${opid}`.proves++;
         proof.std.gprod.`id${opid}`.assumes++;
-    } else {
-        // Otherwise, we mark it correctly
-        string is_proves_str;
-        if (type == PROD_TYPE_PROVES) {
-            is_proves_str = "proves";
+    } else if (type == PROD_TYPE_PROVES) {
+            proof.std.gprod.`id${opid}`.proves_airs[proof.std.gprod.`id${opid}`.proves] = air_name_to_use;
+            proof.std.gprod.`id${opid}`.proves++;
         } else {
-            is_proves_str = "assumes";
+            proof.std.gprod.`id${opid}`.assumes_airs[proof.std.gprod.`id${opid}`.assumes] = air_name_to_use;
+            proof.std.gprod.`id${opid}`.assumes++;
         }
-        proof.std.gprod.`id${opid}`.`${is_proves_str}`++;
-    }
 }
 
 private function gprod_update_global_constraint_data(const int type, const expr sel, const expr exprs) {
@@ -332,8 +346,8 @@ private function piop_gprod_air() {
             numerator_non_reduced *= (s * (e + std_gamma - 1) + 1);
         } else {
             // The expression is of the form (s·(s+1)/2·(e+ɣ-1)+1)/(s·(s-1)/2·(e+ɣ-1)+1)
-            numerator_non_reduced *= (s * (s + 1) * two_inv * (e + std_gamma - 1) + 1);
-            denominator_non_reduced *= (s * (s - 1) * two_inv * (e + std_gamma - 1) + 1);
+            numerator_non_reduced *= (s * (s + 1) * ONE_HALF * (e + std_gamma - 1) + 1);
+            denominator_non_reduced *= (s * (s - 1) * ONE_HALF * (e + std_gamma - 1) + 1);
         }
     }
 
@@ -441,7 +455,7 @@ private function piop_gprod_air() {
                     }
                 } else {
                     // The expression is of the form (s·(s+1)/2·(e+ɣ-1)+1)/(s·(s-1)/2·(e+ɣ-1)+1)
-                    const expr rhs1 = (s * (s + 1) * two_inv * (e + std_gamma - 1) + 1);
+                    const expr rhs1 = (s * (s + 1) * ONE_HALF * (e + std_gamma - 1) + 1);
 
                     // Check the correctness of the intermediates
                     @im_col{reference: im_high[idx], numerator: rhs1, denominator: 1};
@@ -455,7 +469,7 @@ private function piop_gprod_air() {
                     low_degree_len_numerator++;
 
                     idx++;
-                    const expr rhs2 = (s * (s - 1) * two_inv * (e + std_gamma - 1) + 1);
+                    const expr rhs2 = (s * (s - 1) * ONE_HALF * (e + std_gamma - 1) + 1);
 
                     // Check the correctness of the intermediate
                     @im_col{reference: im_high[idx], numerator: rhs2, denominator: 1};
@@ -591,7 +605,7 @@ private function piop_gprod_air() {
                             rhs *= (s * (e + std_gamma - 1) + 1);
                         } else if (type == PROD_TYPE_FREE) {
                             // The expression is of the form (s·(s+1)/2·(e+ɣ-1)+1)
-                            rhs *= (s * (s + 1) * two_inv * (e + std_gamma - 1) + 1);
+                            rhs *= (s * (s + 1) * ONE_HALF * (e + std_gamma - 1) + 1);
                         }
                         degree += low_degree_term_numerator_degree[offset_num];
                         offset_num++;
@@ -621,7 +635,7 @@ private function piop_gprod_air() {
                             lhs *= (s * (e + std_gamma - 1) + 1);
                         } else if (type == PROD_TYPE_FREE) {
                             // The expression is of the form (s·(s-1)/2·(e+ɣ-1)+1)
-                            lhs *= (s * (s - 1) * two_inv * (e + std_gamma - 1) + 1);
+                            lhs *= (s * (s - 1) * ONE_HALF * (e + std_gamma - 1) + 1);
                         }
                         degree += low_degree_term_denominator_degree[offset_den];
                         offset_den++;
@@ -669,7 +683,7 @@ private function piop_gprod_air() {
                             lhs *= (s * (e + std_gamma - 1) + 1);
                         } else if (type == PROD_TYPE_FREE) {
                             // The expression is of the form (s·(s-1)/2·(e+ɣ-1)+1)
-                            lhs *= (s * (s - 1) * two_inv * (e + std_gamma - 1) + 1);
+                            lhs *= (s * (s - 1) * ONE_HALF * (e + std_gamma - 1) + 1);
                         }
                         degree += low_degree_term_denominator_degree[offset_den];
                         offset_den++;
@@ -699,7 +713,7 @@ private function piop_gprod_air() {
                             rhs *= (s * (e + std_gamma - 1) + 1);
                         } else if (type == PROD_TYPE_FREE) {
                             // The expression is of the form (s·(s+1)/2·(e+ɣ-1)+1)
-                            rhs *= (s * (s + 1) * two_inv * (e + std_gamma - 1) + 1);
+                            rhs *= (s * (s + 1) * ONE_HALF * (e + std_gamma - 1) + 1);
                         }
                         degree += low_degree_term_numerator_degree[offset_num];
                         offset_num++;
@@ -734,7 +748,7 @@ private function piop_gprod_air() {
                     numerator *= (s * (e + std_gamma - 1) + 1);
                 } else if (type == PROD_TYPE_FREE) {
                     // The expression is of the form (s·(s+1)/2·(e+ɣ-1)+1)
-                    numerator *= (s * (s + 1) * two_inv * (e + std_gamma - 1) + 1);
+                    numerator *= (s * (s + 1) * ONE_HALF * (e + std_gamma - 1) + 1);
                 }
             }
 
@@ -751,7 +765,7 @@ private function piop_gprod_air() {
                     denominator *= (s * (e + std_gamma - 1) + 1);
                 } else if (type == PROD_TYPE_FREE) {
                     // The expression is of the form (s·(s-1)/2·(e+ɣ-1)+1)
-                    denominator *= (s * (s - 1) * two_inv * (e + std_gamma - 1) + 1);
+                    denominator *= (s * (s - 1) * ONE_HALF * (e + std_gamma - 1) + 1);
                 }
             }
         } else {
@@ -769,7 +783,7 @@ private function piop_gprod_air() {
                     numerator *= (s * (e + std_gamma - 1) + 1);
                 } else if (type == PROD_TYPE_FREE) {
                     // The expression is of the form (s·(s+1)/2·(e+ɣ-1)+1)
-                    numerator *= (s * (s + 1) * two_inv * (e + std_gamma - 1) + 1);
+                    numerator *= (s * (s + 1) * ONE_HALF * (e + std_gamma - 1) + 1);
                 }
             }
 
@@ -786,7 +800,7 @@ private function piop_gprod_air() {
                     denominator *= (s * (e + std_gamma - 1) + 1);
                 } else if (type == PROD_TYPE_FREE) {
                     // The expression is of the form (s·(s-1)/2·(e+ɣ-1)+1)
-                    denominator *= (s * (s - 1) * two_inv * (e + std_gamma - 1) + 1);
+                    denominator *= (s * (s - 1) * ONE_HALF * (e + std_gamma - 1) + 1);
                 }
             }
         }
@@ -824,8 +838,8 @@ private function piop_gprod_air() {
                 direct_gprod_num *= (s * (e + std_gamma - 1) + 1);
             case PROD_TYPE_FREE:
                 // The expression is of the form (s·(s+1)/2·(e+ɣ-1)+1)/(s·(s-1)/2·(e+ɣ-1)+1)
-                direct_gprod_num *= (s * (s + 1) * two_inv * (e + std_gamma - 1) + 1);
-                direct_gprod_den *= (s * (s - 1) * two_inv * (e + std_gamma - 1) + 1);
+                direct_gprod_num *= (s * (s + 1) * ONE_HALF * (e + std_gamma - 1) + 1);
+                direct_gprod_den *= (s * (s - 1) * ONE_HALF * (e + std_gamma - 1) + 1);
             default:
                 error(`Invalid gprod_type: ${type}`);
         }
@@ -888,8 +902,8 @@ private function piop_gprod_proof() {
                 numerator *= (s * (e + std_gamma - 1) + 1);
             case PROD_TYPE_FREE:
                 // The expression is of the form (s·(s+1)/2·(e+ɣ-1)+1)/(s·(s-1)/2·(e+ɣ-1)+1)
-                numerator *= (s * (s + 1) * two_inv * (e + std_gamma - 1) + 1);
-                denominator *= (s * (s - 1) * two_inv * (e + std_gamma - 1) + 1);
+                numerator *= (s * (s + 1) * ONE_HALF * (e + std_gamma - 1) + 1);
+                denominator *= (s * (s - 1) * ONE_HALF * (e + std_gamma - 1) + 1);
             default:
                 error(`Invalid gprod_type: ${type}`);
         }
@@ -916,6 +930,219 @@ private function check_opids_were_completed_prod() {
             error(`${name_str} ${surname_str} #${opid} defined without proves`);
         }
     }
+}
+
+function print_opid_relationship_diagram_prod() {
+    use proof.std.gprod;
+
+    // Collect unique AIRs and their connections
+    string all_airs[ARRAY_SIZE];
+    int air_assumes_opids[ARRAY_SIZE][ARRAY_SIZE];
+    int air_assumes_opid_counts[ARRAY_SIZE][ARRAY_SIZE];
+    int air_assumes_count[ARRAY_SIZE];
+    int air_proves_opids[ARRAY_SIZE][ARRAY_SIZE];
+    int air_proves_opid_counts[ARRAY_SIZE][ARRAY_SIZE];
+    int air_proves_count[ARRAY_SIZE];
+    int air_count = 0;
+
+    for (int i = 0; i < opids_count; i++) {
+        const int opid = opids[i];
+        use proof.std.gprod.`id${opid}` alias opid_data;
+
+        // Process assumes for this opid
+        for (int j = 0; j < opid_data.assumes; j++) {
+            string air_name = opid_data.assumes_airs[j];
+            int found = -1;
+            for (int k = 0; k < air_count; k++) {
+                if (all_airs[k] == air_name) {
+                    found = k;
+                    break;
+                }
+            }
+            if (found == -1) {
+                all_airs[air_count] = air_name;
+                air_assumes_count[air_count] = 0;
+                air_proves_count[air_count] = 0;
+                found = air_count;
+                air_count++;
+            }
+            int opid_idx = -1;
+            for (int k = 0; k < air_assumes_count[found]; k++) {
+                if (air_assumes_opids[found][k] == opid) {
+                    opid_idx = k;
+                    break;
+                }
+            }
+            if (opid_idx == -1) {
+                air_assumes_opids[found][air_assumes_count[found]] = opid;
+                air_assumes_opid_counts[found][air_assumes_count[found]] = 1;
+                air_assumes_count[found]++;
+            } else {
+                air_assumes_opid_counts[found][opid_idx]++;
+            }
+        }
+
+        // Process proves for this opid
+        for (int j = 0; j < opid_data.proves; j++) {
+            string air_name = opid_data.proves_airs[j];
+            int found = -1;
+            for (int k = 0; k < air_count; k++) {
+                if (all_airs[k] == air_name) {
+                    found = k;
+                    break;
+                }
+            }
+            if (found == -1) {
+                all_airs[air_count] = air_name;
+                air_assumes_count[air_count] = 0;
+                air_proves_count[air_count] = 0;
+                found = air_count;
+                air_count++;
+            }
+            int opid_idx = -1;
+            for (int k = 0; k < air_proves_count[found]; k++) {
+                if (air_proves_opids[found][k] == opid) {
+                    opid_idx = k;
+                    break;
+                }
+            }
+            if (opid_idx == -1) {
+                air_proves_opids[found][air_proves_count[found]] = opid;
+                air_proves_opid_counts[found][air_proves_count[found]] = 1;
+                air_proves_count[found]++;
+            } else {
+                air_proves_opid_counts[found][opid_idx]++;
+            }
+        }
+    }
+
+    // Sort AIRs by total connections (descending)
+    for (int i = 0; i < air_count - 1; i++) {
+        for (int j = 0; j < air_count - i - 1; j++) {
+            int total_j = air_assumes_count[j] + air_proves_count[j];
+            int total_j1 = air_assumes_count[j + 1] + air_proves_count[j + 1];
+            if (total_j < total_j1) {
+                string tmp_name = all_airs[j];
+                all_airs[j] = all_airs[j + 1];
+                all_airs[j + 1] = tmp_name;
+
+                int tmp_ac = air_assumes_count[j];
+                air_assumes_count[j] = air_assumes_count[j + 1];
+                air_assumes_count[j + 1] = tmp_ac;
+
+                int tmp_pc = air_proves_count[j];
+                air_proves_count[j] = air_proves_count[j + 1];
+                air_proves_count[j + 1] = tmp_pc;
+
+                for (int k = 0; k < ARRAY_SIZE; k++) {
+                    int tmp_ao = air_assumes_opids[j][k];
+                    air_assumes_opids[j][k] = air_assumes_opids[j + 1][k];
+                    air_assumes_opids[j + 1][k] = tmp_ao;
+
+                    int tmp_aoc = air_assumes_opid_counts[j][k];
+                    air_assumes_opid_counts[j][k] = air_assumes_opid_counts[j + 1][k];
+                    air_assumes_opid_counts[j + 1][k] = tmp_aoc;
+
+                    int tmp_po = air_proves_opids[j][k];
+                    air_proves_opids[j][k] = air_proves_opids[j + 1][k];
+                    air_proves_opids[j + 1][k] = tmp_po;
+
+                    int tmp_poc = air_proves_opid_counts[j][k];
+                    air_proves_opid_counts[j][k] = air_proves_opid_counts[j + 1][k];
+                    air_proves_opid_counts[j + 1][k] = tmp_poc;
+                }
+            }
+        }
+    }
+
+    println("");
+    println("═══════════════════════════════════════════════════════════════════════════════════════════");
+    println("                                   BUS ARCHITECTURE                                        ");
+    println("                                   ◄──  = ASSUMES                                         ");
+    println("                                   ──►  = PROVES                                          ");
+    println("═══════════════════════════════════════════════════════════════════════════════════════════");
+    println("");
+
+    println("BUS");
+    println("│││");
+
+    // Print the bus diagram
+    for (int i = 0; i < air_count; i++) {
+        string air_name = all_airs[i];
+        int num_assumes = air_assumes_count[i];
+        int num_proves = air_proves_count[i];
+
+        // Print assumes (AIR reads from bus)
+        if (num_assumes > 0) {
+            string opid_list = "";
+            for (int j = 0; j < num_assumes; j++) {
+                if (j > 0) opid_list += ", ";
+                opid_list += `#${air_assumes_opids[i][j]}`;
+                if (air_assumes_opid_counts[i][j] > 1) {
+                    opid_list += ` x${air_assumes_opid_counts[i][j]}`;
+                }
+            }
+            println(`│││◄────  ${opid_list}`);
+        } else {
+            println("│││◄────");
+        }
+
+        // Print AIR name
+        println(`│││       [${air_name}]`);
+
+        // Print proves (AIR writes to bus)
+        if (num_proves > 0) {
+            string opid_list = "";
+            for (int j = 0; j < num_proves; j++) {
+                if (j > 0) opid_list += ", ";
+                opid_list += `#${air_proves_opids[i][j]}`;
+                if (air_proves_opid_counts[i][j] > 1) {
+                    opid_list += ` x${air_proves_opid_counts[i][j]}`;
+                }
+            }
+            println(`│││────►  ${opid_list}`);
+        } else {
+            println("│││────►");
+        }
+
+        println("│││");
+    }
+
+    // OPID Legend
+    println("");
+    println("───────────────────────────────────────────────────────────────────────────────────────────");
+    println("  OPID LEGEND:");
+    println("───────────────────────────────────────────────────────────────────────────────────────────");
+
+    int complete = 0;
+    int incomplete = 0;
+    for (int i = 0; i < opids_count; i++) {
+        const int opid = opids[i];
+        use proof.std.gprod.`id${opid}` alias opid_data;
+
+        const string name_str = get_piop_name(opid_data.name);
+        const string surname_str = get_piop_surname(opid_data.surname);
+        const int num_exprs = opid_data.expressions;
+        const int num_assumes = opid_data.assumes;
+        const int num_proves = opid_data.proves;
+
+        string status;
+        if (num_assumes == 0 || num_proves == 0) {
+            status = "❌";
+            incomplete++;
+        } else {
+            status = "✓ ";
+            complete++;
+        }
+
+        println(`  ${status}#${opid}: ${name_str} ${surname_str} | ${num_exprs} expr(s) | assumes: ${num_assumes}, proves: ${num_proves}`);
+    }
+
+    println("");
+    println("═══════════════════════════════════════════════════════════════════════════════════════════");
+    println(`  SUMMARY: ${air_count} AIR(s), ${opids_count} opid(s) | ✓ ${complete} complete | ❌ ${incomplete} incomplete`);
+    println("═══════════════════════════════════════════════════════════════════════════════════════════");
+    println("");
 }
 
 private function piop_gprod_issue_global_debug_hints() {
