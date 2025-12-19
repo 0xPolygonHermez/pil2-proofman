@@ -9,22 +9,24 @@
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 
-#define TRANSCRIPT_STATE_SIZE 4
-#define TRANSCRIPT_PENDING_SIZE 8
-#define TRANSCRIPT_OUT_SIZE 12
-
-
-__device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);
-__device__ Goldilocks::Element _getFields1(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);__global__ void _add(Goldilocks::Element* input, uint64_t size, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);
-__global__ void _getField(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);
-__global__ void __getState(Goldilocks::Element* output, uint64_t nOutputs, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);
-__global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);
+__device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor, uint32_t arity);
+__device__ Goldilocks::Element _getFields1(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor, uint32_t arity);
+__global__ void _add(Goldilocks::Element* input, uint64_t size, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor, uint32_t arity);
+__global__ void _getField(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor, uint32_t arity);
+__global__ void __getState(Goldilocks::Element* output, uint64_t nOutputs, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor, uint32_t arity);
+__global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor, uint32_t arity);
 
 class TranscriptGL_GPU
 {
     
 
 public:
+
+    uint32_t arity;
+    uint32_t transcriptStateSize;
+    uint32_t transcriptPendingSize;
+    uint32_t transcriptOutSize;
+
     Goldilocks::Element* state;
     Goldilocks::Element* pending;
     Goldilocks::Element* out;
@@ -36,6 +38,7 @@ public:
     TranscriptGL_GPU(uint64_t arity, bool custom, cudaStream_t stream);
     ~TranscriptGL_GPU()
     {
+
         CHECKCUDAERR(cudaFree(state));
         CHECKCUDAERR(cudaFree(pending));
         CHECKCUDAERR(cudaFree(out));
@@ -45,9 +48,9 @@ public:
     }
     
     void reset(cudaStream_t stream) {
-        cudaMemsetAsync(state, 0, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element), stream);
-        cudaMemsetAsync(pending, 0, TRANSCRIPT_PENDING_SIZE * sizeof(Goldilocks::Element), stream);
-        cudaMemsetAsync(out, 0, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element), stream);
+        cudaMemsetAsync(state, 0, transcriptOutSize * sizeof(Goldilocks::Element), stream);
+        cudaMemsetAsync(pending, 0, transcriptPendingSize * sizeof(Goldilocks::Element), stream);
+        cudaMemsetAsync(out, 0, transcriptOutSize * sizeof(Goldilocks::Element), stream);
         cudaMemsetAsync(pending_cursor, 0, sizeof(uint), stream);
         cudaMemsetAsync(out_cursor, 0, sizeof(uint), stream);
         cudaMemsetAsync(state_cursor, 0, sizeof(uint), stream);
@@ -58,7 +61,7 @@ public:
     void getState(Goldilocks::Element* output, cudaStream_t stream);
     void getState(Goldilocks::Element* output, uint64_t nOutputs, cudaStream_t stream);
     void getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, cudaStream_t stream);
-    static void init_const(uint32_t* gpu_ids, uint32_t num_gpu_ids);
+    static void init_const(uint32_t* gpu_ids, uint32_t num_gpu_ids, uint32_t arity_init);
     
 };
 

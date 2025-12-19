@@ -1,5 +1,5 @@
-require "std_permutation.pil";
-require "module.pil";
+require "std_permutation.pil"
+require "module.pil"
 
 public in1;
 public in2;

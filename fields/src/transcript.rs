@@ -1,79 +1,86 @@
-use crate::{poseidon2_hash, Field, Goldilocks, PrimeField64};
+use crate::{poseidon2_hash, PrimeField64, Poseidon2Constants};
 
-#[derive(Default)]
-pub struct Transcript {
-    state: [Goldilocks; 12],
-    pending: [Goldilocks; 8],
-    out: [Goldilocks; 12],
-    pending_cursor: u64,
-    out_cursor: u64,
+pub struct Transcript<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize> {
+    state: [F; W],
+    pending: Vec<F>,
+    out: [F; W],
+    pending_cursor: usize,
+    out_cursor: usize,
+    _marker: std::marker::PhantomData<C>,
 }
 
-impl Transcript {
+impl<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize> Default for Transcript<F, C, W> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize> Transcript<F, C, W> {
     pub fn new() -> Self {
         Transcript {
-            state: [Goldilocks::ZERO; 12],
-            pending: [Goldilocks::ZERO; 8],
-            out: [Goldilocks::ZERO; 12],
+            state: [F::ZERO; W],
+            pending: vec![F::ZERO; W - 4],
+            out: [F::ZERO; W],
             pending_cursor: 0,
             out_cursor: 0,
+            _marker: std::marker::PhantomData,
         }
     }
 
     pub fn update_state(&mut self) {
-        while self.pending_cursor < 8 {
-            self.pending[self.pending_cursor as usize] = Goldilocks::ZERO;
+        while self.pending_cursor < (W - 4) {
+            self.pending[self.pending_cursor] = F::ZERO;
             self.pending_cursor += 1;
         }
 
-        let mut inputs = vec![Goldilocks::ZERO; 12];
-        inputs[..8].copy_from_slice(&self.pending);
-        inputs[8..12].copy_from_slice(&self.state[..4]);
-        let output = poseidon2_hash(&inputs);
-        self.out_cursor = 12;
-        for i in 0..8 {
-            self.pending[i] = Goldilocks::ZERO;
+        let mut inputs: [F; W] = [F::ZERO; W];
+        inputs[..W - 4].copy_from_slice(&self.pending);
+        inputs[W - 4..W].copy_from_slice(&self.state[..4]);
+        let output = poseidon2_hash::<F, C, W>(&inputs);
+        self.out_cursor = W;
+        for i in 0..W - 4 {
+            self.pending[i] = F::ZERO;
         }
         self.pending_cursor = 0;
-        self.state.copy_from_slice(&output[..12]);
-        self.out.copy_from_slice(&output[..12]);
+        self.state.copy_from_slice(&output[..W]);
+        self.out.copy_from_slice(&output[..W]);
     }
 
-    pub fn add1(&mut self, input: Goldilocks) {
-        self.pending[self.pending_cursor as usize] = input;
+    pub fn add1(&mut self, input: F) {
+        self.pending[self.pending_cursor] = input;
         self.pending_cursor += 1;
         self.out_cursor = 0;
-        if self.pending_cursor == 8 {
+        if self.pending_cursor == W - 4 {
             self.update_state();
         }
     }
 
-    pub fn put(&mut self, inputs: &mut [Goldilocks]) {
+    pub fn put(&mut self, inputs: &[F]) {
         for input in inputs.iter() {
             self.add1(*input);
         }
     }
 
-    pub fn get_state(&mut self) -> Vec<Goldilocks> {
+    pub fn get_state(&mut self) -> Vec<F> {
         if self.pending_cursor > 0 {
             self.update_state();
         }
-        let mut state = Vec::with_capacity(4);
-        for i in 0..4 {
+        let mut state = Vec::with_capacity(W);
+        for i in 0..W {
             state.push(self.state[i]);
         }
         state
     }
 
-    pub fn get_fields1(&mut self) -> Goldilocks {
+    pub fn get_fields1(&mut self) -> F {
         if self.out_cursor == 0 {
             self.update_state();
         }
-        let val = self.out[(12 - self.out_cursor as usize) % 12];
+        let val = self.out[(W - self.out_cursor) % W];
         self.out_cursor -= 1;
         val
     }
-    pub fn get_field(&mut self, value: &mut [Goldilocks]) {
+    pub fn get_field(&mut self, value: &mut [F]) {
         for val in value.iter_mut().take(3) {
             *val = self.get_fields1();
         }

@@ -1,12 +1,12 @@
-use std::os::raw::c_void;
 use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 use std::sync::Arc;
 use crate::{MpiCtx, ProofmanError};
 use borsh::{BorshDeserialize, BorshSerialize};
+use std::fs::File;
+use std::io::Read;
 
-use fields::PrimeField64;
-use transcript::FFITranscript;
+use fields::{PrimeField64, Transcript, Poseidon16};
 
 use crate::{
     initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode, StepsParams,
@@ -176,7 +176,6 @@ pub struct ParamsGPU {
     pub number_threads_pools_witness: usize,
     pub are_threads_per_witness_set: bool,
     pub max_witness_stored: usize,
-    pub single_instances: Vec<(usize, usize)>, // (airgroup_id, air_id)
     pub pack_trace: bool,
 }
 
@@ -190,7 +189,6 @@ impl Default for ParamsGPU {
             max_witness_stored: 10,
             #[cfg(not(feature = "packed"))]
             max_witness_stored: 4,
-            single_instances: Vec::new(),
             pack_trace: true,
             are_threads_per_witness_set: false,
         }
@@ -213,9 +211,6 @@ impl ParamsGPU {
     pub fn with_max_witness_stored(&mut self, max_witness_stored: usize) {
         self.max_witness_stored = max_witness_stored;
     }
-    pub fn with_single_instance(&mut self, single_instance: (usize, usize)) {
-        self.single_instances.push(single_instance);
-    }
 
     pub fn with_pack_trace(&mut self, pack_trace: bool) {
         self.pack_trace = pack_trace;
@@ -233,6 +228,7 @@ pub struct ProofCtx<F: PrimeField64> {
     pub air_instances: Vec<RwLock<AirInstance<F>>>,
     pub weights: HashMap<(usize, usize), u64>,
     pub custom_commits_fixed: HashMap<String, PathBuf>,
+    pub custom_commits_values: HashMap<String, Vec<u8>>,
     pub dctx: RwLock<DistributionCtx>,
     pub debug_info: RwLock<DebugInfo>,
     pub aggregation: bool,
@@ -285,6 +281,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             dctx: RwLock::new(dctx),
             debug_info: RwLock::new(DebugInfo::default()),
             custom_commits_fixed,
+            custom_commits_values: HashMap::new(),
             weights,
             aggregation,
             final_snark,
@@ -326,6 +323,35 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
         if let Some(witness_tx) = &*self.witness_tx.read().unwrap() {
             witness_tx.send(global_id).unwrap();
+        }
+    }
+
+    pub fn initialize_custom_commits(&mut self, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
+        tracing::info!("Initializing publics custom_commits");
+        for (airgroup_id, airs) in self.global_info.airs.iter().enumerate() {
+            for (air_id, _) in airs.iter().enumerate() {
+                let setup = sctx.get_setup(airgroup_id, air_id)?;
+                for custom_commit in &setup.stark_info.custom_commits {
+                    if custom_commit.stage_widths[0] > 0 {
+                        let custom_file_path = self.get_custom_commits_fixed_buffer(&custom_commit.name, true)?;
+
+                        let mut file = File::open(custom_file_path)?;
+                        let mut root_bytes = [0u8; 32];
+                        file.read_exact(&mut root_bytes)?;
+
+                        self.custom_commits_values.insert(custom_commit.name.clone(), root_bytes.to_vec());
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_custom_commit_root(&self, name: &str) -> ProofmanResult<&[u8]> {
+        let root_bytes = self.custom_commits_values.get(name);
+        match root_bytes {
+            Some(bytes) => Ok(bytes.as_slice()),
+            None => Err(ProofmanError::ProofmanError(format!("Custom Commit {name} not found"))),
         }
     }
 
@@ -565,21 +591,21 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.public_inputs.values.write().unwrap()[public_id] = F::from_u64(value);
     }
 
-    pub fn set_global_challenge(&self, stage: usize, global_challenge: &[F]) {
+    pub fn set_global_challenge(&self, stage: usize, global_challenge: &mut [F]) {
         let mut global_challenge_guard = self.global_challenge.values.write().unwrap();
         global_challenge_guard[0] = global_challenge[0];
         global_challenge_guard[1] = global_challenge[1];
         global_challenge_guard[2] = global_challenge[2];
 
-        let transcript = FFITranscript::new(2, true);
+        let mut transcript: Transcript<F, Poseidon16, 16> = Transcript::new();
 
-        transcript.add_elements(global_challenge.as_ptr() as *mut u8, 3);
-        let challenges_guard = self.challenges.values.read().unwrap();
+        transcript.put(global_challenge);
+        let mut challenges_guard = self.challenges.values.write().unwrap();
 
         let initial_pos = self.global_info.n_challenges.iter().take(stage - 1).sum::<usize>();
         let num_challenges = self.global_info.n_challenges[stage - 1];
         for i in 0..num_challenges {
-            transcript.get_challenge(&challenges_guard[(initial_pos + i) * 3] as *const F as *mut c_void);
+            transcript.get_field(&mut challenges_guard[(initial_pos + i) * 3..(initial_pos + i) * 3 + 3]);
         }
     }
 
