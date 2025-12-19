@@ -64,7 +64,11 @@ public:
 
     void writeConstTreeFileBN128(StarkInfo& starkInfo, void *treeAddress, std::string constTreeFile) {
         TimerStart(WRITING_TREE_FILE);
-        MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, (Goldilocks::Element *)treeAddress, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants);
+        Goldilocks::Element *treeAddressGL = (Goldilocks::Element *)treeAddress;
+        uint64_t NExtended = 1 << starkInfo.starkStruct.nBitsExt;
+        MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, NExtended, starkInfo.nConstants);
+        mt.setSource(treeAddressGL);
+        mt.setNodes((RawFrP::Element *)(&treeAddressGL[starkInfo.nConstants * NExtended]));
         mt.writeFile(constTreeFile);
         TimerStopAndLog(WRITING_TREE_FILE);
     }

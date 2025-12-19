@@ -163,18 +163,35 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 total_const_tree_size,
             }
         } else {
+            let mut setup_recursivef = None;
+            let mut setup_vadcop_final = None;
+            let mut max_const_tree_size = 0;
+            let mut max_const_size = 0;
+            let mut max_prover_buffer_size = 0;
+            if final_snark {
+                setup_vadcop_final =
+                    Some(Setup::new(global_info, 0, 0, &ProofType::VadcopFinal, verify_constraints, false));
+
+                let setup_recursive_final =
+                    Setup::new(global_info, 0, 0, &ProofType::RecursiveF, verify_constraints, false);
+                max_const_tree_size = max_const_tree_size.max(setup_recursive_final.const_tree_size);
+                max_const_size = max_const_size.max(setup_recursive_final.const_pols_size);
+                max_prover_buffer_size = max_prover_buffer_size.max(setup_recursive_final.prover_buffer_size as usize);
+                setup_recursivef = Some(setup_recursive_final);
+            }
+
             SetupsVadcop {
                 sctx_compressor: None,
                 sctx_recursive1: None,
                 sctx_recursive2: None,
-                setup_vadcop_final: None,
-                setup_recursivef: None,
+                setup_vadcop_final,
+                setup_recursivef,
                 total_const_pols_size: 0,
                 total_const_tree_size: 0,
-                max_const_tree_size: 0,
-                max_const_size: 0,
+                max_const_tree_size,
+                max_const_size,
                 max_prover_trace_size: 0,
-                max_prover_buffer_size: 0,
+                max_prover_buffer_size,
                 max_prover_recursive_buffer_size: 0,
                 max_prover_recursive2_buffer_size: 0,
                 max_pinned_proof_size: 0,

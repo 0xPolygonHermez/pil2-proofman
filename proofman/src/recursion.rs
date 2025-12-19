@@ -5,7 +5,6 @@ use fields::PrimeField64;
 use std::ffi::CString;
 use proofman_starks_lib_c::*;
 use std::path::Path;
-use num_traits::ToPrimitive;
 use std::fs::File;
 use std::io::Write;
 
@@ -653,17 +652,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     load_const_pols(setup, const_pols);
     load_const_pols_tree(setup, const_tree);
 
-    let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-    let vadcop_proof: &[u64] = &proof[1 + setup_vadcop_final.stark_info.n_publics as usize..];
-    let mut vadcop_final_proof: Vec<u64> = vec![0; vadcop_proof.len() + pctx.global_info.n_publics];
-    vadcop_final_proof[pctx.global_info.n_publics..].copy_from_slice(vadcop_proof);
-
-    let public_inputs = pctx.get_publics();
-    for p in 0..pctx.global_info.n_publics {
-        vadcop_final_proof[p] = (public_inputs[p].as_canonical_biguint()).to_u64().unwrap();
-    }
-
-    let circom_witness = generate_witness::<F>(setup, 0, &vadcop_final_proof, output_dir_path)?;
+    let circom_witness = generate_witness::<F>(setup, 0, &proof[1..], output_dir_path)?;
 
     let publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
@@ -709,7 +698,7 @@ pub fn generate_fflonk_snark_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     proof: *mut c_void,
     output_dir_path: &Path,
-) -> ProofmanResult<()> {
+) -> ProofmanResult<String> {
     let setup_path = pctx.global_info.get_setup_path("final");
 
     let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
@@ -726,6 +715,8 @@ pub fn generate_fflonk_snark_proof<F: PrimeField64>(
     let dat_filename = setup_path.display().to_string() + ".dat";
     let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
     let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
+
+    let proof_file = output_dir_path.join("proofs").to_string_lossy().into_owned();
 
     unsafe {
         timer_start_trace!(CALCULATE_FINAL_WITNESS);
@@ -746,7 +737,6 @@ pub fn generate_fflonk_snark_proof<F: PrimeField64>(
         timer_stop_and_log_trace!(CALCULATE_FINAL_WITNESS);
 
         timer_start_trace!(CALCULATE_FINAL_PROOF);
-        let proof_file = output_dir_path.join("proofs").to_string_lossy().into_owned();
 
         let zkey_filename = setup_path.display().to_string() + ".zkey";
         tracing::info!("··· Generating final snark proof");
@@ -755,7 +745,7 @@ pub fn generate_fflonk_snark_proof<F: PrimeField64>(
         tracing::info!("··· Final Snark Proof generated.");
     }
 
-    Ok(())
+    Ok(proof_file)
 }
 
 fn generate_witness<F: PrimeField64>(

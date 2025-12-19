@@ -49,8 +49,8 @@ use std::{
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
 use crate::{
-    calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, initialize_setup_info,
-    N_RECURSIVE_PROOFS_PER_AGGREGATION,
+    calculate_max_witness_trace_size, check_tree_paths_vadcop, check_tree_paths_snark, gen_recursive_proof_size,
+    initialize_setup_info, initialize_witness_circom_snark, N_RECURSIVE_PROOFS_PER_AGGREGATION,
 };
 use crate::{verify_constraints_proof, verify_basic_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
@@ -931,12 +931,6 @@ where
             ));
         }
 
-        if options.final_snark && !self.final_snark {
-            return Err(ProofmanError::InvalidParameters(
-                "Proofman has not been initialized in final snark mode".into(),
-            ));
-        }
-
         let phase_inputs = ProvePhaseInputs::Full(ProofInfo::new(input_data_path, 1, vec![0], 0));
         self._generate_proof(phase_inputs, options, ProvePhase::Full)
     }
@@ -964,13 +958,35 @@ where
             ));
         }
 
-        if options.final_snark && !self.final_snark {
+        self._generate_proof(phase_inputs, options, phase)
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn generate_final_snark_proof(&self, vadcop_proof: &[u64], options: ProofOptions) -> ProofmanResult<()> {
+        if !self.final_snark {
             return Err(ProofmanError::InvalidParameters(
                 "Proofman has not been initialized in final snark mode".into(),
             ));
         }
 
-        self._generate_proof(phase_inputs, options, phase)
+        timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
+        let recursivef_proof = generate_recursivef_proof(
+            &self.pctx,
+            &self.setups,
+            vadcop_proof,
+            &self.aux_trace,
+            &self.const_pols,
+            &self.const_tree,
+            &options.output_dir_path,
+            false,
+        )?;
+        timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
+
+        timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
+        let _proof_file = generate_fflonk_snark_proof(&self.pctx, recursivef_proof, &options.output_dir_path);
+        timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
+
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2098,57 +2114,43 @@ where
                     .to_hex()
                     .to_string(),
                 );
-
-                if options.final_snark {
-                    timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
-                    let recursivef_proof = generate_recursivef_proof(
-                        &self.pctx,
-                        &self.setups,
-                        vadcop_final_ref,
-                        &self.aux_trace,
-                        &self.const_pols,
-                        &self.const_tree,
-                        &options.output_dir_path,
-                        false,
-                    )?;
-                    timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
-
-                    timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
-                    let _ = generate_fflonk_snark_proof(&self.pctx, recursivef_proof, &options.output_dir_path);
-                    timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
-                }
             }
         }
 
-        if options.verify_proofs {
-            if options.aggregation {
-                if self.mpi_ctx.rank == 0 {
-                    let setup = self.setups.setup_vadcop_final.as_ref().unwrap();
+        if !options.final_snark {
+            if options.verify_proofs {
+                if options.aggregation {
+                    if self.mpi_ctx.rank == 0 {
+                        let setup = self.setups.setup_vadcop_final.as_ref().unwrap();
 
-                    timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
+                        timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
 
-                    let proof_bytes: &[u8] = cast_slice(vadcop_final_proof.as_ref().unwrap());
+                        let proof_bytes: &[u8] = cast_slice(vadcop_final_proof.as_ref().unwrap());
 
-                    let verkey_u64: Vec<u64> = setup.verkey.iter().map(|x| x.as_canonical_u64()).collect();
+                        let verkey_u64: Vec<u64> = setup.verkey.iter().map(|x| x.as_canonical_u64()).collect();
 
-                    let vk_bytes: &[u8] = cast_slice(&verkey_u64);
-                    let valid_proofs = verify(proof_bytes, vk_bytes);
-                    timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
-                    if !valid_proofs {
-                        tracing::info!("··· {}", "\u{2717} Vadcop Final proof was not verified".bright_red().bold());
-                        return Err(ProofmanError::InvalidProof("Vadcop Final proof was not verified".into()));
-                    } else {
-                        tracing::info!("··· {}", "\u{2713} Vadcop Final proof was verified".bright_green().bold());
+                        let vk_bytes: &[u8] = cast_slice(&verkey_u64);
+                        let valid_proofs = verify(proof_bytes, vk_bytes);
+                        timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
+                        if !valid_proofs {
+                            tracing::info!(
+                                "··· {}",
+                                "\u{2717} Vadcop Final proof was not verified".bright_red().bold()
+                            );
+                            return Err(ProofmanError::InvalidProof("Vadcop Final proof was not verified".into()));
+                        } else {
+                            tracing::info!("··· {}", "\u{2713} Vadcop Final proof was verified".bright_green().bold());
+                        }
                     }
+                } else {
+                    return self.verify_proofs(options.test_mode);
                 }
-            } else {
-                return self.verify_proofs(options.test_mode);
+            } else if phase == ProvePhase::Full {
+                tracing::info!(
+                    "··· {}",
+                    "All proofs were successfully generated. Verification Skipped".bright_yellow().bold()
+                );
             }
-        } else if phase == ProvePhase::Full {
-            tracing::info!(
-                "··· {}",
-                "All proofs were successfully generated. Verification Skipped".bright_yellow().bold()
-            );
         }
 
         if options.save_proofs {
@@ -3277,8 +3279,13 @@ where
             gpu_params,
             &preloaded_const,
         ));
+
         pctx.set_weights(&sctx)?;
-        pctx.initialize_custom_commits(&sctx)?;
+
+        let only_final_snark = !aggregation && final_snark;
+        if !only_final_snark {
+            pctx.initialize_custom_commits(&sctx)?;
+        }
 
         let pctx = Arc::new(pctx);
 
@@ -3296,8 +3303,13 @@ where
         ));
 
         if aggregation {
-            check_tree_paths_vadcop(&pctx, &setups_vadcop, final_snark)?;
-            initialize_witness_circom(&pctx, &setups_vadcop, final_snark)?;
+            check_tree_paths_vadcop(&pctx, &setups_vadcop)?;
+            initialize_witness_circom(&pctx, &setups_vadcop)?;
+        }
+
+        if final_snark {
+            check_tree_paths_snark(&setups_vadcop)?;
+            initialize_witness_circom_snark(&setups_vadcop)?;
         }
 
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN);

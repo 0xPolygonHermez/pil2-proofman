@@ -234,13 +234,24 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, json& globalInfo, uint64_t airg
         starks.getChallenge(transcript, *challenge);
     }
     TimerStopAndLog(STARK_FRI_FOLDING);
-    TimerStart(STARK_FRI_QUERIES);
-
+    TimerStart(STARK_NONCE_GRINDING);
     uint64_t friQueries[setupCtx.starkInfo.starkStruct.nQueries];
 
     uint64_t nonce;
-    // TODO: CALCULATE NONCE
 
+    std::vector<RawFrP::Element> challengeRawFr;
+	for (uint64_t k = 0; k < 3; k++)
+	{
+        RawFrP::Element tmp = RawFrP::field.zero();
+		tmp.v[0] = Goldilocks::toU64(challenge[k]);
+        RawFrP::field.toMontgomery(tmp, tmp);
+        challengeRawFr.push_back(tmp);
+	}
+    
+    Poseidon_opt p;
+    p.grinding(nonce, challengeRawFr, setupCtx.starkInfo.starkStruct.powBits);
+    TimerStopAndLog(STARK_NONCE_GRINDING);
+    TimerStart(STARK_FRI_QUERIES);
     TranscriptBN128 transcriptPermutation(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
     starks.addTranscriptGL(transcriptPermutation, challenge, FIELD_EXTENSION);
     starks.addTranscriptGL(transcriptPermutation, (Goldilocks::Element *)&nonce, 1);

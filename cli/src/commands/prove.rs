@@ -146,6 +146,16 @@ impl ProveCmd {
             HashMap::new(),
         )?;
 
+        let proof_options = ProofOptions::new(
+            false,
+            self.aggregation,
+            self.rma,
+            self.final_snark,
+            self.verify_proofs,
+            self.minimal_memory,
+            self.save_proofs,
+            self.output_dir.clone(),
+        );
         if debug_info.std_mode.name == ModeName::Debug {
             match self.field {
                 Field::Goldilocks => proofman.verify_proof_constraints(
@@ -166,16 +176,7 @@ impl ProveCmd {
                     self.public_inputs.clone(),
                     None,
                     self.verbose.into(),
-                    ProofOptions::new(
-                        false,
-                        self.aggregation,
-                        self.rma,
-                        self.final_snark,
-                        self.verify_proofs,
-                        self.minimal_memory,
-                        self.save_proofs,
-                        self.output_dir.clone(),
-                    ),
+                    proof_options.clone(),
                 )?,
             };
 
@@ -187,6 +188,11 @@ impl ProveCmd {
                 let mut file = File::create(&output_file_path)?;
                 file.write_all(proof_data)?;
                 file.flush()?;
+
+                println!("WRITTEN vadcop final proof to {}", output_file_path.display());
+                if self.final_snark {
+                    proofman.generate_final_snark_proof(&vadcop_final_proof, proof_options.clone())?;
+                }
             }
         }
 

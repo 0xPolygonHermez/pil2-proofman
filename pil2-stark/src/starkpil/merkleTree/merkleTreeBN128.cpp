@@ -383,8 +383,7 @@ void MerkleTreeBN128::merkelize()
 }
 
 void MerkleTreeBN128::writeFile(std::string constTreeFile) {
-    std::ofstream fw(constTreeFile.c_str(), std::fstream::out | std::fstream::binary);
-    fw.write((const char *)source, width * height * sizeof(Goldilocks::Element));
-    fw.write((const char *)nodes, numNodes * sizeof(RawFrP::Element));
-    fw.close();
+    uint64_t nodesOffset = width * height * sizeof(Goldilocks::Element);
+    writeFileParallel(constTreeFile, (const char *)source, width * height * sizeof(Goldilocks::Element), 0);
+    writeFileParallel(constTreeFile, (const char *)nodes, numNodes * sizeof(RawFrP::Element), nodesOffset);
 }

@@ -5,9 +5,9 @@ use crate::{MpiCtx, ProofmanError};
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::fs::File;
 use std::io::Read;
-
+use std::fs;
 use fields::{PrimeField64, Transcript, Poseidon16};
-
+use proofman_starks_lib_c::custom_commit_size_c;
 use crate::{
     initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode, StepsParams,
     VerboseMode, ProofmanResult,
@@ -331,11 +331,51 @@ impl<F: PrimeField64> ProofCtx<F> {
         for (airgroup_id, airs) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in airs.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id)?;
-                for custom_commit in &setup.stark_info.custom_commits {
+                for (commit_id, custom_commit) in setup.stark_info.custom_commits.iter().enumerate() {
                     if custom_commit.stage_widths[0] > 0 {
                         let custom_file_path = self.get_custom_commits_fixed_buffer(&custom_commit.name, true)?;
 
-                        let mut file = File::open(custom_file_path)?;
+                        if !PathBuf::from(&custom_file_path).exists() {
+                            let error_message = format!(
+                                "Error: Unable to find {} custom commit at '{}'.\n\
+                                Please run the following command:\n\
+                                \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
+                                custom_commit.name,
+                                custom_file_path.display(),
+                            );
+                            tracing::warn!("{}", error_message);
+                            return Err(ProofmanError::ProofmanError(error_message));
+                        }
+
+                        let error_message = format!(
+                            "Error: The custom commit file for {} at '{}' exists but is invalid or corrupted.\n\
+                            Please regenerate it by running:\n\
+                            \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
+                            custom_commit.name,
+                            custom_file_path.display(),
+                        );
+
+                        let size = custom_commit_size_c((&setup.p_setup).into(), commit_id as u64) as usize;
+
+                        match fs::metadata(&custom_file_path) {
+                            Ok(metadata) => {
+                                let actual_size = metadata.len() as usize;
+                                if actual_size != (size + 4) * 8 {
+                                    tracing::warn!("{}", error_message);
+                                    return Err(ProofmanError::ProofmanError(error_message));
+                                }
+                            }
+                            Err(err) => {
+                                let error_message = format!(
+                                    "Failed to open {} for custom_commit {}: {}",
+                                    setup.air_name, custom_commit.name, err
+                                );
+                                tracing::warn!("{}", error_message);
+                                return Err(ProofmanError::ProofmanError(error_message));
+                            }
+                        }
+
+                        let mut file = File::open(&custom_file_path)?;
                         let mut root_bytes = [0u8; 32];
                         file.read_exact(&mut root_bytes)?;
 

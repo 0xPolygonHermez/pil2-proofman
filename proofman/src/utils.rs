@@ -11,7 +11,6 @@ use proofman_common::{
 };
 use proofman_util::DeviceBuffer;
 use proofman_starks_lib_c::load_device_const_pols_c;
-use proofman_starks_lib_c::custom_commit_size_c;
 use proofman_starks_lib_c::load_device_setup_c;
 use proofman_common::{PackedInfo, VerboseMode};
 
@@ -264,66 +263,19 @@ pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>)
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx.get_setup(airgroup_id, air_id)?;
             check_const_tree(setup, false, false)?;
-
-            let n_custom_commits = setup.stark_info.custom_commits.len();
-
-            for commit_id in 0..n_custom_commits {
-                if setup.stark_info.custom_commits[commit_id].stage_widths[0] > 0 {
-                    let custom_commit_file_path = pctx
-                        .get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name, false)
-                        .unwrap();
-
-                    if !PathBuf::from(&custom_commit_file_path).exists() {
-                        let error_message = format!(
-                            "Error: Unable to find {} custom commit at '{}'.\n\
-                            Please run the following command:\n\
-                            \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
-                            setup.stark_info.custom_commits[commit_id].name,
-                            custom_commit_file_path.display(),
-                        );
-                        tracing::warn!("{}", error_message);
-                        return Ok(());
-                    }
-
-                    let error_message = format!(
-                        "Error: The custom commit file for {} at '{}' exists but is invalid or corrupted.\n\
-                        Please regenerate it by running:\n\
-                        \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
-                        setup.stark_info.custom_commits[commit_id].name,
-                        custom_commit_file_path.display(),
-                    );
-
-                    let size = custom_commit_size_c((&setup.p_setup).into(), commit_id as u64) as usize;
-
-                    match fs::metadata(custom_commit_file_path) {
-                        Ok(metadata) => {
-                            let actual_size = metadata.len() as usize;
-                            if actual_size != (size + 4) * 8 {
-                                tracing::warn!("{}", error_message);
-                                return Ok(());
-                            }
-                        }
-                        Err(err) => {
-                            tracing::warn!(
-                                "Failed to get metadata for {} for custom_commit {}: {}",
-                                setup.air_name,
-                                setup.stark_info.custom_commits[commit_id].name,
-                                err
-                            );
-                        }
-                    }
-                }
-            }
         }
     }
     Ok(())
 }
 
-pub fn check_tree_paths_vadcop<F: PrimeField64>(
-    pctx: &ProofCtx<F>,
-    setups: &SetupsVadcop<F>,
-    final_snark: bool,
-) -> ProofmanResult<()> {
+pub fn check_tree_paths_snark<F: PrimeField64>(setups: &SetupsVadcop<F>) -> ProofmanResult<()> {
+    let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
+    check_const_tree(setup_recursivef, true, true)?;
+
+    Ok(())
+}
+
+pub fn check_tree_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) -> ProofmanResult<()> {
     let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
@@ -351,11 +303,6 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
 
     let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
     check_const_tree(setup_vadcop_final, true, false)?;
-
-    if final_snark {
-        let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
-        check_const_tree(setup_recursivef, true, true)?;
-    }
 
     Ok(())
 }
@@ -620,11 +567,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
     Ok(())
 }
 
-pub fn initialize_witness_circom<F: PrimeField64>(
-    pctx: &ProofCtx<F>,
-    setups: &SetupsVadcop<F>,
-    final_snark: bool,
-) -> ProofmanResult<()> {
+pub fn initialize_witness_circom<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) -> ProofmanResult<()> {
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
@@ -649,11 +592,13 @@ pub fn initialize_witness_circom<F: PrimeField64>(
     setup_vadcop_final.set_circom_circuit()?;
     setup_vadcop_final.set_exec_file_data()?;
 
-    if final_snark {
-        let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
-        setup_recursivef.set_circom_circuit()?;
-        setup_recursivef.set_exec_file_data()?;
-    }
+    Ok(())
+}
+
+pub fn initialize_witness_circom_snark<F: PrimeField64>(setups: &SetupsVadcop<F>) -> ProofmanResult<()> {
+    let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
+    setup_recursivef.set_circom_circuit()?;
+    setup_recursivef.set_exec_file_data()?;
 
     Ok(())
 }

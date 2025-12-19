@@ -27,7 +27,7 @@ public:
   void hash(vector<FrElement> &state);
   void hash(vector<FrElement> &state, FrElement *result);
   void gmimc(vector<FrElement>, FrElement *result);
-  void grinding(uint64_t nonce, vector<FrElement> &state, const uint32_t n_bits);
+  void grinding(uint64_t &nonce, vector<FrElement> &state, const uint32_t n_bits);
 };
 
 #endif // POSEIDON_OPT
