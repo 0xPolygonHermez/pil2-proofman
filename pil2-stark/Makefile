@@ -77,7 +77,7 @@ ifeq ($(UNAME_S),Darwin)
     CPPFLAGS = -isysroot $(SDKPATH) -I$(HOMEBREW_PREFIX)/include -I$(HOMEBREW_PREFIX)/opt/libomp/include \
         -I$(HOMEBREW_PREFIX)/opt/libsodium/include -MMD -MP $(INC_FLAGS)
     CXXFLAGS = -std=c++17 -Wall -pthread -Wno-unused-label -Wno-vla-cxx-extension -fPIC \
-        -Xpreprocessor -fopenmp
+        -Xpreprocessor -fopenmp -D__DARWIN_ARCH__
     LDFLAGS  = -rdynamic -L$(HOMEBREW_PREFIX)/lib -L$(HOMEBREW_PREFIX)/opt/libomp/lib \
         -L$(HOMEBREW_PREFIX)/opt/libsodium/lib -L$(SDKPATH)/usr/lib \
         -lomp -lgmpxx -lgmp -lpthread -lsodium

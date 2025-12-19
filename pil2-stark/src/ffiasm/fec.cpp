@@ -40,6 +40,7 @@ void FecP_fromMpz(PFecElement pE, mpz_t v) {
 
 
 bool FecP_init() {
+#ifndef __DARWIN_ARCH__
     if (initialized) return false;
     initialized = true;
     mpz_init(q);
@@ -50,6 +51,7 @@ bool FecP_init() {
     mpz_init(mask);
     mpz_mul_2exp(mask, one, nBits);
     mpz_sub(mask, mask, one);
+#endif
     return true;
 }
 
