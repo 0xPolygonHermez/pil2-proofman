@@ -924,7 +924,6 @@ pub fn gen_recursive_proof_c(
     p_public_inputs: *mut u8,
     proof_buffer: *mut u64,
     proof_file: &str,
-    global_info_file: &str,
     airgroup_id: u64,
     air_id: u64,
     instance_id: u64,
@@ -938,9 +937,6 @@ pub fn gen_recursive_proof_c(
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
 
-    let global_info_file_name = CString::new(global_info_file).unwrap();
-    let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
-
     let const_filename_name = CString::new(const_pols_path).unwrap();
     let const_filename_ptr = const_filename_name.as_ptr() as *mut std::os::raw::c_char;
 
@@ -953,7 +949,6 @@ pub fn gen_recursive_proof_c(
     unsafe {
         gen_recursive_proof(
             p_setup_ctx,
-            global_info_file_ptr,
             airgroup_id,
             air_id,
             instance_id,
@@ -984,7 +979,6 @@ pub fn gen_recursive_proof_final_c(
     p_const_tree: *mut u8,
     p_public_inputs: *mut u8,
     proof_file: &str,
-    global_info_file: &str,
     airgroup_id: u64,
     air_id: u64,
     instance_id: u64,
@@ -992,13 +986,9 @@ pub fn gen_recursive_proof_final_c(
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
 
-    let global_info_file_name = CString::new(global_info_file).unwrap();
-    let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
-
     unsafe {
         gen_recursive_proof_final(
             p_setup_ctx,
-            global_info_file_ptr,
             airgroup_id,
             air_id,
             instance_id,
@@ -1058,18 +1048,23 @@ pub fn add_publics_aggregation_c(proof: *mut u8, offset: u64, publics: *mut u8, 
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn init_final_snark_prover_c(zkeyFile: &str, fflonk: bool) -> *mut c_void {
+pub fn init_final_snark_prover_c(zkeyFile: &str) -> *mut c_void {
     let zkey_file_name = CString::new(zkeyFile).unwrap();
     let zkey_file_ptr = zkey_file_name.as_ptr() as *mut std::os::raw::c_char;
-    unsafe { init_final_snark_prover(zkey_file_ptr, fflonk) }
+    unsafe { init_final_snark_prover(zkey_file_ptr) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_final_snark_proof_c(prover: *mut c_void, circomWitnessFinal: *mut u8, outputDir: &str, fflonk: bool) {
+pub fn free_final_snark_prover_c(snark_prover: *mut c_void) {
+    unsafe { free_final_snark_prover(snark_prover) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn gen_final_snark_proof_c(prover: *mut c_void, circomWitnessFinal: *mut u8, outputDir: &str) {
     let output_dir_name = CString::new(outputDir).unwrap();
     let output_dir_ptr = output_dir_name.as_ptr() as *mut std::os::raw::c_char;
     unsafe {
-        gen_final_snark_proof(prover, circomWitnessFinal as *mut std::os::raw::c_void, output_dir_ptr, fflonk);
+        gen_final_snark_proof(prover, circomWitnessFinal as *mut std::os::raw::c_void, output_dir_ptr);
     }
 }
 
@@ -1897,7 +1892,6 @@ pub fn gen_recursive_proof_c(
     _p_public_inputs: *mut u8,
     _proof_buffer: *mut u64,
     _proof_file: &str,
-    _global_info_file: &str,
     _airgroup_id: u64,
     _air_id: u64,
     _instance_id: u64,
@@ -1922,7 +1916,6 @@ pub fn gen_recursive_proof_final_c(
     _p_const_tree: *mut u8,
     _p_public_inputs: *mut u8,
     _proof_file: &str,
-    _global_info_file: &str,
     _airgroup_id: u64,
     _air_id: u64,
     _instance_id: u64,
@@ -1957,13 +1950,18 @@ pub fn add_publics_aggregation_c(_proof: *mut u8, _offset: u64, _publics: *mut u
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn init_final_snark_prover_c(_zkeyFile: &str, _fflonk: bool) -> *mut c_void {
+pub fn init_final_snark_prover_c(_zkeyFile: &str) -> *mut c_void {
     trace!("··· {}", "init_final_snark_prover: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_final_snark_proof_c(_prover: *mut c_void, _circomWitnessFinal: *mut u8, _outputDir: &str, _fflonk: bool) {
+pub fn free_final_snark_prover_c(_snark_prover: *mut c_void) {
+    trace!("··· {}", "free_final_snark_prover: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn gen_final_snark_proof_c(_prover: *mut c_void, _circomWitnessFinal: *mut u8, _outputDir: &str) {
     trace!("··· {}", "gen_final_snark_proof: This is a mock call because there is no linked library");
 }
 

@@ -30,8 +30,7 @@ namespace Fflonk {
 
         Engine &E;
         FFT<typename Engine::Fr> *fft = NULL;
-        
-        std::unique_ptr<BinFileUtils::BinFile> zkeyFile;
+
         Zkey::FflonkZkeyHeader *zkey;
         u_int32_t zkeyPower;
         std::string curveName;
@@ -82,10 +81,10 @@ namespace Fflonk {
 
         ~FflonkProver();
 
-        void setZkey(std::string zkeyFile);
+        void setZkey(BinFileUtils::BinFile *fdZkey);
 
-        std::tuple <json, json> prove(std::string zkeyFile, BinFileUtils::BinFile *fdWtns);
-        std::tuple <json, json> prove(std::string zkeyFile, FrElement *wtns, WtnsUtils::Header* wtnsHeader = NULL);
+        std::tuple <json, json> prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns);
+        std::tuple <json, json> prove(BinFileUtils::BinFile *fdZkey, FrElement *wtns, WtnsUtils::Header* wtnsHeader = NULL);
 
         std::tuple <json, json> prove(BinFileUtils::BinFile *fdWtns);
         std::tuple <json, json> prove(FrElement *wtns, WtnsUtils::Header* wtnsHeader = NULL);

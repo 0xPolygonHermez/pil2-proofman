@@ -33,6 +33,8 @@ public :
     FrElement getEvaluationCommitment(const std::string &key);
 
     json toJson();
+
+    json toJsonRaw();
 };
 
 #include "snark_proof.c.hpp"

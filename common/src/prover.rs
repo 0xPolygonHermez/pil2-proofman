@@ -9,6 +9,7 @@ pub enum ProofType {
     Recursive1,
     Recursive2,
     VadcopFinal,
+    VadcopFinalSnark,
     RecursiveF,
 }
 
@@ -20,7 +21,8 @@ impl ProofType {
             ProofType::Recursive1 => 2,
             ProofType::Recursive2 => 3,
             ProofType::VadcopFinal => 4,
-            ProofType::RecursiveF => 5,
+            ProofType::VadcopFinalSnark => 5,
+            ProofType::RecursiveF => 6,
         }
     }
 }
@@ -33,6 +35,7 @@ impl From<ProofType> for &'static str {
             ProofType::Recursive1 => "recursive1",
             ProofType::Recursive2 => "recursive2",
             ProofType::VadcopFinal => "vadcop_final",
+            ProofType::VadcopFinalSnark => "vadcop_final_snark",
             ProofType::RecursiveF => "recursive_f",
         }
     }
@@ -48,6 +51,7 @@ impl FromStr for ProofType {
             "recursive1" => Ok(ProofType::Recursive1),
             "recursive2" => Ok(ProofType::Recursive2),
             "vadcop_final" => Ok(ProofType::VadcopFinal),
+            "vadcop_final_snark" => Ok(ProofType::VadcopFinalSnark),
             "recursive_f" => Ok(ProofType::RecursiveF),
             _ => Err(()),
         }

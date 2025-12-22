@@ -75,7 +75,6 @@ namespace Plonk
         delete polynomials["Sigma1"];
         delete polynomials["Sigma2"];
         delete polynomials["Sigma3"];
-        cout << 1 << endl;
 
         delete evaluations["QL"];
         delete evaluations["QR"];
@@ -86,17 +85,14 @@ namespace Plonk
         delete evaluations["Sigma2"];
         delete evaluations["Sigma3"];
         delete evaluations["lagrange"];
-        cout << 1 << endl;
     }
 
     template <typename Engine>
-    void PlonkProver<Engine>::setZkey(std::string zkeyFile_)
+    void PlonkProver<Engine>::setZkey(BinFileUtils::BinFile *fdZkey)
     {
-        zkeyFile = BinFileUtils::openExisting(zkeyFile_, "zkey", 1);
-        BinFileUtils::BinFile *fdZkey = zkeyFile.get();
         int protocolId = Zkey::getProtocolIdFromZkey(fdZkey);
         if(protocolId != Zkey::PLONK_PROTOCOL_ID) {
-            zklog.error("Zkey protocolId has to be Fflonk");
+            zklog.error("Zkey protocolId has to be Plonk");
             exitProcess();
         }
 
@@ -411,16 +407,16 @@ namespace Plonk
     }
 
     template <typename Engine>
-    std::tuple<json, json> PlonkProver<Engine>::prove(std::string zkeyFile, BinFileUtils::BinFile *fdWtns)
+    std::tuple<json, json> PlonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns)
     {
-        this->setZkey(zkeyFile);
+        this->setZkey(fdZkey);
         return this->prove(fdWtns);
     }
 
     template <typename Engine>
-    std::tuple<json, json> PlonkProver<Engine>::prove(std::string zkeyFile, FrElement *buffWitness, WtnsUtils::Header *wtnsHeader)
+    std::tuple<json, json> PlonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, FrElement *buffWitness, WtnsUtils::Header *wtnsHeader)
     {
-        this->setZkey(zkeyFile);
+        this->setZkey(fdZkey);
         return this->prove(buffWitness, wtnsHeader);
     }
 
@@ -550,9 +546,7 @@ namespace Plonk
         ss << "Execution time: " << omp_get_wtime() - startTime << "\n";
         LOG_TRACE(ss);
 
-        delete nonPrecomputedBigBuffer;
-
-        return {proof->toJson(), publicSignals};
+        return {proof->toJsonRaw(), publicSignals};
         // }
         // catch (const std::exception &e)
         // {

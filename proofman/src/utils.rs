@@ -191,14 +191,11 @@ pub fn print_summary<F: PrimeField64>(
     Ok(())
 }
 
-fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool, final_snark: bool) -> ProofmanResult<()> {
+pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool) -> ProofmanResult<()> {
     let const_pols_tree_path = &setup.const_pols_tree_path;
     let mut flags = String::new();
     if aggregation {
         flags.push_str(" -a");
-    }
-    if final_snark {
-        flags.push_str(" -f");
     }
 
     let is_gpu = match cfg!(feature = "gpu") {
@@ -262,16 +259,9 @@ pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>)
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx.get_setup(airgroup_id, air_id)?;
-            check_const_tree(setup, false, false)?;
+            check_const_tree(setup, false)?;
         }
     }
-    Ok(())
-}
-
-pub fn check_tree_paths_snark<F: PrimeField64>(setups: &SetupsVadcop<F>) -> ProofmanResult<()> {
-    let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
-    check_const_tree(setup_recursivef, true, true)?;
-
     Ok(())
 }
 
@@ -281,7 +271,7 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &Set
         for (air_id, _) in air_group.iter().enumerate() {
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                 let setup = sctx_compressor.get_setup(airgroup_id, air_id)?;
-                check_const_tree(setup, true, false)?;
+                check_const_tree(setup, true)?;
             }
         }
     }
@@ -290,7 +280,7 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &Set
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
-            check_const_tree(setup, true, false)?;
+            check_const_tree(setup, true)?;
         }
     }
 
@@ -298,11 +288,11 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &Set
     let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup in 0..n_airgroups {
         let setup = sctx_recursive2.get_setup(airgroup, 0)?;
-        check_const_tree(setup, true, false)?;
+        check_const_tree(setup, true)?;
     }
 
     let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-    check_const_tree(setup_vadcop_final, true, false)?;
+    check_const_tree(setup_vadcop_final, true)?;
 
     Ok(())
 }
@@ -592,13 +582,9 @@ pub fn initialize_witness_circom<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &S
     setup_vadcop_final.set_circom_circuit()?;
     setup_vadcop_final.set_exec_file_data()?;
 
-    Ok(())
-}
-
-pub fn initialize_witness_circom_snark<F: PrimeField64>(setups: &SetupsVadcop<F>) -> ProofmanResult<()> {
-    let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
-    setup_recursivef.set_circom_circuit()?;
-    setup_recursivef.set_exec_file_data()?;
+    let setup_vadcop_final_snark = setups.setup_vadcop_final_snark.as_ref().unwrap();
+    setup_vadcop_final_snark.set_circom_circuit()?;
+    setup_vadcop_final_snark.set_exec_file_data()?;
 
     Ok(())
 }

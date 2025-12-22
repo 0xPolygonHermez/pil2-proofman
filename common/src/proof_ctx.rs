@@ -232,7 +232,6 @@ pub struct ProofCtx<F: PrimeField64> {
     pub dctx: RwLock<DistributionCtx>,
     pub debug_info: RwLock<DebugInfo>,
     pub aggregation: bool,
-    pub final_snark: bool,
     pub proof_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_tx_priority: RwLock<Option<crossbeam_channel::Sender<usize>>>,
@@ -245,7 +244,6 @@ impl<F: PrimeField64> ProofCtx<F> {
         proving_key_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
         aggregation: bool,
-        final_snark: bool,
         verbose_mode: VerboseMode,
         mpi_ctx: Arc<MpiCtx>,
     ) -> ProofmanResult<Self> {
@@ -284,7 +282,6 @@ impl<F: PrimeField64> ProofCtx<F> {
             custom_commits_values: HashMap::new(),
             weights,
             aggregation,
-            final_snark,
             witness_tx: RwLock::new(None),
             witness_tx_priority: RwLock::new(None),
             proof_tx: RwLock::new(None),

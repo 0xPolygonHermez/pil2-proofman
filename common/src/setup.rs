@@ -16,7 +16,7 @@ use proofman_starks_lib_c::{
 };
 use proofman_util::create_buffer_fast;
 
-use crate::{GlobalInfo, ProofmanError};
+use crate::{GlobalInfoAir, ProofmanError};
 use crate::ProofType;
 use crate::StarkInfo;
 use crate::ProofmanResult;
@@ -103,45 +103,55 @@ impl<F: PrimeField64> Drop for Setup<F> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 impl<F: PrimeField64> Setup<F> {
     pub fn new(
-        global_info: &GlobalInfo,
+        setup_path: &Path,
         airgroup_id: usize,
         air_id: usize,
-        setup_type: &ProofType,
+        air_info: &GlobalInfoAir,
+        setup_type_: &ProofType,
         verify_constraints: bool,
         preallocate: bool,
+        recursive2_path: Option<&PathBuf>,
     ) -> Self {
-        let setup_path = match setup_type {
-            ProofType::VadcopFinal => global_info.get_setup_path("vadcop_final"),
-            ProofType::RecursiveF => global_info.get_setup_path("recursivef"),
-            _ => global_info.get_air_setup_path(airgroup_id, air_id, setup_type),
-        };
-
         let gpu = cfg!(feature = "gpu");
 
-        let stark_info_path = match setup_type {
+        let stark_info_path = match setup_type_ {
             ProofType::Recursive1 => {
-                let setup_path_recursive2 = global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive2);
+                let setup_path_recursive2 =
+                    recursive2_path.expect("recursive2_path must be provided for Recursive1 proof type");
                 setup_path_recursive2.display().to_string() + ".starkinfo.json"
             }
+            ProofType::VadcopFinalSnark => setup_path.display().to_string() + "_snark.starkinfo.json",
             _ => setup_path.display().to_string() + ".starkinfo.json",
         };
 
-        let expressions_bin_path = match setup_type {
+        let expressions_bin_path = match setup_type_ {
             ProofType::Recursive1 => {
-                let setup_path_recursive2 = global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive2);
+                let setup_path_recursive2 =
+                    recursive2_path.expect("recursive2_path must be provided for Recursive1 proof type");
                 setup_path_recursive2.display().to_string() + ".bin"
             }
+            ProofType::VadcopFinalSnark => setup_path.display().to_string() + "_snark.bin",
             _ => setup_path.display().to_string() + ".bin",
         };
+
+        let setup_type = match setup_type_ {
+            ProofType::VadcopFinalSnark => ProofType::VadcopFinal,
+            _ => setup_type_.clone(),
+        };
+
         let const_pols_path = match !gpu {
             true => setup_path.display().to_string() + ".const",
             false => setup_path.display().to_string() + ".const_gpu",
         };
-        let const_pols_tree_path = match !gpu {
-            true => setup_path.display().to_string() + ".consttree",
-            false => setup_path.display().to_string() + ".consttree_gpu",
+
+        let const_pols_tree_path = match (!gpu, setup_type_ != &ProofType::VadcopFinalSnark) {
+            (true, true) => setup_path.display().to_string() + ".consttree",
+            (false, true) => setup_path.display().to_string() + ".consttree_gpu",
+            (true, false) => setup_path.display().to_string() + "_snark.consttree",
+            (false, false) => setup_path.display().to_string() + "_snark.consttree_gpu",
         };
 
         let (
@@ -160,7 +170,7 @@ impl<F: PrimeField64> Setup<F> {
             pinned_proof_size,
             n_cols,
             n_operations_quotient,
-        ) = if setup_type == &ProofType::Compressor && !global_info.get_air_has_compressor(airgroup_id, air_id) {
+        ) = if setup_type_ == &ProofType::Compressor && !air_info.has_compressor.unwrap_or(false) {
             // If the condition is met, use None for each pointer
             (
                 StarkInfo::default(),
@@ -184,8 +194,8 @@ impl<F: PrimeField64> Setup<F> {
             let stark_info_json = std::fs::read_to_string(&stark_info_path)
                 .unwrap_or_else(|_| panic!("Failed to read file {}", &stark_info_path));
             let stark_info = StarkInfo::from_json(&stark_info_json);
-            let recursive = setup_type != &ProofType::Basic;
-            let recursive_final = setup_type == &ProofType::RecursiveF;
+            let recursive = setup_type_ != &ProofType::Basic;
+            let recursive_final = setup_type_ == &ProofType::RecursiveF;
             let preallocate_const = preallocate && gpu;
             let p_stark_info = stark_info_new_c(
                 stark_info_path.as_str(),
@@ -210,9 +220,12 @@ impl<F: PrimeField64> Setup<F> {
 
             let n_operations_quotient = get_operations_quotient_c(expressions_bin, p_stark_info) as u64;
 
-            let verkey_file = setup_path.with_extension("verkey.json");
+            let verkey_file = match setup_type_ {
+                ProofType::VadcopFinalSnark => setup_path.display().to_string() + "_snark.verkey.json",
+                _ => setup_path.display().to_string() + ".verkey.json",
+            };
 
-            let verkey = if setup_type == &ProofType::RecursiveF {
+            let verkey = if setup_type_ == &ProofType::RecursiveF {
                 vec![]
             } else {
                 let mut file = File::open(&verkey_file).expect("Unable to open file");
@@ -300,9 +313,9 @@ impl<F: PrimeField64> Setup<F> {
             circom_circuit: RwLock::new(None),
             circom_library: RwLock::new(None),
             exec_data: RwLock::new(None),
-            setup_path: setup_path.clone(),
+            setup_path: setup_path.to_path_buf().clone(),
             setup_type: setup_type.clone(),
-            air_name: global_info.airs[airgroup_id][air_id].name.clone(),
+            air_name: air_info.name.clone(),
             const_pols_path,
             const_pols_tree_path,
             n_cols,

@@ -9,6 +9,7 @@ use std::io::Write;
 use bytemuck::cast_slice;
 use fields::Goldilocks;
 
+use proofman::SnarkWrapper;
 use proofman::ProofMan;
 use proofman::ProvePhaseResult;
 use proofman_common::{ModeName, ProofOptions, ParamsGPU};
@@ -36,6 +37,10 @@ pub struct ProveCmd {
     /// Setup folder path
     #[clap(short = 'k', long)]
     pub proving_key: PathBuf,
+
+    /// Setup folder path
+    #[clap(short = 's', long)]
+    pub proving_key_snark: Option<PathBuf>,
 
     /// Output dir path
     #[clap(short = 'o', long, default_value = "tmp")]
@@ -189,9 +194,11 @@ impl ProveCmd {
                 file.write_all(proof_data)?;
                 file.flush()?;
 
-                println!("WRITTEN vadcop final proof to {}", output_file_path.display());
-                if self.final_snark {
-                    proofman.generate_final_snark_proof(&vadcop_final_proof, proof_options.clone())?;
+                if self.final_snark && self.proving_key_snark.is_some() {
+                    let proving_key_snark = self.proving_key_snark.as_ref().unwrap();
+                    let snark_wrapper: SnarkWrapper<Goldilocks> =
+                        SnarkWrapper::new(proving_key_snark, self.verbose.into())?;
+                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, &self.output_dir)?;
                 }
             }
         }

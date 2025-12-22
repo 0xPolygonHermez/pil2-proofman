@@ -89,3 +89,29 @@ json SnarkProof<Engine>::toJson() {
 
     return jsonProof;
 }
+
+template<typename Engine>
+json SnarkProof<Engine>::toJsonRaw() {
+    json jsonProof;
+
+    for (auto &[key, point]: this->polynomialCommitments) {
+        G1PointAffine tmp;
+        E.g1.copy(tmp, point);
+
+        std::string x = E.f1.toString(tmp.x);
+        std::string y = E.f1.toString(tmp.y);
+
+        jsonProof[key].push_back(x);
+        jsonProof[key].push_back(y);
+        jsonProof[key].push_back("1");
+    }
+
+    for (auto &[key, element]: this->evaluationCommitments) {
+        jsonProof[key] = E.fr.toString(element);
+    }
+
+    jsonProof["protocol"] = this->protocol;
+    jsonProof["curve"] = this->curve;
+
+    return jsonProof;
+}

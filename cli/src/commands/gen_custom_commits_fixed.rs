@@ -58,7 +58,6 @@ impl GenCustomCommitsFixedCmd {
             self.proving_key.clone(),
             custom_commits_map,
             false,
-            false,
             self.verbose.into(),
             mpi_ctx,
         )?);

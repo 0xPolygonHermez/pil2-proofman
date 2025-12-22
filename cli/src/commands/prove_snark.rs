@@ -1,14 +1,12 @@
 // extern crate env_logger;
 use clap::Parser;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use colored::Colorize;
 use fields::Goldilocks;
 use std::io::Read;
 use bytemuck::cast_slice;
 
-use proofman::ProofMan;
-use proofman_common::{ProofOptions, ParamsGPU};
+use proofman::SnarkWrapper;
 use std::fs::{self, File};
 use std::path::Path;
 
@@ -21,7 +19,7 @@ pub struct ProveSnarkCmd {
 
     /// Setup folder path
     #[clap(short = 'k', long)]
-    pub proving_key: PathBuf,
+    pub proving_key_snark: PathBuf,
 
     /// Output dir path
     #[clap(short = 'o', long, default_value = "tmp")]
@@ -61,21 +59,9 @@ impl ProveSnarkCmd {
         proof_file.read_to_end(&mut proof_u64)?;
         let proof = cast_slice::<u8, u64>(&proof_u64);
 
-        let proofman = ProofMan::<Goldilocks>::new(
-            self.proving_key.clone(),
-            HashMap::new(),
-            false,
-            false,
-            true,
-            ParamsGPU::new(false),
-            self.verbose.into(),
-            HashMap::new(),
-        )?;
+        let snark_wrapper: SnarkWrapper<Goldilocks> = SnarkWrapper::new(&self.proving_key_snark, self.verbose.into())?;
 
-        let proof_options =
-            ProofOptions::new(false, false, false, true, false, false, self.save_proofs, self.output_dir.clone());
-
-        proofman.generate_final_snark_proof(proof, proof_options.clone())?;
+        snark_wrapper.generate_final_snark_proof(proof, &self.output_dir.clone())?;
 
         Ok(())
     }

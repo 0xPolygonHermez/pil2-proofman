@@ -363,7 +363,6 @@ extern "C" {
     
     pub fn gen_recursive_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
-        globalInfoFile: *mut ::std::os::raw::c_char,
         airgroupId: u64,
         airId: u64,
         instanceId: u64,
@@ -397,7 +396,6 @@ extern "C" {
     
     pub fn gen_recursive_proof_final(
         pSetupCtx: *mut ::std::os::raw::c_void,
-        globalInfoFile: *mut ::std::os::raw::c_char,
         airgroupId: u64,
         airId: u64,
         instanceId: u64,
@@ -426,13 +424,17 @@ extern "C" {
         nPublicsAggregation: u64,
     );
     
-    pub fn init_final_snark_prover(zkeyFile: *mut ::std::os::raw::c_char, fflonk: bool) -> *mut ::std::os::raw::c_void;
+    // Final proof
+    // ========================================================================================
+
+    pub fn init_final_snark_prover(zkeyFile: *mut ::std::os::raw::c_char) -> *mut ::std::os::raw::c_void;
+
+    pub fn free_final_snark_prover(prover: *mut ::std::os::raw::c_void);
 
     pub fn gen_final_snark_proof(
         proverSnark: *mut ::std::os::raw::c_void,
         circomWitnessFinal: *mut ::std::os::raw::c_void,
         outputDir: *mut ::std::os::raw::c_char,
-        fflonk: bool,
     );
 
     // Utilities

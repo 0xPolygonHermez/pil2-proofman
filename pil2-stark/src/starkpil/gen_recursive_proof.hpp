@@ -43,7 +43,7 @@ void calculateWitnessSTD_BN128(SetupCtx& setupCtx, StepsParams& params, Expressi
     updateAirgroupValue(setupCtx, params, hint[0], hintFieldNameAirgroupVal, "numerator_direct", "denominator_direct", options1, options2, !prod);
 }
 
-void *genRecursiveProofBN128(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *witness, Goldilocks::Element *aux_trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, uint64_t *proofBuffer, std::string proofFile) {
+void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *witness, Goldilocks::Element *aux_trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, uint64_t *proofBuffer, std::string proofFile) {
     TimerStart(STARK_PROOF);
 
     NTT_Goldilocks ntt(1 << setupCtx.starkInfo.starkStruct.nBits);
@@ -273,7 +273,7 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, json& globalInfo, uint64_t airg
 
     nlohmann::json zkin = proof.proof.proof2json();
     zkin["publics"] = json::array();
-    for(uint64_t i = 0; i < uint64_t(globalInfo["nPublics"]); ++i) {
+    for(uint64_t i = 0; i < setupCtx.starkInfo.nPublics; ++i) {
         zkin["publics"][i] = Goldilocks::toString(publicInputs[i]);
     }
 

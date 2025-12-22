@@ -16,7 +16,7 @@ use proofman_starks_lib_c::{
     get_instances_ready_c,
 };
 use crate::add_publics_circom;
-use proofman_verifier::{verify_recursive2, verify};
+use proofman_verifier::{verify_recursive2, verify, verify_final_vadcop_snark};
 use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::fs;
@@ -49,15 +49,15 @@ use std::{
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
 use crate::{
-    calculate_max_witness_trace_size, check_tree_paths_vadcop, check_tree_paths_snark, gen_recursive_proof_size,
-    initialize_setup_info, initialize_witness_circom_snark, N_RECURSIVE_PROOFS_PER_AGGREGATION,
+    calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, initialize_setup_info,
+    N_RECURSIVE_PROOFS_PER_AGGREGATION,
 };
 use crate::{verify_constraints_proof, verify_basic_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
 use crate::{
     get_accumulated_challenge, gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof,
-    generate_vadcop_final_proof, generate_fflonk_snark_proof, generate_recursivef_proof, initialize_witness_circom,
+    generate_vadcop_final_proof, initialize_witness_circom,
 };
 use crate::total_recursive_proofs;
 use crate::check_tree_paths;
@@ -157,7 +157,6 @@ pub struct ProofMan<F: PrimeField64> {
     gpu_params: ParamsGPU,
     verify_constraints: bool,
     aggregation: bool,
-    final_snark: bool,
     n_streams: usize,
     n_streams_non_recursive: usize,
     n_gpus: usize,
@@ -351,12 +350,7 @@ where
         cancellation_info.cancel(None);
     }
 
-    pub fn check_setup(
-        proving_key_path: PathBuf,
-        aggregation: bool,
-        final_snark: bool,
-        verbose_mode: VerboseMode,
-    ) -> ProofmanResult<()> {
+    pub fn check_setup(proving_key_path: PathBuf, aggregation: bool, verbose_mode: VerboseMode) -> ProofmanResult<()> {
         // Check proving_key_path exists
         if !proving_key_path.exists() {
             return Err(ProofmanError::InvalidParameters(format!(
@@ -366,23 +360,10 @@ where
 
         let mpi_ctx = Arc::new(MpiCtx::new());
 
-        let pctx = ProofCtx::<F>::create_ctx(
-            proving_key_path,
-            HashMap::new(),
-            aggregation,
-            final_snark,
-            verbose_mode,
-            mpi_ctx,
-        )?;
+        let pctx = ProofCtx::<F>::create_ctx(proving_key_path, HashMap::new(), aggregation, verbose_mode, mpi_ctx)?;
 
-        let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(
-            &pctx.global_info,
-            false,
-            aggregation,
-            final_snark,
-            &ParamsGPU::new(false),
-            &[],
-        ));
+        let setups_aggregation =
+            Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, &ParamsGPU::new(false), &[]));
 
         let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &ParamsGPU::new(false), &[]);
 
@@ -427,10 +408,8 @@ where
             let setup_vadcop_final = setups_aggregation.setup_vadcop_final.as_ref().unwrap();
             calculate_fixed_tree(setup_vadcop_final);
 
-            if final_snark {
-                let setup_recursivef = setups_aggregation.setup_recursivef.as_ref().unwrap();
-                calculate_fixed_tree(setup_recursivef);
-            }
+            let setup_vadcop_final_snark = setups_aggregation.setup_vadcop_final_snark.as_ref().unwrap();
+            calculate_fixed_tree(setup_vadcop_final_snark);
         }
 
         Ok(())
@@ -961,41 +940,13 @@ where
         self._generate_proof(phase_inputs, options, phase)
     }
 
-    #[allow(clippy::type_complexity)]
-    pub fn generate_final_snark_proof(&self, vadcop_proof: &[u64], options: ProofOptions) -> ProofmanResult<()> {
-        if !self.final_snark {
-            return Err(ProofmanError::InvalidParameters(
-                "Proofman has not been initialized in final snark mode".into(),
-            ));
-        }
-
-        timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
-        let recursivef_proof = generate_recursivef_proof(
-            &self.pctx,
-            &self.setups,
-            vadcop_proof,
-            &self.aux_trace,
-            &self.const_pols,
-            &self.const_tree,
-            &options.output_dir_path,
-            false,
-        )?;
-        timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
-
-        timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
-        let _proof_file = generate_fflonk_snark_proof(&self.pctx, recursivef_proof, &options.output_dir_path);
-        timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
-
-        Ok(())
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         proving_key_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
         verify_constraints: bool,
         aggregation: bool,
-        final_snark: bool,
+        _final_snark: bool,
         gpu_params: ParamsGPU,
         verbose_mode: VerboseMode,
         packed_info: HashMap<(usize, usize), PackedInfo>,
@@ -1024,7 +975,6 @@ where
             custom_commits_fixed,
             verify_constraints,
             aggregation,
-            final_snark,
             &gpu_params,
             verbose_mode,
         )?;
@@ -1145,7 +1095,6 @@ where
             prover_buffer_recursive,
             gpu_params,
             aggregation,
-            final_snark,
             verify_constraints,
             n_streams,
             n_streams_non_recursive,
@@ -2117,40 +2066,55 @@ where
             }
         }
 
-        if !options.final_snark {
-            if options.verify_proofs {
-                if options.aggregation {
-                    if self.mpi_ctx.rank == 0 {
-                        let setup = self.setups.setup_vadcop_final.as_ref().unwrap();
+        if options.verify_proofs {
+            if options.aggregation {
+                if self.mpi_ctx.rank == 0 {
+                    timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
 
-                        timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
+                    let proof_bytes: &[u8] = cast_slice(vadcop_final_proof.as_ref().unwrap());
 
-                        let proof_bytes: &[u8] = cast_slice(vadcop_final_proof.as_ref().unwrap());
+                    let verkey_u64: Vec<u64> = match options.final_snark {
+                        true => self
+                            .setups
+                            .setup_vadcop_final_snark
+                            .as_ref()
+                            .unwrap()
+                            .verkey
+                            .iter()
+                            .map(|x| x.as_canonical_u64())
+                            .collect(),
+                        false => self
+                            .setups
+                            .setup_vadcop_final
+                            .as_ref()
+                            .unwrap()
+                            .verkey
+                            .iter()
+                            .map(|x| x.as_canonical_u64())
+                            .collect(),
+                    };
 
-                        let verkey_u64: Vec<u64> = setup.verkey.iter().map(|x| x.as_canonical_u64()).collect();
-
-                        let vk_bytes: &[u8] = cast_slice(&verkey_u64);
-                        let valid_proofs = verify(proof_bytes, vk_bytes);
-                        timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
-                        if !valid_proofs {
-                            tracing::info!(
-                                "··· {}",
-                                "\u{2717} Vadcop Final proof was not verified".bright_red().bold()
-                            );
-                            return Err(ProofmanError::InvalidProof("Vadcop Final proof was not verified".into()));
-                        } else {
-                            tracing::info!("··· {}", "\u{2713} Vadcop Final proof was verified".bright_green().bold());
-                        }
+                    let vk_bytes: &[u8] = cast_slice(&verkey_u64);
+                    let valid_proofs = match options.final_snark {
+                        true => verify_final_vadcop_snark(proof_bytes, vk_bytes),
+                        false => verify(proof_bytes, vk_bytes),
+                    };
+                    timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
+                    if !valid_proofs {
+                        tracing::info!("··· {}", "\u{2717} Vadcop Final proof was not verified".bright_red().bold());
+                        return Err(ProofmanError::InvalidProof("Vadcop Final proof was not verified".into()));
+                    } else {
+                        tracing::info!("··· {}", "\u{2713} Vadcop Final proof was verified".bright_green().bold());
                     }
-                } else {
-                    return self.verify_proofs(options.test_mode);
                 }
-            } else if phase == ProvePhase::Full {
-                tracing::info!(
-                    "··· {}",
-                    "All proofs were successfully generated. Verification Skipped".bright_yellow().bold()
-                );
+            } else {
+                return self.verify_proofs(options.test_mode);
             }
+        } else if phase == ProvePhase::Full && !options.final_snark {
+            tracing::info!(
+                "··· {}",
+                "All proofs were successfully generated. Verification Skipped".bright_yellow().bold()
+            );
         }
 
         if options.save_proofs {
@@ -2340,6 +2304,7 @@ where
                     &self.const_pols,
                     &self.const_tree,
                     self.d_buffers.get_ptr(),
+                    options.final_snark,
                     options.save_proofs,
                 )?;
 
@@ -3250,18 +3215,11 @@ where
         custom_commits_fixed: HashMap<String, PathBuf>,
         verify_constraints: bool,
         aggregation: bool,
-        final_snark: bool,
         gpu_params: &ParamsGPU,
         verbose_mode: VerboseMode,
     ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>)> {
-        let mut pctx = ProofCtx::create_ctx(
-            proving_key_path,
-            custom_commits_fixed,
-            aggregation,
-            final_snark,
-            verbose_mode,
-            mpi_ctx,
-        )?;
+        let mut pctx =
+            ProofCtx::create_ctx(proving_key_path, custom_commits_fixed, aggregation, verbose_mode, mpi_ctx)?;
         timer_start_info!(INITIALIZING_PROOFMAN);
 
         let mut preloaded_const = Vec::new();
@@ -3282,10 +3240,7 @@ where
 
         pctx.set_weights(&sctx)?;
 
-        let only_final_snark = !aggregation && final_snark;
-        if !only_final_snark {
-            pctx.initialize_custom_commits(&sctx)?;
-        }
+        pctx.initialize_custom_commits(&sctx)?;
 
         let pctx = Arc::new(pctx);
 
@@ -3297,7 +3252,6 @@ where
             &pctx.global_info,
             verify_constraints,
             aggregation,
-            final_snark,
             gpu_params,
             &preloaded_const,
         ));
@@ -3305,11 +3259,6 @@ where
         if aggregation {
             check_tree_paths_vadcop(&pctx, &setups_vadcop)?;
             initialize_witness_circom(&pctx, &setups_vadcop)?;
-        }
-
-        if final_snark {
-            check_tree_paths_snark(&setups_vadcop)?;
-            initialize_witness_circom_snark(&setups_vadcop)?;
         }
 
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN);
