@@ -7,8 +7,7 @@ use std::io::Read;
 use bytemuck::cast_slice;
 
 use proofman::SnarkWrapper;
-use std::fs::{self, File};
-use std::path::Path;
+use std::fs::File;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -29,30 +28,14 @@ pub struct ProveSnarkCmd {
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
     pub verbose: u8, // Using u8 to hold the number of `-v`
 
-    #[clap(short = 'b', long, default_value_t = false)]
-    pub save_proofs: bool,
+    #[clap(short = 'j', long, default_value_t = false)]
+    pub save_json: bool,
 }
 
 impl ProveSnarkCmd {
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("{} ProveSnark", format!("{: >12}", "Command").bright_green().bold());
         println!();
-
-        if Path::new(&self.output_dir.join("proofs")).exists() {
-            // In distributed mode two different processes may enter here at the same time and try to remove the same directory
-            if let Err(e) = fs::remove_dir_all(self.output_dir.join("proofs")) {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    return Err(format!("Failed to remove the proofs directory: {e:?}").into());
-                }
-            }
-        }
-
-        if let Err(e) = fs::create_dir_all(self.output_dir.join("proofs")) {
-            if e.kind() != std::io::ErrorKind::AlreadyExists {
-                // prevent collision in distributed mode
-                return Err(format!("Failed to create the proofs directory: {e:?}").into());
-            }
-        }
 
         let mut proof_file = File::open(&self.proof)?;
         let mut proof_u64 = Vec::new();
@@ -61,8 +44,13 @@ impl ProveSnarkCmd {
 
         let snark_wrapper: SnarkWrapper<Goldilocks> = SnarkWrapper::new(&self.proving_key_snark, self.verbose.into())?;
 
-        snark_wrapper.generate_final_snark_proof(proof, &self.output_dir.clone())?;
-
+        let snark_proof = snark_wrapper.generate_final_snark_proof(proof, &self.output_dir, self.save_json)?;
+        println!(
+            "{} Final SNARK proof generated. Proof: {:?}, Publics: {:?}",
+            "Info:".bright_blue().bold(),
+            snark_proof.proof_bytes,
+            snark_proof.public_bytes
+        );
         Ok(())
     }
 }

@@ -1060,11 +1060,11 @@ pub fn free_final_snark_prover_c(snark_prover: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_final_snark_proof_c(prover: *mut c_void, circomWitnessFinal: *mut u8, outputDir: &str) {
+pub fn gen_final_snark_proof_c(prover: *mut c_void, circomWitnessFinal: *mut u8, proof: *mut u8, outputDir: &str) {
     let output_dir_name = CString::new(outputDir).unwrap();
     let output_dir_ptr = output_dir_name.as_ptr() as *mut std::os::raw::c_char;
     unsafe {
-        gen_final_snark_proof(prover, circomWitnessFinal as *mut std::os::raw::c_void, output_dir_ptr);
+        gen_final_snark_proof(prover, circomWitnessFinal as *mut std::os::raw::c_void, proof, output_dir_ptr);
     }
 }
 
@@ -1961,7 +1961,7 @@ pub fn free_final_snark_prover_c(_snark_prover: *mut c_void) {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_final_snark_proof_c(_prover: *mut c_void, _circomWitnessFinal: *mut u8, _outputDir: &str) {
+pub fn gen_final_snark_proof_c(_prover: *mut c_void, _circomWitnessFinal: *mut u8, _proof: *mut u8, _outputDir: &str) {
     trace!("··· {}", "gen_final_snark_proof: This is a mock call because there is no linked library");
 }
 

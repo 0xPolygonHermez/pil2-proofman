@@ -115,3 +115,30 @@ json SnarkProof<Engine>::toJsonRaw() {
 
     return jsonProof;
 }
+
+template<typename Engine>
+std::vector<uint8_t> SnarkProof<Engine>::toBytes(std::vector<std::string> orderedCommitments, std::vector<std::string> orderedEvaluations) {
+    size_t totalSize = 2 * E.g1.F.bytes() * orderedCommitments.size() + E.fr.bytes() * orderedEvaluations.size();
+
+    std::vector<uint8_t> proof(totalSize);
+    size_t offset = 0;
+
+    for (auto key : orderedCommitments) {
+        auto &point = this->polynomialCommitments.at(key);
+        G1PointAffine tmp;
+        E.g1.copy(tmp, point);
+
+        E.g1.F.toRprBE(tmp.x, proof.data() + offset, E.g1.F.bytes());
+        offset += E.g1.F.bytes();
+        E.g1.F.toRprBE(tmp.y, proof.data() + offset, E.g1.F.bytes());
+        offset += E.g1.F.bytes();
+    }
+
+    for (auto key : orderedEvaluations) {
+        auto &element = this->evaluationCommitments.at(key);
+        E.fr.toRprBE(element, proof.data() + offset, E.fr.bytes());
+        offset += E.fr.bytes();
+    }
+
+    return proof;
+}

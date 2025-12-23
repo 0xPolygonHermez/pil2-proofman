@@ -434,6 +434,7 @@ extern "C" {
     pub fn gen_final_snark_proof(
         proverSnark: *mut ::std::os::raw::c_void,
         circomWitnessFinal: *mut ::std::os::raw::c_void,
+        proof: *mut u8,
         outputDir: *mut ::std::os::raw::c_char,
     );
 

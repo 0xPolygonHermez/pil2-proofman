@@ -625,7 +625,7 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     mt.getRoot(&rootGL[0]);
 
-    if(!check) {
+    if(!check && std::string(bufferFile) != "") {
         std::string buffFile = string(bufferFile);
         ofstream fw(buffFile.c_str(), std::fstream::out | std::fstream::binary);
         writeFileParallel(buffFile, root, 32, 0);
@@ -918,8 +918,8 @@ void free_final_snark_prover(void *snark_prover) {
     }
 }
 
-void gen_final_snark_proof(void *prover, void *circomWitnessFinal, char* outputDir) {
-    genFinalSnarkProof(prover, circomWitnessFinal, std::string(outputDir));
+void gen_final_snark_proof(void *prover, void *circomWitnessFinal, uint8_t* proof, char* outputDir) {
+    genFinalSnarkProof(prover, circomWitnessFinal, proof, std::string(outputDir));
 }
 
 void setLogLevel(uint64_t level) {

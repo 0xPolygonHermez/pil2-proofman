@@ -11,7 +11,7 @@
 struct IFinalSnarkProver {
     virtual ~IFinalSnarkProver() = default;
     
-    virtual std::tuple<nlohmann::json, nlohmann::json>
+    virtual std::tuple<nlohmann::json, nlohmann::json, std::vector<uint8_t>>
     prove(AltBn128::FrElement* witnessFinal, WtnsUtils::Header* wtnsHeader = NULL) = 0;
 
     virtual uint32_t nPublics() const = 0;
@@ -27,7 +27,7 @@ public:
         nPublics_ = zkeyHeader_->nPublic;
     }
 
-    std::tuple <nlohmann::json, nlohmann::json>
+    std::tuple <nlohmann::json, nlohmann::json, std::vector<uint8_t>>
     prove(AltBn128::FrElement* witnessFinal, WtnsUtils::Header* wtnsHeader = nullptr) override {
         return prover_.prove(witnessFinal, wtnsHeader);
     }
@@ -45,7 +45,7 @@ public:
         nPublics_ = zkeyHeader_->nPublic;
     }
 
-    std::tuple<nlohmann::json, nlohmann::json>
+    std::tuple<nlohmann::json, nlohmann::json, std::vector<uint8_t>>
     prove(AltBn128::FrElement* witnessFinal, WtnsUtils::Header* wtnsHeader = nullptr) override {
         return prover_.prove(witnessFinal, wtnsHeader);
     }
@@ -79,9 +79,7 @@ std::unique_ptr<IFinalSnarkProver> initFinalSnarkProver(BinFileUtils::BinFile *f
     throw std::runtime_error("Unsupported protocol id");
 }
 
-void genFinalSnarkProof(void *proverSnark, void *circomWitnessFinal,  std::string outputDir) {
-    TimerStart(PROVER_FINAL_SNARK_PROOF);
-
+void genFinalSnarkProof(void *proverSnark, void *circomWitnessFinal, uint8_t* proof, std::string outputDir) {
     FinalSnark* finalSnarkProver = (FinalSnark*)proverSnark;
 
     AltBn128::FrElement *witnessFinal = (AltBn128::FrElement *)circomWitnessFinal;
@@ -92,13 +90,17 @@ void genFinalSnarkProof(void *proverSnark, void *circomWitnessFinal,  std::strin
         AltBn128::Fr.toMontgomery(aux, witnessFinal[1 + i]);
         publicJson.push_back(AltBn128::Fr.toString(aux));
     }
-    json2file(publicJson, outputDir + "/final_snark_publics.json");
+    
 
     try
     {
         TimerStart(SNARK_PROOF);
-        auto [jsonProof, publicSignalsJson] = finalSnarkProver->prover->prove(witnessFinal);      
-        json2file(jsonProof, outputDir + "/final_snark_proof.json");
+        auto [jsonProof, publicSignalsJson, snark_proof] = finalSnarkProver->prover->prove(witnessFinal);
+        memcpy(proof, snark_proof.data(), snark_proof.size());
+        if (!outputDir.empty()) {
+            json2file(jsonProof, outputDir + "/final_snark_proof.json");
+            json2file(publicJson, outputDir + "/final_snark_publics.json");
+        }
         TimerStopAndLog(SNARK_PROOF);
     }
     catch (std::exception &e)
@@ -106,7 +108,6 @@ void genFinalSnarkProof(void *proverSnark, void *circomWitnessFinal,  std::strin
         zklog.error("Prover::genProof() got exception in rapid SNARK:" + string(e.what()));
         exitProcess();
     }
-    TimerStopAndLog(PROVER_FINAL_SNARK_PROOF);
 }
 #endif // FINAL_SNARK_PROOF_HPP
     

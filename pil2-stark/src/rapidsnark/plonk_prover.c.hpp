@@ -407,21 +407,21 @@ namespace Plonk
     }
 
     template <typename Engine>
-    std::tuple<json, json> PlonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns)
+    std::tuple<json, json, std::vector<uint8_t>> PlonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns)
     {
         this->setZkey(fdZkey);
         return this->prove(fdWtns);
     }
 
     template <typename Engine>
-    std::tuple<json, json> PlonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, FrElement *buffWitness, WtnsUtils::Header *wtnsHeader)
+    std::tuple<json, json, std::vector<uint8_t>> PlonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, FrElement *buffWitness, WtnsUtils::Header *wtnsHeader)
     {
         this->setZkey(fdZkey);
         return this->prove(buffWitness, wtnsHeader);
     }
 
     template <typename Engine>
-    std::tuple<json, json> PlonkProver<Engine>::prove(BinFileUtils::BinFile *fdWtns)
+    std::tuple<json, json, std::vector<uint8_t>> PlonkProver<Engine>::prove(BinFileUtils::BinFile *fdWtns)
     {
         LOG_TRACE("> Reading witness file header");
         auto wtnsHeader = WtnsUtils::loadHeader(fdWtns);
@@ -434,7 +434,7 @@ namespace Plonk
     }
 
     template <typename Engine>
-    std::tuple<json, json> PlonkProver<Engine>::prove(FrElement *buffWitness, WtnsUtils::Header *wtnsHeader)
+    std::tuple<json, json, std::vector<uint8_t>> PlonkProver<Engine>::prove(FrElement *buffWitness, WtnsUtils::Header *wtnsHeader)
     {
         if (NULL == zkey)
         {
@@ -546,7 +546,9 @@ namespace Plonk
         ss << "Execution time: " << omp_get_wtime() - startTime << "\n";
         LOG_TRACE(ss);
 
-        return {proof->toJsonRaw(), publicSignals};
+        std::vector<string> orderedCommitments = {"A", "B", "C", "Z", "T1", "T2", "T3", "Wxi", "Wxiw"};
+        std::vector<string> orderedEvaluations = {"eval_a", "eval_b", "eval_c", "eval_s1", "eval_s2", "eval_zw"};
+        return {proof->toJsonRaw(), publicSignals, proof->toBytes(orderedCommitments, orderedEvaluations)};
         // }
         // catch (const std::exception &e)
         // {

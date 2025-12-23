@@ -83,11 +83,11 @@ namespace Fflonk {
 
         void setZkey(BinFileUtils::BinFile *fdZkey);
 
-        std::tuple <json, json> prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns);
-        std::tuple <json, json> prove(BinFileUtils::BinFile *fdZkey, FrElement *wtns, WtnsUtils::Header* wtnsHeader = NULL);
+        std::tuple <json, json, std::vector<uint8_t>> prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns);
+        std::tuple <json, json, std::vector<uint8_t>> prove(BinFileUtils::BinFile *fdZkey, FrElement *wtns, WtnsUtils::Header* wtnsHeader = NULL);
 
-        std::tuple <json, json> prove(BinFileUtils::BinFile *fdWtns);
-        std::tuple <json, json> prove(FrElement *wtns, WtnsUtils::Header* wtnsHeader = NULL);
+        std::tuple <json, json, std::vector<uint8_t>> prove(BinFileUtils::BinFile *fdWtns);
+        std::tuple <json, json, std::vector<uint8_t>> prove(FrElement *wtns, WtnsUtils::Header* wtnsHeader = NULL);
 
     protected:
         void initialize(void* reservedMemoryPtr, uint64_t reservedMemorySize = 0);

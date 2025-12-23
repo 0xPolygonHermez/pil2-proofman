@@ -88,6 +88,9 @@ pub struct ProveCmd {
 
     #[clap(short = 'b', long, default_value_t = false)]
     pub save_proofs: bool,
+
+    #[clap(short = 'j', long, default_value_t = false)]
+    pub save_json_snark: bool,
 }
 
 impl ProveCmd {
@@ -198,7 +201,11 @@ impl ProveCmd {
                     let proving_key_snark = self.proving_key_snark.as_ref().unwrap();
                     let snark_wrapper: SnarkWrapper<Goldilocks> =
                         SnarkWrapper::new(proving_key_snark, self.verbose.into())?;
-                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, &self.output_dir)?;
+                    snark_wrapper.generate_final_snark_proof(
+                        &vadcop_final_proof,
+                        &self.output_dir,
+                        self.save_json_snark,
+                    )?;
                 }
             }
         }

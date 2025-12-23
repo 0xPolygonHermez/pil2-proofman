@@ -119,7 +119,7 @@ extern "C" {
     // =================================================================================
     void *init_final_snark_prover(char* zkeyFile);
     void free_final_snark_prover(void *snark_prover);
-    void gen_final_snark_proof(void *snark_prover, void *circomWitnessFinal, char *outputDir);
+    void gen_final_snark_proof(void *snark_prover, void *circomWitnessFinal, uint8_t* proof, char *outputDir);
 
     // Util calls
     // =================================================================================

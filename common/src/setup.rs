@@ -76,6 +76,7 @@ pub struct Setup<F: PrimeField64> {
     pub circom_circuit: RwLock<Option<*mut c_void>>,
     pub air_name: String,
     pub verkey: Vec<F>,
+    pub verkey_file: String,
     pub exec_data: RwLock<Option<Vec<u64>>>,
     pub n_cols: u64,
     pub n_operations_quotient: u64,
@@ -115,7 +116,7 @@ impl<F: PrimeField64> Setup<F> {
         preallocate: bool,
         recursive2_path: Option<&PathBuf>,
     ) -> Self {
-        let gpu = cfg!(feature = "gpu");
+        let gpu = cfg!(feature = "gpu") && setup_type_ != &ProofType::RecursiveF;
 
         let stark_info_path = match setup_type_ {
             ProofType::Recursive1 => {
@@ -161,6 +162,7 @@ impl<F: PrimeField64> Setup<F> {
             const_pols,
             const_pols_tree,
             verkey,
+            verkey_file,
             const_pols_size,
             const_pols_size_packed,
             const_tree_size,
@@ -179,6 +181,7 @@ impl<F: PrimeField64> Setup<F> {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                String::new(),
                 0,
                 0,
                 0,
@@ -246,6 +249,7 @@ impl<F: PrimeField64> Setup<F> {
                     const_pols,
                     Vec::new(),
                     verkey,
+                    verkey_file,
                     const_pols_size,
                     0,
                     const_tree_size,
@@ -281,6 +285,7 @@ impl<F: PrimeField64> Setup<F> {
                     const_pols,
                     const_pols_tree,
                     verkey,
+                    verkey_file,
                     const_pols_size,
                     const_pols_size_packed,
                     const_tree_size,
@@ -305,6 +310,7 @@ impl<F: PrimeField64> Setup<F> {
             const_pols,
             const_pols_tree,
             verkey,
+            verkey_file,
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
             proof_size,

@@ -231,7 +231,7 @@ pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool) ->
         }
     }
     if setup.setup_type != ProofType::RecursiveF {
-        let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
+        let verkey_path = setup.verkey_file.clone();
 
         let mut contents = String::new();
         let mut file = File::open(verkey_path).unwrap();

@@ -1,10 +1,11 @@
 {
     "nPublics": 8,
     "definitions": [
-        { "name": "module", "initialPos": 0, "chunks": [1, 64] },
-        { "name": "in1", "initialPos": 1, "chunks": [1, 64] },
-        { "name": "in2", "initialPos": 2, "chunks": [1, 64] },
-        { "name": "out", "initialPos": 3, "chunks": [1, 64] },
-        { "name": "rom_root", "initialPos": 4, "chunks": [4, 64] }
-    ]
+        { "name": "module", "initialPos": 0, "nValues": 1, "chunks": [1, 64] },
+        { "name": "in1", "initialPos": 1,  "nValues": 1, "chunks": [1, 64] },
+        { "name": "in2", "initialPos": 2, "nValues": 1, "chunks": [1, 64] },
+        { "name": "out", "initialPos": 3, "nValues": 1, "chunks": [1, 64] },
+        { "name": "rom_root", "initialPos": 4, "nValues": 4, "chunks": [1, 64], "verificationKey": true }
+    ],
+    "hasProgramVK": true
 }
