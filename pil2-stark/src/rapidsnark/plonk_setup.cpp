@@ -211,11 +211,6 @@ namespace Plonk
         BinFileWriter fdZKey(zkeyFilename, "zkey", 1, Zkey::ZKEY_PL_NSECTIONS);
 
         ostringstream ss;
-        ss << "··· Writing Section " << Zkey::ZKEY_HEADER_SECTION << ". Zkey Header";
-        LOG_INFO(ss);
-        ss.str("");
-        writeZkeyHeader(fdZKey);
-
         ss << "··· Writing Section " << Zkey::ZKEY_PL_ADDITIONS_SECTION << ". Additions";
         LOG_INFO(ss);
         ss.str("");
@@ -275,6 +270,11 @@ namespace Plonk
         LOG_INFO(ss);
         ss.str("");
         writePtau(fdZKey, fdPtau);
+
+        ss << "··· Writing Section " << Zkey::ZKEY_HEADER_SECTION << ". Zkey Header";
+        LOG_INFO(ss);
+        ss.str("");
+        writeZkeyHeader(fdZKey);
 
         ss << "··· Writing Section " << Zkey::ZKEY_PL_HEADER_SECTION << ". Plonk Header";
         LOG_INFO(ss);

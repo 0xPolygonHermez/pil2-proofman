@@ -624,7 +624,7 @@ namespace Plonk
         // Build A, B and C evaluations buffer from zkey and witness files
         FrElement bFactorsA[2] = {blindingFactors[2], blindingFactors[1]};
         FrElement bFactorsB[2] = {blindingFactors[4], blindingFactors[3]};
-        FrElement bFactorsC[2] = {blindingFactors[5], blindingFactors[6]};
+        FrElement bFactorsC[2] = {blindingFactors[6], blindingFactors[5]};
 
         computeWirePolynomial("A", bFactorsA);
         computeWirePolynomial("B", bFactorsB);
@@ -1222,15 +1222,15 @@ namespace Plonk
         
         auto publicSignals = new FrElement[zkey->nPublic];
         FrElement montgomery;
-        for (u_int32_t i = 1; i <= zkey->nPublic; i++)
+        for (u_int32_t i = 0; i < zkey->nPublic; i++)
         {
-            E.fr.toMontgomery(montgomery, buffWitness[i]);
+            E.fr.toMontgomery(montgomery, buffWitness[i + 1]);
             publicSignals[i] = montgomery;
         }
 
         for (u_int32_t i = 0; i < zkey->nPublic; i++)
         {
-            const FrElement w = publicSignals[i+1];
+            const FrElement w = publicSignals[i];
             eval_pi = E.fr.sub(eval_pi, E.fr.mul(w, L[i + 1]));
         }
 
