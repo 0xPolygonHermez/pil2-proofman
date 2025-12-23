@@ -4,7 +4,6 @@
 #include "../src/goldilocks_base_field.hpp"
 #include "../src/poseidon2_goldilocks.hpp"
 #include "../src/ntt_goldilocks.hpp"
-#include "../src/gl64_t.cuh"
 #include "../src/poseidon2_goldilocks.cuh"
 #include "../utils/cuda_utils.hpp"
 #include "../src/merklehash_goldilocks.hpp"
