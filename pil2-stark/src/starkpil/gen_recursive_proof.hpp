@@ -43,7 +43,7 @@ void calculateWitnessSTD_BN128(SetupCtx& setupCtx, StepsParams& params, Expressi
     updateAirgroupValue(setupCtx, params, hint[0], hintFieldNameAirgroupVal, "numerator_direct", "denominator_direct", options1, options2, !prod);
 }
 
-void *genRecursiveProofBN128(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *witness, Goldilocks::Element *aux_trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, uint64_t *proofBuffer, std::string proofFile) {
+void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *witness, Goldilocks::Element *aux_trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, uint64_t *proofBuffer, std::string proofFile) {
     TimerStart(STARK_PROOF);
 
     NTT_Goldilocks ntt(1 << setupCtx.starkInfo.starkStruct.nBits);
@@ -234,12 +234,27 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, json& globalInfo, uint64_t airg
         starks.getChallenge(transcript, *challenge);
     }
     TimerStopAndLog(STARK_FRI_FOLDING);
-    TimerStart(STARK_FRI_QUERIES);
-
+    TimerStart(STARK_NONCE_GRINDING);
     uint64_t friQueries[setupCtx.starkInfo.starkStruct.nQueries];
 
+    uint64_t nonce;
+
+    std::vector<RawFrP::Element> challengeRawFr;
+	for (uint64_t k = 0; k < 3; k++)
+	{
+        RawFrP::Element tmp = RawFrP::field.zero();
+		tmp.v[0] = Goldilocks::toU64(challenge[k]);
+        RawFrP::field.toMontgomery(tmp, tmp);
+        challengeRawFr.push_back(tmp);
+	}
+    
+    Poseidon_opt p;
+    p.grinding(nonce, challengeRawFr, setupCtx.starkInfo.starkStruct.powBits);
+    TimerStopAndLog(STARK_NONCE_GRINDING);
+    TimerStart(STARK_FRI_QUERIES);
     TranscriptBN128 transcriptPermutation(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
     starks.addTranscriptGL(transcriptPermutation, challenge, FIELD_EXTENSION);
+    starks.addTranscriptGL(transcriptPermutation, (Goldilocks::Element *)&nonce, 1);
     transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits);
 
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
@@ -254,9 +269,11 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, json& globalInfo, uint64_t airg
     TimerStopAndLog(STARK_STEP_FRI);
 
     proof.proof.setEvals(params.evals);
+    proof.proof.setNonce(nonce);
+
     nlohmann::json zkin = proof.proof.proof2json();
     zkin["publics"] = json::array();
-    for(uint64_t i = 0; i < uint64_t(globalInfo["nPublics"]); ++i) {
+    for(uint64_t i = 0; i < setupCtx.starkInfo.nPublics; ++i) {
         zkin["publics"][i] = Goldilocks::toString(publicInputs[i]);
     }
 

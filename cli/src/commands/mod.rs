@@ -2,6 +2,7 @@ pub mod pilout;
 pub mod field;
 pub mod pil_helpers;
 pub mod prove;
+pub mod prove_snark;
 pub mod verify_constraints;
 pub mod setup;
 pub mod soundness;

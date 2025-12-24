@@ -6,6 +6,7 @@ use commands::gen_custom_commits_fixed::GenCustomCommitsFixedCmd;
 use commands::get_constraints::GetConstraintsCmd;
 use commands::pil_helpers::PilHelpersCmd;
 use commands::prove::ProveCmd;
+use commands::prove_snark::ProveSnarkCmd;
 use commands::verify_constraints::VerifyConstraintsCmd;
 use commands::stats::StatsCmd;
 use commands::verify_stark::VerifyStark;
@@ -30,6 +31,7 @@ pub enum Commands {
     CheckSetup(CheckSetupCmd),
     Soundness(SoundnessCmd),
     Prove(ProveCmd),
+    ProveSnark(ProveSnarkCmd),
     PilHelpers(PilHelpersCmd),
     VerifyConstraints(VerifyConstraintsCmd),
     Stats(StatsCmd),
@@ -51,6 +53,7 @@ fn main() {
         Commands::CheckSetup(args) => args.run(),
         Commands::Soundness(args) => args.run(),
         Commands::Prove(args) => args.run(),
+        Commands::ProveSnark(args) => args.run(),
         Commands::PilHelpers(args) => args.run(),
         Commands::VerifyConstraints(args) => args.run(),
         Commands::GenCustomCommitsFixed(args) => args.run(),

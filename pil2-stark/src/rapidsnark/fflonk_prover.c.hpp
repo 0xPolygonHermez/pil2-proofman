@@ -88,6 +88,11 @@ namespace Fflonk
 
     template<typename Engine>
     void FflonkProver<Engine>::setZkey(BinFileUtils::BinFile *fdZkey) {
+        int protocolId = Zkey::getProtocolIdFromZkey(fdZkey);
+        if(protocolId != Zkey::FFLONK_PROTOCOL_ID) {
+            zklog.error("Zkey protocolId has to be Fflonk");
+            exitProcess();
+        }
         try
         {
             if(NULL != zkey) {
@@ -407,21 +412,21 @@ namespace Fflonk
     }
 
     template<typename Engine>
-    std::tuple <json, json> FflonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns) {
+    std::tuple <json, json, std::vector<uint8_t>> FflonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns) {
 
         this->setZkey(fdZkey);
         return this->prove(fdWtns);
     }
 
     template <typename Engine>
-    std::tuple<json, json> FflonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, FrElement *buffWitness, WtnsUtils::Header* wtnsHeader)
+    std::tuple<json, json, std::vector<uint8_t>> FflonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, FrElement *buffWitness, WtnsUtils::Header* wtnsHeader)
     {
         this->setZkey(fdZkey);
         return this->prove(buffWitness, wtnsHeader);
     }
 
     template<typename Engine>
-    std::tuple <json, json> FflonkProver<Engine>::prove(BinFileUtils::BinFile *fdWtns) {
+    std::tuple <json, json, std::vector<uint8_t>> FflonkProver<Engine>::prove(BinFileUtils::BinFile *fdWtns) {
         LOG_TRACE("> Reading witness file header");
         auto wtnsHeader = WtnsUtils::loadHeader(fdWtns);
 
@@ -433,7 +438,7 @@ namespace Fflonk
     }
 
     template <typename Engine>
-    std::tuple<json, json> FflonkProver<Engine>::prove(FrElement *buffWitness, WtnsUtils::Header* wtnsHeader)
+    std::tuple<json, json, std::vector<uint8_t>> FflonkProver<Engine>::prove(FrElement *buffWitness, WtnsUtils::Header* wtnsHeader)
     {
         if(NULL == zkey) {
             throw std::runtime_error("Zkey data not set");
@@ -587,7 +592,9 @@ namespace Fflonk
             delete evaluations["C"];
             delete evaluations["Z"];
 
-            return {proof->toJson(), publicSignals};
+            std::vector<string> orderedCommitments = {"C1", "C2", "W1", "W2"};
+            std::vector<string> orderedEvaluations = {"ql", "qr", "qm", "qo", "qc","s1", "s2", "s3", "a", "b", "c", "z", "zw", "t1w", "t2w", "inv"};
+            return {proof->toJson(), publicSignals, proof->toBytes(orderedCommitments, orderedEvaluations)};
         }
         catch (const std::exception &e)
         {

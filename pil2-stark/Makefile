@@ -42,6 +42,8 @@ TARGET_BIN_FILE := binfile
 TARGET_STARKS_LIB := libstarks.a
 TARGET_SETUP := fflonkSetup
 TARGET_STARKS_LIB_GPU := libstarksgpu.a
+TARGET_SETUP_PLONK := plonkSetup
+TARGET_PROVE_PLONK := plonkProve
 
 BUILD_DIR := ./build
 BUILD_DIR_GPU := ./build-gpu
@@ -163,6 +165,27 @@ OBJS_SETUP := $(filter-out $(BUILD_DIR)/src/main.cpp.o, $(OBJS_SETUP)) # Exclude
 OBJS_SETUP := $(filter-out $(BUILD_DIR)/src/main_test.cpp.o, $(OBJS_SETUP)) # Exclude main.cpp from test build
 DEPS_SETUP := $(OBJS_SETUP:.o=.d)
 
+SRCS_SETUP_PLONK := $(shell find $(SETUP_DIRS) ! -path "./src/sm/*" ! -path "./src/main_sm/*" -name *.cpp)
+SRCS_SETUP_PLONK += $(shell find src/XKCP -name *.cpp)
+SRCS_SETUP_PLONK += $(shell find src/plonk_setup -name plonk_setup.cpp)
+SRCS_SETUP_PLONK += $(addprefix $(SETUP_DPNDS_DIR)/, alt_bn128.cpp fr.cpp fq.cpp fnec.cpp fec.cpp misc.cpp naf.cpp splitparstr.cpp)
+SRCS_SETUP_PLONK += $(shell find $(SETUP_DPNDS_DIR) -name *.asm)
+OBJS_SETUP_PLONK := $(patsubst %,$(BUILD_DIR)/%.o,$(SRCS_SETUP_PLONK))
+OBJS_SETUP_PLONK := $(filter-out $(BUILD_DIR)/src/main.cpp.o, $(OBJS_SETUP_PLONK)) # Exclude main.cpp from test build
+OBJS_SETUP_PLONK := $(filter-out $(BUILD_DIR)/src/main_test.cpp.o, $(OBJS_SETUP_PLONK)) # Exclude main.cpp from test build
+DEPS_SETUP_PLONK := $(OBJS_SETUP_PLONK:.o=.d)
+
+SRCS_PROVE_PLONK := $(shell find $(SETUP_DIRS) ! -path "./src/sm/*" ! -path "./src/main_sm/*" -name *.cpp)
+SRCS_PROVE_PLONK += $(shell find src/XKCP -name *.cpp)
+SRCS_PROVE_PLONK += $(shell find src/plonk_setup -name main_prover.cpp)
+SRCS_PROVE_PLONK += $(shell find src/utils -name *.cpp)
+SRCS_PROVE_PLONK += $(addprefix $(SETUP_DPNDS_DIR)/, alt_bn128.cpp fr.cpp fq.cpp fnec.cpp fec.cpp misc.cpp naf.cpp splitparstr.cpp)
+SRCS_PROVE_PLONK += $(shell find $(SETUP_DPNDS_DIR) -name *.asm)
+OBJS_PROVE_PLONK := $(patsubst %,$(BUILD_DIR)/%.o,$(SRCS_PROVE_PLONK))
+OBJS_PROVE_PLONK := $(filter-out $(BUILD_DIR)/src/main.cpp.o, $(OBJS_PROVE_PLONK)) # Exclude main.cpp from test build
+OBJS_PROVE_PLONK := $(filter-out $(BUILD_DIR)/src/main_test.cpp.o, $(OBJS_PROVE_PLONK)) # Exclude main.cpp from test build
+DEPS_PROVE_PLONK := $(OBJS_PROVE_PLONK:.o=.d)
+
 all: $(BUILD_DIR)/$(TARGET_STARKS_LIB) $(GPU_TARGETS)
 
 starks_lib: $(LIB_DIR)/$(TARGET_STARKS_LIB)
@@ -175,6 +198,10 @@ binfile: $(BUILD_DIR)/$(TARGET_BINFILE)
 bctree: $(BUILD_DIR)/$(TARGET_BCT)
 
 fflonk_setup: $(BUILD_DIR)/$(TARGET_SETUP)
+
+plonk_setup: $(BUILD_DIR)/$(TARGET_SETUP_PLONK)
+
+plonk_prove: $(BUILD_DIR)/$(TARGET_PROVE_PLONK)
 
 $(LIB_DIR)/$(TARGET_STARKS_LIB): $(OBJS_STARKS_LIB)
 	mkdir -p $(LIB_DIR)
@@ -193,6 +220,12 @@ $(BUILD_DIR)/$(TARGET_BCT): $(OBJS_BCT)
 
 $(BUILD_DIR)/$(TARGET_SETUP): $(OBJS_SETUP)
 	$(CXX) $(OBJS_SETUP) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS)
+
+$(BUILD_DIR)/$(TARGET_SETUP_PLONK): $(OBJS_SETUP_PLONK)
+	$(CXX) $(OBJS_SETUP_PLONK) $(CXXFLAGS) $(CXXFLAGS_EXT) -o $@ $(LDFLAGS) $(LDFLAGS_EXT) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) $(CXXFLAGS_EXT)
+
+$(BUILD_DIR)/$(TARGET_PROVE_PLONK): $(OBJS_PROVE_PLONK)
+	$(CXX) $(OBJS_PROVE_PLONK) $(CXXFLAGS) $(CXXFLAGS_EXT) -o $@ $(LDFLAGS) $(LDFLAGS_EXT) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) $(CXXFLAGS_EXT)
 
 # assembly
 $(BUILD_DIR)/%.asm.o: %.asm
@@ -236,6 +269,8 @@ clean:
 	$(RM) -r $(LIB_DIR) $(LIB_DIR_GPU)
 
 -include $(DEPS_SETUP)
+-include $(DEPS_SETUP_PLONK)
+-include $(DEPS_PROVE_PLONK)
 -include $(DEPS_BCT)
 -include $(DEPS_STARKS_LIB)
 -include $(DEPS_STARKS_LIB_GPU)

@@ -69,7 +69,11 @@ public:
 
     void add(Polynomial<Engine> &polynomial);
 
+    void addBlinding(Polynomial<Engine> &polynomial, FrElement &blindingValue);
+
     void sub(Polynomial<Engine> &polynomial);
+
+    void subBlinding(Polynomial<Engine> &polynomial, FrElement &blindingValue);
 
     void mulScalar(FrElement &value);
 

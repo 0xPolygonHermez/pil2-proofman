@@ -73,6 +73,12 @@ pub struct GlobalInfoAir {
     pub num_rows: usize,
 }
 
+impl GlobalInfoAir {
+    pub fn new(name: String) -> Self {
+        Self { name, has_compressor: None, num_rows: 0 }
+    }
+}
+
 #[derive(Clone, Deserialize, Debug)]
 pub struct GlobalInfoAggType {
     #[serde(rename = "aggType")]

@@ -5,13 +5,12 @@ use fields::PrimeField64;
 use std::ffi::CString;
 use proofman_starks_lib_c::*;
 use std::path::Path;
-use num_traits::ToPrimitive;
 use std::fs::File;
 use std::io::Write;
 
 use proofman_common::{
-    load_const_pols, load_const_pols_tree, CurveType, MpiCtx, Proof, ProofCtx, ProofType, ProofmanResult,
-    ProofmanError, Setup, SetupsVadcop, GetSizeWitnessFunc,
+    CurveType, MpiCtx, Proof, ProofCtx, ProofType, ProofmanResult, ProofmanError, Setup, SetupsVadcop,
+    GetSizeWitnessFunc,
 };
 
 use std::os::raw::{c_void, c_char};
@@ -246,7 +245,7 @@ pub fn gen_recursive_proof_size<F: PrimeField64>(
 
     let publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
 
-    if witness.proof_type != ProofType::VadcopFinal {
+    if witness.proof_type != ProofType::VadcopFinal && witness.proof_type != ProofType::VadcopFinalSnark {
         new_proof_size += publics_aggregation as u64;
     } else {
         new_proof_size += 1 + setup.stark_info.n_publics;
@@ -277,27 +276,26 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         witness.airgroup_id,
         witness.air_id
     );
-    let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
-    let global_info_file: &str = global_info_path.to_str().unwrap();
 
-    let (airgroup_id, air_id, instance_id, output_file_path, vadcop) = if witness.proof_type == ProofType::VadcopFinal {
-        let output_file_path_ = output_dir_path.join("proofs/vadcop_final_proof.json");
-        (0, 0, 0, output_file_path_, false)
-    } else {
-        let (airgroup_id_, air_id_) = (witness.airgroup_id, witness.air_id);
-        let air_instance_name = &pctx.global_info.airs[airgroup_id_][air_id_].name;
-        let output_file_path_ = if witness.proof_type == ProofType::Recursive2 {
-            output_dir_path.join(format!("proofs/{:?}_{}.json", witness.proof_type, air_instance_name))
+    let (airgroup_id, air_id, instance_id, output_file_path, vadcop) =
+        if witness.proof_type == ProofType::VadcopFinal || witness.proof_type == ProofType::VadcopFinalSnark {
+            let output_file_path_ = output_dir_path.join("proofs/vadcop_final_proof.json");
+            (0, 0, 0, output_file_path_, false)
         } else {
-            output_dir_path.join(format!(
-                "proofs/{:?}_{}_{}.json",
-                witness.proof_type,
-                air_instance_name,
-                witness.global_idx.unwrap()
-            ))
+            let (airgroup_id_, air_id_) = (witness.airgroup_id, witness.air_id);
+            let air_instance_name = &pctx.global_info.airs[airgroup_id_][air_id_].name;
+            let output_file_path_ = if witness.proof_type == ProofType::Recursive2 {
+                output_dir_path.join(format!("proofs/{:?}_{}.json", witness.proof_type, air_instance_name))
+            } else {
+                output_dir_path.join(format!(
+                    "proofs/{:?}_{}_{}.json",
+                    witness.proof_type,
+                    air_instance_name,
+                    witness.global_idx.unwrap()
+                ))
+            };
+            (airgroup_id_, air_id_, witness.global_idx.unwrap(), output_file_path_, true)
         };
-        (airgroup_id_, air_id_, witness.global_idx.unwrap(), output_file_path_, true)
-    };
 
     let proof_file = match save_proofs {
         true => output_file_path.to_string_lossy().into_owned(),
@@ -327,15 +325,16 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 
     let publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
 
-    let initial_idx = if witness.proof_type == ProofType::VadcopFinal {
-        1 + setup.stark_info.n_publics as usize
-    } else {
-        publics_aggregation
-    };
+    let initial_idx =
+        if witness.proof_type == ProofType::VadcopFinal || witness.proof_type == ProofType::VadcopFinalSnark {
+            1 + setup.stark_info.n_publics as usize
+        } else {
+            publics_aggregation
+        };
 
     let proof_type: &str = setup.setup_type.clone().into();
 
-    if witness.proof_type != ProofType::VadcopFinal {
+    if witness.proof_type != ProofType::VadcopFinal && witness.proof_type != ProofType::VadcopFinalSnark {
         add_publics_aggregation_c(
             new_proof.proof.as_ptr() as *mut u8,
             0,
@@ -359,7 +358,6 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         publics.as_ptr() as *mut u8,
         new_proof.proof[initial_idx..].as_ptr() as *mut u64,
         &proof_file,
-        global_info_file,
         airgroup_id as u64,
         air_id as u64,
         instance_id as u64,
@@ -558,6 +556,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     const_pols: &[F],
     const_tree: &[F],
     d_buffers: *mut c_void,
+    final_snark: bool,
     save_proof: bool,
 ) -> ProofmanResult<Proof<F>> {
     let publics_circom_size =
@@ -598,10 +597,19 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         offset += proof_size;
     }
 
-    let setup = setups.setup_vadcop_final.as_ref().unwrap();
+    let proof_type = match final_snark {
+        true => ProofType::VadcopFinalSnark,
+        false => ProofType::VadcopFinal,
+    };
+
+    let setup = match final_snark {
+        true => setups.setup_vadcop_final_snark.as_ref().unwrap(),
+        false => setups.setup_vadcop_final.as_ref().unwrap(),
+    };
+
     let circom_witness_vadcop_final = generate_witness::<F>(setup, 0, &updated_proof, output_dir_path)?;
     let witness_final_proof =
-        Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, setup.n_cols as usize);
+        Proof::new_witness(proof_type, 0, 0, None, circom_witness_vadcop_final, setup.n_cols as usize);
     timer_start_info!(GENERATE_VADCOP_FINAL_PROOF);
     let mut final_proof = gen_recursive_proof_size::<F>(pctx, setups, &witness_final_proof)?;
     let stream_id = generate_recursive_proof::<F>(
@@ -633,37 +641,16 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
 
 #[allow(clippy::too_many_arguments)]
 pub fn generate_recursivef_proof<F: PrimeField64>(
-    pctx: &ProofCtx<F>,
-    setups: &SetupsVadcop<F>,
+    setup: &Setup<F>,
     proof: &[u64],
     prover_buffer: &[F],
-    const_pols: &[F],
-    const_tree: &[F],
     output_dir_path: &Path,
-    save_proofs: bool,
 ) -> ProofmanResult<*mut c_void> {
-    let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
-    let global_info_file: &str = global_info_path.to_str().unwrap();
-
-    let setup = setups.setup_recursivef.as_ref().unwrap();
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
     let trace: Vec<F> = vec![F::ZERO; setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize];
 
-    load_const_pols(setup, const_pols);
-    load_const_pols_tree(setup, const_tree);
-
-    let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-    let vadcop_proof: &[u64] = &proof[1 + setup_vadcop_final.stark_info.n_publics as usize..];
-    let mut vadcop_final_proof: Vec<u64> = vec![0; vadcop_proof.len() + pctx.global_info.n_publics];
-    vadcop_final_proof[pctx.global_info.n_publics..].copy_from_slice(vadcop_proof);
-
-    let public_inputs = pctx.get_publics();
-    for p in 0..pctx.global_info.n_publics {
-        vadcop_final_proof[p] = (public_inputs[p].as_canonical_biguint()).to_u64().unwrap();
-    }
-
-    let circom_witness = generate_witness::<F>(setup, 0, &vadcop_final_proof, output_dir_path)?;
+    let circom_witness = generate_witness::<F>(setup, 0, &proof[1..], output_dir_path)?;
 
     let publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
@@ -680,22 +667,16 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         setup.stark_info.map_sections_n["cm1"],
     );
 
-    let proof_file = match save_proofs {
-        true => output_dir_path.join("proofs/recursivef.json").to_string_lossy().into_owned(),
-        false => String::from(""),
-    };
-
     timer_start_trace!(GENERATE_RECURSIVEF_PROOF);
     // prove
     let p_prove = gen_recursive_proof_final_c(
         p_setup,
         trace.as_ptr() as *mut u8,
         prover_buffer.as_ptr() as *mut u8,
-        const_pols.as_ptr() as *mut u8,
-        const_tree.as_ptr() as *mut u8,
+        setup.get_const_ptr(),
+        setup.get_const_tree_ptr(),
         publics.as_ptr() as *mut u8,
-        &proof_file,
-        global_info_file,
+        "tmp/recursivef.json",
         0,
         0,
         0,
@@ -705,13 +686,13 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     Ok(p_prove)
 }
 
-pub fn generate_fflonk_snark_proof<F: PrimeField64>(
-    pctx: &ProofCtx<F>,
+pub fn generate_snark_proof(
+    snark_prover: *mut c_void,
+    setup_path: &Path,
     proof: *mut c_void,
     output_dir_path: &Path,
-) -> ProofmanResult<()> {
-    let setup_path = pctx.global_info.get_setup_path("final");
-
+    save_json: bool,
+) -> ProofmanResult<Vec<u8>> {
     let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
     let rust_lib_filename = setup_path.display().to_string() + lib_extension;
     let rust_lib_path = Path::new(rust_lib_filename.as_str());
@@ -727,6 +708,14 @@ pub fn generate_fflonk_snark_proof<F: PrimeField64>(
     let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
     let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
 
+    let proof_file = match save_json {
+        true => output_dir_path.to_string_lossy().into_owned(),
+        false => String::new(),
+    };
+
+    let snark_proof: Vec<u8> = vec![0; 24 * 32];
+    let snark_proof_ptr = snark_proof.as_ptr() as *mut u8;
+
     unsafe {
         timer_start_trace!(CALCULATE_FINAL_WITNESS);
 
@@ -737,7 +726,6 @@ pub fn generate_fflonk_snark_proof<F: PrimeField64>(
         let witness_ptr = witness.as_ptr() as *mut u8;
 
         let get_witness_final: Symbol<GetWitnessFinalFunc> = library.get(b"getWitness\0")?;
-
         let nmutex = rayon::current_num_threads();
         let res = get_witness_final(proof, dat_filename_ptr, witness_ptr as *mut c_void, nmutex as u64);
         if res != 0 {
@@ -746,16 +734,14 @@ pub fn generate_fflonk_snark_proof<F: PrimeField64>(
         timer_stop_and_log_trace!(CALCULATE_FINAL_WITNESS);
 
         timer_start_trace!(CALCULATE_FINAL_PROOF);
-        let proof_file = output_dir_path.join("proofs").to_string_lossy().into_owned();
 
-        let zkey_filename = setup_path.display().to_string() + ".zkey";
         tracing::info!("··· Generating final snark proof");
-        gen_final_snark_proof_c(witness_ptr, zkey_filename.as_str(), &proof_file);
+        gen_final_snark_proof_c(snark_prover, witness_ptr, snark_proof_ptr, &proof_file);
         timer_stop_and_log_trace!(CALCULATE_FINAL_PROOF);
         tracing::info!("··· Final Snark Proof generated.");
     }
 
-    Ok(())
+    Ok(snark_proof)
 }
 
 fn generate_witness<F: PrimeField64>(
@@ -827,7 +813,9 @@ pub fn get_recursive_buffer_sizes<F: PrimeField64>(
         max_prover_size = max_prover_size.max(setup.prover_buffer_size);
     }
 
-    max_prover_size = max_prover_size.max(setups.setup_vadcop_final.as_ref().unwrap().prover_buffer_size);
+    max_prover_size = max_prover_size
+        .max(setups.setup_vadcop_final.as_ref().unwrap().prover_buffer_size)
+        .max(setups.setup_vadcop_final_snark.as_ref().unwrap().prover_buffer_size);
 
     Ok(max_prover_size as usize)
 }

@@ -75,7 +75,7 @@ pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
 
     tracing::debug!("··· Loading const tree for AIR {} of type {:?}", setup.air_name, setup.setup_type);
 
-    let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
+    let verkey_path = setup.verkey_file.clone();
 
     let p_stark_info = setup.p_setup.p_stark_info;
 
@@ -153,6 +153,6 @@ pub fn load_const_pols_tree<F: PrimeField64>(setup: &Setup<F>, const_tree: &[F])
         const_tree.as_ptr() as *mut u8,
         const_pols_tree_path.as_str(),
         (const_pols_tree_size * 8) as u64,
-        &(setup.setup_path.display().to_string() + ".verkey.json"),
+        &setup.verkey_file,
     );
 }

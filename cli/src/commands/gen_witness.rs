@@ -43,7 +43,6 @@ impl GenWitnessCmd {
             self.proving_key.clone(),
             HashMap::new(),
             true,
-            false,
             self.verbose.into(),
             Arc::new(MpiCtx::new()),
         )?;
@@ -51,8 +50,8 @@ impl GenWitnessCmd {
         let gpu_params = ParamsGPU::new(false);
 
         let setups_vadcop: Arc<SetupsVadcop<Goldilocks>> =
-            Arc::new(SetupsVadcop::new(&pctx.global_info, false, true, false, &gpu_params, &[]));
-        initialize_witness_circom(&pctx, &setups_vadcop, false)?;
+            Arc::new(SetupsVadcop::new(&pctx.global_info, false, true, &gpu_params, &[]));
+        initialize_witness_circom(&pctx, &setups_vadcop)?;
 
         let mut zkin_file = File::open(&self.proof)?;
         let mut zkin_u8 = Vec::new();

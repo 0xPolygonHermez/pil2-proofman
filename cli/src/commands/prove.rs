@@ -9,6 +9,7 @@ use std::io::Write;
 use bytemuck::cast_slice;
 use fields::Goldilocks;
 
+use proofman::SnarkWrapper;
 use proofman::ProofMan;
 use proofman::ProvePhaseResult;
 use proofman_common::{ModeName, ProofOptions, ParamsGPU};
@@ -36,6 +37,10 @@ pub struct ProveCmd {
     /// Setup folder path
     #[clap(short = 'k', long)]
     pub proving_key: PathBuf,
+
+    /// Setup folder path
+    #[clap(short = 's', long)]
+    pub proving_key_snark: Option<PathBuf>,
 
     /// Output dir path
     #[clap(short = 'o', long, default_value = "tmp")]
@@ -83,6 +88,9 @@ pub struct ProveCmd {
 
     #[clap(short = 'b', long, default_value_t = false)]
     pub save_proofs: bool,
+
+    #[clap(short = 'j', long, default_value_t = false)]
+    pub save_json_snark: bool,
 }
 
 impl ProveCmd {
@@ -146,6 +154,16 @@ impl ProveCmd {
             HashMap::new(),
         )?;
 
+        let proof_options = ProofOptions::new(
+            false,
+            self.aggregation,
+            self.rma,
+            self.final_snark,
+            self.verify_proofs,
+            self.minimal_memory,
+            self.save_proofs,
+            self.output_dir.clone(),
+        );
         if debug_info.std_mode.name == ModeName::Debug {
             match self.field {
                 Field::Goldilocks => proofman.verify_proof_constraints(
@@ -166,16 +184,7 @@ impl ProveCmd {
                     self.public_inputs.clone(),
                     None,
                     self.verbose.into(),
-                    ProofOptions::new(
-                        false,
-                        self.aggregation,
-                        self.rma,
-                        self.final_snark,
-                        self.verify_proofs,
-                        self.minimal_memory,
-                        self.save_proofs,
-                        self.output_dir.clone(),
-                    ),
+                    proof_options.clone(),
                 )?,
             };
 
@@ -187,6 +196,17 @@ impl ProveCmd {
                 let mut file = File::create(&output_file_path)?;
                 file.write_all(proof_data)?;
                 file.flush()?;
+
+                if self.final_snark && self.proving_key_snark.is_some() {
+                    let proving_key_snark = self.proving_key_snark.as_ref().unwrap();
+                    let snark_wrapper: SnarkWrapper<Goldilocks> =
+                        SnarkWrapper::new(proving_key_snark, self.verbose.into())?;
+                    snark_wrapper.generate_final_snark_proof(
+                        &vadcop_final_proof,
+                        &self.output_dir,
+                        self.save_json_snark,
+                    )?;
+                }
             }
         }
 

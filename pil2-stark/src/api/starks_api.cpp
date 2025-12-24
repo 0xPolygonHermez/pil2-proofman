@@ -625,7 +625,7 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     mt.getRoot(&rootGL[0]);
 
-    if(!check) {
+    if(!check && std::string(bufferFile) != "") {
         std::string buffFile = string(bufferFile);
         ofstream fw(buffFile.c_str(), std::fstream::out | std::fstream::binary);
         writeFileParallel(buffFile, root, 32, 0);
@@ -821,10 +821,7 @@ void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, voi
 
 void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType) {}
 
-uint64_t gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream) {
-    json globalInfo;
-    file2json(globalInfoFile, globalInfo);
-
+uint64_t gen_recursive_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx;
 
@@ -882,11 +879,8 @@ void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint
 }
 
 
-void *gen_recursive_proof_final(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file) {
-    json globalInfo;
-    file2json(globalInfoFile, globalInfo);
-
-    return genRecursiveProofBN128(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file));
+void *gen_recursive_proof_final(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file) {
+    return genRecursiveProofBN128(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file));
 }
 
 void read_exec_file(uint64_t *exec_data, char *exec_file, uint64_t nCommitedPols) {
@@ -897,8 +891,35 @@ void get_committed_pols(void *circomWitness, uint64_t* execData, void *witness, 
     getCommitedPols((Goldilocks::Element *)circomWitness, execData, (Goldilocks::Element *)witness, (Goldilocks::Element *)pPublics, sizeWitness, N, nPublics, nCommitedPols);
 }
 
-void gen_final_snark_proof(void *circomWitnessFinal, char* zkeyFile, char* outputDir) {
-    genFinalSnarkProof(circomWitnessFinal, string(zkeyFile), string(outputDir));
+void *load_zkey(char* zkeyFile) {
+    auto zkey = BinFileUtils::openExisting(zkeyFile, "zkey", 1);
+    return zkey.get();
+}
+
+
+void *init_final_snark_prover(char* zkeyFile) {
+    auto zkey = BinFileUtils::openExisting(zkeyFile, "zkey", 1);
+    BinFileUtils::BinFile *fdZkey = zkey.get();
+    uint64_t protocolId = Zkey::getProtocolIdFromZkey(fdZkey);
+    auto prover = initFinalSnarkProver(fdZkey);
+
+    FinalSnark *finalSnark = new FinalSnark{
+        .zkey = std::move(zkey),
+        .protocolId = protocolId,
+        .prover = std::move(prover)
+    };
+    
+    return finalSnark;
+}
+
+void free_final_snark_prover(void *snark_prover) {
+    if (snark_prover) {
+        delete static_cast<FinalSnark *>(snark_prover);
+    }
+}
+
+void gen_final_snark_proof(void *prover, void *circomWitnessFinal, uint8_t* proof, char* outputDir) {
+    genFinalSnarkProof(prover, circomWitnessFinal, proof, std::string(outputDir));
 }
 
 void setLogLevel(uint64_t level) {

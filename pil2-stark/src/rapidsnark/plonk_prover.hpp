@@ -1,5 +1,5 @@
-#ifndef FFLONK_PROVER_HPP
-#define FFLONK_PROVER_HPP
+#ifndef PLONK_PROVER_HPP
+#define PLONK_PROVER_HPP
 
 #include <string>
 #include <map>
@@ -7,7 +7,7 @@
 #include "binfile_utils.hpp"
 #include <gmp.h>
 #include "fft.hpp"
-#include "zkey_fflonk.hpp"
+#include "zkey_plonk.hpp"
 #include "polynomial/polynomial.hpp"
 #include "polynomial/evaluations.hpp"
 #include <nlohmann/json.hpp>
@@ -18,12 +18,12 @@
 using json = nlohmann::json;
 using namespace std::chrono;
 
-#define BLINDINGFACTORSLENGTH 10
+#define BLINDINGFACTORSLENGTH_PLONK 11
 
-namespace Fflonk {
+namespace Plonk {
 
     template<typename Engine>
-    class FflonkProver {
+    class PlonkProver {
         using FrElement = typename Engine::FrElement;
         using G1Point = typename Engine::G1Point;
         using G1PointAffine = typename Engine::G1PointAffine;
@@ -31,7 +31,7 @@ namespace Fflonk {
         Engine &E;
         FFT<typename Engine::Fr> *fft = NULL;
 
-        Zkey::FflonkZkeyHeader *zkey;
+        Zkey::PlonkZkeyHeader *zkey;
         u_int32_t zkeyPower;
         std::string curveName;
         size_t sDomain;
@@ -52,8 +52,6 @@ namespace Fflonk {
 
         Zkey::Addition<Engine> *additionsBuff;
 
-        u_int64_t lengthBatchInversesBuffer;
-
         FrElement *inverses;
         FrElement *products;
 
@@ -70,16 +68,16 @@ namespace Fflonk {
 
         std::map <std::string, FrElement> toInverse;
         std::map <std::string, FrElement> challenges;
-        std::map<std::string, FrElement *> roots;
-        FrElement blindingFactors[BLINDINGFACTORSLENGTH];
+
+        FrElement blindingFactors[BLINDINGFACTORSLENGTH_PLONK + 1];
 
         Keccak256Transcript<Engine> *transcript;
         SnarkProof<Engine> *proof;
     public:
-        FflonkProver(Engine &E);
-        FflonkProver(Engine &E, void* reservedMemoryPtr, uint64_t reservedMemorySize);
+        PlonkProver(Engine &E);
+        PlonkProver(Engine &E, void* reservedMemoryPtr, uint64_t reservedMemorySize);
 
-        ~FflonkProver();
+        ~PlonkProver();
 
         void setZkey(BinFileUtils::BinFile *fdZkey);
 
@@ -108,58 +106,28 @@ namespace Fflonk {
 
         void round5();
 
-        //ROUND 1 functions
         void computeWirePolynomials();
 
         void computeWirePolynomial(std::string polName, FrElement blindingFactors[]);
 
-        void computeT0();
-
-        void computeC1();
-
-        //ROUND 2 functions
         void computeZ();
 
-        void computeT1();
+        void computeT();
 
-        void computeT2();
+        void computeR();
 
-        void computeC2();
+        void computeWxi();
 
-        //ROUND 4 functions
-        void computeR0();
-
-        void computeR1();
-
-        void computeR2();
-
-        void computeF();
-
-        void computeZT();
-
-        //ROUND 5 functions
-        void computeL();
-
-        void computeZTS2();
+        void computeWxiw();
 
         void batchInverse(FrElement *elements, u_int64_t length);
 
         FrElement *polynomialFromMontgomery(Polynomial<Engine> *polynomial);
 
-        FrElement getMontgomeryBatchedInverse();
-
-        void computeLiS0();
-
-        void computeLiS1();
-
-        void computeLiS2();
-
         G1Point multiExponentiation(Polynomial<Engine> *polynomial);
-
-        G1Point multiExponentiation(Polynomial<Engine> *polynomial, u_int32_t nx, u_int64_t x[]);
     };
 }
 
-#include "fflonk_prover.c.hpp"
+#include "plonk_prover.c.hpp"
 
 #endif

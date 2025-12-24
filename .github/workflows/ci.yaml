@@ -152,7 +152,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-proofman-js
-          ref: feature/verify-mt-optimization
+          ref: pre-develop-0.16.0
           path: pil2-proofman-js
 
       - name: Install pil2-proofman-js dependencies
@@ -271,7 +271,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-proofman-js
-          ref: feature/verify-mt-optimization
+          ref: pre-develop-0.16.0
           path: pil2-proofman-js
 
       - name: Install pil2-proofman-js dependencies
@@ -389,7 +389,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-proofman-js
-          ref: feature/verify-mt-optimization
+          ref: pre-develop-0.16.0
           path: pil2-proofman-js
 
       - name: Install pil2-proofman-js dependencies

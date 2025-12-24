@@ -296,7 +296,7 @@ dependencies = [
 
 [[package]]
 name = "connection"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "fields",
  "num-bigint",
@@ -407,7 +407,7 @@ dependencies = [
 
 [[package]]
 name = "curves"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "fields",
  "num-bigint",
@@ -423,7 +423,7 @@ checksum = "ef8ae57c4978a2acd8b869ce6b9ca1dfe817bff704c220209fdef2c0b75a01b9"
 
 [[package]]
 name = "diff-buses"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "fields",
  "num-bigint",
@@ -441,7 +441,7 @@ dependencies = [
 
 [[package]]
 name = "direct-update"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "fields",
  "num-bigint",
@@ -499,7 +499,7 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "fibonacci-square"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "fields",
  "num-bigint",
@@ -517,7 +517,7 @@ dependencies = [
 
 [[package]]
 name = "fields"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "num-bigint",
  "paste",
@@ -732,7 +732,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "lookup"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "fields",
  "num-bigint",
@@ -749,7 +749,7 @@ dependencies = [
 
 [[package]]
 name = "macros-test"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "fields",
  "proofman",
@@ -923,7 +923,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "one-instance"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "fields",
  "num-bigint",
@@ -978,7 +978,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "permutation"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "fields",
  "num-bigint",
@@ -1005,7 +1005,7 @@ dependencies = [
 
 [[package]]
 name = "pil-std-lib"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "colored",
  "fields",
@@ -1021,7 +1021,7 @@ dependencies = [
 
 [[package]]
 name = "pilout"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "bytes",
  "prost",
@@ -1080,7 +1080,7 @@ dependencies = [
 
 [[package]]
 name = "proofman"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "blake3",
  "borsh",
@@ -1114,7 +1114,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-cli"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "blake3",
  "bytemuck",
@@ -1140,7 +1140,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-common"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "borsh",
  "colored",
@@ -1170,7 +1170,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-hints"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "fields",
  "proofman-common",
@@ -1181,7 +1181,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-macros"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1191,7 +1191,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-starks-lib-c"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "crossbeam-channel",
  "tracing",
@@ -1199,7 +1199,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-util"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "colored",
  "fields",
@@ -1209,7 +1209,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-verifier"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "bytemuck",
  "fields",
@@ -1315,7 +1315,7 @@ dependencies = [
 
 [[package]]
 name = "range-check"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "fields",
  "num-bigint",
@@ -1519,7 +1519,7 @@ dependencies = [
 
 [[package]]
 name = "simple"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "fields",
  "num-bigint",
@@ -1629,7 +1629,7 @@ dependencies = [
 
 [[package]]
 name = "test-recursive"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "bytemuck",
  "fields",
@@ -1868,7 +1868,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "virtual-tables"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "fields",
  "num-bigint",
@@ -2286,7 +2286,7 @@ checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
 
 [[package]]
 name = "witness"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "colored",
  "fields",
