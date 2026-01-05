@@ -1,14 +1,14 @@
-#ifndef POSEIDON_OPT
-#define POSEIDON_OPT
+#ifndef POSEIDON_BN128_HPP
+#define POSEIDON_BN128_HPP
 
 #include <vector>
 #include <string>
 #include "ffiasm/fr.hpp"
-#include "constants_opt.hpp"
+#include "poseidon_bn128_constants.hpp"
 #include <cassert>
 using namespace std;
 
-class Poseidon_opt
+class PoseidonBN128
 {
   typedef RawFr::Element FrElement;
 
@@ -30,4 +30,4 @@ public:
   void grinding(uint64_t &nonce, vector<FrElement> &state, const uint32_t n_bits);
 };
 
-#endif // POSEIDON_OPT
+#endif // POSEIDON_BN128_HPP

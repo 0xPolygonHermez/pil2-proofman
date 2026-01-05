@@ -191,7 +191,7 @@ void MerkleTreeBN128::linearHash(RawFr::Element* result, Goldilocks::Element* va
         }
 
         uint pending = nElementsGL;
-        Poseidon_opt p;
+        PoseidonBN128 p;
         std::vector<RawFr::Element> elements(arity + 1);
         while (pending > 0)
         {
@@ -260,7 +260,7 @@ void MerkleTreeBN128::linearHash()
         for (uint64_t i = 0; i < height; i++)
         {
             uint pending = nElementsGL;
-            Poseidon_opt p;
+            PoseidonBN128 p;
             std::vector<RawFr::Element> elements(arity + 1);
             while (pending > 0)
             {
@@ -314,7 +314,7 @@ void MerkleTreeBN128::calculateRootFromProof(RawFr::Element *value, std::vector<
     uint64_t currIdx = idx & (arity - 1);
     idx = idx >> nBitsArity;
 
-    Poseidon_opt p;
+    PoseidonBN128 p;
     std::vector<RawFr::Element> elements(arity + 1);
     std::memset(&elements[0], 0, (arity + 1) * sizeof(RawFr::Element));
 
@@ -368,7 +368,7 @@ void MerkleTreeBN128::merkelize()
 #pragma omp parallel for
         for (uint64_t i = 0; i < batches; i++)
         {
-            Poseidon_opt p;
+            PoseidonBN128 p;
             vector<RawFr::Element> elements(arity + 1);
             std::memset(&elements[0], 0, (arity + 1) * sizeof(RawFr::Element));
             uint numHashes = (i == batches - 1) ? n256 - i*arity : arity;
