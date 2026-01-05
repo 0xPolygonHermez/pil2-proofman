@@ -90,7 +90,7 @@ void TranscriptBN128::_updateState()
         pending.push_back(RawFr::field.zero());
     }
 
-    Poseidon_opt p;
+    PoseidonBN128 p;
     out.insert(out.end(), state.begin(), state.end());
     out.insert(out.end(), pending.begin(), pending.end());
 

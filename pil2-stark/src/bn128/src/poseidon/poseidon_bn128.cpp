@@ -1,24 +1,21 @@
-#include "poseidon_opt.hpp"
-#include <omp.h>
-#include <cstring>
-#include <cassert>
+#include "poseidon_bn128.hpp"
 
-void Poseidon_opt::hash(vector<FrElement> &state, FrElement *result)
+void PoseidonBN128::hash(vector<FrElement> &state, FrElement *result)
 {
 	hash(state);
 	*result = state[0];
 }
 
-void Poseidon_opt::hash(vector<FrElement> &state)
+void PoseidonBN128::hash(vector<FrElement> &state)
 {
 	assert(state.size() < 18);
 	const int t = state.size();
 	const int nRoundsP = N_ROUNDS_P[t - 2];
 
-	const vector<FrElement> *c = &(Constants_opt::C[t - 2]);
-	const vector<FrElement> *s = &(Constants_opt::S[t - 2]);
-	const vector<vector<FrElement>> *m = &(Constants_opt::M[t - 2]);
-	const vector<vector<FrElement>> *p = &(Constants_opt::P[t - 2]);
+	const vector<FrElement> *c = &(PoseidonBN128Constants::C[t - 2]);
+	const vector<FrElement> *s = &(PoseidonBN128Constants::S[t - 2]);
+	const vector<vector<FrElement>> *m = &(PoseidonBN128Constants::M[t - 2]);
+	const vector<vector<FrElement>> *p = &(PoseidonBN128Constants::P[t - 2]);
 
 	ark(&state, c, t, 0);
 	for (int r = 0; r < N_ROUNDS_F / 2 - 1; r++)
@@ -62,7 +59,7 @@ void Poseidon_opt::hash(vector<FrElement> &state)
 	mix(&state, state, m, t);
 }
 
-void Poseidon_opt::ark(vector<FrElement> *state, const vector<FrElement> *c, const int ssize, int it)
+void PoseidonBN128::ark(vector<FrElement> *state, const vector<FrElement> *c, const int ssize, int it)
 {
 	for (int i = 0; i < ssize; i++)
 	{
@@ -70,7 +67,7 @@ void Poseidon_opt::ark(vector<FrElement> *state, const vector<FrElement> *c, con
 	}
 }
 
-void Poseidon_opt::sbox(vector<FrElement> *state, const vector<FrElement> *c, const int ssize, int it)
+void PoseidonBN128::sbox(vector<FrElement> *state, const vector<FrElement> *c, const int ssize, int it)
 {
 	for (int i = 0; i < ssize; i++)
 	{
@@ -79,7 +76,7 @@ void Poseidon_opt::sbox(vector<FrElement> *state, const vector<FrElement> *c, co
 	}
 }
 
-void Poseidon_opt::exp5(FrElement &r)
+void PoseidonBN128::exp5(FrElement &r)
 {
 	FrElement aux = r;
 	field.square(r, r);
@@ -87,7 +84,7 @@ void Poseidon_opt::exp5(FrElement &r)
 	field.mul(r, r, aux);
 }
 
-void Poseidon_opt::mix(vector<FrElement> *new_state, vector<FrElement> state, const vector<vector<FrElement>> *m, const int ssize)
+void PoseidonBN128::mix(vector<FrElement> *new_state, vector<FrElement> state, const vector<vector<FrElement>> *m, const int ssize)
 {
 	for (int i = 0; i < ssize; i++)
 	{
