@@ -2,6 +2,7 @@
 
 BUILD_DIR := ./build
 BUILD_DIR_GPU := ./build_gpu
+SRC_DIR := ./src
 
 NVCC := /usr/local/cuda/bin/nvcc
 include CudaArch.mk
@@ -16,7 +17,7 @@ ASFLAGS := -f elf64
 
 BLST_PATH :=
 CXXFLAGS := -std=c++17 -Wall -O3 -fPIC -D__USE_ASSEMBLY__
-CPPFLAGS := -I./src/ffiasm
+CPPFLAGS := -I./src -I./src/ffiasm
 LDFLAGS_BENCH := -lgmp -z noexecstack
 
 ifdef BLST
@@ -42,6 +43,17 @@ BENCH_OBJS := $(addprefix $(BENCH_BUILD_DIR)/,$(notdir $(BENCH_SRCS:.cpp=.cpp.o)
 
 all: testsgpu
 
+# ----------------------
+# CPU tests (gtest)
+# ----------------------
+TESTS_CPU_OBJS := $(BUILD_DIR)/tests/tests.o
+POSEIDON_OBJS := $(BUILD_DIR)/src/poseidon/poseidon_bn128.o
+FFIASM_OBJS := $(BUILD_DIR)/src/ffiasm/fr.cpp.o $(BUILD_DIR)/src/ffiasm/fq.cpp.o $(BUILD_DIR)/src/ffiasm/fr.asm.o $(BUILD_DIR)/src/ffiasm/fq.asm.o
+
+.PHONY: testscpu
+testscpu: $(TESTS_CPU_OBJS) $(POSEIDON_OBJS) $(FFIASM_OBJS)
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lgtest -lgtest_main -lgmp -lpthread
+
 benchscpu: $(BENCH_TARGET)
 
 $(BENCH_TARGET): $(BENCH_OBJS)
@@ -57,6 +69,22 @@ $(BENCH_BUILD_DIR)/%.cpp.o: ./src/ffiasm/%.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(BENCHMARK_FLAGS) -c $< -o $@
 
 $(BENCH_BUILD_DIR)/%.asm.o: ./src/ffiasm/%.asm
+	$(MKDIR_P) $(dir $@)
+	$(AS) $(ASFLAGS) $< -o $@
+
+$(BUILD_DIR)/tests/%.o: ./tests/%.cpp
+	$(MKDIR_P) $(dir $@)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -I$(SRC_DIR) -c $< -o $@
+
+$(BUILD_DIR)/src/poseidon/%.o: $(SRC_DIR)/poseidon/%.cpp
+	$(MKDIR_P) $(dir $@)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/src/ffiasm/%.cpp.o: $(SRC_DIR)/ffiasm/%.cpp
+	$(MKDIR_P) $(dir $@)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/src/ffiasm/%.asm.o: $(SRC_DIR)/ffiasm/%.asm
 	$(MKDIR_P) $(dir $@)
 	$(AS) $(ASFLAGS) $< -o $@
 
@@ -77,11 +105,12 @@ $(BUILD_DIR_GPU)/%.cpp.o: %.cpp
 # ----------------------
 clean:
 	rm -rf $(BUILD_DIR) $(BUILD_DIR_GPU)
-	rm -f benchscpu testsgpu
+	rm -f benchscpu testsgpu testscpu
 
 help:
 	@echo "make [target]"
 	@echo "  all (default) - Build GPU tests"
+	@echo "  testscpu      - Build CPU unit tests (output: ./testscpu)"
 	@echo "  benchscpu     - Build CPU benchmarks (output: ./benchscpu)"
 	@echo "  clean         - Remove build artifacts"
 
