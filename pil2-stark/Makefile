@@ -141,15 +141,15 @@ DEPS_STARKS_LIB_GPU := $(OBJS_STARKS_LIB_GPU:.o=.d)
 # Define BCT source files based on platform
 ifeq ($(UNAME_S),Darwin)
     # macOS - exclude assembly files
-    SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeBN128.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.* ./src/bn128/src/poseidon/poseidon_opt.cpp ./src/bn128/src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
+    SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeBN128.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.* ./src/bn128/src/poseidon/poseidon_bn128.cpp ./src/bn128/src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
 else
     # Linux - include all files including assembly
-    SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeBN128.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.*  ./src/bn128/src/poseidon/poseidon_opt.cpp ./src/bn128/src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
+    SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeBN128.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.*  ./src/bn128/src/poseidon/poseidon_bn128.cpp ./src/bn128/src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
 endif
 OBJS_BCT := $(SRCS_BCT:%=$(BUILD_DIR)/%.o)
 DEPS_BCT := $(OBJS_BCT:.o=.d)
 
-SRCS_BINFILE := $(shell find ./src/binfile/main.cpp ./src/goldilocks/src ./src/starkpil ./src/rapidsnark/logger.* ./src/rapidsnark/binfile_utils.* ./src/rapidsnark/binfile_writer.* ./src/bn128/src/poseidon/poseidon_opt.cpp ./src/bn128/src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
+SRCS_BINFILE := $(shell find ./src/binfile/main.cpp ./src/goldilocks/src ./src/starkpil ./src/rapidsnark/logger.* ./src/rapidsnark/binfile_utils.* ./src/rapidsnark/binfile_writer.* ./src/bn128/src/poseidon/poseidon_bn128.cpp ./src/bn128/src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
 OBJS_BINFILE := $(SRCS_BINFILE:%=$(BUILD_DIR)/%.o)
 DEPS_BINFILE := $(OBJS_BINFILE:.o=.d)
 

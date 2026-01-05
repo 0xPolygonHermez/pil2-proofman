@@ -5,7 +5,7 @@
 #include "fr.hpp"
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_cubic_extension.hpp"
-#include "poseidon_opt.hpp"
+#include "poseidon_bn128.hpp"
 #include "zklog.hpp"
 
 class MerkleTreeBN128

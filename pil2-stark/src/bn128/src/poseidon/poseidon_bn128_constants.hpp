@@ -1,10 +1,10 @@
-#ifndef CONSTANTS_OPT
-#define CONSTANTS_OPT
+#ifndef __POSEIDON_BN128_CONSTANTS_HPP__  
+#define __POSEIDON_BN128_CONSTANTS_HPP__  
 
 #include <vector>
 #include "ffiasm/fr.hpp"
 
-class Constants_opt
+class PoseidonBN128Constants
 {
 public:
     const static inline std::vector<std::vector<RawFrP::Element>> C = {

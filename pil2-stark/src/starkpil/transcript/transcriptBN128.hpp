@@ -2,7 +2,7 @@
 #define TRANSCRIPT_BN128_CLASS
 
 #include "fr.hpp"
-#include "poseidon_opt.hpp"
+#include "poseidon_bn128.hpp"
 #include <cstring>
 #include "goldilocks_base_field.hpp"
 

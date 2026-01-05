@@ -3,8 +3,8 @@
 #include <iostream>
 #include <iomanip>
 #include <cstring>
-#include "../fr.hpp"
-#include "../fq.hpp"
+#include "fr.hpp"
+#include "fq.hpp"
 #if defined(__BLST__)
 #include <blst.h>
 #endif
