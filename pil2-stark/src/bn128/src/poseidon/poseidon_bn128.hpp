@@ -26,8 +26,11 @@ private:
 public:
   void hash(vector<FrElement> &state);
   void hash(vector<FrElement> &state, FrElement *result);
+<<<<<<< HEAD
   void gmimc(vector<FrElement>, FrElement *result);
   void grinding(uint64_t &nonce, vector<FrElement> &state, const uint32_t n_bits);
+=======
+>>>>>>> 0e50c501 (Poseidon2 bn128 implemented)
 };
 
 #endif // POSEIDON_BN128_HPP

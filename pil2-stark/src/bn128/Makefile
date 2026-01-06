@@ -48,10 +48,11 @@ all: testsgpu
 # ----------------------
 TESTS_CPU_OBJS := $(BUILD_DIR)/tests/tests.o
 POSEIDON_OBJS := $(BUILD_DIR)/src/poseidon/poseidon_bn128.o
+POSEIDON2_OBJS := $(BUILD_DIR)/src/poseidon2/poseidon2_bn128.o
 FFIASM_OBJS := $(BUILD_DIR)/src/ffiasm/fr.cpp.o $(BUILD_DIR)/src/ffiasm/fq.cpp.o $(BUILD_DIR)/src/ffiasm/fr.asm.o $(BUILD_DIR)/src/ffiasm/fq.asm.o
 
 .PHONY: testscpu
-testscpu: $(TESTS_CPU_OBJS) $(POSEIDON_OBJS) $(FFIASM_OBJS)
+testscpu: $(TESTS_CPU_OBJS) $(POSEIDON_OBJS) $(POSEIDON2_OBJS) $(FFIASM_OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lgtest -lgtest_main -lgmp -lpthread
 
 benchscpu: $(BENCH_TARGET)
@@ -77,6 +78,10 @@ $(BUILD_DIR)/tests/%.o: ./tests/%.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -I$(SRC_DIR) -c $< -o $@
 
 $(BUILD_DIR)/src/poseidon/%.o: $(SRC_DIR)/poseidon/%.cpp
+	$(MKDIR_P) $(dir $@)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/src/poseidon2/%.o: $(SRC_DIR)/poseidon2/%.cpp
 	$(MKDIR_P) $(dir $@)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
