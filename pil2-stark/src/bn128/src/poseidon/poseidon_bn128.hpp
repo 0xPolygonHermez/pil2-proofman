@@ -26,7 +26,6 @@ private:
 public:
   void hash(vector<FrElement> &state);
   void hash(vector<FrElement> &state, FrElement *result);
-  void gmimc(vector<FrElement>, FrElement *result);
 };
 
 #endif // POSEIDON_BN128_HPP
