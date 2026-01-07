@@ -98,15 +98,15 @@ __device__ __forceinline__ void prod_2(gl64_t *x, const gl64_t alpha, const gl64
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void pow7add_2(gl64_t *x, const gl64_t C[SPONGE_WIDTH_T])
 {
-    gl64_t x2[SPONGE_WIDTH_T], x3[SPONGE_WIDTH_T], x4[SPONGE_WIDTH_T];
+    
 #pragma unroll
     for (int i = 0; i < SPONGE_WIDTH_T; ++i)
     {
         gl64_t xi = x[i] + C[i];
-        x2[i] = xi * xi;
-        x3[i] = xi * x2[i];
-        x4[i] = x2[i] * x2[i];
-        x[i] = x3[i] * x4[i];
+        gl64_t x2 = xi * xi;
+        gl64_t x3 = xi * x2;
+        gl64_t x4 = x2 * x2;
+        x[i] = x3 * x4;
     }
 }
 
@@ -278,15 +278,15 @@ __device__ __forceinline__ void matmul_external_state_()
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void pow7add_state_(const gl64_t C[SPONGE_WIDTH_T])
 {
-    gl64_t x2[SPONGE_WIDTH_T], x3[SPONGE_WIDTH_T], x4[SPONGE_WIDTH_T];
+    
 #pragma unroll
     for (int i = 0; i < SPONGE_WIDTH_T; ++i)
     {
         gl64_t xi = scratchpad[i * blockDim.x + threadIdx.x] + C[i];
-        x2[i] = xi * xi;
-        x3[i] = xi * x2[i];
-        x4[i] = x2[i] * x2[i];
-        scratchpad[i * blockDim.x + threadIdx.x] = x3[i] * x4[i];
+        gl64_t x2 = xi * xi;
+        gl64_t x3 = xi * x2;
+        gl64_t x4 = x2 * x2;
+        scratchpad[i * blockDim.x + threadIdx.x] = x3 * x4;
     }
 }
 
