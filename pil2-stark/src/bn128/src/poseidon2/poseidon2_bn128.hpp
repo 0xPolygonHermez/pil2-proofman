@@ -13,15 +13,15 @@ class Poseidon2BN128
   typedef RawFrP::Element FrElement;
 
   const static int N_ROUNDS_F = 8;
-  const unsigned int N_ROUNDS_P[4] = {0, 0, 0, 56};
+  const unsigned int N_ROUNDS_P[3] = {0, 0, 56};
 
 private:
   RawFrP field;
 
-  inline void pow7(FrElement &x);
+  inline void pow5(FrElement &x);
   inline void add(FrElement &x, const FrElement *st, int t);
   inline void prodadd(FrElement *x, const FrElement *D, const FrElement &sum, int t);
-  inline void pow7add(FrElement *x, const FrElement *C, int t);
+  inline void pow5add(FrElement *x, const FrElement *C, int t);
   inline void matmul_m4(FrElement *x);
   inline void matmul_external(FrElement *x, int t);
 
@@ -31,13 +31,13 @@ public:
   void hash(vector<FrElement> &state, FrElement *result);
 };
 
-void Poseidon2BN128::pow7(FrElement &x)
+void Poseidon2BN128::pow5(FrElement &x)
 {
-    FrElement x2, x3, x4;
-    field.square(x2, x);
-    field.square(x4, x2);
-    field.mul(x3, x, x2);
-    field.mul(x, x3, x4);
+    FrElement aux;
+    field.copy(aux, x);
+    field.square(x, x);
+    field.square(x, x);
+    field.mul(x, x, aux);
 };
 
 void Poseidon2BN128::add(FrElement &x, const FrElement *st, int t)
@@ -58,16 +58,16 @@ void Poseidon2BN128::prodadd(FrElement *x, const FrElement *D, const FrElement &
     }
 };
 
-void Poseidon2BN128::pow7add(FrElement *x, const FrElement *C, int t)
+void Poseidon2BN128::pow5add(FrElement *x, const FrElement *C, int t)
 {
     for (int i = 0; i < t; i++)
     {
-        FrElement x2, x3, x4;
+        FrElement aux;
         field.add(x[i], x[i], C[i]);
-        field.square(x2, x[i]);
-        field.mul(x3, x[i], x2);
-        field.square(x4, x2);
-        field.mul(x[i], x3, x4);
+        field.copy(aux, x[i]);
+        field.square(x[i], x[i]);
+        field.square(x[i], x[i]);
+        field.mul(x[i], x[i], aux);
     }
 };
 
