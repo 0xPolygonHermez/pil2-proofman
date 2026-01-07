@@ -10,12 +10,11 @@ void Poseidon2BN128::hash(vector<FrElement> &state)
 {
 
 	const int t = state.size();
-	assert(t < 16);
-	const int nRoundsP = N_ROUNDS_P[t - 2];
-
-	const vector<FrElement> *c = &(Poseidon2BN128Constants::C[t - 2]);
-	const vector<FrElement> *d = &(Poseidon2BN128Constants::D[t - 2]);
-
+	assert(t == 2 || t == 3 || t == 4 || t == 8 || t == 12 || t == 16);
+	uint32_t pos = t<=4 ? t-2 : t/4 + 1;
+	const int nRoundsP = N_ROUNDS_P[pos];
+	const vector<FrElement> *c = &(Poseidon2BN128Constants::C[pos]);
+	const vector<FrElement> *d = &(Poseidon2BN128Constants::D[pos]);
 	matmul_external(&state[0], t);
 
 	

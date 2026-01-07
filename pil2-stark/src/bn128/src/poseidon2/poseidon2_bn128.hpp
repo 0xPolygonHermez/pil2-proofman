@@ -13,7 +13,7 @@ class Poseidon2BN128
   typedef RawFrP::Element FrElement;
 
   const static int N_ROUNDS_F = 8;
-  const unsigned int N_ROUNDS_P[3] = {0, 0, 56};
+  const unsigned int N_ROUNDS_P[6] = {56, 56, 56, 57, 57, 57}; //for t=2,3,4,8,12,16
 
 private:
   RawFrP field;
@@ -97,27 +97,55 @@ void Poseidon2BN128::matmul_m4(FrElement *x) {
 
 void Poseidon2BN128::matmul_external(FrElement *x, int t) {
     
-    for(int i = 0; i < t; i +=4) {
-        matmul_m4(&x[i]);
-    }
-    if(t > 4){
-        FrElement stored[4];
-        stored[0] = field.zero();
-        stored[1] = field.zero();
-        stored[2] = field.zero();
-        stored[3] = field.zero();
-        for (int i = 0; i < t; i+=4) {
-            field.add(stored[0], stored[0], x[i]);
-            field.add(stored[1], stored[1], x[i+1]);
-            field.add(stored[2], stored[2], x[i+2]);
-            field.add(stored[3], stored[3], x[i+3]);
-        }
-        
-        for (int i = 0; i < t; ++i)
+    switch(t) {
+        case 2:
         {
-            field.add(x[i], x[i], stored[i % 4]);
+            FrElement sum;
+            field.add(sum, x[0], x[1]);
+            field.add(x[0], x[0], sum);
+            field.add(x[1], x[1], sum);
+            return;
+        }
+        case 3:
+        {
+            FrElement sum;
+            field.add(sum, x[0], x[1]);
+            field.add(sum, sum, x[2]);
+            field.add(x[0], x[0], sum);
+            field.add(x[1], x[1], sum);
+            field.add(x[2], x[2], sum);
+            return;
+        }
+        case 4:
+        {
+            matmul_m4(&x[0]);
+            return;
+        }
+        default:
+        {
+            for(int i = 0; i < t; i +=4) {
+                matmul_m4(&x[i]);
+            }   
+            FrElement stored[4];
+            stored[0] = field.zero();
+            stored[1] = field.zero();
+            stored[2] = field.zero();
+            stored[3] = field.zero();
+            for (int i = 0; i < t; i+=4) {
+                field.add(stored[0], stored[0], x[i]);
+                field.add(stored[1], stored[1], x[i+1]);
+                field.add(stored[2], stored[2], x[i+2]);
+                field.add(stored[3], stored[3], x[i+3]);
+            }
+            
+            for (int i = 0; i < t; ++i)
+            {
+                field.add(x[i], x[i], stored[i % 4]);
+            };
+            return;
         }
     }
+    return;    
 };
 
 
