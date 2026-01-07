@@ -7,9 +7,9 @@ SRC_DIR := ./src
 NVCC := /usr/local/cuda/bin/nvcc
 include CudaArch.mk
 
-CUDA_SRC_DIRS := ./src/ffigpu ./tests
+CUDA_SRC_DIRS := ./src/ffigpu ./tests ./src/ffiasm ./src/poseidon2
 CUDA_INC_FLAGS := $(addprefix -I,$(CUDA_SRC_DIRS))
-NVCCFLAGS := -D__USE_CUDA__ $(CUDA_INC_FLAGS) -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 -arch=$(CUDA_ARCH) -I./../../external/sppark/ff
+NVCCFLAGS := -D__USE_CUDA__ -I./../../external/sppark/ff $(CUDA_INC_FLAGS) -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 -arch=$(CUDA_ARCH) 
 
 CXX := g++
 AS := nasm
@@ -47,12 +47,14 @@ all: testsgpu
 # CPU tests (gtest)
 # ----------------------
 TESTS_CPU_OBJS := $(BUILD_DIR)/tests/tests.o
-POSEIDON_OBJS := $(BUILD_DIR)/src/poseidon/poseidon_bn128.o
-POSEIDON2_OBJS := $(BUILD_DIR)/src/poseidon2/poseidon2_bn128.o
+POSEIDON_CPU_OBJS := $(BUILD_DIR)/src/poseidon/poseidon_bn128.o
+POSEIDON2_CPU_OBJS := $(BUILD_DIR)/src/poseidon2/poseidon2_bn128.o
+POSEIDON2_GPU_OBJS := $(BUILD_DIR_GPU)/src/poseidon2/poseidon2_bn128.cu.o
+
 FFIASM_OBJS := $(BUILD_DIR)/src/ffiasm/fr.cpp.o $(BUILD_DIR)/src/ffiasm/fq.cpp.o $(BUILD_DIR)/src/ffiasm/fr.asm.o $(BUILD_DIR)/src/ffiasm/fq.asm.o
 
 .PHONY: testscpu
-testscpu: $(TESTS_CPU_OBJS) $(POSEIDON_OBJS) $(POSEIDON2_OBJS) $(FFIASM_OBJS)
+testscpu: $(TESTS_CPU_OBJS) $(POSEIDON_CPU_OBJS) $(POSEIDON2_CPU_OBJS) $(FFIASM_OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lgtest -lgtest_main -lgmp -lpthread
 
 benchscpu: $(BENCH_TARGET)
@@ -85,6 +87,10 @@ $(BUILD_DIR)/src/poseidon2/%.o: $(SRC_DIR)/poseidon2/%.cpp
 	$(MKDIR_P) $(dir $@)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
+$(BUILD_DIR_GPU)/src/poseidon2/%.cu.o: $(SRC_DIR)/poseidon2/%.cu
+	$(MKDIR_P) $(dir $@)
+	$(NVCC) $(NVCCFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/src/ffiasm/%.cpp.o: $(SRC_DIR)/ffiasm/%.cpp
 	$(MKDIR_P) $(dir $@)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
@@ -94,7 +100,7 @@ $(BUILD_DIR)/src/ffiasm/%.asm.o: $(SRC_DIR)/ffiasm/%.asm
 	$(AS) $(ASFLAGS) $< -o $@
 
 
-testsgpu: $(BUILD_DIR_GPU)/tests/tests.cu.o
+testsgpu: $(BUILD_DIR_GPU)/tests/tests.cu.o $(POSEIDON2_GPU_OBJS) $(FFIASM_OBJS)
 	$(NVCC) $(NVCCFLAGS) -o $@ $^ -lgtest -lgmp
 
 $(BUILD_DIR_GPU)/tests/%.cu.o: tests/%.cu

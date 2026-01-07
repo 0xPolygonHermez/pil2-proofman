@@ -3,35 +3,30 @@
 
 #include <vector>
 #include <string>
-#include "fr.hpp"
+#include "bn128.cuh"
 #include "poseidon2_bn128_constants.hpp"
 #include <cassert>
 using namespace std;
 
-class Poseidon2BN128
+class Poseidon2BN128GPU
 {
-  typedef RawFrP::Element FrElement;
-
-  const static int N_ROUNDS_F = 8;
-  const unsigned int N_ROUNDS_P[6] = {56, 56, 56, 57, 57, 57}; //for t=2,3,4,8,12,16
-
-private:
-  RawFrP field;
-
-  inline void pow5(FrElement &x);
-  inline void add(FrElement &x, const FrElement *st, int t);
-  inline void prodadd(FrElement *x, const FrElement *D, const FrElement &sum, int t);
-  inline void pow5add(FrElement *x, const FrElement *C, int t);
-  inline void matmul_m4(FrElement *x);
-  inline void matmul_external(FrElement *x, int t);
-
-
 public:
+  typedef BN128GPUScalarField::Element FrElement;
+  int loaded_constants_t = -1;
+  BN128GPUScalarField field;
+
+  __device__ __forceinline__ void pow5(FrElement &x);
+  __device__ __forceinline__ void add(FrElement &x, const FrElement *st, int t);
+  __device__ __forceinline__ void prodadd(FrElement *x, const FrElement *D, const FrElement &sum, int t);
+  __device__ __forceinline__ void pow5add(FrElement *x, const FrElement *C, int t);
+  __device__ __forceinline__ void matmul_m4(FrElement *x);
+  __device__ __forceinline__ void matmul_external(FrElement *x, int t);
+
   void hash(vector<FrElement> &state);
   void hash(vector<FrElement> &state, FrElement *result);
 };
 
-void Poseidon2BN128::pow5(FrElement &x)
+__device__ void Poseidon2BN128GPU::pow5(FrElement &x)
 {
     FrElement aux;
     field.copy(aux, x);
@@ -40,7 +35,7 @@ void Poseidon2BN128::pow5(FrElement &x)
     field.mul(x, x, aux);
 };
 
-void Poseidon2BN128::add(FrElement &x, const FrElement *st, int t)
+__device__ void Poseidon2BN128GPU::add(FrElement &x, const FrElement *st, int t)
 {
     for (int i = 0; i < t; i++)
     {
@@ -48,7 +43,7 @@ void Poseidon2BN128::add(FrElement &x, const FrElement *st, int t)
     }
 };
 
-void Poseidon2BN128::prodadd(FrElement *x, const FrElement *D, const FrElement &sum, int t)
+__device__ void Poseidon2BN128GPU::prodadd(FrElement *x, const FrElement *D, const FrElement &sum, int t)
 {
     for (int i = 0; i < t; i++)
     {
@@ -58,7 +53,7 @@ void Poseidon2BN128::prodadd(FrElement *x, const FrElement *D, const FrElement &
     }
 };
 
-void Poseidon2BN128::pow5add(FrElement *x, const FrElement *C, int t)
+__device__ void Poseidon2BN128GPU::pow5add(FrElement *x, const FrElement *C, int t)
 {
     for (int i = 0; i < t; i++)
     {
@@ -71,7 +66,7 @@ void Poseidon2BN128::pow5add(FrElement *x, const FrElement *C, int t)
     }
 };
 
-void Poseidon2BN128::matmul_m4(FrElement *x) {
+__device__ void Poseidon2BN128GPU::matmul_m4(FrElement *x) {
     FrElement t0, t1, t2, t3, t4, t5, t6, t7;
     field.add(t0, x[0], x[1]);
     field.add(t1, x[2], x[3]);
@@ -95,7 +90,7 @@ void Poseidon2BN128::matmul_m4(FrElement *x) {
     x[3] = t4;
 };
 
-void Poseidon2BN128::matmul_external(FrElement *x, int t) {
+__device__ void Poseidon2BN128GPU::matmul_external(FrElement *x, int t) {
     
     switch(t) {
         case 2:
@@ -147,6 +142,5 @@ void Poseidon2BN128::matmul_external(FrElement *x, int t) {
     }
     return;    
 };
-
 
 #endif // POSEIDON2_BN128_HPP
