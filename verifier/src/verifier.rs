@@ -66,13 +66,13 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
     let n_publics = proof[p as usize];
     p += 1;
 
-    let mut publics = Vec::new();
+    let mut publics = Vec::with_capacity(n_publics as usize);
     for _ in 0..n_publics {
         publics.push(Goldilocks::new(proof[p as usize]));
         p += 1;
     }
 
-    let mut roots = Vec::new();
+    let mut roots = Vec::with_capacity(verifier_info.n_stages as usize + 1);
     for _ in 0..verifier_info.n_stages + 1 {
         let mut root = [Goldilocks::ZERO; 4];
         for r in &mut root {
@@ -82,7 +82,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         roots.push(root);
     }
 
-    let mut evals = Vec::new();
+    let mut evals = Vec::with_capacity(verifier_info.n_evals as usize);
     for _ in 0..verifier_info.n_evals {
         let eval = CubicExtensionField {
             value: [
@@ -95,38 +95,46 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         evals.push(eval);
     }
 
-    let mut s0_vals = Vec::new();
-    let mut s0_siblings = Vec::new();
-    let mut s0_last_levels = Vec::new();
+    let n_queries = verifier_info.n_fri_queries as usize;
+    let n_stages_plus_2 = verifier_info.n_stages as usize + 2;
+    let n_sibs = n_siblings as usize;
+    let n_sibs_per_lvl = n_siblings_per_level as usize;
 
-    for q in 0..verifier_info.n_fri_queries {
-        s0_vals.push(Vec::new());
-        let mut vals = Vec::new();
+    let mut s0_vals: Vec<Vec<Vec<Goldilocks>>> = Vec::with_capacity(n_queries);
+    let mut s0_siblings: Vec<Vec<Vec<Vec<Goldilocks>>>> = Vec::with_capacity(n_queries);
+    let mut s0_last_levels: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_stages_plus_2);
+
+    for _q in 0..n_queries {
+        let mut query_vals = Vec::with_capacity(n_stages_plus_2);
+        let mut vals = Vec::with_capacity(verifier_info.n_constants as usize);
         for _ in 0..verifier_info.n_constants {
             vals.push(Goldilocks::new(proof[p as usize]));
             p += 1;
         }
-        s0_vals[q as usize].push(vals);
+        query_vals.push(vals);
+        s0_vals.push(query_vals);
     }
 
-    for q in 0..verifier_info.n_fri_queries {
-        s0_siblings.push(Vec::new());
-        let mut siblings = Vec::new();
-        for _ in 0..n_siblings {
-            let mut sibling = Vec::new();
-            for _ in 0..n_siblings_per_level {
+    for _q in 0..n_queries {
+        let mut query_siblings = Vec::with_capacity(n_stages_plus_2);
+        let mut siblings = Vec::with_capacity(n_sibs);
+        for _ in 0..n_sibs {
+            let mut sibling = Vec::with_capacity(n_sibs_per_lvl);
+            for _ in 0..n_sibs_per_lvl {
                 sibling.push(Goldilocks::new(proof[p as usize]));
                 p += 1;
             }
             siblings.push(sibling);
         }
-        s0_siblings[q as usize].push(siblings);
+        query_siblings.push(siblings);
+        s0_siblings.push(query_siblings);
     }
 
     let num_nodes_level = verifier_info.arity.pow(verifier_info.last_level_verification as u32) * 4;
+    let num_nodes_lvl = num_nodes_level as usize;
 
     if verifier_info.last_level_verification > 0 {
-        let mut last_level_nodes = Vec::new();
+        let mut last_level_nodes = Vec::with_capacity(num_nodes_lvl);
         for _ in 0..num_nodes_level {
             last_level_nodes.push(Goldilocks::new(proof[p as usize]));
             p += 1;
@@ -135,32 +143,32 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
     }
 
     for i in 0..verifier_info.n_stages + 1 {
-        s0_vals.push(Vec::new());
-        s0_siblings.push(Vec::new());
-        for q in 0..verifier_info.n_fri_queries {
-            let mut vals = Vec::new();
-            for _ in 0..verifier_info.num_vals[i as usize] {
+        let num_vals_i = verifier_info.num_vals[i as usize] as usize;
+
+        for query_vals in s0_vals.iter_mut() {
+            let mut vals = Vec::with_capacity(num_vals_i);
+            for _ in 0..num_vals_i {
                 vals.push(Goldilocks::new(proof[p as usize]));
                 p += 1;
             }
-            s0_vals[q as usize].push(vals);
+            query_vals.push(vals);
         }
 
-        for q in 0..verifier_info.n_fri_queries {
-            let mut siblings = Vec::new();
-            for _ in 0..n_siblings {
-                let mut sibling = Vec::new();
-                for _ in 0..n_siblings_per_level {
+        for query_siblings in s0_siblings.iter_mut() {
+            let mut siblings = Vec::with_capacity(n_sibs);
+            for _ in 0..n_sibs {
+                let mut sibling = Vec::with_capacity(n_sibs_per_lvl);
+                for _ in 0..n_sibs_per_lvl {
                     sibling.push(Goldilocks::new(proof[p as usize]));
                     p += 1;
                 }
                 siblings.push(sibling);
             }
-            s0_siblings[q as usize].push(siblings);
+            query_siblings.push(siblings);
         }
 
         if verifier_info.last_level_verification > 0 {
-            let mut last_level_nodes = Vec::new();
+            let mut last_level_nodes = Vec::with_capacity(num_nodes_lvl);
             for _ in 0..num_nodes_level {
                 last_level_nodes.push(Goldilocks::new(proof[p as usize]));
                 p += 1;
@@ -169,7 +177,8 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         }
     }
 
-    let mut roots_fri = Vec::new();
+    let n_fri_steps_minus_1 = (verifier_info.n_fri_steps - 1) as usize;
+    let mut roots_fri = Vec::with_capacity(n_fri_steps_minus_1);
     for _ in 1..verifier_info.n_fri_steps {
         let mut root = [Goldilocks::ZERO; 4];
         for r in &mut root {
@@ -179,39 +188,46 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         roots_fri.push(root);
     }
 
-    let mut siblings_fri = vec![Vec::new(); verifier_info.n_fri_queries as usize];
-    let mut vals_fri = vec![Vec::new(); verifier_info.n_fri_queries as usize];
-    let mut last_levels_fri = Vec::new();
+    let mut siblings_fri: Vec<Vec<Vec<Vec<Goldilocks>>>> =
+        (0..n_queries).map(|_| Vec::with_capacity(n_fri_steps_minus_1)).collect();
+    let mut vals_fri: Vec<Vec<Vec<Goldilocks>>> =
+        (0..n_queries).map(|_| Vec::with_capacity(n_fri_steps_minus_1)).collect();
+    let mut last_levels_fri: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_fri_steps_minus_1);
+
+    let log_arity = (verifier_info.arity as f64).log2();
+    let n_siblings_per_level_fri = ((verifier_info.arity - 1) * 4) as usize;
+
     for i in 1..verifier_info.n_fri_steps {
-        for val_fri in vals_fri.iter_mut().take(verifier_info.n_fri_queries as usize) {
-            let mut vals = Vec::new();
-            for _ in 0..(1 << (verifier_info.fri_steps[(i - 1) as usize] - verifier_info.fri_steps[i as usize])) * 3 {
+        let vals_size =
+            ((1 << (verifier_info.fri_steps[(i - 1) as usize] - verifier_info.fri_steps[i as usize])) * 3) as usize;
+
+        for val_fri in vals_fri.iter_mut().take(n_queries) {
+            let mut vals = Vec::with_capacity(vals_size);
+            for _ in 0..vals_size {
                 vals.push(Goldilocks::new(proof[p as usize]));
                 p += 1;
             }
             val_fri.push(vals);
         }
 
-        for q in 0..verifier_info.n_fri_queries {
-            let n_siblings_fri: u64 =
-                ((verifier_info.fri_steps[i as usize] as f64 / (verifier_info.arity as f64).log2()).ceil()) as u64
-                    - verifier_info.last_level_verification;
+        let n_siblings_fri = ((verifier_info.fri_steps[i as usize] as f64 / log_arity).ceil()) as usize
+            - verifier_info.last_level_verification as usize;
 
-            let n_siblings_per_level_fri = (verifier_info.arity - 1) * 4;
-            let mut siblings = Vec::new();
+        for query_siblings in siblings_fri.iter_mut() {
+            let mut siblings = Vec::with_capacity(n_siblings_fri);
             for _ in 0..n_siblings_fri {
-                let mut sibling = Vec::new();
+                let mut sibling = Vec::with_capacity(n_siblings_per_level_fri);
                 for _ in 0..n_siblings_per_level_fri {
                     sibling.push(Goldilocks::new(proof[p as usize]));
                     p += 1;
                 }
                 siblings.push(sibling);
             }
-            siblings_fri[q as usize].push(siblings);
+            query_siblings.push(siblings);
         }
 
         if verifier_info.last_level_verification > 0 {
-            let mut last_level_nodes = Vec::new();
+            let mut last_level_nodes = Vec::with_capacity(num_nodes_lvl);
             for _ in 0..num_nodes_level {
                 last_level_nodes.push(Goldilocks::new(proof[p as usize]));
                 p += 1;
@@ -220,8 +236,9 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         }
     }
 
-    let mut final_pol = Vec::new();
-    for _ in 0..(1 << verifier_info.fri_steps[(verifier_info.n_fri_steps - 1) as usize]) {
+    let final_pol_capacity = 1usize << verifier_info.fri_steps[(verifier_info.n_fri_steps - 1) as usize];
+    let mut final_pol = Vec::with_capacity(final_pol_capacity);
+    for _ in 0..final_pol_capacity {
         let pol = CubicExtensionField {
             value: [
                 Goldilocks::new(proof[p as usize]),
@@ -243,8 +260,8 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         verifier_info.n_challenges_total as usize
     ];
 
-    let mut xdivxsub = Vec::new();
-    let mut zi = Vec::new();
+    let mut xdivxsub: Vec<Vec<CubicExtensionField<Goldilocks>>> = Vec::with_capacity(n_queries);
+    let mut zi = Vec::with_capacity(verifier_info.boundaries.len() + 1);
 
     let mut transcript: Transcript<Goldilocks, Poseidon16, 16> = Transcript::new();
     transcript.put(&root_c);
@@ -328,25 +345,29 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
 
     let xi_challenge = challenges[verifier_info.n_challenges as usize - 3];
 
-    for q in 0..verifier_info.n_fri_queries as usize {
-        xdivxsub.push(Vec::new());
-        let w = Goldilocks::new(Goldilocks::W[verifier_info.n_bits_ext as usize]);
+    let w_ext = Goldilocks::new(Goldilocks::W[verifier_info.n_bits_ext as usize]);
+    let w_bits = Goldilocks::new(Goldilocks::W[verifier_info.n_bits as usize]);
+    let n_opening_points = verifier_info.opening_points.len();
+
+    for &fri_query in fri_queries.iter().take(n_queries) {
+        let mut query_xdivxsub = Vec::with_capacity(n_opening_points);
         let x = CubicExtensionField {
-            value: [Goldilocks::new(Goldilocks::SHIFT) * w.exp_u64(fri_queries[q]), Goldilocks::ZERO, Goldilocks::ZERO],
+            value: [Goldilocks::new(Goldilocks::SHIFT) * w_ext.exp_u64(fri_query), Goldilocks::ZERO, Goldilocks::ZERO],
         };
-        for o in 0..verifier_info.opening_points.len() {
+        for o in 0..n_opening_points {
             let mut wi = Goldilocks::ONE;
             let abs_opening = verifier_info.opening_points[o].unsigned_abs();
             for _ in 0..abs_opening {
-                wi *= Goldilocks::new(Goldilocks::W[verifier_info.n_bits as usize]);
+                wi *= w_bits;
             }
 
             if verifier_info.opening_points[o] < 0 {
                 wi = wi.inverse();
             }
 
-            xdivxsub[q].push((x - (xi_challenge * wi)).inverse());
+            query_xdivxsub.push((x - (xi_challenge * wi)).inverse());
         }
+        xdivxsub.push(query_xdivxsub);
     }
 
     let x_n = xi_challenge.pow(1 << verifier_info.n_bits);
@@ -362,16 +383,15 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         // Handling for boundaries other than "everyRow" is intentionally deferred.
         // If support for additional boundary types is required, implement logic here.
     }
-    let mut final_pol_vals: Vec<Goldilocks> = final_pol
-        .iter() // borrow each CubicExtensionField
-        .flat_map(|pol| pol.value.iter().cloned())
-        .collect();
+
+    let mut final_pol_vals: Vec<Goldilocks> = Vec::with_capacity(final_pol.len() * 3);
+    for pol in &final_pol {
+        final_pol_vals.extend_from_slice(&pol.value);
+    }
 
     tracing::debug!("Verifying proof");
 
-    let queries: Vec<_> = (0..verifier_info.n_fri_queries as usize).collect();
-    let all_valid = queries.par_iter().all(|_q| {
-        let q = *_q;
+    let all_valid = (0..n_queries).into_par_iter().all(|q| {
         // 1) Fixed MT
         if !verify_mt::<Goldilocks, C, W>(
             &root_c,
