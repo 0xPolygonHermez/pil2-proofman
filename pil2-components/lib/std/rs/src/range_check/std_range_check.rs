@@ -310,8 +310,8 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         let range_item = &self.ranges[id];
 
         // Check that the value is contained within the range
-        #[cfg(all(debug_assertions, feature = "verify-rc-values"))]
-        check_value_in_range(range_item, value);
+        #[cfg(debug_assertions)]
+        Self::check_value_in_range(range_item, value);
 
         // Update the multiplicity of the corresponding AIR
         match range_item.rc_type {
@@ -391,14 +391,32 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         }
     }
 
-    pub fn assign_values(&self, id: usize, values: Vec<u32>) {
+    pub fn assign_values_ranged(&self, id: usize, start: Option<i64>, multiplicities: Vec<u32>) {
         // Find the range with the given id
         let range_item = &self.ranges[id];
 
+        // Initialize the starting point
+        let start = start.unwrap_or(range_item.data.min);
+
         // Check that the value is contained within the range
-        #[cfg(all(debug_assertions, feature = "verify-rc-values"))]
-        for (value, _) in values.iter().enumerate() {
-            check_value_in_range(range_item, value);
+        #[cfg(debug_assertions)]
+        {
+            // Check the given range [start, start + N] actually fits
+            let end = start + multiplicities.len() as i64 - 1;
+            let min = range_item.data.min;
+            let max = range_item.data.max;
+            if start < min {
+                panic!("Range check failed: Start value {} is less than the range minimum {}", start, min);
+            }
+            if end > max {
+                panic!(
+                    "Range check failed: End value {} (start {} + count {} - 1) exceeds the range maximum {}",
+                    end,
+                    start,
+                    multiplicities.len(),
+                    max
+                );
+            }
         }
 
         // Update the multiplicity of the corresponding AIR
@@ -408,13 +426,13 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 // Therefore, we can safely cast value to u8
                 if range_item.is_virtual {
                     // Get the rows corresponding to the values
-                    let vals: Vec<u8> = (0..values.len()).map(|v| v as u8).collect();
+                    let vals: Vec<u8> = (0..multiplicities.len()).map(|v| (start as usize + v) as u8).collect();
                     let rows = U8Air::get_global_rows(&vals);
 
                     // Increment the virtual rows
-                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, &values);
+                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, &multiplicities);
                 } else {
-                    self.u8air.as_ref().unwrap().update_inputs(values);
+                    self.u8air.as_ref().unwrap().update_inputs(start as u8, multiplicities);
                 }
             }
             StdRangeType::U16Air => {
@@ -422,38 +440,37 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 // Therefore, we can safely cast value to u16
                 if range_item.is_virtual {
                     // Get the rows corresponding to the values
-                    let vals: Vec<u16> = (0..values.len()).map(|v| v as u16).collect();
+                    let vals: Vec<u16> = (0..multiplicities.len()).map(|v| (start as usize + v) as u16).collect();
                     let rows = U16Air::get_global_rows(&vals);
 
                     // Increment the virtual rows
-                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, &values);
+                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, &multiplicities);
                 } else {
-                    self.u16air.as_ref().unwrap().update_inputs(values);
+                    self.u16air.as_ref().unwrap().update_inputs(start as u16, multiplicities);
                 }
             }
             StdRangeType::SpecifiedRanges => {
                 if range_item.is_virtual {
                     // Get the rows corresponding to the values
-                    let vals: Vec<i64> = (0..values.len()).map(|v| v as i64).collect();
+                    let vals: Vec<i64> = (0..multiplicities.len()).map(|v| start + v as i64).collect();
                     let rows = SpecifiedRanges::get_global_rows(range_item.data.min, &vals);
 
                     // Increment the virtual rows
-                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, &values);
+                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, &multiplicities);
                 } else {
-                    self.specified_ranges_air.as_ref().unwrap().update_inputs(id, values);
+                    self.specified_ranges_air.as_ref().unwrap().update_inputs(id, start, multiplicities);
                 }
             }
             StdRangeType::U8AirDouble | StdRangeType::U16AirDouble => unreachable!(),
         }
     }
 
-    #[cfg(all(debug_assertions, feature = "verify-rc-values"))]
+    #[cfg(debug_assertions)]
     fn check_value_in_range(range: &StdRange, value: i64) {
         let min = range.data.min;
         let max = range.data.max;
         if value < min || value > max {
-            log::error!("Value {} is not in the range [min,max] = [{},{}]", value, min, max);
-            panic!("Range check failed");
+            panic!("Range check failed: Value {} is not in the range [min,max] = [{},{}]", value, min, max);
         }
     }
 }

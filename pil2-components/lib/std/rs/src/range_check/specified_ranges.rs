@@ -119,7 +119,6 @@ impl SpecifiedRanges {
         values.iter().map(|&v| Self::get_global_row(range_min, v)).collect()
     }
 
-    #[inline(always)]
     pub fn update_input(&self, id: usize, value: i64, multiplicity: u64) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
@@ -141,7 +140,7 @@ impl SpecifiedRanges {
         self.multiplicities[base_offset + range_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
     }
 
-    pub fn update_inputs(&self, id: usize, values: Vec<u32>) {
+    pub fn update_inputs(&self, id: usize, start: i64, multiplicities: Vec<u32>) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
@@ -151,13 +150,21 @@ impl SpecifiedRanges {
         let min_global = ranges.min;
         let base_offset = ranges.mul_idx;
 
+        let start_value = start - min_global;
+
         // Identify to which sub-range the value belongs
-        for (value, multiplicity) in values.iter().enumerate() {
-            let offset = (value as i64 - min_global) as usize;
-            let range_idx = offset >> self.shift;
+        for (offset, multiplicity) in multiplicities.iter().enumerate() {
+            if *multiplicity == 0 {
+                continue;
+            }
+
+            let value = start_value as usize + offset;
+
+            // Identify to which sub-range the value belongs
+            let range_idx = value >> self.shift;
 
             // Get the row index
-            let row_idx = offset & self.mask;
+            let row_idx = value & self.mask;
 
             // Update the multiplicity
             self.multiplicities[base_offset + range_idx][row_idx].fetch_add(*multiplicity as u64, Ordering::Relaxed);

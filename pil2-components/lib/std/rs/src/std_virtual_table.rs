@@ -148,6 +148,9 @@ impl<F: PrimeField64> StdVirtualTable<F> {
     }
 
     pub fn inc_virtual_rows(&self, global_id: usize, rows: &[u64], multiplicities: &[u32]) {
+        #[cfg(debug_assertions)]
+        assert_eq!(rows.len(), multiplicities.len(), "Rows and multiplicities must have the same length");
+
         let (air_idx, uid_idx) = self.indices_by_global_id[global_id];
         self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_rows(uid_idx, rows, multiplicities);
     }

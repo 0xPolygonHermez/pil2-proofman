@@ -71,7 +71,6 @@ impl U8Air {
         values.iter().map(|&v| Self::get_global_row(v)).collect()
     }
 
-    #[inline(always)]
     pub fn update_input(&self, value: u8, multiplicity: u64) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
@@ -87,15 +86,17 @@ impl U8Air {
         self.multiplicities[range_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
     }
 
-    pub fn update_inputs(&self, values: Vec<u32>) {
+    pub fn update_inputs(&self, start: u8, multiplicities: Vec<u32>) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
 
-        for (value, multiplicity) in values.iter().enumerate() {
+        for (offset, multiplicity) in multiplicities.iter().enumerate() {
             if *multiplicity == 0 {
                 continue;
             }
+
+            let value = start as usize + offset;
 
             // Identify to which sub-range the value belongs
             let range_idx = value >> self.shift;
