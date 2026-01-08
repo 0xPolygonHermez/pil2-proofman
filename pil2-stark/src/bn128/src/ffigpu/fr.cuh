@@ -32,6 +32,10 @@ __device__ __forceinline__ BN128GPUScalarField::Element BN128GPUScalarField::zer
     r.v[1] = 0;
     r.v[2] = 0;
     r.v[3] = 0;
+    r.v[4] = 0;
+    r.v[5] = 0;
+    r.v[6] = 0;
+    r.v[7] = 0;
     return r;
 }
 __device__ __forceinline__ void BN128GPUScalarField::copy(Element& r, const Element& a) {

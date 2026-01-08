@@ -20,14 +20,14 @@ include CudaArch.mk
 # ----------------------
 # Compiler Flags
 # ----------------------
-CUDA_SRC_DIRS  := $(SRC_DIR)/ffigpu ./tests $(SRC_DIR)/ffiasm $(SRC_DIR)/poseidon2
+CUDA_SRC_DIRS  := $(SRC_DIR)/ffigpu ./tests $(SRC_DIR)/ffiasm $(SRC_DIR)/poseidon2 $(SRC_DIR)/../../utils
 CUDA_INC_FLAGS := $(addprefix -I,$(CUDA_SRC_DIRS))
 NVCCFLAGS      := -D__USE_CUDA__ -I./../../external/sppark/ff $(CUDA_INC_FLAGS) \
                   -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 \
                   -arch=$(CUDA_ARCH)
 
 CXXFLAGS := -std=c++17 -Wall -O3 -fPIC -D__USE_ASSEMBLY__
-CPPFLAGS := -I$(SRC_DIR) -I$(SRC_DIR)/ffiasm
+CPPFLAGS := -I$(SRC_DIR) -I$(SRC_DIR)/ffiasm -I./../utils
 ASFLAGS  := -f elf64 -g -F dwarf
 
 # Fix linker warning about executable stack
