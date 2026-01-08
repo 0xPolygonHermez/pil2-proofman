@@ -19,7 +19,11 @@ extern __device__ __constant__ uint32_t ALT_BN128_m0;
 
 namespace alt_bn128 {
 struct fr_t {
-    uint32_t limbs[8];
+    uint32_t even[8];
     __host__ __device__ inline fr_t() {}
+
+    uint32_t& operator[](size_t idx) {
+        return even[idx];
+    }
 };
 }

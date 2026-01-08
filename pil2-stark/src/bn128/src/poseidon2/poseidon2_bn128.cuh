@@ -4,7 +4,7 @@
 #include <vector>
 #include <string>
 #include "bn128.cuh"
-#include "poseidon2_bn128_constants.hpp"
+#include "poseidon2_bn128_constants.cuh"
 #include <cassert>
 using namespace std;
 
@@ -12,7 +12,6 @@ class Poseidon2BN128GPU
 {
 public:
   typedef BN128GPUScalarField::Element FrElement;
-  int loaded_constants_t = -1;
   BN128GPUScalarField field;
 
   __device__ __forceinline__ void pow5(FrElement &x);
@@ -22,8 +21,10 @@ public:
   __device__ __forceinline__ void matmul_m4(FrElement *x);
   __device__ __forceinline__ void matmul_external(FrElement *x, int t);
 
-  void hash(vector<FrElement> &state);
-  void hash(vector<FrElement> &state, FrElement *result);
+  void hash(FrElement * d_state, int t);
+  
+  // Must be called once before using GPU hash
+  static void initGPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
 };
 
 __device__ void Poseidon2BN128GPU::pow5(FrElement &x)

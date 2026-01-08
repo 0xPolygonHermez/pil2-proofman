@@ -52,47 +52,104 @@ TEST(BN128, add)
     EXPECT_EQ(h_ok, 1);
 }
 
-/*TEST(BN128_POSEIDON2_TEST, hash) {
-  Poseidon2BN128 p;
-  RawFrP field;
-  size_t t = 2;
-  vector<RawFrP::Element> state(t);
-  for (size_t i = 0; i < t; i++)
-  {
-    field.fromUI(state[i], (unsigned long int)(i));
-  }
-  p.hash(state);        
-  ASSERT_EQ(field.toString(state[0],16), 
-  "1d01e56f49579cec72319e145f06f6177f6c5253206e78c2689781452a31878b");
-  ASSERT_EQ(field.toString(state[1],16), 
-  "d189ec589c41b8cffa88cfc523618a055abe8192c70f75aa72fc514560f6c61");
-  
-  state.resize(16);
-  for (size_t i = 0; i < 16; i++)
-  {
-    field.fromUI(state[i], (unsigned long int)(i));
-  }
-  p.hash(state);
-  ASSERT_EQ(field.toString(state[0],16), 
-  "fc2e6b758f493969e1d860f9a44ee3bdffdf796f382aa4ffb16fa4e9bcc333f");
-  ASSERT_EQ(field.toString(state[15],16), 
-  "e2ceb1f8fde5f80be1f41bd239fabdc2f6133a6a98920a55c42891c3a925152"); 
-}*/
+// Forward declarations for GPU kernels
+__global__ void init_state_kernel(BN128GPUScalarField::Element* state, int t);
+__global__ void from_montgomery_kernel(BN128GPUScalarField::Element* state, int t);
 
-TEST(BN128_POSEIDON2_TEST, hash_gpu) {
-  Poseidon2BN128GPU p;
-  BN128GPUScalarField field;
-  /*size_t t = 2;
-  vector<BN128GPUScalarField::Element> state(t);
-  for (size_t i = 0; i < t; i++)
-  {
-    field.fromUI(state[i], (unsigned long int)(i));
-  }
-  p.hash(state);        
-  ASSERT_EQ(field.toString(state[0],16), 
-  "1d01e56f49579cec72319e145f06f6177f6c5253206e78c2689781452a31878b");
-  ASSERT_EQ(field.toString(state[1],16), 
-  "d189ec589c41b8cffa88cfc523618a055abe8192c70f75aa72fc514560f6c61");*/
+#if defined(__CUDACC__) && defined(__CUDA_ARCH__)
+// GPU kernel to initialize state values: state[i] = i (in Montgomery form)
+__global__ void init_state_kernel(BN128GPUScalarField::Element* state, int t) {
+    for (int i = 0; i < t; i++) {
+        // Initialize to i
+        state[i].v[0] = i;
+        for (int j = 1; j < 8; j++) {
+            state[i].v[j] = 0;
+        }
+        state[i].v.to(); // Convert to Montgomery form
+    }
+}
+
+// GPU kernel to convert state from Montgomery form and copy to result buffer
+__global__ void from_montgomery_kernel(BN128GPUScalarField::Element* state, int t) {
+    for (int i = 0; i < t; i++) {
+        state[i].v.from();
+    }
+}
+
+#endif
+
+TEST(BN128_POSEIDON2_TEST, hash_gpu_t2) {
+    
+    Poseidon2BN128GPU p;
+    BN128GPUScalarField::Element* d_state = nullptr;
+    BN128GPUScalarField::Element* h_state = nullptr;
+    
+    int t = 2;
+    cudaMalloc(&d_state, t * sizeof(BN128GPUScalarField::Element));
+    h_state = new BN128GPUScalarField::Element[t];
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1); // Initialize GPU constants
+    
+    // Initialize state: state[i] = i (in Montgomery form)
+    init_state_kernel<<<1, 1>>>(d_state, t);
+    cudaDeviceSynchronize();
+    
+    // Run hash kernel
+    p.hash(d_state, t);
+    cudaDeviceSynchronize();
+    
+    // Convert from Montgomery form
+    from_montgomery_kernel<<<1, 1>>>(d_state, t);
+    cudaDeviceSynchronize();
+    
+    // Copy result to host
+    cudaMemcpy(h_state, d_state, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyDeviceToHost);
+    cudaFree(d_state);
+    
+    // Convert to hex string for comparison
+    char hex0[65], hex1[65];
+    snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
+             h_state[0].v[7], h_state[0].v[6], h_state[0].v[5], h_state[0].v[4],
+             h_state[0].v[3], h_state[0].v[2], h_state[0].v[1], h_state[0].v[0]);
+    snprintf(hex1, sizeof(hex1), "%08x%08x%08x%08x%08x%08x%08x%08x",
+             h_state[1].v[7], h_state[1].v[6], h_state[1].v[5], h_state[1].v[4],
+             h_state[1].v[3], h_state[1].v[2], h_state[1].v[1], h_state[1].v[0]);
+    delete[] h_state;
+    EXPECT_STREQ(hex0, "1d01e56f49579cec72319e145f06f6177f6c5253206e78c2689781452a31878b");
+    EXPECT_STREQ(hex1, "0d189ec589c41b8cffa88cfc523618a055abe8192c70f75aa72fc514560f6c61");
+
+    t = 16;    
+    cudaMalloc(&d_state, t * sizeof(BN128GPUScalarField::Element));
+    h_state = new BN128GPUScalarField::Element[t];
+    
+    // Initialize state: state[i] = i (in Montgomery form)
+    init_state_kernel<<<1, 1>>>(d_state, t);
+    cudaDeviceSynchronize();
+    
+    // Run hash kernel
+    p.hash(d_state, t);
+    cudaDeviceSynchronize();
+    
+    // Convert from Montgomery form
+    from_montgomery_kernel<<<1, 1>>>(d_state, t);
+    cudaDeviceSynchronize();
+    
+    // Copy result to host
+    cudaMemcpy(h_state, d_state, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyDeviceToHost);
+    cudaFree(d_state);
+    
+    // Convert to hex string for comparison
+    char hex15[65];
+    snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
+             h_state[0].v[7], h_state[0].v[6], h_state[0].v[5], h_state[0].v[4],
+             h_state[0].v[3], h_state[0].v[2], h_state[0].v[1], h_state[0].v[0]);
+    snprintf(hex15, sizeof(hex15), "%08x%08x%08x%08x%08x%08x%08x%08x",
+             h_state[15].v[7], h_state[15].v[6], h_state[15].v[5], h_state[15].v[4],
+             h_state[15].v[3], h_state[15].v[2], h_state[15].v[1], h_state[15].v[0]);
+    delete[] h_state;
+    
+    EXPECT_STREQ(hex0, "0fc2e6b758f493969e1d860f9a44ee3bdffdf796f382aa4ffb16fa4e9bcc333f");
+    EXPECT_STREQ(hex15, "0e2ceb1f8fde5f80be1f41bd239fabdc2f6133a6a98920a55c42891c3a925152");
 }
 
 int main(int argc, char **argv)
