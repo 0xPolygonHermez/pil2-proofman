@@ -529,6 +529,7 @@ dependencies = [
 name = "fields"
 version = "0.16.0"
 dependencies = [
+ "cfg-if",
  "num-bigint",
  "paste",
  "proofman-starks-lib-c",

@@ -1,6 +1,19 @@
 use crate::PrimeField64;
 use crate::Poseidon2Constants;
 
+#[cfg(all(target_os = "zkvm", target_vendor = "zisk"))]
+extern "C" {
+    fn syscall_poseidon2(state: *mut u64);
+}
+
+#[cfg(all(target_os = "zkvm", target_vendor = "zisk"))]
+#[inline]
+fn poseidon2_hash_syscall(state: &mut [u64; 16]) {
+    unsafe {
+        syscall_poseidon2(state.as_mut_ptr());
+    }
+}
+
 pub fn matmul_m4<F: PrimeField64>(input: &mut [F]) {
     let t0 = input[0] + input[1];
     let t1 = input[2] + input[3];
@@ -66,6 +79,24 @@ pub fn add<F: PrimeField64, const W: usize>(input: &[F; W]) -> F {
 }
 
 pub fn poseidon2_hash<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize>(input: &[F; W]) -> [F; W] {
+    cfg_if::cfg_if! {
+        if #[cfg(all(target_os = "zkvm", target_vendor = "zisk"))] {
+            if W == 16 {
+                let mut state_u64 = [0u64; 16];
+                for i in 0..16 {
+                    state_u64[i] = input[i].as_canonical_u64();
+                }
+                poseidon2_hash_syscall(&mut state_u64);
+                let mut result = [F::ZERO; W];
+                for i in 0..16 {
+                    result[i] = F::from_u64(state_u64[i]);
+                }
+                return result;
+            }
+        }
+    }
+    
+    // Native implementation
     let mut state = *input;
 
     matmul_external::<F, W>(&mut state);
