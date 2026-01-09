@@ -45,10 +45,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Component1<F> {
                 let row = Table1::calculate_table_row(val);
 
                 // Update the virtual table rows
-                self.std_lib.inc_virtual_row(id, row, 1);
-
-                // TODO?
-                // self.std_lib.inc_virtual_row_one(id, row);
+                self.std_lib.inc_virtual_row_one(id, row);
             }
 
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));

@@ -391,7 +391,123 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         }
     }
 
-    pub fn assign_values_ranged(&self, id: usize, start: Option<i64>, multiplicities: Vec<u32>) {
+    pub fn assign_values(&self, id: usize, values: &[i64], multiplicities: &[u64]) {
+        // Find the range with the given id
+        let range_item = &self.ranges[id];
+
+        // Check that the value is contained within the range
+        #[cfg(debug_assertions)]
+        {
+            assert_eq!(values.len(), multiplicities.len(), "Rows and multiplicities must have the same length");
+
+            for &value in values {
+                Self::check_value_in_range(range_item, value);
+            }
+        }
+
+        // Update the multiplicity of the corresponding AIR
+        match range_item.rc_type {
+            StdRangeType::U8Air => {
+                // Here, we can safely assume that value ∊ [0,2⁸-1]
+                // Therefore, we can safely cast value to u8
+                let vals: Vec<u8> = values.iter().map(|&v| v as u8).collect();
+                if range_item.is_virtual {
+                    // Get the rows corresponding to the values
+                    let rows = U8Air::get_global_rows(&vals);
+
+                    // Increment the virtual row
+                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, multiplicities);
+                } else {
+                    self.u8air.as_ref().unwrap().update_inputs(&vals, multiplicities);
+                }
+            }
+            StdRangeType::U16Air => {
+                // Here, we can safely assume that value ∊ [0,2¹⁶-1]
+                // Therefore, we can safely cast value to u16
+                let vals: Vec<u16> = values.iter().map(|&v| v as u16).collect();
+                if range_item.is_virtual {
+                    // Get the rows corresponding to the values
+                    let rows = U16Air::get_global_rows(&vals);
+
+                    // Increment the virtual row
+                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, multiplicities);
+                } else {
+                    self.u16air.as_ref().unwrap().update_inputs(&vals, multiplicities);
+                }
+            }
+            StdRangeType::SpecifiedRanges => {
+                if range_item.is_virtual {
+                    // Get the rows corresponding to the values
+                    let rows = SpecifiedRanges::get_global_rows(range_item.data.min, values);
+
+                    // Increment the virtual rows
+                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, multiplicities);
+                } else {
+                    self.specified_ranges_air.as_ref().unwrap().update_inputs(id, values, multiplicities);
+                }
+            }
+            StdRangeType::U8AirDouble | StdRangeType::U16AirDouble => unreachable!(), // TODO
+        }
+    }
+
+    pub fn assign_values_same_mul(&self, id: usize, values: &[i64], multiplicity: u64) {
+        // Find the range with the given id
+        let range_item = &self.ranges[id];
+
+        // Check that all values are contained within the range
+        #[cfg(debug_assertions)]
+        {
+            for &value in values {
+                Self::check_value_in_range(range_item, value);
+            }
+        }
+
+        // Update the multiplicity of the corresponding AIR
+        match range_item.rc_type {
+            StdRangeType::U8Air => {
+                // Here, we can safely assume that value ∊ [0,2⁸-1]
+                // Therefore, we can safely cast value to u8
+                let vals: Vec<u8> = values.iter().map(|&v| v as u8).collect();
+                if range_item.is_virtual {
+                    // Get the rows corresponding to the values
+                    let rows = U8Air::get_global_rows(&vals);
+
+                    // Increment the virtual row
+                    self.virtual_table.inc_virtual_rows_same_mul(range_item.virtual_id, &rows, multiplicity);
+                } else {
+                    self.u8air.as_ref().unwrap().update_inputs_same_mul(&vals, multiplicity);
+                }
+            }
+            StdRangeType::U16Air => {
+                // Here, we can safely assume that value ∊ [0,2¹⁶-1]
+                // Therefore, we can safely cast value to u16
+                let vals: Vec<u16> = values.iter().map(|&v| v as u16).collect();
+                if range_item.is_virtual {
+                    // Get the rows corresponding to the values
+                    let rows = U16Air::get_global_rows(&vals);
+
+                    // Increment the virtual row
+                    self.virtual_table.inc_virtual_rows_same_mul(range_item.virtual_id, &rows, multiplicity);
+                } else {
+                    self.u16air.as_ref().unwrap().update_inputs_same_mul(&vals, multiplicity);
+                }
+            }
+            StdRangeType::SpecifiedRanges => {
+                if range_item.is_virtual {
+                    // Get the rows corresponding to the values
+                    let rows = SpecifiedRanges::get_global_rows(range_item.data.min, values);
+
+                    // Increment the virtual rows
+                    self.virtual_table.inc_virtual_rows_same_mul(range_item.virtual_id, &rows, multiplicity);
+                } else {
+                    self.specified_ranges_air.as_ref().unwrap().update_inputs_same_mul(id, values, multiplicity);
+                }
+            }
+            StdRangeType::U8AirDouble | StdRangeType::U16AirDouble => unreachable!(), // TODO
+        }
+    }
+
+    pub fn assign_values_ranged(&self, id: usize, start: Option<i64>, multiplicities: &[u64]) {
         // Find the range with the given id
         let range_item = &self.ranges[id];
 
@@ -430,9 +546,9 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let rows = U8Air::get_global_rows(&vals);
 
                     // Increment the virtual rows
-                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, &multiplicities);
+                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, multiplicities);
                 } else {
-                    self.u8air.as_ref().unwrap().update_inputs(start as u8, multiplicities);
+                    self.u8air.as_ref().unwrap().update_inputs_ranged(start as u8, multiplicities);
                 }
             }
             StdRangeType::U16Air => {
@@ -444,9 +560,9 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let rows = U16Air::get_global_rows(&vals);
 
                     // Increment the virtual rows
-                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, &multiplicities);
+                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, multiplicities);
                 } else {
-                    self.u16air.as_ref().unwrap().update_inputs(start as u16, multiplicities);
+                    self.u16air.as_ref().unwrap().update_inputs_ranged(start as u16, multiplicities);
                 }
             }
             StdRangeType::SpecifiedRanges => {
@@ -456,12 +572,12 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                     let rows = SpecifiedRanges::get_global_rows(range_item.data.min, &vals);
 
                     // Increment the virtual rows
-                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, &multiplicities);
+                    self.virtual_table.inc_virtual_rows(range_item.virtual_id, &rows, multiplicities);
                 } else {
-                    self.specified_ranges_air.as_ref().unwrap().update_inputs(id, start, multiplicities);
+                    self.specified_ranges_air.as_ref().unwrap().update_inputs_ranged(id, start, multiplicities);
                 }
             }
-            StdRangeType::U8AirDouble | StdRangeType::U16AirDouble => unreachable!(),
+            StdRangeType::U8AirDouble | StdRangeType::U16AirDouble => unreachable!(), // TODO
         }
     }
 

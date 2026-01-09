@@ -119,56 +119,57 @@ impl SpecifiedRanges {
         values.iter().map(|&v| Self::get_global_row(range_min, v)).collect()
     }
 
-    pub fn update_input(&self, id: usize, value: i64, multiplicity: u64) {
+    /// Core update function: Updates multiplicities for value/multiplicity pairs
+    #[inline]
+    fn update(&self, base_offset: usize, min_global: i64, iter: impl Iterator<Item = (i64, u64)>) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
 
-        // Get the ranges for the given id
-        let ranges = &self.ranges[id];
-        let min_global = ranges.min;
-        let base_offset = ranges.mul_idx;
-
-        // Identify to which sub-range the value belongs
-        let offset = (value - min_global) as usize;
-        let range_idx = offset >> self.shift;
-
-        // Get the row index
-        let row_idx = offset & self.mask;
-
-        // Update the multiplicity
-        self.multiplicities[base_offset + range_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
-    }
-
-    pub fn update_inputs(&self, id: usize, start: i64, multiplicities: Vec<u32>) {
-        if self.calculated.load(Ordering::Relaxed) {
-            return;
-        }
-
-        // Get the ranges for the given id
-        let ranges = &self.ranges[id];
-        let min_global = ranges.min;
-        let base_offset = ranges.mul_idx;
-
-        let start_value = start - min_global;
-
-        // Identify to which sub-range the value belongs
-        for (offset, multiplicity) in multiplicities.iter().enumerate() {
-            if *multiplicity == 0 {
+        for (value, multiplicity) in iter {
+            if multiplicity == 0 {
                 continue;
             }
 
-            let value = start_value as usize + offset;
-
             // Identify to which sub-range the value belongs
-            let range_idx = value >> self.shift;
+            let offset = (value - min_global) as usize;
+            let range_idx = offset >> self.shift;
 
             // Get the row index
-            let row_idx = value & self.mask;
+            let row_idx = offset & self.mask;
 
             // Update the multiplicity
-            self.multiplicities[base_offset + range_idx][row_idx].fetch_add(*multiplicity as u64, Ordering::Relaxed);
+            self.multiplicities[base_offset + range_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
         }
+    }
+
+    /// Update a single value with a multiplicity
+    pub fn update_input(&self, id: usize, value: i64, multiplicity: u64) {
+        let range = &self.ranges[id];
+        self.update(range.mul_idx, range.min, std::iter::once((value, multiplicity)));
+    }
+
+    /// Update multiple values with corresponding multiplicities
+    pub fn update_inputs(&self, id: usize, values: &[i64], multiplicities: &[u64]) {
+        debug_assert_eq!(values.len(), multiplicities.len());
+        let range = &self.ranges[id];
+        self.update(range.mul_idx, range.min, values.iter().copied().zip(multiplicities.iter().copied()));
+    }
+
+    /// Update multiple values with the same multiplicity
+    pub fn update_inputs_same_mul(&self, id: usize, values: &[i64], multiplicity: u64) {
+        let range = &self.ranges[id];
+        self.update(range.mul_idx, range.min, values.iter().copied().map(|v| (v, multiplicity)));
+    }
+
+    /// Update a range of values [start, start + len) with corresponding multiplicities
+    pub fn update_inputs_ranged(&self, id: usize, start: i64, multiplicities: &[u64]) {
+        let range = &self.ranges[id];
+        self.update(
+            range.mul_idx,
+            range.min,
+            multiplicities.iter().enumerate().map(|(offset, &mul)| (start + offset as i64, mul)),
+        );
     }
 
     pub fn airgroup_id(&self) -> usize {
