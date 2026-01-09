@@ -1,24 +1,23 @@
-use std::{
-    collections::HashMap,
-    hash::{DefaultHasher, Hasher, Hash},
-};
+use std::hash::{Hash, Hasher};
+
+use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
+
+use std::sync::RwLock;
 
 use colored::Colorize;
 use fields::PrimeField64;
-use num_bigint::BigUint;
-use num_traits::Zero;
-use proofman_common::{ProofCtx, ProofmanResult};
+use proofman_common::{ProofCtx, ProofmanError, ProofmanResult};
 use proofman_hints::HintFieldOutput;
 
 use crate::normalize_vals;
 
-pub type DebugDataFast<F> = HashMap<F, SharedDataFast>; // opid -> sharedDataFast
+pub type DebugDataFast<F> = FxHashMap<F, SharedDataFast>; // opid -> sharedDataFast
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct SharedDataFast {
-    pub global_values: Vec<BigUint>,
-    pub num_proves: BigUint,
-    pub num_assumes: BigUint,
+    pub global_values: FxHashSet<u64>, // store hashes for deduplication
+    pub num_proves: u128,              // accumulation
+    pub num_assumes: u128,             // accumulation
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -30,70 +29,67 @@ pub fn update_debug_data_fast<F: PrimeField64>(
     times: F,
     is_global: bool,
 ) -> ProofmanResult<()> {
-    let bus_opid_times = debug_data_fast.entry(opid).or_insert_with(|| SharedDataFast {
-        global_values: Vec::new(),
-        num_proves: BigUint::zero(),
-        num_assumes: BigUint::zero(),
-    });
+    let bus = debug_data_fast.entry(opid).or_default();
 
-    // Normalize the vector of values
+    let mut hasher = FxHasher::default();
+
     let norm_vals = normalize_vals(&vals);
 
     let mut values = Vec::new();
-    for value in norm_vals.iter() {
+    for value in &norm_vals {
         match value {
             HintFieldOutput::Field(f) => values.push(*f),
-            HintFieldOutput::FieldExtended(ef) => {
-                values.push(ef.value[0]);
-                values.push(ef.value[1]);
-                values.push(ef.value[2]);
-            }
+            HintFieldOutput::FieldExtended(ef) => values.extend_from_slice(&ef.value),
         }
     }
 
-    // Create hash of all values
-    let mut hasher = DefaultHasher::new();
     values.hash(&mut hasher);
-    let hash_value = BigUint::from(hasher.finish());
+    let hash_value = hasher.finish();
 
-    // If the value is global but it was already processed, skip it
-    if is_global {
-        if bus_opid_times.global_values.contains(&hash_value) {
-            return Ok(());
-        }
-        bus_opid_times.global_values.push(hash_value.clone());
+    if is_global && !bus.global_values.insert(hash_value) {
+        return Ok(());
     }
 
-    // Update the number of proves or assumes
+    // Compute contribution safely
+    let contribution = (hash_value as u128)
+        .checked_mul(times.as_canonical_u64() as u128)
+        .ok_or_else(|| ProofmanError::ProofmanError("Overflow in update_debug_data_fast".to_string()))?;
+
     if is_proves {
-        bus_opid_times.num_proves += hash_value * times.as_canonical_biguint();
+        bus.num_proves = bus
+            .num_proves
+            .checked_add(contribution)
+            .ok_or_else(|| ProofmanError::ProofmanError("Overflow in num_proves".to_string()))?;
     } else {
-        bus_opid_times.num_assumes += hash_value * times.as_canonical_biguint();
+        bus.num_assumes = bus
+            .num_assumes
+            .checked_add(contribution)
+            .ok_or_else(|| ProofmanError::ProofmanError("Overflow in num_assumes".to_string()))?;
     }
+
     Ok(())
 }
 
-pub fn check_invalid_opids<F: PrimeField64>(_pctx: &ProofCtx<F>, debugs_data_fasts: &mut [DebugDataFast<F>]) -> Vec<F> {
-    let mut debug_data_fast = HashMap::new();
+pub fn check_invalid_opids<F: PrimeField64>(
+    _pctx: &ProofCtx<F>,
+    debugs_data_fasts: &[RwLock<DebugDataFast<F>>],
+) -> Vec<F> {
+    let mut merged: FxHashMap<F, SharedDataFast> = FxHashMap::default();
 
     for map in debugs_data_fasts {
+        let map = map.read().unwrap();
         for (opid, bus) in map.iter() {
-            if debug_data_fast.contains_key(opid) {
-                let bus_fast: &mut SharedDataFast = debug_data_fast.get_mut(opid).unwrap();
-                bus_fast.num_proves += bus.num_proves.clone();
-                bus_fast.num_assumes += bus.num_assumes.clone();
-            } else {
-                debug_data_fast.insert(*opid, bus.clone());
-            }
+            let entry = merged.entry(*opid).or_default();
+            entry.num_proves = entry.num_proves.checked_add(bus.num_proves).expect("Overflow when merging num_proves");
+            entry.num_assumes =
+                entry.num_assumes.checked_add(bus.num_assumes).expect("Overflow when merging num_assumes");
+            entry.global_values.extend(&bus.global_values);
         }
     }
 
-    // TODO: SINCRONIZATION IN DISTRIBUTED MODE
-
     let mut invalid_opids = Vec::new();
 
-    // Check if there are any invalid opids
-    for (opid, bus) in debug_data_fast.iter_mut() {
+    for (opid, bus) in &merged {
         if bus.num_proves != bus.num_assumes {
             invalid_opids.push(*opid);
         }
@@ -102,7 +98,7 @@ pub fn check_invalid_opids<F: PrimeField64>(_pctx: &ProofCtx<F>, debugs_data_fas
     if !invalid_opids.is_empty() {
         tracing::error!(
             "··· {}",
-            format!("\u{2717} The following opids does not match {invalid_opids:?}").bright_red().bold()
+            format!("\u{2717} The following opids do not match {invalid_opids:?}").bright_red().bold()
         );
     } else {
         tracing::info!("··· {}", "\u{2713} All bus values match.".bright_green().bold());

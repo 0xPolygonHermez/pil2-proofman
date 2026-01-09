@@ -18,6 +18,7 @@ fields.workspace = true
 rayon.workspace = true
 witness.workspace = true
 colored.workspace = true
+rustc-hash.workspace = true
 
 [features]
 default = []
