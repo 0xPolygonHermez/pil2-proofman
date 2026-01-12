@@ -113,11 +113,6 @@ impl U8Air {
         self.update(values.iter().copied().map(|v| (v, multiplicity)));
     }
 
-    /// Update a range of values [start, start + len) with corresponding multiplicities
-    pub fn update_inputs_ranged(&self, start: u8, multiplicities: &[u64]) {
-        self.update(multiplicities.iter().enumerate().map(|(offset, &mul)| (start.wrapping_add(offset as u8), mul)));
-    }
-
     pub fn airgroup_id(&self) -> usize {
         self.airgroup_id
     }

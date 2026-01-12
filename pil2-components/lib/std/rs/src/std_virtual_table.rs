@@ -160,9 +160,15 @@ impl<F: PrimeField64> StdVirtualTable<F> {
         self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_rows_same_mul(uid_idx, rows, multiplicity);
     }
 
-    pub fn inc_virtual_rows_ranged(&self, global_id: usize, multiplicities: &[u64]) {
+    pub fn inc_virtual_rows_ranged(&self, global_id: usize, start: Option<u64>, multiplicities: &[u64]) {
+        // If start is None, set it to 0
+        let start = start.unwrap_or(0);
+
+        // Generate the rows
+        let rows: Vec<u64> = (0..multiplicities.len()).map(|v| (start as usize + v) as u64).collect();
+
         let (air_idx, uid_idx) = self.indices_by_global_id[global_id];
-        self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_rows_ranged(uid_idx, multiplicities);
+        self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_rows(uid_idx, &rows, multiplicities);
     }
 }
 
@@ -227,11 +233,6 @@ impl VirtualTableAir {
     pub fn inc_virtual_rows_same_mul(&self, id: usize, rows: &[u64], multiplicity: u64) {
         let table_offset = self.table_ids[id].1;
         self.update(table_offset, rows.iter().copied().map(|r| (r, multiplicity)));
-    }
-
-    pub fn inc_virtual_rows_ranged(&self, id: usize, multiplicities: &[u64]) {
-        let table_offset = self.table_ids[id].1;
-        self.update(table_offset, multiplicities.iter().enumerate().map(|(offset, &mul)| (offset as u64, mul)));
     }
 }
 

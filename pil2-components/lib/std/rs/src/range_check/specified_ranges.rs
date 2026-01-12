@@ -162,16 +162,6 @@ impl SpecifiedRanges {
         self.update(range.mul_idx, range.min, values.iter().copied().map(|v| (v, multiplicity)));
     }
 
-    /// Update a range of values [start, start + len) with corresponding multiplicities
-    pub fn update_inputs_ranged(&self, id: usize, start: i64, multiplicities: &[u64]) {
-        let range = &self.ranges[id];
-        self.update(
-            range.mul_idx,
-            range.min,
-            multiplicities.iter().enumerate().map(|(offset, &mul)| (start + offset as i64, mul)),
-        );
-    }
-
     pub fn airgroup_id(&self) -> usize {
         self.airgroup_id
     }

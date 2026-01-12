@@ -61,17 +61,12 @@ impl<F: PrimeField64> Std<F> {
         Ok(Arc::new(Self { mode, prod_bus, sum_bus, range_check, virtual_table }))
     }
 
+    // ==================== Range Check API ====================
+
     /// Gets the range id for a given range subject to the range check
     pub fn get_range_id<V: RCValue>(&self, min: V, max: V, predefined: Option<bool>) -> ProofmanResult<usize> {
         self.range_check.get_range_id(min.to_i64(), max.to_i64(), predefined)
     }
-
-    /// Gets the virtual table ID for a given ID
-    pub fn get_virtual_table_id(&self, id: usize) -> ProofmanResult<usize> {
-        self.virtual_table.get_global_id(id)
-    }
-
-    // ==================== Range Check API ====================
 
     /// Increments the multiplicity `mul` of a given value `val` in the range check with id `id`
     pub fn range_check<V: RCValue, M: RCMultiplicity>(&self, id: usize, val: V, mul: M) {
@@ -112,6 +107,11 @@ impl<F: PrimeField64> Std<F> {
 
     // ==================== Virtual Table API ====================
 
+    /// Gets the virtual table ID for a given ID
+    pub fn get_virtual_table_id(&self, id: usize) -> ProofmanResult<usize> {
+        self.virtual_table.get_global_id(id)
+    }
+
     pub fn inc_virtual_row<M: RCMultiplicity>(&self, id: usize, row: M, mul: M) {
         self.virtual_table.inc_virtual_row(id, row.to_u64(), mul.to_u64());
     }
@@ -136,8 +136,9 @@ impl<F: PrimeField64> Std<F> {
         self.virtual_table.inc_virtual_rows_same_mul(id, &rows, mul.to_u64());
     }
 
-    pub fn inc_virtual_rows_ranged<M: RCMultiplicity>(&self, id: usize, muls: &[M]) {
+    pub fn inc_virtual_rows_ranged<M: RCMultiplicity>(&self, id: usize, start: Option<u64>, muls: &[M]) {
+        let start = start.map(|s| s.to_u64());
         let muls: Vec<u64> = muls.iter().map(|&m| m.to_u64()).collect();
-        self.virtual_table.inc_virtual_rows_ranged(id, &muls);
+        self.virtual_table.inc_virtual_rows_ranged(id, start, &muls);
     }
 }
