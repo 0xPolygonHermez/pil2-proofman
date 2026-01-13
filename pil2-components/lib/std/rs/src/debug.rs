@@ -397,13 +397,13 @@ pub fn print_debug_info<F: PrimeField64>(
     fn parse_and_format_values(val_str: &str) -> (String, String) {
         let mut hex_parts = Vec::new();
         let mut bin_parts = Vec::new();
-        
+
         // Check if it's an extended field (starts with '[')
         if val_str.starts_with('[') && val_str.ends_with(']') {
             // Extended field format: "[val1,val2,...]"
-            let inner = &val_str[1..val_str.len()-1];
+            let inner = &val_str[1..val_str.len() - 1];
             let parts: Vec<&str> = inner.split(',').collect();
-            
+
             for part in parts {
                 if let Ok(num) = part.trim().parse::<u64>() {
                     hex_parts.push(format!("0x{:x}", num));
@@ -414,12 +414,12 @@ pub fn print_debug_info<F: PrimeField64>(
                     bin_parts.push(part.to_string());
                 }
             }
-            
+
             (format!("[{}]", hex_parts.join(",")), format!("[{}]", bin_parts.join(",")))
         } else {
             // Simple format: "val1,val2,..."
             let parts: Vec<&str> = val_str.split(',').collect();
-            
+
             for part in parts {
                 if let Ok(num) = part.trim().parse::<u64>() {
                     hex_parts.push(format!("0x{:x}", num));
@@ -430,7 +430,7 @@ pub fn print_debug_info<F: PrimeField64>(
                     bin_parts.push(part.to_string());
                 }
             }
-            
+
             (hex_parts.join(","), bin_parts.join(","))
         }
     }
@@ -453,27 +453,12 @@ pub fn print_debug_info<F: PrimeField64>(
         let num_str = if num != 1 { "times" } else { "time" };
 
         // Parse and format values in different bases
-        let (vals_hex, vals_bin) = parse_and_format_values(val);
+        let (vals_hex, _) = parse_and_format_values(val);
 
         writeln!(output, "\t    ==================================================").expect("Write error");
-        writeln!(
-            output,
-            "\t    • Value (decimal): [{}]",
-            val
-        )
-        .expect("Write error");
-        writeln!(
-            output,
-            "\t      Value (hex):     [{}]",
-            vals_hex
-        )
-        .expect("Write error");
-        writeln!(
-            output,
-            "\t      Appears {} {} across the following:",
-            num, num_str
-        )
-        .expect("Write error");
+        writeln!(output, "\t    • Value (decimal): [{}]", val).expect("Write error");
+        writeln!(output, "\t      Value (hex):     [{}]", vals_hex).expect("Write error");
+        writeln!(output, "\t      Appears {} {} across the following:", num, num_str).expect("Write error");
 
         // Print global data first (if it exists)
         if let Some(bus_info) = bus_data {
