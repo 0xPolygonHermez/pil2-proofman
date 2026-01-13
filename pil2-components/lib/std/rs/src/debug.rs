@@ -82,19 +82,19 @@ pub struct LocalKey(u64);
 impl LocalKey {
     fn new(airgroup_id: u8, air_id: u8, instance_id: u16, hint_id: u16, is_prod: bool) -> Self {
         let prod_flag = if is_prod { 1u64 } else { 0u64 };
-        let val = ((airgroup_id as u64) << 40)
-            | ((air_id as u64) << 32)
-            | ((instance_id as u64) << 16)
-            | ((hint_id as u64) << 1)
+        let val = ((airgroup_id as u64) << 56)
+            | ((air_id as u64) << 48)
+            | ((instance_id as u64) << 32)
+            | ((hint_id as u64) << 16)
             | prod_flag;
         LocalKey(val)
     }
 
     fn unpack(self) -> (u8, u8, u16, u16, bool) {
-        let airgroup_id = (self.0 >> 40) as u8;
-        let air_id = ((self.0 >> 32) & 0xFF) as u8;
-        let instance_id = ((self.0 >> 16) & 0xFFFF) as u16;
-        let hint_id = ((self.0 >> 1) & 0xFFFF) as u16;
+        let airgroup_id = (self.0 >> 56) as u8;
+        let air_id = ((self.0 >> 48) & 0xFF) as u8;
+        let instance_id = ((self.0 >> 32) & 0xFFFF) as u16;
+        let hint_id = ((self.0 >> 16) & 0xFFFF) as u16;
         let is_prod = (self.0 & 1) != 0;
         (airgroup_id, air_id, instance_id, hint_id, is_prod)
     }
@@ -174,6 +174,7 @@ pub fn update_local_debug_data<F: PrimeField64>(
     is_proves: bool,
     times: u64,
     is_prod: bool,
+    store_row_info: bool,
 ) -> ProofmanResult<()> {
     let bus_val = debug_data.entry(opid).or_default().entry(hash).or_insert_with(|| BusValue {
         shared_data: SharedData {
@@ -189,21 +190,25 @@ pub fn update_local_debug_data<F: PrimeField64>(
         bus_val.shared_data.num_assumes += times;
     }
 
-    // let key = LocalKey::new(airgroup_id as u8, air_id as u8, instance_id as u16, hint_id as u16, is_prod);
+    if store_row_info {
+        let key = LocalKey::new(airgroup_id as u8, air_id as u8, instance_id as u16, hint_id as u16, is_prod);
 
-    // let bus_info_opid = debug_data_info.entry(opid).or_default();
-    // let bus_info_val = bus_info_opid
-    //     .entry(hash)
-    //     .or_insert_with(|| BusValueInfo { local_data: FxHashMap::default(), global_data: None });
+        let bus_info_opid = debug_data_info.entry(opid).or_default();
+        let bus_info_val = bus_info_opid
+            .entry(hash)
+            .or_insert_with(|| BusValueInfo { local_data: FxHashMap::default(), global_data: None });
 
-    // let local =
-    //     bus_info_val.local_data.entry(key).or_insert_with(|| LocalBusData { row_proves: vec![], row_assumes: vec![] });
+        let local = bus_info_val
+            .local_data
+            .entry(key)
+            .or_insert_with(|| LocalBusData { row_proves: vec![], row_assumes: vec![] });
 
-    // if is_proves {
-    //     local.row_proves.push(row);
-    // } else {
-    //     local.row_assumes.push(row);
-    // }
+        if is_proves {
+            local.row_proves.push(row);
+        } else {
+            local.row_assumes.push(row);
+        }
+    }
 
     Ok(())
 }
@@ -224,7 +229,15 @@ pub fn update_debug_data<F: PrimeField64>(
     times: u64,
     is_global: bool,
     is_prod: bool,
+    store_row_info_: bool,
+    debug_hashes: &[u64],
 ) -> ProofmanResult<()> {
+    if !debug_hashes.is_empty() && !debug_hashes.contains(&hash) {
+        return Ok(());
+    }
+
+    let store_row_info = store_row_info_ || !debug_hashes.is_empty();
+
     if is_global {
         update_global_debug_data(
             debug_data,
@@ -253,6 +266,7 @@ pub fn update_debug_data<F: PrimeField64>(
             is_proves,
             times,
             is_prod,
+            store_row_info,
         )
     }
 }
@@ -293,7 +307,7 @@ pub fn print_debug_info<F: PrimeField64>(
     // Process mismatched opids serially for ordered output, consuming entries as we go
     for opid in mismatched_opids {
         let bus = debug_data.remove(&opid).unwrap();
-        let bus_info = debug_data_info.remove(&opid).unwrap();
+        let bus_info = debug_data_info.remove(&opid);
 
         if !there_are_errors {
             // Print to a file if requested
@@ -349,7 +363,7 @@ pub fn print_debug_info<F: PrimeField64>(
                 break;
             }
             let shared_data = &data.shared_data;
-            let bus_data = bus_info.get(val);
+            let bus_data = bus_info.as_ref().and_then(|info| info.get(val));
             print_diffs(pctx, sctx, max_values_to_print, shared_data, bus_data, false, &mut output)?;
         }
 
@@ -369,12 +383,55 @@ pub fn print_debug_info<F: PrimeField64>(
             }
 
             let shared_data = &data.shared_data;
-            let bus_data = bus_info.get(val);
+            let bus_data = bus_info.as_ref().and_then(|info| info.get(val));
             print_diffs(pctx, sctx, max_values_to_print, shared_data, bus_data, true, &mut output)?;
         }
 
         if len_overproven > 0 {
             writeln!(output).expect("Write error");
+        }
+    }
+
+    /// Parses decimal value string and formats as hexadecimal and binary
+    /// Handles both simple values "1,2,3" and extended field format "[1,2,3]"
+    fn parse_and_format_values(val_str: &str) -> (String, String) {
+        let mut hex_parts = Vec::new();
+        let mut bin_parts = Vec::new();
+        
+        // Check if it's an extended field (starts with '[')
+        if val_str.starts_with('[') && val_str.ends_with(']') {
+            // Extended field format: "[val1,val2,...]"
+            let inner = &val_str[1..val_str.len()-1];
+            let parts: Vec<&str> = inner.split(',').collect();
+            
+            for part in parts {
+                if let Ok(num) = part.trim().parse::<u64>() {
+                    hex_parts.push(format!("0x{:x}", num));
+                    bin_parts.push(format!("0b{:b}", num));
+                } else {
+                    // If parsing fails, keep the original
+                    hex_parts.push(part.to_string());
+                    bin_parts.push(part.to_string());
+                }
+            }
+            
+            (format!("[{}]", hex_parts.join(",")), format!("[{}]", bin_parts.join(",")))
+        } else {
+            // Simple format: "val1,val2,..."
+            let parts: Vec<&str> = val_str.split(',').collect();
+            
+            for part in parts {
+                if let Ok(num) = part.trim().parse::<u64>() {
+                    hex_parts.push(format!("0x{:x}", num));
+                    bin_parts.push(format!("0b{:b}", num));
+                } else {
+                    // If parsing fails, keep the original
+                    hex_parts.push(part.to_string());
+                    bin_parts.push(part.to_string());
+                }
+            }
+            
+            (hex_parts.join(","), bin_parts.join(","))
         }
     }
 
@@ -395,11 +452,32 @@ pub fn print_debug_info<F: PrimeField64>(
         let num = if proves { num_proves } else { num_assumes };
         let num_str = if num != 1 { "times" } else { "time" };
 
+        // Parse and format values in different bases
+        let (vals_hex, vals_bin) = parse_and_format_values(val);
+
         writeln!(output, "\t    ==================================================").expect("Write error");
         writeln!(
             output,
-            "\t    • Value:\n\t        {}\n\t      Appears {} {} across the following:",
-            val, num, num_str,
+            "\t    • Value (decimal): [{}]",
+            val
+        )
+        .expect("Write error");
+        writeln!(
+            output,
+            "\t      Value (hex):     [{}]",
+            vals_hex
+        )
+        .expect("Write error");
+        writeln!(
+            output,
+            "\t      Value (binary):  [{}]",
+            vals_bin
+        )
+        .expect("Write error");
+        writeln!(
+            output,
+            "\t      Appears {} {} across the following:",
+            num, num_str
         )
         .expect("Write error");
 

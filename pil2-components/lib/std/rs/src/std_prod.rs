@@ -13,7 +13,7 @@ use proofman_hints::{acc_mul_hint_fields, get_hint_ids_by_name, mul_hint_fields,
 
 use crate::{
     get_global_hint_field_constant_a_as, get_global_hint_field_constant_as, DebugData, DebugDataInfo, DebugDataFast,
-    STD_MODE_DEFAULT, STD_MODE_ONE_INSTANCE, extract_hint_fields, print_std_debug_info,
+    STD_MODE_DEFAULT, STD_MODE_ONE_INSTANCE, extract_hint_fields, print_std_debug_info, parse_debug_values_to_hashes,
 };
 
 pub struct StdProd<F: PrimeField64> {
@@ -182,6 +182,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
     fn debug(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) -> ProofmanResult<()> {
         timer_start_info!(DEBUG_MODE_PROD);
         if self.num_users > 0 {
+            let debug_hashes = parse_debug_values_to_hashes::<F>(&pctx)?;
             // Find which instances is using the std_prod
             let instances = pctx.dctx_get_instances();
             let my_instances = pctx.dctx_get_process_instances();
@@ -218,6 +219,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                         &self.debug_data_fast,
                         true,
                         true,
+                        &debug_hashes,
                     )?;
                 }
             } else {
@@ -231,6 +233,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                         &self.debug_data_fast,
                         false,
                         true,
+                        &debug_hashes,
                     )?;
                 }
             }
@@ -240,7 +243,8 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
     }
 
     fn end(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, debug_info: &DebugInfo) -> ProofmanResult<()> {
-        if debug_info.std_mode.name == ModeName::Debug || !debug_info.debug_instances.is_empty() {
+        if debug_info.std_mode.name == ModeName::Debug {
+            let debug_hashes = parse_debug_values_to_hashes::<F>(&pctx)?;
             print_std_debug_info(
                 &pctx,
                 &sctx,
@@ -249,6 +253,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                 &self.debug_data_fast,
                 debug_info,
                 true,
+                &debug_hashes,
             )?;
         }
         Ok(())

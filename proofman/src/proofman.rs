@@ -915,8 +915,9 @@ where
 
         self.wcm.end(debug_info)?;
 
-        let check_global_constraints =
-            debug_info.debug_instances.is_empty() || !debug_info.debug_global_instances.is_empty();
+        let check_global_constraints = !debug_info.skip_prover_instances
+            && debug_info.std_mode.debug_values.is_empty()
+            && (debug_info.debug_instances.is_empty() || !debug_info.debug_global_instances.is_empty());
 
         if check_global_constraints && !test_mode {
             let airgroup_values_air_instances = airgroup_values_air_instances.lock().unwrap();

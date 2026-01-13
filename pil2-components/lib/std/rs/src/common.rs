@@ -53,6 +53,91 @@ pub fn hash_vals<F: PrimeField64>(norm_vals: &[HintFieldOutput<F>]) -> u64 {
     hasher.finish()
 }
 
+/// Parse debug_values from JSON and compute their hashes for filtering
+/// Each inner Vec<String> represents one complete bus value with all field components
+/// Example: [["123"], ["1", "2", "3"]] -> two bus values, first with 1 field, second with 3 fields
+pub fn parse_debug_values_to_hashes<F: PrimeField64>(pctx: &Arc<ProofCtx<F>>) -> ProofmanResult<Vec<u64>> {
+    let debug_values = &pctx.debug_info.read().unwrap().std_mode.debug_values;
+
+    if debug_values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    println!("Parsing {} debug value sets for hashing...", debug_values.len());
+    for (i, vals) in debug_values.iter().enumerate() {
+        println!("  Set {}: {} field components: {:?}", i, vals.len(), vals);
+    }
+
+    let mut hashes = Vec::with_capacity(debug_values.len());
+
+    for values in debug_values {
+        let mut parsed_values: Vec<HintFieldOutput<F>> = Vec::with_capacity(values.len());
+
+        for val_str in values {
+            let trimmed = val_str.trim();
+
+            // Check if it's a FieldExtended format (contains brackets or commas)
+            if trimmed.contains('[') || trimmed.contains(',') {
+                // Parse as FieldExtended: "[1,2,3]" or "1,2,3"
+                let inner = trimmed.trim_start_matches('[').trim_end_matches(']');
+                let components: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
+
+                if components.len() != 3 {
+                    return Err(ProofmanError::StdError(format!(
+                        "FieldExtended must have exactly 3 components, got {}: {}",
+                        components.len(),
+                        val_str
+                    )));
+                }
+
+                let mut field_components = [F::ZERO; 3];
+                for (i, comp_str) in components.iter().enumerate() {
+                    let parsed = if comp_str.starts_with("0x") || comp_str.starts_with("0X") {
+                        u64::from_str_radix(&comp_str[2..], 16).map_err(|_| {
+                            ProofmanError::StdError(format!(
+                                "Failed to parse FieldExtended component as hex: {}",
+                                comp_str
+                            ))
+                        })?
+                    } else {
+                        comp_str.parse::<u64>().map_err(|_| {
+                            ProofmanError::StdError(format!(
+                                "Failed to parse FieldExtended component as decimal: {}",
+                                comp_str
+                            ))
+                        })?
+                    };
+                    field_components[i] = F::from_u64(parsed);
+                }
+
+                let ext_field = fields::CubicExtensionField { value: field_components };
+                parsed_values.push(HintFieldOutput::FieldExtended(ext_field));
+            } else {
+                // Parse as simple Field
+                let parsed = if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
+                    u64::from_str_radix(&trimmed[2..], 16).map_err(|_| {
+                        ProofmanError::StdError(format!("Failed to parse debug_value as hex: {}", val_str))
+                    })?
+                } else {
+                    trimmed.parse::<u64>().map_err(|_| {
+                        ProofmanError::StdError(format!("Failed to parse debug_value as decimal: {}", val_str))
+                    })?
+                };
+
+                let field_val = F::from_u64(parsed);
+                parsed_values.push(HintFieldOutput::Field(field_val));
+            }
+        }
+
+        let normalized = normalize_vals(&parsed_values);
+        let hash = hash_vals(normalized);
+        hashes.push(hash);
+    }
+
+    println!("Computed {:?} debug value hashes.", hashes);
+    Ok(hashes)
+}
+
 // Helper to extract hint fields
 pub fn get_global_hint_field<F: PrimeField64>(sctx: &SetupCtx<F>, hint_id: u64, field_name: &str) -> ProofmanResult<F> {
     match get_hint_field_constant_gc(sctx, hint_id, field_name, false)? {

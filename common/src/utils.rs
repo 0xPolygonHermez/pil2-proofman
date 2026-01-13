@@ -160,7 +160,7 @@ pub fn skip_prover_instance<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     global_idx: usize,
 ) -> ProofmanResult<(bool, Option<InstancesInfo>)> {
-    if pctx.debug_info.read().unwrap().debug_instances.is_empty() {
+    if !pctx.debug_info.read().unwrap().skip_prover_instances {
         return Ok((false, None));
     }
 
@@ -171,9 +171,9 @@ pub fn skip_prover_instance<F: PrimeField64>(
         if airgroup_id_map.is_empty() {
             return Ok((false, None));
         } else if let Some(air_id_map) = airgroup_id_map.get(&air_id) {
-            if air_id_map.is_empty() {
+            if air_id_map.1.is_empty() {
                 return Ok((false, None));
-            } else if let Some(instance_id_map) = air_id_map.get(&air_instance_id) {
+            } else if let Some(instance_id_map) = air_id_map.1.get(&air_instance_id) {
                 return Ok((false, Some(instance_id_map.clone())));
             }
         }
@@ -182,9 +182,37 @@ pub fn skip_prover_instance<F: PrimeField64>(
     Ok((true, None))
 }
 
+pub fn store_rows_info_air<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    airgroup_id: usize,
+    air_id: usize,
+    instance_id: usize,
+) -> bool {
+    if pctx.debug_info.read().unwrap().std_mode.store_row_info {
+        return true;
+    }
+
+    if let Some(airgroup_id_map) = pctx.debug_info.read().unwrap().debug_instances.get(&airgroup_id) {
+        if let Some(air_id_map) = airgroup_id_map.get(&air_id) {
+            if air_id_map.0 {
+                return true;
+            }
+
+            if let Some(instance_id_map) = air_id_map.1.get(&instance_id) {
+                if instance_id_map.store_row_info {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
 fn default_fast_mode() -> bool {
     true
 }
+
 #[derive(Debug, Default, Deserialize)]
 struct StdDebugMode {
     #[serde(default)]
@@ -195,6 +223,10 @@ struct StdDebugMode {
     print_to_file: bool,
     #[serde(default = "default_fast_mode")]
     fast_mode: bool,
+    #[serde(default)]
+    store_row_info: Option<bool>,
+    #[serde(default)]
+    debug_values: Option<Vec<Vec<String>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -207,6 +239,8 @@ struct DebugJson {
     std_mode: Option<StdDebugMode>,
     #[serde(default)]
     n_print_constraints: Option<usize>,
+    #[serde(default)]
+    skip_prover_instances: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -227,6 +261,8 @@ struct AirIdJson {
     air: Option<String>,
     #[serde(default)]
     instance_ids: Option<Vec<InstanceJson>>,
+    #[serde(default)]
+    store_row_info: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -239,6 +275,8 @@ struct InstanceJson {
     hint_ids: Option<Vec<usize>>,
     #[serde(default)]
     rows: Option<Vec<usize>>,
+    #[serde(default)]
+    store_row_info: Option<bool>,
 }
 
 pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String) -> ProofmanResult<DebugInfo> {
@@ -322,14 +360,15 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
                             let instance_constraints = instance.constraints.unwrap_or_default();
                             let hint_ids = instance.hint_ids.unwrap_or_default();
                             let rows = instance.rows.unwrap_or_default();
+                            let store_row_info = instance.store_row_info.unwrap_or(false);
                             instance_map.insert(
                                 instance.instance_id.unwrap_or_default(),
-                                InstancesInfo { constraints: instance_constraints, hint_ids, rows },
+                                InstancesInfo { constraints: instance_constraints, hint_ids, rows, store_row_info },
                             );
                         }
                     }
 
-                    air_id_map.insert(air_id, instance_map);
+                    air_id_map.insert(air_id, (air.store_row_info.unwrap_or(false), instance_map));
                 }
             }
 
@@ -341,11 +380,15 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
     let global_constraints = json.global_constraints.unwrap_or_default();
 
     let std_mode = if json.std_mode.is_none() {
-        StdMode::new(ModeName::Standard, Vec::new(), 0, false, false)
+        StdMode::new(ModeName::Standard, Vec::new(), 0, false, false, false, Vec::new())
     } else {
         let mode = json.std_mode.unwrap_or_default();
         let fast_mode =
             if mode.opids.is_some() && !mode.opids.as_ref().unwrap().is_empty() { false } else { mode.fast_mode };
+
+        let store_row_info = mode.store_row_info.unwrap_or(false);
+
+        let debug_values = mode.debug_values.unwrap_or_default();
 
         StdMode::new(
             ModeName::Debug,
@@ -353,15 +396,19 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
             mode.n_vals.unwrap_or(DEFAULT_PRINT_VALS),
             mode.print_to_file,
             fast_mode,
+            store_row_info,
+            debug_values,
         )
     };
 
     let n_print_constraints = json.n_print_constraints.unwrap_or(DEFAULT_N_PRINT_CONSTRAINTS);
+    let skip_prover_instances = json.skip_prover_instances.unwrap_or(false);
     Ok(DebugInfo {
         debug_instances: airgroup_map.clone(),
         debug_global_instances: global_constraints,
         std_mode,
         n_print_constraints,
+        skip_prover_instances,
     })
 }
 

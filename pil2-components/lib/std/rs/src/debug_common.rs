@@ -5,7 +5,7 @@ use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use fields::PrimeField64;
 
-use proofman_common::{DebugInfo, ProofCtx, ProofmanError, ProofmanResult, SetupCtx};
+use proofman_common::{DebugInfo, ProofCtx, ProofmanError, ProofmanResult, SetupCtx, store_rows_info_air};
 use proofman_hints::{
     get_hint_field, get_hint_field_a, get_hint_field_gc, get_hint_field_gc_a, get_hint_ids_by_name, HintFieldOptions,
     HintFieldValue, HintFieldValuesVec,
@@ -14,10 +14,11 @@ use proofman_hints::{
 use crate::{
     check_invalid_opids, get_global_hint_field, get_global_hint_field_constant_as, get_hint_field_constant_as,
     get_hint_field_constant_as_string, get_hint_field_constant_a_as_string, get_hint_field_constant_as_field,
-    get_row_field_value, print_debug_info, update_debug_data, update_debug_data_fast, store_debug_data, DebugData,
-    DebugDataFast, DebugDataInfo, HintMetadata, hash_vals, normalize_vals,
+    get_row_field_value, print_debug_info, update_debug_data, update_debug_data_fast, DebugData, DebugDataFast,
+    DebugDataInfo, HintMetadata, hash_vals, normalize_vals,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub fn extract_global_hint_fields<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
@@ -26,6 +27,7 @@ pub fn extract_global_hint_fields<F: PrimeField64>(
     debug_data_fast: &mut DebugDataFast,
     fast_mode: bool,
     is_prod: bool,
+    debug_hashes: &[u64],
 ) -> ProofmanResult<()> {
     let debug_data_name = if is_prod { "gprod_debug_data_global" } else { "gsum_debug_data_global" };
     let debug_data_hints = get_hint_ids_by_name(sctx.get_global_bin(), debug_data_name);
@@ -92,6 +94,8 @@ pub fn extract_global_hint_fields<F: PrimeField64>(
                     num_reps.as_canonical_u64(),
                     true,
                     is_prod,
+                    true,
+                    debug_hashes,
                 )?;
             }
         }
@@ -109,6 +113,7 @@ pub fn extract_hint_fields<F: PrimeField64>(
     debug_data_fast: &[RwLock<DebugDataFast>],
     fast_mode: bool,
     is_prod: bool,
+    debug_hashes: &[u64],
 ) -> ProofmanResult<()> {
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
     let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
@@ -199,8 +204,6 @@ pub fn extract_hint_fields<F: PrimeField64>(
 
     let hint_metadatas = hint_metadatas?;
 
-    // store_debug_data(pctx, airgroup_id, air_id, instance_id, &hint_metadatas, num_rows, is_prod)?;
-
     let opids = &pctx.debug_info.read().unwrap().std_mode.opids;
 
     if fast_mode {
@@ -243,6 +246,7 @@ pub fn extract_hint_fields<F: PrimeField64>(
             })?;
         }
     } else {
+        let store_row_info = store_rows_info_air(pctx, airgroup_id, air_id, instance_id);
         for hint_metadata in hint_metadatas.iter() {
             // If both the expresion and the mul are of degree zero, then simply update the bus once
             if hint_metadata.deg_expr.is_zero() && hint_metadata.deg_mul.is_zero() {
@@ -261,6 +265,8 @@ pub fn extract_hint_fields<F: PrimeField64>(
                     debug_data_info,
                     false,
                     is_prod,
+                    store_row_info,
+                    debug_hashes,
                 )?;
             }
             // Otherwise, update the bus for each row
@@ -281,6 +287,8 @@ pub fn extract_hint_fields<F: PrimeField64>(
                         debug_data_info,
                         false,
                         is_prod,
+                        store_row_info,
+                        debug_hashes,
                     )?;
                 }
             }
@@ -309,6 +317,8 @@ pub fn update_bus<F: PrimeField64>(
     debug_data_info: &mut DebugDataInfo,
     is_global: bool,
     is_prod: bool,
+    store_row_info: bool,
+    debug_hashes: &[u64],
 ) -> ProofmanResult<()> {
     let opid = get_row_field_value(busid, row, "busid")?;
     if !op_ids.is_empty() && !op_ids.contains(&opid.as_canonical_u64()) {
@@ -358,6 +368,8 @@ pub fn update_bus<F: PrimeField64>(
         num_reps.as_canonical_u64(),
         is_global,
         is_prod,
+        store_row_info,
+        debug_hashes,
     )
 }
 
@@ -415,6 +427,7 @@ fn update_bus_fast<F: PrimeField64>(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn print_std_debug_info<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
@@ -423,6 +436,7 @@ pub fn print_std_debug_info<F: PrimeField64>(
     debug_data_fast: &[RwLock<DebugDataFast>],
     debug_info: &DebugInfo,
     is_prod: bool,
+    debug_hashes: &[u64],
 ) -> ProofmanResult<()> {
     let fast_mode = debug_info.std_mode.fast_mode;
 
@@ -450,6 +464,7 @@ pub fn print_std_debug_info<F: PrimeField64>(
             &mut total_debug_data_fast,
             fast_mode,
             is_prod,
+            debug_hashes,
         )?;
 
         check_invalid_opids(pctx, total_debug_data_fast);
@@ -464,6 +479,7 @@ pub fn print_std_debug_info<F: PrimeField64>(
             &mut FxHashMap::default(),
             fast_mode,
             is_prod,
+            debug_hashes,
         )?;
 
         let max_values_to_print = debug_info.std_mode.n_vals;
