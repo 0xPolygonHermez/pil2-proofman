@@ -251,8 +251,47 @@ impl<F: PrimeField64> Display for HintFieldOutput<F> {
     }
 }
 
+use itoa::Buffer;
+
 pub fn format_hint_field_output_vec<F: PrimeField64>(vec: &[HintFieldOutput<F>]) -> String {
-    format!("[{}]", vec.iter().map(|item| item.to_string()).collect::<Vec<String>>().join(", "))
+    // Precompute capacity
+    let cap: usize = vec
+        .iter()
+        .map(|v| match v {
+            HintFieldOutput::Field(_) => 21,
+            HintFieldOutput::FieldExtended(e) => 21 * e.value.len(),
+        })
+        .sum::<usize>()
+        + vec.len().saturating_sub(1); // +commas
+
+    let mut result = String::with_capacity(cap);
+    let mut itoa_buf = Buffer::new();
+
+    let mut iter = vec.iter();
+    if let Some(first) = iter.next() {
+        match first {
+            HintFieldOutput::Field(f) => result.push_str(itoa_buf.format(f.as_canonical_u64())),
+            HintFieldOutput::FieldExtended(ef) => {
+                for x in &ef.value {
+                    result.push_str(itoa_buf.format(x.as_canonical_u64()));
+                }
+            }
+        }
+    }
+
+    for item in iter {
+        result.push(',');
+        match item {
+            HintFieldOutput::Field(f) => result.push_str(itoa_buf.format(f.as_canonical_u64())),
+            HintFieldOutput::FieldExtended(ef) => {
+                for x in &ef.value {
+                    result.push_str(itoa_buf.format(x.as_canonical_u64()));
+                }
+            }
+        }
+    }
+
+    result
 }
 
 impl<F: PrimeField64> HintFieldValue<F> {

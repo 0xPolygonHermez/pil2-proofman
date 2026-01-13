@@ -2,8 +2,6 @@ use std::sync::{Arc, RwLock};
 
 use fields::PrimeField64;
 
-use rayon::prelude::*;
-
 use rustc_hash::FxHashMap;
 
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
@@ -11,17 +9,11 @@ use witness::WitnessComponent;
 use proofman_common::{
     skip_prover_instance, ProofmanError, BufferPool, DebugInfo, ModeName, ProofCtx, ProofmanResult, SetupCtx,
 };
-use proofman_hints::{
-    acc_mul_hint_fields, get_hint_field, get_hint_field_a, get_hint_field_gc, get_hint_field_gc_a,
-    get_hint_ids_by_name, mul_hint_fields, update_airgroupvalue, HintFieldOptions, HintFieldValue, HintFieldValuesVec,
-    HintFieldOutput,
-};
+use proofman_hints::{acc_mul_hint_fields, get_hint_ids_by_name, mul_hint_fields, update_airgroupvalue, HintFieldOptions};
 
 use crate::{
-    check_invalid_opids, get_global_hint_field, get_global_hint_field_constant_a_as, get_global_hint_field_constant_as,
-    get_hint_field_constant_as, get_hint_field_constant_as_field, get_row_field_value, print_debug_info,
-    update_debug_data, update_debug_data_fast, DebugData, DebugDataFast, STD_MODE_DEFAULT, STD_MODE_ONE_INSTANCE,
-    HintMetadata,
+    get_global_hint_field_constant_a_as, get_global_hint_field_constant_as, DebugData, DebugDataInfo, DebugDataFast,
+    STD_MODE_DEFAULT, STD_MODE_ONE_INSTANCE, extract_hint_fields, print_std_debug_info,
 };
 
 pub struct StdProd<F: PrimeField64> {
@@ -29,8 +21,10 @@ pub struct StdProd<F: PrimeField64> {
     std_mode: Vec<usize>,
     airgroup_ids: Vec<usize>,
     air_ids: Vec<usize>,
-    debug_data: RwLock<DebugData<F>>,
-    debug_data_fast: Vec<RwLock<DebugDataFast<F>>>,
+    debug_data: RwLock<DebugData>,
+    debug_data_info: RwLock<DebugDataInfo>,
+    debug_data_fast: Vec<RwLock<DebugDataFast>>,
+    _phantom: std::marker::PhantomData<F>,
 }
 
 impl<F: PrimeField64> StdProd<F> {
@@ -45,7 +39,9 @@ impl<F: PrimeField64> StdProd<F> {
                 airgroup_ids: Vec::new(),
                 air_ids: Vec::new(),
                 debug_data: RwLock::new(FxHashMap::default()),
+                debug_data_info: RwLock::new(FxHashMap::default()),
                 debug_data_fast: (0..1000).map(|_| RwLock::new(FxHashMap::default())).collect(),
+                _phantom: std::marker::PhantomData,
             }));
         };
 
@@ -60,7 +56,9 @@ impl<F: PrimeField64> StdProd<F> {
             airgroup_ids,
             air_ids,
             debug_data: RwLock::new(FxHashMap::default()),
+            debug_data_info: RwLock::new(FxHashMap::default()),
             debug_data_fast: (0..1000).map(|_| RwLock::new(FxHashMap::default())).collect(),
+            _phantom: std::marker::PhantomData,
         }))
     }
 }
@@ -211,11 +209,29 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                         continue;
                     }
 
-                    self.extract_hint_fields(&pctx, &sctx, *global_instance_id, true)?;
+                    extract_hint_fields(
+                        &pctx,
+                        &sctx,
+                        *global_instance_id,
+                        &mut self.debug_data.write().unwrap(),
+                        &mut self.debug_data_info.write().unwrap(),
+                        &self.debug_data_fast,
+                        true,
+                        true,
+                    )?;
                 }
             } else {
                 for global_instance_id in global_instance_ids {
-                    self.extract_hint_fields(&pctx, &sctx, *global_instance_id, false)?;
+                    extract_hint_fields(
+                        &pctx,
+                        &sctx,
+                        *global_instance_id,
+                        &mut self.debug_data.write().unwrap(),
+                        &mut self.debug_data_info.write().unwrap(),
+                        &self.debug_data_fast,
+                        false,
+                        true,
+                    )?;
                 }
             }
         }
@@ -225,400 +241,16 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
 
     fn end(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, debug_info: &DebugInfo) -> ProofmanResult<()> {
         if debug_info.std_mode.name == ModeName::Debug || !debug_info.debug_instances.is_empty() {
-            let fast_mode = debug_info.std_mode.fast_mode;
-
-            // Perform the global hint update
-            if fast_mode {
-                let local_debug_data_fast = &mut self.debug_data_fast[0].write().unwrap();
-                Self::extract_global_hint_fields(&pctx, &sctx, &mut FxHashMap::default(), local_debug_data_fast, true)?;
-            } else {
-                let mut debug_data = self.debug_data.write().unwrap();
-                Self::extract_global_hint_fields(&pctx, &sctx, &mut debug_data, &mut FxHashMap::default(), false)?;
-            }
-
-            // At the end, check all the debug data
-            if fast_mode {
-                check_invalid_opids(&pctx, &self.debug_data_fast);
-            } else {
-                let mut debug_data = self.debug_data.write().unwrap();
-                let max_values_to_print = debug_info.std_mode.n_vals;
-                let print_to_file = debug_info.std_mode.print_to_file;
-                print_debug_info(&pctx, &sctx, max_values_to_print, print_to_file, &mut debug_data)?;
-            }
+            print_std_debug_info(
+                &pctx,
+                &sctx,
+                &self.debug_data,
+                &self.debug_data_info,
+                &self.debug_data_fast,
+                debug_info,
+                true,
+            )?;
         }
         Ok(())
-    }
-}
-
-impl<F: PrimeField64> StdProd<F> {
-    const PROD_TYPE_ASSUMES: u64 = 0;
-    const PROD_TYPE_PROVES: u64 = 1;
-    const PROD_TYPE_FREE: u64 = 2;
-
-    fn extract_global_hint_fields(
-        pctx: &ProofCtx<F>,
-        sctx: &SetupCtx<F>,
-        debug_data: &mut DebugData<F>,
-        debug_data_fast: &mut DebugDataFast<F>,
-        fast_mode: bool,
-    ) -> ProofmanResult<()> {
-        let gprod_debug_data = get_hint_ids_by_name(sctx.get_global_bin(), "gprod_debug_data_global");
-        if !gprod_debug_data.is_empty() {
-            let num_global_hints =
-                get_global_hint_field_constant_as::<usize, F>(sctx, gprod_debug_data[0], "num_global_hints")?;
-            for i in 0..num_global_hints {
-                let airgroup_id =
-                    get_global_hint_field_constant_as::<usize, F>(sctx, gprod_debug_data[1 + i], "airgroup_id")?;
-                let type_piop =
-                    get_global_hint_field_constant_as::<u64, F>(sctx, gprod_debug_data[1 + i], "type_piop")?;
-                if ![Self::PROD_TYPE_ASSUMES, Self::PROD_TYPE_PROVES, Self::PROD_TYPE_FREE].contains(&type_piop) {
-                    return Err(ProofmanError::StdError(format!("Invalid type_piop: {type_piop}")));
-                }
-
-                let opid = get_global_hint_field(sctx, gprod_debug_data[1 + i], "busid")?;
-
-                // If opids are specified, then only update the bus if the opid is in the list
-                if !pctx.debug_info.read().unwrap().std_mode.opids.is_empty()
-                    && !pctx.debug_info.read().unwrap().std_mode.opids.contains(&opid.as_canonical_u64())
-                {
-                    continue;
-                }
-
-                let num_reps = get_hint_field_gc(pctx, sctx, gprod_debug_data[1 + i], "num_reps", false)?;
-
-                // If the number of repetitions is zero, continue
-                let mut num_reps = get_row_field_value(&num_reps, 0, "num_reps")?;
-                if num_reps.is_zero() {
-                    continue;
-                }
-
-                // If the type is free and the num_reps is minus_one, simply flip the num_reps
-                if type_piop == Self::PROD_TYPE_FREE {
-                    if num_reps == F::NEG_ONE {
-                        num_reps = -num_reps;
-                    } else if num_reps != F::ONE {
-                        return Err(ProofmanError::StdError(format!(
-                            "The number of repetitions in a free piop can only be {{-1, 0, 1}}, received: {num_reps}"
-                        )));
-                    }
-                }
-
-                let expressions = get_hint_field_gc_a(pctx, sctx, gprod_debug_data[1 + i], "expressions", false)?;
-                let is_proves = type_piop == Self::PROD_TYPE_PROVES;
-                if fast_mode {
-                    update_debug_data_fast(debug_data_fast, opid, expressions.get(0), is_proves, num_reps, true)?;
-                } else {
-                    update_debug_data(
-                        debug_data,
-                        i,
-                        opid,
-                        expressions.get(0),
-                        airgroup_id,
-                        None,
-                        None,
-                        0,
-                        is_proves,
-                        num_reps,
-                        true,
-                        true,
-                    )?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn extract_hint_fields(
-        &self,
-        pctx: &ProofCtx<F>,
-        sctx: &SetupCtx<F>,
-        instance_id: usize,
-        fast_mode: bool,
-    ) -> ProofmanResult<()> {
-        // Process the AIR debug hints
-        let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
-        let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
-
-        let setup = sctx.get_setup(airgroup_id, air_id)?;
-        let p_expressions_bin = setup.p_setup.p_expressions_bin;
-
-        let debug_data_hints = get_hint_ids_by_name(p_expressions_bin, "gprod_debug_data");
-
-        let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
-
-        let hint_metadatas: Result<Vec<_>, ProofmanError> = debug_data_hints
-            .iter()
-            .enumerate()
-            .map(|(i, &hint)| {
-                let busid =
-                    get_hint_field(sctx, pctx, instance_id, hint as usize, "busid", HintFieldOptions::default())?;
-
-                let type_piop = get_hint_field_constant_as::<u64, F>(
-                    sctx,
-                    airgroup_id,
-                    air_id,
-                    hint as usize,
-                    "type_piop",
-                    HintFieldOptions::default(),
-                )?;
-                if ![Self::PROD_TYPE_ASSUMES, Self::PROD_TYPE_PROVES, Self::PROD_TYPE_FREE].contains(&type_piop) {
-                    return Err(ProofmanError::StdError(format!("Invalid type_piop: {type_piop}")));
-                }
-
-                let num_reps =
-                    get_hint_field(sctx, pctx, instance_id, hint as usize, "num_reps", HintFieldOptions::default())?;
-
-                let deg_expr = get_hint_field_constant_as_field(
-                    sctx,
-                    airgroup_id,
-                    air_id,
-                    hint as usize,
-                    "deg_expr",
-                    HintFieldOptions::default(),
-                )?;
-
-                let deg_mul = get_hint_field_constant_as_field(
-                    sctx,
-                    airgroup_id,
-                    air_id,
-                    hint as usize,
-                    "deg_sel",
-                    HintFieldOptions::default(),
-                )?;
-
-                let expressions = get_hint_field_a(
-                    sctx,
-                    pctx,
-                    instance_id,
-                    hint as usize,
-                    "expressions",
-                    HintFieldOptions::default(),
-                )?;
-
-                Ok(HintMetadata { hint, hint_id: i, busid, type_piop, num_reps, expressions, deg_expr, deg_mul })
-            })
-            .collect();
-
-        let hint_metadatas = hint_metadatas?;
-        if fast_mode {
-            let opids = pctx.debug_info.read().unwrap().std_mode.opids.clone();
-
-            // Process hints in chunks of 1000 to reuse pre-allocated HashMaps
-            for chunk in hint_metadatas.chunks(1000) {
-                chunk.par_iter().enumerate().try_for_each(|(idx, hint_metadata)| -> ProofmanResult<()> {
-                    // Directly acquire write lock and work with it
-                    let mut debug_data_fast = self.debug_data_fast[idx].write().unwrap();
-
-                    // If both the expression and the mul are of degree zero, then simply update the bus once
-                    if hint_metadata.deg_expr.is_zero() && hint_metadata.deg_mul.is_zero() {
-                        let opid = match hint_metadata.busid {
-                            HintFieldValue::Field(opid) => {
-                                if !opids.is_empty() && !opids.contains(&opid.as_canonical_u64()) {
-                                    return Ok(());
-                                }
-                                opid
-                            }
-                            _ => return Err(ProofmanError::StdError("busid must be a field element".to_string())),
-                        };
-
-                        Self::update_bus_fast(
-                            opid,
-                            hint_metadata.type_piop,
-                            &hint_metadata.num_reps,
-                            &hint_metadata.expressions,
-                            0,
-                            &mut debug_data_fast,
-                            false,
-                        )?;
-                    }
-                    // Otherwise, update the bus for each row
-                    else {
-                        for j in 0..num_rows {
-                            let opid = match hint_metadata.busid.get(j) {
-                                HintFieldOutput::Field(opid) => {
-                                    if !opids.is_empty() && !opids.contains(&opid.as_canonical_u64()) {
-                                        continue;
-                                    }
-                                    opid
-                                }
-                                _ => return Err(ProofmanError::StdError("busid must be a field element".to_string())),
-                            };
-
-                            Self::update_bus_fast(
-                                opid,
-                                hint_metadata.type_piop,
-                                &hint_metadata.num_reps,
-                                &hint_metadata.expressions,
-                                j,
-                                &mut debug_data_fast,
-                                false,
-                            )?;
-                        }
-                    }
-
-                    Ok(())
-                })?;
-            }
-        } else {
-            for hint_metadata in hint_metadatas.iter() {
-                // If both the expresion and the mul are of degree zero, then simply update the bus once
-                if hint_metadata.deg_expr.is_zero() && hint_metadata.deg_mul.is_zero() {
-                    // In this case, the busid must be a field element
-                    let opid = match hint_metadata.busid {
-                        HintFieldValue::Field(opid) => {
-                            // If opids are specified, then only update the bus if the opid is in the list
-                            let opids = &pctx.debug_info.read().unwrap().std_mode.opids;
-                            if !opids.is_empty() && !opids.contains(&opid.as_canonical_u64()) {
-                                continue;
-                            }
-                            opid
-                        }
-                        _ => return Err(ProofmanError::StdError("busid must be a field element".to_string())),
-                    };
-
-                    Self::update_bus(
-                        hint_metadata.hint_id,
-                        airgroup_id,
-                        air_id,
-                        air_instance_id,
-                        opid,
-                        hint_metadata.type_piop,
-                        &hint_metadata.num_reps,
-                        &hint_metadata.expressions,
-                        0,
-                        &mut self.debug_data.write().unwrap(),
-                        false,
-                    )?;
-                }
-                // Otherwise, update the bus for each row
-                else {
-                    for j in 0..num_rows {
-                        // Get the opid for this row
-                        let opid = match hint_metadata.busid.get(j) {
-                            HintFieldOutput::Field(opid) => {
-                                // If opids are specified, then only update the bus if the opid is in the list
-                                let opids = &pctx.debug_info.read().unwrap().std_mode.opids;
-                                if !opids.is_empty() && !opids.contains(&opid.as_canonical_u64()) {
-                                    continue;
-                                }
-
-                                opid
-                            }
-                            _ => return Err(ProofmanError::StdError("busid must be a field element".to_string())),
-                        };
-
-                        Self::update_bus(
-                            hint_metadata.hint_id,
-                            airgroup_id,
-                            air_id,
-                            air_instance_id,
-                            opid,
-                            hint_metadata.type_piop,
-                            &hint_metadata.num_reps,
-                            &hint_metadata.expressions,
-                            j,
-                            &mut self.debug_data.write().unwrap(),
-                            false,
-                        )?;
-                    }
-                }
-            }
-        }
-
-        std::thread::spawn(move || {
-            drop(hint_metadatas);
-        });
-
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn update_bus(
-        hint_id: usize,
-        airgroup_id: usize,
-        air_id: usize,
-        air_instance_id: usize,
-        opid: F,
-        type_piop: u64,
-        num_reps: &HintFieldValue<F>,
-        expressions: &HintFieldValuesVec<F>,
-        row: usize,
-        debug_data: &mut DebugData<F>,
-        is_global: bool,
-    ) -> ProofmanResult<()> {
-        let mut num_reps = get_row_field_value(num_reps, row, "num_reps")?;
-        if num_reps.is_zero() {
-            return Ok(());
-        }
-
-        let is_proves = match type_piop {
-            Self::PROD_TYPE_ASSUMES => false,
-            Self::PROD_TYPE_PROVES => true,
-            Self::PROD_TYPE_FREE => {
-                if num_reps == F::NEG_ONE {
-                    // If the type is free and the num_reps is minus_one, simply flip the num_reps
-                    num_reps = -num_reps;
-                    false
-                } else if num_reps == F::ONE {
-                    true
-                } else {
-                    return Err(ProofmanError::StdError(format!(
-                        "The number of repetitions in a free piop can only be {{-1, 0, 1}}, received: {num_reps}"
-                    )));
-                }
-            }
-            _ => unreachable!(),
-        };
-
-        update_debug_data(
-            debug_data,
-            hint_id,
-            opid,
-            expressions.get(row),
-            airgroup_id,
-            Some(air_id),
-            Some(air_instance_id),
-            row,
-            is_proves,
-            num_reps,
-            is_global,
-            true,
-        )
-    }
-
-    fn update_bus_fast(
-        opid: F,
-        type_piop: u64,
-        num_reps: &HintFieldValue<F>,
-        expressions: &HintFieldValuesVec<F>,
-        row: usize,
-        debug_data_fast: &mut DebugDataFast<F>,
-        is_global: bool,
-    ) -> ProofmanResult<()> {
-        let mut num_reps = get_row_field_value(num_reps, row, "num_reps")?;
-        if num_reps.is_zero() {
-            return Ok(());
-        }
-
-        let is_proves = match type_piop {
-            Self::PROD_TYPE_ASSUMES => false,
-            Self::PROD_TYPE_PROVES => true,
-            Self::PROD_TYPE_FREE => {
-                if num_reps == F::NEG_ONE {
-                    // If the type is free and the num_reps is minus_one, simply flip the num_reps
-                    num_reps = -num_reps;
-                    false
-                } else if num_reps == F::ONE {
-                    true
-                } else {
-                    return Err(ProofmanError::StdError(format!(
-                        "The number of repetitions in a free piop can only be {{-1, 0, 1}}, received: {num_reps}"
-                    )));
-                }
-            }
-            _ => unreachable!(),
-        };
-
-        update_debug_data_fast(debug_data_fast, opid, expressions.get(row), is_proves, num_reps, is_global)
     }
 }

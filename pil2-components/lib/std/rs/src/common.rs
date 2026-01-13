@@ -1,5 +1,4 @@
 use std::sync::Arc;
-
 use fields::PrimeField64;
 
 use proofman_common::{ProofCtx, ProofmanError, ProofmanResult, SetupCtx};
@@ -22,17 +21,36 @@ pub trait AirComponent<F: PrimeField64> {
 }
 
 /// Normalize the values.
-pub fn normalize_vals<F: PrimeField64>(vals: &[HintFieldOutput<F>]) -> Vec<HintFieldOutput<F>> {
+pub fn normalize_vals<F: PrimeField64>(vals: &[HintFieldOutput<F>]) -> &[HintFieldOutput<F>] {
     let is_zero = |v: &HintFieldOutput<F>| match v {
         HintFieldOutput::Field(x) => *x == F::ZERO,
         HintFieldOutput::FieldExtended(ext) => ext.is_zero(),
     };
 
-    // Find the index of the last non-zero entry
+    // Find the last non-zero element
     let last_non_zero = vals.iter().rposition(|v| !is_zero(v)).unwrap_or(0);
 
-    // Keep everything from index 0 to last_non_zero
-    vals[..=last_non_zero].to_vec()
+    &vals[..=last_non_zero] // slice, no allocation
+}
+
+pub fn hash_vals<F: PrimeField64>(norm_vals: &[HintFieldOutput<F>]) -> u64 {
+    use rustc_hash::FxHasher;
+    use std::hash::Hasher;
+
+    let mut hasher = FxHasher::default();
+
+    for value in norm_vals {
+        match value {
+            HintFieldOutput::Field(f) => f.hash(&mut hasher),
+            HintFieldOutput::FieldExtended(ef) => {
+                for x in &ef.value {
+                    x.hash(&mut hasher);
+                }
+            }
+        }
+    }
+
+    hasher.finish()
 }
 
 // Helper to extract hint fields

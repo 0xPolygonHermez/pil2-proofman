@@ -1026,6 +1026,8 @@ dependencies = [
  "proofman-util",
  "rayon",
  "rustc-hash 2.1.1",
+ "serde",
+ "serde_json",
  "tracing",
  "witness",
 ]
@@ -1184,6 +1186,7 @@ name = "proofman-hints"
 version = "0.16.0"
 dependencies = [
  "fields",
+ "itoa",
  "proofman-common",
  "proofman-starks-lib-c",
  "proofman-util",

@@ -30,6 +30,8 @@ use std::io::IsTerminal;
 
 static GLOBAL_RANK: OnceLock<i32> = OnceLock::new();
 
+use crate::InstancesInfo;
+
 pub struct RankFormatter;
 
 impl<S, N> FormatEvent<S, N> for RankFormatter
@@ -157,9 +159,9 @@ pub fn format_bytes(mut num_bytes: f64) -> String {
 pub fn skip_prover_instance<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     global_idx: usize,
-) -> ProofmanResult<(bool, Vec<usize>)> {
+) -> ProofmanResult<(bool, Option<InstancesInfo>)> {
     if pctx.debug_info.read().unwrap().debug_instances.is_empty() {
-        return Ok((false, Vec::new()));
+        return Ok((false, None));
     }
 
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(global_idx)?;
@@ -167,17 +169,17 @@ pub fn skip_prover_instance<F: PrimeField64>(
 
     if let Some(airgroup_id_map) = pctx.debug_info.read().unwrap().debug_instances.get(&airgroup_id) {
         if airgroup_id_map.is_empty() {
-            return Ok((false, Vec::new()));
+            return Ok((false, None));
         } else if let Some(air_id_map) = airgroup_id_map.get(&air_id) {
             if air_id_map.is_empty() {
-                return Ok((false, Vec::new()));
+                return Ok((false, None));
             } else if let Some(instance_id_map) = air_id_map.get(&air_instance_id) {
-                return Ok((false, instance_id_map.clone()));
+                return Ok((false, Some(instance_id_map.clone())));
             }
         }
     }
 
-    Ok((true, Vec::new()))
+    Ok((true, None))
 }
 
 fn default_fast_mode() -> bool {
@@ -198,7 +200,7 @@ struct StdDebugMode {
 #[derive(Debug, Deserialize)]
 struct DebugJson {
     #[serde(default)]
-    constraints: Option<Vec<AirGroupJson>>,
+    instances: Option<Vec<AirGroupJson>>,
     #[serde(default)]
     global_constraints: Option<Vec<usize>>,
     #[serde(default)]
@@ -233,6 +235,10 @@ struct InstanceJson {
     instance_id: Option<usize>,
     #[serde(default)]
     constraints: Option<Vec<usize>>,
+    #[serde(default)]
+    hint_ids: Option<Vec<usize>>,
+    #[serde(default)]
+    rows: Option<Vec<usize>>,
 }
 
 pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String) -> ProofmanResult<DebugInfo> {
@@ -255,8 +261,8 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
     let mut airgroup_map: AirGroupMap = HashMap::new();
 
     // Populate the airgroup map using the deserialized data
-    if let Some(constraints) = json.constraints {
-        for airgroup in constraints {
+    if let Some(instances) = json.instances {
+        for airgroup in instances {
             let mut air_id_map: AirIdMap = HashMap::new();
 
             if airgroup.airgroup.is_none() && airgroup.airgroup_id.is_none() {
@@ -314,7 +320,12 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
                     if let Some(instances) = air.instance_ids {
                         for instance in instances {
                             let instance_constraints = instance.constraints.unwrap_or_default();
-                            instance_map.insert(instance.instance_id.unwrap_or_default(), instance_constraints);
+                            let hint_ids = instance.hint_ids.unwrap_or_default();
+                            let rows = instance.rows.unwrap_or_default();
+                            instance_map.insert(
+                                instance.instance_id.unwrap_or_default(),
+                                InstancesInfo { constraints: instance_constraints, hint_ids, rows },
+                            );
                         }
                     }
 
@@ -329,7 +340,7 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
     // Default global_constraints to an empty Vec if None
     let global_constraints = json.global_constraints.unwrap_or_default();
 
-    let std_mode = if !airgroup_map.is_empty() {
+    let std_mode = if json.std_mode.is_none() {
         StdMode::new(ModeName::Standard, Vec::new(), 0, false, false)
     } else {
         let mode = json.std_mode.unwrap_or_default();

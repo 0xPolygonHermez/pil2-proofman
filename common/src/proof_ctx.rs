@@ -30,9 +30,16 @@ impl<F> Default for Values<F> {
     }
 }
 
+#[derive(Clone)]
+pub struct InstancesInfo {
+    pub constraints: Vec<usize>,
+    pub hint_ids: Vec<usize>,
+    pub rows: Vec<usize>,
+}
+
 pub type AirGroupMap = HashMap<usize, AirIdMap>;
 pub type AirIdMap = HashMap<usize, InstanceMap>;
-pub type InstanceMap = HashMap<usize, Vec<usize>>;
+pub type InstanceMap = HashMap<usize, InstancesInfo>;
 
 pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
 
