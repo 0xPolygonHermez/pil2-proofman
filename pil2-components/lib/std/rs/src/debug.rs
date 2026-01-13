@@ -470,12 +470,6 @@ pub fn print_debug_info<F: PrimeField64>(
         .expect("Write error");
         writeln!(
             output,
-            "\t      Value (binary):  [{}]",
-            vals_bin
-        )
-        .expect("Write error");
-        writeln!(
-            output,
             "\t      Appears {} {} across the following:",
             num, num_str
         )
