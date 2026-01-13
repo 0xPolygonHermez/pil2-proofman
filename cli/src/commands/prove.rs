@@ -53,7 +53,7 @@ pub struct ProveCmd {
     pub aggregation: bool,
 
     #[clap(short = 'f', long, default_value_t = false)]
-    pub final_snark: bool,
+    pub perf: bool,
 
     #[clap(short = 'y', long, default_value_t = false)]
     pub verify_proofs: bool,
@@ -148,7 +148,6 @@ impl ProveCmd {
             custom_commits_map,
             verify_constraints,
             self.aggregation,
-            self.final_snark,
             gpu_params,
             self.verbose.into(),
             HashMap::new(),
@@ -158,7 +157,7 @@ impl ProveCmd {
             false,
             self.aggregation,
             self.rma,
-            self.final_snark,
+            self.perf,
             self.verify_proofs,
             self.minimal_memory,
             self.save_proofs,
@@ -197,7 +196,7 @@ impl ProveCmd {
                 file.write_all(proof_data)?;
                 file.flush()?;
 
-                if self.final_snark && self.proving_key_snark.is_some() {
+                if self.proving_key_snark.is_some() {
                     let proving_key_snark = self.proving_key_snark.as_ref().unwrap();
                     let snark_wrapper: SnarkWrapper<Goldilocks> =
                         SnarkWrapper::new(proving_key_snark, self.verbose.into())?;

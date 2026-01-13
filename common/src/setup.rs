@@ -124,7 +124,7 @@ impl<F: PrimeField64> Setup<F> {
                     recursive2_path.expect("recursive2_path must be provided for Recursive1 proof type");
                 setup_path_recursive2.display().to_string() + ".starkinfo.json"
             }
-            ProofType::VadcopFinalSnark => setup_path.display().to_string() + "_snark.starkinfo.json",
+            ProofType::VadcopFinalPerf => setup_path.display().to_string() + "_perf.starkinfo.json",
             _ => setup_path.display().to_string() + ".starkinfo.json",
         };
 
@@ -134,12 +134,12 @@ impl<F: PrimeField64> Setup<F> {
                     recursive2_path.expect("recursive2_path must be provided for Recursive1 proof type");
                 setup_path_recursive2.display().to_string() + ".bin"
             }
-            ProofType::VadcopFinalSnark => setup_path.display().to_string() + "_snark.bin",
+            ProofType::VadcopFinalPerf => setup_path.display().to_string() + "_perf.bin",
             _ => setup_path.display().to_string() + ".bin",
         };
 
         let setup_type = match setup_type_ {
-            ProofType::VadcopFinalSnark => ProofType::VadcopFinal,
+            ProofType::VadcopFinalPerf => ProofType::VadcopFinal,
             _ => setup_type_.clone(),
         };
 
@@ -148,11 +148,11 @@ impl<F: PrimeField64> Setup<F> {
             false => setup_path.display().to_string() + ".const_gpu",
         };
 
-        let const_pols_tree_path = match (!gpu, setup_type_ != &ProofType::VadcopFinalSnark) {
+        let const_pols_tree_path = match (!gpu, setup_type_ != &ProofType::VadcopFinalPerf) {
             (true, true) => setup_path.display().to_string() + ".consttree",
             (false, true) => setup_path.display().to_string() + ".consttree_gpu",
-            (true, false) => setup_path.display().to_string() + "_snark.consttree",
-            (false, false) => setup_path.display().to_string() + "_snark.consttree_gpu",
+            (true, false) => setup_path.display().to_string() + "_perf.consttree",
+            (false, false) => setup_path.display().to_string() + "_perf.consttree_gpu",
         };
 
         let (
@@ -224,7 +224,7 @@ impl<F: PrimeField64> Setup<F> {
             let n_operations_quotient = get_operations_quotient_c(expressions_bin, p_stark_info) as u64;
 
             let verkey_file = match setup_type_ {
-                ProofType::VadcopFinalSnark => setup_path.display().to_string() + "_snark.verkey.json",
+                ProofType::VadcopFinalPerf => setup_path.display().to_string() + "_perf.verkey.json",
                 _ => setup_path.display().to_string() + ".verkey.json",
             };
 

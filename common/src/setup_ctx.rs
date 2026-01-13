@@ -40,7 +40,7 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub sctx_recursive1: Option<SetupCtx<F>>,
     pub sctx_recursive2: Option<SetupCtx<F>>,
     pub setup_vadcop_final: Option<Setup<F>>,
-    pub setup_vadcop_final_snark: Option<Setup<F>>,
+    pub setup_vadcop_final_perf: Option<Setup<F>>,
     pub max_const_size: usize,
     pub max_const_tree_size: usize,
     pub max_prover_trace_size: usize,
@@ -84,12 +84,12 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 None,
             );
 
-            let setup_vadcop_final_snark = Setup::new(
+            let setup_vadcop_final_perf = Setup::new(
                 &global_info.get_setup_path("vadcop_final"),
                 0,
                 0,
                 &GlobalInfoAir::new("VadcopFinal".to_string()),
-                &ProofType::VadcopFinalSnark,
+                &ProofType::VadcopFinalPerf,
                 verify_constraints,
                 preallocate,
                 None,
@@ -120,7 +120,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive1.max_const_tree_size)
                 .max(sctx_recursive2.max_const_tree_size)
                 .max(setup_vadcop_final.const_tree_size)
-                .max(setup_vadcop_final_snark.const_tree_size);
+                .max(setup_vadcop_final_perf.const_tree_size);
             let max_prover_trace_size = sctx_compressor
                 .max_prover_trace_size
                 .max(sctx_recursive1.max_prover_trace_size)
@@ -131,7 +131,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive1.max_prover_buffer_size)
                 .max(sctx_recursive2.max_prover_buffer_size)
                 .max(setup_vadcop_final.prover_buffer_size as usize)
-                .max(setup_vadcop_final_snark.prover_buffer_size as usize);
+                .max(setup_vadcop_final_perf.prover_buffer_size as usize);
 
             let max_prover_recursive2_buffer_size = (sctx_recursive2.max_prover_buffer_size
                 + sctx_recursive2.max_prover_trace_size)
@@ -142,14 +142,14 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive1.max_prover_buffer_size + sctx_recursive1.max_prover_trace_size)
                 .max(sctx_compressor.max_prover_buffer_size + sctx_compressor.max_prover_trace_size)
                 .max(setup_vadcop_final.prover_buffer_size as usize + vadcop_final_trace_size as usize)
-                .max(setup_vadcop_final_snark.prover_buffer_size as usize + vadcop_final_trace_size as usize);
+                .max(setup_vadcop_final_perf.prover_buffer_size as usize + vadcop_final_trace_size as usize);
 
             let max_pinned_proof_size = sctx_compressor
                 .max_pinned_proof_size
                 .max(sctx_recursive1.max_pinned_proof_size)
                 .max(sctx_recursive2.max_pinned_proof_size)
                 .max(setup_vadcop_final.proof_size as usize)
-                .max(setup_vadcop_final_snark.proof_size as usize);
+                .max(setup_vadcop_final_perf.proof_size as usize);
 
             let max_n_bits_ext = sctx_compressor
                 .max_n_bits_ext
@@ -162,7 +162,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 sctx_recursive1: Some(sctx_recursive1),
                 sctx_recursive2: Some(sctx_recursive2),
                 setup_vadcop_final: Some(setup_vadcop_final),
-                setup_vadcop_final_snark: Some(setup_vadcop_final_snark),
+                setup_vadcop_final_perf: Some(setup_vadcop_final_perf),
                 max_const_tree_size,
                 max_const_size,
                 max_prover_trace_size,
@@ -180,7 +180,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 sctx_recursive1: None,
                 sctx_recursive2: None,
                 setup_vadcop_final: None,
-                setup_vadcop_final_snark: None,
+                setup_vadcop_final_perf: None,
                 total_const_pols_size: 0,
                 total_const_tree_size: 0,
                 max_const_tree_size: 0,
@@ -201,7 +201,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             ProofType::Recursive1 => self.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id),
             ProofType::Recursive2 => self.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, air_id),
             ProofType::VadcopFinal => Ok(self.setup_vadcop_final.as_ref().unwrap()),
-            ProofType::VadcopFinalSnark => Ok(self.setup_vadcop_final_snark.as_ref().unwrap()),
+            ProofType::VadcopFinalPerf => Ok(self.setup_vadcop_final_perf.as_ref().unwrap()),
             _ => Err(ProofmanError::InvalidSetup("Invalid setup type".into())),
         }
     }

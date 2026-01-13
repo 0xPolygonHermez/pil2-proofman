@@ -16,7 +16,7 @@ use proofman_starks_lib_c::{
     get_instances_ready_c,
 };
 use crate::add_publics_circom;
-use proofman_verifier::{verify_recursive2, verify, verify_final_vadcop_snark};
+use proofman_verifier::{verify_recursive2, verify, verify_final_vadcop_perf};
 use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::fs;
@@ -408,8 +408,8 @@ where
             let setup_vadcop_final = setups_aggregation.setup_vadcop_final.as_ref().unwrap();
             calculate_fixed_tree(setup_vadcop_final);
 
-            let setup_vadcop_final_snark = setups_aggregation.setup_vadcop_final_snark.as_ref().unwrap();
-            calculate_fixed_tree(setup_vadcop_final_snark);
+            let setup_vadcop_final_perf = setups_aggregation.setup_vadcop_final_perf.as_ref().unwrap();
+            calculate_fixed_tree(setup_vadcop_final_perf);
         }
 
         Ok(())
@@ -1086,7 +1086,6 @@ where
         custom_commits_fixed: HashMap<String, PathBuf>,
         verify_constraints: bool,
         aggregation: bool,
-        _final_snark: bool,
         gpu_params: ParamsGPU,
         verbose_mode: VerboseMode,
         packed_info: HashMap<(usize, usize), PackedInfo>,
@@ -2215,10 +2214,10 @@ where
 
                     let proof_bytes: &[u8] = cast_slice(vadcop_final_proof.as_ref().unwrap());
 
-                    let verkey_u64: Vec<u64> = match options.final_snark {
+                    let verkey_u64: Vec<u64> = match options.perf {
                         true => self
                             .setups
-                            .setup_vadcop_final_snark
+                            .setup_vadcop_final_perf
                             .as_ref()
                             .unwrap()
                             .verkey
@@ -2237,8 +2236,8 @@ where
                     };
 
                     let vk_bytes: &[u8] = cast_slice(&verkey_u64);
-                    let valid_proofs = match options.final_snark {
-                        true => verify_final_vadcop_snark(proof_bytes, vk_bytes),
+                    let valid_proofs = match options.perf {
+                        true => verify_final_vadcop_perf(proof_bytes, vk_bytes),
                         false => verify(proof_bytes, vk_bytes),
                     };
                     timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
@@ -2252,7 +2251,7 @@ where
             } else {
                 return self.verify_proofs(options.test_mode);
             }
-        } else if phase == ProvePhase::Full && !options.final_snark {
+        } else if phase == ProvePhase::Full {
             tracing::info!(
                 "··· {}",
                 "All proofs were successfully generated. Verification Skipped".bright_yellow().bold()
@@ -2446,7 +2445,7 @@ where
                     &self.const_pols,
                     &self.const_tree,
                     self.d_buffers.get_ptr(),
-                    options.final_snark,
+                    options.perf,
                     options.save_proofs,
                 )?;
 

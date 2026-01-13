@@ -1,6 +1,6 @@
 // extern crate env_logger;
 use clap::Parser;
-use proofman_verifier::{verify, verify_final_vadcop_snark};
+use proofman_verifier::{verify, verify_final_vadcop_perf};
 use proofman_common::initialize_logger;
 use std::fs::File;
 use std::io::Read;
@@ -18,7 +18,7 @@ pub struct VerifyStark {
     pub verkey: String,
 
     #[clap(short = 'f', long, default_value_t = false)]
-    pub final_snark: bool,
+    pub perf: bool,
 
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
@@ -36,17 +36,12 @@ impl VerifyStark {
         let mut proof = Vec::new();
         proof_file.read_to_end(&mut proof)?;
 
-        println!("PROOF LENGTH IS {}", proof.len());
-
-        let proof_cast = bytemuck::cast_slice::<u8, u64>(&proof);
-        println!("PROOF U64 LENGTH IS {}", proof_cast.len());
-
         let mut verkey_file = File::open(&self.verkey)?;
         let mut vk = Vec::new();
         verkey_file.read_to_end(&mut vk)?;
 
         timer_start_info!(VERIFY_STARK);
-        let valid = if self.final_snark { verify_final_vadcop_snark(&proof, &vk) } else { verify(&proof, &vk) };
+        let valid = if self.perf { verify_final_vadcop_perf(&proof, &vk) } else { verify(&proof, &vk) };
         timer_stop_and_log_info!(VERIFY_STARK);
 
         if !valid {

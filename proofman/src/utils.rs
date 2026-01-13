@@ -582,9 +582,9 @@ pub fn initialize_witness_circom<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &S
     setup_vadcop_final.set_circom_circuit()?;
     setup_vadcop_final.set_exec_file_data()?;
 
-    let setup_vadcop_final_snark = setups.setup_vadcop_final_snark.as_ref().unwrap();
-    setup_vadcop_final_snark.set_circom_circuit()?;
-    setup_vadcop_final_snark.set_exec_file_data()?;
+    let setup_vadcop_final_perf = setups.setup_vadcop_final_perf.as_ref().unwrap();
+    setup_vadcop_final_perf.set_circom_circuit()?;
+    setup_vadcop_final_perf.set_exec_file_data()?;
 
     Ok(())
 }

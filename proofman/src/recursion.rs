@@ -245,7 +245,7 @@ pub fn gen_recursive_proof_size<F: PrimeField64>(
 
     let publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
 
-    if witness.proof_type != ProofType::VadcopFinal && witness.proof_type != ProofType::VadcopFinalSnark {
+    if witness.proof_type != ProofType::VadcopFinal && witness.proof_type != ProofType::VadcopFinalPerf {
         new_proof_size += publics_aggregation as u64;
     } else {
         new_proof_size += 1 + setup.stark_info.n_publics;
@@ -278,7 +278,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     );
 
     let (airgroup_id, air_id, instance_id, output_file_path, vadcop) =
-        if witness.proof_type == ProofType::VadcopFinal || witness.proof_type == ProofType::VadcopFinalSnark {
+        if witness.proof_type == ProofType::VadcopFinal || witness.proof_type == ProofType::VadcopFinalPerf {
             let output_file_path_ = output_dir_path.join("proofs/vadcop_final_proof.json");
             (0, 0, 0, output_file_path_, false)
         } else {
@@ -326,7 +326,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     let publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
 
     let initial_idx =
-        if witness.proof_type == ProofType::VadcopFinal || witness.proof_type == ProofType::VadcopFinalSnark {
+        if witness.proof_type == ProofType::VadcopFinal || witness.proof_type == ProofType::VadcopFinalPerf {
             1 + setup.stark_info.n_publics as usize
         } else {
             publics_aggregation
@@ -334,7 +334,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 
     let proof_type: &str = setup.setup_type.clone().into();
 
-    if witness.proof_type != ProofType::VadcopFinal && witness.proof_type != ProofType::VadcopFinalSnark {
+    if witness.proof_type != ProofType::VadcopFinal && witness.proof_type != ProofType::VadcopFinalPerf {
         add_publics_aggregation_c(
             new_proof.proof.as_ptr() as *mut u8,
             0,
@@ -556,7 +556,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     const_pols: &[F],
     const_tree: &[F],
     d_buffers: *mut c_void,
-    final_snark: bool,
+    perf: bool,
     save_proof: bool,
 ) -> ProofmanResult<Proof<F>> {
     let publics_circom_size =
@@ -597,13 +597,13 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         offset += proof_size;
     }
 
-    let proof_type = match final_snark {
-        true => ProofType::VadcopFinalSnark,
+    let proof_type = match perf {
+        true => ProofType::VadcopFinalPerf,
         false => ProofType::VadcopFinal,
     };
 
-    let setup = match final_snark {
-        true => setups.setup_vadcop_final_snark.as_ref().unwrap(),
+    let setup = match perf {
+        true => setups.setup_vadcop_final_perf.as_ref().unwrap(),
         false => setups.setup_vadcop_final.as_ref().unwrap(),
     };
 
@@ -815,7 +815,7 @@ pub fn get_recursive_buffer_sizes<F: PrimeField64>(
 
     max_prover_size = max_prover_size
         .max(setups.setup_vadcop_final.as_ref().unwrap().prover_buffer_size)
-        .max(setups.setup_vadcop_final_snark.as_ref().unwrap().prover_buffer_size);
+        .max(setups.setup_vadcop_final_perf.as_ref().unwrap().prover_buffer_size);
 
     Ok(max_prover_size as usize)
 }

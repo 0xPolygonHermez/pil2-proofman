@@ -88,7 +88,6 @@ impl StatsCmd {
             custom_commits_map,
             true,
             false,
-            false,
             gpu_params,
             self.verbose.into(),
             HashMap::new(),

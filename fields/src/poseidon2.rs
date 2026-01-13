@@ -95,7 +95,7 @@ pub fn poseidon2_hash<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize>
             }
         }
     }
-    
+
     // Native implementation
     let mut state = *input;
 

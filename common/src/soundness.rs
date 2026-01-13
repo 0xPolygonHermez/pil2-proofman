@@ -30,6 +30,7 @@ pub struct AirTableRow {
     pub fri_early_stop_degree: u64,
     pub grinding_query_phase: u64,
     pub gap_to_radius: f64,
+    pub proof_size: String,
 }
 
 #[derive(Serialize)]
@@ -69,6 +70,7 @@ pub struct AirInfo {
     pub fri_early_stop_degree: u64,
     pub grinding_query_phase: u64,
     pub gap_to_radius: f64,
+    pub proof_size: String,
 }
 
 impl AirTableRow {
@@ -87,6 +89,7 @@ impl AirTableRow {
             fri_early_stop_degree: air.fri_early_stop_degree,
             grinding_query_phase: air.grinding_query_phase,
             gap_to_radius: air.gap_to_radius,
+            proof_size: air.proof_size.clone(),
         }
     }
 }
@@ -158,6 +161,7 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
             fri_early_stop_degree: 1 << setup.stark_info.stark_struct.steps.last().unwrap().n_bits,
             grinding_query_phase: setup.stark_info.stark_struct.pow_bits,
             gap_to_radius: setup.stark_info.security.proximity_gap,
+            proof_size: crate::format_bytes(setup.proof_size as f64 * 8.0),
         },
     )
 }
@@ -227,7 +231,7 @@ pub fn soundness_info<F: PrimeField64>(
             });
         }
 
-        let setup_final_circuit = setups_aggregation.setup_vadcop_final.as_ref().unwrap();
+        let setup_final_circuit = setups_aggregation.setup_vadcop_final_perf.as_ref().unwrap();
         let (_, final_air_info) = get_soundness_air_info(setup_final_circuit);
         circuits.push(TomlCircuit { name: "Final".to_string(), group: "final".to_string(), air: final_air_info });
     }
