@@ -248,7 +248,7 @@ pub struct ProofCtx<F: PrimeField64> {
     pub witness_tx_priority: RwLock<Option<crossbeam_channel::Sender<usize>>>,
 }
 
-pub const MAX_INSTANCES: u64 = 10000;
+pub const MAX_INSTANCES: u64 = 1 << 17;
 
 impl<F: PrimeField64> ProofCtx<F> {
     pub fn create_ctx(
