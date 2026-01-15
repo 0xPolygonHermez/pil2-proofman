@@ -1,5 +1,5 @@
-#ifndef __BN128_FFIGPU_FR_CUH__
-#define __BN128_FFIGPU_FR_CUH__
+#ifndef __BN128_FFIGPU_FQ_CUH__
+#define __BN128_FFIGPU_FQ_CUH__
 
 #define FEATURE_BN254
 # if defined(__CUDA_ARCH__) || defined(__HIPCC__)
@@ -8,11 +8,11 @@
 #  include "alt_bn128_nvcc_host_shim.cuh"
 # endif
 
-// BN128 Scalar Field (Fr) 
-class BN128GPUScalarField {
+// BN128 Base Field (Fq) - used for curve point coordinates
+class BN128GPUBaseField {
 public:
     struct Element {
-        alt_bn128::fr_t v;
+        alt_bn128::fp_t v;
     };
     static __device__ __forceinline__ Element zero();
     static __device__ __forceinline__ Element one();
@@ -28,7 +28,7 @@ public:
 };
 
 #if defined(__CUDACC__) && defined(__CUDA_ARCH__)
-__device__ __forceinline__ BN128GPUScalarField::Element BN128GPUScalarField::zero() {
+__device__ __forceinline__ BN128GPUBaseField::Element BN128GPUBaseField::zero() {
     Element r;
     r.v[0] = 0;
     r.v[1] = 0;
@@ -41,47 +41,47 @@ __device__ __forceinline__ BN128GPUScalarField::Element BN128GPUScalarField::zer
     return r;
 }
 
-__device__ __forceinline__ BN128GPUScalarField::Element BN128GPUScalarField::one() {
+__device__ __forceinline__ BN128GPUBaseField::Element BN128GPUBaseField::one() {
     Element r;
     // Return 1 in Montgomery form (R mod p)
-    r.v = alt_bn128::fr_t::one();
+    r.v = alt_bn128::fp_t::one();
     return r;
 }
 
-__device__ __forceinline__ void BN128GPUScalarField::copy(Element& r, const Element& a) {
+__device__ __forceinline__ void BN128GPUBaseField::copy(Element& r, const Element& a) {
     r.v = a.v;
 }
 
-__device__ __forceinline__ void BN128GPUScalarField::add(Element& r, const Element& a, const Element& b) {
+__device__ __forceinline__ void BN128GPUBaseField::add(Element& r, const Element& a, const Element& b) {
     r.v = a.v;
     r.v += b.v;
 }
 
-__device__ __forceinline__ void BN128GPUScalarField::sub(Element& r, const Element& a, const Element& b) {
+__device__ __forceinline__ void BN128GPUBaseField::sub(Element& r, const Element& a, const Element& b) {
     r.v = a.v;
     r.v -= b.v;
 }
 
-__device__ __forceinline__ void BN128GPUScalarField::mul(Element& r, const Element& a, const Element& b) {
+__device__ __forceinline__ void BN128GPUBaseField::mul(Element& r, const Element& a, const Element& b) {
     r.v = a.v;
     r.v *= b.v;
 }
 
-__device__ __forceinline__ BN128GPUScalarField::Element BN128GPUScalarField::add(const Element& a, const Element& b) {
+__device__ __forceinline__ BN128GPUBaseField::Element BN128GPUBaseField::add(const Element& a, const Element& b) {
     return {a.v + b.v};
 }
 
-__device__ __forceinline__ BN128GPUScalarField::Element BN128GPUScalarField::sub(const Element& a, const Element& b) {
+__device__ __forceinline__ BN128GPUBaseField::Element BN128GPUBaseField::sub(const Element& a, const Element& b) {
     return {a.v - b.v};
 }
 
-__device__ __forceinline__ BN128GPUScalarField::Element BN128GPUScalarField::mul(const Element& a, const Element& b) {
+__device__ __forceinline__ BN128GPUBaseField::Element BN128GPUBaseField::mul(const Element& a, const Element& b) {
     return {a.v * b.v};
 }
 
-__device__ __forceinline__ void BN128GPUScalarField::square(Element& r, const Element& a) {
+__device__ __forceinline__ void BN128GPUBaseField::square(Element& r, const Element& a) {
     r.v = sqr(a.v);
 }
 #endif
 
-#endif // __BN128_FFIGPU_FR_CUH__
+#endif // __BN128_FFIGPU_FQ_CUH__
