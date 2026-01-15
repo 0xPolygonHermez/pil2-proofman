@@ -3,6 +3,8 @@
 #include <iostream>
 #include <iomanip>
 #include "../src/ffiasm/fr.hpp"
+#include "../src/ffiasm/alt_bn128.hpp"
+#include "../src/ffiasm/multiexp.hpp"
 #include "../src/poseidon/poseidon_bn128.hpp"
 #include "../src/poseidon2/poseidon2_bn128.hpp"
 
@@ -88,3 +90,94 @@ TEST(CONVERTER, poseidon_seq_widths_sanity) {
     std::cout << "}" << std::endl;
 }
 #endif
+
+TEST(BN128_MULTIEXP_TEST, multiexp_4_operands) {
+  typedef AltBn128::Engine Engine;
+  Engine engine;
+  RawFrP field;
+  
+  uint64_t n = 4;
+  uint64_t scalarSize = 32;
+  
+  // Create bases using doubling approach: base[i] = 2^i * G
+  std::vector<Engine::G1::PointAffine> bases(n);
+  Engine::G1::Point tempPoint;
+  engine.g1.copy(tempPoint, engine.g1.oneAffine());  
+  for (uint64_t i = 0; i < n; i++) {
+    engine.g1.copy(bases[i], tempPoint);
+    engine.g1.dbl(tempPoint, tempPoint);  // Double for next iteration
+  }
+  
+  // Create scalars from strings: 253-bit large numbers (diverse)
+  std::string scalarStrs[4] = {
+    "5708990770823839524233143877797980545530985996",
+    "8563486156235759286349715816696970818296478975",
+    "9234567890123456789012345678901234567890123456",
+    "10876543210987654321098765432109876543210987654"
+  };
+  std::vector<uint8_t> scalars(n * scalarSize, 0);
+  
+  for (uint64_t i = 0; i < n; i++) {
+    Engine::Fr::Element scalarElem;
+    engine.fr.fromString(scalarElem, scalarStrs[i], 10);
+    // Convert to big-endian bytes, then reverse to get little-endian
+    std::vector<uint8_t> beBytes(scalarSize, 0);
+    engine.fr.toRprBE(scalarElem, beBytes.data(), scalarSize);
+    // Reverse to little-endian (mulByScalar expects LE)
+    for (uint64_t j = 0; j < scalarSize; j++) {
+      scalars[i * scalarSize + j] = beBytes[scalarSize - 1 - j];
+    }
+  }
+  
+  // Perform multiexp
+  ParallelMultiexp<Engine::G1> pme(engine.g1);
+  Engine::G1::Point result;
+  pme.multiexp(result, bases.data(), scalars.data(), scalarSize, n);
+  
+  // Verify multiexp result by manual point accumulation loop in reverse order
+  Engine::G1::Point manualSum;
+  engine.g1.copy(manualSum, engine.g1.zero());
+  
+  for (int i = n-1; i >= 0; i--) {
+    Engine::G1::Point term;
+    engine.g1.mulByScalar(term, bases[i], &scalars[i * scalarSize], scalarSize);
+    engine.g1.add(manualSum, manualSum, term);
+  }
+  
+  ASSERT_TRUE(engine.g1.eq(result, manualSum)) << "Multiexp result does not match manual point accumulation";
+  
+  // Verify multiexp by combining scalars into a single scalar
+  // combinedScalar = s0 + s1*2 + s2*4 + s3*8
+  // Parse scalars directly from strings
+  Engine::Fr::Element rawScalars[4];
+  for (uint64_t i = 0; i < n; i++) {
+    engine.fr.fromString(rawScalars[i], scalarStrs[i], 10);
+  }
+  
+  Engine::Fr::Element combinedScalar;
+  engine.fr.fromUI(combinedScalar, 0);
+  
+  for (uint64_t i = 0; i < n; i++) {
+    Engine::Fr::Element powerOfTwo;
+    engine.fr.fromUI(powerOfTwo, 1ULL << i);
+    Engine::Fr::Element term;
+    engine.fr.mul(term, rawScalars[i], powerOfTwo);
+    engine.fr.add(combinedScalar, combinedScalar, term);
+  }
+  
+  // Convert combined scalar to little-endian bytes (mulByScalar expects LE)
+  std::vector<uint8_t> combinedScalarBE(scalarSize, 0);
+  engine.fr.toRprBE(combinedScalar, combinedScalarBE.data(), scalarSize);
+  std::vector<uint8_t> combinedScalarLE(scalarSize, 0);
+  for (uint64_t j = 0; j < scalarSize; j++) {
+    combinedScalarLE[j] = combinedScalarBE[scalarSize - 1 - j];
+  }
+  
+  // Compute expected result: (s0 + s1*2 + s2*4 + s3*8) * G
+  Engine::G1::Point expected;
+  engine.g1.mulByScalar(expected, engine.g1.oneAffine(), combinedScalarLE.data(), scalarSize);
+  
+  // Verify: multiexp(bases=[G,2G,4G,8G], scalars=[s0,s1,s2,s3]) == (s0 + s1*2 + s2*4 + s3*8) * G
+  ASSERT_TRUE(engine.g1.eq(result, expected)) << "Combined scalar verification failed: multiexp result does not match (s0 + s1*2 + s2*4 + s3*8)*G";
+}
+

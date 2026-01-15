@@ -26,12 +26,12 @@ NVCCFLAGS      := -D__USE_CUDA__ -I./../../external/sppark/ff $(CUDA_INC_FLAGS) 
                   -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 \
                   -arch=$(CUDA_ARCH)
 
-CXXFLAGS := -std=c++17 -Wall -O3 -fPIC -D__USE_ASSEMBLY__
+CXXFLAGS := -std=c++17 -Wall -O3 -fPIC -D__USE_ASSEMBLY__ -fopenmp
 CPPFLAGS := -I$(SRC_DIR) -I$(SRC_DIR)/ffiasm -I./../utils
 ASFLAGS  := -f elf64 -g -F dwarf
 
 # Fix linker warning about executable stack
-LDFLAGS_COMMON := -z noexecstack
+LDFLAGS_COMMON := -z noexecstack -fopenmp
 
 # Optional BLST support
 ifdef BLST
@@ -47,7 +47,7 @@ BENCHMARK_LIBS  := $(shell pkg-config --libs benchmark 2>/dev/null)
 # ----------------------
 # Source Files
 # ----------------------
-FFIASM_SRCS := $(SRC_DIR)/ffiasm/fr.cpp $(SRC_DIR)/ffiasm/fq.cpp
+FFIASM_SRCS := $(SRC_DIR)/ffiasm/fr.cpp $(SRC_DIR)/ffiasm/fq.cpp $(SRC_DIR)/ffiasm/naf.cpp $(SRC_DIR)/ffiasm/misc.cpp $(SRC_DIR)/ffiasm/splitparstr.cpp
 FFIASM_ASMS := $(SRC_DIR)/ffiasm/fr.asm $(SRC_DIR)/ffiasm/fq.asm
 FFIASM_OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.cpp.o,$(FFIASM_SRCS)) \
                $(patsubst $(SRC_DIR)/%.asm,$(BUILD_DIR)/%.asm.o,$(FFIASM_ASMS))
