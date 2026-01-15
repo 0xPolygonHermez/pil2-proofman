@@ -592,6 +592,13 @@ pub fn calculate_impols_expressions_c(p_setup: *mut c_void, step: u64, p_steps_p
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn calculate_witness_expressions_c(p_setup: *mut c_void, p_steps_params: *mut u8) {
+    unsafe {
+        calculate_witness_expr(p_setup, p_steps_params as *mut std::os::raw::c_void);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn custom_commit_size_c(p_setup: *mut c_void, commit_id: u64) -> u64 {
     unsafe { custom_commit_size(p_setup, commit_id) }
 }
@@ -639,33 +646,23 @@ pub fn write_custom_commit_c(
 #[allow(clippy::too_many_arguments)]
 #[cfg(not(feature = "no_lib_link"))]
 pub fn commit_witness_c(
-    arity: u64,
-    n_bits: u64,
-    n_bits_ext: u64,
-    n_cols: u64,
+    p_setup: *mut c_void,
+    p_params: *mut u8,
     instance_id: u64,
     airgroup_id: u64,
     air_id: u64,
     root: *mut u8,
-    witness: *mut u8,
-    aux_trace: *mut u8,
     d_buffers: *mut c_void,
-    setup: *mut c_void,
 ) -> u64 {
     unsafe {
         commit_witness(
-            arity,
-            n_bits,
-            n_bits_ext,
-            n_cols,
+            p_setup,
+            p_params as *mut std::os::raw::c_void,
             instance_id,
             airgroup_id,
             air_id,
             root as *mut std::os::raw::c_void,
-            witness as *mut std::os::raw::c_void,
-            aux_trace as *mut std::os::raw::c_void,
             d_buffers,
-            setup,
         )
     }
 }
@@ -1670,6 +1667,11 @@ pub fn calculate_impols_expressions_c(_p_setup: *mut c_void, _step: u64, _p_step
 }
 
 #[cfg(feature = "no_lib_link")]
+pub fn calculate_witness_expressions_c(_p_setup: *mut c_void, _p_steps_params: *mut u8) {
+    trace!("··· {}", "calculate_witness_expressions: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
 pub fn custom_commit_size_c(_p_setup: *mut c_void, _commit_id: u64) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "custom_commit_size: This is a mock call because there is no linked library");
     0
@@ -1698,18 +1700,13 @@ pub fn write_custom_commit_c(
 #[cfg(feature = "no_lib_link")]
 #[allow(clippy::too_many_arguments)]
 pub fn commit_witness_c(
-    _arity: u64,
-    _n_bits: u64,
-    _n_bits_ext: u64,
-    _n_cols: u64,
+    _p_setup: *mut c_void,
+    _p_params: *mut u8,
     _instance_id: u64,
     _airgroup_id: u64,
     _air_id: u64,
     _root: *mut u8,
-    _witness: *mut u8,
-    _aux_trace: *mut u8,
     _d_buffers: *mut c_void,
-    _setup: *mut c_void,
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "commit_witness: This is a mock call because there is no linked library");
     0

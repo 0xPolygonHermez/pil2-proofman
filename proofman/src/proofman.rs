@@ -37,8 +37,8 @@ use proofman_common::{ProofmanResult, ProofmanError};
 use mpi::topology::Communicator;
 
 use proofman_starks_lib_c::{
-    gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c, clear_proof_done_callback_c,
-    launch_callback_c,
+    gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c,
+    calculate_witness_expressions_c, clear_proof_done_callback_c, launch_callback_c,
 };
 
 use std::{
@@ -942,6 +942,12 @@ where
     fn calculate_instance_witness(&self, instance_id: usize) -> ProofmanResult<()> {
         Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true)?;
 
+        let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
+        let setup = self.sctx.get_setup(airgroup_id, air_id)?;
+        let steps_params = self.pctx.get_air_instance_params(instance_id, false);
+
+        calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
+
         #[cfg(feature = "diagnostic")]
         {
             let invalid_initialization = Self::diagnostic_instance(&self.pctx, &self.sctx, instance_id);
@@ -951,7 +957,8 @@ where
         }
 
         self.wcm.calculate_witness(2, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
-        Self::calculate_im_pols(2, &self.sctx, &self.pctx, instance_id)?;
+
+        calculate_impols_expressions_c((&setup.p_setup).into(), 2, (&steps_params).into());
 
         Ok(())
     }
@@ -1413,6 +1420,7 @@ where
                 let roots_contributions_clone = self.roots_contributions.clone();
                 let d_buffers_clone = self.d_buffers.clone();
                 let aux_trace_clone = self.aux_trace.clone();
+                let const_pols_clone = self.const_pols.clone();
                 let memory_handler_clone = self.memory_handler.clone();
                 let contributions_rx_clone = self.contributions_rx.clone();
                 let cancellation_info_clone = self.cancellation_info.clone();
@@ -1432,7 +1440,8 @@ where
                                 &roots_contributions_clone,
                                 &values_contributions_clone,
                                 instance_id,
-                                aux_trace_clone.as_ptr() as *mut u8,
+                                &aux_trace_clone,
+                                &const_pols_clone,
                                 &d_buffers_clone,
                             ) {
                                 cancellation_info_clone.write().unwrap().cancel(Some(e));
@@ -3544,21 +3553,6 @@ where
         Ok(())
     }
 
-    pub fn calculate_im_pols(
-        stage: u32,
-        sctx: &SetupCtx<F>,
-        pctx: &ProofCtx<F>,
-        instance_id: usize,
-    ) -> ProofmanResult<()> {
-        let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
-        let setup = sctx.get_setup(airgroup_id, air_id)?;
-
-        let steps_params = pctx.get_air_instance_params(instance_id, false);
-
-        calculate_impols_expressions_c((&setup.p_setup).into(), stage as u64, (&steps_params).into());
-        Ok(())
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn get_contribution_air(
         pctx: &ProofCtx<F>,
@@ -3566,7 +3560,8 @@ where
         roots_contributions: &[[F; 4]],
         values_contributions: &[Mutex<Vec<F>>],
         instance_id: usize,
-        aux_trace_contribution_ptr: *mut u8,
+        aux_trace: &[F],
+        const_pols: &[F],
         d_buffers: &DeviceBuffer,
     ) -> ProofmanResult<()> {
         let n_field_elements = 4;
@@ -3576,22 +3571,29 @@ where
 
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
         let setup = sctx.get_setup(airgroup_id, air_id)?;
+        let p_setup: *mut c_void = (&setup.p_setup).into();
 
         let air_values = &pctx.get_air_instance_air_values(airgroup_id, air_id, air_instance_id)?;
 
+        Self::initialize_air_instance(pctx, sctx, instance_id, false, false)?;
+
+        let mut steps_params = pctx.get_air_instance_params(instance_id, true);
+
+        if cfg!(not(feature = "gpu")) {
+            steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
+            steps_params.p_const_pols = const_pols.as_ptr() as *mut u8;
+        }
+
+        let p_steps_params: *mut u8 = (&steps_params).into();
+
         commit_witness_c(
-            setup.stark_info.stark_struct.merkle_tree_arity,
-            setup.stark_info.stark_struct.n_bits,
-            setup.stark_info.stark_struct.n_bits_ext,
-            *setup.stark_info.map_sections_n.get("cm1").unwrap(),
+            p_setup,
+            p_steps_params,
             instance_id as u64,
             airgroup_id as u64,
             air_id as u64,
             roots_contributions[instance_id].as_ptr() as *mut u8,
-            pctx.get_air_instance_trace_ptr(instance_id),
-            aux_trace_contribution_ptr,
             d_buffers.get_ptr(),
-            (&setup.p_setup).into(),
         );
 
         let n_airvalues = setup
