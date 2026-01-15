@@ -1,3 +1,6 @@
 [submodule "pil2-stark/external/sppark"]
 	path = pil2-stark/external/sppark
 	url = https://github.com/supranational/sppark.git
+[submodule "pil2-stark/external/blst"]
+	path = pil2-stark/external/blst
+	url = https://github.com/supranational/blst.git
