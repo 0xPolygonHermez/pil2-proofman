@@ -2,11 +2,7 @@
 #define __BN128_FFIGPU_FR_CUH__
 
 #define FEATURE_BN254
-# if defined(__CUDA_ARCH__) || defined(__HIPCC__)
-#  include <alt_bn128.hpp>
-# else
-#  include "alt_bn128_nvcc_host_shim.cuh"
-# endif
+#include <alt_bn128.hpp>
 
 // BN128 Scalar Field (Fr) 
 class BN128GPUScalarField {
