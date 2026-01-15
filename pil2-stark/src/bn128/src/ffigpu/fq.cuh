@@ -2,11 +2,7 @@
 #define __BN128_FFIGPU_FQ_CUH__
 
 #define FEATURE_BN254
-# if defined(__CUDA_ARCH__) || defined(__HIPCC__)
-#  include <alt_bn128.hpp>
-# else
-#  include "alt_bn128_nvcc_host_shim.cuh"
-# endif
+#include <alt_bn128.hpp>
 
 // BN128 Base Field (Fq) - used for curve point coordinates
 class BN128GPUBaseField {
