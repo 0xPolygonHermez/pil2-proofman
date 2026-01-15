@@ -107,7 +107,7 @@ TEST(BN128_POSEIDON2_TEST, hash_gpu_t2) {
     cudaFree(d_state);
     
     // Convert to hex string for comparison
-    char hex0[65], hex1[65];
+    char hex0[65], hex1[65]; //64 hex chars + 1 null
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
              h_state[0].v[7], h_state[0].v[6], h_state[0].v[5], h_state[0].v[4],
              h_state[0].v[3], h_state[0].v[2], h_state[0].v[1], h_state[0].v[0]);
@@ -139,7 +139,7 @@ TEST(BN128_POSEIDON2_TEST, hash_gpu_t2) {
     cudaFree(d_state);
     
     // Convert to hex string for comparison
-    char hex15[65];
+    char hex15[65]; //64 hex chars + 1 null
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
              h_state[0].v[7], h_state[0].v[6], h_state[0].v[5], h_state[0].v[4],
              h_state[0].v[3], h_state[0].v[2], h_state[0].v[1], h_state[0].v[0]);
