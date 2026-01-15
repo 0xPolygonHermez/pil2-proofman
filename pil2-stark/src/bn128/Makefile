@@ -20,11 +20,14 @@ include CudaArch.mk
 # ----------------------
 # Compiler Flags
 # ----------------------
-CUDA_SRC_DIRS  := $(SRC_DIR)/ffigpu ./tests $(SRC_DIR)/ffiasm $(SRC_DIR)/poseidon2 $(SRC_DIR)/../../utils
+CUDA_SRC_DIRS  := $(SRC_DIR)/ffigpu $(SRC_DIR)/msm ./tests $(SRC_DIR)/ffiasm $(SRC_DIR)/poseidon2 $(SRC_DIR)/curve $(SRC_DIR)/../../utils
 CUDA_INC_FLAGS := $(addprefix -I,$(CUDA_SRC_DIRS))
 BLST_INC       := -I./../../external/blst/src
-NVCCFLAGS      := -D__USE_CUDA__ -I./../../external/sppark/ff $(BLST_INC) $(CUDA_INC_FLAGS) \
-                  -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 \
+BLST_LIB       := ./../../external/blst/libblst.a
+SPPARK_INC     := -I./../../external/sppark -I./../../external/sppark/ff -I./../../external/sppark/util -I./../../external/sppark/ec
+SPPARK_UTIL    := ./../../external/sppark/util/all_gpus.cpp
+NVCCFLAGS      := -D__USE_CUDA__ -DFEATURE_BN254 $(SPPARK_INC) $(BLST_INC) $(CUDA_INC_FLAGS) \
+                  -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 -Xcompiler -D__ADX__ \
                   -arch=$(CUDA_ARCH)
 
 CXXFLAGS := -std=c++17 -Wall -O3 -fPIC -D__USE_ASSEMBLY__ -fopenmp
@@ -60,6 +63,8 @@ POSEIDON2_CPU_OBJS := $(BUILD_DIR)/src/poseidon2/poseidon2_bn128.o
 
 # GPU test objects
 POSEIDON2_GPU_OBJS := $(BUILD_DIR_GPU)/src/poseidon2/poseidon2_bn128.cu.o
+MSM_GPU_OBJS       := $(BUILD_DIR_GPU)/src/msm/msm_bn128.cu.o
+SPPARK_GPU_OBJS    := $(BUILD_DIR_GPU)/sppark/all_gpus.o
 
 # Benchmark
 BENCH_BUILD_DIR := $(BUILD_DIR)/benchs
@@ -77,8 +82,8 @@ BENCH_OBJS      := $(BENCH_BUILD_DIR)/bench.cpp.o \
 all: testsgpu
 
 # GPU tests
-testsgpu: $(BUILD_DIR_GPU)/tests/tests.cu.o $(POSEIDON2_GPU_OBJS) $(FFIASM_OBJS)
-	$(NVCC) $(NVCCFLAGS) -o $@ $^ -lgtest -lgmp
+testsgpu: $(BUILD_DIR_GPU)/tests/tests.cu.o $(POSEIDON2_GPU_OBJS) $(MSM_GPU_OBJS) $(SPPARK_GPU_OBJS) $(FFIASM_OBJS)
+	$(NVCC) $(NVCCFLAGS) -o $@ $^ $(BLST_LIB) -lgtest -lgmp
 
 # CPU tests
 testscpu: $(TESTS_CPU_OBJS) $(POSEIDON_CPU_OBJS) $(POSEIDON2_CPU_OBJS) $(FFIASM_OBJS)
@@ -101,6 +106,15 @@ $(BUILD_DIR_GPU)/tests/%.cu.o: tests/%.cu
 $(BUILD_DIR_GPU)/src/poseidon2/%.cu.o: $(SRC_DIR)/poseidon2/%.cu
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) $(NVCCFLAGS) -c $< -o $@
+
+$(BUILD_DIR_GPU)/src/msm/%.cu.o: $(SRC_DIR)/msm/%.cu
+	$(MKDIR_P) $(dir $@)
+	$(NVCC) $(NVCCFLAGS) -c $< -o $@
+
+# sppark utility (compile as CUDA to get proper GPU support)
+$(BUILD_DIR_GPU)/sppark/all_gpus.o: $(SPPARK_UTIL)
+	$(MKDIR_P) $(dir $@)
+	$(NVCC) $(NVCCFLAGS) -x cu -c $< -o $@
 
 # ----------------------
 # Pattern Rules - CPU
