@@ -9,6 +9,7 @@ use std::ffi::c_void;
 
 use fields::{CubicExtensionField, PrimeField64};
 use proofman_common::{ProofCtx, ProofmanError, ProofmanResult, SetupCtx, StepsParams};
+use proofman_util::create_buffer_fast;
 
 use std::ops::{Add, Div, Mul, Sub, AddAssign, DivAssign, MulAssign, SubAssign};
 
@@ -108,19 +109,19 @@ impl<F: PrimeField64> Default for HintFieldInfo<F> {
 impl<F: PrimeField64> HintFieldInfo<F> {
     pub fn init_buffers(&mut self) {
         if self.size > 0 {
-            self.values = vec![F::ZERO; self.size as usize];
+            self.values = create_buffer_fast(self.size as usize);
         }
 
         if self.matrix_size > 0 {
-            self.pos = vec![0; self.matrix_size as usize];
+            self.pos = create_buffer_fast(self.matrix_size as usize);
         }
 
         if self.string_size > 0 {
-            self.string_value = vec![0; self.string_size as usize];
+            self.string_value = create_buffer_fast(self.string_size as usize);
         }
 
         if self.expression_line_size > 0 {
-            self.expression_line = vec![0; self.expression_line_size as usize]
+            self.expression_line = create_buffer_fast(self.expression_line_size as usize);
         }
     }
 }
@@ -250,8 +251,47 @@ impl<F: PrimeField64> Display for HintFieldOutput<F> {
     }
 }
 
+use itoa::Buffer;
+
 pub fn format_hint_field_output_vec<F: PrimeField64>(vec: &[HintFieldOutput<F>]) -> String {
-    format!("[{}]", vec.iter().map(|item| item.to_string()).collect::<Vec<String>>().join(", "))
+    // Precompute capacity
+    let cap: usize = vec
+        .iter()
+        .map(|v| match v {
+            HintFieldOutput::Field(_) => 21,
+            HintFieldOutput::FieldExtended(e) => 21 * e.value.len(),
+        })
+        .sum::<usize>()
+        + vec.len().saturating_sub(1); // +commas
+
+    let mut result = String::with_capacity(cap);
+    let mut itoa_buf = Buffer::new();
+
+    let mut iter = vec.iter();
+    if let Some(first) = iter.next() {
+        match first {
+            HintFieldOutput::Field(f) => result.push_str(itoa_buf.format(f.as_canonical_u64())),
+            HintFieldOutput::FieldExtended(ef) => {
+                for x in &ef.value {
+                    result.push_str(itoa_buf.format(x.as_canonical_u64()));
+                }
+            }
+        }
+    }
+
+    for item in iter {
+        result.push(',');
+        match item {
+            HintFieldOutput::Field(f) => result.push_str(itoa_buf.format(f.as_canonical_u64())),
+            HintFieldOutput::FieldExtended(ef) => {
+                for x in &ef.value {
+                    result.push_str(itoa_buf.format(x.as_canonical_u64()));
+                }
+            }
+        }
+    }
+
+    result
 }
 
 impl<F: PrimeField64> HintFieldValue<F> {
@@ -710,19 +750,25 @@ impl<F: PrimeField64> HintFieldValue<F> {
 pub struct HintCol;
 
 impl HintCol {
-    pub fn from_hint_field<F: PrimeField64>(hint_field: &HintFieldInfo<F>) -> HintFieldValue<F> {
+    pub fn from_hint_field<F: PrimeField64>(hint_field: HintFieldInfo<F>) -> HintFieldValue<F> {
         match hint_field.field_type {
             HintFieldType::Field => HintFieldValue::Field(hint_field.values[0]),
             HintFieldType::FieldExtended => {
                 let array = [hint_field.values[0], hint_field.values[1], hint_field.values[2]];
                 HintFieldValue::FieldExtended(CubicExtensionField { value: array })
             }
-            HintFieldType::Column => HintFieldValue::Column(hint_field.values.to_vec()),
+            HintFieldType::Column => HintFieldValue::Column(hint_field.values),
             HintFieldType::ColumnExtended => {
-                let mut extended_vec = Vec::with_capacity(hint_field.size as usize / 3);
-                for chunk in hint_field.values.chunks(3) {
-                    extended_vec.push(CubicExtensionField { value: [chunk[0], chunk[1], chunk[2]] });
-                }
+                let values = hint_field.values;
+                let len = values.len() / 3;
+                let capacity = values.capacity() / 3;
+
+                let extended_vec = unsafe {
+                    let ptr = values.as_ptr() as *mut CubicExtensionField<F>;
+                    std::mem::forget(values);
+                    Vec::from_raw_parts(ptr, len, capacity)
+                };
+
                 HintFieldValue::ColumnExtended(extended_vec)
             }
             HintFieldType::String => match std::str::from_utf8(&hint_field.string_value) {
@@ -953,7 +999,7 @@ pub fn get_hint_field<F: PrimeField64>(
 ) -> ProofmanResult<HintFieldValue<F>> {
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
 
-    let hint_info = get_hint_f(
+    let mut hint_info = get_hint_f(
         sctx,
         Some(pctx),
         airgroup_id,
@@ -974,7 +1020,7 @@ pub fn get_hint_field<F: PrimeField64>(
         tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info[0].expression_line).unwrap());
     }
 
-    Ok(HintCol::from_hint_field(&hint_info[0]))
+    Ok(HintCol::from_hint_field(hint_info.swap_remove(0)))
 }
 
 pub fn get_hint_field_a<F: PrimeField64>(
@@ -999,7 +1045,7 @@ pub fn get_hint_field_a<F: PrimeField64>(
     )?;
 
     let mut hint_field_values = Vec::new();
-    for (v, hint_info) in hint_infos.iter().enumerate() {
+    for (v, hint_info) in hint_infos.into_iter().enumerate() {
         if v == 0 && hint_info.matrix_size != 1 {
             return Err(ProofmanError::InvalidHints(
                 "get_hint_field_m can only be called with an array of expressions!".to_string(),
@@ -1038,13 +1084,12 @@ pub fn get_hint_field_m<F: PrimeField64>(
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 
-    for (v, hint_info) in hint_infos.iter().enumerate() {
+    for (v, hint_info) in hint_infos.into_iter().enumerate() {
         if v == 0 && hint_info.matrix_size > 2 {
             return Err(ProofmanError::InvalidHints(
                 "get_hint_field_m can only be called with a matrix of expressions!".to_string(),
             ));
         }
-        let hint_value = HintCol::from_hint_field(hint_info);
         let mut pos = Vec::new();
         for p in 0..hint_info.matrix_size {
             pos.push(hint_info.pos[p as usize]);
@@ -1052,7 +1097,7 @@ pub fn get_hint_field_m<F: PrimeField64>(
         if options.print_expression {
             tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
         }
-        hint_field_values.insert(pos, hint_value);
+        hint_field_values.insert(pos, HintCol::from_hint_field(hint_info));
     }
 
     Ok(HintFieldValues { values: hint_field_values })
@@ -1068,7 +1113,7 @@ pub fn get_hint_field_constant<F: PrimeField64>(
 ) -> ProofmanResult<HintFieldValue<F>> {
     options.compilation_time = true;
 
-    let hint_info = get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone())?;
+    let mut hint_info = get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone())?;
 
     if hint_info[0].matrix_size != 0 {
         return Err(ProofmanError::InvalidHints(format!(
@@ -1080,7 +1125,7 @@ pub fn get_hint_field_constant<F: PrimeField64>(
         tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info[0].expression_line).unwrap());
     }
 
-    Ok(HintCol::from_hint_field(&hint_info[0]))
+    Ok(HintCol::from_hint_field(hint_info.swap_remove(0)))
 }
 
 pub fn get_hint_field_constant_a<F: PrimeField64>(
@@ -1096,7 +1141,7 @@ pub fn get_hint_field_constant_a<F: PrimeField64>(
     let hint_infos = get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone())?;
 
     let mut hint_field_values = Vec::new();
-    for (v, hint_info) in hint_infos.iter().enumerate() {
+    for (v, hint_info) in hint_infos.into_iter().enumerate() {
         if v == 0 && hint_info.matrix_size != 1 {
             return Err(ProofmanError::InvalidHints(
                 "get_hint_field_m can only be called with an array of expressions!".to_string(),
@@ -1126,13 +1171,12 @@ pub fn get_hint_field_constant_m<F: PrimeField64>(
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 
-    for (v, hint_info) in hint_infos.iter().enumerate() {
+    for (v, hint_info) in hint_infos.into_iter().enumerate() {
         if v == 0 && hint_info.matrix_size > 2 {
             return Err(ProofmanError::InvalidHints(
                 "get_hint_field_m can only be called with a matrix of expressions!".to_string(),
             ));
         }
-        let hint_value = HintCol::from_hint_field(hint_info);
         let mut pos = Vec::new();
         for p in 0..hint_info.matrix_size {
             pos.push(hint_info.pos[p as usize]);
@@ -1140,7 +1184,7 @@ pub fn get_hint_field_constant_m<F: PrimeField64>(
         if options.print_expression {
             tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
         }
-        hint_field_values.insert(pos, hint_value);
+        hint_field_values.insert(pos, HintCol::from_hint_field(hint_info));
     }
 
     Ok(HintFieldValues { values: hint_field_values })

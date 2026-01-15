@@ -8,6 +8,7 @@ use commands::pil_helpers::PilHelpersCmd;
 use commands::prove::ProveCmd;
 use commands::prove_snark::ProveSnarkCmd;
 use commands::verify_constraints::VerifyConstraintsCmd;
+use commands::debug_info::DebugInfoCmd;
 use commands::stats::StatsCmd;
 use commands::verify_stark::VerifyStark;
 use commands::gen_witness::GenWitnessCmd;
@@ -34,6 +35,7 @@ pub enum Commands {
     ProveSnark(ProveSnarkCmd),
     PilHelpers(PilHelpersCmd),
     VerifyConstraints(VerifyConstraintsCmd),
+    DebugInfo(DebugInfoCmd),
     Stats(StatsCmd),
     Execute(ExecuteCmd),
     VerifyStark(VerifyStark),
@@ -56,6 +58,7 @@ fn main() {
         Commands::ProveSnark(args) => args.run(),
         Commands::PilHelpers(args) => args.run(),
         Commands::VerifyConstraints(args) => args.run(),
+        Commands::DebugInfo(args) => args.run(),
         Commands::GenCustomCommitsFixed(args) => args.run(),
         Commands::GetConstraints(args) => args.run(),
         Commands::VerifyStark(args) => args.run(),
