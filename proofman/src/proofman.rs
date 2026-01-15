@@ -16,7 +16,7 @@ use proofman_starks_lib_c::{
     get_instances_ready_c,
 };
 use crate::add_publics_circom;
-use proofman_verifier::{verify_recursive2, verify, verify_final_vadcop_perf};
+use proofman_verifier::{verify_recursive2, verify_vadcop_final, verify_vadcop_final_compressed};
 use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::fs;
@@ -57,7 +57,7 @@ use crate::MaxSizes;
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
 use crate::{
     get_accumulated_challenge, gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof,
-    generate_vadcop_final_proof, initialize_witness_circom,
+    generate_vadcop_final_proof, generate_vadcop_final_compressed_proof, initialize_witness_circom,
 };
 use crate::total_recursive_proofs;
 use crate::check_tree_paths;
@@ -408,8 +408,8 @@ where
             let setup_vadcop_final = setups_aggregation.setup_vadcop_final.as_ref().unwrap();
             calculate_fixed_tree(setup_vadcop_final);
 
-            let setup_vadcop_final_perf = setups_aggregation.setup_vadcop_final_perf.as_ref().unwrap();
-            calculate_fixed_tree(setup_vadcop_final_perf);
+            let setup_vadcop_final_compressed = setups_aggregation.setup_vadcop_final_compressed.as_ref().unwrap();
+            calculate_fixed_tree(setup_vadcop_final_compressed);
         }
 
         Ok(())
@@ -2214,10 +2214,10 @@ where
 
                     let proof_bytes: &[u8] = cast_slice(vadcop_final_proof.as_ref().unwrap());
 
-                    let verkey_u64: Vec<u64> = match options.perf {
+                    let verkey_u64: Vec<u64> = match options.compressed {
                         true => self
                             .setups
-                            .setup_vadcop_final_perf
+                            .setup_vadcop_final_compressed
                             .as_ref()
                             .unwrap()
                             .verkey
@@ -2236,9 +2236,9 @@ where
                     };
 
                     let vk_bytes: &[u8] = cast_slice(&verkey_u64);
-                    let valid_proofs = match options.perf {
-                        true => verify_final_vadcop_perf(proof_bytes, vk_bytes),
-                        false => verify(proof_bytes, vk_bytes),
+                    let valid_proofs = match options.compressed {
+                        true => verify_vadcop_final_compressed(proof_bytes, vk_bytes),
+                        false => verify_vadcop_final(proof_bytes, vk_bytes),
                     };
                     timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
                     if !valid_proofs {
@@ -2445,11 +2445,26 @@ where
                     &self.const_pols,
                     &self.const_tree,
                     self.d_buffers.get_ptr(),
-                    options.perf,
                     options.save_proofs,
                 )?;
 
-                return Ok(Some(vec![AggProofs::new(0, vadcop_proof_final.proof, vec![])]));
+                if options.compressed {
+                    let vadcop_final_proof_compressed = generate_vadcop_final_compressed_proof(
+                        &self.pctx,
+                        &self.setups,
+                        &vadcop_proof_final,
+                        &self.prover_buffer_recursive,
+                        &options.output_dir_path,
+                        &self.const_pols,
+                        &self.const_tree,
+                        self.d_buffers.get_ptr(),
+                        options.save_proofs,
+                    )?;
+
+                    return Ok(Some(vec![AggProofs::new(0, vadcop_final_proof_compressed.proof, vec![])]));
+                } else {
+                    return Ok(Some(vec![AggProofs::new(0, vadcop_proof_final.proof, vec![])]));
+                }
             }
         }
 

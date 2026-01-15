@@ -4379,13 +4379,13 @@ fn verifier_info() -> VerifierInfo {
         n_constants: 52,
         n_evals: 152,
         n_bits: 16,
-        n_bits_ext: 22,
+        n_bits_ext: 21,
         arity: 4,
-        n_fri_queries: 36,
+        n_fri_queries: 43,
         n_fri_steps: 5,
         n_challenges: 6,
         n_challenges_total: 12,
-        fri_steps: vec![22, 18, 14, 10, 6],
+        fri_steps: vec![21, 17, 13, 9, 5],
         hash_commits: true,
         last_level_verification: 1,
         pow_bits: 22,
@@ -4397,6 +4397,6 @@ fn verifier_info() -> VerifierInfo {
     }
 }
 
-pub fn verify(proof: &[u8], vk: &[u8]) -> bool {
+pub fn verify_vadcop_final(proof: &[u8], vk: &[u8]) -> bool {
     stark_verify::<Poseidon16, 16>(proof, vk, &verifier_info(), q_verify, query_verify)
 }

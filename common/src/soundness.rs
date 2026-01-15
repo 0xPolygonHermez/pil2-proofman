@@ -231,9 +231,17 @@ pub fn soundness_info<F: PrimeField64>(
             });
         }
 
-        let setup_final_circuit = setups_aggregation.setup_vadcop_final_perf.as_ref().unwrap();
+        let setup_final_circuit = setups_aggregation.setup_vadcop_final.as_ref().unwrap();
         let (_, final_air_info) = get_soundness_air_info(setup_final_circuit);
         circuits.push(TomlCircuit { name: "Final".to_string(), group: "final".to_string(), air: final_air_info });
+
+        let setup_final_circuit_compressed = setups_aggregation.setup_vadcop_final_compressed.as_ref().unwrap();
+        let (_, final_air_info) = get_soundness_air_info(setup_final_circuit_compressed);
+        circuits.push(TomlCircuit {
+            name: "FinalCompressed".to_string(),
+            group: "final".to_string(),
+            air: final_air_info,
+        });
     }
 
     Ok(SoundnessToml {

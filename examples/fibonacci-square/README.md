@@ -159,7 +159,7 @@ cargo build --features gpu --workspace \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --output-dir examples/fibonacci-square/build/proofs \
-     --custom-commits rom=examples/fibonacci-square/build/rom_gpu.bin -y -a
+     --custom-commits rom=examples/fibonacci-square/build/rom_gpu.bin -y -a -f
 ```
 ### 2.9 All at once
 
@@ -235,9 +235,9 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
      --custom-commits rom=examples/fibonacci-square/build/rom.bin \
      --verify-proofs \
      --aggregation \
-     --perf \
+     --compressed \
      --output-dir examples/fibonacci-square/build/proofs \
 && cargo run --bin proofman-cli verify-stark \
      --proof ./examples/fibonacci-square/build/proofs/proofs/vadcop_final_proof.bin \
-     --verkey ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.verkey.bin --perf
+     --verkey ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.verkey.bin --compressed
 ```

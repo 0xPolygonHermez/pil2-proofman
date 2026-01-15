@@ -53,7 +53,7 @@ pub struct ProveCmd {
     pub aggregation: bool,
 
     #[clap(short = 'f', long, default_value_t = false)]
-    pub perf: bool,
+    pub compressed: bool,
 
     #[clap(short = 'y', long, default_value_t = false)]
     pub verify_proofs: bool,
@@ -157,7 +157,7 @@ impl ProveCmd {
             false,
             self.aggregation,
             self.rma,
-            self.perf,
+            self.compressed,
             self.verify_proofs,
             self.minimal_memory,
             self.save_proofs,

@@ -49,7 +49,7 @@ pub struct ProofOptions {
     pub verify_constraints: bool,
     pub aggregation: bool,
     pub rma: bool,
-    pub perf: bool,
+    pub compressed: bool,
     pub verify_proofs: bool,
     pub save_proofs: bool,
     pub test_mode: bool,
@@ -62,7 +62,7 @@ impl BorshSerialize for ProofOptions {
         BorshSerialize::serialize(&self.verify_constraints, writer)?;
         BorshSerialize::serialize(&self.aggregation, writer)?;
         BorshSerialize::serialize(&self.rma, writer)?;
-        BorshSerialize::serialize(&self.perf, writer)?;
+        BorshSerialize::serialize(&self.compressed, writer)?;
         BorshSerialize::serialize(&self.verify_proofs, writer)?;
         BorshSerialize::serialize(&self.save_proofs, writer)?;
         BorshSerialize::serialize(&self.test_mode, writer)?;
@@ -77,7 +77,7 @@ impl BorshDeserialize for ProofOptions {
         let verify_constraints = bool::deserialize_reader(reader)?;
         let aggregation = bool::deserialize_reader(reader)?;
         let rma = bool::deserialize_reader(reader)?;
-        let perf = bool::deserialize_reader(reader)?;
+        let compressed = bool::deserialize_reader(reader)?;
         let verify_proofs = bool::deserialize_reader(reader)?;
         let save_proofs = bool::deserialize_reader(reader)?;
         let test_mode = bool::deserialize_reader(reader)?;
@@ -88,7 +88,7 @@ impl BorshDeserialize for ProofOptions {
             verify_constraints,
             aggregation,
             rma,
-            perf,
+            compressed,
             verify_proofs,
             save_proofs,
             test_mode,
@@ -136,7 +136,7 @@ impl ProofOptions {
         verify_constraints: bool,
         aggregation: bool,
         rma: bool,
-        perf: bool,
+        compressed: bool,
         verify_proofs: bool,
         minimal_memory: bool,
         save_proofs: bool,
@@ -146,7 +146,7 @@ impl ProofOptions {
             verify_constraints,
             aggregation,
             rma,
-            perf,
+            compressed,
             verify_proofs,
             minimal_memory,
             save_proofs,
@@ -160,7 +160,7 @@ impl ProofOptions {
         verify_constraints: bool,
         aggregation: bool,
         rma: bool,
-        perf: bool,
+        compressed: bool,
         verify_proofs: bool,
         minimal_memory: bool,
         save_proofs: bool,
@@ -170,7 +170,7 @@ impl ProofOptions {
             verify_constraints,
             aggregation,
             rma,
-            perf,
+            compressed,
             verify_proofs,
             save_proofs,
             minimal_memory,
