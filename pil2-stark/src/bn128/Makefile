@@ -22,7 +22,8 @@ include CudaArch.mk
 # ----------------------
 CUDA_SRC_DIRS  := $(SRC_DIR)/ffigpu ./tests $(SRC_DIR)/ffiasm $(SRC_DIR)/poseidon2 $(SRC_DIR)/../../utils
 CUDA_INC_FLAGS := $(addprefix -I,$(CUDA_SRC_DIRS))
-NVCCFLAGS      := -D__USE_CUDA__ -I./../../external/sppark/ff $(CUDA_INC_FLAGS) \
+BLST_INC       := -I./../../external/blst/src
+NVCCFLAGS      := -D__USE_CUDA__ -I./../../external/sppark/ff $(BLST_INC) $(CUDA_INC_FLAGS) \
                   -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 \
                   -arch=$(CUDA_ARCH)
 
