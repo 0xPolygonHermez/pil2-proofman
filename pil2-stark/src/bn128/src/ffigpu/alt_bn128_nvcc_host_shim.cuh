@@ -26,4 +26,14 @@ struct fr_t {
         return even[idx];
     }
 };
-}
+
+struct fp_t {
+    uint32_t even[8];
+    __host__ __device__ inline fp_t() {}
+
+    uint32_t& operator[](size_t idx) {
+        return even[idx];
+    }
+};
+
+} // namespace alt_bn128
