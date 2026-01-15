@@ -3073,9 +3073,7 @@ where
         };
         let mut n_recursive_streams_per_gpu = 0;
         if aggregation {
-            while gpu_available_memory > 0
-                && (n_streams_per_gpu + n_recursive_streams_per_gpu) < std::cmp::max(gpu_params.max_number_streams, 20)
-            {
+            while gpu_available_memory > 0 && n_recursive_streams_per_gpu < 10 {
                 gpu_available_memory -= max_prover_recursive2_buffer_size as i64;
                 if gpu_available_memory < 0 {
                     break;
