@@ -6,6 +6,7 @@
 #include "poseidon2_bn128.cuh"
 #include "msm_bn128.cuh"
 #include "point.cuh"
+#include "alt_bn128.hpp"
 
 __global__ void kernel_fr_add_one_one(int* ok);
 
@@ -211,61 +212,134 @@ TEST(BN128_POSEIDON2_TEST, hash_gpu_t2) {
 // =====================
 #ifndef __CUDA_ARCH__
 
-TEST(BN128_MSM, simple_msm) {
-    // BN254 generator point G1 = (1, 2) in Montgomery form
-    // These are the Montgomery representations for the BN254 base field
-    static const uint64_t G1_X_MONT[4] = {
-        0xd35d438dc58f0d9dULL, 0x0a78eb28f5c70b3dULL,
-        0x666ea36f7879462cULL, 0x0e0a77c19a07df2fULL
-    };  // Montgomery(1) mod p
-    static const uint64_t G1_Y_MONT[4] = {
-        0xa6ba871b8b1e1b3aULL, 0x14f1d651eb8e167bULL,
-        0xccdd46def0f28c58ULL, 0x1c14ef83340fbe5eULL
-    };  // Montgomery(2) mod p
+TEST(BN128_MSM, msm) {
+    // Use CPU curve for computing expected result
+    AltBn128::G1PointAffine& G = AltBn128::G1.oneAffine();
     
-    // Create 4 copies of G1 generator point
+    // Create points: [G, 2G, 4G, 8G]
+    // With large 253-bit scalars (same as CPU test)
+    // MSM result: s0*G + s1*(2G) + s2*(4G) + s3*(8G) = (s0 + 2*s1 + 4*s2 + 8*s3)*G
     const size_t npoints = 4;
+    const size_t scalarSize = 32;  // 256-bit scalars
     PointAffineGPU* h_points = new PointAffineGPU[npoints];
     BN128GPUScalarField::Element* h_scalars = new BN128GPUScalarField::Element[npoints];
     
-    // Initialize all points as the generator
+    // Compute points: G, 2G, 4G, 8G using CPU
+    AltBn128::G1Point P;
+    AltBn128::G1PointAffine P_affine;
+    AltBn128::G1.copy(P, G);  // P = G
+    
     for (size_t i = 0; i < npoints; i++) {
-        memcpy(&h_points[i].x, G1_X_MONT, sizeof(G1_X_MONT));
-        memcpy(&h_points[i].y, G1_Y_MONT, sizeof(G1_Y_MONT));
+        AltBn128::G1.copy(P_affine, P);
+        memcpy(&h_points[i].x, &P_affine.x, sizeof(AltBn128::F1Element));
+        memcpy(&h_points[i].y, &P_affine.y, sizeof(AltBn128::F1Element));
+        AltBn128::G1.dbl(P, P);
     }
     
-    // Initialize scalars: [1, 2, 3, 4] - NOT in Montgomery form
-    // MSM result should be: 1*G + 2*G + 3*G + 4*G = 10*G
+    // Large 253-bit scalars (same as CPU multiexp test)
+    const char* scalarStrs[4] = {
+        "5708990770823839524233143877797980545530985996",
+        "8563486156235759286349715816696970818296478975",
+        "9234567890123456789012345678901234567890123456",
+        "10876543210987654321098765432109876543210987654"
+    };
+    
+    // Parse scalars and convert to little-endian format for GPU
+    AltBn128::FrElement rawScalars[4];
     for (size_t i = 0; i < npoints; i++) {
-        uint64_t scalar_val[4] = {i + 1, 0, 0, 0};
-        memcpy(&h_scalars[i], scalar_val, sizeof(scalar_val));
+        AltBn128::Fr.fromString(rawScalars[i], scalarStrs[i], 10);
+        // Fr stores in Montgomery form internally, but we need raw LE for GPU
+        // Convert to big-endian bytes, then reverse to little-endian
+        uint8_t beBytes[scalarSize];
+        AltBn128::Fr.toRprBE(rawScalars[i], beBytes, scalarSize);
+        // Reverse to little-endian (GPU MSM expects LE)
+        uint8_t leBytes[scalarSize];
+        for (size_t j = 0; j < scalarSize; j++) {
+            leBytes[j] = beBytes[scalarSize - 1 - j];
+        }
+        memcpy(&h_scalars[i], leBytes, scalarSize);
     }
     
-    // Perform MSM on GPU
-    PointJacobianGPU result;
-    memset(&result, 0, sizeof(result));
+    // ========== GPU MSM ==========
+    PointJacobianGPU gpu_result;
+    memset(&gpu_result, 0, sizeof(gpu_result));
     
-    MSM_BN128_GPU::msm(result, h_points, h_scalars, npoints, false);
+    MSM_BN128_GPU::msm(gpu_result, h_points, h_scalars, npoints, false);
     
-    // Verify result is not point at infinity (Z != 0)
-    // Cast to raw bytes to check
-    const uint64_t* pz = reinterpret_cast<const uint64_t*>(&result.Z);
-    bool z_nonzero = (pz[0] | pz[1] | pz[2] | pz[3]) != 0;
+    // ========== CPU verification ==========
+    // Compute combined scalar: s0 + 2*s1 + 4*s2 + 8*s3
+    AltBn128::FrElement combinedScalar;
+    AltBn128::Fr.fromUI(combinedScalar, 0);
     
-    EXPECT_TRUE(z_nonzero) << "Result is point at infinity (Z=0)";
+    for (size_t i = 0; i < npoints; i++) {
+        AltBn128::FrElement powerOfTwo;
+        AltBn128::Fr.fromUI(powerOfTwo, 1ULL << i);
+        AltBn128::FrElement term;
+        AltBn128::Fr.mul(term, rawScalars[i], powerOfTwo);
+        AltBn128::Fr.add(combinedScalar, combinedScalar, term);
+    }
     
-    // Print result using raw access
-    const uint32_t* px = reinterpret_cast<const uint32_t*>(&result.X);
-    const uint32_t* py = reinterpret_cast<const uint32_t*>(&result.Y);
-    const uint32_t* pz32 = reinterpret_cast<const uint32_t*>(&result.Z);
+    // Convert combined scalar to little-endian bytes
+    uint8_t combinedBE[scalarSize];
+    AltBn128::Fr.toRprBE(combinedScalar, combinedBE, scalarSize);
+    uint8_t combinedLE[scalarSize];
+    for (size_t j = 0; j < scalarSize; j++) {
+        combinedLE[j] = combinedBE[scalarSize - 1 - j];
+    }
     
-    printf("MSM test completed. Result (10*G1) in Jacobian form:\n");
-    printf("  X = %08x%08x%08x%08x%08x%08x%08x%08x\n", 
-           px[7], px[6], px[5], px[4], px[3], px[2], px[1], px[0]);
-    printf("  Y = %08x%08x%08x%08x%08x%08x%08x%08x\n",
-           py[7], py[6], py[5], py[4], py[3], py[2], py[1], py[0]);
-    printf("  Z = %08x%08x%08x%08x%08x%08x%08x%08x\n",
-           pz32[7], pz32[6], pz32[5], pz32[4], pz32[3], pz32[2], pz32[1], pz32[0]);
+    // Compute expected: (s0 + 2*s1 + 4*s2 + 8*s3) * G
+    AltBn128::G1Point cpu_result;
+    AltBn128::G1.mulByScalar(cpu_result, G, combinedLE, scalarSize);
+    
+    // Convert CPU result to affine
+    AltBn128::G1PointAffine cpu_affine;
+    AltBn128::G1.copy(cpu_affine, cpu_result);
+    
+    // Convert GPU result (Jacobian) to affine using CPU field operations
+    // GPU Jacobian: affine_x = X/Z^2, affine_y = Y/Z^3
+    
+    AltBn128::F1Element gpu_X, gpu_Y, gpu_Z;
+    memcpy(&gpu_X, &gpu_result.X, sizeof(AltBn128::F1Element));
+    memcpy(&gpu_Y, &gpu_result.Y, sizeof(AltBn128::F1Element));
+    memcpy(&gpu_Z, &gpu_result.Z, sizeof(AltBn128::F1Element));
+    
+    // Compute Z^2 and Z^3
+    AltBn128::F1Element z2, z3, z_inv, z2_inv, z3_inv;
+    AltBn128::F1.square(z2, gpu_Z);
+    AltBn128::F1.mul(z3, z2, gpu_Z);
+    
+    // Compute inverses
+    AltBn128::F1.inv(z2_inv, z2);
+    AltBn128::F1.inv(z3_inv, z3);
+    
+    // Compute affine coordinates
+    AltBn128::F1Element gpu_affine_x, gpu_affine_y;
+    AltBn128::F1.mul(gpu_affine_x, gpu_X, z2_inv);
+    AltBn128::F1.mul(gpu_affine_y, gpu_Y, z3_inv);
+    
+    // Compare with CPU affine result
+    bool x_eq = AltBn128::F1.eq(gpu_affine_x, cpu_affine.x);
+    bool y_eq = AltBn128::F1.eq(gpu_affine_y, cpu_affine.y);
+    
+    EXPECT_TRUE(x_eq) << "GPU X coordinate does not match CPU";
+    EXPECT_TRUE(y_eq) << "GPU Y coordinate does not match CPU";
+    
+    if (!x_eq || !y_eq) {
+        // Print both results for debugging
+        const uint32_t* gx = reinterpret_cast<const uint32_t*>(&gpu_affine_x);
+        const uint32_t* gy = reinterpret_cast<const uint32_t*>(&gpu_affine_y);
+        const uint32_t* cx = reinterpret_cast<const uint32_t*>(&cpu_affine.x);
+        const uint32_t* cy = reinterpret_cast<const uint32_t*>(&cpu_affine.y);
+        
+        printf("GPU affine X = %08x%08x%08x%08x%08x%08x%08x%08x\n",
+               gx[7], gx[6], gx[5], gx[4], gx[3], gx[2], gx[1], gx[0]);
+        printf("CPU affine X = %08x%08x%08x%08x%08x%08x%08x%08x\n",
+               cx[7], cx[6], cx[5], cx[4], cx[3], cx[2], cx[1], cx[0]);
+        printf("GPU affine Y = %08x%08x%08x%08x%08x%08x%08x%08x\n",
+               gy[7], gy[6], gy[5], gy[4], gy[3], gy[2], gy[1], gy[0]);
+        printf("CPU affine Y = %08x%08x%08x%08x%08x%08x%08x%08x\n",
+               cy[7], cy[6], cy[5], cy[4], cy[3], cy[2], cy[1], cy[0]);
+    }
     
     delete[] h_points;
     delete[] h_scalars;
