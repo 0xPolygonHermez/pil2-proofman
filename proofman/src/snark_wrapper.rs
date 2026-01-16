@@ -7,7 +7,7 @@ use proofman_util::{timer_start_info, timer_stop_and_log_info, create_buffer_fas
 use fields::PrimeField64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::fs::File;
+use std::fs::{File, create_dir_all};
 use std::io::Write;
 use std::ffi::c_void;
 use proofman_starks_lib_c::{init_final_snark_prover_c, free_final_snark_prover_c};
@@ -105,12 +105,16 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         let public_bytes = self.get_public_bytes(&vadcop_proof[1..1 + vadcop_proof[0] as usize])?;
         let snark_proof = SnarkProof { proof_bytes: snark_proof_bytes, public_bytes };
 
-        let proofs_file_path = output_dir_path.join("proofs/final_snark_proof.bin");
+        let proofs_dir = output_dir_path.join("snark_proof");
+
+        create_dir_all(&proofs_dir)?;
+
+        let proofs_file_path = output_dir_path.join("snark_proof/final_snark_proof.bin");
         let mut proof_file = File::create(&proofs_file_path)?;
         proof_file.write_all(&snark_proof.proof_bytes)?;
         proof_file.flush()?;
 
-        let publics_file_path = output_dir_path.join("proofs/final_snark_publics.bin");
+        let publics_file_path = output_dir_path.join("snark_proof/final_snark_publics.bin");
         let mut publics_file = File::create(&publics_file_path)?;
         publics_file.write_all(&snark_proof.public_bytes)?;
         publics_file.flush()?;

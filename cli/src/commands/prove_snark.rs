@@ -44,13 +44,8 @@ impl ProveSnarkCmd {
 
         let snark_wrapper: SnarkWrapper<Goldilocks> = SnarkWrapper::new(&self.proving_key_snark, self.verbose.into())?;
 
-        let snark_proof = snark_wrapper.generate_final_snark_proof(proof, &self.output_dir, self.save_json)?;
-        println!(
-            "{} Final SNARK proof generated. Proof: {:?}, Publics: {:?}",
-            "Info:".bright_blue().bold(),
-            snark_proof.proof_bytes,
-            snark_proof.public_bytes
-        );
+        snark_wrapper.generate_final_snark_proof(proof, &self.output_dir, self.save_json)?;
+
         Ok(())
     }
 }

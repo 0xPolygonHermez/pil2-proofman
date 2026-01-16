@@ -4387,7 +4387,7 @@ fn verifier_info() -> VerifierInfo {
         n_challenges_total: 12,
         fri_steps: vec![21, 17, 13, 9, 5],
         hash_commits: true,
-        last_level_verification: 1,
+        last_level_verification: 2,
         pow_bits: 22,
         num_vals: vec![62, 15, 21],
         opening_points: vec![-1, -2, 0, 1],
