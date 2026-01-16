@@ -20,15 +20,17 @@ include CudaArch.mk
 # ----------------------
 # Compiler Flags
 # ----------------------
-CUDA_SRC_DIRS  := $(SRC_DIR)/ffigpu $(SRC_DIR)/msm ./tests $(SRC_DIR)/ffiasm $(SRC_DIR)/poseidon2 $(SRC_DIR)/curve $(SRC_DIR)/../../utils
+CUDA_SRC_DIRS  := $(SRC_DIR)/ffigpu $(SRC_DIR)/msm ./tests $(SRC_DIR)/poseidon2 $(SRC_DIR)/curve $(SRC_DIR)/../../utils
 CUDA_INC_FLAGS := $(addprefix -I,$(CUDA_SRC_DIRS))
 BLST_INC       := -I./../../external/blst/src
 BLST_LIB       := ./../../external/blst/libblst.a
 SPPARK_INC     := -I./../../external/sppark -I./../../external/sppark/ff -I./../../external/sppark/util -I./../../external/sppark/ec
 SPPARK_UTIL    := ./../../external/sppark/util/all_gpus.cpp
-NVCCFLAGS      := -D__USE_CUDA__ -DFEATURE_BN254 $(SPPARK_INC) $(BLST_INC) $(CUDA_INC_FLAGS) \
+# Use -iquote for ffiasm so nested includes (fq.hpp, fr.hpp, etc.) resolve correctly
+FFIASM_QUOTE   := -Xcompiler -iquote$(SRC_DIR)/ffiasm
+NVCCFLAGS      := -D__USE_CUDA__ -DFEATURE_BN254 $(SPPARK_INC) $(BLST_INC) $(CUDA_INC_FLAGS) $(FFIASM_QUOTE) \
                   -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 -Xcompiler -D__ADX__ \
-                  -arch=$(CUDA_ARCH)
+                  -D__USE_ASSEMBLY__ -arch=$(CUDA_ARCH)
 
 CXXFLAGS := -std=c++17 -Wall -O3 -fPIC -D__USE_ASSEMBLY__ -fopenmp
 CPPFLAGS := -I$(SRC_DIR) -I$(SRC_DIR)/ffiasm -I./../utils
@@ -51,7 +53,7 @@ BENCHMARK_LIBS  := $(shell pkg-config --libs benchmark 2>/dev/null)
 # ----------------------
 # Source Files
 # ----------------------
-FFIASM_SRCS := $(SRC_DIR)/ffiasm/fr.cpp $(SRC_DIR)/ffiasm/fq.cpp $(SRC_DIR)/ffiasm/naf.cpp $(SRC_DIR)/ffiasm/misc.cpp $(SRC_DIR)/ffiasm/splitparstr.cpp
+FFIASM_SRCS := $(SRC_DIR)/ffiasm/fr.cpp $(SRC_DIR)/ffiasm/fq.cpp $(SRC_DIR)/ffiasm/naf.cpp $(SRC_DIR)/ffiasm/misc.cpp $(SRC_DIR)/ffiasm/splitparstr.cpp $(SRC_DIR)/ffiasm/alt_bn128.cpp
 FFIASM_ASMS := $(SRC_DIR)/ffiasm/fr.asm $(SRC_DIR)/ffiasm/fq.asm
 FFIASM_OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.cpp.o,$(FFIASM_SRCS)) \
                $(patsubst $(SRC_DIR)/%.asm,$(BUILD_DIR)/%.asm.o,$(FFIASM_ASMS))
