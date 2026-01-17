@@ -127,9 +127,8 @@ static void MSM_GPU_BENCH(benchmark::State &state) {
     }
     
     // Report throughput
-    state.SetItemsProcessed(state.iterations() * n);
-    state.counters["points"] = n;
     state.counters["log2(n)"] = power;
+    state.SetItemsProcessed(state.iterations() * n);
 }
 
 // Register MSM GPU benchmarks: argument is the power of 2 (n = 2^arg)
