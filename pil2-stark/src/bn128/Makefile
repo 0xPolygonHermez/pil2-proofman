@@ -68,7 +68,7 @@ POSEIDON2_GPU_OBJS := $(BUILD_DIR_GPU)/src/poseidon2/poseidon2_bn128.cu.o
 MSM_GPU_OBJS       := $(BUILD_DIR_GPU)/src/msm/msm_bn128.cu.o
 SPPARK_GPU_OBJS    := $(BUILD_DIR_GPU)/sppark/all_gpus.o
 
-# Benchmark
+# Benchmark CPU
 BENCH_BUILD_DIR := $(BUILD_DIR)/benchs
 BENCH_TARGET    := benchscpu
 BENCH_SRCS      := ./benchs/bench.cpp $(FFIASM_SRCS)
@@ -76,10 +76,14 @@ BENCH_OBJS      := $(BENCH_BUILD_DIR)/bench.cpp.o \
                    $(patsubst $(SRC_DIR)/ffiasm/%.cpp,$(BENCH_BUILD_DIR)/%.cpp.o,$(FFIASM_SRCS)) \
                    $(patsubst $(SRC_DIR)/ffiasm/%.asm,$(BENCH_BUILD_DIR)/%.asm.o,$(FFIASM_ASMS))
 
+# Benchmark GPU
+BENCH_GPU_BUILD_DIR := $(BUILD_DIR_GPU)/benchs
+BENCH_GPU_TARGET    := benchsgpu
+
 # ----------------------
 # Targets
 # ----------------------
-.PHONY: all testsgpu testscpu benchscpu clean help
+.PHONY: all testsgpu testscpu benchscpu benchsgpu clean help
 
 all: testsgpu
 
@@ -91,12 +95,16 @@ testsgpu: $(BUILD_DIR_GPU)/tests/tests.cu.o $(POSEIDON2_GPU_OBJS) $(MSM_GPU_OBJS
 testscpu: $(TESTS_CPU_OBJS) $(POSEIDON_CPU_OBJS) $(POSEIDON2_CPU_OBJS) $(FFIASM_OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lgtest -lgtest_main -lgmp -lpthread $(LDFLAGS_COMMON)
 
-# Benchmarks
+# Benchmarks CPU
 benchscpu: $(BENCH_TARGET)
 
 $(BENCH_TARGET): $(BENCH_OBJS)
 	$(MKDIR_P) $(dir $@)
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lgmp $(LDFLAGS_COMMON) $(BENCHMARK_LIBS)
+
+# Benchmarks GPU
+benchsgpu: $(BENCH_GPU_BUILD_DIR)/bench.cu.o $(MSM_GPU_OBJS) $(SPPARK_GPU_OBJS) $(FFIASM_OBJS)
+	$(NVCC) $(NVCCFLAGS) -o $@ $^ $(BLST_LIB) -lgmp $(BENCHMARK_LIBS)
 
 # ----------------------
 # Pattern Rules - GPU
@@ -117,6 +125,11 @@ $(BUILD_DIR_GPU)/src/msm/%.cu.o: $(SRC_DIR)/msm/%.cu
 $(BUILD_DIR_GPU)/sppark/all_gpus.o: $(SPPARK_UTIL)
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) $(NVCCFLAGS) -x cu -c $< -o $@
+
+# GPU benchmarks
+$(BENCH_GPU_BUILD_DIR)/bench.cu.o: ./benchs/bench.cu
+	$(MKDIR_P) $(dir $@)
+	$(NVCC) $(NVCCFLAGS) -I./benchs -c $< -o $@
 
 # ----------------------
 # Pattern Rules - CPU
@@ -162,7 +175,7 @@ $(BENCH_BUILD_DIR)/%.asm.o: $(SRC_DIR)/ffiasm/%.asm
 # ----------------------
 clean:
 	rm -rf $(BUILD_DIR) $(BUILD_DIR_GPU)
-	rm -f benchscpu testsgpu testscpu
+	rm -f benchscpu benchsgpu testsgpu testscpu
 
 help:
 	@echo "Usage: make [target]"
@@ -172,4 +185,5 @@ help:
 	@echo "  testsgpu      - Build GPU unit tests (output: ./testsgpu)"
 	@echo "  testscpu      - Build CPU unit tests (output: ./testscpu)"
 	@echo "  benchscpu     - Build CPU benchmarks (output: ./benchscpu)"
+	@echo "  benchsgpu     - Build GPU benchmarks (output: ./benchsgpu)"
 	@echo "  clean         - Remove build artifacts"
