@@ -13,37 +13,35 @@
 #include "alt_bn128.hpp"
 
 // =====================
-// MSM GPU Benchmark
+// Utilities
 // =====================
 
-// Global storage for precomputed test data (allocated once)
-static PointAffineGPU* g_msm_points_gpu = nullptr;
-static BN128GPUScalarField::Element* g_msm_scalars_gpu = nullptr;
-static uint64_t g_msm_n = 0;
-static const uint64_t MSM_SCALAR_SIZE = 32;  // 256-bit scalars
+// Generate random scalars in parallel
+static void generate_random_scalars(uint8_t* scalars, uint64_t n, uint64_t scalar_size = 32, int seed = 42) {
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        std::mt19937_64 rng(seed + tid);
+        
+        uint64_t start_idx = (tid * n) / omp_get_num_threads();
+        uint64_t end_idx = ((tid + 1) * n) / omp_get_num_threads();
+        
+        for (uint64_t i = start_idx; i < end_idx; i++) {
+            uint8_t* scalar = &scalars[i * scalar_size];
+            for (size_t j = 0; j < scalar_size; j++) {
+                scalar[j] = rng() & 0xFF;
+            }
+            // Ensure scalar < field order by clearing top bits (~253 bits)
+            scalar[scalar_size - 1] &= 0x1F;
+        }
+    }
+}
 
-static void setup_msm_data_gpu(uint64_t n) {
-    if (g_msm_points_gpu != nullptr && g_msm_n == n) {
-        return;  // Already initialized with same size
-    }
-    
-    // Cleanup previous allocation
-    if (g_msm_points_gpu != nullptr) {
-        delete[] g_msm_points_gpu;
-        delete[] g_msm_scalars_gpu;
-    }
-    
-    g_msm_n = n;
-    g_msm_points_gpu = new PointAffineGPU[n];
-    g_msm_scalars_gpu = new BN128GPUScalarField::Element[n];
-    
-    // Generate base points: g_msm_points_gpu[i] = 2^i * G
-    
-    // Pre-compute chunk starting points for parallel generation
+// Generate curve points in parallel: points[i] = 2^i * G (GPU format)
+static void generate_curve_points_gpu(PointAffineGPU* points, uint64_t n) {
     const int nChunks = omp_get_max_threads();
     std::vector<AltBn128::G1Point> chunkStarts(nChunks);
     
-    // Compute chunk starting points sequentially
     uint64_t chunkSize = (n + nChunks - 1) / nChunks;
     AltBn128::G1Point acc;
     AltBn128::G1.copy(acc, AltBn128::G1.oneAffine());
@@ -55,7 +53,6 @@ static void setup_msm_data_gpu(uint64_t n) {
         }
     }
     
-    // Generate points in parallel: base[i] = 2^i * G
     #pragma omp parallel
     {
         int tid = omp_get_thread_num();
@@ -68,71 +65,52 @@ static void setup_msm_data_gpu(uint64_t n) {
         AltBn128::G1PointAffine P_affine;
         for (uint64_t i = start_idx; i < end_idx; i++) {
             AltBn128::G1.copy(P_affine, localPoint);
-            memcpy(&g_msm_points_gpu[i].x, &P_affine.x, sizeof(AltBn128::F1Element));
-            memcpy(&g_msm_points_gpu[i].y, &P_affine.y, sizeof(AltBn128::F1Element));
+            memcpy(&points[i].x, &P_affine.x, sizeof(AltBn128::F1Element));
+            memcpy(&points[i].y, &P_affine.y, sizeof(AltBn128::F1Element));
             AltBn128::G1.dbl(localPoint, localPoint);
         }
     }
-    
-    // Generate random scalars in parallel
-    #pragma omp parallel
-    {
-        int tid = omp_get_thread_num();
-        // Use thread-local RNG with unique seed per thread
-        std::mt19937_64 rng(42 + tid);  // Deterministic seed for reproducibility
-        
-        uint64_t start_idx = (tid * n) / omp_get_num_threads();
-        uint64_t end_idx = ((tid + 1) * n) / omp_get_num_threads();
-        
-        for (uint64_t i = start_idx; i < end_idx; i++) {
-            uint8_t scalar[MSM_SCALAR_SIZE];
-            // Generate 253-bit scalar (BN254 scalar field is ~253 bits)
-            for (size_t j = 0; j < MSM_SCALAR_SIZE; j++) {
-                scalar[j] = rng() & 0xFF;
-            }
-            // Ensure scalar < field order by clearing top bits
-            scalar[MSM_SCALAR_SIZE - 1] &= 0x1F;  // ~253 bits
-            memcpy(&g_msm_scalars_gpu[i], scalar, MSM_SCALAR_SIZE);
-        }
-    }
 }
 
-static void cleanup_msm_data_gpu() {
-    if (g_msm_points_gpu != nullptr) {
-        delete[] g_msm_points_gpu;
-        delete[] g_msm_scalars_gpu;
-        g_msm_points_gpu = nullptr;
-        g_msm_scalars_gpu = nullptr;
-        g_msm_n = 0;
-    }
-}
+// =====================
+// MSM GPU Benchmark
+// =====================
+
+static const uint64_t MSM_SCALAR_SIZE = 32;
 
 static void MSM_GPU_BENCH(benchmark::State &state) {
-    // state.range(0) is the power of 2, so n = 2^range(0)
     uint64_t power = state.range(0);
     uint64_t n = 1ULL << power;
     
-    setup_msm_data_gpu(n);
+    // Allocate data
+    PointAffineGPU* points = new PointAffineGPU[n];
+    BN128GPUScalarField::Element* scalars = new BN128GPUScalarField::Element[n];
     
-    PointJacobianGPU gpu_result;
+    // Generate test data
+    generate_curve_points_gpu(points, n);
+    generate_random_scalars(reinterpret_cast<uint8_t*>(scalars), n, MSM_SCALAR_SIZE, 42);
+    
+    PointJacobianGPU result;
     
     // Warm-up GPU
-    MSM_BN128_GPU::msm(gpu_result, g_msm_points_gpu, g_msm_scalars_gpu, n, false);
+    MSM_BN128_GPU::msm(result, points, scalars, n, false);
     cudaDeviceSynchronize();
     
     for (auto _ : state) {
-        MSM_BN128_GPU::msm(gpu_result, g_msm_points_gpu, g_msm_scalars_gpu, n, false);
+        MSM_BN128_GPU::msm(result, points, scalars, n, false);
         cudaDeviceSynchronize();
-        benchmark::DoNotOptimize(gpu_result);
+        benchmark::DoNotOptimize(result);
     }
+    
+    // Cleanup
+    delete[] points;
+    delete[] scalars;
     
     // Report throughput
     state.counters["log2(n)"] = power;
     state.SetItemsProcessed(state.iterations() * n);
 }
 
-// Register MSM GPU benchmarks: argument is the power of 2 (n = 2^arg)
-// Default: 22, 23, 24, 25 -> 4M, 8M, 16M, 32M points
 BENCHMARK(MSM_GPU_BENCH)
     ->Unit(benchmark::kMillisecond)
     ->UseRealTime()
@@ -148,12 +126,8 @@ int main(int argc, char** argv) {
         std::cout << "GPU: " << prop.name << " (" << prop.totalGlobalMem / (1024*1024*1024) << " GB)" << std::endl;
     }
     
-    // Run benchmarks
     ::benchmark::Initialize(&argc, argv);
     ::benchmark::RunSpecifiedBenchmarks();
-    
-    // Cleanup MSM test data
-    cleanup_msm_data_gpu();
     
     return 0;
 }
