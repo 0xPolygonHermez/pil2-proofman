@@ -3,8 +3,13 @@
 #include <iostream>
 #include <iomanip>
 #include <cstring>
+#include <omp.h>
+#include <random>
+#include <chrono>
 #include "fr.hpp"
 #include "fq.hpp"
+#include "alt_bn128.hpp"
+#include "multiexp.hpp"
 #if defined(__BLST__)
 #include <blst.h>
 #endif
@@ -320,8 +325,135 @@ BENCHMARK(BLST_INV_FR_BENCH)
 
 #endif
 
+// =====================
+// MSM CPU Benchmark
+// =====================
+
+// Global storage for precomputed test data (allocated once)
+static AltBn128::G1PointAffine* g_msm_bases = nullptr;
+static uint8_t* g_msm_scalars = nullptr;
+static uint64_t g_msm_n = 0;
+static const uint64_t MSM_SCALAR_SIZE = 32;  // 256-bit scalars
+
+static void setup_msm_data(uint64_t n) {
+    if (g_msm_bases != nullptr && g_msm_n == n) {
+        return;  // Already initialized with same size
+    }
+    
+    // Cleanup previous allocation
+    if (g_msm_bases != nullptr) {
+        delete[] g_msm_bases;
+        delete[] g_msm_scalars;
+    }
+    
+    g_msm_n = n;
+    g_msm_bases = new AltBn128::G1PointAffine[n];
+    g_msm_scalars = new uint8_t[n * MSM_SCALAR_SIZE];
+        
+    // Generate base points: g_msm_bases[i] = 2^i * G
+    
+    // Pre-compute chunk starting points for parallel generation
+    const int nChunks = omp_get_max_threads();
+    std::vector<AltBn128::G1Point> chunkStarts(nChunks);
+    
+    // Compute chunk starting points sequentially
+    uint64_t chunkSize = (n + nChunks - 1) / nChunks;
+    AltBn128::G1Point acc;
+    AltBn128::G1.copy(acc, AltBn128::G1.oneAffine());
+    
+    for (int c = 0; c < nChunks; c++) {
+        AltBn128::G1.copy(chunkStarts[c], acc);
+        // Advance acc by chunkSize doublings
+        for (uint64_t j = 0; j < chunkSize && (c * chunkSize + j) < n; j++) {
+            AltBn128::G1.dbl(acc, acc);
+        }
+    }
+    
+    // Generate points in parallel: base[i] = 2^i * G
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        uint64_t start_idx = tid * chunkSize;
+        uint64_t end_idx = std::min(start_idx + chunkSize, n);
+        
+        AltBn128::G1Point localPoint;
+        AltBn128::G1.copy(localPoint, chunkStarts[tid]);
+        
+        for (uint64_t i = start_idx; i < end_idx; i++) {
+            AltBn128::G1.copy(g_msm_bases[i], localPoint);
+            AltBn128::G1.dbl(localPoint, localPoint);
+        }
+    }
+    
+    // Generate random scalars in parallel
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        // Use thread-local RNG with unique seed per thread
+        std::mt19937_64 rng(42 + tid);  // Deterministic seed for reproducibility
+        
+        uint64_t start_idx = (tid * n) / omp_get_num_threads();
+        uint64_t end_idx = ((tid + 1) * n) / omp_get_num_threads();
+        
+        for (uint64_t i = start_idx; i < end_idx; i++) {
+            uint8_t* scalar = &g_msm_scalars[i * MSM_SCALAR_SIZE];
+            // Generate 253-bit scalar (BN254 scalar field is ~253 bits)
+            for (size_t j = 0; j < MSM_SCALAR_SIZE; j++) {
+                scalar[j] = rng() & 0xFF;
+            }
+            // Ensure scalar < field order by clearing top bits
+            scalar[MSM_SCALAR_SIZE - 1] &= 0x1F;  // ~253 bits
+        }
+    }
+}
+
+static void cleanup_msm_data() {
+    if (g_msm_bases != nullptr) {
+        delete[] g_msm_bases;
+        delete[] g_msm_scalars;
+        g_msm_bases = nullptr;
+        g_msm_scalars = nullptr;
+        g_msm_n = 0;
+    }
+}
+
+static void MSM_CPU_BENCH(benchmark::State &state) {
+    // state.range(0) is the power of 2, so n = 2^range(0)
+    uint64_t power = state.range(0);
+    uint64_t n = 1ULL << power;
+    
+    // Setup test data (done once, cached for subsequent iterations)
+    setup_msm_data(n);
+    
+    // AltBn128::G1 is Curve<RawFqP>, so use that as the template type
+    ParallelMultiexp<Curve<RawFqP>> pme(AltBn128::G1);
+    AltBn128::G1Point result;
+    
+    for (auto _ : state) {
+        pme.multiexp(result, g_msm_bases, g_msm_scalars, MSM_SCALAR_SIZE, n);
+        benchmark::DoNotOptimize(result);
+    }
+    
+    // Report throughput
+    state.SetItemsProcessed(state.iterations() * n);
+    state.counters["points"] = n;
+    state.counters["log2(n)"] = power;
+}
+
+// Register MSM benchmarks: argument is the power of 2 (n = 2^arg)
+// Default: 22, 23, 24, 25 -> 4M, 8M, 16M, 32M points
+BENCHMARK(MSM_CPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->DenseRange(22, 25);  // 2^22 to 2^25
+
 int main(int argc, char** argv) {
     // Run benchmarks
     ::benchmark::Initialize(&argc, argv);
     ::benchmark::RunSpecifiedBenchmarks();
+    
+    // Cleanup MSM test data
+    cleanup_msm_data();
+    
+    return 0;
 }
