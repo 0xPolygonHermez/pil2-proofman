@@ -5,8 +5,10 @@
 #include "fq.cuh"
 #include "poseidon2_bn128.cuh"
 #include "msm_bn128.cuh"
+#include "ntt_bn128.cuh"
 #include "point.cuh"
 #include "alt_bn128.hpp"
+#include "fft.hpp"
 
 __global__ void kernel_fr_add_one_one(int* ok);
 
@@ -210,7 +212,6 @@ TEST(BN128_POSEIDON2_TEST, hash_gpu_t2) {
 // =====================
 // MSM (Multi-Scalar Multiplication) GPU Test
 // =====================
-#ifndef __CUDA_ARCH__
 
 TEST(BN128_MSM, msm) {
     // Use CPU curve for computing expected result
@@ -345,7 +346,179 @@ TEST(BN128_MSM, msm) {
     delete[] h_scalars;
 }
 
-#endif // !__CUDA_ARCH__
+// =====================
+// NTT GPU Tests
+// =====================
+
+TEST(BN128_NTT_GPU_TEST, ntt_then_intt_roundtrip) {
+    // Test: NTT followed by INTT should recover the original data
+    const uint32_t lg_n = 4;
+    const uint64_t n = 1ULL << lg_n;
+    
+    // Use CPU field to initialize data properly
+    RawFrP field;
+    
+    // Allocate host memory (RawFrP::Element has same layout as GPU element)
+    RawFrP::Element* h_data = new RawFrP::Element[n];
+    RawFrP::Element* h_original = new RawFrP::Element[n];
+    
+    // Initialize data: data[i] = i
+    for (uint64_t i = 0; i < n; i++) {
+        field.fromUI(h_data[i], i);
+        field.copy(h_original[i], h_data[i]);
+    }
+    
+    // Cast to GPU type (same memory layout)
+    BN128GPUScalarField::Element* gpu_data = reinterpret_cast<BN128GPUScalarField::Element*>(h_data);
+    
+    // Apply NTT then INTT
+    NTT_BN128_GPU::ntt(gpu_data, lg_n);
+    NTT_BN128_GPU::intt(gpu_data, lg_n);
+        
+    // Verify result matches original
+    bool all_match = true;
+    for (uint64_t i = 0; i < n; i++) {
+        if (!field.eq(h_data[i], h_original[i])) {
+            all_match = false;
+            printf("Mismatch at index %lu: expected %s, got %s\n", i,
+                   field.toString(h_original[i], 10).c_str(),
+                   field.toString(h_data[i], 10).c_str());
+        }
+    }
+    
+    EXPECT_TRUE(all_match) << "NTT->INTT roundtrip failed";
+    
+    delete[] h_data;
+    delete[] h_original;
+}
+
+TEST(BN128_NTT_GPU_TEST, intt_then_ntt_roundtrip) {
+    // Test: INTT followed by NTT should recover the original data
+    const uint32_t lg_n = 4;
+    const uint64_t n = 1ULL << lg_n;
+    
+    RawFrP field;
+    
+    RawFrP::Element* h_data = new RawFrP::Element[n];
+    RawFrP::Element* h_original = new RawFrP::Element[n];
+    
+    // Initialize data: data[i] = i
+    for (uint64_t i = 0; i < n; i++) {
+        field.fromUI(h_data[i], i);
+        field.copy(h_original[i], h_data[i]);
+    }
+    
+    BN128GPUScalarField::Element* gpu_data = reinterpret_cast<BN128GPUScalarField::Element*>(h_data);
+    
+    // Apply INTT then NTT
+    NTT_BN128_GPU::intt(gpu_data, lg_n);
+    NTT_BN128_GPU::ntt(gpu_data, lg_n);
+    
+    // Verify result matches original
+    bool all_match = true;
+    for (uint64_t i = 0; i < n; i++) {
+        if (!field.eq(h_data[i], h_original[i])) {
+            all_match = false;
+            printf("Mismatch at index %lu: expected %s, got %s\n", i,
+                   field.toString(h_original[i], 10).c_str(),
+                   field.toString(h_data[i], 10).c_str());
+        }
+    }
+    
+    EXPECT_TRUE(all_match) << "INTT->NTT roundtrip failed";
+    
+    delete[] h_data;
+    delete[] h_original;
+}
+
+TEST(BN128_NTT_GPU_TEST, ntt_linearity) {
+    // Test: NTT(a + b) == NTT(a) + NTT(b)  (NTT is a linear operation)
+    const uint32_t lg_n = 4;
+    const uint64_t n = 1ULL << lg_n;
+    
+    RawFrP field;
+    
+    RawFrP::Element* h_a = new RawFrP::Element[n];
+    RawFrP::Element* h_b = new RawFrP::Element[n];
+    RawFrP::Element* h_a_plus_b = new RawFrP::Element[n];
+    
+    // Initialize vectors a and b
+    for (uint64_t i = 0; i < n; i++) {
+        field.fromUI(h_a[i], i + 1);           // a = [1, 2, 3, ..., 16]
+        field.fromUI(h_b[i], (i * 7) % 13);    // b = different pattern
+        field.add(h_a_plus_b[i], h_a[i], h_b[i]);
+    }
+    
+    // Cast to GPU type
+    BN128GPUScalarField::Element* gpu_a = reinterpret_cast<BN128GPUScalarField::Element*>(h_a);
+    BN128GPUScalarField::Element* gpu_b = reinterpret_cast<BN128GPUScalarField::Element*>(h_b);
+    BN128GPUScalarField::Element* gpu_a_plus_b = reinterpret_cast<BN128GPUScalarField::Element*>(h_a_plus_b);
+    
+    // Compute NTT(a), NTT(b), NTT(a+b)
+    NTT_BN128_GPU::ntt(gpu_a, lg_n);
+    NTT_BN128_GPU::ntt(gpu_b, lg_n);
+    NTT_BN128_GPU::ntt(gpu_a_plus_b, lg_n);
+    
+    // Verify: NTT(a+b) == NTT(a) + NTT(b)
+    bool all_match = true;
+    for (uint64_t i = 0; i < n; i++) {
+        RawFrP::Element expected_sum;
+        field.add(expected_sum, h_a[i], h_b[i]);
+        
+        if (!field.eq(h_a_plus_b[i], expected_sum)) {
+            all_match = false;
+            printf("Linearity failed at index %lu\n", i);
+        }
+    }
+    
+    EXPECT_TRUE(all_match) << "NTT linearity test failed";
+    
+    delete[] h_a;
+    delete[] h_b;
+    delete[] h_a_plus_b;
+}
+
+TEST(BN128_NTT_GPU_TEST, ntt_gpu_vs_cpu) {
+    // Test: GPU NTT result should match CPU FFT result
+    RawFrP field;
+    const uint32_t lg_n = 4;
+    const uint64_t n = 1ULL << lg_n;
+    
+    // Allocate memory
+    RawFrP::Element* h_gpu_data = new RawFrP::Element[n];
+    std::vector<RawFrP::Element> cpu_data(n);
+    
+    // Initialize both with same data
+    for (uint64_t i = 0; i < n; i++) {
+        field.fromUI(cpu_data[i], i);
+        field.copy(h_gpu_data[i], cpu_data[i]);
+    }
+    
+    // Run GPU NTT
+    BN128GPUScalarField::Element* gpu_data = reinterpret_cast<BN128GPUScalarField::Element*>(h_gpu_data);
+    NTT_BN128_GPU::ntt(gpu_data, lg_n);
+    
+    // Run CPU FFT
+    FFT<RawFrP> fft(n);
+    fft.fft(cpu_data.data(), n);
+    
+    // Compare results
+    bool all_match = true;
+    for (uint64_t i = 0; i < n; i++) {
+        if (!field.eq(h_gpu_data[i], cpu_data[i])) {
+            all_match = false;
+            printf("Index %lu mismatch:\n", i);
+            printf("  GPU: %s\n", field.toString(h_gpu_data[i], 16).c_str());
+            printf("  CPU: %s\n", field.toString(cpu_data[i], 16).c_str());
+        }
+    }
+    
+    EXPECT_TRUE(all_match) << "GPU NTT does not match CPU FFT";
+    
+    delete[] h_gpu_data;
+}
+
+
 
 int main(int argc, char **argv)
 {
