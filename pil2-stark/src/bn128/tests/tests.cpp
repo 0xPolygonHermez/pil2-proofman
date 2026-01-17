@@ -5,6 +5,7 @@
 #include "../src/ffiasm/fr.hpp"
 #include "../src/ffiasm/alt_bn128.hpp"
 #include "../src/ffiasm/multiexp.hpp"
+#include "../src/ffiasm/fft.hpp"
 #include "../src/poseidon/poseidon_bn128.hpp"
 #include "../src/poseidon2/poseidon2_bn128.hpp"
 
@@ -179,5 +180,102 @@ TEST(BN128_MULTIEXP_TEST, multiexp_4_operands) {
   
   // Verify: multiexp(bases=[G,2G,4G,8G], scalars=[s0,s1,s2,s3]) == (s0 + s1*2 + s2*4 + s3*8) * G
   ASSERT_TRUE(engine.g1.eq(result, expected)) << "Combined scalar verification failed: multiexp result does not match (s0 + s1*2 + s2*4 + s3*8)*G";
+}
+
+// =====================
+// FFT Tests
+// =====================
+
+TEST(BN128_FFT_TEST, fft_then_ifft_roundtrip) {
+  // Test: fft followed by ifft should recover the original data
+  RawFrP field;
+  const uint64_t n = 16;
+  
+  FFT<RawFrP> fft(n);
+  
+  std::vector<RawFrP::Element> data(n);
+  std::vector<RawFrP::Element> original(n);
+  for (uint64_t i = 0; i < n; i++) {
+    field.fromUI(data[i], i);
+    field.copy(original[i], data[i]);
+  }
+  
+  // Apply fft then ifft
+  fft.fft(data.data(), n);
+  fft.ifft(data.data(), n);
+  
+  // Verify result matches original
+  for (uint64_t i = 0; i < n; i++) {
+    ASSERT_TRUE(field.eq(data[i], original[i])) 
+      << "Mismatch at index " << i 
+      << ": expected " << field.toString(original[i], 10)
+      << ", got " << field.toString(data[i], 10);
+  }
+}
+
+TEST(BN128_FFT_TEST, ifft_then_fft_roundtrip) {
+  // Test: ifft followed by fft should recover the original data
+  RawFrP field;
+  const uint64_t n = 16;
+  
+  FFT<RawFrP> fft(n);
+  
+  std::vector<RawFrP::Element> data(n);
+  std::vector<RawFrP::Element> original(n);
+  for (uint64_t i = 0; i < n; i++) {
+    field.fromUI(data[i], i);
+    field.copy(original[i], data[i]);
+  }
+  
+  // Apply ifft then fft
+  fft.ifft(data.data(), n);
+  fft.fft(data.data(), n);
+  
+  // Verify result matches original
+  for (uint64_t i = 0; i < n; i++) {
+    ASSERT_TRUE(field.eq(data[i], original[i])) 
+      << "Mismatch at index " << i 
+      << ": expected " << field.toString(original[i], 10)
+      << ", got " << field.toString(data[i], 10);
+  }
+}
+
+TEST(BN128_FFT_TEST, fft_linearity) {
+  // Test: fft(a + b) == fft(a) + fft(b)  (FFT is a linear operation)
+  RawFrP field;
+  const uint64_t n = 16;
+  
+  FFT<RawFrP> fft(n);
+  
+  // Create two input vectors
+  std::vector<RawFrP::Element> a(n);
+  std::vector<RawFrP::Element> b(n);
+  std::vector<RawFrP::Element> a_plus_b(n);
+  
+  for (uint64_t i = 0; i < n; i++) {
+    field.fromUI(a[i], i + 1);           // a = [1, 2, 3, ..., 16]
+    field.fromUI(b[i], (i * 7) % 13);    // b = some different pattern
+    field.add(a_plus_b[i], a[i], b[i]);  // a_plus_b = a + b
+  }
+  
+  // Compute fft(a), fft(b), fft(a+b)
+  std::vector<RawFrP::Element> fft_a(a);
+  std::vector<RawFrP::Element> fft_b(b);
+  std::vector<RawFrP::Element> fft_a_plus_b(a_plus_b);
+  
+  fft.fft(fft_a.data(), n);
+  fft.fft(fft_b.data(), n);
+  fft.fft(fft_a_plus_b.data(), n);
+  
+  // Verify: fft(a+b) == fft(a) + fft(b)
+  for (uint64_t i = 0; i < n; i++) {
+    RawFrP::Element expected_sum;
+    field.add(expected_sum, fft_a[i], fft_b[i]);
+    
+    ASSERT_TRUE(field.eq(fft_a_plus_b[i], expected_sum)) 
+      << "Linearity failed at index " << i 
+      << ": fft(a+b) = " << field.toString(fft_a_plus_b[i], 10)
+      << ", fft(a) + fft(b) = " << field.toString(expected_sum, 10);
+  }
 }
 
