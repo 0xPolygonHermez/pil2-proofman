@@ -9,8 +9,10 @@
 #include "bn128.cuh"
 #include "fq.cuh"
 #include "msm_bn128.cuh"
+#include "ntt_bn128.cuh"
 #include "point.cuh"
 #include "alt_bn128.hpp"
+#include "fft.hpp"
 
 // =====================
 // Utilities
@@ -112,6 +114,41 @@ static void MSM_GPU_BENCH(benchmark::State &state) {
 }
 
 BENCHMARK(MSM_GPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->DenseRange(22, 25);
+
+// =====================
+// NTT GPU Benchmark
+// =====================
+
+static void NTT_GPU_BENCH(benchmark::State &state) {
+    uint64_t power = state.range(0);
+    uint64_t n = 1ULL << power;
+    
+    // Allocate data (use RawFrP::Element which has same layout as GPU element)
+    RawFrP::Element* data = new RawFrP::Element[n];
+    generate_random_scalars(reinterpret_cast<uint8_t*>(data), n, sizeof(RawFrP::Element));
+    BN128GPUScalarField::Element* gpu_data = reinterpret_cast<BN128GPUScalarField::Element*>(data);
+    
+    // Warm-up GPU
+    NTT_BN128_GPU::ntt(gpu_data, power);
+    cudaDeviceSynchronize();
+    
+    for (auto _ : state) {        
+        NTT_BN128_GPU::ntt(gpu_data, power);
+        cudaDeviceSynchronize();
+        benchmark::DoNotOptimize(data);
+    }
+    
+    delete[] data;
+    
+    // Report throughput
+    state.counters["log2(n)"] = power;
+    state.SetItemsProcessed(state.iterations() * n);
+}
+
+BENCHMARK(NTT_GPU_BENCH)
     ->Unit(benchmark::kMillisecond)
     ->UseRealTime()
     ->DenseRange(22, 25);
