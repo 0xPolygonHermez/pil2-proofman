@@ -104,7 +104,7 @@ $(BENCH_TARGET): $(BENCH_OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lgmp $(LDFLAGS_COMMON) $(BENCHMARK_LIBS)
 
 # Benchmarks GPU
-benchsgpu: $(BENCH_GPU_BUILD_DIR)/bench.cu.o $(MSM_GPU_OBJS) $(SPPARK_GPU_OBJS) $(FFIASM_OBJS)
+benchsgpu: $(BENCH_GPU_BUILD_DIR)/bench.cu.o $(MSM_GPU_OBJS) $(NTT_GPU_OBJS) $(SPPARK_GPU_OBJS) $(FFIASM_OBJS)
 	$(NVCC) $(NVCCFLAGS) -o $@ $^ $(BLST_LIB) -lgmp $(BENCHMARK_LIBS)
 
 # ----------------------
