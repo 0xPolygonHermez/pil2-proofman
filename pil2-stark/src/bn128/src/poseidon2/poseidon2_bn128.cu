@@ -1,6 +1,6 @@
 #include "cuda_utils.cuh"
 #include "poseidon2_bn128.cuh"
-#include "poseidon2_bn128_constants.cuh"  // Host-side constants
+#include "poseidon2_bn128_constants.hpp"  // Shared CPU/GPU constants (binary compatible)
 #include <cuda_runtime.h>
 
 typedef Poseidon2BN128GPU::FrElement FrElementGPU;
@@ -93,21 +93,21 @@ void Poseidon2BN128GPU::initGPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids
 	{
 		CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
 
-		// Copy C constants
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C2, Poseidon2BN128ConstantsGPU::C2, sizeof(Poseidon2BN128ConstantsGPU::C2), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C3, Poseidon2BN128ConstantsGPU::C3, sizeof(Poseidon2BN128ConstantsGPU::C3), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C4, Poseidon2BN128ConstantsGPU::C4, sizeof(Poseidon2BN128ConstantsGPU::C4), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C8, Poseidon2BN128ConstantsGPU::C8, sizeof(Poseidon2BN128ConstantsGPU::C8), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C12, Poseidon2BN128ConstantsGPU::C12, sizeof(Poseidon2BN128ConstantsGPU::C12), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C16, Poseidon2BN128ConstantsGPU::C16, sizeof(Poseidon2BN128ConstantsGPU::C16), 0, cudaMemcpyHostToDevice));
+		// Copy C constants (CPU RawFrP::Element is binary compatible with GPU FrElement)
+		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C2, Poseidon2BN128Constants::C2, sizeof(Poseidon2BN128Constants::C2), 0, cudaMemcpyHostToDevice));
+		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C3, Poseidon2BN128Constants::C3, sizeof(Poseidon2BN128Constants::C3), 0, cudaMemcpyHostToDevice));
+		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C4, Poseidon2BN128Constants::C4, sizeof(Poseidon2BN128Constants::C4), 0, cudaMemcpyHostToDevice));
+		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C8, Poseidon2BN128Constants::C8, sizeof(Poseidon2BN128Constants::C8), 0, cudaMemcpyHostToDevice));
+		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C12, Poseidon2BN128Constants::C12, sizeof(Poseidon2BN128Constants::C12), 0, cudaMemcpyHostToDevice));
+		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C16, Poseidon2BN128Constants::C16, sizeof(Poseidon2BN128Constants::C16), 0, cudaMemcpyHostToDevice));
 
 		// Copy D constants
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D2, Poseidon2BN128ConstantsGPU::D2, sizeof(Poseidon2BN128ConstantsGPU::D2), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D3, Poseidon2BN128ConstantsGPU::D3, sizeof(Poseidon2BN128ConstantsGPU::D3), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D4, Poseidon2BN128ConstantsGPU::D4, sizeof(Poseidon2BN128ConstantsGPU::D4), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D8, Poseidon2BN128ConstantsGPU::D8, sizeof(Poseidon2BN128ConstantsGPU::D8), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D12, Poseidon2BN128ConstantsGPU::D12, sizeof(Poseidon2BN128ConstantsGPU::D12), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D16, Poseidon2BN128ConstantsGPU::D16, sizeof(Poseidon2BN128ConstantsGPU::D16), 0, cudaMemcpyHostToDevice));
+		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D2, Poseidon2BN128Constants::D2, sizeof(Poseidon2BN128Constants::D2), 0, cudaMemcpyHostToDevice));
+		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D3, Poseidon2BN128Constants::D3, sizeof(Poseidon2BN128Constants::D3), 0, cudaMemcpyHostToDevice));
+		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D4, Poseidon2BN128Constants::D4, sizeof(Poseidon2BN128Constants::D4), 0, cudaMemcpyHostToDevice));
+		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D8, Poseidon2BN128Constants::D8, sizeof(Poseidon2BN128Constants::D8), 0, cudaMemcpyHostToDevice));
+		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D12, Poseidon2BN128Constants::D12, sizeof(Poseidon2BN128Constants::D12), 0, cudaMemcpyHostToDevice));
+		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D16, Poseidon2BN128Constants::D16, sizeof(Poseidon2BN128Constants::D16), 0, cudaMemcpyHostToDevice));
 
 	}       
     
