@@ -41,8 +41,9 @@ TEST(BN128_POSEIDON2_TEST, hash) {
   ASSERT_EQ(field.toString(state[1],16), 
   "d189ec589c41b8cffa88cfc523618a055abe8192c70f75aa72fc514560f6c61");
   
-  state.resize(16);
-  for (size_t i = 0; i < 16; i++)
+  t=16;
+  state.resize(t);
+  for (size_t i = 0; i < t; i++)
   {
     field.fromUI(state[i], (unsigned long int)(i));
   }
