@@ -26,32 +26,107 @@ TEST(BN128_POSEIDON_TEST, hash) {
   ASSERT_EQ(field.toString(state4[3],16), "1a779bd9781d3a8354eae5ed74e7fa44fa0e458e45a1407524bddf3b9f2bf2d7");
 }
 
-TEST(BN128_POSEIDON2_TEST, hash) {
+// ==============================================================================
+// Poseidon2 tests for all supported t values (t=2,3,4,8,12,16)
+// Input: state[i] = i for i in 0..t-1
+// ==============================================================================
+
+TEST(BN128_POSEIDON2_TEST, hash_t2) {
   Poseidon2BN128 p;
   RawFrP field;
-  size_t t = 2;
+  const size_t t = 2;
   vector<RawFrP::Element> state(t);
-  for (size_t i = 0; i < t; i++)
-  {
-    field.fromUI(state[i], (unsigned long int)(i));
-  }
-  p.hash(state);        
-  ASSERT_EQ(field.toString(state[0],16), 
-  "1d01e56f49579cec72319e145f06f6177f6c5253206e78c2689781452a31878b");
-  ASSERT_EQ(field.toString(state[1],16), 
-  "d189ec589c41b8cffa88cfc523618a055abe8192c70f75aa72fc514560f6c61");
-  
-  t=16;
-  state.resize(t);
-  for (size_t i = 0; i < t; i++)
-  {
+  for (size_t i = 0; i < t; i++) {
     field.fromUI(state[i], (unsigned long int)(i));
   }
   p.hash(state);
-  ASSERT_EQ(field.toString(state[0],16), 
-  "fc2e6b758f493969e1d860f9a44ee3bdffdf796f382aa4ffb16fa4e9bcc333f");
-  ASSERT_EQ(field.toString(state[15],16), 
-  "e2ceb1f8fde5f80be1f41bd239fabdc2f6133a6a98920a55c42891c3a925152"); 
+  ASSERT_EQ(field.toString(state[0],16), "1d01e56f49579cec72319e145f06f6177f6c5253206e78c2689781452a31878b");
+  ASSERT_EQ(field.toString(state[1],16), "d189ec589c41b8cffa88cfc523618a055abe8192c70f75aa72fc514560f6c61");
+}
+
+TEST(BN128_POSEIDON2_TEST, hash_t3) {
+  Poseidon2BN128 p;
+  RawFrP field;
+  const size_t t = 3;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) {
+    field.fromUI(state[i], (unsigned long int)(i));
+  }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "bb61d24daca55eebcb1929a82650f328134334da98ea4f847f760054f4a3033");
+  ASSERT_EQ(field.toString(state[1],16), "303b6f7c86d043bfcbcc80214f26a30277a15d3f74ca654992defe7ff8d03570");
+  ASSERT_EQ(field.toString(state[2],16), "1ed25194542b12eef8617361c3ba7c52e660b145994427cc86296242cf766ec8");
+}
+
+TEST(BN128_POSEIDON2_TEST, hash_t4) {
+  Poseidon2BN128 p;
+  RawFrP field;
+  const size_t t = 4;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) {
+    field.fromUI(state[i], (unsigned long int)(i));
+  }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "1bd538c2ee014ed5141b29e9ae240bf8db3fe5b9a38629a9647cf8d76c01737");
+  ASSERT_EQ(field.toString(state[1],16), "239b62e7db98aa3a2a8f6a0d2fa1709e7a35959aa6c7034814d9daa90cbac662");
+  ASSERT_EQ(field.toString(state[2],16), "4cbb44c61d928ed06808456bf758cbf0c18d1e15a7b6dbc8245fa7515d5e3cb");
+  ASSERT_EQ(field.toString(state[3],16), "2e11c5cff2a22c64d01304b778d78f6998eff1ab73163a35603f54794c30847a");
+}
+
+TEST(BN128_POSEIDON2_TEST, hash_t8) {
+  Poseidon2BN128 p;
+  RawFrP field;
+  const size_t t = 8;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) {
+    field.fromUI(state[i], (unsigned long int)(i));
+  }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "1d1a50bcde871247856df135d56a4ca61af575f1140ed9b1503c77528cf345df");
+  ASSERT_EQ(field.toString(state[1],16), "2d3943cf476ed49fd8a636660d8a76c83b55f07d06bc082005ad7eb1a21791c5");
+  ASSERT_EQ(field.toString(state[2],16), "2fcda2dd846fadfde8104b1d05175dcf3cf8bd698ed8ea3ad2fbcf9c06e00310");
+  ASSERT_EQ(field.toString(state[3],16), "28811ac7e0829171f9d3d81f1c0ff8f34b360d407a16b331a1cb6b5d992de094");
+  ASSERT_EQ(field.toString(state[4],16), "2c07c1817cfccb67c1297935514885c07abad5a0e15477f6c076c0b0fb1ad6f3");
+  ASSERT_EQ(field.toString(state[5],16), "1b6114397199bc44e37437dd3ba1754dff007d3315bfcdcdc14ec27d02452f52");
+  ASSERT_EQ(field.toString(state[6],16), "1431250baf36fb61a07618caee4dd2f500da339a05c553e8f529a3349e617aa2");
+  ASSERT_EQ(field.toString(state[7],16), "b19bfa00c8f1d505074130e7f8b49a8624b1905e280ceca5ba11099b081b265");
+}
+
+TEST(BN128_POSEIDON2_TEST, hash_t12) {
+  Poseidon2BN128 p;
+  RawFrP field;
+  const size_t t = 12;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) {
+    field.fromUI(state[i], (unsigned long int)(i));
+  }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "3014e0ec17029f7e4f5cfe8c7c54fc3df6a5f7539f6aa304b2f3c747a9105618");
+  ASSERT_EQ(field.toString(state[1],16), "2f90753e7aaf46c158cd12346da7dd37c3136353ec51525cabbaaf2b2350f9b2");
+  ASSERT_EQ(field.toString(state[2],16), "2e28bdc8b2c68b09da0cb653ee7e54eca909cf2ae010784554aa3e165b1a105f");
+  ASSERT_EQ(field.toString(state[3],16), "1d6a97ef87dbd3476a848af45beebe6b5d79cb047b37212e3e5839f1e80b397a");
+  ASSERT_EQ(field.toString(state[4],16), "24e23df24b19b75f44218a08d107709d35561bc1b982cfc317d54568cd496519");
+  ASSERT_EQ(field.toString(state[5],16), "185a08e623b85e797844191a1f184f7b8fc486253919eb20f1186a8331757018");
+  ASSERT_EQ(field.toString(state[6],16), "69ed78df853a105c8949dae5b4e81cbe370e8f6e25735a688aa8ff3df9659eb");
+  ASSERT_EQ(field.toString(state[7],16), "284395d79b64123211a4a59b81a90f9cfa8d8314dccde4cef22ec1e31431efd3");
+  ASSERT_EQ(field.toString(state[8],16), "f24be5a8c95e3504ead0da9e792b77d7056f94461d69b04b33ea5d239f8e444");
+  ASSERT_EQ(field.toString(state[9],16), "22469ccfef0ce5a237518c38dec31fc2804e633b3b365c23a9f703ca31ef393");
+  ASSERT_EQ(field.toString(state[10],16), "1fcdcee218d5a0101bd233d572f184964854d445ca08d2bd6df6ceba5651e322");
+  ASSERT_EQ(field.toString(state[11],16), "905469a776b7d5a3f18841edb90fa0d8c6de479c2789c042dafefb367ad1a2b");
+}
+
+TEST(BN128_POSEIDON2_TEST, hash_t16) {
+  Poseidon2BN128 p;
+  RawFrP field;
+  const size_t t = 16;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) {
+    field.fromUI(state[i], (unsigned long int)(i));
+  }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "fc2e6b758f493969e1d860f9a44ee3bdffdf796f382aa4ffb16fa4e9bcc333f");
+  ASSERT_EQ(field.toString(state[15],16), "e2ceb1f8fde5f80be1f41bd239fabdc2f6133a6a98920a55c42891c3a925152");
+  // Note: state[1]-state[14] can be added if needed for more thorough validation
 }
 
 #if 0
