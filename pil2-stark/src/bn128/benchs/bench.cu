@@ -10,6 +10,7 @@
 #include "fq.cuh"
 #include "msm_bn128.cuh"
 #include "ntt_bn128.cuh"
+#include "poseidon2_bn128.cuh"
 #include "point.cuh"
 #include "alt_bn128.hpp"
 #include "fft.hpp"
@@ -152,6 +153,64 @@ BENCHMARK(NTT_GPU_BENCH)
     ->Unit(benchmark::kMillisecond)
     ->UseRealTime()
     ->DenseRange(22, 25);
+
+// =====================
+// Poseidon2 GPU Benchmark
+// =====================
+
+static const int POSEIDON2_NUM_HASHES = 10000;
+
+static void POSEIDON2_SEQ_GPU_BENCH(benchmark::State &state) {
+    int t = state.range(0);
+    
+    // Initialize GPU constants
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1);
+    
+    BN128GPUScalarField::Element* d_state = nullptr;
+    cudaMalloc(&d_state, t * sizeof(BN128GPUScalarField::Element));
+    
+    // Initialize host state
+    RawFrP field;
+    RawFrP::Element* h_state = new RawFrP::Element[t];
+    for (int i = 0; i < t; i++) {
+        field.fromUI(h_state[i], i);
+    }
+    
+    // Warm-up
+    cudaMemcpy(d_state, h_state, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyHostToDevice);
+    Poseidon2BN128GPU poseidon2;
+    poseidon2.hash(d_state, t);
+    cudaDeviceSynchronize();
+    
+    for (auto _ : state) {
+        // Copy fresh state to device
+        cudaMemcpy(d_state, h_state, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyHostToDevice);
+        for(int i = 0; i < POSEIDON2_NUM_HASHES; i++){
+            poseidon2.hash(d_state, t);
+        }
+        cudaDeviceSynchronize();
+        benchmark::DoNotOptimize(d_state);
+    }
+    
+    // Cleanup
+    cudaFree(d_state);
+    delete[] h_state;
+    
+    state.counters["t"] = t;
+    state.counters["hashes"] = POSEIDON2_NUM_HASHES;
+    state.SetItemsProcessed(state.iterations() * POSEIDON2_NUM_HASHES);
+}
+
+BENCHMARK(POSEIDON2_SEQ_GPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Args({2})
+    ->Args({3})
+    ->Args({4})
+    ->Args({8})
+    ->Args({12})
+    ->Args({16});
 
 int main(int argc, char** argv) {
     // Print GPU info

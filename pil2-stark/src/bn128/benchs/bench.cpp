@@ -11,6 +11,7 @@
 #include "alt_bn128.hpp"
 #include "multiexp.hpp"
 #include "fft.hpp"
+#include "poseidon2_bn128.hpp"
 #if defined(__BLST__)
 #include <blst.h>
 #endif
@@ -456,5 +457,46 @@ BENCHMARK(NTT_CPU_BENCH)
     ->Unit(benchmark::kMillisecond)
     ->UseRealTime()
     ->DenseRange(22, 25);
+
+// =====================
+// Poseidon2 CPU Benchmark
+// =====================
+
+static const int POSEIDON2_NUM_HASHES = 10000;
+
+static void POSEIDON2_SEQ_CPU_BENCH(benchmark::State &state) {
+    int t = state.range(0);
+    
+    RawFrP field;
+    Poseidon2BN128 poseidon2;
+    
+    // Initialize state with sequential values
+    std::vector<RawFrP::Element> hash_state(t);
+    for (int i = 0; i < t; i++) {
+        field.fromUI(hash_state[i], i);
+    }
+    
+    for (auto _ : state) {
+        std::vector<RawFrP::Element> state_copy = hash_state;
+        for(int i = 0; i < POSEIDON2_NUM_HASHES; i++){
+            poseidon2.hash(state_copy);
+        }
+        benchmark::DoNotOptimize(state_copy);
+    }
+    
+    state.counters["t"] = t;
+    state.counters["hashes"] = POSEIDON2_NUM_HASHES;
+    state.SetItemsProcessed(state.iterations() * POSEIDON2_NUM_HASHES);
+}
+
+BENCHMARK(POSEIDON2_SEQ_CPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Args({2})
+    ->Args({3})
+    ->Args({4})
+    ->Args({8})
+    ->Args({12})
+    ->Args({16});
 
 BENCHMARK_MAIN();
