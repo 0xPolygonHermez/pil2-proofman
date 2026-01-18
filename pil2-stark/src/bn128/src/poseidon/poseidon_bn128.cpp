@@ -12,10 +12,10 @@ void PoseidonBN128::hash(vector<FrElement> &state)
 	const int t = state.size();
 	const int nRoundsP = N_ROUNDS_P[t - 2];
 
-	const vector<FrElement> *c = &(PoseidonBN128Constants::C[t - 2]);
-	const vector<FrElement> *s = &(PoseidonBN128Constants::S[t - 2]);
-	const vector<vector<FrElement>> *m = &(PoseidonBN128Constants::M[t - 2]);
-	const vector<vector<FrElement>> *p = &(PoseidonBN128Constants::P[t - 2]);
+	const FrElement *c = (const FrElement *)PoseidonBN128Constants::get_C(t);
+	const FrElement *s = (const FrElement *)PoseidonBN128Constants::get_S(t);
+	const FrElement *m = (const FrElement *)PoseidonBN128Constants::get_M(t);
+	const FrElement *p = (const FrElement *)PoseidonBN128Constants::get_P(t);
 
 	ark(&state, c, t, 0);
 	for (int r = 0; r < N_ROUNDS_F / 2 - 1; r++)
@@ -28,19 +28,19 @@ void PoseidonBN128::hash(vector<FrElement> &state)
 	for (int r = 0; r < nRoundsP; r++)
 	{
 		exp5(state[0]);
-		field.add(state[0], state[0], (FrElement &)(*c)[(N_ROUNDS_F / 2 + 1) * t + r]);
+		field.add(state[0], state[0], (FrElement &)c[(N_ROUNDS_F / 2 + 1) * t + r]);
 
 		FrElement s0 = field.zero();
 		FrElement accumulator1;
 		FrElement accumulator2;
 		for (int j = 0; j < t; j++)
 		{
-			accumulator1 = (FrElement &)(*s)[(t * 2 - 1) * r + j];
+			accumulator1 = (FrElement &)s[(t * 2 - 1) * r + j];
 			field.mul(accumulator1, accumulator1, state[j]);
 			field.add(s0, s0, accumulator1);
 			if (j > 0)
 			{
-				accumulator2 = (FrElement &)(*s)[(t * 2 - 1) * r + t + j - 1];
+				accumulator2 = (FrElement &)s[(t * 2 - 1) * r + t + j - 1];
 				field.mul(accumulator2, state[0], accumulator2);
 				field.add(state[j], state[j], accumulator2);
 			}
@@ -59,20 +59,20 @@ void PoseidonBN128::hash(vector<FrElement> &state)
 	mix(&state, state, m, t);
 }
 
-void PoseidonBN128::ark(vector<FrElement> *state, const vector<FrElement> *c, const int ssize, int it)
+void PoseidonBN128::ark(vector<FrElement> *state, const FrElement *c, const int ssize, int it)
 {
 	for (int i = 0; i < ssize; i++)
 	{
-		field.add((*state)[i], (*state)[i], (FrElement &)(*c)[it + i]);
+		field.add((*state)[i], (*state)[i], (FrElement &)c[it + i]);
 	}
 }
 
-void PoseidonBN128::sbox(vector<FrElement> *state, const vector<FrElement> *c, const int ssize, int it)
+void PoseidonBN128::sbox(vector<FrElement> *state, const FrElement *c, const int ssize, int it)
 {
 	for (int i = 0; i < ssize; i++)
 	{
 		exp5((*state)[i]);
-		field.add((*state)[i], (*state)[i], (FrElement &)(*c)[it + i]);
+		field.add((*state)[i], (*state)[i], (FrElement &)c[it + i]);
 	}
 }
 
@@ -84,14 +84,14 @@ void PoseidonBN128::exp5(FrElement &r)
 	field.mul(r, r, aux);
 }
 
-void PoseidonBN128::mix(vector<FrElement> *new_state, vector<FrElement> state, const vector<vector<FrElement>> *m, const int ssize)
+void PoseidonBN128::mix(vector<FrElement> *new_state, vector<FrElement> state, const FrElement *m, const int ssize)
 {
 	for (int i = 0; i < ssize; i++)
 	{
 		(*new_state)[i] = field.zero();
 		for (int j = 0; j < ssize; j++)
 		{
-			FrElement mji = (*m)[j][i];
+			FrElement mji = (FrElement &)m[j * ssize + i];
 			field.mul(mji, mji, state[j]);
 			field.add((*new_state)[i], (*new_state)[i], mji);
 		}
