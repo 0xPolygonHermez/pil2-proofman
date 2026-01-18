@@ -17,9 +17,9 @@ class PoseidonBN128
 
 private:
   RawFrP field;
-  void ark(vector<FrElement> *state, const vector<FrElement> *c, const int ssize, int it);
-  void sbox(vector<FrElement> *state, const vector<FrElement> *c, const int ssize, int it);
-  void mix(vector<FrElement> *new_state, vector<FrElement> state, const vector<vector<FrElement>> *m, const int ssize);
+  void ark(vector<FrElement> *state, const FrElement *c, const int ssize, int it);
+  void sbox(vector<FrElement> *state, const FrElement *c, const int ssize, int it);
+  void mix(vector<FrElement> *new_state, vector<FrElement> state, const FrElement *m, const int ssize);
   void exp5(FrElement &r);
   void stateExp5(vector<FrElement> *state, const int ssize);
 

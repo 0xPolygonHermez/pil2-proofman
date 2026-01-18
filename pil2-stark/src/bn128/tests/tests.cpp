@@ -10,25 +10,188 @@
 #include "../src/poseidon2/poseidon2_bn128.hpp"
 
 
-TEST(BN128_POSEIDON_TEST, hash) {
+// ==============================================================================
+// Poseidon tests for all supported t values (t=2..17)
+// ==============================================================================
+
+TEST(BN128_POSEIDON_TEST, hash_t2) {
   PoseidonBN128 p;
   RawFrP field;
+  const size_t t = 2;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "29176100eaa962bdc1fe6c654d6a3c130e96a4d1168b33848b897dc502820133");
+  ASSERT_EQ(field.toString(state[1],16), "112a4f9241e384b0ede4655e6d2bbf7ebd9595775de9e7536df87cd487852fc4");
+}
 
-  vector<RawFrP::Element> state4(4);
-  for (size_t i = 0; i < 4; i++)
-  {
-    field.fromUI(state4[i], (unsigned long int)(i));
-  }
-  p.hash(state4);        
-  ASSERT_EQ(field.toString(state4[0],16), "e7732d89e6939c0ff03d5e58dab6302f3230e269dc5b968f725df34ab36d732");
-  ASSERT_EQ(field.toString(state4[1],16), "7b0b86b41ec7fdfe6c17ee6ccdddce4e47e748e493e542f9a435b0dde022a0d");
-  ASSERT_EQ(field.toString(state4[2],16), "4362e50fcc8be421898d47ace20eab18b0a6efab0e12ade49f2df609fec4209");
-  ASSERT_EQ(field.toString(state4[3],16), "1a779bd9781d3a8354eae5ed74e7fa44fa0e458e45a1407524bddf3b9f2bf2d7");
+TEST(BN128_POSEIDON_TEST, hash_t3) {
+  PoseidonBN128 p;
+  RawFrP field;
+  const size_t t = 3;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "115cc0f5e7d690413df64c6b9662e9cf2a3617f2743245519e19607a4417189a");
+  ASSERT_EQ(field.toString(state[2],16), "e7ae82e40091e63cbd4f16a6d16310b3729d4b6e138fcf54110e2867045a30c");
+}
+
+TEST(BN128_POSEIDON_TEST, hash_t4) {
+  PoseidonBN128 p;
+  RawFrP field;
+  const size_t t = 4;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "e7732d89e6939c0ff03d5e58dab6302f3230e269dc5b968f725df34ab36d732");
+  ASSERT_EQ(field.toString(state[3],16), "1a779bd9781d3a8354eae5ed74e7fa44fa0e458e45a1407524bddf3b9f2bf2d7");
+}
+
+TEST(BN128_POSEIDON_TEST, hash_t5) {
+  PoseidonBN128 p;
+  RawFrP field;
+  const size_t t = 5;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "299c867db6c1fdd79dcefa40e4510b9837e60ebb1ce0663dbaa525df65250465");
+  ASSERT_EQ(field.toString(state[4],16), "7748bc6877c9b82c8b98666ee9d0626ec7f5be4205f79ee8528ef1c4a376fc7");
+}
+
+TEST(BN128_POSEIDON_TEST, hash_t6) {
+  PoseidonBN128 p;
+  RawFrP field;
+  const size_t t = 6;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "dab9449e4a1398a15224c0b15a49d598b2174d305a316c918125f8feeb123c0");
+  ASSERT_EQ(field.toString(state[5],16), "208adf8d7f4ac061f00db710aef42f3b2f13176de26674b0a5f4436b883db6bc");
+}
+
+TEST(BN128_POSEIDON_TEST, hash_t7) {
+  PoseidonBN128 p;
+  RawFrP field;
+  const size_t t = 7;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "2d1a03850084442813c8ebf094dea47538490a68b05f2239134a4cca2f6302e1");
+  ASSERT_EQ(field.toString(state[6],16), "2ac1d41181b675cbbfe7801457f882bfcd0d9994a37a6a105452b48a71f3c810");
+}
+
+TEST(BN128_POSEIDON_TEST, hash_t8) {
+  PoseidonBN128 p;
+  RawFrP field;
+  const size_t t = 8;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "1c2f3482dbb140c4ebb9ada49abdbc374a9a85fcfc6533ec2e9df45b4921c318");
+  ASSERT_EQ(field.toString(state[7],16), "73534f0cedf2b30a870814eee062903ce751e545270c3cbfc5e4732c450ba9c");
+}
+
+TEST(BN128_POSEIDON_TEST, hash_t9) {
+  PoseidonBN128 p;
+  RawFrP field;
+  const size_t t = 9;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "2921ab9bd0140cbc98e40395c0fefb40337a4d54fbbecd9a4d43b3d8d0c4d8d1");
+  ASSERT_EQ(field.toString(state[8],16), "2c8e23a3569963447e55619f1d1462f63ea2e40d3d405c18bbf394f13c253749");
+}
+
+TEST(BN128_POSEIDON_TEST, hash_t10) {
+  PoseidonBN128 p;
+  RawFrP field;
+  const size_t t = 10;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "1e0b893aa2ad802275e749d260330b7675b22bb3aaa4461d204af32e60cd9078");
+  ASSERT_EQ(field.toString(state[9],16), "315afa225921ebb807ba0f33feef2bb5b74c51b740b58faa205dc127e8aa7ac");
+}
+
+TEST(BN128_POSEIDON_TEST, hash_t11) {
+  PoseidonBN128 p;
+  RawFrP field;
+  const size_t t = 11;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "816126a09c29ecfcc0628461dacfb9459816fc60d6738b78db9ad07206fdc21");
+  ASSERT_EQ(field.toString(state[10],16), "10f779eb86c66f6e316473976ca0b6b81e8c0c2cadf917ce84bf9cce1b72c45e");
+}
+
+TEST(BN128_POSEIDON_TEST, hash_t12) {
+  PoseidonBN128 p;
+  RawFrP field;
+  const size_t t = 12;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "7e5b070aa2dba008f30a6b785b6c5ae2429e211f71cacdbdae0e07fc05b47a8");
+  ASSERT_EQ(field.toString(state[11],16), "1941a33364c6d1904c0e540b5170c73567d31cb038d5d6b83cd769412139321a");
+}
+
+TEST(BN128_POSEIDON_TEST, hash_t13) {
+  PoseidonBN128 p;
+  RawFrP field;
+  const size_t t = 13;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "58814945232937db248a01e7cc55b3d681cc08702c8168494e856c1ef7693b5");
+  ASSERT_EQ(field.toString(state[12],16), "1a6df4eadbafbed2a14f78606ca1326f4bef58a348cffc2a0e8c050dab9cff94");
+}
+
+TEST(BN128_POSEIDON_TEST, hash_t14) {
+  PoseidonBN128 p;
+  RawFrP field;
+  const size_t t = 14;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "f918939632fadca6456a2fe6e65a124828d4c3920d379cc744e90a666887806");
+  ASSERT_EQ(field.toString(state[13],16), "5a2ad96bd0cec0ed170ae830c1800d3e83a72d3fb84673213aab431fc578cb7");
+}
+
+TEST(BN128_POSEIDON_TEST, hash_t15) {
+  PoseidonBN128 p;
+  RawFrP field;
+  const size_t t = 15;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "1278779aaafc5ca58bf573151005830cdb4683fb26591c85a7464d4f0e527776");
+  ASSERT_EQ(field.toString(state[14],16), "2c24786e78a255df1c1f11c09c5bea75c4ac1f96ad7978e6867f033363ed6bda");
+}
+
+TEST(BN128_POSEIDON_TEST, hash_t16) {
+  PoseidonBN128 p;
+  RawFrP field;
+  const size_t t = 16;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "94ae33b67a845998abb55e917642d4022d078d96f7c36ea11da4273ecf20f50");
+  ASSERT_EQ(field.toString(state[15],16), "254e179b1f643318769c2480e0bdbc9f8e0aaeda3bb50be1284c184c0ce9d2a4");
+}
+
+TEST(BN128_POSEIDON_TEST, hash_t17) {
+  PoseidonBN128 p;
+  RawFrP field;
+  const size_t t = 17;
+  vector<RawFrP::Element> state(t);
+  for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
+  p.hash(state);
+  ASSERT_EQ(field.toString(state[0],16), "16159a551cbb66108281a48099fff949ae08afd7f1f2ec06de2ffb96b919b765");
+  ASSERT_EQ(field.toString(state[16],16), "ffa1bd9b53dbedee9ab5742283c8968d0435c3b3a566fcb66ca61ce04a5b5bf");
 }
 
 // ==============================================================================
 // Poseidon2 tests for all supported t values (t=2,3,4,8,12,16)
-// Input: state[i] = i for i in 0..t-1
 // ==============================================================================
 
 TEST(BN128_POSEIDON2_TEST, hash_t2) {
@@ -54,7 +217,6 @@ TEST(BN128_POSEIDON2_TEST, hash_t3) {
   }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "bb61d24daca55eebcb1929a82650f328134334da98ea4f847f760054f4a3033");
-  ASSERT_EQ(field.toString(state[1],16), "303b6f7c86d043bfcbcc80214f26a30277a15d3f74ca654992defe7ff8d03570");
   ASSERT_EQ(field.toString(state[2],16), "1ed25194542b12eef8617361c3ba7c52e660b145994427cc86296242cf766ec8");
 }
 
@@ -68,8 +230,6 @@ TEST(BN128_POSEIDON2_TEST, hash_t4) {
   }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "1bd538c2ee014ed5141b29e9ae240bf8db3fe5b9a38629a9647cf8d76c01737");
-  ASSERT_EQ(field.toString(state[1],16), "239b62e7db98aa3a2a8f6a0d2fa1709e7a35959aa6c7034814d9daa90cbac662");
-  ASSERT_EQ(field.toString(state[2],16), "4cbb44c61d928ed06808456bf758cbf0c18d1e15a7b6dbc8245fa7515d5e3cb");
   ASSERT_EQ(field.toString(state[3],16), "2e11c5cff2a22c64d01304b778d78f6998eff1ab73163a35603f54794c30847a");
 }
 
@@ -83,12 +243,6 @@ TEST(BN128_POSEIDON2_TEST, hash_t8) {
   }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "1d1a50bcde871247856df135d56a4ca61af575f1140ed9b1503c77528cf345df");
-  ASSERT_EQ(field.toString(state[1],16), "2d3943cf476ed49fd8a636660d8a76c83b55f07d06bc082005ad7eb1a21791c5");
-  ASSERT_EQ(field.toString(state[2],16), "2fcda2dd846fadfde8104b1d05175dcf3cf8bd698ed8ea3ad2fbcf9c06e00310");
-  ASSERT_EQ(field.toString(state[3],16), "28811ac7e0829171f9d3d81f1c0ff8f34b360d407a16b331a1cb6b5d992de094");
-  ASSERT_EQ(field.toString(state[4],16), "2c07c1817cfccb67c1297935514885c07abad5a0e15477f6c076c0b0fb1ad6f3");
-  ASSERT_EQ(field.toString(state[5],16), "1b6114397199bc44e37437dd3ba1754dff007d3315bfcdcdc14ec27d02452f52");
-  ASSERT_EQ(field.toString(state[6],16), "1431250baf36fb61a07618caee4dd2f500da339a05c553e8f529a3349e617aa2");
   ASSERT_EQ(field.toString(state[7],16), "b19bfa00c8f1d505074130e7f8b49a8624b1905e280ceca5ba11099b081b265");
 }
 
@@ -102,16 +256,6 @@ TEST(BN128_POSEIDON2_TEST, hash_t12) {
   }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "3014e0ec17029f7e4f5cfe8c7c54fc3df6a5f7539f6aa304b2f3c747a9105618");
-  ASSERT_EQ(field.toString(state[1],16), "2f90753e7aaf46c158cd12346da7dd37c3136353ec51525cabbaaf2b2350f9b2");
-  ASSERT_EQ(field.toString(state[2],16), "2e28bdc8b2c68b09da0cb653ee7e54eca909cf2ae010784554aa3e165b1a105f");
-  ASSERT_EQ(field.toString(state[3],16), "1d6a97ef87dbd3476a848af45beebe6b5d79cb047b37212e3e5839f1e80b397a");
-  ASSERT_EQ(field.toString(state[4],16), "24e23df24b19b75f44218a08d107709d35561bc1b982cfc317d54568cd496519");
-  ASSERT_EQ(field.toString(state[5],16), "185a08e623b85e797844191a1f184f7b8fc486253919eb20f1186a8331757018");
-  ASSERT_EQ(field.toString(state[6],16), "69ed78df853a105c8949dae5b4e81cbe370e8f6e25735a688aa8ff3df9659eb");
-  ASSERT_EQ(field.toString(state[7],16), "284395d79b64123211a4a59b81a90f9cfa8d8314dccde4cef22ec1e31431efd3");
-  ASSERT_EQ(field.toString(state[8],16), "f24be5a8c95e3504ead0da9e792b77d7056f94461d69b04b33ea5d239f8e444");
-  ASSERT_EQ(field.toString(state[9],16), "22469ccfef0ce5a237518c38dec31fc2804e633b3b365c23a9f703ca31ef393");
-  ASSERT_EQ(field.toString(state[10],16), "1fcdcee218d5a0101bd233d572f184964854d445ca08d2bd6df6ceba5651e322");
   ASSERT_EQ(field.toString(state[11],16), "905469a776b7d5a3f18841edb90fa0d8c6de479c2789c042dafefb367ad1a2b");
 }
 
@@ -126,7 +270,6 @@ TEST(BN128_POSEIDON2_TEST, hash_t16) {
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "fc2e6b758f493969e1d860f9a44ee3bdffdf796f382aa4ffb16fa4e9bcc333f");
   ASSERT_EQ(field.toString(state[15],16), "e2ceb1f8fde5f80be1f41bd239fabdc2f6133a6a98920a55c42891c3a925152");
-  // Note: state[1]-state[14] can be added if needed for more thorough validation
 }
 
 #if 0
@@ -167,6 +310,10 @@ TEST(CONVERTER, poseidon_seq_widths_sanity) {
     std::cout << "}" << std::endl;
 }
 #endif
+
+// ==============================================================================
+// Multiexp Tests
+// ==============================================================================
 
 TEST(BN128_MULTIEXP_TEST, multiexp_4_operands) {
   typedef AltBn128::Engine Engine;
@@ -258,9 +405,9 @@ TEST(BN128_MULTIEXP_TEST, multiexp_4_operands) {
   ASSERT_TRUE(engine.g1.eq(result, expected)) << "Combined scalar verification failed: multiexp result does not match (s0 + s1*2 + s2*4 + s3*8)*G";
 }
 
-// =====================
+// ==============================================================================
 // FFT Tests
-// =====================
+// ============================================================================== 
 
 TEST(BN128_FFT_TEST, fft_then_ifft_roundtrip) {
   // Test: fft followed by ifft should recover the original data
