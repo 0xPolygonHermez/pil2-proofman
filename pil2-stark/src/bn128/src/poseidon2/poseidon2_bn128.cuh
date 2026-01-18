@@ -4,7 +4,6 @@
 #include <vector>
 #include <string>
 #include "bn128.cuh"
-#include "poseidon2_bn128_constants.cuh"
 #include <cassert>
 using namespace std;
 
