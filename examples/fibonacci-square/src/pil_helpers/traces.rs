@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "042393820032daa0b270bdbcb2d0f4e85806eaebb015e59b11129954269a504a";
+pub const PILOUT_HASH: &str = "70f8b09d8460d58adbc27c5099646bcd182c21f7f5b347dc8f9763d9a1a3b8fd";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
@@ -102,7 +102,7 @@ pub type ModuleTrace<F> = GenericTrace<ModuleTraceRow<F>, 1048576, 0, 1>;
 
 
 trace_row!(SpecifiedRangesFixedRow<F> {
- RANGE: [F; 1], __L1__: F,
+ OPID: [F; 1], VALS: [F; 1], __L1__: F,
 });
 pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 256, 0, 2>;
 

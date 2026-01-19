@@ -173,6 +173,9 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
 && node --max-old-space-size=65536 ../pil2-proofman-js/src/main_setup.js \
      -a ./examples/fibonacci-square/pil/build.pilout \
      -b ./examples/fibonacci-square/build -t pil2-components/lib/std/pil \
+&& node ../pil2-proofman-js/src/main_stats.js \
+     -a ./examples/fibonacci-square/pil/build.pilout \
+     -o ./examples/fibonacci-square/build/build.stats \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \
@@ -206,6 +209,9 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
      -a ./examples/fibonacci-square/pil/build.pilout \
      -b ./examples/fibonacci-square/build -t pil2-components/lib/std/pil \
      -r \
+&& node ../pil2-proofman-js/src/main_stats.js \
+     -a ./examples/fibonacci-square/pil/build.pilout \
+     -o ./examples/fibonacci-square/build/build.stats \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \

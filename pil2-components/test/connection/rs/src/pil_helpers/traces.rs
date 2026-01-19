@@ -18,6 +18,8 @@ type FieldExtension<F> = [F; 3];
 
 pub const PILOUT_HASH: &str = "902ab7600fe1477807da3ac331620197d27b761c93f374feb36547dbbd502be0";
 
+pub const MERKLE_TREE_ARITY: u64 = 4;
+
 //AIRGROUP CONSTANTS
 
 pub const CONNECTION_AIRGROUP_ID: usize = 0;
