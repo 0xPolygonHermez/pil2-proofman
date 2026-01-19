@@ -9,9 +9,9 @@
 #include "ffiasm/fq.hpp"
 
 extern Goldilocks fr;
-extern RawFecP fec;
-extern RawFnecP fnec;
-extern RawFrP bn128;
-extern RawFqP fq;
+extern RawFec fec;
+extern RawFnec fnec;
+extern RawFr bn128;
+extern RawFq fq;
 
 #endif

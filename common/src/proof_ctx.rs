@@ -30,9 +30,17 @@ impl<F> Default for Values<F> {
     }
 }
 
+#[derive(Clone)]
+pub struct InstancesInfo {
+    pub constraints: Vec<usize>,
+    pub hint_ids: Vec<usize>,
+    pub rows: Vec<usize>,
+    pub store_row_info: bool,
+}
+
 pub type AirGroupMap = HashMap<usize, AirIdMap>;
-pub type AirIdMap = HashMap<usize, InstanceMap>;
-pub type InstanceMap = HashMap<usize, Vec<usize>>;
+pub type AirIdMap = HashMap<usize, (bool, InstanceMap)>;
+pub type InstanceMap = HashMap<usize, InstancesInfo>;
 
 pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
 
@@ -96,6 +104,7 @@ pub struct DebugInfo {
     pub debug_global_instances: Vec<usize>,
     pub std_mode: StdMode,
     pub n_print_constraints: usize,
+    pub skip_prover_instances: bool,
 }
 
 impl Default for DebugInfo {
@@ -105,6 +114,7 @@ impl Default for DebugInfo {
             debug_global_instances: Default::default(),
             std_mode: Default::default(),
             n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,
+            skip_prover_instances: false,
         }
     }
 }
@@ -116,6 +126,7 @@ impl DebugInfo {
             debug_global_instances: Vec::new(),
             std_mode: StdMode::new_debug(),
             n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,
+            skip_prover_instances: false,
         }
     }
 }
@@ -237,7 +248,7 @@ pub struct ProofCtx<F: PrimeField64> {
     pub witness_tx_priority: RwLock<Option<crossbeam_channel::Sender<usize>>>,
 }
 
-pub const MAX_INSTANCES: u64 = 10000;
+pub const MAX_INSTANCES: u64 = 1 << 17;
 
 impl<F: PrimeField64> ProofCtx<F> {
     pub fn create_ctx(

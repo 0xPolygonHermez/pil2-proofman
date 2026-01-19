@@ -232,6 +232,11 @@ extern "C" {
         stepsParams: *mut ::std::os::raw::c_void,
     );
 
+    pub fn calculate_witness_expr(
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        stepsParams: *mut ::std::os::raw::c_void,
+    );
+
     // Custom Commits
     // ========================================================================================
     pub fn custom_commit_size(pSetup: *mut ::std::os::raw::c_void, commitId: u64) -> u64;
@@ -257,18 +262,13 @@ extern "C" {
     // Witness Commit
     // ========================================================================================
     pub fn commit_witness(
-        arity: u64,
-        nBits: u64,
-        nBitsExt: u64,
-        nCols: u64,
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        params: *mut ::std::os::raw::c_void,
         instanceId: u64,
         airgroupId: u64,
         airId: u64,
         root: *mut ::std::os::raw::c_void,
-        trace: *mut ::std::os::raw::c_void,
-        auxTrace: *mut ::std::os::raw::c_void,
         d_buffers: *mut ::std::os::raw::c_void,
-        pSetupCtx_: *mut ::std::os::raw::c_void,
     ) -> u64;
 
     // Constraints Verification

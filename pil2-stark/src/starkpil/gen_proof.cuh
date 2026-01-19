@@ -14,6 +14,26 @@
 // carregar-me els d_trees
 // _inplace not good name
 
+void calculateWitnessExpr_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams *d_params, ExpressionsGPU *expressionsCtxGPU, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream) {
+
+    uint64_t nWitnessHints = setupCtx.expressionsBin.getNumberHintIdsByName("witness_calc");
+    if(nWitnessHints > 0) {
+        uint64_t witnessHints[nWitnessHints];
+        setupCtx.expressionsBin.getHintIdsByName(witnessHints, "witness_calc");
+        std::string hintFieldDest[nWitnessHints];
+        std::string hintField[nWitnessHints];
+        HintFieldOptions hintOptions[nWitnessHints];
+        for(uint64_t i = 0; i < nWitnessHints; i++) {
+            hintFieldDest[i] = "reference";
+            hintField[i] = "expression";
+            HintFieldOptions options;
+            hintOptions[i] = options;
+        }
+
+        calculateExprGPU(setupCtx, h_params, d_params, nWitnessHints, witnessHints, hintFieldDest, hintField, hintOptions, expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+    }
+}
+
 void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams *d_params, bool prod, ExpressionsGPU *expressionsCtxGPU, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream) {
 
     std::string name = prod ? "gprod_col" : "gsum_col";
@@ -177,6 +197,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStopGPU(timer, STARK_STEP_0);
     
     TimerStartGPU(timer, STARK_COMMIT_STAGE_1);
+    calculateWitnessExpr_gpu(setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     if (recursive) {
         commitStage_inplace(1, setupCtx, starks.treesGL, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, d_transcript, false, timer, stream);
     } else {

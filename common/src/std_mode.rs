@@ -4,34 +4,44 @@ pub const DEFAULT_PRINT_VALS: usize = 10;
 
 // TODO: It would be awesome to be able to filter by other field, like the type of operations
 //       which is in a column distinct from the opid.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct StdMode {
     pub name: ModeName,
     pub opids: Vec<u64>,
     pub n_vals: usize,
     pub print_to_file: bool,
     pub fast_mode: bool,
+    pub store_row_info: bool,
+    pub debug_values: Vec<Vec<String>>, // Store raw strings instead of hashes
 }
 
 impl StdMode {
-    pub const fn new(name: ModeName, opids: Vec<u64>, n_vals: usize, print_to_file: bool, fast_mode: bool) -> Self {
+    pub fn new(
+        name: ModeName,
+        opids: Vec<u64>,
+        n_vals: usize,
+        print_to_file: bool,
+        fast_mode: bool,
+        store_row_info: bool,
+        debug_values: Vec<Vec<String>>,
+    ) -> Self {
         if name.as_usize() != ModeName::Standard.as_usize() && n_vals == 0 {
             panic!("n_vals must be greater than 0");
         }
 
-        Self { name, opids, n_vals, print_to_file, fast_mode }
+        Self { name, opids, n_vals, print_to_file, fast_mode, store_row_info, debug_values }
     }
 
     pub fn new_debug() -> Self {
-        Self::new(ModeName::Debug, Vec::new(), DEFAULT_PRINT_VALS, false, true)
+        Self::new(ModeName::Debug, Vec::new(), DEFAULT_PRINT_VALS, false, true, false, Vec::new())
     }
 }
 
 impl From<u8> for StdMode {
     fn from(v: u8) -> Self {
         match v {
-            0 => StdMode::new(ModeName::Standard, Vec::new(), DEFAULT_PRINT_VALS, false, false),
-            1 => StdMode::new(ModeName::Debug, Vec::new(), DEFAULT_PRINT_VALS, false, true),
+            0 => StdMode::new(ModeName::Standard, Vec::new(), DEFAULT_PRINT_VALS, false, false, false, Vec::new()),
+            1 => StdMode::new(ModeName::Debug, Vec::new(), DEFAULT_PRINT_VALS, false, true, false, Vec::new()),
             _ => panic!("Invalid mode"),
         }
     }
@@ -39,12 +49,12 @@ impl From<u8> for StdMode {
 
 impl Default for StdMode {
     fn default() -> Self {
-        StdMode::new(ModeName::Standard, Vec::new(), DEFAULT_PRINT_VALS, false, false)
+        StdMode::new(ModeName::Standard, Vec::new(), DEFAULT_PRINT_VALS, false, false, false, Vec::new())
     }
 }
 
 #[allow(dead_code)]
-#[derive(Default, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone)]
 pub enum ModeName {
     #[default]
     Standard = 0,

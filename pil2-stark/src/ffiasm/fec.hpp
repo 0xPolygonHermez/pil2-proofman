@@ -257,7 +257,7 @@ void FecP_inv(PFecElement r, PFecElement a);
 void FecP_div(PFecElement r, PFecElement a, PFecElement b);
 void FecP_pow(PFecElement r, PFecElement a, PFecElement b);
 
-class RawFecP {
+class RawFec {
 
 public:
     const static int N64 = Fec_N64;
@@ -275,8 +275,8 @@ private:
 
 public:
 
-    RawFecP();
-    ~RawFecP();
+    RawFec();
+    ~RawFec();
 
     const Element &zero() { return fZero; };
     const Element &one() { return fOne; };
@@ -330,7 +330,7 @@ public:
     
     void fromUI(Element &r, unsigned long int v);
 
-    static RawFecP field;
+    static RawFec field;
 
 };
 

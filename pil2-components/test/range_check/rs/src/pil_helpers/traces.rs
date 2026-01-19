@@ -193,12 +193,12 @@ pub type U8AirTrace<F> = GenericTrace<U8AirTraceRow<F>, 256, 9, 0>;
 
 
 trace_row!(SpecifiedRangesFixedRow<F> {
- RANGE: [F; 28], __L1__: F,
+ OPID: [F; 14], VALS: [F; 14], __L1__: F,
 });
 pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 32768, 10, 0>;
 
 trace_row!(SpecifiedRangesTraceRow<F> {
- mul:[F; 28],
+ mul:[F; 14],
 });
 pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 32768, 10, 0>;
 

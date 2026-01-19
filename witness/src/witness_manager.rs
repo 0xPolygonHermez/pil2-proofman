@@ -96,7 +96,7 @@ impl<F: PrimeField64> WitnessManager<F> {
     }
 
     pub fn debug(&self, instance_ids: &[usize], debug_info: &DebugInfo) -> ProofmanResult<()> {
-        if debug_info.std_mode.name == ModeName::Debug || !debug_info.debug_instances.is_empty() {
+        if debug_info.std_mode.name == ModeName::Debug {
             for (idx, component) in self.components.read().unwrap().iter().enumerate() {
                 let ids_hash_set: HashSet<usize> = instance_ids.iter().cloned().collect();
 
