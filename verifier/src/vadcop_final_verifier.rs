@@ -1,4 +1,4 @@
-use fields::{Goldilocks, CubicExtensionField, Field, Poseidon8};
+use fields::{Goldilocks, CubicExtensionField, Field, Poseidon16};
 use crate::{Boundary, VerifierInfo, stark_verify};
 
 #[rustfmt::skip]
@@ -4380,14 +4380,14 @@ fn verifier_info() -> VerifierInfo {
         n_evals: 152,
         n_bits: 16,
         n_bits_ext: 21,
-        arity: 2,
+        arity: 4,
         n_fri_queries: 43,
-        n_fri_steps: 4,
+        n_fri_steps: 5,
         n_challenges: 6,
-        n_challenges_total: 11,
-        fri_steps: vec![21, 17, 13, 9],
+        n_challenges_total: 12,
+        fri_steps: vec![21, 17, 13, 9, 5],
         hash_commits: true,
-        last_level_verification: 6,
+        last_level_verification: 2,
         pow_bits: 22,
         num_vals: vec![62, 15, 21],
         opening_points: vec![-1, -2, 0, 1],
@@ -4397,6 +4397,6 @@ fn verifier_info() -> VerifierInfo {
     }
 }
 
-pub fn verify(proof: &[u8], vk: &[u8]) -> bool {
-    stark_verify::<Poseidon8, 8>(proof, vk, &verifier_info(), q_verify, query_verify)
+pub fn verify_vadcop_final(proof: &[u8], vk: &[u8]) -> bool {
+    stark_verify::<Poseidon16, 16>(proof, vk, &verifier_info(), q_verify, query_verify)
 }

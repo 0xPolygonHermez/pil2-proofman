@@ -553,6 +553,46 @@ pub fn initialize_setup_info<F: PrimeField64>(
                 _offset_aggregation += setup_vadcop_final.const_tree_size as u64;
             }
         }
+
+        let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
+
+        let proof_type: &str = setup_vadcop_final_compressed.setup_type.clone().into();
+        if cfg!(feature = "gpu") {
+            tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
+        }
+        load_device_setup_c(
+            0_u64,
+            0_u64,
+            proof_type,
+            (&setup_vadcop_final_compressed.p_setup).into(),
+            d_buffers.get_ptr(),
+            setup_vadcop_final_compressed.verkey.as_ptr() as *mut u8,
+            std::ptr::null_mut(),
+        );
+        if cfg!(feature = "gpu") {
+            let const_pols_path = &setup_vadcop_final_compressed.const_pols_path;
+            tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading const pols in GPU");
+            let load_tree = setup_vadcop_final_compressed.preallocate;
+            let tree_path = match load_tree {
+                true => &setup_vadcop_final_compressed.const_pols_tree_path,
+                false => "",
+            };
+            load_device_const_pols_c(
+                0_u64,
+                0_u64,
+                _offset_aggregation,
+                d_buffers.get_ptr(),
+                const_pols_path,
+                setup_vadcop_final_compressed.const_pols_size_packed as u64,
+                tree_path,
+                setup_vadcop_final_compressed.const_tree_size as u64,
+                proof_type,
+            );
+            _offset_aggregation += setup_vadcop_final_compressed.const_pols_size_packed as u64;
+            if load_tree {
+                _offset_aggregation += setup_vadcop_final_compressed.const_tree_size as u64;
+            }
+        }
     }
     Ok(())
 }
@@ -582,9 +622,9 @@ pub fn initialize_witness_circom<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &S
     setup_vadcop_final.set_circom_circuit()?;
     setup_vadcop_final.set_exec_file_data()?;
 
-    let setup_vadcop_final_snark = setups.setup_vadcop_final_snark.as_ref().unwrap();
-    setup_vadcop_final_snark.set_circom_circuit()?;
-    setup_vadcop_final_snark.set_exec_file_data()?;
+    let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
+    setup_vadcop_final_compressed.set_circom_circuit()?;
+    setup_vadcop_final_compressed.set_exec_file_data()?;
 
     Ok(())
 }
