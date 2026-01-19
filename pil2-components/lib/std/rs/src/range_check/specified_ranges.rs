@@ -11,11 +11,11 @@ use witness::WitnessComponent;
 use proofman_common::{AirInstance, BufferPool, ProofCtx, ProofmanError, ProofmanResult, SetupCtx, TraceInfo};
 use proofman_hints::{get_hint_field_constant_a, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
 
-use crate::{get_hint_field_constant_as, validate_binary_field, AirComponent};
+use crate::{get_hint_field_constant_as, validate_binary_field, AirComponent, extract_field_element_as_usize};
 
 #[derive(Debug, Clone)]
 pub struct SpecifiedRange {
-    mul_idx: usize,
+    acc_height: usize,
     min: i64,
 }
 
@@ -48,8 +48,8 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
         let hint_id = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "specified_ranges_data")[0] as usize;
 
         // Get the relevant data
-        let col_num =
-            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint_id, "col_num", hint_opt.clone())?;
+        let num_muls =
+            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint_id, "num_muls", hint_opt.clone())?;
 
         let mins = get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "mins", hint_opt.clone())?.values;
         let mins_neg =
@@ -57,13 +57,12 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
 
         let opids_count =
             get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint_id, "opids_count", hint_opt.clone())?;
-        let opids_len =
-            get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "opids_len", hint_opt)?.values;
+        let acc_heights =
+            get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "acc_heights", hint_opt)?.values;
 
         // Get and store the ranges
         let mut ranges = Vec::with_capacity(opids_count as usize);
-        let mut offset = 0;
-        for ((min_hint, min_neg_hint), opid_len_hint) in mins.iter().zip(mins_neg.iter()).zip(opids_len.iter()) {
+        for ((min_hint, min_neg_hint), acc_heights_hint) in mins.iter().zip(mins_neg.iter()).zip(acc_heights.iter()) {
             let min = match min_hint {
                 HintFieldValue::Field(f) => f.as_canonical_u64(),
                 _ => return Err(ProofmanError::StdError("min hint must be a field element".to_string())),
@@ -76,19 +75,14 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
 
             let min = if min_neg { min as i128 - F::ORDER_U64 as i128 } else { min as i128 };
 
-            let opid_len = match opid_len_hint {
-                HintFieldValue::Field(f) => f.as_canonical_u64() as usize,
-                _ => return Err(ProofmanError::StdError("Opid len hint must be a field element".to_string())),
-            };
+            let acc_heights = extract_field_element_as_usize(acc_heights_hint, "Acc Heights")?;
 
             // In this conversion we assume that min is at most of 63 bits
             // We can safely assume it because we have already check this minimum before
-            ranges.push(SpecifiedRange { mul_idx: offset, min: min as i64 });
-
-            offset += opid_len;
+            ranges.push(SpecifiedRange { acc_height: acc_heights, min: min as i64 });
         }
 
-        let num_cols = col_num as usize;
+        let num_cols = num_muls as usize;
         let multiplicities = (0..num_cols)
             .into_par_iter()
             .map(|_| (0..num_rows).into_par_iter().map(|_| AtomicU64::new(0)).collect())
@@ -121,7 +115,7 @@ impl SpecifiedRanges {
 
     /// Core update function: Updates multiplicities for value/multiplicity pairs
     #[inline]
-    fn update(&self, base_offset: usize, min_global: i64, iter: impl Iterator<Item = (i64, u64)>) {
+    fn update(&self, table_offset: usize, range_min: i64, iter: impl Iterator<Item = (i64, u64)>) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
@@ -131,35 +125,40 @@ impl SpecifiedRanges {
                 continue;
             }
 
-            // Identify to which sub-range the value belongs
-            let offset = (value - min_global) as usize;
-            let range_idx = offset >> self.shift;
+            // Get the value offset
+            let val_offset = (value - range_min) as usize;
+
+            // Get the overall offset
+            let offset = table_offset + val_offset;
+
+            // Get the multiplicity index
+            let mul_idx = offset >> self.shift;
 
             // Get the row index
             let row_idx = offset & self.mask;
 
             // Update the multiplicity
-            self.multiplicities[base_offset + range_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
+            self.multiplicities[mul_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
         }
     }
 
     /// Update a single value with a multiplicity
     pub fn update_input(&self, id: usize, value: i64, multiplicity: u64) {
         let range = &self.ranges[id];
-        self.update(range.mul_idx, range.min, std::iter::once((value, multiplicity)));
+        self.update(range.acc_height, range.min, std::iter::once((value, multiplicity)));
     }
 
     /// Update multiple values with corresponding multiplicities
     pub fn update_inputs(&self, id: usize, values: &[i64], multiplicities: &[u64]) {
         debug_assert_eq!(values.len(), multiplicities.len());
         let range = &self.ranges[id];
-        self.update(range.mul_idx, range.min, values.iter().copied().zip(multiplicities.iter().copied()));
+        self.update(range.acc_height, range.min, values.iter().copied().zip(multiplicities.iter().copied()));
     }
 
     /// Update multiple values with the same multiplicity
     pub fn update_inputs_same_mul(&self, id: usize, values: &[i64], multiplicity: u64) {
         let range = &self.ranges[id];
-        self.update(range.mul_idx, range.min, values.iter().copied().map(|v| (v, multiplicity)));
+        self.update(range.acc_height, range.min, values.iter().copied().map(|v| (v, multiplicity)));
     }
 
     pub fn airgroup_id(&self) -> usize {
