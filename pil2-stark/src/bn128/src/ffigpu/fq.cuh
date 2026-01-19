@@ -49,18 +49,15 @@ __device__ __forceinline__ void BN128GPUBaseField::copy(Element& r, const Elemen
 }
 
 __device__ __forceinline__ void BN128GPUBaseField::add(Element& r, const Element& a, const Element& b) {
-    r.v = a.v;
-    r.v += b.v;
+    r.v = a.v + b.v;
 }
 
 __device__ __forceinline__ void BN128GPUBaseField::sub(Element& r, const Element& a, const Element& b) {
-    r.v = a.v;
-    r.v -= b.v;
+    r.v = a.v - b.v;
 }
 
 __device__ __forceinline__ void BN128GPUBaseField::mul(Element& r, const Element& a, const Element& b) {
-    r.v = a.v;
-    r.v *= b.v;
+    r.v = a.v * b.v;
 }
 
 __device__ __forceinline__ BN128GPUBaseField::Element BN128GPUBaseField::add(const Element& a, const Element& b) {
