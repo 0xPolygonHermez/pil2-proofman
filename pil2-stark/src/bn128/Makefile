@@ -20,7 +20,7 @@ include CudaArch.mk
 # ----------------------
 # Compiler Flags
 # ----------------------
-CUDA_SRC_DIRS  := $(SRC_DIR)/ffigpu $(SRC_DIR)/msm $(SRC_DIR)/ntt ./tests $(SRC_DIR)/poseidon2 $(SRC_DIR)/curve $(SRC_DIR)/../../utils
+CUDA_SRC_DIRS  := $(SRC_DIR)/ffigpu $(SRC_DIR)/msm $(SRC_DIR)/ntt ./tests $(SRC_DIR)/poseidon $(SRC_DIR)/poseidon2 $(SRC_DIR)/curve $(SRC_DIR)/../../utils
 CUDA_INC_FLAGS := $(addprefix -I,$(CUDA_SRC_DIRS))
 BLST_INC       := -I./../../external/blst/src
 BLST_LIB       := ./../../external/blst/libblst.a
@@ -64,6 +64,7 @@ POSEIDON_CPU_OBJS := $(BUILD_DIR)/src/poseidon/poseidon_bn128.o
 POSEIDON2_CPU_OBJS := $(BUILD_DIR)/src/poseidon2/poseidon2_bn128.o
 
 # GPU test objects
+POSEIDON_GPU_OBJS  := $(BUILD_DIR_GPU)/src/poseidon/poseidon_bn128.cu.o
 POSEIDON2_GPU_OBJS := $(BUILD_DIR_GPU)/src/poseidon2/poseidon2_bn128.cu.o
 MSM_GPU_OBJS       := $(BUILD_DIR_GPU)/src/msm/msm_bn128.cu.o
 NTT_GPU_OBJS       := $(BUILD_DIR_GPU)/src/ntt/ntt_bn128.cu.o
@@ -89,7 +90,7 @@ BENCH_GPU_TARGET    := benchsgpu
 all: testsgpu
 
 # GPU tests
-testsgpu: $(BUILD_DIR_GPU)/tests/tests.cu.o $(POSEIDON2_GPU_OBJS) $(MSM_GPU_OBJS) $(NTT_GPU_OBJS) $(SPPARK_GPU_OBJS) $(FFIASM_OBJS)
+testsgpu: $(BUILD_DIR_GPU)/tests/tests.cu.o $(POSEIDON_GPU_OBJS) $(POSEIDON2_GPU_OBJS) $(MSM_GPU_OBJS) $(NTT_GPU_OBJS) $(SPPARK_GPU_OBJS) $(FFIASM_OBJS)
 	$(NVCC) $(NVCCFLAGS) -o $@ $^ $(BLST_LIB) -lgtest -lgmp
 
 # CPU tests
@@ -113,6 +114,10 @@ benchsgpu: $(BENCH_GPU_BUILD_DIR)/bench.cu.o $(POSEIDON2_GPU_OBJS) $(MSM_GPU_OBJ
 $(BUILD_DIR_GPU)/tests/%.cu.o: tests/%.cu
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) $(NVCCFLAGS) -I./tests -c $< -o $@
+
+$(BUILD_DIR_GPU)/src/poseidon/%.cu.o: $(SRC_DIR)/poseidon/%.cu
+	$(MKDIR_P) $(dir $@)
+	$(NVCC) $(NVCCFLAGS) -c $< -o $@
 
 $(BUILD_DIR_GPU)/src/poseidon2/%.cu.o: $(SRC_DIR)/poseidon2/%.cu
 	$(MKDIR_P) $(dir $@)

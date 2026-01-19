@@ -2,7 +2,7 @@
 #define __POSEIDON_BN128_CONSTANTS_HPP__  
 
 #include <cassert>
-#include "ffiasm/fr.hpp"
+#include "fr.hpp"
 
 class PoseidonBN128Constants
 {
