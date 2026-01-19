@@ -74,7 +74,6 @@ impl DebugInfoCmd {
             custom_commits_map,
             true,
             false,
-            false,
             ParamsGPU::default(),
             self.verbose.into(),
             HashMap::new(),

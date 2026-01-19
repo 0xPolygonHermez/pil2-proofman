@@ -34,8 +34,6 @@ pub fn store_debug_data<F: PrimeField64>(
     num_rows: usize,
     is_prod: bool,
 ) -> ProofmanResult<()> {
-    proofman_util::timer_start_info!(PREPARE);
-
     let (skip, instance_info) = skip_prover_instance(pctx, instance_id)?;
 
     if skip {
