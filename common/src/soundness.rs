@@ -21,7 +21,10 @@ pub struct AirTableRow {
     pub trace_length: u64,
     pub rho: f64,
     pub air_max_degree: u64,
-    pub num_columns: u64,
+    pub num_columns_fixed: u64,
+    pub num_columns_witness: u64,
+    pub total_columns: u64,
+    pub num_constraints: u64,
     pub opening_points: u64,
     pub batch_size: u64,
     pub power_batching: bool,
@@ -61,7 +64,10 @@ pub struct AirInfo {
     pub trace_length: u64,
     pub rho: f64,
     pub air_max_degree: u64,
-    pub num_columns: u64,
+    pub num_columns_fixed: u64,
+    pub num_columns_witness: u64,
+    pub total_columns: u64,
+    pub num_constraints: u64,
     pub opening_points: u64,
     pub batch_size: u64,
     pub power_batching: bool,
@@ -80,7 +86,10 @@ impl AirTableRow {
             trace_length: air.trace_length,
             rho: air.rho,
             air_max_degree: air.air_max_degree,
-            num_columns: air.num_columns,
+            total_columns: air.total_columns,
+            num_columns_fixed: air.num_columns_fixed,
+            num_columns_witness: air.num_columns_witness,
+            num_constraints: air.num_constraints,
             opening_points: air.opening_points,
             batch_size: air.batch_size,
             power_batching: air.power_batching,
@@ -140,13 +149,23 @@ pub fn print_soundness_table(soundness: &SoundnessToml) {
 }
 
 pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, AirInfo) {
+    let witness_cols = setup
+        .stark_info
+        .map_sections_n
+        .iter()
+        .filter(|(k, _)| k.as_str() != "const" && k.as_str() != "cm3")
+        .map(|(_, n)| n)
+        .sum::<u64>();
     (
         setup.air_name.clone(),
         AirInfo {
             trace_length: 1 << setup.stark_info.stark_struct.n_bits,
             rho: 1.0 / (1 << (setup.stark_info.stark_struct.n_bits_ext - setup.stark_info.stark_struct.n_bits)) as f64,
             air_max_degree: setup.stark_info.q_deg + 1,
-            num_columns: setup.stark_info.n_constraints,
+            total_columns: setup.stark_info.n_constants + witness_cols,
+            num_columns_fixed: setup.stark_info.n_constants,
+            num_columns_witness: witness_cols,
+            num_constraints: setup.stark_info.n_constraints as u64,
             opening_points: setup.stark_info.opening_points.len() as u64,
             batch_size: setup.stark_info.ev_map.len() as u64,
             power_batching: true,
