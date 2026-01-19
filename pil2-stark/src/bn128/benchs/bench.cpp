@@ -81,8 +81,8 @@ BENCHMARK(MUL_U64_BENCH)
 
 static void ADD_FR_BENCH(benchmark::State &state)
 {
-    RawFrP field;
-    RawFrP::Element a, b, c;
+    RawFr field;
+    RawFr::Element a, b, c;
     
     // Use 253-bit values
     mpz_t a_mpz, b_mpz;
@@ -109,8 +109,8 @@ BENCHMARK(ADD_FR_BENCH)
 
 static void SUB_FR_BENCH(benchmark::State &state)
 {
-    RawFrP field;
-    RawFrP::Element a, b, c;
+    RawFr field;
+    RawFr::Element a, b, c;
     
     mpz_t a_mpz, b_mpz;
     mpz_init_set_str(a_mpz, "7237005577333373737202998770919480949126995012696537173126649423595929467232", 10);
@@ -136,8 +136,8 @@ BENCHMARK(SUB_FR_BENCH)
 
 static void MUL_FR_BENCH(benchmark::State &state)
 {
-    RawFrP field;
-    RawFrP::Element a, b, c;
+    RawFr field;
+    RawFr::Element a, b, c;
     
     mpz_t a_mpz, b_mpz;
     mpz_init_set_str(a_mpz, "14474011154666747474405997541838961898253990025393074346253298847191858934464", 10);
@@ -163,8 +163,8 @@ BENCHMARK(MUL_FR_BENCH)
 
 static void SQUARE_FR_BENCH(benchmark::State &state)
 {
-    RawFrP field;
-    RawFrP::Element a, c;
+    RawFr field;
+    RawFr::Element a, c;
     
     mpz_t a_mpz;
     mpz_init_set_str(a_mpz, "14474011154666747474405997541838961898253990025393074346253298847191858934464", 10);
@@ -186,8 +186,8 @@ BENCHMARK(SQUARE_FR_BENCH)
 
 static void DIV_FR_BENCH(benchmark::State &state)
 {
-    RawFrP field;
-    RawFrP::Element a, b, c;
+    RawFr field;
+    RawFr::Element a, b, c;
     
     mpz_t a_mpz, b_mpz;
     mpz_init_set_str(a_mpz, "7237005577333373737202998770919480949126995012696537173126649423595929467232", 10);
@@ -213,8 +213,8 @@ BENCHMARK(DIV_FR_BENCH)
 
 static void INV_FR_BENCH(benchmark::State &state)
 {
-    RawFrP field;
-    RawFrP::Element a, c;
+    RawFr field;
+    RawFr::Element a, c;
     
     mpz_t a_mpz;
     mpz_init_set_str(a_mpz, "14474011154666747474405997541838961898253990025393074346253298847191858934464", 10);
@@ -235,8 +235,8 @@ BENCHMARK(INV_FR_BENCH)
     ->UseRealTime();
 
 // Add BLS FR benchmarks if BLST is enabled
-// We can compare BLS's FR implementation performance with our own RawFrP implementation
-// the scalar fields are not the same but similar: 255-bit prime for BLS vs 254-bit prime for RawFrP
+// We can compare BLS's FR implementation performance with our own RawFr implementation
+// the scalar fields are not the same but similar: 255-bit prime for BLS vs 254-bit prime for RawFr
 #if defined(__BLST__)
 
 static void BLST_ADD_FR_BENCH(benchmark::State &state)
@@ -434,12 +434,12 @@ static void NTT_CPU_BENCH(benchmark::State &state) {
     uint64_t n = 1ULL << power;
     
     // Allocate data
-    RawFrP::Element* data = new RawFrP::Element[n];
+    RawFr::Element* data = new RawFr::Element[n];
     
     // Generate random field elements (reuse generate_random_scalars)
-    generate_random_scalars(reinterpret_cast<uint8_t*>(data), n, sizeof(RawFrP::Element));
+    generate_random_scalars(reinterpret_cast<uint8_t*>(data), n, sizeof(RawFr::Element));
     
-    FFT<RawFrP> fft(n);
+    FFT<RawFr> fft(n);
     
     for (auto _ : state) {
         fft.fft(data, n);
@@ -468,17 +468,17 @@ static const int POSEIDON2_NUM_HASHES = 10000;
 static void POSEIDON2_SEQ_CPU_BENCH(benchmark::State &state) {
     int t = state.range(0);
     
-    RawFrP field;
+    RawFr field;
     Poseidon2BN128 poseidon2;
     
     // Initialize state with sequential values
-    std::vector<RawFrP::Element> hash_state(t);
+    std::vector<RawFr::Element> hash_state(t);
     for (int i = 0; i < t; i++) {
         field.fromUI(hash_state[i], i);
     }
     
     for (auto _ : state) {
-        std::vector<RawFrP::Element> state_copy = hash_state;
+        std::vector<RawFr::Element> state_copy = hash_state;
         for(int i = 0; i < POSEIDON2_NUM_HASHES; i++){
             poseidon2.hash(state_copy);
         }
@@ -509,16 +509,16 @@ static const int POSEIDON_NUM_HASHES = 10000;
 static void POSEIDON_SEQ_CPU_BENCH(benchmark::State &state) {
     int t = state.range(0);
     
-    RawFrP field;
+    RawFr field;
     PoseidonBN128 poseidon;
     
-    std::vector<RawFrP::Element> hash_state(t);
+    std::vector<RawFr::Element> hash_state(t);
     for (int i = 0; i < t; i++) {
         field.fromUI(hash_state[i], i);
     }
     
     for (auto _ : state) {
-        std::vector<RawFrP::Element> state_copy = hash_state;
+        std::vector<RawFr::Element> state_copy = hash_state;
         for(int i = 0; i < POSEIDON_NUM_HASHES; i++){
             poseidon.hash(state_copy);
         }

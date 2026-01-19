@@ -16,7 +16,7 @@ class PoseidonBN128
   const unsigned int N_ROUNDS_P[16] = {56, 57, 56, 60, 60, 63, 64, 63, 60, 66, 60, 65, 70, 60, 64, 68};
 
 private:
-  RawFrP field;
+  RawFr field;
   void ark(vector<FrElement> *state, const FrElement *c, const int ssize, int it);
   void sbox(vector<FrElement> *state, const FrElement *c, const int ssize, int it);
   void mix(vector<FrElement> *new_state, vector<FrElement> state, const FrElement *m, const int ssize);

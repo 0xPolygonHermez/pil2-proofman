@@ -8,7 +8,7 @@ class Poseidon2BN128Constants
 {
 public:
     // C constants for t=2 (72 elements)
-    const static inline RawFrP::Element C2[72] = {
+    const static inline RawFr::Element C2[72] = {
         {0xA96C453DC58ACA67, 0x73EB0F4319A6FA1B, 0xC1584C4902CFEBE6, 0x0258FEAEAB003C81},
         {0x999F128F883214EE, 0x3812D56244476181, 0xF1C713591A60E735, 0x1D29E209ED432B39},
         {0x10245A461F9886F9, 0xC1F6A382A4AF9CD7, 0x43DC54DE7BE4216C, 0x08DDE7787782A71D},
@@ -84,7 +84,7 @@ public:
     };
 
     // C constants for t=3 (80 elements)
-    const static inline RawFrP::Element C3[80] = {
+    const static inline RawFr::Element C3[80] = {
         {0xD722B5D4CE14484C, 0x28FDF04EF431D35F, 0x0AF406C6D8A909C9, 0x2D545BA8D234EFA0},
         {0x55A2A5FC348A5584, 0xD73CD95929E45265, 0x66E861C483269614, 0x040E6777B2B473E0},
         {0x0A830EC1F8020B2A, 0x8197A4F899305E94, 0x3C2E69437AC4428F, 0x17ECEEF02F845328},
@@ -168,7 +168,7 @@ public:
     };
 
     // C constants for t=4 (88 elements)
-    const static inline RawFrP::Element C4[88] = {
+    const static inline RawFr::Element C4[88] = {
         {0x40E29857ECCBA526, 0x78B5D11F628BB63C, 0x90A91F8124D71C1D, 0x22B90B99257C701F},
         {0xDDA103BCD5E88168, 0xCADEC275563908DF, 0xCB42FAA49BDA666A, 0x12C1E60E14878465},
         {0xE2EE3F59DE1800C2, 0xC7979D60539090BA, 0xB17490108EFD09C7, 0x157AE4CD6C889238},
@@ -260,7 +260,7 @@ public:
     };
 
     // C constants for t=8 (121 elements)
-    const static inline RawFrP::Element C8[121] = {
+    const static inline RawFr::Element C8[121] = {
         {0x3C05B743FFE95E23, 0xD820E6851E555599, 0x76A1BFC9DAACF55D, 0x1ED4DC154DA40091},
         {0x233B6048065F8987, 0x2183268D7189FD92, 0x47EC11FCA1AED8FC, 0x21BA5A371DBF8D69},
         {0xE7749060220EB7C4, 0xCE10994EAAC12928, 0xF272E3340B383044, 0x0857C1802BDC1A99},
@@ -385,7 +385,7 @@ public:
     };
 
     // C constants for t=12 (153 elements)
-    const static inline RawFrP::Element C12[153] = {
+    const static inline RawFr::Element C12[153] = {
         {0xF0C1DD3743A45085, 0x81F3BB538B396B7B, 0x9FA3E002667388CF, 0x128AF451D87D1942},
         {0x5EB9B30A2AF39F58, 0xE28A09679E4D53B3, 0x763F184A06CCB4E8, 0x24E8CB01AB5D9DC0},
         {0xD46988C46D4CF3AC, 0xBA800036973E1136, 0x8CF17C8AF19CF843, 0x27D9F98EAC8370D2},
@@ -542,7 +542,7 @@ public:
     };
 
     // C constants for t=16 (185 elements)
-    const static inline RawFrP::Element C16[185] = {
+    const static inline RawFr::Element C16[185] = {
         {0x5476A75B286C9119, 0xE94E73A7AF5F039C, 0xA82AE3909052E0CD, 0x2B8D4CBE7525E826},
         {0xC301343372DBBFF4, 0x86C05D8F4A4F2A43, 0x7FFB57953C43C3C5, 0x064F07239CD60FD3},
         {0x99A5F5E55F092E2B, 0x7AA32D63F2A99F4C, 0xED86AAFC144430FD, 0x1B7288FF498C0D35},
@@ -731,20 +731,20 @@ public:
     };
 
     // D constants for t=2 (2 elements)
-    const static inline RawFrP::Element D2[2] = {
+    const static inline RawFr::Element D2[2] = {
         {0xAC96341C4FFFFFFB, 0x36FC76959F60CD29, 0x666EA36F7879462E, 0x0E0A77C19A07DF2F},
         {0x592C68389FFFFFF6, 0x6DF8ED2B3EC19A53, 0xCCDD46DEF0F28C5C, 0x1C14EF83340FBE5E}
     };
 
     // D constants for t=3 (3 elements)
-    const static inline RawFrP::Element D3[3] = {
+    const static inline RawFr::Element D3[3] = {
         {0xAC96341C4FFFFFFB, 0x36FC76959F60CD29, 0x666EA36F7879462E, 0x0E0A77C19A07DF2F},
         {0xAC96341C4FFFFFFB, 0x36FC76959F60CD29, 0x666EA36F7879462E, 0x0E0A77C19A07DF2F},
         {0x592C68389FFFFFF6, 0x6DF8ED2B3EC19A53, 0xCCDD46DEF0F28C5C, 0x1C14EF83340FBE5E}
     };
 
     // D constants for t=4 (4 elements)
-    const static inline RawFrP::Element D4[4] = {
+    const static inline RawFr::Element D4[4] = {
         {0x78B3C4DF7B603C75, 0xDD54552F4A97B9E3, 0xC9CEB940F70388E9, 0x300AF8E86F112B7E},
         {0x00DEB14139B1EF67, 0xCCB2BDEFCCA2343D, 0x6C43A052DBE2F558, 0x1063A869506E775C},
         {0x94EEA894378E2F93, 0x93FAF7C07882666B, 0x21288CC59995CFDC, 0x027E7283B9B0B7D3},
@@ -752,7 +752,7 @@ public:
     };
 
     // D constants for t=8 (8 elements)
-    const static inline RawFrP::Element D8[8] = {
+    const static inline RawFr::Element D8[8] = {
         {0x067A17A26A206864, 0x3DB98D271FCF896D, 0xF2933868FB360680, 0x19708EA7B23C720D},
         {0xD3115B871B208108, 0xD80123FBC4B1FE6D, 0x2B47C5B05EA3259C, 0x1511CF71FCA36061},
         {0x59E640BE985642D4, 0x7AE05B8B22B1DC61, 0x829E64E73ACEA60D, 0x18B3969D3CF745FF},
@@ -764,7 +764,7 @@ public:
     };
 
     // D constants for t=12 (12 elements)
-    const static inline RawFrP::Element D12[12] = {
+    const static inline RawFr::Element D12[12] = {
         {0x06090F5A14A38C32, 0xCAE85426B5CC4FAD, 0x8DFD4E6943AA8CE0, 0x1EE5240904DA8AAF},
         {0x93B603E51569FECB, 0x4CD354E67FA24279, 0xE0C0D3D13D22102E, 0x0997CCFD81EE3376},
         {0x1C04D32D5AB8CC52, 0x6F9686F4957ADD50, 0xB1780201C5F2AC13, 0x10C25D1833BBF12C},
@@ -780,7 +780,7 @@ public:
     };
 
     // D constants for t=16 (16 elements)
-    const static inline RawFrP::Element D16[16] = {
+    const static inline RawFr::Element D16[16] = {
         {0x2C4412FDAA52FBE0, 0xA0C7DA2DA37A470B, 0x1F5D32EB82607ED9, 0x03E87F1FEDFB25B0},
         {0x20EC20A344475FCB, 0xDB77839C8A51F018, 0xDC218D91467BCAAE, 0x2D95978A98B4A14D},
         {0x2C2D3A3A02135120, 0x6434F6217E435B8F, 0x7E5AA003E91DF8B0, 0x2379698FCB42063C},
@@ -800,7 +800,7 @@ public:
     };
 
     // Get C constants for a given t value
-    static inline const RawFrP::Element* get_C(int t) {
+    static inline const RawFr::Element* get_C(int t) {
         switch(t) {
             case 2: return C2;
             case 3: return C3;
@@ -813,7 +813,7 @@ public:
     }
 
     // Get D constants for a given t value
-    static inline const RawFrP::Element* get_D(int t) {
+    static inline const RawFr::Element* get_D(int t) {
         switch(t) {
             case 2: return D2;
             case 3: return D3;

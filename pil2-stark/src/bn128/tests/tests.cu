@@ -1089,11 +1089,11 @@ TEST(BN128_NTT_GPU_TEST, ntt_then_intt_roundtrip) {
     const uint64_t n = 1ULL << lg_n;
     
     // Use CPU field to initialize data properly
-    RawFrP field;
+    RawFr field;
     
-    // Allocate host memory (RawFrP::Element has same layout as GPU element)
-    RawFrP::Element* h_data = new RawFrP::Element[n];
-    RawFrP::Element* h_original = new RawFrP::Element[n];
+    // Allocate host memory (RawFr::Element has same layout as GPU element)
+    RawFr::Element* h_data = new RawFr::Element[n];
+    RawFr::Element* h_original = new RawFr::Element[n];
     
     // Initialize data: data[i] = i
     for (uint64_t i = 0; i < n; i++) {
@@ -1130,10 +1130,10 @@ TEST(BN128_NTT_GPU_TEST, intt_then_ntt_roundtrip) {
     const uint32_t lg_n = 4;
     const uint64_t n = 1ULL << lg_n;
     
-    RawFrP field;
+    RawFr field;
     
-    RawFrP::Element* h_data = new RawFrP::Element[n];
-    RawFrP::Element* h_original = new RawFrP::Element[n];
+    RawFr::Element* h_data = new RawFr::Element[n];
+    RawFr::Element* h_original = new RawFr::Element[n];
     
     // Initialize data: data[i] = i
     for (uint64_t i = 0; i < n; i++) {
@@ -1169,11 +1169,11 @@ TEST(BN128_NTT_GPU_TEST, ntt_linearity) {
     const uint32_t lg_n = 4;
     const uint64_t n = 1ULL << lg_n;
     
-    RawFrP field;
+    RawFr field;
     
-    RawFrP::Element* h_a = new RawFrP::Element[n];
-    RawFrP::Element* h_b = new RawFrP::Element[n];
-    RawFrP::Element* h_a_plus_b = new RawFrP::Element[n];
+    RawFr::Element* h_a = new RawFr::Element[n];
+    RawFr::Element* h_b = new RawFr::Element[n];
+    RawFr::Element* h_a_plus_b = new RawFr::Element[n];
     
     // Initialize vectors a and b
     for (uint64_t i = 0; i < n; i++) {
@@ -1195,7 +1195,7 @@ TEST(BN128_NTT_GPU_TEST, ntt_linearity) {
     // Verify: NTT(a+b) == NTT(a) + NTT(b)
     bool all_match = true;
     for (uint64_t i = 0; i < n; i++) {
-        RawFrP::Element expected_sum;
+        RawFr::Element expected_sum;
         field.add(expected_sum, h_a[i], h_b[i]);
         
         if (!field.eq(h_a_plus_b[i], expected_sum)) {
@@ -1213,13 +1213,13 @@ TEST(BN128_NTT_GPU_TEST, ntt_linearity) {
 
 TEST(BN128_NTT_GPU_TEST, ntt_gpu_vs_cpu) {
     // Test: GPU NTT result should match CPU FFT result
-    RawFrP field;
+    RawFr field;
     const uint32_t lg_n = 4;
     const uint64_t n = 1ULL << lg_n;
     
     // Allocate memory
-    RawFrP::Element* h_gpu_data = new RawFrP::Element[n];
-    std::vector<RawFrP::Element> cpu_data(n);
+    RawFr::Element* h_gpu_data = new RawFr::Element[n];
+    std::vector<RawFr::Element> cpu_data(n);
     
     // Initialize both with same data
     for (uint64_t i = 0; i < n; i++) {
@@ -1232,7 +1232,7 @@ TEST(BN128_NTT_GPU_TEST, ntt_gpu_vs_cpu) {
     NTT_BN128_GPU::ntt(gpu_data, lg_n);
     
     // Run CPU FFT
-    FFT<RawFrP> fft(n);
+    FFT<RawFr> fft(n);
     fft.fft(cpu_data.data(), n);
     
     // Compare results

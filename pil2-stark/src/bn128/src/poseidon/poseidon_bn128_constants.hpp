@@ -8,7 +8,7 @@ class PoseidonBN128Constants
 {
 public:
     // C constants for t=2 (72 elements)
-    const static inline RawFrP::Element C2[72] = {
+    const static inline RawFr::Element C2[72] = {
         {0xA96C453DC58ACA67, 0x73EB0F4319A6FA1B, 0xC1584C4902CFEBE6, 0x0258FEAEAB003C81},
         {0x999F128F883214EE, 0x3812D56244476181, 0xF1C713591A60E735, 0x1D29E209ED432B39},
         {0xB12A21DDE55EE9AE, 0xE6FACBF5C7A0F667, 0x37AFDA6EC3FF5974, 0x1CF36C6ECD15C256},
@@ -84,7 +84,7 @@ public:
     };
 
     // C constants for t=3 (81 elements)
-    const static inline RawFrP::Element C3[81] = {
+    const static inline RawFr::Element C3[81] = {
         {0x83BBBAC36534A858, 0x0971619601250A07, 0x27A219050E23910C, 0x1638BF18C8507442},
         {0x5E2BB0E6BB25631A, 0x56B042B8DEF5875E, 0x01BC3E10A8E9B451, 0x17BFE16092EF1D7E},
         {0xA4FEF9B954508D89, 0xAFEB6B7D4EE4C69E, 0xD8EBE8A7FC301C39, 0x1840976E07AD780C},
@@ -169,7 +169,7 @@ public:
     };
 
     // C constants for t=4 (88 elements)
-    const static inline RawFrP::Element C4[88] = {
+    const static inline RawFr::Element C4[88] = {
         {0x40E29857ECCBA526, 0x78B5D11F628BB63C, 0x90A91F8124D71C1D, 0x22B90B99257C701F},
         {0xDDA103BCD5E88168, 0xCADEC275563908DF, 0xCB42FAA49BDA666A, 0x12C1E60E14878465},
         {0xE2EE3F59DE1800C2, 0xC7979D60539090BA, 0xB17490108EFD09C7, 0x157AE4CD6C889238},
@@ -261,7 +261,7 @@ public:
     };
 
     // C constants for t=5 (100 elements)
-    const static inline RawFrP::Element C5[100] = {
+    const static inline RawFr::Element C5[100] = {
         {0x878A9569334498E4, 0x4641E4A29D08274F, 0xF2713820FEA6F0C4, 0x0898C94BD2C76331},
         {0xD6DEC67B3646BDBC, 0x626A9E071B154F27, 0x71A61CB1F9D90CBE, 0x134DD09BC5DFFAA7},
         {0xC24D9503F8682C8C, 0x9CF5F5ABE19FEDFF, 0x125F8816CDB2D9F1, 0x05954A7A4436FD78},
@@ -365,7 +365,7 @@ public:
     };
 
     // C constants for t=6 (108 elements)
-    const static inline RawFrP::Element C6[108] = {
+    const static inline RawFr::Element C6[108] = {
         {0x3966746EB3B06F10, 0x67C6466FC0F39FD5, 0x3A03DE41C85D5250, 0x0D857A86544D1217},
         {0xBC41A286DA885FAC, 0x7A38FFB857ABA248, 0xB512F7291D795AD9, 0x10FB7FEC7C13D076},
         {0x6D1D4964DEA84CE0, 0x8D4A87DEC2F648E3, 0xA40F4401414BFD32, 0x2DC186390EF4DBE9},
@@ -477,7 +477,7 @@ public:
     };
 
     // C constants for t=7 (119 elements)
-    const static inline RawFrP::Element C7[119] = {
+    const static inline RawFr::Element C7[119] = {
         {0x219FAA0970770602, 0x9A73C1DC6E820969, 0x1117BAE44BECFF8B, 0x00C3F5AF1D27EC8D},
         {0xCD7FA6279AEB8ABF, 0xF16BA25B5EB55D49, 0x9FDA5AE58E2F542C, 0x0F79C548EB9BD349},
         {0xAA94898F77E72DB9, 0x5491D93CD5538B5F, 0xCF7C09E35EB5C3CC, 0x16C9A99863DCAA2E},
@@ -600,7 +600,7 @@ public:
     };
 
     // C constants for t=8 (128 elements)
-    const static inline RawFrP::Element C8[128] = {
+    const static inline RawFr::Element C8[128] = {
         {0xB9D56DEAA52D8E34, 0xD1ABC4BBA3D90188, 0xA8CAE9BBCFFB7668, 0x244A8228C1C4C5F0},
         {0x3DADF724C2EAA7C4, 0xC51336D7575C7E07, 0x989515C71F971DCB, 0x17C6E62CC5DB59F4},
         {0x9A785811AEDD0E6A, 0x4ABD2D0E31C5D29D, 0xB5691668F07AD24D, 0x21A1412A9055812C},
@@ -732,7 +732,7 @@ public:
     };
 
     // C constants for t=9 (135 elements)
-    const static inline RawFrP::Element C9[135] = {
+    const static inline RawFr::Element C9[135] = {
         {0xCCC8C7771A8A426A, 0x12881BAF5B09DC22, 0x36BEF279B36AE936, 0x20877252CB848CF7},
         {0xA0182A7B51A81044, 0x37C6694858A05BE1, 0x41BE7C08AFF90695, 0x0FA219C0AFD59FEC},
         {0x927E749575A42340, 0xD1C22DC2BE654AD7, 0x5519B169DE072C28, 0x2306C9E590BA9BCD},
@@ -871,7 +871,7 @@ public:
     };
 
     // C constants for t=10 (140 elements)
-    const static inline RawFrP::Element C10[140] = {
+    const static inline RawFr::Element C10[140] = {
         {0xCFDCB7A408294D86, 0x7CD3AA1BCF75B142, 0x53E448E07F9BDE14, 0x258E323186F968BF},
         {0x3691F0F6BC72144E, 0xF13AE01658B8AAAA, 0xE5304AD1DE28F058, 0x0AF6F86BA4D88AC4},
         {0xC43A26BFDCC2695B, 0x46FBA2920A83FB67, 0x078B6129557F4380, 0x098C74A21BF64BFF},
@@ -1015,7 +1015,7 @@ public:
     };
 
     // C constants for t=11 (154 elements)
-    const static inline RawFrP::Element C11[154] = {
+    const static inline RawFr::Element C11[154] = {
         {0xCF05A300DDA2F521, 0xB189A788FB138550, 0x0019E7E8F7027CCA, 0x1804025998F0DF22},
         {0x18A6F413F312D760, 0xE60F98BB43C57C05, 0x2DB57F0CEDF49583, 0x2CA9E8A90ADCC8B3},
         {0x97A418C207EA9479, 0x1B7AD3FC23689E9C, 0xF17A4F3A6D290F79, 0x2FCC7CF6199E5633},
@@ -1173,7 +1173,7 @@ public:
     };
 
     // C constants for t=12 (156 elements)
-    const static inline RawFrP::Element C12[156] = {
+    const static inline RawFr::Element C12[156] = {
         {0xC206AB5B7E9999EC, 0x695B8AD148207108, 0xAD8C370A23E0E1E2, 0x0376BC0993731ECC},
         {0x2841F2CA54028E07, 0x8B921E061AE9B944, 0x1D7723AC15CD7AE9, 0x1016B5BF680293C0},
         {0xECA055CA9B82BDC7, 0x1B252E7BA276F303, 0xC82151C149684730, 0x0FB98A7481751601},
@@ -1333,7 +1333,7 @@ public:
     };
 
     // C constants for t=13 (169 elements)
-    const static inline RawFrP::Element C13[169] = {
+    const static inline RawFr::Element C13[169] = {
         {0xBA41ADFFEE856C88, 0x9921FE55FD71CC53, 0x9733BACA82A86723, 0x0595CAB62C5E06B8},
         {0x94DB7429E3E6343C, 0xB359EAF7CEAA7739, 0x9A6F882FBDE2339A, 0x02D76FF5DAC580E6},
         {0x2F35E3B75578279E, 0xDE73F63FD2E15AD2, 0x9BED6BDAF03B9C58, 0x1C8B9F2E4E2F00F1},
@@ -1506,7 +1506,7 @@ public:
     };
 
     // C constants for t=14 (182 elements)
-    const static inline RawFrP::Element C14[182] = {
+    const static inline RawFr::Element C14[182] = {
         {0x70DDD0B16B8ED122, 0x732D246EB8B662F1, 0x00E576B200319450, 0x211DA55EBD9020B6},
         {0xD598B7E4707FEA56, 0xDF6810DE50F2813A, 0x18F1DFCE89042F43, 0x2FBC04E4E288662D},
         {0xA882A8BD372860D1, 0x2D51F69CDDFBF9E7, 0xADA52F4E56AE8F14, 0x1251BAC3A11B679A},
@@ -1692,7 +1692,7 @@ public:
     };
 
     // C constants for t=15 (180 elements)
-    const static inline RawFrP::Element C15[180] = {
+    const static inline RawFr::Element C15[180] = {
         {0x513F551107607649, 0x7090B24839DBBD06, 0x1E00524DEB217AE4, 0x07C855960FDB522D},
         {0x267539C3B700AC02, 0x5625DBABE69F3908, 0x97B99F0B9FB449BE, 0x09FECE2CF94A957A},
         {0xE5A2699052F1235A, 0x22BB700464647AD4, 0x59CD0C0CF6187286, 0x06377FFF6C820EF7},
@@ -1876,7 +1876,7 @@ public:
     };
 
     // C constants for t=16 (192 elements)
-    const static inline RawFrP::Element C16[192] = {
+    const static inline RawFr::Element C16[192] = {
         {0xE54C772485EDD4F0, 0xB99A7257681CF7A5, 0x9A23AA8C470FA20B, 0x091AB84201E70E9F},
         {0x648D15006E651F39, 0xA91E98EA0F2D8B61, 0x287E5E6C477B1A2A, 0x1EEE29ED0957379E},
         {0xE61CFB7404E8F18B, 0x392A4B4FB0D399AF, 0xF6F567107D6F7D01, 0x2595C662F1C48F70},
@@ -2072,7 +2072,7 @@ public:
     };
 
     // C constants for t=17 (204 elements)
-    const static inline RawFrP::Element C17[204] = {
+    const static inline RawFr::Element C17[204] = {
         {0x653348DE459669DF, 0x49A80B492228A79C, 0xEBD300A5434A5461, 0x08B3B62C3AD6D00F},
         {0x8797C8AED8FA90A1, 0x4B216274DBA10B66, 0xF6B72DAD14AF68A3, 0x2F0A8592F3752325},
         {0x72C42698C1034A46, 0xB53CACB4ED9DA5AD, 0xBC1C846580F6B58A, 0x1823E5BBAD559A07},
@@ -2280,7 +2280,7 @@ public:
     };
 
     // M matrix for t=2 (2x2=4 elements, row-major)
-    const static inline RawFrP::Element M2[4] = {
+    const static inline RawFr::Element M2[4] = {
         {0xF8B2F47577922DA4, 0x49C37C46F4FA97B6, 0xEAD42BC5207CE75B, 0x1E6197B9DC74448B},
         {0x536D530E1905BE54, 0x53CC09060B99F372, 0xFE8B92243F7D9E58, 0x2E82E796DAEA67C3},
         {0xC91FEA8D2D7F6EAD, 0x4443F72E7C6FF1E2, 0x03A88BCE6AC257FF, 0x264B0B0F2FAD086D},
@@ -2288,7 +2288,7 @@ public:
     };
 
     // M matrix for t=3 (3x3=9 elements, row-major)
-    const static inline RawFrP::Element M3[9] = {
+    const static inline RawFr::Element M3[9] = {
         {0xF2E8909A56FCF3D7, 0x8019CE3145ED8C1D, 0xDDA896A228616418, 0x0E5ED723FFC885E1},
         {0x670D8BD946474DD5, 0x56DAED800BF07BAE, 0x5C98D51ECCA20E6D, 0x1A3491EDA18B0028},
         {0xCC226561D2802757, 0xFCFBD22F5BB9F4ED, 0xC8EF58ACCE2B8678, 0x05984BB41BAE9C88},
@@ -2301,7 +2301,7 @@ public:
     };
 
     // M matrix for t=4 (4x4=16 elements, row-major)
-    const static inline RawFrP::Element M4[16] = {
+    const static inline RawFr::Element M4[16] = {
         {0xC746D3A1EA1CC193, 0x6909FA60CBF91537, 0x5B41F9011D64F292, 0x163FD60C1936197D},
         {0xC8C85E8CCEC69C00, 0xBE0283254C087A25, 0xE7E873D447F84EA7, 0x006DE5B38E5FD49E},
         {0xBB83FA3E0A031EDF, 0xA247540E9AB2ABDE, 0x10CE1AD9C5A34AA0, 0x0E0D7C4459FDE200},
@@ -2321,7 +2321,7 @@ public:
     };
 
     // M matrix for t=5 (5x5=25 elements, row-major)
-    const static inline RawFrP::Element M5[25] = {
+    const static inline RawFr::Element M5[25] = {
         {0x77464B55CD95EFCA, 0x68BA7A74AE0E5894, 0xBD4DC1C2266C359D, 0x2967C834940E37A0},
         {0x6907E36200995439, 0xB9F80B5666C65169, 0x7BA328F07EBC2640, 0x152D921C334DEB59},
         {0x235BC3071B88C57F, 0x1EDD9E8B512A928B, 0x4EBA9DB9A285A5DB, 0x208C85CECD6E86B2},
@@ -2350,7 +2350,7 @@ public:
     };
 
     // M matrix for t=6 (6x6=36 elements, row-major)
-    const static inline RawFrP::Element M6[36] = {
+    const static inline RawFr::Element M6[36] = {
         {0x40608A783EE62BAD, 0xB04481CEA961436E, 0x97A709DB9ED8C008, 0x281F30C1BF2D293A},
         {0xEFDA51BAD9992600, 0xB16FD81C76521488, 0x2CB484BEC9EA82AB, 0x23DA01C08FA91FDF},
         {0x3E66E1111B61380E, 0xB3BB4D0A482FED80, 0xF1FC52E48B3C87C3, 0x29C2B69D270A7A26},
@@ -2390,7 +2390,7 @@ public:
     };
 
     // M matrix for t=7 (7x7=49 elements, row-major)
-    const static inline RawFrP::Element M7[49] = {
+    const static inline RawFr::Element M7[49] = {
         {0xD24CCB91FDE9412B, 0xB32BD1C97EC99D80, 0x26D1F83CFF15E715, 0x04AB17C2331AD1BE},
         {0xA6288E89444BDDEB, 0x05262308CF91505B, 0x815EA488AC5B6CFF, 0x12A21D19B0750542},
         {0xACF060A6340D3543, 0xD15A3D9F64009CA3, 0x004DDA80951C6839, 0x05E8E1E88397FC89},
@@ -2443,7 +2443,7 @@ public:
     };
 
     // M matrix for t=8 (8x8=64 elements, row-major)
-    const static inline RawFrP::Element M8[64] = {
+    const static inline RawFr::Element M8[64] = {
         {0x1F4DBE8BF090B931, 0xD395B73788FCA25A, 0xDC23828594B1EFD6, 0x1141A50170BF495C},
         {0xE1927EDC10347FB5, 0x1548221913074C96, 0x9ED2715EC1CF5809, 0x2A968C597597D2B8},
         {0x783657EACBB1AF36, 0x79EE316F0218341D, 0xCF1687685BA466F1, 0x1D52E0E630C90C63},
@@ -2511,7 +2511,7 @@ public:
     };
 
     // M matrix for t=9 (9x9=81 elements, row-major)
-    const static inline RawFrP::Element M9[81] = {
+    const static inline RawFr::Element M9[81] = {
         {0x447766904D8567BF, 0x1C57E6B79253CB2D, 0x51ACB0F67AB9A1C8, 0x1CB4E8B5ED6D914F},
         {0x7E7083A07243F6D8, 0xB8C7EEE40C94B77A, 0x280253BE655726AE, 0x26F1B7E9EAF92FEF},
         {0x338FFACDF40CC989, 0x46745DE72BC1C676, 0xC99780AA71319719, 0x1DA55B3B2FD62565},
@@ -2596,7 +2596,7 @@ public:
     };
 
     // M matrix for t=10 (10x10=100 elements, row-major)
-    const static inline RawFrP::Element M10[100] = {
+    const static inline RawFr::Element M10[100] = {
         {0xE6614A3E6D90B4CE, 0x5200488A5113F396, 0xDB53DE6D224EEA8F, 0x2B291D666B0D68BB},
         {0x372F2323D875FB22, 0xB4EF2C3992812C17, 0x871BA83189D9BE07, 0x24588E722C2E6979},
         {0x00BC7B5D01BF2C50, 0xC86B7F68F0CC2E81, 0xCA25BF4417B3CB53, 0x1B11D4418071C26E},
@@ -2700,7 +2700,7 @@ public:
     };
 
     // M matrix for t=11 (11x11=121 elements, row-major)
-    const static inline RawFrP::Element M11[121] = {
+    const static inline RawFr::Element M11[121] = {
         {0xBF35D343AC4B23E3, 0x32869AB9F3CF3279, 0x5A21A53ADD96C8CC, 0x2AEC2B24E6536AEC},
         {0x2B1049B9F9F9751A, 0x76743E1C7B3F8231, 0x9EE6897F83AA4CCC, 0x1EC889D07B6955F4},
         {0xC4690C6E533ACB09, 0x9E0EC418828597AD, 0x216BD6EF5FB63E9A, 0x0CE7D631EA127695},
@@ -2825,7 +2825,7 @@ public:
     };
 
     // M matrix for t=12 (12x12=144 elements, row-major)
-    const static inline RawFrP::Element M12[144] = {
+    const static inline RawFr::Element M12[144] = {
         {0x7BE15E9C8BC62723, 0x96ED328F6F6DFE8C, 0xAA1C1D5FE0D04CDF, 0x1DEF002D24AFA03F},
         {0x75542D43DE84F76A, 0x26DFF199C48F6126, 0x4FE8E1E367DEE28E, 0x2B1BE9B505E643EB},
         {0xC9DCF8E64B9CD1BE, 0xD570B765BB5DDE16, 0x07ECBD0310D783A1, 0x1F9858548F766D17},
@@ -2973,7 +2973,7 @@ public:
     };
 
     // M matrix for t=13 (13x13=169 elements, row-major)
-    const static inline RawFrP::Element M13[169] = {
+    const static inline RawFr::Element M13[169] = {
         {0x260F226F53EFFC0E, 0x696850298CA823BF, 0xCF41D3BE9E9B8B29, 0x2ACA1E1675CF79FA},
         {0x6E2C382D7470A19A, 0x3A9B8F27261C0889, 0x683726B47E17EAA1, 0x2DFA2C16EBACA0F3},
         {0xF4FD4D294A9D807A, 0x87B812C679D476DA, 0x4DE5F7C20CCDF503, 0x193833769B59622A},
@@ -3146,7 +3146,7 @@ public:
     };
 
     // M matrix for t=14 (14x14=196 elements, row-major)
-    const static inline RawFrP::Element M14[196] = {
+    const static inline RawFr::Element M14[196] = {
         {0xDA33A31BD025BC23, 0x7C228B75FA4609DA, 0xB6BA4043DE205DA5, 0x1AB1A82415271BB8},
         {0x62ECB358459C64F8, 0x6FE0F31A381A1D35, 0x12A6DA2AF604CB7C, 0x0D23775ADA2A001B},
         {0x4F3071EBBFA128D7, 0x63E78851C1B28428, 0xF2FAFC7089600481, 0x1FB5164A6CE552F3},
@@ -3346,7 +3346,7 @@ public:
     };
 
     // M matrix for t=15 (15x15=225 elements, row-major)
-    const static inline RawFrP::Element M15[225] = {
+    const static inline RawFr::Element M15[225] = {
         {0x10C7543B66E9F907, 0x6E3B37BBAE9021BA, 0xCB9B37849EC76ADF, 0x22D4448E8D0B79FA},
         {0xA55452057B9C844F, 0x91CFDE0FE5BB8F4C, 0x83391373C232826B, 0x1728626428E9EE02},
         {0x89D160121ECA75CE, 0xD82AEF0367C717F2, 0x62F43C8707700AA7, 0x0F391E65B531D675},
@@ -3575,7 +3575,7 @@ public:
     };
 
     // M matrix for t=16 (16x16=256 elements, row-major)
-    const static inline RawFrP::Element M16[256] = {
+    const static inline RawFr::Element M16[256] = {
         {0xFCF960E8A9554C5A, 0x0C67573FEDFB805F, 0xCF33FAAB78D84D31, 0x1EA1FAA4CDBB37F0},
         {0xCF003941ADB4BB64, 0x0B536AEC9C00EF62, 0x98E9E7E9FCDA8C06, 0x05E40B24F19BA2E3},
         {0x086FC9EFDB41EB8E, 0x31F8941833110C66, 0x4FF334526EBC1440, 0x2288C1D34C3CCC33},
@@ -3835,7 +3835,7 @@ public:
     };
 
     // M matrix for t=17 (17x17=289 elements, row-major)
-    const static inline RawFrP::Element M17[289] = {
+    const static inline RawFr::Element M17[289] = {
         {0x6837F3BDF29DE6D9, 0xA7810F926C973B22, 0x8E5091707BFF5986, 0x215E61EA6901246A},
         {0xADD6DB61144D605E, 0x20BBEE6C74E7C82B, 0xA2A71D617B627E2E, 0x14BD5BC275FD8BC5},
         {0xE3E1D438C7A602E9, 0x24BA1543BA5517FF, 0x0B60B8C480E485DA, 0x2FB664DBC7B614F1},
@@ -4128,7 +4128,7 @@ public:
     };
 
     // P matrix for t=2 (2x2=4 elements, row-major)
-    const static inline RawFrP::Element P2[4] = {
+    const static inline RawFr::Element P2[4] = {
         {0xF8B2F47577922DA4, 0x49C37C46F4FA97B6, 0xEAD42BC5207CE75B, 0x1E6197B9DC74448B},
         {0x67AD5D218A6E76B8, 0xEC80B1D05A8F56DA, 0xB99E1D7FFA456741, 0x07C7009203027010},
         {0xC91FEA8D2D7F6EAD, 0x4443F72E7C6FF1E2, 0x03A88BCE6AC257FF, 0x264B0B0F2FAD086D},
@@ -4136,7 +4136,7 @@ public:
     };
 
     // P matrix for t=3 (3x3=9 elements, row-major)
-    const static inline RawFrP::Element P3[9] = {
+    const static inline RawFr::Element P3[9] = {
         {0xF2E8909A56FCF3D7, 0x8019CE3145ED8C1D, 0xDDA896A228616418, 0x0E5ED723FFC885E1},
         {0x8B35EE2C1DCD3478, 0x0E2E4310CD1B2D80, 0x1C248B574789221E, 0x08F2E5159867AF70},
         {0xF58A7FF299DE270B, 0x080D795E1BDE9F10, 0xF6EB9727C052A415, 0x2DA01854C6E84BF8},
@@ -4149,7 +4149,7 @@ public:
     };
 
     // P matrix for t=4 (4x4=16 elements, row-major)
-    const static inline RawFrP::Element P4[16] = {
+    const static inline RawFr::Element P4[16] = {
         {0xC746D3A1EA1CC193, 0x6909FA60CBF91537, 0x5B41F9011D64F292, 0x163FD60C1936197D},
         {0xD3265CB81E8AB574, 0xE359A5C8345D88CB, 0x47CA18D45F99B2AD, 0x1B19F63622245A2F},
         {0x87FBD51B144BF6E8, 0x832CB96C47C933E0, 0xE0A4C40E31F6216F, 0x2734358D0CCA2757},
@@ -4169,7 +4169,7 @@ public:
     };
 
     // P matrix for t=5 (5x5=25 elements, row-major)
-    const static inline RawFrP::Element P5[25] = {
+    const static inline RawFr::Element P5[25] = {
         {0x77464B55CD95EFCA, 0x68BA7A74AE0E5894, 0xBD4DC1C2266C359D, 0x2967C834940E37A0},
         {0xCE4ACF526C3274F2, 0x972B38360D5FD556, 0xA1A97C8AAD5DA8A0, 0x2BE88E1419BBF1D1},
         {0xC7D3895B727EEDEC, 0x9C9ED3E16476B8B6, 0xA9E5C73AED214353, 0x0CEDC2B424714991},
@@ -4198,7 +4198,7 @@ public:
     };
 
     // P matrix for t=6 (6x6=36 elements, row-major)
-    const static inline RawFrP::Element P6[36] = {
+    const static inline RawFr::Element P6[36] = {
         {0x40608A783EE62BAD, 0xB04481CEA961436E, 0x97A709DB9ED8C008, 0x281F30C1BF2D293A},
         {0x373EBB2AC910A73C, 0x186FAC98E21847C2, 0xEF7BE58965898DC4, 0x10589862BF092F33},
         {0x5ED017030F3BFA70, 0xDA85D02FABA8CD5A, 0xD922173B6E40391A, 0x210006C32BB6BC88},
@@ -4238,7 +4238,7 @@ public:
     };
 
     // P matrix for t=7 (7x7=49 elements, row-major)
-    const static inline RawFrP::Element P7[49] = {
+    const static inline RawFr::Element P7[49] = {
         {0xD24CCB91FDE9412B, 0xB32BD1C97EC99D80, 0x26D1F83CFF15E715, 0x04AB17C2331AD1BE},
         {0x3CDD0EC8B6F2A523, 0xAB45B6FD7CED4269, 0xC7B8A2E44F53DD80, 0x2E31E8AF24FD3F08},
         {0x1DFD7BD78858B6E4, 0x9B873E097DB14226, 0xA34554566923395C, 0x0490AE4E7CBD1ADE},
@@ -4291,7 +4291,7 @@ public:
     };
 
     // P matrix for t=8 (8x8=64 elements, row-major)
-    const static inline RawFrP::Element P8[64] = {
+    const static inline RawFr::Element P8[64] = {
         {0x1F4DBE8BF090B931, 0xD395B73788FCA25A, 0xDC23828594B1EFD6, 0x1141A50170BF495C},
         {0xB67EBAF29A80344D, 0x73EDB5BA3CE41582, 0xB356FAB549DE8909, 0x18CDD48269AF33CE},
         {0x1A79B3C9B509DBBB, 0x40E3E5EE1EB4E2AE, 0x0B65CB74FF36104E, 0x06F4775105319694},
@@ -4359,7 +4359,7 @@ public:
     };
 
     // P matrix for t=9 (9x9=81 elements, row-major)
-    const static inline RawFrP::Element P9[81] = {
+    const static inline RawFr::Element P9[81] = {
         {0x447766904D8567BF, 0x1C57E6B79253CB2D, 0x51ACB0F67AB9A1C8, 0x1CB4E8B5ED6D914F},
         {0x394BE6B6F7D7ACA3, 0x3EAB0F89B8F238C2, 0x3791E1AC2DAD91F1, 0x03B4BD40077FCF86},
         {0xBA238F34F50DEB60, 0x652F2CC54D378913, 0xF7B30797937E3CE4, 0x28F93168772685CE},
@@ -4444,7 +4444,7 @@ public:
     };
 
     // P matrix for t=10 (10x10=100 elements, row-major)
-    const static inline RawFrP::Element P10[100] = {
+    const static inline RawFr::Element P10[100] = {
         {0xE6614A3E6D90B4CE, 0x5200488A5113F396, 0xDB53DE6D224EEA8F, 0x2B291D666B0D68BB},
         {0xDE992CD2CF4CF29C, 0xCB326295DCA491C0, 0x0B19F419CF2D4218, 0x1EEE5D57B6EAF1A3},
         {0xE2DD2EFA9A7BB42D, 0x4EC1D77946120960, 0x6151B360BC6AC0F0, 0x04851D7FE14AFFE3},
@@ -4548,7 +4548,7 @@ public:
     };
 
     // P matrix for t=11 (11x11=121 elements, row-major)
-    const static inline RawFrP::Element P11[121] = {
+    const static inline RawFr::Element P11[121] = {
         {0xBF35D343AC4B23E3, 0x32869AB9F3CF3279, 0x5A21A53ADD96C8CC, 0x2AEC2B24E6536AEC},
         {0x11D1E16A5C4C6B68, 0x71F6DFAD7083E191, 0x41507213788A08F6, 0x2666DEE0ACD48CAF},
         {0x490EDE9099ED3C69, 0xC84A17CAC0998D0F, 0xCFBDA4F57D444337, 0x186C39B6D5E4048F},
@@ -4673,7 +4673,7 @@ public:
     };
 
     // P matrix for t=12 (12x12=144 elements, row-major)
-    const static inline RawFrP::Element P12[144] = {
+    const static inline RawFr::Element P12[144] = {
         {0x7BE15E9C8BC62723, 0x96ED328F6F6DFE8C, 0xAA1C1D5FE0D04CDF, 0x1DEF002D24AFA03F},
         {0x8DB507639A5D9E08, 0x2B7E6E0360F037D8, 0x323DCC2C33799F0E, 0x0E92A3C0E6576699},
         {0x6178C26744E19E1B, 0x1454007F1103F8A1, 0xAA88A62774406AD4, 0x2039B2E3A628A7E4},
@@ -4821,7 +4821,7 @@ public:
     };
 
     // P matrix for t=13 (13x13=169 elements, row-major)
-    const static inline RawFrP::Element P13[169] = {
+    const static inline RawFr::Element P13[169] = {
         {0x260F226F53EFFC0E, 0x696850298CA823BF, 0xCF41D3BE9E9B8B29, 0x2ACA1E1675CF79FA},
         {0x6CBE909F57D1ED72, 0x27C9AA511FE0118D, 0x14FE10607B6AD70D, 0x0257E71D8C6BB61B},
         {0x9213422B1416C9BB, 0x809DFBC18F3FBFDA, 0xD319F8CC2A469616, 0x27138EF5B204D3D7},
@@ -4994,7 +4994,7 @@ public:
     };
 
     // P matrix for t=14 (14x14=196 elements, row-major)
-    const static inline RawFrP::Element P14[196] = {
+    const static inline RawFr::Element P14[196] = {
         {0xDA33A31BD025BC23, 0x7C228B75FA4609DA, 0xB6BA4043DE205DA5, 0x1AB1A82415271BB8},
         {0x97BC3E6E18CB7CFB, 0x0C371059FA776E80, 0x8C8FF9217CEC4AA0, 0x1AE9740EFA871DBA},
         {0xAB258DA1926A32FF, 0xE8C0EF90A67FB4FC, 0xF12B857F6E4CAD91, 0x04F938BF8A15F834},
@@ -5194,7 +5194,7 @@ public:
     };
 
     // P matrix for t=15 (15x15=225 elements, row-major)
-    const static inline RawFrP::Element P15[225] = {
+    const static inline RawFr::Element P15[225] = {
         {0x10C7543B66E9F907, 0x6E3B37BBAE9021BA, 0xCB9B37849EC76ADF, 0x22D4448E8D0B79FA},
         {0x32B175253B54B485, 0x84079342C38E38E6, 0x16B75390D9E9A211, 0x0EC01E9F266D3C6E},
         {0xDE54A0E06D44C587, 0xAC44854FFFDDF905, 0xD1CC6CB6D51F8AC0, 0x071AFC254956F680},
@@ -5423,7 +5423,7 @@ public:
     };
 
     // P matrix for t=16 (16x16=256 elements, row-major)
-    const static inline RawFrP::Element P16[256] = {
+    const static inline RawFr::Element P16[256] = {
         {0xFCF960E8A9554C5A, 0x0C67573FEDFB805F, 0xCF33FAAB78D84D31, 0x1EA1FAA4CDBB37F0},
         {0x39E0247EA21ACA20, 0xCF090C7554E34D8B, 0x41380E20B6FD553F, 0x1727297D97EB4EE2},
         {0x6386BCCD30890B84, 0x7F5DA2FFFBA1E269, 0x57695D87BD88B362, 0x032E60E8B787D363},
@@ -5683,7 +5683,7 @@ public:
     };
 
     // P matrix for t=17 (17x17=289 elements, row-major)
-    const static inline RawFrP::Element P17[289] = {
+    const static inline RawFr::Element P17[289] = {
         {0x6837F3BDF29DE6D9, 0xA7810F926C973B22, 0x8E5091707BFF5986, 0x215E61EA6901246A},
         {0xCDF229F2560D112C, 0x3355C2C88BE422B8, 0xE27316A8A0BA3C2E, 0x246D2A77AEF5D3C2},
         {0x7D860AB3089F5B85, 0x73AC805AC89AD81D, 0xD011BDD30164F9EF, 0x2AC7FC263D37C4C0},
@@ -5976,7 +5976,7 @@ public:
     };
 
     // S constants for t=2 (168 elements)
-    const static inline RawFrP::Element S2[168] = {
+    const static inline RawFr::Element S2[168] = {
         {0xF8B2F47577922DA4, 0x49C37C46F4FA97B6, 0xEAD42BC5207CE75B, 0x1E6197B9DC74448B},
         {0xFE0CDC1A0D6516F0, 0x5F44813D6C2210A9, 0x2A7B70CC77FDCE85, 0x0EDAE9561BB06338},
         {0xF27CEAEA8435A2BC, 0x6F4498CFF6E15BD6, 0x1C6C658890E0B273, 0x09B6A5EC44558837},
@@ -6148,7 +6148,7 @@ public:
     };
 
     // S constants for t=3 (285 elements)
-    const static inline RawFrP::Element S3[285] = {
+    const static inline RawFr::Element S3[285] = {
         {0xF2E8909A56FCF3D7, 0x8019CE3145ED8C1D, 0xDDA896A228616418, 0x0E5ED723FFC885E1},
         {0x54EAC0A65648C197, 0xF2E60F65C0156001, 0x4491155F1B34ED44, 0x1691558EB9B3923C},
         {0x43E62CF4C2EC6CA4, 0xC8EC0A8E48BE0DD4, 0x6CD5CDE08923C043, 0x1F898C62A1DACDF3},
@@ -6437,7 +6437,7 @@ public:
     };
 
     // S constants for t=4 (392 elements)
-    const static inline RawFrP::Element S4[392] = {
+    const static inline RawFr::Element S4[392] = {
         {0xC746D3A1EA1CC193, 0x6909FA60CBF91537, 0x5B41F9011D64F292, 0x163FD60C1936197D},
         {0xE31103E1961C801B, 0x8FBB7164B109F1DC, 0x2AF7E18CFCD21C38, 0x25328187FF0454BC},
         {0x829321CF5AB6FD09, 0x470DEEDDC31AA819, 0x17AE48D9F5DA99C9, 0x152688C29BE3EFFE},
@@ -6833,7 +6833,7 @@ public:
     };
 
     // S constants for t=5 (540 elements)
-    const static inline RawFrP::Element S5[540] = {
+    const static inline RawFr::Element S5[540] = {
         {0x77464B55CD95EFCA, 0x68BA7A74AE0E5894, 0xBD4DC1C2266C359D, 0x2967C834940E37A0},
         {0xBF11A04B622DEAB2, 0x2551CD2C3634C305, 0x7D6C9625D1D5D6CE, 0x0C01A573A0D5C0DA},
         {0xB4DEAE83DCAE7248, 0xD9C0A6D372D959D4, 0xEF0DE8470B523633, 0x1518497D31DC7D3B},
@@ -7377,7 +7377,7 @@ public:
     };
 
     // S constants for t=6 (660 elements)
-    const static inline RawFrP::Element S6[660] = {
+    const static inline RawFr::Element S6[660] = {
         {0x40608A783EE62BAD, 0xB04481CEA961436E, 0x97A709DB9ED8C008, 0x281F30C1BF2D293A},
         {0xE56BADA946269A04, 0xCE84DAF88CFB4D5B, 0x9ADD3D8576D64747, 0x1FEFEAB9F58E4F33},
         {0x5C0FB8A53E3DDF75, 0xEAA5BB591057F436, 0x94C058EED89C2ABB, 0x0E75A9410CAC7C61},
@@ -8041,7 +8041,7 @@ public:
     };
 
     // S constants for t=7 (819 elements)
-    const static inline RawFrP::Element S7[819] = {
+    const static inline RawFr::Element S7[819] = {
         {0xD24CCB91FDE9412B, 0xB32BD1C97EC99D80, 0x26D1F83CFF15E715, 0x04AB17C2331AD1BE},
         {0xAF24F234302356E4, 0xA9B285B9BFD9B66C, 0x9E765850A091FA3B, 0x1C319BCFB87638E5},
         {0xED24673EB3017E21, 0x23A7A40A5E434C50, 0x374712C3384E441A, 0x0E2187969BAA2348},
@@ -8864,7 +8864,7 @@ public:
     };
 
     // S constants for t=8 (960 elements)
-    const static inline RawFrP::Element S8[960] = {
+    const static inline RawFr::Element S8[960] = {
         {0x1F4DBE8BF090B931, 0xD395B73788FCA25A, 0xDC23828594B1EFD6, 0x1141A50170BF495C},
         {0xB37120CC40071F01, 0xB7C4F3A54976F1EE, 0x3D2181A22A7741BE, 0x09DD3EAD7A959C72},
         {0x64D339D6BDFC410A, 0x1E3BB85FCB2F2740, 0x6BE5B1F222D8E2A5, 0x19F9335B4ED4778B},
@@ -9828,7 +9828,7 @@ public:
     };
 
     // S constants for t=9 (1071 elements)
-    const static inline RawFrP::Element S9[1071] = {
+    const static inline RawFr::Element S9[1071] = {
         {0x447766904D8567BF, 0x1C57E6B79253CB2D, 0x51ACB0F67AB9A1C8, 0x1CB4E8B5ED6D914F},
         {0xEE9447AC936C3D8C, 0xFE0C3CEF55F5F725, 0x0397016262CB22A8, 0x08EBBAEB0C3A0401},
         {0x5E731DCE88F5934C, 0x49FE6FFD65621AB6, 0x783F79B854F0E6DC, 0x148E423BD50140AD},
@@ -10903,7 +10903,7 @@ public:
     };
 
     // S constants for t=10 (1140 elements)
-    const static inline RawFrP::Element S10[1140] = {
+    const static inline RawFr::Element S10[1140] = {
         {0xE6614A3E6D90B4CE, 0x5200488A5113F396, 0xDB53DE6D224EEA8F, 0x2B291D666B0D68BB},
         {0x6CD2F6BE44EE2684, 0x2BB9402A1398C801, 0xD02FE7A2D7FBC498, 0x0AC2C9A0E405CCFC},
         {0x2F54819B9C27186F, 0x7CA4BDAB7FA98D7C, 0xFC1A42CD77DCD529, 0x29CA3A0D07D16BE1},
@@ -12047,7 +12047,7 @@ public:
     };
 
     // S constants for t=11 (1386 elements)
-    const static inline RawFrP::Element S11[1386] = {
+    const static inline RawFr::Element S11[1386] = {
         {0xBF35D343AC4B23E3, 0x32869AB9F3CF3279, 0x5A21A53ADD96C8CC, 0x2AEC2B24E6536AEC},
         {0x62E8C272CC2D0648, 0x438BBB8FB7B12808, 0xEB10A9B768D6ABA7, 0x04D4A2158A71CAD4},
         {0xACB89C567B0450BC, 0x917EFBB09A2353EF, 0x3222F2C138ED18D0, 0x2646248C56EAEC60},
@@ -13437,7 +13437,7 @@ public:
     };
 
     // S constants for t=12 (1380 elements)
-    const static inline RawFrP::Element S12[1380] = {
+    const static inline RawFr::Element S12[1380] = {
         {0x7BE15E9C8BC62723, 0x96ED328F6F6DFE8C, 0xAA1C1D5FE0D04CDF, 0x1DEF002D24AFA03F},
         {0x5087B9D05A238497, 0xAB12873B99F8DF6B, 0x1969B37137C6B923, 0x0AFE9201716B051B},
         {0xFBD5DCAC55F10F83, 0x58387EBF11492386, 0xC3E5725BC36E59BC, 0x2CD3D6AA2AE98A55},
@@ -14821,7 +14821,7 @@ public:
     };
 
     // S constants for t=13 (1625 elements)
-    const static inline RawFrP::Element S13[1625] = {
+    const static inline RawFr::Element S13[1625] = {
         {0x260F226F53EFFC0E, 0x696850298CA823BF, 0xCF41D3BE9E9B8B29, 0x2ACA1E1675CF79FA},
         {0x16364F28BA807BD5, 0x76A684B4D2827763, 0x8BB339DE2F4B50B2, 0x302DD576BBD71D24},
         {0x1BE26C10E42D571A, 0x46FFC90369CA384B, 0x94DC7D8F358F8D79, 0x30053D0E2AA98F3B},
@@ -16450,7 +16450,7 @@ public:
     };
 
     // S constants for t=14 (1890 elements)
-    const static inline RawFrP::Element S14[1890] = {
+    const static inline RawFr::Element S14[1890] = {
         {0xDA33A31BD025BC23, 0x7C228B75FA4609DA, 0xB6BA4043DE205DA5, 0x1AB1A82415271BB8},
         {0x042A7CEC9B2575F7, 0xFB7A4012C5109A39, 0x12046CB738DF2130, 0x239B38027EFD9CB9},
         {0xA82EC3C269E59CE6, 0xA3CD165C0EB072A6, 0x13C92A667979763A, 0x2C891DF486AFEA74},
@@ -18344,7 +18344,7 @@ public:
     };
 
     // S constants for t=15 (1740 elements)
-    const static inline RawFrP::Element S15[1740] = {
+    const static inline RawFr::Element S15[1740] = {
         {0x10C7543B66E9F907, 0x6E3B37BBAE9021BA, 0xCB9B37849EC76ADF, 0x22D4448E8D0B79FA},
         {0xFE8A0CDD27094AEF, 0xD9EB86599AE16094, 0x13D1BE32E4F5E44A, 0x158D84AF62E8EE9C},
         {0x30DB488DF7C602DC, 0x15D7AFDF679F7CBE, 0x88FCBC4E0F29787F, 0x26271A309F475DFC},
@@ -20088,7 +20088,7 @@ public:
     };
 
     // S constants for t=16 (1984 elements)
-    const static inline RawFrP::Element S16[1984] = {
+    const static inline RawFr::Element S16[1984] = {
         {0xFCF960E8A9554C5A, 0x0C67573FEDFB805F, 0xCF33FAAB78D84D31, 0x1EA1FAA4CDBB37F0},
         {0x22ACBD0BE78CF83C, 0x5180115660939074, 0x509E6E8411827D4F, 0x0078883352A81A1B},
         {0x35C793BC83B7C527, 0x127FCA8793E78ADA, 0xB334BA293F69D6D2, 0x2A788CA912283FD8},
@@ -22076,7 +22076,7 @@ public:
     };
 
     // S constants for t=17 (2244 elements)
-    const static inline RawFrP::Element S17[2244] = {
+    const static inline RawFr::Element S17[2244] = {
         {0x6837F3BDF29DE6D9, 0xA7810F926C973B22, 0x8E5091707BFF5986, 0x215E61EA6901246A},
         {0xCBB29426312D673B, 0xD8CB19A94E15C098, 0x33924F358E06D395, 0x0AF4FBF7745933EC},
         {0xD0DD90759A0292A0, 0xA5651584B4DB63CE, 0xF0B6E267DB37764E, 0x01D1DE6C062609DA},
@@ -24324,7 +24324,7 @@ public:
     };
 
     // Get C constants for a given t value
-    static inline const RawFrP::Element* get_C(int t) {
+    static inline const RawFr::Element* get_C(int t) {
         switch(t) {
             case 2: return C2;
             case 3: return C3;
@@ -24370,7 +24370,7 @@ public:
     }
 
     // Get M matrix for a given t value (row-major, access as M[row*t + col])
-    static inline const RawFrP::Element* get_M(int t) {
+    static inline const RawFr::Element* get_M(int t) {
         switch(t) {
             case 2: return M2;
             case 3: return M3;
@@ -24393,7 +24393,7 @@ public:
     }
 
     // Get P matrix for a given t value (row-major, access as P[row*t + col])
-    static inline const RawFrP::Element* get_P(int t) {
+    static inline const RawFr::Element* get_P(int t) {
         switch(t) {
             case 2: return P2;
             case 3: return P3;
@@ -24416,7 +24416,7 @@ public:
     }
 
     // Get S constants for a given t value
-    static inline const RawFrP::Element* get_S(int t) {
+    static inline const RawFr::Element* get_S(int t) {
         switch(t) {
             case 2: return S2;
             case 3: return S3;

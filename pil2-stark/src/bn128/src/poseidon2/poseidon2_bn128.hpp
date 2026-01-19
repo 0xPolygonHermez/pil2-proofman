@@ -10,13 +10,13 @@ using namespace std;
 
 class Poseidon2BN128
 {
-  typedef RawFrP::Element FrElement;
+  typedef RawFr::Element FrElement;
 
   const static int N_ROUNDS_F = 8;
   const unsigned int N_ROUNDS_P[6] = {56, 56, 56, 57, 57, 57}; //for t=2,3,4,8,12,16
 
 private:
-  RawFrP field;
+  RawFr field;
 
   inline void pow5(FrElement &x);
   inline void add(FrElement &x, const FrElement *st, int t);
