@@ -49,18 +49,15 @@ __device__ __forceinline__ void BN128GPUScalarField::copy(Element& r, const Elem
 }
 
 __device__ __forceinline__ void BN128GPUScalarField::add(Element& r, const Element& a, const Element& b) {
-    r.v = a.v;
-    r.v += b.v;
+    r.v = a.v + b.v;
 }
 
 __device__ __forceinline__ void BN128GPUScalarField::sub(Element& r, const Element& a, const Element& b) {
-    r.v = a.v;
-    r.v -= b.v;
+    r.v = a.v - b.v;
 }
 
 __device__ __forceinline__ void BN128GPUScalarField::mul(Element& r, const Element& a, const Element& b) {
-    r.v = a.v;
-    r.v *= b.v;
+    r.v = a.v * b.v;
 }
 
 __device__ __forceinline__ BN128GPUScalarField::Element BN128GPUScalarField::add(const Element& a, const Element& b) {

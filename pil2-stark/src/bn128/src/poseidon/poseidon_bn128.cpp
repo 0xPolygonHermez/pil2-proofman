@@ -30,7 +30,6 @@ void PoseidonBN128::hash(vector<FrElement> &state)
 	{
 		exp5(state[0]);
 		field.add(state[0], state[0], (FrElement &)c[(N_ROUNDS_F / 2 + 1) * t + r]);
-
 		FrElement s0 = field.zero();
 		FrElement accumulator1;
 		FrElement accumulator2;
