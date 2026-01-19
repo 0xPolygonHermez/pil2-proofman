@@ -51,9 +51,9 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
 
     ProverHelpers proverHelpers(setupCtx.starkInfo, true);
 
-    FRIProof<RawFrP::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
+    FRIProof<RawFr::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
     
-    Starks<RawFrP::Element> starks(setupCtx, pConstTree);
+    Starks<RawFr::Element> starks(setupCtx, pConstTree);
     
     ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);
 
@@ -83,14 +83,14 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
     //--------------------------------
 
     TimerStart(STARK_STEP_0);
-    RawFrP::Element verkey[nFieldElements];
+    RawFr::Element verkey[nFieldElements];
     starks.treesGL[setupCtx.starkInfo.nStages + 1]->getRoot(verkey);
     starks.addTranscript(transcript, &verkey[0], nFieldElements);
     if(setupCtx.starkInfo.nPublics > 0) {
         if(!setupCtx.starkInfo.starkStruct.hashCommits) {
             starks.addTranscriptGL(transcript, &publicInputs[0], setupCtx.starkInfo.nPublics);
         } else {
-            RawFrP::Element hash[nFieldElements];
+            RawFr::Element hash[nFieldElements];
             starks.calculateHash(hash, &publicInputs[0], setupCtx.starkInfo.nPublics);
             starks.addTranscript(transcript, hash, nFieldElements);
         }
@@ -181,7 +181,7 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
         starks.addTranscriptGL(transcript, evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
     } else {
-        RawFrP::Element hash[nFieldElements];
+        RawFr::Element hash[nFieldElements];
         starks.calculateHash(hash, evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
         starks.addTranscript(transcript, hash, nFieldElements);
     }
@@ -214,10 +214,10 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
     {   
         uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
         uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
-        FRI<RawFrP::Element>::fold(step, friPol, challenge, nBitsExt, prevBits, currentBits);
+        FRI<RawFr::Element>::fold(step, friPol, challenge, nBitsExt, prevBits, currentBits);
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {
-            FRI<RawFrP::Element>::merkelize(step, proof, friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits);
+            FRI<RawFr::Element>::merkelize(step, proof, friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits);
             starks.addTranscript(transcript, &proof.proof.fri.treesFRI[step].root[0], nFieldElements);
         }
         else
@@ -225,7 +225,7 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
             if(!setupCtx.starkInfo.starkStruct.hashCommits) {
                 starks.addTranscriptGL(transcript, friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION);
             } else {
-                RawFrP::Element hash[nFieldElements];
+                RawFr::Element hash[nFieldElements];
                 starks.calculateHash(hash, friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION);
                 starks.addTranscript(transcript, hash, nFieldElements);
             } 
@@ -239,12 +239,12 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
 
     uint64_t nonce;
 
-    std::vector<RawFrP::Element> challengeRawFr;
+    std::vector<RawFr::Element> challengeRawFr;
 	for (uint64_t k = 0; k < 3; k++)
 	{
-        RawFrP::Element tmp = RawFrP::field.zero();
+        RawFr::Element tmp = RawFr::field.zero();
 		tmp.v[0] = Goldilocks::toU64(challenge[k]);
-        RawFrP::field.toMontgomery(tmp, tmp);
+        RawFr::field.toMontgomery(tmp, tmp);
         challengeRawFr.push_back(tmp);
 	}
     
@@ -258,12 +258,12 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
     transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits);
 
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
-    FRI<RawFrP::Element>::proveQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, nTrees);
+    FRI<RawFr::Element>::proveQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, nTrees);
     for(uint64_t step = 1; step < setupCtx.starkInfo.starkStruct.steps.size(); ++step) {
-        FRI<RawFrP::Element>::proveFRIQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, step, setupCtx.starkInfo.starkStruct.steps[step].nBits, proof, starks.treesFRI[step - 1]);
+        FRI<RawFr::Element>::proveFRIQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, step, setupCtx.starkInfo.starkStruct.steps[step].nBits, proof, starks.treesFRI[step - 1]);
     }
 
-    FRI<RawFrP::Element>::setFinalPol(proof, friPol, setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size() - 1].nBits);
+    FRI<RawFr::Element>::setFinalPol(proof, friPol, setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size() - 1].nBits);
     TimerStopAndLog(STARK_FRI_QUERIES);
 
     TimerStopAndLog(STARK_STEP_FRI);

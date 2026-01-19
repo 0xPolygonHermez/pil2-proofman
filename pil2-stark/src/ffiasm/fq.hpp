@@ -250,7 +250,7 @@ void FqP_inv(PFqElement r, PFqElement a);
 void FqP_div(PFqElement r, PFqElement a, PFqElement b);
 void FqP_pow(PFqElement r, PFqElement a, PFqElement b);
 
-class RawFqP {
+class RawFq {
 
 public:
     const static int N64 = Fq_N64;
@@ -268,8 +268,8 @@ private:
 
 public:
 
-    RawFqP();
-    ~RawFqP();
+    RawFq();
+    ~RawFq();
 
     const Element &zero() { return fZero; };
     const Element &one() { return fOne; };
@@ -326,7 +326,7 @@ public:
     
     void fromUI(Element &r, unsigned long int v);
 
-    static RawFqP field;
+    static RawFq field;
 
 };
 

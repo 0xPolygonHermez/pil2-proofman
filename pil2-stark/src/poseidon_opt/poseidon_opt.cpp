@@ -101,7 +101,7 @@ void Poseidon_opt::mix(vector<FrElement> *new_state, vector<FrElement> state, co
 	}
 }
 
-void Poseidon_opt::grinding(uint64_t &nonce, vector<RawFrP::Element> &state, const uint32_t n_bits){
+void Poseidon_opt::grinding(uint64_t &nonce, vector<RawFr::Element> &state, const uint32_t n_bits){
     uint64_t checkChunk = omp_get_max_threads() * 512;
 	uint64_t level   = uint64_t(1) << (64 - n_bits);
     uint64_t* chunkIdxs = new uint64_t[omp_get_max_threads()];
@@ -120,21 +120,21 @@ void Poseidon_opt::grinding(uint64_t &nonce, vector<RawFrP::Element> &state, con
 
 			if (chunkIdxs[tid] != UINT64_MAX) continue;
 
-			vector<RawFrP::Element> localState(state.size() + 2);
-			localState[0] = RawFrP::field.zero();
-			std::memcpy(&localState[1], &state[0], state.size() * sizeof(RawFrP::Element));
+			vector<RawFr::Element> localState(state.size() + 2);
+			localState[0] = RawFr::field.zero();
+			std::memcpy(&localState[1], &state[0], state.size() * sizeof(RawFr::Element));
 
 			// Append nonce
-			RawFrP::Element tmp = RawFrP::field.zero();
+			RawFr::Element tmp = RawFr::field.zero();
 			tmp.v[0] = offset + i;
-			RawFrP::field.toMontgomery(tmp, tmp);
+			RawFr::field.toMontgomery(tmp, tmp);
 			localState[state.size() + 1] = tmp;
 
 			// Compute hash
 			hash(localState);
 
-			RawFrP::Element res;
-			RawFrP::field.fromMontgomery(res, localState[0]);
+			RawFr::Element res;
+			RawFr::field.fromMontgomery(res, localState[0]);
 
 			if(res.v[0] < level) {
 				chunkIdxs[tid] = offset + i;
