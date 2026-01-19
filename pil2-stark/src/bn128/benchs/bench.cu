@@ -209,8 +209,19 @@ BENCHMARK(POSEIDON_SEQ_GPU_BENCH)
     ->Args({2})
     ->Args({3})
     ->Args({4})
+    ->Args({5})
+    ->Args({6})
+    ->Args({7})
     ->Args({8})
-    ->Args({12});
+    ->Args({9})
+    ->Args({10})
+    ->Args({11})
+    ->Args({12})
+    ->Args({13})
+    ->Args({14})
+    ->Args({15})
+    ->Args({16})
+    ->Args({17});
 
 // =====================
 // Poseidon2 GPU Benchmark

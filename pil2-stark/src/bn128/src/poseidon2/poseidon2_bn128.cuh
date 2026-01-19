@@ -22,7 +22,7 @@ public:
 
   void hash(FrElement * d_state, int t);
   
-  // Must be called once before using GPU hash
+  // Initialize GPU constants (copies all constants to constant memory)
   static void initGPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
 };
 

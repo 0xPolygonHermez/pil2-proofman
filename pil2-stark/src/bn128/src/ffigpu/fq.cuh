@@ -1,7 +1,9 @@
 #ifndef __BN128_FFIGPU_FQ_CUH__
 #define __BN128_FFIGPU_FQ_CUH__
 
+#ifndef FEATURE_BN254
 #define FEATURE_BN254
+#endif
 #include <alt_bn128.hpp>
 
 // BN128 Base Field (Fq) - used for curve point coordinates
