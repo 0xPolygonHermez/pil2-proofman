@@ -31,10 +31,12 @@ pub fn verify_constraints<F: PrimeField64>(
     let (skip, constraints_skip) = skip_prover_instance(pctx, global_id)?;
 
     if !skip {
-        if !constraints_skip.is_empty() {
-            constraints_info.iter_mut().for_each(|constraint| constraint.skip = true);
-            for constraint_id in &constraints_skip {
-                constraints_info[*constraint_id].skip = false;
+        if let Some(constraints_skip) = constraints_skip {
+            if !constraints_skip.constraints.is_empty() {
+                constraints_info.iter_mut().for_each(|constraint| constraint.skip = true);
+                for constraint_id in &constraints_skip.constraints {
+                    constraints_info[*constraint_id].skip = false;
+                }
             }
         }
 

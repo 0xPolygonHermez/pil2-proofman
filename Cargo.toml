@@ -98,4 +98,6 @@ borsh = { version = "1.5", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tokio-util = "0.7.16"
+rustc-hash = "2.1.1"
+itoa = "1.0.17"
 thiserror = { version = "2" }

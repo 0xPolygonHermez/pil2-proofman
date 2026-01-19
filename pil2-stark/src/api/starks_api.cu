@@ -10,7 +10,6 @@
 #ifdef __USE_CUDA__
 #include "gen_recursive_proof.cuh"
 #include "gen_proof.cuh"
-#include "gen_commit.cuh"
 #include "poseidon2_goldilocks.cuh"
 #include <cuda_runtime.h>
 #include <mutex>
@@ -616,9 +615,10 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t air
     return streamId;
 }
 
-uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *trace, void *auxTrace, void *d_buffers_, void *pSetupCtx_) {
+uint64_t commit_witness(void *pSetupCtx_, void *params_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers_) {
 
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    StepsParams *params = (StepsParams *)params_;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     uint32_t streamId = selectStream(d_buffers, airgroupId, airId, "basic");
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
@@ -634,7 +634,12 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
     cudaSetDevice(gpuId);
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key]["basic"][gpuLocalId];
 
-    uint64_t N = 1 << nBits;
+    uint64_t N = 1 << setupCtx->starkInfo.starkStruct.nBits;
+    uint64_t NExtended = 1 << setupCtx->starkInfo.starkStruct.nBitsExt;
+    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
+    uint64_t arity = setupCtx->starkInfo.starkStruct.merkleTreeArity;
+    uint64_t nBits = setupCtx->starkInfo.starkStruct.nBits;
+    uint64_t nBitsExt = setupCtx->starkInfo.starkStruct.nBitsExt;
 
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
     TimerGPU &timer = d_buffers->streamsData[streamId].timer;
@@ -644,8 +649,102 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
     uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
     uint64_t total_size = air_instance_info->is_packed ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : sizeTrace;
     uint64_t *dst = (uint64_t*)(d_aux_trace + offsetStage1Extended);
-    copy_to_device_in_chunks(d_buffers, trace, dst, total_size, streamId, timer);
-    genCommit_gpu(arity, nBits, nBitsExt, nCols, d_aux_trace, d_buffers->streamsData[streamId].pinned_buffer_proof, setupCtx, air_instance_info, timer, stream);
+    copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
+    
+    uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(NExtended, arity);
+
+    uint64_t offset_src = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
+    uint64_t offset_dst = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
+    uint64_t offset_mt = setupCtx->starkInfo.mapOffsets[make_pair("mt1", true)];
+
+    Goldilocks::Element *pNodes = (Goldilocks::Element*)d_aux_trace + offset_mt;
+    NTT_Goldilocks_GPU ntt;
+
+    if (air_instance_info->is_packed) {
+        unpack_trace(air_instance_info, (uint64_t *)(d_aux_trace + offset_dst), (uint64_t *)(d_aux_trace + offset_src), nCols, N, stream, timer);
+    } else {
+        ntt.prepare_blocks_trace((gl64_t *)(d_aux_trace + offset_src), (gl64_t *)(d_aux_trace + offset_dst), nCols, N, stream, timer);
+    }
+
+    uint64_t nWitnessHints = setupCtx->expressionsBin.getNumberHintIdsByName("witness_calc");
+    if(nWitnessHints > 0) {
+        uint64_t countId = 0;
+        uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
+        uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
+        uint64_t offsetAirgroupValues = setupCtx->starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
+        uint64_t offsetAirValues = setupCtx->starkInfo.mapOffsets[std::make_pair("airvalues", false)];
+        uint64_t offsetProofValues = setupCtx->starkInfo.mapOffsets[std::make_pair("proofvalues", false)];
+
+        uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
+        gl64_t *d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
+        gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+        Goldilocks::Element *packed_const_pols = (Goldilocks::Element *)d_const_pols;
+        Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
+        uint64_t* d_num_packed_words = (uint64_t*) d_const_pols;
+        unpack_fixed(d_num_packed_words, (uint64_t*)(packed_const_pols + 1), (uint64_t*)(packed_const_pols + 1 + setupCtx->starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx->starkInfo.nConstants, N, stream, timer);
+        CHECKCUDAERR(cudaGetLastError());
+
+        Goldilocks::Element *pCustomCommitsFixed = nullptr;
+        if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0) {
+            pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
+            copy_to_device_in_chunks(d_buffers, params->pCustomCommitsFixed, pCustomCommitsFixed, setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element), streamId, timer);
+        }
+
+        size_t totalCopySize = 0;
+        totalCopySize += setupCtx->starkInfo.nPublics;
+        totalCopySize += setupCtx->starkInfo.proofValuesSize;
+        totalCopySize += setupCtx->starkInfo.airgroupValuesSize;
+        totalCopySize += setupCtx->starkInfo.airValuesSize;
+
+        Goldilocks::Element aux_values[totalCopySize];
+        uint64_t offset = 0;
+        memcpy(aux_values + offset, params->publicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
+        offset += setupCtx->starkInfo.nPublics;
+        if (setupCtx->starkInfo.proofValuesSize > 0) {
+            memcpy(aux_values + offset, params->proofValues, setupCtx->starkInfo.proofValuesSize * sizeof(Goldilocks::Element));
+            offset += setupCtx->starkInfo.proofValuesSize;
+        }
+        if (setupCtx->starkInfo.airgroupValuesSize > 0) {
+            memcpy(aux_values + offset, params->airgroupValues, setupCtx->starkInfo.airgroupValuesSize * sizeof(Goldilocks::Element));
+            offset += setupCtx->starkInfo.airgroupValuesSize;
+        }
+        if (setupCtx->starkInfo.airValuesSize > 0) {
+            memcpy(aux_values + offset, params->airValues, setupCtx->starkInfo.airValuesSize * sizeof(Goldilocks::Element));
+            offset += setupCtx->starkInfo.airValuesSize;
+        }
+
+        copy_to_device_in_chunks(d_buffers, aux_values, (uint8_t*)(d_aux_trace + offsetPublicInputs), totalCopySize * sizeof(Goldilocks::Element), streamId, timer);
+
+        StepsParams h_params = {
+            trace : (Goldilocks::Element *)d_aux_trace + offsetCm1,
+            aux_trace : (Goldilocks::Element *)d_aux_trace,
+            publicInputs : (Goldilocks::Element *)d_aux_trace + offsetPublicInputs,
+            proofValues : (Goldilocks::Element *)d_aux_trace + offsetProofValues,
+            challenges : nullptr,
+            airgroupValues : (Goldilocks::Element *)d_aux_trace + offsetAirgroupValues,
+            airValues : (Goldilocks::Element *)d_aux_trace + offsetAirValues,
+            evals : nullptr,
+            xDivXSub : nullptr,
+            pConstPolsAddress: d_const_pols_unpacked,
+            pConstPolsExtendedTreeAddress: nullptr,
+            pCustomCommitsFixed,
+        };
+
+        StepsParams *params_pinned = d_buffers->streamsData[streamId].pinned_params;
+        memcpy(params_pinned, &h_params, sizeof(StepsParams));
+        StepsParams *d_params =  d_buffers->streamsData[streamId].params;
+        CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams), cudaMemcpyHostToDevice, stream));
+
+        ExpsArguments *d_expsArgs = d_buffers->streamsData[streamId].d_expsArgs;
+        DestParamsGPU *d_destParams = d_buffers->streamsData[streamId].d_destParams;
+        Goldilocks::Element *pinned_exps_params = d_buffers->streamsData[streamId].pinned_buffer_exps_params;
+        Goldilocks::Element *pinned_exps_args = d_buffers->streamsData[streamId].pinned_buffer_exps_args;
+        
+        calculateWitnessExpr_gpu(*setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+    }
+
+    ntt.LDE_MerkleTree_GPU(pNodes, d_aux_trace, offset_dst, d_aux_trace, offset_src, nBits, nBitsExt, nCols, arity, timer, stream);
+    CHECKCUDAERR(cudaMemcpyAsync(d_buffers->streamsData[streamId].pinned_buffer_proof, &pNodes[tree_size - HASH_SIZE], HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
     return streamId;

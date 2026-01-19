@@ -564,6 +564,18 @@ uint64_t set_hint_field(void *pSetupCtx, void* params, void *values, uint64_t hi
 // Starks
 // ========================================================================================
 
+void calculate_witness_expr(void *pSetupCtx, void * stepsParams)
+{
+    SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
+    StepsParams &params = *(StepsParams *)stepsParams;
+
+    ProverHelpers proverHelpers;
+
+    ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);
+
+    calculateWitnessExpr(setupCtx, params, expressionsCtx);
+}
+
 void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsParams)
 {
     SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
@@ -636,28 +648,39 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
     }
 }
 
-uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *trace, void *auxTrace, void *d_buffers_, void *pSetupCtx_) {
+uint64_t commit_witness(void *pSetupCtx_, void *params_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers_) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
-    Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
-    Goldilocks::Element *auxTraceGL = (Goldilocks::Element *)auxTrace;
-    uint64_t N = 1 << nBits;
-    uint64_t NExtended = 1 << nBitsExt;
-
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    StepsParams *params = (StepsParams *)params_;
 
-    MerkleTreeGL mt(arity, setupCtx->starkInfo.starkStruct.lastLevelVerification, true, NExtended, nCols);
+    Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
+    Goldilocks::Element *auxTraceGL = (Goldilocks::Element *)params->aux_trace;
+    uint64_t N = 1 << setupCtx->starkInfo.starkStruct.nBits;
+    uint64_t NExtended = 1 << setupCtx->starkInfo.starkStruct.nBitsExt;
+
+    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];    
+
+    MerkleTreeGL mt(setupCtx->starkInfo.starkStruct.merkleTreeArity, setupCtx->starkInfo.starkStruct.lastLevelVerification, true, NExtended, nCols);
+
+    uint64_t offset_src = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
+    uint64_t offset_dst = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
+    uint64_t offset_mt = setupCtx->starkInfo.mapOffsets[std::make_pair("mt1", true)];
 
     PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
     if (packed_info != nullptr && packed_info->is_packed) {
-        d_buffers->unpack_cpu((uint64_t *)trace, (uint64_t*)&auxTraceGL[0], N, nCols, packed_info->num_packed_words, packed_info->unpack_info);
-    } else {
-        memcpy(auxTraceGL, trace, N * nCols * sizeof(Goldilocks::Element));
+        d_buffers->unpack_cpu((uint64_t *)params->trace, (uint64_t*)&auxTraceGL[offset_src], N, nCols, packed_info->num_packed_words, packed_info->unpack_info);
+        memcpy(params->trace, &params->aux_trace[offset_src], N * nCols * sizeof(Goldilocks::Element));
     }
     
+    ProverHelpers proverHelpers;
+    ExpressionsPack expressionsCtx(*setupCtx, &proverHelpers);
+
+    calculateWitnessExpr(*setupCtx, *params, expressionsCtx);
+
     NTT_Goldilocks ntt(N);
-    ntt.extendPol(&auxTraceGL[0], &auxTraceGL[0], NExtended, N, nCols, &auxTraceGL[NExtended * nCols]);
-    mt.setSource(&auxTraceGL[0]);
-    mt.setNodes(&auxTraceGL[NExtended * nCols]);
+    ntt.extendPol(&auxTraceGL[offset_dst], params->trace, NExtended, N, nCols, &auxTraceGL[offset_mt]);
+    mt.setSource(&auxTraceGL[offset_dst]);
+    mt.setNodes(&auxTraceGL[offset_mt]);
     mt.merkelize();
     mt.getRoot(rootGL);
 
@@ -959,7 +982,7 @@ bool stark_verify(uint64_t* proof, void *pStarkInfo, void *pExpressionsBin, char
 }
 
 bool stark_verify_bn128(void* jProof, void *pStarkInfo, void *pExpressionsBin, char *verkeyFile, void *pPublics) {
-    return starkVerify<RawFrP::Element>(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, nullptr, false, nullptr);
+    return starkVerify<RawFr::Element>(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, nullptr, false, nullptr);
 
 }
 
@@ -972,7 +995,7 @@ bool stark_verify_from_file(char* proofFile, void *pStarkInfo, void *pExpression
     if (starkInfo.starkStruct.verificationHashType == "GL") {
         return starkVerify<Goldilocks::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
     } else {
-        return starkVerify<RawFrP::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
+        return starkVerify<RawFr::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
     }
 }
 

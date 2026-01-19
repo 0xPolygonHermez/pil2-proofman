@@ -158,7 +158,7 @@ pub fn get_hint_field_constant_gc<F: PrimeField64>(
     hint_field_name: &str,
     print_expression: bool,
 ) -> ProofmanResult<HintFieldValue<F>> {
-    let hint_info = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression)?;
+    let mut hint_info = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression)?;
 
     if hint_info[0].matrix_size != 0 {
         return Err(ProofmanError::InvalidHints(format!(
@@ -170,7 +170,7 @@ pub fn get_hint_field_constant_gc<F: PrimeField64>(
         tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info[0].expression_line).unwrap());
     }
 
-    Ok(HintCol::from_hint_field(&hint_info[0]))
+    Ok(HintCol::from_hint_field(hint_info.swap_remove(0)))
 }
 
 pub fn get_hint_field_gc_constant_a<F: PrimeField64>(
@@ -182,7 +182,7 @@ pub fn get_hint_field_gc_constant_a<F: PrimeField64>(
     let hint_infos = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression)?;
 
     let mut hint_field_values = Vec::new();
-    for (v, hint_info) in hint_infos.iter().enumerate() {
+    for (v, hint_info) in hint_infos.into_iter().enumerate() {
         if v == 0 && hint_info.matrix_size != 1 {
             return Err(ProofmanError::InvalidHints(
                 "get_hint_field_m can only be called with an array of expressions!".to_string(),
@@ -208,13 +208,12 @@ pub fn get_hint_field_constant_gc_m<F: PrimeField64>(
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 
-    for (v, hint_info) in hint_infos.iter().enumerate() {
+    for (v, hint_info) in hint_infos.into_iter().enumerate() {
         if v == 0 && hint_info.matrix_size > 2 {
             return Err(ProofmanError::InvalidHints(
                 "get_hint_field_m can only be called with a matrix of expressions!".to_string(),
             ));
         }
-        let hint_value = HintCol::from_hint_field(hint_info);
         let mut pos = Vec::new();
         for p in 0..hint_info.matrix_size {
             pos.push(hint_info.pos[p as usize]);
@@ -222,7 +221,7 @@ pub fn get_hint_field_constant_gc_m<F: PrimeField64>(
         if print_expression {
             tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
         }
-        hint_field_values.insert(pos, hint_value);
+        hint_field_values.insert(pos, HintCol::from_hint_field(hint_info));
     }
 
     Ok(HintFieldValues { values: hint_field_values })
@@ -235,7 +234,7 @@ pub fn get_hint_field_gc<F: PrimeField64>(
     hint_field_name: &str,
     print_expression: bool,
 ) -> ProofmanResult<HintFieldValue<F>> {
-    let hint_info = get_global_hint_f(Some(pctx), sctx, hint_id, hint_field_name, print_expression)?;
+    let mut hint_info = get_global_hint_f(Some(pctx), sctx, hint_id, hint_field_name, print_expression)?;
 
     if hint_info[0].matrix_size != 0 {
         return Err(ProofmanError::InvalidHints(format!(
@@ -247,7 +246,7 @@ pub fn get_hint_field_gc<F: PrimeField64>(
         tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info[0].expression_line).unwrap());
     }
 
-    Ok(HintCol::from_hint_field(&hint_info[0]))
+    Ok(HintCol::from_hint_field(hint_info.swap_remove(0)))
 }
 
 pub fn get_hint_field_gc_a<F: PrimeField64>(
@@ -260,7 +259,7 @@ pub fn get_hint_field_gc_a<F: PrimeField64>(
     let hint_infos = get_global_hint_f(Some(pctx), sctx, hint_id, hint_field_name, print_expression)?;
 
     let mut hint_field_values = Vec::new();
-    for (v, hint_info) in hint_infos.iter().enumerate() {
+    for (v, hint_info) in hint_infos.into_iter().enumerate() {
         if v == 0 && hint_info.matrix_size != 1 {
             return Err(ProofmanError::InvalidHints(
                 "get_hint_field_m can only be called with an array of expressions!".to_string(),
@@ -286,13 +285,12 @@ pub fn get_hint_field_gc_m<F: PrimeField64>(
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 
-    for (v, hint_info) in hint_infos.iter().enumerate() {
+    for (v, hint_info) in hint_infos.into_iter().enumerate() {
         if v == 0 && hint_info.matrix_size > 2 {
             return Err(ProofmanError::InvalidHints(
                 "get_hint_field_m can only be called with a matrix of expressions!".to_string(),
             ));
         }
-        let hint_value = HintCol::from_hint_field(hint_info);
         let mut pos = Vec::new();
         for p in 0..hint_info.matrix_size {
             pos.push(hint_info.pos[p as usize]);
@@ -300,7 +298,7 @@ pub fn get_hint_field_gc_m<F: PrimeField64>(
         if print_expression {
             tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
         }
-        hint_field_values.insert(pos, hint_value);
+        hint_field_values.insert(pos, HintCol::from_hint_field(hint_info));
     }
 
     Ok(HintFieldValues { values: hint_field_values })

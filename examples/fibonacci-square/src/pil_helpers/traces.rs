@@ -85,7 +85,7 @@ trace_row!(FibonacciSquareFixedRow<F> {
 pub type FibonacciSquareFixed<F> = GenericTrace<FibonacciSquareFixedRow<F>, 4194304, 0, 0>;
 
 trace_row!(FibonacciSquareTraceRow<F> {
- a:F, b:F,
+ a:F, b:F, test:F,
 });
 pub type FibonacciSquareTrace<F> = GenericTrace<FibonacciSquareTraceRow<F>, 4194304, 0, 0>;
 

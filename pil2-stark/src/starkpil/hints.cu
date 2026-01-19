@@ -113,6 +113,61 @@ uint64_t setHintFieldGPU(SetupCtx& setupCtx, StepsParams& params, Goldilocks::El
     return hintFieldVal.id;
 }
 
+void calculateExprGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams *d_params, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName, HintFieldOptions *hintOptions, void* GPUExpressionsCtx, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream) {
+    if(setupCtx.expressionsBin.hints.size() == 0) {
+        zklog.error("No hints were found.");
+        exitProcess();
+        exit(-1);
+    }
+
+    std::vector<Dest> dests;
+    Goldilocks::Element *buff = NULL;
+
+    for(uint64_t i = 0; i < nHints; ++i) {
+        Hint hint = setupCtx.expressionsBin.hints[hintId[i]];
+        Goldilocks::Element *buff_gpu = NULL;
+
+        std::string hintDest = hintFieldNameDest[i];
+        auto hintFieldDest = std::find_if(hint.fields.begin(), hint.fields.end(), [hintDest](const HintField& hintField) {
+            return hintField.name == hintDest;
+        });
+        HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
+
+        uint64_t stagePos = 0;
+        uint64_t stageCols = 0;
+        bool expr = false;
+        uint64_t nRows;
+        if(hintFieldDestVal.operand == opType::cm) {
+            stageCols = setupCtx.starkInfo.mapSectionsN["cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage)];
+            stagePos = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos;  
+            uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)];           
+            buff = NULL;
+            buff_gpu = h_params.aux_trace + offsetAuxTrace;
+            nRows = 1 << setupCtx.starkInfo.starkStruct.nBits;
+        } else if (hintFieldDestVal.operand == opType::airvalue) {
+            nRows = 1;
+            expr = true;
+            uint64_t pos = 0;
+            for(uint64_t i = 0; i < hintFieldDestVal.id; ++i) {
+                pos += setupCtx.starkInfo.airValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+            }
+            buff = NULL;
+            buff_gpu = h_params.airValues + pos;
+        } else {
+            zklog.error("Only committed pols and airvalues can be set");
+            exitProcess();
+            exit(-1);
+        }
+
+        Dest destStruct(buff, nRows, stagePos, stageCols, expr);
+        destStruct.dest_gpu = buff_gpu;
+
+        addHintField(setupCtx, h_params, hintId[i], destStruct, hintFieldName[i], hintOptions[i]);
+        
+        opHintFieldsGPU(d_params, destStruct, nRows, false, GPUExpressionsCtx, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+    }
+}
+
 void multiplyHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams *d_params, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2, void* GPUExpressionsCtx, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream) {
     if(setupCtx.expressionsBin.hints.size() == 0) {
         zklog.error("No hints were found.");
