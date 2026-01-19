@@ -23,7 +23,9 @@ __device__ __constant__ FrElementGPU GPU_D16[16];
 __device__ __constant__ int N_ROUNDS_F = 8;
 __device__ __constant__ int N_ROUNDS_P[6] = {56, 56, 56, 57, 57, 57};
 
-// Helper to get C constants pointer based on t
+// Track if constants have been initialized
+static bool constants_initialized = false;
+
 __device__ __forceinline__ const FrElementGPU* get_C(int t) {
     switch(t) {
         case 2:  return GPU_C2;
@@ -36,7 +38,6 @@ __device__ __forceinline__ const FrElementGPU* get_C(int t) {
     }
 }
 
-// Helper to get D constants pointer based on t
 __device__ __forceinline__ const FrElementGPU* get_D(int t) {
     switch(t) {
         case 2:  return GPU_D2;
@@ -80,38 +81,33 @@ void Poseidon2BN128GPU::hash(FrElement* d_state, int t) {
     poseidon2_hash_kernel<<<1, 1>>>(d_state, t);
 }
 
-// Initialize GPU constants by copying from host
+// Initialize GPU constants - copies all constants to constant memory
 void Poseidon2BN128GPU::initGPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids) {
-    static bool initialized = false;
-    if (initialized) return;
-    
-    initialized = true;
-	int deviceId;
+    if (constants_initialized) return;
+
+    int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
 
-	for(int i = 0; i < num_gpu_ids; i++)
-	{
-		CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
+    for(uint32_t i = 0; i < num_gpu_ids; i++)
+    {
+        CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
 
-		// Copy C constants (CPU RawFrP::Element is binary compatible with GPU FrElement)
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C2, Poseidon2BN128Constants::C2, sizeof(Poseidon2BN128Constants::C2), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C3, Poseidon2BN128Constants::C3, sizeof(Poseidon2BN128Constants::C3), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C4, Poseidon2BN128Constants::C4, sizeof(Poseidon2BN128Constants::C4), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C8, Poseidon2BN128Constants::C8, sizeof(Poseidon2BN128Constants::C8), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C12, Poseidon2BN128Constants::C12, sizeof(Poseidon2BN128Constants::C12), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C16, Poseidon2BN128Constants::C16, sizeof(Poseidon2BN128Constants::C16), 0, cudaMemcpyHostToDevice));
-
-		// Copy D constants
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D2, Poseidon2BN128Constants::D2, sizeof(Poseidon2BN128Constants::D2), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D3, Poseidon2BN128Constants::D3, sizeof(Poseidon2BN128Constants::D3), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D4, Poseidon2BN128Constants::D4, sizeof(Poseidon2BN128Constants::D4), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D8, Poseidon2BN128Constants::D8, sizeof(Poseidon2BN128Constants::D8), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D12, Poseidon2BN128Constants::D12, sizeof(Poseidon2BN128Constants::D12), 0, cudaMemcpyHostToDevice));
-		CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D16, Poseidon2BN128Constants::D16, sizeof(Poseidon2BN128Constants::D16), 0, cudaMemcpyHostToDevice));
-
-	}       
+        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C2, Poseidon2BN128Constants::C2, sizeof(Poseidon2BN128Constants::C2), 0, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D2, Poseidon2BN128Constants::D2, sizeof(Poseidon2BN128Constants::D2), 0, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C3, Poseidon2BN128Constants::C3, sizeof(Poseidon2BN128Constants::C3), 0, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D3, Poseidon2BN128Constants::D3, sizeof(Poseidon2BN128Constants::D3), 0, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C4, Poseidon2BN128Constants::C4, sizeof(Poseidon2BN128Constants::C4), 0, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D4, Poseidon2BN128Constants::D4, sizeof(Poseidon2BN128Constants::D4), 0, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C8, Poseidon2BN128Constants::C8, sizeof(Poseidon2BN128Constants::C8), 0, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D8, Poseidon2BN128Constants::D8, sizeof(Poseidon2BN128Constants::D8), 0, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C12, Poseidon2BN128Constants::C12, sizeof(Poseidon2BN128Constants::C12), 0, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D12, Poseidon2BN128Constants::D12, sizeof(Poseidon2BN128Constants::D12), 0, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C16, Poseidon2BN128Constants::C16, sizeof(Poseidon2BN128Constants::C16), 0, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D16, Poseidon2BN128Constants::D16, sizeof(Poseidon2BN128Constants::D16), 0, cudaMemcpyHostToDevice));
+    }
     
-    cudaSetDevice(deviceId);
+    CHECKCUDAERR(cudaSetDevice(deviceId));
+    constants_initialized = true;
 }
 
 

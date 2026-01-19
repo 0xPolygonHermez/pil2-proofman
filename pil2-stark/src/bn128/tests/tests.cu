@@ -1038,7 +1038,7 @@ TEST(BN128_MSM, msm) {
     memcpy(&gpu_Z, &gpu_result.Z, sizeof(AltBn128::F1Element));
     
     // Compute Z^2 and Z^3
-    AltBn128::F1Element z2, z3, z_inv, z2_inv, z3_inv;
+    AltBn128::F1Element z2, z3, z2_inv, z3_inv;
     AltBn128::F1.square(z2, gpu_Z);
     AltBn128::F1.mul(z3, z2, gpu_Z);
     

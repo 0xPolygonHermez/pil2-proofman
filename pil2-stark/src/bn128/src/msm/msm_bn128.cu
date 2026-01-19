@@ -4,7 +4,9 @@
 #include <cuda.h>
 
 // Enable BN254 curve
+#ifndef FEATURE_BN254
 #define FEATURE_BN254
+#endif
 
 #include "msm_bn128.cuh"
 

@@ -1,7 +1,9 @@
 #ifndef __BN128_FFIGPU_FR_CUH__
 #define __BN128_FFIGPU_FR_CUH__
 
+#ifndef FEATURE_BN254
 #define FEATURE_BN254
+#endif
 #include <alt_bn128.hpp>
 
 // BN128 Scalar Field (Fr) 
