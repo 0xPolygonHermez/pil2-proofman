@@ -174,30 +174,182 @@ TEST(BN128_POSEIDON2_TEST, hash_gpu_t2) {
     delete[] h_state;
     EXPECT_STREQ(hex0, "1d01e56f49579cec72319e145f06f6177f6c5253206e78c2689781452a31878b");
     EXPECT_STREQ(hex1, "0d189ec589c41b8cffa88cfc523618a055abe8192c70f75aa72fc514560f6c61");
+}
 
-    t = 16;    
+TEST(BN128_POSEIDON2_TEST, hash_gpu_t3) {
+    
+    Poseidon2BN128GPU p;
+    BN128GPUScalarField::Element* d_state = nullptr;
+    BN128GPUScalarField::Element* h_state = nullptr;
+    
+    int t = 3;
     cudaMalloc(&d_state, t * sizeof(BN128GPUScalarField::Element));
     h_state = new BN128GPUScalarField::Element[t];
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1);
     
-    // Initialize state: state[i] = i (in Montgomery form)
     init_state_kernel<<<1, 1>>>(d_state, t);
     cudaDeviceSynchronize();
     
-    // Run hash kernel
     p.hash(d_state, t);
     cudaDeviceSynchronize();
     
-    // Convert from Montgomery form
     from_montgomery_kernel<<<1, 1>>>(d_state, t);
     cudaDeviceSynchronize();
     
-    // Copy result to host
     cudaMemcpy(h_state, d_state, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyDeviceToHost);
     cudaFree(d_state);
     
-    // Use pointer cast to access the raw uint32_t values 
-    char hex15[65]; //64 hex chars + 1 null
-    p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
+    char hex0[65], hex2[65];
+    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
+    const uint32_t* p2 = reinterpret_cast<const uint32_t*>(&h_state[2].v);
+    snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
+             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+    snprintf(hex2, sizeof(hex2), "%08x%08x%08x%08x%08x%08x%08x%08x",
+             p2[7], p2[6], p2[5], p2[4], p2[3], p2[2], p2[1], p2[0]);
+    delete[] h_state;
+    
+    EXPECT_STREQ(hex0, "0bb61d24daca55eebcb1929a82650f328134334da98ea4f847f760054f4a3033");
+    EXPECT_STREQ(hex2, "1ed25194542b12eef8617361c3ba7c52e660b145994427cc86296242cf766ec8");
+}
+
+TEST(BN128_POSEIDON2_TEST, hash_gpu_t4) {
+    
+    Poseidon2BN128GPU p;
+    BN128GPUScalarField::Element* d_state = nullptr;
+    BN128GPUScalarField::Element* h_state = nullptr;
+    
+    int t = 4;
+    cudaMalloc(&d_state, t * sizeof(BN128GPUScalarField::Element));
+    h_state = new BN128GPUScalarField::Element[t];
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1);
+    
+    init_state_kernel<<<1, 1>>>(d_state, t);
+    cudaDeviceSynchronize();
+    
+    p.hash(d_state, t);
+    cudaDeviceSynchronize();
+    
+    from_montgomery_kernel<<<1, 1>>>(d_state, t);
+    cudaDeviceSynchronize();
+    
+    cudaMemcpy(h_state, d_state, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyDeviceToHost);
+    cudaFree(d_state);
+    
+    char hex0[65], hex3[65];
+    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
+    const uint32_t* p3 = reinterpret_cast<const uint32_t*>(&h_state[3].v);
+    snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
+             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+    snprintf(hex3, sizeof(hex3), "%08x%08x%08x%08x%08x%08x%08x%08x",
+             p3[7], p3[6], p3[5], p3[4], p3[3], p3[2], p3[1], p3[0]);
+    delete[] h_state;
+    
+    EXPECT_STREQ(hex0, "01bd538c2ee014ed5141b29e9ae240bf8db3fe5b9a38629a9647cf8d76c01737");
+    EXPECT_STREQ(hex3, "2e11c5cff2a22c64d01304b778d78f6998eff1ab73163a35603f54794c30847a");
+}
+
+TEST(BN128_POSEIDON2_TEST, hash_gpu_t8) {
+    
+    Poseidon2BN128GPU p;
+    BN128GPUScalarField::Element* d_state = nullptr;
+    BN128GPUScalarField::Element* h_state = nullptr;
+    
+    int t = 8;
+    cudaMalloc(&d_state, t * sizeof(BN128GPUScalarField::Element));
+    h_state = new BN128GPUScalarField::Element[t];
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1);
+    
+    init_state_kernel<<<1, 1>>>(d_state, t);
+    cudaDeviceSynchronize();
+    
+    p.hash(d_state, t);
+    cudaDeviceSynchronize();
+    
+    from_montgomery_kernel<<<1, 1>>>(d_state, t);
+    cudaDeviceSynchronize();
+    
+    cudaMemcpy(h_state, d_state, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyDeviceToHost);
+    cudaFree(d_state);
+    
+    char hex0[65], hex7[65];
+    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
+    const uint32_t* p7 = reinterpret_cast<const uint32_t*>(&h_state[7].v);
+    snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
+             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+    snprintf(hex7, sizeof(hex7), "%08x%08x%08x%08x%08x%08x%08x%08x",
+             p7[7], p7[6], p7[5], p7[4], p7[3], p7[2], p7[1], p7[0]);
+    delete[] h_state;
+    
+    EXPECT_STREQ(hex0, "1d1a50bcde871247856df135d56a4ca61af575f1140ed9b1503c77528cf345df");
+    EXPECT_STREQ(hex7, "0b19bfa00c8f1d505074130e7f8b49a8624b1905e280ceca5ba11099b081b265");
+}
+
+TEST(BN128_POSEIDON2_TEST, hash_gpu_t12) {
+    
+    Poseidon2BN128GPU p;
+    BN128GPUScalarField::Element* d_state = nullptr;
+    BN128GPUScalarField::Element* h_state = nullptr;
+    
+    int t = 12;
+    cudaMalloc(&d_state, t * sizeof(BN128GPUScalarField::Element));
+    h_state = new BN128GPUScalarField::Element[t];
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1);
+    
+    init_state_kernel<<<1, 1>>>(d_state, t);
+    cudaDeviceSynchronize();
+    
+    p.hash(d_state, t);
+    cudaDeviceSynchronize();
+    
+    from_montgomery_kernel<<<1, 1>>>(d_state, t);
+    cudaDeviceSynchronize();
+    
+    cudaMemcpy(h_state, d_state, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyDeviceToHost);
+    cudaFree(d_state);
+    
+    char hex0[65], hex11[65];
+    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
+    const uint32_t* p11 = reinterpret_cast<const uint32_t*>(&h_state[11].v);
+    snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
+             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+    snprintf(hex11, sizeof(hex11), "%08x%08x%08x%08x%08x%08x%08x%08x",
+             p11[7], p11[6], p11[5], p11[4], p11[3], p11[2], p11[1], p11[0]);
+    delete[] h_state;
+    
+    EXPECT_STREQ(hex0, "3014e0ec17029f7e4f5cfe8c7c54fc3df6a5f7539f6aa304b2f3c747a9105618");
+    EXPECT_STREQ(hex11, "0905469a776b7d5a3f18841edb90fa0d8c6de479c2789c042dafefb367ad1a2b");
+}
+
+TEST(BN128_POSEIDON2_TEST, hash_gpu_t16) {
+    
+    Poseidon2BN128GPU p;
+    BN128GPUScalarField::Element* d_state = nullptr;
+    BN128GPUScalarField::Element* h_state = nullptr;
+    
+    int t = 16;    
+    cudaMalloc(&d_state, t * sizeof(BN128GPUScalarField::Element));
+    h_state = new BN128GPUScalarField::Element[t];
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1);
+    
+    init_state_kernel<<<1, 1>>>(d_state, t);
+    cudaDeviceSynchronize();
+    
+    p.hash(d_state, t);
+    cudaDeviceSynchronize();
+    
+    from_montgomery_kernel<<<1, 1>>>(d_state, t);
+    cudaDeviceSynchronize();
+    
+    cudaMemcpy(h_state, d_state, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyDeviceToHost);
+    cudaFree(d_state);
+    
+    char hex0[65], hex15[65];
+    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
     const uint32_t* p15 = reinterpret_cast<const uint32_t*>(&h_state[15].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
              p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
