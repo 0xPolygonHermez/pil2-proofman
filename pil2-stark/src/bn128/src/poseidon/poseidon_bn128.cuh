@@ -20,8 +20,10 @@ public:
 
     void hash(FrElement *d_state, int t);
     
-    // Must be called once before using GPU hash
+    // Initialize GPU constants (uploads all t values 2-17)
     static void initGPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
+    // Free all GPU constants
+    static void freeGPUConstants();
 };
 
 __device__ void PoseidonBN128GPU::exp5(FrElement &r)
