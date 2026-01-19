@@ -165,7 +165,7 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
             total_columns: setup.stark_info.n_constants + witness_cols,
             num_columns_fixed: setup.stark_info.n_constants,
             num_columns_witness: witness_cols,
-            num_constraints: setup.stark_info.n_constraints as u64,
+            num_constraints: setup.stark_info.n_constraints,
             opening_points: setup.stark_info.opening_points.len() as u64,
             batch_size: setup.stark_info.ev_map.len() as u64,
             power_batching: true,
@@ -254,12 +254,12 @@ pub fn soundness_info<F: PrimeField64>(
         let (_, final_air_info) = get_soundness_air_info(setup_final_circuit);
         circuits.push(TomlCircuit { name: "Final".to_string(), group: "final".to_string(), air: final_air_info });
 
-        let setup_final_circuit_compressed = setups_aggregation.setup_vadcop_final_compressed.as_ref().unwrap();
-        let (_, final_air_info) = get_soundness_air_info(setup_final_circuit_compressed);
+        let setup_final_compressed_circuit = setups_aggregation.setup_vadcop_final_compressed.as_ref().unwrap();
+        let (_, final_compressed_air_info) = get_soundness_air_info(setup_final_compressed_circuit);
         circuits.push(TomlCircuit {
-            name: "FinalCompressed".to_string(),
-            group: "final".to_string(),
-            air: final_air_info,
+            name: "Final_Compressed".to_string(),
+            group: "final_compressed".to_string(),
+            air: final_compressed_air_info,
         });
     }
 
