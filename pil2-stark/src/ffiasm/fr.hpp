@@ -270,7 +270,7 @@ void Fr_inv(PFrElement r, PFrElement a);
 void Fr_div(PFrElement r, PFrElement a, PFrElement b);
 void Fr_pow(PFrElement r, PFrElement a, PFrElement b);
 
-class RawFrP {
+class RawFr {
 
 public:
     const static int N64 = Fr_N64;
@@ -288,8 +288,8 @@ private:
 
 public:
 
-    RawFrP();
-    ~RawFrP();
+    RawFr();
+    ~RawFr();
 
     const Element &zero() { return fZero; };
     const Element &one() { return fOne; };
@@ -345,7 +345,7 @@ public:
     
     void fromUI(Element &r, unsigned long int v);
 
-    static RawFrP field;
+    static RawFr field;
 
 };
 
