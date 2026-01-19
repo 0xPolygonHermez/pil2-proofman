@@ -1,51 +1,51 @@
 
 
-        global Fnec_copy
-        global Fnec_copyn
-        global Fnec_add
-        global Fnec_sub
-        global Fnec_neg
-        global Fnec_mul
-        global Fnec_square
-        global Fnec_band
-        global Fnec_bor
-        global Fnec_bxor
-        global Fnec_bnot
-        global Fnec_shl
-        global Fnec_shr
-        global Fnec_eq
-        global Fnec_neq
-        global Fnec_lt
-        global Fnec_gt
-        global Fnec_leq
-        global Fnec_geq
-        global Fnec_land
-        global Fnec_lor
-        global Fnec_lnot
-        global Fnec_toNormal
-        global Fnec_toLongNormal
-        global Fnec_toMontgomery
-        global Fnec_toInt
-        global Fnec_isTrue
-        global Fnec_q
-        global Fnec_R3
+        global FnecP_copy
+        global FnecP_copyn
+        global FnecP_add
+        global FnecP_sub
+        global FnecP_neg
+        global FnecP_mul
+        global FnecP_square
+        global FnecP_band
+        global FnecP_bor
+        global FnecP_bxor
+        global FnecP_bnot
+        global FnecP_shl
+        global FnecP_shr
+        global FnecP_eq
+        global FnecP_neq
+        global FnecP_lt
+        global FnecP_gt
+        global FnecP_leq
+        global FnecP_geq
+        global FnecP_land
+        global FnecP_lor
+        global FnecP_lnot
+        global FnecP_toNormal
+        global FnecP_toLongNormal
+        global FnecP_toMontgomery
+        global FnecP_toInt
+        global FnecP_isTrue
+        global FnecP_q
+        global FnecP_R3
 
-        global Fnec_rawCopy
-        global Fnec_rawZero
-        global Fnec_rawSwap
-        global Fnec_rawAdd
-        global Fnec_rawSub
-        global Fnec_rawNeg
-        global Fnec_rawMMul
-        global Fnec_rawMSquare
-        global Fnec_rawToMontgomery
-        global Fnec_rawFromMontgomery
-        global Fnec_rawIsEq
-        global Fnec_rawIsZero
-        global Fnec_rawq
-        global Fnec_rawR3
+        global FnecP_rawCopy
+        global FnecP_rawZero
+        global FnecP_rawSwap
+        global FnecP_rawAdd
+        global FnecP_rawSub
+        global FnecP_rawNeg
+        global FnecP_rawMMul
+        global FnecP_rawMSquare
+        global FnecP_rawToMontgomery
+        global FnecP_rawFromMontgomery
+        global FnecP_rawIsEq
+        global FnecP_rawIsZero
+        global FnecP_rawq
+        global FnecP_rawR3
 
-        extern Fnec_fail
+        extern FnecP_fail
         DEFAULT REL
 
         section .text
@@ -76,7 +76,7 @@
 ; Nidified registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fnec_copy:
+FnecP_copy:
 
         mov     rax, [rsi + 0]
         mov     [rdi + 0], rax
@@ -107,7 +107,7 @@ Fnec_copy:
 ; Nidified registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fnec_rawCopy:
+FnecP_rawCopy:
 
         mov     rax, [rsi + 0]
         mov     [rdi + 0], rax
@@ -134,7 +134,7 @@ Fnec_rawCopy:
 ; Nidified registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fnec_rawZero:
+FnecP_rawZero:
         xor     rax, rax
 
         mov     [rdi + 0], rax
@@ -158,7 +158,7 @@ Fnec_rawZero:
 ; Nidified registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fnec_rawSwap:
+FnecP_rawSwap:
 
         mov     rax, [rsi + 0]
         mov     rcx, [rdi + 0]
@@ -195,8 +195,8 @@ Fnec_rawSwap:
 ; Nidified registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fnec_copyn:
-Fnec_copyn_loop:
+FnecP_copyn:
+FnecP_copyn_loop:
         mov     r8, rsi
         mov     r9, rdi
         mov     rax, 5
@@ -268,50 +268,50 @@ u64toLong_adjust_neg:
 ; Returs:
 ;   rax <= The value
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fnec_toInt:
+FnecP_toInt:
         mov     rax, [rdi]
         bt      rax, 63
-        jc      Fnec_long
+        jc      FnecP_long
         movsx   rax, eax
         ret
 
-Fnec_long:
+FnecP_long:
         push   rbp
         push   rsi
         push   rdx
         mov    rbp, rsp
         bt      rax, 62
-        jnc     Fnec_longNormal
-Fnec_longMontgomery:
+        jnc     FnecP_longNormal
+FnecP_longMontgomery:
 
         mov  r8, rdi
         sub  rsp, 40
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
 
 
-Fnec_longNormal:
+FnecP_longNormal:
         mov     rax, [rdi + 8]
         mov     rcx, rax
         shr     rcx, 31
-        jnz     Fnec_longNeg
+        jnz     FnecP_longNeg
 
         mov     rcx, [rdi + 16]
         test    rcx, rcx
-        jnz     Fnec_longNeg
+        jnz     FnecP_longNeg
 
         mov     rcx, [rdi + 24]
         test    rcx, rcx
-        jnz     Fnec_longNeg
+        jnz     FnecP_longNeg
 
         mov     rcx, [rdi + 32]
         test    rcx, rcx
-        jnz     Fnec_longNeg
+        jnz     FnecP_longNeg
 
         mov rsp, rbp
         pop rdx
@@ -319,37 +319,37 @@ Fnec_longNormal:
         pop rbp
         ret
 
-Fnec_longNeg:
+FnecP_longNeg:
         mov     rax, [rdi + 8]
         sub     rax, [q]
-        jnc     Fnec_longErr
+        jnc     FnecP_longErr
 
         mov     rcx, [rdi + 16]
         sbb     rcx, [q + 8]
-        jnc     Fnec_longErr
+        jnc     FnecP_longErr
 
         mov     rcx, [rdi + 24]
         sbb     rcx, [q + 16]
-        jnc     Fnec_longErr
+        jnc     FnecP_longErr
 
         mov     rcx, [rdi + 32]
         sbb     rcx, [q + 24]
-        jnc     Fnec_longErr
+        jnc     FnecP_longErr
 
         mov     rcx, rax
         sar     rcx, 31
         add     rcx, 1
-        jnz     Fnec_longErr
+        jnz     FnecP_longErr
         mov rsp, rbp
         pop rdx
         pop rsi
         pop rbp
         ret
 
-Fnec_longErr:
+FnecP_longErr:
         push    rdi
         mov     rdi, 0
-        call    Fnec_fail
+        call    FnecP_fail
         pop     rdi
         mov rsp, rbp
         pop rdx
@@ -361,7 +361,7 @@ Fnec_longErr:
 
 
 
-Fnec_rawMMul:
+FnecP_rawMMul:
     push rbp
     push r15
     push r14
@@ -524,25 +524,25 @@ Fnec_rawMMul:
 
 ;comparison
     test r15,r15
-jnz Fnec_rawMMul_sq
+jnz FnecP_rawMMul_sq
     cmp r14,[q + 24]
-    jc Fnec_rawMMul_done
-    jnz Fnec_rawMMul_sq
+    jc FnecP_rawMMul_done
+    jnz FnecP_rawMMul_sq
     cmp r13,[q + 16]
-    jc Fnec_rawMMul_done
-    jnz Fnec_rawMMul_sq
+    jc FnecP_rawMMul_done
+    jnz FnecP_rawMMul_sq
     cmp r12,[q + 8]
-    jc Fnec_rawMMul_done
-    jnz Fnec_rawMMul_sq
+    jc FnecP_rawMMul_done
+    jnz FnecP_rawMMul_sq
     cmp r11,[q + 0]
-    jc Fnec_rawMMul_done
-    jnz Fnec_rawMMul_sq
-Fnec_rawMMul_sq:
+    jc FnecP_rawMMul_done
+    jnz FnecP_rawMMul_sq
+FnecP_rawMMul_sq:
     sub r11,[q +0]
     sbb r12,[q +8]
     sbb r13,[q +16]
     sbb r14,[q +24]
-Fnec_rawMMul_done:
+FnecP_rawMMul_done:
     mov [rdi + 0],r11
     mov [rdi + 8],r12
     mov [rdi + 16],r13
@@ -553,7 +553,7 @@ Fnec_rawMMul_done:
     pop r15
     pop rbp
     ret
-Fnec_rawMSquare:
+FnecP_rawMSquare:
     push rbp
     push r15
     push r14
@@ -716,25 +716,25 @@ Fnec_rawMSquare:
 
 ;comparison
     test r15,r15
-jnz Fnec_rawMSquare_sq
+jnz FnecP_rawMSquare_sq
     cmp r14,[q + 24]
-    jc Fnec_rawMSquare_done
-    jnz Fnec_rawMSquare_sq
+    jc FnecP_rawMSquare_done
+    jnz FnecP_rawMSquare_sq
     cmp r13,[q + 16]
-    jc Fnec_rawMSquare_done
-    jnz Fnec_rawMSquare_sq
+    jc FnecP_rawMSquare_done
+    jnz FnecP_rawMSquare_sq
     cmp r12,[q + 8]
-    jc Fnec_rawMSquare_done
-    jnz Fnec_rawMSquare_sq
+    jc FnecP_rawMSquare_done
+    jnz FnecP_rawMSquare_sq
     cmp r11,[q + 0]
-    jc Fnec_rawMSquare_done
-    jnz Fnec_rawMSquare_sq
-Fnec_rawMSquare_sq:
+    jc FnecP_rawMSquare_done
+    jnz FnecP_rawMSquare_sq
+FnecP_rawMSquare_sq:
     sub r11,[q +0]
     sbb r12,[q +8]
     sbb r13,[q +16]
     sbb r14,[q +24]
-Fnec_rawMSquare_done:
+FnecP_rawMSquare_done:
     mov [rdi + 0],r11
     mov [rdi + 8],r12
     mov [rdi + 16],r13
@@ -745,7 +745,7 @@ Fnec_rawMSquare_done:
     pop r15
     pop rbp
     ret
-Fnec_rawMMul1:
+FnecP_rawMMul1:
     push rbp
     push r15
     push r14
@@ -857,25 +857,25 @@ Fnec_rawMMul1:
 
 ;comparison
     test r15,r15
-jnz Fnec_rawMMul1_sq
+jnz FnecP_rawMMul1_sq
     cmp r14,[q + 24]
-    jc Fnec_rawMMul1_done
-    jnz Fnec_rawMMul1_sq
+    jc FnecP_rawMMul1_done
+    jnz FnecP_rawMMul1_sq
     cmp r13,[q + 16]
-    jc Fnec_rawMMul1_done
-    jnz Fnec_rawMMul1_sq
+    jc FnecP_rawMMul1_done
+    jnz FnecP_rawMMul1_sq
     cmp r12,[q + 8]
-    jc Fnec_rawMMul1_done
-    jnz Fnec_rawMMul1_sq
+    jc FnecP_rawMMul1_done
+    jnz FnecP_rawMMul1_sq
     cmp r11,[q + 0]
-    jc Fnec_rawMMul1_done
-    jnz Fnec_rawMMul1_sq
-Fnec_rawMMul1_sq:
+    jc FnecP_rawMMul1_done
+    jnz FnecP_rawMMul1_sq
+FnecP_rawMMul1_sq:
     sub r11,[q +0]
     sbb r12,[q +8]
     sbb r13,[q +16]
     sbb r14,[q +24]
-Fnec_rawMMul1_done:
+FnecP_rawMMul1_done:
     mov [rdi + 0],r11
     mov [rdi + 8],r12
     mov [rdi + 16],r13
@@ -886,7 +886,7 @@ Fnec_rawMMul1_done:
     pop r15
     pop rbp
     ret
-Fnec_rawFromMontgomery:
+FnecP_rawFromMontgomery:
     push rbp
     push r15
     push r14
@@ -992,25 +992,25 @@ Fnec_rawFromMontgomery:
 
 ;comparison
     test r15,r15
-jnz Fnec_rawFromMontgomery_sq
+jnz FnecP_rawFromMontgomery_sq
     cmp r14,[q + 24]
-    jc Fnec_rawFromMontgomery_done
-    jnz Fnec_rawFromMontgomery_sq
+    jc FnecP_rawFromMontgomery_done
+    jnz FnecP_rawFromMontgomery_sq
     cmp r13,[q + 16]
-    jc Fnec_rawFromMontgomery_done
-    jnz Fnec_rawFromMontgomery_sq
+    jc FnecP_rawFromMontgomery_done
+    jnz FnecP_rawFromMontgomery_sq
     cmp r12,[q + 8]
-    jc Fnec_rawFromMontgomery_done
-    jnz Fnec_rawFromMontgomery_sq
+    jc FnecP_rawFromMontgomery_done
+    jnz FnecP_rawFromMontgomery_sq
     cmp r11,[q + 0]
-    jc Fnec_rawFromMontgomery_done
-    jnz Fnec_rawFromMontgomery_sq
-Fnec_rawFromMontgomery_sq:
+    jc FnecP_rawFromMontgomery_done
+    jnz FnecP_rawFromMontgomery_sq
+FnecP_rawFromMontgomery_sq:
     sub r11,[q +0]
     sbb r12,[q +8]
     sbb r13,[q +16]
     sbb r14,[q +24]
-Fnec_rawFromMontgomery_done:
+FnecP_rawFromMontgomery_done:
     mov [rdi + 0],r11
     mov [rdi + 8],r12
     mov [rdi + 16],r13
@@ -1029,10 +1029,10 @@ Fnec_rawFromMontgomery_done:
 ;   rdi <= Pointer destination element
 ;   rsi <= Pointer to src element
 ;;;;;;;;;;;;;;;;;;;;
-Fnec_rawToMontgomery:
+FnecP_rawToMontgomery:
     push    rdx
     lea     rdx, [R2]
-    call    Fnec_rawMMul
+    call    FnecP_rawMMul
     pop     rdx
     ret
 
@@ -1045,7 +1045,7 @@ Fnec_rawToMontgomery:
 ; Modified registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;
-Fnec_toMontgomery:
+FnecP_toMontgomery:
     mov     rax, [rsi]
     bt      rax, 62                     ; check if montgomery
     jc      toMontgomery_doNothing
@@ -1060,7 +1060,7 @@ toMontgomeryShort:
     cmp     rdx, 0
     js      negMontgomeryShort
 posMontgomeryShort:
-    call    Fnec_rawMMul1
+    call    FnecP_rawMMul1
     sub     rdi, 8
             mov r11b, 0x40
         shl r11d, 24
@@ -1069,7 +1069,7 @@ posMontgomeryShort:
 
 negMontgomeryShort:
     neg     rdx              ; Do the multiplication positive and then negate the result.
-    call    Fnec_rawMMul1
+    call    FnecP_rawMMul1
     mov     rsi, rdi
     call    rawNegL
     sub     rdi, 8
@@ -1084,7 +1084,7 @@ toMontgomeryLong:
     add     rdi, 8
     add     rsi, 8
     lea     rdx, [R2]
-    call    Fnec_rawMMul
+    call    FnecP_rawMMul
     sub     rsi, 8
     sub     rdi, 8
             mov r11b, 0xC0
@@ -1094,7 +1094,7 @@ toMontgomeryLong:
 
 
 toMontgomery_doNothing:
-    call   Fnec_copy
+    call   FnecP_copy
     ret
 
 ;;;;;;;;;;;;;;;;;;;;;;
@@ -1106,7 +1106,7 @@ toMontgomery_doNothing:
 ; Modified registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;
-Fnec_toNormal:
+FnecP_toNormal:
     mov     rax, [rsi]
     bt      rax, 62                     ; check if montgomery
     jnc     toNormal_doNothing
@@ -1116,7 +1116,7 @@ Fnec_toNormal:
 toNormalLong:
     add     rdi, 8
     add     rsi, 8
-    call    Fnec_rawFromMontgomery
+    call    FnecP_rawFromMontgomery
     sub     rsi, 8
     sub     rdi, 8
             mov r11b, 0x80
@@ -1125,7 +1125,7 @@ toNormalLong:
     ret
 
 toNormal_doNothing:
-    call   Fnec_copy
+    call   FnecP_copy
     ret
 
 ;;;;;;;;;;;;;;;;;;;;;;
@@ -1137,19 +1137,19 @@ toNormal_doNothing:
 ; Modified registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;
-Fnec_toLongNormal:
+FnecP_toLongNormal:
     mov     rax, [rsi]
     bt      rax, 63                     ; check if long
     jnc     toLongNormal_fromShort
     bt      rax, 62                     ; check if montgomery
     jc      toLongNormal_fromMontgomery
-    call    Fnec_copy              ; It is already long
+    call    FnecP_copy              ; It is already long
     ret
 
 toLongNormal_fromMontgomery:
     add     rdi, 8
     add     rsi, 8
-    call    Fnec_rawFromMontgomery
+    call    FnecP_rawFromMontgomery
     sub     rsi, 8
     sub     rdi, 8
             mov r11b, 0x80
@@ -1189,7 +1189,7 @@ toLongNormal_fromShort:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_add:
+FnecP_add:
         push   rbp
         push   rsi
         push   rdx
@@ -1282,7 +1282,7 @@ add_l1ms2n:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toMontgomery
+        call FnecP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -1368,7 +1368,7 @@ add_s1nl2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toMontgomery
+        call FnecP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -1440,7 +1440,7 @@ add_l1nl2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toMontgomery
+        call FnecP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -1473,7 +1473,7 @@ add_l1ml2n:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toMontgomery
+        call FnecP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -1524,7 +1524,7 @@ add_l1ml2m:
 ;    rax
 ;;;;;;;;;;;;;;;;;;;;;;
 rawAddLL:
-Fnec_rawAdd:
+FnecP_rawAdd:
         ; Add component by component with carry
 
         mov rax, [rsi + 0]
@@ -1686,7 +1686,7 @@ rawAddLS_done:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_sub:
+FnecP_sub:
         push   rbp
         push   rsi
         push   rdx
@@ -1778,7 +1778,7 @@ sub_l1ms2n:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toMontgomery
+        call FnecP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -1872,7 +1872,7 @@ sub_s1nl2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toMontgomery
+        call FnecP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -1944,7 +1944,7 @@ sub_l1nl2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toMontgomery
+        call FnecP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -1977,7 +1977,7 @@ sub_l1ml2n:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toMontgomery
+        call FnecP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -2133,7 +2133,7 @@ rawSubSL_done:
 ;    rax
 ;;;;;;;;;;;;;;;;;;;;;;
 rawSubLL:
-Fnec_rawSub:
+FnecP_rawSub:
         ; Substract first digit
 
         mov rax, [rsi + 0]
@@ -2259,7 +2259,7 @@ rawNegSL_done:
 ;   rdi <= Pointer to result
 ;   [rdi] = -[rsi]
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_neg:
+FnecP_neg:
         mov    rax, [rsi]
         bt     rax, 63          ; Check if is short first operand
         jc     neg_l
@@ -2305,7 +2305,7 @@ neg_l:
 ;   [rdi] = - [rsi]
 ;;;;;;;;;;;;;;;;;;;;;;
 rawNegL:
-Fnec_rawNeg:
+FnecP_rawNeg:
         ; Compare is zero
 
         xor rax, rax
@@ -2382,7 +2382,7 @@ doNegate:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_square:
+FnecP_square:
         mov    r8, [rsi]
         bt     r8, 63          ; Check if is short first operand
         jc     square_l1
@@ -2416,7 +2416,7 @@ square_l1n:
 
         add rdi, 8
         add rsi, 8
-        call Fnec_rawMSquare
+        call FnecP_rawMSquare
         sub rdi, 8
         sub rsi, 8
 
@@ -2425,7 +2425,7 @@ square_l1n:
         add rdi, 8
         mov rsi, rdi
         lea rdx, [R3]
-        call Fnec_rawMMul
+        call FnecP_rawMMul
         sub rdi, 8
         pop rsi
 
@@ -2438,7 +2438,7 @@ square_l1m:
 
         add rdi, 8
         add rsi, 8
-        call Fnec_rawMSquare
+        call FnecP_rawMSquare
         sub rdi, 8
         sub rsi, 8
 
@@ -2458,7 +2458,7 @@ square_l1m:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_mul:
+FnecP_mul:
         mov    r8, [rsi]
         mov    r9, [rdx]
         bt     r8, 63          ; Check if is short first operand
@@ -2510,7 +2510,7 @@ mul_l1ns2n:
         
         jns tmp_5
         neg rdx
-        call Fnec_rawMMul1
+        call FnecP_rawMMul1
         mov rsi, rdi
         call rawNegL
         sub rdi, 8
@@ -2518,7 +2518,7 @@ mul_l1ns2n:
         
         jmp tmp_6
 tmp_5:
-        call Fnec_rawMMul1
+        call FnecP_rawMMul1
         sub rdi, 8
         pop rsi
 tmp_6:
@@ -2529,7 +2529,7 @@ tmp_6:
         add rdi, 8
         mov rsi, rdi
         lea rdx, [R3]
-        call Fnec_rawMMul
+        call FnecP_rawMMul
         sub rdi, 8
         pop rsi
 
@@ -2544,7 +2544,7 @@ mul_l1ns2m:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fnec_rawMMul
+        call FnecP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2567,7 +2567,7 @@ mul_l1ms2n:
         
         jns tmp_7
         neg rdx
-        call Fnec_rawMMul1
+        call FnecP_rawMMul1
         mov rsi, rdi
         call rawNegL
         sub rdi, 8
@@ -2575,7 +2575,7 @@ mul_l1ms2n:
         
         jmp tmp_8
 tmp_7:
-        call Fnec_rawMMul1
+        call FnecP_rawMMul1
         sub rdi, 8
         pop rsi
 tmp_8:
@@ -2591,7 +2591,7 @@ mul_l1ms2m:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fnec_rawMMul
+        call FnecP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2618,7 +2618,7 @@ mul_s1nl2n:
         
         jns tmp_9
         neg rdx
-        call Fnec_rawMMul1
+        call FnecP_rawMMul1
         mov rsi, rdi
         call rawNegL
         sub rdi, 8
@@ -2626,7 +2626,7 @@ mul_s1nl2n:
         
         jmp tmp_10
 tmp_9:
-        call Fnec_rawMMul1
+        call FnecP_rawMMul1
         sub rdi, 8
         pop rsi
 tmp_10:
@@ -2637,7 +2637,7 @@ tmp_10:
         add rdi, 8
         mov rsi, rdi
         lea rdx, [R3]
-        call Fnec_rawMMul
+        call FnecP_rawMMul
         sub rdi, 8
         pop rsi
 
@@ -2656,7 +2656,7 @@ mul_s1nl2m:
         
         jns tmp_11
         neg rdx
-        call Fnec_rawMMul1
+        call FnecP_rawMMul1
         mov rsi, rdi
         call rawNegL
         sub rdi, 8
@@ -2664,7 +2664,7 @@ mul_s1nl2m:
         
         jmp tmp_12
 tmp_11:
-        call Fnec_rawMMul1
+        call FnecP_rawMMul1
         sub rdi, 8
         pop rsi
 tmp_12:
@@ -2683,7 +2683,7 @@ mul_s1ml2n:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fnec_rawMMul
+        call FnecP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2697,7 +2697,7 @@ mul_s1ml2m:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fnec_rawMMul
+        call FnecP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2718,7 +2718,7 @@ mul_l1nl2n:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fnec_rawMMul
+        call FnecP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2727,7 +2727,7 @@ mul_l1nl2n:
         add rdi, 8
         mov rsi, rdi
         lea rdx, [R3]
-        call Fnec_rawMMul
+        call FnecP_rawMMul
         sub rdi, 8
         pop rsi
 
@@ -2741,7 +2741,7 @@ mul_l1nl2m:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fnec_rawMMul
+        call FnecP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2758,7 +2758,7 @@ mul_l1ml2n:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fnec_rawMMul
+        call FnecP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2772,7 +2772,7 @@ mul_l1ml2m:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fnec_rawMMul
+        call FnecP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2807,7 +2807,7 @@ mul_l1ml2m:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_band:
+FnecP_band:
         push   rbp
         push   rsi
         push   rdx
@@ -2848,7 +2848,7 @@ tmp_13:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -2859,7 +2859,7 @@ tmp_13:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -3037,7 +3037,7 @@ tmp_16:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -3131,7 +3131,7 @@ and_l1ms2:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -3219,7 +3219,7 @@ tmp_21:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -3392,7 +3392,7 @@ tmp_26:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -3487,7 +3487,7 @@ and_s1l2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -3573,7 +3573,7 @@ tmp_31:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -3752,7 +3752,7 @@ and_l1nl2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -3844,7 +3844,7 @@ and_l1ml2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -3933,7 +3933,7 @@ and_l1ml2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -3945,7 +3945,7 @@ and_l1ml2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -4036,7 +4036,7 @@ tmp_43:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_bor:
+FnecP_bor:
         push   rbp
         push   rsi
         push   rdx
@@ -4077,7 +4077,7 @@ tmp_44:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -4088,7 +4088,7 @@ tmp_44:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -4266,7 +4266,7 @@ tmp_47:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -4360,7 +4360,7 @@ or_l1ms2:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -4448,7 +4448,7 @@ tmp_52:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -4621,7 +4621,7 @@ tmp_57:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -4716,7 +4716,7 @@ or_s1l2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -4802,7 +4802,7 @@ tmp_62:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -4981,7 +4981,7 @@ or_l1nl2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -5073,7 +5073,7 @@ or_l1ml2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -5162,7 +5162,7 @@ or_l1ml2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -5174,7 +5174,7 @@ or_l1ml2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -5265,7 +5265,7 @@ tmp_74:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_bxor:
+FnecP_bxor:
         push   rbp
         push   rsi
         push   rdx
@@ -5306,7 +5306,7 @@ tmp_75:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -5317,7 +5317,7 @@ tmp_75:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -5495,7 +5495,7 @@ tmp_78:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -5589,7 +5589,7 @@ xor_l1ms2:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -5677,7 +5677,7 @@ tmp_83:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -5850,7 +5850,7 @@ tmp_88:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -5945,7 +5945,7 @@ xor_s1l2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -6031,7 +6031,7 @@ tmp_93:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -6210,7 +6210,7 @@ xor_l1nl2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -6302,7 +6302,7 @@ xor_l1ml2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -6391,7 +6391,7 @@ xor_l1ml2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -6403,7 +6403,7 @@ xor_l1ml2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -6494,7 +6494,7 @@ tmp_105:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_bnot:
+FnecP_bnot:
         push   rbp
         push   rsi
         push   rdx
@@ -6513,7 +6513,7 @@ bnot_s:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -6531,7 +6531,7 @@ bnot_l1m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -6626,10 +6626,10 @@ tmp_107:
 ;;;;;;;;;;;;;;;;;;;;;;
 rawShr:
         cmp rdx, 0
-        je Fnec_rawCopy
+        je FnecP_rawCopy
 
         cmp rdx, 256
-        jae Fnec_rawZero
+        jae FnecP_rawZero
 
 rawShr_nz:
         mov r8, rdx
@@ -6826,10 +6826,10 @@ rawShr_endif3_3:
 ;;;;;;;;;;;;;;;;;;;;;;
 rawShl:
         cmp rdx, 0
-        je Fnec_rawCopy
+        je FnecP_rawCopy
         
         cmp rdx, 256
-        jae Fnec_rawZero
+        jae FnecP_rawZero
 
         mov r8, rdx
         shr r8,6
@@ -7148,7 +7148,7 @@ tmp_111:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_shr:
+FnecP_shr:
         push   rbp
         push   rsi
         push   rdi
@@ -7174,7 +7174,7 @@ Fnec_shr:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7248,7 +7248,7 @@ tmp_115:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_shl:
+FnecP_shl:
         push   rbp
         push   rsi
         push   rdi
@@ -7273,7 +7273,7 @@ Fnec_shl:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7372,7 +7372,7 @@ do_shlcl:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7388,7 +7388,7 @@ do_shll:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7441,7 +7441,7 @@ do_shrcl:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7456,7 +7456,7 @@ do_shrl:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7500,7 +7500,7 @@ setzero:
 ; Modified Registers:
 ;    r8, r9, rax
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_rgt:
+FnecP_rgt:
         push   rbp
         push   rsi
         push   rdx
@@ -7534,7 +7534,7 @@ rgt_l1ns2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7549,7 +7549,7 @@ rgt_l1ms2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7560,7 +7560,7 @@ rgt_l1ms2:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7579,7 +7579,7 @@ rgt_s1l2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7593,7 +7593,7 @@ rgt_s1l2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7605,7 +7605,7 @@ rgt_s1l2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7630,7 +7630,7 @@ rgt_l1nl2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7647,7 +7647,7 @@ rgt_l1ml2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7661,7 +7661,7 @@ rgt_l1ml2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7673,7 +7673,7 @@ rgt_l1ml2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7841,7 +7841,7 @@ rgt_ret1:
 ; Modified Registers:
 ;    r8, r9, rax
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_rlt:
+FnecP_rlt:
         push   rbp
         push   rsi
         push   rdx
@@ -7875,7 +7875,7 @@ rlt_l1ns2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7890,7 +7890,7 @@ rlt_l1ms2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7901,7 +7901,7 @@ rlt_l1ms2:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7920,7 +7920,7 @@ rlt_s1l2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7934,7 +7934,7 @@ rlt_s1l2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7946,7 +7946,7 @@ rlt_s1l2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7971,7 +7971,7 @@ rlt_l1nl2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7988,7 +7988,7 @@ rlt_l1ml2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -8002,7 +8002,7 @@ rlt_l1ml2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -8014,7 +8014,7 @@ rlt_l1ml2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toNormal
+        call FnecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -8176,7 +8176,7 @@ rlt_ret1:
 ; Modified Registers:
 ;    r8, r9, rax
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_req:
+FnecP_req:
         push   rbp
         push   rsi
         push   rdx
@@ -8210,7 +8210,7 @@ req_l1ns2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -8225,7 +8225,7 @@ req_l1ms2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toMontgomery
+        call FnecP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -8244,7 +8244,7 @@ req_s1l2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toLongNormal
+        call FnecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -8258,7 +8258,7 @@ req_s1l2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toMontgomery
+        call FnecP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -8282,7 +8282,7 @@ req_l1nl2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fnec_toMontgomery
+        call FnecP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -8300,7 +8300,7 @@ req_l1ml2n:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fnec_toMontgomery
+        call FnecP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -8362,8 +8362,8 @@ req_ret0:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_gt:
-        call Fnec_rgt
+FnecP_gt:
+        call FnecP_rgt
         mov [rdi], rax
         ret
 
@@ -8378,8 +8378,8 @@ Fnec_gt:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_lt:
-        call Fnec_rlt
+FnecP_lt:
+        call FnecP_rlt
         mov [rdi], rax
         ret
 
@@ -8394,8 +8394,8 @@ Fnec_lt:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_eq:
-        call Fnec_req
+FnecP_eq:
+        call FnecP_req
         mov [rdi], rax
         ret
 
@@ -8410,8 +8410,8 @@ Fnec_eq:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_neq:
-        call Fnec_req
+FnecP_neq:
+        call FnecP_req
         xor rax, 1
         mov [rdi], rax
         ret
@@ -8427,8 +8427,8 @@ Fnec_neq:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_geq:
-        call Fnec_rlt
+FnecP_geq:
+        call FnecP_rlt
         xor rax, 1
         mov [rdi], rax
         ret
@@ -8444,8 +8444,8 @@ Fnec_geq:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_leq:
-        call Fnec_rgt
+FnecP_leq:
+        call FnecP_rgt
         xor rax, 1
         mov [rdi], rax
         ret
@@ -8464,7 +8464,7 @@ Fnec_leq:
 ; Modified Registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_rawIsEq:
+FnecP_rawIsEq:
 
         mov     rax, [rsi + 0]
         cmp     [rdi + 0], rax
@@ -8501,7 +8501,7 @@ rawIsEq_ret0:
 ; Modified Registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_rawIsZero:
+FnecP_rawIsZero:
 
         cmp     qword [rdi + 0], $0
         jne     rawIsZero_ret0
@@ -8545,7 +8545,7 @@ rawIsZero_ret0:
 ; Modified Registers:
 ;    rax, rcx, r8
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_land:
+FnecP_land:
 
 
 
@@ -8646,7 +8646,7 @@ done_127:
 ; Modified Registers:
 ;    rax, rcx, r8
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_lor:
+FnecP_lor:
 
 
 
@@ -8746,7 +8746,7 @@ done_135:
 ; Modified Registers:
 ;    rax, rax, r8
 ;;;;;;;;;;;;;;;;;;;;;;
-Fnec_lnot:
+FnecP_lnot:
 
 
 
@@ -8809,7 +8809,7 @@ lnot_retOne:
 ; Returs:
 ;   rax <= 1 if true 0 if false
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fnec_isTrue:
+FnecP_isTrue:
         
 
 
@@ -8859,17 +8859,17 @@ done_143:
 
 
         section .data
-Fnec_q:
+FnecP_q:
         dd      0
         dd      0x80000000
-Fnec_rawq:
+FnecP_rawq:
 q       dq      0xbfd25e8cd0364141,0xbaaedce6af48a03b,0xfffffffffffffffe,0xffffffffffffffff
 half    dq      0xdfe92f46681b20a0,0x5d576e7357a4501d,0xffffffffffffffff,0x7fffffffffffffff
 R2      dq      0x896cf21467d7d140,0x741496c20e7cf878,0xe697f5e45bcd07c6,0x9d671cd581c69bc5
-Fnec_R3:
+FnecP_R3:
         dd      0
         dd      0x80000000
-Fnec_rawR3:
+FnecP_rawR3:
 R3      dq      0x7bc0cfe0e9ff41ed,0x0017648444d4322c,0xb1b31347f1d0b2da,0x555d800c18ef116d
 lboMask dq      0xffffffffffffffff
 np      dq      0x4b0dff665588b13f

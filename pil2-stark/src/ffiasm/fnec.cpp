@@ -14,36 +14,36 @@ static size_t nBits;
 static bool initialized = false;
 
 
-void Fnec_toMpz(mpz_t r, PFnecElement pE) {
+void FnecP_toMpz(mpz_t r, PFnecElement pE) {
     FnecElement tmp;
-    Fnec_toNormal(&tmp, pE);
-    if (!(tmp.type & Fnec_LONG)) {
+    FnecP_toNormal(&tmp, pE);
+    if (!(tmp.type & FnecP_LONG)) {
         mpz_set_si(r, tmp.shortVal);
         if (tmp.shortVal<0) {
             mpz_add(r, r, q);
         }
     } else {
-        mpz_import(r, Fnec_N64, -1, 8, -1, 0, (const void *)tmp.longVal);
+        mpz_import(r, FnecP_N64, -1, 8, -1, 0, (const void *)tmp.longVal);
     }
 }
 
-void Fnec_fromMpz(PFnecElement pE, mpz_t v) {
+void FnecP_fromMpz(PFnecElement pE, mpz_t v) {
     if (mpz_fits_sint_p(v)) {
-        pE->type = Fnec_SHORT;
+        pE->type = FnecP_SHORT;
         pE->shortVal = mpz_get_si(v);
     } else {
-        pE->type = Fnec_LONG;
-        for (int i=0; i<Fnec_N64; i++) pE->longVal[i] = 0;
+        pE->type = FnecP_LONG;
+        for (int i=0; i<FnecP_N64; i++) pE->longVal[i] = 0;
         mpz_export((void *)(pE->longVal), NULL, -1, 8, -1, 0, v);
     }
 }
 
 
-bool Fnec_init() {
+bool FnecP_init() {
     if (initialized) return false;
     initialized = true;
     mpz_init(q);
-    mpz_import(q, Fnec_N64, -1, 8, -1, 0, (const void *)Fnec_q.longVal);
+    mpz_import(q, FnecP_N64, -1, 8, -1, 0, (const void *)FnecP_q.longVal);
     mpz_init_set_ui(zero, 0);
     mpz_init_set_ui(one, 1);
     nBits = mpz_sizeinbase (q, 2);
@@ -53,18 +53,18 @@ bool Fnec_init() {
     return true;
 }
 
-void Fnec_str2element(PFnecElement pE, char const *s) {
+void FnecP_str2element(PFnecElement pE, char const *s) {
     mpz_t mr;
     mpz_init_set_str(mr, s, 10);
     mpz_fdiv_r(mr, mr, q);
-    Fnec_fromMpz(pE, mr);
+    FnecP_fromMpz(pE, mr);
     mpz_clear(mr);
 }
 
-char *Fnec_element2str(PFnecElement pE) {
+char *FnecP_element2str(PFnecElement pE) {
     FnecElement tmp;
     mpz_t r;
-    if (!(pE->type & Fnec_LONG)) {
+    if (!(pE->type & FnecP_LONG)) {
         if (pE->shortVal>=0) {
             char *r = new char[32];
             snprintf(r, 32, "%d", pE->shortVal);
@@ -74,16 +74,16 @@ char *Fnec_element2str(PFnecElement pE) {
             mpz_add(r, r, q);
         }
     } else {
-        Fnec_toNormal(&tmp, pE);
+        FnecP_toNormal(&tmp, pE);
         mpz_init(r);
-        mpz_import(r, Fnec_N64, -1, 8, -1, 0, (const void *)tmp.longVal);
+        mpz_import(r, FnecP_N64, -1, 8, -1, 0, (const void *)tmp.longVal);
     }
     char *res = mpz_get_str (0, 10, r);
     mpz_clear(r);
     return res;
 }
 
-void Fnec_idiv(PFnecElement r, PFnecElement a, PFnecElement b) {
+void FnecP_idiv(PFnecElement r, PFnecElement a, PFnecElement b) {
     mpz_t ma;
     mpz_t mb;
     mpz_t mr;
@@ -91,23 +91,23 @@ void Fnec_idiv(PFnecElement r, PFnecElement a, PFnecElement b) {
     mpz_init(mb);
     mpz_init(mr);
 
-    Fnec_toMpz(ma, a);
+    FnecP_toMpz(ma, a);
     // char *s1 = mpz_get_str (0, 10, ma);
     // printf("s1 %s\n", s1);
-    Fnec_toMpz(mb, b);
+    FnecP_toMpz(mb, b);
     // char *s2 = mpz_get_str (0, 10, mb);
     // printf("s2 %s\n", s2);
     mpz_fdiv_q(mr, ma, mb);
     // char *sr = mpz_get_str (0, 10, mr);
     // printf("r %s\n", sr);
-    Fnec_fromMpz(r, mr);
+    FnecP_fromMpz(r, mr);
 
     mpz_clear(ma);
     mpz_clear(mb);
     mpz_clear(mr);
 }
 
-void Fnec_mod(PFnecElement r, PFnecElement a, PFnecElement b) {
+void FnecP_mod(PFnecElement r, PFnecElement a, PFnecElement b) {
     mpz_t ma;
     mpz_t mb;
     mpz_t mr;
@@ -115,17 +115,17 @@ void Fnec_mod(PFnecElement r, PFnecElement a, PFnecElement b) {
     mpz_init(mb);
     mpz_init(mr);
 
-    Fnec_toMpz(ma, a);
-    Fnec_toMpz(mb, b);
+    FnecP_toMpz(ma, a);
+    FnecP_toMpz(mb, b);
     mpz_fdiv_r(mr, ma, mb);
-    Fnec_fromMpz(r, mr);
+    FnecP_fromMpz(r, mr);
 
     mpz_clear(ma);
     mpz_clear(mb);
     mpz_clear(mr);
 }
 
-void Fnec_pow(PFnecElement r, PFnecElement a, PFnecElement b) {
+void FnecP_pow(PFnecElement r, PFnecElement a, PFnecElement b) {
     mpz_t ma;
     mpz_t mb;
     mpz_t mr;
@@ -133,44 +133,44 @@ void Fnec_pow(PFnecElement r, PFnecElement a, PFnecElement b) {
     mpz_init(mb);
     mpz_init(mr);
 
-    Fnec_toMpz(ma, a);
-    Fnec_toMpz(mb, b);
+    FnecP_toMpz(ma, a);
+    FnecP_toMpz(mb, b);
     mpz_powm(mr, ma, mb, q);
-    Fnec_fromMpz(r, mr);
+    FnecP_fromMpz(r, mr);
 
     mpz_clear(ma);
     mpz_clear(mb);
     mpz_clear(mr);
 }
 
-void Fnec_inv(PFnecElement r, PFnecElement a) {
+void FnecP_inv(PFnecElement r, PFnecElement a) {
     mpz_t ma;
     mpz_t mr;
     mpz_init(ma);
     mpz_init(mr);
 
-    Fnec_toMpz(ma, a);
+    FnecP_toMpz(ma, a);
     mpz_invert(mr, ma, q);
-    Fnec_fromMpz(r, mr);
+    FnecP_fromMpz(r, mr);
     mpz_clear(ma);
     mpz_clear(mr);
 }
 
-void Fnec_div(PFnecElement r, PFnecElement a, PFnecElement b) {
+void FnecP_div(PFnecElement r, PFnecElement a, PFnecElement b) {
     FnecElement tmp;
-    Fnec_inv(&tmp, b);
-    Fnec_mul(r, a, &tmp);
+    FnecP_inv(&tmp, b);
+    FnecP_mul(r, a, &tmp);
 }
 
 #ifdef __USE_ASSEMBLY__
-void Fnec_fail() {
+void FnecP_fail() {
     assert(false);
 }
 #endif
 
 RawFnecP::RawFnecP() {
 #ifdef __USE_ASSEMBLY__
-    Fnec_init();
+    FnecP_init();
     set(fZero, 0);
     set(fOne, 1);
     neg(fNegOne, fOne);
@@ -184,9 +184,9 @@ void RawFnecP::fromString(Element &r, const std::string &s, uint32_t radix) {
     mpz_t mr;
     mpz_init_set_str(mr, s.c_str(), radix);
     mpz_fdiv_r(mr, mr, q);
-    for (int i=0; i<Fnec_N64; i++) r.v[i] = 0;
+    for (int i=0; i<FnecP_N64; i++) r.v[i] = 0;
     mpz_export((void *)(r.v), NULL, -1, 8, -1, 0, mr);
-    Fnec_rawToMontgomery(r.v,r.v);
+    FnecP_rawToMontgomery(r.v,r.v);
     mpz_clear(mr);
 }
 
@@ -194,9 +194,9 @@ void RawFnecP::fromUI(Element &r, unsigned long int v) {
     mpz_t mr;
     mpz_init(mr);
     mpz_set_ui(mr, v);
-    for (int i=0; i<Fnec_N64; i++) r.v[i] = 0;
+    for (int i=0; i<FnecP_N64; i++) r.v[i] = 0;
     mpz_export((void *)(r.v), NULL, -1, 8, -1, 0, mr);
-    Fnec_rawToMontgomery(r.v,r.v);
+    FnecP_rawToMontgomery(r.v,r.v);
     mpz_clear(mr);
 }
 
@@ -216,18 +216,18 @@ void RawFnecP::set(Element &r, int value) {
 
   mpz_export((void *)(r.v), NULL, -1, 8, -1, 0, mr);
       
-  for (int i=0; i<Fnec_N64; i++) r.v[i] = 0;
+  for (int i=0; i<FnecP_N64; i++) r.v[i] = 0;
   mpz_export((void *)(r.v), NULL, -1, 8, -1, 0, mr);
-  Fnec_rawToMontgomery(r.v,r.v);
+  FnecP_rawToMontgomery(r.v,r.v);
   mpz_clear(mr);
 }
 
 std::string RawFnecP::toString(const Element &a, uint32_t radix) {
     Element tmp;
     mpz_t r;
-    Fnec_rawFromMontgomery(tmp.v, a.v);
+    FnecP_rawFromMontgomery(tmp.v, a.v);
     mpz_init(r);
-    mpz_import(r, Fnec_N64, -1, 8, -1, 0, (const void *)(tmp.v));
+    mpz_import(r, FnecP_N64, -1, 8, -1, 0, (const void *)(tmp.v));
     char *res = mpz_get_str (0, radix, r);
     mpz_clear(r);
     std::string resS(res);
@@ -238,14 +238,14 @@ std::string RawFnecP::toString(const Element &a, uint32_t radix) {
 void RawFnecP::inv(Element &r, const Element &a) {
     mpz_t mr;
     mpz_init(mr);
-    mpz_import(mr, Fnec_N64, -1, 8, -1, 0, (const void *)(a.v));
+    mpz_import(mr, FnecP_N64, -1, 8, -1, 0, (const void *)(a.v));
     mpz_invert(mr, mr, q);
 
 
-    for (int i=0; i<Fnec_N64; i++) r.v[i] = 0;
+    for (int i=0; i<FnecP_N64; i++) r.v[i] = 0;
     mpz_export((void *)(r.v), NULL, -1, 8, -1, 0, mr);
 
-    Fnec_rawMMul(r.v, r.v,Fnec_rawR3);
+    FnecP_rawMMul(r.v, r.v,FnecP_rawR3);
     mpz_clear(mr);
 }
 
@@ -279,20 +279,20 @@ void RawFnecP::exp(Element &r, const Element &base, uint8_t* scalar, unsigned in
 
 void RawFnecP::toMpz(mpz_t r, const Element &a) {
     Element tmp;
-    Fnec_rawFromMontgomery(tmp.v, a.v);
-    mpz_import(r, Fnec_N64, -1, 8, -1, 0, (const void *)tmp.v);
+    FnecP_rawFromMontgomery(tmp.v, a.v);
+    mpz_import(r, FnecP_N64, -1, 8, -1, 0, (const void *)tmp.v);
 }
 
 void RawFnecP::fromMpz(Element &r, const mpz_t a) {
-    for (int i=0; i<Fnec_N64; i++) r.v[i] = 0;
+    for (int i=0; i<FnecP_N64; i++) r.v[i] = 0;
     mpz_export((void *)(r.v), NULL, -1, 8, -1, 0, a);
-    Fnec_rawToMontgomery(r.v, r.v);
+    FnecP_rawToMontgomery(r.v, r.v);
 }
 
 int RawFnecP::toRprBE(const Element &element, uint8_t *data, int bytes)
 {
-    if (bytes < Fnec_N64 * 8) {
-      return -(Fnec_N64 * 8);
+    if (bytes < FnecP_N64 * 8) {
+      return -(FnecP_N64 * 8);
     }
 
     mpz_t r;
@@ -303,25 +303,25 @@ int RawFnecP::toRprBE(const Element &element, uint8_t *data, int bytes)
     mpz_export(data, NULL, 1, 8, 1, 0, r);
   
     mpz_clear(r);
-    return Fnec_N64 * 8;
+    return FnecP_N64 * 8;
 }
 
 int RawFnecP::fromRprBE(Element &element, const uint8_t *data, int bytes)
 {
-    if (bytes < Fnec_N64 * 8) {
-      return -(Fnec_N64* 8);
+    if (bytes < FnecP_N64 * 8) {
+      return -(FnecP_N64* 8);
     }
     mpz_t r;
     mpz_init(r);
 
-    mpz_import(r, Fnec_N64 * 8, 0, 1, 0, 0, data);
+    mpz_import(r, FnecP_N64 * 8, 0, 1, 0, 0, data);
     fromMpz(element, r);
 
     mpz_clear(r);
-    return Fnec_N64 * 8;
+    return FnecP_N64 * 8;
 }
 
-static bool init = Fnec_init();
+static bool init = FnecP_init();
 
 RawFnecP RawFnecP::field;
 

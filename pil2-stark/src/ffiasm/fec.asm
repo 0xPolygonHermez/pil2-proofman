@@ -1,49 +1,49 @@
 
 
-        global Fec_copy
-        global Fec_copyn
-        global Fec_add
-        global Fec_sub
-        global Fec_neg
-        global Fec_mul
-        global Fec_square
-        global Fec_band
-        global Fec_bor
-        global Fec_bxor
-        global Fec_bnot
-        global Fec_shl
-        global Fec_shr
-        global Fec_eq
-        global Fec_neq
-        global Fec_lt
-        global Fec_gt
-        global Fec_leq
-        global Fec_geq
-        global Fec_land
-        global Fec_lor
-        global Fec_lnot
-        global Fec_toNormal
-        global Fec_toLongNormal
-        global Fec_toMontgomery
-        global Fec_toInt
-        global Fec_isTrue
-        global Fec_q
-        global Fec_R3
+        global FecP_copy
+        global FecP_copyn
+        global FecP_add
+        global FecP_sub
+        global FecP_neg
+        global FecP_mul
+        global FecP_square
+        global FecP_band
+        global FecP_bor
+        global FecP_bxor
+        global FecP_bnot
+        global FecP_shl
+        global FecP_shr
+        global FecP_eq
+        global FecP_neq
+        global FecP_lt
+        global FecP_gt
+        global FecP_leq
+        global FecP_geq
+        global FecP_land
+        global FecP_lor
+        global FecP_lnot
+        global FecP_toNormal
+        global FecP_toLongNormal
+        global FecP_toMontgomery
+        global FecP_toInt
+        global FecP_isTrue
+        global FecP_q
+        global FecP_R3
 
-        global Fec_rawCopy
-        global Fec_rawZero
-        global Fec_rawSwap
-        global Fec_rawAdd
-        global Fec_rawSub
-        global Fec_rawNeg
-        global Fec_rawMMul
-        global Fec_rawMSquare
-        global Fec_rawToMontgomery
-        global Fec_rawFromMontgomery
-        global Fec_rawIsEq
-        global Fec_rawIsZero
-        global Fec_rawq
-        global Fec_rawR3
+        global FecP_rawCopy
+        global FecP_rawZero
+        global FecP_rawSwap
+        global FecP_rawAdd
+        global FecP_rawSub
+        global FecP_rawNeg
+        global FecP_rawMMul
+        global FecP_rawMSquare
+        global FecP_rawToMontgomery
+        global FecP_rawFromMontgomery
+        global FecP_rawIsEq
+        global FecP_rawIsZero
+        global FecP_rawq
+        global FecP_rawR3
 
         extern FecP_fail
         DEFAULT REL
@@ -76,7 +76,7 @@
 ; Nidified registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fec_copy:
+FecP_copy:
 
         mov     rax, [rsi + 0]
         mov     [rdi + 0], rax
@@ -107,7 +107,7 @@ Fec_copy:
 ; Nidified registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fec_rawCopy:
+FecP_rawCopy:
 
         mov     rax, [rsi + 0]
         mov     [rdi + 0], rax
@@ -134,7 +134,7 @@ Fec_rawCopy:
 ; Nidified registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fec_rawZero:
+FecP_rawZero:
         xor     rax, rax
 
         mov     [rdi + 0], rax
@@ -158,7 +158,7 @@ Fec_rawZero:
 ; Nidified registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fec_rawSwap:
+FecP_rawSwap:
 
         mov     rax, [rsi + 0]
         mov     rcx, [rdi + 0]
@@ -195,8 +195,8 @@ Fec_rawSwap:
 ; Nidified registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fec_copyn:
-Fec_copyn_loop:
+FecP_copyn:
+FecP_copyn_loop:
         mov     r8, rsi
         mov     r9, rdi
         mov     rax, 5
@@ -268,50 +268,50 @@ u64toLong_adjust_neg:
 ; Returs:
 ;   rax <= The value
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fec_toInt:
+FecP_toInt:
         mov     rax, [rdi]
         bt      rax, 63
-        jc      Fec_long
+        jc      FecP_long
         movsx   rax, eax
         ret
 
-Fec_long:
+FecP_long:
         push   rbp
         push   rsi
         push   rdx
         mov    rbp, rsp
         bt      rax, 62
-        jnc     Fec_longNormal
-Fec_longMontgomery:
+        jnc     FecP_longNormal
+FecP_longMontgomery:
 
         mov  r8, rdi
         sub  rsp, 40
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
 
 
-Fec_longNormal:
+FecP_longNormal:
         mov     rax, [rdi + 8]
         mov     rcx, rax
         shr     rcx, 31
-        jnz     Fec_longNeg
+        jnz     FecP_longNeg
 
         mov     rcx, [rdi + 16]
         test    rcx, rcx
-        jnz     Fec_longNeg
+        jnz     FecP_longNeg
 
         mov     rcx, [rdi + 24]
         test    rcx, rcx
-        jnz     Fec_longNeg
+        jnz     FecP_longNeg
 
         mov     rcx, [rdi + 32]
         test    rcx, rcx
-        jnz     Fec_longNeg
+        jnz     FecP_longNeg
 
         mov rsp, rbp
         pop rdx
@@ -319,34 +319,34 @@ Fec_longNormal:
         pop rbp
         ret
 
-Fec_longNeg:
+FecP_longNeg:
         mov     rax, [rdi + 8]
         sub     rax, [q]
-        jnc     Fec_longErr
+        jnc     FecP_longErr
 
         mov     rcx, [rdi + 16]
         sbb     rcx, [q + 8]
-        jnc     Fec_longErr
+        jnc     FecP_longErr
 
         mov     rcx, [rdi + 24]
         sbb     rcx, [q + 16]
-        jnc     Fec_longErr
+        jnc     FecP_longErr
 
         mov     rcx, [rdi + 32]
         sbb     rcx, [q + 24]
-        jnc     Fec_longErr
+        jnc     FecP_longErr
 
         mov     rcx, rax
         sar     rcx, 31
         add     rcx, 1
-        jnz     Fec_longErr
+        jnz     FecP_longErr
         mov rsp, rbp
         pop rdx
         pop rsi
         pop rbp
         ret
 
-Fec_longErr:
+FecP_longErr:
         push    rdi
         mov     rdi, 0
         call    FecP_fail
@@ -361,7 +361,7 @@ Fec_longErr:
 
 
 
-Fec_rawMMul:
+FecP_rawMMul:
     push rbp
     push r15
     push r14
@@ -524,25 +524,25 @@ Fec_rawMMul:
 
 ;comparison
     test r15,r15
-jnz Fec_rawMMul_sq
+jnz FecP_rawMMul_sq
     cmp r14,[q + 24]
-    jc Fec_rawMMul_done
-    jnz Fec_rawMMul_sq
+    jc FecP_rawMMul_done
+    jnz FecP_rawMMul_sq
     cmp r13,[q + 16]
-    jc Fec_rawMMul_done
-    jnz Fec_rawMMul_sq
+    jc FecP_rawMMul_done
+    jnz FecP_rawMMul_sq
     cmp r12,[q + 8]
-    jc Fec_rawMMul_done
-    jnz Fec_rawMMul_sq
+    jc FecP_rawMMul_done
+    jnz FecP_rawMMul_sq
     cmp r11,[q + 0]
-    jc Fec_rawMMul_done
-    jnz Fec_rawMMul_sq
-Fec_rawMMul_sq:
+    jc FecP_rawMMul_done
+    jnz FecP_rawMMul_sq
+FecP_rawMMul_sq:
     sub r11,[q +0]
     sbb r12,[q +8]
     sbb r13,[q +16]
     sbb r14,[q +24]
-Fec_rawMMul_done:
+FecP_rawMMul_done:
     mov [rdi + 0],r11
     mov [rdi + 8],r12
     mov [rdi + 16],r13
@@ -553,7 +553,7 @@ Fec_rawMMul_done:
     pop r15
     pop rbp
     ret
-Fec_rawMSquare:
+FecP_rawMSquare:
     push rbp
     push r15
     push r14
@@ -716,25 +716,25 @@ Fec_rawMSquare:
 
 ;comparison
     test r15,r15
-jnz Fec_rawMSquare_sq
+jnz FecP_rawMSquare_sq
     cmp r14,[q + 24]
-    jc Fec_rawMSquare_done
-    jnz Fec_rawMSquare_sq
+    jc FecP_rawMSquare_done
+    jnz FecP_rawMSquare_sq
     cmp r13,[q + 16]
-    jc Fec_rawMSquare_done
-    jnz Fec_rawMSquare_sq
+    jc FecP_rawMSquare_done
+    jnz FecP_rawMSquare_sq
     cmp r12,[q + 8]
-    jc Fec_rawMSquare_done
-    jnz Fec_rawMSquare_sq
+    jc FecP_rawMSquare_done
+    jnz FecP_rawMSquare_sq
     cmp r11,[q + 0]
-    jc Fec_rawMSquare_done
-    jnz Fec_rawMSquare_sq
-Fec_rawMSquare_sq:
+    jc FecP_rawMSquare_done
+    jnz FecP_rawMSquare_sq
+FecP_rawMSquare_sq:
     sub r11,[q +0]
     sbb r12,[q +8]
     sbb r13,[q +16]
     sbb r14,[q +24]
-Fec_rawMSquare_done:
+FecP_rawMSquare_done:
     mov [rdi + 0],r11
     mov [rdi + 8],r12
     mov [rdi + 16],r13
@@ -745,7 +745,7 @@ Fec_rawMSquare_done:
     pop r15
     pop rbp
     ret
-Fec_rawMMul1:
+FecP_rawMMul1:
     push rbp
     push r15
     push r14
@@ -857,25 +857,25 @@ Fec_rawMMul1:
 
 ;comparison
     test r15,r15
-jnz Fec_rawMMul1_sq
+jnz FecP_rawMMul1_sq
     cmp r14,[q + 24]
-    jc Fec_rawMMul1_done
-    jnz Fec_rawMMul1_sq
+    jc FecP_rawMMul1_done
+    jnz FecP_rawMMul1_sq
     cmp r13,[q + 16]
-    jc Fec_rawMMul1_done
-    jnz Fec_rawMMul1_sq
+    jc FecP_rawMMul1_done
+    jnz FecP_rawMMul1_sq
     cmp r12,[q + 8]
-    jc Fec_rawMMul1_done
-    jnz Fec_rawMMul1_sq
+    jc FecP_rawMMul1_done
+    jnz FecP_rawMMul1_sq
     cmp r11,[q + 0]
-    jc Fec_rawMMul1_done
-    jnz Fec_rawMMul1_sq
-Fec_rawMMul1_sq:
+    jc FecP_rawMMul1_done
+    jnz FecP_rawMMul1_sq
+FecP_rawMMul1_sq:
     sub r11,[q +0]
     sbb r12,[q +8]
     sbb r13,[q +16]
     sbb r14,[q +24]
-Fec_rawMMul1_done:
+FecP_rawMMul1_done:
     mov [rdi + 0],r11
     mov [rdi + 8],r12
     mov [rdi + 16],r13
@@ -886,7 +886,7 @@ Fec_rawMMul1_done:
     pop r15
     pop rbp
     ret
-Fec_rawFromMontgomery:
+FecP_rawFromMontgomery:
     push rbp
     push r15
     push r14
@@ -992,25 +992,25 @@ Fec_rawFromMontgomery:
 
 ;comparison
     test r15,r15
-jnz Fec_rawFromMontgomery_sq
+jnz FecP_rawFromMontgomery_sq
     cmp r14,[q + 24]
-    jc Fec_rawFromMontgomery_done
-    jnz Fec_rawFromMontgomery_sq
+    jc FecP_rawFromMontgomery_done
+    jnz FecP_rawFromMontgomery_sq
     cmp r13,[q + 16]
-    jc Fec_rawFromMontgomery_done
-    jnz Fec_rawFromMontgomery_sq
+    jc FecP_rawFromMontgomery_done
+    jnz FecP_rawFromMontgomery_sq
     cmp r12,[q + 8]
-    jc Fec_rawFromMontgomery_done
-    jnz Fec_rawFromMontgomery_sq
+    jc FecP_rawFromMontgomery_done
+    jnz FecP_rawFromMontgomery_sq
     cmp r11,[q + 0]
-    jc Fec_rawFromMontgomery_done
-    jnz Fec_rawFromMontgomery_sq
-Fec_rawFromMontgomery_sq:
+    jc FecP_rawFromMontgomery_done
+    jnz FecP_rawFromMontgomery_sq
+FecP_rawFromMontgomery_sq:
     sub r11,[q +0]
     sbb r12,[q +8]
     sbb r13,[q +16]
     sbb r14,[q +24]
-Fec_rawFromMontgomery_done:
+FecP_rawFromMontgomery_done:
     mov [rdi + 0],r11
     mov [rdi + 8],r12
     mov [rdi + 16],r13
@@ -1029,10 +1029,10 @@ Fec_rawFromMontgomery_done:
 ;   rdi <= Pointer destination element
 ;   rsi <= Pointer to src element
 ;;;;;;;;;;;;;;;;;;;;
-Fec_rawToMontgomery:
+FecP_rawToMontgomery:
     push    rdx
     lea     rdx, [R2]
-    call    Fec_rawMMul
+    call    FecP_rawMMul
     pop     rdx
     ret
 
@@ -1045,7 +1045,7 @@ Fec_rawToMontgomery:
 ; Modified registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;
-Fec_toMontgomery:
+FecP_toMontgomery:
     mov     rax, [rsi]
     bt      rax, 62                     ; check if montgomery
     jc      toMontgomery_doNothing
@@ -1060,7 +1060,7 @@ toMontgomeryShort:
     cmp     rdx, 0
     js      negMontgomeryShort
 posMontgomeryShort:
-    call    Fec_rawMMul1
+    call    FecP_rawMMul1
     sub     rdi, 8
             mov r11b, 0x40
         shl r11d, 24
@@ -1069,7 +1069,7 @@ posMontgomeryShort:
 
 negMontgomeryShort:
     neg     rdx              ; Do the multiplication positive and then negate the result.
-    call    Fec_rawMMul1
+    call    FecP_rawMMul1
     mov     rsi, rdi
     call    rawNegL
     sub     rdi, 8
@@ -1084,7 +1084,7 @@ toMontgomeryLong:
     add     rdi, 8
     add     rsi, 8
     lea     rdx, [R2]
-    call    Fec_rawMMul
+    call    FecP_rawMMul
     sub     rsi, 8
     sub     rdi, 8
             mov r11b, 0xC0
@@ -1094,7 +1094,7 @@ toMontgomeryLong:
 
 
 toMontgomery_doNothing:
-    call   Fec_copy
+    call   FecP_copy
     ret
 
 ;;;;;;;;;;;;;;;;;;;;;;
@@ -1106,7 +1106,7 @@ toMontgomery_doNothing:
 ; Modified registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;
-Fec_toNormal:
+FecP_toNormal:
     mov     rax, [rsi]
     bt      rax, 62                     ; check if montgomery
     jnc     toNormal_doNothing
@@ -1116,7 +1116,7 @@ Fec_toNormal:
 toNormalLong:
     add     rdi, 8
     add     rsi, 8
-    call    Fec_rawFromMontgomery
+    call    FecP_rawFromMontgomery
     sub     rsi, 8
     sub     rdi, 8
             mov r11b, 0x80
@@ -1125,7 +1125,7 @@ toNormalLong:
     ret
 
 toNormal_doNothing:
-    call   Fec_copy
+    call   FecP_copy
     ret
 
 ;;;;;;;;;;;;;;;;;;;;;;
@@ -1137,19 +1137,19 @@ toNormal_doNothing:
 ; Modified registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;
-Fec_toLongNormal:
+FecP_toLongNormal:
     mov     rax, [rsi]
     bt      rax, 63                     ; check if long
     jnc     toLongNormal_fromShort
     bt      rax, 62                     ; check if montgomery
     jc      toLongNormal_fromMontgomery
-    call    Fec_copy              ; It is already long
+    call    FecP_copy              ; It is already long
     ret
 
 toLongNormal_fromMontgomery:
     add     rdi, 8
     add     rsi, 8
-    call    Fec_rawFromMontgomery
+    call    FecP_rawFromMontgomery
     sub     rsi, 8
     sub     rdi, 8
             mov r11b, 0x80
@@ -1189,7 +1189,7 @@ toLongNormal_fromShort:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_add:
+FecP_add:
         push   rbp
         push   rsi
         push   rdx
@@ -1282,7 +1282,7 @@ add_l1ms2n:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toMontgomery
+        call FecP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -1368,7 +1368,7 @@ add_s1nl2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toMontgomery
+        call FecP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -1440,7 +1440,7 @@ add_l1nl2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toMontgomery
+        call FecP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -1473,7 +1473,7 @@ add_l1ml2n:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toMontgomery
+        call FecP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -1524,7 +1524,7 @@ add_l1ml2m:
 ;    rax
 ;;;;;;;;;;;;;;;;;;;;;;
 rawAddLL:
-Fec_rawAdd:
+FecP_rawAdd:
         ; Add component by component with carry
 
         mov rax, [rsi + 0]
@@ -1686,7 +1686,7 @@ rawAddLS_done:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_sub:
+FecP_sub:
         push   rbp
         push   rsi
         push   rdx
@@ -1778,7 +1778,7 @@ sub_l1ms2n:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toMontgomery
+        call FecP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -1872,7 +1872,7 @@ sub_s1nl2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toMontgomery
+        call FecP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -1944,7 +1944,7 @@ sub_l1nl2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toMontgomery
+        call FecP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -1977,7 +1977,7 @@ sub_l1ml2n:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toMontgomery
+        call FecP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -2133,7 +2133,7 @@ rawSubSL_done:
 ;    rax
 ;;;;;;;;;;;;;;;;;;;;;;
 rawSubLL:
-Fec_rawSub:
+FecP_rawSub:
         ; Substract first digit
 
         mov rax, [rsi + 0]
@@ -2259,7 +2259,7 @@ rawNegSL_done:
 ;   rdi <= Pointer to result
 ;   [rdi] = -[rsi]
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_neg:
+FecP_neg:
         mov    rax, [rsi]
         bt     rax, 63          ; Check if is short first operand
         jc     neg_l
@@ -2305,7 +2305,7 @@ neg_l:
 ;   [rdi] = - [rsi]
 ;;;;;;;;;;;;;;;;;;;;;;
 rawNegL:
-Fec_rawNeg:
+FecP_rawNeg:
         ; Compare is zero
 
         xor rax, rax
@@ -2382,7 +2382,7 @@ doNegate:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_square:
+FecP_square:
         mov    r8, [rsi]
         bt     r8, 63          ; Check if is short first operand
         jc     square_l1
@@ -2416,7 +2416,7 @@ square_l1n:
 
         add rdi, 8
         add rsi, 8
-        call Fec_rawMSquare
+        call FecP_rawMSquare
         sub rdi, 8
         sub rsi, 8
 
@@ -2425,7 +2425,7 @@ square_l1n:
         add rdi, 8
         mov rsi, rdi
         lea rdx, [R3]
-        call Fec_rawMMul
+        call FecP_rawMMul
         sub rdi, 8
         pop rsi
 
@@ -2438,7 +2438,7 @@ square_l1m:
 
         add rdi, 8
         add rsi, 8
-        call Fec_rawMSquare
+        call FecP_rawMSquare
         sub rdi, 8
         sub rsi, 8
 
@@ -2458,7 +2458,7 @@ square_l1m:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_mul:
+FecP_mul:
         mov    r8, [rsi]
         mov    r9, [rdx]
         bt     r8, 63          ; Check if is short first operand
@@ -2510,7 +2510,7 @@ mul_l1ns2n:
         
         jns tmp_5
         neg rdx
-        call Fec_rawMMul1
+        call FecP_rawMMul1
         mov rsi, rdi
         call rawNegL
         sub rdi, 8
@@ -2518,7 +2518,7 @@ mul_l1ns2n:
         
         jmp tmp_6
 tmp_5:
-        call Fec_rawMMul1
+        call FecP_rawMMul1
         sub rdi, 8
         pop rsi
 tmp_6:
@@ -2529,7 +2529,7 @@ tmp_6:
         add rdi, 8
         mov rsi, rdi
         lea rdx, [R3]
-        call Fec_rawMMul
+        call FecP_rawMMul
         sub rdi, 8
         pop rsi
 
@@ -2544,7 +2544,7 @@ mul_l1ns2m:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fec_rawMMul
+        call FecP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2567,7 +2567,7 @@ mul_l1ms2n:
         
         jns tmp_7
         neg rdx
-        call Fec_rawMMul1
+        call FecP_rawMMul1
         mov rsi, rdi
         call rawNegL
         sub rdi, 8
@@ -2575,7 +2575,7 @@ mul_l1ms2n:
         
         jmp tmp_8
 tmp_7:
-        call Fec_rawMMul1
+        call FecP_rawMMul1
         sub rdi, 8
         pop rsi
 tmp_8:
@@ -2591,7 +2591,7 @@ mul_l1ms2m:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fec_rawMMul
+        call FecP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2618,7 +2618,7 @@ mul_s1nl2n:
         
         jns tmp_9
         neg rdx
-        call Fec_rawMMul1
+        call FecP_rawMMul1
         mov rsi, rdi
         call rawNegL
         sub rdi, 8
@@ -2626,7 +2626,7 @@ mul_s1nl2n:
         
         jmp tmp_10
 tmp_9:
-        call Fec_rawMMul1
+        call FecP_rawMMul1
         sub rdi, 8
         pop rsi
 tmp_10:
@@ -2637,7 +2637,7 @@ tmp_10:
         add rdi, 8
         mov rsi, rdi
         lea rdx, [R3]
-        call Fec_rawMMul
+        call FecP_rawMMul
         sub rdi, 8
         pop rsi
 
@@ -2656,7 +2656,7 @@ mul_s1nl2m:
         
         jns tmp_11
         neg rdx
-        call Fec_rawMMul1
+        call FecP_rawMMul1
         mov rsi, rdi
         call rawNegL
         sub rdi, 8
@@ -2664,7 +2664,7 @@ mul_s1nl2m:
         
         jmp tmp_12
 tmp_11:
-        call Fec_rawMMul1
+        call FecP_rawMMul1
         sub rdi, 8
         pop rsi
 tmp_12:
@@ -2683,7 +2683,7 @@ mul_s1ml2n:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fec_rawMMul
+        call FecP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2697,7 +2697,7 @@ mul_s1ml2m:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fec_rawMMul
+        call FecP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2718,7 +2718,7 @@ mul_l1nl2n:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fec_rawMMul
+        call FecP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2727,7 +2727,7 @@ mul_l1nl2n:
         add rdi, 8
         mov rsi, rdi
         lea rdx, [R3]
-        call Fec_rawMMul
+        call FecP_rawMMul
         sub rdi, 8
         pop rsi
 
@@ -2741,7 +2741,7 @@ mul_l1nl2m:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fec_rawMMul
+        call FecP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2758,7 +2758,7 @@ mul_l1ml2n:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fec_rawMMul
+        call FecP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2772,7 +2772,7 @@ mul_l1ml2m:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fec_rawMMul
+        call FecP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2807,7 +2807,7 @@ mul_l1ml2m:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_band:
+FecP_band:
         push   rbp
         push   rsi
         push   rdx
@@ -2848,7 +2848,7 @@ tmp_13:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -2859,7 +2859,7 @@ tmp_13:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -3037,7 +3037,7 @@ tmp_16:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -3131,7 +3131,7 @@ and_l1ms2:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -3219,7 +3219,7 @@ tmp_21:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -3392,7 +3392,7 @@ tmp_26:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -3487,7 +3487,7 @@ and_s1l2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -3573,7 +3573,7 @@ tmp_31:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -3752,7 +3752,7 @@ and_l1nl2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -3844,7 +3844,7 @@ and_l1ml2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -3933,7 +3933,7 @@ and_l1ml2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -3945,7 +3945,7 @@ and_l1ml2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -4036,7 +4036,7 @@ tmp_43:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_bor:
+FecP_bor:
         push   rbp
         push   rsi
         push   rdx
@@ -4077,7 +4077,7 @@ tmp_44:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -4088,7 +4088,7 @@ tmp_44:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -4266,7 +4266,7 @@ tmp_47:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -4360,7 +4360,7 @@ or_l1ms2:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -4448,7 +4448,7 @@ tmp_52:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -4621,7 +4621,7 @@ tmp_57:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -4716,7 +4716,7 @@ or_s1l2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -4802,7 +4802,7 @@ tmp_62:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -4981,7 +4981,7 @@ or_l1nl2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -5073,7 +5073,7 @@ or_l1ml2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -5162,7 +5162,7 @@ or_l1ml2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -5174,7 +5174,7 @@ or_l1ml2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -5265,7 +5265,7 @@ tmp_74:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_bxor:
+FecP_bxor:
         push   rbp
         push   rsi
         push   rdx
@@ -5306,7 +5306,7 @@ tmp_75:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -5317,7 +5317,7 @@ tmp_75:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -5495,7 +5495,7 @@ tmp_78:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -5589,7 +5589,7 @@ xor_l1ms2:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -5677,7 +5677,7 @@ tmp_83:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -5850,7 +5850,7 @@ tmp_88:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -5945,7 +5945,7 @@ xor_s1l2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -6031,7 +6031,7 @@ tmp_93:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -6210,7 +6210,7 @@ xor_l1nl2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -6302,7 +6302,7 @@ xor_l1ml2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -6391,7 +6391,7 @@ xor_l1ml2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -6403,7 +6403,7 @@ xor_l1ml2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -6494,7 +6494,7 @@ tmp_105:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_bnot:
+FecP_bnot:
         push   rbp
         push   rsi
         push   rdx
@@ -6513,7 +6513,7 @@ bnot_s:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -6531,7 +6531,7 @@ bnot_l1m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -6626,10 +6626,10 @@ tmp_107:
 ;;;;;;;;;;;;;;;;;;;;;;
 rawShr:
         cmp rdx, 0
-        je Fec_rawCopy
+        je FecP_rawCopy
 
         cmp rdx, 256
-        jae Fec_rawZero
+        jae FecP_rawZero
 
 rawShr_nz:
         mov r8, rdx
@@ -6826,10 +6826,10 @@ rawShr_endif3_3:
 ;;;;;;;;;;;;;;;;;;;;;;
 rawShl:
         cmp rdx, 0
-        je Fec_rawCopy
+        je FecP_rawCopy
         
         cmp rdx, 256
-        jae Fec_rawZero
+        jae FecP_rawZero
 
         mov r8, rdx
         shr r8,6
@@ -7148,7 +7148,7 @@ tmp_111:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_shr:
+FecP_shr:
         push   rbp
         push   rsi
         push   rdi
@@ -7174,7 +7174,7 @@ Fec_shr:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7248,7 +7248,7 @@ tmp_115:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_shl:
+FecP_shl:
         push   rbp
         push   rsi
         push   rdi
@@ -7273,7 +7273,7 @@ Fec_shl:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7372,7 +7372,7 @@ do_shlcl:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7388,7 +7388,7 @@ do_shll:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7441,7 +7441,7 @@ do_shrcl:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7456,7 +7456,7 @@ do_shrl:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7500,7 +7500,7 @@ setzero:
 ; Modified Registers:
 ;    r8, r9, rax
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_rgt:
+FecP_rgt:
         push   rbp
         push   rsi
         push   rdx
@@ -7534,7 +7534,7 @@ rgt_l1ns2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7549,7 +7549,7 @@ rgt_l1ms2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7560,7 +7560,7 @@ rgt_l1ms2:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7579,7 +7579,7 @@ rgt_s1l2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7593,7 +7593,7 @@ rgt_s1l2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7605,7 +7605,7 @@ rgt_s1l2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7630,7 +7630,7 @@ rgt_l1nl2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7647,7 +7647,7 @@ rgt_l1ml2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7661,7 +7661,7 @@ rgt_l1ml2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7673,7 +7673,7 @@ rgt_l1ml2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7841,7 +7841,7 @@ rgt_ret1:
 ; Modified Registers:
 ;    r8, r9, rax
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_rlt:
+FecP_rlt:
         push   rbp
         push   rsi
         push   rdx
@@ -7875,7 +7875,7 @@ rlt_l1ns2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7890,7 +7890,7 @@ rlt_l1ms2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7901,7 +7901,7 @@ rlt_l1ms2:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7920,7 +7920,7 @@ rlt_s1l2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7934,7 +7934,7 @@ rlt_s1l2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7946,7 +7946,7 @@ rlt_s1l2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7971,7 +7971,7 @@ rlt_l1nl2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7988,7 +7988,7 @@ rlt_l1ml2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -8002,7 +8002,7 @@ rlt_l1ml2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -8014,7 +8014,7 @@ rlt_l1ml2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toNormal
+        call FecP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -8176,7 +8176,7 @@ rlt_ret1:
 ; Modified Registers:
 ;    r8, r9, rax
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_req:
+FecP_req:
         push   rbp
         push   rsi
         push   rdx
@@ -8210,7 +8210,7 @@ req_l1ns2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -8225,7 +8225,7 @@ req_l1ms2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toMontgomery
+        call FecP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -8244,7 +8244,7 @@ req_s1l2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toLongNormal
+        call FecP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -8258,7 +8258,7 @@ req_s1l2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toMontgomery
+        call FecP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -8282,7 +8282,7 @@ req_l1nl2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fec_toMontgomery
+        call FecP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -8300,7 +8300,7 @@ req_l1ml2n:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fec_toMontgomery
+        call FecP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -8362,8 +8362,8 @@ req_ret0:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_gt:
-        call Fec_rgt
+FecP_gt:
+        call FecP_rgt
         mov [rdi], rax
         ret
 
@@ -8378,8 +8378,8 @@ Fec_gt:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_lt:
-        call Fec_rlt
+FecP_lt:
+        call FecP_rlt
         mov [rdi], rax
         ret
 
@@ -8394,8 +8394,8 @@ Fec_lt:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_eq:
-        call Fec_req
+FecP_eq:
+        call FecP_req
         mov [rdi], rax
         ret
 
@@ -8410,8 +8410,8 @@ Fec_eq:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_neq:
-        call Fec_req
+FecP_neq:
+        call FecP_req
         xor rax, 1
         mov [rdi], rax
         ret
@@ -8427,8 +8427,8 @@ Fec_neq:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_geq:
-        call Fec_rlt
+FecP_geq:
+        call FecP_rlt
         xor rax, 1
         mov [rdi], rax
         ret
@@ -8444,8 +8444,8 @@ Fec_geq:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_leq:
-        call Fec_rgt
+FecP_leq:
+        call FecP_rgt
         xor rax, 1
         mov [rdi], rax
         ret
@@ -8464,7 +8464,7 @@ Fec_leq:
 ; Modified Registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_rawIsEq:
+FecP_rawIsEq:
 
         mov     rax, [rsi + 0]
         cmp     [rdi + 0], rax
@@ -8501,7 +8501,7 @@ rawIsEq_ret0:
 ; Modified Registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_rawIsZero:
+FecP_rawIsZero:
 
         cmp     qword [rdi + 0], $0
         jne     rawIsZero_ret0
@@ -8545,7 +8545,7 @@ rawIsZero_ret0:
 ; Modified Registers:
 ;    rax, rcx, r8
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_land:
+FecP_land:
 
 
 
@@ -8646,7 +8646,7 @@ done_127:
 ; Modified Registers:
 ;    rax, rcx, r8
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_lor:
+FecP_lor:
 
 
 
@@ -8746,7 +8746,7 @@ done_135:
 ; Modified Registers:
 ;    rax, rax, r8
 ;;;;;;;;;;;;;;;;;;;;;;
-Fec_lnot:
+FecP_lnot:
 
 
 
@@ -8809,7 +8809,7 @@ lnot_retOne:
 ; Returs:
 ;   rax <= 1 if true 0 if false
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fec_isTrue:
+FecP_isTrue:
         
 
 
@@ -8859,17 +8859,17 @@ done_143:
 
 
         section .data
-Fec_q:
+FecP_q:
         dd      0
         dd      0x80000000
-Fec_rawq:
+FecP_rawq:
 q       dq      0xfffffffefffffc2f,0xffffffffffffffff,0xffffffffffffffff,0xffffffffffffffff
 half    dq      0xffffffff7ffffe17,0xffffffffffffffff,0xffffffffffffffff,0x7fffffffffffffff
 R2      dq      0x000007a2000e90a1,0x0000000000000001,0x0000000000000000,0x0000000000000000
-Fec_R3:
+FecP_R3:
         dd      0
         dd      0x80000000
-Fec_rawR3:
+FecP_rawR3:
 R3      dq      0x002bb1e33795f671,0x0000000100000b73,0x0000000000000000,0x0000000000000000
 lboMask dq      0xffffffffffffffff
 np      dq      0xd838091dd2253531

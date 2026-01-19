@@ -16,24 +16,24 @@ static bool initialized = false;
 
 void FecP_toMpz(mpz_t r, PFecElement pE) {
     FecElement tmp;
-    Fec_toNormal(&tmp, pE);
-    if (!(tmp.type & Fec_LONG)) {
+    FecP_toNormal(&tmp, pE);
+    if (!(tmp.type & FecP_LONG)) {
         mpz_set_si(r, tmp.shortVal);
         if (tmp.shortVal<0) {
             mpz_add(r, r, q);
         }
     } else {
-        mpz_import(r, Fec_N64, -1, 8, -1, 0, (const void *)tmp.longVal);
+        mpz_import(r, FecP_N64, -1, 8, -1, 0, (const void *)tmp.longVal);
     }
 }
 
 void FecP_fromMpz(PFecElement pE, mpz_t v) {
     if (mpz_fits_sint_p(v)) {
-        pE->type = Fec_SHORT;
+        pE->type = FecP_SHORT;
         pE->shortVal = mpz_get_si(v);
     } else {
-        pE->type = Fec_LONG;
-        for (int i=0; i<Fec_N64; i++) pE->longVal[i] = 0;
+        pE->type = FecP_LONG;
+        for (int i=0; i<FecP_N64; i++) pE->longVal[i] = 0;
         mpz_export((void *)(pE->longVal), NULL, -1, 8, -1, 0, v);
     }
 }
@@ -44,7 +44,7 @@ bool FecP_init() {
     if (initialized) return false;
     initialized = true;
     mpz_init(q);
-    mpz_import(q, Fec_N64, -1, 8, -1, 0, (const void *)Fec_q.longVal);
+    mpz_import(q, FecP_N64, -1, 8, -1, 0, (const void *)FecP_q.longVal);
     mpz_init_set_ui(zero, 0);
     mpz_init_set_ui(one, 1);
     nBits = mpz_sizeinbase (q, 2);
@@ -66,7 +66,7 @@ void FecP_str2element(PFecElement pE, char const *s) {
 char *FecP_element2str(PFecElement pE) {
     FecElement tmp;
     mpz_t r;
-    if (!(pE->type & Fec_LONG)) {
+    if (!(pE->type & FecP_LONG)) {
         if (pE->shortVal>=0) {
             char *r = new char[32];
             snprintf(r, 32, "%d", pE->shortVal);
@@ -76,9 +76,9 @@ char *FecP_element2str(PFecElement pE) {
             mpz_add(r, r, q);
         }
     } else {
-        Fec_toNormal(&tmp, pE);
+        FecP_toNormal(&tmp, pE);
         mpz_init(r);
-        mpz_import(r, Fec_N64, -1, 8, -1, 0, (const void *)tmp.longVal);
+        mpz_import(r, FecP_N64, -1, 8, -1, 0, (const void *)tmp.longVal);
     }
     char *res = mpz_get_str (0, 10, r);
     mpz_clear(r);
@@ -161,7 +161,7 @@ void FecP_inv(PFecElement r, PFecElement a) {
 void FecP_div(PFecElement r, PFecElement a, PFecElement b) {
     FecElement tmp;
     FecP_inv(&tmp, b);
-    Fec_mul(r, a, &tmp);
+    FecP_mul(r, a, &tmp);
 }
 
 #ifdef __USE_ASSEMBLY__
@@ -186,9 +186,9 @@ void RawFecP::fromString(Element &r, const std::string &s, uint32_t radix) {
     mpz_t mr;
     mpz_init_set_str(mr, s.c_str(), radix);
     mpz_fdiv_r(mr, mr, q);
-    for (int i=0; i<Fec_N64; i++) r.v[i] = 0;
+    for (int i=0; i<FecP_N64; i++) r.v[i] = 0;
     mpz_export((void *)(r.v), NULL, -1, 8, -1, 0, mr);
-    Fec_rawToMontgomery(r.v,r.v);
+    FecP_rawToMontgomery(r.v,r.v);
     mpz_clear(mr);
 }
 
@@ -196,9 +196,9 @@ void RawFecP::fromUI(Element &r, unsigned long int v) {
     mpz_t mr;
     mpz_init(mr);
     mpz_set_ui(mr, v);
-    for (int i=0; i<Fec_N64; i++) r.v[i] = 0;
+    for (int i=0; i<FecP_N64; i++) r.v[i] = 0;
     mpz_export((void *)(r.v), NULL, -1, 8, -1, 0, mr);
-    Fec_rawToMontgomery(r.v,r.v);
+    FecP_rawToMontgomery(r.v,r.v);
     mpz_clear(mr);
 }
 
@@ -218,18 +218,18 @@ void RawFecP::set(Element &r, int value) {
 
   mpz_export((void *)(r.v), NULL, -1, 8, -1, 0, mr);
       
-  for (int i=0; i<Fec_N64; i++) r.v[i] = 0;
+  for (int i=0; i<FecP_N64; i++) r.v[i] = 0;
   mpz_export((void *)(r.v), NULL, -1, 8, -1, 0, mr);
-  Fec_rawToMontgomery(r.v,r.v);
+  FecP_rawToMontgomery(r.v,r.v);
   mpz_clear(mr);
 }
 
 std::string RawFecP::toString(const Element &a, uint32_t radix) {
     Element tmp;
     mpz_t r;
-    Fec_rawFromMontgomery(tmp.v, a.v);
+    FecP_rawFromMontgomery(tmp.v, a.v);
     mpz_init(r);
-    mpz_import(r, Fec_N64, -1, 8, -1, 0, (const void *)(tmp.v));
+    mpz_import(r, FecP_N64, -1, 8, -1, 0, (const void *)(tmp.v));
     char *res = mpz_get_str (0, radix, r);
     mpz_clear(r);
     std::string resS(res);
@@ -240,14 +240,14 @@ std::string RawFecP::toString(const Element &a, uint32_t radix) {
 void RawFecP::inv(Element &r, const Element &a) {
     mpz_t mr;
     mpz_init(mr);
-    mpz_import(mr, Fec_N64, -1, 8, -1, 0, (const void *)(a.v));
+    mpz_import(mr, FecP_N64, -1, 8, -1, 0, (const void *)(a.v));
     mpz_invert(mr, mr, q);
 
 
-    for (int i=0; i<Fec_N64; i++) r.v[i] = 0;
+    for (int i=0; i<FecP_N64; i++) r.v[i] = 0;
     mpz_export((void *)(r.v), NULL, -1, 8, -1, 0, mr);
 
-    Fec_rawMMul(r.v, r.v,Fec_rawR3);
+    FecP_rawMMul(r.v, r.v,FecP_rawR3);
     mpz_clear(mr);
 }
 
@@ -281,20 +281,20 @@ void RawFecP::exp(Element &r, const Element &base, uint8_t* scalar, unsigned int
 
 void RawFecP::toMpz(mpz_t r, const Element &a) {
     Element tmp;
-    Fec_rawFromMontgomery(tmp.v, a.v);
-    mpz_import(r, Fec_N64, -1, 8, -1, 0, (const void *)tmp.v);
+    FecP_rawFromMontgomery(tmp.v, a.v);
+    mpz_import(r, FecP_N64, -1, 8, -1, 0, (const void *)tmp.v);
 }
 
 void RawFecP::fromMpz(Element &r, const mpz_t a) {
-    for (int i=0; i<Fec_N64; i++) r.v[i] = 0;
+    for (int i=0; i<FecP_N64; i++) r.v[i] = 0;
     mpz_export((void *)(r.v), NULL, -1, 8, -1, 0, a);
-    Fec_rawToMontgomery(r.v, r.v);
+    FecP_rawToMontgomery(r.v, r.v);
 }
 
 int RawFecP::toRprBE(const Element &element, uint8_t *data, int bytes)
 {
-    if (bytes < Fec_N64 * 8) {
-      return -(Fec_N64 * 8);
+    if (bytes < FecP_N64 * 8) {
+      return -(FecP_N64 * 8);
     }
 
     mpz_t r;
@@ -305,22 +305,22 @@ int RawFecP::toRprBE(const Element &element, uint8_t *data, int bytes)
     mpz_export(data, NULL, 1, 8, 1, 0, r);
   
     mpz_clear(r);
-    return Fec_N64 * 8;
+    return FecP_N64 * 8;
 }
 
 int RawFecP::fromRprBE(Element &element, const uint8_t *data, int bytes)
 {
-    if (bytes < Fec_N64 * 8) {
-      return -(Fec_N64* 8);
+    if (bytes < FecP_N64 * 8) {
+      return -(FecP_N64* 8);
     }
     mpz_t r;
     mpz_init(r);
 
-    mpz_import(r, Fec_N64 * 8, 0, 1, 0, 0, data);
+    mpz_import(r, FecP_N64 * 8, 0, 1, 0, 0, data);
     fromMpz(element, r);
 
     mpz_clear(r);
-    return Fec_N64 * 8;
+    return FecP_N64 * 8;
 }
 
 static bool init = FecP_init();

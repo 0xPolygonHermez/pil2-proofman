@@ -1,49 +1,49 @@
 
 
-        global Fq_copy
-        global Fq_copyn
-        global Fq_add
-        global Fq_sub
-        global Fq_neg
-        global Fq_mul
-        global Fq_square
-        global Fq_band
-        global Fq_bor
-        global Fq_bxor
-        global Fq_bnot
-        global Fq_shl
-        global Fq_shr
-        global Fq_eq
-        global Fq_neq
-        global Fq_lt
-        global Fq_gt
-        global Fq_leq
-        global Fq_geq
-        global Fq_land
-        global Fq_lor
-        global Fq_lnot
-        global Fq_toNormal
-        global Fq_toLongNormal
-        global Fq_toMontgomery
-        global Fq_toInt
-        global Fq_isTrue
-        global Fq_q
-        global Fq_R3
+        global FqP_copy
+        global FqP_copyn
+        global FqP_add
+        global FqP_sub
+        global FqP_neg
+        global FqP_mul
+        global FqP_square
+        global FqP_band
+        global FqP_bor
+        global FqP_bxor
+        global FqP_bnot
+        global FqP_shl
+        global FqP_shr
+        global FqP_eq
+        global FqP_neq
+        global FqP_lt
+        global FqP_gt
+        global FqP_leq
+        global FqP_geq
+        global FqP_land
+        global FqP_lor
+        global FqP_lnot
+        global FqP_toNormal
+        global FqP_toLongNormal
+        global FqP_toMontgomery
+        global FqP_toInt
+        global FqP_isTrue
+        global FqP_q
+        global FqP_R3
 
-        global Fq_rawCopy
-        global Fq_rawZero
-        global Fq_rawSwap
-        global Fq_rawAdd
-        global Fq_rawSub
-        global Fq_rawNeg
-        global Fq_rawMMul
-        global Fq_rawMSquare
-        global Fq_rawToMontgomery
-        global Fq_rawFromMontgomery
-        global Fq_rawIsEq
-        global Fq_rawIsZero
-        global Fq_rawq
-        global Fq_rawR3
+        global FqP_rawCopy
+        global FqP_rawZero
+        global FqP_rawSwap
+        global FqP_rawAdd
+        global FqP_rawSub
+        global FqP_rawNeg
+        global FqP_rawMMul
+        global FqP_rawMSquare
+        global FqP_rawToMontgomery
+        global FqP_rawFromMontgomery
+        global FqP_rawIsEq
+        global FqP_rawIsZero
+        global FqP_rawq
+        global FqP_rawR3
 
         extern FqP_fail
         DEFAULT REL
@@ -76,7 +76,7 @@
 ; Nidified registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fq_copy:
+FqP_copy:
 
         mov     rax, [rsi + 0]
         mov     [rdi + 0], rax
@@ -107,7 +107,7 @@ Fq_copy:
 ; Nidified registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fq_rawCopy:
+FqP_rawCopy:
 
         mov     rax, [rsi + 0]
         mov     [rdi + 0], rax
@@ -134,7 +134,7 @@ Fq_rawCopy:
 ; Nidified registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fq_rawZero:
+FqP_rawZero:
         xor     rax, rax
 
         mov     [rdi + 0], rax
@@ -158,7 +158,7 @@ Fq_rawZero:
 ; Nidified registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fq_rawSwap:
+FqP_rawSwap:
 
         mov     rax, [rsi + 0]
         mov     rcx, [rdi + 0]
@@ -195,8 +195,8 @@ Fq_rawSwap:
 ; Nidified registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fq_copyn:
-Fq_copyn_loop:
+FqP_copyn:
+FqP_copyn_loop:
         mov     r8, rsi
         mov     r9, rdi
         mov     rax, 5
@@ -268,50 +268,50 @@ u64toLong_adjust_neg:
 ; Returs:
 ;   rax <= The value
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fq_toInt:
+FqP_toInt:
         mov     rax, [rdi]
         bt      rax, 63
-        jc      Fq_long
+        jc      FqP_long
         movsx   rax, eax
         ret
 
-Fq_long:
+FqP_long:
         push   rbp
         push   rsi
         push   rdx
         mov    rbp, rsp
         bt      rax, 62
-        jnc     Fq_longNormal
-Fq_longMontgomery:
+        jnc     FqP_longNormal
+FqP_longMontgomery:
 
         mov  r8, rdi
         sub  rsp, 40
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
 
 
-Fq_longNormal:
+FqP_longNormal:
         mov     rax, [rdi + 8]
         mov     rcx, rax
         shr     rcx, 31
-        jnz     Fq_longNeg
+        jnz     FqP_longNeg
 
         mov     rcx, [rdi + 16]
         test    rcx, rcx
-        jnz     Fq_longNeg
+        jnz     FqP_longNeg
 
         mov     rcx, [rdi + 24]
         test    rcx, rcx
-        jnz     Fq_longNeg
+        jnz     FqP_longNeg
 
         mov     rcx, [rdi + 32]
         test    rcx, rcx
-        jnz     Fq_longNeg
+        jnz     FqP_longNeg
 
         mov rsp, rbp
         pop rdx
@@ -319,34 +319,34 @@ Fq_longNormal:
         pop rbp
         ret
 
-Fq_longNeg:
+FqP_longNeg:
         mov     rax, [rdi + 8]
         sub     rax, [q]
-        jnc     Fq_longErr
+        jnc     FqP_longErr
 
         mov     rcx, [rdi + 16]
         sbb     rcx, [q + 8]
-        jnc     Fq_longErr
+        jnc     FqP_longErr
 
         mov     rcx, [rdi + 24]
         sbb     rcx, [q + 16]
-        jnc     Fq_longErr
+        jnc     FqP_longErr
 
         mov     rcx, [rdi + 32]
         sbb     rcx, [q + 24]
-        jnc     Fq_longErr
+        jnc     FqP_longErr
 
         mov     rcx, rax
         sar     rcx, 31
         add     rcx, 1
-        jnz     Fq_longErr
+        jnz     FqP_longErr
         mov rsp, rbp
         pop rdx
         pop rsi
         pop rbp
         ret
 
-Fq_longErr:
+FqP_longErr:
         push    rdi
         mov     rdi, 0
         call    FqP_fail
@@ -361,7 +361,7 @@ Fq_longErr:
 
 
 
-Fq_rawMMul:
+FqP_rawMMul:
     push r15
     push r14
     push r13
@@ -503,23 +503,23 @@ Fq_rawMMul:
 
 ;comparison
     cmp r14,[q + 24]
-    jc Fq_rawMMul_done
-    jnz Fq_rawMMul_sq
+    jc FqP_rawMMul_done
+    jnz FqP_rawMMul_sq
     cmp r13,[q + 16]
-    jc Fq_rawMMul_done
-    jnz Fq_rawMMul_sq
+    jc FqP_rawMMul_done
+    jnz FqP_rawMMul_sq
     cmp r12,[q + 8]
-    jc Fq_rawMMul_done
-    jnz Fq_rawMMul_sq
+    jc FqP_rawMMul_done
+    jnz FqP_rawMMul_sq
     cmp r11,[q + 0]
-    jc Fq_rawMMul_done
-    jnz Fq_rawMMul_sq
-Fq_rawMMul_sq:
+    jc FqP_rawMMul_done
+    jnz FqP_rawMMul_sq
+FqP_rawMMul_sq:
     sub r11,[q +0]
     sbb r12,[q +8]
     sbb r13,[q +16]
     sbb r14,[q +24]
-Fq_rawMMul_done:
+FqP_rawMMul_done:
     mov [rdi + 0],r11
     mov [rdi + 8],r12
     mov [rdi + 16],r13
@@ -529,7 +529,7 @@ Fq_rawMMul_done:
     pop r14
     pop r15
     ret
-Fq_rawMSquare:
+FqP_rawMSquare:
     push r15
     push r14
     push r13
@@ -671,23 +671,23 @@ Fq_rawMSquare:
 
 ;comparison
     cmp r14,[q + 24]
-    jc Fq_rawMSquare_done
-    jnz Fq_rawMSquare_sq
+    jc FqP_rawMSquare_done
+    jnz FqP_rawMSquare_sq
     cmp r13,[q + 16]
-    jc Fq_rawMSquare_done
-    jnz Fq_rawMSquare_sq
+    jc FqP_rawMSquare_done
+    jnz FqP_rawMSquare_sq
     cmp r12,[q + 8]
-    jc Fq_rawMSquare_done
-    jnz Fq_rawMSquare_sq
+    jc FqP_rawMSquare_done
+    jnz FqP_rawMSquare_sq
     cmp r11,[q + 0]
-    jc Fq_rawMSquare_done
-    jnz Fq_rawMSquare_sq
-Fq_rawMSquare_sq:
+    jc FqP_rawMSquare_done
+    jnz FqP_rawMSquare_sq
+FqP_rawMSquare_sq:
     sub r11,[q +0]
     sbb r12,[q +8]
     sbb r13,[q +16]
     sbb r14,[q +24]
-Fq_rawMSquare_done:
+FqP_rawMSquare_done:
     mov [rdi + 0],r11
     mov [rdi + 8],r12
     mov [rdi + 16],r13
@@ -697,7 +697,7 @@ Fq_rawMSquare_done:
     pop r14
     pop r15
     ret
-Fq_rawMMul1:
+FqP_rawMMul1:
     push r15
     push r14
     push r13
@@ -794,23 +794,23 @@ Fq_rawMMul1:
 
 ;comparison
     cmp r14,[q + 24]
-    jc Fq_rawMMul1_done
-    jnz Fq_rawMMul1_sq
+    jc FqP_rawMMul1_done
+    jnz FqP_rawMMul1_sq
     cmp r13,[q + 16]
-    jc Fq_rawMMul1_done
-    jnz Fq_rawMMul1_sq
+    jc FqP_rawMMul1_done
+    jnz FqP_rawMMul1_sq
     cmp r12,[q + 8]
-    jc Fq_rawMMul1_done
-    jnz Fq_rawMMul1_sq
+    jc FqP_rawMMul1_done
+    jnz FqP_rawMMul1_sq
     cmp r11,[q + 0]
-    jc Fq_rawMMul1_done
-    jnz Fq_rawMMul1_sq
-Fq_rawMMul1_sq:
+    jc FqP_rawMMul1_done
+    jnz FqP_rawMMul1_sq
+FqP_rawMMul1_sq:
     sub r11,[q +0]
     sbb r12,[q +8]
     sbb r13,[q +16]
     sbb r14,[q +24]
-Fq_rawMMul1_done:
+FqP_rawMMul1_done:
     mov [rdi + 0],r11
     mov [rdi + 8],r12
     mov [rdi + 16],r13
@@ -820,7 +820,7 @@ Fq_rawMMul1_done:
     pop r14
     pop r15
     ret
-Fq_rawFromMontgomery:
+FqP_rawFromMontgomery:
     push r15
     push r14
     push r13
@@ -912,23 +912,23 @@ Fq_rawFromMontgomery:
 
 ;comparison
     cmp r14,[q + 24]
-    jc Fq_rawFromMontgomery_done
-    jnz Fq_rawFromMontgomery_sq
+    jc FqP_rawFromMontgomery_done
+    jnz FqP_rawFromMontgomery_sq
     cmp r13,[q + 16]
-    jc Fq_rawFromMontgomery_done
-    jnz Fq_rawFromMontgomery_sq
+    jc FqP_rawFromMontgomery_done
+    jnz FqP_rawFromMontgomery_sq
     cmp r12,[q + 8]
-    jc Fq_rawFromMontgomery_done
-    jnz Fq_rawFromMontgomery_sq
+    jc FqP_rawFromMontgomery_done
+    jnz FqP_rawFromMontgomery_sq
     cmp r11,[q + 0]
-    jc Fq_rawFromMontgomery_done
-    jnz Fq_rawFromMontgomery_sq
-Fq_rawFromMontgomery_sq:
+    jc FqP_rawFromMontgomery_done
+    jnz FqP_rawFromMontgomery_sq
+FqP_rawFromMontgomery_sq:
     sub r11,[q +0]
     sbb r12,[q +8]
     sbb r13,[q +16]
     sbb r14,[q +24]
-Fq_rawFromMontgomery_done:
+FqP_rawFromMontgomery_done:
     mov [rdi + 0],r11
     mov [rdi + 8],r12
     mov [rdi + 16],r13
@@ -946,10 +946,10 @@ Fq_rawFromMontgomery_done:
 ;   rdi <= Pointer destination element
 ;   rsi <= Pointer to src element
 ;;;;;;;;;;;;;;;;;;;;
-Fq_rawToMontgomery:
+FqP_rawToMontgomery:
     push    rdx
     lea     rdx, [R2]
-    call    Fq_rawMMul
+    call    FqP_rawMMul
     pop     rdx
     ret
 
@@ -962,7 +962,7 @@ Fq_rawToMontgomery:
 ; Modified registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;
-Fq_toMontgomery:
+FqP_toMontgomery:
     mov     rax, [rsi]
     bt      rax, 62                     ; check if montgomery
     jc      toMontgomery_doNothing
@@ -977,7 +977,7 @@ toMontgomeryShort:
     cmp     rdx, 0
     js      negMontgomeryShort
 posMontgomeryShort:
-    call    Fq_rawMMul1
+    call    FqP_rawMMul1
     sub     rdi, 8
             mov r11b, 0x40
         shl r11d, 24
@@ -986,7 +986,7 @@ posMontgomeryShort:
 
 negMontgomeryShort:
     neg     rdx              ; Do the multiplication positive and then negate the result.
-    call    Fq_rawMMul1
+    call    FqP_rawMMul1
     mov     rsi, rdi
     call    rawNegL
     sub     rdi, 8
@@ -1001,7 +1001,7 @@ toMontgomeryLong:
     add     rdi, 8
     add     rsi, 8
     lea     rdx, [R2]
-    call    Fq_rawMMul
+    call    FqP_rawMMul
     sub     rsi, 8
     sub     rdi, 8
             mov r11b, 0xC0
@@ -1011,7 +1011,7 @@ toMontgomeryLong:
 
 
 toMontgomery_doNothing:
-    call   Fq_copy
+    call   FqP_copy
     ret
 
 ;;;;;;;;;;;;;;;;;;;;;;
@@ -1023,7 +1023,7 @@ toMontgomery_doNothing:
 ; Modified registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;
-Fq_toNormal:
+FqP_toNormal:
     mov     rax, [rsi]
     bt      rax, 62                     ; check if montgomery
     jnc     toNormal_doNothing
@@ -1033,7 +1033,7 @@ Fq_toNormal:
 toNormalLong:
     add     rdi, 8
     add     rsi, 8
-    call    Fq_rawFromMontgomery
+    call    FqP_rawFromMontgomery
     sub     rsi, 8
     sub     rdi, 8
             mov r11b, 0x80
@@ -1042,7 +1042,7 @@ toNormalLong:
     ret
 
 toNormal_doNothing:
-    call   Fq_copy
+    call   FqP_copy
     ret
 
 ;;;;;;;;;;;;;;;;;;;;;;
@@ -1054,19 +1054,19 @@ toNormal_doNothing:
 ; Modified registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;
-Fq_toLongNormal:
+FqP_toLongNormal:
     mov     rax, [rsi]
     bt      rax, 63                     ; check if long
     jnc     toLongNormal_fromShort
     bt      rax, 62                     ; check if montgomery
     jc      toLongNormal_fromMontgomery
-    call    Fq_copy              ; It is already long
+    call    FqP_copy              ; It is already long
     ret
 
 toLongNormal_fromMontgomery:
     add     rdi, 8
     add     rsi, 8
-    call    Fq_rawFromMontgomery
+    call    FqP_rawFromMontgomery
     sub     rsi, 8
     sub     rdi, 8
             mov r11b, 0x80
@@ -1106,7 +1106,7 @@ toLongNormal_fromShort:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_add:
+FqP_add:
         push   rbp
         push   rsi
         push   rdx
@@ -1199,7 +1199,7 @@ add_l1ms2n:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toMontgomery
+        call FqP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -1285,7 +1285,7 @@ add_s1nl2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toMontgomery
+        call FqP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -1357,7 +1357,7 @@ add_l1nl2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toMontgomery
+        call FqP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -1390,7 +1390,7 @@ add_l1ml2n:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toMontgomery
+        call FqP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -1441,7 +1441,7 @@ add_l1ml2m:
 ;    rax
 ;;;;;;;;;;;;;;;;;;;;;;
 rawAddLL:
-Fq_rawAdd:
+FqP_rawAdd:
         ; Add component by component with carry
 
         mov rax, [rsi + 0]
@@ -1603,7 +1603,7 @@ rawAddLS_done:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_sub:
+FqP_sub:
         push   rbp
         push   rsi
         push   rdx
@@ -1695,7 +1695,7 @@ sub_l1ms2n:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toMontgomery
+        call FqP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -1789,7 +1789,7 @@ sub_s1nl2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toMontgomery
+        call FqP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -1861,7 +1861,7 @@ sub_l1nl2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toMontgomery
+        call FqP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -1894,7 +1894,7 @@ sub_l1ml2n:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toMontgomery
+        call FqP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -2050,7 +2050,7 @@ rawSubSL_done:
 ;    rax
 ;;;;;;;;;;;;;;;;;;;;;;
 rawSubLL:
-Fq_rawSub:
+FqP_rawSub:
         ; Substract first digit
 
         mov rax, [rsi + 0]
@@ -2176,7 +2176,7 @@ rawNegSL_done:
 ;   rdi <= Pointer to result
 ;   [rdi] = -[rsi]
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_neg:
+FqP_neg:
         mov    rax, [rsi]
         bt     rax, 63          ; Check if is short first operand
         jc     neg_l
@@ -2222,7 +2222,7 @@ neg_l:
 ;   [rdi] = - [rsi]
 ;;;;;;;;;;;;;;;;;;;;;;
 rawNegL:
-Fq_rawNeg:
+FqP_rawNeg:
         ; Compare is zero
 
         xor rax, rax
@@ -2299,7 +2299,7 @@ doNegate:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_square:
+FqP_square:
         mov    r8, [rsi]
         bt     r8, 63          ; Check if is short first operand
         jc     square_l1
@@ -2333,7 +2333,7 @@ square_l1n:
 
         add rdi, 8
         add rsi, 8
-        call Fq_rawMSquare
+        call FqP_rawMSquare
         sub rdi, 8
         sub rsi, 8
 
@@ -2342,7 +2342,7 @@ square_l1n:
         add rdi, 8
         mov rsi, rdi
         lea rdx, [R3]
-        call Fq_rawMMul
+        call FqP_rawMMul
         sub rdi, 8
         pop rsi
 
@@ -2355,7 +2355,7 @@ square_l1m:
 
         add rdi, 8
         add rsi, 8
-        call Fq_rawMSquare
+        call FqP_rawMSquare
         sub rdi, 8
         sub rsi, 8
 
@@ -2375,7 +2375,7 @@ square_l1m:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_mul:
+FqP_mul:
         mov    r8, [rsi]
         mov    r9, [rdx]
         bt     r8, 63          ; Check if is short first operand
@@ -2427,7 +2427,7 @@ mul_l1ns2n:
         
         jns tmp_5
         neg rdx
-        call Fq_rawMMul1
+        call FqP_rawMMul1
         mov rsi, rdi
         call rawNegL
         sub rdi, 8
@@ -2435,7 +2435,7 @@ mul_l1ns2n:
         
         jmp tmp_6
 tmp_5:
-        call Fq_rawMMul1
+        call FqP_rawMMul1
         sub rdi, 8
         pop rsi
 tmp_6:
@@ -2446,7 +2446,7 @@ tmp_6:
         add rdi, 8
         mov rsi, rdi
         lea rdx, [R3]
-        call Fq_rawMMul
+        call FqP_rawMMul
         sub rdi, 8
         pop rsi
 
@@ -2461,7 +2461,7 @@ mul_l1ns2m:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fq_rawMMul
+        call FqP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2484,7 +2484,7 @@ mul_l1ms2n:
         
         jns tmp_7
         neg rdx
-        call Fq_rawMMul1
+        call FqP_rawMMul1
         mov rsi, rdi
         call rawNegL
         sub rdi, 8
@@ -2492,7 +2492,7 @@ mul_l1ms2n:
         
         jmp tmp_8
 tmp_7:
-        call Fq_rawMMul1
+        call FqP_rawMMul1
         sub rdi, 8
         pop rsi
 tmp_8:
@@ -2508,7 +2508,7 @@ mul_l1ms2m:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fq_rawMMul
+        call FqP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2535,7 +2535,7 @@ mul_s1nl2n:
         
         jns tmp_9
         neg rdx
-        call Fq_rawMMul1
+        call FqP_rawMMul1
         mov rsi, rdi
         call rawNegL
         sub rdi, 8
@@ -2543,7 +2543,7 @@ mul_s1nl2n:
         
         jmp tmp_10
 tmp_9:
-        call Fq_rawMMul1
+        call FqP_rawMMul1
         sub rdi, 8
         pop rsi
 tmp_10:
@@ -2554,7 +2554,7 @@ tmp_10:
         add rdi, 8
         mov rsi, rdi
         lea rdx, [R3]
-        call Fq_rawMMul
+        call FqP_rawMMul
         sub rdi, 8
         pop rsi
 
@@ -2573,7 +2573,7 @@ mul_s1nl2m:
         
         jns tmp_11
         neg rdx
-        call Fq_rawMMul1
+        call FqP_rawMMul1
         mov rsi, rdi
         call rawNegL
         sub rdi, 8
@@ -2581,7 +2581,7 @@ mul_s1nl2m:
         
         jmp tmp_12
 tmp_11:
-        call Fq_rawMMul1
+        call FqP_rawMMul1
         sub rdi, 8
         pop rsi
 tmp_12:
@@ -2600,7 +2600,7 @@ mul_s1ml2n:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fq_rawMMul
+        call FqP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2614,7 +2614,7 @@ mul_s1ml2m:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fq_rawMMul
+        call FqP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2635,7 +2635,7 @@ mul_l1nl2n:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fq_rawMMul
+        call FqP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2644,7 +2644,7 @@ mul_l1nl2n:
         add rdi, 8
         mov rsi, rdi
         lea rdx, [R3]
-        call Fq_rawMMul
+        call FqP_rawMMul
         sub rdi, 8
         pop rsi
 
@@ -2658,7 +2658,7 @@ mul_l1nl2m:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fq_rawMMul
+        call FqP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2675,7 +2675,7 @@ mul_l1ml2n:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fq_rawMMul
+        call FqP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2689,7 +2689,7 @@ mul_l1ml2m:
         add rdi, 8
         add rsi, 8
         add rdx, 8
-        call Fq_rawMMul
+        call FqP_rawMMul
         sub rdi, 8
         sub rsi, 8
 
@@ -2724,7 +2724,7 @@ mul_l1ml2m:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_band:
+FqP_band:
         push   rbp
         push   rsi
         push   rdx
@@ -2765,7 +2765,7 @@ tmp_13:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -2776,7 +2776,7 @@ tmp_13:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -2954,7 +2954,7 @@ tmp_16:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -3048,7 +3048,7 @@ and_l1ms2:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -3136,7 +3136,7 @@ tmp_21:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -3309,7 +3309,7 @@ tmp_26:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -3404,7 +3404,7 @@ and_s1l2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -3490,7 +3490,7 @@ tmp_31:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -3669,7 +3669,7 @@ and_l1nl2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -3761,7 +3761,7 @@ and_l1ml2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -3850,7 +3850,7 @@ and_l1ml2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -3862,7 +3862,7 @@ and_l1ml2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -3953,7 +3953,7 @@ tmp_43:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_bor:
+FqP_bor:
         push   rbp
         push   rsi
         push   rdx
@@ -3994,7 +3994,7 @@ tmp_44:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -4005,7 +4005,7 @@ tmp_44:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -4183,7 +4183,7 @@ tmp_47:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -4277,7 +4277,7 @@ or_l1ms2:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -4365,7 +4365,7 @@ tmp_52:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -4538,7 +4538,7 @@ tmp_57:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -4633,7 +4633,7 @@ or_s1l2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -4719,7 +4719,7 @@ tmp_62:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -4898,7 +4898,7 @@ or_l1nl2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -4990,7 +4990,7 @@ or_l1ml2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -5079,7 +5079,7 @@ or_l1ml2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -5091,7 +5091,7 @@ or_l1ml2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -5182,7 +5182,7 @@ tmp_74:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_bxor:
+FqP_bxor:
         push   rbp
         push   rsi
         push   rdx
@@ -5223,7 +5223,7 @@ tmp_75:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -5234,7 +5234,7 @@ tmp_75:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -5412,7 +5412,7 @@ tmp_78:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -5506,7 +5506,7 @@ xor_l1ms2:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -5594,7 +5594,7 @@ tmp_83:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -5767,7 +5767,7 @@ tmp_88:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -5862,7 +5862,7 @@ xor_s1l2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -5948,7 +5948,7 @@ tmp_93:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -6127,7 +6127,7 @@ xor_l1nl2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -6219,7 +6219,7 @@ xor_l1ml2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -6308,7 +6308,7 @@ xor_l1ml2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -6320,7 +6320,7 @@ xor_l1ml2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -6411,7 +6411,7 @@ tmp_105:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_bnot:
+FqP_bnot:
         push   rbp
         push   rsi
         push   rdx
@@ -6430,7 +6430,7 @@ bnot_s:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -6448,7 +6448,7 @@ bnot_l1m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -6543,10 +6543,10 @@ tmp_107:
 ;;;;;;;;;;;;;;;;;;;;;;
 rawShr:
         cmp rdx, 0
-        je Fq_rawCopy
+        je FqP_rawCopy
 
         cmp rdx, 254
-        jae Fq_rawZero
+        jae FqP_rawZero
 
 rawShr_nz:
         mov r8, rdx
@@ -6743,10 +6743,10 @@ rawShr_endif3_3:
 ;;;;;;;;;;;;;;;;;;;;;;
 rawShl:
         cmp rdx, 0
-        je Fq_rawCopy
+        je FqP_rawCopy
         
         cmp rdx, 254
-        jae Fq_rawZero
+        jae FqP_rawZero
 
         mov r8, rdx
         shr r8,6
@@ -7065,7 +7065,7 @@ tmp_111:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_shr:
+FqP_shr:
         push   rbp
         push   rsi
         push   rdi
@@ -7091,7 +7091,7 @@ Fq_shr:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7165,7 +7165,7 @@ tmp_115:
 ; Modified Registers:
 ;    r8, r9, 10, r11, rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_shl:
+FqP_shl:
         push   rbp
         push   rsi
         push   rdi
@@ -7190,7 +7190,7 @@ Fq_shl:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7289,7 +7289,7 @@ do_shlcl:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7305,7 +7305,7 @@ do_shll:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7358,7 +7358,7 @@ do_shrcl:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7373,7 +7373,7 @@ do_shrl:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7417,7 +7417,7 @@ setzero:
 ; Modified Registers:
 ;    r8, r9, rax
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_rgt:
+FqP_rgt:
         push   rbp
         push   rsi
         push   rdx
@@ -7451,7 +7451,7 @@ rgt_l1ns2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7466,7 +7466,7 @@ rgt_l1ms2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7477,7 +7477,7 @@ rgt_l1ms2:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7496,7 +7496,7 @@ rgt_s1l2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7510,7 +7510,7 @@ rgt_s1l2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7522,7 +7522,7 @@ rgt_s1l2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7547,7 +7547,7 @@ rgt_l1nl2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7564,7 +7564,7 @@ rgt_l1ml2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7578,7 +7578,7 @@ rgt_l1ml2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7590,7 +7590,7 @@ rgt_l1ml2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7758,7 +7758,7 @@ rgt_ret1:
 ; Modified Registers:
 ;    r8, r9, rax
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_rlt:
+FqP_rlt:
         push   rbp
         push   rsi
         push   rdx
@@ -7792,7 +7792,7 @@ rlt_l1ns2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7807,7 +7807,7 @@ rlt_l1ms2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7818,7 +7818,7 @@ rlt_l1ms2:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7837,7 +7837,7 @@ rlt_s1l2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7851,7 +7851,7 @@ rlt_s1l2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7863,7 +7863,7 @@ rlt_s1l2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7888,7 +7888,7 @@ rlt_l1nl2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -7905,7 +7905,7 @@ rlt_l1ml2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7919,7 +7919,7 @@ rlt_l1ml2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -7931,7 +7931,7 @@ rlt_l1ml2m:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toNormal
+        call FqP_toNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -8093,7 +8093,7 @@ rlt_ret1:
 ; Modified Registers:
 ;    r8, r9, rax
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_req:
+FqP_req:
         push   rbp
         push   rsi
         push   rdx
@@ -8127,7 +8127,7 @@ req_l1ns2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -8142,7 +8142,7 @@ req_l1ms2:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toMontgomery
+        call FqP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -8161,7 +8161,7 @@ req_s1l2n:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toLongNormal
+        call FqP_toLongNormal
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -8175,7 +8175,7 @@ req_s1l2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toMontgomery
+        call FqP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -8199,7 +8199,7 @@ req_l1nl2m:
         mov  rdi, rsp
         push rdx
         push r8
-        call Fq_toMontgomery
+        call FqP_toMontgomery
         mov  rsi, rdi
         pop  rdi
         pop  rdx
@@ -8217,7 +8217,7 @@ req_l1ml2n:
         push rsi
         mov  rsi, rdx
         push r8
-        call Fq_toMontgomery
+        call FqP_toMontgomery
         mov  rdx, rdi
         pop  rdi
         pop  rsi
@@ -8279,8 +8279,8 @@ req_ret0:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_gt:
-        call Fq_rgt
+FqP_gt:
+        call FqP_rgt
         mov [rdi], rax
         ret
 
@@ -8295,8 +8295,8 @@ Fq_gt:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_lt:
-        call Fq_rlt
+FqP_lt:
+        call FqP_rlt
         mov [rdi], rax
         ret
 
@@ -8311,8 +8311,8 @@ Fq_lt:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_eq:
-        call Fq_req
+FqP_eq:
+        call FqP_req
         mov [rdi], rax
         ret
 
@@ -8327,8 +8327,8 @@ Fq_eq:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_neq:
-        call Fq_req
+FqP_neq:
+        call FqP_req
         xor rax, 1
         mov [rdi], rax
         ret
@@ -8344,8 +8344,8 @@ Fq_neq:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_geq:
-        call Fq_rlt
+FqP_geq:
+        call FqP_rlt
         xor rax, 1
         mov [rdi], rax
         ret
@@ -8361,8 +8361,8 @@ Fq_geq:
 ; Modified Registers:
 ;    rax, rcx
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_leq:
-        call Fq_rgt
+FqP_leq:
+        call FqP_rgt
         xor rax, 1
         mov [rdi], rax
         ret
@@ -8381,7 +8381,7 @@ Fq_leq:
 ; Modified Registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_rawIsEq:
+FqP_rawIsEq:
 
         mov     rax, [rsi + 0]
         cmp     [rdi + 0], rax
@@ -8418,7 +8418,7 @@ rawIsEq_ret0:
 ; Modified Registers:
 ;   rax
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_rawIsZero:
+FqP_rawIsZero:
 
         cmp     qword [rdi + 0], $0
         jne     rawIsZero_ret0
@@ -8462,7 +8462,7 @@ rawIsZero_ret0:
 ; Modified Registers:
 ;    rax, rcx, r8
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_land:
+FqP_land:
 
 
 
@@ -8563,7 +8563,7 @@ done_127:
 ; Modified Registers:
 ;    rax, rcx, r8
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_lor:
+FqP_lor:
 
 
 
@@ -8663,7 +8663,7 @@ done_135:
 ; Modified Registers:
 ;    rax, rax, r8
 ;;;;;;;;;;;;;;;;;;;;;;
-Fq_lnot:
+FqP_lnot:
 
 
 
@@ -8726,7 +8726,7 @@ lnot_retOne:
 ; Returs:
 ;   rax <= 1 if true 0 if false
 ;;;;;;;;;;;;;;;;;;;;;;;
-Fq_isTrue:
+FqP_isTrue:
         
 
 
@@ -8776,17 +8776,17 @@ done_143:
 
 
         section .data
-Fq_q:
+FqP_q:
         dd      0
         dd      0x80000000
-Fq_rawq:
+FqP_rawq:
 q       dq      0x3c208c16d87cfd47,0x97816a916871ca8d,0xb85045b68181585d,0x30644e72e131a029
 half    dq      0x9e10460b6c3e7ea3,0xcbc0b548b438e546,0xdc2822db40c0ac2e,0x183227397098d014
 R2      dq      0xf32cfc5b538afa89,0xb5e71911d44501fb,0x47ab1eff0a417ff6,0x06d89f71cab8351f
-Fq_R3:
+FqP_R3:
         dd      0
         dd      0x80000000
-Fq_rawR3:
+FqP_rawR3:
 R3      dq      0xb1cd6dafda1530df,0x62f210e6a7283db6,0xef7f0b0c0ada0afb,0x20fd6e902d592544
 lboMask dq      0x3fffffffffffffff
 np      dq      0x87d20782e4866389
