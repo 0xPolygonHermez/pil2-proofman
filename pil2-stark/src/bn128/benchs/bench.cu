@@ -128,9 +128,9 @@ static void NTT_GPU_BENCH(benchmark::State &state) {
     uint64_t power = state.range(0);
     uint64_t n = 1ULL << power;
     
-    // Allocate data (use RawFrP::Element which has same layout as GPU element)
-    RawFrP::Element* data = new RawFrP::Element[n];
-    generate_random_scalars(reinterpret_cast<uint8_t*>(data), n, sizeof(RawFrP::Element));
+    // Allocate data (use RawFr::Element which has same layout as GPU element)
+    RawFr::Element* data = new RawFr::Element[n];
+    generate_random_scalars(reinterpret_cast<uint8_t*>(data), n, sizeof(RawFr::Element));
     BN128GPUScalarField::Element* gpu_data = reinterpret_cast<BN128GPUScalarField::Element*>(data);
     
     // Warm-up GPU
@@ -172,8 +172,8 @@ static void POSEIDON_SEQ_GPU_BENCH(benchmark::State &state) {
     cudaMalloc(&d_state, t * sizeof(BN128GPUScalarField::Element));
     
     // Initialize host state
-    RawFrP field;
-    RawFrP::Element* h_state = new RawFrP::Element[t];
+    RawFr field;
+    RawFr::Element* h_state = new RawFr::Element[t];
     for (int i = 0; i < t; i++) {
         field.fromUI(h_state[i], i);
     }
@@ -240,8 +240,8 @@ static void POSEIDON2_SEQ_GPU_BENCH(benchmark::State &state) {
     cudaMalloc(&d_state, t * sizeof(BN128GPUScalarField::Element));
     
     // Initialize host state
-    RawFrP field;
-    RawFrP::Element* h_state = new RawFrP::Element[t];
+    RawFr field;
+    RawFr::Element* h_state = new RawFr::Element[t];
     for (int i = 0; i < t; i++) {
         field.fromUI(h_state[i], i);
     }

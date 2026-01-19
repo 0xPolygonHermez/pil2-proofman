@@ -16,9 +16,9 @@
 
 TEST(BN128_POSEIDON_TEST, hash_t2) {
   PoseidonBN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 2;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "29176100eaa962bdc1fe6c654d6a3c130e96a4d1168b33848b897dc502820133");
@@ -27,9 +27,9 @@ TEST(BN128_POSEIDON_TEST, hash_t2) {
 
 TEST(BN128_POSEIDON_TEST, hash_t3) {
   PoseidonBN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 3;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "115cc0f5e7d690413df64c6b9662e9cf2a3617f2743245519e19607a4417189a");
@@ -38,9 +38,9 @@ TEST(BN128_POSEIDON_TEST, hash_t3) {
 
 TEST(BN128_POSEIDON_TEST, hash_t4) {
   PoseidonBN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 4;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "e7732d89e6939c0ff03d5e58dab6302f3230e269dc5b968f725df34ab36d732");
@@ -49,9 +49,9 @@ TEST(BN128_POSEIDON_TEST, hash_t4) {
 
 TEST(BN128_POSEIDON_TEST, hash_t5) {
   PoseidonBN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 5;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "299c867db6c1fdd79dcefa40e4510b9837e60ebb1ce0663dbaa525df65250465");
@@ -60,9 +60,9 @@ TEST(BN128_POSEIDON_TEST, hash_t5) {
 
 TEST(BN128_POSEIDON_TEST, hash_t6) {
   PoseidonBN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 6;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "dab9449e4a1398a15224c0b15a49d598b2174d305a316c918125f8feeb123c0");
@@ -71,9 +71,9 @@ TEST(BN128_POSEIDON_TEST, hash_t6) {
 
 TEST(BN128_POSEIDON_TEST, hash_t7) {
   PoseidonBN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 7;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "2d1a03850084442813c8ebf094dea47538490a68b05f2239134a4cca2f6302e1");
@@ -82,9 +82,9 @@ TEST(BN128_POSEIDON_TEST, hash_t7) {
 
 TEST(BN128_POSEIDON_TEST, hash_t8) {
   PoseidonBN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 8;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "1c2f3482dbb140c4ebb9ada49abdbc374a9a85fcfc6533ec2e9df45b4921c318");
@@ -93,9 +93,9 @@ TEST(BN128_POSEIDON_TEST, hash_t8) {
 
 TEST(BN128_POSEIDON_TEST, hash_t9) {
   PoseidonBN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 9;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "2921ab9bd0140cbc98e40395c0fefb40337a4d54fbbecd9a4d43b3d8d0c4d8d1");
@@ -104,9 +104,9 @@ TEST(BN128_POSEIDON_TEST, hash_t9) {
 
 TEST(BN128_POSEIDON_TEST, hash_t10) {
   PoseidonBN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 10;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "1e0b893aa2ad802275e749d260330b7675b22bb3aaa4461d204af32e60cd9078");
@@ -115,9 +115,9 @@ TEST(BN128_POSEIDON_TEST, hash_t10) {
 
 TEST(BN128_POSEIDON_TEST, hash_t11) {
   PoseidonBN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 11;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "816126a09c29ecfcc0628461dacfb9459816fc60d6738b78db9ad07206fdc21");
@@ -126,9 +126,9 @@ TEST(BN128_POSEIDON_TEST, hash_t11) {
 
 TEST(BN128_POSEIDON_TEST, hash_t12) {
   PoseidonBN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 12;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "7e5b070aa2dba008f30a6b785b6c5ae2429e211f71cacdbdae0e07fc05b47a8");
@@ -137,9 +137,9 @@ TEST(BN128_POSEIDON_TEST, hash_t12) {
 
 TEST(BN128_POSEIDON_TEST, hash_t13) {
   PoseidonBN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 13;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "58814945232937db248a01e7cc55b3d681cc08702c8168494e856c1ef7693b5");
@@ -148,9 +148,9 @@ TEST(BN128_POSEIDON_TEST, hash_t13) {
 
 TEST(BN128_POSEIDON_TEST, hash_t14) {
   PoseidonBN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 14;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "f918939632fadca6456a2fe6e65a124828d4c3920d379cc744e90a666887806");
@@ -159,9 +159,9 @@ TEST(BN128_POSEIDON_TEST, hash_t14) {
 
 TEST(BN128_POSEIDON_TEST, hash_t15) {
   PoseidonBN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 15;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "1278779aaafc5ca58bf573151005830cdb4683fb26591c85a7464d4f0e527776");
@@ -170,9 +170,9 @@ TEST(BN128_POSEIDON_TEST, hash_t15) {
 
 TEST(BN128_POSEIDON_TEST, hash_t16) {
   PoseidonBN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 16;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "94ae33b67a845998abb55e917642d4022d078d96f7c36ea11da4273ecf20f50");
@@ -181,9 +181,9 @@ TEST(BN128_POSEIDON_TEST, hash_t16) {
 
 TEST(BN128_POSEIDON_TEST, hash_t17) {
   PoseidonBN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 17;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) { field.fromUI(state[i], (unsigned long int)(i)); }
   p.hash(state);
   ASSERT_EQ(field.toString(state[0],16), "16159a551cbb66108281a48099fff949ae08afd7f1f2ec06de2ffb96b919b765");
@@ -196,9 +196,9 @@ TEST(BN128_POSEIDON_TEST, hash_t17) {
 
 TEST(BN128_POSEIDON2_TEST, hash_t2) {
   Poseidon2BN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 2;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) {
     field.fromUI(state[i], (unsigned long int)(i));
   }
@@ -209,9 +209,9 @@ TEST(BN128_POSEIDON2_TEST, hash_t2) {
 
 TEST(BN128_POSEIDON2_TEST, hash_t3) {
   Poseidon2BN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 3;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) {
     field.fromUI(state[i], (unsigned long int)(i));
   }
@@ -222,9 +222,9 @@ TEST(BN128_POSEIDON2_TEST, hash_t3) {
 
 TEST(BN128_POSEIDON2_TEST, hash_t4) {
   Poseidon2BN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 4;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) {
     field.fromUI(state[i], (unsigned long int)(i));
   }
@@ -235,9 +235,9 @@ TEST(BN128_POSEIDON2_TEST, hash_t4) {
 
 TEST(BN128_POSEIDON2_TEST, hash_t8) {
   Poseidon2BN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 8;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) {
     field.fromUI(state[i], (unsigned long int)(i));
   }
@@ -248,9 +248,9 @@ TEST(BN128_POSEIDON2_TEST, hash_t8) {
 
 TEST(BN128_POSEIDON2_TEST, hash_t12) {
   Poseidon2BN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 12;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) {
     field.fromUI(state[i], (unsigned long int)(i));
   }
@@ -261,9 +261,9 @@ TEST(BN128_POSEIDON2_TEST, hash_t12) {
 
 TEST(BN128_POSEIDON2_TEST, hash_t16) {
   Poseidon2BN128 p;
-  RawFrP field;
+  RawFr field;
   const size_t t = 16;
-  vector<RawFrP::Element> state(t);
+  vector<RawFr::Element> state(t);
   for (size_t i = 0; i < t; i++) {
     field.fromUI(state[i], (unsigned long int)(i));
   }
@@ -276,10 +276,10 @@ TEST(BN128_POSEIDON2_TEST, hash_t16) {
 // This test is just to generate the constants for Poseidon2BN128 in montgomery form
 TEST(CONVERTER, poseidon_seq_widths_sanity) {
 	  Poseidon2BN128 p;
-    RawFrP field;
+    RawFr field;
 
     //takes a number in exadecimal
-    RawFrP::Element number;
+    RawFr::Element number;
     int nstrings = 1000;
     std::string strs[nstrings];
     int k=0;
@@ -318,7 +318,7 @@ TEST(CONVERTER, poseidon_seq_widths_sanity) {
 TEST(BN128_MULTIEXP_TEST, multiexp_4_operands) {
   typedef AltBn128::Engine Engine;
   Engine engine;
-  RawFrP field;
+  RawFr field;
   
   uint64_t n = 4;
   uint64_t scalarSize = 32;
@@ -411,13 +411,13 @@ TEST(BN128_MULTIEXP_TEST, multiexp_4_operands) {
 
 TEST(BN128_FFT_TEST, fft_then_ifft_roundtrip) {
   // Test: fft followed by ifft should recover the original data
-  RawFrP field;
+  RawFr field;
   const uint64_t n = 16;
   
-  FFT<RawFrP> fft(n);
+  FFT<RawFr> fft(n);
   
-  std::vector<RawFrP::Element> data(n);
-  std::vector<RawFrP::Element> original(n);
+  std::vector<RawFr::Element> data(n);
+  std::vector<RawFr::Element> original(n);
   for (uint64_t i = 0; i < n; i++) {
     field.fromUI(data[i], i);
     field.copy(original[i], data[i]);
@@ -438,13 +438,13 @@ TEST(BN128_FFT_TEST, fft_then_ifft_roundtrip) {
 
 TEST(BN128_FFT_TEST, ifft_then_fft_roundtrip) {
   // Test: ifft followed by fft should recover the original data
-  RawFrP field;
+  RawFr field;
   const uint64_t n = 16;
   
-  FFT<RawFrP> fft(n);
+  FFT<RawFr> fft(n);
   
-  std::vector<RawFrP::Element> data(n);
-  std::vector<RawFrP::Element> original(n);
+  std::vector<RawFr::Element> data(n);
+  std::vector<RawFr::Element> original(n);
   for (uint64_t i = 0; i < n; i++) {
     field.fromUI(data[i], i);
     field.copy(original[i], data[i]);
@@ -465,15 +465,15 @@ TEST(BN128_FFT_TEST, ifft_then_fft_roundtrip) {
 
 TEST(BN128_FFT_TEST, fft_linearity) {
   // Test: fft(a + b) == fft(a) + fft(b)  (FFT is a linear operation)
-  RawFrP field;
+  RawFr field;
   const uint64_t n = 16;
   
-  FFT<RawFrP> fft(n);
+  FFT<RawFr> fft(n);
   
   // Create two input vectors
-  std::vector<RawFrP::Element> a(n);
-  std::vector<RawFrP::Element> b(n);
-  std::vector<RawFrP::Element> a_plus_b(n);
+  std::vector<RawFr::Element> a(n);
+  std::vector<RawFr::Element> b(n);
+  std::vector<RawFr::Element> a_plus_b(n);
   
   for (uint64_t i = 0; i < n; i++) {
     field.fromUI(a[i], i + 1);           // a = [1, 2, 3, ..., 16]
@@ -482,9 +482,9 @@ TEST(BN128_FFT_TEST, fft_linearity) {
   }
   
   // Compute fft(a), fft(b), fft(a+b)
-  std::vector<RawFrP::Element> fft_a(a);
-  std::vector<RawFrP::Element> fft_b(b);
-  std::vector<RawFrP::Element> fft_a_plus_b(a_plus_b);
+  std::vector<RawFr::Element> fft_a(a);
+  std::vector<RawFr::Element> fft_b(b);
+  std::vector<RawFr::Element> fft_a_plus_b(a_plus_b);
   
   fft.fft(fft_a.data(), n);
   fft.fft(fft_b.data(), n);
@@ -492,7 +492,7 @@ TEST(BN128_FFT_TEST, fft_linearity) {
   
   // Verify: fft(a+b) == fft(a) + fft(b)
   for (uint64_t i = 0; i < n; i++) {
-    RawFrP::Element expected_sum;
+    RawFr::Element expected_sum;
     field.add(expected_sum, fft_a[i], fft_b[i]);
     
     ASSERT_TRUE(field.eq(fft_a_plus_b[i], expected_sum)) 

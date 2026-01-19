@@ -1,4 +1,7 @@
 #include "poseidon_bn128.hpp"
+#include <omp.h>
+#include <cstring>
+//#include <cassert>
 
 void PoseidonBN128::hash(vector<FrElement> &state, FrElement *result)
 {
@@ -97,7 +100,7 @@ void PoseidonBN128::mix(vector<FrElement> *new_state, vector<FrElement> state, c
 	}
 }
 
-void Poseidon_opt::grinding(uint64_t &nonce, vector<RawFr::Element> &state, const uint32_t n_bits){
+void PoseidonBN128::grinding(uint64_t &nonce, vector<RawFr::Element> &state, const uint32_t n_bits){
     uint64_t checkChunk = omp_get_max_threads() * 512;
 	uint64_t level   = uint64_t(1) << (64 - n_bits);
     uint64_t* chunkIdxs = new uint64_t[omp_get_max_threads()];
