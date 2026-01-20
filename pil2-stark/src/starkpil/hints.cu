@@ -39,6 +39,29 @@ void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *aux_trace, Goldil
     setPolynomial_<<<blocks, threads, 0, stream>>>(aux_trace + offset, values, dim, polInfo.stagePos, nCols, nRows);    
 }
 
+__global__ void getPolynomial_(Goldilocks::Element *pol, Goldilocks::Element *dest, uint64_t dim, uint64_t col, uint64_t nCols, uint64_t nRows, uint64_t rowOffset) {
+    uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row < nRows) {
+        uint64_t srcRow = (row + rowOffset) % nRows;
+        for (uint64_t j = 0; j < dim; ++j) {
+            uint64_t idx = getBufferOffset(srcRow, col + j, nRows, nCols);
+            dest[row * dim + j] = pol[idx];
+        }
+    }
+}
+
+void getPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilocks::Element *dest, PolMap& polInfo, uint64_t rowOffsetIndex, std::string type, cudaStream_t stream) {
+    std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? setupCtx.starkInfo.customCommits[polInfo.commitId].name + "0" : "const";
+    uint64_t nRows = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    uint64_t rowOffset = setupCtx.starkInfo.openingPoints[rowOffsetIndex];
+    uint64_t nCols = setupCtx.starkInfo.mapSectionsN[stage];
+    uint64_t dim = polInfo.dim;
+    
+    dim3 threads(512);
+    dim3 blocks((nRows + threads.x - 1) / threads.x);
+    getPolynomial_<<<blocks, threads, 0, stream>>>(buffer, dest, dim, polInfo.stagePos, nCols, nRows, rowOffset);
+}
+
 void copyValueGPU( Goldilocks::Element * target, Goldilocks::Element* src, uint64_t size, cudaStream_t stream) {
     CHECKCUDAERR(cudaMemcpyAsync(target, src, size * sizeof(Goldilocks::Element), cudaMemcpyDeviceToDevice, stream));
 }
@@ -607,4 +630,171 @@ void accOperationGPU(gl64_t* vals, uint64_t N, bool add, uint32_t dim, gl64_t* h
         prescan_correction<<<blocks1, 2*threads1.x, 0, stream>>>(vals, helper1, add, dim, N);
     }
     CHECKCUDAERR(cudaGetLastError());
+}
+
+void getHintFieldGPU(
+    SetupCtx& setupCtx,
+    StepsParams &h_params,
+    StepsParams *d_params,
+    HintFieldInfo *hintFieldValues,
+    uint64_t hintId,
+    std::string hintFieldName,
+    HintFieldOptions& hintOptions,
+    ExpressionsGPU* GPUExpressionsCtx,
+    ExpsArguments *d_expsArgs,
+    DestParamsGPU *d_destParams,
+    Goldilocks::Element *pinned_exps_params,
+    Goldilocks::Element *pinned_exps_args,
+    uint64_t& countId,
+    TimerGPU &timer,
+    cudaStream_t stream
+) {
+    if(setupCtx.expressionsBin.hints.size() == 0) {
+        zklog.error("No hints were found.");
+        exitProcess();
+        exit(-1);
+    }
+
+    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+
+    Hint hint = setupCtx.expressionsBin.hints[hintId];
+    
+    auto hintField = std::find_if(hint.fields.begin(), hint.fields.end(), [hintFieldName](const HintField& hintField) {
+        return hintField.name == hintFieldName;
+    });
+
+    if(hintField == hint.fields.end()) {
+        zklog.error("Hint field " + hintFieldName + " not found in hint " + hint.name + ".");
+        exitProcess();
+        exit(-1);
+    }
+
+    for(uint64_t i = 0; i < hintField->values.size(); ++i) {
+        HintFieldValue hintFieldVal = hintField->values[i];
+        if(hintOptions.dest && (hintFieldVal.operand != opType::cm && hintFieldVal.operand != opType::airgroupvalue && hintFieldVal.operand != opType::airvalue)) {
+            zklog.error("Invalid destination.");
+            exitProcess();
+            exit(-1);
+        }
+
+        HintFieldInfo hintFieldInfo = hintFieldValues[i];
+
+        if(hintOptions.print_expression) {
+            std::string expression_line = getExpressionDebug(setupCtx, hintId, hintFieldName, hintFieldVal);
+            std::memcpy(hintFieldInfo.expression_line, expression_line.data(), expression_line.size());
+            hintFieldInfo.expression_line_size = expression_line.size();
+        }
+
+        if(hintFieldVal.operand == opType::cm) {
+            if(!hintOptions.dest) {
+                std::string stage = "cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldVal.id].stage);
+                uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair(stage, false)];
+                // For GPU: trace data is in aux_trace at the stage offset
+                Goldilocks::Element *pAddress = h_params.aux_trace + offset;
+                getPolynomialGPU(setupCtx, pAddress, hintFieldInfo.values, setupCtx.starkInfo.cmPolsMap[hintFieldVal.id], hintFieldVal.rowOffsetIndex, "cm", stream);
+                if(hintOptions.inverse) {
+                    zklog.error("Inverse not supported still for polynomials in GPU");
+                    exitProcess();
+                }
+            } else if(hintOptions.initialize_zeros) {
+                CHECKCUDAERR(cudaMemsetAsync(hintFieldInfo.values, 0, hintFieldInfo.size * sizeof(Goldilocks::Element), stream));
+            }
+        } else if(hintFieldVal.operand == opType::custom) {
+            // pCustomCommitsFixed points to aux_trace + custom_fixed offset, need the specific commit's offset within
+            uint64_t customOffset = setupCtx.starkInfo.mapOffsets[std::make_pair(setupCtx.starkInfo.customCommits[hintFieldVal.commitId].name + "0", false)];
+            Goldilocks::Element *pCustom = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)] + customOffset;
+            getPolynomialGPU(setupCtx, pCustom, hintFieldInfo.values, setupCtx.starkInfo.customCommitsMap[hintFieldVal.commitId][hintFieldVal.id], hintFieldVal.rowOffsetIndex, "custom", stream);
+            if(hintOptions.inverse) {
+                zklog.error("Inverse not supported still for polynomials in GPU");
+                exitProcess();
+            }
+        } else if(hintFieldVal.operand == opType::const_) {
+            // pConstPolsAddress already points to the unpacked const pols in aux_trace
+            getPolynomialGPU(setupCtx, h_params.pConstPolsAddress, hintFieldInfo.values, setupCtx.starkInfo.constPolsMap[hintFieldVal.id], hintFieldVal.rowOffsetIndex, "const", stream);
+            if(hintOptions.inverse) {
+                zklog.error("Inverse not supported still for polynomials in GPU");
+                exitProcess();
+            }
+        } else if (hintFieldVal.operand == opType::tmp) {
+            // Calculate expression on GPU
+            ExpressionsGPU* expressionsCtx = (ExpressionsGPU*)GPUExpressionsCtx;
+            
+            Dest destStruct(nullptr, N, 0, 0, true);
+            destStruct.dest_gpu = hintFieldInfo.values;
+            destStruct.addParams(hintFieldVal.id, hintFieldVal.dim, hintOptions.inverse, hintOptions.compilation_time);
+            
+            countId++;
+            expressionsCtx->calculateExpressions_gpu(d_params, destStruct, N, false, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, false);
+        } else if (hintFieldVal.operand == opType::public_) {
+            // publicInputs are in GPU memory in h_params
+            if(hintOptions.inverse) {
+                // Need to copy to CPU, invert, and copy back - for now just error
+                zklog.error("Inverse for public_ not supported in GPU yet");
+                exitProcess();
+            } else {
+                copyValueGPU(hintFieldInfo.values, &h_params.publicInputs[hintFieldVal.id], 1, stream);
+            }
+        } else if (hintFieldVal.operand == opType::number) {
+            // Number is a constant, need to copy to GPU
+            Goldilocks::Element val = hintOptions.inverse ? Goldilocks::inv(Goldilocks::fromU64(hintFieldVal.value)) : Goldilocks::fromU64(hintFieldVal.value);
+            CHECKCUDAERR(cudaMemcpyAsync(hintFieldInfo.values, &val, sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
+        } else if (hintFieldVal.operand == opType::airgroupvalue) {
+            if(!hintOptions.dest) {
+                uint64_t pos = 0;
+                for(uint64_t j = 0; j < hintFieldVal.id; ++j) {
+                    pos += setupCtx.starkInfo.airgroupValuesMap[j].stage == 1 ? 1 : FIELD_EXTENSION;
+                }
+                if(hintOptions.inverse) {
+                    zklog.error("Inverse for airgroupvalue not supported in GPU yet");
+                    exitProcess();
+                } else {
+                    copyValueGPU(hintFieldInfo.values, &h_params.airgroupValues[pos], hintFieldInfo.size, stream);
+                }
+            }
+        } else if (hintFieldVal.operand == opType::airvalue) {
+            if(!hintOptions.dest) {
+                uint64_t pos = 0;
+                for(uint64_t j = 0; j < hintFieldVal.id; ++j) {
+                    pos += setupCtx.starkInfo.airValuesMap[j].stage == 1 ? 1 : FIELD_EXTENSION;
+                }
+                if(hintOptions.inverse) {
+                    zklog.error("Inverse for airvalue not supported in GPU yet");
+                    exitProcess();
+                } else {
+                    copyValueGPU(hintFieldInfo.values, &h_params.airValues[pos], hintFieldInfo.size, stream);
+                }
+            }
+        } else if (hintFieldVal.operand == opType::proofvalue) {
+            if(!hintOptions.dest) {
+                uint64_t pos = 0;
+                for(uint64_t j = 0; j < hintFieldVal.id; ++j) {
+                    pos += setupCtx.starkInfo.proofValuesMap[j].stage == 1 ? 1 : FIELD_EXTENSION;
+                }
+                if(hintOptions.inverse) {
+                    zklog.error("Inverse for proofvalue not supported in GPU yet");
+                    exitProcess();
+                } else {
+                    copyValueGPU(hintFieldInfo.values, &h_params.proofValues[pos], hintFieldInfo.size, stream);
+                }
+            }
+        } else if (hintFieldVal.operand == opType::challenge) {
+            if(hintOptions.inverse) {
+                zklog.error("Inverse for challenge not supported in GPU yet");
+                exitProcess();
+            } else {
+                copyValueGPU(hintFieldInfo.values, &h_params.challenges[FIELD_EXTENSION*hintFieldVal.id], hintFieldInfo.size, stream);
+            }
+        } else if (hintFieldVal.operand == opType::string_) {
+            // Strings stay on CPU, just copy
+            std::memcpy(hintFieldInfo.stringValue, hintFieldVal.stringValue.data(), hintFieldVal.stringValue.size()); 
+        } else {
+            zklog.error("Unknown HintFieldType");
+            exitProcess();
+            exit(-1);
+        }
+
+        for(uint64_t j = 0; j < hintFieldInfo.matrix_size; ++j) {
+            hintFieldInfo.pos[j] = hintFieldVal.pos[j];
+        }
+    }
 }

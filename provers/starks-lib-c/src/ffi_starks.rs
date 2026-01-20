@@ -368,23 +368,34 @@ pub fn get_hint_ids_by_name_c(p_expressions_bin: *mut c_void, hint_ids: *mut u64
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
 pub fn get_hint_field_c(
     p_setup_ctx: *mut c_void,
+    airgroup_id: u64,
+    air_id: u64,
     p_steps_params: *mut u8,
     hint_field_values: *mut c_void,
     hint_id: u64,
     hint_field_name: &str,
     hint_options: *mut u8,
+    d_buffers: *mut c_void,
+    stream_id: u64,
+    constant: bool,
 ) {
     let field_name = CString::new(hint_field_name).unwrap();
     unsafe {
         get_hint_field(
             p_setup_ctx,
+            airgroup_id,
+            air_id,
             p_steps_params as *mut std::os::raw::c_void,
             hint_field_values,
             hint_id,
             field_name.as_ptr() as *mut std::os::raw::c_char,
             hint_options as *mut std::os::raw::c_void,
+            d_buffers,
+            stream_id,
+            constant,
         )
     }
 }
@@ -1577,13 +1588,19 @@ pub fn get_hint_ids_by_name_c(_p_expressions_bin: *mut c_void, _hint_ids: *mut u
 }
 
 #[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
 pub fn get_hint_field_c(
     _p_setup_ctx: *mut c_void,
+    _airgroup_id: u64,
+    _air_id: u64,
     _p_steps_params: *mut u8,
     _hint_field_values: *mut c_void,
     _hint_id: u64,
     _hint_field_name: &str,
     _hint_options: *mut u8,
+    _d_buffers: *mut c_void,
+    _stream_id: u64,
+    _constant: bool,
 ) {
     trace!("··· {}", "get_hint_field: This is a mock call because there is no linked library");
 }
@@ -1601,7 +1618,7 @@ pub fn get_hint_field_sizes_c(
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_hint_field_values_c(_p_setup_ctx: *mut c_void, _hint_id: u64, _hint_field_name: &str) -> u64 {
-    trace!("··· {}", "get_hint_field: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_hint_field_values: This is a mock call because there is no linked library");
     0
 }
 

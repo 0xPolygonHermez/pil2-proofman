@@ -30,16 +30,6 @@ pub type GetWitnessFinalFunc =
 
 pub const N_RECURSIVE_PROOFS_PER_AGGREGATION: usize = 3;
 
-#[derive(Debug)]
-pub struct MaxSizes {
-    pub total_const_area: u64,
-    pub aux_trace_area: u64,
-    pub aux_trace_recursive_area: u64,
-    pub total_const_area_aggregation: u64,
-    pub n_streams: u64,
-    pub n_recursive_streams: u64,
-}
-
 #[derive(Debug, BorshSerialize, BorshDeserialize)]
 pub struct AggProofs {
     pub airgroup_id: u64,
@@ -263,7 +253,6 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     new_proof: &Proof<F>,
     prover_buffer: &[F],
     output_dir_path: &Path,
-    d_buffers: *mut c_void,
     const_tree: &[F],
     const_pols: &[F],
     save_proofs: bool,
@@ -360,7 +349,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         air_id as u64,
         instance_id as u64,
         vadcop,
-        d_buffers,
+        pctx.get_device_buffers_ptr(),
         &setup.const_pols_path,
         &setup.const_pols_tree_path,
         witness.proof_type.clone().into(),
@@ -388,7 +377,6 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
     const_pols: &[F],
     const_tree: &[F],
     output_dir_path: &Path,
-    d_buffers: *mut c_void,
     save_proofs: bool,
     agg_proofs: &mut Vec<AggProofs>,
 ) -> ProofmanResult<()> {
@@ -491,14 +479,13 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                             &recursive2_proof,
                             prover_buffer,
                             output_dir_path,
-                            d_buffers,
                             const_tree,
                             const_pols,
                             save_proofs,
                             false,
                         )?;
 
-                        get_stream_id_proof_c(d_buffers, stream_id);
+                        get_stream_id_proof_c(pctx.get_device_buffers_ptr(), stream_id);
 
                         airgroup_proofs[airgroup][j] = Some(recursive2_proof.proof);
 
@@ -553,7 +540,6 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     output_dir_path: &Path,
     const_pols: &[F],
     const_tree: &[F],
-    d_buffers: *mut c_void,
     save_proof: bool,
 ) -> ProofmanResult<Proof<F>> {
     timer_start_info!(GENERATE_VADCOP_FINAL_PROOF);
@@ -609,13 +595,12 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         &final_proof,
         prover_buffer,
         output_dir_path,
-        d_buffers,
         const_tree,
         const_pols,
         save_proof,
         false,
     )?;
-    get_stream_id_proof_c(d_buffers, stream_id);
+    get_stream_id_proof_c(pctx.get_device_buffers_ptr(), stream_id);
 
     // Set publics for vadcop final proof
     let publics = pctx.get_publics();
@@ -638,7 +623,6 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
     output_dir_path: &Path,
     const_pols: &[F],
     const_tree: &[F],
-    d_buffers: *mut c_void,
     save_proof: bool,
 ) -> ProofmanResult<Proof<F>> {
     timer_start_info!(GENERATE_VADCOP_FINAL_COMPRESSED_PROOF);
@@ -663,13 +647,12 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
         &final_proof,
         prover_buffer,
         output_dir_path,
-        d_buffers,
         const_tree,
         const_pols,
         save_proof,
         false,
     )?;
-    get_stream_id_proof_c(d_buffers, stream_id);
+    get_stream_id_proof_c(pctx.get_device_buffers_ptr(), stream_id);
 
     // Set publics for vadcop final proof
     let publics = pctx.get_publics();

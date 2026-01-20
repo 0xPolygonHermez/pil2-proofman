@@ -66,7 +66,7 @@ extern "C" {
 
     // Hints
     // ========================================================================================
-    void get_hint_field(void *pSetupCtx, void *stepsParams, void *hintFieldValues, uint64_t hintId, char *hintFieldName, void *hintOptions);
+    void get_hint_field(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *hintFieldValues, uint64_t hintId, char *hintFieldName, void *hintOptions, void *d_buffers_, uint64_t streamId, bool constant);
     uint64_t get_hint_field_values(void *pSetupCtx, uint64_t hintId, char *hintFieldName);
     void get_hint_field_sizes(void *pSetupCtx, void *hintFieldValues, uint64_t hintId, char *hintFieldName, void *hintOptions);
     void mul_hint_fields(void *pSetupCtx, void *stepsParams, uint64_t nHints, uint64_t *hintId, char **hintFieldNameDest, char **hintFieldName1, char **hintFieldName2, void **hintOptions1, void **hintOptions2);

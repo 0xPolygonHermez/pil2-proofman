@@ -331,4 +331,8 @@ impl<F: Field> AirInstance<F> {
     pub fn set_stream_id(&mut self, stream_id: u64) {
         self.stream_id = stream_id;
     }
+
+    pub fn get_stream_id(&self) -> u64 {
+        self.stream_id
+    }
 }

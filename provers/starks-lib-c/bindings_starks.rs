@@ -142,11 +142,16 @@ extern "C" {
     // ========================================================================================
     pub fn get_hint_field(
         pSetupCtx: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
         stepsParams: *mut ::std::os::raw::c_void,
         hintFieldValues: *mut ::std::os::raw::c_void,
         hintId: u64,
         hintFieldName: *mut ::std::os::raw::c_char,
         hintOptions: *mut ::std::os::raw::c_void,
+        d_buffers: *mut ::std::os::raw::c_void,
+        streamId: u64,
+        constant: bool,
     );
     
     pub fn get_hint_field_values(

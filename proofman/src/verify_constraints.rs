@@ -8,15 +8,12 @@ use proofman_common::{
     DebugInfo, GlobalConstraintInfo, ProofCtx, ProofmanError, ProofmanResult, SetupCtx,
 };
 
-use proofman_util::DeviceBuffer;
-
 use std::os::raw::c_void;
 use colored::*;
 
 pub fn verify_constraints<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
-    d_buffers: &DeviceBuffer,
     global_id: usize,
     n_print_constraints: u64,
     stream_id: u64,
@@ -64,7 +61,7 @@ pub fn verify_constraints<F: PrimeField64>(
             air_id as u64,
             (&steps_params).into(),
             constraints_info_c.as_mut_ptr() as *mut c_void,
-            d_buffers.get_ptr(),
+            pctx.get_device_buffers_ptr(),
             stream_id,
         );
 
@@ -161,12 +158,11 @@ pub fn verify_global_constraints_proof<F: PrimeField64>(
 pub fn verify_constraints_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
-    d_buffers: &DeviceBuffer,
     instance_id: usize,
     n_print_constraints: u64,
     stream_id: u64,
 ) -> ProofmanResult<bool> {
-    let constraints = verify_constraints(pctx, sctx, d_buffers, instance_id, n_print_constraints, stream_id)?;
+    let constraints = verify_constraints(pctx, sctx, instance_id, n_print_constraints, stream_id)?;
 
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;

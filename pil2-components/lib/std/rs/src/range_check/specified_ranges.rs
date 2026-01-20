@@ -48,17 +48,33 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
         let hint_id = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "specified_ranges_data")[0] as usize;
 
         // Get the relevant data
-        let num_muls =
-            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint_id, "num_muls", hint_opt.clone())?;
+        let num_muls = get_hint_field_constant_as::<u64, F>(
+            sctx,
+            pctx,
+            airgroup_id,
+            air_id,
+            hint_id,
+            "num_muls",
+            hint_opt.clone(),
+        )?;
 
-        let mins = get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "mins", hint_opt.clone())?.values;
+        let mins =
+            get_hint_field_constant_a::<F>(sctx, pctx, airgroup_id, air_id, hint_id, "mins", hint_opt.clone())?.values;
         let mins_neg =
-            get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "mins_neg", hint_opt.clone())?.values;
+            get_hint_field_constant_a::<F>(sctx, pctx, airgroup_id, air_id, hint_id, "mins_neg", hint_opt.clone())?
+                .values;
 
-        let opids_count =
-            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint_id, "opids_count", hint_opt.clone())?;
+        let opids_count = get_hint_field_constant_as::<u64, F>(
+            sctx,
+            pctx,
+            airgroup_id,
+            air_id,
+            hint_id,
+            "opids_count",
+            hint_opt.clone(),
+        )?;
         let acc_heights =
-            get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "acc_heights", hint_opt)?.values;
+            get_hint_field_constant_a::<F>(sctx, pctx, airgroup_id, air_id, hint_id, "acc_heights", hint_opt)?.values;
 
         // Get and store the ranges
         let mut ranges = Vec::with_capacity(opids_count as usize);

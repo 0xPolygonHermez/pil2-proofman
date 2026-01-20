@@ -111,6 +111,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
 
             Self::register_ranges(
                 sctx,
+                &pctx,
                 virtual_table.clone(),
                 airgroup_id,
                 air_id,
@@ -154,8 +155,10 @@ impl<F: PrimeField64> StdRangeCheck<F> {
     }
 
     // Helper function to register ranges
+    #[allow(clippy::too_many_arguments)]
     fn register_ranges(
         sctx: &SetupCtx<F>,
+        pctx: &ProofCtx<F>,
         virtual_table: Arc<StdVirtualTable<F>>,
         airgroup_id: usize,
         air_id: usize,
@@ -169,7 +172,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         let rc_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "range_def");
 
         for hint in rc_hints {
-            let hint_data = Self::parse_range_hint(sctx, airgroup_id, air_id, hint)?;
+            let hint_data = Self::parse_range_hint(sctx, pctx, airgroup_id, air_id, hint)?;
 
             let data = RangeData { min: hint_data.min, max: hint_data.max, predefined: hint_data.predefined };
 
@@ -204,15 +207,29 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         Ok(())
     }
 
-    fn parse_range_hint(sctx: &SetupCtx<F>, airgroup_id: usize, air_id: usize, hint: u64) -> ProofmanResult<HintCache> {
+    fn parse_range_hint(
+        sctx: &SetupCtx<F>,
+        pctx: &ProofCtx<F>,
+        airgroup_id: usize,
+        air_id: usize,
+        hint: u64,
+    ) -> ProofmanResult<HintCache> {
         let options = HintFieldOptions::default();
 
-        let opid =
-            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint as usize, "opid", options.clone())?;
+        let opid = get_hint_field_constant_as::<u64, F>(
+            sctx,
+            pctx,
+            airgroup_id,
+            air_id,
+            hint as usize,
+            "opid",
+            options.clone(),
+        )?;
 
         let predefined = validate_binary_field(
             get_hint_field_constant_as_field::<F>(
                 sctx,
+                pctx,
                 airgroup_id,
                 air_id,
                 hint as usize,
@@ -222,11 +239,19 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             "Predefined",
         )?;
 
-        let min_val =
-            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint as usize, "min", options.clone())?;
+        let min_val = get_hint_field_constant_as::<u64, F>(
+            sctx,
+            pctx,
+            airgroup_id,
+            air_id,
+            hint as usize,
+            "min",
+            options.clone(),
+        )?;
         let min_neg = validate_binary_field(
             get_hint_field_constant_as_field::<F>(
                 sctx,
+                pctx,
                 airgroup_id,
                 air_id,
                 hint as usize,
@@ -236,11 +261,19 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             "Min neg",
         )?;
 
-        let max_val =
-            get_hint_field_constant_as::<u64, F>(sctx, airgroup_id, air_id, hint as usize, "max", options.clone())?;
+        let max_val = get_hint_field_constant_as::<u64, F>(
+            sctx,
+            pctx,
+            airgroup_id,
+            air_id,
+            hint as usize,
+            "max",
+            options.clone(),
+        )?;
         let max_neg = validate_binary_field(
             get_hint_field_constant_as_field::<F>(
                 sctx,
+                pctx,
                 airgroup_id,
                 air_id,
                 hint as usize,
@@ -251,7 +284,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         )?;
 
         let HintFieldValue::String(rc_type_str) =
-            get_hint_field_constant::<F>(sctx, airgroup_id, air_id, hint as usize, "type", options.clone())?
+            get_hint_field_constant::<F>(sctx, pctx, airgroup_id, air_id, hint as usize, "type", options.clone())?
         else {
             return Err(ProofmanError::StdError("Type hint must be a string".to_string()));
         };
@@ -259,6 +292,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         let is_virtual = validate_binary_field(
             get_hint_field_constant_as_field::<F>(
                 sctx,
+                pctx,
                 airgroup_id,
                 air_id,
                 hint as usize,

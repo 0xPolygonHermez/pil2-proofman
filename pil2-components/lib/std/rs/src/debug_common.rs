@@ -135,6 +135,7 @@ pub fn extract_hint_fields<F: PrimeField64>(
 
             let type_piop = get_hint_field_constant_as::<u64, F>(
                 sctx,
+                pctx,
                 airgroup_id,
                 air_id,
                 hint as usize,
@@ -150,6 +151,7 @@ pub fn extract_hint_fields<F: PrimeField64>(
 
             let deg_expr = get_hint_field_constant_as_field(
                 sctx,
+                pctx,
                 airgroup_id,
                 air_id,
                 hint as usize,
@@ -159,6 +161,7 @@ pub fn extract_hint_fields<F: PrimeField64>(
 
             let deg_mul = get_hint_field_constant_as_field(
                 sctx,
+                pctx,
                 airgroup_id,
                 air_id,
                 hint as usize,
@@ -168,6 +171,7 @@ pub fn extract_hint_fields<F: PrimeField64>(
 
             let name_piop = get_hint_field_constant_as_string(
                 sctx,
+                pctx,
                 airgroup_id,
                 air_id,
                 hint as usize,
@@ -177,6 +181,7 @@ pub fn extract_hint_fields<F: PrimeField64>(
 
             let name_exprs = get_hint_field_constant_a_as_string(
                 sctx,
+                pctx,
                 airgroup_id,
                 air_id,
                 hint as usize,
