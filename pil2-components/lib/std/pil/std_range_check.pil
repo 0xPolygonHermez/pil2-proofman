@@ -140,20 +140,60 @@ function set_max_std_tables_bits(const int bits) {
 const int U8AIR_OPID = 100;
 const int U16AIR_OPID = 101;
 
-int last_assigned_opid = U16AIR_OPID;
-private function generate_opid(const int min, const int max, const int predefined): int {
-    if (predefined && min >= 0) {
-        // If the range is [0, R] with R <= MASK_8/MASK_16, we use the predefined opids
-        if (max <= MASK_8) {
-            return U8AIR_OPID;
-        } else if (max <= MASK_16) {
-            return U16AIR_OPID;
+int LAST_ASSIGNED_OPID = U16AIR_OPID;
+
+/**
+ * Gets the opid for a specified range.
+ *
+ * @param min        The minimum value of the range (inclusive).
+ * @param max        The maximum value of the range (inclusive).
+ * @param predefined A flag indicating whether to use predefined ranges.
+ * @param query_only If true, only queries for existing opid without creating a new one.
+ *                   Returns -1 if the range is not found.
+ *
+ * @return The opid for the range, or -1 if query_only is true and range not found.
+ */
+function get_opid(const int min, const int max, const int predefined = 0, const int query_only = 0): int {
+    range_validator(min, max);
+
+    // Check if the range can be absorbed into the predefined ranges
+    const int absorb = predefined && min >= 0 && max <= MASK_16;
+
+    const int opid = opid_process(min, max, predefined, absorb, rep_count: 0, query_only: query_only);
+
+    // If not query_only and we got a valid opid, track that range_check must be called
+    if (!query_only && opid != -1) {
+        container air.std.pending alias pending {
+            int count = 0;
+            int opids[ARRAY_SIZE];
+            int mins[ARRAY_SIZE];
+            int maxs[ARRAY_SIZE];
+            int predefined[ARRAY_SIZE];
+            int called[ARRAY_SIZE];
+        }
+
+        // Check if this opid is already pending
+        int already_pending = 0;
+        for (int i = 0; i < pending.count; i++) {
+            if (pending.opids[i] == opid) {
+                already_pending = 1;
+                break;
+            }
+        }
+
+        if (!already_pending) {
+            pending.opids[pending.count] = opid;
+            pending.mins[pending.count] = min;
+            pending.maxs[pending.count] = max;
+            pending.predefined[pending.count] = predefined;
+            pending.count++;
+
+            // Register the check at end of air
+            on final air check_pending_range_checks();
         }
     }
 
-    // Generate a new opid
-    last_assigned_opid++;
-    return last_assigned_opid;
+    return opid;
 }
 
 airtemplate U8Air(const int N = 2**8) {
@@ -310,11 +350,21 @@ function range_check(const expr expression, const int min, const int max, const 
 
     const int opid = opid_process(min, max, predefined, absorb);
 
+    // Mark this opid as called
+    mark_opid_called(opid);
+
     if (predefined && !absorb) {
         println(`The range [${min},${max}] cannot be absorbed into any predefined range. The range will be treated as a specified range.`);
         println("Available predefined ranges:");
         println(` -  U8: [0, ${MASK_8}]`);
         println(` - U16: [0, ${MASK_16}]`);
+    }
+
+    // TODO: Add it to other rc types when predefined is available
+    // To mark if the U8 and U16 airs are used within the airgroup
+    container airgroup.std.rc {
+        int u8_used = 0;
+        int u16_used = 0;
     }
 
     // Define the range check assumes
@@ -380,7 +430,7 @@ function range_check_group(const expr expressions[], const int min, const int ma
 
     int opid;
     for (int i = 0; i < len; i++) {
-        opid =range_check(expressions[i], min, max, sels[i], predefined);
+        opid = range_check(expressions[i], min, max, sels[i], predefined);
     }
 
     return opid;
@@ -432,6 +482,10 @@ function multi_range_check(const expr expression, const int min1, const int max1
 
     const int opid1 = opid_process(min1, max1, predefined, absorb: 0);
     const int opid2 = opid_process(min2, max2, predefined, absorb: 0);
+
+    // Mark these opids as called
+    mark_opid_called(opid1);
+    mark_opid_called(opid2);
 
     @range_def{opid: opid1, predefined: predefined, min: min1, max: max1, 
                min_neg: (min1 < 0), max_neg: (max1 < 0), 
@@ -503,6 +557,9 @@ function dynamic_range_check(const expr expression, const expr range_sel, const 
     int opids[opids_count_id];
     for (int i = 0; i < opids_count_id; i++) {
         opids[i] = opids_id[i];
+
+        // Mark this opid as called
+        mark_opid_called(opids[i]);
     }
 
     // Define the assume
@@ -542,7 +599,7 @@ private function range_validator(const int min, const int max) {
     }
 }
 
-private function opid_process(const int min, const int max, const int predefined, const int absorb): int {
+private function opid_process(const int min, const int max, const int predefined, const int absorb, const int rep_count = 1, const int query_only = 0): int {
     container proof.std.rc alias rcproof {
         // Number of times U8, U16 and specified ranges air are used
         int num_u8_airgroup = 0;
@@ -576,48 +633,38 @@ private function opid_process(const int min, const int max, const int predefined
         int air_ids[ARRAY_SIZE];
     }
 
-    container airgroup.std.rc {
-        // To mark if the U8 and U16 airs are used within the airgroup
-        int u8_used = 0;
-        int u16_used = 0;
-    }
-
-    // Store the airgroup and air ids for global hints if it appears the first time
-    int found = 0;
-    for (int i = 0; i < rcproof.air_count; i++) {
-        if (rcproof.airgroup_ids[i] == AIRGROUP_ID && rcproof.air_ids[i] == AIR_ID) {
-            found = 1;
-            break;
-        }
-    }
-
-    if (!found) {
-        rcproof.airgroup_ids[rcproof.air_count] = AIRGROUP_ID;
-        rcproof.air_ids[rcproof.air_count] = AIR_ID;
-        rcproof.air_count++;
-    }
-
-    // Print range stats
-    if (PRINT_RANGE_STATS == 1) {
-        on final proof print_range_stats();
-    }
-
-    // Generate global hints
-    on final proof issue_rc_users_global(); 
-
     for (int i = 0; i < rcproof.opids_count; i++) {
         if (min == rcproof.mins[i] && max == rcproof.maxs[i]) {
             if ((predefined == rcproof.predefined[i]) || (absorb == rcproof.absorbed[i])) {
                 // If the range has already been introduced, increment the repetitions
                 // and return the same opid
-                rcproof.reps[i]++;
+                if (rep_count) {
+                    rcproof.reps[i]++;
+                }
                 return rcproof.opids[i];
             }
         }
     }
 
-    // Otherwise, we get the corresponding opid
-    const int opid = generate_opid(min, max, predefined);
+    // If the opid is not found and we just want to query, exit
+    if (query_only) {
+        return -1;
+    }
+
+    // Otherwise, we generate a new opid
+    int opid;
+    if (predefined && min >= 0) {
+        // If the range is [0, R] with R <= MASK_8/MASK_16, we use the predefined opids
+        if (max <= MASK_8) {
+            opid = U8AIR_OPID;
+        } else if (max <= MASK_16) {
+            opid = U16AIR_OPID;
+        }
+    } else {
+        // Generate a new opid
+        LAST_ASSIGNED_OPID++;
+        opid = LAST_ASSIGNED_OPID;
+    }
 
     // Save range data
     rcproof.opids[rcproof.opids_count] = opid;
@@ -625,7 +672,9 @@ private function opid_process(const int min, const int max, const int predefined
     rcproof.absorbed[rcproof.opids_count] = absorb;
     rcproof.mins[rcproof.opids_count] = min;
     rcproof.maxs[rcproof.opids_count] = max;
-    rcproof.reps[rcproof.opids_count] = 1;
+    if (rep_count) {
+        rcproof.reps[rcproof.opids_count] = 1;
+    }
     rcproof.opids_count++;
 
     // Exit if the range does not belong to the specified ranges air
@@ -649,6 +698,21 @@ private function opid_process(const int min, const int max, const int predefined
 }
 
 private function define_proves(const int absorb) {
+    // Store the airgroup and air ids if it appears the first time
+    int found = 0;
+    for (int i = 0; i < proof.std.rc.air_count; i++) {
+        if (proof.std.rc.airgroup_ids[i] == AIRGROUP_ID && proof.std.rc.air_ids[i] == AIR_ID) {
+            found = 1;
+            break;
+        }
+    }
+
+    if (!found) {
+        proof.std.rc.airgroup_ids[proof.std.rc.air_count] = AIRGROUP_ID;
+        proof.std.rc.air_ids[proof.std.rc.air_count] = AIR_ID;
+        proof.std.rc.air_count++;
+    }
+
     if (absorb) {
         // If the U8 was used, update the max airgroup id
         if (airgroup.std.rc.u8_used) {
@@ -674,6 +738,47 @@ private function define_proves(const int absorb) {
         }
 
         on final(2) airgroup declare_specified_air();
+    }
+
+    // Generate global hints
+    on final proof issue_rc_users_global(); 
+
+    // Print range stats
+    if (PRINT_RANGE_STATS == 1) {
+        on final proof print_range_stats();
+    }
+}
+
+/**
+ * Marks an opid as called.
+ */
+private function mark_opid_called(const int opid) {
+    if (!defined(air.std.pending)) {
+        return;
+    }
+
+    use air.std.pending alias pending;
+
+    // Check if already marked
+    for (int i = 0; i < pending.count; i++) {
+        if (pending.opids[i] == opid) {
+            pending.called[i] = 1;
+            return;
+        }
+    }
+}
+
+/**
+ * Checks that all pending range checks from get_opid have been called.
+ */
+private function check_pending_range_checks() {
+    use air.std.pending alias pending;
+
+    for (int i = 0; i < pending.count; i++) {
+        if (!pending.called[i]) {
+            const string pred_str = pending.predefined[i] ? " (predefined)" : "";
+            error(`get_opid was called for range #${pending.opids[i]} [${pending.mins[i]}, ${pending.maxs[i]}]${pred_str}, but this range was never range checked.`);
+        }
     }
 }
 
@@ -831,12 +936,34 @@ private function issue_rc_users_global() {
 }
 
 private function print_range_stats() {
-    use proof.std.rc;
+    use proof.std.rc alias rcproof;
+
+    // Sort indices by opid
+    int indices[rcproof.opids_count];
+    for (int i = 0; i < rcproof.opids_count; i++) {
+        indices[i] = i;
+    }
+    
+    for (int i = 0; i < rcproof.opids_count - 1; i++) {
+        for (int j = 0; j < rcproof.opids_count - i - 1; j++) {
+            if (rcproof.opids[indices[j]] > rcproof.opids[indices[j + 1]]) {
+                const int tmp = indices[j];
+                indices[j] = indices[j + 1];
+                indices[j + 1] = tmp;
+            }
+        }
+    }
 
     println("Range check stats:");
-    for (int i = 0; i < opids_count; i++) {
-        const int num_reps = reps[i];
-        const string num_reps_str = (num_reps == 1) ? "time" : "times";
-        println(` - [${mins[i]}, ${maxs[i]}]: ${num_reps} ${num_reps_str}`);
+    for (int i = 0; i < rcproof.opids_count; i++) {
+        const int idx = indices[i];
+        const int opid = rcproof.opids[idx];
+        const int min = rcproof.mins[idx];
+        const int max = rcproof.maxs[idx];
+        const int reps = rcproof.reps[idx];
+        const string pred_str = rcproof.predefined[idx] ? " (predefined)" : "";
+        const string reps_str = (reps == 1) ? "1 time" : `${reps} times`;
+        
+        println(`  · opid #${opid}: [${min}, ${max}]${pred_str} - ${reps_str}`);
     }
 }
