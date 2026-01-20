@@ -12,6 +12,7 @@ use std::io::Write;
 use std::ffi::c_void;
 use proofman_starks_lib_c::{init_final_snark_prover_c, free_final_snark_prover_c};
 use crate::verify_proof_bn128;
+use crate::check_const_tree;
 
 pub struct SnarkWrapper<F: PrimeField64> {
     pub setup_snark_path: PathBuf,
@@ -156,6 +157,31 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     }
 }
 
+pub fn check_setup_snark<F: PrimeField64>(
+    proving_key_snark_path: &Path,
+    verbose_mode: VerboseMode,
+) -> ProofmanResult<()> {
+    initialize_logger(verbose_mode, None);
+
+    let setup_recursivef_path =
+        PathBuf::from(format!("{}/{}/{}", proving_key_snark_path.display(), "recursivef", "recursivef"));
+
+    let setup_recursivef: Setup<F> = Setup::new(
+        &setup_recursivef_path,
+        0,
+        0,
+        &GlobalInfoAir::new("RecursiveF".to_string()),
+        &ProofType::RecursiveF,
+        false,
+        false,
+        None,
+    );
+
+    calculate_fixed_tree(&setup_recursivef);
+
+    Ok(())
+}
+
 pub fn generate_and_verify_recursivef<F: PrimeField64>(
     proving_key_path: &Path,
     vadcop_proof: &[u64],
@@ -183,7 +209,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     setup_recursivef.set_circom_circuit()?;
     setup_recursivef.set_exec_file_data()?;
 
-    calculate_fixed_tree(&setup_recursivef);
+    check_const_tree(&setup_recursivef, false)?;
 
     setup_recursivef.load_const_pols();
     setup_recursivef.load_const_pols_tree();

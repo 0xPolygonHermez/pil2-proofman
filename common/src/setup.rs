@@ -116,8 +116,6 @@ impl<F: PrimeField64> Setup<F> {
         preallocate: bool,
         recursive2_path: Option<&PathBuf>,
     ) -> Self {
-        let gpu = cfg!(feature = "gpu") && setup_type != &ProofType::RecursiveF;
-
         let stark_info_path = match setup_type {
             ProofType::Recursive1 => {
                 let setup_path_recursive2 =
@@ -136,12 +134,12 @@ impl<F: PrimeField64> Setup<F> {
             _ => setup_path.display().to_string() + ".bin",
         };
 
-        let const_pols_path = match !gpu {
+        let const_pols_path = match !cfg!(feature = "gpu") {
             true => setup_path.display().to_string() + ".const",
             false => setup_path.display().to_string() + ".const_gpu",
         };
 
-        let const_pols_tree_path = match !gpu {
+        let const_pols_tree_path = match !cfg!(feature = "gpu") {
             true => setup_path.display().to_string() + ".consttree",
             false => setup_path.display().to_string() + ".consttree_gpu",
         };
@@ -190,14 +188,14 @@ impl<F: PrimeField64> Setup<F> {
             let stark_info = StarkInfo::from_json(&stark_info_json);
             let recursive = setup_type != &ProofType::Basic;
             let recursive_final = setup_type == &ProofType::RecursiveF;
-            let preallocate_const = preallocate && gpu;
+            let preallocate_const = preallocate && cfg!(feature = "gpu");
             let p_stark_info = stark_info_new_c(
                 stark_info_path.as_str(),
                 recursive_final,
                 recursive,
                 verify_constraints,
                 false,
-                gpu,
+                cfg!(feature = "gpu"),
                 preallocate_const,
             );
             let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
@@ -252,7 +250,7 @@ impl<F: PrimeField64> Setup<F> {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
                 let const_pols_tree: Vec<F> = create_buffer_fast(const_tree_size);
                 let mut const_pols_size_packed = 0;
-                if gpu {
+                if cfg!(feature = "gpu") {
                     let words_per_row: u64 = if Path::new(&const_pols_path).exists() {
                         let bytes = fs::read(&const_pols_path).expect("Failed to read const_pols file");
                         if bytes.len() >= 8 {

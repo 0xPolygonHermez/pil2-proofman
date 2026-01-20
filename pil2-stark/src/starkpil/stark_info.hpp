@@ -182,7 +182,6 @@ public:
     bool verify_constraints = false;
     bool verify = false;
     bool gpu = false;
-    bool recursive_final = false;
     bool preallocate = false;
 
     bool calculateFixedExtended = false;
