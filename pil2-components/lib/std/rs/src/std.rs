@@ -47,6 +47,15 @@ pub struct Std<F: PrimeField64> {
     pub virtual_table: Arc<StdVirtualTable<F>>,
 }
 
+/// Marker bit to distinguish range check IDs from virtual table IDs
+/// This assumes that we will never have more than 2^62 range checks or virtual tables
+#[cfg(debug_assertions)]
+const RANGE_CHECK_MARKER: usize = 1 << 63;
+#[cfg(debug_assertions)]
+const VIRTUAL_TABLE_MARKER: usize = 1 << 62;
+#[cfg(debug_assertions)]
+const ID_MASK: usize = !(RANGE_CHECK_MARKER | VIRTUAL_TABLE_MARKER);
+
 impl<F: PrimeField64> Std<F> {
     pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, shared_tables: bool) -> ProofmanResult<Arc<Self>> {
         // Get the mode
@@ -65,21 +74,46 @@ impl<F: PrimeField64> Std<F> {
 
     /// Gets the range id for a given range subject to the range check
     pub fn get_range_id<V: RCValue>(&self, min: V, max: V, predefined: Option<bool>) -> ProofmanResult<usize> {
-        self.range_check.get_range_id(min.to_i64(), max.to_i64(), predefined)
+        let id = self.range_check.get_range_id(min.to_i64(), max.to_i64(), predefined)?;
+
+        #[cfg(debug_assertions)]
+        let id = id | RANGE_CHECK_MARKER;
+
+        Ok(id)
+    }
+
+    #[cfg(debug_assertions)]
+    #[inline]
+    fn unwrap_range_check_id(&self, id: usize) -> usize {
+        assert!(
+            (id & RANGE_CHECK_MARKER) != 0,
+            "Invalid range check ID: {}. Expected an ID from get_range_id().",
+            id & ID_MASK
+        );
+        id & ID_MASK
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[inline(always)]
+    fn unwrap_range_check_id(&self, id: usize) -> usize {
+        id
     }
 
     /// Increments the multiplicity `mul` of a given value `val` in the range check with id `id`
     pub fn range_check<V: RCValue, M: RCMultiplicity>(&self, id: usize, val: V, mul: M) {
+        let id = self.unwrap_range_check_id(id);
         self.range_check.assign_value(id, val.to_i64(), mul.to_u64());
     }
 
     /// Increments the multiplicity of a given value `val` by 1
     pub fn range_check_one<V: RCValue>(&self, id: usize, val: V) {
+        let id = self.unwrap_range_check_id(id);
         self.range_check.assign_value(id, val.to_i64(), 1);
     }
 
     /// Increments the multiplicities for multiple value/multiplicity pairs in the range check with id `id`
     pub fn range_check_batch<V: RCValue, M: RCMultiplicity>(&self, id: usize, vals: &[V], muls: &[M]) {
+        let id = self.unwrap_range_check_id(id);
         let vals: Vec<i64> = vals.iter().map(|&v| v.to_i64()).collect();
         let muls: Vec<u64> = muls.iter().map(|&m| m.to_u64()).collect();
         self.range_check.assign_values(id, &vals, &muls);
@@ -87,12 +121,14 @@ impl<F: PrimeField64> Std<F> {
 
     /// Increments the multiplicity by 1 for each value in `vals`
     pub fn range_check_batch_one<V: RCValue>(&self, id: usize, vals: &[V]) {
+        let id = self.unwrap_range_check_id(id);
         let vals: Vec<i64> = vals.iter().map(|&v| v.to_i64()).collect();
         self.range_check.assign_values_same_mul(id, &vals, 1);
     }
 
     /// Increments the multiplicities for multiple values with the same multiplicity in the range check with id `id`
     pub fn range_checks_same_mul<V: RCValue, M: RCMultiplicity>(&self, id: usize, vals: &[V], mul: M) {
+        let id = self.unwrap_range_check_id(id);
         let vals: Vec<i64> = vals.iter().map(|&v| v.to_i64()).collect();
         self.range_check.assign_values_same_mul(id, &vals, mul.to_u64());
     }
@@ -100,6 +136,7 @@ impl<F: PrimeField64> Std<F> {
     /// Increments the multiplicities of a list of values `[start, start + N]` in the range check with id `id`.
     /// If `start` is `None`, then it is set to be the minimum of the range
     pub fn range_check_ranged<M: RCMultiplicity>(&self, id: usize, start: Option<i64>, muls: &[M]) {
+        let id = self.unwrap_range_check_id(id);
         let start = start.map(|s| s.to_i64());
         let muls: Vec<u64> = muls.iter().map(|&m| m.to_u64()).collect();
         self.range_check.assign_values_ranged(id, start, &muls)
@@ -109,34 +146,62 @@ impl<F: PrimeField64> Std<F> {
 
     /// Gets the virtual table ID for a given ID
     pub fn get_virtual_table_id(&self, id: usize) -> ProofmanResult<usize> {
-        self.virtual_table.get_global_id(id)
+        let id = self.virtual_table.get_global_id(id)?;
+
+        #[cfg(debug_assertions)]
+        let id = id | VIRTUAL_TABLE_MARKER;
+
+        Ok(id)
+    }
+
+    #[cfg(debug_assertions)]
+    #[inline]
+    fn unwrap_virtual_table_id(&self, id: usize) -> usize {
+        assert!(
+            (id & VIRTUAL_TABLE_MARKER) != 0,
+            "Invalid virtual table ID: {}. Expected an ID from get_virtual_table_id()",
+            id & ID_MASK
+        );
+        id & ID_MASK
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[inline(always)]
+    fn unwrap_virtual_table_id(&self, id: usize) -> usize {
+        id
     }
 
     pub fn inc_virtual_row<M: RCMultiplicity>(&self, id: usize, row: M, mul: M) {
+        let id = self.unwrap_virtual_table_id(id);
         self.virtual_table.inc_virtual_row(id, row.to_u64(), mul.to_u64());
     }
 
     pub fn inc_virtual_row_one<M: RCMultiplicity>(&self, id: usize, row: M) {
+        let id = self.unwrap_virtual_table_id(id);
         self.virtual_table.inc_virtual_row(id, row.to_u64(), 1);
     }
 
     pub fn inc_virtual_row_batch<M: RCMultiplicity>(&self, id: usize, rows: &[M], muls: &[M]) {
+        let id = self.unwrap_virtual_table_id(id);
         let rows: Vec<u64> = rows.iter().map(|&r| r.to_u64()).collect();
         let muls: Vec<u64> = muls.iter().map(|&m| m.to_u64()).collect();
         self.virtual_table.inc_virtual_rows(id, &rows, &muls);
     }
 
     pub fn inc_virtual_row_batch_one<M: RCMultiplicity>(&self, id: usize, rows: &[M]) {
+        let id = self.unwrap_virtual_table_id(id);
         let rows: Vec<u64> = rows.iter().map(|&r| r.to_u64()).collect();
         self.virtual_table.inc_virtual_rows_same_mul(id, &rows, 1);
     }
 
     pub fn inc_virtual_rows_same_mul<M: RCMultiplicity>(&self, id: usize, rows: &[M], mul: M) {
+        let id = self.unwrap_virtual_table_id(id);
         let rows: Vec<u64> = rows.iter().map(|&r| r.to_u64()).collect();
         self.virtual_table.inc_virtual_rows_same_mul(id, &rows, mul.to_u64());
     }
 
     pub fn inc_virtual_rows_ranged<M: RCMultiplicity>(&self, id: usize, start: Option<u64>, muls: &[M]) {
+        let id = self.unwrap_virtual_table_id(id);
         let start = start.map(|s| s.to_u64());
         let muls: Vec<u64> = muls.iter().map(|&m| m.to_u64()).collect();
         self.virtual_table.inc_virtual_rows_ranged(id, start, &muls);
