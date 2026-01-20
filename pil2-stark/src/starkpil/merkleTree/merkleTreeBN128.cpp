@@ -175,7 +175,7 @@ void MerkleTreeBN128::linearHash(RawFr::Element* result, Goldilocks::Element* va
     if (width > 4)
     {
         uint64_t widthRawFrElements = ceil((double)width / FIELD_EXTENSION);
-        RawFr::Element buff[widthRawFrElements]; 
+        RawFr::Element *buff = (RawFr::Element *)calloc(height * widthRawFrElements, sizeof(RawFr::Element));
 
         uint64_t nElementsGL = (width > FIELD_EXTENSION + 1) ? ceil((double)width / FIELD_EXTENSION) : 0;
         for (uint64_t j = 0; j < nElementsGL; j++)
@@ -218,7 +218,8 @@ void MerkleTreeBN128::linearHash(RawFr::Element* result, Goldilocks::Element* va
                 p.hash(elements_last, &result[0]);
                 pending = 0;
             }
-        } 
+        }
+        free(buff); 
     } else {
         for (uint64_t k = 0; k < width; k++)
         {
@@ -311,20 +312,20 @@ void MerkleTreeBN128::calculateRootFromProof(RawFr::Element *value, std::vector<
     uint64_t nBitsArity = std::ceil(std::log2(arity));
 
     uint64_t currIdx = idx & (arity - 1);
-    uint64_t nextIdx = idx >> nBitsArity;
+    idx = idx >> nBitsArity;
 
     Poseidon_opt p;
     std::vector<RawFr::Element> elements(arity + 1);
     std::memset(&elements[0], 0, (arity + 1) * sizeof(RawFr::Element));
 
     for(uint64_t i = 0; i < arity; ++i) {
-        std::memcpy(&elements[i], &mp[offset][i], sizeof(RawFr::Element));
+        std::memcpy(&elements[1 + i], &mp[offset][i], sizeof(RawFr::Element));
     }
 
-    std::memcpy(&elements[currIdx], &value[0], sizeof(RawFr::Element));
+    std::memcpy(&elements[1 + currIdx], &value[0], sizeof(RawFr::Element));
     p.hash(elements, &value[0]);
 
-    calculateRootFromProof(value, mp, nextIdx, offset + 1);
+    calculateRootFromProof(value, mp, idx, offset + 1);
 
 }
 

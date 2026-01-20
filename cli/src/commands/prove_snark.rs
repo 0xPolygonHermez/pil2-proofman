@@ -7,6 +7,7 @@ use std::io::Read;
 use bytemuck::cast_slice;
 
 use proofman::SnarkWrapper;
+use proofman::generate_and_verify_recursivef;
 use std::fs::File;
 
 #[derive(Parser)]
@@ -28,6 +29,9 @@ pub struct ProveSnarkCmd {
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
     pub verbose: u8, // Using u8 to hold the number of `-v`
 
+    #[clap(short = 'r', long, default_value_t = false)]
+    pub only_recursivef: bool,
+
     #[clap(short = 'j', long, default_value_t = false)]
     pub save_json: bool,
 }
@@ -42,10 +46,25 @@ impl ProveSnarkCmd {
         proof_file.read_to_end(&mut proof_u64)?;
         let proof = cast_slice::<u8, u64>(&proof_u64);
 
-        let snark_wrapper: SnarkWrapper<Goldilocks> = SnarkWrapper::new(&self.proving_key_snark, self.verbose.into())?;
-
-        snark_wrapper.generate_final_snark_proof(proof, &self.output_dir, self.save_json)?;
-
-        Ok(())
+        if self.only_recursivef {
+            let valid = generate_and_verify_recursivef::<Goldilocks>(
+                &self.proving_key_snark,
+                proof,
+                &self.output_dir,
+                self.verbose.into(),
+            )?;
+            if !valid {
+                tracing::info!("··· {}", "\u{2717} Stark RecursiveF proof was not verified".bright_red().bold());
+                Err("Stark proof was not verified".into())
+            } else {
+                tracing::info!("    {}", "\u{2713} Stark RecursiveF proof was verified".bright_green().bold());
+                Ok(())
+            }
+        } else {
+            let snark_wrapper: SnarkWrapper<Goldilocks> =
+                SnarkWrapper::new(&self.proving_key_snark, self.verbose.into())?;
+            snark_wrapper.generate_final_snark_proof(proof, &self.output_dir, self.save_json)?;
+            Ok(())
+        }
     }
 }
