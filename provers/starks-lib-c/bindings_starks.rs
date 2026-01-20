@@ -278,11 +278,23 @@ extern "C" {
     pub fn get_constraints_lines_sizes(pSetupCtx: *mut ::std::os::raw::c_void, constraintsLinesSizes: *mut u64);
     
     pub fn get_constraints_lines(pSetupCtx: *mut ::std::os::raw::c_void, constraintsLines: *mut *mut u8);
-    
+
+    pub fn initialize_instance(
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
+        stepsParams: *mut ::std::os::raw::c_void,
+        d_buffers: *mut ::std::os::raw::c_void,
+    ) -> u64;
+
     pub fn verify_constraints(
         pSetupCtx: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
         stepsParams: *mut ::std::os::raw::c_void,
         constraintsInfo: *mut ::std::os::raw::c_void,
+        d_buffers: *mut ::std::os::raw::c_void,
+        streamId: u64,
     );
 
     // Global Constraints

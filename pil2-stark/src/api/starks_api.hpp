@@ -92,7 +92,8 @@ extern "C" {
     uint64_t get_n_constraints(void *pSetupCtx);
     void get_constraints_lines_sizes(void *pSetupCtx, uint64_t *constraintsLinesSizes);
     void get_constraints_lines(void *pSetupCtx, uint8_t **constraintsLines);
-    void verify_constraints(void *pSetupCtx, void *stepsParams, void *constraintsInfo);
+    uint64_t initialize_instance(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, void* params_, void *d_buffers_);
+    void verify_constraints(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *constraintsInfo, void *d_buffers, uint64_t streamId);
 
     // Global constraints
     // =================================================================================

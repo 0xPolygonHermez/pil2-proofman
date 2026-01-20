@@ -9,6 +9,7 @@
 
 #ifdef __USE_CUDA__
 #include "gen_recursive_proof.cuh"
+#include "verify_constraints.cuh"
 #include "gen_proof.cuh"
 #include "poseidon2_goldilocks.cuh"
 #include <cuda_runtime.h>
@@ -481,6 +482,121 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
     return streamId;
+}
+
+uint64_t initialize_instance(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, void* params_, void *d_buffers_) {
+    auto key = std::make_pair(airgroupId, airId);
+    std::string proofType = "basic";
+
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    uint32_t streamId = selectStream(d_buffers, airgroupId, airId, proofType, false);
+    uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
+    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
+    cudaSetDevice(gpuId);
+
+    AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][string(proofType)][gpuLocalId];
+
+    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    StepsParams *params = (StepsParams *)params_;
+    cudaStream_t stream = d_buffers->streamsData[streamId].stream;
+    TimerGPU &timer = d_buffers->streamsData[streamId].timer;
+
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+
+    uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
+    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
+    uint64_t sizeTrace = N * (setupCtx->starkInfo.mapSectionsN["cm1"]) * sizeof(Goldilocks::Element);
+   
+    bool reuse_constants = d_buffers->streamsData[streamId].airgroupId == airgroupId && d_buffers->streamsData[streamId].airId == airId && d_buffers->streamsData[streamId].proofType == string("basic");
+
+    d_buffers->streamsData[streamId].pSetupCtx = pSetupCtx_;
+    d_buffers->streamsData[streamId].airgroupId = airgroupId;
+    d_buffers->streamsData[streamId].airId = airId;
+    d_buffers->streamsData[streamId].proofType = "basic";
+
+    uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
+    uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
+
+    if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0) {
+        Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
+        copy_to_device_in_chunks(d_buffers, params->pCustomCommitsFixed, pCustomCommitsFixed, setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element), streamId, timer);
+    }
+
+    uint64_t total_size = air_instance_info->is_packed ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : N * nCols * sizeof(Goldilocks::Element);
+    uint64_t *dst = (uint64_t *)(d_aux_trace + offsetStage1 + N * nCols);
+    copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);    
+    
+    size_t totalCopySize = 0;
+    totalCopySize += setupCtx->starkInfo.nPublics;
+    totalCopySize += setupCtx->starkInfo.proofValuesSize;
+    totalCopySize += setupCtx->starkInfo.airgroupValuesSize;
+    totalCopySize += setupCtx->starkInfo.airValuesSize;
+    totalCopySize += 2 * FIELD_EXTENSION;
+
+    Goldilocks::Element aux_values[totalCopySize];
+    uint64_t offset = 0;
+    memcpy(aux_values + offset, params->publicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
+    offset += setupCtx->starkInfo.nPublics;
+    if (setupCtx->starkInfo.proofValuesSize > 0) {
+        memcpy(aux_values + offset, params->proofValues, setupCtx->starkInfo.proofValuesSize * sizeof(Goldilocks::Element));
+        offset += setupCtx->starkInfo.proofValuesSize;
+    }
+    if (setupCtx->starkInfo.airgroupValuesSize > 0) {
+        memcpy(aux_values + offset, params->airgroupValues, setupCtx->starkInfo.airgroupValuesSize * sizeof(Goldilocks::Element));
+        offset += setupCtx->starkInfo.airgroupValuesSize;
+    }
+    if (setupCtx->starkInfo.airValuesSize > 0) {
+        memcpy(aux_values + offset, params->airValues, setupCtx->starkInfo.airValuesSize * sizeof(Goldilocks::Element));
+        offset += setupCtx->starkInfo.airValuesSize;
+    }
+    memcpy(aux_values + offset, (Goldilocks::Element *)params->challenges, 2 * FIELD_EXTENSION * sizeof(Goldilocks::Element));
+
+    copy_to_device_in_chunks(d_buffers, aux_values, (uint8_t*)(d_aux_trace + offsetPublicInputs), totalCopySize * sizeof(Goldilocks::Element), streamId, timer);
+    
+    gl64_t *d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
+    
+    uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
+    Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
+    if(!reuse_constants) {
+        unpack_fixed((uint64_t*)d_const_pols, (uint64_t*)(d_const_pols + 1), (uint64_t*)(d_const_pols + 1 + setupCtx->starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx->starkInfo.nConstants, N, stream, timer);
+        CHECKCUDAERR(cudaGetLastError());
+    }
+
+    uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
+    if (air_instance_info->is_packed) {
+        unpack_trace(air_instance_info, (uint64_t*)(d_aux_trace + offsetCm1 + N * nCols), (uint64_t*)(d_aux_trace + offsetCm1), nCols, N, stream, timer); 
+    } else {
+        NTT_Goldilocks_GPU ntt;
+        ntt.prepare_blocks_trace((gl64_t*)(d_aux_trace + offsetCm1), (gl64_t *)(d_aux_trace + offsetCm1 + N * nCols), nCols, N, stream, timer);
+    }
+
+    d_buffers->streamsData[streamId].status = 2;
+    return streamId;
+}
+
+void verify_constraints(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, void* params_, void* constraintsInfo, void *d_buffers_, uint64_t streamId) {
+
+    auto key = std::make_pair(airgroupId, airId);
+    std::string proofType = "basic";
+
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+
+    uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
+    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
+    cudaSetDevice(gpuId);
+
+    AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][string(proofType)][gpuLocalId];
+
+    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    StepsParams *params = (StepsParams *)params_;
+    cudaStream_t stream = d_buffers->streamsData[streamId].stream;
+    TimerGPU &timer = d_buffers->streamsData[streamId].timer;
+
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+
+    verifyConstraintsGPU(*setupCtx, d_aux_trace, streamId, d_buffers, air_instance_info, (ConstraintInfo *)constraintsInfo, params->airgroupValues, timer, stream);
+    cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
+    d_buffers->streamsData[streamId].status = 3;
 }
 
 void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId) {

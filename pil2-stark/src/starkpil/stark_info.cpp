@@ -69,6 +69,8 @@ void StarkInfo::load(json j)
     qDeg = j["qDeg"];
     qDim = j["qDim"];
 
+    nConstraints = j["nConstraints"];
+
     friExpId = j["friExpId"];
     cExpId = j["cExpId"];
 
@@ -281,7 +283,10 @@ void StarkInfo::load(json j)
         uint64_t NExtended = (1 << starkStruct.nBitsExt);
         mapTotalN = 0;
 
-        mapOffsets[std::make_pair("const", false)] = 0;
+        if(gpu) {
+            mapOffsets[std::make_pair("const", false)] = 0;
+            mapTotalN += N * nConstants;
+        }
 
         mapTotalNCustomCommitsFixed = 0;
 
@@ -295,12 +300,35 @@ void StarkInfo::load(json j)
             }
         }
 
+        if(gpu) {
+            mapOffsets[std::make_pair("constraints", false)] = mapTotalN;
+            mapTotalN += N * 3;
+
+            mapOffsets[std::make_pair("custom_fixed", false)] = mapTotalN;
+            mapTotalN += mapTotalNCustomCommitsFixed;
+
+            mapOffsets[std::make_pair("publics", false)] = mapTotalN;
+            mapTotalN += nPublics;
+
+            mapOffsets[std::make_pair("proofvalues", false)] = mapTotalN;
+            mapTotalN += proofValuesSize;
+
+            mapOffsets[std::make_pair("airgroupvalues", false)] = mapTotalN;
+            mapTotalN += airgroupValuesSize;
+
+            mapOffsets[std::make_pair("airvalues", false)] = mapTotalN;
+            mapTotalN += airValuesSize;
+
+            mapOffsets[std::make_pair("challenges", false)] = mapTotalN;
+            mapTotalN += 2 * FIELD_EXTENSION;
+        }
+        
         for(uint64_t stage = 1; stage <= nStages; stage++) {
             mapOffsets[std::make_pair("cm" + to_string(stage), false)] = mapTotalN;
             mapTotalN += N * mapSectionsN["cm" + to_string(stage)];
         }
         mapOffsets[std::make_pair("q", true)] = mapTotalN;
-        mapTotalN += NExtended * FIELD_EXTENSION;
+        mapTotalN += N * FIELD_EXTENSION;
         mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN;
     } else {
         setMapOffsets();

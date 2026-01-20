@@ -38,7 +38,7 @@ use mpi::topology::Communicator;
 
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c,
-    calculate_witness_expressions_c, clear_proof_done_callback_c, launch_callback_c,
+    calculate_witness_expressions_c, clear_proof_done_callback_c, launch_callback_c, initialize_instance_c,
 };
 
 use std::{
@@ -730,6 +730,7 @@ where
                 handle.join().unwrap();
             }
 
+            Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true)?;
             self.calculate_instance_witness(instance_id)?;
             self.wcm.debug(&[instance_id], debug_info)?;
         }
@@ -754,6 +755,7 @@ where
                 handle.join().unwrap();
             }
 
+            Self::initialize_air_instance(&self.pctx, &self.sctx, *instance_id, true, true)?;
             self.calculate_instance_witness(*instance_id)?;
             self.wcm.debug(&[*instance_id], debug_info)?;
         }
@@ -821,7 +823,8 @@ where
     }
 
     fn _verify_proof_constraints(&self, debug_info: &DebugInfo, test_mode: bool) -> ProofmanResult<()> {
-        if cfg!(feature = "packed") {
+        timer_start_info!(VERIFYING_PROOF_CONSTRAINTS);
+        if cfg!(feature = "packed") && !cfg!(feature = "gpu") {
             return Err(ProofmanError::InvalidConfiguration("Packed witnesses are not supported in this mode".into()));
         }
 
@@ -843,75 +846,116 @@ where
         self.pctx.set_global_challenge(2, &mut global_challenge);
         transcript.put(&dummy_element);
 
-        let instances = self.pctx.dctx_get_instances();
+        let witness_done = Arc::new(Counter::new());
+
+        self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
+
+        let minimal_memory = true;
+
         let my_instances = self.pctx.dctx_get_process_instances();
-        let airgroup_values_air_instances = Mutex::new(vec![Vec::new(); my_instances.len()]);
-        let valid_constraints = AtomicBool::new(true);
-        let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
+        let airgroup_values_air_instances = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
+        let valid_constraints = Arc::new(AtomicBool::new(true));
 
-        for &instance_id in my_instances.iter() {
-            let instance_info = instances[instance_id];
-            let (airgroup_id, air_id, is_table) =
-                (instance_info.airgroup_id, instance_info.air_id, instance_info.table);
-            let (skip, _) = skip_prover_instance(&self.pctx, instance_id)?;
-            if is_table || skip {
-                continue;
-            }
+        for _ in 0..self.n_streams {
+            let pctx_clone = self.pctx.clone();
+            let sctx_clone = self.sctx.clone();
+            let d_buffers_clone = self.d_buffers.clone();
+            let memory_handler_clone = self.memory_handler.clone();
+            let contributions_rx_clone = self.contributions_rx.clone();
+            let cancellation_info_clone = self.cancellation_info.clone();
+            let valid_constraints = valid_constraints.clone();
+            let airgroup_values_air_instances = airgroup_values_air_instances.clone();
+            let wcm_clone = self.wcm.clone();
+            let debug_info_clone = debug_info.clone();
+            let contribution_handle = std::thread::spawn(move || loop {
+                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                    break;
+                }
+                match contributions_rx_clone.try_recv() {
+                    Ok(instance_id) => {
+                        if instance_id == usize::MAX {
+                            break;
+                        }
 
-            self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
-            self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
+                        if let Err(e) = Self::process_verify_constraints_instance(
+                            &pctx_clone,
+                            &sctx_clone,
+                            &d_buffers_clone,
+                            memory_handler_clone.clone(),
+                            &wcm_clone,
+                            instance_id,
+                            &debug_info_clone,
+                            valid_constraints.clone(),
+                            airgroup_values_air_instances.clone(),
+                        ) {
+                            cancellation_info_clone.write().unwrap().cancel(Some(e));
+                            break;
+                        }
+                    }
+                    Err(crossbeam_channel::TryRecvError::Empty) => {
+                        std::thread::sleep(std::time::Duration::from_micros(100));
+                        continue;
+                    }
+                    Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                        break;
+                    }
+                }
+            });
 
-            // Join the previous thread (if any) before starting a new one
-            if let Some(handle) = thread_handle.take() {
+            self.handle_contributions.lock().unwrap().push(contribution_handle);
+        }
+
+        let (witness_handler, witness_handles) =
+            self.calc_witness_handler(witness_done.clone(), self.memory_handler.clone(), minimal_memory, false);
+
+        let my_instances_no_tables =
+            my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+
+        timer_start_debug!(CALCULATING_WITNESS);
+        self.calculate_witness(
+            &my_instances_no_tables,
+            self.memory_handler.clone(),
+            witness_done.clone(),
+            minimal_memory,
+            false,
+        )?;
+        timer_stop_and_log_debug!(CALCULATING_WITNESS);
+
+        if let Some(h) = witness_handler {
+            h.join().unwrap();
+        }
+        if cfg!(feature = "gpu") {
+            let handles_to_join = witness_handles.lock().unwrap().drain(..).collect::<Vec<_>>();
+            for handle in handles_to_join {
                 handle.join().unwrap();
             }
-
-            self.calculate_instance_witness(instance_id)?;
-            self.wcm.debug(&[instance_id], debug_info)?;
-
-            self.verify_proof_constraints_stage(
-                &valid_constraints,
-                &airgroup_values_air_instances,
-                instance_id,
-                airgroup_id,
-                air_id,
-                debug_info,
-            )?;
         }
+
+        drop(witness_handles);
 
         let my_instances_tables = self.pctx.dctx_get_my_tables();
 
-        timer_start_info!(CALCULATING_TABLES);
+        timer_start_debug!(CALCULATING_TABLES);
+
         for instance_id in my_instances_tables.iter() {
+            self.wcm.pre_calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
             self.wcm.calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
         }
-        timer_stop_and_log_info!(CALCULATING_TABLES);
 
-        for instance_id in my_instances_tables.iter() {
-            let (skip, _) = skip_prover_instance(&self.pctx, *instance_id)?;
+        timer_stop_and_log_debug!(CALCULATING_TABLES);
 
-            if skip || !self.pctx.dctx_is_my_process_instance(*instance_id)? {
-                continue;
-            };
+        self.pctx.set_proof_tx(None);
 
-            // Join the previous thread (if any) before starting a new one
-            if let Some(handle) = thread_handle.take() {
-                handle.join().unwrap();
-            }
-
-            let instance_info = &instances[*instance_id];
-            let (airgroup_id, air_id) = (instance_info.airgroup_id, instance_info.air_id);
-            self.calculate_instance_witness(*instance_id)?;
-            self.wcm.debug(&[*instance_id], debug_info)?;
-            self.verify_proof_constraints_stage(
-                &valid_constraints,
-                &airgroup_values_air_instances,
-                *instance_id,
-                airgroup_id,
-                air_id,
-                debug_info,
-            )?;
+        for _ in 0..self.n_streams {
+            self.contributions_tx.send(usize::MAX).ok();
         }
+
+        let handles = self.handle_contributions.lock().unwrap().drain(..).collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        self.check_cancel(true)?;
 
         self.wcm.end(debug_info)?;
 
@@ -928,6 +972,7 @@ where
                 let valid_global_constraints =
                     verify_global_constraints_proof(&self.pctx, &self.sctx, debug_info, airgroupvalues);
 
+                timer_stop_and_log_info!(VERIFYING_PROOF_CONSTRAINTS);
                 if valid_constraints.load(Ordering::Relaxed) && valid_global_constraints.is_ok() {
                     return Ok(());
                 } else {
@@ -936,12 +981,12 @@ where
             }
         }
 
+        timer_stop_and_log_info!(VERIFYING_PROOF_CONSTRAINTS);
+
         Ok(())
     }
 
     fn calculate_instance_witness(&self, instance_id: usize) -> ProofmanResult<()> {
-        Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true)?;
-
         let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
         let setup = self.sctx.get_setup(airgroup_id, air_id)?;
         let steps_params = self.pctx.get_air_instance_params(instance_id, false);
@@ -964,28 +1009,61 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn verify_proof_constraints_stage(
-        &self,
-        valid_constraints: &AtomicBool,
-        airgroup_values_air_instances: &Mutex<Vec<Vec<F>>>,
+    fn process_verify_constraints_instance(
+        pctx: &Arc<ProofCtx<F>>,
+        sctx: &Arc<SetupCtx<F>>,
+        d_buffers: &DeviceBuffer,
+        memory_handler: Arc<MemoryHandler<F>>,
+        wcm: &Arc<WitnessManager<F>>,
         instance_id: usize,
-        airgroup_id: usize,
-        air_id: usize,
         debug_info: &DebugInfo,
+        valid_constraints: Arc<AtomicBool>,
+        airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
     ) -> ProofmanResult<()> {
-        let valid =
-            verify_constraints_proof(&self.pctx, &self.sctx, instance_id, debug_info.n_print_constraints as u64)?;
+        let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
+        Self::initialize_air_instance(pctx, sctx, instance_id, true, true)?;
+
+        let setup = sctx.get_setup(airgroup_id, air_id)?;
+        let steps_params = pctx.get_air_instance_params(instance_id, false);
+
+        let stream_id = initialize_instance_c(
+            (&setup.p_setup).into(),
+            airgroup_id as u64,
+            air_id as u64,
+            (&steps_params).into(),
+            d_buffers.get_ptr(),
+        );
+
+        pctx.set_instance_stream_id(instance_id, stream_id);
+
+        if !cfg!(feature = "gpu") {
+            calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
+            wcm.calculate_witness(2, &[instance_id], 1, memory_handler.as_ref())?;
+            calculate_impols_expressions_c((&setup.p_setup).into(), 2, (&steps_params).into());
+        }
+
+        let valid = verify_constraints_proof(
+            pctx,
+            sctx,
+            d_buffers,
+            instance_id,
+            debug_info.n_print_constraints as u64,
+            stream_id,
+        )?;
+
         if !valid {
             valid_constraints.fetch_and(valid, Ordering::Relaxed);
         }
 
-        let air_instance_id = self.pctx.dctx_find_air_instance_id(instance_id)?;
-        let airgroup_values = self.pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id)?;
-        airgroup_values_air_instances.lock().unwrap()[self.pctx.dctx_get_instance_local_idx(instance_id)?] =
-            airgroup_values;
-        let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(instance_id);
+        let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
+        let airgroup_values = pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id)?;
+        airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_local_idx(instance_id)?] = airgroup_values;
+
+        wcm.debug(&[instance_id], debug_info)?;
+
+        let (is_shared_buffer, witness_buffer) = pctx.free_instance(instance_id);
         if is_shared_buffer {
-            self.memory_handler.release_buffer(witness_buffer)?;
+            memory_handler.release_buffer(witness_buffer)?;
         }
         Ok(())
     }
@@ -1120,8 +1198,16 @@ where
 
         timer_start_info!(INIT_PROOFMAN);
 
-        let (d_buffers, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
-            Self::prepare_gpu(&pctx, &sctx, &setups_vadcop, aggregation, &gpu_params, &mpi_ctx, &packed_info)?;
+        let (d_buffers, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) = Self::prepare_gpu(
+            &pctx,
+            &sctx,
+            &setups_vadcop,
+            verify_constraints,
+            aggregation,
+            &gpu_params,
+            &mpi_ctx,
+            &packed_info,
+        )?;
 
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));
 
@@ -3007,6 +3093,10 @@ where
             timer_stop_and_log_debug!(PRE_CALCULATE_WC);
         } else {
             for &instance_id in instances.iter() {
+                let (skip, _) = skip_prover_instance(&self.pctx, instance_id)?;
+                if skip {
+                    continue;
+                }
                 let n_threads_witness = self.num_threads_per_witness;
 
                 let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
@@ -3147,10 +3237,12 @@ where
     }
 
     #[allow(clippy::type_complexity)]
+    #[allow(clippy::too_many_arguments)]
     fn prepare_gpu(
         pctx: &ProofCtx<F>,
         sctx: &SetupCtx<F>,
         setups_vadcop: &SetupsVadcop<F>,
+        verify_constraints: bool,
         aggregation: bool,
         gpu_params: &ParamsGPU,
         mpi_ctx: &MpiCtx,
@@ -3168,7 +3260,7 @@ where
         let n_gpus = get_num_gpus_c();
         let n_processes_node = mpi_ctx.node_n_processes as usize as u64;
 
-        let n_partitions = match cfg!(feature = "gpu") {
+        let n_partitions = match cfg!(feature = "gpu") && !verify_constraints {
             true => {
                 if n_gpus > n_processes_node {
                     1
