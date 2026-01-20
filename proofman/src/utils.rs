@@ -250,7 +250,10 @@ pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool) ->
                 return Err(error_message);
             }
         }
+    } else {
+        // TODO: implement recursiveF verkey check
     }
+
     Ok(())
 }
 
