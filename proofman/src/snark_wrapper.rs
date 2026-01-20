@@ -11,6 +11,7 @@ use std::fs::{File, create_dir_all};
 use std::io::Write;
 use std::ffi::c_void;
 use proofman_starks_lib_c::{init_final_snark_prover_c, free_final_snark_prover_c};
+use crate::verify_proof_bn128;
 
 pub struct SnarkWrapper<F: PrimeField64> {
     pub setup_snark_path: PathBuf,
@@ -153,4 +154,56 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         }
         Ok(public_bytes)
     }
+}
+
+pub fn generate_and_verify_recursivef<F: PrimeField64>(
+    proving_key_path: &Path,
+    vadcop_proof: &[u64],
+    output_dir_path: &Path,
+    verbose_mode: VerboseMode,
+) -> ProofmanResult<bool> {
+    initialize_logger(verbose_mode, None);
+
+    timer_start_info!(LOADING_RECURSIVE_F_SETUP);
+
+    let setup_recursivef_path =
+        PathBuf::from(format!("{}/{}/{}", proving_key_path.display(), "recursivef", "recursivef"));
+
+    let setup_recursivef = Setup::new(
+        &setup_recursivef_path,
+        0,
+        0,
+        &GlobalInfoAir::new("RecursiveF".to_string()),
+        &ProofType::RecursiveF,
+        false,
+        false,
+        None,
+    );
+
+    setup_recursivef.set_circom_circuit()?;
+    setup_recursivef.set_exec_file_data()?;
+
+    calculate_fixed_tree(&setup_recursivef);
+
+    setup_recursivef.load_const_pols();
+    setup_recursivef.load_const_pols_tree();
+
+    let aux_trace = if cfg!(feature = "gpu") {
+        Arc::new(Vec::new())
+    } else {
+        Arc::new(create_buffer_fast(setup_recursivef.prover_buffer_size as usize))
+    };
+
+    timer_stop_and_log_info!(LOADING_RECURSIVE_F_SETUP);
+
+    timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
+    let recursivef_proof = generate_recursivef_proof(&setup_recursivef, vadcop_proof, &aux_trace, output_dir_path)?;
+    timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
+
+    timer_start_info!(VERIFY_RECURSIVE_F_PROOF);
+    let publics: Vec<F> = vadcop_proof[1..1 + vadcop_proof[0] as usize].iter().map(|&x| F::from_u64(x)).collect();
+
+    let is_valid = verify_proof_bn128(recursivef_proof, &setup_recursivef, Some(publics));
+    timer_stop_and_log_info!(VERIFY_RECURSIVE_F_PROOF);
+    Ok(is_valid)
 }

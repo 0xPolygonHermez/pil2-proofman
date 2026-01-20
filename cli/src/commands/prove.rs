@@ -191,7 +191,10 @@ impl ProveCmd {
                 let proof_data = cast_slice(&vadcop_final_proof);
 
                 // Save the vadcop final proof
-                let output_file_path = self.output_dir.join("proofs/vadcop_final_proof.bin");
+                let output_file_path = match self.compressed {
+                    true => self.output_dir.join("proofs/vadcop_final_proof_compressed.bin"),
+                    false => self.output_dir.join("proofs/vadcop_final_proof.bin"),
+                };
                 let mut file = File::create(&output_file_path)?;
                 file.write_all(proof_data)?;
                 file.flush()?;

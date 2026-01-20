@@ -532,7 +532,7 @@ public:
             }
         }
 
-        j["nonce"] = nonce;
+        j["nonce"] = std::to_string(nonce);
         
         return j;
     }

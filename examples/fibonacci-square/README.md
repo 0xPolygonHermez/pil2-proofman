@@ -83,6 +83,21 @@ node ../pil2-proofman-js/src/main_setup.js \
      -b ./examples/fibonacci-square/build -r -u ./examples/fibonacci-square/build/fixed
 ```
 
+Additionally, to run the snark setup:
+
+```bash
+node ../pil2-proofman-js/src/main_setup_snark.js \
+     -b ./examples/fibonacci-square/build -t ./pil2-components/lib/std/pil \
+     -n plonk -p examples/fibonacci-square/src/publics_info.json -w <powers_of_tau>
+```
+
+If only wants to generate the recursive final for debugging purposes, run:
+
+```bash
+node ../pil2-proofman-js/src/main_setup_snark.js \
+     -b ./examples/fibonacci-square/build -t ./pil2-components/lib/std/pil -o
+```
+
 To run the aggregated proof, need to add -r to the previous command
 
 ### 2.3 Generate PIL Helpers
@@ -142,7 +157,7 @@ cargo run --bin proofman-cli prove \
      -a
 ```
 
-### 2.8 Generating GPU proof
+### 2.9 Generating GPU proof
 
 In order to generate a proof in the GPU, the following commands needs to be executed after generating the setup and pil-helpers
 
@@ -238,6 +253,6 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
      --compressed \
      --output-dir examples/fibonacci-square/build/proofs \
 && cargo run --bin proofman-cli verify-stark \
-     --proof ./examples/fibonacci-square/build/proofs/proofs/vadcop_final_proof.bin \
-     --verkey ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.verkey.bin --compressed
+     --proof ./examples/fibonacci-square/build/proofs/proofs/vadcop_final_proof_compressed.bin \
+     --verkey ./examples/fibonacci-square/build/provingKey/build/vadcop_final_compressed/vadcop_final_compressed.verkey.bin --compressed
 ```
