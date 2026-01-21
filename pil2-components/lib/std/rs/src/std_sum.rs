@@ -13,7 +13,8 @@ use proofman_hints::{acc_mul_hint_fields, get_hint_ids_by_name, mul_hint_fields,
 
 use crate::{
     get_global_hint_field_constant_a_as, get_global_hint_field_constant_as, DebugData, DebugDataInfo, DebugDataFast,
-    STD_MODE_DEFAULT, STD_MODE_ONE_INSTANCE, extract_hint_fields, print_std_debug_info, parse_debug_values_to_hashes,
+    STD_MODE_DEFAULT, STD_NUM_DEBUG_DATA_FAST_MAPS_TOTAL, STD_MODE_ONE_INSTANCE, extract_hint_fields,
+    print_std_debug_info, parse_debug_values_to_hashes,
 };
 
 pub struct StdSum<F: PrimeField64> {
@@ -40,7 +41,9 @@ impl<F: PrimeField64> StdSum<F> {
                 air_ids: Vec::new(),
                 debug_data: RwLock::new(FxHashMap::default()),
                 debug_data_info: RwLock::new(FxHashMap::default()),
-                debug_data_fast: (0..1000).map(|_| RwLock::new(FxHashMap::default())).collect(),
+                debug_data_fast: (0..STD_NUM_DEBUG_DATA_FAST_MAPS_TOTAL)
+                    .map(|_| RwLock::new(FxHashMap::default()))
+                    .collect(),
                 _phantom: std::marker::PhantomData,
             }));
         };
@@ -57,7 +60,7 @@ impl<F: PrimeField64> StdSum<F> {
             air_ids,
             debug_data: RwLock::new(FxHashMap::default()),
             debug_data_info: RwLock::new(FxHashMap::default()),
-            debug_data_fast: (0..1000).map(|_| RwLock::new(FxHashMap::default())).collect(),
+            debug_data_fast: (0..STD_NUM_DEBUG_DATA_FAST_MAPS_TOTAL).map(|_| RwLock::new(FxHashMap::default())).collect(),
             _phantom: std::marker::PhantomData,
         }))
     }

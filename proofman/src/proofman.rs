@@ -37,7 +37,7 @@ use mpi::topology::Communicator;
 
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c,
-    calculate_witness_expressions_c, clear_proof_done_callback_c, launch_callback_c, initialize_instance_c,
+    calculate_witness_expressions_c, clear_proof_done_callback_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
 };
 
 use std::{
@@ -1023,6 +1023,7 @@ where
             (&setup.p_setup).into(),
             airgroup_id as u64,
             air_id as u64,
+            instance_id as u64,
             (&steps_params).into(),
             pctx.get_device_buffers_ptr(),
         );
@@ -1033,20 +1034,29 @@ where
             calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
             wcm.calculate_witness(2, &[instance_id], 1, memory_handler.as_ref())?;
             calculate_impols_expressions_c((&setup.p_setup).into(), 2, (&steps_params).into());
+        } else {
+            calculate_trace_instance_c(
+                (&setup.p_setup).into(),
+                airgroup_id as u64,
+                air_id as u64,
+                (&steps_params).into(),
+                pctx.get_device_buffers_ptr(),
+                stream_id,
+            );
         }
 
+        let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
+        let airgroup_values = pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id)?;
+        airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_local_idx(instance_id)?] = airgroup_values.clone();
+
+        wcm.debug(&[instance_id], debug_info)?;
+        
         let valid =
             verify_constraints_proof(pctx, sctx, instance_id, debug_info.n_print_constraints as u64, stream_id)?;
 
         if !valid {
             valid_constraints.fetch_and(valid, Ordering::Relaxed);
         }
-
-        let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
-        let airgroup_values = pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id)?;
-        airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_local_idx(instance_id)?] = airgroup_values;
-
-        wcm.debug(&[instance_id], debug_info)?;
 
         let (is_shared_buffer, witness_buffer) = pctx.free_instance(instance_id);
         if is_shared_buffer {

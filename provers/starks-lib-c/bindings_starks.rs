@@ -288,9 +288,19 @@ extern "C" {
         pSetupCtx: *mut ::std::os::raw::c_void,
         airgroupId: u64,
         airId: u64,
+        instanceId: u64,
         stepsParams: *mut ::std::os::raw::c_void,
         d_buffers: *mut ::std::os::raw::c_void,
     ) -> u64;
+
+    pub fn calculate_trace_instance(
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
+        stepsParams: *mut ::std::os::raw::c_void,
+        d_buffers: *mut ::std::os::raw::c_void,
+        streamId: u64,
+    );
 
     pub fn verify_constraints(
         pSetupCtx: *mut ::std::os::raw::c_void,

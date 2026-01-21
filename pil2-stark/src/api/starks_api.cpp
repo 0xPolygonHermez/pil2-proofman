@@ -722,9 +722,11 @@ void get_constraints_lines(void* pSetupCtx, uint8_t **constraintsLines)
 }
 
 #ifndef __USE_CUDA__
-uint64_t initialize_instance(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, void* params_, void *d_buffers_) {
+uint64_t initialize_instance(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* params_, void *d_buffers_) {
     return 0;
 }
+
+void calculate_trace_instance(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *d_buffers, uint64_t streamId) {}
 
 void verify_constraints(void *pSetupCtx, uint64_t airgroupId, uint64_t airId,void* stepsParams, void* constraintsInfo, void *d_buffers, uint64_t streamId)
 {

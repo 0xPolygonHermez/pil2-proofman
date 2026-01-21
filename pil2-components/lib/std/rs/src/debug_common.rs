@@ -18,6 +18,8 @@ use crate::{
     DebugDataInfo, HintMetadata, hash_vals, normalize_vals,
 };
 
+pub const STD_NUM_DEBUG_DATA_FAST_MAPS_TOTAL: usize = 100;
+
 #[allow(clippy::too_many_arguments)]
 pub fn extract_global_hint_fields<F: PrimeField64>(
     pctx: &ProofCtx<F>,
@@ -212,8 +214,8 @@ pub fn extract_hint_fields<F: PrimeField64>(
     let opids = &pctx.debug_info.read().unwrap().std_mode.opids;
 
     if fast_mode {
-        // Process hints in chunks of 1000 to reuse pre-allocated HashMaps
-        for chunk in hint_metadatas.chunks(1000) {
+        // Process hints in chunks of to reuse pre-allocated HashMaps
+        for chunk in hint_metadatas.chunks(STD_NUM_DEBUG_DATA_FAST_MAPS_TOTAL) {
             chunk.par_iter().enumerate().try_for_each(|(idx, hint_metadata)| -> ProofmanResult<()> {
                 // Directly acquire write lock and work with it
                 let mut debug_data_fast = debug_data_fast[idx].write().unwrap();

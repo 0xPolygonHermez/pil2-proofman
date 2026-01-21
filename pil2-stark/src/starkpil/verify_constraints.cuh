@@ -170,26 +170,20 @@ void verifyConstraintGPU(
     cudaFree(d_invalidValues);
 }
 
-void verifyConstraintsGPU(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t stream_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, ConstraintInfo *constraintsInfo, Goldilocks::Element *airgroupValuesCPU, TimerGPU &timer, cudaStream_t stream) {
+void calculateTraceInstance(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t stream_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, Goldilocks::Element *airgroupValuesCPU, TimerGPU &timer, cudaStream_t stream) {
     
-   uint64_t countId = 0;
+    uint64_t countId = 0;
 
     StepsParams *params_pinned = d_buffers->streamsData[stream_id].pinned_params;
-    Goldilocks::Element *proof_buffer_pinned = d_buffers->streamsData[stream_id].pinned_buffer_proof;
     Goldilocks::Element *pinned_exps_params = d_buffers->streamsData[stream_id].pinned_buffer_exps_params;
     Goldilocks::Element *pinned_exps_args = d_buffers->streamsData[stream_id].pinned_buffer_exps_args;
-    TranscriptGL_GPU *d_transcript = d_buffers->streamsData[stream_id].transcript;
-    TranscriptGL_GPU *d_transcript_helper = d_buffers->streamsData[stream_id].transcript_helper;
     StepsParams *d_params =  d_buffers->streamsData[stream_id].params;
     ExpsArguments *d_expsArgs = d_buffers->streamsData[stream_id].d_expsArgs;
     DestParamsGPU *d_destParams = d_buffers->streamsData[stream_id].d_destParams;
 
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
     Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
-
-    uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
     
     uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", false)];
     uint64_t offsetConstraints = setupCtx.starkInfo.mapOffsets[std::make_pair("constraints", false)];
@@ -220,7 +214,7 @@ void verifyConstraintsGPU(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t stre
     memcpy(params_pinned, &h_params, sizeof(StepsParams));
     
     CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams), cudaMemcpyHostToDevice, stream));
-    
+        
     TimerStartGPU(timer, STARK_CALCULATE_WITNESS_STD);
     calculateWitnessExpr_gpu(setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
 
@@ -232,6 +226,24 @@ void verifyConstraintsGPU(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t stre
     calculateImPolsExpressions(setupCtx, air_instance_info->expressions_gpu, h_params, d_params, 2, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     TimerStopGPU(timer, CALCULATE_IM_POLS);
 
+    CHECKCUDAERR(cudaMemcpyAsync(airgroupValuesCPU, d_aux_trace + offsetAirgroupValues, setupCtx.starkInfo.airgroupValuesSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost, stream));
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+}
+
+void verifyConstraintsGPU(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t stream_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, ConstraintInfo *constraintsInfo, TimerGPU &timer, cudaStream_t stream) {
+    
+    uint64_t countId = 0;
+
+    Goldilocks::Element *pinned_exps_params = d_buffers->streamsData[stream_id].pinned_buffer_exps_params;
+    Goldilocks::Element *pinned_exps_args = d_buffers->streamsData[stream_id].pinned_buffer_exps_args;
+    StepsParams *d_params =  d_buffers->streamsData[stream_id].params;
+    ExpsArguments *d_expsArgs = d_buffers->streamsData[stream_id].d_expsArgs;
+    DestParamsGPU *d_destParams = d_buffers->streamsData[stream_id].d_destParams;
+
+    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    
+    uint64_t offsetConstraints = setupCtx.starkInfo.mapOffsets[std::make_pair("constraints", false)];
+    
     Goldilocks::Element *pBufferGPU = (Goldilocks::Element *)(d_aux_trace + offsetConstraints);
     
     // Process each constraint: calculate on GPU, verify on GPU
@@ -260,6 +272,5 @@ void verifyConstraintsGPU(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t stre
         }
     }
     
-    CHECKCUDAERR(cudaMemcpyAsync(airgroupValuesCPU, h_params.airgroupValues, setupCtx.starkInfo.airgroupValuesSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost, stream));
-        CHECKCUDAERR(cudaStreamSynchronize(stream));
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
 }
