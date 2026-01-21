@@ -12,3 +12,6 @@ colored.workspace = true
 fields.workspace = true
 tracing.workspace = true
 sysinfo.workspace = true
+bytemuck.workspace = true
+serde.workspace = true
+bincode.workspace = true

@@ -5,15 +5,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use colored::Colorize;
 use crate::commands::field::Field;
-use std::io::Write;
-use bytemuck::cast_slice;
 use fields::Goldilocks;
 
 use proofman::SnarkWrapper;
 use proofman::ProofMan;
 use proofman::ProvePhaseResult;
 use proofman_common::{ModeName, ProofOptions, ParamsGPU};
-use std::fs::{self, File};
+use std::fs;
 use std::path::Path;
 
 #[derive(Parser)]
@@ -188,16 +186,8 @@ impl ProveCmd {
             };
 
             if let ProvePhaseResult::Full(_, Some(vadcop_final_proof)) = result {
-                let proof_data = cast_slice(&vadcop_final_proof);
-
-                // Save the vadcop final proof
-                let output_file_path = match self.compressed {
-                    true => self.output_dir.join("proofs/vadcop_final_proof_compressed.bin"),
-                    false => self.output_dir.join("proofs/vadcop_final_proof.bin"),
-                };
-                let mut file = File::create(&output_file_path)?;
-                file.write_all(proof_data)?;
-                file.flush()?;
+                // Save the vadcop final proof using the struct's save method
+                vadcop_final_proof.save(self.output_dir.clone())?;
 
                 if let Some(proving_key_snark) = &self.proving_key_snark {
                     let snark_wrapper: SnarkWrapper<Goldilocks> =

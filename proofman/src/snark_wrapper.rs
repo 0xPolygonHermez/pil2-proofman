@@ -1,9 +1,8 @@
-use crate::{generate_recursivef_proof, generate_snark_proof};
 use proofman_common::{
     GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree, VerboseMode,
     initialize_logger,
 };
-use proofman_util::{timer_start_info, timer_stop_and_log_info, create_buffer_fast};
+use proofman_util::{timer_start_info, timer_stop_and_log_info, create_buffer_fast, VadcopFinalProof};
 use fields::PrimeField64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,7 +10,7 @@ use std::fs::{File, create_dir_all};
 use std::io::Write;
 use std::ffi::c_void;
 use proofman_starks_lib_c::{init_final_snark_prover_c, free_final_snark_prover_c};
-use crate::verify_proof_bn128;
+use crate::{verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof};
 
 pub struct SnarkWrapper<F: PrimeField64> {
     pub setup_snark_path: PathBuf,
@@ -83,13 +82,19 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     #[allow(clippy::type_complexity)]
     pub fn generate_final_snark_proof(
         &self,
-        vadcop_proof: &[u64],
+        vadcop_proof: &VadcopFinalProof,
         output_dir_path: &Path,
         save_json: bool,
     ) -> ProofmanResult<SnarkProof> {
+        if vadcop_proof.compressed {
+            return Err(ProofmanError::InvalidConfiguration(
+                "Compressed vadcop proofs are not supported for snark proof generation".to_string(),
+            ));
+        }
+        let proof = vadcop_proof.proof_with_publics_u64();
         timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
         let recursivef_proof =
-            generate_recursivef_proof(&self.setup_recursivef, vadcop_proof, &self.aux_trace, output_dir_path)?;
+            generate_recursivef_proof(&self.setup_recursivef, &proof, &self.aux_trace, output_dir_path)?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
         timer_start_info!(GENERATING_SNARK_PROOF);
@@ -103,7 +108,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         timer_stop_and_log_info!(GENERATING_SNARK_PROOF);
 
-        let public_bytes = self.get_public_bytes(&vadcop_proof[1..1 + vadcop_proof[0] as usize])?;
+        let public_bytes = self.get_public_bytes(&proof[1..1 + proof[0] as usize])?;
         let snark_proof = SnarkProof { proof_bytes: snark_proof_bytes, public_bytes };
 
         let proofs_dir = output_dir_path.join("snark_proof");
@@ -158,11 +163,18 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
 pub fn generate_and_verify_recursivef<F: PrimeField64>(
     proving_key_path: &Path,
-    vadcop_proof: &[u64],
+    vadcop_proof: &VadcopFinalProof,
     output_dir_path: &Path,
     verbose_mode: VerboseMode,
 ) -> ProofmanResult<bool> {
     initialize_logger(verbose_mode, None);
+
+    if vadcop_proof.compressed {
+        return Err(ProofmanError::InvalidConfiguration(
+            "Compressed vadcop proofs are not supported for snark proof generation".to_string(),
+        ));
+    }
+    let proof = vadcop_proof.proof_with_publics_u64();
 
     timer_start_info!(LOADING_RECURSIVE_F_SETUP);
 
@@ -197,13 +209,20 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     timer_stop_and_log_info!(LOADING_RECURSIVE_F_SETUP);
 
     timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
-    let recursivef_proof = generate_recursivef_proof(&setup_recursivef, vadcop_proof, &aux_trace, output_dir_path)?;
+    let recursivef_proof = generate_recursivef_proof(&setup_recursivef, &proof, &aux_trace, output_dir_path)?;
     timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
     timer_start_info!(VERIFY_RECURSIVE_F_PROOF);
-    let publics: Vec<F> = vadcop_proof[1..1 + vadcop_proof[0] as usize].iter().map(|&x| F::from_u64(x)).collect();
-
+    let publics: Vec<F> = proof[1..1 + proof[0] as usize].iter().map(|&x| F::from_u64(x)).collect();
     let is_valid = verify_proof_bn128(recursivef_proof, &setup_recursivef, Some(publics));
     timer_stop_and_log_info!(VERIFY_RECURSIVE_F_PROOF);
+
+    let setup_snark_path = PathBuf::from(format!("{}/{}/{}", proving_key_path.display(), "final", "final"));
+    if setup_snark_path.parent().is_some_and(|p| p.exists()) {
+        generate_witness_final_snark(recursivef_proof, &setup_snark_path)?;
+    }
     Ok(is_valid)
 }
+
+unsafe impl<F: PrimeField64> Send for SnarkWrapper<F> {}
+unsafe impl<F: PrimeField64> Sync for SnarkWrapper<F> {}

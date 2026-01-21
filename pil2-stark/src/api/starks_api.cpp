@@ -250,64 +250,6 @@ void reset_agg_readiness_tracker(){
 #endif
 }
 
-void save_challenges(void *pGlobalChallenge, char* globalInfoFile, char *fileDir) {
-
-    json globalInfo;
-    file2json(globalInfoFile, globalInfo);
-
-    Goldilocks::Element *globalChallenge = (Goldilocks::Element *)pGlobalChallenge;
-    
-    json challengesJson = json::array();
-    for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
-        challengesJson[k] = Goldilocks::toString(globalChallenge[k]);
-    }
-
-    json2file(challengesJson, string(fileDir) + "/global_challenges.json");
-}
-
-
-void save_publics(uint64_t numPublicInputs, void *pPublicInputs, char *fileDir) {
-
-    Goldilocks::Element* publicInputs = (Goldilocks::Element *)pPublicInputs;
-
-    // Generate publics
-    json publicStarkJson;
-    for (uint64_t i = 0; i < numPublicInputs; i++)
-    {
-        publicStarkJson[i] = Goldilocks::toString(publicInputs[i]);
-    }
-
-    // save publics to filestarks
-    json2file(publicStarkJson, string(fileDir) + "/publics.json");
-}
-
-void save_proof_values(void *pProofValues, char* globalInfoFile, char *fileDir) {
-    Goldilocks::Element* proofValues = (Goldilocks::Element *)pProofValues;
-
-    json globalInfo;
-    file2json(globalInfoFile, globalInfo);
-
-    json proofValuesJson;
-    uint64_t p = 0;
-    for(uint64_t i = 0; i < globalInfo["proofValuesMap"].size(); i++) {
-        proofValuesJson[i] = json::array();
-        if(globalInfo["proofValuesMap"][i]["stage"] == 1) {
-            proofValuesJson[i][0] = Goldilocks::toString(proofValues[p++]);
-            proofValuesJson[i][1] = "0";
-            proofValuesJson[i][2] = "0";
-        } else {
-            proofValuesJson[i][0] = Goldilocks::toString(proofValues[p++]);
-            proofValuesJson[i][1] = Goldilocks::toString(proofValues[p++]);
-            proofValuesJson[i][2] = Goldilocks::toString(proofValues[p++]);
-        }
-        
-    }
-
-    json2file(proofValuesJson, string(fileDir) + "/proof_values.json");
-}
-
-
-
 // SetupCtx
 // ========================================================================================
 

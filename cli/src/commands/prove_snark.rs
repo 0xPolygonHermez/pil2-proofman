@@ -3,12 +3,10 @@ use clap::Parser;
 use std::path::PathBuf;
 use colored::Colorize;
 use fields::Goldilocks;
-use std::io::Read;
-use bytemuck::cast_slice;
 
 use proofman::SnarkWrapper;
 use proofman::generate_and_verify_recursivef;
-use std::fs::File;
+use proofman_util::VadcopFinalProof;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -41,15 +39,13 @@ impl ProveSnarkCmd {
         println!("{} ProveSnark", format!("{: >12}", "Command").bright_green().bold());
         println!();
 
-        let mut proof_file = File::open(&self.proof)?;
-        let mut proof_u64 = Vec::new();
-        proof_file.read_to_end(&mut proof_u64)?;
-        let proof = cast_slice::<u8, u64>(&proof_u64);
+        let proof = VadcopFinalProof::load(&self.proof)
+            .map_err(|e| format!("Failed to load VadcopFinalProof from file {}: {}", self.proof, e))?;
 
         if self.only_recursivef {
             let valid = generate_and_verify_recursivef::<Goldilocks>(
                 &self.proving_key_snark,
-                proof,
+                &proof,
                 &self.output_dir,
                 self.verbose.into(),
             )?;
@@ -63,7 +59,7 @@ impl ProveSnarkCmd {
         } else {
             let snark_wrapper: SnarkWrapper<Goldilocks> =
                 SnarkWrapper::new(&self.proving_key_snark, self.verbose.into())?;
-            snark_wrapper.generate_final_snark_proof(proof, &self.output_dir, self.save_json)?;
+            snark_wrapper.generate_final_snark_proof(&proof, &self.output_dir, self.save_json)?;
             Ok(())
         }
     }

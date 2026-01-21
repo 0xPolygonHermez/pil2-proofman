@@ -11,8 +11,8 @@ use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{get_num_gpus_c, init_gpu_setup_c};
 use proofman_starks_lib_c::{
-    save_challenges_c, save_proof_values_c, save_publics_c, get_stream_proofs_c, get_stream_proofs_non_blocking_c,
-    free_device_buffers_c, register_proof_done_callback_c, reset_device_streams_c, get_instances_ready_c,
+    check_device_memory_c, gen_device_streams_c, get_stream_proofs_c, get_stream_proofs_non_blocking_c,
+    register_proof_done_callback_c, reset_device_streams_c, get_instances_ready_c,
 };
 use crate::add_publics_circom;
 use proofman_verifier::{verify_recursive2, verify_vadcop_final, verify_vadcop_final_compressed};
@@ -31,6 +31,7 @@ use tokio_util::sync::CancellationToken;
 use rand::{SeedableRng, seq::SliceRandom};
 use rand::rngs::StdRng;
 use proofman_common::{ProofmanResult, ProofmanError, Setup};
+use proofman_util::VadcopFinalProof;
 
 #[cfg(distributed)]
 use mpi::topology::Communicator;
@@ -61,7 +62,7 @@ use crate::{
 use crate::total_recursive_proofs;
 use crate::check_tree_paths;
 use crate::Counter;
-use crate::{AggProofs};
+use crate::AggProofs;
 use crate::aggregate_worker_proofs;
 
 use std::ffi::c_void;
@@ -290,7 +291,7 @@ pub enum ProvePhaseInputs {
 pub enum ProvePhaseResult {
     Contributions(Vec<ContributionsInfo>),
     Internal(Vec<AggProofs>),
-    Full(Option<String>, Option<Vec<u64>>),
+    Full(Option<String>, Option<VadcopFinalProof>),
 }
 
 impl<F: PrimeField64> Drop for ProofMan<F> {
@@ -2323,15 +2324,14 @@ where
             if self.mpi_ctx.rank == 0 {
                 let vadcop_final = self.receive_aggregated_proofs(vec![], true, true, &options)?;
 
-                vadcop_final_proof = Some(vadcop_final.unwrap().into_iter().next().unwrap().proof);
+                let proof = vadcop_final.unwrap().into_iter().next().unwrap().proof;
 
-                let vadcop_final_ref = vadcop_final_proof.as_ref().unwrap();
+                vadcop_final_proof = Some(VadcopFinalProof::new(&proof, options.compressed));
+
                 proof_id = Some(
-                    blake3::hash(unsafe {
-                        std::slice::from_raw_parts(vadcop_final_ref.as_ptr() as *const u8, vadcop_final_ref.len() * 8)
-                    })
-                    .to_hex()
-                    .to_string(),
+                    blake3::hash(unsafe { std::slice::from_raw_parts(proof.as_ptr() as *const u8, proof.len() * 8) })
+                        .to_hex()
+                        .to_string(),
                 );
             }
         }
@@ -2340,8 +2340,6 @@ where
             if options.aggregation {
                 if self.mpi_ctx.rank == 0 {
                     timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
-
-                    let proof_bytes: &[u8] = cast_slice(vadcop_final_proof.as_ref().unwrap());
 
                     let verkey_u64: Vec<u64> = match options.compressed {
                         true => self
@@ -2366,8 +2364,8 @@ where
 
                     let vk_bytes: &[u8] = cast_slice(&verkey_u64);
                     let valid_proofs = match options.compressed {
-                        true => verify_vadcop_final_compressed(proof_bytes, vk_bytes),
-                        false => verify_vadcop_final(proof_bytes, vk_bytes),
+                        true => verify_vadcop_final_compressed(vadcop_final_proof.as_ref().unwrap(), vk_bytes),
+                        false => verify_vadcop_final(vadcop_final_proof.as_ref().unwrap(), vk_bytes),
                     };
                     timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
                     if !valid_proofs {
@@ -2384,26 +2382,6 @@ where
             tracing::info!(
                 "··· {}",
                 "All proofs were successfully generated. Verification Skipped".bright_yellow().bold()
-            );
-        }
-
-        if options.save_proofs {
-            let global_info_path = self.pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
-            let global_info_file = global_info_path.to_str().unwrap();
-            save_challenges_c(
-                self.pctx.get_challenges_ptr(),
-                global_info_file,
-                options.output_dir_path.to_string_lossy().as_ref(),
-            );
-            save_proof_values_c(
-                self.pctx.get_proof_values_ptr(),
-                global_info_file,
-                options.output_dir_path.to_string_lossy().as_ref(),
-            );
-            save_publics_c(
-                self.pctx.global_info.n_publics as u64,
-                self.pctx.get_publics_ptr(),
-                options.output_dir_path.to_string_lossy().as_ref(),
             );
         }
 
@@ -2464,12 +2442,10 @@ where
             recursive2_proof[1..1 + publics_extended.len()].copy_from_slice(&publics_extended);
             recursive2_proof[1 + publics_extended.len()..].copy_from_slice(rec_proof);
 
-            let proof_bytes: &[u8] = cast_slice(&recursive2_proof);
-
             let verkey_u64: Vec<u64> = setup.verkey.iter().map(|x| x.as_canonical_u64()).collect();
             let vk_bytes: &[u8] = cast_slice(&verkey_u64);
 
-            let valid_recursive_proof = verify_recursive2(proof_bytes, vk_bytes);
+            let valid_recursive_proof = verify_recursive2(&VadcopFinalProof::new(&recursive2_proof, false), vk_bytes);
 
             if !valid_recursive_proof {
                 self.cancellation_info

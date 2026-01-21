@@ -17,12 +17,6 @@ extern "C" {
         }
     };
     
-    // Save Proof
-    // ========================================================================================
-    void save_challenges(void *pChallenges, char *globalInfoFile, char *fileDir);
-    void save_publics(uint64_t numPublicInputs, void *pPublicInputs, char *fileDir);
-    void save_proof_values(void *pProofValues, char *globalInfoFile, char *fileDir);
-
     // SetupCtx
     // ========================================================================================
     uint64_t n_hints_by_name(void *p_expression_bin, char *hintName);

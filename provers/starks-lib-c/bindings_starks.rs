@@ -3,26 +3,6 @@
 
 #[allow(dead_code)]
 extern "C" {
-    // Save Proof
-    // ========================================================================================
-    pub fn save_challenges(
-        pChallenges: *mut ::std::os::raw::c_void,
-        globalInfoFile: *mut ::std::os::raw::c_char,
-        fileDir: *mut ::std::os::raw::c_char,
-    );
-    
-    pub fn save_publics(
-        numPublicInputs: u64,
-        pPublicInputs: *mut ::std::os::raw::c_void,
-        fileDir: *mut ::std::os::raw::c_char,
-    );
-    
-    pub fn save_proof_values(
-        pProofValues: *mut ::std::os::raw::c_void,
-        globalInfoFile: *mut ::std::os::raw::c_char,
-        fileDir: *mut ::std::os::raw::c_char,
-    );
-
     // SetupCtx
     // ========================================================================================
     pub fn n_hints_by_name(

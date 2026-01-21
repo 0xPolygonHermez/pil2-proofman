@@ -84,47 +84,6 @@ pub fn clear_proof_done_callback_c() {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn save_challenges_c(p_challenges: *mut u8, global_info_file: &str, output_dir: &str) {
-    unsafe {
-        let file_dir = CString::new(output_dir).unwrap();
-        let file_ptr = file_dir.as_ptr() as *mut std::os::raw::c_char;
-
-        let global_info_file_name = CString::new(global_info_file).unwrap();
-        let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
-
-        save_challenges(p_challenges as *mut std::os::raw::c_void, global_info_file_ptr, file_ptr);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn save_publics_c(n_publics: u64, public_inputs: *mut u8, output_dir: &str) {
-    let file_dir: CString = CString::new(output_dir).unwrap();
-    unsafe {
-        save_publics(
-            n_publics,
-            public_inputs as *mut std::os::raw::c_void,
-            file_dir.as_ptr() as *mut std::os::raw::c_char,
-        );
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn save_proof_values_c(proof_values: *mut u8, global_info_file: &str, output_dir: &str) {
-    let file_dir: CString = CString::new(output_dir).unwrap();
-
-    let global_info_file_name = CString::new(global_info_file).unwrap();
-    let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
-
-    unsafe {
-        save_proof_values(
-            proof_values as *mut std::os::raw::c_void,
-            global_info_file_ptr,
-            file_dir.as_ptr() as *mut std::os::raw::c_char,
-        );
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
 pub fn stark_info_new_c(
     filename: &str,
     recursive_final: bool,
@@ -1428,21 +1387,6 @@ pub fn clear_proof_done_callback_c() {
         "ffi     ",
         "_clear_proof_done_callback: This is a mock call because there is no linked library"
     );
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn save_challenges_c(_p_challenges: *mut u8, _global_info_file: &str, _output_dir: &str) {
-    trace!("··· {}", "save_challenges: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn save_publics_c(_n_publics: u64, _public_inputs: *mut u8, _output_dir: &str) {
-    trace!("··· {}", "save_publics: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn save_proof_values_c(_proof_values: *mut u8, _global_info_file: &str, _output_dir: &str) {
-    trace!("··· {}", "save_proof_values: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]

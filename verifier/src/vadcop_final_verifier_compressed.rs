@@ -1,5 +1,6 @@
 use fields::{Goldilocks, CubicExtensionField, Field, Poseidon8};
 use crate::{Boundary, VerifierInfo, stark_verify};
+use proofman_util::VadcopFinalProof;
 
 #[rustfmt::skip]
 #[allow(clippy::all)]
@@ -4304,6 +4305,6 @@ fn verifier_info() -> VerifierInfo {
     }
 }
 
-pub fn verify_vadcop_final_compressed(proof: &[u8], vk: &[u8]) -> bool {
+pub fn verify_vadcop_final_compressed(proof: &VadcopFinalProof, vk: &[u8]) -> bool {
     stark_verify::<Poseidon8, 8>(proof, vk, &verifier_info(), q_verify, query_verify)
 }
