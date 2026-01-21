@@ -13,8 +13,8 @@ use proofman_hints::{acc_mul_hint_fields, get_hint_ids_by_name, mul_hint_fields,
 
 use crate::{
     get_global_hint_field_constant_a_as, get_global_hint_field_constant_as, DebugData, DebugDataInfo, DebugDataFast,
-    STD_MODE_DEFAULT, STD_MODE_ONE_INSTANCE, STD_NUM_DEBUG_DATA_FAST_MAPS_TOTAL, extract_hint_fields,
-    print_std_debug_info, parse_debug_values_to_hashes,
+    DebugDataFastGlobal, STD_MODE_DEFAULT, STD_MODE_ONE_INSTANCE, extract_hint_fields, print_std_debug_info,
+    parse_debug_values_to_hashes,
 };
 
 pub struct StdProd<F: PrimeField64> {
@@ -24,7 +24,8 @@ pub struct StdProd<F: PrimeField64> {
     air_ids: Vec<usize>,
     debug_data: RwLock<DebugData>,
     debug_data_info: RwLock<DebugDataInfo>,
-    debug_data_fast: Vec<RwLock<DebugDataFast>>,
+    debug_data_fast: RwLock<DebugDataFast>,
+    debug_data_fast_global: RwLock<DebugDataFastGlobal>,
     _phantom: std::marker::PhantomData<F>,
 }
 
@@ -41,9 +42,8 @@ impl<F: PrimeField64> StdProd<F> {
                 air_ids: Vec::new(),
                 debug_data: RwLock::new(FxHashMap::default()),
                 debug_data_info: RwLock::new(FxHashMap::default()),
-                debug_data_fast: (0..STD_NUM_DEBUG_DATA_FAST_MAPS_TOTAL)
-                    .map(|_| RwLock::new(FxHashMap::default()))
-                    .collect(),
+                debug_data_fast: RwLock::new(DebugDataFast::new()),
+                debug_data_fast_global: RwLock::new(DebugDataFastGlobal::new()),
                 _phantom: std::marker::PhantomData,
             }));
         };
@@ -60,9 +60,8 @@ impl<F: PrimeField64> StdProd<F> {
             air_ids,
             debug_data: RwLock::new(FxHashMap::default()),
             debug_data_info: RwLock::new(FxHashMap::default()),
-            debug_data_fast: (0..STD_NUM_DEBUG_DATA_FAST_MAPS_TOTAL)
-                .map(|_| RwLock::new(FxHashMap::default()))
-                .collect(),
+            debug_data_fast: RwLock::new(DebugDataFast::new()),
+            debug_data_fast_global: RwLock::new(DebugDataFastGlobal::new()),
             _phantom: std::marker::PhantomData,
         }))
     }
@@ -222,6 +221,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                         &mut self.debug_data.write().unwrap(),
                         &mut self.debug_data_info.write().unwrap(),
                         &self.debug_data_fast,
+                        &self.debug_data_fast_global,
                         true,
                         true,
                         &debug_hashes,
@@ -236,6 +236,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                         &mut self.debug_data.write().unwrap(),
                         &mut self.debug_data_info.write().unwrap(),
                         &self.debug_data_fast,
+                        &self.debug_data_fast_global,
                         false,
                         true,
                         &debug_hashes,
@@ -256,6 +257,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                 &self.debug_data,
                 &self.debug_data_info,
                 &self.debug_data_fast,
+                &self.debug_data_fast_global,
                 debug_info,
                 true,
                 &debug_hashes,
