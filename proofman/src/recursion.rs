@@ -710,6 +710,11 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         setup.stark_info.map_sections_n["cm1"],
     );
 
+    // Create output directory if it doesn't exist
+    std::fs::create_dir_all(output_dir_path)?;
+    let recursivef_json_path = output_dir_path.join("recursivef.json");
+    let recursivef_json_str = recursivef_json_path.to_string_lossy().into_owned();
+
     timer_start_trace!(GENERATE_RECURSIVEF_PROOF);
     // prove
     let p_prove = gen_recursive_proof_final_c(
@@ -719,7 +724,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         setup.get_const_ptr(),
         setup.get_const_tree_ptr(),
         publics.as_ptr() as *mut u8,
-        "tmp/recursivef.json",
+        &recursivef_json_str,
         0,
         0,
         0,
