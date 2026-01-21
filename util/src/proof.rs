@@ -46,7 +46,7 @@ impl VadcopFinalProof {
         Ok(proof)
     }
 
-    pub fn to_u64_vec(&self) -> Vec<u64> {
+    pub fn proof_with_publics_u64(&self) -> Vec<u64> {
         let public_values_u64: &[u64] = cast_slice(&self.public_values);
         let proof_u64: &[u64] = cast_slice(&self.proof);
 
@@ -56,5 +56,23 @@ impl VadcopFinalProof {
         result.extend_from_slice(proof_u64);
 
         result
+    }
+
+    pub fn get_publics(&self) -> Vec<u64> {
+        let public_values_u64: &[u64] = cast_slice(&self.public_values);
+        public_values_u64.to_vec()
+    }
+
+    pub fn get_proof(&self) -> Vec<u64> {
+        let proof_u64: &[u64] = cast_slice(&self.proof);
+        proof_u64.to_vec()
+    }
+
+    pub fn get_public_bytes(&self) -> Vec<u8> {
+        self.public_values.clone()
+    }
+
+    pub fn get_proof_bytes(&self) -> Vec<u8> {
+        self.proof.clone()
     }
 }

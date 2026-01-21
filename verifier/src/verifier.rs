@@ -55,7 +55,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         &[CubicExtensionField<Goldilocks>],
     ) -> CubicExtensionField<Goldilocks>,
 ) -> bool {
-    let proof = proof.to_u64_vec();
+    let proof = proof.proof_with_publics_u64();
     let vk = cast_slice::<u8, u64>(vk);
     let n_siblings: u64 = ((verifier_info.n_bits_ext as f64 / (verifier_info.arity as f64).log2()).ceil()) as u64
         - verifier_info.last_level_verification;
