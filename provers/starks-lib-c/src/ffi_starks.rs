@@ -706,7 +706,16 @@ pub fn initialize_instance_c(
     p_steps_params: *mut u8,
     d_buffers: *mut c_void,
 ) -> u64 {
-    unsafe { initialize_instance(p_setup, airgroup_id, air_id, instance_id, p_steps_params as *mut std::os::raw::c_void, d_buffers) }
+    unsafe {
+        initialize_instance(
+            p_setup,
+            airgroup_id,
+            air_id,
+            instance_id,
+            p_steps_params as *mut std::os::raw::c_void,
+            d_buffers,
+        )
+    }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -718,7 +727,16 @@ pub fn calculate_trace_instance_c(
     d_buffers: *mut c_void,
     stream_id: u64,
 ) {
-    unsafe { calculate_trace_instance(p_setup, airgroup_id, air_id, p_steps_params as *mut std::os::raw::c_void, d_buffers, stream_id) }
+    unsafe {
+        calculate_trace_instance(
+            p_setup,
+            airgroup_id,
+            air_id,
+            p_steps_params as *mut std::os::raw::c_void,
+            d_buffers,
+            stream_id,
+        )
+    }
 }
 
 #[cfg(not(feature = "no_lib_link"))]

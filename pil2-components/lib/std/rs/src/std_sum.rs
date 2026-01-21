@@ -60,7 +60,9 @@ impl<F: PrimeField64> StdSum<F> {
             air_ids,
             debug_data: RwLock::new(FxHashMap::default()),
             debug_data_info: RwLock::new(FxHashMap::default()),
-            debug_data_fast: (0..STD_NUM_DEBUG_DATA_FAST_MAPS_TOTAL).map(|_| RwLock::new(FxHashMap::default())).collect(),
+            debug_data_fast: (0..STD_NUM_DEBUG_DATA_FAST_MAPS_TOTAL)
+                .map(|_| RwLock::new(FxHashMap::default()))
+                .collect(),
             _phantom: std::marker::PhantomData,
         }))
     }

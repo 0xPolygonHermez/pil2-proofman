@@ -37,7 +37,8 @@ use mpi::topology::Communicator;
 
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c,
-    calculate_witness_expressions_c, clear_proof_done_callback_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
+    calculate_witness_expressions_c, clear_proof_done_callback_c, launch_callback_c, initialize_instance_c,
+    calculate_trace_instance_c,
 };
 
 use std::{
@@ -1047,10 +1048,11 @@ where
 
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
         let airgroup_values = pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id)?;
-        airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_local_idx(instance_id)?] = airgroup_values.clone();
+        airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_local_idx(instance_id)?] =
+            airgroup_values.clone();
 
         wcm.debug(&[instance_id], debug_info)?;
-        
+
         let valid =
             verify_constraints_proof(pctx, sctx, instance_id, debug_info.n_print_constraints as u64, stream_id)?;
 
