@@ -1,5 +1,4 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use bytemuck::cast_slice;
 use libloading::{Library, Symbol};
 use fields::{ExtensionField, Transcript, PrimeField64, GoldilocksQuinticExtension, Poseidon16};
 use proofman_common::{
@@ -305,6 +304,10 @@ where
 {
     pub fn get_wcm(&self) -> Arc<WitnessManager<F>> {
         self.wcm.clone()
+    }
+
+    pub fn get_proving_key_path(&self) -> PathBuf {
+        self.pctx.global_info.get_proving_key_path()
     }
 
     pub fn set_barrier(&self) {
@@ -2341,31 +2344,14 @@ where
                 if self.mpi_ctx.rank == 0 {
                     timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
 
-                    let verkey_u64: Vec<u64> = match options.compressed {
-                        true => self
-                            .setups
-                            .setup_vadcop_final_compressed
-                            .as_ref()
-                            .unwrap()
-                            .verkey
-                            .iter()
-                            .map(|x| x.as_canonical_u64())
-                            .collect(),
-                        false => self
-                            .setups
-                            .setup_vadcop_final
-                            .as_ref()
-                            .unwrap()
-                            .verkey
-                            .iter()
-                            .map(|x| x.as_canonical_u64())
-                            .collect(),
+                    let vk = match options.compressed {
+                        true => self.setups.setup_vadcop_final_compressed.as_ref().unwrap().get_vk(),
+                        false => self.setups.setup_vadcop_final.as_ref().unwrap().get_vk(),
                     };
 
-                    let vk_bytes: &[u8] = cast_slice(&verkey_u64);
                     let valid_proofs = match options.compressed {
-                        true => verify_vadcop_final_compressed(vadcop_final_proof.as_ref().unwrap(), vk_bytes),
-                        false => verify_vadcop_final(vadcop_final_proof.as_ref().unwrap(), vk_bytes),
+                        true => verify_vadcop_final_compressed(vadcop_final_proof.as_ref().unwrap(), &vk),
+                        false => verify_vadcop_final(vadcop_final_proof.as_ref().unwrap(), &vk),
                     };
                     timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
                     if !valid_proofs {
@@ -2442,10 +2428,8 @@ where
             recursive2_proof[1..1 + publics_extended.len()].copy_from_slice(&publics_extended);
             recursive2_proof[1 + publics_extended.len()..].copy_from_slice(rec_proof);
 
-            let verkey_u64: Vec<u64> = setup.verkey.iter().map(|x| x.as_canonical_u64()).collect();
-            let vk_bytes: &[u8] = cast_slice(&verkey_u64);
-
-            let valid_recursive_proof = verify_recursive2(&VadcopFinalProof::new(&recursive2_proof, false), vk_bytes);
+            let valid_recursive_proof =
+                verify_recursive2(&VadcopFinalProof::new(&recursive2_proof, false), &setup.get_vk());
 
             if !valid_recursive_proof {
                 self.cancellation_info
@@ -3591,7 +3575,12 @@ where
 
         let mut values_hash = vec![F::ZERO; size];
 
-        values_hash[..n_field_elements].copy_from_slice(&setup.verkey[..n_field_elements]);
+        let vk_bytes = setup.get_vk();
+        for (i, value) in values_hash.iter_mut().enumerate().take(n_field_elements) {
+            let start = i * 8;
+            let bytes: [u8; 8] = vk_bytes[start..start + 8].try_into().unwrap();
+            *value = F::from_u64(u64::from_le_bytes(bytes));
+        }
 
         let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();
         let mut p = 0;

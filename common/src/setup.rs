@@ -75,7 +75,7 @@ pub struct Setup<F: PrimeField64> {
     pub circom_library: RwLock<Option<Library>>,
     pub circom_circuit: RwLock<Option<*mut c_void>>,
     pub air_name: String,
-    pub verkey: Vec<F>,
+    pub verkey: Vec<u8>,
     pub verkey_file: String,
     pub exec_data: RwLock<Option<Vec<u64>>>,
     pub n_cols: u64,
@@ -219,11 +219,11 @@ impl<F: PrimeField64> Setup<F> {
             let verkey = if setup_type == &ProofType::RecursiveF {
                 vec![]
             } else {
-                let mut file = File::open(&verkey_file).expect("Unable to open file");
-                let mut json_str = String::new();
-                file.read_to_string(&mut json_str).expect("Unable to read file");
-                let vk: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
-                vk.iter().map(|&x| F::from_u64(x)).collect::<Vec<F>>()
+                let mut vk_file =
+                    File::open(&verkey_file).unwrap_or_else(|_| panic!("Failed to open verkey file: {}", verkey_file));
+                let mut vk = Vec::new();
+                vk_file.read_to_end(&mut vk).unwrap_or_else(|_| panic!("Failed to read verkey file: {}", verkey_file));
+                vk
             };
 
             let n_cols = stark_info.map_sections_n["cm1"];
@@ -318,6 +318,9 @@ impl<F: PrimeField64> Setup<F> {
         }
     }
 
+    pub fn get_vk(&self) -> Vec<u8> {
+        self.verkey.clone()
+    }
     pub fn load_const_pols(&self) {
         load_const_pols_c(
             self.const_pols.as_ptr() as *mut u8,
