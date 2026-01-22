@@ -5,7 +5,6 @@
 
 typedef PoseidonBN128GPU::FrElement FrElementGPU;
 
-// All constants in global memory (constant memory is limited to 64KB)
 // Device-side pointers arrays indexed by (t-2)
 __device__ FrElementGPU *GPU_C_ptr[16] = {nullptr};
 __device__ FrElementGPU *GPU_M_ptr[16] = {nullptr};
@@ -21,68 +20,20 @@ static FrElementGPU *h_GPU_S[16] = {nullptr};
 // Track if constants have been initialized
 static bool constants_initialized = false;
 
-// Round counts in constant memory (small enough)
-#define N_ROUNDS_F 8
+// Partial round counts
 __device__ __constant__ int N_ROUNDS_P_POSEIDON[16] = {56, 57, 56, 60, 60, 63, 64, 63, 60, 66, 60, 65, 70, 60, 64, 68};
 
 __global__ void poseidon_hash_kernel(FrElementGPU *state, int t) {
     PoseidonBN128GPU poseidon;
     
+    // Get constants from device global pointers
     const FrElementGPU *C = GPU_C_ptr[t - 2];
-    const FrElementGPU *S = GPU_S_ptr[t - 2];
     const FrElementGPU *M = GPU_M_ptr[t - 2];
     const FrElementGPU *P = GPU_P_ptr[t - 2];
+    const FrElementGPU *S = GPU_S_ptr[t - 2];
     const int nRoundsP = N_ROUNDS_P_POSEIDON[t - 2];
     
-    // Temporary buffer for mix operation
-    FrElementGPU tmp[17];
-    
-    poseidon.ark(state, C, t, 0);
-    
-    for (int r = 0; r < N_ROUNDS_F / 2 - 1; r++)
-    {
-        poseidon.sbox(state, C, t, (r + 1) * t);
-        poseidon.mix(state, tmp, M, t);
-    }
-    
-    poseidon.sbox(state, C, t, (N_ROUNDS_F / 2) * t);
-    poseidon.mix(state, tmp, P, t);
-    
-    for (int r = 0; r < nRoundsP; r++)
-    {
-        poseidon.exp5(state[0]);
-        BN128GPUScalarField::add(state[0], state[0], C[(N_ROUNDS_F / 2 + 1) * t + r]);
-
-        FrElementGPU s0 = BN128GPUScalarField::zero();
-        FrElementGPU accumulator1;
-        FrElementGPU accumulator2;
-        
-        for (int j = 0; j < t; j++)
-        {
-            accumulator1 = S[(t * 2 - 1) * r + j];
-            BN128GPUScalarField::mul(accumulator1, accumulator1, state[j]);
-            BN128GPUScalarField::add(s0, s0, accumulator1);
-            if (j > 0)
-            {
-                accumulator2 = S[(t * 2 - 1) * r + t + j - 1];
-                BN128GPUScalarField::mul(accumulator2, state[0], accumulator2);
-                BN128GPUScalarField::add(state[j], state[j], accumulator2);
-            }
-        }
-        state[0] = s0;
-    }
-    
-    for (int r = 0; r < N_ROUNDS_F / 2 - 1; r++)
-    {
-        poseidon.sbox(state, C, t, (N_ROUNDS_F / 2 + 1) * t + nRoundsP + r * t);
-        poseidon.mix(state, tmp, M, t);
-    }
-    
-    for (int i = 0; i < t; i++)
-    {
-        poseidon.exp5(state[i]);
-    }
-    poseidon.mix(state, tmp, M, t);
+    poseidon.hash_(state, t, C, M, P, S, nRoundsP);
 }
 
 void PoseidonBN128GPU::hash(FrElement* d_state, int t) {

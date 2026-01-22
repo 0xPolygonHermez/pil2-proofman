@@ -7,6 +7,9 @@
 #include <cassert>
 using namespace std;
 
+// Full Round counts
+#define N_ROUNDS_F_POSEIDON 8
+
 class PoseidonBN128GPU
 {
 public:
@@ -17,6 +20,7 @@ public:
     __device__ __forceinline__ void sbox(FrElement *state, const FrElement *c, int t, int offset);
     __device__ __forceinline__ void mix(FrElement *state, FrElement *tmp, const FrElement *m, int t);
     __device__ __forceinline__ void exp5(FrElement &r);
+    __device__ void hash_(FrElement *state, int t, const FrElement *C, const FrElement *M, const FrElement *P, const FrElement *S, int nRoundsP);
 
     void hash(FrElement *d_state, int t);
     
@@ -73,6 +77,62 @@ __device__ void PoseidonBN128GPU::mix(FrElement *state, FrElement *tmp, const Fr
     {
         state[i] = tmp[i];
     }
+}
+
+// Hash function with constants passed as arguments 
+__device__ __forceinline__ void PoseidonBN128GPU::hash_(FrElement *state, int t, const FrElement *C, const FrElement *M, const FrElement *P, const FrElement *S, int nRoundsP)
+{
+    PoseidonBN128GPU poseidon;
+    
+    // Temporary buffer for mix operation
+    FrElement tmp[18];
+    
+    poseidon.ark(state, C, t, 0);
+    
+    for (int r = 0; r < N_ROUNDS_F_POSEIDON / 2 - 1; r++)
+    {
+        poseidon.sbox(state, C, t, (r + 1) * t);
+        poseidon.mix(state, tmp, M, t);
+    }
+    
+    poseidon.sbox(state, C, t, (N_ROUNDS_F_POSEIDON / 2) * t);
+    poseidon.mix(state, tmp, P, t);
+    
+    for (int r = 0; r < nRoundsP; r++)
+    {
+        poseidon.exp5(state[0]);
+        BN128GPUScalarField::add(state[0], state[0], C[(N_ROUNDS_F_POSEIDON / 2 + 1) * t + r]);
+
+        FrElement s0 = BN128GPUScalarField::zero();
+        FrElement accumulator1;
+        FrElement accumulator2;
+        
+        for (int j = 0; j < t; j++)
+        {
+            accumulator1 = S[(t * 2 - 1) * r + j];
+            BN128GPUScalarField::mul(accumulator1, accumulator1, state[j]);
+            BN128GPUScalarField::add(s0, s0, accumulator1);
+            if (j > 0)
+            {
+                accumulator2 = S[(t * 2 - 1) * r + t + j - 1];
+                BN128GPUScalarField::mul(accumulator2, state[0], accumulator2);
+                BN128GPUScalarField::add(state[j], state[j], accumulator2);
+            }
+        }
+        state[0] = s0;
+    }
+    
+    for (int r = 0; r < N_ROUNDS_F_POSEIDON / 2 - 1; r++)
+    {
+        poseidon.sbox(state, C, t, (N_ROUNDS_F_POSEIDON / 2 + 1) * t + nRoundsP + r * t);
+        poseidon.mix(state, tmp, M, t);
+    }
+    
+    for (int i = 0; i < t; i++)
+    {
+        poseidon.exp5(state[i]);
+    }
+    poseidon.mix(state, tmp, M, t);
 }
 
 #endif // POSEIDON_BN128_CUH
