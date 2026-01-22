@@ -547,6 +547,7 @@ pub fn print_debug_info<F: PrimeField64>(
 
                     let piop_name = get_hint_field_constant_as_string(
                         sctx,
+                        pctx,
                         airgroup_id,
                         air_id,
                         hint as usize,
@@ -556,6 +557,7 @@ pub fn print_debug_info<F: PrimeField64>(
 
                     let expr_name = get_hint_field_constant_a_as_string(
                         sctx,
+                        pctx,
                         airgroup_id,
                         air_id,
                         hint as usize,

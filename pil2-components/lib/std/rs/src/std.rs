@@ -25,7 +25,7 @@ impl<F: PrimeField64> Std<F> {
         // Instantiate the components
         let prod_bus = StdProd::new(&sctx)?;
         let sum_bus = StdSum::new(&sctx)?;
-        let virtual_table = StdVirtualTable::new(pctx.clone(), &sctx, shared_tables)?;
+        let virtual_table = StdVirtualTable::new(&pctx, &sctx, shared_tables)?;
         let range_check = StdRangeCheck::new(pctx.clone(), &sctx, virtual_table.clone(), shared_tables)?;
 
         Ok(Arc::new(Self { mode, prod_bus, sum_bus, range_check, virtual_table }))

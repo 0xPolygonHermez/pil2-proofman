@@ -15,7 +15,7 @@ use crate::{
     check_invalid_opids, get_global_hint_field, get_global_hint_field_constant_as, get_hint_field_constant_as,
     get_hint_field_constant_as_string, get_hint_field_constant_a_as_string, get_hint_field_constant_as_field,
     get_row_field_value, print_debug_info, update_debug_data, update_debug_data_fast, DebugData, DebugDataFast,
-    DebugDataInfo, HintMetadata, hash_vals, normalize_vals,
+    DebugDataFastGlobal, DebugDataInfo, HintMetadata, hash_vals, normalize_vals,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -25,6 +25,7 @@ pub fn extract_global_hint_fields<F: PrimeField64>(
     debug_data: &mut DebugData,
     debug_data_info: &mut DebugDataInfo,
     debug_data_fast: &mut DebugDataFast,
+    debug_data_fast_global: &mut DebugDataFastGlobal,
     fast_mode: bool,
     is_prod: bool,
     debug_hashes: &[u64],
@@ -77,7 +78,15 @@ pub fn extract_global_hint_fields<F: PrimeField64>(
             let norm_vals = normalize_vals(&expr);
             let hash = hash_vals(norm_vals);
             if fast_mode {
-                update_debug_data_fast(debug_data_fast, opid, hash, is_proves, num_reps.as_canonical_u64(), true)?;
+                update_debug_data_fast(
+                    debug_data_fast,
+                    debug_data_fast_global,
+                    opid,
+                    hash,
+                    is_proves,
+                    num_reps.as_canonical_u64(),
+                    true,
+                )?;
             } else {
                 update_debug_data(
                     debug_data,
@@ -110,7 +119,8 @@ pub fn extract_hint_fields<F: PrimeField64>(
     instance_id: usize,
     debug_data: &mut DebugData,
     debug_data_info: &mut DebugDataInfo,
-    debug_data_fast: &[RwLock<DebugDataFast>],
+    debug_data_fast: &RwLock<DebugDataFast>,
+    debug_data_fast_global: &RwLock<DebugDataFastGlobal>,
     fast_mode: bool,
     is_prod: bool,
     debug_hashes: &[u64],
@@ -135,6 +145,7 @@ pub fn extract_hint_fields<F: PrimeField64>(
 
             let type_piop = get_hint_field_constant_as::<u64, F>(
                 sctx,
+                pctx,
                 airgroup_id,
                 air_id,
                 hint as usize,
@@ -150,6 +161,7 @@ pub fn extract_hint_fields<F: PrimeField64>(
 
             let deg_expr = get_hint_field_constant_as_field(
                 sctx,
+                pctx,
                 airgroup_id,
                 air_id,
                 hint as usize,
@@ -159,6 +171,7 @@ pub fn extract_hint_fields<F: PrimeField64>(
 
             let deg_mul = get_hint_field_constant_as_field(
                 sctx,
+                pctx,
                 airgroup_id,
                 air_id,
                 hint as usize,
@@ -168,6 +181,7 @@ pub fn extract_hint_fields<F: PrimeField64>(
 
             let name_piop = get_hint_field_constant_as_string(
                 sctx,
+                pctx,
                 airgroup_id,
                 air_id,
                 hint as usize,
@@ -177,6 +191,7 @@ pub fn extract_hint_fields<F: PrimeField64>(
 
             let name_exprs = get_hint_field_constant_a_as_string(
                 sctx,
+                pctx,
                 airgroup_id,
                 air_id,
                 hint as usize,
@@ -207,44 +222,51 @@ pub fn extract_hint_fields<F: PrimeField64>(
     let opids = &pctx.debug_info.read().unwrap().std_mode.opids;
 
     if fast_mode {
-        // Process hints in chunks of 1000 to reuse pre-allocated HashMaps
-        for chunk in hint_metadatas.chunks(1000) {
-            chunk.par_iter().enumerate().try_for_each(|(idx, hint_metadata)| -> ProofmanResult<()> {
-                // Directly acquire write lock and work with it
-                let mut debug_data_fast = debug_data_fast[idx].write().unwrap();
+        // Process hints in chunks of to reuse pre-allocated HashMaps
+        hint_metadatas.par_iter().try_for_each(|hint_metadata| -> ProofmanResult<()> {
+            // Directly acquire write lock and work with it
+            let mut local_debug_data = DebugDataFast::new();
+            let mut local_debug_data_global = DebugDataFastGlobal::new();
 
-                // If both the expression and the mul are of degree zero, then simply update the bus once
-                if hint_metadata.deg_expr.is_zero() && hint_metadata.deg_mul.is_zero() {
+            // If both the expression and the mul are of degree zero, then simply update the bus once
+            if hint_metadata.deg_expr.is_zero() && hint_metadata.deg_mul.is_zero() {
+                update_bus_fast(
+                    opids,
+                    &hint_metadata.busid,
+                    hint_metadata.type_piop,
+                    &hint_metadata.num_reps,
+                    &hint_metadata.expressions,
+                    0,
+                    &mut local_debug_data,
+                    &mut local_debug_data_global,
+                    false,
+                )?;
+            }
+            // Otherwise, update the bus for each row
+            else {
+                for j in 0..num_rows {
                     update_bus_fast(
                         opids,
                         &hint_metadata.busid,
                         hint_metadata.type_piop,
                         &hint_metadata.num_reps,
                         &hint_metadata.expressions,
-                        0,
-                        &mut debug_data_fast,
+                        j,
+                        &mut local_debug_data,
+                        &mut local_debug_data_global,
                         false,
                     )?;
                 }
-                // Otherwise, update the bus for each row
-                else {
-                    for j in 0..num_rows {
-                        update_bus_fast(
-                            opids,
-                            &hint_metadata.busid,
-                            hint_metadata.type_piop,
-                            &hint_metadata.num_reps,
-                            &hint_metadata.expressions,
-                            j,
-                            &mut debug_data_fast,
-                            false,
-                        )?;
-                    }
-                }
+            }
 
-                Ok(())
-            })?;
-        }
+            let mut shared = debug_data_fast.write().unwrap();
+            local_debug_data.merge_into(&mut shared);
+            let mut shared_global = debug_data_fast_global.write().unwrap();
+            for (opid, hashes) in local_debug_data_global.into_iter() {
+                shared_global.entry(opid).or_default().extend(hashes);
+            }
+            Ok(())
+        })?;
     } else {
         let store_row_info = store_rows_info_air(pctx, airgroup_id, air_id, instance_id);
         for hint_metadata in hint_metadatas.iter() {
@@ -302,6 +324,7 @@ pub fn extract_hint_fields<F: PrimeField64>(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[inline]
 pub fn update_bus<F: PrimeField64>(
     op_ids: &[u64],
     hint_id: usize,
@@ -382,6 +405,7 @@ fn update_bus_fast<F: PrimeField64>(
     expressions: &HintFieldValuesVec<F>,
     row: usize,
     debug_data_fast: &mut DebugDataFast,
+    debug_data_fast_global: &mut DebugDataFastGlobal,
     is_global: bool,
 ) -> ProofmanResult<()> {
     let opid = get_row_field_value(busid, row, "busid")?;
@@ -419,6 +443,7 @@ fn update_bus_fast<F: PrimeField64>(
 
     update_debug_data_fast(
         debug_data_fast,
+        debug_data_fast_global,
         opid.as_canonical_u64(),
         hash,
         is_proves,
@@ -433,7 +458,8 @@ pub fn print_std_debug_info<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     debug_data: &RwLock<DebugData>,
     debug_data_info: &RwLock<DebugDataInfo>,
-    debug_data_fast: &[RwLock<DebugDataFast>],
+    debug_data_fast: &RwLock<DebugDataFast>,
+    debug_data_fast_global: &RwLock<DebugDataFastGlobal>,
     debug_info: &DebugInfo,
     is_prod: bool,
     debug_hashes: &[u64],
@@ -441,19 +467,8 @@ pub fn print_std_debug_info<F: PrimeField64>(
     let fast_mode = debug_info.std_mode.fast_mode;
 
     if fast_mode {
-        let mut total_debug_data_fast = DebugDataFast::default();
-
-        for map in debug_data_fast {
-            let map = map.read().unwrap();
-            for (opid, bus) in map.iter() {
-                let entry = total_debug_data_fast.entry(*opid).or_default();
-                entry.num_proves =
-                    entry.num_proves.checked_add(bus.num_proves).expect("Overflow when merging num_proves");
-                entry.num_assumes =
-                    entry.num_assumes.checked_add(bus.num_assumes).expect("Overflow when merging num_assumes");
-                entry.global_values.extend(&bus.global_values);
-            }
-        }
+        let mut debug_data_fast = debug_data_fast.write().unwrap();
+        let mut debug_data_fast_global = debug_data_fast_global.write().unwrap();
 
         // Perform the global hint update
         extract_global_hint_fields(
@@ -461,13 +476,14 @@ pub fn print_std_debug_info<F: PrimeField64>(
             sctx,
             &mut FxHashMap::default(),
             &mut FxHashMap::default(),
-            &mut total_debug_data_fast,
+            &mut debug_data_fast,
+            &mut debug_data_fast_global,
             fast_mode,
             is_prod,
             debug_hashes,
         )?;
 
-        check_invalid_opids(pctx, total_debug_data_fast);
+        check_invalid_opids(pctx, std::mem::take(&mut *debug_data_fast));
     } else {
         let mut debug_data_t = debug_data.write().unwrap();
         let mut debug_data_info_t = debug_data_info.write().unwrap();
@@ -476,7 +492,8 @@ pub fn print_std_debug_info<F: PrimeField64>(
             sctx,
             &mut debug_data_t,
             &mut debug_data_info_t,
-            &mut FxHashMap::default(),
+            &mut DebugDataFast::new(),
+            &mut DebugDataFastGlobal::new(),
             fast_mode,
             is_prod,
             debug_hashes,

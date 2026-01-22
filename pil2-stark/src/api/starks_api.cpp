@@ -1,7 +1,6 @@
 #include "zkglobals.hpp"
 #include "proof2zkinStark.hpp"
 #include "starks.hpp"
-#include "verify_constraints.hpp"
 #include "global_constraints.hpp"
 #include "gen_recursive_proof.hpp"
 #include "gen_proof.hpp"
@@ -17,6 +16,10 @@
 #include "mpi.h"
 #endif
 
+
+#ifndef __USE_CUDA__
+#include "verify_constraints.hpp"
+#endif
 
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
@@ -488,7 +491,8 @@ void expressions_bin_free(void *pExpressionsBin)
 
 // Hints
 // ========================================================================================
-void get_hint_field(void *pSetupCtx, void* stepsParams, void* hintFieldValues, uint64_t hintId, char* hintFieldName, void* hintOptions) 
+#ifndef __USE_CUDA__
+void get_hint_field(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void* stepsParams, void* hintFieldValues, uint64_t hintId, char* hintFieldName, void* hintOptions, void *d_buffers_, uint64_t streamId, bool constant) 
 {
     SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
     ProverHelpers proverHelpers;
@@ -497,6 +501,7 @@ void get_hint_field(void *pSetupCtx, void* stepsParams, void* hintFieldValues, u
 
     getHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, expressionsCtx, (HintFieldInfo *) hintFieldValues, hintId, string(hintFieldName), *(HintFieldOptions *) hintOptions);
 }
+#endif
 
 uint64_t get_hint_field_values(void *pSetupCtx, uint64_t hintId, char* hintFieldName) {
     return getHintFieldValues(*(SetupCtx *)pSetupCtx, hintId, string(hintFieldName));
@@ -716,10 +721,18 @@ void get_constraints_lines(void* pSetupCtx, uint8_t **constraintsLines)
     }
 }
 
-void verify_constraints(void *pSetupCtx, void* stepsParams, void* constraintsInfo)
+#ifndef __USE_CUDA__
+uint64_t initialize_instance(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* params_, void *d_buffers_) {
+    return 0;
+}
+
+void calculate_trace_instance(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *d_buffers, uint64_t streamId) {}
+
+void verify_constraints(void *pSetupCtx, uint64_t airgroupId, uint64_t airId,void* stepsParams, void* constraintsInfo, void *d_buffers, uint64_t streamId)
 {
     verifyConstraints(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, (ConstraintInfo *)constraintsInfo);
 }
+#endif
 
 // Global Constraints
 // =================================================================================

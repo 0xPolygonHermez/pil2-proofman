@@ -7,11 +7,26 @@ use std::fs::File;
 use std::io::Read;
 use std::fs;
 use fields::{PrimeField64, Transcript, Poseidon16};
-use proofman_starks_lib_c::custom_commit_size_c;
 use crate::{
-    initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode, StepsParams,
-    VerboseMode, ProofmanResult,
+    initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode,
+    StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
 };
+
+use std::ffi::c_void;
+use proofman_starks_lib_c::{
+    check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
+};
+use proofman_util::DeviceBuffer;
+
+#[derive(Debug)]
+pub struct MaxSizes {
+    pub total_const_area: u64,
+    pub aux_trace_area: u64,
+    pub aux_trace_recursive_area: u64,
+    pub total_const_area_aggregation: u64,
+    pub n_streams: u64,
+    pub n_recursive_streams: u64,
+}
 
 #[derive(Debug)]
 pub struct Values<F> {
@@ -246,6 +261,7 @@ pub struct ProofCtx<F: PrimeField64> {
     pub proof_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_tx_priority: RwLock<Option<crossbeam_channel::Sender<usize>>>,
+    pub d_buffers: Arc<DeviceBuffer>,
 }
 
 pub const MAX_INSTANCES: u64 = 1 << 17;
@@ -296,6 +312,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             witness_tx: RwLock::new(None),
             witness_tx_priority: RwLock::new(None),
             proof_tx: RwLock::new(None),
+            d_buffers: Arc::new(DeviceBuffer::default()),
         })
     }
 
@@ -749,6 +766,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.air_instances[instance_id].read().unwrap().get_trace_ptr()
     }
 
+    pub fn get_air_instance_stream_id(&self, instance_id: usize) -> u64 {
+        self.air_instances[instance_id].read().unwrap().get_stream_id()
+    }
+
     pub fn get_air_instance_trace(
         &self,
         airgroup_id: usize,
@@ -806,5 +827,151 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn free_instance_traces(&self, instance_id: usize) -> (bool, Vec<F>) {
         self.air_instances[instance_id].write().unwrap().clear_traces()
+    }
+
+    pub fn set_instance_stream_id(&self, instance_id: usize, stream_id: u64) {
+        self.air_instances[instance_id].write().unwrap().set_stream_id(stream_id);
+    }
+
+    #[allow(clippy::type_complexity)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_device_buffers(
+        &mut self,
+        sctx: &SetupCtx<F>,
+        setups_vadcop: &SetupsVadcop<F>,
+        aggregation: bool,
+        gpu_params: &ParamsGPU,
+    ) -> ProofmanResult<(u64, u64, u64)> {
+        let mut free_memory_gpu = match cfg!(feature = "gpu") {
+            true => {
+                check_device_memory_c(self.mpi_ctx.node_rank as u32, self.mpi_ctx.node_n_processes as usize as u32)
+                    as f64
+                    * 0.99
+            }
+            false => 0.0,
+        };
+
+        self.mpi_ctx.barrier();
+
+        let n_gpus = get_num_gpus_c();
+        let n_processes_node = self.mpi_ctx.node_n_processes as usize as u64;
+
+        let n_partitions = match cfg!(feature = "gpu") {
+            true => {
+                if n_gpus > n_processes_node {
+                    1
+                } else {
+                    n_processes_node.div_ceil(n_gpus)
+                }
+            }
+            false => 1,
+        };
+
+        free_memory_gpu /= n_partitions as f64;
+
+        let mut total_const_area = 0;
+        let mut total_const_area_aggregation = 0;
+
+        if cfg!(feature = "gpu") {
+            total_const_area += sctx.total_const_pols_size as u64;
+            total_const_area += sctx.total_const_tree_size as u64;
+            if aggregation {
+                total_const_area_aggregation += setups_vadcop.total_const_pols_size as u64;
+                total_const_area_aggregation += setups_vadcop.total_const_tree_size as u64;
+            }
+        }
+
+        let max_size_buffer = (free_memory_gpu / 8.0).floor() as u64 - total_const_area - total_const_area_aggregation;
+        let max_prover_buffer_size = sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size);
+
+        let n_streams_per_gpu = match cfg!(feature = "gpu") {
+            true => {
+                let max_number_proofs_per_gpu =
+                    gpu_params.max_number_streams.min(max_size_buffer as usize / max_prover_buffer_size);
+                if max_number_proofs_per_gpu < 1 {
+                    return Err(ProofmanError::InvalidConfiguration("Not enough GPU memory to run the proof".into()));
+                }
+                max_number_proofs_per_gpu
+            }
+            false => 1,
+        };
+
+        let max_prover_buffer_size =
+            sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_recursive_buffer_size) as u64;
+
+        let max_prover_recursive2_buffer_size = setups_vadcop.max_prover_recursive2_buffer_size as u64;
+
+        tracing::info!("Max prover buffer size: {}", format_bytes(max_prover_buffer_size as f64 * 8.0));
+        tracing::info!(
+            "Max prover recursive buffer size: {}",
+            format_bytes(setups_vadcop.max_prover_recursive_buffer_size as f64 * 8.0)
+        );
+        tracing::info!(
+            "Max prover recursive1/recursive2 buffer size: {}",
+            format_bytes(setups_vadcop.max_prover_recursive2_buffer_size as f64 * 8.0)
+        );
+
+        let mut gpu_available_memory = match cfg!(feature = "gpu") {
+            true => max_size_buffer as i64 - (n_streams_per_gpu * max_prover_buffer_size as usize) as i64,
+            false => 0,
+        };
+        let mut n_recursive_streams_per_gpu = 0;
+        if aggregation {
+            while gpu_available_memory > 0 && n_recursive_streams_per_gpu < 10 {
+                gpu_available_memory -= max_prover_recursive2_buffer_size as i64;
+                if gpu_available_memory < 0 {
+                    break;
+                }
+                n_recursive_streams_per_gpu += 1;
+            }
+        }
+
+        if cfg!(feature = "gpu") {
+            tracing::info!(
+                "Using {} streams per GPU for basic proofs and {} streams per GPU for recursive proofs. Using {} for fixed pols",
+                n_streams_per_gpu,
+                n_recursive_streams_per_gpu,
+                format_bytes((total_const_area + total_const_area_aggregation) as f64 * 8.0)
+            );
+        }
+
+        let max_sizes = MaxSizes {
+            total_const_area,
+            aux_trace_area: max_prover_buffer_size,
+            aux_trace_recursive_area: max_prover_recursive2_buffer_size,
+            total_const_area_aggregation,
+            n_streams: n_streams_per_gpu as u64,
+            n_recursive_streams: n_recursive_streams_per_gpu as u64,
+        };
+
+        let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
+        let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
+            max_sizes_ptr,
+            self.mpi_ctx.node_rank as u32,
+            self.mpi_ctx.node_n_processes as usize as u32,
+            self.global_info.transcript_arity as u32,
+        )));
+
+        let max_pinned_proof_size = match aggregation {
+            true => sctx.max_pinned_proof_size.max(setups_vadcop.max_pinned_proof_size) as u64,
+            false => sctx.max_pinned_proof_size as u64,
+        };
+
+        let n_gpus: u64 = gen_device_streams_c(
+            d_buffers.get_ptr(),
+            max_prover_buffer_size,
+            max_prover_recursive2_buffer_size,
+            max_pinned_proof_size,
+            sctx.max_n_bits_ext as u64,
+            self.global_info.transcript_arity as u64,
+        );
+
+        self.d_buffers = d_buffers;
+
+        Ok((n_streams_per_gpu as u64, n_recursive_streams_per_gpu as u64, n_gpus))
+    }
+
+    pub fn get_device_buffers_ptr(&self) -> *mut c_void {
+        self.d_buffers.get_ptr()
     }
 }

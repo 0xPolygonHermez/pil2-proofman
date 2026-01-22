@@ -938,7 +938,7 @@ pub fn update_airgroupvalue<F: PrimeField64>(
 #[allow(clippy::too_many_arguments)]
 fn get_hint_f<F: PrimeField64>(
     sctx: &SetupCtx<F>,
-    pctx: Option<&ProofCtx<F>>,
+    pctx: &ProofCtx<F>,
     airgroup_id: usize,
     air_id: usize,
     instance_id: Option<usize>,
@@ -949,7 +949,7 @@ fn get_hint_f<F: PrimeField64>(
     let setup = sctx.get_setup(airgroup_id, air_id)?;
 
     let steps_params = if let Some(instance_id) = instance_id {
-        pctx.unwrap().get_air_instance_params(instance_id, false)
+        pctx.get_air_instance_params(instance_id, false)
     } else {
         StepsParams::default()
     };
@@ -978,13 +978,22 @@ fn get_hint_f<F: PrimeField64>(
     hint_field_values_c = HintFieldInfoC::from_hint_field_info_vec(&mut hint_field_values);
     hint_field_values_c_ptr = hint_field_values_c.as_mut_ptr() as *mut c_void;
 
+    let stream_id = if let Some(instance_id) = instance_id { pctx.get_air_instance_stream_id(instance_id) } else { 0 };
+
+    let d_buffers = pctx.get_device_buffers_ptr();
+
     get_hint_field_c(
         (&setup.p_setup).into(),
+        airgroup_id as u64,
+        air_id as u64,
         (&steps_params).into(),
         hint_field_values_c_ptr,
         hint_id as u64,
         hint_field_name,
         (&options).into(),
+        d_buffers,
+        stream_id,
+        options.compilation_time,
     );
 
     Ok(hint_field_values)
@@ -999,16 +1008,8 @@ pub fn get_hint_field<F: PrimeField64>(
 ) -> ProofmanResult<HintFieldValue<F>> {
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
 
-    let mut hint_info = get_hint_f(
-        sctx,
-        Some(pctx),
-        airgroup_id,
-        air_id,
-        Some(instance_id),
-        hint_id,
-        hint_field_name,
-        options.clone(),
-    )?;
+    let mut hint_info =
+        get_hint_f(sctx, pctx, airgroup_id, air_id, Some(instance_id), hint_id, hint_field_name, options.clone())?;
 
     if hint_info[0].matrix_size != 0 {
         return Err(ProofmanError::InvalidHints(format!(
@@ -1033,16 +1034,8 @@ pub fn get_hint_field_a<F: PrimeField64>(
 ) -> ProofmanResult<HintFieldValuesVec<F>> {
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
 
-    let hint_infos = get_hint_f(
-        sctx,
-        Some(pctx),
-        airgroup_id,
-        air_id,
-        Some(instance_id),
-        hint_id,
-        hint_field_name,
-        options.clone(),
-    )?;
+    let hint_infos =
+        get_hint_f(sctx, pctx, airgroup_id, air_id, Some(instance_id), hint_id, hint_field_name, options.clone())?;
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.into_iter().enumerate() {
@@ -1071,16 +1064,8 @@ pub fn get_hint_field_m<F: PrimeField64>(
 ) -> ProofmanResult<HintFieldValues<F>> {
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
 
-    let hint_infos = get_hint_f(
-        sctx,
-        Some(pctx),
-        airgroup_id,
-        air_id,
-        Some(instance_id),
-        hint_id,
-        hint_field_name,
-        options.clone(),
-    )?;
+    let hint_infos =
+        get_hint_f(sctx, pctx, airgroup_id, air_id, Some(instance_id), hint_id, hint_field_name, options.clone())?;
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 
@@ -1105,6 +1090,7 @@ pub fn get_hint_field_m<F: PrimeField64>(
 
 pub fn get_hint_field_constant<F: PrimeField64>(
     sctx: &SetupCtx<F>,
+    pctx: &ProofCtx<F>,
     airgroup_id: usize,
     air_id: usize,
     hint_id: usize,
@@ -1113,7 +1099,7 @@ pub fn get_hint_field_constant<F: PrimeField64>(
 ) -> ProofmanResult<HintFieldValue<F>> {
     options.compilation_time = true;
 
-    let mut hint_info = get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone())?;
+    let mut hint_info = get_hint_f(sctx, pctx, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone())?;
 
     if hint_info[0].matrix_size != 0 {
         return Err(ProofmanError::InvalidHints(format!(
@@ -1130,6 +1116,7 @@ pub fn get_hint_field_constant<F: PrimeField64>(
 
 pub fn get_hint_field_constant_a<F: PrimeField64>(
     sctx: &SetupCtx<F>,
+    pctx: &ProofCtx<F>,
     airgroup_id: usize,
     air_id: usize,
     hint_id: usize,
@@ -1138,7 +1125,7 @@ pub fn get_hint_field_constant_a<F: PrimeField64>(
 ) -> ProofmanResult<HintFieldValuesVec<F>> {
     options.compilation_time = true;
 
-    let hint_infos = get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone())?;
+    let hint_infos = get_hint_f(sctx, pctx, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone())?;
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.into_iter().enumerate() {
@@ -1159,6 +1146,7 @@ pub fn get_hint_field_constant_a<F: PrimeField64>(
 
 pub fn get_hint_field_constant_m<F: PrimeField64>(
     sctx: &SetupCtx<F>,
+    pctx: &ProofCtx<F>,
     airgroup_id: usize,
     air_id: usize,
     hint_id: usize,
@@ -1167,7 +1155,7 @@ pub fn get_hint_field_constant_m<F: PrimeField64>(
 ) -> ProofmanResult<HintFieldValues<F>> {
     options.compilation_time = true;
 
-    let hint_infos = get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone())?;
+    let hint_infos = get_hint_f(sctx, pctx, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone())?;
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 

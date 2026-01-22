@@ -170,6 +170,8 @@ public:
     uint64_t qDeg;
     uint64_t qDim;
 
+    uint64_t nConstraints;
+
     uint64_t friExpId;
     uint64_t cExpId;
 

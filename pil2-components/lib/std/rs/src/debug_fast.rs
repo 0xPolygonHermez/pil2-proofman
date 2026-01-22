@@ -1,49 +1,79 @@
-use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::{HashSet, HashMap};
 
 use colored::Colorize;
 use fields::PrimeField64;
-use proofman_common::{ProofCtx, ProofmanError, ProofmanResult};
+use proofman_common::{ProofCtx, ProofmanResult};
 
-pub type DebugDataFast = FxHashMap<u64, SharedDataFast>; // opid -> sharedDataFast
-
+/// Small vec-based map for ~10 opids. Linear search is faster than hashing for small N.
 #[derive(Clone, Debug, Default)]
-pub struct SharedDataFast {
-    pub global_values: FxHashSet<u64>, // store hashes for deduplication
-    pub num_proves: u128,              // accumulation
-    pub num_assumes: u128,             // accumulation
+pub struct DebugDataFast {
+    entries: Vec<(u64, i128)>, // (opid, balance)
 }
 
+impl DebugDataFast {
+    #[inline]
+    pub fn new() -> Self {
+        Self { entries: Vec::with_capacity(16) } // Pre-allocate for ~10 opids
+    }
+
+    #[inline(always)]
+    pub fn get_or_insert(&mut self, opid: u64) -> &mut i128 {
+        // Linear search - faster than HashMap for N < ~20
+        let pos = self.entries.iter().position(|(id, _)| *id == opid);
+        if let Some(idx) = pos {
+            &mut self.entries[idx].1
+        } else {
+            self.entries.push((opid, 0));
+            &mut self.entries.last_mut().unwrap().1
+        }
+    }
+
+    #[inline(always)]
+    pub fn merge_into(&self, other: &mut DebugDataFast) {
+        for &(opid, balance) in &self.entries {
+            if balance != 0 {
+                let entry = other.get_or_insert(opid);
+                *entry = entry.wrapping_add(balance);
+            }
+        }
+    }
+}
+
+impl IntoIterator for DebugDataFast {
+    type Item = (u64, i128);
+    type IntoIter = std::vec::IntoIter<(u64, i128)>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.into_iter()
+    }
+}
+
+pub type DebugDataFastGlobal = HashMap<u64, HashSet<u64>>;
+
 #[allow(clippy::too_many_arguments)]
+#[inline(always)]
 pub fn update_debug_data_fast(
     debug_data_fast: &mut DebugDataFast,
+    debug_data_fast_global: &mut DebugDataFastGlobal,
     opid: u64,
     hash: u64,
     is_proves: bool,
     times: u64,
     is_global: bool,
 ) -> ProofmanResult<()> {
-    let bus = debug_data_fast.entry(opid).or_default();
-
-    if is_global && !bus.global_values.insert(hash) {
-        println!("Global value already exists for hash={}, skipping update.", hash);
+    // Skip duplicate global values
+    if is_global && !debug_data_fast_global.entry(opid).or_default().insert(hash) {
         return Ok(());
     }
 
-    // Compute contribution safely
-    let contribution = (hash as u128)
-        .checked_mul(times as u128)
-        .ok_or_else(|| ProofmanError::ProofmanError("Overflow in update_debug_data_fast".to_string()))?;
+    let contribution = (hash as u128).wrapping_mul(times as u128) as i128;
+    let bus = debug_data_fast.get_or_insert(opid);
 
     if is_proves {
-        bus.num_proves = bus
-            .num_proves
-            .checked_add(contribution)
-            .ok_or_else(|| ProofmanError::ProofmanError("Overflow in num_proves".to_string()))?;
+        *bus = bus.wrapping_add(contribution);
     } else {
-        bus.num_assumes = bus
-            .num_assumes
-            .checked_add(contribution)
-            .ok_or_else(|| ProofmanError::ProofmanError("Overflow in num_assumes".to_string()))?;
+        *bus = bus.wrapping_sub(contribution);
     }
 
     Ok(())
@@ -52,8 +82,8 @@ pub fn update_debug_data_fast(
 pub fn check_invalid_opids<F: PrimeField64>(_pctx: &ProofCtx<F>, debug_data_fast: DebugDataFast) -> Vec<u64> {
     let mut invalid_opids = Vec::new();
 
-    for (opid, bus) in debug_data_fast {
-        if bus.num_proves != bus.num_assumes {
+    for (opid, bus) in debug_data_fast.into_iter() {
+        if bus != 0 {
             invalid_opids.push(opid);
         }
     }

@@ -66,7 +66,7 @@ extern "C" {
 
     // Hints
     // ========================================================================================
-    void get_hint_field(void *pSetupCtx, void *stepsParams, void *hintFieldValues, uint64_t hintId, char *hintFieldName, void *hintOptions);
+    void get_hint_field(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *hintFieldValues, uint64_t hintId, char *hintFieldName, void *hintOptions, void *d_buffers_, uint64_t streamId, bool constant);
     uint64_t get_hint_field_values(void *pSetupCtx, uint64_t hintId, char *hintFieldName);
     void get_hint_field_sizes(void *pSetupCtx, void *hintFieldValues, uint64_t hintId, char *hintFieldName, void *hintOptions);
     void mul_hint_fields(void *pSetupCtx, void *stepsParams, uint64_t nHints, uint64_t *hintId, char **hintFieldNameDest, char **hintFieldName1, char **hintFieldName2, void **hintOptions1, void **hintOptions2);
@@ -92,7 +92,9 @@ extern "C" {
     uint64_t get_n_constraints(void *pSetupCtx);
     void get_constraints_lines_sizes(void *pSetupCtx, uint64_t *constraintsLinesSizes);
     void get_constraints_lines(void *pSetupCtx, uint8_t **constraintsLines);
-    void verify_constraints(void *pSetupCtx, void *stepsParams, void *constraintsInfo);
+    uint64_t initialize_instance(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* params_, void *d_buffers_);
+    void calculate_trace_instance(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *d_buffers, uint64_t streamId);
+    void verify_constraints(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *constraintsInfo, void *d_buffers, uint64_t streamId);
 
     // Global constraints
     // =================================================================================

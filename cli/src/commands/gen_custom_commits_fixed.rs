@@ -2,7 +2,7 @@
 use clap::Parser;
 use libloading::{Library, Symbol};
 use std::sync::Arc;
-use proofman_common::{MpiCtx, ParamsGPU, ProofCtx, ProofType, SetupCtx};
+use proofman_common::{MpiCtx, ParamsGPU, ProofCtx, ProofType, SetupCtx, SetupsVadcop};
 use std::{collections::HashMap, path::PathBuf};
 use colored::Colorize;
 use crate::commands::field::Field;
@@ -54,25 +54,19 @@ impl GenCustomCommitsFixedCmd {
         }
 
         let mpi_ctx = Arc::new(MpiCtx::new());
-        let pctx = Arc::new(ProofCtx::create_ctx(
-            self.proving_key.clone(),
-            custom_commits_map,
-            false,
-            self.verbose.into(),
-            mpi_ctx,
-        )?);
+        let mut pctx =
+            ProofCtx::create_ctx(self.proving_key.clone(), custom_commits_map, false, self.verbose.into(), mpi_ctx)?;
 
         tracing::info!("{}", format!("{} GenCustomCommitsFixed", format!("{: >12}", "Command").bright_green().bold()));
         tracing::info!("");
 
-        let sctx = Arc::new(SetupCtx::<Goldilocks>::new(
-            &pctx.global_info,
-            &ProofType::Basic,
-            false,
-            &ParamsGPU::new(false),
-            &[],
-        ));
+        let params_gpu = ParamsGPU::new(false);
+        let sctx = Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, &params_gpu, &[]));
 
+        let setups_vadcop = Arc::new(SetupsVadcop::new(&pctx.global_info, false, false, &params_gpu, &[]));
+        pctx.set_device_buffers(&sctx, &setups_vadcop, false, &params_gpu)?;
+
+        let pctx = Arc::new(pctx);
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));
 
         // Load the witness computation dynamic library

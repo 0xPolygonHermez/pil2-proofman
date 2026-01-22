@@ -37,7 +37,7 @@ pub struct VirtualTableAir {
 }
 
 impl<F: PrimeField64> StdVirtualTable<F> {
-    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: &SetupCtx<F>, shared_tables: bool) -> ProofmanResult<Arc<Self>> {
+    pub fn new(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, shared_tables: bool) -> ProofmanResult<Arc<Self>> {
         // Get relevant data from the global hint
         let virtual_table_global_hint = get_hint_ids_by_name(sctx.get_global_bin(), "virtual_table_data_global");
         if virtual_table_global_hint.is_empty() {
@@ -69,6 +69,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             let hint_opt = HintFieldOptions::default();
             let table_ids = get_hint_field_constant_a_as::<usize, F>(
                 sctx,
+                pctx,
                 airgroup_id,
                 air_id,
                 hint_id,
@@ -77,6 +78,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             )?;
             let acc_heights = get_hint_field_constant_a_as::<u64, F>(
                 sctx,
+                pctx,
                 airgroup_id,
                 air_id,
                 hint_id,
@@ -85,6 +87,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             )?;
             let num_muls = get_hint_field_constant_as::<usize, F>(
                 sctx,
+                pctx,
                 airgroup_id,
                 air_id,
                 hint_id,

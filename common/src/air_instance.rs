@@ -153,6 +153,7 @@ pub struct AirInstance<F> {
     pub fixed: Vec<F>,
     pub shared_buffer: bool,
     pub is_packed: bool,
+    pub stream_id: u64,
 }
 
 impl<F: Field> AirInstance<F> {
@@ -179,6 +180,7 @@ impl<F: Field> AirInstance<F> {
             shared_buffer: trace_info.shared_buffer,
             fixed: Vec::new(),
             is_packed: trace_info.is_packed,
+            stream_id: 0,
         }
     }
 
@@ -324,5 +326,13 @@ impl<F: Field> AirInstance<F> {
         self.evals = Vec::new();
         self.challenges = Vec::new();
         self.clear_traces()
+    }
+
+    pub fn set_stream_id(&mut self, stream_id: u64) {
+        self.stream_id = stream_id;
+    }
+
+    pub fn get_stream_id(&self) -> u64 {
+        self.stream_id
     }
 }

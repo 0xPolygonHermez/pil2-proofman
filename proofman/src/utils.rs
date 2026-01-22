@@ -9,7 +9,6 @@ use colored::*;
 use proofman_common::{
     format_bytes, MpiCtx, ParamsGPU, ProofCtx, ProofType, ProofmanError, ProofmanResult, Setup, SetupCtx, SetupsVadcop,
 };
-use proofman_util::DeviceBuffer;
 use proofman_starks_lib_c::load_device_const_pols_c;
 use proofman_starks_lib_c::load_device_setup_c;
 use proofman_common::{PackedInfo, VerboseMode};
@@ -329,11 +328,11 @@ pub fn initialize_setup_info<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     setups: &SetupsVadcop<F>,
-    d_buffers: &DeviceBuffer,
     aggregation: bool,
     packed_info: &HashMap<(usize, usize), PackedInfo>,
 ) -> ProofmanResult<()> {
     let mut offset = 0;
+    let d_buffers = pctx.get_device_buffers_ptr();
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx.get_setup(airgroup_id, air_id)?;
@@ -348,7 +347,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                 air_id as u64,
                 proof_type,
                 (&setup.p_setup).into(),
-                d_buffers.get_ptr(),
+                d_buffers,
                 setup.verkey.as_ptr() as *mut u8,
                 packed_info_air.as_ffi().get_ptr(),
             );
@@ -364,7 +363,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                     airgroup_id as u64,
                     air_id as u64,
                     offset,
-                    d_buffers.get_ptr(),
+                    d_buffers,
                     const_pols_path,
                     setup.const_pols_size_packed as u64,
                     tree_path,
@@ -395,7 +394,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                         air_id as u64,
                         proof_type,
                         (&setup.p_setup).into(),
-                        d_buffers.get_ptr(),
+                        d_buffers,
                         setup.verkey.as_ptr() as *mut u8,
                         std::ptr::null_mut(),
                     );
@@ -411,7 +410,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                             airgroup_id as u64,
                             air_id as u64,
                             _offset_aggregation,
-                            d_buffers.get_ptr(),
+                            d_buffers,
                             const_pols_path,
                             setup.const_pols_size_packed as u64,
                             tree_path,
@@ -440,7 +439,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                     air_id as u64,
                     proof_type,
                     (&setup.p_setup).into(),
-                    d_buffers.get_ptr(),
+                    d_buffers,
                     setup.verkey.as_ptr() as *mut u8,
                     std::ptr::null_mut(),
                 );
@@ -456,7 +455,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                         airgroup_id as u64,
                         air_id as u64,
                         _offset_aggregation,
-                        d_buffers.get_ptr(),
+                        d_buffers,
                         const_pols_path,
                         setup.const_pols_size_packed as u64,
                         tree_path,
@@ -484,7 +483,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                 0_u64,
                 proof_type,
                 (&setup.p_setup).into(),
-                d_buffers.get_ptr(),
+                d_buffers,
                 setup.verkey.as_ptr() as *mut u8,
                 std::ptr::null_mut(),
             );
@@ -500,7 +499,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                     airgroup_id as u64,
                     0_u64,
                     _offset_aggregation,
-                    d_buffers.get_ptr(),
+                    d_buffers,
                     const_pols_path,
                     setup.const_pols_size_packed as u64,
                     tree_path,
@@ -525,7 +524,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
             0_u64,
             proof_type,
             (&setup_vadcop_final.p_setup).into(),
-            d_buffers.get_ptr(),
+            d_buffers,
             setup_vadcop_final.verkey.as_ptr() as *mut u8,
             std::ptr::null_mut(),
         );
@@ -541,7 +540,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                 0_u64,
                 0_u64,
                 _offset_aggregation,
-                d_buffers.get_ptr(),
+                d_buffers,
                 const_pols_path,
                 setup_vadcop_final.const_pols_size_packed as u64,
                 tree_path,
@@ -565,7 +564,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
             0_u64,
             proof_type,
             (&setup_vadcop_final_compressed.p_setup).into(),
-            d_buffers.get_ptr(),
+            d_buffers,
             setup_vadcop_final_compressed.verkey.as_ptr() as *mut u8,
             std::ptr::null_mut(),
         );
@@ -581,7 +580,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                 0_u64,
                 0_u64,
                 _offset_aggregation,
-                d_buffers.get_ptr(),
+                d_buffers,
                 const_pols_path,
                 setup_vadcop_final_compressed.const_pols_size_packed as u64,
                 tree_path,
