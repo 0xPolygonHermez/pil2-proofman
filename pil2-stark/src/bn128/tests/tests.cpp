@@ -521,3 +521,27 @@ TEST(BN128_POSEIDON_TEST, linearHash_100_elements) {
   
   ASSERT_EQ(field.toString(output, 16), "f51f3d0104201ef2bf7424be924330f937e4504111c6b26f7c195afbcb9d6cd");
 }
+
+TEST(BN128_POSEIDON_TEST, linearHash_trace_4rows_100cols) {
+  PoseidonBN128 p;
+  RawFr field;
+  
+  const size_t rows = 4;
+  const size_t cols = 100;
+  
+  // Create trace: 4 rows × 100 cols Goldilocks elements
+  // Row i contains values [i*cols, i*cols+1, ..., i*cols+cols-1]
+  std::vector<Goldilocks::Element> trace(rows * cols);
+  for (size_t i = 0; i < rows * cols; i++) {
+    trace[i] = Goldilocks::fromU64(i);
+  }
+  
+  std::vector<RawFr::Element> output(rows);
+  p.linearHash(output.data(), trace.data(), rows, cols, 17, false);
+  
+  // Verify all 4 rows
+  ASSERT_EQ(field.toString(output[0], 16), "f51f3d0104201ef2bf7424be924330f937e4504111c6b26f7c195afbcb9d6cd");
+  ASSERT_EQ(field.toString(output[1], 16), "12b276d381cf64df6b1732ec6e91ae30f1f8c60cc08959aa9f81ae3b00cae371");
+  ASSERT_EQ(field.toString(output[2], 16), "160dcdd70c78a86409e231df7f4add4e32c9a92fe74ac92dff516d3d8fa728");
+  ASSERT_EQ(field.toString(output[3], 16), "2393e4f4bbaadaee5acaf60590547ef52c7dfd553f856283726497304ad47b5b");
+}

@@ -11,9 +11,7 @@
 class MerkleTreeBN128
 {
 private:
-    void linearHash();
-    void linearHash(RawFr::Element* result, Goldilocks::Element* values);
-
+    
     Goldilocks::Element getElement(uint64_t idx, uint64_t subIdx);
     void genMerkleProof(RawFr::Element *proof, uint64_t idx, uint64_t offset, uint64_t n);
     void calculateRootFromProof(RawFr::Element *value, std::vector<std::vector<RawFr::Element>> &mp, uint64_t &idx, uint64_t offset);

@@ -170,24 +170,6 @@ void MerkleTreeBN128::genMerkleProof(RawFr::Element *proof, uint64_t idx, uint64
     genMerkleProof(&proof[arity], nextIdx, offset + nextN * arity, nextN);
 }
 
-void MerkleTreeBN128::linearHash(RawFr::Element* result, Goldilocks::Element* values)
-{
-    PoseidonBN128 p;
-    p.linearHash(result, values, width, arity+1, custom);
-}
-
-/*
- * LinearHash BN128
- */
-void MerkleTreeBN128::linearHash()
-{
-#pragma omp parallel for
-    for (uint64_t i = 0; i < height; i++)
-    {
-        linearHash(&nodes[i], &source[i * width]);
-    }
-}
-
 void MerkleTreeBN128::calculateRootFromProof(RawFr::Element *value, std::vector<std::vector<RawFr::Element>> &mp, uint64_t &idx, uint64_t offset) {
     if(offset == mp.size()) return;
 
@@ -215,8 +197,8 @@ void MerkleTreeBN128::calculateRootFromProof(RawFr::Element *value, std::vector<
 bool MerkleTreeBN128::verifyGroupProof(RawFr::Element* root, RawFr::Element* level, std::vector<std::vector<RawFr::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v) {
     RawFr::Element value[1];
     value[0] = RawFr::field.zero();
-
-    linearHash(value, v.data());
+    PoseidonBN128 p;
+    p.linearHash(value, v.data(), width, arity+1, custom);
 
     uint64_t queryIdx = idx;
     calculateRootFromProof(&value[0], mp, queryIdx, 0);
@@ -238,7 +220,8 @@ bool MerkleTreeBN128::verifyGroupProof(RawFr::Element* root, RawFr::Element* lev
 void MerkleTreeBN128::merkelize()
 {
 
-    linearHash();
+    PoseidonBN128 p;
+    p.linearHash(nodes, source, height, width, arity+1, custom);
 
     RawFr::Element *cursor = &nodes[0];
     uint64_t n256 = height;

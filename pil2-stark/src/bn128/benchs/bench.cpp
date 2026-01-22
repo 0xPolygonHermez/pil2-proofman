@@ -589,4 +589,44 @@ BENCHMARK(POSEIDON_LINEARHASH_CPU_BENCH)
     ->Args({1000, 9})    // 1000 Goldilocks elements, t=9
     ->Args({10000, 9});  // 10000 Goldilocks elements, t=9
 
+// ==========================================
+// Poseidon linearHash (trace) CPU Benchmark
+// ==========================================
+
+static void POSEIDON_LINEARHASH_TRACE_CPU_BENCH(benchmark::State &state) {
+    int rows = state.range(0);
+    int cols = state.range(1);
+    int t = state.range(2);
+    
+    PoseidonBN128 poseidon;
+    
+    std::vector<Goldilocks::Element> trace(rows * cols);
+    for (int i = 0; i < rows * cols; i++) {
+        trace[i] = Goldilocks::fromU64(i);
+    }
+    
+    std::vector<RawFr::Element> output(rows);
+    
+    for (auto _ : state) {
+        poseidon.linearHash(output.data(), trace.data(), rows, cols, t, false);
+        benchmark::DoNotOptimize(output);
+    }
+    
+    state.counters["trace_rows"] = rows;
+    state.counters["trace_cols"] = cols;
+    state.counters["t"] = t;
+    state.SetItemsProcessed(state.iterations() * rows * cols);
+}
+
+BENCHMARK(POSEIDON_LINEARHASH_TRACE_CPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Args({1024, 100, 17})      // 1K rows × 100 cols, t=17
+    ->Args({1024, 1000, 17})     // 1K rows × 1000 cols, t=17
+    ->Args({1 << 16, 100, 17})   // 64K rows × 100 cols, t=17
+    ->Args({1 << 16, 1000, 17})  // 64K rows × 1000 cols, t=17
+    ->Args({1 << 20, 100, 17})   // 1M rows × 100 cols, t=17
+    ->Args({1024, 100, 9})       // 1K rows × 100 cols, t=9
+    ->Args({1 << 16, 100, 9});   // 64K rows × 100 cols, t=9
+
 BENCHMARK_MAIN();

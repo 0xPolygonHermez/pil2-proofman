@@ -222,3 +222,12 @@ void PoseidonBN128::linearHash(FrElement* output, Goldilocks::Element* input, ui
 	
     *output = result;
 }
+
+void PoseidonBN128::linearHash(FrElement* output, Goldilocks::Element* trace,  uint64_t rows, uint64_t cols, uint64_t t, bool custom){
+	#pragma omp parallel for
+    for (uint64_t i = 0; i < rows; i++)
+    {
+        linearHash(&output[i], &trace[i * cols], cols, t, custom);
+    }
+}
+
