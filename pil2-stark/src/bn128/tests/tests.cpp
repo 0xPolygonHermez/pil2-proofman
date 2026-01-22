@@ -502,3 +502,22 @@ TEST(BN128_FFT_TEST, fft_linearity) {
   }
 }
 
+// ==============================================================================
+// Poseidon linearHash test
+// ==============================================================================
+
+TEST(BN128_POSEIDON_TEST, linearHash_100_elements) {
+  PoseidonBN128 p;
+  RawFr field;
+  
+  // Create 100 Goldilocks elements [0, 1, 2, ..., 99]
+  Goldilocks::Element input[100];
+  for (size_t i = 0; i < 100; i++) {
+    input[i] = Goldilocks::fromU64(i);
+  }
+  
+  RawFr::Element output;
+  p.linearHash(&output, input, 100, 17, false);
+  
+  ASSERT_EQ(field.toString(output, 16), "f51f3d0104201ef2bf7424be924330f937e4504111c6b26f7c195afbcb9d6cd");
+}

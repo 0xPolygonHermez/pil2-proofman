@@ -13,6 +13,7 @@
 #include "fft.hpp"
 #include "poseidon2_bn128.hpp"
 #include "poseidon_bn128.hpp"
+#include "goldilocks_base_field.hpp"
 #if defined(__BLST__)
 #include <blst.h>
 #endif
@@ -403,7 +404,7 @@ static void MSM_CPU_BENCH(benchmark::State &state) {
     generate_curve_points(bases, n);
     generate_random_scalars(scalars, n, MSM_SCALAR_SIZE, 42);
     
-    ParallelMultiexp<Curve<RawFqP>> pme(AltBn128::G1);
+    ParallelMultiexp<Curve<RawFq>> pme(AltBn128::G1);
     AltBn128::G1Point result;
     
     for (auto _ : state) {
@@ -549,5 +550,43 @@ BENCHMARK(POSEIDON_SEQ_CPU_BENCH)
     ->Args({15})
     ->Args({16})
     ->Args({17});
+
+// =====================
+// Poseidon linearHash CPU Benchmark
+// =====================
+
+static void POSEIDON_LINEARHASH_CPU_BENCH(benchmark::State &state) {
+    int inputSize = state.range(0);
+    int t = state.range(1);
+    
+    PoseidonBN128 poseidon;
+    
+    // Create input Goldilocks elements
+    std::vector<Goldilocks::Element> input(inputSize);
+    for (int i = 0; i < inputSize; i++) {
+        input[i] = Goldilocks::fromU64(i);
+    }
+    
+    RawFr::Element output;
+    
+    for (auto _ : state) {
+        poseidon.linearHash(&output, input.data(), inputSize, t, false);
+        benchmark::DoNotOptimize(output);
+    }
+    
+    state.counters["inputSize"] = inputSize;
+    state.counters["t"] = t;
+    state.SetItemsProcessed(state.iterations());
+}
+
+BENCHMARK(POSEIDON_LINEARHASH_CPU_BENCH)
+    ->Unit(benchmark::kMicrosecond)
+    ->UseRealTime()
+    ->Args({100, 17})    // 100 Goldilocks elements, t=17
+    ->Args({1000, 17})   // 1000 Goldilocks elements, t=17
+    ->Args({10000, 17})  // 10000 Goldilocks elements, t=17
+    ->Args({100, 9})     // 100 Goldilocks elements, t=9
+    ->Args({1000, 9})    // 1000 Goldilocks elements, t=9
+    ->Args({10000, 9});  // 10000 Goldilocks elements, t=9
 
 BENCHMARK_MAIN();

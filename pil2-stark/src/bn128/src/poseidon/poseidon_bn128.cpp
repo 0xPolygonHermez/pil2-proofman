@@ -1,7 +1,7 @@
 #include "poseidon_bn128.hpp"
 #include <omp.h>
 #include <cstring>
-//#include <cassert>
+
 
 void PoseidonBN128::hash(vector<FrElement> &state, FrElement *result)
 {
@@ -159,4 +159,66 @@ void PoseidonBN128::grinding(uint64_t &nonce, vector<RawFr::Element> &state, con
         throw std::runtime_error("Poseidon_opt::grinding: could not find a valid nonce");
 
     delete[] chunkIdxs;
+}
+
+void PoseidonBN128::linearHash(FrElement* output, Goldilocks::Element* input, uint64_t inputSize, uint64_t t, bool custom)
+{
+	FrElement result = field.zero();
+	
+	if (inputSize > 4)
+    {
+        uint64_t nElementsGL = (inputSize + FIELD_EXTENSION - 1) / FIELD_EXTENSION;
+        RawFr::Element* buff = (RawFr::Element *)malloc(nElementsGL * sizeof(RawFr::Element));
+        
+        for (uint64_t j = 0; j < nElementsGL; j++)
+        {
+            buff[j] = RawFr::field.zero();  
+            uint64_t pending = inputSize - j * FIELD_EXTENSION;
+            uint64_t batch;
+            (pending >= FIELD_EXTENSION) ? batch = FIELD_EXTENSION : batch = pending;
+            for (uint64_t k = 0; k < batch; k++)
+            {
+                buff[j].v[k] = Goldilocks::toU64(input[j * FIELD_EXTENSION + k]);
+            }
+            RawFr::field.toMontgomery(buff[j], buff[j]);
+        }
+
+        uint64_t pending = nElementsGL;
+        std::vector<RawFr::Element> elements(t);
+        while (pending > 0)
+        {
+            std::memset(&elements[0], 0, t * sizeof(RawFr::Element));
+            if (pending >= t-1)
+            {
+                std::memcpy(&elements[1], &buff[nElementsGL - pending], (t-1) * sizeof(RawFr::Element));
+                elements[0] = result;
+                hash(elements, &result);
+                pending = pending - (t-1);
+            }
+            else if(custom) 
+            {
+                std::memcpy(&elements[1], &buff[nElementsGL - pending], pending * sizeof(RawFr::Element));
+                elements[0] = result;
+                hash(elements, &result);
+                pending = 0;
+            }
+            else
+            {
+                std::vector<RawFr::Element> elements_last(pending + 1);
+                std::memcpy(&elements_last[1], &buff[nElementsGL - pending], pending * sizeof(RawFr::Element));
+                elements_last[0] = result;
+                hash(elements_last, &result);
+                pending = 0;
+            }
+        }
+        free(buff);
+    } else {
+        for (uint64_t k = 0; k < inputSize; k++)
+        {
+            result.v[k] = Goldilocks::toU64(input[k]);
+        }
+        RawFr::field.toMontgomery(result, result);
+    }
+	
+    *output = result;
 }

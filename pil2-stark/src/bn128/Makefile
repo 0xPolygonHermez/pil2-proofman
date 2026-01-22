@@ -33,7 +33,7 @@ NVCCFLAGS      := -D__USE_CUDA__ -DFEATURE_BN254 $(SPPARK_INC) $(BLST_INC) $(CUD
                   -D__USE_ASSEMBLY__ -arch=$(CUDA_ARCH) --diag-suppress 114
 
 CXXFLAGS := -std=c++17 -Wall -O3 -fPIC -D__USE_ASSEMBLY__ -fopenmp
-CPPFLAGS := -I$(SRC_DIR) -I$(SRC_DIR)/ffiasm -I$(SRC_DIR)/poseidon -I$(SRC_DIR)/poseidon2 -I./../utils
+CPPFLAGS := -I$(SRC_DIR) -I$(SRC_DIR)/ffiasm -I$(SRC_DIR)/poseidon -I$(SRC_DIR)/poseidon2 -I./../utils -I./../goldilocks/src
 ASFLAGS  := -f elf64 -g -F dwarf
 
 # Fix linker warning about executable stack

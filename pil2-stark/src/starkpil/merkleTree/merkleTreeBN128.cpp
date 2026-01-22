@@ -172,61 +172,8 @@ void MerkleTreeBN128::genMerkleProof(RawFr::Element *proof, uint64_t idx, uint64
 
 void MerkleTreeBN128::linearHash(RawFr::Element* result, Goldilocks::Element* values)
 {
-    if (width > 4)
-    {
-        uint64_t widthRawFrElements = ceil((double)width / FIELD_EXTENSION);
-        RawFr::Element *buff = (RawFr::Element *)calloc(height * widthRawFrElements, sizeof(RawFr::Element));
-
-        uint64_t nElementsGL = (width > FIELD_EXTENSION + 1) ? ceil((double)width / FIELD_EXTENSION) : 0;
-        for (uint64_t j = 0; j < nElementsGL; j++)
-        {
-            uint64_t pending = width - j * FIELD_EXTENSION;
-            uint64_t batch;
-            (pending >= FIELD_EXTENSION) ? batch = FIELD_EXTENSION : batch = pending;
-            for (uint64_t k = 0; k < batch; k++)
-            {
-                buff[j].v[k] = Goldilocks::toU64(values[j * FIELD_EXTENSION + k]);
-            }
-            RawFr::field.toMontgomery(buff[j], buff[j]);
-        }
-
-        uint pending = nElementsGL;
-        PoseidonBN128 p;
-        std::vector<RawFr::Element> elements(arity + 1);
-        while (pending > 0)
-        {
-            std::memset(&elements[0], 0, (arity + 1) * sizeof(RawFr::Element));
-            if (pending >= arity)
-            {
-                std::memcpy(&elements[1], &buff[nElementsGL - pending], arity * sizeof(RawFr::Element));
-                std::memcpy(&elements[0], &result[0], sizeof(RawFr::Element));
-                p.hash(elements, &result[0]);
-                pending = pending - arity;
-            }
-            else if(custom) 
-            {
-                std::memcpy(&elements[1], &buff[nElementsGL - pending], pending * sizeof(RawFr::Element));
-                std::memcpy(&elements[0], &result[0], sizeof(RawFr::Element));
-                p.hash(elements, &result[0]);
-                pending = 0;
-            }
-            else
-            {
-                std::vector<RawFr::Element> elements_last(pending + 1);
-                std::memcpy(&elements_last[1], &buff[nElementsGL - pending], pending * sizeof(RawFr::Element));
-                std::memcpy(&elements_last[0], &result[0], sizeof(RawFr::Element));
-                p.hash(elements_last, &result[0]);
-                pending = 0;
-            }
-        }
-        free(buff); 
-    } else {
-        for (uint64_t k = 0; k < width; k++)
-        {
-            result[0].v[k] = Goldilocks::toU64(values[k]);
-        }
-        RawFr::field.toMontgomery(result[0], result[0]);
-    }
+    PoseidonBN128 p;
+    p.linearHash(result, values, width, arity+1, custom);
 }
 
 /*
@@ -234,75 +181,10 @@ void MerkleTreeBN128::linearHash(RawFr::Element* result, Goldilocks::Element* va
  */
 void MerkleTreeBN128::linearHash()
 {
-    if (width > 4)
+#pragma omp parallel for
+    for (uint64_t i = 0; i < height; i++)
     {
-        uint64_t widthRawFrElements = ceil((double)width / FIELD_EXTENSION);
-        RawFr::Element *buff = (RawFr::Element *)calloc(height * widthRawFrElements, sizeof(RawFr::Element));
-
-    uint64_t nElementsGL = (width > FIELD_EXTENSION + 1) ? ceil((double)width / FIELD_EXTENSION) : 0;
-#pragma omp parallel for
-        for (uint64_t i = 0; i < height; i++)
-        {
-            for (uint64_t j = 0; j < nElementsGL; j++)
-            {
-                uint64_t pending = width - j * FIELD_EXTENSION;
-                uint64_t batch;
-                (pending >= FIELD_EXTENSION) ? batch = FIELD_EXTENSION : batch = pending;
-                for (uint64_t k = 0; k < batch; k++)
-                {
-                    buff[i * nElementsGL + j].v[k] = Goldilocks::toU64(source[i * width + j * FIELD_EXTENSION + k]);
-                }
-                RawFr::field.toMontgomery(buff[i * nElementsGL + j], buff[i * nElementsGL + j]);
-            }
-        }
-
-#pragma omp parallel for
-        for (uint64_t i = 0; i < height; i++)
-        {
-            uint pending = nElementsGL;
-            PoseidonBN128 p;
-            std::vector<RawFr::Element> elements(arity + 1);
-            while (pending > 0)
-            {
-                std::memset(&elements[0], 0, (arity + 1) * sizeof(RawFr::Element));
-                if (pending >= arity)
-                {
-                    std::memcpy(&elements[1], &buff[i * nElementsGL + nElementsGL - pending], arity * sizeof(RawFr::Element));
-                    std::memcpy(&elements[0], &nodes[i], sizeof(RawFr::Element));
-                    p.hash(elements, &nodes[i]);
-                    pending = pending - arity;
-                }
-                else if(custom) 
-                {
-                    std::memcpy(&elements[1], &buff[i * nElementsGL + nElementsGL - pending], pending * sizeof(RawFr::Element));
-                    std::memcpy(&elements[0], &nodes[i], sizeof(RawFr::Element));
-                    p.hash(elements, &nodes[i]);
-                    pending = 0;
-                }
-                else
-                {
-                    std::vector<RawFr::Element> elements_last(pending + 1);
-                    assert(i * nElementsGL + nElementsGL - pending < height * nElementsGL); //to avoid out of bounds access compiler warning
-                    std::memcpy(&elements_last[1], &buff[i * nElementsGL + nElementsGL - pending], pending * sizeof(RawFr::Element));
-                    std::memcpy(&elements_last[0], &nodes[i], sizeof(RawFr::Element));
-                    p.hash(elements_last, &nodes[i]);
-                    pending = 0;
-                }
-            }
-        }
-        free(buff);
-    }
-    else
-    {
-#pragma omp parallel for
-        for (uint64_t i = 0; i < height; i++)
-        {
-            for (uint64_t k = 0; k < width; k++)
-            {
-                nodes[i].v[k] = Goldilocks::toU64(source[i * width + k]);
-            }
-            RawFr::field.toMontgomery(nodes[i], nodes[i]);
-        }
+        linearHash(&nodes[i], &source[i * width]);
     }
 }
 

@@ -5,6 +5,8 @@
 #include <string>
 #include "ffiasm/fr.hpp"
 #include "poseidon_bn128_constants.hpp"
+#include "goldilocks_base_field.hpp"
+#include "goldilocks_cubic_extension.hpp"
 #include <cassert>
 using namespace std;
 
@@ -26,8 +28,8 @@ private:
 public:
   void hash(vector<FrElement> &state);
   void hash(vector<FrElement> &state, FrElement *result);
-  void gmimc(vector<FrElement>, FrElement *result);
   void grinding(uint64_t &nonce, vector<FrElement> &state, const uint32_t n_bits);
+  void linearHash(FrElement* output, Goldilocks::Element* input, uint64_t inputSize, uint64_t t, bool custom = false);
 };
 
 #endif // POSEIDON_BN128_HPP
