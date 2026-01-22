@@ -231,3 +231,30 @@ void PoseidonBN128::linearHash(FrElement* output, Goldilocks::Element* trace,  u
     }
 }
 
+void PoseidonBN128::merkletree(FrElement* tree, Goldilocks::Element *trace, uint64_t rows, uint64_t cols, uint64_t arity, bool custom){
+    
+	linearHash(tree, trace, rows, cols, arity+1, custom);
+
+    RawFr::Element *cursor = &tree[0];
+    uint64_t n256 = rows;
+    uint64_t nextN256 =  (n256 + arity - 1) / arity;
+    RawFr::Element *cursorNext = &tree[nextN256 * arity];
+    while (n256 > 1)
+    {
+        uint64_t batches = (n256 + arity - 1) / arity;
+#pragma omp parallel for
+        for (uint64_t i = 0; i < batches; i++)
+        {
+            vector<RawFr::Element> elements(arity + 1);
+            std::memset(&elements[0], 0, (arity + 1) * sizeof(RawFr::Element));
+            uint numHashes = (i == batches - 1) ? n256 - i*arity : arity;
+            std::memcpy(&elements[1], &cursor[i * arity], numHashes * sizeof(RawFr::Element));
+            hash(elements, &cursorNext[i]);
+        }
+
+        n256 = nextN256;
+        nextN256 =  (n256 + arity - 1) / arity;
+        cursor = cursorNext;
+        cursorNext = &cursor[nextN256 * arity];
+    }
+}

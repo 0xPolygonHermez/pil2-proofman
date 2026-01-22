@@ -31,6 +31,8 @@ public:
   void grinding(uint64_t &nonce, vector<FrElement> &state, const uint32_t n_bits);
   void linearHash(FrElement* output, Goldilocks::Element* input, uint64_t inputSize, uint64_t t, bool custom = false);
   void linearHash(FrElement* output, Goldilocks::Element* trace, uint64_t rows, uint64_t cols, uint64_t t, bool custom = false);
+  void merkletree(FrElement* tree, Goldilocks::Element *trace, uint64_t rows, uint64_t cols, uint64_t arity, bool custom = false);
+
 };
 
 #endif // POSEIDON_BN128_HPP

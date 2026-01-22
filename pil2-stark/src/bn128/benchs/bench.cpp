@@ -629,4 +629,58 @@ BENCHMARK(POSEIDON_LINEARHASH_TRACE_CPU_BENCH)
     ->Args({1024, 100, 9})       // 1K rows × 100 cols, t=9
     ->Args({1 << 16, 100, 9});   // 64K rows × 100 cols, t=9
 
+// ==========================================
+// Poseidon merkletree CPU Benchmark
+// ==========================================
+
+static void POSEIDON_MERKLETREE_CPU_BENCH(benchmark::State &state) {
+    int rows = state.range(0);
+    int cols = state.range(1);
+    int arity = state.range(2);
+    
+    PoseidonBN128 poseidon;
+    
+    std::vector<Goldilocks::Element> trace(rows * cols);
+    for (int i = 0; i < rows * cols; i++) {
+        trace[i] = Goldilocks::fromU64(i);
+    }
+    
+    uint64_t n = rows;
+    uint64_t nextN = ((n - 1) / arity) + 1;
+    uint64_t numNodes = nextN * arity;
+    while (n > 1) {
+        n = nextN;
+        nextN = ((n - 1) / arity) + 1;
+        if (n > 1) {
+            numNodes += nextN * arity;
+        } else {
+            numNodes += 1;
+        }
+    }
+    
+    std::vector<RawFr::Element> tree(numNodes);
+    
+    for (auto _ : state) {
+        poseidon.merkletree(tree.data(), trace.data(), rows, cols, arity, false);
+        benchmark::DoNotOptimize(tree);
+    }
+    
+    state.counters["trace_rows"] = rows;
+    state.counters["trace_cols"] = cols;
+    state.counters["arity"] = arity;
+    state.counters["numNodes"] = numNodes;
+    state.SetItemsProcessed(state.iterations() * rows * cols);
+}
+
+BENCHMARK(POSEIDON_MERKLETREE_CPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Args({1024, 100, 16})       // 1K rows × 100 cols, arity=16
+    ->Args({1024, 1000, 16})      // 1K rows × 1000 cols, arity=16
+    ->Args({1 << 16, 100, 16})    // 64K rows × 100 cols, arity=16
+    ->Args({1 << 16, 1000, 16})   // 64K rows × 1000 cols, arity=16
+    ->Args({1 << 20, 100, 16})    // 1M rows × 100 cols, arity=16
+    ->Args({1 << 16, 100, 8})     // 64K rows × 100 cols, arity=8
+    ->Args({1 << 16, 100, 4});    // 64K rows × 100 cols, arity=4
+
 BENCHMARK_MAIN();

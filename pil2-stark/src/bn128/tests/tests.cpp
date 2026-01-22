@@ -545,3 +545,38 @@ TEST(BN128_POSEIDON_TEST, linearHash_trace_4rows_100cols) {
   ASSERT_EQ(field.toString(output[2], 16), "160dcdd70c78a86409e231df7f4add4e32c9a92fe74ac92dff516d3d8fa728");
   ASSERT_EQ(field.toString(output[3], 16), "2393e4f4bbaadaee5acaf60590547ef52c7dfd553f856283726497304ad47b5b");
 }
+
+// ==============================================================================
+// Poseidon merkletree test
+// ==============================================================================
+
+TEST(BN128_POSEIDON_TEST, merkletree_8rows_100cols) {
+  PoseidonBN128 p;
+  RawFr field;
+  
+  const size_t rows = 8;
+  const size_t cols = 100;
+  const size_t arity = 16;
+  
+  std::vector<Goldilocks::Element> trace(rows * cols);
+  for (size_t i = 0; i < rows * cols; i++) {
+    trace[i] = Goldilocks::fromU64(i);
+  }
+  
+  const size_t numNodes = 17; 
+  std::vector<RawFr::Element> tree(numNodes);
+  
+  p.merkletree(tree.data(), trace.data(), rows, cols, arity, false);
+  
+  ASSERT_EQ(field.toString(tree[0], 16), "f51f3d0104201ef2bf7424be924330f937e4504111c6b26f7c195afbcb9d6cd");
+  ASSERT_EQ(field.toString(tree[1], 16), "12b276d381cf64df6b1732ec6e91ae30f1f8c60cc08959aa9f81ae3b00cae371");
+  ASSERT_EQ(field.toString(tree[2], 16), "160dcdd70c78a86409e231df7f4add4e32c9a92fe74ac92dff516d3d8fa728");
+  ASSERT_EQ(field.toString(tree[3], 16), "2393e4f4bbaadaee5acaf60590547ef52c7dfd553f856283726497304ad47b5b");
+  ASSERT_EQ(field.toString(tree[4], 16), "69539124331a9758e99c6f6d9f4f86088a4e48aa51d643a87c85f2536820c91");
+  ASSERT_EQ(field.toString(tree[5], 16), "3e5fef46738269d441b69cb79ed05afbc4cb319e81cb8500da2be30800fd478");
+  ASSERT_EQ(field.toString(tree[6], 16), "26a631438c157a61dbfcf090f4da49ef1d7e05b3a0f1ace53df8aa5966334987");
+  ASSERT_EQ(field.toString(tree[7], 16), "17bcde7b057013734be16c97b6397967fb42c57f10f9a85dbe92436bf1446f60");
+  
+  // Verify root (last node)
+  ASSERT_EQ(field.toString(tree[numNodes - 1], 16), "b6d02c9e5ea48185580c371837a1ecc09d7cf40774e1ac6f8491819deb3824d");
+}

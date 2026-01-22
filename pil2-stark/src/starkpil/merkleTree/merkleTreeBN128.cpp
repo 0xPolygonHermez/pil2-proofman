@@ -216,36 +216,10 @@ bool MerkleTreeBN128::verifyGroupProof(RawFr::Element* root, RawFr::Element* lev
     return true;
 }
 
-
 void MerkleTreeBN128::merkelize()
 {
-
     PoseidonBN128 p;
-    p.linearHash(nodes, source, height, width, arity+1, custom);
-
-    RawFr::Element *cursor = &nodes[0];
-    uint64_t n256 = height;
-    uint64_t nextN256 = floor((double)(n256 - 1) / arity) + 1;
-    RawFr::Element *cursorNext = &nodes[nextN256 * arity];
-    while (n256 > 1)
-    {
-        uint64_t batches = ceil((double)n256 / arity);
-#pragma omp parallel for
-        for (uint64_t i = 0; i < batches; i++)
-        {
-            PoseidonBN128 p;
-            vector<RawFr::Element> elements(arity + 1);
-            std::memset(&elements[0], 0, (arity + 1) * sizeof(RawFr::Element));
-            uint numHashes = (i == batches - 1) ? n256 - i*arity : arity;
-            std::memcpy(&elements[1], &cursor[i * arity], numHashes * sizeof(RawFr::Element));
-            p.hash(elements, &cursorNext[i]);
-        }
-
-        n256 = nextN256;
-        nextN256 = floor((double)(n256 - 1) / arity) + 1;
-        cursor = cursorNext;
-        cursorNext = &cursor[nextN256 * arity];
-    }
+    p.merkletree(nodes, source, height, width, arity, custom);
 }
 
 void MerkleTreeBN128::writeFile(std::string constTreeFile) {
