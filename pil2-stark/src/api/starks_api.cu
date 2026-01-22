@@ -1064,7 +1064,7 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
 
     Goldilocks::Element *customCommitsPols = new Goldilocks::Element[N * nCols];
     cudaMemcpy(customCommitsPols, d_customCommitsPols, N * nCols * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
-    if(!check) {
+    if(!check && std::string(bufferFile) != "") {
         std::string buffFile = string(bufferFile);
         ofstream fw(buffFile.c_str(), std::fstream::out | std::fstream::binary);
         writeFileParallel(buffFile, root, 32, 0);
