@@ -1224,6 +1224,33 @@ where
         self._generate_proof(phase_inputs, options, phase)
     }
 
+    pub fn generate_final_proof_compressed(
+        &self,
+        vadcop_final_proof: &VadcopFinalProof,
+        output_dir_path: &PathBuf,
+        save_proof: bool,
+    ) -> ProofmanResult<VadcopFinalProof> {
+        if vadcop_final_proof.compressed {
+            return Err(ProofmanError::InvalidConfiguration(
+                "Compressed vadcop proofs are not supported for snark proof generation".to_string(),
+            ));
+        }
+
+        let vadcop_final_proof_compressed = generate_vadcop_final_compressed_proof(
+            &self.pctx,
+            &self.setups,
+            &vadcop_final_proof.proof_with_publics_u64(),
+            &self.prover_buffer_recursive,
+            output_dir_path,
+            &self.const_pols,
+            &self.const_tree,
+            self.d_buffers.get_ptr(),
+            save_proof,
+        )?;
+
+        Ok(VadcopFinalProof::new(&vadcop_final_proof_compressed.proof, true))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         proving_key_path: PathBuf,
@@ -2540,7 +2567,7 @@ where
                     let vadcop_final_proof_compressed = generate_vadcop_final_compressed_proof(
                         &self.pctx,
                         &self.setups,
-                        &vadcop_proof_final,
+                        &vadcop_proof_final.proof,
                         &self.prover_buffer_recursive,
                         &options.output_dir_path,
                         &self.const_pols,

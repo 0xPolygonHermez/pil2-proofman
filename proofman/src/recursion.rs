@@ -618,7 +618,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
 pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
-    vadcop_final_proof: &Proof<F>,
+    vadcop_final_proof: &[u64],
     prover_buffer: &[F],
     output_dir_path: &Path,
     const_pols: &[F],
@@ -629,7 +629,7 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
     let setup = setups.setup_vadcop_final_compressed.as_ref().unwrap();
 
     let circom_witness_vadcop_final_compressed =
-        generate_witness::<F>(setup, 0, &vadcop_final_proof.proof[1..], output_dir_path)?;
+        generate_witness::<F>(setup, 0, &vadcop_final_proof[1..], output_dir_path)?;
     let witness_final_proof = Proof::new_witness(
         ProofType::VadcopFinalCompressed,
         0,
