@@ -1224,7 +1224,7 @@ where
         self._generate_proof(phase_inputs, options, phase)
     }
 
-    pub fn generate_final_proof_compressed(
+    pub fn generate_vadcop_final_proof_compressed(
         &self,
         vadcop_final_proof: &VadcopFinalProof,
         output_dir_path: &PathBuf,
