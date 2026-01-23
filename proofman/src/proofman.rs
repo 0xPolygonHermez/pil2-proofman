@@ -10,8 +10,8 @@ use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{get_num_gpus_c, init_gpu_setup_c};
 use proofman_starks_lib_c::{
-    check_device_memory_c, gen_device_streams_c, get_stream_proofs_c, get_stream_proofs_non_blocking_c,
-    register_proof_done_callback_c, reset_device_streams_c, get_instances_ready_c,
+    get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c, reset_device_streams_c,
+    get_instances_ready_c, free_device_buffers_c,
 };
 use crate::add_publics_circom;
 use proofman_verifier::{verify_recursive2, verify_vadcop_final, verify_vadcop_final_compressed};
@@ -1244,7 +1244,6 @@ where
             output_dir_path,
             &self.const_pols,
             &self.const_tree,
-            self.d_buffers.get_ptr(),
             save_proof,
         )?;
 

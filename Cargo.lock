@@ -1167,6 +1167,7 @@ version = "0.16.0"
 dependencies = [
  "bincode",
  "borsh",
+ "bytemuck",
  "colored",
  "crossbeam-channel",
  "crossbeam-queue",
