@@ -1080,16 +1080,65 @@ pub fn init_final_snark_prover_c(zkeyFile: &str) -> *mut c_void {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn get_snark_protocol_id_c(snark_prover: *mut c_void) -> u64 {
+    unsafe { get_snark_protocol_id(snark_prover) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn free_final_snark_prover_c(snark_prover: *mut c_void) {
     unsafe { free_final_snark_prover(snark_prover) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_final_snark_proof_c(prover: *mut c_void, circomWitnessFinal: *mut u8, proof: *mut u8, outputDir: &str) {
-    let output_dir_name = CString::new(outputDir).unwrap();
-    let output_dir_ptr = output_dir_name.as_ptr() as *mut std::os::raw::c_char;
+pub fn gen_final_snark_proof_c(
+    prover: *mut c_void,
+    circomWitnessFinal: *mut u8,
+    proof: *mut u8,
+    publics_snark: *mut u8,
+) {
     unsafe {
-        gen_final_snark_proof(prover, circomWitnessFinal as *mut std::os::raw::c_void, proof, output_dir_ptr);
+        gen_final_snark_proof(prover, circomWitnessFinal as *mut std::os::raw::c_void, proof, publics_snark);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn snark_proof_bytes_to_json_c(proof_bytes: &[u8], public_bytes: &[u8], protocol_id: i32) -> (String, String) {
+    unsafe {
+        let mut proof_json_ptr: *mut std::os::raw::c_char = std::ptr::null_mut();
+        let mut publics_json_ptr: *mut std::os::raw::c_char = std::ptr::null_mut();
+
+        snark_proof_bytes_to_json(
+            proof_bytes.as_ptr(),
+            proof_bytes.len() as u64,
+            public_bytes.as_ptr(),
+            public_bytes.len() as u64,
+            protocol_id,
+            &mut proof_json_ptr as *mut *mut std::os::raw::c_char,
+            &mut publics_json_ptr as *mut *mut std::os::raw::c_char,
+        );
+
+        // Convert C strings to Rust strings
+        let proof_json = if !proof_json_ptr.is_null() {
+            CStr::from_ptr(proof_json_ptr).to_string_lossy().into_owned()
+        } else {
+            String::new()
+        };
+
+        let publics_json = if !publics_json_ptr.is_null() {
+            CStr::from_ptr(publics_json_ptr).to_string_lossy().into_owned()
+        } else {
+            String::new()
+        };
+
+        // Free the C strings
+        if !proof_json_ptr.is_null() {
+            free_json_string(proof_json_ptr);
+        }
+        if !publics_json_ptr.is_null() {
+            free_json_string(publics_json_ptr);
+        }
+
+        (proof_json, publics_json)
     }
 }
 
@@ -2005,13 +2054,30 @@ pub fn init_final_snark_prover_c(_zkeyFile: &str) -> *mut c_void {
 }
 
 #[cfg(feature = "no_lib_link")]
+pub fn get_snark_protocol_id_c(_snark_prover: *mut c_void) -> u64 {
+    trace!("··· {}", "get_snark_protocol_id: This is a mock call because there is no linked library");
+    0
+}
+
+#[cfg(feature = "no_lib_link")]
 pub fn free_final_snark_prover_c(_snark_prover: *mut c_void) {
     trace!("··· {}", "free_final_snark_prover: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_final_snark_proof_c(_prover: *mut c_void, _circomWitnessFinal: *mut u8, _proof: *mut u8, _outputDir: &str) {
+pub fn gen_final_snark_proof_c(
+    _prover: *mut c_void,
+    _circomWitnessFinal: *mut u8,
+    _proof: *mut u8,
+    _publics_snark: *mut u8,
+) {
     trace!("··· {}", "gen_final_snark_proof: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn snark_proof_bytes_to_json_c(_proof_bytes: &[u8], _public_bytes: &[u8], _protocol_id: i32) -> (String, String) {
+    trace!("··· {}", "snark_proof_bytes_to_json: This is a mock call because there is no linked library");
+    ("{}".to_string(), "{}".to_string())
 }
 
 #[cfg(feature = "no_lib_link")]

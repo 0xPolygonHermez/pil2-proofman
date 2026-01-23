@@ -1105,6 +1105,7 @@ dependencies = [
 name = "proofman"
 version = "0.16.0"
 dependencies = [
+ "bincode",
  "blake3",
  "borsh",
  "bytemuck",

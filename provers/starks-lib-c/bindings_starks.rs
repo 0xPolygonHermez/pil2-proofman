@@ -436,13 +436,27 @@ extern "C" {
 
     pub fn init_final_snark_prover(zkeyFile: *mut ::std::os::raw::c_char) -> *mut ::std::os::raw::c_void;
 
+    pub fn get_snark_protocol_id(prover: *mut ::std::os::raw::c_void) -> u64;
+
     pub fn free_final_snark_prover(prover: *mut ::std::os::raw::c_void);
 
     pub fn gen_final_snark_proof(
         proverSnark: *mut ::std::os::raw::c_void,
         circomWitnessFinal: *mut ::std::os::raw::c_void,
         proof: *mut u8,
-        outputDir: *mut ::std::os::raw::c_char,
+        publicsSnark: *mut u8,
+    );
+
+    pub fn free_json_string(json_str: *mut ::std::os::raw::c_char);
+
+    pub fn snark_proof_bytes_to_json(
+        proof_bytes: *const u8,
+        proof_size: u64,
+        public_bytes: *const u8,
+        public_size: u64,
+        protocol_id: ::std::os::raw::c_int,
+        proof_json_out: *mut *mut ::std::os::raw::c_char,
+        publics_json_out: *mut *mut ::std::os::raw::c_char,
     );
 
     // Utilities

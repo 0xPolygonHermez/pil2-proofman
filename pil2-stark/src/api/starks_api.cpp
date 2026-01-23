@@ -874,6 +874,10 @@ void *load_zkey(char* zkeyFile) {
     return zkey.get();
 }
 
+uint64_t get_snark_protocol_id(void *snark_prover) {
+    FinalSnark* finalSnarkProver = (FinalSnark*)snark_prover;
+    return finalSnarkProver->protocolId;
+}
 
 void *init_final_snark_prover(char* zkeyFile) {
     auto zkey = BinFileUtils::openExisting(zkeyFile, "zkey", 1);
@@ -896,8 +900,34 @@ void free_final_snark_prover(void *snark_prover) {
     }
 }
 
-void gen_final_snark_proof(void *prover, void *circomWitnessFinal, uint8_t* proof, char* outputDir) {
-    genFinalSnarkProof(prover, circomWitnessFinal, proof, std::string(outputDir));
+void gen_final_snark_proof(void *prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark) {
+    genFinalSnarkProof(prover, circomWitnessFinal, proof, publicsSnark);
+}
+
+void free_json_string(char* json_str) {
+    if (json_str != nullptr) {
+        free(json_str);
+    }
+}
+
+void snark_proof_bytes_to_json(
+    uint8_t* proof_bytes,
+    uint64_t proof_size,
+    uint8_t* public_bytes,
+    uint64_t public_size,
+    int protocol_id,
+    char** proof_json_out,
+    char** publics_json_out
+) {
+    auto [proof_json, publics_json] = snark_proof_to_json(
+        proof_bytes, proof_size, public_bytes, public_size, protocol_id
+    );
+    
+    *proof_json_out = (char*)malloc(proof_json.size() + 1);
+    *publics_json_out = (char*)malloc(publics_json.size() + 1);
+    
+    strcpy(*proof_json_out, proof_json.c_str());
+    strcpy(*publics_json_out, publics_json.c_str());
 }
 
 void setLogLevel(uint64_t level) {

@@ -407,21 +407,21 @@ namespace Plonk
     }
 
     template <typename Engine>
-    std::tuple<json, json, std::vector<uint8_t>> PlonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns)
+    std::tuple<json, json, std::vector<uint8_t>, std::vector<uint8_t>> PlonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns)
     {
         this->setZkey(fdZkey);
         return this->prove(fdWtns);
     }
 
     template <typename Engine>
-    std::tuple<json, json, std::vector<uint8_t>> PlonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, FrElement *buffWitness, WtnsUtils::Header *wtnsHeader)
+    std::tuple<json, json, std::vector<uint8_t>, std::vector<uint8_t>> PlonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, FrElement *buffWitness, WtnsUtils::Header *wtnsHeader)
     {
         this->setZkey(fdZkey);
         return this->prove(buffWitness, wtnsHeader);
     }
 
     template <typename Engine>
-    std::tuple<json, json, std::vector<uint8_t>> PlonkProver<Engine>::prove(BinFileUtils::BinFile *fdWtns)
+    std::tuple<json, json, std::vector<uint8_t>, std::vector<uint8_t>> PlonkProver<Engine>::prove(BinFileUtils::BinFile *fdWtns)
     {
         LOG_TRACE("> Reading witness file header");
         auto wtnsHeader = WtnsUtils::loadHeader(fdWtns);
@@ -434,7 +434,7 @@ namespace Plonk
     }
 
     template <typename Engine>
-    std::tuple<json, json, std::vector<uint8_t>> PlonkProver<Engine>::prove(FrElement *buffWitness, WtnsUtils::Header *wtnsHeader)
+    std::tuple<json, json, std::vector<uint8_t>, std::vector<uint8_t>> PlonkProver<Engine>::prove(FrElement *buffWitness, WtnsUtils::Header *wtnsHeader)
     {
         if (NULL == zkey)
         {
@@ -533,11 +533,16 @@ namespace Plonk
 
         // Prepare public inputs
         json publicSignals;
+        std::vector<uint8_t> publicBytes;
         FrElement montgomery;
         for (u_int32_t i = 1; i <= zkey->nPublic; i++)
         {
             E.fr.toMontgomery(montgomery, buffWitness[i]);
             publicSignals.push_back(E.fr.toString(montgomery).c_str());
+            
+            uint8_t buffer[E.fr.bytes()];
+            E.fr.toRprBE(montgomery, buffer, E.fr.bytes());
+            publicBytes.insert(publicBytes.end(), buffer, buffer + E.fr.bytes());
         }
 
         LOG_TRACE("PLONK PROVER FINISHED");
@@ -548,7 +553,7 @@ namespace Plonk
 
         std::vector<string> orderedCommitments = {"A", "B", "C", "Z", "T1", "T2", "T3", "Wxi", "Wxiw"};
         std::vector<string> orderedEvaluations = {"eval_a", "eval_b", "eval_c", "eval_s1", "eval_s2", "eval_zw"};
-        return {proof->toJsonRaw(), publicSignals, proof->toBytes(orderedCommitments, orderedEvaluations)};
+        return {proof->toJsonRaw(), publicSignals, proof->toBytes(orderedCommitments, orderedEvaluations), publicBytes};
         // }
         // catch (const std::exception &e)
         // {

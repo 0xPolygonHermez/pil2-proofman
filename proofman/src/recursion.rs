@@ -716,27 +716,23 @@ pub fn generate_snark_proof(
     snark_prover: *mut c_void,
     setup_path: &Path,
     proof: *mut c_void,
-    output_dir_path: &Path,
-    save_json: bool,
-) -> ProofmanResult<Vec<u8>> {
+) -> ProofmanResult<(Vec<u8>, Vec<u8>)> {
     let witness = generate_witness_final_snark(proof, setup_path)?;
 
-    let proof_file = match save_json {
-        true => output_dir_path.to_string_lossy().into_owned(),
-        false => String::new(),
-    };
-
     timer_start_trace!(CALCULATE_FINAL_PROOF);
+
+    let snark_publics: Vec<u8> = vec![0; 32];
+    let snark_publics_ptr = snark_publics.as_ptr() as *mut u8;
 
     let snark_proof: Vec<u8> = vec![0; 24 * 32];
     let snark_proof_ptr = snark_proof.as_ptr() as *mut u8;
 
     tracing::info!("··· Generating final snark proof");
-    gen_final_snark_proof_c(snark_prover, witness.as_ptr() as *mut u8, snark_proof_ptr, &proof_file);
+    gen_final_snark_proof_c(snark_prover, witness.as_ptr() as *mut u8, snark_proof_ptr, snark_publics_ptr);
     timer_stop_and_log_trace!(CALCULATE_FINAL_PROOF);
     tracing::info!("··· Final Snark Proof generated.");
 
-    Ok(snark_proof)
+    Ok((snark_proof, snark_publics))
 }
 
 pub fn generate_witness_final_snark(proof: *mut c_void, setup_path: &Path) -> ProofmanResult<Vec<u8>> {
