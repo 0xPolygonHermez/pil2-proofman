@@ -167,18 +167,18 @@ void PoseidonBN128::linearHash(FrElement* output, Goldilocks::Element* input, ui
 	
 	if (inputSize > 4)
     {
-        uint64_t nElementsGL = (inputSize + FIELD_EXTENSION - 1) / FIELD_EXTENSION;
+        uint64_t nElementsGL = (inputSize + 2) / 3;
         RawFr::Element* buff = (RawFr::Element *)malloc(nElementsGL * sizeof(RawFr::Element));
         
         for (uint64_t j = 0; j < nElementsGL; j++)
         {
             buff[j] = RawFr::field.zero();  
-            uint64_t pending = inputSize - j * FIELD_EXTENSION;
+            uint64_t pending = inputSize - j * 3;
             uint64_t batch;
-            (pending >= FIELD_EXTENSION) ? batch = FIELD_EXTENSION : batch = pending;
+            (pending >= 3) ? batch = 3 : batch = pending;
             for (uint64_t k = 0; k < batch; k++)
             {
-                buff[j].v[k] = Goldilocks::toU64(input[j * FIELD_EXTENSION + k]);
+                buff[j].v[k] = Goldilocks::toU64(input[j * 3 + k]);
             }
             RawFr::field.toMontgomery(buff[j], buff[j]);
         }

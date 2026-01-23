@@ -24,8 +24,8 @@ public:
     static __device__ __forceinline__ Element sub(const Element& a, const Element& b);
     static __device__ __forceinline__ Element mul(const Element& a, const Element& b);
 
-    static __device__ __forceinline__ void toMongomery(Element& r);
-    static __device__ __forceinline__ void fromMongomery(Element& r);
+    static __device__ __forceinline__ void toMontgomery(Element& r);
+    static __device__ __forceinline__ void fromMontgomery(Element& r);
 };
 
 #if defined(__CUDACC__) && defined(__CUDA_ARCH__)
@@ -81,11 +81,11 @@ __device__ __forceinline__ void BN128GPUBaseField::square(Element& r, const Elem
     r.v = sqr(a.v);
 }
 
-__device__ __forceinline__ void BN128GPUBaseField::toMongomery(Element& r) {
+__device__ __forceinline__ void BN128GPUBaseField::toMontgomery(Element& r) {
     r.v.to();
 }
 
-__device__ __forceinline__ void BN128GPUBaseField::fromMongomery(Element& r) {
+__device__ __forceinline__ void BN128GPUBaseField::fromMontgomery(Element& r) {
     r.v.from();
 }
 #endif

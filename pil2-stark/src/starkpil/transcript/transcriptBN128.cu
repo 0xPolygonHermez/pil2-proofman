@@ -27,7 +27,7 @@ __device__ __constant__ int TRANSCRIPT_N_ROUNDS_P[16] = {56, 57, 56, 60, 60, 63,
 // GPU BN128 elements are stored in Montgomery form as 8 uint32_t limbs
 __device__ void fromMontgomeryLimbs(uint64_t* result, PoseidonBN128GPU::FrElement a) {
     
-    BN128GPUScalarField::fromMongomery(a);
+    BN128GPUScalarField::fromMontgomery(a);
     // The fr_t structure contains 8 uint32_t values in little-endian order
     // We reinterpret the entire structure as uint32_t array
     const uint32_t* limbs = reinterpret_cast<const uint32_t*>(&a.v);
@@ -51,7 +51,7 @@ __device__ void goldilocks_to_fr(PoseidonBN128GPU::FrElement& result, const Gold
     limbs[0] = (uint32_t)(val);
     limbs[1] = (uint32_t)(val >> 32);
     
-    BN128GPUScalarField::toMongomery(result);
+    BN128GPUScalarField::toMontgomery(result);
 }
 
 __device__ void _updateStateBN128(PoseidonBN128GPU::FrElement* state, PoseidonBN128GPU::FrElement* pending, PoseidonBN128GPU::FrElement* out, uint* pending_cursor, uint* out_cursor, uint* out3_cursor, uint64_t arity) 

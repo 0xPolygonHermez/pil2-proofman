@@ -28,6 +28,12 @@ public:
     static void initGPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
     // Free all GPU constants
     static void freeGPUConstants();
+    
+    // Linear hash for traces stored in row-major layout (not tiled)
+    static void linearHash(FrElement *d_output, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int t, bool custom, cudaStream_t stream);
+    
+    // Linear hash for traces stored in tiled layout  
+    static void linearHashTiles(FrElement *d_output, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int t, bool custom, cudaStream_t stream);
 };
 
 __device__ void PoseidonBN128GPU::exp5(FrElement &r)

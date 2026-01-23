@@ -2,6 +2,7 @@
 #include "poseidon_bn128.cuh"
 #include "poseidon_bn128_constants.hpp"  // Shared CPU/GPU constants (binary compatible)
 #include <cuda_runtime.h>
+#include "data_layout.cuh"
 
 typedef PoseidonBN128GPU::FrElement FrElementGPU;
 
@@ -107,6 +108,149 @@ void PoseidonBN128GPU::freeGPUConstants() {
         cudaMemcpyToSymbol(GPU_S_ptr, &null_ptr, sizeof(FrElementGPU*), idx * sizeof(FrElementGPU*));
     }
     constants_initialized = false;
+}
+
+// =============================================================================
+// Linear Hash GPU
+// =============================================================================
+
+// Load 3 Goldilocks elements into a BN128 Fr element (in registers)
+// Supports both row-major and tiled layouts via template parameter
+template<bool TILED>
+__device__ __forceinline__ void poseidon_bn128_load_fr_from_gl(
+    BN128GPUScalarField::Element &elem,
+    const uint64_t *input,
+    uint32_t row,
+    uint64_t base_col,
+    uint64_t num_rows,
+    uint64_t num_cols
+) {
+    uint32_t* limbs = (uint32_t*)&elem.v;
+    limbs[0] = limbs[1] = limbs[2] = limbs[3] = 0;
+    limbs[4] = limbs[5] = limbs[6] = limbs[7] = 0;
+    
+    #pragma unroll
+    for (uint32_t k = 0; k < 3; k++) {
+        uint64_t col = base_col + k;
+        if (col < num_cols) {
+            uint64_t idx;
+            if constexpr (TILED) {
+                idx = getBufferOffset(row, col, num_rows, num_cols);
+            } else {
+                idx = row * num_cols + col;
+            }
+            uint64_t gl_val = input[idx];
+            limbs[k * 2] = (uint32_t)gl_val;
+            limbs[k * 2 + 1] = (uint32_t)(gl_val >> 32);
+        }
+    }
+}
+
+// Perform the hash loop for linear hash
+// Supports both row-major (TILED=false) and tiled (TILED=true) layouts
+template<bool TILED>
+__device__ void poseidon_bn128_hash_loop(
+    BN128GPUScalarField::Element &result,
+    const uint64_t *__restrict__ input,
+    uint64_t num_cols,
+    uint64_t num_rows,
+    int t,
+    bool custom
+) {
+    uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    // Number of Fr elements needed to pack all Goldilocks columns
+    // Each Fr element holds 3 Goldilocks field elements
+    uint64_t nElementsFr = (num_cols + 2) / 3;
+    
+    // Rate is t-1 (capacity is 1, stored in position 0)
+    int rate = t - 1;
+    
+    // State array in registers - capacity (position 0) starts as zero
+    BN128GPUScalarField::Element state[18];
+    state[0] = BN128GPUScalarField::zero();
+    
+    // Process input in chunks of (t-1) Fr elements
+    uint64_t pending = nElementsFr;
+    uint64_t fr_offset = 0;
+    
+    while (pending > 0) {
+        uint32_t batch = (pending >= rate) ? rate : pending;
+        
+        // Determine actual_t for this iteration
+        int actual_t = t;
+        if (pending < rate && !custom) {
+            actual_t = batch + 1;
+        }
+        
+        // Load batch Fr elements directly into state registers (positions 1 to batch)
+        // and convert to Montgomery form
+        for (uint32_t fr_idx = 0; fr_idx < batch; fr_idx++) {
+            uint64_t base_col = (fr_offset + fr_idx) * 3;
+            poseidon_bn128_load_fr_from_gl<TILED>(state[fr_idx + 1], input, row, base_col, num_rows, num_cols);
+            BN128GPUScalarField::toMontgomery(state[fr_idx + 1]);
+        }
+        
+        for (uint32_t i = batch + 1; i < actual_t; i++) {
+            state[i] = BN128GPUScalarField::zero();
+        }
+        
+        // Perform hash
+        PoseidonBN128GPU poseidon;
+        const FrElementGPU *C_actual = GPU_C_ptr[actual_t - 2];
+        const FrElementGPU *M_actual = GPU_M_ptr[actual_t - 2];
+        const FrElementGPU *P_actual = GPU_P_ptr[actual_t - 2];
+        const FrElementGPU *S_actual = GPU_S_ptr[actual_t - 2];
+        const int nRoundsP_actual = N_ROUNDS_P_POSEIDON[actual_t - 2];
+        
+        poseidon.hash_(state, actual_t, C_actual, M_actual, P_actual, S_actual, nRoundsP_actual);
+        
+        // state[0] now contains the hash result, which becomes capacity for next iteration
+        pending -= batch;
+        fr_offset += batch;
+    }
+    
+    // Return the final result
+    result = state[0];
+}
+
+template<bool TILED>
+__global__ void linearHashGPUBN128(
+    FrElementGPU *__restrict__ output,
+    uint64_t *__restrict__ input,
+    uint64_t num_cols,
+    uint64_t num_rows,
+    int t,
+    bool custom
+) {
+    uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= num_rows) return;
+    
+    BN128GPUScalarField::Element result;
+    poseidon_bn128_hash_loop<TILED>(result, input, num_cols, num_rows, t, custom);
+    output[row] = result;
+}
+
+// Linear hash for traces stored in row-major layout
+void PoseidonBN128GPU::linearHash(FrElement *d_output, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int t, bool custom, cudaStream_t stream) {
+
+    int threadsPerBlock = 64;
+    int numBlocks = (num_rows + threadsPerBlock - 1) / threadsPerBlock;
+    
+    linearHashGPUBN128<false><<<numBlocks, threadsPerBlock, 0, stream>>>(
+        d_output, d_input, num_cols, num_rows, t, custom
+    );
+}
+
+// Linear hash for traces stored in tiled layout
+void PoseidonBN128GPU::linearHashTiles(FrElement *d_output, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int t, bool custom, cudaStream_t stream) {
+    
+    int threadsPerBlock = 64;
+    int numBlocks = (num_rows + threadsPerBlock - 1) / threadsPerBlock;
+    
+    linearHashGPUBN128<true><<<numBlocks, threadsPerBlock, 0, stream>>>(
+        d_output, d_input, num_cols, num_rows, t, custom
+    );
 }
 
 #undef INIT_T_CONSTANTS

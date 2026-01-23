@@ -281,6 +281,120 @@ BENCHMARK(POSEIDON2_SEQ_GPU_BENCH)
     ->Args({12})
     ->Args({16});
 
+// =====================
+// LinearHash GPU Benchmark
+// =====================
+
+static void LINEARHASH_GPU_BENCH(benchmark::State &state) {
+    uint64_t rows = state.range(0);
+    uint64_t cols = state.range(1);
+    int t = state.range(2);
+    
+    // Initialize GPU constants
+    uint32_t gpu_idxs[] = {0};
+    PoseidonBN128GPU::initGPUConstants(gpu_idxs, 1);
+    
+    uint64_t* h_input = new uint64_t[rows * cols];
+    for (uint64_t i = 0; i < rows * cols; i++) {
+        h_input[i] = i;
+    }
+    
+    uint64_t* d_input = nullptr;
+    BN128GPUScalarField::Element* d_output = nullptr;
+    cudaMalloc(&d_input, rows * cols * sizeof(uint64_t));
+    cudaMalloc(&d_output, rows * sizeof(BN128GPUScalarField::Element));
+    
+    cudaMemcpy(d_input, h_input, rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice);
+    
+    // Warm-up
+    PoseidonBN128GPU::linearHash(d_output, d_input, cols, rows, t, false, 0);
+    cudaDeviceSynchronize();
+    
+    for (auto _ : state) {
+        PoseidonBN128GPU::linearHash(d_output, d_input, cols, rows, t, false, 0);
+        cudaDeviceSynchronize();
+        benchmark::DoNotOptimize(d_output);
+    }
+    
+    // Cleanup
+    cudaFree(d_input);
+    cudaFree(d_output);
+    delete[] h_input;
+    
+    state.counters["rows"] = rows;
+    state.counters["cols"] = cols;
+    state.counters["t"] = t;
+    state.SetItemsProcessed(state.iterations() * rows * cols);
+}
+
+BENCHMARK(LINEARHASH_GPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Args({1024, 100, 17})      // 1K rows × 100 cols, t=17
+    ->Args({1024, 1000, 17})     // 1K rows × 1000 cols, t=17
+    ->Args({1 << 16, 100, 17})   // 64K rows × 100 cols, t=17
+    ->Args({1 << 16, 1000, 17})  // 64K rows × 1000 cols, t=17
+    ->Args({1 << 20, 100, 17})   // 1M rows × 100 cols, t=17
+    ->Args({1024, 100, 9})       // 1K rows × 100 cols, t=9
+    ->Args({1 << 16, 100, 9});   // 64K rows × 100 cols, t=9
+
+// =====================
+// LinearHashTiles GPU Benchmark (Tiled layout)
+// =====================
+
+static void LINEARHASHTILES_GPU_BENCH(benchmark::State &state) {
+    uint64_t rows = state.range(0);
+    uint64_t cols = state.range(1);
+    int t = state.range(2);
+    
+    // Initialize GPU constants
+    uint32_t gpu_idxs[] = {0};
+    PoseidonBN128GPU::initGPUConstants(gpu_idxs, 1);
+    
+    uint64_t* h_input = new uint64_t[rows * cols];
+    for (uint64_t i = 0; i < rows * cols; i++) {
+        h_input[i] = i;
+    }
+    
+    uint64_t* d_input = nullptr;
+    BN128GPUScalarField::Element* d_output = nullptr;
+    cudaMalloc(&d_input, rows * cols * sizeof(uint64_t));
+    cudaMalloc(&d_output, rows * sizeof(BN128GPUScalarField::Element));
+    
+    cudaMemcpy(d_input, h_input, rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice);
+    
+    // Warm-up
+    PoseidonBN128GPU::linearHashTiles(d_output, d_input, cols, rows, t, false, 0);
+    cudaDeviceSynchronize();
+    
+    for (auto _ : state) {
+        PoseidonBN128GPU::linearHashTiles(d_output, d_input, cols, rows, t, false, 0);
+        cudaDeviceSynchronize();
+        benchmark::DoNotOptimize(d_output);
+    }
+    
+    // Cleanup
+    cudaFree(d_input);
+    cudaFree(d_output);
+    delete[] h_input;
+    
+    state.counters["rows"] = rows;
+    state.counters["cols"] = cols;
+    state.counters["t"] = t;
+    state.SetItemsProcessed(state.iterations() * rows * cols);
+}
+
+BENCHMARK(LINEARHASHTILES_GPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Args({1024, 100, 17})      // 1K rows × 100 cols, t=17
+    ->Args({1024, 1000, 17})     // 1K rows × 1000 cols, t=17
+    ->Args({1 << 16, 100, 17})   // 64K rows × 100 cols, t=17
+    ->Args({1 << 16, 1000, 17})  // 64K rows × 1000 cols, t=17
+    ->Args({1 << 20, 100, 17})   // 1M rows × 100 cols, t=17
+    ->Args({1024, 100, 9})       // 1K rows × 100 cols, t=9
+    ->Args({1 << 16, 100, 9});   // 64K rows × 100 cols, t=9
+
 int main(int argc, char** argv) {
     // Print GPU info
     int deviceCount;

@@ -10,6 +10,7 @@
 #include "point.cuh"
 #include "alt_bn128.hpp"
 #include "fft.hpp"
+#include "cuda_utils.cuh"
 
 __global__ void kernel_fr_add_one_one(int* ok);
 
@@ -940,6 +941,148 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t17) {
     
     EXPECT_STREQ(hex0, "16159a551cbb66108281a48099fff949ae08afd7f1f2ec06de2ffb96b919b765");
     EXPECT_STREQ(hex16, "0ffa1bd9b53dbedee9ab5742283c8968d0435c3b3a566fcb66ca61ce04a5b5bf");
+}
+
+// =====================
+// Poseidon linearHash GPU Test
+// =====================
+
+TEST(BN128_POSEIDON_TEST, linearHash_gpu_4rows_100cols) {
+    const size_t rows = 4;
+    const size_t cols = 100;
+    int t = 17;
+    
+    uint32_t gpu_idxs[] = {0};
+    PoseidonBN128GPU::initGPUConstants(gpu_idxs, 1);
+    
+    // Create trace: 4 rows × 100 cols Goldilocks elements (uint64_t)
+    std::vector<uint64_t> trace(rows * cols);
+    for (size_t i = 0; i < rows * cols; i++) {
+        trace[i] = i;
+    }
+    
+    uint64_t* d_input = nullptr;
+    BN128GPUScalarField::Element* d_output = nullptr;
+    CHECKCUDAERR(cudaMalloc(&d_input, rows * cols * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMalloc(&d_output, rows * sizeof(BN128GPUScalarField::Element)));
+    
+    CHECKCUDAERR(cudaMemset(d_output, 0, rows * sizeof(BN128GPUScalarField::Element)));
+    
+    CHECKCUDAERR(cudaMemcpy(d_input, trace.data(), rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+    
+    PoseidonBN128GPU::linearHash(d_output, d_input, cols, rows, t, false, 0);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    
+    RawFr::Element* h_output = new RawFr::Element[rows];
+    CHECKCUDAERR(cudaMemcpy(h_output, d_output, rows * sizeof(RawFr::Element), cudaMemcpyDeviceToHost));
+    
+    for (size_t i = 0; i < rows; i++) {
+        std::string hex = RawFr::field.toString(h_output[i], 16);
+        
+        if (i == 0) EXPECT_EQ(hex, "f51f3d0104201ef2bf7424be924330f937e4504111c6b26f7c195afbcb9d6cd");
+        if (i == 1) EXPECT_EQ(hex, "12b276d381cf64df6b1732ec6e91ae30f1f8c60cc08959aa9f81ae3b00cae371");
+        if (i == 2) EXPECT_EQ(hex, "160dcdd70c78a86409e231df7f4add4e32c9a92fe74ac92dff516d3d8fa728");
+        if (i == 3) EXPECT_EQ(hex, "2393e4f4bbaadaee5acaf60590547ef52c7dfd553f856283726497304ad47b5b");
+    }
+    
+    delete[] h_output;
+    cudaFree(d_input);
+    cudaFree(d_output);
+}
+
+// Helper function to convert row-major trace to tiled layout (CPU version of getBufferOffset)
+// Tile layout: TILE_HEIGHT=256 rows × TILE_WIDTH=4 cols per tile
+// Within each tile, data is stored column-major with TILE_HEIGHT stride
+static inline uint64_t getBufferOffsetCPU(uint64_t row, uint64_t col, uint64_t nRows, uint64_t nCols) {
+    const uint64_t TILE_HEIGHT = 256;
+    const uint64_t TILE_WIDTH = 4;
+    
+    uint64_t blockY = col / TILE_WIDTH;
+    uint64_t blockX = row / TILE_HEIGHT;
+    uint64_t nCols_block = (nCols - TILE_WIDTH * blockY < TILE_WIDTH) 
+                           ? (nCols - TILE_WIDTH * blockY) : TILE_WIDTH;
+    uint64_t col_block = col % TILE_WIDTH;
+    uint64_t row_block = row % TILE_HEIGHT;
+
+    return blockY * TILE_WIDTH * nRows + blockX * nCols_block * TILE_HEIGHT
+           + col_block * TILE_HEIGHT + row_block;
+}
+
+// Test linearHashTiles with tiled layout - should produce same results as linearHash with row-major
+TEST(BN128_POSEIDON_TEST, linearHashTiles_gpu_256rows_100cols) {
+    const size_t rows = 256;  // Use TILE_HEIGHT to properly test tiled layout
+    const size_t cols = 100;
+    int t = 17;
+    
+    uint32_t gpu_idxs[] = {0};
+    PoseidonBN128GPU::initGPUConstants(gpu_idxs, 1);
+    
+    std::vector<uint64_t> trace_rowmajor(rows * cols);
+    for (size_t i = 0; i < rows * cols; i++) {
+        trace_rowmajor[i] = i;
+    }
+    
+    std::vector<uint64_t> trace_tiled(rows * cols);
+    for (size_t row = 0; row < rows; row++) {
+        for (size_t col = 0; col < cols; col++) {
+            uint64_t tiled_idx = getBufferOffsetCPU(row, col, rows, cols);
+            trace_tiled[tiled_idx] = trace_rowmajor[row * cols + col];
+        }
+    }
+    
+    uint64_t *d_input_rowmajor = nullptr, *d_input_tiled = nullptr;
+    BN128GPUScalarField::Element *d_output_rowmajor = nullptr, *d_output_tiled = nullptr;
+    
+    CHECKCUDAERR(cudaMalloc(&d_input_rowmajor, rows * cols * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMalloc(&d_input_tiled, rows * cols * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMalloc(&d_output_rowmajor, rows * sizeof(BN128GPUScalarField::Element)));
+    CHECKCUDAERR(cudaMalloc(&d_output_tiled, rows * sizeof(BN128GPUScalarField::Element)));
+    
+    CHECKCUDAERR(cudaMemcpy(d_input_rowmajor, trace_rowmajor.data(), rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_input_tiled, trace_tiled.data(), rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+    
+    PoseidonBN128GPU::linearHash(d_output_rowmajor, d_input_rowmajor, cols, rows, t, false, 0);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    
+    PoseidonBN128GPU::linearHashTiles(d_output_tiled, d_input_tiled, cols, rows, t, false, 0);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    
+    std::vector<RawFr::Element> h_output_rowmajor(rows);
+    std::vector<RawFr::Element> h_output_tiled(rows);
+    CHECKCUDAERR(cudaMemcpy(h_output_rowmajor.data(), d_output_rowmajor, rows * sizeof(RawFr::Element), cudaMemcpyDeviceToHost));
+    CHECKCUDAERR(cudaMemcpy(h_output_tiled.data(), d_output_tiled, rows * sizeof(RawFr::Element), cudaMemcpyDeviceToHost));
+    
+    int mismatches = 0;
+    for (size_t i = 0; i < rows; i++) {
+        const uint32_t* p_rowmajor = reinterpret_cast<const uint32_t*>(&h_output_rowmajor[i]);
+        const uint32_t* p_tiled = reinterpret_cast<const uint32_t*>(&h_output_tiled[i]);
+        
+        bool match = true;
+        for (int j = 0; j < 8; j++) {
+            if (p_rowmajor[j] != p_tiled[j]) {
+                match = false;
+                break;
+            }
+        }
+        
+        if (!match) {
+            mismatches++;
+            if (mismatches <= 5) {  // Print first 5 mismatches
+                std::string hex_rowmajor = RawFr::field.toString(h_output_rowmajor[i], 16);
+                std::string hex_tiled = RawFr::field.toString(h_output_tiled[i], 16);
+                printf("Row %zu MISMATCH:\n", i);
+                printf("  rowmajor: %s\n", hex_rowmajor.c_str());
+                printf("  tiled:    %s\n", hex_tiled.c_str());
+            }
+        }
+    }
+    
+    EXPECT_EQ(mismatches, 0) << "Found " << mismatches << " mismatches between row-major and tiled results";
+    
+    cudaFree(d_input_rowmajor);
+    cudaFree(d_input_tiled);
+    cudaFree(d_output_rowmajor);
+    cudaFree(d_output_tiled);
 }
 
 // =====================

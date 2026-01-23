@@ -20,7 +20,7 @@ include CudaArch.mk
 # ----------------------
 # Compiler Flags
 # ----------------------
-CUDA_SRC_DIRS  := $(SRC_DIR)/ffigpu $(SRC_DIR)/msm $(SRC_DIR)/ntt ./tests $(SRC_DIR)/poseidon $(SRC_DIR)/poseidon2 $(SRC_DIR)/curve $(SRC_DIR)/../../utils
+CUDA_SRC_DIRS  := $(SRC_DIR)/ffigpu $(SRC_DIR)/msm $(SRC_DIR)/ntt ./tests $(SRC_DIR)/poseidon $(SRC_DIR)/poseidon2 $(SRC_DIR)/curve $(SRC_DIR)/../../utils ./../goldilocks/src
 CUDA_INC_FLAGS := $(addprefix -I,$(CUDA_SRC_DIRS))
 BLST_INC       := -I./../../external/blst/src
 BLST_LIB       := ./../../external/blst/libblst.a
