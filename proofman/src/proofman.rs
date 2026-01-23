@@ -1227,7 +1227,7 @@ where
     pub fn generate_vadcop_final_proof_compressed(
         &self,
         vadcop_final_proof: &VadcopFinalProof,
-        output_dir_path: &PathBuf,
+        output_dir_path: &Path,
         save_proof: bool,
     ) -> ProofmanResult<VadcopFinalProof> {
         if vadcop_final_proof.compressed {

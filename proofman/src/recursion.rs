@@ -719,6 +719,27 @@ pub fn generate_snark_proof(
     output_dir_path: &Path,
     save_json: bool,
 ) -> ProofmanResult<Vec<u8>> {
+    let witness = generate_witness_final_snark(proof, setup_path)?;
+
+    let proof_file = match save_json {
+        true => output_dir_path.to_string_lossy().into_owned(),
+        false => String::new(),
+    };
+
+    timer_start_trace!(CALCULATE_FINAL_PROOF);
+
+    let snark_proof: Vec<u8> = vec![0; 24 * 32];
+    let snark_proof_ptr = snark_proof.as_ptr() as *mut u8;
+
+    tracing::info!("··· Generating final snark proof");
+    gen_final_snark_proof_c(snark_prover, witness.as_ptr() as *mut u8, snark_proof_ptr, &proof_file);
+    timer_stop_and_log_trace!(CALCULATE_FINAL_PROOF);
+    tracing::info!("··· Final Snark Proof generated.");
+
+    Ok(snark_proof)
+}
+
+pub fn generate_witness_final_snark(proof: *mut c_void, setup_path: &Path) -> ProofmanResult<Vec<u8>> {
     let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
     let rust_lib_filename = setup_path.display().to_string() + lib_extension;
     let rust_lib_path = Path::new(rust_lib_filename.as_str());
@@ -734,16 +755,8 @@ pub fn generate_snark_proof(
     let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
     let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
 
-    let proof_file = match save_json {
-        true => output_dir_path.to_string_lossy().into_owned(),
-        false => String::new(),
-    };
-
-    let snark_proof: Vec<u8> = vec![0; 24 * 32];
-    let snark_proof_ptr = snark_proof.as_ptr() as *mut u8;
-
     unsafe {
-        timer_start_trace!(CALCULATE_FINAL_WITNESS);
+        timer_start_info!(CALCULATE_FINAL_WITNESS);
 
         let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
         let size_witness = get_size_witness();
@@ -757,17 +770,10 @@ pub fn generate_snark_proof(
         if res != 0 {
             return Err(ProofmanError::InvalidProof("Error generating final witness from rust".into()));
         }
-        timer_stop_and_log_trace!(CALCULATE_FINAL_WITNESS);
+        timer_stop_and_log_info!(CALCULATE_FINAL_WITNESS);
 
-        timer_start_trace!(CALCULATE_FINAL_PROOF);
-
-        tracing::info!("··· Generating final snark proof");
-        gen_final_snark_proof_c(snark_prover, witness_ptr, snark_proof_ptr, &proof_file);
-        timer_stop_and_log_trace!(CALCULATE_FINAL_PROOF);
-        tracing::info!("··· Final Snark Proof generated.");
+        Ok(witness)
     }
-
-    Ok(snark_proof)
 }
 
 fn generate_witness<F: PrimeField64>(
