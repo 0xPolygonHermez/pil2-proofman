@@ -82,15 +82,7 @@ std::unique_ptr<IFinalSnarkProver> initFinalSnarkProver(BinFileUtils::BinFile *f
 void genFinalSnarkProof(void *proverSnark, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark) {
     FinalSnark* finalSnarkProver = (FinalSnark*)proverSnark;
 
-    AltBn128::FrElement *witnessFinal = (AltBn128::FrElement *)circomWitnessFinal;
-    // Save public file
-    json publicJson = json::array();
-    for (size_t i = 0; i < finalSnarkProver->prover->nPublics(); ++i) {
-        AltBn128::FrElement aux;
-        AltBn128::Fr.toMontgomery(aux, witnessFinal[1 + i]);
-        publicJson.push_back(AltBn128::Fr.toString(aux));
-    }
-    
+    AltBn128::FrElement *witnessFinal = (AltBn128::FrElement *)circomWitnessFinal; 
 
     try
     {
