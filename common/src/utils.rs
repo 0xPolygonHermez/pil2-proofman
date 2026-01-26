@@ -314,8 +314,8 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
                 ));
             }
 
-            let airgroup_id = if airgroup.airgroup_id.is_some() {
-                airgroup.airgroup_id.unwrap()
+            let airgroup_id = if let Some(airgroup_id) = airgroup.airgroup_id {
+                airgroup_id
             } else {
                 let airgroup_name = airgroup.airgroup.unwrap().to_string();
                 let airgroup_id = global_info.air_groups.iter().position(|x| x == &airgroup_name);
@@ -340,8 +340,8 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
                         ));
                     }
 
-                    let air_id = if air.air_id.is_some() {
-                        air.air_id.unwrap()
+                    let air_id = if let Some(air_id) = air.air_id {
+                        air_id
                     } else {
                         let air_name = air.air.unwrap().to_string();
                         let air_id = global_info.airs[airgroup_id].iter().position(|x| x.name == air_name);
