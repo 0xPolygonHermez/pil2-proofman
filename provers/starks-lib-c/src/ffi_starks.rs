@@ -1081,6 +1081,9 @@ pub fn init_final_snark_prover_c(zkeyFile: &str) -> *mut c_void {
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn get_snark_protocol_id_c(snark_prover: *mut c_void) -> u64 {
+    if snark_prover.is_null() {
+        return 0;
+    }
     unsafe { get_snark_protocol_id(snark_prover) }
 }
 

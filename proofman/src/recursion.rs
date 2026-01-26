@@ -268,7 +268,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 
     let (airgroup_id, air_id, instance_id, output_file_path, vadcop) =
         if witness.proof_type == ProofType::VadcopFinal || witness.proof_type == ProofType::VadcopFinalCompressed {
-            let output_file_path_ = output_dir_path.join(format!("proofs/${:?}.json", witness.proof_type));
+            let output_file_path_ = output_dir_path.join(format!("proofs/{:?}.json", witness.proof_type));
             (0, 0, 0, output_file_path_, false)
         } else {
             let (airgroup_id_, air_id_) = (witness.airgroup_id, witness.air_id);

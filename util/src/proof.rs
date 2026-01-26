@@ -13,13 +13,26 @@ pub struct VadcopFinalProof {
 }
 
 impl VadcopFinalProof {
-    pub fn new(proof: &[u64], compressed: bool) -> Self {
-        let n_publics = proof[0] as usize;
-        let rest = &proof[1..];
+    pub fn new(proof: &[u64], compressed: bool) -> Result<Self, String> {
+        if proof.is_empty() {
+            return Err("Proof slice is empty, cannot extract public count".to_string());
+        }
 
+        let n_publics = proof[0] as usize;
+
+        if proof.len() < n_publics + 1 {
+            return Err(format!(
+                "Proof slice length ({}) is insufficient for {} publics (expected at least {})",
+                proof.len(),
+                n_publics,
+                n_publics + 1
+            ));
+        }
+
+        let rest = &proof[1..];
         let (publics, proof_u64) = rest.split_at(n_publics);
 
-        Self { public_values: cast_slice(publics).to_vec(), proof: cast_slice(proof_u64).to_vec(), compressed }
+        Ok(Self { public_values: cast_slice(publics).to_vec(), proof: cast_slice(proof_u64).to_vec(), compressed })
     }
 
     pub fn save(&self, dir: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

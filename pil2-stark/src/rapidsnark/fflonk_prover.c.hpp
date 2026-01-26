@@ -412,21 +412,21 @@ namespace Fflonk
     }
 
     template<typename Engine>
-    std::tuple <json, json, std::vector<uint8_t>, std::vector<uint8_t>> FflonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns) {
+    std::tuple <std::vector<uint8_t>, std::vector<uint8_t>> FflonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns) {
 
         this->setZkey(fdZkey);
         return this->prove(fdWtns);
     }
 
     template <typename Engine>
-    std::tuple<json, json, std::vector<uint8_t>, std::vector<uint8_t>> FflonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, FrElement *buffWitness, WtnsUtils::Header* wtnsHeader)
+    std::tuple<std::vector<uint8_t>, std::vector<uint8_t>> FflonkProver<Engine>::prove(BinFileUtils::BinFile *fdZkey, FrElement *buffWitness, WtnsUtils::Header* wtnsHeader)
     {
         this->setZkey(fdZkey);
         return this->prove(buffWitness, wtnsHeader);
     }
 
     template<typename Engine>
-    std::tuple <json, json, std::vector<uint8_t>, std::vector<uint8_t>> FflonkProver<Engine>::prove(BinFileUtils::BinFile *fdWtns) {
+    std::tuple <std::vector<uint8_t>, std::vector<uint8_t>> FflonkProver<Engine>::prove(BinFileUtils::BinFile *fdWtns) {
         LOG_TRACE("> Reading witness file header");
         auto wtnsHeader = WtnsUtils::loadHeader(fdWtns);
 
@@ -438,7 +438,7 @@ namespace Fflonk
     }
 
     template <typename Engine>
-    std::tuple<json, json, std::vector<uint8_t>, std::vector<uint8_t>> FflonkProver<Engine>::prove(FrElement *buffWitness, WtnsUtils::Header* wtnsHeader)
+    std::tuple<std::vector<uint8_t>, std::vector<uint8_t>> FflonkProver<Engine>::prove(FrElement *buffWitness, WtnsUtils::Header* wtnsHeader)
     {
         if(NULL == zkey) {
             throw std::runtime_error("Zkey data not set");
@@ -554,13 +554,11 @@ namespace Fflonk
             proof->addEvaluationCommitment("inv", getMontgomeryBatchedInverse());
 
             // Prepare public inputs
-            json publicSignals;
             std::vector<uint8_t> publicBytes;
             FrElement montgomery;
             for (u_int32_t i = 1; i <= zkey->nPublic; i++)
             {
                 E.fr.toMontgomery(montgomery, buffWitness[i]);
-                publicSignals.push_back(E.fr.toString(montgomery).c_str());
 
                 uint8_t buffer[E.fr.bytes()];
                 E.fr.toRprBE(montgomery, buffer, E.fr.bytes());
@@ -599,7 +597,7 @@ namespace Fflonk
 
             std::vector<string> orderedCommitments = {"C1", "C2", "W1", "W2"};
             std::vector<string> orderedEvaluations = {"ql", "qr", "qm", "qo", "qc","s1", "s2", "s3", "a", "b", "c", "z", "zw", "t1w", "t2w", "inv"};
-            return {proof->toJson(), publicSignals, proof->toBytes(orderedCommitments, orderedEvaluations), publicBytes};
+            return {proof->toBytes(orderedCommitments, orderedEvaluations), publicBytes};
         }
         catch (const std::exception &e)
         {

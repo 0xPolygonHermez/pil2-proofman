@@ -154,6 +154,12 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         timer_start_info!(INITIALIZING_FINAL_SNARK_PROVER);
         let zkey_filename = setup_snark_path.display().to_string() + ".zkey";
         let snark_prover = init_final_snark_prover_c(zkey_filename.as_str());
+        if snark_prover.is_null() {
+            return Err(std::io::Error::other(
+                format!("Failed to initialize final snark prover from zkey file '{}'", zkey_filename),
+            )
+            .into());
+        }
         let protocol_id = get_snark_protocol_id_c(snark_prover);
         let protocol = SnarkProtocol::from_protocol_id(protocol_id)?;
         timer_stop_and_log_info!(INITIALIZING_FINAL_SNARK_PROVER);
@@ -301,10 +307,15 @@ pub fn verify_snark_proof(snark_proof: &SnarkProof, vkey_path: &Path) -> Proofma
         .convert_to_json()
         .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to convert SNARK proof to JSON: {}", e)))?;
 
-    // Write JSON to temporary files
+    // Write JSON to temporary files with unique names to avoid race conditions
     let temp_dir = std::env::temp_dir();
-    let proof_path = temp_dir.join("snark_proof.json");
-    let publics_path = temp_dir.join("snark_publics.json");
+    let unique_id = format!(
+        "{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    );
+    let proof_path = temp_dir.join(format!("snark_proof_{}.json", unique_id));
+    let publics_path = temp_dir.join(format!("snark_publics_{}.json", unique_id));
 
     std::fs::write(&proof_path, serde_json::to_string_pretty(&proof_json_value).unwrap())
         .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to write proof file: {}", e)))?;
@@ -314,8 +325,8 @@ pub fn verify_snark_proof(snark_proof: &SnarkProof, vkey_path: &Path) -> Proofma
     // Determine protocol
     let protocol = SnarkProtocol::from_protocol_id(snark_proof.protocol_id)?;
 
-    // Check if snarkjs is installed
-    if Command::new("which").arg("snarkjs").output().map(|o| !o.status.success()).unwrap_or(true) {
+    // Check if snarkjs is installed (cross-platform check)
+    if Command::new("snarkjs").arg("--version").output().map(|o| !o.status.success()).unwrap_or(true) {
         tracing::error!("··· {}", "snarkjs is not installed or not in PATH".bright_red().bold());
         tracing::error!("··· Please install snarkjs: npm install -g snarkjs");
         return Err(ProofmanError::InvalidConfiguration(

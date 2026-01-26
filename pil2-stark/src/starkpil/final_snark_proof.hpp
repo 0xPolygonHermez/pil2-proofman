@@ -11,7 +11,7 @@
 struct IFinalSnarkProver {
     virtual ~IFinalSnarkProver() = default;
     
-    virtual std::tuple<nlohmann::json, nlohmann::json, std::vector<uint8_t>, std::vector<uint8_t>>
+    virtual std::tuple<std::vector<uint8_t>, std::vector<uint8_t>>
     prove(AltBn128::FrElement* witnessFinal, WtnsUtils::Header* wtnsHeader = NULL) = 0;
 
     virtual uint32_t nPublics() const = 0;
@@ -27,7 +27,7 @@ public:
         nPublics_ = zkeyHeader_->nPublic;
     }
 
-    std::tuple <nlohmann::json, nlohmann::json, std::vector<uint8_t>, std::vector<uint8_t>>
+    std::tuple <std::vector<uint8_t>, std::vector<uint8_t>>
     prove(AltBn128::FrElement* witnessFinal, WtnsUtils::Header* wtnsHeader = nullptr) override {
         return prover_.prove(witnessFinal, wtnsHeader);
     }
@@ -45,7 +45,7 @@ public:
         nPublics_ = zkeyHeader_->nPublic;
     }
 
-    std::tuple<nlohmann::json, nlohmann::json, std::vector<uint8_t>, std::vector<uint8_t>>
+    std::tuple<std::vector<uint8_t>, std::vector<uint8_t>>
     prove(AltBn128::FrElement* witnessFinal, WtnsUtils::Header* wtnsHeader = nullptr) override {
         return prover_.prove(witnessFinal, wtnsHeader);
     }
@@ -95,7 +95,7 @@ void genFinalSnarkProof(void *proverSnark, void *circomWitnessFinal, uint8_t* pr
     try
     {
         TimerStart(SNARK_PROOF);
-        auto [jsonProof, publicSignalsJson, snark_proof, public_bytes] = finalSnarkProver->prover->prove(witnessFinal);
+        auto [snark_proof, public_bytes] = finalSnarkProver->prover->prove(witnessFinal);
         memcpy(proof, snark_proof.data(), snark_proof.size());
         memcpy(publicsSnark, public_bytes.data(), public_bytes.size());
         TimerStopAndLog(SNARK_PROOF);
@@ -139,6 +139,16 @@ std::pair<std::string, std::string> snark_proof_to_json(
         protocol_name = "fflonk";
     } else {
         throw std::runtime_error("Unknown protocol ID");
+    }
+    
+    // Validate proof size before parsing
+    // Each commitment is a G1 point with 2 coordinates (x, y), each coordinate is AltBn128::Fr.bytes()
+    // Each evaluation is a single Fr element
+    size_t expected_size = (orderedCommitments.size() * 2 + orderedEvaluations.size()) * AltBn128::Fr.bytes();
+    if (proof_size < expected_size) {
+        throw std::runtime_error("Proof size (" + std::to_string(proof_size) + 
+                                 " bytes) is smaller than expected (" + std::to_string(expected_size) + 
+                                 " bytes) for " + protocol_name + " protocol");
     }
     
     size_t offset = 0;

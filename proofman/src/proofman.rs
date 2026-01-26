@@ -1247,7 +1247,8 @@ where
             save_proof,
         )?;
 
-        Ok(VadcopFinalProof::new(&vadcop_final_proof_compressed.proof, true))
+        VadcopFinalProof::new(&vadcop_final_proof_compressed.proof, true)
+            .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e)))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2355,7 +2356,9 @@ where
 
                 let proof = vadcop_final.unwrap().into_iter().next().unwrap().proof;
 
-                vadcop_final_proof = Some(VadcopFinalProof::new(&proof, options.compressed));
+                vadcop_final_proof = Some(VadcopFinalProof::new(&proof, options.compressed).map_err(|e| {
+                    ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e))
+                })?);
 
                 proof_id = Some(
                     blake3::hash(unsafe { std::slice::from_raw_parts(proof.as_ptr() as *const u8, proof.len() * 8) })
@@ -2454,8 +2457,10 @@ where
             recursive2_proof[1..1 + publics_extended.len()].copy_from_slice(&publics_extended);
             recursive2_proof[1 + publics_extended.len()..].copy_from_slice(rec_proof);
 
-            let valid_recursive_proof =
-                verify_recursive2(&VadcopFinalProof::new(&recursive2_proof, false), &setup.get_vk());
+            let vadcop_proof = VadcopFinalProof::new(&recursive2_proof, false).map_err(|e| {
+                ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e))
+            })?;
+            let valid_recursive_proof = verify_recursive2(&vadcop_proof, &setup.get_vk());
 
             if !valid_recursive_proof {
                 self.cancellation_info
