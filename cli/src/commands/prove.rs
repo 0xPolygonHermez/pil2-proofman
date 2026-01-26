@@ -86,9 +86,6 @@ pub struct ProveCmd {
 
     #[clap(short = 'b', long, default_value_t = false)]
     pub save_proofs: bool,
-
-    #[clap(short = 'j', long, default_value_t = false)]
-    pub save_json_snark: bool,
 }
 
 impl ProveCmd {

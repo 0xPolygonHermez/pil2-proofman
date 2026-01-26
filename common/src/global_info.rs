@@ -209,14 +209,14 @@ impl GlobalInfo {
         self.airs[airgroup_id].len()
     }
 
-    pub fn get_public_starting_pos(&self, public_name: &str) -> usize {
+    pub fn get_public_starting_pos(&self, public_name: &str) -> ProofmanResult<usize> {
         if let Some(publics_map) = &self.publics_map {
             for (pos, public) in publics_map.iter().enumerate() {
                 if public.name == public_name {
-                    return pos;
+                    return Ok(pos);
                 }
             }
         }
-        panic!("Public '{}' not found in publics_map", public_name);
+        Err(ProofmanError::InvalidConfiguration(format!("Public '{}' not found in publics_map", public_name)))
     }
 }

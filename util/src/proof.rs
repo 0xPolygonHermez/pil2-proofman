@@ -71,21 +71,19 @@ impl VadcopFinalProof {
         result
     }
 
-    pub fn get_publics(&self) -> Vec<u64> {
-        let public_values_u64: &[u64] = cast_slice(&self.public_values);
-        public_values_u64.to_vec()
+    pub fn get_publics(&self) -> &[u64] {
+        cast_slice(&self.public_values)
     }
 
-    pub fn get_proof(&self) -> Vec<u64> {
-        let proof_u64: &[u64] = cast_slice(&self.proof);
-        proof_u64.to_vec()
+    pub fn get_proof(&self) -> &[u64] {
+        cast_slice(&self.proof)
     }
 
-    pub fn get_public_bytes(&self) -> Vec<u8> {
-        self.public_values.clone()
+    pub fn get_public_bytes(&self) -> &[u8] {
+        &self.public_values
     }
 
-    pub fn get_proof_bytes(&self) -> Vec<u8> {
-        self.proof.clone()
+    pub fn get_proof_bytes(&self) -> &[u8] {
+        &self.proof
     }
 }

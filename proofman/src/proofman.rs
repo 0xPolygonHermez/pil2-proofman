@@ -1232,7 +1232,7 @@ where
     ) -> ProofmanResult<VadcopFinalProof> {
         if vadcop_final_proof.compressed {
             return Err(ProofmanError::InvalidConfiguration(
-                "Compressed vadcop proofs are not supported for snark proof generation".to_string(),
+                "Cannot generate a compressed vadcop proof from an already compressed vadcop proof".to_string(),
             ));
         }
 

@@ -318,10 +318,12 @@ pub fn verify_snark_proof(snark_proof: &SnarkProof, vkey_path: &Path) -> Proofma
     let proof_path = temp_dir.join(format!("snark_proof_{}.json", unique_id));
     let publics_path = temp_dir.join(format!("snark_publics_{}.json", unique_id));
 
-    std::fs::write(&proof_path, serde_json::to_string_pretty(&proof_json_value).unwrap())
-        .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to write proof file: {}", e)))?;
-    std::fs::write(&publics_path, serde_json::to_string_pretty(&publics_json_value).unwrap())
-        .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to write publics file: {}", e)))?;
+    let proof_json_str = serde_json::to_string_pretty(&proof_json_value)
+        .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to serialize proof JSON: {}", e)))?;
+    let publics_json_str = serde_json::to_string_pretty(&publics_json_value)
+        .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to serialize publics JSON: {}", e)))?;
+    std::fs::write(&proof_path, proof_json_str)?;
+    std::fs::write(&publics_path, publics_json_str)?;
 
     // Determine protocol
     let protocol = SnarkProtocol::from_protocol_id(snark_proof.protocol_id)?;
