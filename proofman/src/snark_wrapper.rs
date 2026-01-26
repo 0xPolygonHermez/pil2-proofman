@@ -155,9 +155,10 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         let zkey_filename = setup_snark_path.display().to_string() + ".zkey";
         let snark_prover = init_final_snark_prover_c(zkey_filename.as_str());
         if snark_prover.is_null() {
-            return Err(std::io::Error::other(
-                format!("Failed to initialize final snark prover from zkey file '{}'", zkey_filename),
-            )
+            return Err(std::io::Error::other(format!(
+                "Failed to initialize final snark prover from zkey file '{}'",
+                zkey_filename
+            ))
             .into());
         }
         let protocol_id = get_snark_protocol_id_c(snark_prover);
