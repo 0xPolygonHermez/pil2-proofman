@@ -2,7 +2,7 @@ use crate::{ProofmanError, ProofmanResult};
 
 pub trait Trace<F>: Send {
     fn num_rows(&self) -> usize;
-    fn n_cols(&self) -> usize;
+    fn num_cols(&self) -> usize;
     fn airgroup_id(&self) -> usize;
     fn air_id(&self) -> usize;
     fn commit_id(&self) -> Option<usize>;
@@ -235,7 +235,7 @@ impl<
         NUM_ROWS
     }
 
-    fn n_cols(&self) -> usize {
+    fn num_cols(&self) -> usize {
         R::ROW_SIZE
     }
 

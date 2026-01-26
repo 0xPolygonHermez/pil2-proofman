@@ -21,7 +21,7 @@ pub fn write_custom_commit_trace<F: PrimeField64>(
     let n_extended = blowup_factor * custom_trace.num_rows() as u64;
     let n_bits = n.trailing_zeros() as u64;
     let n_bits_ext = n_extended.trailing_zeros() as u64;
-    let n_cols = custom_trace.n_cols() as u64;
+    let n_cols = custom_trace.num_cols() as u64;
     let mut root = vec![F::ZERO, F::ZERO, F::ZERO, F::ZERO];
 
     let mut root_file = vec![F::ZERO, F::ZERO, F::ZERO, F::ZERO];

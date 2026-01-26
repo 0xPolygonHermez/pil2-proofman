@@ -9,7 +9,7 @@ use std::fs;
 use fields::{PrimeField64, Transcript, Poseidon16};
 use crate::{
     initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode,
-    StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
+    RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
 };
 
 use std::ffi::c_void;
@@ -499,6 +499,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances_calculated[global_idx].store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
+    pub fn dctx_reset_instance_calculated(&self, global_idx: usize) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.instances_calculated[global_idx].store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
     pub fn dctx_is_instance_calculated(&self, global_idx: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
         dctx.instances_calculated[global_idx].load(std::sync::atomic::Ordering::SeqCst)
@@ -770,21 +775,8 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.air_instances[instance_id].read().unwrap().get_stream_id()
     }
 
-    pub fn get_air_instance_trace(
-        &self,
-        airgroup_id: usize,
-        air_id: usize,
-        air_instance_id: usize,
-    ) -> ProofmanResult<Vec<F>> {
-        let dctx = self.dctx.read().unwrap();
-        let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
-        if let Some(index) = index {
-            Ok(self.air_instances[index].read().unwrap().get_trace())
-        } else {
-            Err(ProofmanError::OutOfBounds(format!(
-                "Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found"
-            )))
-        }
+    pub fn get_air_instance_trace(&self, instance_id: usize, first_row: usize, n_rows: usize) -> Vec<RowInfo> {
+        self.air_instances[instance_id].read().unwrap().get_trace(first_row, n_rows)
     }
 
     pub fn get_air_instance_air_values(

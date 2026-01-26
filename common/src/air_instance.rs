@@ -1,10 +1,16 @@
 use std::ptr;
-use fields::Field;
+use fields::PrimeField64;
 use proofman_util::create_buffer_fast;
 
 use crate::{
     trace::{Trace, Values},
 };
+
+#[derive(Clone, serde::Serialize)]
+pub struct RowInfo {
+    pub row: usize,
+    pub values: Vec<u64>,
+}
 
 #[repr(C)]
 pub struct StepsParams {
@@ -55,6 +61,7 @@ pub struct CustomCommitInfo<F> {
 pub struct TraceInfo<F> {
     airgroup_id: usize,
     air_id: usize,
+    n_cols: usize,
     num_rows: usize,
     trace: Vec<F>,
     custom_traces: Option<Vec<CustomCommitInfo<F>>>,
@@ -68,6 +75,7 @@ impl<F> TraceInfo<F> {
     pub fn new(
         airgroup_id: usize,
         air_id: usize,
+        n_cols: usize,
         num_rows: usize,
         trace: Vec<F>,
         shared_buffer: bool,
@@ -76,6 +84,7 @@ impl<F> TraceInfo<F> {
         Self {
             airgroup_id,
             air_id,
+            n_cols,
             num_rows,
             trace,
             custom_traces: None,
@@ -143,6 +152,7 @@ pub struct AirInstance<F> {
     pub airgroup_id: usize,
     pub air_id: usize,
     pub num_rows: usize,
+    pub n_cols_trace: usize,
     pub trace: Vec<F>,
     pub aux_trace: Vec<F>,
     pub custom_commits_fixed: Vec<F>,
@@ -156,7 +166,7 @@ pub struct AirInstance<F> {
     pub stream_id: u64,
 }
 
-impl<F: Field> AirInstance<F> {
+impl<F: PrimeField64> AirInstance<F> {
     pub fn new(trace_info: TraceInfo<F>) -> Self {
         let airgroup_id = trace_info.airgroup_id;
         let air_id = trace_info.air_id;
@@ -170,6 +180,7 @@ impl<F: Field> AirInstance<F> {
             airgroup_id,
             air_id,
             num_rows,
+            n_cols_trace: trace_info.n_cols,
             trace: trace_info.trace,
             aux_trace: Vec::new(),
             custom_commits_fixed: Vec::new(),
@@ -188,6 +199,7 @@ impl<F: Field> AirInstance<F> {
         let mut trace_info = TraceInfo::new(
             traces.trace.airgroup_id(),
             traces.trace.air_id(),
+            traces.trace.num_cols(),
             traces.trace.num_rows(),
             traces.trace.get_buffer(),
             traces.trace.is_shared_buffer(),
@@ -212,8 +224,17 @@ impl<F: Field> AirInstance<F> {
         AirInstance::new(trace_info)
     }
 
-    pub fn get_trace(&self) -> Vec<F> {
-        self.trace.clone()
+    pub fn get_trace(&self, first_row: usize, n_rows: usize) -> Vec<RowInfo> {
+        let end_row = (first_row + n_rows).min(self.trace.len() / self.n_cols_trace);
+
+        (first_row..end_row)
+            .map(|row| {
+                let start = row * self.n_cols_trace;
+                let end = start + self.n_cols_trace;
+                let values = self.trace[start..end].iter().map(|v| F::as_canonical_u64(v)).collect();
+                RowInfo { row, values }
+            })
+            .collect()
     }
 
     pub fn get_trace_stage(&self, stage: usize) -> Vec<F> {

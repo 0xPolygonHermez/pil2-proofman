@@ -283,7 +283,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 self.num_rows
             }
 
-            fn n_cols(&self) -> usize {
+            fn num_cols(&self) -> usize {
                 self.row_size
             }
 

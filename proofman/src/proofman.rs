@@ -4,8 +4,8 @@ use libloading::{Library, Symbol};
 use fields::{ExtensionField, Transcript, PrimeField64, GoldilocksQuinticExtension, Poseidon16};
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
-    DebugInfo, MemoryHandler, MpiCtx, PackedInfo, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx,
-    SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
+    RowInfo, DebugInfo, MemoryHandler, MpiCtx, PackedInfo, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType,
+    SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -30,7 +30,7 @@ use tokio_util::sync::CancellationToken;
 
 use rand::{SeedableRng, seq::SliceRandom};
 use rand::rngs::StdRng;
-use proofman_common::{ProofmanResult, ProofmanError};
+use proofman_common::{ProofmanResult, ProofmanError, Setup};
 
 #[cfg(distributed)]
 use mpi::topology::Communicator;
@@ -82,6 +82,26 @@ struct CsvInfo {
     percentage_instances: f64,
     total_area: u64,
     percentage_area: f64,
+    instance_ids: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AirExecuteInfo {
+    pub airgroup_id: usize,
+    pub air_id: usize,
+    pub num_instances: usize,
+    pub instance_ids: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExecuteResult {
+    pub airs: Vec<AirExecuteInfo>,
+}
+
+impl ExecuteResult {
+    pub fn find(&self, airgroup_id: usize, air_id: usize) -> Option<&AirExecuteInfo> {
+        self.airs.iter().find(|info| info.airgroup_id == airgroup_id && info.air_id == air_id)
+    }
 }
 
 struct CancellationThread {
@@ -306,6 +326,10 @@ where
         self.pctx.mpi_ctx.n_processes
     }
 
+    pub fn get_setup(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<&Setup<F>> {
+        self.sctx.get_setup(airgroup_id, air_id)
+    }
+
     pub fn split_active_processes(&self, _is_active: bool) {
         #[cfg(distributed)]
         {
@@ -418,7 +442,7 @@ where
         public_inputs_path: Option<PathBuf>,
         output_path: Option<PathBuf>,
         verbose_mode: VerboseMode,
-    ) -> ProofmanResult<()> {
+    ) -> ProofmanResult<ExecuteResult> {
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
@@ -432,11 +456,11 @@ where
         self.execute_(output_path)
     }
 
-    pub fn execute_from_lib(&self, output_path: Option<PathBuf>) -> ProofmanResult<()> {
+    pub fn execute_from_lib(&self, output_path: Option<PathBuf>) -> ProofmanResult<ExecuteResult> {
         self.execute_(output_path)
     }
 
-    pub fn execute_(&self, output_path: Option<PathBuf>) -> ProofmanResult<()> {
+    pub fn execute_(&self, output_path: Option<PathBuf>) -> ProofmanResult<ExecuteResult> {
         self.pctx.dctx_setup(1, vec![0], 0)?;
 
         self.cancellation_info.write().unwrap().reset();
@@ -464,6 +488,7 @@ where
                         percentage_area: 0f64,
                         instance_count: 0,
                         percentage_instances: 0f64,
+                        instance_ids: Vec::new(),
                     },
                 );
             }
@@ -472,7 +497,7 @@ where
         let mut total_area = 0;
         let mut total_instances = 0;
 
-        for instance_info in instances.iter() {
+        for (instance_id, instance_info) in instances.iter().enumerate() {
             let airgroup_id = instance_info.airgroup_id;
             let air_id = instance_info.air_id;
 
@@ -493,6 +518,7 @@ where
             air_info.entry(air_name).and_modify(|info| {
                 info.total_area += area;
                 info.instance_count += 1;
+                info.instance_ids.push(instance_id);
             });
         }
 
@@ -538,7 +564,40 @@ where
             wtr.flush()?;
         }
 
-        Ok(())
+        let result = ExecuteResult {
+            airs: air_info
+                .values()
+                .map(|info| AirExecuteInfo {
+                    airgroup_id: info.airgroup_id,
+                    air_id: info.air_id,
+                    num_instances: info.instance_count,
+                    instance_ids: info.instance_ids.clone(),
+                })
+                .collect(),
+        };
+
+        Ok(result)
+    }
+
+    pub fn get_instance_trace(
+        &self,
+        instance_id: usize,
+        first_row: usize,
+        num_rows: usize,
+    ) -> ProofmanResult<Vec<RowInfo>> {
+        if self.pctx.dctx_is_instance_calculated(instance_id) {
+            return Ok(self.pctx.get_air_instance_trace(instance_id, first_row, num_rows));
+        }
+
+        self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
+        self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
+
+        let is_shared_buffer = self.pctx.is_shared_buffer(instance_id);
+        if is_shared_buffer {
+            self.memory_handler.to_be_released_buffer(instance_id, true);
+        }
+
+        Ok(self.pctx.get_air_instance_trace(instance_id, first_row, num_rows))
     }
 
     pub fn compute_witness(
@@ -1522,7 +1581,7 @@ where
 
                             let is_shared_buffer = pctx_clone.is_shared_buffer(instance_id);
                             if is_shared_buffer {
-                                memory_handler_clone.to_be_released_buffer(instance_id);
+                                memory_handler_clone.to_be_released_buffer(instance_id, false);
                             }
                         }
                         Err(crossbeam_channel::TryRecvError::Empty) => {

@@ -8,7 +8,7 @@ use crate::{ProofmanError, ProofmanResult};
 
 pub struct MemoryHandler<F: PrimeField64 + Send + Sync + 'static> {
     pctx: Arc<ProofCtx<F>>,
-    instance_ids_to_be_released: Arc<SegQueue<usize>>,
+    instance_ids_to_be_released: Arc<SegQueue<(usize, bool)>>,
     sender: Sender<Vec<F>>,
     receiver: Receiver<Vec<F>>,
     n_buffers: usize,
@@ -74,7 +74,10 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
             if let Ok(buffer) = self.receiver.try_recv() {
                 return buffer;
             }
-            if let Some(stored_instance_id) = self.instance_ids_to_be_released.pop() {
+            if let Some((stored_instance_id, remove_from_calculated)) = self.instance_ids_to_be_released.pop() {
+                if remove_from_calculated {
+                    self.pctx.dctx_reset_instance_calculated(stored_instance_id);
+                }
                 let (is_shared_buffer, witness_buffer) = self.pctx.free_instance_traces(stored_instance_id);
                 if is_shared_buffer {
                     return witness_buffer;
@@ -96,8 +99,8 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
         Ok(())
     }
 
-    pub fn to_be_released_buffer(&self, instance_id: usize) {
-        self.instance_ids_to_be_released.push(instance_id);
+    pub fn to_be_released_buffer(&self, instance_id: usize, remove_from_calculated: bool) {
+        self.instance_ids_to_be_released.push((instance_id, remove_from_calculated));
     }
 
     pub fn get_n_buffers(&self) -> usize {
