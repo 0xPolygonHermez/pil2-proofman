@@ -45,6 +45,10 @@ impl<F: PrimeField64> WitnessManager<F> {
         self.pctx.mpi_ctx.node_rank
     }
 
+    pub fn set_witness_initialized(&self) {
+        self.init.store(true, Ordering::SeqCst);
+    }
+    
     pub fn set_init_witness(&self, init: bool, library: Library) {
         self.init.store(init, Ordering::SeqCst);
         self.library.lock().unwrap().replace(library);
