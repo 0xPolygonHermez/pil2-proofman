@@ -145,6 +145,22 @@ impl DebugInfo {
         }
     }
 }
+impl Default for ProofOptions {
+    fn default() -> Self {
+        Self {
+            verify_constraints: false,
+            aggregation: true,
+            rma: false,
+            compressed: false,
+            verify_proofs: false,
+            minimal_memory: false,
+            save_proofs: false,
+            output_dir_path: PathBuf::new(),
+            test_mode: false,
+        }
+    }
+}
+
 impl ProofOptions {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -192,6 +208,23 @@ impl ProofOptions {
             output_dir_path,
             test_mode: true,
         }
+    }
+
+    pub fn minimal_memory(&mut self) {
+        self.minimal_memory = true;
+    }
+
+    pub fn use_rma(&mut self) {
+        self.rma = true;
+    }
+
+    pub fn compressed(&mut self) {
+        self.compressed = true;
+    }
+
+    pub fn save_proofs(&mut self, output_dir_path: PathBuf) {
+        self.save_proofs = true;
+        self.output_dir_path = output_dir_path;
     }
 }
 

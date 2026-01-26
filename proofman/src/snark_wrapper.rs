@@ -313,7 +313,10 @@ pub fn verify_snark_proof(snark_proof: &SnarkProof, vkey_path: &Path) -> Proofma
     let unique_id = format!(
         "{}_{}",
         std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
+            .as_nanos()
     );
     let proof_path = temp_dir.join(format!("snark_proof_{}.json", unique_id));
     let publics_path = temp_dir.join(format!("snark_publics_{}.json", unique_id));
@@ -347,8 +350,12 @@ pub fn verify_snark_proof(snark_proof: &SnarkProof, vkey_path: &Path) -> Proofma
         .output()
         .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to execute snarkjs: {}", e)))?;
 
-    let _ = std::fs::remove_file(&proof_path);
-    let _ = std::fs::remove_file(&publics_path);
+    if let Err(e) = std::fs::remove_file(&proof_path) {
+        tracing::warn!("Failed to remove temporary SNARK proof file {}: {}", proof_path.display(), e);
+    }
+    if let Err(e) = std::fs::remove_file(&publics_path) {
+        tracing::warn!("Failed to remove temporary SNARK publics file {}: {}", publics_path.display(), e);
+    }
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
