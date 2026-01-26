@@ -1,11 +1,10 @@
 use std::collections::HashSet;
-use std::sync::{Arc, RwLock, Mutex};
+use std::sync::{Arc, RwLock};
 use std::path::PathBuf;
 
 use fields::PrimeField64;
 use proofman_common::{BufferPool, DebugInfo, ModeName, ProofCtx, ProofmanResult, SetupCtx};
 use crate::WitnessComponent;
-use libloading::Library;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const MAX_COMPONENTS: usize = 1000;
@@ -17,8 +16,6 @@ pub struct WitnessManager<F: PrimeField64> {
     pctx: Arc<ProofCtx<F>>,
     sctx: Arc<SetupCtx<F>>,
     public_inputs_path: RwLock<Option<PathBuf>>,
-    init: AtomicBool,
-    library: Mutex<Option<Library>>,
     execution_done: AtomicBool,
 }
 
@@ -31,8 +28,6 @@ impl<F: PrimeField64> WitnessManager<F> {
             pctx,
             sctx,
             public_inputs_path: RwLock::new(None),
-            init: AtomicBool::new(false),
-            library: Mutex::new(None),
             execution_done: AtomicBool::new(false),
         }
     }
@@ -43,15 +38,6 @@ impl<F: PrimeField64> WitnessManager<F> {
 
     pub fn get_local_rank(&self) -> i32 {
         self.pctx.mpi_ctx.node_rank
-    }
-
-    pub fn set_init_witness(&self, init: bool, library: Library) {
-        self.init.store(init, Ordering::SeqCst);
-        self.library.lock().unwrap().replace(library);
-    }
-
-    pub fn is_init_witness(&self) -> bool {
-        self.init.load(Ordering::SeqCst)
     }
 
     pub fn set_public_inputs_path(&self, path: Option<PathBuf>) {

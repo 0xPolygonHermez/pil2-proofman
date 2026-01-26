@@ -1,6 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytemuck::cast_slice;
-use libloading::{Library, Symbol};
 use fields::{ExtensionField, Transcript, PrimeField64, GoldilocksQuinticExtension, Poseidon16};
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
@@ -46,7 +45,7 @@ use std::{
     sync::Arc,
 };
 
-use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
+use witness::WitnessManager;
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
 use crate::{
     calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, initialize_setup_info,
@@ -302,6 +301,10 @@ impl<F: PrimeField64> ProofMan<F>
 where
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
+    pub fn get_wcm(&self) -> Arc<WitnessManager<F>> {
+        self.wcm.clone()
+    }
+
     pub fn set_barrier(&self) {
         self.mpi_ctx.barrier();
     }
@@ -436,31 +439,7 @@ where
         Ok(())
     }
 
-    pub fn execute(
-        &self,
-        witness_lib_path: PathBuf,
-        public_inputs_path: Option<PathBuf>,
-        output_path: Option<PathBuf>,
-        verbose_mode: VerboseMode,
-    ) -> ProofmanResult<ExecuteResult> {
-        timer_start_info!(CREATE_WITNESS_LIB);
-        let library = unsafe { Library::new(&witness_lib_path)? };
-        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
-        timer_stop_and_log_info!(CREATE_WITNESS_LIB);
-
-        self.wcm.set_public_inputs_path(public_inputs_path);
-
-        self.register_witness(&mut *witness_lib, library)?;
-
-        self.execute_(output_path)
-    }
-
     pub fn execute_from_lib(&self, output_path: Option<PathBuf>) -> ProofmanResult<ExecuteResult> {
-        self.execute_(output_path)
-    }
-
-    pub fn execute_(&self, output_path: Option<PathBuf>) -> ProofmanResult<ExecuteResult> {
         self.pctx.dctx_setup(1, vec![0], 0)?;
 
         self.cancellation_info.write().unwrap().reset();
@@ -600,36 +579,10 @@ where
         Ok(self.pctx.get_air_instance_trace(instance_id, first_row, num_rows))
     }
 
-    pub fn compute_witness(
-        &self,
-        witness_lib_path: PathBuf,
-        public_inputs_path: Option<PathBuf>,
-        debug_info: &DebugInfo,
-        verbose_mode: VerboseMode,
-        options: ProofOptions,
-    ) -> ProofmanResult<()> {
-        timer_start_info!(CREATE_WITNESS_LIB);
-        let library = unsafe { Library::new(&witness_lib_path)? };
-        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
-        timer_stop_and_log_info!(CREATE_WITNESS_LIB);
-
-        self.wcm.set_public_inputs_path(public_inputs_path);
-        self.pctx.set_debug_info(debug_info);
-
-        self.register_witness(&mut *witness_lib, library)?;
-
-        self.compute_witness_(options)
-    }
-
     /// Computes only the witness without generating a proof neither verifying constraints.
     /// This is useful for debugging or benchmarking purposes.
     pub fn compute_witness_from_lib(&self, debug_info: &DebugInfo, options: ProofOptions) -> ProofmanResult<()> {
         self.pctx.set_debug_info(debug_info);
-        self.compute_witness_(options)
-    }
-
-    pub fn compute_witness_(&self, options: ProofOptions) -> ProofmanResult<()> {
         self.pctx.dctx_setup(1, vec![0], 0)?;
 
         self.cancellation_info.write().unwrap().reset();
@@ -692,63 +645,7 @@ where
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn get_debug_info(
-        &self,
-        witness_lib_path: PathBuf,
-        public_inputs_path: Option<PathBuf>,
-        input_data_path: Option<PathBuf>,
-        output_dir_path: PathBuf,
-        debug_info: &DebugInfo,
-        verbose_mode: VerboseMode,
-    ) -> ProofmanResult<()> {
-        // Check witness_lib path exists
-        if !witness_lib_path.exists() {
-            return Err(ProofmanError::InvalidParameters(format!(
-                "Witness computation dynamic library not found at path: {witness_lib_path:?}"
-            )));
-        }
-
-        // Check input data path
-        if let Some(ref input_data_path) = input_data_path {
-            if !input_data_path.exists() {
-                return Err(ProofmanError::InvalidParameters(format!(
-                    "Input data file not found at path: {input_data_path:?}"
-                )));
-            }
-        }
-
-        // Check public_inputs_path is a folder
-        if let Some(ref publics_path) = public_inputs_path {
-            if !publics_path.exists() {
-                return Err(ProofmanError::InvalidParameters(format!(
-                    "Public inputs file not found at path: {publics_path:?}"
-                )));
-            }
-        }
-
-        if !output_dir_path.exists() {
-            fs::create_dir_all(&output_dir_path)?;
-        }
-
-        timer_start_info!(CREATE_WITNESS_LIB);
-        let library = unsafe { Library::new(&witness_lib_path)? };
-        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
-        timer_stop_and_log_info!(CREATE_WITNESS_LIB);
-
-        self.wcm.set_public_inputs_path(public_inputs_path);
-
-        self.register_witness(&mut *witness_lib, library)?;
-
-        self._get_debug_info(debug_info)
-    }
-
     pub fn get_debug_info_from_lib(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
-        self._get_debug_info(debug_info)
-    }
-
-    fn _get_debug_info(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
         self.pctx.dctx_setup(1, vec![0], 0)?;
 
         self.pctx.set_debug_info(debug_info);
@@ -821,64 +718,7 @@ where
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn verify_proof_constraints(
-        &self,
-        witness_lib_path: PathBuf,
-        public_inputs_path: Option<PathBuf>,
-        input_data_path: Option<PathBuf>,
-        output_dir_path: PathBuf,
-        debug_info: &DebugInfo,
-        verbose_mode: VerboseMode,
-        test_mode: bool,
-    ) -> ProofmanResult<()> {
-        // Check witness_lib path exists
-        if !witness_lib_path.exists() {
-            return Err(ProofmanError::InvalidParameters(format!(
-                "Witness computation dynamic library not found at path: {witness_lib_path:?}"
-            )));
-        }
-
-        // Check input data path
-        if let Some(ref input_data_path) = input_data_path {
-            if !input_data_path.exists() {
-                return Err(ProofmanError::InvalidParameters(format!(
-                    "Input data file not found at path: {input_data_path:?}"
-                )));
-            }
-        }
-
-        // Check public_inputs_path is a folder
-        if let Some(ref publics_path) = public_inputs_path {
-            if !publics_path.exists() {
-                return Err(ProofmanError::InvalidParameters(format!(
-                    "Public inputs file not found at path: {publics_path:?}"
-                )));
-            }
-        }
-
-        if !output_dir_path.exists() {
-            fs::create_dir_all(&output_dir_path)?;
-        }
-
-        timer_start_info!(CREATE_WITNESS_LIB);
-        let library = unsafe { Library::new(&witness_lib_path)? };
-        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
-        timer_stop_and_log_info!(CREATE_WITNESS_LIB);
-
-        self.wcm.set_public_inputs_path(public_inputs_path);
-
-        self.register_witness(&mut *witness_lib, library)?;
-
-        self._verify_proof_constraints(debug_info, test_mode)
-    }
-
     pub fn verify_proof_constraints_from_lib(&self, debug_info: &DebugInfo, test_mode: bool) -> ProofmanResult<()> {
-        self._verify_proof_constraints(debug_info, test_mode)
-    }
-
-    fn _verify_proof_constraints(&self, debug_info: &DebugInfo, test_mode: bool) -> ProofmanResult<()> {
         timer_start_info!(VERIFYING_PROOF_CONSTRAINTS);
         if cfg!(feature = "packed") && !cfg!(feature = "gpu") {
             return Err(ProofmanError::InvalidConfiguration("Packed witnesses are not supported in this mode".into()));
@@ -1124,96 +964,6 @@ where
             memory_handler.release_buffer(witness_buffer)?;
         }
         Ok(())
-    }
-
-    #[allow(clippy::type_complexity)]
-    pub fn generate_proof(
-        &self,
-        witness_lib_path: PathBuf,
-        public_inputs_path: Option<PathBuf>,
-        input_data_path: Option<PathBuf>,
-        verbose_mode: VerboseMode,
-        options: ProofOptions,
-    ) -> ProofmanResult<ProvePhaseResult> {
-        // Check witness_lib path exists
-        if !witness_lib_path.exists() {
-            return Err(ProofmanError::InvalidParameters(format!(
-                "Witness computation dynamic library not found at path: {witness_lib_path:?}"
-            )));
-        }
-
-        // Check input data path
-        if let Some(ref input_data_path) = input_data_path {
-            if !input_data_path.exists() {
-                return Err(ProofmanError::InvalidParameters(format!(
-                    "Input data file not found at path: {input_data_path:?}"
-                )));
-            }
-        }
-
-        // Check public_inputs_path is a folder
-        if let Some(ref publics_path) = public_inputs_path {
-            if !publics_path.exists() {
-                return Err(ProofmanError::InvalidParameters(format!(
-                    "Public inputs file not found at path: {publics_path:?}"
-                )));
-            }
-        }
-
-        if !options.output_dir_path.exists() {
-            fs::create_dir_all(&options.output_dir_path)?;
-        }
-
-        timer_start_info!(CREATE_WITNESS_LIB);
-        let library = unsafe { Library::new(&witness_lib_path)? };
-        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
-        timer_stop_and_log_info!(CREATE_WITNESS_LIB);
-
-        self.wcm.set_public_inputs_path(public_inputs_path);
-
-        self.register_witness(&mut *witness_lib, library)?;
-
-        if self.verify_constraints {
-            return Err(ProofmanError::InvalidParameters(
-                "Proofman has been initialized in verify_constraints mode".into(),
-            ));
-        }
-
-        if options.aggregation && !self.aggregation {
-            return Err(ProofmanError::InvalidParameters(
-                "Proofman has not been initialized in aggregation mode".into(),
-            ));
-        }
-
-        let phase_inputs = ProvePhaseInputs::Full(ProofInfo::new(input_data_path, 1, vec![0], 0));
-        self._generate_proof(phase_inputs, options, ProvePhase::Full)
-    }
-
-    #[allow(clippy::type_complexity)]
-    pub fn generate_proof_from_lib(
-        &self,
-        phase_inputs: ProvePhaseInputs,
-        options: ProofOptions,
-        phase: ProvePhase,
-    ) -> ProofmanResult<ProvePhaseResult> {
-        if !options.output_dir_path.exists() {
-            fs::create_dir_all(&options.output_dir_path)?;
-        }
-
-        if self.verify_constraints {
-            return Err(ProofmanError::InvalidParameters(
-                "Proofman has been initialized in verify_constraints mode".into(),
-            ));
-        }
-
-        if options.aggregation && !self.aggregation {
-            return Err(ProofmanError::InvalidParameters(
-                "Proofman has not been initialized in aggregation mode".into(),
-            ));
-        }
-
-        self._generate_proof(phase_inputs, options, phase)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1508,22 +1258,29 @@ where
         Ok(())
     }
 
-    pub fn register_witness(&self, witness_lib: &mut dyn WitnessLibrary<F>, library: Library) -> ProofmanResult<()> {
-        timer_start_info!(REGISTERING_WITNESS);
-        witness_lib.register_witness(&self.wcm)?;
-        self.wcm.set_init_witness(true, library);
-        timer_stop_and_log_info!(REGISTERING_WITNESS);
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::type_complexity)]
-    fn _generate_proof(
+    pub fn generate_proof_from_lib(
         &self,
         phase_inputs: ProvePhaseInputs,
         options: ProofOptions,
         phase: ProvePhase,
     ) -> ProofmanResult<ProvePhaseResult> {
+        if self.verify_constraints {
+            return Err(ProofmanError::InvalidParameters(
+                "Proofman has been initialized in verify_constraints mode".into(),
+            ));
+        }
+
+        if options.aggregation && !self.aggregation {
+            return Err(ProofmanError::InvalidParameters(
+                "Proofman has not been initialized in aggregation mode".into(),
+            ));
+        }
+
+        if !options.output_dir_path.exists() {
+            fs::create_dir_all(&options.output_dir_path)?;
+        }
+
         let _cancellation_thread = CancellationThread::new(self.cancellation_info.clone(), self.mpi_ctx.clone());
 
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
@@ -2775,10 +2532,6 @@ where
 
     fn exec(&self) -> ProofmanResult<()> {
         timer_start_info!(EXECUTE);
-
-        if !self.wcm.is_init_witness() {
-            return Err(ProofmanError::ProofmanError("Witness computation dynamic library not initialized".into()));
-        }
 
         if let Err(e) = self.wcm.execute() {
             self.cancellation_info.write().unwrap().cancel(Some(e));

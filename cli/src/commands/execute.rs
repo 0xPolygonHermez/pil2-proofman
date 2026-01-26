@@ -5,6 +5,7 @@ use colored::Colorize;
 use crate::commands::field::Field;
 
 use fields::Goldilocks;
+use witness::load_witness_library;
 
 use proofman::ProofMan;
 use proofman_common::ParamsGPU;
@@ -22,10 +23,6 @@ pub struct ExecuteCmd {
     /// to generate the witness.
     #[clap(short = 'e', long)]
     pub elf: Option<PathBuf>,
-
-    /// Inputs path
-    #[clap(short = 'i', long)]
-    pub input_data: Option<PathBuf>,
 
     /// Public inputs path
     #[clap(short = 'p', long)]
@@ -73,13 +70,16 @@ impl ExecuteCmd {
             HashMap::new(),
         )?;
 
+        let _witness_lib = load_witness_library(
+            &self.witness_lib,
+            self.public_inputs.clone(),
+            &proofman.get_wcm(),
+            self.verbose.into(),
+            proofman.rank(),
+        )?;
+
         match self.field {
-            Field::Goldilocks => proofman.execute(
-                self.witness_lib.clone(),
-                self.public_inputs.clone(),
-                self.output_path.clone(),
-                self.verbose.into(),
-            )?,
+            Field::Goldilocks => proofman.execute_from_lib(self.output_path.clone())?,
         };
 
         Ok(())

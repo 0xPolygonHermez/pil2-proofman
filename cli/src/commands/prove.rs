@@ -11,10 +11,11 @@ use fields::Goldilocks;
 
 use proofman::SnarkWrapper;
 use proofman::ProofMan;
-use proofman::ProvePhaseResult;
+use proofman::{ProvePhaseResult, ProvePhase, ProvePhaseInputs, ProofInfo};
 use proofman_common::{ModeName, ProofOptions, ParamsGPU};
 use std::fs::{self, File};
 use std::path::Path;
+use witness::load_witness_library;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -153,6 +154,14 @@ impl ProveCmd {
             HashMap::new(),
         )?;
 
+        let _witness_lib = load_witness_library(
+            &self.witness_lib,
+            self.public_inputs.clone(),
+            &proofman.get_wcm(),
+            self.verbose.into(),
+            proofman.rank(),
+        )?;
+
         let proof_options = ProofOptions::new(
             false,
             self.aggregation,
@@ -165,26 +174,15 @@ impl ProveCmd {
         );
         if debug_info.std_mode.name == ModeName::Debug {
             match self.field {
-                Field::Goldilocks => proofman.verify_proof_constraints(
-                    self.witness_lib.clone(),
-                    self.public_inputs.clone(),
-                    None,
-                    self.output_dir.clone(),
-                    &debug_info.clone(),
-                    self.verbose.into(),
-                    false,
-                )?,
+                Field::Goldilocks => proofman.verify_proof_constraints_from_lib(&debug_info.clone(), false)?,
             };
         } else {
             proofman.set_barrier();
+            let phase_inputs = ProvePhaseInputs::Full(ProofInfo::new(None, 1, vec![0], 0));
             let result = match self.field {
-                Field::Goldilocks => proofman.generate_proof(
-                    self.witness_lib.clone(),
-                    self.public_inputs.clone(),
-                    None,
-                    self.verbose.into(),
-                    proof_options.clone(),
-                )?,
+                Field::Goldilocks => {
+                    proofman.generate_proof_from_lib(phase_inputs, proof_options.clone(), ProvePhase::Full)?
+                }
             };
 
             if let ProvePhaseResult::Full(_, Some(vadcop_final_proof)) = result {

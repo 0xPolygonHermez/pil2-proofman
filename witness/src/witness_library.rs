@@ -1,7 +1,9 @@
 use crate::WitnessManager;
 use fields::PrimeField64;
-use proofman_common::{PackedInfo, ProofCtx, ProofmanResult, VerboseMode};
+use proofman_common::{PackedInfo, ProofCtx, ProofmanResult, ProofmanError, VerboseMode};
+use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 /// This is the type of the function that is used to load a witness library.
 pub type WitnessLibInitFn<F> = fn(VerboseMode, Option<i32>) -> ProofmanResult<Box<dyn WitnessLibrary<F>>>;
@@ -38,4 +40,31 @@ macro_rules! witness_library {
             Ok(Box::new($lib_name))
         }
     };
+}
+
+pub fn load_witness_library<F: PrimeField64>(
+    witness_lib_path: &Path,
+    public_inputs_path: Option<PathBuf>,
+    wcm: &WitnessManager<F>,
+    verbose_mode: VerboseMode,
+    rank: Option<i32>,
+) -> ProofmanResult<Box<dyn WitnessLibrary<F>>> {
+    if let Some(ref publics_path) = public_inputs_path {
+        if !publics_path.exists() {
+            return Err(ProofmanError::InvalidParameters(format!(
+                "Public inputs file not found at path: {publics_path:?}"
+            )));
+        }
+        wcm.set_public_inputs_path(public_inputs_path);
+    }
+
+    timer_start_info!(CREATE_WITNESS_LIB);
+    let library = unsafe { libloading::Library::new(witness_lib_path)? };
+    let witness_library: libloading::Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
+    let mut witness_lib = witness_library(verbose_mode, rank)?;
+    timer_stop_and_log_info!(CREATE_WITNESS_LIB);
+
+    witness_lib.register_witness(wcm)?;
+
+    Ok(witness_lib)
 }

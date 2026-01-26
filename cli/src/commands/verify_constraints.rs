@@ -6,6 +6,7 @@ use colored::Colorize;
 use crate::commands::field::Field;
 
 use fields::Goldilocks;
+use witness::load_witness_library;
 
 use proofman::ProofMan;
 use proofman_common::ParamsGPU;
@@ -23,10 +24,6 @@ pub struct VerifyConstraintsCmd {
     /// to generate the witness.
     #[clap(short = 'e', long)]
     pub elf: Option<PathBuf>,
-
-    /// Inputs path
-    #[clap(short = 'i', long)]
-    pub input_data: Option<PathBuf>,
 
     /// Public inputs path
     #[clap(short = 'p', long)]
@@ -80,16 +77,16 @@ impl VerifyConstraintsCmd {
             HashMap::new(),
         )?;
 
+        let _witness_lib = load_witness_library(
+            &self.witness_lib,
+            self.public_inputs.clone(),
+            &proofman.get_wcm(),
+            self.verbose.into(),
+            proofman.rank(),
+        )?;
+
         match self.field {
-            Field::Goldilocks => proofman.verify_proof_constraints(
-                self.witness_lib.clone(),
-                self.public_inputs.clone(),
-                self.input_data.clone(),
-                PathBuf::new(),
-                &debug_info,
-                self.verbose.into(),
-                false,
-            )?,
+            Field::Goldilocks => proofman.verify_proof_constraints_from_lib(&debug_info, false)?,
         };
 
         Ok(())

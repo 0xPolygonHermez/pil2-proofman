@@ -6,6 +6,7 @@ use colored::Colorize;
 use crate::commands::field::Field;
 
 use fields::Goldilocks;
+use witness::load_witness_library;
 
 use proofman::ProofMan;
 use proofman_common::ParamsGPU;
@@ -93,12 +94,17 @@ impl StatsCmd {
             HashMap::new(),
         )?;
 
+        let _witness_lib = load_witness_library(
+            &self.witness_lib,
+            self.public_inputs.clone(),
+            &proofman.get_wcm(),
+            self.verbose.into(),
+            proofman.rank(),
+        )?;
+
         match self.field {
-            Field::Goldilocks => proofman.compute_witness(
-                self.witness_lib.clone(),
-                self.public_inputs.clone(),
+            Field::Goldilocks => proofman.compute_witness_from_lib(
                 &debug_info,
-                self.verbose.into(),
                 ProofOptions::new(false, false, false, false, false, self.minimal_memory, false, PathBuf::new()),
             )?,
         };
