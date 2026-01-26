@@ -302,6 +302,10 @@ impl<F: PrimeField64> ProofMan<F>
 where
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
+    pub fn get_wcm(&self) -> Arc<WitnessManager<F>> {
+        self.wcm.clone()
+    }
+    
     pub fn set_barrier(&self) {
         self.mpi_ctx.barrier();
     }
