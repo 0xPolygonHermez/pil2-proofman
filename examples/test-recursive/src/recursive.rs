@@ -128,6 +128,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
             let air_instance = AirInstance::new(TraceInfo::new(
                 0,
                 0,
+                n_cols as usize,
                 1 << (setup.stark_info.stark_struct.n_bits),
                 trace,
                 false,

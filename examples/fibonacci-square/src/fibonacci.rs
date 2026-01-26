@@ -93,21 +93,4 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         write_custom_commit_trace::<F>(&mut trace_rom, blowup_factor, MERKLE_TREE_ARITY, &file_name, check)?;
         Ok(())
     }
-
-    fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) -> ProofmanResult<()> {
-        // let trace = FibonacciSquareTrace::new_from_vec(_pctx.get_air_instance_trace(0, 0, 0));
-        // let fixed = FibonacciSquareFixed::new_from_vec(_sctx.get_fixed(0, 0));
-        // let air_values = FibonacciSquareAirValues::new_from_vec(pctx.get_air_instance_air_values(0, 0, 0));
-        // let airgroup_values = FibonacciSquareAirGroupValues::new_from_vec(pctx.get_air_instance_airgroup_values(0, 0, 0));
-
-        // let publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
-        // let proof_values = BuildProofValues::from_vec_guard(pctx.get_proof_values());
-
-        // tracing::info!("  First row 1: {:?}", trace[1]);
-        // tracing::info!("  Air values: {:?}", air_values);
-        // tracing::info!("  Airgroup values: {:?}", airgroup_values);
-        // tracing::info!("  Publics: {:?}", publics);
-        // tracing::info!("  Proof values: {:?}", proof_values);
-        Ok(())
-    }
 }

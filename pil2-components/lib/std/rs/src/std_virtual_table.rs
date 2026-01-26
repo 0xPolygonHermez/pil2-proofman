@@ -330,7 +330,7 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         &self,
         stage: u32,
         pctx: Arc<ProofCtx<F>>,
-        _sctx: Arc<SetupCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
@@ -359,9 +359,12 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
                         chunk[col] = F::from_u64(vec[row].load(Ordering::Relaxed));
                     }
                 });
+                let setup = sctx.get_setup(self.airgroup_id, self.air_id)?;
+                let n_cols = setup.stark_info.map_sections_n["cm1"] as usize;
                 let air_instance = AirInstance::new(TraceInfo::new(
                     self.airgroup_id,
                     self.air_id,
+                    n_cols,
                     self.num_rows,
                     buffer,
                     false,
