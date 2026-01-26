@@ -208,4 +208,15 @@ impl GlobalInfo {
     pub fn get_n_airs_for_airgroup(&self, airgroup_id: usize) -> usize {
         self.airs[airgroup_id].len()
     }
+
+    pub fn get_public_starting_pos(&self, public_name: &str) -> usize {
+        if let Some(publics_map) = &self.publics_map {
+            for (pos, public) in publics_map.iter().enumerate() {
+                if public.name == public_name {
+                    return pos;
+                }
+            }
+        }
+        panic!("Public '{}' not found in publics_map", public_name);
+    }
 }

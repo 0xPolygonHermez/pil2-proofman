@@ -102,6 +102,10 @@ impl SnarkProof {
 
         Ok((proof_json_value, publics_json_value))
     }
+
+    pub fn get_public_bytes(&self) -> &[u8] {
+        &self.public_bytes
+    }
 }
 
 impl<F: PrimeField64> Drop for SnarkWrapper<F> {
