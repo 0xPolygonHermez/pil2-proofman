@@ -36,7 +36,19 @@ impl VadcopFinalProof {
     }
 
     pub fn save(&self, dir: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let file_path = dir.as_ref().join("vadcop_final_proof.bin");
+        let dir_path = dir.as_ref();
+
+        // Create directory if it doesn't exist
+        if !dir_path.exists() {
+            std::fs::create_dir_all(dir_path).map_err(|e| {
+                std::io::Error::new(
+                    e.kind(),
+                    format!("Failed to create directory for saving proof: {}: {}", dir_path.display(), e),
+                )
+            })?;
+        }
+
+        let file_path = dir_path.join("vadcop_final_proof.bin");
 
         let file = File::create(&file_path).map_err(|e| {
             std::io::Error::new(
