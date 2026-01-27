@@ -60,7 +60,7 @@ impl ProveSnarkCmd {
             let snark_wrapper: SnarkWrapper<Goldilocks> =
                 SnarkWrapper::new(&self.proving_key_snark, self.verbose.into())?;
             let snark_proof = snark_wrapper.generate_final_snark_proof(&proof, &self.output_dir)?;
-            snark_proof.save(&self.output_dir)?;
+            snark_proof.save(self.output_dir.join("snark_proof.bin"))?;
             Ok(())
         }
     }

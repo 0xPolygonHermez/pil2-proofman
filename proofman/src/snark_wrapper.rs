@@ -6,7 +6,7 @@ use proofman_util::{timer_start_info, timer_stop_and_log_info, create_buffer_fas
 use fields::PrimeField64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::fs::{File, create_dir_all};
+use std::fs::File;
 use std::process::Command;
 use colored::Colorize;
 use std::ffi::c_void;
@@ -67,15 +67,20 @@ impl SnarkProof {
         Self { proof_bytes, public_bytes, public_snark_bytes, protocol_id }
     }
 
-    pub fn save(&self, dir: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let file_path = dir.as_ref().join("final_snark_proof.bin");
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let path = path.as_ref();
 
-        let file = File::create(&file_path).map_err(|e| {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let file = File::create(path).map_err(|e| {
             std::io::Error::new(
                 e.kind(),
-                format!("Failed to create file for saving SNARK proof: {}: {}", file_path.display(), e),
+                format!("Failed to create file for saving SNARK proof: {}: {}", path.display(), e),
             )
         })?;
+
         bincode::serialize_into(file, self)?;
         Ok(())
     }
@@ -196,13 +201,6 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             SnarkProof::new(snark_proof_bytes, public_bytes, snark_publics_bytes, self.protocol.protocol_id());
 
         timer_stop_and_log_info!(GENERATING_SNARK_PROOF);
-
-        let proofs_dir = output_dir_path.join("snark_proof");
-        create_dir_all(&proofs_dir)?;
-
-        snark_proof
-            .save(&proofs_dir)
-            .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to save SNARK proof: {}", e)))?;
 
         Ok(snark_proof)
     }

@@ -184,7 +184,7 @@ impl ProveCmd {
 
             if let ProvePhaseResult::Full(_, Some(vadcop_final_proof)) = result {
                 // Save the vadcop final proof using the struct's save method
-                vadcop_final_proof.save(self.output_dir.clone())?;
+                vadcop_final_proof.save(self.output_dir.join("vadcop_final_proof.bin"))?;
 
                 if let Some(proving_key_snark) = &self.proving_key_snark {
                     let snark_wrapper: SnarkWrapper<Goldilocks> =

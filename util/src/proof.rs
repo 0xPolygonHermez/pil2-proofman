@@ -35,27 +35,20 @@ impl VadcopFinalProof {
         Ok(Self { public_values: cast_slice(publics).to_vec(), proof: cast_slice(proof_u64).to_vec(), compressed })
     }
 
-    pub fn save(&self, dir: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let dir_path = dir.as_ref();
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let path = path.as_ref();
 
-        // Create directory if it doesn't exist
-        if !dir_path.exists() {
-            std::fs::create_dir_all(dir_path).map_err(|e| {
-                std::io::Error::new(
-                    e.kind(),
-                    format!("Failed to create directory for saving proof: {}: {}", dir_path.display(), e),
-                )
-            })?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
         }
 
-        let file_path = dir_path.join("vadcop_final_proof.bin");
-
-        let file = File::create(&file_path).map_err(|e| {
+        let file = File::create(path).map_err(|e| {
             std::io::Error::new(
                 e.kind(),
-                format!("Failed to create file for saving proof: {}: {}", file_path.display(), e),
+                format!("Failed to create file for saving Vadcop Final proof: {}: {}", path.display(), e),
             )
         })?;
+
         bincode::serialize_into(file, self)?;
         Ok(())
     }
