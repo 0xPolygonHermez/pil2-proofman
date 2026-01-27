@@ -34,6 +34,12 @@ public:
     
     // Linear hash for traces stored in tiled layout  
     static void linearHashTiles(FrElement *d_output, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int t, bool custom, cudaStream_t stream);
+    
+    // Merkle tree construction for row-major layout
+    static void merkletree(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, bool custom, cudaStream_t stream);
+    
+    // Merkle tree construction for tiled layout
+    static void merkletreeTiles(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, bool custom, cudaStream_t stream);
 };
 
 __device__ void PoseidonBN128GPU::exp5(FrElement &r)

@@ -1086,6 +1086,155 @@ TEST(BN128_POSEIDON_TEST, linearHashTiles_gpu_256rows_100cols) {
 }
 
 // =====================
+// Poseidon merkletree GPU Test
+// =====================
+
+TEST(BN128_POSEIDON_TEST, merkletree_gpu_8rows_100cols) {
+    const size_t rows = 8;
+    const size_t cols = 100;
+    const size_t arity = 16;
+    const size_t numNodes = 17;
+    
+    uint32_t gpu_idxs[] = {0};
+    PoseidonBN128GPU::initGPUConstants(gpu_idxs, 1);
+    
+    // Create trace: 8 rows × 100 cols Goldilocks elements (row-major)
+    std::vector<uint64_t> trace(rows * cols);
+    for (size_t i = 0; i < rows * cols; i++) {
+        trace[i] = i;
+    }
+    
+    uint64_t* d_input = nullptr;
+    BN128GPUScalarField::Element* d_tree = nullptr;
+    CHECKCUDAERR(cudaMalloc(&d_input, rows * cols * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMalloc(&d_tree, numNodes * sizeof(BN128GPUScalarField::Element)));
+    
+    CHECKCUDAERR(cudaMemcpy(d_input, trace.data(), rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemset(d_tree, 0, numNodes * sizeof(BN128GPUScalarField::Element)));
+    
+    // Run GPU merkletree
+    PoseidonBN128GPU::merkletree(d_tree, d_input, cols, rows, arity, false, 0);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    
+    std::vector<RawFr::Element> h_tree(numNodes);
+    CHECKCUDAERR(cudaMemcpy(h_tree.data(), d_tree, numNodes * sizeof(RawFr::Element), cudaMemcpyDeviceToHost));
+    
+    // Verify leaves
+    EXPECT_EQ(RawFr::field.toString(h_tree[0], 16), "f51f3d0104201ef2bf7424be924330f937e4504111c6b26f7c195afbcb9d6cd");
+    EXPECT_EQ(RawFr::field.toString(h_tree[1], 16), "12b276d381cf64df6b1732ec6e91ae30f1f8c60cc08959aa9f81ae3b00cae371");
+    EXPECT_EQ(RawFr::field.toString(h_tree[2], 16), "160dcdd70c78a86409e231df7f4add4e32c9a92fe74ac92dff516d3d8fa728");
+    EXPECT_EQ(RawFr::field.toString(h_tree[3], 16), "2393e4f4bbaadaee5acaf60590547ef52c7dfd553f856283726497304ad47b5b");
+    EXPECT_EQ(RawFr::field.toString(h_tree[4], 16), "69539124331a9758e99c6f6d9f4f86088a4e48aa51d643a87c85f2536820c91");
+    EXPECT_EQ(RawFr::field.toString(h_tree[5], 16), "3e5fef46738269d441b69cb79ed05afbc4cb319e81cb8500da2be30800fd478");
+    EXPECT_EQ(RawFr::field.toString(h_tree[6], 16), "26a631438c157a61dbfcf090f4da49ef1d7e05b3a0f1ace53df8aa5966334987");
+    EXPECT_EQ(RawFr::field.toString(h_tree[7], 16), "17bcde7b057013734be16c97b6397967fb42c57f10f9a85dbe92436bf1446f60");
+    
+    // Verify root
+    EXPECT_EQ(RawFr::field.toString(h_tree[numNodes - 1], 16), "b6d02c9e5ea48185580c371837a1ecc09d7cf40774e1ac6f8491819deb3824d");
+    
+    cudaFree(d_input);
+    cudaFree(d_tree);
+}
+
+TEST(BN128_POSEIDON_TEST, merkletreeTiles_gpu_256rows_100cols) {
+    const size_t rows = 256;  // Use TILE_HEIGHT to properly test tiled layout
+    const size_t cols = 100;
+    const size_t arity = 16;
+    
+    // numNodes for merkletree with arity 16: 
+    // level 0: 256 leaves
+    // level 1: ceil(256/16) = 16 nodes
+    // level 2: ceil(16/16) = 1 node (root)
+    // total: 256 + 16 + 1 = 273
+    const size_t numNodes = 273;
+    
+    uint32_t gpu_idxs[] = {0};
+    PoseidonBN128GPU::initGPUConstants(gpu_idxs, 1);
+    
+    // Create trace in row-major format: 256 rows × 100 cols
+    std::vector<uint64_t> trace_rowmajor(rows * cols);
+    for (size_t i = 0; i < rows * cols; i++) {
+        trace_rowmajor[i] = i;
+    }
+    
+    // Convert to tiled layout using getBufferOffsetCPU
+    std::vector<uint64_t> trace_tiled(rows * cols);
+    for (size_t row = 0; row < rows; row++) {
+        for (size_t col = 0; col < cols; col++) {
+            uint64_t tiled_idx = getBufferOffsetCPU(row, col, rows, cols);
+            trace_tiled[tiled_idx] = trace_rowmajor[row * cols + col];
+        }
+    }
+    
+    // Allocate GPU memory
+    uint64_t *d_input_rowmajor = nullptr, *d_input_tiled = nullptr;
+    BN128GPUScalarField::Element *d_tree_rowmajor = nullptr, *d_tree_tiled = nullptr;
+    
+    CHECKCUDAERR(cudaMalloc(&d_input_rowmajor, rows * cols * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMalloc(&d_input_tiled, rows * cols * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMalloc(&d_tree_rowmajor, numNodes * sizeof(BN128GPUScalarField::Element)));
+    CHECKCUDAERR(cudaMalloc(&d_tree_tiled, numNodes * sizeof(BN128GPUScalarField::Element)));
+    
+    CHECKCUDAERR(cudaMemcpy(d_input_rowmajor, trace_rowmajor.data(), rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_input_tiled, trace_tiled.data(), rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemset(d_tree_rowmajor, 0, numNodes * sizeof(BN128GPUScalarField::Element)));
+    CHECKCUDAERR(cudaMemset(d_tree_tiled, 0, numNodes * sizeof(BN128GPUScalarField::Element)));
+    
+    // Run GPU merkletree with row-major layout
+    PoseidonBN128GPU::merkletree(d_tree_rowmajor, d_input_rowmajor, cols, rows, arity, false, 0);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    
+    // Run GPU merkletreeTiles with tiled layout
+    PoseidonBN128GPU::merkletreeTiles(d_tree_tiled, d_input_tiled, cols, rows, arity, false, 0);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    
+    // Copy results back to host
+    std::vector<RawFr::Element> h_tree_rowmajor(numNodes);
+    std::vector<RawFr::Element> h_tree_tiled(numNodes);
+    CHECKCUDAERR(cudaMemcpy(h_tree_rowmajor.data(), d_tree_rowmajor, numNodes * sizeof(RawFr::Element), cudaMemcpyDeviceToHost));
+    CHECKCUDAERR(cudaMemcpy(h_tree_tiled.data(), d_tree_tiled, numNodes * sizeof(RawFr::Element), cudaMemcpyDeviceToHost));
+    
+    // Compare results
+    int mismatches = 0;
+    for (size_t i = 0; i < numNodes; i++) {
+        const uint32_t* p_rowmajor = reinterpret_cast<const uint32_t*>(&h_tree_rowmajor[i]);
+        const uint32_t* p_tiled = reinterpret_cast<const uint32_t*>(&h_tree_tiled[i]);
+        
+        bool match = true;
+        for (int j = 0; j < 8; j++) {
+            if (p_rowmajor[j] != p_tiled[j]) {
+                match = false;
+                break;
+            }
+        }
+        
+        if (!match) {
+            mismatches++;
+            if (mismatches <= 5) {  // Print first 5 mismatches
+                std::string hex_rowmajor = RawFr::field.toString(h_tree_rowmajor[i], 16);
+                std::string hex_tiled = RawFr::field.toString(h_tree_tiled[i], 16);
+                printf("Node %zu MISMATCH:\n", i);
+                printf("  rowmajor: %s\n", hex_rowmajor.c_str());
+                printf("  tiled:    %s\n", hex_tiled.c_str());
+            }
+        }
+    }
+    
+    EXPECT_EQ(mismatches, 0) << "Found " << mismatches << " mismatches between row-major and tiled merkletree results";
+    
+    // Print root hash for verification
+    if (mismatches == 0) {
+        std::string root_hash = RawFr::field.toString(h_tree_rowmajor[numNodes - 1], 16);
+        printf("Merkletree root hash (256 rows × 100 cols): %s\n", root_hash.c_str());
+    }
+    
+    cudaFree(d_input_rowmajor);
+    cudaFree(d_input_tiled);
+    cudaFree(d_tree_rowmajor);
+    cudaFree(d_tree_tiled);
+}
+
+// =====================
 // MSM (Multi-Scalar Multiplication) GPU Test
 // =====================
 

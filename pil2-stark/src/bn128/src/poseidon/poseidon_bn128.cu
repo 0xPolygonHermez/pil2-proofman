@@ -253,4 +253,111 @@ void PoseidonBN128GPU::linearHashTiles(FrElement *d_output, uint64_t *d_input, u
     );
 }
 
+// =============================================================================
+// Merkle Tree GPU - Hash kernel for tree building
+// =============================================================================
+
+// Kernel to hash groups of Fr elements for Merkle tree building
+// Each thread hashes (t-1) inputs into 1 output
+// Input layout: cursor[nextIndex + tid * (t-1)] for tid in [0, nextN)
+// Output layout: cursor[nextIndex + pending + tid] for tid in [0, nextN)
+__global__ void hashTreeKernelBN128(
+    FrElementGPU *cursor,
+    uint64_t nextN,
+    uint64_t nextIndex,
+    uint64_t pending,
+    int t
+) {
+    uint64_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= nextN) return;
+    
+    int rate = t - 1;
+    
+    // Build state: state[0] = 0 (capacity), state[1..t-1] = inputs
+    BN128GPUScalarField::Element state[18];
+    state[0] = BN128GPUScalarField::zero();
+    
+    // Load input elements
+    FrElementGPU *input_ptr = &cursor[nextIndex + tid * rate];
+    for (int i = 0; i < rate; i++) {
+        state[i + 1] = input_ptr[i];
+    }
+    
+    // Hash
+    PoseidonBN128GPU poseidon;
+    const FrElementGPU *C = GPU_C_ptr[t - 2];
+    const FrElementGPU *M = GPU_M_ptr[t - 2];
+    const FrElementGPU *P = GPU_P_ptr[t - 2];
+    const FrElementGPU *S = GPU_S_ptr[t - 2];
+    const int nRoundsP = N_ROUNDS_P_POSEIDON[t - 2];
+    
+    poseidon.hash_(state, t, C, M, P, S, nRoundsP);
+    
+    // Write output
+    cursor[nextIndex + pending + tid] = state[0];
+}
+
+template<bool TILED>
+void merkletreeGPUBN128(
+    FrElementGPU *d_tree,
+    uint64_t *d_input,
+    uint64_t num_cols,
+    uint64_t num_rows,
+    uint64_t arity,
+    bool custom,
+    cudaStream_t stream
+) {
+    if (num_rows == 0) return;
+    
+    int t = arity + 1;  // arity inputs + 1 capacity
+    int threadsPerBlock = 64;
+    int numBlocks = (num_rows + threadsPerBlock - 1) / threadsPerBlock;
+    
+    // Step 1: Compute leaf hashes
+    linearHashGPUBN128<TILED><<<numBlocks, threadsPerBlock, 0, stream>>>(
+        d_tree, d_input, num_cols, num_rows, t, custom
+    );
+    CHECKCUDAERR(cudaGetLastError());
+    
+    // Step 2: Build the Merkle tree
+    uint64_t pending = num_rows;  
+    uint64_t nextN = (pending + arity - 1) / arity;
+    uint64_t nextIndex = 0;  // Start index of current level in d_tree
+    
+    while (pending > 1) {
+        // Pad with zeros if needed
+        uint64_t extraZeros = (arity - (pending % arity)) % arity;
+        if (extraZeros > 0) {
+            CHECKCUDAERR(cudaMemsetAsync(
+                (uint8_t*)(d_tree + nextIndex + pending), 
+                0, 
+                extraZeros * sizeof(FrElementGPU), 
+                stream
+            ));
+        }
+        
+        // Hash this level
+        numBlocks = (nextN + threadsPerBlock - 1) / threadsPerBlock;
+        hashTreeKernelBN128<<<numBlocks, threadsPerBlock, 0, stream>>>(
+            d_tree, nextN, nextIndex, pending + extraZeros, t
+        );
+        CHECKCUDAERR(cudaGetLastError());
+        
+        // Move to next level
+        nextIndex += pending + extraZeros;
+        pending = nextN;
+        nextN = (pending + arity - 1) / arity;
+    }
+}
+
+// Merkle tree for row-major layout
+void PoseidonBN128GPU::merkletree(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, bool custom, cudaStream_t stream) {
+    merkletreeGPUBN128<false>(d_tree, d_input, num_cols, num_rows, arity, custom, stream);
+}
+
+// Merkle tree for tiled layout
+void PoseidonBN128GPU::merkletreeTiles(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, bool custom, cudaStream_t stream) {
+    merkletreeGPUBN128<true>(d_tree, d_input, num_cols, num_rows, arity, custom, stream);
+}
+
 #undef INIT_T_CONSTANTS
