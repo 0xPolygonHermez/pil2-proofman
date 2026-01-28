@@ -66,15 +66,6 @@ impl StatsCmd {
             Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone())?,
         };
 
-        let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
-        for commit in &self.custom_commits {
-            if let Some((key, value)) = commit.split_once('=') {
-                custom_commits_map.insert(key.to_string(), PathBuf::from(value));
-            } else {
-                eprintln!("Invalid commit format: {commit:?}");
-            }
-        }
-
         let mut gpu_params = ParamsGPU::default();
         if let Some(number_threads_witness) = self.number_threads_witness {
             gpu_params.with_number_threads_pools_witness(number_threads_witness);
@@ -85,13 +76,22 @@ impl StatsCmd {
 
         let proofman = ProofMan::<Goldilocks>::new(
             self.proving_key.clone(),
-            custom_commits_map,
             true,
             false,
             gpu_params,
             self.verbose.into(),
             HashMap::new(),
         )?;
+
+        let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
+        for commit in &self.custom_commits {
+            if let Some((key, value)) = commit.split_once('=') {
+                custom_commits_map.insert(key.to_string(), PathBuf::from(value));
+            } else {
+                eprintln!("Invalid commit format: {commit:?}");
+            }
+        }
+        proofman.register_custom_commits(custom_commits_map)?;
 
         match self.field {
             Field::Goldilocks => proofman.compute_witness(

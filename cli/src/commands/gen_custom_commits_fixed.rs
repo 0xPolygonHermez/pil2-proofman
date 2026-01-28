@@ -54,8 +54,7 @@ impl GenCustomCommitsFixedCmd {
         }
 
         let mpi_ctx = Arc::new(MpiCtx::new());
-        let mut pctx =
-            ProofCtx::create_ctx(self.proving_key.clone(), custom_commits_map, false, self.verbose.into(), mpi_ctx)?;
+        let mut pctx = ProofCtx::create_ctx(self.proving_key.clone(), false, self.verbose.into(), mpi_ctx)?;
 
         tracing::info!("{}", format!("{} GenCustomCommitsFixed", format!("{: >12}", "Command").bright_green().bold()));
         tracing::info!("");

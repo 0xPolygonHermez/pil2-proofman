@@ -389,7 +389,7 @@ where
 
         let mpi_ctx = Arc::new(MpiCtx::new());
 
-        let pctx = ProofCtx::<F>::create_ctx(proving_key_path, HashMap::new(), aggregation, verbose_mode, mpi_ctx)?;
+        let pctx = ProofCtx::<F>::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx)?;
 
         let setups_aggregation =
             Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, &ParamsGPU::new(false), &[]));
@@ -1245,7 +1245,6 @@ where
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         proving_key_path: PathBuf,
-        custom_commits_fixed: HashMap<String, PathBuf>,
         verify_constraints: bool,
         aggregation: bool,
         gpu_params: ParamsGPU,
@@ -1274,7 +1273,6 @@ where
             Self::initialize_proofman(
                 mpi_ctx.clone(),
                 proving_key_path,
-                custom_commits_fixed,
                 verify_constraints,
                 aggregation,
                 &gpu_params,
@@ -1441,6 +1439,10 @@ where
             cancellation_info: Arc::new(RwLock::new(CancellationInfo::default())),
             verbose_mode,
         })
+    }
+
+    pub fn register_custom_commits(&self, custom_commits_fixed: HashMap<String, PathBuf>) -> ProofmanResult<()> {
+        self.pctx.initialize_custom_commits(custom_commits_fixed, &self.sctx)
     }
 
     pub fn reset(&self) -> ProofmanResult<()> {
@@ -3353,15 +3355,13 @@ where
     fn initialize_proofman(
         mpi_ctx: Arc<MpiCtx>,
         proving_key_path: PathBuf,
-        custom_commits_fixed: HashMap<String, PathBuf>,
         verify_constraints: bool,
         aggregation: bool,
         gpu_params: &ParamsGPU,
         packed_info: &HashMap<(usize, usize), PackedInfo>,
         verbose_mode: VerboseMode,
     ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64)> {
-        let mut pctx =
-            ProofCtx::create_ctx(proving_key_path, custom_commits_fixed, aggregation, verbose_mode, mpi_ctx)?;
+        let mut pctx = ProofCtx::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx)?;
         timer_start_info!(INITIALIZING_PROOFMAN);
 
         let mut preloaded_const = Vec::new();
@@ -3389,8 +3389,6 @@ where
         ));
 
         pctx.set_weights(&sctx)?;
-
-        pctx.initialize_custom_commits(&sctx)?;
 
         let (n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
             pctx.set_device_buffers(&sctx, &setups_vadcop, aggregation, gpu_params)?;

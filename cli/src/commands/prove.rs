@@ -115,15 +115,6 @@ impl ProveCmd {
             Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone())?,
         };
 
-        let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
-        for commit in &self.custom_commits {
-            if let Some((key, value)) = commit.split_once('=') {
-                custom_commits_map.insert(key.to_string(), PathBuf::from(value));
-            } else {
-                eprintln!("Invalid commit format: {commit:?}");
-            }
-        }
-
         let verify_constraints = debug_info.std_mode.name == ModeName::Debug;
 
         let mut gpu_params = ParamsGPU::new(self.preallocate);
@@ -140,13 +131,22 @@ impl ProveCmd {
 
         let proofman = ProofMan::<Goldilocks>::new(
             self.proving_key.clone(),
-            custom_commits_map,
             verify_constraints,
             self.aggregation,
             gpu_params,
             self.verbose.into(),
             HashMap::new(),
         )?;
+
+        let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
+        for commit in &self.custom_commits {
+            if let Some((key, value)) = commit.split_once('=') {
+                custom_commits_map.insert(key.to_string(), PathBuf::from(value));
+            } else {
+                eprintln!("Invalid commit format: {commit:?}");
+            }
+        }
+        proofman.register_custom_commits(custom_commits_map)?;
 
         let proof_options = ProofOptions::new(
             false,

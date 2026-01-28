@@ -1,7 +1,6 @@
 use crate::Setup;
 use serde::Serialize;
 use tabled::{Tabled, Table};
-use std::collections::HashMap;
 use crate::ProofType;
 use crate::ParamsGPU;
 use crate::VerboseMode;
@@ -199,7 +198,7 @@ pub fn soundness_info<F: PrimeField64>(
 
     let mpi_ctx = Arc::new(MpiCtx::new());
 
-    let pctx = ProofCtx::<F>::create_ctx(proving_key_path, HashMap::new(), aggregation, verbose_mode, mpi_ctx)?;
+    let pctx = ProofCtx::<F>::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx)?;
 
     let setups_aggregation =
         Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, &ParamsGPU::new(false), &[]));
