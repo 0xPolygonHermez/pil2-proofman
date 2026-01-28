@@ -706,7 +706,6 @@ where
         witness_lib_path: PathBuf,
         public_inputs_path: Option<PathBuf>,
         input_data_path: Option<PathBuf>,
-        output_dir_path: PathBuf,
         debug_info: &DebugInfo,
         verbose_mode: VerboseMode,
     ) -> ProofmanResult<()> {
@@ -733,10 +732,6 @@ where
                     "Public inputs file not found at path: {publics_path:?}"
                 )));
             }
-        }
-
-        if !output_dir_path.exists() {
-            fs::create_dir_all(&output_dir_path)?;
         }
 
         timer_start_info!(CREATE_WITNESS_LIB);
@@ -835,7 +830,6 @@ where
         witness_lib_path: PathBuf,
         public_inputs_path: Option<PathBuf>,
         input_data_path: Option<PathBuf>,
-        output_dir_path: PathBuf,
         debug_info: &DebugInfo,
         verbose_mode: VerboseMode,
         test_mode: bool,
@@ -863,10 +857,6 @@ where
                     "Public inputs file not found at path: {publics_path:?}"
                 )));
             }
-        }
-
-        if !output_dir_path.exists() {
-            fs::create_dir_all(&output_dir_path)?;
         }
 
         timer_start_info!(CREATE_WITNESS_LIB);
@@ -1168,10 +1158,6 @@ where
             }
         }
 
-        if !options.output_dir_path.exists() {
-            fs::create_dir_all(&options.output_dir_path)?;
-        }
-
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
@@ -1205,10 +1191,6 @@ where
         options: ProofOptions,
         phase: ProvePhase,
     ) -> ProofmanResult<ProvePhaseResult> {
-        if !options.output_dir_path.exists() {
-            fs::create_dir_all(&options.output_dir_path)?;
-        }
-
         if self.verify_constraints {
             return Err(ProofmanError::InvalidParameters(
                 "Proofman has been initialized in verify_constraints mode".into(),
@@ -1227,13 +1209,22 @@ where
     pub fn generate_vadcop_final_proof_compressed(
         &self,
         vadcop_final_proof: &VadcopFinalProof,
-        output_dir_path: &Path,
+        output_dir_path: Option<&Path>,
         save_proof: bool,
     ) -> ProofmanResult<VadcopFinalProof> {
         if vadcop_final_proof.compressed {
             return Err(ProofmanError::InvalidConfiguration(
                 "Cannot generate a compressed vadcop proof from an already compressed vadcop proof".to_string(),
             ));
+        }
+
+        let output_dir_path = match output_dir_path {
+            Some(path) => path,
+            None => Path::new("tmp"),
+        };
+
+        if !output_dir_path.exists() {
+            fs::create_dir_all(&output_dir_path)?;
         }
 
         let vadcop_final_proof_compressed = generate_vadcop_final_compressed_proof(
@@ -1559,6 +1550,15 @@ where
         options: ProofOptions,
         phase: ProvePhase,
     ) -> ProofmanResult<ProvePhaseResult> {
+        let output_dir_path: PathBuf = match options.output_dir_path.as_deref() {
+            Some(path) => path.to_path_buf(),
+            None => PathBuf::from("tmp"),
+        };
+
+        if !output_dir_path.exists() {
+            fs::create_dir_all(&output_dir_path)?;
+        }
+
         let _cancellation_thread = CancellationThread::new(self.cancellation_info.clone(), self.mpi_ctx.clone());
 
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
@@ -1833,7 +1833,7 @@ where
             let compressor_witness_tx_clone = self.compressor_witness_tx.clone();
             let recursive_rx_clone = self.recursive_rx.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
-            let output_dir_path = options.output_dir_path.clone();
+            let output_dir_path = output_dir_path.clone();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, proof_type)) = recursive_rx_clone.recv() {
                     if id == u64::MAX - 1 {
@@ -1969,7 +1969,7 @@ where
                 &self.pctx,
                 &self.sctx,
                 *instance_id as usize,
-                &options.output_dir_path,
+                &output_dir_path,
                 &self.aux_trace,
                 &self.const_pols,
                 &self.const_tree,
@@ -2008,7 +2008,7 @@ where
             let pctx_clone = self.pctx.clone();
             let sctx_clone = self.sctx.clone();
             let setups_clone = self.setups.clone();
-            let output_dir_path_clone = options.output_dir_path.clone();
+            let output_dir_path_clone = output_dir_path.clone();
             let aux_trace_clone = self.aux_trace.clone();
             let const_pols_clone = self.const_pols.clone();
             let const_tree_clone = self.const_tree.clone();
@@ -2285,7 +2285,7 @@ where
                     &self.prover_buffer_recursive,
                     &self.const_pols,
                     &self.const_tree,
-                    &options.output_dir_path,
+                    &output_dir_path,
                     false,
                     &mut agg_proofs,
                 )?;
@@ -2299,7 +2299,7 @@ where
                 timer_stop_and_log_debug!(GET_OUTER_RANK);
                 let outer_rank = self.mpi_ctx.get_outer_agg_rank()? as usize;
                 if self.pctx.mpi_ctx.rank as usize == outer_rank {
-                    self.worker_aggregations_rma(&options, outer_rank != 0)?;
+                    self.worker_aggregations_rma(output_dir_path.to_path_buf(), options.save_proofs, outer_rank != 0)?;
                 } else {
                     for airgroup in 0..self.pctx.global_info.air_groups.len() {
                         let mut write_lock = self.recursive2_proofs[airgroup].write().unwrap();
@@ -2414,11 +2414,20 @@ where
         final_proof: bool,
         options: &ProofOptions,
     ) -> ProofmanResult<Option<Vec<AggProofs>>> {
+        let output_dir_path = match options.output_dir_path.as_deref() {
+            Some(path) => path,
+            None => Path::new("tmp"),
+        };
+
+        if !output_dir_path.exists() {
+            fs::create_dir_all(&output_dir_path)?;
+        }
+
         if !agg_proofs.is_empty()
             && !self.cancellation_info.read().unwrap().token.is_cancelled()
             && self.outer_aggregations_handle.lock().unwrap().is_none()
         {
-            self.outer_aggregations(options);
+            self.outer_aggregations(&output_dir_path, options.save_proofs);
         }
 
         for proof in agg_proofs {
@@ -2561,7 +2570,7 @@ where
                     &self.setups,
                     &agg_proofs_data,
                     &self.prover_buffer_recursive,
-                    &options.output_dir_path,
+                    &output_dir_path,
                     &self.const_pols,
                     &self.const_tree,
                     options.save_proofs,
@@ -2573,7 +2582,7 @@ where
                         &self.setups,
                         &vadcop_proof_final.proof,
                         &self.prover_buffer_recursive,
-                        &options.output_dir_path,
+                        &output_dir_path,
                         &self.const_pols,
                         &self.const_tree,
                         options.save_proofs,
@@ -2589,7 +2598,7 @@ where
         Ok(None)
     }
 
-    fn outer_aggregations(&self, options: &ProofOptions) {
+    fn outer_aggregations(&self, output_dir_path: &Path, save_proofs: bool) {
         self.outer_agg_proofs_finished.store(false, Ordering::SeqCst);
         register_proof_done_callback_c(self.recursive_tx.clone());
 
@@ -2602,7 +2611,7 @@ where
             let recursive_rx_clone = self.recursive_rx.clone();
             let total_outer_agg_proofs = self.total_outer_agg_proofs.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
-            let output_dir_path = options.output_dir_path.clone();
+            let output_dir_path = output_dir_path.to_path_buf();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, _)) = recursive_rx_clone.recv() {
                     if id == u64::MAX - 1 {
@@ -2651,8 +2660,7 @@ where
         let outer_agg_proofs_finished = self.outer_agg_proofs_finished.clone();
         let rec2_witness_rx = self.rec2_witness_rx.clone();
         let cancellation_info_clone = self.cancellation_info.clone();
-        let output_dir_path_clone = options.output_dir_path.clone();
-        let save_proofs = options.save_proofs;
+        let output_dir_path_clone = output_dir_path.to_path_buf();
         let outer_aggregations_handle = std::thread::spawn(move || loop {
             if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                 break;
@@ -2788,7 +2796,12 @@ where
     }
 
     #[allow(clippy::type_complexity)]
-    fn worker_aggregations_rma(&self, options: &ProofOptions, send_proofs: bool) -> ProofmanResult<()> {
+    fn worker_aggregations_rma(
+        &self,
+        output_dir_path: PathBuf,
+        save_proofs: bool,
+        send_proofs: bool,
+    ) -> ProofmanResult<()> {
         timer_start_debug!(GENERATING_WORKER_RMA_COMPRESSED_PROOFS);
 
         let my_rank = self.mpi_ctx.rank as usize;
@@ -2841,8 +2854,8 @@ where
         let prover_buffer_recursive = self.prover_buffer_recursive.clone();
         let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
         let cancellation_info_clone = self.cancellation_info.clone();
-        let output_dir_path_clone = options.output_dir_path.clone();
-        let save_proofs = options.save_proofs;
+        let output_dir_path_clone = output_dir_path.clone();
+        let save_proofs = save_proofs;
         let recursive2_handle = std::thread::spawn(move || {
             while let Ok(mut witness) = rec2_witness_rx.recv() {
                 if cancellation_info_clone.read().unwrap().token.is_cancelled() {
@@ -2903,7 +2916,7 @@ where
             let recursive_rx_clone = recursive_rx.clone();
             let recursive2_done_clone = recursive2_done.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
-            let output_dir_path = options.output_dir_path.clone();
+            let output_dir_path = output_dir_path.clone();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, _)) = recursive_rx_clone.recv() {
                     recursive2_done_clone.increment();

@@ -85,7 +85,6 @@ impl VerifyConstraintsCmd {
                 self.witness_lib.clone(),
                 self.public_inputs.clone(),
                 self.input_data.clone(),
-                PathBuf::new(),
                 &debug_info,
                 self.verbose.into(),
                 false,

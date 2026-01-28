@@ -156,7 +156,7 @@ impl ProveCmd {
             self.verify_proofs,
             self.minimal_memory,
             self.save_proofs,
-            self.output_dir.clone(),
+            Some(self.output_dir.clone()),
         );
         if debug_info.std_mode.name == ModeName::Debug {
             match self.field {
@@ -164,7 +164,6 @@ impl ProveCmd {
                     self.witness_lib.clone(),
                     self.public_inputs.clone(),
                     None,
-                    self.output_dir.clone(),
                     &debug_info.clone(),
                     self.verbose.into(),
                     false,

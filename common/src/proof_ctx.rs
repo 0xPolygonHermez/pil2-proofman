@@ -68,7 +68,7 @@ pub struct ProofOptions {
     pub verify_proofs: bool,
     pub save_proofs: bool,
     pub test_mode: bool,
-    pub output_dir_path: PathBuf,
+    pub output_dir_path: Option<PathBuf>,
     pub minimal_memory: bool,
 }
 
@@ -81,7 +81,7 @@ impl BorshSerialize for ProofOptions {
         BorshSerialize::serialize(&self.verify_proofs, writer)?;
         BorshSerialize::serialize(&self.save_proofs, writer)?;
         BorshSerialize::serialize(&self.test_mode, writer)?;
-        BorshSerialize::serialize(&self.output_dir_path.to_string_lossy().to_string(), writer)?;
+        BorshSerialize::serialize(&self.output_dir_path.as_ref().map(|p| p.to_string_lossy().to_string()), writer)?;
         BorshSerialize::serialize(&self.minimal_memory, writer)?;
         Ok(())
     }
@@ -96,7 +96,7 @@ impl BorshDeserialize for ProofOptions {
         let verify_proofs = bool::deserialize_reader(reader)?;
         let save_proofs = bool::deserialize_reader(reader)?;
         let test_mode = bool::deserialize_reader(reader)?;
-        let output_dir_path_str = String::deserialize_reader(reader)?;
+        let output_dir_path: Option<String> = Option::<String>::deserialize_reader(reader)?;
         let minimal_memory = bool::deserialize_reader(reader)?;
 
         Ok(Self {
@@ -107,7 +107,7 @@ impl BorshDeserialize for ProofOptions {
             verify_proofs,
             save_proofs,
             test_mode,
-            output_dir_path: PathBuf::from(output_dir_path_str),
+            output_dir_path: output_dir_path.map(PathBuf::from),
             minimal_memory,
         })
     }
@@ -155,7 +155,7 @@ impl Default for ProofOptions {
             verify_proofs: false,
             minimal_memory: false,
             save_proofs: false,
-            output_dir_path: PathBuf::new(),
+            output_dir_path: None,
             test_mode: false,
         }
     }
@@ -171,7 +171,7 @@ impl ProofOptions {
         verify_proofs: bool,
         minimal_memory: bool,
         save_proofs: bool,
-        output_dir_path: PathBuf,
+        output_dir_path: Option<PathBuf>,
     ) -> Self {
         Self {
             verify_constraints,
@@ -195,7 +195,7 @@ impl ProofOptions {
         verify_proofs: bool,
         minimal_memory: bool,
         save_proofs: bool,
-        output_dir_path: PathBuf,
+        output_dir_path: Option<PathBuf>,
     ) -> Self {
         Self {
             verify_constraints,
@@ -222,7 +222,7 @@ impl ProofOptions {
         self.compressed = true;
     }
 
-    pub fn save_proofs(&mut self, output_dir_path: PathBuf) {
+    pub fn save_proofs(&mut self, output_dir_path: Option<PathBuf>) {
         self.save_proofs = true;
         self.output_dir_path = output_dir_path;
     }

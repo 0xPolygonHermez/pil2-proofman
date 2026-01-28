@@ -99,7 +99,7 @@ impl StatsCmd {
                 self.public_inputs.clone(),
                 &debug_info,
                 self.verbose.into(),
-                ProofOptions::new(false, false, false, false, false, self.minimal_memory, false, PathBuf::new()),
+                ProofOptions::new(false, false, false, false, false, self.minimal_memory, false, None),
             )?,
         };
 
