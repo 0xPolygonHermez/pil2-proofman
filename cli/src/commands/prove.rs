@@ -188,7 +188,7 @@ impl ProveCmd {
                 if let Some(proving_key_snark) = &self.proving_key_snark {
                     let snark_wrapper: SnarkWrapper<Goldilocks> =
                         SnarkWrapper::new(proving_key_snark, self.verbose.into())?;
-                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, &self.output_dir)?;
+                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, Some(self.output_dir.clone()))?;
                 }
             }
         }

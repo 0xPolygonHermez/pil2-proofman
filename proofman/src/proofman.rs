@@ -1224,7 +1224,7 @@ where
         };
 
         if !output_dir_path.exists() {
-            fs::create_dir_all(&output_dir_path)?;
+            fs::create_dir_all(output_dir_path)?;
         }
 
         let vadcop_final_proof_compressed = generate_vadcop_final_compressed_proof(
@@ -2393,11 +2393,6 @@ where
             } else {
                 return self.verify_proofs(options.test_mode);
             }
-        } else if phase == ProvePhase::Full {
-            tracing::info!(
-                "··· {}",
-                "All proofs were successfully generated. Verification Skipped".bright_yellow().bold()
-            );
         }
 
         if phase == ProvePhase::Full {
@@ -2420,14 +2415,14 @@ where
         };
 
         if !output_dir_path.exists() {
-            fs::create_dir_all(&output_dir_path)?;
+            fs::create_dir_all(output_dir_path)?;
         }
 
         if !agg_proofs.is_empty()
             && !self.cancellation_info.read().unwrap().token.is_cancelled()
             && self.outer_aggregations_handle.lock().unwrap().is_none()
         {
-            self.outer_aggregations(&output_dir_path, options.save_proofs);
+            self.outer_aggregations(output_dir_path, options.save_proofs);
         }
 
         for proof in agg_proofs {
@@ -2570,7 +2565,7 @@ where
                     &self.setups,
                     &agg_proofs_data,
                     &self.prover_buffer_recursive,
-                    &output_dir_path,
+                    output_dir_path,
                     &self.const_pols,
                     &self.const_tree,
                     options.save_proofs,
@@ -2582,7 +2577,7 @@ where
                         &self.setups,
                         &vadcop_proof_final.proof,
                         &self.prover_buffer_recursive,
-                        &output_dir_path,
+                        output_dir_path,
                         &self.const_pols,
                         &self.const_tree,
                         options.save_proofs,
@@ -2855,7 +2850,6 @@ where
         let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
         let cancellation_info_clone = self.cancellation_info.clone();
         let output_dir_path_clone = output_dir_path.clone();
-        let save_proofs = save_proofs;
         let recursive2_handle = std::thread::spawn(move || {
             while let Ok(mut witness) = rec2_witness_rx.recv() {
                 if cancellation_info_clone.read().unwrap().token.is_cancelled() {

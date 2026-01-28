@@ -10,6 +10,7 @@ use std::fs::File;
 use std::process::Command;
 use colored::Colorize;
 use std::ffi::c_void;
+use std::fs;
 use proofman_starks_lib_c::{
     init_final_snark_prover_c, free_final_snark_prover_c, get_snark_protocol_id_c, snark_proof_bytes_to_json_c,
 };
@@ -179,8 +180,17 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     pub fn generate_final_snark_proof(
         &self,
         vadcop_proof: &VadcopFinalProof,
-        output_dir_path: &Path,
+        output_dir_path: Option<PathBuf>,
     ) -> ProofmanResult<SnarkProof> {
+        let output_dir_path = match output_dir_path.as_deref() {
+            Some(path) => path,
+            None => Path::new("tmp"),
+        };
+
+        if !output_dir_path.exists() {
+            fs::create_dir_all(output_dir_path)?;
+        }
+
         if vadcop_proof.compressed {
             return Err(ProofmanError::InvalidConfiguration(
                 "Compressed vadcop proofs are not supported for snark proof generation".to_string(),
