@@ -18,12 +18,15 @@ if [ -z "$CAP" ]; then
     exit 1
 fi
 # Try to use nvcc --list-gpu-code if available, otherwise fallback to parsing help
-if nvcc --list-gpu-code >/dev/null 2>&1; then
-    # Use the more reliable --list-gpu-code option
-    NVCC_ARCHS=$(nvcc --list-gpu-code | grep -oE "sm_[0-9]+" | sed 's/sm_//g' | sort -n -u)
-else
-    # Fallback to parsing help text
-    NVCC_ARCHS=$(nvcc --help | grep -oE "sm_[0-9]+" | sed 's/sm_//g' | sort -n -u)
+if command -v nvcc >/dev/null 2>&1; then
+    # nvcc exists — now check capabilities
+    if nvcc --list-gpu-code >/dev/null 2>&1; then
+        # Use the more reliable --list-gpu-code option
+        NVCC_ARCHS=$(nvcc --list-gpu-code | grep -oE "sm_[0-9]+" | sed 's/sm_//g' | sort -n -u)
+    else
+        # Fallback to parsing help text
+        NVCC_ARCHS=$(nvcc --help | grep -oE "sm_[0-9]+" | sed 's/sm_//g' | sort -n -u)
+    fi
 fi
 
 SELECTED_CAP=0
