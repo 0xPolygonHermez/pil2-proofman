@@ -14,4 +14,7 @@ void commitStage_bn128_gpu(uint64_t step, SetupCtx& setupCtx, MerkleTreeBN128**t
 
 void extendAndMerkelize_bn128_gpu(uint64_t step, SetupCtx& setupCtx, MerkleTreeBN128** treesGL, Goldilocks::Element* d_trace, Goldilocks::Element* d_aux_trace, TranscriptBN128_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream);
 
+void computeQ_bn128_gpu(uint64_t step, SetupCtx& setupCtx, MerkleTreeBN128 **treesGL, Goldilocks::Element *d_aux_trace, TranscriptBN128_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream);
+
+
 #endif

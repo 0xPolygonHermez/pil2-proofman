@@ -147,6 +147,24 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
         }
     }
     
+    // Print all challenges for debugging (CPU equivalent of GPU debug)
+    {
+        uint64_t numChallenges = setupCtx.starkInfo.challengesMap.size();
+        std::cout << "=== CPU Challenges (Stage 1-3) ===" << std::endl;
+        for (uint64_t i = 0; i < numChallenges; i++) {
+            if (setupCtx.starkInfo.challengesMap[i].stage <= 3) {
+                std::cout << "Challenge[" << i << "]: ";
+                for (uint64_t j = 0; j < FIELD_EXTENSION; j++) {
+                    std::cout << Goldilocks::toU64(challenges[i * FIELD_EXTENSION + j]);
+                    if (j < FIELD_EXTENSION - 1) std::cout << ", ";
+                }
+                std::cout << std::endl;
+            }
+        }
+        std::cout << "==================================" << std::endl;
+    }
+    
+
     TimerStart(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
     starks.calculateQuotientPolynomial(params, expressionsCtx);
     TimerStopAndLog(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);

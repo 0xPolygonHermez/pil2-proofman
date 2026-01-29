@@ -222,7 +222,51 @@ __global__ void transposeSubBlocksBack_noBR_compact(gl64_t *src, uint64_t n_bits
     dst[offset_dst] = shared[threadIdx.y * blockDim.x + threadIdx.x];
 }
 
-void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t n_bits, uint64_t n_bits_ext, uint64_t nCols, uint64_t arity, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream)
+
+
+void NTT_Goldilocks_GPU::computeQ_inplace(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t n_bits, uint64_t n_bits_ext, uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream)
+{
+   
+    if (nCols == 0 || n_bits_ext == 0)
+    {
+        return;
+    }
+
+    TimerStartCategoryGPU(timer, NTT);
+
+    if(n_bits_ext > maxLogDomainSize)
+    {
+        printf("[NTT] ERROR: n_bits_ext %lu exceeds maxLogDomainSize %lu\n", n_bits_ext, maxLogDomainSize);
+        abort();
+    }
+
+    uint64_t N = 1 << n_bits;
+    uint64_t NExtended = 1 << n_bits_ext;
+    gl64_t* d_S = d_aux_trace + offset_helper;
+    gl64_t *d_q = d_aux_trace + offset_q;
+    gl64_t *d_cmQ = d_aux_trace + offset_cmQ;
+
+    // Intt
+    dim3 block(TILE_HEIGHT, TILE_WIDTH);
+    dim3 grid0((NExtended + block.x - 1) / block.x,
+             (qDim + block.y - 1) / block.y);
+    int sharedMemSize = block.x * block.y * sizeof(gl64_t);
+    transposeSubBlocksBackInPlace<<<grid0, block, sharedMemSize, stream>>>(d_q, NExtended, qDim);
+    ntt_cuda_blocks_par(d_q, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, qDim, true, false, stream, maxLogDomainSize);
+
+    dim3 threads(TILE_HEIGHT, 1, 1);
+    dim3 blocks((N + threads.x - 1) / threads.x, 1, 1);
+    applyS<<<blocks, threads, 0, stream>>>(d_cmQ, d_q, d_S, shiftIn, N, NExtended, n_bits_ext - n_bits, qDeg, qDim);
+
+    dim3 grid1((NExtended + block.x - 1) / block.x,
+             (nCols + block.y - 1) / block.y);
+    ntt_cuda_blocks_par(d_cmQ, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, nCols, false, false, stream, maxLogDomainSize);
+    transposeSubBlocksInPlace<<<grid1, block, sharedMemSize, stream>>>(d_cmQ, NExtended, nCols);
+
+    TimerStopCategoryGPU(timer, NTT);
+}
+
+void NTT_Goldilocks_GPU::computeQ_MerkleTree_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t n_bits, uint64_t n_bits_ext, uint64_t nCols, uint64_t arity, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream)
 {
    
     if (nCols == 0 || n_bits_ext == 0)
