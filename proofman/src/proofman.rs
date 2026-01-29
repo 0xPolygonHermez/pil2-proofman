@@ -1442,7 +1442,7 @@ where
     }
 
     pub fn register_custom_commits(&self, custom_commits_fixed: HashMap<String, PathBuf>) -> ProofmanResult<()> {
-        self.pctx.initialize_custom_commits(custom_commits_fixed, &self.sctx)
+        self.pctx.initialize_custom_commits(custom_commits_fixed, &self.sctx, false)
     }
 
     pub fn reset(&self) -> ProofmanResult<()> {

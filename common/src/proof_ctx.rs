@@ -386,6 +386,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         &self,
         custom_commits_fixed: HashMap<String, PathBuf>,
         sctx: &SetupCtx<F>,
+        only_init: bool,
     ) -> ProofmanResult<()> {
         tracing::info!("Initializing publics custom_commits");
         for (airgroup_id, airs) in self.global_info.airs.iter().enumerate() {
@@ -400,49 +401,50 @@ impl<F: PrimeField64> ProofCtx<F> {
                             ))
                         })?;
 
-                        if !PathBuf::from(&custom_file_path).exists() {
-                            let error_message = format!(
-                                "Error: Unable to find {} custom commit at '{}'.\n\
-                                Please run the following command:\n\
-                                \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
-                                custom_commit.name,
-                                custom_file_path.display(),
-                            );
-                            tracing::warn!("{}", error_message);
-                            return Err(ProofmanError::ProofmanError(error_message));
-                        }
-
-                        let error_message = format!(
-                            "Error: The custom commit file for {} at '{}' exists but is invalid or corrupted.\n\
-                            Please regenerate it by running:\n\
-                            \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
-                            custom_commit.name,
-                            custom_file_path.display(),
-                        );
-
-                        let size = custom_commit_size_c((&setup.p_setup).into(), commit_id as u64) as usize;
-
-                        match fs::metadata(custom_file_path) {
-                            Ok(metadata) => {
-                                let actual_size = metadata.len() as usize;
-                                if actual_size != (size + 4) * 8 {
-                                    tracing::warn!("{}", error_message);
-                                    return Err(ProofmanError::ProofmanError(error_message));
-                                }
-                            }
-                            Err(err) => {
+                        let mut root_bytes = [0u8; 32];
+                        if !only_init {
+                            if !PathBuf::from(&custom_file_path).exists() {
                                 let error_message = format!(
-                                    "Failed to open {} for custom_commit {}: {}",
-                                    setup.air_name, custom_commit.name, err
+                                    "Error: Unable to find {} custom commit at '{}'.\n\
+                                    Please run the following command:\n\
+                                    \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
+                                    custom_commit.name,
+                                    custom_file_path.display(),
                                 );
                                 tracing::warn!("{}", error_message);
                                 return Err(ProofmanError::ProofmanError(error_message));
                             }
-                        }
 
-                        let mut file = File::open(custom_file_path)?;
-                        let mut root_bytes = [0u8; 32];
-                        file.read_exact(&mut root_bytes)?;
+                            let error_message = format!(
+                                "Error: The custom commit file for {} at '{}' exists but is invalid or corrupted.\n\
+                                Please regenerate it by running:\n\
+                                \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
+                                custom_commit.name,
+                                custom_file_path.display(),
+                            );
+
+                            let size = custom_commit_size_c((&setup.p_setup).into(), commit_id as u64) as usize;
+
+                            match fs::metadata(custom_file_path) {
+                                Ok(metadata) => {
+                                    let actual_size = metadata.len() as usize;
+                                    if actual_size != (size + 4) * 8 {
+                                        tracing::warn!("{}", error_message);
+                                        return Err(ProofmanError::ProofmanError(error_message));
+                                    }
+                                }
+                                Err(err) => {
+                                    let error_message = format!(
+                                        "Failed to open {} for custom_commit {}: {}",
+                                        setup.air_name, custom_commit.name, err
+                                    );
+                                    tracing::warn!("{}", error_message);
+                                    return Err(ProofmanError::ProofmanError(error_message));
+                                }
+                            }
+                            let mut file = File::open(custom_file_path)?;
+                            file.read_exact(&mut root_bytes)?;
+                        }
 
                         self.custom_commits_values
                             .lock()

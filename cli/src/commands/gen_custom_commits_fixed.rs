@@ -61,7 +61,7 @@ impl GenCustomCommitsFixedCmd {
 
         let setups_vadcop = Arc::new(SetupsVadcop::new(&pctx.global_info, false, false, &params_gpu, &[]));
         pctx.set_device_buffers(&sctx, &setups_vadcop, false, &params_gpu)?;
-        pctx.initialize_custom_commits(custom_commits_map, &sctx)?;
+        pctx.initialize_custom_commits(custom_commits_map, &sctx, true)?;
 
         let pctx = Arc::new(pctx);
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));
