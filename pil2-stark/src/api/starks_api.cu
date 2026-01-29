@@ -1,3 +1,4 @@
+#include "bn128.cuh"
 #include "zkglobals.hpp"
 #include "proof2zkinStark.hpp"
 #include "starks.hpp"
@@ -13,6 +14,8 @@
 #include "gen_proof.cuh"
 #include "poseidon2_goldilocks.cuh"
 #include "hints.cuh"
+#include "gen_recursivef_proof.cuh"
+#include "poseidon_bn128.cuh"
 #include <cuda_runtime.h>
 #include <mutex>
 
@@ -834,6 +837,110 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t air
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
     return streamId;
+}
+
+void *gen_recursive_proof_final(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize) {
+    
+    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    uint32_t gpuId = 0;
+    cudaSetDevice(gpuId);
+    cudaStream_t stream; 
+    cudaStreamCreate(&stream);
+    
+    NTT_Goldilocks_GPU::init_twiddle_factors_and_r(22, 1, &gpuId); //max nBitsExt=21
+    
+    // Initialize BN128 Poseidon GPU constants for merkletree and transcript
+    // Note: When merkleTreeCustom is false, the transcript uses arity=16 regardless of merkleTreeArity
+    uint64_t transcriptArity = setupCtx->starkInfo.starkStruct.merkleTreeCustom ? setupCtx->starkInfo.starkStruct.merkleTreeArity : 16;
+    PoseidonBN128GPU::initGPUConstants(&gpuId, 1);
+    TranscriptBN128_GPU::init_const(&gpuId, 1, transcriptArity);
+
+    
+    uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
+    uint64_t NExtended = (1 << setupCtx->starkInfo.starkStruct.nBitsExt);
+    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
+    uint64_t nConst = setupCtx->starkInfo.nConstants;
+
+    uint64_t sizeWitness = N * nCols * sizeof(Goldilocks::Element);
+    uint64_t sizeConstPols = N * nConst * sizeof(Goldilocks::Element);
+    uint64_t sizeConstPolsExtended = NExtended * nConst * sizeof(Goldilocks::Element);
+    uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
+    uint64_t sizeConstOnlyTree = sizeConstTree - sizeConstPolsExtended;
+    uint64_t sizeAuxTrace = proverBufferSize;
+    uint64_t sizePublicInputs = setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element);
+    uint64_t helperBufferSize = (4 + setupCtx->starkInfo.challengesMap.size() * FIELD_EXTENSION) * sizeof(Goldilocks::Element);
+    
+    std::cout << "N: " << N << ", nCols: " << nCols << std::endl;
+    std::cout << "Size witness: " << sizeWitness << ", Size const tree: " << sizeConstTree << std::endl;
+    std::cout << "Size const pols: " << sizeConstPols << std::endl;
+    std::cout << "Size aux trace: " << sizeAuxTrace << std::endl;
+    std::cout << "Size const only tree: " << sizeConstOnlyTree << std::endl;
+    std::cout << "Size const pols extended: " << sizeConstPolsExtended << std::endl;
+    std::cout << "Size public inputs: " << sizePublicInputs << std::endl;
+    std::cout << "Prover helper buffer size: " << helperBufferSize << std::endl;
+
+    //generate device buffers
+    gl64_t *d_witness;
+    gl64_t *d_aux_trace;
+    gl64_t *d_const_pols;
+    gl64_t *d_const_tree;
+    gl64_t *d_public_inputs;
+    gl64_t *d_helper_buffer;
+
+    CHECKCUDAERR(cudaMalloc(&d_witness, sizeWitness));
+    CHECKCUDAERR(cudaMalloc(&d_aux_trace, sizeAuxTrace));
+    CHECKCUDAERR(cudaMalloc(&d_const_pols, sizeConstPols));
+    CHECKCUDAERR(cudaMalloc(&d_const_tree, sizeConstTree));
+    CHECKCUDAERR(cudaMalloc(&d_public_inputs, sizePublicInputs));
+    CHECKCUDAERR(cudaMalloc(&d_helper_buffer, helperBufferSize));
+
+    // 1. Create a pinned buffer to manage copies
+    assert(sizeAuxTrace >= sizeWitness && sizeAuxTrace >= sizeConstPols && sizeAuxTrace >= sizeConstPolsExtended);
+    uint8_t* pinnedBuffer = nullptr;
+    size_t pinnedBufferSize = 256 * 1024 * 1024; // 256 MB
+    dim3 gridSize;
+    dim3 blockSize(32,32,1);
+    CHECKCUDAERR(cudaMallocHost((void**)&pinnedBuffer, pinnedBufferSize));
+    
+    // Note: toTiledLayout kernel uses blockIdx.x for row, blockIdx.y for col
+    // So grid.x should correspond to nRows and grid.y to nCols
+    copy_to_device_in_chunks((const uint8_t*)witness, (uint8_t*)d_aux_trace, sizeWitness, pinnedBuffer, pinnedBufferSize, stream);
+    gridSize = dim3((N + blockSize.x - 1) / blockSize.x, (nCols + blockSize.y - 1) / blockSize.y, 1);
+    toTiledLayout<<<gridSize, blockSize, 0, stream>>>(N, nCols, (uint64_t*)d_aux_trace, (uint64_t*)d_witness);
+    CHECKCUDAERR(cudaGetLastError());
+    
+    copy_to_device_in_chunks((const uint8_t*)pConstPols, (uint8_t*)d_aux_trace, sizeConstPols, pinnedBuffer, pinnedBufferSize, stream);
+    gridSize = dim3((N + blockSize.x - 1) / blockSize.x, (nConst + blockSize.y - 1) / blockSize.y, 1);
+    toTiledLayout<<<gridSize, blockSize, 0, stream>>>(N, nConst, (uint64_t*)d_aux_trace, (uint64_t*)d_const_pols);
+    CHECKCUDAERR(cudaGetLastError());
+    
+    copy_to_device_in_chunks((const uint8_t*)pConstTree, (uint8_t*)d_aux_trace, sizeConstPolsExtended, pinnedBuffer, pinnedBufferSize, stream);
+    // For very large NExtended, need to put it on grid.x which has higher limit
+    gridSize = dim3((NExtended + blockSize.x - 1) / blockSize.x, (nConst + blockSize.y - 1) / blockSize.y, 1);
+    toTiledLayout<<<gridSize, blockSize, 0, stream>>>(NExtended, nConst, (uint64_t*)d_aux_trace, (uint64_t*)d_const_tree);
+    CHECKCUDAERR(cudaGetLastError());
+    
+    // Copy the tree nodes (non-tiled) directly to d_const_tree after the extended pols
+    cudaMemcpyAsync((uint8_t*)d_const_tree + sizeConstPolsExtended, (uint8_t*)pConstTree + sizeConstPolsExtended, sizeConstOnlyTree, cudaMemcpyHostToDevice, stream);
+    CHECKCUDAERR(cudaGetLastError());
+
+    copy_to_device_in_chunks((const uint8_t*)pPublicInputs, (uint8_t*)d_public_inputs, sizePublicInputs, pinnedBuffer, pinnedBufferSize, stream);   
+
+    void* result = genRecursiveProofBN128_gpu(*setupCtx, airgroupId, airId, instanceId, (Goldilocks::Element *)d_witness, (Goldilocks::Element *)d_aux_trace, (Goldilocks::Element *)d_const_pols, (Goldilocks::Element *)d_const_tree, (Goldilocks::Element *)d_public_inputs, (Goldilocks::Element *)d_helper_buffer, string(proof_file), stream);
+
+    cudaStreamSynchronize(stream);
+
+    // Free device buffers AFTER the proof generation
+    CHECKCUDAERR(cudaFree(d_witness));
+    CHECKCUDAERR(cudaFree(d_aux_trace));
+    CHECKCUDAERR(cudaFree(d_const_pols));
+    CHECKCUDAERR(cudaFree(d_const_tree));
+    CHECKCUDAERR(cudaFree(d_public_inputs));
+    CHECKCUDAERR(cudaFreeHost(pinnedBuffer));
+    CHECKCUDAERR(cudaStreamDestroy(stream));
+    CHECKCUDAERR(cudaFree(d_helper_buffer));
+
+    return result;
 }
 
 uint64_t commit_witness(void *pSetupCtx_, void *params_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers_) {

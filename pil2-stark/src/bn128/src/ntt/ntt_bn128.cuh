@@ -4,9 +4,9 @@
 #ifndef __NTT_BN128_CUH__
 #define __NTT_BN128_CUH__
 
+#include "bn128.cuh"
 #include <cstddef>
 #include <cstdint>
-#include "bn128.cuh"
 
 // NTT GPU interface
 class NTT_BN128_GPU {

@@ -2,7 +2,7 @@
 #include "proof2zkinStark.hpp"
 #include "starks.hpp"
 #include "global_constraints.hpp"
-#include "gen_recursive_proof.hpp"
+#include "gen_recursivef_proof.hpp"
 #include "gen_proof.hpp"
 #include "logger.hpp"
 #include <filesystem>
@@ -897,6 +897,10 @@ uint64_t gen_recursive_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airI
     return 0;
 }
 
+void *gen_recursive_proof_final(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize) {
+    return genRecursiveProofBN128(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file));
+}
+
 #endif
 
 void launch_callback(uint64_t instanceId, char *proofType) {
@@ -915,9 +919,7 @@ void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint
 }
 
 
-void *gen_recursive_proof_final(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file) {
-    return genRecursiveProofBN128(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file));
-}
+
 
 void read_exec_file(uint64_t *exec_data, char *exec_file, uint64_t nCommitedPols) {
     readExecFile(exec_data, string(exec_file), nCommitedPols);

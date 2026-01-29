@@ -384,8 +384,16 @@ void copy_to_device_in_chunks(
     void* dst,
     uint64_t total_size,
     uint64_t streamId,
-    TimerGPU &timer
-    );
+    TimerGPU &timer);
+
+void copy_to_device_in_chunks(
+    const uint8_t* src,
+    uint8_t* dst,
+    uint64_t total_size_bytes,
+    uint8_t* pinnedBuffer,
+    uint64_t pinnedBufferSize,
+    cudaStream_t stream);
+
 
 void load_and_copy_to_device_in_chunks(
     DeviceCommitBuffers* d_buffers,
@@ -394,5 +402,12 @@ void load_and_copy_to_device_in_chunks(
     uint64_t total_size,
     uint64_t streamId
     );
+
+__global__ void toTiledLayout(
+    const uint64_t nRows,
+    const uint64_t nCols,
+    const uint64_t* __restrict__ input,
+    uint64_t* __restrict__ output
+);
 #endif
 #endif

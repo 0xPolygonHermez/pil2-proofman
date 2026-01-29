@@ -1,6 +1,7 @@
 #ifndef TRANSCRIPT_BN128_GPU_CLASS
 #define TRANSCRIPT_BN128_GPU_CLASS
 
+#include "bn128.cuh"
 #include "goldilocks_base_field.hpp"
 #include "poseidon/poseidon_bn128.cuh"
 #include "cuda_utils.cuh"

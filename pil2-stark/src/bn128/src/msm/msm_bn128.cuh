@@ -4,9 +4,9 @@
 #ifndef __MSM_BN128_CUH__
 #define __MSM_BN128_CUH__
 
+#include "bn128.cuh"
 #include <cstddef>
 #include "point.cuh"
-#include "bn128.cuh"
 
 // MSM GPU interface
 class MSM_BN128_GPU {

@@ -60,7 +60,7 @@ public:
     bool verifyGroupProof(Goldilocks::Element* root, Goldilocks::Element* level, std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v);
 
     void merkelize();
-    Goldilocks::Element *get_nodes_ptr()
+    void *get_nodes_ptr()
     {
         return nodes;
     }

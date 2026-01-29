@@ -673,6 +673,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     vadcop_final_verkey: &[u64],
     is_aggregated: bool,
     output_dir_path: &Path,
+    prover_buffer_size: usize,
 ) -> ProofmanResult<*mut c_void> {
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
@@ -724,6 +725,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         0,
         0,
         0,
+        prover_buffer_size as u64,
     );
     timer_stop_and_log_trace!(GENERATE_RECURSIVEF_PROOF);
 

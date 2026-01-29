@@ -1048,6 +1048,7 @@ pub fn gen_recursive_proof_final_c(
     airgroup_id: u64,
     air_id: u64,
     instance_id: u64,
+    prover_buffer_size: u64,
 ) -> *mut c_void {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1064,6 +1065,7 @@ pub fn gen_recursive_proof_final_c(
             p_const_tree as *mut std::os::raw::c_void,
             p_public_inputs as *mut std::os::raw::c_void,
             proof_file_ptr,
+            prover_buffer_size,
         )
     }
 }
@@ -2024,6 +2026,7 @@ pub fn gen_recursive_proof_final_c(
     _airgroup_id: u64,
     _air_id: u64,
     _instance_id: u64,
+    _prover_buffer_size: u64,
 ) -> *mut c_void {
     trace!("··· {}", "gen_recursive_proof_final: This is a mock call because there is no linked library");
     std::ptr::null_mut()

@@ -432,6 +432,7 @@ extern "C" {
         pConstTree: *mut ::std::os::raw::c_void,
         pPublicInputs: *mut ::std::os::raw::c_void,
         proof_file: *mut ::std::os::raw::c_char,
+        prover_buffer_size: u64,
     ) -> *mut ::std::os::raw::c_void;
 
     // Stream Management

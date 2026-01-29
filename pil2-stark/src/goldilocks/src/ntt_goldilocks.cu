@@ -284,6 +284,40 @@ void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t 
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 
+void NTT_Goldilocks_GPU::LDE_GPU(gl64_t* d_dst_ntt, uint64_t offset_dst_ntt,
+                                    gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits,
+                                    u_int64_t n_bits_ext, u_int64_t nCols, TimerGPU &timer, cudaStream_t stream){
+
+    if (nCols == 0 || n_bits == 0)
+    {
+        return;
+    }
+    TimerStartCategoryGPU(timer, NTT);
+    if (n_bits_ext > maxLogDomainSize)
+    {
+        printf("[NTT] ERROR: n_bits_ext %lu exceeds maxLogDomainSize %lu\n", n_bits_ext, maxLogDomainSize);
+        abort();
+    }
+
+    uint64_t size = 1 << n_bits;
+    uint64_t ext_size = 1 << n_bits_ext;    
+    gl64_t *d_dst_ntt_ = &d_dst_ntt[offset_dst_ntt];
+    gl64_t *d_src_ntt_ = &d_src_ntt[offset_src_ntt];
+    dim3 block(TILE_HEIGHT, TILE_WIDTH);
+    dim3 grid0((size + block.x - 1) / block.x,
+             (nCols + block.y - 1) / block.y);
+    int sharedMemSize = block.x * block.y * sizeof(gl64_t);
+
+    transposeSubBlocksBack_noBR_compact<<<grid0, block, sharedMemSize, stream>>>(d_src_ntt_, n_bits, d_dst_ntt_, n_bits_ext, nCols);
+    ntt_cuda_blocks_par1_noBR_compact(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, n_bits_ext, nCols, true, true, stream, maxLogDomainSize); 
+    ntt_cuda_blocks_par2_noBR(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, nCols, false, false, stream, maxLogDomainSize);
+    dim3 grid1((ext_size + block.x - 1) / block.x,
+             (nCols + block.y - 1) / block.y);
+    transposeSubBlocksInPlace<<<grid1, block, sharedMemSize, stream>>>(d_dst_ntt_, ext_size, nCols);
+    TimerStopCategoryGPU(timer, NTT);
+
+}
+
 void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits, u_int64_t n_bits_ext, u_int64_t nCols, u_int64_t arity, TimerGPU &timer, cudaStream_t stream)
 {
     if (nCols == 0 || n_bits == 0)
