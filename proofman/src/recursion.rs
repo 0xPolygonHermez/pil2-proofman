@@ -702,7 +702,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         setup.get_const_ptr(),
         setup.get_const_tree_ptr(),
         publics.as_ptr() as *mut u8,
-        "tmp/recursivef.json",
+        "",
         0,
         0,
         0,

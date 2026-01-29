@@ -13,7 +13,11 @@ pub struct VadcopFinalProof {
 }
 
 impl VadcopFinalProof {
-    pub fn new(proof: &[u64], compressed: bool) -> Result<Self, String> {
+    pub fn new(proof: Vec<u8>, public_values: Vec<u8>, compressed: bool) -> Self {
+        Self { proof, public_values, compressed }
+    }
+
+    pub fn new_from_proof(proof: &[u64], compressed: bool) -> Result<Self, String> {
         if proof.is_empty() {
             return Err("Proof slice is empty, cannot extract public count".to_string());
         }

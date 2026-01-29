@@ -51,7 +51,7 @@ pub struct SnarkWrapper<F: PrimeField64> {
     pub setup_recursivef: Setup<F>,
     pub aux_trace: Arc<Vec<F>>,
     pub snark_prover: *mut c_void,
-    pub publics_info: PublicsInfo,
+    pub proving_key_path: PathBuf,
     pub protocol: SnarkProtocol,
 }
 
@@ -171,9 +171,14 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         let protocol = SnarkProtocol::from_protocol_id(protocol_id)?;
         timer_stop_and_log_info!(INITIALIZING_FINAL_SNARK_PROVER);
 
-        let publics_info = PublicsInfo::from_folder(proving_key_path)?;
-
-        Ok(Self { aux_trace, setup_recursivef, setup_snark_path, snark_prover, publics_info, protocol })
+        Ok(Self {
+            aux_trace,
+            setup_recursivef,
+            setup_snark_path,
+            snark_prover,
+            proving_key_path: proving_key_path.to_path_buf(),
+            protocol,
+        })
     }
 
     #[allow(clippy::type_complexity)]
@@ -206,7 +211,8 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         let (snark_proof_bytes, snark_publics_bytes) =
             generate_snark_proof(self.snark_prover, &self.setup_snark_path, recursivef_proof)?;
 
-        let public_bytes = self.get_public_bytes(&proof[1..1 + proof[0] as usize])?;
+        let publics_info = PublicsInfo::from_folder(&self.proving_key_path)?;
+        let public_bytes = get_public_bytes_solidity(&publics_info, &proof[1..1 + proof[0] as usize])?;
         let snark_proof =
             SnarkProof::new(snark_proof_bytes, public_bytes, snark_publics_bytes, self.protocol.protocol_id());
 
@@ -214,38 +220,38 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         Ok(snark_proof)
     }
+}
 
-    fn get_public_bytes(&self, vadcop_public_inputs: &[u64]) -> ProofmanResult<Vec<u8>> {
-        if vadcop_public_inputs.len() != self.publics_info.n_publics {
-            return Err(ProofmanError::InvalidConfiguration(format!(
-                "Number of vadcop public inputs ({}) does not match expected number of publics ({})",
-                vadcop_public_inputs.len(),
-                self.publics_info.n_publics
-            )));
-        }
-
-        let mut public_bytes = vec![];
-        let mut index = 0;
-        for public_def in &self.publics_info.definitions {
-            let n_words = public_def.n_values;
-            if !public_def.verification_key {
-                let n_chunks_per_word = public_def.chunks[0];
-                let n_bits_per_chunk = public_def.chunks[1];
-                let n_bytes_per_chunk = n_bits_per_chunk / 8;
-                for _ in 0..n_words {
-                    for i in 0..n_chunks_per_word {
-                        let value = vadcop_public_inputs[index + n_chunks_per_word - i - 1];
-                        let be_bytes = value.to_be_bytes();
-                        public_bytes.extend_from_slice(&be_bytes[8 - n_bytes_per_chunk..]);
-                    }
-                    index += n_chunks_per_word;
-                }
-            } else {
-                index += n_words;
-            }
-        }
-        Ok(public_bytes)
+pub fn get_public_bytes_solidity(publics_info: &PublicsInfo, vadcop_public_inputs: &[u64]) -> ProofmanResult<Vec<u8>> {
+    if vadcop_public_inputs.len() != publics_info.n_publics {
+        return Err(ProofmanError::InvalidConfiguration(format!(
+            "Number of vadcop public inputs ({}) does not match expected number of publics ({})",
+            vadcop_public_inputs.len(),
+            publics_info.n_publics
+        )));
     }
+
+    let mut public_bytes = vec![];
+    let mut index = 0;
+    for public_def in &publics_info.definitions {
+        let n_words = public_def.n_values;
+        if !public_def.verification_key {
+            let n_chunks_per_word = public_def.chunks[0];
+            let n_bits_per_chunk = public_def.chunks[1];
+            let n_bytes_per_chunk = n_bits_per_chunk / 8;
+            for _ in 0..n_words {
+                for i in 0..n_chunks_per_word {
+                    let value = vadcop_public_inputs[index + n_chunks_per_word - i - 1];
+                    let be_bytes = value.to_be_bytes();
+                    public_bytes.extend_from_slice(&be_bytes[8 - n_bytes_per_chunk..]);
+                }
+                index += n_chunks_per_word;
+            }
+        } else {
+            index += n_words;
+        }
+    }
+    Ok(public_bytes)
 }
 
 pub fn generate_and_verify_recursivef<F: PrimeField64>(
@@ -338,15 +344,6 @@ pub fn verify_snark_proof(snark_proof: &SnarkProof, vkey_path: &Path) -> Proofma
 
     // Determine protocol
     let protocol = SnarkProtocol::from_protocol_id(snark_proof.protocol_id)?;
-
-    // Check if snarkjs is installed (cross-platform check)
-    if Command::new("snarkjs").arg("--version").output().map(|o| !o.status.success()).unwrap_or(true) {
-        tracing::error!("··· {}", "snarkjs is not installed or not in PATH".bright_red().bold());
-        tracing::error!("··· Please install snarkjs: npm install -g snarkjs");
-        return Err(ProofmanError::InvalidConfiguration(
-            "snarkjs is not installed. Please run: npm install -g snarkjs".to_string(),
-        ));
-    }
 
     // Call snarkjs verify
     let output = Command::new("snarkjs")
