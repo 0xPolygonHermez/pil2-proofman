@@ -596,7 +596,6 @@ pub fn write_custom_commit_c(
     n_cols: u64,
     buffer: *mut u8,
     buffer_file: &str,
-    check: bool,
 ) {
     let buffer_file_name = CString::new(buffer_file).unwrap();
     unsafe {
@@ -608,7 +607,6 @@ pub fn write_custom_commit_c(
             n_cols,
             buffer as *mut std::os::raw::c_void,
             buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
-            check,
         );
     }
 }
@@ -1763,7 +1761,6 @@ pub fn write_custom_commit_c(
     _n_cols: u64,
     _buffer: *mut u8,
     _buffer_file: &str,
-    _check: bool,
 ) {
     trace!("··· {}", "write_custom_commit: This is a mock call because there is no linked library");
 }

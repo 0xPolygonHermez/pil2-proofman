@@ -241,7 +241,6 @@ extern "C" {
         nCols: u64,
         buffer: *mut ::std::os::raw::c_void,
         bufferFile: *mut ::std::os::raw::c_char,
-        check: bool,
     );
 
     // Witness Commit

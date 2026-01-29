@@ -569,7 +569,7 @@ void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *buf
 }
 
 #ifndef __USE_CUDA__
-void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *buffer, char *bufferFile, bool check)
+void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *buffer, char *bufferFile)
 {
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
@@ -584,7 +584,7 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     mt.getRoot(&rootGL[0]);
 
-    if(!check && std::string(bufferFile) != "") {
+    if(std::string(bufferFile) != "") {
         std::string buffFile = string(bufferFile);
         ofstream fw(buffFile.c_str(), std::fstream::out | std::fstream::binary);
         writeFileParallel(buffFile, root, 32, 0);
