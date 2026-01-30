@@ -1,6 +1,7 @@
 #include "transcriptBN128.cuh"
 #include "goldilocks_base_field.hpp"
 #include "poseidon/poseidon_bn128_constants.hpp"
+#include "gl64_tooling.cuh"
 
 #include <math.h>
 
@@ -43,7 +44,8 @@ __device__ void goldilocks_to_fr(PoseidonBN128GPU::FrElement& result, const Gold
     
     result = BN128GPUScalarField::zero();
     
-    uint64_t val = gl.fe;
+    // Reduce from partially reduced form [0, 2*MOD) to canonical form [0, MOD)
+    uint64_t val = gl64_reduce(gl);
     
     // Reinterpret the fr_t structure as uint32_t array
     // fr_t uses 8 uint32_t limbs in little-endian order

@@ -2,7 +2,9 @@
 #include "transcript/transcriptBN128.cuh"
 #include "setup_ctx.hpp"
 #include "ntt_goldilocks.cuh"
+#include "starks_gpu.cuh"
 
+class gl64_t;
 
 void calculateHashBN128_gpu(TranscriptBN128_GPU *d_transcript, PoseidonBN128GPU::FrElement* hash, SetupCtx &setupCtx, Goldilocks::Element* buffer, uint64_t nElements, cudaStream_t stream) {
 
@@ -87,4 +89,31 @@ void computeQ_bn128_gpu(uint64_t step, SetupCtx &setupCtx, MerkleTreeBN128 **tre
         }
     }
     // Note: pNodes is stored in treesGL[step-1] via setNodes() and will be freed when treesGL is destroyed
+}
+
+void merkelizeFRI_bn128_gpu(SetupCtx& setupCtx, StepsParams &h_params, uint64_t step, Goldilocks::Element *pol, MerkleTreeBN128 *treeFRI, uint64_t currentBits, uint64_t nextBits, TranscriptBN128_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream)
+{
+    uint64_t pol2N = 1 << currentBits;
+
+    uint64_t width = 1 << nextBits;
+    uint64_t height = pol2N / width;
+    dim3 nThreads(32, 32);
+    dim3 nBlocks((width + nThreads.x - 1) / nThreads.x, (height + nThreads.y - 1) / nThreads.y);
+
+    Goldilocks::Element *src = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)];
+    treeFRI->setSource(src); 
+    transposeFRI<<<nBlocks, nThreads, 0, stream>>>((gl64_t *)treeFRI->source, (gl64_t *)pol, pol2N, width);
+    
+    TimerStartCategoryGPU(timer, MERKLE_TREE);
+    PoseidonBN128GPU::FrElement * pNodes;
+    int64_t tree_size = treeFRI->getNumNodes(treeFRI->height);
+    cudaMalloc((void**)&pNodes, tree_size * sizeof(PoseidonBN128GPU::FrElement));
+    treeFRI->setNodes((RawFr::Element*)pNodes);
+    PoseidonBN128GPU::merkletree((PoseidonBN128GPU::FrElement*) treeFRI->nodes, (uint64_t *)treeFRI->source, treeFRI->width, treeFRI->height, setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, stream);
+    
+    TimerStopCategoryGPU(timer, MERKLE_TREE);
+
+    if(d_transcript != nullptr) {
+        d_transcript->put((PoseidonBN128GPU::FrElement*)&treeFRI->nodes[tree_size - 1], uint64_t(1), stream);
+    }
 }

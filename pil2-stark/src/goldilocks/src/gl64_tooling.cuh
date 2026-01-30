@@ -14,6 +14,16 @@
 #endif
 #include "gl64_t.cuh"
 
+// Reduce a Goldilocks value from partially reduced form [0, 2*MOD) to canonical form [0, MOD)
+// This is needed when converting Goldilocks values to other field representations (e.g., BN128)
+__device__ __forceinline__ uint64_t gl64_reduce(uint64_t val) {
+    return (val >= GOLDILOCKS_PRIME) ? (val - GOLDILOCKS_PRIME) : val;
+}
+
+// Overload for Goldilocks::Element
+__device__ __forceinline__ uint64_t gl64_reduce(const Goldilocks::Element& gl) {
+    return gl64_reduce(gl.fe);
+}
 
 class gl64_gpu
 {
@@ -70,10 +80,15 @@ struct AirInstanceInfo {
         opening_points = d_openingPoints;
         expressions_gpu = new ExpressionsGPU(*setupCtx, setupCtx->starkInfo.nrowsPack, setupCtx->starkInfo.maxNBlocks);
 
-        Goldilocks::Element *d_verkeyRoot;
-        CHECKCUDAERR(cudaMalloc(&d_verkeyRoot, HASH_SIZE * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMemcpy(d_verkeyRoot, verkeyRoot_, HASH_SIZE * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-        verkeyRoot = d_verkeyRoot;
+        if(verkeyRoot_ == nullptr) {
+            verkeyRoot = nullptr;
+        }
+        else {
+            Goldilocks::Element *d_verkeyRoot;
+            CHECKCUDAERR(cudaMalloc(&d_verkeyRoot, HASH_SIZE * sizeof(Goldilocks::Element)));
+            CHECKCUDAERR(cudaMemcpy(d_verkeyRoot, verkeyRoot_, HASH_SIZE * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+            verkeyRoot = d_verkeyRoot;
+        }
 
         CHECKCUDAERR(cudaMalloc(&d_num_packed_words, sizeof(uint64_t)));
 

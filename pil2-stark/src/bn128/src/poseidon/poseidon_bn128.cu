@@ -3,6 +3,7 @@
 #include "poseidon_bn128_constants.hpp"  // Shared CPU/GPU constants (binary compatible)
 #include <cuda_runtime.h>
 #include "data_layout.cuh"
+#include "gl64_tooling.cuh"
 
 typedef PoseidonBN128GPU::FrElement FrElementGPU;
 
@@ -114,16 +115,6 @@ void PoseidonBN128GPU::freeGPUConstants() {
 // Linear Hash GPU
 // =============================================================================
 
-// Goldilocks prime: p = 2^64 - 2^32 + 1
-__device__ __constant__ uint64_t GOLDILOCKS_MOD = 0xFFFFFFFF00000001ULL;
-
-// Reduce a Goldilocks value from partially reduced form to canonical form
-// In partially reduced form, values can be in range [0, 2*MOD)
-// This reduces them to canonical form [0, MOD)
-__device__ __forceinline__ uint64_t reduce_gl64(uint64_t val) {
-    return (val >= GOLDILOCKS_MOD) ? (val - GOLDILOCKS_MOD) : val;
-}
-
 // Load 3 Goldilocks elements into a BN128 Fr element (in registers)
 // Supports both row-major and tiled layouts via template parameter
 template<bool TILED>
@@ -149,8 +140,8 @@ __device__ __forceinline__ void poseidon_bn128_load_fr_from_gl(
             } else {
                 idx = row * num_cols + col;
             }
-            // Load and reduce from partially reduced form to canonical form
-            uint64_t gl_val = reduce_gl64(input[idx]);
+            // Reduce from partially reduced form [0, 2*MOD) to canonical form [0, MOD)
+            uint64_t gl_val = gl64_reduce(input[idx]);
             limbs[k * 2] = (uint32_t)gl_val;
             limbs[k * 2 + 1] = (uint32_t)(gl_val >> 32);
         }
