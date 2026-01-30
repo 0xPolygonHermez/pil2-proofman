@@ -11,6 +11,7 @@
 #include "alt_bn128.hpp"
 #include "fft.hpp"
 #include "cuda_utils.cuh"
+#include "fr.hpp"
 
 __global__ void kernel_fr_add_one_one(int* ok);
 
@@ -1541,6 +1542,70 @@ TEST(BN128_NTT_GPU_TEST, ntt_gpu_vs_cpu) {
     EXPECT_TRUE(all_match) << "GPU NTT does not match CPU FFT";
     
     delete[] h_gpu_data;
+}
+
+// =====================
+// Grinding GPU Tests
+// =====================
+
+// Note: CPU verification of GPU grinding results is done in the CPU test suite
+// (tests.cpp grinding_cpu test). These GPU tests verify the kernel execution
+// completes successfully and finds the same nonce as the CPU test.
+
+TEST(BN128_POSEIDON_GPU_TEST, grinding_gpu) {
+    // Initialize GPU constants
+    uint32_t gpu_id = 0;
+    PoseidonBN128GPU::initGPUConstants(&gpu_id, 1);
+    
+    const uint8_t n_bits = 8;
+    
+    // Create input state with 3 elements
+    // Note: fromUI already converts to Montgomery form
+    RawFr field;
+    RawFr::Element h_state[3];
+    field.fromUI(h_state[0], 0x1234567890abcdefULL);
+    field.fromUI(h_state[1], 0xfedcba0987654321ULL);
+    field.fromUI(h_state[2], 0x0123456789abcdefULL);
+    
+    // Allocate device memory
+    PoseidonBN128GPU::FrElement *d_state;
+    uint64_t *d_nonce;
+    uint64_t *d_nonceBlock;
+    
+    CHECKCUDAERR(cudaMalloc(&d_state, 3 * sizeof(PoseidonBN128GPU::FrElement)));
+    CHECKCUDAERR(cudaMalloc(&d_nonce, sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMalloc(&d_nonceBlock, 256 * sizeof(uint64_t)));  // GRINDING_GRID_SIZE
+    
+    // Copy state to device
+    CHECKCUDAERR(cudaMemcpy(d_state, h_state, 3 * sizeof(PoseidonBN128GPU::FrElement), cudaMemcpyHostToDevice));
+    
+    // Initialize nonce to not found
+    uint64_t init_nonce = UINT64_MAX;
+    CHECKCUDAERR(cudaMemcpy(d_nonce, &init_nonce, sizeof(uint64_t), cudaMemcpyHostToDevice));
+    
+    // Run GPU grinding
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+    
+    PoseidonBN128GPU::grinding(d_nonce, d_nonceBlock, d_state, n_bits, stream);
+    
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+    
+    // Copy result back
+    uint64_t h_nonce;
+    CHECKCUDAERR(cudaMemcpy(&h_nonce, d_nonce, sizeof(uint64_t), cudaMemcpyDeviceToHost));
+    
+    // Verify we found a valid nonce
+    ASSERT_NE(h_nonce, UINT64_MAX) << "GPU grinding did not find a nonce";
+    
+    // Verify the nonce matches the CPU test expectation (CPU/GPU parity)
+    EXPECT_EQ(h_nonce, 1530ULL) << "GPU nonce does not match CPU expected nonce";
+    
+    // Cleanup
+    CHECKCUDAERR(cudaStreamDestroy(stream));
+    CHECKCUDAERR(cudaFree(d_state));
+    CHECKCUDAERR(cudaFree(d_nonce));
+    CHECKCUDAERR(cudaFree(d_nonceBlock));
 }
 
 

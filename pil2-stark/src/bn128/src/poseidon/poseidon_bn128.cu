@@ -3,7 +3,16 @@
 #include "poseidon_bn128_constants.hpp"  // Shared CPU/GPU constants (binary compatible)
 #include <cuda_runtime.h>
 #include "data_layout.cuh"
-#include "gl64_tooling.cuh"
+
+// Goldilocks prime constant
+#ifndef GOLDILOCKS_PRIME
+#define GOLDILOCKS_PRIME 0xFFFFFFFF00000001ULL
+#endif
+
+// Inline gl64_reduce - Reduce a Goldilocks value from partially reduced form [0, 2*MOD) to canonical form [0, MOD)
+__device__ __forceinline__ uint64_t gl64_reduce(uint64_t val) {
+    return (val >= GOLDILOCKS_PRIME) ? (val - GOLDILOCKS_PRIME) : val;
+}
 
 typedef PoseidonBN128GPU::FrElement FrElementGPU;
 
@@ -360,6 +369,168 @@ void PoseidonBN128GPU::merkletree(FrElement *d_tree, uint64_t *d_input, uint64_t
 // Merkle tree for tiled layout
 void PoseidonBN128GPU::merkletreeTiles(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, bool custom, cudaStream_t stream) {
     merkletreeGPUBN128<true>(d_tree, d_input, num_cols, num_rows, arity, custom, stream);
+}
+
+// =============================================================================
+// Grinding GPU Implementation
+// =============================================================================
+
+// Grinding constants for parallel search
+
+#define BN128_GRINDING_LAUNCH_BITS 19
+#define BN128_GRINDING_LAUNCH_BLOCKS_SIZE 512
+#define BN128_GRINDING_LAUNCH_GRID_SIZE \
+    (((1ULL << BN128_GRINDING_LAUNCH_BITS) + BN128_GRINDING_LAUNCH_BLOCKS_SIZE - 1) / BN128_GRINDING_LAUNCH_BLOCKS_SIZE)
+
+// Shared memory for block-level reduction
+extern __shared__ uint64_t grinding_shared[];
+
+// Grinding kernel: searches for nonce where hash(state || nonce).v[0] < level
+// Uses t=5 state: [0, state[0], state[1], state[2], nonce]
+__global__ void grinding_kernel_bn128(
+    uint64_t *d_nonce,
+    uint64_t *d_nonceBlock,
+    const FrElementGPU *d_state,
+    uint32_t n_bits,
+    uint64_t hashes_per_thread,
+    uint64_t nonces_offset
+) {
+    // Early exit if nonce already found in previous launch
+    if (nonces_offset != 0 && d_nonce[0] != UINT64_MAX) {
+        return;
+    }
+    
+    uint64_t *shared_nonces = grinding_shared;
+    
+    // Initialize shared memory and check for previously found nonce
+    if (threadIdx.x == 0) {
+        shared_nonces[0] = UINT64_MAX;
+        if (blockIdx.x == 0) {
+            d_nonce[0] = UINT64_MAX;
+        }
+        if (nonces_offset != 0) {
+            for (int i = 0; i < gridDim.x; ++i) {
+                if (d_nonceBlock[i] != UINT64_MAX) {
+                    shared_nonces[0] = d_nonceBlock[i];
+                    if (blockIdx.x == 0) {
+                        d_nonce[0] = d_nonceBlock[i];
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    __syncthreads();
+    
+    if (shared_nonces[0] != UINT64_MAX) {
+        return;
+    }
+    
+    // Initialize block's nonce to not found
+    d_nonceBlock[blockIdx.x] = UINT64_MAX;
+    
+    // Calculate starting nonce for this thread
+    uint64_t idx = nonces_offset + (blockIdx.x * blockDim.x + threadIdx.x) * hashes_per_thread;
+    uint64_t level = 1ULL << (64 - n_bits);
+    uint64_t locId = UINT64_MAX;
+    
+    // Get constants for t=5
+    const int t = 5;
+    const FrElementGPU *C = GPU_C_ptr[t - 2];
+    const FrElementGPU *M = GPU_M_ptr[t - 2];
+    const FrElementGPU *P = GPU_P_ptr[t - 2];
+    const FrElementGPU *S = GPU_S_ptr[t - 2];
+    const int nRoundsP = N_ROUNDS_P_POSEIDON[t - 2];
+    
+    PoseidonBN128GPU poseidon;
+    
+    for (uint64_t k = 0; k < hashes_per_thread && locId == UINT64_MAX; k++) {
+        uint64_t nonce_k = idx + k;
+        
+        // Build state: [0, state[0], state[1], state[2], nonce]
+        FrElementGPU state[5];
+        state[0] = BN128GPUScalarField::zero();
+        state[1] = d_state[0];  // Already in Montgomery form
+        state[2] = d_state[1];
+        state[3] = d_state[2];
+        
+        // Create nonce element and convert to Montgomery form
+        state[4] = BN128GPUScalarField::zero();
+        // Access limbs through pointer cast (same pattern as existing code)
+        uint32_t* nonce_limbs = (uint32_t*)&state[4].v;
+        nonce_limbs[0] = (uint32_t)nonce_k;
+        nonce_limbs[1] = (uint32_t)(nonce_k >> 32);
+        BN128GPUScalarField::toMontgomery(state[4]);
+        
+        // Perform hash
+        poseidon.hash_(state, t, C, M, P, S, nRoundsP);
+        
+        // Convert result from Montgomery and check
+        FrElementGPU result = state[0];
+        BN128GPUScalarField::fromMontgomery(result);
+        
+        // Check if hash satisfies grinding requirement
+        // We compare the lowest 64 bits against level
+        uint32_t* result_limbs = (uint32_t*)&result.v;
+        uint64_t hash_low = ((uint64_t)result_limbs[1] << 32) | result_limbs[0];
+        if (hash_low < level) {
+            locId = nonce_k;
+        }
+    }
+    
+    // Store result in shared memory for block-level reduction
+    shared_nonces[threadIdx.x] = locId;
+    __syncthreads();
+    
+    // Parallel reduction to find minimum nonce in block
+    uint32_t alive = blockDim.x >> 1;
+    while (alive > 0) {
+        if (threadIdx.x < alive && shared_nonces[threadIdx.x + alive] < shared_nonces[threadIdx.x]) {
+            shared_nonces[threadIdx.x] = shared_nonces[threadIdx.x + alive];
+        }
+        __syncthreads();
+        alive >>= 1;
+    }
+    
+    // Thread 0 stores block's result
+    if (threadIdx.x == 0) {
+        d_nonceBlock[blockIdx.x] = shared_nonces[0];
+    }
+}
+
+
+void PoseidonBN128GPU::grinding(uint64_t *d_nonce, uint64_t *d_nonceBlock, const FrElement *d_state, uint32_t n_bits, cudaStream_t stream) {
+    // Calculate number of iterations needed for 128-bit security
+    // Probability of not finding nonce in totalHashes: (1 - 1/2^n_bits)^totalHashes = 2^(-128)
+    const uint64_t security = 128;
+    double totalHashesRequired = (double(-double(security))) * log(2.0) / log(1.0 - 1.0 / double(1ULL << n_bits));
+    uint64_t log_totalHashesRequired = (uint64_t)ceil(log2(totalHashesRequired));
+    
+    uint64_t log_N = BN128_GRINDING_LAUNCH_BITS;  // 1<<BN128_GRINDING_LAUNCH_BITS nonces tryded per launch
+    uint64_t log_launch_iters = 7;  // 128 launch iterations
+    
+    uint64_t log_hashesPerThread;
+    if (log_totalHashesRequired > log_launch_iters + log_N) {
+        log_hashesPerThread = log_totalHashesRequired - log_launch_iters - log_N;
+    } else {
+        log_hashesPerThread = 0;
+    }
+    uint64_t hashesPerThread = 1ULL << log_hashesPerThread;
+    
+    dim3 blockSize(BN128_GRINDING_LAUNCH_BLOCKS_SIZE);
+    dim3 gridSize(BN128_GRINDING_LAUNCH_GRID_SIZE);
+    
+    size_t shared_mem_size = blockSize.x * sizeof(uint64_t);
+    uint64_t nonces_offset = 0;
+    uint64_t nonces_per_iteration = blockSize.x * gridSize.x * hashesPerThread;
+    uint64_t launch_iters = 1ULL << log_launch_iters;
+    
+    for (uint64_t i = 0; i < launch_iters; ++i) {
+        grinding_kernel_bn128<<<gridSize, blockSize, shared_mem_size, stream>>>(
+            d_nonce, d_nonceBlock, d_state, n_bits, hashesPerThread, nonces_offset
+        );
+        nonces_offset += nonces_per_iteration;
+    }
 }
 
 #undef INIT_T_CONSTANTS

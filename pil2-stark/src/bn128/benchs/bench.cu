@@ -543,6 +543,69 @@ BENCHMARK(MERKLETREETILES_GPU_BENCH)
     ->Args({1 << 16, 100, 8})     // 64K rows × 100 cols, arity=8
     ->Args({1 << 16, 100, 4});    // 64K rows × 100 cols, arity=4
 
+// =====================
+// Poseidon Grinding GPU Benchmark
+// =====================
+
+static void POSEIDON_GRINDING_GPU_BENCH(benchmark::State &state) {
+    int n_bits = state.range(0);
+    
+    // Initialize GPU constants
+    uint32_t gpu_idxs[] = {0};
+    PoseidonBN128GPU::initGPUConstants(gpu_idxs, 1);
+    
+    // Create a 3-element state for grinding
+    RawFr field;
+    RawFr::Element h_state[3];
+    for (int i = 0; i < 3; i++) {
+        field.fromUI(h_state[i], 1000 + i);
+    }
+    
+    // Allocate device memory
+    BN128GPUScalarField::Element *d_state;
+    uint64_t *d_nonce;
+    uint64_t *d_nonceBlock;
+    
+    cudaMalloc(&d_state, 3 * sizeof(BN128GPUScalarField::Element));
+    cudaMalloc(&d_nonce, sizeof(uint64_t));
+    cudaMalloc(&d_nonceBlock, 256 * sizeof(uint64_t));  // GRINDING_GRID_SIZE
+    
+    // Copy state to device
+    cudaMemcpy(d_state, h_state, 3 * sizeof(BN128GPUScalarField::Element), cudaMemcpyHostToDevice);
+    
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
+    
+    // Warm-up
+    uint64_t init_nonce = UINT64_MAX;
+    cudaMemcpy(d_nonce, &init_nonce, sizeof(uint64_t), cudaMemcpyHostToDevice);
+    PoseidonBN128GPU::grinding(d_nonce, d_nonceBlock, d_state, n_bits, stream);
+    cudaStreamSynchronize(stream);
+    
+    for (auto _ : state) {
+        cudaMemcpy(d_nonce, &init_nonce, sizeof(uint64_t), cudaMemcpyHostToDevice);
+        PoseidonBN128GPU::grinding(d_nonce, d_nonceBlock, d_state, n_bits, stream);
+        cudaStreamSynchronize(stream);
+        benchmark::DoNotOptimize(d_nonce);
+    }
+    
+    // Cleanup
+    cudaStreamDestroy(stream);
+    cudaFree(d_state);
+    cudaFree(d_nonce);
+    cudaFree(d_nonceBlock);
+    
+    state.counters["n_bits"] = n_bits;
+}
+
+BENCHMARK(POSEIDON_GRINDING_GPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Arg(8)
+    ->Arg(12)
+    ->Arg(16)
+    ->Arg(20);
+
 int main(int argc, char** argv) {
     // Print GPU info
     int deviceCount;

@@ -40,6 +40,9 @@ public:
     
     // Merkle tree construction for tiled layout
     static void merkletreeTiles(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, bool custom, cudaStream_t stream);
+    
+    // d_nonceBlock: device buffer for intermediate nonce storage (size: gridDim.x * sizeof(uint64_t))
+    static void grinding(uint64_t *d_nonce, uint64_t *d_nonceBlock, const FrElement *d_state, uint32_t n_bits, cudaStream_t stream);
 };
 
 __device__ void PoseidonBN128GPU::exp5(FrElement &r)
