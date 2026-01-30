@@ -683,4 +683,38 @@ BENCHMARK(POSEIDON_MERKLETREE_CPU_BENCH)
     ->Args({1 << 16, 100, 8})     // 64K rows × 100 cols, arity=8
     ->Args({1 << 16, 100, 4});    // 64K rows × 100 cols, arity=4
 
+// ==========================================
+// Poseidon grinding CPU Benchmark
+// ==========================================
+
+static void POSEIDON_GRINDING_CPU_BENCH(benchmark::State &state) {
+    int n_bits = state.range(0);
+    
+    PoseidonBN128 poseidon;
+    RawFr field;
+    
+    // Create input state with 3 elements
+    vector<RawFr::Element> input_state(3);
+    field.fromUI(input_state[0], 0x1234567890abcdefULL);
+    field.fromUI(input_state[1], 0xfedcba0987654321ULL);
+    field.fromUI(input_state[2], 0x0123456789abcdefULL);
+    
+    for (auto _ : state) {
+        uint64_t nonce = UINT64_MAX;
+        poseidon.grinding(nonce, input_state, n_bits);
+        benchmark::DoNotOptimize(nonce);
+        assert(nonce != UINT64_MAX); // ensure grinding was performed
+    }
+    
+    state.counters["n_bits"] = n_bits;
+}
+
+BENCHMARK(POSEIDON_GRINDING_CPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Args({8})    // 8 bits - easy, ~256 expected hashes
+    ->Args({12})   // 12 bits - ~4096 expected hashes
+    ->Args({16})   // 16 bits - ~65536 expected hashes
+    ->Args({20});  // 20 bits - ~1M expected hashes
+
 BENCHMARK_MAIN();

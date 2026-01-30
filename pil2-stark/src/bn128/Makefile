@@ -27,7 +27,7 @@ BLST_LIB       := ./../../external/blst/libblst.a
 SPPARK_INC     := -I./../../external/sppark -I./../../external/sppark/ff -I./../../external/sppark/util -I./../../external/sppark/ec
 SPPARK_UTIL    := ./../../external/sppark/util/all_gpus.cpp
 # Use -iquote for ffiasm so nested includes (fq.hpp, fr.hpp, etc.) resolve correctly
-FFIASM_QUOTE   := -Xcompiler -iquote$(SRC_DIR)/ffiasm
+FFIASM_QUOTE   := -Xcompiler -iquote$(SRC_DIR)/ffiasm -Xcompiler -iquote$(SRC_DIR)
 NVCCFLAGS      := -D__USE_CUDA__ -DFEATURE_BN254 $(SPPARK_INC) $(BLST_INC) $(CUDA_INC_FLAGS) $(FFIASM_QUOTE) \
                   -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 -Xcompiler -D__ADX__ \
                   -D__USE_ASSEMBLY__ -arch=$(CUDA_ARCH) --diag-suppress 114

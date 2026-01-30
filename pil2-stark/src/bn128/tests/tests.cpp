@@ -580,3 +580,54 @@ TEST(BN128_POSEIDON_TEST, merkletree_8rows_100cols) {
   // Verify root (last node)
   ASSERT_EQ(field.toString(tree[numNodes - 1], 16), "b6d02c9e5ea48185580c371837a1ecc09d7cf40774e1ac6f8491819deb3824d");
 }
+// ==============================================================================
+// Poseidon BN128 grinding test
+// ==============================================================================
+
+TEST(BN128_POSEIDON_TEST, grinding_cpu) {
+  PoseidonBN128 p;
+  RawFr field;
+  
+  constexpr uint8_t n_bits = 8;
+  
+  // Create input state with 3 elements
+  vector<RawFr::Element> state(3);
+  field.fromUI(state[0], 0x1234567890abcdefULL);
+  field.fromUI(state[1], 0xfedcba0987654321ULL);
+  field.fromUI(state[2], 0x0123456789abcdefULL);
+  
+  uint64_t nonce = UINT64_MAX;
+  
+  // Call CPU grinding function
+  p.grinding(nonce, state, n_bits);
+  
+  // Verify we found a valid nonce
+  ASSERT_NE(nonce, UINT64_MAX);
+  
+  // Verify the expected nonce value
+  ASSERT_EQ(nonce, 1530ULL);
+  
+  // Verify the hash at nonce satisfies the grinding requirement
+  uint64_t level = (1ULL << (64 - n_bits));
+  
+  // Compute the hash with the found nonce to verify
+  vector<RawFr::Element> verifyState(state.size() + 2);
+  verifyState[0] = field.zero();
+  std::memcpy(&verifyState[1], &state[0], state.size() * sizeof(RawFr::Element));
+  
+  // Append nonce
+  RawFr::Element tmp = field.zero();
+  tmp.v[0] = nonce;
+  field.toMontgomery(tmp, tmp);
+  verifyState[state.size() + 1] = tmp;
+  
+  // Compute hash
+  p.hash(verifyState);
+  
+  // Convert from Montgomery and check
+  RawFr::Element res;
+  field.fromMontgomery(res, verifyState[0]);
+  
+  // Check that res.v[0] < level
+  ASSERT_LT(res.v[0], level);
+}
