@@ -13,14 +13,16 @@ __global__ void convertGLToBN128ScalarField_kernel(
 ) {
     uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) {
-        // Start with zero element
-        output[idx] = BN128GPUScalarField::zero();
-        
-        // Copy the 64-bit Goldilocks value to the low limbs via pointer cast
-        uint32_t* limbs = (uint32_t*)&output[idx].v;
+        // Create element from uint64 using the Element operator[]
         uint64_t gl_val = input[idx];
-        limbs[0] = (uint32_t)gl_val;
-        limbs[1] = (uint32_t)(gl_val >> 32);
+        output[idx][0] = (uint32_t)gl_val;
+        output[idx][1] = (uint32_t)(gl_val >> 32);
+        output[idx][2] = 0;
+        output[idx][3] = 0;
+        output[idx][4] = 0;
+        output[idx][5] = 0;
+        output[idx][6] = 0;
+        output[idx][7] = 0;
         
         // Convert to Montgomery form
         BN128GPUScalarField::toMontgomery(output[idx]);

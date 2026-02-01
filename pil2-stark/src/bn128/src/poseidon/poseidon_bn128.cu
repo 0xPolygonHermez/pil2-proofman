@@ -135,9 +135,8 @@ __device__ __forceinline__ void poseidon_bn128_load_fr_from_gl(
     uint64_t num_rows,
     uint64_t num_cols
 ) {
-    uint32_t* limbs = (uint32_t*)&elem.v;
-    limbs[0] = limbs[1] = limbs[2] = limbs[3] = 0;
-    limbs[4] = limbs[5] = limbs[6] = limbs[7] = 0;
+    elem[0] = elem[1] = elem[2] = elem[3] = 0;
+    elem[4] = elem[5] = elem[6] = elem[7] = 0;
     
     #pragma unroll
     for (uint32_t k = 0; k < 3; k++) {
@@ -151,8 +150,8 @@ __device__ __forceinline__ void poseidon_bn128_load_fr_from_gl(
             }
             // Reduce from partially reduced form [0, 2*MOD) to canonical form [0, MOD)
             uint64_t gl_val = gl64_reduce(input[idx]);
-            limbs[k * 2] = (uint32_t)gl_val;
-            limbs[k * 2 + 1] = (uint32_t)(gl_val >> 32);
+            elem[k * 2] = (uint32_t)gl_val;
+            elem[k * 2 + 1] = (uint32_t)(gl_val >> 32);
         }
     }
 }
@@ -456,10 +455,8 @@ __global__ void grinding_kernel_bn128(
         
         // Create nonce element and convert to Montgomery form
         state[4] = BN128GPUScalarField::zero();
-        // Access limbs through pointer cast (same pattern as existing code)
-        uint32_t* nonce_limbs = (uint32_t*)&state[4].v;
-        nonce_limbs[0] = (uint32_t)nonce_k;
-        nonce_limbs[1] = (uint32_t)(nonce_k >> 32);
+        state[4][0] = (uint32_t)nonce_k;
+        state[4][1] = (uint32_t)(nonce_k >> 32);
         BN128GPUScalarField::toMontgomery(state[4]);
         
         // Perform hash
@@ -471,8 +468,7 @@ __global__ void grinding_kernel_bn128(
         
         // Check if hash satisfies grinding requirement
         // We compare the lowest 64 bits against level
-        uint32_t* result_limbs = (uint32_t*)&result.v;
-        uint64_t hash_low = ((uint64_t)result_limbs[1] << 32) | result_limbs[0];
+        uint64_t hash_low = ((uint64_t)result[1] << 32) | result[0];
         if (hash_low < level) {
             locId = nonce_k;
         }

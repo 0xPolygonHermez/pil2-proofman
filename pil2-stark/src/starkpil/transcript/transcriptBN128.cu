@@ -30,14 +30,11 @@ __device__ void fromMontgomeryLimbs(uint64_t* result, PoseidonBN128GPU::FrElemen
     
     BN128GPUScalarField::fromMontgomery(a);
     // The fr_t structure contains 8 uint32_t values in little-endian order
-    // We reinterpret the entire structure as uint32_t array
-    const uint32_t* limbs = reinterpret_cast<const uint32_t*>(&a.v);
-    
     // Combine into uint64_t (little-endian)
-    result[0] = ((uint64_t)limbs[1] << 32) | limbs[0];
-    result[1] = ((uint64_t)limbs[3] << 32) | limbs[2];
-    result[2] = ((uint64_t)limbs[5] << 32) | limbs[4];
-    result[3] = ((uint64_t)limbs[7] << 32) | limbs[6];
+    result[0] = ((uint64_t)a[1] << 32) | a[0];
+    result[1] = ((uint64_t)a[3] << 32) | a[2];
+    result[2] = ((uint64_t)a[5] << 32) | a[4];
+    result[3] = ((uint64_t)a[7] << 32) | a[6];
 }
 
 __device__ void goldilocks_to_fr(PoseidonBN128GPU::FrElement& result, const Goldilocks::Element& gl) {
@@ -47,11 +44,9 @@ __device__ void goldilocks_to_fr(PoseidonBN128GPU::FrElement& result, const Gold
     // Reduce from partially reduced form [0, 2*MOD) to canonical form [0, MOD)
     uint64_t val = gl64_reduce(gl);
     
-    // Reinterpret the fr_t structure as uint32_t array
-    // fr_t uses 8 uint32_t limbs in little-endian order
-    uint32_t* limbs = reinterpret_cast<uint32_t*>(&result.v);
-    limbs[0] = (uint32_t)(val);
-    limbs[1] = (uint32_t)(val >> 32);
+    // Set the low 64 bits in little-endian limb order
+    result[0] = (uint32_t)(val);
+    result[1] = (uint32_t)(val >> 32);
     
     BN128GPUScalarField::toMontgomery(result);
 }

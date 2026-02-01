@@ -22,11 +22,11 @@ __global__ void kernel_fr_add_one_one(int* ok)
     BN128GPUScalarField::Element b;
     BN128GPUScalarField::Element r;
 
-    a.v[0] = 1;
-    b.v[0] = 1;
+    a[0] = 1;
+    b[0] = 1;
     for(int i = 1; i < 8; ++i) {
-        a.v[i] = 0;
-        b.v[i] = 0;
+        a[i] = 0;
+        b[i] = 0;
     }    
     a.v.to(); // Convert to montgomery form
     b.v.to(); // Convert to montgomery form
@@ -38,7 +38,7 @@ __global__ void kernel_fr_add_one_one(int* ok)
     bool same = true;    
     for(int i = 0; i < 8; ++i) {
         uint32_t expected = (i == 0) ? 2 : 0;
-        if(r.v[i] != expected) {
+        if(r[i] != expected) {
             same = false;
         }
     }
@@ -73,11 +73,11 @@ __global__ void kernel_fq_add_one_one(int* ok)
     BN128GPUBaseField::Element b;
     BN128GPUBaseField::Element r;
 
-    a.v[0] = 1;
-    b.v[0] = 1;
+    a[0] = 1;
+    b[0] = 1;
     for(int i = 1; i < 8; ++i) {
-        a.v[i] = 0;
-        b.v[i] = 0;
+        a[i] = 0;
+        b[i] = 0;
     }    
     a.v.to(); // Convert to montgomery form
     b.v.to(); // Convert to montgomery form
@@ -89,7 +89,7 @@ __global__ void kernel_fq_add_one_one(int* ok)
     bool same = true;    
     for(int i = 0; i < 8; ++i) {
         uint32_t expected = (i == 0) ? 2 : 0;
-        if(r.v[i] != expected) {
+        if(r[i] != expected) {
             same = false;
         }
     }
@@ -121,9 +121,9 @@ __global__ void from_montgomery_kernel(BN128GPUScalarField::Element* state, int 
 __global__ void init_state_kernel(BN128GPUScalarField::Element* state, int t) {
     for (int i = 0; i < t; i++) {
         // Initialize to i
-        state[i].v[0] = i;
+        state[i][0] = i;
         for (int j = 1; j < 8; j++) {
-            state[i].v[j] = 0;
+            state[i][j] = 0;
         }
         state[i].v.to(); // Convert to Montgomery form
     }
@@ -166,14 +166,12 @@ TEST(BN128_POSEIDON2_TEST, hash_gpu_t2) {
     cudaMemcpy(h_state, d_state, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyDeviceToHost);
     cudaFree(d_state);
     
-    // Use pointer cast to access the raw uint32_t values 
+    // Format as hex strings for comparison
     char hex0[65], hex1[65]; //64 hex chars + 1 null
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p1 = reinterpret_cast<const uint32_t*>(&h_state[1].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex1, sizeof(hex1), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p1[7], p1[6], p1[5], p1[4], p1[3], p1[2], p1[1], p1[0]);
+             h_state[1][7], h_state[1][6], h_state[1][5], h_state[1][4], h_state[1][3], h_state[1][2], h_state[1][1], h_state[1][0]);
     delete[] h_state;
     EXPECT_STREQ(hex0, "1d01e56f49579cec72319e145f06f6177f6c5253206e78c2689781452a31878b");
     EXPECT_STREQ(hex1, "0d189ec589c41b8cffa88cfc523618a055abe8192c70f75aa72fc514560f6c61");
@@ -204,12 +202,10 @@ TEST(BN128_POSEIDON2_TEST, hash_gpu_t3) {
     cudaFree(d_state);
     
     char hex0[65], hex2[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p2 = reinterpret_cast<const uint32_t*>(&h_state[2].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex2, sizeof(hex2), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p2[7], p2[6], p2[5], p2[4], p2[3], p2[2], p2[1], p2[0]);
+             h_state[2][7], h_state[2][6], h_state[2][5], h_state[2][4], h_state[2][3], h_state[2][2], h_state[2][1], h_state[2][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "0bb61d24daca55eebcb1929a82650f328134334da98ea4f847f760054f4a3033");
@@ -241,12 +237,10 @@ TEST(BN128_POSEIDON2_TEST, hash_gpu_t4) {
     cudaFree(d_state);
     
     char hex0[65], hex3[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p3 = reinterpret_cast<const uint32_t*>(&h_state[3].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex3, sizeof(hex3), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p3[7], p3[6], p3[5], p3[4], p3[3], p3[2], p3[1], p3[0]);
+             h_state[3][7], h_state[3][6], h_state[3][5], h_state[3][4], h_state[3][3], h_state[3][2], h_state[3][1], h_state[3][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "01bd538c2ee014ed5141b29e9ae240bf8db3fe5b9a38629a9647cf8d76c01737");
@@ -278,12 +272,10 @@ TEST(BN128_POSEIDON2_TEST, hash_gpu_t8) {
     cudaFree(d_state);
     
     char hex0[65], hex7[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p7 = reinterpret_cast<const uint32_t*>(&h_state[7].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex7, sizeof(hex7), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p7[7], p7[6], p7[5], p7[4], p7[3], p7[2], p7[1], p7[0]);
+             h_state[7][7], h_state[7][6], h_state[7][5], h_state[7][4], h_state[7][3], h_state[7][2], h_state[7][1], h_state[7][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "1d1a50bcde871247856df135d56a4ca61af575f1140ed9b1503c77528cf345df");
@@ -315,12 +307,10 @@ TEST(BN128_POSEIDON2_TEST, hash_gpu_t12) {
     cudaFree(d_state);
     
     char hex0[65], hex11[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p11 = reinterpret_cast<const uint32_t*>(&h_state[11].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex11, sizeof(hex11), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p11[7], p11[6], p11[5], p11[4], p11[3], p11[2], p11[1], p11[0]);
+             h_state[11][7], h_state[11][6], h_state[11][5], h_state[11][4], h_state[11][3], h_state[11][2], h_state[11][1], h_state[11][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "3014e0ec17029f7e4f5cfe8c7c54fc3df6a5f7539f6aa304b2f3c747a9105618");
@@ -352,12 +342,10 @@ TEST(BN128_POSEIDON2_TEST, hash_gpu_t16) {
     cudaFree(d_state);
     
     char hex0[65], hex15[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p15 = reinterpret_cast<const uint32_t*>(&h_state[15].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex15, sizeof(hex15), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p15[7], p15[6], p15[5], p15[4], p15[3], p15[2], p15[1], p15[0]);
+             h_state[15][7], h_state[15][6], h_state[15][5], h_state[15][4], h_state[15][3], h_state[15][2], h_state[15][1], h_state[15][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "0fc2e6b758f493969e1d860f9a44ee3bdffdf796f382aa4ffb16fa4e9bcc333f");
@@ -392,12 +380,10 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t2) {
     cudaFree(d_state);
     
     char hex0[65], hex1[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p1 = reinterpret_cast<const uint32_t*>(&h_state[1].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex1, sizeof(hex1), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p1[7], p1[6], p1[5], p1[4], p1[3], p1[2], p1[1], p1[0]);
+             h_state[1][7], h_state[1][6], h_state[1][5], h_state[1][4], h_state[1][3], h_state[1][2], h_state[1][1], h_state[1][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "29176100eaa962bdc1fe6c654d6a3c130e96a4d1168b33848b897dc502820133");
@@ -428,12 +414,10 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t3) {
     cudaFree(d_state);
     
     char hex0[65], hex2[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p2 = reinterpret_cast<const uint32_t*>(&h_state[2].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex2, sizeof(hex2), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p2[7], p2[6], p2[5], p2[4], p2[3], p2[2], p2[1], p2[0]);
+             h_state[2][7], h_state[2][6], h_state[2][5], h_state[2][4], h_state[2][3], h_state[2][2], h_state[2][1], h_state[2][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "115cc0f5e7d690413df64c6b9662e9cf2a3617f2743245519e19607a4417189a");
@@ -464,12 +448,10 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t4) {
     cudaFree(d_state);
     
     char hex0[65], hex3[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p3 = reinterpret_cast<const uint32_t*>(&h_state[3].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex3, sizeof(hex3), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p3[7], p3[6], p3[5], p3[4], p3[3], p3[2], p3[1], p3[0]);
+             h_state[3][7], h_state[3][6], h_state[3][5], h_state[3][4], h_state[3][3], h_state[3][2], h_state[3][1], h_state[3][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "0e7732d89e6939c0ff03d5e58dab6302f3230e269dc5b968f725df34ab36d732");
@@ -500,12 +482,10 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t5) {
     cudaFree(d_state);
     
     char hex0[65], hex4[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p4 = reinterpret_cast<const uint32_t*>(&h_state[4].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex4, sizeof(hex4), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p4[7], p4[6], p4[5], p4[4], p4[3], p4[2], p4[1], p4[0]);
+             h_state[4][7], h_state[4][6], h_state[4][5], h_state[4][4], h_state[4][3], h_state[4][2], h_state[4][1], h_state[4][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "299c867db6c1fdd79dcefa40e4510b9837e60ebb1ce0663dbaa525df65250465");
@@ -536,12 +516,10 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t6) {
     cudaFree(d_state);
     
     char hex0[65], hex5[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p5 = reinterpret_cast<const uint32_t*>(&h_state[5].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex5, sizeof(hex5), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p5[7], p5[6], p5[5], p5[4], p5[3], p5[2], p5[1], p5[0]);
+             h_state[5][7], h_state[5][6], h_state[5][5], h_state[5][4], h_state[5][3], h_state[5][2], h_state[5][1], h_state[5][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "0dab9449e4a1398a15224c0b15a49d598b2174d305a316c918125f8feeb123c0");
@@ -572,12 +550,10 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t7) {
     cudaFree(d_state);
     
     char hex0[65], hex6[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p6 = reinterpret_cast<const uint32_t*>(&h_state[6].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex6, sizeof(hex6), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p6[7], p6[6], p6[5], p6[4], p6[3], p6[2], p6[1], p6[0]);
+             h_state[6][7], h_state[6][6], h_state[6][5], h_state[6][4], h_state[6][3], h_state[6][2], h_state[6][1], h_state[6][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "2d1a03850084442813c8ebf094dea47538490a68b05f2239134a4cca2f6302e1");
@@ -608,12 +584,10 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t8) {
     cudaFree(d_state);
     
     char hex0[65], hex7[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p7 = reinterpret_cast<const uint32_t*>(&h_state[7].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex7, sizeof(hex7), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p7[7], p7[6], p7[5], p7[4], p7[3], p7[2], p7[1], p7[0]);
+             h_state[7][7], h_state[7][6], h_state[7][5], h_state[7][4], h_state[7][3], h_state[7][2], h_state[7][1], h_state[7][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "1c2f3482dbb140c4ebb9ada49abdbc374a9a85fcfc6533ec2e9df45b4921c318");
@@ -644,12 +618,10 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t9) {
     cudaFree(d_state);
     
     char hex0[65], hex8[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p8 = reinterpret_cast<const uint32_t*>(&h_state[8].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex8, sizeof(hex8), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p8[7], p8[6], p8[5], p8[4], p8[3], p8[2], p8[1], p8[0]);
+             h_state[8][7], h_state[8][6], h_state[8][5], h_state[8][4], h_state[8][3], h_state[8][2], h_state[8][1], h_state[8][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "2921ab9bd0140cbc98e40395c0fefb40337a4d54fbbecd9a4d43b3d8d0c4d8d1");
@@ -680,12 +652,10 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t10) {
     cudaFree(d_state);
     
     char hex0[65], hex9[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p9 = reinterpret_cast<const uint32_t*>(&h_state[9].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex9, sizeof(hex9), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p9[7], p9[6], p9[5], p9[4], p9[3], p9[2], p9[1], p9[0]);
+             h_state[9][7], h_state[9][6], h_state[9][5], h_state[9][4], h_state[9][3], h_state[9][2], h_state[9][1], h_state[9][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "1e0b893aa2ad802275e749d260330b7675b22bb3aaa4461d204af32e60cd9078");
@@ -716,12 +686,10 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t11) {
     cudaFree(d_state);
     
     char hex0[65], hex10[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p10 = reinterpret_cast<const uint32_t*>(&h_state[10].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex10, sizeof(hex10), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p10[7], p10[6], p10[5], p10[4], p10[3], p10[2], p10[1], p10[0]);
+             h_state[10][7], h_state[10][6], h_state[10][5], h_state[10][4], h_state[10][3], h_state[10][2], h_state[10][1], h_state[10][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "0816126a09c29ecfcc0628461dacfb9459816fc60d6738b78db9ad07206fdc21");
@@ -752,12 +720,10 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t12) {
     cudaFree(d_state);
     
     char hex0[65], hex11[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p11 = reinterpret_cast<const uint32_t*>(&h_state[11].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex11, sizeof(hex11), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p11[7], p11[6], p11[5], p11[4], p11[3], p11[2], p11[1], p11[0]);
+             h_state[11][7], h_state[11][6], h_state[11][5], h_state[11][4], h_state[11][3], h_state[11][2], h_state[11][1], h_state[11][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "07e5b070aa2dba008f30a6b785b6c5ae2429e211f71cacdbdae0e07fc05b47a8");
@@ -788,12 +754,10 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t13) {
     cudaFree(d_state);
     
     char hex0[65], hex12[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p12 = reinterpret_cast<const uint32_t*>(&h_state[12].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex12, sizeof(hex12), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p12[7], p12[6], p12[5], p12[4], p12[3], p12[2], p12[1], p12[0]);
+             h_state[12][7], h_state[12][6], h_state[12][5], h_state[12][4], h_state[12][3], h_state[12][2], h_state[12][1], h_state[12][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "058814945232937db248a01e7cc55b3d681cc08702c8168494e856c1ef7693b5");
@@ -824,12 +788,10 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t14) {
     cudaFree(d_state);
     
     char hex0[65], hex13[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p13 = reinterpret_cast<const uint32_t*>(&h_state[13].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex13, sizeof(hex13), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p13[7], p13[6], p13[5], p13[4], p13[3], p13[2], p13[1], p13[0]);
+             h_state[13][7], h_state[13][6], h_state[13][5], h_state[13][4], h_state[13][3], h_state[13][2], h_state[13][1], h_state[13][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "0f918939632fadca6456a2fe6e65a124828d4c3920d379cc744e90a666887806");
@@ -860,12 +822,10 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t15) {
     cudaFree(d_state);
     
     char hex0[65], hex14[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p14 = reinterpret_cast<const uint32_t*>(&h_state[14].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex14, sizeof(hex14), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p14[7], p14[6], p14[5], p14[4], p14[3], p14[2], p14[1], p14[0]);
+             h_state[14][7], h_state[14][6], h_state[14][5], h_state[14][4], h_state[14][3], h_state[14][2], h_state[14][1], h_state[14][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "1278779aaafc5ca58bf573151005830cdb4683fb26591c85a7464d4f0e527776");
@@ -896,12 +856,10 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t16) {
     cudaFree(d_state);
     
     char hex0[65], hex15[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p15 = reinterpret_cast<const uint32_t*>(&h_state[15].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex15, sizeof(hex15), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p15[7], p15[6], p15[5], p15[4], p15[3], p15[2], p15[1], p15[0]);
+             h_state[15][7], h_state[15][6], h_state[15][5], h_state[15][4], h_state[15][3], h_state[15][2], h_state[15][1], h_state[15][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "094ae33b67a845998abb55e917642d4022d078d96f7c36ea11da4273ecf20f50");
@@ -932,12 +890,10 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t17) {
     cudaFree(d_state);
     
     char hex0[65], hex16[65];
-    const uint32_t* p0 = reinterpret_cast<const uint32_t*>(&h_state[0].v);
-    const uint32_t* p16 = reinterpret_cast<const uint32_t*>(&h_state[16].v);
     snprintf(hex0, sizeof(hex0), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p0[7], p0[6], p0[5], p0[4], p0[3], p0[2], p0[1], p0[0]);
+             h_state[0][7], h_state[0][6], h_state[0][5], h_state[0][4], h_state[0][3], h_state[0][2], h_state[0][1], h_state[0][0]);
     snprintf(hex16, sizeof(hex16), "%08x%08x%08x%08x%08x%08x%08x%08x",
-             p16[7], p16[6], p16[5], p16[4], p16[3], p16[2], p16[1], p16[0]);
+             h_state[16][7], h_state[16][6], h_state[16][5], h_state[16][4], h_state[16][3], h_state[16][2], h_state[16][1], h_state[16][0]);
     delete[] h_state;
     
     EXPECT_STREQ(hex0, "16159a551cbb66108281a48099fff949ae08afd7f1f2ec06de2ffb96b919b765");

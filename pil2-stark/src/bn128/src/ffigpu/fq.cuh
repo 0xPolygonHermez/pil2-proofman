@@ -11,6 +11,14 @@ class BN128GPUBaseField {
 public:
     struct Element {
         alt_bn128::fp_t v;
+        
+        // Accessor to underlying limbs (workaround for private operator[] in blst_384_t)
+        __host__ __device__ __forceinline__ uint32_t& operator[](size_t i) {
+            return ((uint32_t*)&v)[i];
+        }
+        __host__ __device__ __forceinline__ const uint32_t& operator[](size_t i) const {
+            return ((const uint32_t*)&v)[i];
+        }
     };
     static __device__ __forceinline__ Element zero();
     static __device__ __forceinline__ Element one();
@@ -31,14 +39,14 @@ public:
 #if defined(__CUDACC__) && defined(__CUDA_ARCH__)
 __device__ __forceinline__ BN128GPUBaseField::Element BN128GPUBaseField::zero() {
     Element r;
-    r.v[0] = 0;
-    r.v[1] = 0;
-    r.v[2] = 0;
-    r.v[3] = 0;
-    r.v[4] = 0;
-    r.v[5] = 0;
-    r.v[6] = 0;
-    r.v[7] = 0;
+    r[0] = 0;
+    r[1] = 0;
+    r[2] = 0;
+    r[3] = 0;
+    r[4] = 0;
+    r[5] = 0;
+    r[6] = 0;
+    r[7] = 0;
     return r;
 }
 
