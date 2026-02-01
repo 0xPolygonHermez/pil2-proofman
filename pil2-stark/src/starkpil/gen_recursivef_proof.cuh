@@ -10,9 +10,6 @@
 #include "gpu_timer.cuh"
 #include <iomanip>
 
-/* Todo:
-    - netejar genproof tota inicialitzacio inecessaria del starks
- */
 
 
 void calculateWitnessSTD_BN128_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams *d_params, bool prod, ExpressionsGPU *expressionsCtxGPU, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream) {
@@ -146,11 +143,13 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
 
     //=============================
     
-    // the challenges buffer can allways be used safely
-    PoseidonBN128GPU::FrElement * d_hash_gpu = (PoseidonBN128GPU::FrElement *) h_params.challenges;
+    // Use input_hash_nonce buffer as temporary storage for BN128 hash output
+    PoseidonBN128GPU::FrElement * d_hash_gpu = (PoseidonBN128GPU::FrElement *)((Goldilocks::Element *)d_aux_trace + offsetInputHashNonce);
 
     d_transcript.reset(stream);
-    d_transcript.put(((PoseidonBN128GPU::FrElement *) starks.treesGL[setupCtx.starkInfo.nStages + 1]->get_nodes_ptr()) + starks.treesGL[setupCtx.starkInfo.nStages + 1]->numNodes - 1, 1, stream);
+
+    PoseidonBN128GPU::FrElement *constTreeRoot = ((PoseidonBN128GPU::FrElement *) starks.treesGL[setupCtx.starkInfo.nStages + 1]->get_nodes_ptr()) + starks.treesGL[setupCtx.starkInfo.nStages + 1]->numNodes - 1;
+    d_transcript.put(constTreeRoot, 1, stream);
     if (setupCtx.starkInfo.nPublics > 0)
     {
         if (!setupCtx.starkInfo.starkStruct.hashCommits)
@@ -301,29 +300,20 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     TimerStartGPU(timer, STARK_STEP_FRI);
 
     TimerStartCategoryGPU(timer, GRINDING);
-    Goldilocks::Element *d_input_hash_nonce = (Goldilocks::Element *)d_aux_trace + offsetInputHashNonce;
-    CHECKCUDAERR(cudaMemcpyAsync(d_input_hash_nonce, h_params.challenges, FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToDevice, stream));
-    //Poseidon2GoldilocksGPUGrinding::grinding((uint64_t *)d_nonce, (uint64_t *)d_nonceBlocks, (uint64_t *)d_input_hash_nonce, setupCtx.starkInfo.starkStruct.powBits, stream);
+    PoseidonBN128GPU::FrElement *d_grinding_state = (PoseidonBN128GPU::FrElement *)(d_aux_trace + offsetInputHashNonce);
+    convertGLToBN128ScalarField(d_grinding_state, (const uint64_t *)h_params.challenges, FIELD_EXTENSION, stream);
+    CHECKCUDAERR(cudaGetLastError());
+    
+    PoseidonBN128GPU::grinding((uint64_t *)d_nonce, (uint64_t *)d_nonceBlocks, d_grinding_state, setupCtx.starkInfo.starkStruct.powBits, stream);
     CHECKCUDAERR(cudaGetLastError());
     TimerStopCategoryGPU(timer, GRINDING);
 
-    // Print GPU challenges for comparison with CPU
+    // Print GPU nonce for comparison with CPU
     {
         cudaStreamSynchronize(stream);
-        uint64_t numChallenges = setupCtx.starkInfo.challengesMap.size();
-        std::vector<Goldilocks::Element> h_challenges(numChallenges * FIELD_EXTENSION);
-        cudaMemcpy(h_challenges.data(), h_params.challenges, numChallenges * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
-        
-        std::cout << "=== GPU Challenges  ===" << std::endl;
-        for (uint64_t i = 0; i < numChallenges; i++) {
-            std::cout << "Challenge[" << i << "]: ";
-            for (uint64_t j = 0; j < FIELD_EXTENSION; j++) {
-                std::cout << Goldilocks::toU64(h_challenges[i * FIELD_EXTENSION + j]);
-                if (j < FIELD_EXTENSION - 1) std::cout << ", ";
-            }
-            std::cout << std::endl;            
-        }
-        std::cout << "==================================" << std::endl;
+        uint64_t h_nonce;
+        cudaMemcpy(&h_nonce, d_nonce, sizeof(uint64_t), cudaMemcpyDeviceToHost);
+        std::cout << "GPU nonce: " << h_nonce << std::endl;
     }
 
     TimerStopGPU(timer,STARK_GPU_PROOF);

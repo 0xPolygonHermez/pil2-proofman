@@ -6,6 +6,34 @@
 
 class gl64_t;
 
+__global__ void convertGLToBN128ScalarField_kernel(
+    PoseidonBN128GPU::FrElement *output,
+    const uint64_t *input,
+    uint64_t n
+) {
+    uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        // Start with zero element
+        output[idx] = BN128GPUScalarField::zero();
+        
+        // Copy the 64-bit Goldilocks value to the low limbs via pointer cast
+        uint32_t* limbs = (uint32_t*)&output[idx].v;
+        uint64_t gl_val = input[idx];
+        limbs[0] = (uint32_t)gl_val;
+        limbs[1] = (uint32_t)(gl_val >> 32);
+        
+        // Convert to Montgomery form
+        BN128GPUScalarField::toMontgomery(output[idx]);
+    }
+}
+
+void convertGLToBN128ScalarField(PoseidonBN128GPU::FrElement *output, const uint64_t *input, uint64_t n, cudaStream_t stream) {
+    if (n == 0) return;
+    dim3 threads(32);
+    dim3 blocks((n + threads.x - 1) / threads.x);
+    convertGLToBN128ScalarField_kernel<<<blocks, threads, 0, stream>>>(output, input, n);
+}
+
 void calculateHashBN128_gpu(TranscriptBN128_GPU *d_transcript, PoseidonBN128GPU::FrElement* hash, SetupCtx &setupCtx, Goldilocks::Element* buffer, uint64_t nElements, cudaStream_t stream) {
 
     d_transcript->reset(stream);
