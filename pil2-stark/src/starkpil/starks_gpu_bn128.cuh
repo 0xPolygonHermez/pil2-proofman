@@ -8,6 +8,8 @@
 #include "gpu_timer.cuh"
 #include "steps.hpp"
 #include "gl64_t.cuh"
+#include "proof_stark.hpp"
+#include "starks.hpp"
 
 
 void calculateHashBN128_gpu(TranscriptBN128_GPU *d_transcript ,PoseidonBN128GPU::FrElement* hash, SetupCtx &setupCtx, Goldilocks::Element* buffer, uint64_t nElements, cudaStream_t stream);
@@ -25,5 +27,12 @@ void merkelizeFRI_bn128_gpu(SetupCtx& setupCtx, StepsParams &h_params, uint64_t 
 void proveQueries_bn128_gpu(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *d_friQueries, uint64_t nQueries, MerkleTreeBN128 **trees, uint64_t nTrees, gl64_t *d_aux_trace, uint32_t nStages, cudaStream_t stream);
 
 void proveFRIQueries_bn128_gpu(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t step, uint64_t currentBits, uint64_t *d_friQueries, uint64_t nQueries, MerkleTreeBN128 *treeFRI, cudaStream_t stream);
+
+void setProof_bn128_gpu(
+    Starks<RawFr::Element>& starks,
+    FRIProof<RawFr::Element>& proof,
+    Goldilocks::Element *d_aux_trace,
+    cudaStream_t stream
+);
 
 #endif

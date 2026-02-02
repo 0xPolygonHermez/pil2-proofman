@@ -286,12 +286,12 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
     if(!proofFile.empty()) {
         json2file(zkin, proofFile);
     }
+    
+    TimerStopAndLog(STARK_PROOF);
 
     return (void *) new nlohmann::json(zkin);
     
 
-    TimerStopAndLog(STARK_PROOF);
 
     
-    return nullptr;
 }

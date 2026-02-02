@@ -55,7 +55,7 @@ void calculateWitnessSTD_BN128_gpu(SetupCtx& setupCtx, StepsParams& h_params, St
     updateAirgroupValueGPU(setupCtx, h_params, d_params, hint[0], hintFieldNameAirgroupVal, "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
 }
 
-void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *d_aux_trace, Goldilocks::Element *d_constTree, std::string proofFile, cudaStream_t stream) {
+void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *d_aux_trace, Goldilocks::Element *d_constTree, Goldilocks::Element *h_publicInputs, std::string proofFile, cudaStream_t stream) {
 
     //2) do I need constTreePath?
     
@@ -137,11 +137,10 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     Goldilocks::Element *d_nonceBlocks = (Goldilocks::Element *)d_aux_trace + offsetNonceBlocks;
     uint64_t *friQueries_gpu = (uint64_t *)d_aux_trace + offsetFriQueries;
 
-    gl64_t *d_queries_buff = (gl64_t *)d_aux_trace + offsetProofQueries;
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
     uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.steps.size() - 1;
 
-    //=============================
+    gl64_t *d_queries_buff = (gl64_t *)d_aux_trace + offsetProofQueries;
     
     // Use input_hash_nonce buffer as temporary storage for BN128 hash output
     PoseidonBN128GPU::FrElement * d_hash_gpu = (PoseidonBN128GPU::FrElement *)((Goldilocks::Element *)d_aux_trace + offsetInputHashNonce);
@@ -243,7 +242,6 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
         d_transcript.put(h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION, stream);
     } else {
-        // todo_roger: here we are going to write on top of the challenges buffer, is it ok? 
         calculateHashBN128_gpu(&d_transcript_helper, d_hash_gpu, setupCtx, h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION, stream);
         d_transcript.put(d_hash_gpu, nFieldElements, stream);
     }
@@ -307,21 +305,13 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     CHECKCUDAERR(cudaGetLastError());
     TimerStopCategoryGPU(timer, GRINDING);
 
-    // Print GPU nonce for comparison with CPU
-    {
-        cudaStreamSynchronize(stream);
-        uint64_t h_nonce;
-        cudaMemcpy(&h_nonce, d_nonce, sizeof(uint64_t), cudaMemcpyDeviceToHost);
-        std::cout << "GPU nonce: " << h_nonce << std::endl;
-    }
-
     TimerStartCategoryGPU(timer, STARK_FRI_QUERIES);
     d_transcript_helper.reset(stream);
     d_transcript_helper.put(h_params.challenges, FIELD_EXTENSION, stream);
     d_transcript_helper.put(d_nonce, 1, stream);
     d_transcript_helper.getPermutations(friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits, stream);
 
-    proveQueries_bn128_gpu(setupCtx, d_queries_buff, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesGL, nTrees, (gl64_t*)d_aux_trace, (gl64_t*)d_constTree, setupCtx.starkInfo.nStages, stream);
+    proveQueries_bn128_gpu(setupCtx, d_queries_buff, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesGL, nTrees, (gl64_t*)d_aux_trace, setupCtx.starkInfo.nStages, stream);
 
     for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {
         proveFRIQueries_bn128_gpu(setupCtx, &d_queries_buff[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize], step + 1, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesFRI[step], stream);
@@ -329,6 +319,28 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
 
     TimerStopCategoryGPU(timer, STARK_FRI_QUERIES);
     TimerStopGPU(timer, STARK_STEP_FRI);
+
+    //--------------------------------
+    // 7. Generate proof file
+    //--------------------------------
+    FRIProof<RawFr::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);    
+    
+    setProof_bn128_gpu(
+        starks,
+        proof,
+        d_aux_trace,
+        stream
+    );
+
+    nlohmann::json zkin = proof.proof.proof2json();
+    zkin["publics"] = nlohmann::json::array();
+    for(uint64_t i = 0; i < setupCtx.starkInfo.nPublics; ++i) {
+        zkin["publics"][i] = Goldilocks::toString(h_publicInputs[i]);
+    }
+
+    if(!proofFile.empty()) {
+        json2file(zkin, proofFile);
+    }
 
     TimerStopGPU(timer,STARK_GPU_PROOF);
 
@@ -342,15 +354,11 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     cudaFree(d_expsArgs);
     cudaFree(d_destParams);
 
-
-
-
-
     // Free stark trees
     /*for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2; i++)
     {
        cudaFree(starks.treesGL[i]->get_nodes_ptr());
     }*/
     // free FRI trees
-    return nullptr;
+    return (void *) new nlohmann::json(zkin);
 }

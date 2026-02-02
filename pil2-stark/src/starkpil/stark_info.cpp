@@ -536,7 +536,13 @@ void StarkInfo::setMapOffsets() {
         }
 
         uint64_t nSiblings = std::ceil(starkStruct.nBitsExt / std::log2(starkStruct.merkleTreeArity)) - starkStruct.lastLevelVerification;
-        uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+        uint64_t nSiblingsPerLevel;
+        if (starkStruct.verificationHashType == "BN128") {
+            // BN128: all arity siblings per level, each is 4 uint64_t (32 bytes)
+            nSiblingsPerLevel = starkStruct.merkleTreeArity * 4;
+        } else {
+            nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+        }
         maxProofSize = nSiblings * nSiblingsPerLevel;
 
         maxProofBuffSize = maxTreeWidth + maxProofSize;

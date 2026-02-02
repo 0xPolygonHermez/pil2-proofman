@@ -868,15 +868,6 @@ void *gen_recursive_proof_final(void *pSetupCtx_, uint64_t airgroupId, uint64_t 
     uint64_t sizeConstOnlyTree = sizeConstTree - sizeConstPolsExtended;
     uint64_t sizeAuxTrace = proverBufferSize;
     uint64_t sizePublicInputs = setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element);
-    
-    std::cout << "N: " << N << ", nCols: " << nCols << std::endl;
-    std::cout << "Size witness: " << sizeWitness << ", Size const tree: " << sizeConstTree << std::endl;
-    std::cout << "Size const pols: " << sizeConstPols << std::endl;
-    std::cout << "Size aux trace: " << sizeAuxTrace << std::endl;
-    std::cout << "Size const only tree: " << sizeConstOnlyTree << std::endl;
-    std::cout << "Size const pols extended: " << sizeConstPolsExtended << std::endl;
-    std::cout << "Size public inputs: " << sizePublicInputs << std::endl;
-
     //generate device buffers
     gl64_t *d_witness;
     gl64_t *d_aux_trace;
@@ -938,7 +929,7 @@ void *gen_recursive_proof_final(void *pSetupCtx_, uint64_t airgroupId, uint64_t 
     CHECKCUDAERR(cudaFree(d_const_pols));
 
 
-    void* result = genRecursiveProofBN128_gpu(*setupCtx, airgroupId, airId, instanceId, (Goldilocks::Element *)d_aux_trace, (Goldilocks::Element *)d_const_tree, string(proof_file), stream);
+    void* result = genRecursiveProofBN128_gpu(*setupCtx, airgroupId, airId, instanceId, (Goldilocks::Element *)d_aux_trace, (Goldilocks::Element *)d_const_tree, (Goldilocks::Element *)pPublicInputs, string(proof_file), stream);
 
     cudaStreamSynchronize(stream);
 

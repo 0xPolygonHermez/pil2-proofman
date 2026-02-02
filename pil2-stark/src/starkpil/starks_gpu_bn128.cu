@@ -4,6 +4,7 @@
 #include "ntt_goldilocks.cuh"
 #include "starks_gpu.cuh"
 #include "data_layout.cuh"
+#include "fri/fri.hpp"
 
 class gl64_t;
 
@@ -127,8 +128,8 @@ void proveQueries_bn128_gpu(
     uint32_t nStages,
     cudaStream_t stream
 ) {
-    uint64_t maxBuffSize = setupCtx.starkInfo.maxProofBuffSize;
     uint64_t maxTreeWidth = setupCtx.starkInfo.maxTreeWidth;
+    uint64_t maxBuffSize = setupCtx.starkInfo.maxProofBuffSize;
 
     // For each tree, extract polynomial values and generate Merkle proofs
     for (uint64_t k = 0; k < nTrees; k++)
@@ -176,7 +177,8 @@ void proveFRIQueries_bn128_gpu(
     MerkleTreeBN128 *treeFRI,
     cudaStream_t stream
 ) {
-    uint64_t buffSize = treeFRI->getMerkleTreeWidth() + treeFRI->getMerkleProofSize() / sizeof(gl64_t);
+    uint64_t maxBuffSize = setupCtx.starkInfo.maxProofBuffSize;
+    uint64_t friWidth = treeFRI->getMerkleTreeWidth();
     
     // Reduce query indices modulo current domain size
     dim3 nthreads_(64);
@@ -186,14 +188,14 @@ void proveFRIQueries_bn128_gpu(
 
     // Extract polynomial values at queried positions
     dim3 nThreads(32, 32);
-    dim3 nBlocks((treeFRI->getMerkleTreeWidth() + nThreads.x - 1) / nThreads.x, (nQueries + nThreads.y - 1) / nThreads.y);
+    dim3 nBlocks((friWidth + nThreads.x - 1) / nThreads.x, (nQueries + nThreads.y - 1) / nThreads.y);
     getTracePolsFRIBN128<<<nBlocks, nThreads, 0, stream>>>(
         (gl64_t *)treeFRI->source,
-        treeFRI->getMerkleTreeWidth(),
+        friWidth,
         d_friQueries,
         nQueries,
         d_queries_buff,
-        buffSize
+        maxBuffSize
     );
     CHECKCUDAERR(cudaGetLastError());
 
@@ -206,8 +208,8 @@ void proveFRIQueries_bn128_gpu(
         d_friQueries,
         nQueries,
         d_queries_buff,
-        buffSize,
-        treeFRI->getMerkleTreeWidth(),
+        maxBuffSize,
+        friWidth,
         setupCtx.starkInfo.starkStruct.merkleTreeArity,
         setupCtx.starkInfo.starkStruct.lastLevelVerification
     );
@@ -353,4 +355,132 @@ void merkelizeFRI_bn128_gpu(SetupCtx& setupCtx, StepsParams &h_params, uint64_t 
     if(d_transcript != nullptr) {
         d_transcript->put((PoseidonBN128GPU::FrElement*)&treeFRI->nodes[tree_size - 1], uint64_t(1), stream);
     }
+}
+
+// Populate FRIProof structure from GPU data for JSON generation
+void setProof_bn128_gpu(
+    Starks<RawFr::Element>& starks,
+    FRIProof<RawFr::Element>& proof,
+    Goldilocks::Element *d_aux_trace,
+    cudaStream_t stream
+) {
+    SetupCtx& setupCtx = starks.setupCtx;
+    MerkleTreeBN128 **trees = starks.treesGL;
+    MerkleTreeBN128 **treesFRI = starks.treesFRI;
+    uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
+    
+    Goldilocks::Element *d_evals = d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("evals", false)];
+    Goldilocks::Element *d_airgroupValues = d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
+    Goldilocks::Element *d_airValues = d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("airvalues", false)];
+    Goldilocks::Element *d_friPol = d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
+    uint64_t *d_nonce = (uint64_t *)(d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("nonce", false)]);
+    
+    uint64_t nQueries = setupCtx.starkInfo.starkStruct.nQueries;
+    uint64_t maxTreeWidth = setupCtx.starkInfo.maxTreeWidth;
+    uint64_t nFRISteps = setupCtx.starkInfo.starkStruct.steps.size() - 1;
+    uint64_t maxProofBuffSize = setupCtx.starkInfo.maxProofBuffSize;
+    
+    uint64_t offsetProofQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("proof_queries", false)];
+    gl64_t *d_queries_buff = (gl64_t *)d_aux_trace + offsetProofQueries;
+
+    cudaStreamSynchronize(stream);
+
+    // ============ Copy roots from main trees ============
+    // Note: const tree root (treesGL[nStages+1]) is NOT stored in proof y
+    uint64_t nStages = setupCtx.starkInfo.nStages;
+    for (uint64_t k = 0; k < nTrees; ++k) {
+        if (k == nStages + 1) continue;        
+        // Map tree index to roots index
+        uint64_t rootIdx = (k <= nStages) ? k : (k - 1);
+        
+        int64_t tree_size = trees[k]->getNumNodes(trees[k]->height);
+        RawFr::Element *d_root = (RawFr::Element *)trees[k]->nodes + tree_size - 1;
+        cudaMemcpy(&proof.proof.roots[rootIdx][0], d_root, sizeof(RawFr::Element), cudaMemcpyDeviceToHost);
+    }
+
+    // ============ Copy roots from FRI trees ============
+    for (uint64_t step = 0; step < nFRISteps; ++step) {
+        int64_t tree_size = treesFRI[step]->getNumNodes(treesFRI[step]->height);
+        RawFr::Element *d_root = (RawFr::Element *)treesFRI[step]->nodes + tree_size - 1;
+        cudaMemcpy(&proof.proof.fri.treesFRI[step].root[0], d_root, sizeof(RawFr::Element), cudaMemcpyDeviceToHost);
+    }
+
+    // ============ Copy query proofs for main trees ============
+    uint64_t totalQueryBufferSize = (nTrees + nFRISteps) * nQueries * maxProofBuffSize;
+    uint64_t *h_queries_buff = new uint64_t[totalQueryBufferSize];
+    cudaMemcpy(h_queries_buff, d_queries_buff, totalQueryBufferSize * sizeof(uint64_t), cudaMemcpyDeviceToHost);
+
+    // Process main trees
+    for (uint64_t i = 0; i < nQueries; ++i) {
+        std::vector<MerkleProof<RawFr::Element>> vMkProof;
+        
+        for (uint64_t k = 0; k < nTrees; ++k) {
+            uint64_t treeWidth = trees[k]->getMerkleTreeWidth();
+            uint64_t proofLength = trees[k]->getMerkleProofLength();
+            uint64_t numSiblings = trees[k]->getNumSiblings();
+            
+            uint64_t queryOffset = k * nQueries * maxProofBuffSize + i * maxProofBuffSize;
+            
+            MerkleProof<RawFr::Element> mkProof(treeWidth, proofLength, numSiblings, 
+                                                 &h_queries_buff[queryOffset], maxTreeWidth);
+            vMkProof.push_back(mkProof);
+        }
+        proof.proof.fri.trees.polQueries[i] = vMkProof;
+    }
+
+    // Process FRI trees
+    for (uint64_t step = 0; step < nFRISteps; ++step) {
+        uint64_t friWidth = treesFRI[step]->getMerkleTreeWidth();
+        uint64_t proofLength = treesFRI[step]->getMerkleProofLength();
+        uint64_t numSiblings = treesFRI[step]->getNumSiblings();
+        
+        for (uint64_t i = 0; i < nQueries; ++i) {
+            std::vector<MerkleProof<RawFr::Element>> vMkProof;
+            
+            uint64_t queryOffset = (nTrees + step) * nQueries * maxProofBuffSize + i * maxProofBuffSize;
+            
+            MerkleProof<RawFr::Element> mkProof(friWidth, proofLength, numSiblings,
+                                                 &h_queries_buff[queryOffset], friWidth);
+            vMkProof.push_back(mkProof);
+            
+            proof.proof.fri.treesFRI[step].polQueries[i] = vMkProof;
+        }
+    }
+    
+    delete[] h_queries_buff;
+
+    // ============ Copy evals ============
+    uint64_t evalsSize = setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION;
+    Goldilocks::Element *h_evals = new Goldilocks::Element[evalsSize];
+    cudaMemcpy(h_evals, d_evals, evalsSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+    proof.proof.setEvals(h_evals);
+    delete[] h_evals;
+
+    // ============ Copy airgroupValues ============
+    if (setupCtx.starkInfo.airgroupValuesSize > 0) {
+        Goldilocks::Element *h_airgroupValues = new Goldilocks::Element[setupCtx.starkInfo.airgroupValuesSize];
+        cudaMemcpy(h_airgroupValues, d_airgroupValues, setupCtx.starkInfo.airgroupValuesSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+        proof.proof.setAirgroupValues(h_airgroupValues);
+        delete[] h_airgroupValues;
+    }
+
+    // ============ Copy airValues ============
+    if (setupCtx.starkInfo.airValuesSize > 0) {
+        Goldilocks::Element *h_airValues = new Goldilocks::Element[setupCtx.starkInfo.airValuesSize];
+        cudaMemcpy(h_airValues, d_airValues, setupCtx.starkInfo.airValuesSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+        proof.proof.setAirValues(h_airValues);
+        delete[] h_airValues;
+    }
+
+    // ============ Copy FRI final polynomial ============
+    uint64_t finalPolDegree = 1 << setupCtx.starkInfo.starkStruct.steps[nFRISteps].nBits;
+    Goldilocks::Element *h_friPol = new Goldilocks::Element[finalPolDegree * FIELD_EXTENSION];
+    cudaMemcpy(h_friPol, d_friPol, finalPolDegree * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+    FRI<RawFr::Element>::setFinalPol(proof, h_friPol, setupCtx.starkInfo.starkStruct.steps[nFRISteps].nBits);
+    delete[] h_friPol;
+
+    // ============ Copy nonce ============
+    uint64_t h_nonce;
+    cudaMemcpy(&h_nonce, d_nonce, sizeof(uint64_t), cudaMemcpyDeviceToHost);
+    proof.proof.setNonce(h_nonce);
 }
