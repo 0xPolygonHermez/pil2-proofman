@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::fs::{File, create_dir_all};
 use std::io::Write;
+use std::io::Read;
 use std::ffi::c_void;
 use proofman_starks_lib_c::{init_final_snark_prover_c, free_final_snark_prover_c};
 use crate::verify_proof_bn128;
@@ -16,6 +17,7 @@ use crate::verify_proof_bn128;
 pub struct SnarkWrapper<F: PrimeField64> {
     pub setup_snark_path: PathBuf,
     pub setup_recursivef: Setup<F>,
+    pub vadcop_final_verkey: Vec<u64>,
     pub aux_trace: Arc<Vec<F>>,
     pub snark_prover: *mut c_void,
     pub publics_info: PublicsInfo,
@@ -40,6 +42,14 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         let setup_recursivef_path =
             PathBuf::from(format!("{}/{}/{}", proving_key_path.display(), "recursivef", "recursivef"));
         let setup_snark_path = PathBuf::from(format!("{}/{}/{}", proving_key_path.display(), "final", "final"));
+
+        let vadcop_final_verkey_path =
+            PathBuf::from(format!("{}/vadcop_final.verkey.json", proving_key_path.display()));
+
+        let mut file = File::open(&vadcop_final_verkey_path).expect("Unable to open file");
+        let mut json_str = String::new();
+        file.read_to_string(&mut json_str).expect("Unable to read file");
+        let vadcop_final_verkey: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
 
         timer_start_info!(LOADING_RECURSIVE_F_SETUP);
 
@@ -77,7 +87,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         let publics_info = PublicsInfo::from_folder(proving_key_path)?;
 
-        Ok(Self { aux_trace, setup_recursivef, setup_snark_path, snark_prover, publics_info })
+        Ok(Self { aux_trace, setup_recursivef, setup_snark_path, snark_prover, publics_info, vadcop_final_verkey })
     }
 
     #[allow(clippy::type_complexity)]
@@ -88,8 +98,14 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         save_json: bool,
     ) -> ProofmanResult<SnarkProof> {
         timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
-        let recursivef_proof =
-            generate_recursivef_proof(&self.setup_recursivef, vadcop_proof, &self.aux_trace, output_dir_path)?;
+        let recursivef_proof = generate_recursivef_proof(
+            &self.setup_recursivef,
+            vadcop_proof,
+            &self.aux_trace,
+            &self.vadcop_final_verkey,
+            false,
+            output_dir_path,
+        )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
         timer_start_info!(GENERATING_SNARK_PROOF);
@@ -196,8 +212,22 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
 
     timer_stop_and_log_info!(LOADING_RECURSIVE_F_SETUP);
 
+    let vadcop_final_verkey_path = PathBuf::from(format!("{}/vadcop_final.verkey.json", proving_key_path.display()));
+
+    let mut file = File::open(&vadcop_final_verkey_path).expect("Unable to open file");
+    let mut json_str = String::new();
+    file.read_to_string(&mut json_str).expect("Unable to read file");
+    let vadcop_final_verkey: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
+
     timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
-    let recursivef_proof = generate_recursivef_proof(&setup_recursivef, vadcop_proof, &aux_trace, output_dir_path)?;
+    let recursivef_proof = generate_recursivef_proof(
+        &setup_recursivef,
+        vadcop_proof,
+        &aux_trace,
+        &vadcop_final_verkey,
+        false,
+        output_dir_path,
+    )?;
     timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
     timer_start_info!(VERIFY_RECURSIVE_F_PROOF);

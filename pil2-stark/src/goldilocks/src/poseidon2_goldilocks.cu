@@ -243,48 +243,33 @@ __global__ void linearHashGPUTiles_(uint64_t *__restrict__ output, uint64_t *__r
     if( row >= num_rows)
         return;
 
-    if (num_cols <= CAPACITY_T)
-    {
-        uint64_t out_idx = row*CAPACITY_T;
-        #pragma unroll
-        for (uint32_t i = 0; i < CAPACITY_T; i++) {
-            if (i < num_cols){
-                output[out_idx + i] = input[getBufferOffset(row, i, num_rows, num_cols)];
-            } else {
-                output[out_idx + i] = gl64_t(uint64_t(0));
-            }
-        }
+    gl64_t state[SPONGE_WIDTH_T];
+    #pragma unroll
+    for (uint32_t i = 0; i < CAPACITY_T; i++){
+        state[RATE_T+i] =  gl64_t(uint64_t(0));
     }
-    else
+    for (uint32_t col = 0;;)
     {
-        gl64_t state[SPONGE_WIDTH_T];
-        #pragma unroll
-        for (uint32_t i = 0; i < CAPACITY_T; i++){
-            state[RATE_T+i] =  gl64_t(uint64_t(0));
+        __syncwarp();
+        uint32_t delta = min(num_cols - col, RATE_T);
+        for (uint32_t i = 0; i < delta; i++) {
+            state[i] = input[getBufferOffset(row, col + i, num_rows, num_cols)];
         }
-        for (uint32_t col = 0;;)
-        {
-            __syncwarp();
-            uint32_t delta = min(num_cols - col, RATE_T);
-            for (uint32_t i = 0; i < delta; i++) {
-                state[i] = input[getBufferOffset(row, col + i, num_rows, num_cols)];
-            }
-            for (uint32_t i = delta; i < RATE_T; i++) {
-                state[i] = gl64_t(uint64_t(0));
-            }
-            __syncwarp();
-            hash_full_result_seq_2_<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(state, GPU_C_GL, GPU_D_GL);
+        for (uint32_t i = delta; i < RATE_T; i++) {
+            state[i] = gl64_t(uint64_t(0));
+        }
+        __syncwarp();
+        hash_full_result_seq_2_<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(state, GPU_C_GL, GPU_D_GL);
 
-            if ((col += RATE_T) >= num_cols)
-                break;
-            __syncwarp();
-            for (uint32_t i = 0; i < CAPACITY_T; i++)
-                state[i + RATE_T] = state[i];
-        }
-        uint64_t out_idx = row*CAPACITY_T;
-        for (uint32_t i = 0; i < CAPACITY_T; i++) {
-            output[out_idx+i] = state[i];            
-        }
+        if ((col += RATE_T) >= num_cols)
+            break;
+        __syncwarp();
+        for (uint32_t i = 0; i < CAPACITY_T; i++)
+            state[i + RATE_T] = state[i];
+    }
+    uint64_t out_idx = row*CAPACITY_T;
+    for (uint32_t i = 0; i < CAPACITY_T; i++) {
+        output[out_idx+i] = state[i];            
     }
 }
 
