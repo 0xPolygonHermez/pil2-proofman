@@ -133,10 +133,6 @@ pub fn linear_hash_seq<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize
     assert!(W > 4);
     let mut state: [F; W] = [F::ZERO; W];
     let size = input.len();
-    if size <= 4 {
-        state[..size].copy_from_slice(&input[..size]);
-        return state;
-    }
     let mut remaining = size;
     while remaining > 0 {
         if remaining != size {

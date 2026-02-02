@@ -440,91 +440,69 @@ __device__ __forceinline__ void poseidon2_store(uint64_t *__restrict__ out, uint
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void poseidon2_hash_loop(const uint64_t *__restrict__ in, uint32_t ncols)
 {
-    if (ncols <= CAPACITY_T)
+    for (uint32_t col = 0;;)
     {
-        poseidon2_load<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(in, 0, ncols, ncols);
-        for (uint32_t i = ncols; i < CAPACITY_T; i++)
+        uint32_t delta = min(ncols - col, RATE_T);
+        poseidon2_load<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(in, col, delta, ncols);
+        if (delta < RATE_T)
         {
-            scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0)); 
-        }
-    }
-    else
-    {
-        for (uint32_t col = 0;;)
-        {
-            uint32_t delta = min(ncols - col, RATE_T);
-            poseidon2_load<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(in, col, delta, ncols);
-            if (delta < RATE_T)
+            for (uint32_t i = delta; i < RATE_T; i++)
             {
-                for (uint32_t i = delta; i < RATE_T; i++)
-                {
-                    scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0)); 
-                }
+                scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0)); 
             }
-
-            poseidon2_hash<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
-    
-            if ((col += RATE_T) >= ncols)
-                break;
-
-            gl64_t tmp[CAPACITY_T];
-
-#pragma unroll
-            for (uint32_t i = 0; i < CAPACITY_T; i++)
-                tmp[i] = scratchpad[i * blockDim.x + threadIdx.x];
-            __syncwarp();
-
-#pragma unroll
-
-            for (uint32_t i = 0; i < CAPACITY_T; i++)
-                scratchpad[(i + RATE_T) * blockDim.x + threadIdx.x] = tmp[i];
-            __syncwarp();
         }
+
+        poseidon2_hash<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
+
+        if ((col += RATE_T) >= ncols)
+            break;
+
+        gl64_t tmp[CAPACITY_T];
+
+#pragma unroll
+        for (uint32_t i = 0; i < CAPACITY_T; i++)
+            tmp[i] = scratchpad[i * blockDim.x + threadIdx.x];
+        __syncwarp();
+
+#pragma unroll
+
+        for (uint32_t i = 0; i < CAPACITY_T; i++)
+            scratchpad[(i + RATE_T) * blockDim.x + threadIdx.x] = tmp[i];
+        __syncwarp();
     }
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void poseidon2_hash_loop_blocks(const uint64_t *__restrict__ in, uint32_t num_cols, uint32_t num_rows)
 {
-    if (num_cols <= CAPACITY_T)
+    for (uint32_t col = 0;;)
     {
-        poseidon2_load_blocks<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(in, num_rows, num_cols, 0, num_cols);
-        for (uint32_t i = num_cols; i < CAPACITY_T; i++)
+        uint32_t delta = min(num_cols - col, RATE_T);
+        poseidon2_load_blocks<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T >(in, num_rows, num_cols, col, delta);
+        if (delta < RATE_T)
         {
-            scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0)); 
-        }
-    }
-    else
-    {
-        for (uint32_t col = 0;;)
-        {
-            uint32_t delta = min(num_cols - col, RATE_T);
-            poseidon2_load_blocks<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T >(in, num_rows, num_cols, col, delta);
-            if (delta < RATE_T)
+            for (uint32_t i = delta; i < RATE_T; i++)
             {
-                for (uint32_t i = delta; i < RATE_T; i++)
-                {
-                    scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0)); 
-                }
+                scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0)); 
             }
-            poseidon2_hash<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
-
-            if ((col += RATE_T) >= num_cols)
-                break;
-
-            gl64_t tmp[CAPACITY_T];
-
-#pragma unroll
-            for (uint32_t i = 0; i < CAPACITY_T; i++)
-                tmp[i] = scratchpad[i * blockDim.x + threadIdx.x];
-            __syncwarp();
-
-#pragma unroll
-
-            for (uint32_t i = 0; i < CAPACITY_T; i++)
-                scratchpad[(i + RATE_T) * blockDim.x + threadIdx.x] = tmp[i];
-            __syncwarp();
         }
+        poseidon2_hash<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
+
+        if ((col += RATE_T) >= num_cols)
+            break;
+
+        gl64_t tmp[CAPACITY_T];
+
+#pragma unroll
+        for (uint32_t i = 0; i < CAPACITY_T; i++)
+            tmp[i] = scratchpad[i * blockDim.x + threadIdx.x];
+        __syncwarp();
+
+#pragma unroll
+
+        for (uint32_t i = 0; i < CAPACITY_T; i++)
+            scratchpad[(i + RATE_T) * blockDim.x + threadIdx.x] = tmp[i];
+        __syncwarp();
     }
 }
 

@@ -668,15 +668,28 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
 
 pub fn generate_recursivef_proof<F: PrimeField64>(
     setup: &Setup<F>,
-    proof: &[u64],
+    vadcop_proof: &[u64],
     prover_buffer: &[F],
+    vadcop_final_verkey: &[u64],
+    is_aggregated: bool,
     output_dir_path: &Path,
 ) -> ProofmanResult<*mut c_void> {
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
     let trace: Vec<F> = vec![F::ZERO; setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize];
 
-    let circom_witness = generate_witness::<F>(setup, 0, &proof[1..], output_dir_path)?;
+    let proof = &vadcop_proof[1..];
+    let publics_circom_size = 5; // Verkey + boolean flag for aggregated circuit
+
+    let mut updated_proof: Vec<u64> = vec![0; proof.len() + publics_circom_size];
+
+    updated_proof[0..proof.len()].copy_from_slice(proof);
+    updated_proof[proof.len()] = is_aggregated as u64;
+    for i in 0..vadcop_final_verkey.len() {
+        updated_proof[proof.len() + 1 + i] = vadcop_final_verkey[i];
+    }
+
+    let circom_witness = generate_witness::<F>(setup, 0, &updated_proof, output_dir_path)?;
 
     let publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
