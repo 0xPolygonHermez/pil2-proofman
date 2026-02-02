@@ -297,7 +297,6 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
         }
         d_transcript.getField((uint64_t *)h_params.challenges, stream);
     }
-    TimerStartGPU(timer, STARK_STEP_FRI);
 
     TimerStartCategoryGPU(timer, GRINDING);
     PoseidonBN128GPU::FrElement *d_grinding_state = (PoseidonBN128GPU::FrElement *)(d_aux_trace + offsetInputHashNonce);
@@ -316,6 +315,21 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
         std::cout << "GPU nonce: " << h_nonce << std::endl;
     }
 
+    TimerStartCategoryGPU(timer, STARK_FRI_QUERIES);
+    d_transcript_helper.reset(stream);
+    d_transcript_helper.put(h_params.challenges, FIELD_EXTENSION, stream);
+    d_transcript_helper.put(d_nonce, 1, stream);
+    d_transcript_helper.getPermutations(friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits, stream);
+
+    proveQueries_bn128_gpu(setupCtx, d_queries_buff, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesGL, nTrees, (gl64_t*)d_aux_trace, (gl64_t*)d_constTree, setupCtx.starkInfo.nStages, stream);
+
+    for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {
+        proveFRIQueries_bn128_gpu(setupCtx, &d_queries_buff[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize], step + 1, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesFRI[step], stream);
+    }
+
+    TimerStopCategoryGPU(timer, STARK_FRI_QUERIES);
+    TimerStopGPU(timer, STARK_STEP_FRI);
+
     TimerStopGPU(timer,STARK_GPU_PROOF);
 
     // free allocated pinned memory
@@ -323,7 +337,7 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     cudaFreeHost(pinned_exps_params);
     cudaFreeHost(pinned_exps_args);
 
-    //free deice memory allocated
+    //free device memory allocated
     cudaFree(d_params);
     cudaFree(d_expsArgs);
     cudaFree(d_destParams);
