@@ -235,14 +235,12 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
         computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), &air_instance_info->opening_points[i], (gl64_t*) d_aux_trace, offset_helper, d_LEv, timer, stream);
         evmap_inplace(setupCtx, h_params, count++, openingPoints.size(), openingPoints.data(), air_instance_info, (Goldilocks::Element*)d_LEv, offset_helper, timer, stream);
     }
-    TimerStartCategoryGPU(timer, TRANSCRIPT_PUT_EVALS);
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
         d_transcript.put(h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION, stream, &timer);
     } else {
         calculateHashBN128_gpu(&d_transcript_helper, d_hash_gpu, setupCtx, h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION, stream);
         d_transcript.put(d_hash_gpu, nFieldElements, stream, &timer);
     }
-    TimerStopCategoryGPU(timer, TRANSCRIPT_PUT_EVALS);
     
     TimerStopGPU(timer, STARK_STEP_EVALS);
     //--------------------------------
@@ -286,14 +284,12 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
         }
         else
         {
-            TimerStartCategoryGPU(timer, TRANSCRIPT_PUT_FRI);
             if(!setupCtx.starkInfo.starkStruct.hashCommits) {
                 d_transcript.put((Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION, stream, &timer);
             } else {
                 calculateHashBN128_gpu(&d_transcript_helper, d_hash_gpu, setupCtx, (Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION, stream);
                 d_transcript.put(d_hash_gpu, nFieldElements, stream, &timer);
             }
-            TimerStopCategoryGPU(timer, TRANSCRIPT_PUT_FRI);
         }
         d_transcript.getField((uint64_t *)h_params.challenges, stream);
     }

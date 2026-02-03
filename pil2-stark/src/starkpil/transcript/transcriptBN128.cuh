@@ -7,6 +7,8 @@
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 #include "zklog.hpp"
+#include "gpu_timer.cuh"
+
 
 
 // Device functions
@@ -50,8 +52,8 @@ public:
     
     void reset(cudaStream_t stream);
 
-    void put(Goldilocks::Element *input, uint64_t size, cudaStream_t stream);
-    void put(PoseidonBN128GPU::FrElement *input, uint64_t size, cudaStream_t stream);
+    void put(Goldilocks::Element *input, uint64_t size, cudaStream_t stream, TimerGPU *timer=nullptr);
+    void put(PoseidonBN128GPU::FrElement *input, uint64_t size, cudaStream_t stream, TimerGPU *timer=nullptr);
     void getField(uint64_t *output, cudaStream_t stream);
     void getState(PoseidonBN128GPU::FrElement* output, cudaStream_t stream);
     void getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, cudaStream_t stream);
