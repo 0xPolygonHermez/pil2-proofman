@@ -224,6 +224,72 @@ BENCHMARK(POSEIDON_SEQ_GPU_BENCH)
     ->Args({17});
 
 // =====================
+// Poseidon Parallel GPU Benchmark
+// =====================
+
+static void POSEIDON_PARALLEL_GPU_BENCH(benchmark::State &state) {
+    int t = state.range(0);
+    
+    // Initialize GPU constants
+    uint32_t gpu_idxs[] = {0};
+    PoseidonBN128GPU::initGPUConstants(gpu_idxs, 1);
+    
+    BN128GPUScalarField::Element* d_state = nullptr;
+    cudaMalloc(&d_state, t * sizeof(BN128GPUScalarField::Element));
+    
+    // Initialize host state
+    RawFr field;
+    RawFr::Element* h_state = new RawFr::Element[t];
+    for (int i = 0; i < t; i++) {
+        field.fromUI(h_state[i], i);
+    }
+    
+    // Warm-up
+    cudaMemcpy(d_state, h_state, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyHostToDevice);
+    PoseidonBN128GPU poseidon;
+    poseidon.hashParallel(d_state, t);
+    cudaDeviceSynchronize();
+    
+    for (auto _ : state) {
+        // Copy fresh state to device
+        cudaMemcpy(d_state, h_state, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyHostToDevice);
+        for(int i = 0; i < POSEIDON_NUM_HASHES; i++){
+            poseidon.hashParallel(d_state, t);
+        }
+        cudaDeviceSynchronize();
+        benchmark::DoNotOptimize(d_state);
+    }
+    
+    // Cleanup
+    cudaFree(d_state);
+    delete[] h_state;
+    
+    state.counters["t"] = t;
+    state.counters["hashes"] = POSEIDON_NUM_HASHES;
+    state.SetItemsProcessed(state.iterations() * POSEIDON_NUM_HASHES);
+}
+
+BENCHMARK(POSEIDON_PARALLEL_GPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Args({2})
+    ->Args({3})
+    ->Args({4})
+    ->Args({5})
+    ->Args({6})
+    ->Args({7})
+    ->Args({8})
+    ->Args({9})
+    ->Args({10})
+    ->Args({11})
+    ->Args({12})
+    ->Args({13})
+    ->Args({14})
+    ->Args({15})
+    ->Args({16})
+    ->Args({17});
+
+// =====================
 // Poseidon2 GPU Benchmark
 // =====================
 

@@ -51,6 +51,45 @@ void PoseidonBN128GPU::hash(FrElement* d_state, int t) {
     poseidon_hash_kernel<<<1, 1>>>(d_state, t);
 }
 
+// Parallel hash kernel - uses 32 threads (one warp) for parallel mix operations
+// Shared memory layout: state[32] + tmp[32] = 64 FrElements
+__global__ void poseidon_hash_parallel_kernel(FrElementGPU *d_state, int t) {
+    
+    // Use raw uint32_t arrays to avoid dynamic initialization warning
+    __shared__ uint32_t shared_state_raw[32 * 8];  // 32 elements * 8 limbs
+    __shared__ uint32_t tmp_raw[32 * 8];
+    FrElementGPU* shared_state = reinterpret_cast<FrElementGPU*>(shared_state_raw);
+    FrElementGPU* tmp = reinterpret_cast<FrElementGPU*>(tmp_raw);
+    
+    int tid = threadIdx.x;
+    
+    // Load state from global memory to shared memory
+    if (tid < t) {
+        shared_state[tid] = d_state[tid];
+    } else if (tid < 32) {
+        shared_state[tid] = BN128GPUScalarField::zero();
+    }
+    __syncthreads();
+    
+    // Get constants from device global pointers
+    const FrElementGPU *C = GPU_C_ptr[t - 2];
+    const FrElementGPU *M = GPU_M_ptr[t - 2];
+    const FrElementGPU *P = GPU_P_ptr[t - 2];
+    const FrElementGPU *S = GPU_S_ptr[t - 2];
+    const int nRoundsP = N_ROUNDS_P_POSEIDON[t - 2];
+    
+    PoseidonBN128GPU poseidon;
+    poseidon.hash_parallel_(shared_state, tmp, t, C, M, P, S, nRoundsP);
+    
+    if (tid < t) {
+        d_state[tid] = shared_state[tid];
+    }
+}
+
+void PoseidonBN128GPU::hashParallel(FrElement* d_state, int t) {
+    poseidon_hash_parallel_kernel<<<1, 32>>>(d_state, t);
+}
+
 // Helper macro for initializing a single t value
 #define INIT_T_CONSTANTS(t_val) do { \
     int idx = t_val - 2; \

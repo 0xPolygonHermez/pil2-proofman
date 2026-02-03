@@ -288,7 +288,9 @@ void extendAndMerkelize_bn128_gpu(uint64_t step, SetupCtx& setupCtx, MerkleTreeB
     {
         NTT_Goldilocks_GPU ntt;
         ntt.LDE_GPU(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream);
+        TimerStartCategoryGPU(timer, MERKLE_TREE);
         PoseidonBN128GPU::merkletreeTiles(pNodes, (uint64_t*)pSource, nCols, NExtended, setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, stream);
+        TimerStopCategoryGPU(timer, MERKLE_TREE);
         if(d_transcript != nullptr) {
             d_transcript->put(&pNodes[tree_size - 1], 1, stream);
         }
@@ -322,7 +324,9 @@ void computeQ_bn128_gpu(uint64_t step, SetupCtx &setupCtx, MerkleTreeBN128 **tre
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft", false)];
         NTT_Goldilocks_GPU nttExtended;
         nttExtended.computeQ_inplace(offset_cmQ, offset_q, qDeg, qDim, shiftIn, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, (gl64_t*)d_aux_trace, offset_helper, timer, stream);
+        TimerStartCategoryGPU(timer, MERKLE_TREE);
         PoseidonBN128GPU::merkletreeTiles(pNodes, (uint64_t*)pSource, nCols, NExtended, setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, stream);
+        TimerStopCategoryGPU(timer, MERKLE_TREE);
         if(d_transcript != nullptr) {
             d_transcript->put(&pNodes[tree_size - 1], 1, stream);
         }

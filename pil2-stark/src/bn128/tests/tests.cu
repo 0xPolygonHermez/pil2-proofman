@@ -901,6 +901,69 @@ TEST(BN128_POSEIDON_TEST, hash_gpu_t17) {
 }
 
 // =====================
+// Poseidon Parallel Hash GPU Tests
+// =====================
+
+// Test parallel hash for various t values (2-17)
+TEST(BN128_POSEIDON_TEST, hash_parallel_gpu_all_t) {
+    PoseidonBN128GPU p;
+    uint32_t gpu_idxs[] = {0};
+    PoseidonBN128GPU::initGPUConstants(gpu_idxs, 1);
+    
+    for (int t = 2; t <= 17; t++) {
+        BN128GPUScalarField::Element* d_state_seq = nullptr;
+        BN128GPUScalarField::Element* d_state_par = nullptr;
+        BN128GPUScalarField::Element* h_state_seq = nullptr;
+        BN128GPUScalarField::Element* h_state_par = nullptr;
+        
+        cudaMalloc(&d_state_seq, t * sizeof(BN128GPUScalarField::Element));
+        cudaMalloc(&d_state_par, t * sizeof(BN128GPUScalarField::Element));
+        h_state_seq = new BN128GPUScalarField::Element[t];
+        h_state_par = new BN128GPUScalarField::Element[t];
+        
+        // Initialize both states with same values
+        init_state_kernel<<<1, 1>>>(d_state_seq, t);
+        init_state_kernel<<<1, 1>>>(d_state_par, t);
+        cudaDeviceSynchronize();
+        
+        // Run sequential hash
+        p.hash(d_state_seq, t);
+        cudaDeviceSynchronize();
+        
+        // Run parallel hash
+        p.hashParallel(d_state_par, t);
+        cudaDeviceSynchronize();
+        
+        // Convert from Montgomery form
+        from_montgomery_kernel<<<1, 1>>>(d_state_seq, t);
+        from_montgomery_kernel<<<1, 1>>>(d_state_par, t);
+        cudaDeviceSynchronize();
+        
+        // Copy results to host
+        cudaMemcpy(h_state_seq, d_state_seq, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_state_par, d_state_par, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyDeviceToHost);
+        cudaFree(d_state_seq);
+        cudaFree(d_state_par);
+        
+        // Compare all elements
+        bool all_match = true;
+        for (int i = 0; i < t; i++) {
+            for (int j = 0; j < 8; j++) {
+                if (h_state_seq[i][j] != h_state_par[i][j]) {
+                    all_match = false;
+                    printf("t=%d: Mismatch at state[%d][%d]: seq=%08x, par=%08x\n", t, i, j, h_state_seq[i][j], h_state_par[i][j]);
+                }
+            }
+        }
+        
+        delete[] h_state_seq;
+        delete[] h_state_par;
+        
+        EXPECT_TRUE(all_match) << "Parallel hash mismatch for t=" << t;
+    }
+}
+
+// =====================
 // Poseidon linearHash GPU Test
 // =====================
 
@@ -1179,11 +1242,6 @@ TEST(BN128_POSEIDON_TEST, merkletreeTiles_gpu_256rows_100cols) {
     
     EXPECT_EQ(mismatches, 0) << "Found " << mismatches << " mismatches between row-major and tiled merkletree results";
     
-    // Print root hash for verification
-    if (mismatches == 0) {
-        std::string root_hash = RawFr::field.toString(h_tree_rowmajor[numNodes - 1], 16);
-        printf("Merkletree root hash (256 rows × 100 cols): %s\n", root_hash.c_str());
-    }
     
     cudaFree(d_input_rowmajor);
     cudaFree(d_input_tiled);
