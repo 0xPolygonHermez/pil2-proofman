@@ -56,8 +56,6 @@ void calculateWitnessSTD_BN128_gpu(SetupCtx& setupCtx, StepsParams& h_params, St
 }
 
 void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *d_aux_trace, Goldilocks::Element *d_constTree, Goldilocks::Element *h_publicInputs, std::string proofFile, cudaStream_t stream) {
-
-    //2) do I need constTreePath?
     
     TimerGPU timer;
     cudaStreamSynchronize(stream);
@@ -318,11 +316,11 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     }
 
     TimerStopCategoryGPU(timer, STARK_FRI_QUERIES);
-    TimerStopGPU(timer, STARK_STEP_FRI);
 
     //--------------------------------
     // 7. Generate proof file
     //--------------------------------
+    TimerStartGPU(timer, STARK_SAVE_PROOF);
     FRIProof<RawFr::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);    
     
     setProof_bn128_gpu(
@@ -341,6 +339,7 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     if(!proofFile.empty()) {
         json2file(zkin, proofFile);
     }
+    TimerStopGPU(timer, STARK_SAVE_PROOF);
 
     TimerStopGPU(timer,STARK_GPU_PROOF);
 
@@ -354,11 +353,25 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     cudaFree(d_expsArgs);
     cudaFree(d_destParams);
 
-    // Free stark trees
-    /*for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2; i++)
+    // Free stark trees (skip constants tree at nStages+1 - passed in from outside)
+    for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2; i++)
     {
-       cudaFree(starks.treesGL[i]->get_nodes_ptr());
-    }*/
+        if (i != setupCtx.starkInfo.nStages + 1) {
+            cudaFree(starks.treesGL[i]->get_nodes_ptr());
+        }
+    }
     // free FRI trees
+    for (uint64_t i = 0; i < nTreesFRI; i++)
+    {
+        cudaFree(starks.treesFRI[i]->get_nodes_ptr());
+    }
+
+    // Free AirInstanceInfo (and all its GPU allocations)
+    delete air_instance_info;
+
+    // I can call the timer right away because in setProof we have a stream synchnronize
+    TimerSyncAndLogAllGPU(timer, instanceId, airgroupId, airId);
+    TimerSyncCategoriesGPU(timer);
+    //TimerLogCategoryContributionsGPU(timer, STARK_GPU_PROOF);
     return (void *) new nlohmann::json(zkin);
 }
