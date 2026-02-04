@@ -681,9 +681,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
 
     let mut updated_proof: Vec<u64> = vec![0; proof.len() + 4];
 
-    for i in 0..4 {
-        updated_proof[i] = vadcop_final_verkey[i];
-    }
+    updated_proof[..4].copy_from_slice(&vadcop_final_verkey[..4]);
 
     updated_proof[4..].copy_from_slice(proof);
 
