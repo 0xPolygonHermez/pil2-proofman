@@ -250,64 +250,6 @@ void reset_agg_readiness_tracker(){
 #endif
 }
 
-void save_challenges(void *pGlobalChallenge, char* globalInfoFile, char *fileDir) {
-
-    json globalInfo;
-    file2json(globalInfoFile, globalInfo);
-
-    Goldilocks::Element *globalChallenge = (Goldilocks::Element *)pGlobalChallenge;
-    
-    json challengesJson = json::array();
-    for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
-        challengesJson[k] = Goldilocks::toString(globalChallenge[k]);
-    }
-
-    json2file(challengesJson, string(fileDir) + "/global_challenges.json");
-}
-
-
-void save_publics(uint64_t numPublicInputs, void *pPublicInputs, char *fileDir) {
-
-    Goldilocks::Element* publicInputs = (Goldilocks::Element *)pPublicInputs;
-
-    // Generate publics
-    json publicStarkJson;
-    for (uint64_t i = 0; i < numPublicInputs; i++)
-    {
-        publicStarkJson[i] = Goldilocks::toString(publicInputs[i]);
-    }
-
-    // save publics to filestarks
-    json2file(publicStarkJson, string(fileDir) + "/publics.json");
-}
-
-void save_proof_values(void *pProofValues, char* globalInfoFile, char *fileDir) {
-    Goldilocks::Element* proofValues = (Goldilocks::Element *)pProofValues;
-
-    json globalInfo;
-    file2json(globalInfoFile, globalInfo);
-
-    json proofValuesJson;
-    uint64_t p = 0;
-    for(uint64_t i = 0; i < globalInfo["proofValuesMap"].size(); i++) {
-        proofValuesJson[i] = json::array();
-        if(globalInfo["proofValuesMap"][i]["stage"] == 1) {
-            proofValuesJson[i][0] = Goldilocks::toString(proofValues[p++]);
-            proofValuesJson[i][1] = "0";
-            proofValuesJson[i][2] = "0";
-        } else {
-            proofValuesJson[i][0] = Goldilocks::toString(proofValues[p++]);
-            proofValuesJson[i][1] = Goldilocks::toString(proofValues[p++]);
-            proofValuesJson[i][2] = Goldilocks::toString(proofValues[p++]);
-        }
-        
-    }
-
-    json2file(proofValuesJson, string(fileDir) + "/proof_values.json");
-}
-
-
-
 // SetupCtx
 // ========================================================================================
 
@@ -629,7 +571,7 @@ void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *buf
 }
 
 #ifndef __USE_CUDA__
-void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *buffer, char *bufferFile, bool check)
+void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *buffer, char *bufferFile)
 {
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
@@ -644,7 +586,7 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     mt.getRoot(&rootGL[0]);
 
-    if(!check && std::string(bufferFile) != "") {
+    if(std::string(bufferFile) != "") {
         std::string buffFile = string(bufferFile);
         ofstream fw(buffFile.c_str(), std::fstream::out | std::fstream::binary);
         writeFileParallel(buffFile, root, 32, 0);
@@ -940,6 +882,10 @@ void *load_zkey(char* zkeyFile) {
     return zkey.get();
 }
 
+uint64_t get_snark_protocol_id(void *snark_prover) {
+    FinalSnark* finalSnarkProver = (FinalSnark*)snark_prover;
+    return finalSnarkProver->protocolId;
+}
 
 void *init_final_snark_prover(char* zkeyFile) {
     auto zkey = BinFileUtils::openExisting(zkeyFile, "zkey", 1);
@@ -962,8 +908,34 @@ void free_final_snark_prover(void *snark_prover) {
     }
 }
 
-void gen_final_snark_proof(void *prover, void *circomWitnessFinal, uint8_t* proof, char* outputDir) {
-    genFinalSnarkProof(prover, circomWitnessFinal, proof, std::string(outputDir));
+void gen_final_snark_proof(void *prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark) {
+    genFinalSnarkProof(prover, circomWitnessFinal, proof, publicsSnark);
+}
+
+void free_json_string(char* json_str) {
+    if (json_str != nullptr) {
+        free(json_str);
+    }
+}
+
+void snark_proof_bytes_to_json(
+    uint8_t* proof_bytes,
+    uint64_t proof_size,
+    uint8_t* public_bytes,
+    uint64_t public_size,
+    int protocol_id,
+    char** proof_json_out,
+    char** publics_json_out
+) {
+    auto [proof_json, publics_json] = snark_proof_to_json(
+        proof_bytes, proof_size, public_bytes, public_size, protocol_id
+    );
+    
+    *proof_json_out = (char*)malloc(proof_json.size() + 1);
+    *publics_json_out = (char*)malloc(publics_json.size() + 1);
+    
+    strcpy(*proof_json_out, proof_json.c_str());
+    strcpy(*publics_json_out, publics_json.c_str());
 }
 
 void setLogLevel(uint64_t level) {

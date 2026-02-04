@@ -1,5 +1,4 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use bytemuck::cast_slice;
 use libloading::{Library, Symbol};
 use fields::{ExtensionField, Transcript, PrimeField64, GoldilocksQuinticExtension, Poseidon16};
 use proofman_common::{
@@ -11,8 +10,8 @@ use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{get_num_gpus_c, init_gpu_setup_c};
 use proofman_starks_lib_c::{
-    save_challenges_c, save_proof_values_c, save_publics_c, get_stream_proofs_c, get_stream_proofs_non_blocking_c,
-    free_device_buffers_c, register_proof_done_callback_c, reset_device_streams_c, get_instances_ready_c,
+    get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c, reset_device_streams_c,
+    get_instances_ready_c, free_device_buffers_c,
 };
 use crate::add_publics_circom;
 use proofman_verifier::{verify_recursive2, verify_vadcop_final, verify_vadcop_final_compressed};
@@ -31,6 +30,7 @@ use tokio_util::sync::CancellationToken;
 use rand::{SeedableRng, seq::SliceRandom};
 use rand::rngs::StdRng;
 use proofman_common::{ProofmanResult, ProofmanError, Setup};
+use proofman_util::VadcopFinalProof;
 
 #[cfg(distributed)]
 use mpi::topology::Communicator;
@@ -61,7 +61,7 @@ use crate::{
 use crate::total_recursive_proofs;
 use crate::check_tree_paths;
 use crate::Counter;
-use crate::{AggProofs};
+use crate::AggProofs;
 use crate::aggregate_worker_proofs;
 
 use std::ffi::c_void;
@@ -290,7 +290,7 @@ pub enum ProvePhaseInputs {
 pub enum ProvePhaseResult {
     Contributions(Vec<ContributionsInfo>),
     Internal(Vec<AggProofs>),
-    Full(Option<String>, Option<Vec<u64>>),
+    Full(Option<String>, Option<VadcopFinalProof>),
 }
 
 impl<F: PrimeField64> Drop for ProofMan<F> {
@@ -304,6 +304,10 @@ where
 {
     pub fn get_wcm(&self) -> Arc<WitnessManager<F>> {
         self.wcm.clone()
+    }
+
+    pub fn get_proving_key_path(&self) -> PathBuf {
+        self.pctx.global_info.get_proving_key_path()
     }
 
     pub fn set_barrier(&self) {
@@ -385,7 +389,7 @@ where
 
         let mpi_ctx = Arc::new(MpiCtx::new());
 
-        let pctx = ProofCtx::<F>::create_ctx(proving_key_path, HashMap::new(), aggregation, verbose_mode, mpi_ctx)?;
+        let pctx = ProofCtx::<F>::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx)?;
 
         let setups_aggregation =
             Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, &ParamsGPU::new(false), &[]));
@@ -702,7 +706,6 @@ where
         witness_lib_path: PathBuf,
         public_inputs_path: Option<PathBuf>,
         input_data_path: Option<PathBuf>,
-        output_dir_path: PathBuf,
         debug_info: &DebugInfo,
         verbose_mode: VerboseMode,
     ) -> ProofmanResult<()> {
@@ -729,10 +732,6 @@ where
                     "Public inputs file not found at path: {publics_path:?}"
                 )));
             }
-        }
-
-        if !output_dir_path.exists() {
-            fs::create_dir_all(&output_dir_path)?;
         }
 
         timer_start_info!(CREATE_WITNESS_LIB);
@@ -831,7 +830,6 @@ where
         witness_lib_path: PathBuf,
         public_inputs_path: Option<PathBuf>,
         input_data_path: Option<PathBuf>,
-        output_dir_path: PathBuf,
         debug_info: &DebugInfo,
         verbose_mode: VerboseMode,
         test_mode: bool,
@@ -859,10 +857,6 @@ where
                     "Public inputs file not found at path: {publics_path:?}"
                 )));
             }
-        }
-
-        if !output_dir_path.exists() {
-            fs::create_dir_all(&output_dir_path)?;
         }
 
         timer_start_info!(CREATE_WITNESS_LIB);
@@ -1053,9 +1047,9 @@ where
 
         #[cfg(feature = "diagnostic")]
         {
-            let invalid_initialization = Self::diagnostic_instance(&self.pctx, &self.sctx, instance_id);
+            let invalid_initialization = Self::diagnostic_instance(&self.pctx, &self.sctx, instance_id)?;
             if invalid_initialization {
-                return Some(Err(ProofmanError::InvalidProof("Invalid initialization".into())));
+                return Err(ProofmanError::InvalidProof("Invalid initialization".into()));
             }
         }
 
@@ -1164,10 +1158,6 @@ where
             }
         }
 
-        if !options.output_dir_path.exists() {
-            fs::create_dir_all(&options.output_dir_path)?;
-        }
-
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
@@ -1201,10 +1191,6 @@ where
         options: ProofOptions,
         phase: ProvePhase,
     ) -> ProofmanResult<ProvePhaseResult> {
-        if !options.output_dir_path.exists() {
-            fs::create_dir_all(&options.output_dir_path)?;
-        }
-
         if self.verify_constraints {
             return Err(ProofmanError::InvalidParameters(
                 "Proofman has been initialized in verify_constraints mode".into(),
@@ -1220,10 +1206,45 @@ where
         self._generate_proof(phase_inputs, options, phase)
     }
 
+    pub fn generate_vadcop_final_proof_compressed(
+        &self,
+        vadcop_final_proof: &VadcopFinalProof,
+        output_dir_path: Option<&Path>,
+        save_proof: bool,
+    ) -> ProofmanResult<VadcopFinalProof> {
+        if vadcop_final_proof.compressed {
+            return Err(ProofmanError::InvalidConfiguration(
+                "Cannot generate a compressed vadcop proof from an already compressed vadcop proof".to_string(),
+            ));
+        }
+
+        let output_dir_path = match output_dir_path {
+            Some(path) => path,
+            None => Path::new("tmp"),
+        };
+
+        if !output_dir_path.exists() {
+            fs::create_dir_all(output_dir_path)?;
+        }
+
+        let vadcop_final_proof_compressed = generate_vadcop_final_compressed_proof(
+            &self.pctx,
+            &self.setups,
+            &vadcop_final_proof.proof_with_publics_u64(),
+            &self.prover_buffer_recursive,
+            output_dir_path,
+            &self.const_pols,
+            &self.const_tree,
+            save_proof,
+        )?;
+
+        VadcopFinalProof::new_from_proof(&vadcop_final_proof_compressed.proof, true)
+            .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e)))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         proving_key_path: PathBuf,
-        custom_commits_fixed: HashMap<String, PathBuf>,
         verify_constraints: bool,
         aggregation: bool,
         gpu_params: ParamsGPU,
@@ -1252,7 +1273,6 @@ where
             Self::initialize_proofman(
                 mpi_ctx.clone(),
                 proving_key_path,
-                custom_commits_fixed,
                 verify_constraints,
                 aggregation,
                 &gpu_params,
@@ -1421,6 +1441,10 @@ where
         })
     }
 
+    pub fn register_custom_commits(&self, custom_commits_fixed: HashMap<String, PathBuf>) -> ProofmanResult<()> {
+        self.pctx.initialize_custom_commits(custom_commits_fixed, &self.sctx, false)
+    }
+
     pub fn reset(&self) -> ProofmanResult<()> {
         self.wcm.reset();
 
@@ -1528,6 +1552,15 @@ where
         options: ProofOptions,
         phase: ProvePhase,
     ) -> ProofmanResult<ProvePhaseResult> {
+        let output_dir_path: PathBuf = match options.output_dir_path.as_deref() {
+            Some(path) => path.to_path_buf(),
+            None => PathBuf::from("tmp"),
+        };
+
+        if !output_dir_path.exists() {
+            fs::create_dir_all(&output_dir_path)?;
+        }
+
         let _cancellation_thread = CancellationThread::new(self.cancellation_info.clone(), self.mpi_ctx.clone());
 
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
@@ -1802,7 +1835,7 @@ where
             let compressor_witness_tx_clone = self.compressor_witness_tx.clone();
             let recursive_rx_clone = self.recursive_rx.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
-            let output_dir_path = options.output_dir_path.clone();
+            let output_dir_path = output_dir_path.clone();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, proof_type)) = recursive_rx_clone.recv() {
                     if id == u64::MAX - 1 {
@@ -1938,7 +1971,7 @@ where
                 &self.pctx,
                 &self.sctx,
                 *instance_id as usize,
-                &options.output_dir_path,
+                &output_dir_path,
                 &self.aux_trace,
                 &self.const_pols,
                 &self.const_tree,
@@ -1977,7 +2010,7 @@ where
             let pctx_clone = self.pctx.clone();
             let sctx_clone = self.sctx.clone();
             let setups_clone = self.setups.clone();
-            let output_dir_path_clone = options.output_dir_path.clone();
+            let output_dir_path_clone = output_dir_path.clone();
             let aux_trace_clone = self.aux_trace.clone();
             let const_pols_clone = self.const_pols.clone();
             let const_tree_clone = self.const_tree.clone();
@@ -2254,7 +2287,7 @@ where
                     &self.prover_buffer_recursive,
                     &self.const_pols,
                     &self.const_tree,
-                    &options.output_dir_path,
+                    &output_dir_path,
                     false,
                     &mut agg_proofs,
                 )?;
@@ -2268,7 +2301,7 @@ where
                 timer_stop_and_log_debug!(GET_OUTER_RANK);
                 let outer_rank = self.mpi_ctx.get_outer_agg_rank()? as usize;
                 if self.pctx.mpi_ctx.rank as usize == outer_rank {
-                    self.worker_aggregations_rma(&options, outer_rank != 0)?;
+                    self.worker_aggregations_rma(output_dir_path.to_path_buf(), options.save_proofs, outer_rank != 0)?;
                 } else {
                     for airgroup in 0..self.pctx.global_info.air_groups.len() {
                         let mut write_lock = self.recursive2_proofs[airgroup].write().unwrap();
@@ -2323,15 +2356,17 @@ where
             if self.mpi_ctx.rank == 0 {
                 let vadcop_final = self.receive_aggregated_proofs(vec![], true, true, &options)?;
 
-                vadcop_final_proof = Some(vadcop_final.unwrap().into_iter().next().unwrap().proof);
+                let proof = vadcop_final.unwrap().into_iter().next().unwrap().proof;
 
-                let vadcop_final_ref = vadcop_final_proof.as_ref().unwrap();
+                vadcop_final_proof =
+                    Some(VadcopFinalProof::new_from_proof(&proof, options.compressed).map_err(|e| {
+                        ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e))
+                    })?);
+
                 proof_id = Some(
-                    blake3::hash(unsafe {
-                        std::slice::from_raw_parts(vadcop_final_ref.as_ptr() as *const u8, vadcop_final_ref.len() * 8)
-                    })
-                    .to_hex()
-                    .to_string(),
+                    blake3::hash(unsafe { std::slice::from_raw_parts(proof.as_ptr() as *const u8, proof.len() * 8) })
+                        .to_hex()
+                        .to_string(),
                 );
             }
         }
@@ -2341,33 +2376,14 @@ where
                 if self.mpi_ctx.rank == 0 {
                     timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
 
-                    let proof_bytes: &[u8] = cast_slice(vadcop_final_proof.as_ref().unwrap());
-
-                    let verkey_u64: Vec<u64> = match options.compressed {
-                        true => self
-                            .setups
-                            .setup_vadcop_final_compressed
-                            .as_ref()
-                            .unwrap()
-                            .verkey
-                            .iter()
-                            .map(|x| x.as_canonical_u64())
-                            .collect(),
-                        false => self
-                            .setups
-                            .setup_vadcop_final
-                            .as_ref()
-                            .unwrap()
-                            .verkey
-                            .iter()
-                            .map(|x| x.as_canonical_u64())
-                            .collect(),
+                    let vk = match options.compressed {
+                        true => self.setups.setup_vadcop_final_compressed.as_ref().unwrap().get_vk(),
+                        false => self.setups.setup_vadcop_final.as_ref().unwrap().get_vk(),
                     };
 
-                    let vk_bytes: &[u8] = cast_slice(&verkey_u64);
                     let valid_proofs = match options.compressed {
-                        true => verify_vadcop_final_compressed(proof_bytes, vk_bytes),
-                        false => verify_vadcop_final(proof_bytes, vk_bytes),
+                        true => verify_vadcop_final_compressed(vadcop_final_proof.as_ref().unwrap(), &vk),
+                        false => verify_vadcop_final(vadcop_final_proof.as_ref().unwrap(), &vk),
                     };
                     timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
                     if !valid_proofs {
@@ -2380,31 +2396,6 @@ where
             } else {
                 return self.verify_proofs(options.test_mode);
             }
-        } else if phase == ProvePhase::Full {
-            tracing::info!(
-                "··· {}",
-                "All proofs were successfully generated. Verification Skipped".bright_yellow().bold()
-            );
-        }
-
-        if options.save_proofs {
-            let global_info_path = self.pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
-            let global_info_file = global_info_path.to_str().unwrap();
-            save_challenges_c(
-                self.pctx.get_challenges_ptr(),
-                global_info_file,
-                options.output_dir_path.to_string_lossy().as_ref(),
-            );
-            save_proof_values_c(
-                self.pctx.get_proof_values_ptr(),
-                global_info_file,
-                options.output_dir_path.to_string_lossy().as_ref(),
-            );
-            save_publics_c(
-                self.pctx.global_info.n_publics as u64,
-                self.pctx.get_publics_ptr(),
-                options.output_dir_path.to_string_lossy().as_ref(),
-            );
         }
 
         if phase == ProvePhase::Full {
@@ -2421,11 +2412,20 @@ where
         final_proof: bool,
         options: &ProofOptions,
     ) -> ProofmanResult<Option<Vec<AggProofs>>> {
+        let output_dir_path = match options.output_dir_path.as_deref() {
+            Some(path) => path,
+            None => Path::new("tmp"),
+        };
+
+        if !output_dir_path.exists() {
+            fs::create_dir_all(output_dir_path)?;
+        }
+
         if !agg_proofs.is_empty()
             && !self.cancellation_info.read().unwrap().token.is_cancelled()
             && self.outer_aggregations_handle.lock().unwrap().is_none()
         {
-            self.outer_aggregations(options);
+            self.outer_aggregations(output_dir_path, options.save_proofs);
         }
 
         for proof in agg_proofs {
@@ -2464,12 +2464,10 @@ where
             recursive2_proof[1..1 + publics_extended.len()].copy_from_slice(&publics_extended);
             recursive2_proof[1 + publics_extended.len()..].copy_from_slice(rec_proof);
 
-            let proof_bytes: &[u8] = cast_slice(&recursive2_proof);
-
-            let verkey_u64: Vec<u64> = setup.verkey.iter().map(|x| x.as_canonical_u64()).collect();
-            let vk_bytes: &[u8] = cast_slice(&verkey_u64);
-
-            let valid_recursive_proof = verify_recursive2(proof_bytes, vk_bytes);
+            let vadcop_proof = VadcopFinalProof::new_from_proof(&recursive2_proof, false).map_err(|e| {
+                ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e))
+            })?;
+            let valid_recursive_proof = verify_recursive2(&vadcop_proof, &setup.get_vk());
 
             if !valid_recursive_proof {
                 self.cancellation_info
@@ -2570,7 +2568,7 @@ where
                     &self.setups,
                     &agg_proofs_data,
                     &self.prover_buffer_recursive,
-                    &options.output_dir_path,
+                    output_dir_path,
                     &self.const_pols,
                     &self.const_tree,
                     options.save_proofs,
@@ -2580,9 +2578,9 @@ where
                     let vadcop_final_proof_compressed = generate_vadcop_final_compressed_proof(
                         &self.pctx,
                         &self.setups,
-                        &vadcop_proof_final,
+                        &vadcop_proof_final.proof,
                         &self.prover_buffer_recursive,
-                        &options.output_dir_path,
+                        output_dir_path,
                         &self.const_pols,
                         &self.const_tree,
                         options.save_proofs,
@@ -2598,7 +2596,7 @@ where
         Ok(None)
     }
 
-    fn outer_aggregations(&self, options: &ProofOptions) {
+    fn outer_aggregations(&self, output_dir_path: &Path, save_proofs: bool) {
         self.outer_agg_proofs_finished.store(false, Ordering::SeqCst);
         register_proof_done_callback_c(self.recursive_tx.clone());
 
@@ -2611,7 +2609,7 @@ where
             let recursive_rx_clone = self.recursive_rx.clone();
             let total_outer_agg_proofs = self.total_outer_agg_proofs.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
-            let output_dir_path = options.output_dir_path.clone();
+            let output_dir_path = output_dir_path.to_path_buf();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, _)) = recursive_rx_clone.recv() {
                     if id == u64::MAX - 1 {
@@ -2660,8 +2658,7 @@ where
         let outer_agg_proofs_finished = self.outer_agg_proofs_finished.clone();
         let rec2_witness_rx = self.rec2_witness_rx.clone();
         let cancellation_info_clone = self.cancellation_info.clone();
-        let output_dir_path_clone = options.output_dir_path.clone();
-        let save_proofs = options.save_proofs;
+        let output_dir_path_clone = output_dir_path.to_path_buf();
         let outer_aggregations_handle = std::thread::spawn(move || loop {
             if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                 break;
@@ -2797,7 +2794,12 @@ where
     }
 
     #[allow(clippy::type_complexity)]
-    fn worker_aggregations_rma(&self, options: &ProofOptions, send_proofs: bool) -> ProofmanResult<()> {
+    fn worker_aggregations_rma(
+        &self,
+        output_dir_path: PathBuf,
+        save_proofs: bool,
+        send_proofs: bool,
+    ) -> ProofmanResult<()> {
         timer_start_debug!(GENERATING_WORKER_RMA_COMPRESSED_PROOFS);
 
         let my_rank = self.mpi_ctx.rank as usize;
@@ -2850,8 +2852,7 @@ where
         let prover_buffer_recursive = self.prover_buffer_recursive.clone();
         let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
         let cancellation_info_clone = self.cancellation_info.clone();
-        let output_dir_path_clone = options.output_dir_path.clone();
-        let save_proofs = options.save_proofs;
+        let output_dir_path_clone = output_dir_path.clone();
         let recursive2_handle = std::thread::spawn(move || {
             while let Ok(mut witness) = rec2_witness_rx.recv() {
                 if cancellation_info_clone.read().unwrap().token.is_cancelled() {
@@ -2912,7 +2913,7 @@ where
             let recursive_rx_clone = recursive_rx.clone();
             let recursive2_done_clone = recursive2_done.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
-            let output_dir_path = options.output_dir_path.clone();
+            let output_dir_path = output_dir_path.clone();
             let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, _)) = recursive_rx_clone.recv() {
                     recursive2_done_clone.increment();
@@ -3355,15 +3356,13 @@ where
     fn initialize_proofman(
         mpi_ctx: Arc<MpiCtx>,
         proving_key_path: PathBuf,
-        custom_commits_fixed: HashMap<String, PathBuf>,
         verify_constraints: bool,
         aggregation: bool,
         gpu_params: &ParamsGPU,
         packed_info: &HashMap<(usize, usize), PackedInfo>,
         verbose_mode: VerboseMode,
     ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64)> {
-        let mut pctx =
-            ProofCtx::create_ctx(proving_key_path, custom_commits_fixed, aggregation, verbose_mode, mpi_ctx)?;
+        let mut pctx = ProofCtx::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx)?;
         timer_start_info!(INITIALIZING_PROOFMAN);
 
         let mut preloaded_const = Vec::new();
@@ -3391,8 +3390,6 @@ where
         ));
 
         pctx.set_weights(&sctx)?;
-
-        pctx.initialize_custom_commits(&sctx)?;
 
         let (n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
             pctx.set_device_buffers(&sctx, &setups_vadcop, aggregation, gpu_params)?;
@@ -3615,7 +3612,12 @@ where
 
         let mut values_hash = vec![F::ZERO; size];
 
-        values_hash[..n_field_elements].copy_from_slice(&setup.verkey[..n_field_elements]);
+        let vk_bytes = setup.get_vk();
+        for (i, value) in values_hash.iter_mut().enumerate().take(n_field_elements) {
+            let start = i * 8;
+            let bytes: [u8; 8] = vk_bytes[start..start + 8].try_into().unwrap();
+            *value = F::from_u64(u64::from_le_bytes(bytes));
+        }
 
         let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();
         let mut p = 0;

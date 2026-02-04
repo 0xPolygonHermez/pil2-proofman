@@ -36,7 +36,7 @@ pub struct MpiCtx {
     pub cancelled: AtomicU32,
 }
 
-const MPI_TAG_CANCEL_JOB: i32 = 999999;
+const _MPI_TAG_CANCEL_JOB: i32 = 999999;
 
 impl Default for MpiCtx {
     fn default() -> Self {
@@ -515,7 +515,7 @@ impl MpiCtx {
                 let cancel_msg: [i32; 1] = [self.rank];
                 for rank in 0..self.n_processes {
                     if rank != self.rank {
-                        self.world.process_at_rank(rank).send_with_tag(&cancel_msg, MPI_TAG_CANCEL_JOB);
+                        self.world.process_at_rank(rank).send_with_tag(&cancel_msg, _MPI_TAG_CANCEL_JOB);
                     }
                 }
             }
@@ -527,8 +527,8 @@ impl MpiCtx {
         #[cfg(distributed)]
         {
             if self.cancelled.load(Ordering::SeqCst) == 0 {
-                if let Some(_status) = self.world.any_process().immediate_probe_with_tag(MPI_TAG_CANCEL_JOB) {
-                    let (msg, _) = self.world.any_process().receive_vec_with_tag::<i32>(MPI_TAG_CANCEL_JOB);
+                if let Some(_status) = self.world.any_process().immediate_probe_with_tag(_MPI_TAG_CANCEL_JOB) {
+                    let (msg, _) = self.world.any_process().receive_vec_with_tag::<i32>(_MPI_TAG_CANCEL_JOB);
 
                     if let Some(&failed_rank) = msg.first() {
                         return Some(ProofmanError::MpiCancellation(format!(

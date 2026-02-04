@@ -17,12 +17,6 @@ extern "C" {
         }
     };
     
-    // Save Proof
-    // ========================================================================================
-    void save_challenges(void *pChallenges, char *globalInfoFile, char *fileDir);
-    void save_publics(uint64_t numPublicInputs, void *pPublicInputs, char *fileDir);
-    void save_proof_values(void *pProofValues, char *globalInfoFile, char *fileDir);
-
     // SetupCtx
     // ========================================================================================
     uint64_t n_hints_by_name(void *p_expression_bin, char *hintName);
@@ -84,7 +78,7 @@ extern "C" {
     
     uint64_t custom_commit_size(void *pSetup, uint64_t commitId);
     void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *customCommitFile);
-    void write_custom_commit(void *root,  uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *buffer, char *bufferFile, bool check);
+    void write_custom_commit(void *root,  uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *buffer, char *bufferFile);
 
     uint64_t commit_witness(void *pSetupCtx, void *params, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers);
 
@@ -121,9 +115,13 @@ extern "C" {
     void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint64_t nPublicsAggregation);
     // Final proof
     // =================================================================================
+
+    uint64_t get_snark_protocol_id(void* snark_prover);
     void *init_final_snark_prover(char* zkeyFile);
     void free_final_snark_prover(void *snark_prover);
-    void gen_final_snark_proof(void *snark_prover, void *circomWitnessFinal, uint8_t* proof, char *outputDir);
+    void gen_final_snark_proof(void *snark_prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark);
+    void free_json_string(char* json_str);
+    void snark_proof_bytes_to_json(uint8_t* proof_bytes,uint64_t proof_size,uint8_t* public_bytes,uint64_t public_size,int protocol_id,char** proof_json_out,char** publics_json_out);
 
     // Util calls
     // =================================================================================

@@ -43,12 +43,7 @@ pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
         Ok(())
     }
 
-    fn gen_custom_commits_fixed(
-        &self,
-        _pctx: Arc<ProofCtx<F>>,
-        _sctx: Arc<SetupCtx<F>>,
-        _check: bool,
-    ) -> ProofmanResult<()> {
+    fn gen_custom_commits_fixed(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>) -> ProofmanResult<()> {
         Ok(())
     }
 }

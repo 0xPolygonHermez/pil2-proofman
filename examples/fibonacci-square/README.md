@@ -254,6 +254,6 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
      --compressed \
      --output-dir examples/fibonacci-square/build/proofs \
 && cargo run --bin proofman-cli verify-stark \
-     --proof ./examples/fibonacci-square/build/proofs/proofs/vadcop_final_proof_compressed.bin \
-     --verkey ./examples/fibonacci-square/build/provingKey/build/vadcop_final_compressed/vadcop_final_compressed.verkey.bin --compressed
+     --proof ./examples/fibonacci-square/build/proofs/vadcop_final_proof.bin \
+     --verkey ./examples/fibonacci-square/build/provingKey/build/vadcop_final_compressed/vadcop_final_compressed.verkey.bin
 ```

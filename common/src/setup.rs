@@ -7,6 +7,7 @@ use std::fs;
 use std::io::Read;
 use libloading::{Library, Symbol};
 use std::ffi::CString;
+use bytemuck::cast_slice;
 
 use proofman_starks_lib_c::set_memory_expressions_c;
 use proofman_starks_lib_c::{
@@ -342,6 +343,11 @@ impl<F: PrimeField64> Setup<F> {
 
     pub fn get_const_tree_ptr(&self) -> *mut u8 {
         self.const_pols_tree.as_ptr() as *mut u8
+    }
+
+    pub fn get_vk(&self) -> Vec<u8> {
+        let verkey_u64: Vec<u64> = self.verkey.iter().map(|x| x.as_canonical_u64()).collect();
+        cast_slice(&verkey_u64).to_vec()
     }
 
     pub fn set_circom_circuit(&self) -> ProofmanResult<()> {

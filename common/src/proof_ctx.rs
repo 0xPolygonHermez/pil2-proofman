@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 use crate::{MpiCtx, ProofmanError};
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::fs::File;
@@ -68,7 +69,7 @@ pub struct ProofOptions {
     pub verify_proofs: bool,
     pub save_proofs: bool,
     pub test_mode: bool,
-    pub output_dir_path: PathBuf,
+    pub output_dir_path: Option<PathBuf>,
     pub minimal_memory: bool,
 }
 
@@ -81,7 +82,7 @@ impl BorshSerialize for ProofOptions {
         BorshSerialize::serialize(&self.verify_proofs, writer)?;
         BorshSerialize::serialize(&self.save_proofs, writer)?;
         BorshSerialize::serialize(&self.test_mode, writer)?;
-        BorshSerialize::serialize(&self.output_dir_path.to_string_lossy().to_string(), writer)?;
+        BorshSerialize::serialize(&self.output_dir_path.as_ref().map(|p| p.to_string_lossy().to_string()), writer)?;
         BorshSerialize::serialize(&self.minimal_memory, writer)?;
         Ok(())
     }
@@ -96,7 +97,7 @@ impl BorshDeserialize for ProofOptions {
         let verify_proofs = bool::deserialize_reader(reader)?;
         let save_proofs = bool::deserialize_reader(reader)?;
         let test_mode = bool::deserialize_reader(reader)?;
-        let output_dir_path_str = String::deserialize_reader(reader)?;
+        let output_dir_path: Option<String> = Option::<String>::deserialize_reader(reader)?;
         let minimal_memory = bool::deserialize_reader(reader)?;
 
         Ok(Self {
@@ -107,7 +108,7 @@ impl BorshDeserialize for ProofOptions {
             verify_proofs,
             save_proofs,
             test_mode,
-            output_dir_path: PathBuf::from(output_dir_path_str),
+            output_dir_path: output_dir_path.map(PathBuf::from),
             minimal_memory,
         })
     }
@@ -145,6 +146,22 @@ impl DebugInfo {
         }
     }
 }
+impl Default for ProofOptions {
+    fn default() -> Self {
+        Self {
+            verify_constraints: false,
+            aggregation: true,
+            rma: false,
+            compressed: false,
+            verify_proofs: false,
+            minimal_memory: false,
+            save_proofs: false,
+            output_dir_path: None,
+            test_mode: false,
+        }
+    }
+}
+
 impl ProofOptions {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -155,7 +172,7 @@ impl ProofOptions {
         verify_proofs: bool,
         minimal_memory: bool,
         save_proofs: bool,
-        output_dir_path: PathBuf,
+        output_dir_path: Option<PathBuf>,
     ) -> Self {
         Self {
             verify_constraints,
@@ -179,7 +196,7 @@ impl ProofOptions {
         verify_proofs: bool,
         minimal_memory: bool,
         save_proofs: bool,
-        output_dir_path: PathBuf,
+        output_dir_path: Option<PathBuf>,
     ) -> Self {
         Self {
             verify_constraints,
@@ -192,6 +209,23 @@ impl ProofOptions {
             output_dir_path,
             test_mode: true,
         }
+    }
+
+    pub fn minimal_memory(&mut self) {
+        self.minimal_memory = true;
+    }
+
+    pub fn use_rma(&mut self) {
+        self.rma = true;
+    }
+
+    pub fn compressed(&mut self) {
+        self.compressed = true;
+    }
+
+    pub fn save_proofs(&mut self, output_dir_path: Option<PathBuf>) {
+        self.save_proofs = true;
+        self.output_dir_path = output_dir_path;
     }
 }
 
@@ -253,8 +287,7 @@ pub struct ProofCtx<F: PrimeField64> {
     pub global_info: GlobalInfo,
     pub air_instances: Vec<RwLock<AirInstance<F>>>,
     pub weights: HashMap<(usize, usize), u64>,
-    pub custom_commits_fixed: HashMap<String, PathBuf>,
-    pub custom_commits_values: HashMap<String, Vec<u8>>,
+    pub custom_commits_values: Mutex<HashMap<String, (PathBuf, Vec<u8>)>>,
     pub dctx: RwLock<DistributionCtx>,
     pub debug_info: RwLock<DebugInfo>,
     pub aggregation: bool,
@@ -269,7 +302,6 @@ pub const MAX_INSTANCES: u64 = 1 << 17;
 impl<F: PrimeField64> ProofCtx<F> {
     pub fn create_ctx(
         proving_key_path: PathBuf,
-        custom_commits_fixed: HashMap<String, PathBuf>,
         aggregation: bool,
         verbose_mode: VerboseMode,
         mpi_ctx: Arc<MpiCtx>,
@@ -305,8 +337,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             air_instances,
             dctx: RwLock::new(dctx),
             debug_info: RwLock::new(DebugInfo::default()),
-            custom_commits_fixed,
-            custom_commits_values: HashMap::new(),
+            custom_commits_values: Mutex::new(HashMap::new()),
             weights,
             aggregation,
             witness_tx: RwLock::new(None),
@@ -351,60 +382,74 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn initialize_custom_commits(&mut self, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
+    pub fn initialize_custom_commits(
+        &self,
+        custom_commits_fixed: HashMap<String, PathBuf>,
+        sctx: &SetupCtx<F>,
+        only_init: bool,
+    ) -> ProofmanResult<()> {
         tracing::info!("Initializing publics custom_commits");
         for (airgroup_id, airs) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in airs.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id)?;
                 for (commit_id, custom_commit) in setup.stark_info.custom_commits.iter().enumerate() {
                     if custom_commit.stage_widths[0] > 0 {
-                        let custom_file_path = self.get_custom_commits_fixed_buffer(&custom_commit.name, true)?;
+                        let custom_file_path = custom_commits_fixed.get(&custom_commit.name).ok_or_else(|| {
+                            ProofmanError::ProofmanError(format!(
+                                "Custom commit file path for {} not found",
+                                custom_commit.name
+                            ))
+                        })?;
 
-                        if !PathBuf::from(&custom_file_path).exists() {
-                            let error_message = format!(
-                                "Error: Unable to find {} custom commit at '{}'.\n\
-                                Please run the following command:\n\
-                                \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
-                                custom_commit.name,
-                                custom_file_path.display(),
-                            );
-                            tracing::warn!("{}", error_message);
-                            return Err(ProofmanError::ProofmanError(error_message));
-                        }
-
-                        let error_message = format!(
-                            "Error: The custom commit file for {} at '{}' exists but is invalid or corrupted.\n\
-                            Please regenerate it by running:\n\
-                            \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
-                            custom_commit.name,
-                            custom_file_path.display(),
-                        );
-
-                        let size = custom_commit_size_c((&setup.p_setup).into(), commit_id as u64) as usize;
-
-                        match fs::metadata(&custom_file_path) {
-                            Ok(metadata) => {
-                                let actual_size = metadata.len() as usize;
-                                if actual_size != (size + 4) * 8 {
-                                    tracing::warn!("{}", error_message);
-                                    return Err(ProofmanError::ProofmanError(error_message));
-                                }
-                            }
-                            Err(err) => {
+                        let mut root_bytes = [0u8; 32];
+                        if !only_init {
+                            if !PathBuf::from(&custom_file_path).exists() {
                                 let error_message = format!(
-                                    "Failed to open {} for custom_commit {}: {}",
-                                    setup.air_name, custom_commit.name, err
+                                    "Error: Unable to find {} custom commit at '{}'.\n\
+                                    Please run the following command:\n\
+                                    \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
+                                    custom_commit.name,
+                                    custom_file_path.display(),
                                 );
                                 tracing::warn!("{}", error_message);
                                 return Err(ProofmanError::ProofmanError(error_message));
                             }
+
+                            let error_message = format!(
+                                "Error: The custom commit file for {} at '{}' exists but is invalid or corrupted.\n\
+                                Please regenerate it by running:\n\
+                                \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
+                                custom_commit.name,
+                                custom_file_path.display(),
+                            );
+
+                            let size = custom_commit_size_c((&setup.p_setup).into(), commit_id as u64) as usize;
+
+                            match fs::metadata(custom_file_path) {
+                                Ok(metadata) => {
+                                    let actual_size = metadata.len() as usize;
+                                    if actual_size != (size + 4) * 8 {
+                                        tracing::warn!("{}", error_message);
+                                        return Err(ProofmanError::ProofmanError(error_message));
+                                    }
+                                }
+                                Err(err) => {
+                                    let error_message = format!(
+                                        "Failed to open {} for custom_commit {}: {}",
+                                        setup.air_name, custom_commit.name, err
+                                    );
+                                    tracing::warn!("{}", error_message);
+                                    return Err(ProofmanError::ProofmanError(error_message));
+                                }
+                            }
+                            let mut file = File::open(custom_file_path)?;
+                            file.read_exact(&mut root_bytes)?;
                         }
 
-                        let mut file = File::open(&custom_file_path)?;
-                        let mut root_bytes = [0u8; 32];
-                        file.read_exact(&mut root_bytes)?;
-
-                        self.custom_commits_values.insert(custom_commit.name.clone(), root_bytes.to_vec());
+                        self.custom_commits_values
+                            .lock()
+                            .unwrap()
+                            .insert(custom_commit.name.clone(), (custom_file_path.clone(), root_bytes.to_vec()));
                     }
                 }
             }
@@ -412,10 +457,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         Ok(())
     }
 
-    pub fn get_custom_commit_root(&self, name: &str) -> ProofmanResult<&[u8]> {
-        let root_bytes = self.custom_commits_values.get(name);
+    pub fn get_custom_commit_root(&self, name: &str) -> ProofmanResult<Vec<u8>> {
+        let custom_commit_lock = self.custom_commits_values.lock().unwrap();
+        let root_bytes = custom_commit_lock.get(name);
         match root_bytes {
-            Some(bytes) => Ok(bytes.as_slice()),
+            Some((_, bytes)) => Ok(bytes.clone()),
             None => Err(ProofmanError::ProofmanError(format!("Custom Commit {name} not found"))),
         }
     }
@@ -447,9 +493,10 @@ impl<F: PrimeField64> ProofCtx<F> {
     }
 
     pub fn get_custom_commits_fixed_buffer(&self, name: &str, return_error: bool) -> ProofmanResult<PathBuf> {
-        let file_name = self.custom_commits_fixed.get(name);
+        let custom_commits_lock = self.custom_commits_values.lock().unwrap();
+        let file_name = custom_commits_lock.get(name);
         match file_name {
-            Some(path) => Ok(path.to_path_buf()),
+            Some((path, _)) => Ok(path.to_path_buf()),
             None => {
                 if return_error {
                     Err(ProofmanError::ProofmanError(format!("Custom Commit Fixed {file_name:?} not found")))

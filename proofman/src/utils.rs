@@ -2,7 +2,10 @@ use fields::PrimeField64;
 use num_traits::ToPrimitive;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use colored::*;
 
@@ -11,7 +14,7 @@ use proofman_common::{
 };
 use proofman_starks_lib_c::load_device_const_pols_c;
 use proofman_starks_lib_c::load_device_setup_c;
-use proofman_common::{PackedInfo, VerboseMode};
+use proofman_common::{PackedInfo, VerboseMode, GlobalInfo};
 
 use pil_std_lib::Std;
 use witness::WitnessManager;
@@ -760,4 +763,23 @@ pub fn print_roots<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[[
             contribution,
         );
     }
+}
+
+pub fn get_vadcop_final_proof_vkey(proving_key_path: &Path, compressed: bool) -> ProofmanResult<Vec<u8>> {
+    let global_info = GlobalInfo::new(proving_key_path)?;
+    let setup_path = match compressed {
+        true => global_info.get_setup_path("vadcop_final_compressed"),
+        false => global_info.get_setup_path("vadcop_final"),
+    };
+
+    let verkey_file = setup_path.display().to_string() + ".verkey.bin";
+
+    let mut file = File::open(&verkey_file)
+        .map_err(|e| ProofmanError::InvalidSetup(format!("Failed to open verkey file '{}': {}", verkey_file, e)))?;
+
+    let mut contents = Vec::new();
+    file.read_to_end(&mut contents)
+        .map_err(|e| ProofmanError::InvalidSetup(format!("Failed to read verkey file '{}': {}", verkey_file, e)))?;
+
+    Ok(contents)
 }
