@@ -671,7 +671,6 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     vadcop_proof: &[u64],
     prover_buffer: &[F],
     vadcop_final_verkey: &[u64],
-    is_aggregated: bool,
     output_dir_path: &Path,
     prover_buffer_size: usize,
 ) -> ProofmanResult<*mut c_void> {
@@ -680,15 +679,11 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     let trace: Vec<F> = vec![F::ZERO; setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize];
 
     let proof = &vadcop_proof[1..];
-    let publics_circom_size = 5; // Verkey + boolean flag for aggregated circuit
+    let mut updated_proof: Vec<u64> = vec![0; proof.len() + 4];
 
-    let mut updated_proof: Vec<u64> = vec![0; proof.len() + publics_circom_size];
+    updated_proof[..4].copy_from_slice(&vadcop_final_verkey[..4]);
 
-    updated_proof[0..proof.len()].copy_from_slice(proof);
-    updated_proof[proof.len()] = is_aggregated as u64;
-    for i in 0..vadcop_final_verkey.len() {
-        updated_proof[proof.len() + 1 + i] = vadcop_final_verkey[i];
-    }
+    updated_proof[4..].copy_from_slice(proof);
 
     let circom_witness = generate_witness::<F>(setup, 0, &updated_proof, output_dir_path)?;
 
@@ -712,7 +707,12 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     let recursivef_json_path = output_dir_path.join("recursivef.json");
     let recursivef_json_str = recursivef_json_path.to_string_lossy().into_owned();
 
-    let d_buffers = gen_device_buffers_recursivef_c(p_setup as *mut u8, setup.get_const_ptr() as *mut u8, setup.get_const_tree_ptr() as *mut u8, prover_buffer_size as u64);
+    let d_buffers = gen_device_buffers_recursivef_c(
+        p_setup as *mut u8,
+        setup.get_const_ptr() as *mut u8,
+        setup.get_const_tree_ptr() as *mut u8,
+        prover_buffer_size as u64,
+    );
     timer_start_trace!(GENERATE_RECURSIVEF_PROOF);
     // prove
     let p_prove = gen_recursive_proof_final_c(

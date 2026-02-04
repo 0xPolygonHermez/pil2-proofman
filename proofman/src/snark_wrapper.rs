@@ -100,8 +100,14 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     ) -> ProofmanResult<SnarkProof> {
         timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
         // last parameter 0 because is not used in CPU mode
-        let recursivef_proof =
-            generate_recursivef_proof(&self.setup_recursivef, vadcop_proof, &self.aux_trace, output_dir_path, 0)?;
+        let recursivef_proof = generate_recursivef_proof(
+            &self.setup_recursivef,
+            vadcop_proof,
+            &self.aux_trace,
+            &self.vadcop_final_verkey,
+            output_dir_path,
+            0,
+        )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
         timer_start_info!(GENERATING_SNARK_PROOF);
@@ -241,11 +247,19 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     let vadcop_final_verkey: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
 
     timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
-    let recursivef_proof = generate_recursivef_proof(&setup_recursivef, vadcop_proof, &aux_trace, output_dir_path, (setup_recursivef.prover_buffer_size as usize* std::mem::size_of::<F>()) as usize)?;
+    let recursivef_proof = generate_recursivef_proof(
+        &setup_recursivef,
+        vadcop_proof,
+        &aux_trace,
+        &vadcop_final_verkey,
+        output_dir_path,
+        (setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>()) as usize,
+    )?;
     timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
     timer_start_info!(VERIFY_RECURSIVE_F_PROOF);
-    let publics: Vec<F> = vadcop_proof[1..1 + vadcop_proof[0] as usize].iter().map(|&x| F::from_u64(x)).collect();
+    let mut publics: Vec<F> = vadcop_final_verkey[0..4].iter().map(|&x| F::from_u64(x)).collect();
+    publics.extend(vadcop_proof[1..1 + vadcop_proof[0] as usize].iter().map(|&x| F::from_u64(x)));
 
     let is_valid = verify_proof_bn128(recursivef_proof, &setup_recursivef, Some(publics));
     timer_stop_and_log_info!(VERIFY_RECURSIVE_F_PROOF);

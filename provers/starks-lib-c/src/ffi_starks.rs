@@ -1265,14 +1265,20 @@ pub fn gen_device_buffers_recursivef_c(
     p_const_tree: *mut u8,
     prover_buffer_size: u64,
 ) -> *mut u8 {
-    unsafe { gen_device_buffers_recursivef(p_setup_ctx as *mut c_void, p_const_pols as *mut c_void, p_const_tree as *mut c_void, prover_buffer_size) as *mut u8 }
+    unsafe {
+        gen_device_buffers_recursivef(
+            p_setup_ctx as *mut c_void,
+            p_const_pols as *mut c_void,
+            p_const_tree as *mut c_void,
+            prover_buffer_size,
+        ) as *mut u8
+    }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn free_device_buffers_recursivef_c(d_buffers: *mut u8) {
     unsafe { free_device_buffers_recursivef(d_buffers as *mut c_void) }
 }
-    
 
 #[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
