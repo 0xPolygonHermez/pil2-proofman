@@ -55,11 +55,8 @@ void calculateWitnessSTD_BN128_gpu(SetupCtx& setupCtx, StepsParams& h_params, St
     updateAirgroupValueGPU(setupCtx, h_params, d_params, hint[0], hintFieldNameAirgroupVal, "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
 }
 
-void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *d_aux_trace, Goldilocks::Element *d_constTree, Goldilocks::Element *h_publicInputs, std::string proofFile, cudaStream_t stream) {
+void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *d_aux_trace, Goldilocks::Element *d_constTree, Goldilocks::Element *h_publicInputs, std::string proofFile, TimerGPU &timer, cudaStream_t stream) {
     
-    TimerGPU timer;
-    cudaStreamSynchronize(stream);
-
     TimerStartGPU(timer, STARK_GPU_PROOF);
     TimerStartGPU(timer, STARK_STEP_0);
 
@@ -341,8 +338,8 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
         json2file(zkin, proofFile);
     }
     TimerStopGPU(timer, STARK_SAVE_PROOF);
+    TimerStartGPU(timer, STARK_CLEANUP);
 
-    TimerStopGPU(timer,STARK_GPU_PROOF);
 
     // free allocated pinned memory
     cudaFreeHost(params_pinned);
@@ -370,7 +367,8 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     // Free AirInstanceInfo (and all its GPU allocations)
     delete air_instance_info;
 
-    // I can call the timer right away because in setProof we have a stream synchnronize
+    TimerStopGPU(timer, STARK_CLEANUP);
+    TimerStopGPU(timer,STARK_GPU_PROOF);
     TimerSyncAndLogAllGPU(timer, instanceId, airgroupId, airId);
     TimerSyncCategoriesGPU(timer);
     TimerLogCategoryContributionsGPU(timer, STARK_GPU_PROOF);

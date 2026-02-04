@@ -433,6 +433,7 @@ extern "C" {
         pPublicInputs: *mut ::std::os::raw::c_void,
         proof_file: *mut ::std::os::raw::c_char,
         prover_buffer_size: u64,
+        d_buffers: *mut ::std::os::raw::c_void,
     ) -> *mut ::std::os::raw::c_void;
 
     // Stream Management
@@ -525,6 +526,15 @@ extern "C" {
         node_size: u32,
         arity: u32,
     ) -> *mut ::std::os::raw::c_void;
+
+    pub fn gen_device_buffers_recursivef(
+        pSetupCtx_: *mut ::std::os::raw::c_void,
+        pConstPols: *mut ::std::os::raw::c_void,
+        pConstTree: *mut ::std::os::raw::c_void,
+        proverBufferSize: u64,
+    ) -> *mut ::std::os::raw::c_void;
+
+    pub fn free_device_buffers_recursivef(d_buffers: *mut ::std::os::raw::c_void);
     
     pub fn free_device_buffers(d_buffers: *mut ::std::os::raw::c_void);
     

@@ -1049,6 +1049,7 @@ pub fn gen_recursive_proof_final_c(
     air_id: u64,
     instance_id: u64,
     prover_buffer_size: u64,
+    d_buffers: *mut u8,
 ) -> *mut c_void {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1066,6 +1067,7 @@ pub fn gen_recursive_proof_final_c(
             p_public_inputs as *mut std::os::raw::c_void,
             proof_file_ptr,
             prover_buffer_size,
+            d_buffers as *mut std::os::raw::c_void,
         )
     }
 }
@@ -1255,6 +1257,22 @@ pub fn gen_device_buffers_c(
 ) -> *mut ::std::os::raw::c_void {
     unsafe { gen_device_buffers(max_sizes, node_rank, node_n_processes, arity) }
 }
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn gen_device_buffers_recursivef_c(
+    p_setup_ctx: *mut u8,
+    p_const_pols: *mut u8,
+    p_const_tree: *mut u8,
+    prover_buffer_size: u64,
+) -> *mut u8 {
+    unsafe { gen_device_buffers_recursivef(p_setup_ctx as *mut c_void, p_const_pols as *mut c_void, p_const_tree as *mut c_void, prover_buffer_size) as *mut u8 }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn free_device_buffers_recursivef_c(d_buffers: *mut u8) {
+    unsafe { free_device_buffers_recursivef(d_buffers as *mut c_void) }
+}
+    
 
 #[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
@@ -2027,6 +2045,7 @@ pub fn gen_recursive_proof_final_c(
     _air_id: u64,
     _instance_id: u64,
     _prover_buffer_size: u64,
+    _d_buffers: *mut u8,
 ) -> *mut c_void {
     trace!("··· {}", "gen_recursive_proof_final: This is a mock call because there is no linked library");
     std::ptr::null_mut()
@@ -2154,6 +2173,30 @@ pub fn gen_device_buffers_c(
         "gen_device_commit_buffers: This is a mock call because there is no linked library"
     );
     std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn gen_device_buffers_recursivef_c(
+    _p_setup_ctx: *mut u8,
+    _p_const_pols: *mut u8,
+    _p_const_tree: *mut u8,
+    _prover_buffer_size: u64,
+) -> *mut u8 {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "gen_device_buffers_recursivef: This is a mock call because there is no linked library"
+    );
+    std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn free_device_buffers_recursivef_c(_d_buffers: *mut u8) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "free_device_buffers_recursivef: This is a mock call because there is no linked library"
+    );
 }
 
 #[cfg(feature = "no_lib_link")]

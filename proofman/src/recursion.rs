@@ -712,6 +712,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     let recursivef_json_path = output_dir_path.join("recursivef.json");
     let recursivef_json_str = recursivef_json_path.to_string_lossy().into_owned();
 
+    let d_buffers = gen_device_buffers_recursivef_c(p_setup as *mut u8, setup.get_const_ptr() as *mut u8, setup.get_const_tree_ptr() as *mut u8, prover_buffer_size as u64);
     timer_start_trace!(GENERATE_RECURSIVEF_PROOF);
     // prove
     let p_prove = gen_recursive_proof_final_c(
@@ -726,8 +727,12 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         0,
         0,
         prover_buffer_size as u64,
+        d_buffers as *mut u8,
     );
     timer_stop_and_log_trace!(GENERATE_RECURSIVEF_PROOF);
+
+    // Free GPU buffers
+    free_device_buffers_recursivef_c(d_buffers);
 
     Ok(p_prove)
 }

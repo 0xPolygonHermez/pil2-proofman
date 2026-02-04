@@ -368,6 +368,28 @@ struct StreamData{
         cudaFreeHost(pinned_params);
     }
 };
+
+struct DeviceRecursiveFBuffers
+{
+    
+    cudaStream_t stream;
+    TimerGPU timer;
+    gl64_t *d_aux_trace;
+    gl64_t *d_const_tree;
+    uint8_t* pinnedBuffer;
+    size_t pinnedBufferSize = 256 * 1024 * 1024;
+
+    DeviceRecursiveFBuffers() : stream(), timer(){
+        cudaStreamCreate(&stream);
+        timer.init(stream);
+        CHECKCUDAERR(cudaMallocHost((void**)&pinnedBuffer, pinnedBufferSize));
+
+    }
+    ~DeviceRecursiveFBuffers() {
+        cudaStreamDestroy(stream);
+        cudaFreeHost(pinnedBuffer);
+    }
+};
 struct DeviceCommitBuffers
 {
     gl64_t **d_constPols;
