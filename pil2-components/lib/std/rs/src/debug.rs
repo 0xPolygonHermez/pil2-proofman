@@ -345,9 +345,10 @@ pub fn print_debug_info<F: PrimeField64>(
         }
         writeln!(output, "\t► Mismatched bus values for opid {opid}:").expect("Write error");
 
-        // Partition entries into overassumed and overproven, consuming the HashMap
-        let (overassumed_values, overproven_values): (Vec<_>, Vec<_>) =
-            bus.into_par_iter().partition(|(_, v)| v.shared_data.num_proves < v.shared_data.num_assumes);
+        let (overassumed_values, overproven_values): (Vec<_>, Vec<_>) = bus
+            .into_par_iter()
+            .filter(|(_, v)| v.shared_data.num_proves != v.shared_data.num_assumes)
+            .partition(|(_, v)| v.shared_data.num_proves < v.shared_data.num_assumes);
 
         let len_overassumed = overassumed_values.len();
         let len_overproven = overproven_values.len();
