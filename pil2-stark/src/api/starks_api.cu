@@ -839,6 +839,59 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t air
     return streamId;
 }
 
+void tile_const_pols(void *pStarkinfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile) {
+
+    StarkInfo &starkInfo = *(StarkInfo *)pStarkinfo;
+    uint64_t *h_constPols = (uint64_t *)pConstPols;
+    uint64_t *h_constTree = (uint64_t *)pConstTree;
+
+    uint64_t N = (1 << starkInfo.starkStruct.nBits);
+    uint64_t NExtended = (1 << starkInfo.starkStruct.nBitsExt);
+    uint64_t nConst = starkInfo.nConstants;
+    uint64_t sizeConstPols = N * nConst * sizeof(Goldilocks::Element);
+    uint64_t sizeConstPolsExtended = NExtended * nConst * sizeof(Goldilocks::Element);
+    uint64_t sizeConstTree = get_const_tree_size((void *)&starkInfo) * sizeof(Goldilocks::Element);
+    uint64_t sizeConstOnlyTree = sizeConstTree - sizeConstPolsExtended;
+
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+
+    gl64_t * d_helper;
+    gl64_t * d_helperAux;
+
+    CHECKCUDAERR(cudaMalloc(&d_helper, sizeConstPolsExtended));
+    CHECKCUDAERR(cudaMalloc(&d_helperAux, sizeConstPolsExtended));
+    Goldilocks::Element *h_helperTiled = (Goldilocks::Element *)malloc(sizeConstTree);
+
+    dim3 gridSize;
+    dim3 blockSize(32,32,1);
+    
+    // ConstPols
+    CHECKCUDAERR(cudaMemcpy(d_helper, h_constPols, sizeConstPols, cudaMemcpyHostToDevice));
+    gridSize = dim3((N + blockSize.x - 1) / blockSize.x, (nConst + blockSize.y - 1) / blockSize.y, 1);
+    fromRowMajorToTiled<<<gridSize, blockSize, 0, stream>>>(N, nConst, (uint64_t*)d_helper, (uint64_t*)d_helperAux);
+    CHECKCUDAERR(cudaMemcpy(h_helperTiled, d_helperAux, sizeConstPols, cudaMemcpyDeviceToHost));
+    ofstream fw(constFile, std::fstream::out | std::fstream::binary);
+    fw.write((const char *)h_helperTiled, sizeConstPols);
+    fw.close();
+
+    // ConstTree
+    CHECKCUDAERR(cudaMemcpy(d_helper, h_constTree, sizeConstPolsExtended, cudaMemcpyHostToDevice));
+    gridSize = dim3((NExtended + blockSize.x - 1) / blockSize.x, (nConst + blockSize.y - 1) / blockSize.y, 1);
+    fromRowMajorToTiled<<<gridSize, blockSize, 0, stream>>>(NExtended, nConst, (uint64_t*)d_helper, (uint64_t*)d_helperAux);
+    CHECKCUDAERR(cudaMemcpy(h_helperTiled, d_helperAux, sizeConstPolsExtended, cudaMemcpyDeviceToHost));
+    memcpy(h_helperTiled + (sizeConstPolsExtended / sizeof(Goldilocks::Element)), (uint8_t*)pConstTree + sizeConstPolsExtended, sizeConstOnlyTree);
+    ofstream fwTree(constTreeFile, std::fstream::out | std::fstream::binary);
+    fwTree.write((const char *)h_helperTiled, sizeConstTree);
+    fwTree.close();
+
+    free(h_helperTiled);
+    CHECKCUDAERR(cudaFree(d_helper));
+    CHECKCUDAERR(cudaFree(d_helperAux));
+    CHECKCUDAERR(cudaStreamDestroy(stream));
+
+}
+
 void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pConstTree, uint64_t proverBufferSize) {
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     uint32_t gpuId = 0;
@@ -854,14 +907,9 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
     TranscriptBN128_GPU::init_const(&gpuId, 1, transcriptArity);
 
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
-    uint64_t NExtended = (1 << setupCtx->starkInfo.starkStruct.nBitsExt);
     uint64_t nConst = setupCtx->starkInfo.nConstants;
-    uint64_t nColsWitness = setupCtx->starkInfo.mapSectionsN["cm1"];
-
     uint64_t sizeConstPols = N * nConst * sizeof(Goldilocks::Element);
-    uint64_t sizeConstPolsExtended = NExtended * nConst * sizeof(Goldilocks::Element);
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
-    uint64_t sizeConstOnlyTree = sizeConstTree - sizeConstPolsExtended;
     uint64_t sizeAuxTrace = proverBufferSize;
 
     // Allocate device buffers
@@ -874,28 +922,15 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
     uint64_t pinnedBufferSize = d_buffers->pinnedBufferSize;
     cudaStream_t stream = d_buffers->stream;
 
-    dim3 gridSize;
-    dim3 blockSize(32,32,1);
-
-    // Copy and tile const tree extended pols use aux_trace temporarily, then to d_const_tree
-    assert(sizeAuxTrace > sizeConstTree);
-    copy_to_device_in_chunks((const uint8_t*)pConstTree, (uint8_t*)d_aux_trace, sizeConstPolsExtended, pinnedBuffer, pinnedBufferSize, stream);
-    gridSize = dim3((NExtended + blockSize.x - 1) / blockSize.x, (nConst + blockSize.y - 1) / blockSize.y, 1);
-    toTiledLayout<<<gridSize, blockSize, 0, stream>>>(NExtended, nConst, (uint64_t*)d_aux_trace, (uint64_t*)d_const_tree);    
-    cudaMemcpyAsync((uint8_t*)d_const_tree + sizeConstPolsExtended, (uint8_t*)pConstTree + sizeConstPolsExtended, sizeConstOnlyTree, cudaMemcpyHostToDevice, stream);
-    CHECKCUDAERR(cudaGetLastError());
-
-
-    // Copy and tile const pols to d_aux_trace cm1 extended offset
-    assert(nColsWitness * NExtended>= nConst * N); //check that we can safely use this section as buffer
-    uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
+    // Copy const pols to device
     uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
-    uint64_t * helper = (uint64_t *)(d_aux_trace + offsetCm1);
-    copy_to_device_in_chunks((const uint8_t*)pConstPols, (uint8_t*)helper, sizeConstPols, pinnedBuffer, pinnedBufferSize, stream);
-    gridSize = dim3((N + blockSize.x - 1) / blockSize.x, (nConst + blockSize.y - 1) / blockSize.y, 1);
-    toTiledLayout<<<gridSize, blockSize, 0, stream>>>(N, nConst, (uint64_t*)helper, (uint64_t*)(d_aux_trace + offsetConstPols));
+    copy_to_device_in_chunks((const uint8_t*)pConstPols, (uint8_t*)(d_aux_trace + offsetConstPols), sizeConstPols, pinnedBuffer, pinnedBufferSize, stream);
     CHECKCUDAERR(cudaGetLastError());
 
+    // Copy const tree to device
+    copy_to_device_in_chunks((const uint8_t*)pConstTree, (uint8_t*)d_const_tree, sizeConstTree, pinnedBuffer, pinnedBufferSize, stream);
+    CHECKCUDAERR(cudaGetLastError());
+    
     return (void*)d_buffers;
 }
 
@@ -933,7 +968,7 @@ void *gen_recursive_proof_final(void *pSetupCtx_, uint64_t airgroupId, uint64_t 
     gl64_t * d_witness = d_aux_trace + offsetCm1;
     copy_to_device_in_chunks((const uint8_t*)witness, (uint8_t*)d_witness_temp, sizeWitness, pinnedBuffer, pinnedBufferSize, d_buffers->stream);
     gridSize = dim3((N + blockSize.x - 1) / blockSize.x, (nCols + blockSize.y - 1) / blockSize.y, 1);
-    toTiledLayout<<<gridSize, blockSize, 0, d_buffers->stream>>>(N, nCols, (uint64_t*)d_witness_temp, (uint64_t*)d_witness);
+    fromRowMajorToTiled<<<gridSize, blockSize, 0, d_buffers->stream>>>(N, nCols, (uint64_t*)d_witness_temp, (uint64_t*)d_witness);
     CHECKCUDAERR(cudaGetLastError());
 
     // Copy public inputs

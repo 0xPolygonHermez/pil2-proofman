@@ -3,7 +3,7 @@
 
 // Kernel to convert row-major layout to tiled layout
 // Uses blockIdx.x for rows (which can be very large) and blockIdx.y for cols
-__global__ void toTiledLayout(
+__global__ void fromRowMajorToTiled(
     const uint64_t nRows,
     const uint64_t nCols,
     const uint64_t* __restrict__ input,

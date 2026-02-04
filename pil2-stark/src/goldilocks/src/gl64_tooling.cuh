@@ -440,7 +440,7 @@ void load_and_copy_to_device_in_chunks(
     uint64_t streamId
     );
 
-__global__ void toTiledLayout(
+__global__ void fromRowMajorToTiled(
     const uint64_t nRows,
     const uint64_t nCols,
     const uint64_t* __restrict__ input,

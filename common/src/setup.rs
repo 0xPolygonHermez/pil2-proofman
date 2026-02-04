@@ -250,7 +250,7 @@ impl<F: PrimeField64> Setup<F> {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
                 let const_pols_tree: Vec<F> = create_buffer_fast(const_tree_size);
                 let mut const_pols_size_packed = 0;
-                if cfg!(feature = "gpu") {
+                if cfg!(feature = "gpu") && setup_type != &ProofType::RecursiveF {
                     let words_per_row: u64 = if Path::new(&const_pols_path).exists() {
                         let bytes = fs::read(&const_pols_path).expect("Failed to read const_pols file");
                         if bytes.len() >= 8 {

@@ -1,6 +1,6 @@
 use crate::{generate_recursivef_proof, generate_snark_proof};
 use proofman_common::{
-    GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree, VerboseMode,
+    GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree_snark, VerboseMode,
     initialize_logger,
 };
 use proofman_util::{timer_start_info, timer_stop_and_log_info, create_buffer_fast};
@@ -68,7 +68,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         setup_recursivef.set_circom_circuit()?;
         setup_recursivef.set_exec_file_data()?;
 
-        calculate_fixed_tree(&setup_recursivef);
+        calculate_fixed_tree_snark(&setup_recursivef);
 
         setup_recursivef.load_const_pols();
         setup_recursivef.load_const_pols_tree();
@@ -194,7 +194,7 @@ pub fn check_setup_snark<F: PrimeField64>(
         None,
     );
 
-    calculate_fixed_tree(&setup_recursivef);
+    calculate_fixed_tree_snark(&setup_recursivef);
 
     Ok(())
 }

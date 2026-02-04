@@ -709,8 +709,8 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
 
     let d_buffers = gen_device_buffers_recursivef_c(
         p_setup as *mut u8,
-        setup.get_const_ptr() as *mut u8,
-        setup.get_const_tree_ptr() as *mut u8,
+        setup.get_const_ptr(),
+        setup.get_const_tree_ptr(),
         prover_buffer_size as u64,
     );
     timer_start_trace!(GENERATE_RECURSIVEF_PROOF);
@@ -727,7 +727,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         0,
         0,
         prover_buffer_size as u64,
-        d_buffers as *mut u8,
+        d_buffers,
     );
     timer_stop_and_log_trace!(GENERATE_RECURSIVEF_PROOF);
 

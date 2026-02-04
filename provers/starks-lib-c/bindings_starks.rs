@@ -92,6 +92,14 @@ extern "C" {
         constFile: *mut ::std::os::raw::c_char,
     );
 
+    pub fn tile_const_pols(
+        pStarkInfo: *mut ::std::os::raw::c_void,
+        pConstPols: *mut ::std::os::raw::c_void,
+        constFile: *mut ::std::os::raw::c_char,
+        pConstTree: *mut ::std::os::raw::c_void,
+        constTreeFile: *mut ::std::os::raw::c_char,
+    ); 
+
     pub fn prepare_blocks(pol: *mut u64, N: u64, nCols: u64);
 
     pub fn calculate_const_tree(
