@@ -229,7 +229,7 @@ impl<F: PrimeField64> Setup<F> {
 
             let n_cols = stark_info.map_sections_n["cm1"];
 
-            if verify_constraints {
+            if verify_constraints && !gpu{
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
                 (
                     stark_info,
