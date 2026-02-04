@@ -37,9 +37,6 @@ pub struct GenCustomCommitsFixedCmd {
 
     #[clap(short = 'c', long, value_name="KEY=VALUE", num_args(1..))]
     pub custom_commits: Vec<String>,
-
-    #[clap(long, short = 'k')]
-    pub check: bool,
 }
 
 impl GenCustomCommitsFixedCmd {
@@ -54,8 +51,7 @@ impl GenCustomCommitsFixedCmd {
         }
 
         let mpi_ctx = Arc::new(MpiCtx::new());
-        let mut pctx =
-            ProofCtx::create_ctx(self.proving_key.clone(), custom_commits_map, false, self.verbose.into(), mpi_ctx)?;
+        let mut pctx = ProofCtx::create_ctx(self.proving_key.clone(), false, self.verbose.into(), mpi_ctx)?;
 
         tracing::info!("{}", format!("{} GenCustomCommitsFixed", format!("{: >12}", "Command").bright_green().bold()));
         tracing::info!("");
@@ -65,6 +61,7 @@ impl GenCustomCommitsFixedCmd {
 
         let setups_vadcop = Arc::new(SetupsVadcop::new(&pctx.global_info, false, false, &params_gpu, &[]));
         pctx.set_device_buffers(&sctx, &setups_vadcop, false, &params_gpu)?;
+        pctx.initialize_custom_commits(custom_commits_map, &sctx, true)?;
 
         let pctx = Arc::new(pctx);
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));
@@ -76,6 +73,6 @@ impl GenCustomCommitsFixedCmd {
         let mut witness_lib = witness_lib(self.verbose.into(), None)?;
         witness_lib.register_witness(&wcm)?;
 
-        wcm.gen_custom_commits_fixed(self.check).map_err(|e| e.into())
+        wcm.gen_custom_commits_fixed().map_err(|e| e.into())
     }
 }

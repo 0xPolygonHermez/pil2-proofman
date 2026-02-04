@@ -7,6 +7,7 @@ use std::fs;
 use std::io::Read;
 use libloading::{Library, Symbol};
 use std::ffi::CString;
+use bytemuck::cast_slice;
 
 use proofman_starks_lib_c::set_memory_expressions_c;
 use proofman_starks_lib_c::{
@@ -228,7 +229,7 @@ impl<F: PrimeField64> Setup<F> {
 
             let n_cols = stark_info.map_sections_n["cm1"];
 
-            if verify_constraints && !gpu {
+            if verify_constraints {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
                 (
                     stark_info,
@@ -344,6 +345,11 @@ impl<F: PrimeField64> Setup<F> {
 
     pub fn get_const_tree_ptr(&self) -> *mut u8 {
         self.const_pols_tree.as_ptr() as *mut u8
+    }
+
+    pub fn get_vk(&self) -> Vec<u8> {
+        let verkey_u64: Vec<u64> = self.verkey.iter().map(|x| x.as_canonical_u64()).collect();
+        cast_slice(&verkey_u64).to_vec()
     }
 
     pub fn set_circom_circuit(&self) -> ProofmanResult<()> {

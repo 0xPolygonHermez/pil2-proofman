@@ -5,15 +5,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use colored::Colorize;
 use crate::commands::field::Field;
-use std::io::Write;
-use bytemuck::cast_slice;
 use fields::Goldilocks;
 
 use proofman::SnarkWrapper;
 use proofman::ProofMan;
 use proofman::ProvePhaseResult;
 use proofman_common::{ModeName, ProofOptions, ParamsGPU};
-use std::fs::{self, File};
+use std::fs;
 use std::path::Path;
 
 #[derive(Parser)]
@@ -88,9 +86,6 @@ pub struct ProveCmd {
 
     #[clap(short = 'b', long, default_value_t = false)]
     pub save_proofs: bool,
-
-    #[clap(short = 'j', long, default_value_t = false)]
-    pub save_json_snark: bool,
 }
 
 impl ProveCmd {
@@ -120,15 +115,6 @@ impl ProveCmd {
             Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone())?,
         };
 
-        let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
-        for commit in &self.custom_commits {
-            if let Some((key, value)) = commit.split_once('=') {
-                custom_commits_map.insert(key.to_string(), PathBuf::from(value));
-            } else {
-                eprintln!("Invalid commit format: {commit:?}");
-            }
-        }
-
         let verify_constraints = debug_info.std_mode.name == ModeName::Debug;
 
         let mut gpu_params = ParamsGPU::new(self.preallocate);
@@ -145,13 +131,22 @@ impl ProveCmd {
 
         let proofman = ProofMan::<Goldilocks>::new(
             self.proving_key.clone(),
-            custom_commits_map,
             verify_constraints,
             self.aggregation,
             gpu_params,
             self.verbose.into(),
             HashMap::new(),
         )?;
+
+        let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
+        for commit in &self.custom_commits {
+            if let Some((key, value)) = commit.split_once('=') {
+                custom_commits_map.insert(key.to_string(), PathBuf::from(value));
+            } else {
+                eprintln!("Invalid commit format: {commit:?}");
+            }
+        }
+        proofman.register_custom_commits(custom_commits_map)?;
 
         let proof_options = ProofOptions::new(
             false,
@@ -161,7 +156,7 @@ impl ProveCmd {
             self.verify_proofs,
             self.minimal_memory,
             self.save_proofs,
-            self.output_dir.clone(),
+            Some(self.output_dir.clone()),
         );
         if debug_info.std_mode.name == ModeName::Debug {
             match self.field {
@@ -169,7 +164,6 @@ impl ProveCmd {
                     self.witness_lib.clone(),
                     self.public_inputs.clone(),
                     None,
-                    self.output_dir.clone(),
                     &debug_info.clone(),
                     self.verbose.into(),
                     false,
@@ -188,25 +182,13 @@ impl ProveCmd {
             };
 
             if let ProvePhaseResult::Full(_, Some(vadcop_final_proof)) = result {
-                let proof_data = cast_slice(&vadcop_final_proof);
-
-                // Save the vadcop final proof
-                let output_file_path = match self.compressed {
-                    true => self.output_dir.join("proofs/vadcop_final_proof_compressed.bin"),
-                    false => self.output_dir.join("proofs/vadcop_final_proof.bin"),
-                };
-                let mut file = File::create(&output_file_path)?;
-                file.write_all(proof_data)?;
-                file.flush()?;
+                // Save the vadcop final proof using the struct's save method
+                vadcop_final_proof.save(self.output_dir.join("vadcop_final_proof.bin"))?;
 
                 if let Some(proving_key_snark) = &self.proving_key_snark {
                     let snark_wrapper: SnarkWrapper<Goldilocks> =
                         SnarkWrapper::new(proving_key_snark, self.verbose.into())?;
-                    snark_wrapper.generate_final_snark_proof(
-                        &vadcop_final_proof,
-                        &self.output_dir,
-                        self.save_json_snark,
-                    )?;
+                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, Some(self.output_dir.clone()))?;
                 }
             }
         }

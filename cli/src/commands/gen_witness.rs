@@ -5,7 +5,6 @@ use proofman_common::{initialize_logger, ParamsGPU, SetupsVadcop, MpiCtx, ProofC
 use proofman::{GetWitnessFunc, initialize_witness_circom};
 use std::fs::File;
 use std::io::Read;
-use std::collections::HashMap;
 use colored::Colorize;
 use fields::{Field, Goldilocks};
 use libloading::Symbol;
@@ -39,13 +38,8 @@ impl GenWitnessCmd {
 
         initialize_logger(VerboseMode::Info, None);
 
-        let pctx: ProofCtx<Goldilocks> = ProofCtx::create_ctx(
-            self.proving_key.clone(),
-            HashMap::new(),
-            true,
-            self.verbose.into(),
-            Arc::new(MpiCtx::new()),
-        )?;
+        let pctx: ProofCtx<Goldilocks> =
+            ProofCtx::create_ctx(self.proving_key.clone(), true, self.verbose.into(), Arc::new(MpiCtx::new()))?;
 
         let gpu_params = ParamsGPU::new(false);
 

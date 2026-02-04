@@ -11,6 +11,7 @@ use commands::verify_constraints::VerifyConstraintsCmd;
 use commands::debug_info::DebugInfoCmd;
 use commands::stats::StatsCmd;
 use commands::verify_stark::VerifyStark;
+use commands::verify_snark::VerifySnark;
 use commands::gen_witness::GenWitnessCmd;
 use commands::execute::ExecuteCmd;
 use commands::pilout::{PiloutSubcommands, PiloutCmd};
@@ -39,6 +40,7 @@ pub enum Commands {
     Stats(StatsCmd),
     Execute(ExecuteCmd),
     VerifyStark(VerifyStark),
+    VerifySnark(VerifySnark),
     GetConstraints(GetConstraintsCmd),
     GenCustomCommitsFixed(GenCustomCommitsFixedCmd),
     GenWitness(GenWitnessCmd),
@@ -62,6 +64,7 @@ fn main() {
         Commands::GenCustomCommitsFixed(args) => args.run(),
         Commands::GetConstraints(args) => args.run(),
         Commands::VerifyStark(args) => args.run(),
+        Commands::VerifySnark(args) => args.run(),
         Commands::Stats(args) => args.run(),
         Commands::Execute(args) => args.run(),
         Commands::GenWitness(args) => args.run(),

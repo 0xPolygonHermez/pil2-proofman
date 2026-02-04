@@ -4,6 +4,9 @@ use std::ffi::c_void;
 
 use std::mem::MaybeUninit;
 
+mod proof;
+pub use proof::*;
+
 pub fn create_buffer_fast<F>(buffer_size: usize) -> Vec<F> {
     let mut buffer: Vec<MaybeUninit<F>> = Vec::with_capacity(buffer_size);
     unsafe {

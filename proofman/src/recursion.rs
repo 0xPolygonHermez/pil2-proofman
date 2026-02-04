@@ -268,7 +268,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 
     let (airgroup_id, air_id, instance_id, output_file_path, vadcop) =
         if witness.proof_type == ProofType::VadcopFinal || witness.proof_type == ProofType::VadcopFinalCompressed {
-            let output_file_path_ = output_dir_path.join("proofs/vadcop_final_proof.json");
+            let output_file_path_ = output_dir_path.join(format!("proofs/{:?}.json", witness.proof_type));
             (0, 0, 0, output_file_path_, false)
         } else {
             let (airgroup_id_, air_id_) = (witness.airgroup_id, witness.air_id);
@@ -618,7 +618,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
 pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
-    vadcop_final_proof: &Proof<F>,
+    vadcop_final_proof: &[u64],
     prover_buffer: &[F],
     output_dir_path: &Path,
     const_pols: &[F],
@@ -629,7 +629,7 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
     let setup = setups.setup_vadcop_final_compressed.as_ref().unwrap();
 
     let circom_witness_vadcop_final_compressed =
-        generate_witness::<F>(setup, 0, &vadcop_final_proof.proof[1..], output_dir_path)?;
+        generate_witness::<F>(setup, 0, &vadcop_final_proof[1..], output_dir_path)?;
     let witness_final_proof = Proof::new_witness(
         ProofType::VadcopFinalCompressed,
         0,
@@ -671,7 +671,6 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     vadcop_proof: &[u64],
     prover_buffer: &[F],
     vadcop_final_verkey: &[u64],
-    is_aggregated: bool,
     output_dir_path: &Path,
 ) -> ProofmanResult<*mut c_void> {
     let p_setup: *mut c_void = (&setup.p_setup).into();
@@ -679,15 +678,12 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     let trace: Vec<F> = vec![F::ZERO; setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize];
 
     let proof = &vadcop_proof[1..];
-    let publics_circom_size = 5; // Verkey + boolean flag for aggregated circuit
 
-    let mut updated_proof: Vec<u64> = vec![0; proof.len() + publics_circom_size];
+    let mut updated_proof: Vec<u64> = vec![0; proof.len() + 4];
 
-    updated_proof[0..proof.len()].copy_from_slice(proof);
-    updated_proof[proof.len()] = is_aggregated as u64;
-    for i in 0..vadcop_final_verkey.len() {
-        updated_proof[proof.len() + 1 + i] = vadcop_final_verkey[i];
-    }
+    updated_proof[..4].copy_from_slice(&vadcop_final_verkey[..4]);
+
+    updated_proof[4..].copy_from_slice(proof);
 
     let circom_witness = generate_witness::<F>(setup, 0, &updated_proof, output_dir_path)?;
 
@@ -715,7 +711,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         setup.get_const_ptr(),
         setup.get_const_tree_ptr(),
         publics.as_ptr() as *mut u8,
-        "tmp/recursivef.json",
+        "",
         0,
         0,
         0,
@@ -729,9 +725,26 @@ pub fn generate_snark_proof(
     snark_prover: *mut c_void,
     setup_path: &Path,
     proof: *mut c_void,
-    output_dir_path: &Path,
-    save_json: bool,
-) -> ProofmanResult<Vec<u8>> {
+) -> ProofmanResult<(Vec<u8>, Vec<u8>)> {
+    let witness = generate_witness_final_snark(proof, setup_path)?;
+
+    timer_start_trace!(CALCULATE_FINAL_PROOF);
+
+    let snark_publics: Vec<u8> = vec![0; 32];
+    let snark_publics_ptr = snark_publics.as_ptr() as *mut u8;
+
+    let snark_proof: Vec<u8> = vec![0; 24 * 32];
+    let snark_proof_ptr = snark_proof.as_ptr() as *mut u8;
+
+    tracing::info!("··· Generating final snark proof");
+    gen_final_snark_proof_c(snark_prover, witness.as_ptr() as *mut u8, snark_proof_ptr, snark_publics_ptr);
+    timer_stop_and_log_trace!(CALCULATE_FINAL_PROOF);
+    tracing::info!("··· Final Snark Proof generated.");
+
+    Ok((snark_proof, snark_publics))
+}
+
+pub fn generate_witness_final_snark(proof: *mut c_void, setup_path: &Path) -> ProofmanResult<Vec<u8>> {
     let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
     let rust_lib_filename = setup_path.display().to_string() + lib_extension;
     let rust_lib_path = Path::new(rust_lib_filename.as_str());
@@ -747,16 +760,8 @@ pub fn generate_snark_proof(
     let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
     let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
 
-    let proof_file = match save_json {
-        true => output_dir_path.to_string_lossy().into_owned(),
-        false => String::new(),
-    };
-
-    let snark_proof: Vec<u8> = vec![0; 24 * 32];
-    let snark_proof_ptr = snark_proof.as_ptr() as *mut u8;
-
     unsafe {
-        timer_start_trace!(CALCULATE_FINAL_WITNESS);
+        timer_start_info!(CALCULATE_FINAL_WITNESS);
 
         let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
         let size_witness = get_size_witness();
@@ -770,17 +775,10 @@ pub fn generate_snark_proof(
         if res != 0 {
             return Err(ProofmanError::InvalidProof("Error generating final witness from rust".into()));
         }
-        timer_stop_and_log_trace!(CALCULATE_FINAL_WITNESS);
+        timer_stop_and_log_info!(CALCULATE_FINAL_WITNESS);
 
-        timer_start_trace!(CALCULATE_FINAL_PROOF);
-
-        tracing::info!("··· Generating final snark proof");
-        gen_final_snark_proof_c(snark_prover, witness_ptr, snark_proof_ptr, &proof_file);
-        timer_stop_and_log_trace!(CALCULATE_FINAL_PROOF);
-        tracing::info!("··· Final Snark Proof generated.");
+        Ok(witness)
     }
-
-    Ok(snark_proof)
 }
 
 fn generate_witness<F: PrimeField64>(
