@@ -84,47 +84,6 @@ pub fn clear_proof_done_callback_c() {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn save_challenges_c(p_challenges: *mut u8, global_info_file: &str, output_dir: &str) {
-    unsafe {
-        let file_dir = CString::new(output_dir).unwrap();
-        let file_ptr = file_dir.as_ptr() as *mut std::os::raw::c_char;
-
-        let global_info_file_name = CString::new(global_info_file).unwrap();
-        let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
-
-        save_challenges(p_challenges as *mut std::os::raw::c_void, global_info_file_ptr, file_ptr);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn save_publics_c(n_publics: u64, public_inputs: *mut u8, output_dir: &str) {
-    let file_dir: CString = CString::new(output_dir).unwrap();
-    unsafe {
-        save_publics(
-            n_publics,
-            public_inputs as *mut std::os::raw::c_void,
-            file_dir.as_ptr() as *mut std::os::raw::c_char,
-        );
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn save_proof_values_c(proof_values: *mut u8, global_info_file: &str, output_dir: &str) {
-    let file_dir: CString = CString::new(output_dir).unwrap();
-
-    let global_info_file_name = CString::new(global_info_file).unwrap();
-    let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
-
-    unsafe {
-        save_proof_values(
-            proof_values as *mut std::os::raw::c_void,
-            global_info_file_ptr,
-            file_dir.as_ptr() as *mut std::os::raw::c_char,
-        );
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
 pub fn stark_info_new_c(
     filename: &str,
     recursive_final: bool,
@@ -652,7 +611,6 @@ pub fn write_custom_commit_c(
     n_cols: u64,
     buffer: *mut u8,
     buffer_file: &str,
-    check: bool,
 ) {
     let buffer_file_name = CString::new(buffer_file).unwrap();
     unsafe {
@@ -664,7 +622,6 @@ pub fn write_custom_commit_c(
             n_cols,
             buffer as *mut std::os::raw::c_void,
             buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
-            check,
         );
     }
 }
@@ -1140,16 +1097,68 @@ pub fn init_final_snark_prover_c(zkeyFile: &str) -> *mut c_void {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn get_snark_protocol_id_c(snark_prover: *mut c_void) -> u64 {
+    if snark_prover.is_null() {
+        return 0;
+    }
+    unsafe { get_snark_protocol_id(snark_prover) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn free_final_snark_prover_c(snark_prover: *mut c_void) {
     unsafe { free_final_snark_prover(snark_prover) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_final_snark_proof_c(prover: *mut c_void, circomWitnessFinal: *mut u8, proof: *mut u8, outputDir: &str) {
-    let output_dir_name = CString::new(outputDir).unwrap();
-    let output_dir_ptr = output_dir_name.as_ptr() as *mut std::os::raw::c_char;
+pub fn gen_final_snark_proof_c(
+    prover: *mut c_void,
+    circomWitnessFinal: *mut u8,
+    proof: *mut u8,
+    publics_snark: *mut u8,
+) {
     unsafe {
-        gen_final_snark_proof(prover, circomWitnessFinal as *mut std::os::raw::c_void, proof, output_dir_ptr);
+        gen_final_snark_proof(prover, circomWitnessFinal as *mut std::os::raw::c_void, proof, publics_snark);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn snark_proof_bytes_to_json_c(proof_bytes: &[u8], public_bytes: &[u8], protocol_id: i32) -> (String, String) {
+    unsafe {
+        let mut proof_json_ptr: *mut std::os::raw::c_char = std::ptr::null_mut();
+        let mut publics_json_ptr: *mut std::os::raw::c_char = std::ptr::null_mut();
+
+        snark_proof_bytes_to_json(
+            proof_bytes.as_ptr(),
+            proof_bytes.len() as u64,
+            public_bytes.as_ptr(),
+            public_bytes.len() as u64,
+            protocol_id,
+            &mut proof_json_ptr as *mut *mut std::os::raw::c_char,
+            &mut publics_json_ptr as *mut *mut std::os::raw::c_char,
+        );
+
+        // Convert C strings to Rust strings
+        let proof_json = if !proof_json_ptr.is_null() {
+            CStr::from_ptr(proof_json_ptr).to_string_lossy().into_owned()
+        } else {
+            String::new()
+        };
+
+        let publics_json = if !publics_json_ptr.is_null() {
+            CStr::from_ptr(publics_json_ptr).to_string_lossy().into_owned()
+        } else {
+            String::new()
+        };
+
+        // Free the C strings
+        if !proof_json_ptr.is_null() {
+            free_json_string(proof_json_ptr);
+        }
+        if !publics_json_ptr.is_null() {
+            free_json_string(publics_json_ptr);
+        }
+
+        (proof_json, publics_json)
     }
 }
 
@@ -1469,21 +1478,6 @@ pub fn clear_proof_done_callback_c() {
         "ffi     ",
         "_clear_proof_done_callback: This is a mock call because there is no linked library"
     );
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn save_challenges_c(_p_challenges: *mut u8, _global_info_file: &str, _output_dir: &str) {
-    trace!("··· {}", "save_challenges: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn save_publics_c(_n_publics: u64, _public_inputs: *mut u8, _output_dir: &str) {
-    trace!("··· {}", "save_publics: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn save_proof_values_c(_proof_values: *mut u8, _global_info_file: &str, _output_dir: &str) {
-    trace!("··· {}", "save_proof_values: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1813,7 +1807,6 @@ pub fn write_custom_commit_c(
     _n_cols: u64,
     _buffer: *mut u8,
     _buffer_file: &str,
-    _check: bool,
 ) {
     trace!("··· {}", "write_custom_commit: This is a mock call because there is no linked library");
 }
@@ -2109,13 +2102,30 @@ pub fn init_final_snark_prover_c(_zkeyFile: &str) -> *mut c_void {
 }
 
 #[cfg(feature = "no_lib_link")]
+pub fn get_snark_protocol_id_c(_snark_prover: *mut c_void) -> u64 {
+    trace!("··· {}", "get_snark_protocol_id: This is a mock call because there is no linked library");
+    0
+}
+
+#[cfg(feature = "no_lib_link")]
 pub fn free_final_snark_prover_c(_snark_prover: *mut c_void) {
     trace!("··· {}", "free_final_snark_prover: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_final_snark_proof_c(_prover: *mut c_void, _circomWitnessFinal: *mut u8, _proof: *mut u8, _outputDir: &str) {
+pub fn gen_final_snark_proof_c(
+    _prover: *mut c_void,
+    _circomWitnessFinal: *mut u8,
+    _proof: *mut u8,
+    _publics_snark: *mut u8,
+) {
     trace!("··· {}", "gen_final_snark_proof: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn snark_proof_bytes_to_json_c(_proof_bytes: &[u8], _public_bytes: &[u8], _protocol_id: i32) -> (String, String) {
+    trace!("··· {}", "snark_proof_bytes_to_json: This is a mock call because there is no linked library");
+    ("{}".to_string(), "{}".to_string())
 }
 
 #[cfg(feature = "no_lib_link")]

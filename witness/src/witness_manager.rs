@@ -70,9 +70,9 @@ impl<F: PrimeField64> WitnessManager<F> {
         self.components_std.write().unwrap().push(component);
     }
 
-    pub fn gen_custom_commits_fixed(&self, check: bool) -> ProofmanResult<()> {
+    pub fn gen_custom_commits_fixed(&self) -> ProofmanResult<()> {
         for component in self.components.read().unwrap().iter() {
-            component.gen_custom_commits_fixed(self.pctx.clone(), self.sctx.clone(), check)?;
+            component.gen_custom_commits_fixed(self.pctx.clone(), self.sctx.clone())?;
         }
 
         Ok(())
