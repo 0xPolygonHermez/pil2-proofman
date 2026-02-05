@@ -25,10 +25,8 @@ pub fn print_summary_info<F: PrimeField64>(
     mpi_ctx: &MpiCtx,
     packed_info: &HashMap<(usize, usize), PackedInfo>,
     verbose_mode: VerboseMode,
-) -> ProofmanResult<()> {
-    if mpi_ctx.rank == 0 {
-        print_summary(pctx, sctx, packed_info, true, verbose_mode)?;
-    }
+) -> ProofmanResult<String> {
+    let summary = print_summary(pctx, sctx, packed_info, true, verbose_mode, mpi_ctx.rank == 0)?;
 
     if mpi_ctx.n_processes > 1 {
         let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info_process();
@@ -40,9 +38,9 @@ pub fn print_summary_info<F: PrimeField64>(
             max_deviation
         );
 
-        print_summary(pctx, sctx, packed_info, false, verbose_mode)?;
+        let _ = print_summary(pctx, sctx, packed_info, false, verbose_mode, true)?;
     }
-    Ok(())
+    Ok(summary)
 }
 
 pub fn print_summary<F: PrimeField64>(
@@ -51,7 +49,10 @@ pub fn print_summary<F: PrimeField64>(
     packed_info: &HashMap<(usize, usize), PackedInfo>,
     global: bool,
     verbose_mode: VerboseMode,
-) -> ProofmanResult<()> {
+    print_output: bool,
+) -> ProofmanResult<String> {
+    let mut summary_info = String::new();
+
     let mut air_info = HashMap::new();
 
     let mut air_instances = HashMap::new();
@@ -116,24 +117,32 @@ pub fn print_summary<F: PrimeField64>(
     air_groups.sort();
 
     if verbose_mode != VerboseMode::Info {
-        tracing::info!("{}", "--- TOTAL PROOF INSTANCES SUMMARY ------------------------".bright_white().bold());
-        tracing::info!("    ► {} Air instances found:", n_instances);
+        if print_output {
+            tracing::info!("{}", "--- TOTAL PROOF INSTANCES SUMMARY ------------------------".bright_white().bold());
+            tracing::info!("    ► {} Air instances found:", n_instances);
+        }
         for air_group in &air_groups {
             let air_group_instances = air_instances.get(*air_group).unwrap();
             let mut air_names: Vec<_> = air_group_instances.keys().collect();
             air_names.sort();
 
-            tracing::info!("      Air Group [{}]", air_group);
+            if print_output {
+                tracing::info!("      Air Group [{}]", air_group);
+            }
             for air_name in air_names {
                 let count = air_group_instances.get(air_name).unwrap();
                 let (n_bits, total_cols, _, _, _) = air_info.get(air_name).unwrap();
-                tracing::info!(
-                    "      {}",
-                    format!("· {count} x Air [{air_name}] ({total_cols} x 2^{n_bits})").bright_white().bold()
-                );
+                if print_output {
+                    tracing::info!(
+                        "      {}",
+                        format!("· {count} x Air [{air_name}] ({total_cols} x 2^{n_bits})").bright_white().bold()
+                    );
+                }
             }
         }
-        tracing::info!("{}", "--- TOTAL PROVER MEMORY USAGE ----------------------------".bright_white().bold());
+        if print_output {
+            tracing::info!("{}", "--- TOTAL PROVER MEMORY USAGE ----------------------------".bright_white().bold());
+        }
         for air_group in &air_groups {
             let air_group_instances = air_instances.get(*air_group).unwrap();
             let mut air_names: Vec<_> = air_group_instances.keys().collect();
@@ -143,31 +152,37 @@ pub fn print_summary<F: PrimeField64>(
                 let count = air_group_instances.get(air_name).unwrap();
                 let (_, _, _, memory_trace, memory_instance) = air_info.get(air_name).unwrap();
                 let gpu = cfg!(feature = "gpu");
-                if gpu {
-                    tracing::info!(
-                        "      · {}: {} GPU per each of {} instance | Witness CPU: {}",
-                        air_name,
-                        format_bytes(*memory_instance),
-                        count,
-                        format_bytes(*memory_trace),
-                    );
-                } else {
-                    tracing::info!(
-                        "      · {}: {} per each of {} instance | Witness : {}",
-                        air_name,
-                        format_bytes(*memory_instance),
-                        count,
-                        format_bytes(*memory_trace),
-                    );
+                if print_output {
+                    if gpu {
+                        tracing::info!(
+                            "      · {}: {} GPU per each of {} instance | Witness CPU: {}",
+                            air_name,
+                            format_bytes(*memory_instance),
+                            count,
+                            format_bytes(*memory_trace),
+                        );
+                    } else {
+                        tracing::info!(
+                            "      · {}: {} per each of {} instance | Witness : {}",
+                            air_name,
+                            format_bytes(*memory_instance),
+                            count,
+                            format_bytes(*memory_trace),
+                        );
+                    }
                 }
             }
         }
-        tracing::info!("      Total memory required by proofman: {}", format_bytes(max_prover_memory));
-        tracing::info!("----------------------------------------------------------");
-        tracing::info!("      Extra memory tables (CPU): {}", format_bytes(memory_tables));
-        tracing::info!("----------------------------------------------------------");
+        if print_output {
+            tracing::info!("      Total memory required by proofman: {}", format_bytes(max_prover_memory));
+            tracing::info!("----------------------------------------------------------");
+            tracing::info!("      Extra memory tables (CPU): {}", format_bytes(memory_tables));
+            tracing::info!("----------------------------------------------------------");
+        }
     } else {
-        tracing::info!("{}", "--- PROOF INSTANCES SUMMARY ---".bright_white().bold());
+        if print_output {
+            tracing::info!("{}", "--- PROOF INSTANCES SUMMARY ---".bright_white().bold());
+        }
 
         for air_group in &air_groups {
             let air_group_instances = air_instances.get(*air_group).unwrap();
@@ -182,15 +197,23 @@ pub fn print_summary<F: PrimeField64>(
                 })
                 .collect();
 
-            summary.push(format!("Total instances: {}", n_instances));
+            summary.push(format!("Total {} instances: {}", if global { "global" } else { "local" }, n_instances));
 
-            tracing::info!("{} | {}", air_group.bright_white().bold(), summary.join(" | "));
+            if print_output {
+                tracing::info!("{} | {}", air_group.bright_white().bold(), summary.join(" | "));
+            }
+
+            if global {
+                summary_info = summary.join(" | ");
+            }
         }
 
-        tracing::info!("{}", "--------------------------------".bright_white().bold());
+        if print_output {
+            tracing::info!("{}", "--------------------------------".bright_white().bold());
+        }
     }
 
-    Ok(())
+    Ok(summary_info)
 }
 
 pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool) -> ProofmanResult<()> {
