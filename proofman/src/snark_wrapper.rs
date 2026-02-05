@@ -359,7 +359,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         &aux_trace,
         &vadcop_final_verkey,
         output_dir_path,
-        (setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>()) as usize,
+        setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
     )?;
     timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 

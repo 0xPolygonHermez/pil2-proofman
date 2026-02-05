@@ -871,7 +871,11 @@ void tile_const_pols(void *pStarkinfo, void *pConstPols, char *constFile, void *
     gridSize = dim3((N + blockSize.x - 1) / blockSize.x, (nConst + blockSize.y - 1) / blockSize.y, 1);
     fromRowMajorToTiled<<<gridSize, blockSize, 0, stream>>>(N, nConst, (uint64_t*)d_helper, (uint64_t*)d_helperAux);
     CHECKCUDAERR(cudaMemcpy(h_helperTiled, d_helperAux, sizeConstPols, cudaMemcpyDeviceToHost));
-    ofstream fw(constFile, std::fstream::out | std::fstream::binary);
+    ofstream fw(constFile, std::ios::out | std::ios::binary);
+    if (!fw.is_open()) {
+        zklog.error("Failed to open file for writing: " + string(constFile));
+        exitProcess();
+    }
     fw.write((const char *)h_helperTiled, sizeConstPols);
     fw.close();
 
@@ -881,7 +885,11 @@ void tile_const_pols(void *pStarkinfo, void *pConstPols, char *constFile, void *
     fromRowMajorToTiled<<<gridSize, blockSize, 0, stream>>>(NExtended, nConst, (uint64_t*)d_helper, (uint64_t*)d_helperAux);
     CHECKCUDAERR(cudaMemcpy(h_helperTiled, d_helperAux, sizeConstPolsExtended, cudaMemcpyDeviceToHost));
     memcpy(h_helperTiled + (sizeConstPolsExtended / sizeof(Goldilocks::Element)), (uint8_t*)pConstTree + sizeConstPolsExtended, sizeConstOnlyTree);
-    ofstream fwTree(constTreeFile, std::fstream::out | std::fstream::binary);
+    ofstream fwTree(constTreeFile, std::ios::out | std::ios::binary);
+    if (!fwTree.is_open()) {
+        zklog.error("Failed to open file for writing: " + string(constTreeFile));
+        exitProcess();
+    }
     fwTree.write((const char *)h_helperTiled, sizeConstTree);
     fwTree.close();
 
