@@ -1168,13 +1168,12 @@ void prepare_blocks(uint64_t *pol, uint64_t N, uint64_t nCols) {
     cudaStreamDestroy(stream);
 }
 
-void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *buffer, char *bufferFile)
+void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile)
 {   
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
     cudaSetDevice(deviceId);
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
 
     TimerGPU timer;
 
@@ -1188,12 +1187,17 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
     mt.setSource(customCommitsTree);
     mt.setNodes(&customCommitsTree[NExtended * nCols]);
 
-    gl64_t* d_buffer;
-    gl64_t* d_customCommitsPols;
-    gl64_t* d_customCommitsTree;
-    cudaMalloc((void**)&d_buffer, N * nCols * sizeof(gl64_t));
-    cudaMalloc((void**)&d_customCommitsPols, N * nCols * sizeof(gl64_t));
-    cudaMalloc((void**)&d_customCommitsTree, treeSize * sizeof(gl64_t));
+    uint32_t streamId = 0;
+    cudaStream_t stream = d_buffers->streamsData[streamId].stream;
+    
+    uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
+    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
+
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+
+    gl64_t* d_buffer = d_aux_trace;
+    gl64_t* d_customCommitsPols = d_aux_trace + N * nCols;
+    gl64_t* d_customCommitsTree = d_customCommitsPols + N * nCols;
     cudaMemset(d_customCommitsTree, 0, treeSize * sizeof(gl64_t));
     cudaMemcpy(d_buffer, buffer, N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice);
 
@@ -1220,12 +1224,8 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
         fw.close();
     }
 
-    cudaFree(d_buffer);
-    cudaFree(d_customCommitsPols);
-    cudaFree(d_customCommitsTree);
     delete[] customCommitsTree;
     delete[] customCommitsPols;
-    cudaStreamDestroy(stream);
 }
 
 void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress_) {

@@ -609,6 +609,7 @@ pub fn write_custom_commit_c(
     n_bits: u64,
     n_bits_ext: u64,
     n_cols: u64,
+    d_buffers: *mut c_void,
     buffer: *mut u8,
     buffer_file: &str,
 ) {
@@ -620,6 +621,7 @@ pub fn write_custom_commit_c(
             n_bits,
             n_bits_ext,
             n_cols,
+            d_buffers,
             buffer as *mut std::os::raw::c_void,
             buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
         );
@@ -1805,6 +1807,7 @@ pub fn write_custom_commit_c(
     _n_bits: u64,
     _n_bits_ext: u64,
     _n_cols: u64,
+    _d_buffers: *mut c_void,
     _buffer: *mut u8,
     _buffer_file: &str,
 ) {

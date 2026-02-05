@@ -1,12 +1,14 @@
 use std::path::Path;
 
 use fields::PrimeField64;
-use proofman_starks_lib_c::{write_custom_commit_c, init_gpu_setup_c, get_num_gpus_c};
+use proofman_starks_lib_c::write_custom_commit_c;
 
 use crate::trace::Trace;
-use crate::{ProofmanResult, ProofmanError};
+use crate::ProofmanResult;
+use crate::ProofCtx;
 
 pub fn write_custom_commit_trace<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
     custom_trace: &mut dyn Trace<F>,
     blowup_factor: u64,
     merkle_tree_arity: u64,
@@ -21,21 +23,13 @@ pub fn write_custom_commit_trace<F: PrimeField64>(
     let n_cols = custom_trace.num_cols() as u64;
     let mut root = vec![F::ZERO, F::ZERO, F::ZERO, F::ZERO];
 
-    if cfg!(feature = "gpu") {
-        let n_gpus = get_num_gpus_c();
-        if n_gpus == 0 {
-            return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
-        }
-
-        init_gpu_setup_c(n_bits_ext);
-    }
-
     write_custom_commit_c(
         root.as_mut_ptr() as *mut u8,
         arity,
         n_bits,
         n_bits_ext,
         n_cols,
+        pctx.get_device_buffers_ptr(),
         buffer.as_ptr() as *mut u8,
         file_name.to_str().expect("Invalid file name"),
     );
