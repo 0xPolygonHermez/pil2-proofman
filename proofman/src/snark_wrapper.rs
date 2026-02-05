@@ -1,6 +1,6 @@
 use proofman_common::{
-    GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree_snark, VerboseMode,
-    initialize_logger,
+    GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree_snark,
+    VerboseMode, initialize_logger,
 };
 use proofman_util::{timer_start_info, timer_stop_and_log_info, create_buffer_fast, VadcopFinalProof};
 use fields::PrimeField64;

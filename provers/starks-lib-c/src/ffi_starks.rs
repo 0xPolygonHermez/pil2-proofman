@@ -217,7 +217,13 @@ pub fn pack_const_pols_c(pStarkinfo: *mut c_void, pConstPols: *mut u8, constFile
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn tile_const_pols_c(pStarkInfo: *mut c_void, pConstPols: *mut u8, constFile: &str, pConstTree: *mut u8, constTreeFile: &str) {
+pub fn tile_const_pols_c(
+    pStarkInfo: *mut c_void,
+    pConstPols: *mut u8,
+    constFile: &str,
+    pConstTree: *mut u8,
+    constTreeFile: &str,
+) {
     let const_file_cstr: CString = CString::new(constFile).unwrap();
     let const_tree_file_cstr: CString = CString::new(constTreeFile).unwrap();
     unsafe {
@@ -1588,7 +1594,13 @@ pub fn pack_const_pols_c(_pStarkinfo: *mut c_void, _pConstPols: *mut u8, _constF
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn tile_const_pols_c(_pStarkinfo: *mut c_void, _pConstPols: *mut u8, _constFile: &str, _pConstTree: *mut u8, _constTreeFile: &str) {
+pub fn tile_const_pols_c(
+    _pStarkinfo: *mut c_void,
+    _pConstPols: *mut u8,
+    _constFile: &str,
+    _pConstTree: *mut u8,
+    _constTreeFile: &str,
+) {
     trace!("··· {}", "tile_const_pols: This is a mock call because there is no linked library");
 }
 

@@ -182,12 +182,11 @@ pub fn calculate_fixed_tree_snark<F: PrimeField64>(setup: &Setup<F>) {
         false
     };
 
-
     if !valid_root {
-        timer_start_info!(WRITING_CONST_TREE);        
+        timer_start_info!(WRITING_CONST_TREE);
         calculate_const_tree_bn128_c(p_stark_info, const_pols.as_ptr() as *mut u8, const_tree.as_ptr() as *mut u8);
-        write_const_tree_bn128_c(p_stark_info, const_tree.as_ptr() as *mut u8, const_pols_tree_path.as_str());    
-        timer_stop_and_log_info!(WRITING_CONST_TREE);        
+        write_const_tree_bn128_c(p_stark_info, const_tree.as_ptr() as *mut u8, const_pols_tree_path.as_str());
+        timer_stop_and_log_info!(WRITING_CONST_TREE);
     }
     if cfg!(feature = "gpu") {
         // save constant pols and extended pols with tiles layout
@@ -199,7 +198,6 @@ pub fn calculate_fixed_tree_snark<F: PrimeField64>(setup: &Setup<F>) {
             const_pols_tree_path.as_str(),
         );
     }
-
 }
 
 pub fn load_const_pols<F: PrimeField64>(setup: &Setup<F>, const_pols: &[F]) {
