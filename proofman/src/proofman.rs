@@ -72,6 +72,14 @@ use proofman_util::{
 
 use serde::Serialize;
 
+#[derive(Default, Debug, Clone)]
+pub struct ExecutionInfo {
+    pub execution_time: u64,
+    pub publics: Vec<u64>,
+    pub proof_values: Vec<u64>,
+    pub summary_info: String,
+}
+
 #[derive(Serialize)]
 struct CsvInfo {
     version: String,
@@ -219,6 +227,7 @@ pub struct ProofMan<F: PrimeField64> {
     max_witness_trace_size: usize,
     packed_info: HashMap<(usize, usize), PackedInfo>,
     cancellation_info: Arc<RwLock<CancellationInfo>>,
+    execution_info: RwLock<ExecutionInfo>,
     verbose_mode: VerboseMode,
 }
 
@@ -336,6 +345,10 @@ where
 
     pub fn get_setup(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<&Setup<F>> {
         self.sctx.get_setup(airgroup_id, air_id)
+    }
+    
+    pub fn get_execution_info(&self) -> ExecutionInfo {
+        self.execution_info.read().unwrap().clone()
     }
 
     pub fn split_active_processes(&self, _is_active: bool) {
@@ -475,7 +488,7 @@ where
         self.reset()?;
         self.pctx.dctx_reset();
 
-        self.exec()?;
+        let _ = self.exec()?;
 
         let mut air_info: HashMap<&String, CsvInfo> = HashMap::new();
 
@@ -660,7 +673,7 @@ where
         let (witness_handler, witness_handles) =
             self.calc_witness_handler(witness_done.clone(), memory_handler.clone(), options.minimal_memory, true);
 
-        self.exec()?;
+        let _ = self.exec()?;
 
         let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
         let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
@@ -889,7 +902,7 @@ where
         self.reset()?;
         self.pctx.dctx_reset();
 
-        self.exec()?;
+        let _ = self.exec()?;
 
         let mut transcript: Transcript<F, Poseidon16, 16> = Transcript::new();
         let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
@@ -1438,6 +1451,7 @@ where
             packed_info,
             cancellation_info: Arc::new(RwLock::new(CancellationInfo::default())),
             verbose_mode,
+            execution_info: RwLock::new(ExecutionInfo::default()),
         })
     }
 
@@ -1640,7 +1654,7 @@ where
                 false,
             );
 
-            self.exec()?;
+            let summary_info = self.exec()?;
 
             if !options.test_mode {
                 Self::set_publics_custom_commits(&self.sctx, &self.pctx)?;
@@ -1745,6 +1759,12 @@ where
                 internal_contribution.iter().map(|&x| x.as_canonical_u64()).collect::<Vec<u64>>();
 
             if phase == ProvePhase::Contributions {
+                *self.execution_info.write().unwrap() = ExecutionInfo {
+                    execution_time: 0,
+                    publics: self.pctx.get_publics().clone().into_iter().map(|p| p.as_canonical_u64()).collect(),
+                    proof_values: self.pctx.get_proof_values().clone().into_iter().map(|p| p.as_canonical_u64()).collect(),
+                    summary_info,
+                };
                 return Ok(ProvePhaseResult::Contributions(vec![ContributionsInfo {
                     challenge: internal_contribution_u64,
                     worker_index: self.pctx.get_worker_index()? as u32,
@@ -2774,7 +2794,7 @@ where
         }
     }
 
-    fn exec(&self) -> ProofmanResult<()> {
+    fn exec(&self) -> ProofmanResult<String> {
         timer_start_info!(EXECUTE);
 
         if !self.wcm.is_init_witness() {
@@ -2787,10 +2807,10 @@ where
 
         self.check_cancel(true)?;
 
-        print_summary_info(&self.pctx, &self.sctx, &self.mpi_ctx, &self.packed_info, self.verbose_mode)?;
+        let global_summary = print_summary_info(&self.pctx, &self.sctx, &self.mpi_ctx, &self.packed_info, self.verbose_mode)?;
 
         timer_stop_and_log_info!(EXECUTE);
-        Ok(())
+        Ok(global_summary)
     }
 
     #[allow(clippy::type_complexity)]
