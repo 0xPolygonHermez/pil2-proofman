@@ -77,7 +77,7 @@ extern "C" {
     
     uint64_t custom_commit_size(void *pSetup, uint64_t commitId);
     void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *customCommitFile);
-    void write_custom_commit(void *root,  uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *buffer, char *bufferFile);
+    void write_custom_commit(void *root,  uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile);
 
     uint64_t commit_witness(void *pSetupCtx, void *params, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers);
 

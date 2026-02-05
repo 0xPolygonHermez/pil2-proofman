@@ -239,6 +239,7 @@ extern "C" {
         nBits: u64,
         nBitsExt: u64,
         nCols: u64,
+        d_buffers: *mut ::std::os::raw::c_void,
         buffer: *mut ::std::os::raw::c_void,
         bufferFile: *mut ::std::os::raw::c_char,
     );
