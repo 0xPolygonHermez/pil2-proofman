@@ -494,7 +494,10 @@ void NTT_Goldilocks_GPU::init_twiddle_factors_and_r(uint64_t maxLogDomainSize_, 
     }
 
     cudaStream_t stream[nGPUs];
-    
+    bool stream_created[nGPUs];
+    for (int i = 0; i < nGPUs; i++) {
+        stream_created[i] = false;
+    }
     for (int i = 0; i < nGPUs; i++) {
         if (d_fwd_twiddle_factors[gpu_ids[i]] != nullptr && d_inv_twiddle_factors[gpu_ids[i]] != nullptr && d_r[gpu_ids[i]] != nullptr) {
             continue; // Already initialized
@@ -502,6 +505,7 @@ void NTT_Goldilocks_GPU::init_twiddle_factors_and_r(uint64_t maxLogDomainSize_, 
             assert(d_fwd_twiddle_factors[gpu_ids[i]] == nullptr && d_inv_twiddle_factors[gpu_ids[i]] == nullptr && d_r[gpu_ids[i]] == nullptr);
             cudaSetDevice(gpu_ids[i]);
             cudaStreamCreate(&stream[i]);
+            stream_created[i] = true;
             cudaMalloc(&d_fwd_twiddle_factors[gpu_ids[i]], (1 << (maxLogDomainSize - 1)) * sizeof(gl64_t));
             cudaMalloc(&d_inv_twiddle_factors[gpu_ids[i]], (1 << (maxLogDomainSize - 1)) * sizeof(gl64_t));
             cudaMalloc(&d_r[gpu_ids[i]], (1 << maxLogDomainSize) * sizeof(gl64_t));
@@ -510,9 +514,11 @@ void NTT_Goldilocks_GPU::init_twiddle_factors_and_r(uint64_t maxLogDomainSize_, 
         }
     }
     for (int i = 0; i < nGPUs; i++) {
-        cudaSetDevice(gpu_ids[i]);
-        cudaStreamSynchronize(stream[i]);
-        cudaStreamDestroy(stream[i]);
+        if (stream_created[i]) {
+            cudaSetDevice(gpu_ids[i]);
+            cudaStreamSynchronize(stream[i]);
+            cudaStreamDestroy(stream[i]);
+        }
     }
 
     if(free_inputs) {

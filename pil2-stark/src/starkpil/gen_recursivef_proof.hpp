@@ -255,7 +255,6 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
     
     PoseidonBN128 p;
     p.grinding(nonce, challengeRawFr, setupCtx.starkInfo.starkStruct.powBits);
-    std::cout << "CPU nonce: " << nonce << std::endl;
     TimerStopAndLog(STARK_NONCE_GRINDING);
     TimerStart(STARK_FRI_QUERIES);
     TranscriptBN128 transcriptPermutation(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
