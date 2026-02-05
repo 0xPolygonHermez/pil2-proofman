@@ -191,23 +191,29 @@ void TranscriptGL_GPU::init_const(uint32_t* gpu_ids, uint32_t num_gpu_ids, uint3
 
 void TranscriptGL_GPU::put(Goldilocks::Element *input, uint64_t size, cudaStream_t stream)
 {
-    _add<<<1, 1, 0, stream>>>(input, size, state, pending, out, pending_cursor, out_cursor, arity);
+    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2_hash_shared
+    _add<<<1,1, sharedMem, stream>>>(input, size, state, pending, out, pending_cursor, out_cursor,arity);
 }
 
 void TranscriptGL_GPU::getField(uint64_t* output, cudaStream_t stream)
 {
-    _getField<<<1, 1, 0, stream>>>(output, state, pending, out, pending_cursor, out_cursor, arity);
+    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2_hash_shared  
+    _getField<<<1, 1, sharedMem, stream>>>(output, state, pending, out, pending_cursor, out_cursor, arity);
+    
 } 
 
 void TranscriptGL_GPU::getState(Goldilocks::Element* output, cudaStream_t stream) {
-    __getState<<<1, 1, 0, stream>>>(output, transcriptStateSize, state, pending, out, pending_cursor, out_cursor, arity);
+    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2_hash_shared  
+    __getState<<<1, 1, sharedMem, stream>>>(output, transcriptStateSize, state, pending, out, pending_cursor, out_cursor,arity);
 }
 
 void TranscriptGL_GPU::getState(Goldilocks::Element* output, uint64_t nOutputs, cudaStream_t stream) {
-    __getState<<<1, 1, 0, stream>>>(output, nOutputs, state, pending, out, pending_cursor, out_cursor, arity);
+    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2_hash_shared 
+    __getState<<<1, 1, sharedMem, stream>>>(output, nOutputs, state, pending, out, pending_cursor, out_cursor,arity);
 }
 
 void TranscriptGL_GPU::getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, cudaStream_t stream)
 {
-    __getPermutations<<<1, 1, 0, stream>>>(res, n, nBits, state, pending, out, pending_cursor, out_cursor, arity);
+    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2_hash_shared 
+    __getPermutations<<<1, 1, sharedMem, stream>>>(res, n, nBits, state, pending, out, pending_cursor, out_cursor, arity);
 }
