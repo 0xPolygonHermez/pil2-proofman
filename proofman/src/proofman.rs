@@ -319,6 +319,10 @@ where
         self.pctx.global_info.get_proving_key_path()
     }
 
+    pub fn get_device_buffers_ptr(&self) -> *mut std::ffi::c_void {
+        self.pctx.get_device_buffers_ptr()
+    }
+
     pub fn set_barrier(&self) {
         self.mpi_ctx.barrier();
     }
@@ -350,9 +354,9 @@ where
     pub fn get_execution_info(&self) -> ExecutionInfo {
         self.execution_info.read().unwrap().clone()
     }
-    
+
     pub fn get_publics(&self) -> Vec<u8> {
-        self.pctx.get_publics().clone().into_iter().map(|x| x.as_canonical_u64().to_le_bytes()).flatten().collect()
+        self.pctx.get_publics().iter().flat_map(|x| x.as_canonical_u64().to_le_bytes()).collect()
     }
 
     pub fn split_active_processes(&self, _is_active: bool) {

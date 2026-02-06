@@ -36,7 +36,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
 
     Goldilocks::Element *pConstPolsExtendedTreeAddress = (Goldilocks::Element *)d_const_tree;
 
-    Starks<Goldilocks::Element> starks(setupCtx, nullptr, nullptr, false);
+    Starks<Goldilocks::Element> starks(setupCtx, nullptr, nullptr, false, false);
     starks.treesGL[setupCtx.starkInfo.nStages + 1]->setSource(pConstPolsExtendedTreeAddress);
     starks.treesGL[setupCtx.starkInfo.nStages + 1]->setNodes(&pConstPolsExtendedTreeAddress[setupCtx.starkInfo.nConstants * NExtended]);
 
@@ -79,7 +79,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
     // 0.- Add const root and publics to transcript
     //--------------------------------
     d_transcript->reset(stream);
-    d_transcript->put(starks.treesGL[setupCtx.starkInfo.nStages+1]->get_nodes_ptr() + starks.treesGL[setupCtx.starkInfo.nStages + 1]->numNodes - HASH_SIZE, HASH_SIZE, stream);
+    d_transcript->put((Goldilocks::Element *)(starks.treesGL[setupCtx.starkInfo.nStages+1]->get_nodes_ptr()) + starks.treesGL[setupCtx.starkInfo.nStages + 1]->numNodes - HASH_SIZE, HASH_SIZE, stream);
     if (setupCtx.starkInfo.nPublics > 0)
     {
         if (!setupCtx.starkInfo.starkStruct.hashCommits)

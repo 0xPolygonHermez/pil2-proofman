@@ -14,6 +14,7 @@ use proofman_common::{
 };
 use proofman_starks_lib_c::load_device_const_pols_c;
 use proofman_starks_lib_c::load_device_setup_c;
+use proofman_starks_lib_c::verify_root_bn128_from_tree_c;
 use proofman_common::{PackedInfo, VerboseMode, GlobalInfo};
 
 use pil_std_lib::Std;
@@ -229,18 +230,25 @@ pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool) ->
     };
 
     if !PathBuf::from(&const_pols_tree_path).exists() {
-        let error_message = ProofmanError::InvalidSetup(format!(
+        let options = match setup.setup_type {
+            ProofType::RecursiveF => "check-setup-snark --proving-key-snark",
+            _ => "check-setup --proving-key",
+        };
+        return Err(ProofmanError::InvalidSetup(format!(
             "Error: Unable to find the constant tree at '{const_pols_tree_path}'.\n\
-            Please run the following command:\n\
-            \x1b[1mcargo run {is_gpu}--bin proofman-cli check-setup --proving-key <PROVING_KEY>{flags}\x1b[0m"
-        ));
-        return Err(error_message);
+            Please run the following command to generate it:\n\
+            \x1b[1mcargo run {is_gpu}--bin proofman-cli {options} <PROVING_KEY>{flags}\x1b[0m"
+        )));
     }
 
+    let options = match setup.setup_type {
+        ProofType::RecursiveF => "check-setup-snark --proving-key-snark",
+        _ => "check-setup --proving-key",
+    };
     let error_message = ProofmanError::InvalidSetup(format!(
         "Error: The constant tree file at '{const_pols_tree_path}' exists but is invalid or corrupted.\n\
         Please regenerate it by running:\n\
-        \x1b[1mcargo run {is_gpu}--bin proofman-cli check-setup --proving-key <PROVING_KEY>{flags}\x1b[0m"
+        \x1b[1mcargo run {is_gpu}--bin proofman-cli {options} <PROVING_KEY>{flags}\x1b[0m"
     ));
 
     let const_pols_tree_size = setup.const_tree_size;
@@ -255,6 +263,13 @@ pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool) ->
             return Err(ProofmanError::InvalidSetup(format!("Failed to get metadata for {}: {}", setup.air_name, err)));
         }
     }
+
+    let mut file = File::open(const_pols_tree_path)?;
+    file.seek(SeekFrom::End(-32))?; // Move to 32 bytes before the end
+
+    let mut buffer = [0u8; 32];
+    file.read_exact(&mut buffer)?;
+
     if setup.setup_type != ProofType::RecursiveF {
         let verkey_path = setup.verkey_file.clone();
 
@@ -263,12 +278,6 @@ pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool) ->
         let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read verkey path file: {err}"));
         let verkey_u64: Vec<u64> = serde_json::from_str(&contents).unwrap();
 
-        let mut file = File::open(const_pols_tree_path)?;
-        file.seek(SeekFrom::End(-32))?; // Move to 32 bytes before the end
-
-        let mut buffer = [0u8; 32];
-        file.read_exact(&mut buffer)?;
-
         for (i, verkey_val) in verkey_u64.iter().enumerate() {
             let byte_range = i * 8..(i + 1) * 8;
             let value = u64::from_le_bytes(buffer[byte_range].try_into()?);
@@ -276,7 +285,23 @@ pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool) ->
                 return Err(error_message);
             }
         }
+    } else {
+        // RecursiveF verkey check - use C++ helper to verify root
+        let verkey_path = setup.verkey_file.clone();
+        let mut contents = String::new();
+        let mut file = File::open(verkey_path).unwrap();
+        let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read verkey path file: {err}"));
+
+        let verkey_str: String = serde_json::from_str(&contents)
+            .map_err(|err| ProofmanError::InvalidSetup(format!("Failed to parse verkey as string: {}", err)))?;
+
+        let is_valid = verify_root_bn128_from_tree_c(const_pols_tree_path, &verkey_str);
+
+        if !is_valid {
+            return Err(error_message);
+        }
     }
+
     Ok(())
 }
 

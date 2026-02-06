@@ -5,15 +5,13 @@
 #include "fr.hpp"
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_cubic_extension.hpp"
-#include "poseidon_opt.hpp"
+#include "poseidon_bn128.hpp"
 #include "zklog.hpp"
 
 class MerkleTreeBN128
 {
 private:
-    void linearHash();
-    void linearHash(RawFr::Element* result, Goldilocks::Element* values);
-
+    
     Goldilocks::Element getElement(uint64_t idx, uint64_t subIdx);
     void genMerkleProof(RawFr::Element *proof, uint64_t idx, uint64_t offset, uint64_t n);
     void calculateRootFromProof(RawFr::Element *value, std::vector<std::vector<RawFr::Element>> &mp, uint64_t &idx, uint64_t offset);
@@ -53,9 +51,8 @@ public:
     void getGroupProof(RawFr::Element *proof, uint64_t idx);
     
     void merkelize();
-    Goldilocks::Element* get_nodes_ptr() {
-        assert(false); //This function cannot be used, is just for compatibility
-        return source;
+    void* get_nodes_ptr() {
+        return nodes;
     }
 
     bool verifyGroupProof(RawFr::Element* root, RawFr::Element* level, std::vector<std::vector<RawFr::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v);

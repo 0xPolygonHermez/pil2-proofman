@@ -222,7 +222,51 @@ __global__ void transposeSubBlocksBack_noBR_compact(gl64_t *src, uint64_t n_bits
     dst[offset_dst] = shared[threadIdx.y * blockDim.x + threadIdx.x];
 }
 
-void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t n_bits, uint64_t n_bits_ext, uint64_t nCols, uint64_t arity, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream)
+
+
+void NTT_Goldilocks_GPU::computeQ_inplace(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t n_bits, uint64_t n_bits_ext, uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream)
+{
+   
+    if (nCols == 0 || n_bits_ext == 0)
+    {
+        return;
+    }
+
+    TimerStartCategoryGPU(timer, NTT);
+
+    if(n_bits_ext > maxLogDomainSize)
+    {
+        printf("[NTT] ERROR: n_bits_ext %lu exceeds maxLogDomainSize %lu\n", n_bits_ext, maxLogDomainSize);
+        abort();
+    }
+
+    uint64_t N = 1 << n_bits;
+    uint64_t NExtended = 1 << n_bits_ext;
+    gl64_t* d_S = d_aux_trace + offset_helper;
+    gl64_t *d_q = d_aux_trace + offset_q;
+    gl64_t *d_cmQ = d_aux_trace + offset_cmQ;
+
+    // Intt
+    dim3 block(TILE_HEIGHT, TILE_WIDTH);
+    dim3 grid0((NExtended + block.x - 1) / block.x,
+             (qDim + block.y - 1) / block.y);
+    int sharedMemSize = block.x * block.y * sizeof(gl64_t);
+    transposeSubBlocksBackInPlace<<<grid0, block, sharedMemSize, stream>>>(d_q, NExtended, qDim);
+    ntt_cuda_blocks_par(d_q, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, qDim, true, false, stream, maxLogDomainSize);
+
+    dim3 threads(TILE_HEIGHT, 1, 1);
+    dim3 blocks((N + threads.x - 1) / threads.x, 1, 1);
+    applyS<<<blocks, threads, 0, stream>>>(d_cmQ, d_q, d_S, shiftIn, N, NExtended, n_bits_ext - n_bits, qDeg, qDim);
+
+    dim3 grid1((NExtended + block.x - 1) / block.x,
+             (nCols + block.y - 1) / block.y);
+    ntt_cuda_blocks_par(d_cmQ, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, nCols, false, false, stream, maxLogDomainSize);
+    transposeSubBlocksInPlace<<<grid1, block, sharedMemSize, stream>>>(d_cmQ, NExtended, nCols);
+
+    TimerStopCategoryGPU(timer, NTT);
+}
+
+void NTT_Goldilocks_GPU::computeQ_MerkleTree_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t n_bits, uint64_t n_bits_ext, uint64_t nCols, uint64_t arity, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream)
 {
    
     if (nCols == 0 || n_bits_ext == 0)
@@ -282,6 +326,40 @@ void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t 
         exit(-1);
     }    
     TimerStopCategoryGPU(timer, MERKLE_TREE);
+}
+
+void NTT_Goldilocks_GPU::LDE_GPU(gl64_t* d_dst_ntt, uint64_t offset_dst_ntt,
+                                    gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits,
+                                    u_int64_t n_bits_ext, u_int64_t nCols, TimerGPU &timer, cudaStream_t stream){
+
+    if (nCols == 0 || n_bits == 0)
+    {
+        return;
+    }
+    TimerStartCategoryGPU(timer, NTT);
+    if (n_bits_ext > maxLogDomainSize)
+    {
+        printf("[NTT] ERROR: n_bits_ext %lu exceeds maxLogDomainSize %lu\n", n_bits_ext, maxLogDomainSize);
+        abort();
+    }
+
+    uint64_t size = 1 << n_bits;
+    uint64_t ext_size = 1 << n_bits_ext;    
+    gl64_t *d_dst_ntt_ = &d_dst_ntt[offset_dst_ntt];
+    gl64_t *d_src_ntt_ = &d_src_ntt[offset_src_ntt];
+    dim3 block(TILE_HEIGHT, TILE_WIDTH);
+    dim3 grid0((size + block.x - 1) / block.x,
+             (nCols + block.y - 1) / block.y);
+    int sharedMemSize = block.x * block.y * sizeof(gl64_t);
+
+    transposeSubBlocksBack_noBR_compact<<<grid0, block, sharedMemSize, stream>>>(d_src_ntt_, n_bits, d_dst_ntt_, n_bits_ext, nCols);
+    ntt_cuda_blocks_par1_noBR_compact(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, n_bits_ext, nCols, true, true, stream, maxLogDomainSize); 
+    ntt_cuda_blocks_par2_noBR(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, nCols, false, false, stream, maxLogDomainSize);
+    dim3 grid1((ext_size + block.x - 1) / block.x,
+             (nCols + block.y - 1) / block.y);
+    transposeSubBlocksInPlace<<<grid1, block, sharedMemSize, stream>>>(d_dst_ntt_, ext_size, nCols);
+    TimerStopCategoryGPU(timer, NTT);
+
 }
 
 void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits, u_int64_t n_bits_ext, u_int64_t nCols, u_int64_t arity, TimerGPU &timer, cudaStream_t stream)
@@ -416,7 +494,10 @@ void NTT_Goldilocks_GPU::init_twiddle_factors_and_r(uint64_t maxLogDomainSize_, 
     }
 
     cudaStream_t stream[nGPUs];
-    
+    bool stream_created[nGPUs];
+    for (int i = 0; i < nGPUs; i++) {
+        stream_created[i] = false;
+    }
     for (int i = 0; i < nGPUs; i++) {
         if (d_fwd_twiddle_factors[gpu_ids[i]] != nullptr && d_inv_twiddle_factors[gpu_ids[i]] != nullptr && d_r[gpu_ids[i]] != nullptr) {
             continue; // Already initialized
@@ -424,6 +505,7 @@ void NTT_Goldilocks_GPU::init_twiddle_factors_and_r(uint64_t maxLogDomainSize_, 
             assert(d_fwd_twiddle_factors[gpu_ids[i]] == nullptr && d_inv_twiddle_factors[gpu_ids[i]] == nullptr && d_r[gpu_ids[i]] == nullptr);
             cudaSetDevice(gpu_ids[i]);
             cudaStreamCreate(&stream[i]);
+            stream_created[i] = true;
             cudaMalloc(&d_fwd_twiddle_factors[gpu_ids[i]], (1 << (maxLogDomainSize - 1)) * sizeof(gl64_t));
             cudaMalloc(&d_inv_twiddle_factors[gpu_ids[i]], (1 << (maxLogDomainSize - 1)) * sizeof(gl64_t));
             cudaMalloc(&d_r[gpu_ids[i]], (1 << maxLogDomainSize) * sizeof(gl64_t));
@@ -432,9 +514,11 @@ void NTT_Goldilocks_GPU::init_twiddle_factors_and_r(uint64_t maxLogDomainSize_, 
         }
     }
     for (int i = 0; i < nGPUs; i++) {
-        cudaSetDevice(gpu_ids[i]);
-        cudaStreamSynchronize(stream[i]);
-        cudaStreamDestroy(stream[i]);
+        if (stream_created[i]) {
+            cudaSetDevice(gpu_ids[i]);
+            cudaStreamSynchronize(stream[i]);
+            cudaStreamDestroy(stream[i]);
+        }
     }
 
     if(free_inputs) {

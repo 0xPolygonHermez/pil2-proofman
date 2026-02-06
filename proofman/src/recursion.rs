@@ -672,13 +672,14 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     prover_buffer: &[F],
     vadcop_final_verkey: &[u64],
     output_dir_path: &Path,
+    prover_buffer_size: usize,
+    device_buffers_ptr: Option<*mut c_void>,
 ) -> ProofmanResult<*mut c_void> {
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
     let trace: Vec<F> = vec![F::ZERO; setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize];
 
     let proof = &vadcop_proof[1..];
-
     let mut updated_proof: Vec<u64> = vec![0; proof.len() + 4];
 
     updated_proof[..4].copy_from_slice(&vadcop_final_verkey[..4]);
@@ -702,6 +703,20 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         setup.stark_info.map_sections_n["cm1"],
     );
 
+    // Create output directory if it doesn't exist
+    std::fs::create_dir_all(output_dir_path)?;
+    let recursivef_json_path = output_dir_path.join("recursivef.json");
+    let recursivef_json_str = recursivef_json_path.to_string_lossy().into_owned();
+
+    // if device_buffers_ptr is provided, reuse those buffers otherwise pass null and the C++ code will allocate new ones
+    let d_commit_buffers = device_buffers_ptr.unwrap_or(std::ptr::null_mut());
+    let d_buffers = gen_device_buffers_recursivef_c(
+        p_setup as *mut u8,
+        setup.get_const_ptr(),
+        setup.get_const_tree_ptr(),
+        prover_buffer_size as u64,
+        d_commit_buffers as *mut u8,
+    );
     timer_start_trace!(GENERATE_RECURSIVEF_PROOF);
     // prove
     let p_prove = gen_recursive_proof_final_c(
@@ -711,12 +726,17 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         setup.get_const_ptr(),
         setup.get_const_tree_ptr(),
         publics.as_ptr() as *mut u8,
-        "",
+        &recursivef_json_str,
         0,
         0,
         0,
+        prover_buffer_size as u64,
+        d_buffers,
     );
     timer_stop_and_log_trace!(GENERATE_RECURSIVEF_PROOF);
+
+    // Free GPU buffers if have been allocated
+    free_device_buffers_recursivef_c(d_buffers);
 
     Ok(p_prove)
 }

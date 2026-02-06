@@ -16,6 +16,7 @@ use commands::gen_witness::GenWitnessCmd;
 use commands::execute::ExecuteCmd;
 use commands::pilout::{PiloutSubcommands, PiloutCmd};
 use commands::setup::CheckSetupCmd;
+use commands::setup_snark::CheckSetupSnarkCmd;
 use commands::soundness::SoundnessCmd;
 use proofman_util::cli::print_banner;
 
@@ -31,6 +32,7 @@ pub struct Cli {
 pub enum Commands {
     Pilout(PiloutCmd),
     CheckSetup(CheckSetupCmd),
+    CheckSetupSnark(CheckSetupSnarkCmd),
     Soundness(SoundnessCmd),
     Prove(ProveCmd),
     ProveSnark(ProveSnarkCmd),
@@ -55,6 +57,7 @@ fn main() {
             PiloutSubcommands::Inspect(args) => args.run(),
         },
         Commands::CheckSetup(args) => args.run(),
+        Commands::CheckSetupSnark(args) => args.run(),
         Commands::Soundness(args) => args.run(),
         Commands::Prove(args) => args.run(),
         Commands::ProveSnark(args) => args.run(),

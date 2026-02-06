@@ -1,6 +1,6 @@
 use proofman_common::{
-    GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree, VerboseMode,
-    initialize_logger,
+    GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree_snark,
+    VerboseMode, initialize_logger,
 };
 use proofman_util::{timer_start_info, timer_stop_and_log_info, create_buffer_fast, VadcopFinalProof};
 use fields::PrimeField64;
@@ -11,6 +11,7 @@ use std::process::Command;
 use colored::Colorize;
 use std::io::Read;
 use std::ffi::c_void;
+use crate::check_const_tree;
 use std::fs;
 use proofman_starks_lib_c::{
     init_final_snark_prover_c, free_final_snark_prover_c, get_snark_protocol_id_c, snark_proof_bytes_to_json_c,
@@ -154,7 +155,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         setup_recursivef.set_circom_circuit()?;
         setup_recursivef.set_exec_file_data()?;
 
-        calculate_fixed_tree(&setup_recursivef);
+        check_const_tree(&setup_recursivef, false)?;
 
         setup_recursivef.load_const_pols();
         setup_recursivef.load_const_pols_tree();
@@ -197,6 +198,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         &self,
         vadcop_proof: &VadcopFinalProof,
         output_dir_path: Option<PathBuf>,
+        device_buffers_ptr: Option<*mut c_void>,
     ) -> ProofmanResult<SnarkProof> {
         let output_dir_path = match output_dir_path.as_deref() {
             Some(path) => path,
@@ -220,6 +222,8 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             &self.aux_trace,
             &self.vadcop_final_verkey,
             output_dir_path,
+            self.setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
+            device_buffers_ptr,
         )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
@@ -270,6 +274,31 @@ pub fn get_public_bytes_solidity(publics_info: &PublicsInfo, vadcop_public_input
     Ok(public_bytes)
 }
 
+pub fn check_setup_snark<F: PrimeField64>(
+    proving_key_snark_path: &Path,
+    verbose_mode: VerboseMode,
+) -> ProofmanResult<()> {
+    initialize_logger(verbose_mode, None);
+
+    let setup_recursivef_path =
+        PathBuf::from(format!("{}/{}/{}", proving_key_snark_path.display(), "recursivef", "recursivef"));
+
+    let setup_recursivef: Setup<F> = Setup::new(
+        &setup_recursivef_path,
+        0,
+        0,
+        &GlobalInfoAir::new("RecursiveF".to_string()),
+        &ProofType::RecursiveF,
+        false,
+        false,
+        None,
+    );
+
+    calculate_fixed_tree_snark(&setup_recursivef);
+
+    Ok(())
+}
+
 pub fn generate_and_verify_recursivef<F: PrimeField64>(
     proving_key_path: &Path,
     vadcop_proof: &VadcopFinalProof,
@@ -304,7 +333,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     setup_recursivef.set_circom_circuit()?;
     setup_recursivef.set_exec_file_data()?;
 
-    calculate_fixed_tree(&setup_recursivef);
+    check_const_tree(&setup_recursivef, false)?;
 
     setup_recursivef.load_const_pols();
     setup_recursivef.load_const_pols_tree();
@@ -325,8 +354,15 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     let vadcop_final_verkey: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
 
     timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
-    let recursivef_proof =
-        generate_recursivef_proof(&setup_recursivef, &proof, &aux_trace, &vadcop_final_verkey, output_dir_path)?;
+    let recursivef_proof = generate_recursivef_proof(
+        &setup_recursivef,
+        &proof,
+        &aux_trace,
+        &vadcop_final_verkey,
+        output_dir_path,
+        setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
+        None,
+    )?;
     timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
     timer_start_info!(VERIFY_RECURSIVE_F_PROOF);

@@ -14,6 +14,16 @@
 #endif
 #include "gl64_t.cuh"
 
+// Reduce a Goldilocks value from partially reduced form [0, 2*MOD) to canonical form [0, MOD)
+// This is needed when converting Goldilocks values to other field representations (e.g., BN128)
+__device__ __forceinline__ uint64_t gl64_reduce(uint64_t val) {
+    return (val >= GOLDILOCKS_PRIME) ? (val - GOLDILOCKS_PRIME) : val;
+}
+
+// Overload for Goldilocks::Element
+__device__ __forceinline__ uint64_t gl64_reduce(const Goldilocks::Element& gl) {
+    return gl64_reduce(gl.fe);
+}
 
 class gl64_gpu
 {
@@ -70,10 +80,15 @@ struct AirInstanceInfo {
         opening_points = d_openingPoints;
         expressions_gpu = new ExpressionsGPU(*setupCtx, setupCtx->starkInfo.nrowsPack, setupCtx->starkInfo.maxNBlocks);
 
-        Goldilocks::Element *d_verkeyRoot;
-        CHECKCUDAERR(cudaMalloc(&d_verkeyRoot, HASH_SIZE * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMemcpy(d_verkeyRoot, verkeyRoot_, HASH_SIZE * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-        verkeyRoot = d_verkeyRoot;
+        if(verkeyRoot_ == nullptr) {
+            verkeyRoot = nullptr;
+        }
+        else {
+            Goldilocks::Element *d_verkeyRoot;
+            CHECKCUDAERR(cudaMalloc(&d_verkeyRoot, HASH_SIZE * sizeof(Goldilocks::Element)));
+            CHECKCUDAERR(cudaMemcpy(d_verkeyRoot, verkeyRoot_, HASH_SIZE * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+            verkeyRoot = d_verkeyRoot;
+        }
 
         CHECKCUDAERR(cudaMalloc(&d_num_packed_words, sizeof(uint64_t)));
 
@@ -353,6 +368,30 @@ struct StreamData{
         cudaFreeHost(pinned_params);
     }
 };
+
+struct DeviceRecursiveFBuffers
+{
+    
+    cudaStream_t stream;
+    TimerGPU timer;
+    gl64_t *d_aux_trace;
+    gl64_t *d_const_tree;
+    uint8_t* pinnedBuffer;
+    size_t pinnedBufferSize = 256 * 1024 * 1024;
+    bool owns_aux_trace;
+    bool owns_const_tree;
+
+    DeviceRecursiveFBuffers() : stream(), timer(), owns_aux_trace(true), owns_const_tree(true){
+        cudaStreamCreate(&stream);
+        timer.init(stream);
+        CHECKCUDAERR(cudaMallocHost((void**)&pinnedBuffer, pinnedBufferSize));
+
+    }
+    ~DeviceRecursiveFBuffers() {
+        cudaStreamDestroy(stream);
+        cudaFreeHost(pinnedBuffer);
+    }
+};
 struct DeviceCommitBuffers
 {
     gl64_t **d_constPols;
@@ -384,8 +423,16 @@ void copy_to_device_in_chunks(
     void* dst,
     uint64_t total_size,
     uint64_t streamId,
-    TimerGPU &timer
-    );
+    TimerGPU &timer);
+
+void copy_to_device_in_chunks(
+    const uint8_t* src,
+    uint8_t* dst,
+    uint64_t total_size_bytes,
+    uint8_t* pinnedBuffer,
+    uint64_t pinnedBufferSize,
+    cudaStream_t stream);
+
 
 void load_and_copy_to_device_in_chunks(
     DeviceCommitBuffers* d_buffers,
@@ -394,5 +441,12 @@ void load_and_copy_to_device_in_chunks(
     uint64_t total_size,
     uint64_t streamId
     );
+
+__global__ void fromRowMajorToTiled(
+    const uint64_t nRows,
+    const uint64_t nCols,
+    const uint64_t* __restrict__ input,
+    uint64_t* __restrict__ output
+);
 #endif
 #endif

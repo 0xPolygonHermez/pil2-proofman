@@ -72,6 +72,14 @@ extern "C" {
         constFile: *mut ::std::os::raw::c_char,
     );
 
+    pub fn tile_const_pols(
+        pStarkInfo: *mut ::std::os::raw::c_void,
+        pConstPols: *mut ::std::os::raw::c_void,
+        constFile: *mut ::std::os::raw::c_char,
+        pConstTree: *mut ::std::os::raw::c_void,
+        constTreeFile: *mut ::std::os::raw::c_char,
+    ); 
+
     pub fn prepare_blocks(pol: *mut u64, N: u64, nCols: u64);
 
     pub fn calculate_const_tree(
@@ -97,6 +105,11 @@ extern "C" {
         pConstTreeAddress: *mut ::std::os::raw::c_void,
         treeFilename: *mut ::std::os::raw::c_char,
     );
+
+    pub fn verify_root_bn128_from_tree(
+        treeFilename: *mut ::std::os::raw::c_char,
+        expectedRoot: *mut ::std::os::raw::c_char,
+    ) -> bool;
 
     // Expressions Bin
     // ========================================================================================
@@ -412,6 +425,8 @@ extern "C" {
         pConstTree: *mut ::std::os::raw::c_void,
         pPublicInputs: *mut ::std::os::raw::c_void,
         proof_file: *mut ::std::os::raw::c_char,
+        prover_buffer_size: u64,
+        d_buffers: *mut ::std::os::raw::c_void,
     ) -> *mut ::std::os::raw::c_void;
 
     // Stream Management
@@ -518,6 +533,16 @@ extern "C" {
         node_size: u32,
         arity: u32,
     ) -> *mut ::std::os::raw::c_void;
+
+    pub fn gen_device_buffers_recursivef(
+        pSetupCtx_: *mut ::std::os::raw::c_void,
+        pConstPols: *mut ::std::os::raw::c_void,
+        pConstTree: *mut ::std::os::raw::c_void,
+        proverBufferSize: u64,
+        d_commit_buffers: *mut ::std::os::raw::c_void,
+    ) -> *mut ::std::os::raw::c_void;
+
+    pub fn free_device_buffers_recursivef(d_buffers: *mut ::std::os::raw::c_void);
     
     pub fn free_device_buffers(d_buffers: *mut ::std::os::raw::c_void);
     

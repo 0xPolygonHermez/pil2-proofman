@@ -392,12 +392,12 @@ __global__ void grinding_check_(uint64_t* nonce, uint64_t *__restrict__ nonceBlo
 template<uint32_t SPONGE_WIDTH_T>
 void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_nonce, uint64_t *d_nonceBlock, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream){
 
-    uint64_t log_launch_iters = 7; //64 launch iterations
+    uint64_t log_launch_iters = 7; //128 launch iterations
     uint64_t launch_iters = 1ULL << log_launch_iters;
-    uint64_t log_N = NONCES_LAUNCH_BITS; //512K nonces per launch
+    uint64_t log_N = NONCES_LAUNCH_BITS; //~512K nonces per launch
     uint64_t N = 1 << log_N;
     uint64_t security = 128;
-    // we need to determine log_hashesPerThread such that, suthat probabilty of not finding a valid nonce is lower
+    // we need to determine log_hashesPerThread such that, the probabilty of not finding a valid nonce is lower
     // than 2^(-security)
     // (1-1/2^n_bits)^(totalHashesRequired) = 2^(-security)
     // totalHashesRequired = log(2^(-security)) / log(1-1/2^n_bits)

@@ -53,7 +53,7 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
 
     FRIProof<RawFr::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
     
-    Starks<RawFr::Element> starks(setupCtx, pConstTree);
+    Starks<RawFr::Element> starks(setupCtx, pConstTree, nullptr, false, true);
     
     ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);
 
@@ -83,8 +83,10 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
     //--------------------------------
 
     TimerStart(STARK_STEP_0);
+    
     RawFr::Element verkey[nFieldElements];
     starks.treesGL[setupCtx.starkInfo.nStages + 1]->getRoot(verkey);
+    
     starks.addTranscript(transcript, &verkey[0], nFieldElements);
     if(setupCtx.starkInfo.nPublics > 0) {
         if(!setupCtx.starkInfo.starkStruct.hashCommits) {
@@ -104,9 +106,11 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
             starks.getChallenge(transcript, challenges[i * FIELD_EXTENSION]);
         }
     }
+    
     TimerStart(STARK_COMMIT_STAGE_1);
     starks.commitStage(1, params.trace, params.aux_trace, proof, ntt);
     TimerStopAndLog(STARK_COMMIT_STAGE_1);
+    
     starks.addTranscript(transcript, &proof.proof.roots[0][0], nFieldElements);
     
     TimerStopAndLog(STARK_STEP_1);
@@ -143,6 +147,7 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
         }
     }
     
+
     TimerStart(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
     starks.calculateQuotientPolynomial(params, expressionsCtx);
     TimerStopAndLog(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
@@ -248,7 +253,7 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
         challengeRawFr.push_back(tmp);
 	}
     
-    Poseidon_opt p;
+    PoseidonBN128 p;
     p.grinding(nonce, challengeRawFr, setupCtx.starkInfo.starkStruct.powBits);
     TimerStopAndLog(STARK_NONCE_GRINDING);
     TimerStart(STARK_FRI_QUERIES);
@@ -280,12 +285,12 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
     if(!proofFile.empty()) {
         json2file(zkin, proofFile);
     }
+    
+    TimerStopAndLog(STARK_PROOF);
 
     return (void *) new nlohmann::json(zkin);
     
 
-    TimerStopAndLog(STARK_PROOF);
 
     
-    return nullptr;
 }

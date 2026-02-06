@@ -217,6 +217,27 @@ pub fn pack_const_pols_c(pStarkinfo: *mut c_void, pConstPols: *mut u8, constFile
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn tile_const_pols_c(
+    pStarkInfo: *mut c_void,
+    pConstPols: *mut u8,
+    constFile: &str,
+    pConstTree: *mut u8,
+    constTreeFile: &str,
+) {
+    let const_file_cstr: CString = CString::new(constFile).unwrap();
+    let const_tree_file_cstr: CString = CString::new(constTreeFile).unwrap();
+    unsafe {
+        tile_const_pols(
+            pStarkInfo,
+            pConstPols as *mut std::os::raw::c_void,
+            const_file_cstr.as_ptr() as *mut std::os::raw::c_char,
+            pConstTree as *mut std::os::raw::c_void,
+            const_tree_file_cstr.as_ptr() as *mut std::os::raw::c_char,
+        );
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn prepare_blocks_c(pol: *mut u64, N: u64, nCols: u64) {
     unsafe {
         prepare_blocks(pol, N, nCols);
@@ -268,6 +289,19 @@ pub fn write_const_tree_bn128_c(pStarkInfo: *mut c_void, pConstPolsTreeAddress: 
             pConstPolsTreeAddress as *mut std::os::raw::c_void,
             tree_filename.as_ptr() as *mut std::os::raw::c_char,
         );
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn verify_root_bn128_from_tree_c(tree_filename: &str, expected_root: &str) -> bool {
+    unsafe {
+        let tree_filename_cstr = CString::new(tree_filename).unwrap();
+        let expected_root_cstr = CString::new(expected_root).unwrap();
+
+        verify_root_bn128_from_tree(
+            tree_filename_cstr.as_ptr() as *mut std::os::raw::c_char,
+            expected_root_cstr.as_ptr() as *mut std::os::raw::c_char,
+        )
     }
 }
 
@@ -1007,6 +1041,8 @@ pub fn gen_recursive_proof_final_c(
     airgroup_id: u64,
     air_id: u64,
     instance_id: u64,
+    prover_buffer_size: u64,
+    d_buffers: *mut u8,
 ) -> *mut c_void {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1023,6 +1059,8 @@ pub fn gen_recursive_proof_final_c(
             p_const_tree as *mut std::os::raw::c_void,
             p_public_inputs as *mut std::os::raw::c_void,
             proof_file_ptr,
+            prover_buffer_size,
+            d_buffers as *mut std::os::raw::c_void,
         )
     }
 }
@@ -1263,6 +1301,30 @@ pub fn gen_device_buffers_c(
     arity: u32,
 ) -> *mut ::std::os::raw::c_void {
     unsafe { gen_device_buffers(max_sizes, node_rank, node_n_processes, arity) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn gen_device_buffers_recursivef_c(
+    p_setup_ctx: *mut u8,
+    p_const_pols: *mut u8,
+    p_const_tree: *mut u8,
+    prover_buffer_size: u64,
+    d_commit_buffers: *mut u8,
+) -> *mut u8 {
+    unsafe {
+        gen_device_buffers_recursivef(
+            p_setup_ctx as *mut c_void,
+            p_const_pols as *mut c_void,
+            p_const_tree as *mut c_void,
+            prover_buffer_size,
+            d_commit_buffers as *mut c_void,
+        ) as *mut u8
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn free_device_buffers_recursivef_c(d_buffers: *mut u8) {
+    unsafe { free_device_buffers_recursivef(d_buffers as *mut c_void) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1547,6 +1609,17 @@ pub fn pack_const_pols_c(_pStarkinfo: *mut c_void, _pConstPols: *mut u8, _constF
 }
 
 #[cfg(feature = "no_lib_link")]
+pub fn tile_const_pols_c(
+    _pStarkinfo: *mut c_void,
+    _pConstPols: *mut u8,
+    _constFile: &str,
+    _pConstTree: *mut u8,
+    _constTreeFile: &str,
+) {
+    trace!("··· {}", "tile_const_pols: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
 pub fn prepare_blocks_c(_pol: *mut u64, _N: u64, _nCols: u64) {
     trace!("··· {}", "prepare_blocks: This is a mock call because there is no linked library");
 }
@@ -1569,6 +1642,12 @@ pub fn write_const_tree_c(_pStarkInfo: *mut c_void, _pConstPolsTreeAddress: *mut
 #[cfg(feature = "no_lib_link")]
 pub fn write_const_tree_bn128_c(_pStarkInfo: *mut c_void, _pConstPolsTreeAddress: *mut u8, _tree_filename: &str) {
     trace!("··· {}", "write_const_tree_bn128: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn verify_root_bn128_from_tree_c(_tree_filename: &str, _expected_root: &str) -> bool {
+    trace!("··· {}", "verify_root_bn128_from_tree: This is a mock call because there is no linked library");
+    true
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -2020,6 +2099,8 @@ pub fn gen_recursive_proof_final_c(
     _airgroup_id: u64,
     _air_id: u64,
     _instance_id: u64,
+    _prover_buffer_size: u64,
+    _d_buffers: *mut u8,
 ) -> *mut c_void {
     trace!("··· {}", "gen_recursive_proof_final: This is a mock call because there is no linked library");
     std::ptr::null_mut()
@@ -2164,6 +2245,31 @@ pub fn gen_device_buffers_c(
         "gen_device_commit_buffers: This is a mock call because there is no linked library"
     );
     std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn gen_device_buffers_recursivef_c(
+    _p_setup_ctx: *mut u8,
+    _p_const_pols: *mut u8,
+    _p_const_tree: *mut u8,
+    _prover_buffer_size: u64,
+    _d_commit_buffers: *mut u8,
+) -> *mut u8 {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "gen_device_buffers_recursivef: This is a mock call because there is no linked library"
+    );
+    std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn free_device_buffers_recursivef_c(_d_buffers: *mut u8) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "free_device_buffers_recursivef: This is a mock call because there is no linked library"
+    );
 }
 
 #[cfg(feature = "no_lib_link")]

@@ -2,10 +2,11 @@
 #include "proof2zkinStark.hpp"
 #include "starks.hpp"
 #include "global_constraints.hpp"
-#include "gen_recursive_proof.hpp"
+#include "gen_recursivef_proof.hpp"
 #include "gen_proof.hpp"
 #include "logger.hpp"
 #include <filesystem>
+#include <fstream>
 #include "setup_ctx.hpp"
 #include "stark_verify.hpp"
 #include "exec_file.hpp"
@@ -367,6 +368,8 @@ void pack_const_pols(void *pStarkinfo, void *pConstPols, char *constFile) {
 }
 
 #ifndef __USE_CUDA__
+
+void tile_const_pols(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile){}
 void init_gpu_setup(uint64_t maxBitsExt) {}
 void prepare_blocks(uint64_t* pol, uint64_t N, uint64_t nCols) {}
 void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress) {
@@ -389,6 +392,34 @@ void write_const_tree(void *pStarkInfo, void *pConstTreeAddress, char *treeFilen
 void write_const_tree_bn128(void *pStarkInfo, void *pConstTreeAddress, char *treeFilename) {
     ConstTree constTree;
     constTree.writeConstTreeFileBN128(*(StarkInfo *)pStarkInfo, pConstTreeAddress, treeFilename);
+}
+
+bool verify_root_bn128_from_tree(char *treeFilename, char *expectedRoot) {
+    // Open the tree file and read the last 32 bytes (the root)
+    std::ifstream file(treeFilename, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        return false;
+    }
+    
+    std::streamsize size = file.tellg();
+    if (size < 32) {
+        return false;
+    }
+    
+    // Seek to 32 bytes before the end
+    file.seekg(-32, std::ios::end);
+    
+    // Read the root (32 bytes = RawFr::Element)
+    RawFr::Element root;
+    file.read((char*)&root, sizeof(RawFr::Element));
+    file.close();
+    
+    // Convert root to string
+    RawFr rawFr;
+    std::string actualRoot = rawFr.toString(root);
+    
+    // Compare with expected root
+    return actualRoot == std::string(expectedRoot);
 }
 
 // Expressions Bin
@@ -770,6 +801,10 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
     DeviceCommitBuffersCPU *d_buffers = new DeviceCommitBuffersCPU();
     return (void *)d_buffers;
 };
+void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pConstTree, uint64_t proverBufferSize, void *d_commit_buffers){
+    return nullptr;
+}
+void free_device_buffers_recursivef(void *d_buffers_){}
 
 uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t max_n_bits_ext, uint64_t merkleTreeArity) { return 1; }
 
@@ -839,6 +874,10 @@ uint64_t gen_recursive_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airI
     return 0;
 }
 
+void *gen_recursive_proof_final(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers) {
+    return genRecursiveProofBN128(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file));
+}
+
 #endif
 
 void launch_callback(uint64_t instanceId, char *proofType) {
@@ -857,9 +896,7 @@ void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint
 }
 
 
-void *gen_recursive_proof_final(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file) {
-    return genRecursiveProofBN128(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file));
-}
+
 
 void read_exec_file(uint64_t *exec_data, char *exec_file, uint64_t nCommitedPols) {
     readExecFile(exec_data, string(exec_file), nCommitedPols);

@@ -188,7 +188,13 @@ impl ProveCmd {
                 if let Some(proving_key_snark) = &self.proving_key_snark {
                     let snark_wrapper: SnarkWrapper<Goldilocks> =
                         SnarkWrapper::new(proving_key_snark, self.verbose.into())?;
-                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, Some(self.output_dir.clone()))?;
+                    // Reuse device memory from device_buffers_ptr
+                    let device_buffers_ptr = proofman.get_device_buffers_ptr();
+                    snark_wrapper.generate_final_snark_proof(
+                        &vadcop_final_proof,
+                        Some(self.output_dir.clone()),
+                        Some(device_buffers_ptr),
+                    )?;
                 }
             }
         }
