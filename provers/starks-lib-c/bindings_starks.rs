@@ -106,6 +106,11 @@ extern "C" {
         treeFilename: *mut ::std::os::raw::c_char,
     );
 
+    pub fn verify_root_bn128_from_tree(
+        treeFilename: *mut ::std::os::raw::c_char,
+        expectedRoot: *mut ::std::os::raw::c_char,
+    ) -> bool;
+
     // Expressions Bin
     // ========================================================================================
     pub fn expressions_bin_new(

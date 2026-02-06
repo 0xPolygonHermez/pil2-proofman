@@ -6,6 +6,7 @@
 #include "gen_proof.hpp"
 #include "logger.hpp"
 #include <filesystem>
+#include <fstream>
 #include "setup_ctx.hpp"
 #include "stark_verify.hpp"
 #include "exec_file.hpp"
@@ -391,6 +392,34 @@ void write_const_tree(void *pStarkInfo, void *pConstTreeAddress, char *treeFilen
 void write_const_tree_bn128(void *pStarkInfo, void *pConstTreeAddress, char *treeFilename) {
     ConstTree constTree;
     constTree.writeConstTreeFileBN128(*(StarkInfo *)pStarkInfo, pConstTreeAddress, treeFilename);
+}
+
+bool verify_root_bn128_from_tree(char *treeFilename, char *expectedRoot) {
+    // Open the tree file and read the last 32 bytes (the root)
+    std::ifstream file(treeFilename, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        return false;
+    }
+    
+    std::streamsize size = file.tellg();
+    if (size < 32) {
+        return false;
+    }
+    
+    // Seek to 32 bytes before the end
+    file.seekg(-32, std::ios::end);
+    
+    // Read the root (32 bytes = RawFr::Element)
+    RawFr::Element root;
+    file.read((char*)&root, sizeof(RawFr::Element));
+    file.close();
+    
+    // Convert root to string
+    RawFr rawFr;
+    std::string actualRoot = rawFr.toString(root);
+    
+    // Compare with expected root
+    return actualRoot == std::string(expectedRoot);
 }
 
 // Expressions Bin

@@ -48,6 +48,7 @@ extern "C" {
     void calculate_const_tree_bn128(void *pStarkInfo, void *pConstPolsAddress, void *pConstTree);
     void write_const_tree(void *pStarkInfo, void *pConstTreeAddress, char *treeFilename);
     void write_const_tree_bn128(void *pStarkInfo, void *pConstTreeAddress, char *treeFilename);
+    bool verify_root_bn128_from_tree(char *treeFilename, char *expectedRoot);
 
     // Expressions Bin
     // ========================================================================================

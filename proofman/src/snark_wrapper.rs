@@ -155,7 +155,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         setup_recursivef.set_circom_circuit()?;
         setup_recursivef.set_exec_file_data()?;
 
-        calculate_fixed_tree_snark(&setup_recursivef);
+        check_const_tree(&setup_recursivef, false)?;
 
         setup_recursivef.load_const_pols();
         setup_recursivef.load_const_pols_tree();

@@ -293,6 +293,19 @@ pub fn write_const_tree_bn128_c(pStarkInfo: *mut c_void, pConstPolsTreeAddress: 
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn verify_root_bn128_from_tree_c(tree_filename: &str, expected_root: &str) -> bool {
+    unsafe {
+        let tree_filename_cstr = CString::new(tree_filename).unwrap();
+        let expected_root_cstr = CString::new(expected_root).unwrap();
+
+        verify_root_bn128_from_tree(
+            tree_filename_cstr.as_ptr() as *mut std::os::raw::c_char,
+            expected_root_cstr.as_ptr() as *mut std::os::raw::c_char,
+        )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn expressions_bin_new_c(filename: &str, global: bool, verify: bool) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
@@ -1629,6 +1642,12 @@ pub fn write_const_tree_c(_pStarkInfo: *mut c_void, _pConstPolsTreeAddress: *mut
 #[cfg(feature = "no_lib_link")]
 pub fn write_const_tree_bn128_c(_pStarkInfo: *mut c_void, _pConstPolsTreeAddress: *mut u8, _tree_filename: &str) {
     trace!("··· {}", "write_const_tree_bn128: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn verify_root_bn128_from_tree_c(_tree_filename: &str, _expected_root: &str) -> bool {
+    trace!("··· {}", "verify_root_bn128_from_tree: This is a mock call because there is no linked library");
+    true
 }
 
 #[cfg(feature = "no_lib_link")]
