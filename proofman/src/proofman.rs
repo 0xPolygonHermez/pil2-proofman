@@ -299,7 +299,7 @@ pub enum ProvePhaseInputs {
 pub enum ProvePhaseResult {
     Contributions(Vec<ContributionsInfo>),
     Internal(Vec<AggProofs>),
-    Full(Option<String>, Option<VadcopFinalProof>, *mut std::ffi::c_void),
+    Full(Option<String>, Option<VadcopFinalProof>),
 }
 
 impl<F: PrimeField64> Drop for ProofMan<F> {
@@ -317,6 +317,10 @@ where
 
     pub fn get_proving_key_path(&self) -> PathBuf {
         self.pctx.global_info.get_proving_key_path()
+    }
+
+    pub fn get_device_buffers_ptr(&self) -> *mut std::ffi::c_void {
+        self.pctx.get_device_buffers_ptr()
     }
 
     pub fn set_barrier(&self) {
@@ -2425,8 +2429,7 @@ where
         }
 
         if phase == ProvePhase::Full {
-            let device_buffers_ptr = self.pctx.get_device_buffers_ptr();
-            Ok(ProvePhaseResult::Full(proof_id, vadcop_final_proof, device_buffers_ptr))
+            Ok(ProvePhaseResult::Full(proof_id, vadcop_final_proof))
         } else {
             Ok(ProvePhaseResult::Internal(Vec::new()))
         }
