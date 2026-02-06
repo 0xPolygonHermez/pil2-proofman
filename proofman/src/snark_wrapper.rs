@@ -198,6 +198,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         &self,
         vadcop_proof: &VadcopFinalProof,
         output_dir_path: Option<PathBuf>,
+        device_buffers_ptr: Option<*mut c_void>,
     ) -> ProofmanResult<SnarkProof> {
         let output_dir_path = match output_dir_path.as_deref() {
             Some(path) => path,
@@ -222,6 +223,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             &self.vadcop_final_verkey,
             output_dir_path,
             self.setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
+            device_buffers_ptr,
         )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
@@ -359,6 +361,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         &vadcop_final_verkey,
         output_dir_path,
         setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
+        None,
     )?;
     timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 

@@ -378,8 +378,10 @@ struct DeviceRecursiveFBuffers
     gl64_t *d_const_tree;
     uint8_t* pinnedBuffer;
     size_t pinnedBufferSize = 256 * 1024 * 1024;
+    bool owns_aux_trace;
+    bool owns_const_tree;
 
-    DeviceRecursiveFBuffers() : stream(), timer(){
+    DeviceRecursiveFBuffers() : stream(), timer(), owns_aux_trace(true), owns_const_tree(true){
         cudaStreamCreate(&stream);
         timer.init(stream);
         CHECKCUDAERR(cudaMallocHost((void**)&pinnedBuffer, pinnedBufferSize));

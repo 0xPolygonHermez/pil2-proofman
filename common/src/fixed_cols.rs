@@ -148,7 +148,7 @@ pub fn calculate_fixed_tree_snark<F: PrimeField64>(setup: &Setup<F>) {
     let const_pols_tree_path_cpu = setup.setup_path.display().to_string() + ".consttree";
     let const_pols_tree_path_gpu = &setup.const_pols_tree_path.clone();
 
-    tracing::info!("··· Loading const pols for AIR {} of type {:?}", setup.air_name, setup.setup_type);
+    tracing::debug!("··· Loading const pols for AIR {} of type {:?}", setup.air_name, setup.setup_type);
 
     load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_pols.len() as u64 * 8);
 
@@ -190,14 +190,32 @@ pub fn calculate_fixed_tree_snark<F: PrimeField64>(setup: &Setup<F>) {
         timer_stop_and_log_info!(WRITING_CONST_TREE);
     }
     if cfg!(feature = "gpu") {
-        // save constant pols and extended pols with tiles layout
-        tile_const_pols_c(
-            p_stark_info,
-            const_pols.as_ptr() as *mut u8,
-            setup.const_pols_path.as_str(),
-            const_tree.as_ptr() as *mut u8,
-            const_pols_tree_path_gpu.as_str(),
-        );
+        // Check if GPU files already exist and have correct sizes
+        let gpu_const_pols_valid = PathBuf::from(&setup.const_pols_path).exists()
+            && std::fs::metadata(&setup.const_pols_path)
+                .map(|m| m.len() as usize == const_pols_size * 8)
+                .unwrap_or(false);
+
+        let gpu_const_tree_valid = PathBuf::from(const_pols_tree_path_gpu).exists()
+            && std::fs::metadata(const_pols_tree_path_gpu)
+                .map(|m| m.len() as usize == const_pols_tree_size * 8)
+                .unwrap_or(false);
+
+        // Only skip if CPU tree was valid (not recalculated) AND GPU files have correct sizes
+        if !valid_root || !gpu_const_pols_valid || !gpu_const_tree_valid {
+            timer_start_info!(WRITING_GPU_CONST_TREE);
+            // save constant pols and extended pols with tiles layout
+            tile_const_pols_c(
+                p_stark_info,
+                const_pols.as_ptr() as *mut u8,
+                setup.const_pols_path.as_str(),
+                const_tree.as_ptr() as *mut u8,
+                const_pols_tree_path_gpu.as_str(),
+            );
+            timer_stop_and_log_info!(WRITING_GPU_CONST_TREE);
+        } else {
+            tracing::debug!("··· GPU const files already exist with correct sizes, skipping tile_const_pols_c");
+        }
     }
 }
 

@@ -1296,6 +1296,7 @@ pub fn gen_device_buffers_recursivef_c(
     p_const_pols: *mut u8,
     p_const_tree: *mut u8,
     prover_buffer_size: u64,
+    d_commit_buffers: *mut u8,
 ) -> *mut u8 {
     unsafe {
         gen_device_buffers_recursivef(
@@ -1303,6 +1304,7 @@ pub fn gen_device_buffers_recursivef_c(
             p_const_pols as *mut c_void,
             p_const_tree as *mut c_void,
             prover_buffer_size,
+            d_commit_buffers as *mut c_void,
         ) as *mut u8
     }
 }
@@ -2232,6 +2234,7 @@ pub fn gen_device_buffers_recursivef_c(
     _p_const_pols: *mut u8,
     _p_const_tree: *mut u8,
     _prover_buffer_size: u64,
+    _d_commit_buffers: *mut u8,
 ) -> *mut u8 {
     trace!(
         "{}: ··· {}",

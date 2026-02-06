@@ -900,7 +900,7 @@ void tile_const_pols(void *pStarkinfo, void *pConstPols, char *constFile, void *
 
 }
 
-void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pConstTree, uint64_t proverBufferSize) {
+void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pConstTree, uint64_t proverBufferSize, void *d_commit_buffers_) {
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     uint32_t gpuId = 0;
     cudaSetDevice(gpuId);
@@ -920,10 +920,32 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
     uint64_t sizeAuxTrace = proverBufferSize;
 
-    // Allocate device buffers
-    CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace, sizeAuxTrace));
-    CHECKCUDAERR(cudaMalloc(&d_buffers->d_const_tree, sizeConstTree));
+    if (d_commit_buffers_ == nullptr) {
+        // Allocate new device buffers
+        d_buffers->owns_aux_trace = true;
+        d_buffers->owns_const_tree = true;
+        CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace, sizeAuxTrace));
+        CHECKCUDAERR(cudaMalloc(&d_buffers->d_const_tree, sizeConstTree));
+    } else {
+        // Reuse buffers from DeviceCommitBuffers
+        DeviceCommitBuffers *d_commit_buffers = (DeviceCommitBuffers *)d_commit_buffers_;
+        
+        // Always reuse first buffer for d_aux_trace
+        d_buffers->owns_aux_trace = false;
+        d_buffers->d_aux_trace = d_commit_buffers->d_aux_trace[0][0];
+        
+        // If there's more than one stream, reuse second buffer for d_const_tree
+        if (d_commit_buffers->n_streams > 1) {
+            d_buffers->owns_const_tree = false;
+            d_buffers->d_const_tree = d_commit_buffers->d_aux_trace[0][1];
+        } else {
+            // Only one stream available, allocate d_const_tree
+            d_buffers->owns_const_tree = true;
+            CHECKCUDAERR(cudaMalloc(&d_buffers->d_const_tree, sizeConstTree));
+        }
+    }
 
+    // Always copy const pols and const tree to device
     gl64_t * d_aux_trace = (gl64_t *)d_buffers->d_aux_trace;
     gl64_t * d_const_tree = (gl64_t *)d_buffers->d_const_tree;
     uint8_t * pinnedBuffer = d_buffers->pinnedBuffer;
@@ -944,9 +966,12 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
 
 void free_device_buffers_recursivef(void *d_buffers_) {
     DeviceRecursiveFBuffers *d_buffers = (DeviceRecursiveFBuffers *)d_buffers_;
-    CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace));
-    CHECKCUDAERR(cudaFree(d_buffers->d_const_tree));
-    // Destructor handles stream, pinnedBuffer cleanup
+    if (d_buffers->owns_const_tree) {
+        CHECKCUDAERR(cudaFree(d_buffers->d_const_tree));
+    }
+    if (d_buffers->owns_aux_trace) {
+        CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace));
+    }
     delete d_buffers;
 }
 

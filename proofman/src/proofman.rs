@@ -299,7 +299,7 @@ pub enum ProvePhaseInputs {
 pub enum ProvePhaseResult {
     Contributions(Vec<ContributionsInfo>),
     Internal(Vec<AggProofs>),
-    Full(Option<String>, Option<VadcopFinalProof>),
+    Full(Option<String>, Option<VadcopFinalProof>, *mut std::ffi::c_void),
 }
 
 impl<F: PrimeField64> Drop for ProofMan<F> {
@@ -2425,7 +2425,8 @@ where
         }
 
         if phase == ProvePhase::Full {
-            Ok(ProvePhaseResult::Full(proof_id, vadcop_final_proof))
+            let device_buffers_ptr = self.pctx.get_device_buffers_ptr();
+            Ok(ProvePhaseResult::Full(proof_id, vadcop_final_proof, device_buffers_ptr))
         } else {
             Ok(ProvePhaseResult::Internal(Vec::new()))
         }

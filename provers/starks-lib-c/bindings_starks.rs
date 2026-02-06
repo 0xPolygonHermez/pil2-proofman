@@ -534,6 +534,7 @@ extern "C" {
         pConstPols: *mut ::std::os::raw::c_void,
         pConstTree: *mut ::std::os::raw::c_void,
         proverBufferSize: u64,
+        d_commit_buffers: *mut ::std::os::raw::c_void,
     ) -> *mut ::std::os::raw::c_void;
 
     pub fn free_device_buffers_recursivef(d_buffers: *mut ::std::os::raw::c_void);

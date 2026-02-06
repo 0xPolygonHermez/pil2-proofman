@@ -181,14 +181,15 @@ impl ProveCmd {
                 )?,
             };
 
-            if let ProvePhaseResult::Full(_, Some(vadcop_final_proof)) = result {
+            if let ProvePhaseResult::Full(_, Some(vadcop_final_proof), device_buffers_ptr) = result {
                 // Save the vadcop final proof using the struct's save method
                 vadcop_final_proof.save(self.output_dir.join("vadcop_final_proof.bin"))?;
 
                 if let Some(proving_key_snark) = &self.proving_key_snark {
                     let snark_wrapper: SnarkWrapper<Goldilocks> =
                         SnarkWrapper::new(proving_key_snark, self.verbose.into())?;
-                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, Some(self.output_dir.clone()))?;
+                    // Reuse device memory from device_buffers_ptr
+                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, Some(self.output_dir.clone()), Some(device_buffers_ptr))?;
                 }
             }
         }
