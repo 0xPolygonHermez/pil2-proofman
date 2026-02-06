@@ -1204,9 +1204,7 @@ void prepare_blocks(uint64_t *pol, uint64_t N, uint64_t nCols) {
 void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile)
 {   
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    int deviceId;
-    CHECKCUDAERR(cudaGetDevice(&deviceId));
-    cudaSetDevice(deviceId);
+    cudaSetDevice(d_buffers->my_gpu_ids[0]);
 
     TimerGPU timer;
 
