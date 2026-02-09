@@ -74,7 +74,8 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
         debug_assert!(num_rows & (num_rows - 1) == 0);
 
         let mut vec: Vec<std::mem::MaybeUninit<R>> = Vec::with_capacity(num_rows);
-        let buffer: Vec<R> = unsafe {
+        #[allow(unused_mut)]
+        let mut buffer: Vec<R> = unsafe {
             vec.set_len(num_rows);
             std::mem::transmute(vec)
         };

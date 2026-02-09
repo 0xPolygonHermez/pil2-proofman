@@ -1107,6 +1107,14 @@ where
             pctx.get_device_buffers_ptr(),
         );
 
+        #[cfg(feature = "diagnostic")]
+        {
+            let invalid_initialization = Self::diagnostic_instance(&pctx, &sctx, instance_id)?;
+            if invalid_initialization {
+                return Err(ProofmanError::InvalidProof("Invalid initialization".into()));
+            }
+        }
+
         pctx.set_instance_stream_id(instance_id, stream_id);
 
         if !cfg!(feature = "gpu") {
