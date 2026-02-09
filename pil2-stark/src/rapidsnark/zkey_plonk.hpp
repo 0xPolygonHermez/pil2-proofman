@@ -52,6 +52,7 @@ namespace Zkey {
         ~PlonkZkeyHeader();
 
         static PlonkZkeyHeader* loadPlonkZkeyHeader(BinFileUtils::BinFile *f);
+        static PlonkZkeyHeader* loadPlonkZkeyHeaderDirect(BinFileUtils::BinFile *f);
     };
 }
 

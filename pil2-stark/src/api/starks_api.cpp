@@ -917,18 +917,15 @@ uint64_t get_snark_protocol_id(void *snark_prover) {
 }
 
 void *init_final_snark_prover(char* zkeyFile) {
-    auto zkey = BinFileUtils::openExisting(zkeyFile, "zkey", 1);
-    BinFileUtils::BinFile *fdZkey = zkey.get();
-    uint64_t protocolId = Zkey::getProtocolIdFromZkey(fdZkey);
-    auto prover = initFinalSnarkProver(fdZkey);
 
-    zkey.reset();
+    auto fdZkey = std::make_unique<BinFileUtils::BinFile>(std::string(zkeyFile), "zkey", 1, /*directRead=*/true);
+    uint64_t protocolId = getProtocolIdFromBinFile(fdZkey.get());
+    auto prover = initFinalSnarkProver(fdZkey.get());
     FinalSnark *finalSnark = new FinalSnark{
-        .zkey = nullptr,
+        .zkey = std::move(fdZkey),
         .protocolId = protocolId,
         .prover = std::move(prover)
     };
-    
     return finalSnark;
 }
 

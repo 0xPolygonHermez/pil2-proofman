@@ -14,7 +14,7 @@
 namespace BinFileUtils
 {
     BinFile::BinFile(void *data, uint64_t _size, std::string _type, uint32_t maxVersion)
-        : addr(nullptr), size(0), pos(0), version(0), readingSection(nullptr)
+        : addr(nullptr), size(0), pos(0), directRead(false), fileFd(-1), version(0), readingSection(nullptr)
     {
         size = _size;
         addr = malloc(size);
@@ -61,7 +61,7 @@ namespace BinFileUtils
     }
 
     BinFile::BinFile(std::string fileName, std::string _type, uint32_t maxVersion)
-        : addr(nullptr), size(0), pos(0), version(0), readingSection(nullptr)
+        : addr(nullptr), size(0), pos(0), directRead(false), fileFd(-1), version(0), readingSection(nullptr)
     {
         
         int fd;
@@ -130,9 +130,119 @@ namespace BinFileUtils
         readingSection = nullptr;
     }
 
+    BinFile::BinFile(std::string fileName, std::string _type, uint32_t maxVersion, bool _directRead)
+        : addr(nullptr), size(0), pos(0), directRead(_directRead), fileFd(-1), version(0), readingSection(nullptr)
+    {
+        if (!_directRead) {
+            *this = BinFile(fileName, _type, maxVersion);
+            return;
+        }
+
+        fileFd = open(fileName.c_str(), O_RDONLY);
+        if (fileFd == -1)
+            throw std::system_error(errno, std::generic_category(), "open");
+
+        struct stat sb;
+        if (fstat(fileFd, &sb) == -1) {
+            close(fileFd);
+            fileFd = -1;
+            throw std::system_error(errno, std::generic_category(), "fstat");
+        }
+
+        size = sb.st_size;
+
+        // Read the fixed-size file header: 4 bytes type + 4 bytes version + 4 bytes nSections = 12 bytes
+        uint8_t fileHeader[12];
+        ssize_t bytesRead = ::pread(fileFd, fileHeader, 12, 0);
+        if (bytesRead < 12) {
+            close(fileFd);
+            fileFd = -1;
+            throw std::runtime_error("Failed to read BinFile header");
+        }
+
+        type.assign((const char *)fileHeader, 4);
+        if (type != _type) {
+            close(fileFd);
+            fileFd = -1;
+            throw std::invalid_argument("Invalid file type. It should be " + _type + " and it us " + type);
+        }
+
+        version = *((u_int32_t *)(fileHeader + 4));
+        if (version > maxVersion) {
+            close(fileFd);
+            fileFd = -1;
+            throw std::invalid_argument("Invalid version. It should be <=" + std::to_string(maxVersion) + " and it us " + std::to_string(version));
+        }
+
+        u_int32_t nSections = *((u_int32_t *)(fileHeader + 8));
+
+        
+        u_int64_t filePos = 12; // after type + version + nSections
+        uint8_t entryBuf[12];
+        for (u_int32_t i = 0; i < nSections; i++) {
+            ssize_t r = ::pread(fileFd, entryBuf, 12, filePos);
+            if (r < 12) {
+                close(fileFd);
+                fileFd = -1;
+                throw std::runtime_error("Failed to read section entry " + std::to_string(i));
+            }
+            u_int32_t sType = *((u_int32_t *)(entryBuf));
+            u_int64_t sSize = *((u_int64_t *)(entryBuf + 4));
+            filePos += 12; // skip past the entry header
+
+            if (sections.find(sType) == sections.end()) {
+                sections.insert(std::make_pair(sType, std::vector<Section>()));
+            }
+
+            // In directRead mode, Section.start stores the FILE OFFSET (cast to void*)
+            sections[sType].push_back(Section((void *)filePos, sSize));
+
+            filePos += sSize; // skip past the section data
+        }
+
+        pos = 0;
+        readingSection = nullptr;
+    }
+
     BinFile::~BinFile()
     {
-        free(addr);
+        if (directRead) {
+            if (fileFd >= 0) close(fileFd);
+        } else {
+            free(addr);
+        }
+    }
+
+    void BinFile::readSectionTo(void *dest, u_int32_t sectionId, u_int64_t offset, u_int64_t len)
+    {
+        if (!directRead) {
+            // Eager mode: copy from in-memory buffer
+            void *src = (void *)((u_int64_t)getSectionData(sectionId) + offset);
+            memcpy(dest, src, len);
+            return;
+        }
+
+        if (sections.find(sectionId) == sections.end()) {
+            throw std::range_error("Section does not exist: " + std::to_string(sectionId));
+        }
+
+        // In directRead mode, Section.start is the file offset
+        u_int64_t fileOffset = (u_int64_t)sections[sectionId][0].start + offset;
+        u_int64_t sectionSize = sections[sectionId][0].size;
+
+        if (offset + len > sectionSize) {
+            throw std::range_error("readSectionTo: offset+len exceeds section size");
+        }
+
+        // Read in a loop to handle partial reads
+        u_int64_t totalRead = 0;
+        while (totalRead < len) {
+            ssize_t r = ::pread(fileFd, (uint8_t *)dest + totalRead, len - totalRead, fileOffset + totalRead);
+            if (r <= 0) {
+                throw std::system_error(errno, std::generic_category(), "pread in readSectionTo");
+            }
+            totalRead += r;
+        }
     }
 
     void BinFile::startReadSection(u_int32_t sectionId, u_int32_t sectionPos)
