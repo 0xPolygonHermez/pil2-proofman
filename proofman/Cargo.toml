@@ -48,7 +48,7 @@ mpi = { version = "0.8.0" }
 default = []
 no_lib_link = ["proofman-common/no_lib_link"]
 disable_distributed = []
-diagnostic = ["proofman-macros/diagnostic"]
+diagnostic = ["proofman-macros/diagnostic", "proofman-common/diagnostic"]
 packed = ["proofman-common/packed"]
 gpu = ["proofman-common/gpu", "proofman-starks-lib-c/gpu"]
 
