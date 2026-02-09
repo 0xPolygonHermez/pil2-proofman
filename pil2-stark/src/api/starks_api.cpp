@@ -922,8 +922,9 @@ void *init_final_snark_prover(char* zkeyFile) {
     uint64_t protocolId = Zkey::getProtocolIdFromZkey(fdZkey);
     auto prover = initFinalSnarkProver(fdZkey);
 
+    zkey.reset();
     FinalSnark *finalSnark = new FinalSnark{
-        .zkey = std::move(zkey),
+        .zkey = nullptr,
         .protocolId = protocolId,
         .prover = std::move(prover)
     };

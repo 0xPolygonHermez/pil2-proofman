@@ -55,6 +55,19 @@ namespace Plonk
         delete[] precomputedBigBuffer;
         delete[] mapBuffersBigBuffer;
         delete[] buffInternalWitness;
+        delete[] additionsBuff;
+
+        free(zkey->k1);
+        free(zkey->k2);
+        free(zkey->QM);
+        free(zkey->QL);
+        free(zkey->QR);
+        free(zkey->QO);
+        free(zkey->QC);
+        free(zkey->S1);
+        free(zkey->S2);
+        free(zkey->S3);
+        free(zkey->X2);
 
         if (NULL == reservedMemoryPtr)
         {
@@ -106,6 +119,23 @@ namespace Plonk
         LOG_TRACE("> Reading zkey file");
 
         zkey = Zkey::PlonkZkeyHeader::loadPlonkZkeyHeader(fdZkey);
+
+        auto deepCopy = [](void *&ptr, size_t size) {
+            void *copy = malloc(size);
+            memcpy(copy, ptr, size);
+            ptr = copy;
+        };
+        deepCopy(zkey->k1, zkey->n8r);
+        deepCopy(zkey->k2, zkey->n8r);
+        deepCopy(zkey->QM, zkey->n8q * 2);
+        deepCopy(zkey->QL, zkey->n8q * 2);
+        deepCopy(zkey->QR, zkey->n8q * 2);
+        deepCopy(zkey->QO, zkey->n8q * 2);
+        deepCopy(zkey->QC, zkey->n8q * 2);
+        deepCopy(zkey->S1, zkey->n8q * 2);
+        deepCopy(zkey->S2, zkey->n8q * 2);
+        deepCopy(zkey->S3, zkey->n8q * 2);
+        deepCopy(zkey->X2, zkey->n8q * 4);
 
         if (zkey->protocolId != Zkey::PLONK_PROTOCOL_ID)
         {
@@ -295,7 +325,11 @@ namespace Plonk
         buffInternalWitness = new FrElement[zkey->nAdditions];
 
         LOG_TRACE("··· Loading additions");
-        additionsBuff = (Zkey::Addition<Engine> *)fdZkey->getSectionData(Zkey::ZKEY_PL_ADDITIONS_SECTION);
+        auto srcAdditions = (Zkey::Addition<Engine> *)fdZkey->getSectionData(Zkey::ZKEY_PL_ADDITIONS_SECTION);
+        additionsBuff = new Zkey::Addition<Engine>[zkey->nAdditions];
+        uint64_t additionsBytes = zkey->nAdditions * sizeof(Zkey::Addition<Engine>);
+        ThreadUtils::parcpy(additionsBuff, srcAdditions, additionsBytes, nThreads);
+        
 
         LOG_TRACE("··· Loading map buffers");
         // ThreadUtils::parset(mapBuffers["A"], 0, byteLength * 3, nThreads);
@@ -706,7 +740,7 @@ namespace Plonk
         E.g1.copy(Commitment, *((G1PointAffine *)zkey->S3));
         transcript->addPolCommitment(Commitment);
 
-        // Add A to the transcript
+        // Add publics to the transcript
         for (u_int32_t i = 0; i < zkey->nPublic; i++)
         {
             transcript->addScalar(buffers["A"][i]);
