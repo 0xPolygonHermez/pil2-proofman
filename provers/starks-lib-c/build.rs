@@ -105,6 +105,12 @@ fn main() {
         println!("cargo:rustc-link-search=native={cuda_path}");
         println!("cargo:rustc-link-lib=dylib=cudart"); // Link the CUDA runtime library
 
+        // Add the blst library for GPU MSM
+        let blst_path = pil2_stark_path.join("external/blst");
+        let blst_lib_path = blst_path.canonicalize().unwrap_or_else(|_| blst_path.clone());
+        println!("cargo:rustc-link-search=native={}", blst_lib_path.display());
+        println!("cargo:rustc-link-lib=static=blst");
+
         // Specify the CUDA architecture
         println!("cargo:rustc-env=CUDA_ARCH=sm_75"); // Adjust the architecture as needed
     }

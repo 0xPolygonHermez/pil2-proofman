@@ -15,6 +15,8 @@
 #include "logger.hpp"
 using namespace CPlusPlusLogging;
 
+extern "C" void msm_bn128_gpu(void* out, const void* points, const void* scalars, size_t npoints, bool montgomery);
+
 namespace PlonkGPU
 {
     template <typename Engine>
@@ -1448,7 +1450,23 @@ namespace PlonkGPU
         G1Point value;
         FrElement *pol = this->polynomialFromMontgomery(polynomial);
 
-        E.g1.multiMulByScalar(value, PTau, (uint8_t *)pol, sizeof(pol[0]), polynomial->getDegree() + 1);
+        // GPU MSM returns standard Jacobian {X, Y, Z}
+        // CPU expects Extended Jacobian {x, y, zz, zzz} where zz=Z², zzz=Z³
+        struct JacobianPoint {
+            typename Engine::F1Element X;
+            typename Engine::F1Element Y;
+            typename Engine::F1Element Z;
+        };
+        JacobianPoint gpuResult;
+
+        msm_bn128_gpu(&gpuResult, PTau, pol, polynomial->getDegree() + 1, false);
+
+        // Convert from standard Jacobian to Extended Jacobian
+        // x = X, y = Y, zz = Z², zzz = Z³
+        value.x = gpuResult.X;
+        value.y = gpuResult.Y;
+        E.f1.square(value.zz, gpuResult.Z);           // zz = Z²
+        E.f1.mul(value.zzz, value.zz, gpuResult.Z);   // zzz = Z³
 
         return value;
     }

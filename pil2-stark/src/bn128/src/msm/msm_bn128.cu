@@ -49,4 +49,20 @@ void MSM_BN128_GPU::msm(PointJacobianGPU& out,
     }
 }
 
+// C-linkage wrapper function for calling from g++ code
+// This allows plonk_prover_gpu (compiled with g++) to call GPU MSM
+extern "C" void msm_bn128_gpu(void* out, const void* points, const void* scalars, size_t npoints, bool mont) {
+    
+    point_t* gpu_out = reinterpret_cast<point_t*>(out);
+    const affine_t* gpu_points = reinterpret_cast<const affine_t*>(points);
+    const scalar_t* gpu_scalars = reinterpret_cast<const scalar_t*>(scalars);
+    
+    RustError err = mult_pippenger<bucket_t>(gpu_out, gpu_points, npoints, 
+                                              gpu_scalars, mont);
+    
+    if (err.code != 0) { 
+        gpu_out->inf();
+    }
+}
+
 #endif // !__CUDA_ARCH__
