@@ -8,6 +8,13 @@
 #include <cstring>
 #include <thread>
 
+
+struct FinalSnarkGPU;
+extern void *initFinalSnarkProverGPU(char* zkeyFile);
+extern void freeFinalSnarkProverGPU(void *snark_prover);
+extern void genFinalSnarkProofGPU(void *proverSnark, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark);
+extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
+
 #ifdef __USE_CUDA__
 #include "gen_recursive_proof.cuh"
 #include "verify_constraints.cuh"
@@ -1457,5 +1464,17 @@ void closeStreamTimer(TimerGPU &timer, uint64_t instance_id, uint64_t airgroup_i
     else
         TimerLogCategoryContributionsGPU(timer, STARK_GPU_COMMIT);
     TimerResetGPU(timer);
+}
+
+void *init_final_snark_prover(char* zkeyFile) {
+    return initFinalSnarkProverGPU(zkeyFile);
+}
+
+void free_final_snark_prover(void *snark_prover) {
+    freeFinalSnarkProverGPU(snark_prover);
+}
+
+void gen_final_snark_proof(void *prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark) {
+    genFinalSnarkProofGPU(prover, circomWitnessFinal, proof, publicsSnark);
 }
 #endif

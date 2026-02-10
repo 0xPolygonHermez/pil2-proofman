@@ -916,6 +916,7 @@ uint64_t get_snark_protocol_id(void *snark_prover) {
     return finalSnarkProver->protocolId;
 }
 
+#ifndef __USE_CUDA__
 void *init_final_snark_prover(char* zkeyFile) {
 
     auto fdZkey = std::make_unique<BinFileUtils::BinFile>(std::string(zkeyFile), "zkey", 1, /*directRead=*/true);
@@ -938,6 +939,7 @@ void free_final_snark_prover(void *snark_prover) {
 void gen_final_snark_proof(void *prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark) {
     genFinalSnarkProof(prover, circomWitnessFinal, proof, publicsSnark);
 }
+#endif
 
 void free_json_string(char* json_str) {
     if (json_str != nullptr) {
