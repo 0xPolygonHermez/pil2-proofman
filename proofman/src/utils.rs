@@ -266,39 +266,6 @@ pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool) ->
 
     // For GPU builds, verify GPU files exist and have correct sizes
     if cfg!(feature = "gpu") {
-        let const_pols_size = setup.const_pols_size;
-
-        // Check GPU const pols file
-        if !PathBuf::from(&setup.const_pols_path).exists() {
-            return Err(ProofmanError::InvalidSetup(format!(
-                "Error: GPU constant polynomials file '{}' does not exist.\n\
-                Please run the following command to generate it:\n\
-                \x1b[1mcargo run {is_gpu}--bin proofman-cli {options} <PROVING_KEY>{flags}\x1b[0m",
-                setup.const_pols_path
-            )));
-        }
-
-        match fs::metadata(&setup.const_pols_path) {
-            Ok(metadata) => {
-                let actual_size = metadata.len() as usize;
-                let expected_size = const_pols_size * 8;
-                if actual_size != expected_size {
-                    return Err(ProofmanError::InvalidSetup(format!(
-                        "Error: GPU constant polynomials file '{}' has incorrect size ({} bytes, expected {} bytes).\n\
-                        Please regenerate it by running:\n\
-                        \x1b[1mcargo run {is_gpu}--bin proofman-cli {options} <PROVING_KEY>{flags}\x1b[0m",
-                        setup.const_pols_path, actual_size, expected_size
-                    )));
-                }
-            }
-            Err(err) => {
-                return Err(ProofmanError::InvalidSetup(format!(
-                    "Failed to get metadata for GPU const pols {}: {}",
-                    setup.air_name, err
-                )));
-            }
-        }
-
         // Check GPU const tree file
         if !PathBuf::from(&setup.const_pols_tree_path).exists() {
             return Err(ProofmanError::InvalidSetup(format!(
@@ -369,6 +336,56 @@ pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool) ->
         }
     }
 
+    Ok(())
+}
+
+pub fn check_const_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            let setup = sctx.get_setup(airgroup_id, air_id)?;
+            if cfg!(feature = "gpu") {
+                let mut file = File::open(&setup.const_pols_path)?;
+                let mut words_per_row_bytes = [0u8; 8];
+                file.read_exact(&mut words_per_row_bytes)?;
+                let words_per_row = u64::from_le_bytes(words_per_row_bytes);
+
+                // Calculate expected size
+                let n_constants = setup.stark_info.n_constants as usize;
+                let n_rows = 1usize << setup.stark_info.stark_struct.n_bits as usize;
+                let expected_size = 8 + (n_constants * 8) + (n_rows * words_per_row as usize * 8);
+
+                // Check GPU const pols file
+                if !PathBuf::from(&setup.const_pols_path).exists() {
+                    return Err(ProofmanError::InvalidSetup(format!(
+                        "Error: GPU constant polynomials file '{}' does not exist.\n\
+                Please run the following command to generate it:\n\
+                \x1b[1mcargo run --features gpu --bin proofman-cli <PROVING_KEY>\x1b[0m",
+                        setup.const_pols_path
+                    )));
+                }
+
+                match fs::metadata(&setup.const_pols_path) {
+                    Ok(metadata) => {
+                        let actual_size = metadata.len() as usize;
+                        if actual_size != expected_size {
+                            return Err(ProofmanError::InvalidSetup(format!(
+                        "Error: GPU constant polynomials file '{}' has incorrect size ({} bytes, expected {} bytes).\n\
+                        Please regenerate it by running:\n\
+                        \x1b[1mcargo run --features gpu --bin proofman-cli <PROVING_KEY>\x1b[0m",
+                        setup.const_pols_path, actual_size, expected_size
+                    )));
+                        }
+                    }
+                    Err(err) => {
+                        return Err(ProofmanError::InvalidSetup(format!(
+                            "Failed to get metadata for GPU const pols {}: {}",
+                            setup.air_name, err
+                        )));
+                    }
+                }
+            }
+        }
+    }
     Ok(())
 }
 

@@ -31,6 +31,7 @@ use rand::{SeedableRng, seq::SliceRandom};
 use rand::rngs::StdRng;
 use proofman_common::{ProofmanResult, ProofmanError, Setup};
 use proofman_util::VadcopFinalProof;
+use crate::check_const_paths;
 
 #[cfg(distributed)]
 use mpi::topology::Communicator;
@@ -3446,6 +3447,8 @@ where
         if !verify_constraints {
             check_tree_paths(&pctx, &sctx)?;
         }
+
+        check_const_paths(&pctx, &sctx)?;
 
         if aggregation {
             check_tree_paths_vadcop(&pctx, &setups_vadcop)?;
