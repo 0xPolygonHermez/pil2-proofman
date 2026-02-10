@@ -318,7 +318,7 @@ void StarkInfo::load(json j)
             mapOffsets[std::make_pair("airvalues", false)] = mapTotalN;
             mapTotalN += airValuesSize;
 
-            mapOffsets[std::make_pair("challenges", false)] = mapTotalN;
+            mapOffsets[std::make_pair("challenge", false)] = mapTotalN;
             mapTotalN += 2 * FIELD_EXTENSION;
         }
         
@@ -467,8 +467,10 @@ void StarkInfo::setMapOffsets() {
         }
     }
 
-    mapOffsets[std::make_pair("const", false)] = mapTotalN;
-    mapTotalN += N * nConstants;
+    if (gpu) {
+        mapOffsets[std::make_pair("const", false)] = mapTotalN;
+        mapTotalN += N * nConstants;
+    }
 
     if(gpu) {
         mapOffsets[std::make_pair("custom_fixed", false)] = mapTotalN;
