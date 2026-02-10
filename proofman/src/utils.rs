@@ -264,6 +264,73 @@ pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool) ->
         }
     }
 
+    // For GPU builds, verify GPU files exist and have correct sizes
+    if cfg!(feature = "gpu") {
+        let const_pols_size = setup.const_pols_size;
+
+        // Check GPU const pols file
+        if !PathBuf::from(&setup.const_pols_path).exists() {
+            return Err(ProofmanError::InvalidSetup(format!(
+                "Error: GPU constant polynomials file '{}' does not exist.\n\
+                Please run the following command to generate it:\n\
+                \x1b[1mcargo run {is_gpu}--bin proofman-cli {options} <PROVING_KEY>{flags}\x1b[0m",
+                setup.const_pols_path
+            )));
+        }
+
+        match fs::metadata(&setup.const_pols_path) {
+            Ok(metadata) => {
+                let actual_size = metadata.len() as usize;
+                let expected_size = const_pols_size * 8;
+                if actual_size != expected_size {
+                    return Err(ProofmanError::InvalidSetup(format!(
+                        "Error: GPU constant polynomials file '{}' has incorrect size ({} bytes, expected {} bytes).\n\
+                        Please regenerate it by running:\n\
+                        \x1b[1mcargo run {is_gpu}--bin proofman-cli {options} <PROVING_KEY>{flags}\x1b[0m",
+                        setup.const_pols_path, actual_size, expected_size
+                    )));
+                }
+            }
+            Err(err) => {
+                return Err(ProofmanError::InvalidSetup(format!(
+                    "Failed to get metadata for GPU const pols {}: {}",
+                    setup.air_name, err
+                )));
+            }
+        }
+
+        // Check GPU const tree file
+        if !PathBuf::from(&setup.const_pols_tree_path).exists() {
+            return Err(ProofmanError::InvalidSetup(format!(
+                "Error: GPU constant tree file '{}' does not exist.\n\
+                Please run the following command to generate it:\n\
+                \x1b[1mcargo run {is_gpu}--bin proofman-cli {options} <PROVING_KEY>{flags}\x1b[0m",
+                setup.const_pols_tree_path
+            )));
+        }
+
+        match fs::metadata(&setup.const_pols_tree_path) {
+            Ok(metadata) => {
+                let actual_size = metadata.len() as usize;
+                let expected_size = const_pols_tree_size * 8;
+                if actual_size != expected_size {
+                    return Err(ProofmanError::InvalidSetup(format!(
+                        "Error: GPU constant tree file '{}' has incorrect size ({} bytes, expected {} bytes).\n\
+                        Please regenerate it by running:\n\
+                        \x1b[1mcargo run {is_gpu}--bin proofman-cli {options} <PROVING_KEY>{flags}\x1b[0m",
+                        setup.const_pols_tree_path, actual_size, expected_size
+                    )));
+                }
+            }
+            Err(err) => {
+                return Err(ProofmanError::InvalidSetup(format!(
+                    "Failed to get metadata for GPU const tree {}: {}",
+                    setup.air_name, err
+                )));
+            }
+        }
+    }
+
     let mut file = File::open(const_pols_tree_path)?;
     file.seek(SeekFrom::End(-32))?; // Move to 32 bytes before the end
 
