@@ -923,10 +923,13 @@ void *init_final_snark_prover(char* zkeyFile) {
 
     if (protocolId == Zkey::FFLONK_PROTOCOL_ID) {
         // FFLONK protocol requires directRead=false (legacy code)
-        fdZkey = std::make_unique<BinFileUtils::BinFile>(std::string(zkeyFile), "zkey", 1, /*directRead=*/false);
-        auto prover = initFinalSnarkProver(fdZkey.get());
+        auto zkey = BinFileUtils::openExisting(zkeyFile, "zkey", 1);
+        BinFileUtils::BinFile *fdZkey = zkey.get();
+        uint64_t protocolId = Zkey::getProtocolIdFromZkey(fdZkey);
+        auto prover = initFinalSnarkProver(fdZkey);
+
         FinalSnark *finalSnark = new FinalSnark{
-            .zkey = std::move(fdZkey),
+            .zkey = std::move(zkey),
             .protocolId = protocolId,
             .prover = std::move(prover)
         };
