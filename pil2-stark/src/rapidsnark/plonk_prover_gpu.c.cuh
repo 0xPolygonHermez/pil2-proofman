@@ -15,7 +15,10 @@
 #include "logger.hpp"
 using namespace CPlusPlusLogging;
 
+// GPU function declarations (implemented in CUDA, linked via extern "C")
 extern "C" void msm_bn128_gpu(void* out, const void* points, const void* scalars, size_t npoints, bool montgomery);
+extern "C" void ntt_bn128_gpu(void* data, uint32_t lg_n);
+extern "C" void intt_bn128_gpu(void* data, uint32_t lg_n);
 
 namespace PlonkGPU
 {
@@ -723,17 +726,17 @@ namespace PlonkGPU
         }
 
         // Create the polynomial
-        // and compute the coefficients of the wire polynomials from evaluations
+        // and compute the coefficients of the wire polynomials from evaluations using GPU IFFT
         std::ostringstream ss;
-        ss << "··· Computing " << polName << " ifft";
+        ss << "··· Computing " << polName << " ifft (GPU)";
         LOG_TRACE(ss);
-        polynomials[polName] = Polynomial<Engine>::fromEvaluations(E, fft, buffersPol, polPtr[polName], zkey->domainSize, 2);
+        polynomials[polName] = polynomialFromEvaluationsGPU(buffersPol, polPtr[polName], zkey->domainSize, 2, zkeyPower);
 
-        // Compute the extended evaluations of the wire polynomials
+        // Compute the extended evaluations of the wire polynomials using GPU FFT
         ss.str("");
-        ss << "··· Computing " << polName << " fft";
+        ss << "··· Computing " << polName << " fft (GPU)";
         LOG_TRACE(ss);
-        evaluations[polName] = new Evaluations<Engine>(E, fft, evalPtr[polName], *polynomials[polName], zkey->domainSize * 4);
+        evaluations[polName] = evaluationsFromPolynomialGPU(evalPtr[polName], *polynomials[polName], zkey->domainSize * 4, zkeyPower + 2);
 
         polynomials[polName]->blindCoefficients(blindingFactors, 2);
     }
@@ -898,13 +901,13 @@ namespace PlonkGPU
             throw std::runtime_error("Copy constraints does not match");
         }
 
-        // Compute polynomial coefficients z(X) from buffers.Z
-        LOG_TRACE("··· Computing Z ifft");
-        polynomials["Z"] = Polynomial<Engine>::fromEvaluations(E, fft, buffersZ, polPtr["Z"], zkey->domainSize, 3);
+        // Compute polynomial coefficients z(X) from buffers.Z using GPU IFFT
+        LOG_TRACE("··· Computing Z ifft (GPU)");
+        polynomials["Z"] = polynomialFromEvaluationsGPU(buffersZ, polPtr["Z"], zkey->domainSize, 3, zkeyPower);
 
-        // Compute extended evaluations of z(X) polynomial
-        LOG_TRACE("··· Computing Z fft");
-        evaluations["Z"] = new Evaluations<Engine>(E, fft, evalPtr["Z"], *polynomials["Z"], zkey->domainSize * 4);
+        // Compute extended evaluations of z(X) polynomial using GPU FFT
+        LOG_TRACE("··· Computing Z fft (GPU)");
+        evaluations["Z"] = evaluationsFromPolynomialGPU(evalPtr["Z"], *polynomials["Z"], zkey->domainSize * 4, zkeyPower + 2);
 
         // Blind z(X) polynomial coefficients with blinding scalars b
         FrElement bFactors[3] = {blindingFactors[9], blindingFactors[8], blindingFactors[7]};
@@ -1103,16 +1106,16 @@ namespace PlonkGPU
             buffersTz[i] = tz;
         }
 
-        // Compute the coefficients of the polynomial T2(X) from buffers.T2
-        LOG_TRACE("··· Computing T ifft");
-        polynomials["T"] = Polynomial<Engine>::fromEvaluations(E, fft, buffers["T"], polPtr["T"], zkey->domainSize * 4);
+        // Compute the coefficients of the polynomial T(X) from buffers.T using GPU IFFT
+        LOG_TRACE("··· Computing T ifft (GPU)");
+        polynomials["T"] = polynomialFromEvaluationsGPU(buffers["T"], polPtr["T"], zkey->domainSize * 4, 0, zkeyPower + 2);
 
         // Divide the polynomial T by Z_H(X)
         polynomials["T"]->divZh(zkey->domainSize, 4);
 
-        // Compute the coefficients of the polynomial Tz(X) from buffers.Tz
-        LOG_TRACE("··· Computing Tz ifft");
-        polynomials["Tz"] = Polynomial<Engine>::fromEvaluations(E, fft, buffers["Tz"], polPtr["Tz"], zkey->domainSize * 4);
+        // Compute the coefficients of the polynomial Tz(X) from buffers.Tz using GPU IFFT
+        LOG_TRACE("··· Computing Tz ifft (GPU)");
+        polynomials["Tz"] = polynomialFromEvaluationsGPU(buffers["Tz"], polPtr["Tz"], zkey->domainSize * 4, 0, zkeyPower + 2);
 
         // Add the polynomial Tz to T to get the final polynomial T
         polynomials["T"]->add(*polynomials["Tz"]);
@@ -1469,5 +1472,47 @@ namespace PlonkGPU
         E.f1.mul(value.zzz, value.zz, gpuResult.Z);   // zzz = Z³
 
         return value;
+    }
+
+    // GPU-accelerated polynomial construction from evaluations using GPU IFFT
+    template <typename Engine>
+    Polynomial<Engine>* PlonkProverGPU<Engine>::polynomialFromEvaluationsGPU(
+        FrElement *evaluations, FrElement *reservedBuffer, u_int64_t length, u_int64_t blindLength, u_int32_t power)
+    {
+        Polynomial<Engine> *pol = new Polynomial<Engine>(E, reservedBuffer, length, blindLength);
+
+        int nThreads = omp_get_max_threads() / 2;
+        ThreadUtils::parcpy(pol->coef, evaluations, length * sizeof(FrElement), nThreads);
+
+        // Use GPU IFFT instead of CPU fft->ifft
+        intt_bn128_gpu(pol->coef, power);
+
+        pol->fixDegree();
+
+        return pol;
+    }
+
+    // GPU-accelerated evaluations construction from polynomial using GPU FFT
+    template <typename Engine>
+    Evaluations<Engine>* PlonkProverGPU<Engine>::evaluationsFromPolynomialGPU(
+        FrElement *reservedBuffer, Polynomial<Engine> &polynomial, u_int32_t extensionLength, u_int32_t power)
+    {
+        Evaluations<Engine> *evals = new Evaluations<Engine>(E, reservedBuffer, extensionLength);
+
+        u_int64_t polLength = polynomial.getLength();
+        int nThreads = omp_get_max_threads() / 2;
+
+        // Copy polynomial coefficients to evaluation buffer
+        ThreadUtils::parcpy(evals->eval, polynomial.coef, polLength * sizeof(FrElement), nThreads);
+
+        // Zero-pad the rest
+        if (extensionLength > polLength) {
+            ThreadUtils::parset(evals->eval + polLength, 0, (extensionLength - polLength) * sizeof(FrElement), nThreads);
+        }
+
+        // Use GPU FFT instead of CPU fft->fft
+        ntt_bn128_gpu(evals->eval, power);
+
+        return evals;
     }
 }

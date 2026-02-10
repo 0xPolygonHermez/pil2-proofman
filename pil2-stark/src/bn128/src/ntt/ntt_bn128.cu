@@ -56,4 +56,35 @@ void NTT_BN128_GPU::intt(BN128GPUScalarField::Element* data, uint32_t lg_n) {
     }
 }
 
+// C-linkage wrapper functions for calling from g++ code
+extern "C" void ntt_bn128_gpu(void* data, uint32_t lg_n) {
+    fr_t* gpu_data = reinterpret_cast<fr_t*>(data);
+    
+    auto& gpu = select_gpu(-1);
+    
+    RustError err = NTT::Base(gpu, gpu_data, lg_n,
+                              NTT::InputOutputOrder::NN,
+                              NTT::Direction::forward,
+                              NTT::Type::standard);
+    
+    if (err.code != 0) {
+        fprintf(stderr, "NTT GPU error: %d\n", err.code);
+    }
+}
+
+extern "C" void intt_bn128_gpu(void* data, uint32_t lg_n) {
+    fr_t* gpu_data = reinterpret_cast<fr_t*>(data);
+    
+    auto& gpu = select_gpu(-1);
+    
+    RustError err = NTT::Base(gpu, gpu_data, lg_n,
+                              NTT::InputOutputOrder::NN,
+                              NTT::Direction::inverse,
+                              NTT::Type::standard);
+    
+    if (err.code != 0) {
+        fprintf(stderr, "INTT GPU error: %d\n", err.code);
+    }
+}
+
 #endif // !__CUDA_ARCH__

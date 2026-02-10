@@ -127,6 +127,13 @@ namespace PlonkGPU {
         FrElement *polynomialFromMontgomery(Polynomial<Engine> *polynomial);
 
         G1Point multiExponentiationGPU(Polynomial<Engine> *polynomial);
+
+        // GPU-accelerated FFT/IFFT methods
+        Polynomial<Engine>* polynomialFromEvaluationsGPU(
+            FrElement *evaluations, FrElement *reservedBuffer, u_int64_t length, u_int64_t blindLength, u_int32_t power);
+        
+        Evaluations<Engine>* evaluationsFromPolynomialGPU(
+            FrElement *reservedBuffer, Polynomial<Engine> &polynomial, u_int32_t extensionLength, u_int32_t power);
     };
 }
 
