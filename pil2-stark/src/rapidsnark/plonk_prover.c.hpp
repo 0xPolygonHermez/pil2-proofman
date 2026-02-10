@@ -55,6 +55,22 @@ namespace Plonk
         delete[] precomputedBigBuffer;
         delete[] mapBuffersBigBuffer;
         delete[] buffInternalWitness;
+        delete[] additionsBuff;
+
+        if (zkey != NULL)
+        {
+            free(zkey->k1);
+            free(zkey->k2);
+            free(zkey->QM);
+            free(zkey->QL);
+            free(zkey->QR);
+            free(zkey->QO);
+            free(zkey->QC);
+            free(zkey->S1);
+            free(zkey->S2);
+            free(zkey->S3);
+            free(zkey->X2);
+        }
 
         if (NULL == reservedMemoryPtr)
         {
@@ -90,14 +106,8 @@ namespace Plonk
     template <typename Engine>
     void PlonkProver<Engine>::setZkey(BinFileUtils::BinFile *fdZkey)
     {
-        int protocolId = Zkey::getProtocolIdFromZkey(fdZkey);
-        if(protocolId != Zkey::PLONK_PROTOCOL_ID) {
-            zklog.error("Zkey protocolId has to be Plonk");
-            exitProcess();
-        }
+        bool dr = fdZkey->isDirectRead();
 
-        // try
-        // {
         if (NULL != zkey)
         {
             removePrecomputedData();
@@ -105,7 +115,29 @@ namespace Plonk
 
         LOG_TRACE("> Reading zkey file");
 
-        zkey = Zkey::PlonkZkeyHeader::loadPlonkZkeyHeader(fdZkey);
+        if (dr) {
+            zkey = Zkey::PlonkZkeyHeader::loadPlonkZkeyHeaderDirect(fdZkey);
+        } else {
+            zkey = Zkey::PlonkZkeyHeader::loadPlonkZkeyHeader(fdZkey);
+
+            // Deep-copy header pointer fields so they survive after BinFile is freed
+            auto deepCopy = [](void *&ptr, size_t size) {
+                void *copy = malloc(size);
+                memcpy(copy, ptr, size);
+                ptr = copy;
+            };
+            deepCopy(zkey->k1, zkey->n8r);
+            deepCopy(zkey->k2, zkey->n8r);
+            deepCopy(zkey->QM, zkey->n8q * 2);
+            deepCopy(zkey->QL, zkey->n8q * 2);
+            deepCopy(zkey->QR, zkey->n8q * 2);
+            deepCopy(zkey->QO, zkey->n8q * 2);
+            deepCopy(zkey->QC, zkey->n8q * 2);
+            deepCopy(zkey->S1, zkey->n8q * 2);
+            deepCopy(zkey->S2, zkey->n8q * 2);
+            deepCopy(zkey->S3, zkey->n8q * 2);
+            deepCopy(zkey->X2, zkey->n8q * 4);
+        }
 
         if (zkey->protocolId != Zkey::PLONK_PROTOCOL_ID)
         {
@@ -168,7 +200,6 @@ namespace Plonk
         // Read Q selectors polynomials and evaluations
         LOG_TRACE("... Loading QL, QR, QM, QO, & QC polynomial coefficients and evaluations");
 
-        // Reserve memory for Q's polynomials
         polynomials["QL"] = new Polynomial<Engine>(E, polPtr["QL"], zkey->domainSize);
         polynomials["QR"] = new Polynomial<Engine>(E, polPtr["QR"], zkey->domainSize);
         polynomials["QM"] = new Polynomial<Engine>(E, polPtr["QM"], zkey->domainSize);
@@ -177,22 +208,29 @@ namespace Plonk
 
         int nThreads = omp_get_max_threads() / 2;
 
-        // Read Q's polynomial coefficients from zkey file
-        ThreadUtils::parcpy(polynomials["QL"]->coef,
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QL_SECTION),
-                            sDomain, nThreads);
-        ThreadUtils::parcpy(polynomials["QR"]->coef,
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QR_SECTION),
-                            sDomain, nThreads);
-        ThreadUtils::parcpy(polynomials["QM"]->coef,
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QM_SECTION),
-                            sDomain, nThreads);
-        ThreadUtils::parcpy(polynomials["QO"]->coef,
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QO_SECTION),
-                            sDomain, nThreads);
-        ThreadUtils::parcpy(polynomials["QC"]->coef,
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QC_SECTION),
-                            sDomain, nThreads);
+        if (dr) {
+            fdZkey->readSectionTo(polynomials["QL"]->coef, Zkey::ZKEY_PL_QL_SECTION, 0, sDomain);
+            fdZkey->readSectionTo(polynomials["QR"]->coef, Zkey::ZKEY_PL_QR_SECTION, 0, sDomain);
+            fdZkey->readSectionTo(polynomials["QM"]->coef, Zkey::ZKEY_PL_QM_SECTION, 0, sDomain);
+            fdZkey->readSectionTo(polynomials["QO"]->coef, Zkey::ZKEY_PL_QO_SECTION, 0, sDomain);
+            fdZkey->readSectionTo(polynomials["QC"]->coef, Zkey::ZKEY_PL_QC_SECTION, 0, sDomain);
+        } else {
+            ThreadUtils::parcpy(polynomials["QL"]->coef,
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QL_SECTION),
+                                sDomain, nThreads);
+            ThreadUtils::parcpy(polynomials["QR"]->coef,
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QR_SECTION),
+                                sDomain, nThreads);
+            ThreadUtils::parcpy(polynomials["QM"]->coef,
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QM_SECTION),
+                                sDomain, nThreads);
+            ThreadUtils::parcpy(polynomials["QO"]->coef,
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QO_SECTION),
+                                sDomain, nThreads);
+            ThreadUtils::parcpy(polynomials["QC"]->coef,
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QC_SECTION),
+                                sDomain, nThreads);
+        }
 
         polynomials["QL"]->fixDegree();
         polynomials["QR"]->fixDegree();
@@ -200,32 +238,35 @@ namespace Plonk
         polynomials["QO"]->fixDegree();
         polynomials["QC"]->fixDegree();
 
-        std::ostringstream ss;
-        ss << "... Reading Q selector evaluations ";
-
-        // Reserve memory for Q's evaluations
         evaluations["QL"] = new Evaluations<Engine>(E, evalPtr["QL"], zkey->domainSize * 4);
         evaluations["QR"] = new Evaluations<Engine>(E, evalPtr["QR"], zkey->domainSize * 4);
         evaluations["QM"] = new Evaluations<Engine>(E, evalPtr["QM"], zkey->domainSize * 4);
         evaluations["QO"] = new Evaluations<Engine>(E, evalPtr["QO"], zkey->domainSize * 4);
         evaluations["QC"] = new Evaluations<Engine>(E, evalPtr["QC"], zkey->domainSize * 4);
 
-        // Read Q's evaluations from zkey file
-        ThreadUtils::parcpy(evaluations["QL"]->eval,
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QL_SECTION) + zkey->domainSize,
-                            sDomain * 4, nThreads);
-        ThreadUtils::parcpy(evaluations["QR"]->eval,
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QR_SECTION) + zkey->domainSize,
-                            sDomain * 4, nThreads);
-        ThreadUtils::parcpy(evaluations["QM"]->eval,
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QM_SECTION) + zkey->domainSize,
-                            sDomain * 4, nThreads);
-        ThreadUtils::parcpy(evaluations["QO"]->eval,
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QO_SECTION) + zkey->domainSize,
-                            sDomain * 4, nThreads);
-        ThreadUtils::parcpy(evaluations["QC"]->eval,
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QC_SECTION) + zkey->domainSize,
-                            sDomain * 4, nThreads);
+        if (dr) {
+            fdZkey->readSectionTo(evaluations["QL"]->eval, Zkey::ZKEY_PL_QL_SECTION, sDomain, sDomain * 4);
+            fdZkey->readSectionTo(evaluations["QR"]->eval, Zkey::ZKEY_PL_QR_SECTION, sDomain, sDomain * 4);
+            fdZkey->readSectionTo(evaluations["QM"]->eval, Zkey::ZKEY_PL_QM_SECTION, sDomain, sDomain * 4);
+            fdZkey->readSectionTo(evaluations["QO"]->eval, Zkey::ZKEY_PL_QO_SECTION, sDomain, sDomain * 4);
+            fdZkey->readSectionTo(evaluations["QC"]->eval, Zkey::ZKEY_PL_QC_SECTION, sDomain, sDomain * 4);
+        } else {
+            ThreadUtils::parcpy(evaluations["QL"]->eval,
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QL_SECTION) + zkey->domainSize,
+                                sDomain * 4, nThreads);
+            ThreadUtils::parcpy(evaluations["QR"]->eval,
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QR_SECTION) + zkey->domainSize,
+                                sDomain * 4, nThreads);
+            ThreadUtils::parcpy(evaluations["QM"]->eval,
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QM_SECTION) + zkey->domainSize,
+                                sDomain * 4, nThreads);
+            ThreadUtils::parcpy(evaluations["QO"]->eval,
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QO_SECTION) + zkey->domainSize,
+                                sDomain * 4, nThreads);
+            ThreadUtils::parcpy(evaluations["QC"]->eval,
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_QC_SECTION) + zkey->domainSize,
+                                sDomain * 4, nThreads);
+        }
 
         // Read Sigma polynomial coefficients and evaluations from zkey file
         LOG_TRACE("... Loading Sigma1, Sigma2 & Sigma3 polynomial coefficients and evaluations");
@@ -234,15 +275,21 @@ namespace Plonk
         polynomials["Sigma2"] = new Polynomial<Engine>(E, polPtr["Sigma2"], zkey->domainSize);
         polynomials["Sigma3"] = new Polynomial<Engine>(E, polPtr["Sigma3"], zkey->domainSize);
 
-        ThreadUtils::parcpy(polynomials["Sigma1"]->coef,
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_SIGMA_SECTION),
-                            sDomain, nThreads);
-        ThreadUtils::parcpy(polynomials["Sigma2"]->coef,
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_SIGMA_SECTION) + zkey->domainSize * 5,
-                            sDomain, nThreads);
-        ThreadUtils::parcpy(polynomials["Sigma3"]->coef,
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_SIGMA_SECTION) + zkey->domainSize * 10,
-                            sDomain, nThreads);
+        if (dr) {
+            fdZkey->readSectionTo(polynomials["Sigma1"]->coef, Zkey::ZKEY_PL_SIGMA_SECTION, 0, sDomain);
+            fdZkey->readSectionTo(polynomials["Sigma2"]->coef, Zkey::ZKEY_PL_SIGMA_SECTION, sDomain * 5, sDomain);
+            fdZkey->readSectionTo(polynomials["Sigma3"]->coef, Zkey::ZKEY_PL_SIGMA_SECTION, sDomain * 10, sDomain);
+        } else {
+            ThreadUtils::parcpy(polynomials["Sigma1"]->coef,
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_SIGMA_SECTION),
+                                sDomain, nThreads);
+            ThreadUtils::parcpy(polynomials["Sigma2"]->coef,
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_SIGMA_SECTION) + zkey->domainSize * 5,
+                                sDomain, nThreads);
+            ThreadUtils::parcpy(polynomials["Sigma3"]->coef,
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_SIGMA_SECTION) + zkey->domainSize * 10,
+                                sDomain, nThreads);
+        }
 
         polynomials["Sigma1"]->fixDegree();
         polynomials["Sigma2"]->fixDegree();
@@ -252,34 +299,48 @@ namespace Plonk
         evaluations["Sigma2"] = new Evaluations<Engine>(E, evalPtr["Sigma2"], zkey->domainSize * 4);
         evaluations["Sigma3"] = new Evaluations<Engine>(E, evalPtr["Sigma3"], zkey->domainSize * 4);
 
-        ThreadUtils::parcpy(evaluations["Sigma1"]->eval,
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_SIGMA_SECTION) + zkey->domainSize,
-                            sDomain * 4, nThreads);
-        ThreadUtils::parcpy(evaluations["Sigma2"]->eval,
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_SIGMA_SECTION) + zkey->domainSize + zkey->domainSize * 5,
-                            sDomain * 4, nThreads);
-        ThreadUtils::parcpy(evaluations["Sigma3"]->eval,
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_SIGMA_SECTION) + zkey->domainSize + zkey->domainSize * 10,
-                            sDomain * 4, nThreads);
+        if (dr) {
+            fdZkey->readSectionTo(evaluations["Sigma1"]->eval, Zkey::ZKEY_PL_SIGMA_SECTION, sDomain * 1, sDomain * 4);
+            fdZkey->readSectionTo(evaluations["Sigma2"]->eval, Zkey::ZKEY_PL_SIGMA_SECTION, sDomain * 6, sDomain * 4);
+            fdZkey->readSectionTo(evaluations["Sigma3"]->eval, Zkey::ZKEY_PL_SIGMA_SECTION, sDomain * 11, sDomain * 4);
+        } else {
+            ThreadUtils::parcpy(evaluations["Sigma1"]->eval,
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_SIGMA_SECTION) + zkey->domainSize,
+                                sDomain * 4, nThreads);
+            ThreadUtils::parcpy(evaluations["Sigma2"]->eval,
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_SIGMA_SECTION) + zkey->domainSize + zkey->domainSize * 5,
+                                sDomain * 4, nThreads);
+            ThreadUtils::parcpy(evaluations["Sigma3"]->eval,
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_SIGMA_SECTION) + zkey->domainSize + zkey->domainSize * 10,
+                                sDomain * 4, nThreads);
+        }
 
         // Read Lagrange polynomials & evaluations from zkey file
         LOG_TRACE("... Loading Lagrange evaluations");
         evaluations["lagrange"] = new Evaluations<Engine>(E, evalPtr["lagrange"], zkey->domainSize * 4 * zkey->nPublic);
         for (uint64_t i = 0; i < zkey->nPublic; i++)
         {
-            ThreadUtils::parcpy(evaluations["lagrange"]->eval + zkey->domainSize * 4 * i,
-                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_LAGRANGE_SECTION) + zkey->domainSize + zkey->domainSize * 5 * i,
-                                sDomain * 4, nThreads);
+            if (dr) {
+                fdZkey->readSectionTo(evaluations["lagrange"]->eval + zkey->domainSize * 4 * i,
+                                      Zkey::ZKEY_PL_LAGRANGE_SECTION,
+                                      sDomain + sDomain * 5 * i,
+                                      sDomain * 4);
+            } else {
+                ThreadUtils::parcpy(evaluations["lagrange"]->eval + zkey->domainSize * 4 * i,
+                                    (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_LAGRANGE_SECTION) + zkey->domainSize + zkey->domainSize * 5 * i,
+                                    sDomain * 4, nThreads);
+            }
         }
         LOG_TRACE("... Loading Powers of Tau evaluations");
 
-        // ThreadUtils::parset(PTau, 0, sizeof(G1PointAffine) * (zkey->domainSize + 6), nThreads);
-
-        // domainSize + 6 corresponds to the SRS length stored in the zkey during the setup phase.
-        // This represents the maximum SRS length required by the proving system.
-        ThreadUtils::parcpy(this->PTau,
-                            (G1PointAffine *)fdZkey->getSectionData(Zkey::ZKEY_PL_PTAU_SECTION),
-                            (zkey->domainSize + 6) * sizeof(G1PointAffine), nThreads);
+        if (dr) {
+            fdZkey->readSectionTo(this->PTau, Zkey::ZKEY_PL_PTAU_SECTION, 0,
+                                  (zkey->domainSize + 6) * sizeof(G1PointAffine));
+        } else {
+            ThreadUtils::parcpy(this->PTau,
+                                (G1PointAffine *)fdZkey->getSectionData(Zkey::ZKEY_PL_PTAU_SECTION),
+                                (zkey->domainSize + 6) * sizeof(G1PointAffine), nThreads);
+        }
 
         // Load A, B & C map buffers
         LOG_TRACE("... Loading A, B & C map buffers");
@@ -295,21 +356,33 @@ namespace Plonk
         buffInternalWitness = new FrElement[zkey->nAdditions];
 
         LOG_TRACE("··· Loading additions");
-        additionsBuff = (Zkey::Addition<Engine> *)fdZkey->getSectionData(Zkey::ZKEY_PL_ADDITIONS_SECTION);
+        additionsBuff = new Zkey::Addition<Engine>[zkey->nAdditions];
+        uint64_t additionsBytes = zkey->nAdditions * sizeof(Zkey::Addition<Engine>);
+
+        if (dr) {
+            fdZkey->readSectionTo(additionsBuff, Zkey::ZKEY_PL_ADDITIONS_SECTION, 0, additionsBytes);
+        } else {
+            auto srcAdditions = (Zkey::Addition<Engine> *)fdZkey->getSectionData(Zkey::ZKEY_PL_ADDITIONS_SECTION);
+            ThreadUtils::parcpy(additionsBuff, srcAdditions, additionsBytes, nThreads);
+        }
 
         LOG_TRACE("··· Loading map buffers");
-        // ThreadUtils::parset(mapBuffers["A"], 0, byteLength * 3, nThreads);
 
-        // Read zkey sections and fill the buffers
-        ThreadUtils::parcpy(mapBuffers["A"],
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_A_MAP_SECTION),
-                            byteLength, nThreads);
-        ThreadUtils::parcpy(mapBuffers["B"],
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_B_MAP_SECTION),
-                            byteLength, nThreads);
-        ThreadUtils::parcpy(mapBuffers["C"],
-                            (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_C_MAP_SECTION),
-                            byteLength, nThreads);
+        if (dr) {
+            fdZkey->readSectionTo(mapBuffers["A"], Zkey::ZKEY_PL_A_MAP_SECTION, 0, byteLength);
+            fdZkey->readSectionTo(mapBuffers["B"], Zkey::ZKEY_PL_B_MAP_SECTION, 0, byteLength);
+            fdZkey->readSectionTo(mapBuffers["C"], Zkey::ZKEY_PL_C_MAP_SECTION, 0, byteLength);
+        } else {
+            ThreadUtils::parcpy(mapBuffers["A"],
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_A_MAP_SECTION),
+                                byteLength, nThreads);
+            ThreadUtils::parcpy(mapBuffers["B"],
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_B_MAP_SECTION),
+                                byteLength, nThreads);
+            ThreadUtils::parcpy(mapBuffers["C"],
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_C_MAP_SECTION),
+                                byteLength, nThreads);
+        }
 
         transcript = new Keccak256Transcript<Engine>(E);
         proof = new SnarkProof<Engine>(E, "plonk");
@@ -353,7 +426,7 @@ namespace Plonk
         {
             if (lengthNonPrecomputedBigBuffer * sizeof(FrElement) > reservedMemorySize)
             {
-                ss.str("");
+                std::ostringstream ss;
                 ss << "Not enough reserved memory to generate a prove. Increase reserved memory size at least to "
                    << lengthNonPrecomputedBigBuffer * sizeof(FrElement) << " bytes";
                 throw std::runtime_error(ss.str());
@@ -706,7 +779,7 @@ namespace Plonk
         E.g1.copy(Commitment, *((G1PointAffine *)zkey->S3));
         transcript->addPolCommitment(Commitment);
 
-        // Add A to the transcript
+        // Add publics to the transcript
         for (u_int32_t i = 0; i < zkey->nPublic; i++)
         {
             transcript->addScalar(buffers["A"][i]);

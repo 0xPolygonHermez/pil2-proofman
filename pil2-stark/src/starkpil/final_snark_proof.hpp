@@ -23,8 +23,7 @@ class PlonkFinalProver : public IFinalSnarkProver {
 public:
     PlonkFinalProver(BinFileUtils::BinFile* fdZkey) : prover_(AltBn128::Engine::engine) {
         prover_.setZkey(fdZkey);
-        auto zkeyHeader_ = Zkey::PlonkZkeyHeader::loadPlonkZkeyHeader(fdZkey);
-        nPublics_ = zkeyHeader_->nPublic;
+        nPublics_ = prover_.getNPublic();
     }
 
     std::tuple <std::vector<uint8_t>, std::vector<uint8_t>>
@@ -59,8 +58,18 @@ struct FinalSnark {
     std::unique_ptr<IFinalSnarkProver> prover;
 };
 
+int getProtocolIdFromBinFile(BinFileUtils::BinFile *fdZkey) {
+    if (fdZkey->isDirectRead()) {
+        uint32_t protocolId32 = 0;
+        fdZkey->readSectionTo(&protocolId32, 1, 0, 4);
+        return (int)protocolId32;
+    } else {
+        return Zkey::getProtocolIdFromZkey(fdZkey);
+    }
+}
+
 std::unique_ptr<IFinalSnarkProver> initFinalSnarkProver(BinFileUtils::BinFile *fdZkey) {
-    int protocolId = Zkey::getProtocolIdFromZkey(fdZkey);
+    int protocolId = getProtocolIdFromBinFile(fdZkey);
 
     if (protocolId == Zkey::FFLONK_PROTOCOL_ID) {
         TimerStart(PROVER_INIT_FFLONK);

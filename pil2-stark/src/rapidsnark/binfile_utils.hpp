@@ -14,6 +14,8 @@ namespace BinFileUtils
         void *addr;
         u_int64_t size;
         u_int64_t pos;
+        bool directRead;
+        int fileFd;
 
         class Section
         {
@@ -34,6 +36,7 @@ namespace BinFileUtils
     public:
         BinFile(void *data, uint64_t size, std::string type, uint32_t maxVersion);
         BinFile(std::string fileName, std::string type, uint32_t maxVersion);
+        BinFile(std::string fileName, std::string type, uint32_t maxVersion, bool directRead);
 
         ~BinFile();
 
@@ -44,6 +47,10 @@ namespace BinFileUtils
 
         void *getSectionData(u_int32_t sectionId, u_int32_t sectionPos = 0);
         u_int64_t getSectionSize(u_int32_t sectionId, u_int32_t sectionPos = 0);
+
+        void readSectionTo(void *dest, u_int32_t sectionId, u_int64_t offset, u_int64_t len);
+
+        bool isDirectRead() const { return directRead; }
 
         u_int8_t  readU8LE();
         u_int16_t readU16LE();

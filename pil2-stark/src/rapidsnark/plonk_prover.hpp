@@ -81,6 +81,8 @@ namespace Plonk {
 
         void setZkey(BinFileUtils::BinFile *fdZkey);
 
+        u_int32_t getNPublic() const { return zkey->nPublic; }
+
         std::tuple <std::vector<uint8_t>, std::vector<uint8_t>> prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns);
         std::tuple <std::vector<uint8_t>, std::vector<uint8_t>> prove(BinFileUtils::BinFile *fdZkey, FrElement *wtns, WtnsUtils::Header* wtnsHeader = NULL);
 
