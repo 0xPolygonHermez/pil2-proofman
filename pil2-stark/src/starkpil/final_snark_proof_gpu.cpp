@@ -60,6 +60,20 @@ void genFinalSnarkProofGPU(void *proverSnark, void *circomWitnessFinal, uint8_t*
 void *initFinalSnarkProverGPU(char* zkeyFile) {
     auto fdZkey = std::make_unique<BinFileUtils::BinFile>(std::string(zkeyFile), "zkey", 1, /*directRead=*/true);
     uint64_t protocolId = getProtocolIdFromBinFileGPU(fdZkey.get());
+
+    if (protocolId == Zkey::FFLONK_PROTOCOL_ID) {
+        // FFLONK protocol requires directRead=false (legacy code)
+        auto zkey = BinFileUtils::openExisting(zkeyFile, "zkey", 1);
+        BinFileUtils::BinFile *fdZkey = zkey.get();
+        auto prover = initFinalSnarkProverGPU(fdZkey);
+
+        FinalSnarkGPU *finalSnark = new FinalSnarkGPU{
+            .zkey = std::move(zkey),
+            .protocolId = protocolId,
+            .prover = std::move(prover)
+        };
+        return finalSnark;
+    }
     auto prover = initFinalSnarkProverGPU(fdZkey.get());
     FinalSnarkGPU *finalSnark = new FinalSnarkGPU{
         .zkey = std::move(fdZkey),

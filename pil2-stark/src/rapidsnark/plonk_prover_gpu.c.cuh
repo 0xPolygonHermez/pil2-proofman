@@ -57,17 +57,20 @@ namespace PlonkGPU
         delete[] buffInternalWitness;
         delete[] additionsBuff;
 
-        free(zkey->k1);
-        free(zkey->k2);
-        free(zkey->QM);
-        free(zkey->QL);
-        free(zkey->QR);
-        free(zkey->QO);
-        free(zkey->QC);
-        free(zkey->S1);
-        free(zkey->S2);
-        free(zkey->S3);
-        free(zkey->X2);
+        if (zkey != NULL)
+        {
+            free(zkey->k1);
+            free(zkey->k2);
+            free(zkey->QM);
+            free(zkey->QL);
+            free(zkey->QR);
+            free(zkey->QO);
+            free(zkey->QC);
+            free(zkey->S1);
+            free(zkey->S2);
+            free(zkey->S3);
+            free(zkey->X2);
+        }
 
         if (NULL == reservedMemoryPtr)
         {
