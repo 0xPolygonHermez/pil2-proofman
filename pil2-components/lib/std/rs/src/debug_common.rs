@@ -76,7 +76,7 @@ pub fn extract_global_hint_fields<F: PrimeField64>(
             let is_proves = type_piop == 1;
             let expr = expressions.get(0);
             let norm_vals = normalize_vals(&expr);
-            let hash = hash_vals(norm_vals);
+            let hash = hash_vals(&expr);
             if fast_mode {
                 update_debug_data_fast(
                     debug_data_fast,
@@ -374,7 +374,7 @@ pub fn update_bus<F: PrimeField64>(
 
     let expr = expressions.get(row);
     let norm_vals = normalize_vals(&expr);
-    let hash = hash_vals(norm_vals);
+    let hash = hash_vals(&expr);
 
     update_debug_data(
         debug_data,
@@ -438,8 +438,7 @@ fn update_bus_fast<F: PrimeField64>(
     };
 
     let expr = expressions.get(row);
-    let norm_vals = normalize_vals(&expr);
-    let hash = hash_vals(norm_vals);
+    let hash = hash_vals(&expr);
 
     update_debug_data_fast(
         debug_data_fast,
