@@ -920,6 +920,18 @@ void *init_final_snark_prover(char* zkeyFile) {
 
     auto fdZkey = std::make_unique<BinFileUtils::BinFile>(std::string(zkeyFile), "zkey", 1, /*directRead=*/true);
     uint64_t protocolId = getProtocolIdFromBinFile(fdZkey.get());
+
+    if (protocolId == Zkey::FFLONK_PROTOCOL_ID) {
+        // FFLONK protocol requires directRead=false (legacy code)
+        fdZkey = std::make_unique<BinFileUtils::BinFile>(std::string(zkeyFile), "zkey", 1, /*directRead=*/false);
+        auto prover = initFinalSnarkProver(fdZkey.get());
+        FinalSnark *finalSnark = new FinalSnark{
+            .zkey = std::move(fdZkey),
+            .protocolId = protocolId,
+            .prover = std::move(prover)
+        };
+        return finalSnark;
+    }
     auto prover = initFinalSnarkProver(fdZkey.get());
     FinalSnark *finalSnark = new FinalSnark{
         .zkey = std::move(fdZkey),
