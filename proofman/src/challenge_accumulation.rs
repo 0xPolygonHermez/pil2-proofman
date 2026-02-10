@@ -13,9 +13,12 @@ fn _print_challenges<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &
 
     for instance_id in my_instances.iter() {
         let root_contribution = roots_contributions[*instance_id];
+        let (airgroup_id, air_id) = pctx.dctx_get_instance_info(*instance_id).unwrap();
         tracing::info!(
-            "··· Instance {}: Root contribution: [{}, {}, {}, {}]",
+            "··· Instance {} [{}:{}]: Root contribution: [{}, {}, {}, {}]",
             instance_id,
+            airgroup_id,
+            air_id,
             root_contribution[0],
             root_contribution[1],
             root_contribution[2],
