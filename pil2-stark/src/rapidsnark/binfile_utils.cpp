@@ -134,8 +134,7 @@ namespace BinFileUtils
         : addr(nullptr), size(0), pos(0), directRead(_directRead), fileFd(-1), version(0), readingSection(nullptr)
     {
         if (!_directRead) {
-            *this = BinFile(fileName, _type, maxVersion);
-            return;
+           throw std::invalid_argument("This constructor is only for direct read mode right now.");
         }
 
         fileFd = open(fileName.c_str(), O_RDONLY);
@@ -198,6 +197,12 @@ namespace BinFileUtils
             sections[sType].push_back(Section((void *)filePos, sSize));
 
             filePos += sSize; // skip past the section data
+
+            if (filePos > size) {
+                close(fileFd);
+                fileFd = -1;
+                throw std::runtime_error("Section data exceeds file size");
+            }
         }
 
         pos = 0;
@@ -290,6 +295,9 @@ namespace BinFileUtils
         if (sectionPos >= sections[sectionId].size())
         {
             throw std::range_error("Section pos too big. There are " + std::to_string(sections[sectionId].size()) + " and it's trying to access section: " + std::to_string(sectionPos));
+        }
+        if (directRead) {
+            throw std::runtime_error("Direct read mode not supported for getSectionData");
         }
 
         return sections[sectionId][sectionPos].start;

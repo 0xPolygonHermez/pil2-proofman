@@ -63,28 +63,29 @@ namespace Zkey {
 
         u_int64_t off = 0;
 
-        plonkZkeyHeader->n8q = *((u_int32_t *)(buf + off));
-        off += 4;
+        auto readUint32 = [&](u_int32_t &out) {
+            memcpy(&out, buf + off, sizeof(u_int32_t));
+            off += sizeof(u_int32_t);
+        };
+
+        
+        // Read fields in the same order as loadPlonkZkeyHeader
+        
+        readUint32(plonkZkeyHeader->n8q);
         mpz_init(plonkZkeyHeader->qPrime);
         mpz_import(plonkZkeyHeader->qPrime, plonkZkeyHeader->n8q, -1, 1, -1, 0, buf + off);
         off += plonkZkeyHeader->n8q;
 
-        plonkZkeyHeader->n8r = *((u_int32_t *)(buf + off));
-        off += 4;
+        readUint32(plonkZkeyHeader->n8r);
         mpz_init(plonkZkeyHeader->rPrime);
         mpz_import(plonkZkeyHeader->rPrime, plonkZkeyHeader->n8r, -1, 1, -1, 0, buf + off);
         off += plonkZkeyHeader->n8r;
 
-        plonkZkeyHeader->nVars = *((u_int32_t *)(buf + off));
-        off += 4;
-        plonkZkeyHeader->nPublic = *((u_int32_t *)(buf + off));
-        off += 4;
-        plonkZkeyHeader->domainSize = *((u_int32_t *)(buf + off));
-        off += 4;
-        plonkZkeyHeader->nAdditions = *((u_int32_t *)(buf + off));
-        off += 4;
-        plonkZkeyHeader->nConstraints = *((u_int32_t *)(buf + off));
-        off += 4;
+        readUint32(plonkZkeyHeader->nVars);
+        readUint32(plonkZkeyHeader->nPublic);
+        readUint32(plonkZkeyHeader->domainSize);
+        readUint32(plonkZkeyHeader->nAdditions);
+        readUint32(plonkZkeyHeader->nConstraints);
 
         // Deep-copy small pointer fields — they own their memory
         auto copyField = [](uint8_t *src, size_t len) -> void* {
@@ -92,6 +93,7 @@ namespace Zkey {
             memcpy(copy, src, len);
             return copy;
         };
+
 
         plonkZkeyHeader->k1 = copyField(buf + off, plonkZkeyHeader->n8r);
         off += plonkZkeyHeader->n8r;

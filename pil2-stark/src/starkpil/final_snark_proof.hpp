@@ -187,3 +187,4 @@ std::pair<std::string, std::string> snark_proof_to_json(
 }
 
 #endif // FINAL_SNARK_PROOF_HPP
+    
