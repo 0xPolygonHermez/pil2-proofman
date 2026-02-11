@@ -30,7 +30,6 @@ env = "1.0.1"
 yansi = "1.0.1"
 colored.workspace = true
 tabled = "0.7"
-indexmap = { version = "2", features = ["serde"] }
 bincode.workspace = true
 bytemuck.workspace = true
 
