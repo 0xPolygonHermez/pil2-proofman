@@ -82,11 +82,15 @@ impl<F: PrimeField64> WitnessManager<F> {
         self.execution_done.store(false, Ordering::SeqCst);
         let n_components = self.components_std.read().unwrap().len();
         for (idx, component) in self.components_std.read().unwrap().iter().enumerate() {
-            component.execute(self.pctx.clone(), &self.components_instance_ids[n_components + idx])?;
+            component.execute(
+                self.pctx.clone(),
+                self.sctx.clone(),
+                &self.components_instance_ids[n_components + idx],
+            )?;
         }
 
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
-            component.execute(self.pctx.clone(), &self.components_instance_ids[idx])?;
+            component.execute(self.pctx.clone(), self.sctx.clone(), &self.components_instance_ids[idx])?;
         }
 
         self.pctx.dctx_assign_instances()?;
