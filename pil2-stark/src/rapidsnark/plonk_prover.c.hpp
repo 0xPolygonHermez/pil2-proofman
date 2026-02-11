@@ -839,11 +839,6 @@ namespace Plonk
 #pragma omp parallel for
         for (u_int64_t i = 0; i < zkey->domainSize; i++)
         {
-            //            if ((0 != i) && (i % 100000 == 0)) {
-            //                ss.str("");
-            //                ss << "> Computing Z evaluation " << i << "/" << zkey->domainSize;
-            //                //LOG_TRACE(ss);
-            //            }
 
             FrElement omega = fft->root(zkeyPower, i);
 

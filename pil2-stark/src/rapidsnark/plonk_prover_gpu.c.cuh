@@ -19,6 +19,11 @@ using namespace CPlusPlusLogging;
 extern "C" void msm_bn128_gpu(void* out, const void* points, const void* scalars, size_t npoints, bool montgomery);
 extern "C" void ntt_bn128_gpu(void* data, uint32_t lg_n);
 extern "C" void intt_bn128_gpu(void* data, uint32_t lg_n);
+extern "C" void compute_z_ratios_gpu(
+    void* ratioOut, const void* buffA, const void* buffB, const void* buffC,
+    const void* sigma1Eval, const void* sigma2Eval, const void* sigma3Eval,
+    const void* beta, const void* gamma, const void* k1, const void* k2,
+    const void* omega, uint64_t domainSize);
 
 namespace PlonkGPU
 {
@@ -417,8 +422,8 @@ namespace PlonkGPU
         lengthNonPrecomputedBigBuffer += zkey->domainSize + 6;       // Buffer tmp
 
         // Memory reuse plan:
-        // buffers.T    ← numArr, polynomials.R
-        // buffers.Tz   ← denArr, polynomials.Wxi
+        // buffers.T    ← zratioArray, polynomials.R
+        // buffers.Tz   ← polynomials.Wxi
         // polynomials.T ← buffers.Z
 
         buffersLength = zkey->domainSize * 3; // Buffers A, B, C, tmp
@@ -469,10 +474,9 @@ namespace PlonkGPU
         buffers["tmp"] = buffers["C"] + (zkey->domainSize);
 
         // Reuses
-        buffers["numArr"] = buffers["T"];
+        buffers["zratioArray"] = buffers["T"];
         polPtr["R"] = buffers["T"];
 
-        buffers["denArr"] = buffers["Tz"];
         polPtr["Wxi"] = buffers["Tz"];
 
         buffers["Z"] = polPtr["T"];
@@ -805,8 +809,7 @@ namespace PlonkGPU
     template <typename Engine>
     void PlonkProverGPU<Engine>::computeZ()
     {
-        FrElement *numArr = buffers["numArr"];
-        FrElement *denArr = buffers["denArr"];
+        FrElement *zratioArray = buffers["zratioArray"];
 
         auto buffersA = buffers["A"];
         auto buffersB = buffers["B"];
@@ -816,7 +819,7 @@ namespace PlonkGPU
         auto evalSigma2 = evaluations["Sigma2"];
         auto evalSigma3 = evaluations["Sigma3"];
 
-        LOG_TRACE("··· Computing Z evaluations");
+        LOG_TRACE("··· Computing Z evaluations (GPU)");
 
         // Preloaded constants
         auto beta = challenges["beta"];
@@ -824,77 +827,37 @@ namespace PlonkGPU
         auto k1 = *((FrElement *)zkey->k1);
         auto k2 = *((FrElement *)zkey->k2);
 
-        std::ostringstream ss;
-#pragma omp parallel for
-        for (u_int64_t i = 0; i < zkey->domainSize; i++)
-        {
-            FrElement omega = fft->root(zkeyPower, i);
+        // Primitive root of unity: omega = root(zkeyPower, 1)
+        FrElement omega = fft->root(zkeyPower, 1);
 
-            // Z(X) := numArr / denArr
-            // numArr := (a + beta·ω + gamma)(b + beta·ω·k1 + gamma)(c + beta·ω·k2 + gamma)
-            FrElement betaw = E.fr.mul(beta, omega);
+        compute_z_ratios_gpu(
+            (void*)zratioArray,
+            (const void*)buffersA,
+            (const void*)buffersB,
+            (const void*)buffersC,
+            (const void*)evalSigma1->eval,
+            (const void*)evalSigma2->eval,
+            (const void*)evalSigma3->eval,
+            (const void*)&beta,
+            (const void*)&gamma,
+            (const void*)&k1,
+            (const void*)&k2,
+            (const void*)&omega,
+            zkey->domainSize);
 
-            FrElement num1 = buffersA[i];
-            num1 = E.fr.add(num1, betaw);
-            num1 = E.fr.add(num1, gamma);
-
-            FrElement num2 = buffersB[i];
-            num2 = E.fr.add(num2, E.fr.mul(k1, betaw));
-            num2 = E.fr.add(num2, gamma);
-
-            FrElement num3 = buffersC[i];
-            num3 = E.fr.add(num3, E.fr.mul(k2, betaw));
-            num3 = E.fr.add(num3, gamma);
-
-            numArr[i] = E.fr.mul(num1, E.fr.mul(num2, num3));
-
-            // denArr := (a + beta·sigma1 + gamma)(b + beta·sigma2 + gamma)(c + beta·sigma3 + gamma)
-            FrElement den1 = buffersA[i];
-            den1 = E.fr.add(den1, E.fr.mul(beta, evalSigma1->eval[i * 4]));
-            den1 = E.fr.add(den1, gamma);
-
-            FrElement den2 = buffersB[i];
-            den2 = E.fr.add(den2, E.fr.mul(beta, evalSigma2->eval[i * 4]));
-            den2 = E.fr.add(den2, gamma);
-
-            FrElement den3 = buffersC[i];
-            den3 = E.fr.add(den3, E.fr.mul(beta, evalSigma3->eval[i * 4]));
-            den3 = E.fr.add(den3, gamma);
-
-            denArr[i] = E.fr.mul(den1, E.fr.mul(den2, den3));
-        }
-
-        FrElement numPrev = numArr[0];
-        FrElement denPrev = denArr[0];
-        FrElement numCur, denCur;
-
-        for (u_int64_t i = 0; i < zkey->domainSize - 1; i++)
-        {
-            numCur = numArr[i + 1];
-            denCur = denArr[i + 1];
-
-            numArr[i + 1] = numPrev;
-            denArr[i + 1] = denPrev;
-
-            numPrev = E.fr.mul(numPrev, numCur);
-            denPrev = E.fr.mul(denPrev, denCur);
-        }
-
-        numArr[0] = numPrev;
-        denArr[0] = denPrev;
-
-        // Compute the inverse of denArr to compute in the next command the
-        // division numArr/denArr by multiplying num · 1/denArr
-        batchInverse(denArr, zkey->domainSize);
-
-        // Multiply numArr · denArr where denArr was inverted in the previous command
+        // Sequential prefix product over ratios to build Z evaluations
+        // Z[0] = product of all ratios (should equal 1)
+        // Z[i] = product of ratios[0..i-1] for i > 0
         auto buffersZ = buffers["Z"];
 
-#pragma omp parallel for
-        for (u_int32_t i = 0; i < zkey->domainSize; i++)
+        FrElement prev = zratioArray[0];
+        for (u_int64_t i = 0; i < zkey->domainSize - 1; i++)
         {
-            buffersZ[i] = E.fr.mul(numArr[i], denArr[i]);
+            FrElement cur = zratioArray[i + 1];
+            buffersZ[i + 1] = prev;
+            prev = E.fr.mul(prev, cur);
         }
+        buffersZ[0] = prev;
 
         if (!E.fr.eq(buffersZ[0], E.fr.one()))
         {

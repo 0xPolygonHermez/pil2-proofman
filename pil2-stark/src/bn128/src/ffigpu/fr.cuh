@@ -31,6 +31,12 @@ public:
     static __device__ __forceinline__ Element add(const Element& a, const Element& b);
     static __device__ __forceinline__ Element sub(const Element& a, const Element& b);
     static __device__ __forceinline__ Element mul(const Element& a, const Element& b);
+    static __device__ __forceinline__ Element square(const Element& a);
+
+    static __device__ __forceinline__ void reciprocal(Element& r, const Element& a);
+    static __device__ __forceinline__ Element reciprocal(const Element& a);
+    static __device__ __forceinline__ void pow(Element& r, const Element& base, uint32_t exp);
+    static __device__ __forceinline__ Element pow(const Element& base, uint32_t exp);
 
     static __device__ __forceinline__ void toMontgomery(Element& r);
     static __device__ __forceinline__ void fromMontgomery(Element& r);
@@ -87,6 +93,21 @@ __device__ __forceinline__ BN128GPUScalarField::Element BN128GPUScalarField::mul
 
 __device__ __forceinline__ void BN128GPUScalarField::square(Element& r, const Element& a) {
     r.v = sqr(a.v);
+}
+__device__ __forceinline__ BN128GPUScalarField::Element BN128GPUScalarField::square(const Element& a) {
+    return {sqr(a.v)};
+}
+__device__ __forceinline__ void BN128GPUScalarField::reciprocal(Element& r, const Element& a) {
+    r.v = a.v.reciprocal();
+}
+__device__ __forceinline__ BN128GPUScalarField::Element BN128GPUScalarField::reciprocal(const Element& a) {
+    return {a.v.reciprocal()};
+}
+__device__ __forceinline__ void BN128GPUScalarField::pow(Element& r, const Element& base, uint32_t exp) {
+    r.v = base.v ^ exp;
+}
+__device__ __forceinline__ BN128GPUScalarField::Element BN128GPUScalarField::pow(const Element& base, uint32_t exp) {
+    return {base.v ^ exp};
 }
 __device__ __forceinline__ void BN128GPUScalarField::toMontgomery(Element& r) {
     r.v.to();
