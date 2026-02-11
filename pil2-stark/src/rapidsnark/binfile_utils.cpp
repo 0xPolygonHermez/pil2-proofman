@@ -10,6 +10,9 @@
 #include "binfile_utils.hpp"
 #include "thread_utils.hpp"
 #include <omp.h>
+#include <thread>
+#include <vector>
+#include <algorithm>
 
 namespace BinFileUtils
 {
@@ -248,6 +251,46 @@ namespace BinFileUtils
             }
             totalRead += r;
         }
+    }
+
+    void BinFile::readSectionToParallel(void *dest, u_int32_t sectionId,
+                                         u_int64_t offset, u_int64_t len, int numThreads)
+    {
+        if (!directRead || len == 0) {
+            readSectionTo(dest, sectionId, offset, len);
+            return;
+        }
+
+        if (sections.find(sectionId) == sections.end()) {
+            throw std::range_error("Section does not exist: " + std::to_string(sectionId));
+        }
+
+        u_int64_t fileOffset = (u_int64_t)sections[sectionId][0].start + offset;
+        u_int64_t sectionSize = sections[sectionId][0].size;
+
+        if (offset + len > sectionSize) {
+            throw std::range_error("readSectionToParallel: offset+len exceeds section size");
+        }
+
+        u_int64_t chunkSize = (len + numThreads - 1) / numThreads;
+        std::vector<std::thread> threads;
+        for (int i = 0; i < numThreads; i++) {
+            u_int64_t off = (u_int64_t)i * chunkSize;
+            if (off >= len) break;
+            u_int64_t sz = std::min(chunkSize, len - off);
+            threads.emplace_back([fd = this->fileFd, dest, fileOffset, off, sz]() {
+                u_int64_t done = 0;
+                while (done < sz) {
+                    ssize_t r = ::pread(fd, (uint8_t *)dest + off + done,
+                                        sz - done, fileOffset + off + done);
+                    if (r <= 0) {
+                        throw std::system_error(errno, std::generic_category(), "pread parallel");
+                    }
+                    done += r;
+                }
+            });
+        }
+        for (auto &t : threads) t.join();
     }
 
     void BinFile::startReadSection(u_int32_t sectionId, u_int32_t sectionPos)

@@ -49,6 +49,7 @@ namespace BinFileUtils
         u_int64_t getSectionSize(u_int32_t sectionId, u_int32_t sectionPos = 0);
 
         void readSectionTo(void *dest, u_int32_t sectionId, u_int64_t offset, u_int64_t len);
+        void readSectionToParallel(void *dest, u_int32_t sectionId, u_int64_t offset, u_int64_t len, int numThreads = 8);
 
         bool isDirectRead() const { return directRead; }
 
