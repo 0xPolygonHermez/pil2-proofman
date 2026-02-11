@@ -24,6 +24,28 @@ extern "C" void compute_z_ratios_gpu(
     const void* sigma1Eval, const void* sigma2Eval, const void* sigma3Eval,
     const void* beta, const void* gamma, const void* k1, const void* k2,
     const void* omega, uint64_t domainSize);
+extern "C" void compute_pi_gpu(
+    void* piOut,
+    const void* evalLagrange,
+    const void* publicA,
+    uint64_t fullN, uint32_t nPublic);
+extern "C" void compute_t_evaluations_gpu(
+    void* tOut, void* tzOut,
+    const void* evalA, const void* evalB,
+    const void* evalC, const void* evalZ,
+    const void* evalQM, const void* evalQL,
+    const void* evalQR, const void* evalQO,
+    const void* evalQC, const void* evalS1,
+    const void* evalS2, const void* evalS3,
+    const void* evalLagrange0,
+    const void* piPrecomp,
+    const void* blindFactors,
+    const void* beta, const void* gamma,
+    const void* alpha, const void* alpha2,
+    const void* k1, const void* k2,
+    const void* omega4x, const void* omega1,
+    const void* Z1, const void* Z2, const void* Z3,
+    uint64_t domainSize);
 
 namespace PlonkGPU
 {
@@ -919,8 +941,7 @@ namespace PlonkGPU
     template <typename Engine>
     void PlonkProverGPU<Engine>::computeT()
     {
-        LOG_TRACE("··· Computing T evaluations");
-        MulZ<Engine> mulz(E, fft);
+        LOG_TRACE("··· Computing T evaluations (GPU)");
 
         auto buffersA = buffers["A"];
         auto buffersT = buffers["T"];
@@ -940,7 +961,6 @@ namespace PlonkGPU
         auto evaluationsS3 = evaluations["Sigma3"];
         auto evaluationsLagrange = evaluations["lagrange"];
 
-
         // Preloaded constants
         auto beta = challenges["beta"];
         auto gamma = challenges["gamma"];
@@ -950,124 +970,66 @@ namespace PlonkGPU
         auto k2 = *((FrElement *)zkey->k2);
         auto omega1 = fft->root(zkeyPower, 1);
 
-        std::ostringstream ss;
-#pragma omp parallel for
-        for (u_int64_t i = 0; i < zkey->domainSize * 4; i++)
-        {
-            FrElement omega = fft->root(zkeyPower + 2, i);
-            FrElement omega2 = E.fr.square(omega);
-            FrElement omegaW = E.fr.mul(omega, omega1);
-            FrElement omegaW2 = E.fr.square(omegaW);
+        // Primitive root of the 4x extended domain
+        FrElement omega_4x = fft->root(zkeyPower + 2, 1);
 
-            FrElement a = evaluationsA->eval[i];
-            FrElement b = evaluationsB->eval[i];
-            FrElement c = evaluationsC->eval[i];
-            FrElement z = evaluationsZ->eval[i];
-            FrElement zW = evaluationsZ->eval[(zkey->domainSize * 4 + 4 + i) % (zkey->domainSize * 4)];
+        // Precompute MulZ Z1/Z2/Z3 constants (from mul_z.c.hpp)
+        FrElement w2 = fft->root(2, 1);
+        FrElement Z1[4], Z2[4], Z3[4];
+        Z1[0] = E.fr.zero();
+        Z1[1] = E.fr.add(E.fr.set(-1), w2);
+        Z1[2] = E.fr.set(-2);
+        Z1[3] = E.fr.sub(E.fr.set(-1), w2);
+        Z2[0] = E.fr.zero();
+        Z2[1] = E.fr.mul(E.fr.set(-2), w2);
+        Z2[2] = E.fr.set(4);
+        Z2[3] = E.fr.sub(E.fr.zero(), E.fr.mul(E.fr.set(-2), w2));
+        Z3[0] = E.fr.zero();
+        Z3[1] = E.fr.add(E.fr.set(2), E.fr.mul(E.fr.set(2), w2));
+        Z3[2] = E.fr.set(-8);
+        Z3[3] = E.fr.sub(E.fr.set(2), E.fr.mul(E.fr.set(2), w2));
 
-            FrElement qm = evaluationsQM->eval[i];
-            FrElement ql = evaluationsQL->eval[i];
-            FrElement qr = evaluationsQR->eval[i];
-            FrElement qo = evaluationsQO->eval[i];
-            FrElement qc = evaluationsQC->eval[i];
-            FrElement s1 = evaluationsS1->eval[i];
-            FrElement s2 = evaluationsS2->eval[i];
-            FrElement s3 = evaluationsS3->eval[i];
+        // Precompute PI(X) = -sum_j L_j(X) * publicA[j] on GPU
+        uint64_t fullN = 4 * (uint64_t)zkey->domainSize;
+        FrElement* piBuffer = (FrElement*)calloc(fullN, sizeof(FrElement));
+        compute_pi_gpu(
+            (void*)piBuffer,
+            (const void*)evaluationsLagrange->eval,
+            (const void*)buffersA,
+            fullN, zkey->nPublic);
 
-            auto lagrange_eval = evaluationsLagrange->getEvaluation(i);
+        compute_t_evaluations_gpu(
+            (void*)buffersT,
+            (void*)buffersTz,
+            (const void*)evaluationsA->eval,
+            (const void*)evaluationsB->eval,
+            (const void*)evaluationsC->eval,
+            (const void*)evaluationsZ->eval,
+            (const void*)evaluationsQM->eval,
+            (const void*)evaluationsQL->eval,
+            (const void*)evaluationsQR->eval,
+            (const void*)evaluationsQO->eval,
+            (const void*)evaluationsQC->eval,
+            (const void*)evaluationsS1->eval,
+            (const void*)evaluationsS2->eval,
+            (const void*)evaluationsS3->eval,
+            (const void*)evaluationsLagrange->eval,
+            (const void*)piBuffer,
+            (const void*)blindingFactors,
+            (const void*)&beta,
+            (const void*)&gamma,
+            (const void*)&alpha,
+            (const void*)&alpha2,
+            (const void*)&k1,
+            (const void*)&k2,
+            (const void*)&omega_4x,
+            (const void*)&omega1,
+            (const void*)Z1,
+            (const void*)Z2,
+            (const void*)Z3,
+            zkey->domainSize);
 
-            FrElement ap = E.fr.add(blindingFactors[2], E.fr.mul(blindingFactors[1], omega));
-            FrElement bp = E.fr.add(blindingFactors[4], E.fr.mul(blindingFactors[3], omega));
-            FrElement cp = E.fr.add(blindingFactors[6], E.fr.mul(blindingFactors[5], omega));
-
-            FrElement zp = E.fr.add(E.fr.add(E.fr.mul(blindingFactors[7], omega2), E.fr.mul(blindingFactors[8], omega)),
-                                    blindingFactors[9]);
-            FrElement zWp = E.fr.add(
-                E.fr.add(E.fr.mul(blindingFactors[7], omegaW2), E.fr.mul(blindingFactors[8], omegaW)),
-                blindingFactors[9]);
-
-            auto pi = E.fr.zero();
-            for (u_int32_t j = 0; j < zkey->nPublic; j++)
-            {
-                const u_int32_t offset = (j * 4 * zkey->domainSize) + i;
-
-                const auto lPol = evaluationsLagrange ->getEvaluation(offset);
-                    const auto aVal = buffersA[j];
-                pi = E.fr.sub(pi, E.fr.mul(lPol, aVal));
-            }
-
-            // T(X) := [ ( a(X)·b(X)·qm(X) + a(X)·ql(X) + b(X)·qr(X) + c(X)·qo(X) + PI(X) + qc(X) )
-            //       +   ((a(X) + beta·X + gamma)(b(X) + beta·k1·X + gamma)(c(X) + beta·k2·X + gamma)·z(X)
-            //       -    (a(X) + beta·sigma1(X) + gamma)(b(X) + beta·sigma2(X) + gamma)(c(X) + beta·sigma3(X) + gamma)z(Xω)) · alpha
-            //       +    (z(X) - 1) · L_1(X) · alpha^2 ] · 1/Z_H(X)
-
-            // e1 := a(X)b(X)qM(X) + a(X)qL(X) + b(X)qR(X) + c(X)qO(X) + PI(X) + qC(X)
-            auto [e1, e1z] = mulz.mul2(a, b, ap, bp, i % 4);
-            e1 = E.fr.mul(e1, qm);
-            e1z = E.fr.mul(e1z, qm);
-
-            e1 = E.fr.add(e1, E.fr.mul(a, ql));
-            e1z = E.fr.add(e1z, E.fr.mul(ap, ql));
-
-            e1 = E.fr.add(e1, E.fr.mul(b, qr));
-            e1z = E.fr.add(e1z, E.fr.mul(bp, qr));
-
-            e1 = E.fr.add(e1, E.fr.mul(c, qo));
-            e1z = E.fr.add(e1z, E.fr.mul(cp, qo));
-
-            e1 = E.fr.add(e1, pi);
-            e1 = E.fr.add(e1, qc);
-
-            // e2 := α[(a(X) + βX + γ)(b(X) + βk1X + γ)(c(X) + βk2X + γ)z(X)]
-            auto betaw = E.fr.mul(beta, omega);
-            auto e2a = E.fr.add(a, betaw);
-            e2a = E.fr.add(e2a, gamma);
-
-            auto e2b = E.fr.add(b, E.fr.mul(betaw, k1));
-            e2b = E.fr.add(e2b, gamma);
-
-            auto e2c = E.fr.add(c, E.fr.mul(betaw, k2));
-            e2c = E.fr.add(e2c, gamma);
-
-            auto e2d = z;
-
-            auto [e2, e2z] = mulz.mul4(e2a, e2b, e2c, e2d, ap, bp, cp, zp, i % 4);
-            e2 = E.fr.mul(e2, alpha);
-            e2z = E.fr.mul(e2z, alpha);
-
-            // e3 := α[(a(X) + βSσ1(X) + γ)(b(X) + βSσ2(X) + γ)(c(X) + βSσ3(X) + γ)z(Xω)]
-            auto e3a = a;
-            e3a = E.fr.add(e3a, E.fr.mul(beta, s1));
-            e3a = E.fr.add(e3a, gamma);
-
-            auto e3b = b;
-            e3b = E.fr.add(e3b, E.fr.mul(beta, s2));
-            e3b = E.fr.add(e3b, gamma);
-
-            auto e3c = c;
-            e3c = E.fr.add(e3c, E.fr.mul(beta, s3));
-            e3c = E.fr.add(e3c, gamma);
-
-            auto e3d = zW;
-            auto [e3, e3z] = mulz.mul4(e3a, e3b, e3c, e3d, ap, bp, cp, zWp, i % 4);
-
-            e3 = E.fr.mul(e3, alpha);
-            e3z = E.fr.mul(e3z, alpha);
-
-            // e4 := α^2(z(X)−1)L1(X)
-            auto e4 = E.fr.sub(z, E.fr.one());
-            e4 = E.fr.mul(e4, lagrange_eval);
-            e4 = E.fr.mul(e4, alpha2);
-
-            auto e4z = E.fr.mul(zp, lagrange_eval);
-            e4z = E.fr.mul(e4z, alpha2);
-
-            auto t = E.fr.add(E.fr.sub(E.fr.add(e1, e2), e3), e4);
-            auto tz = E.fr.add(E.fr.sub(E.fr.add(e1z, e2z), e3z), e4z);
-
-            buffersT[i] = t;
-            buffersTz[i] = tz;
-        }
+        free(piBuffer);
 
         // Compute the coefficients of the polynomial T(X) from buffers.T using GPU IFFT
         LOG_TRACE("··· Computing T ifft (GPU)");
