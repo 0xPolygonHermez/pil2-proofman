@@ -466,29 +466,6 @@ where
         Ok(())
     }
 
-    pub fn get_execution_cost(&self) -> ProofmanResult<u64> {
-        let instances = self.pctx.dctx_get_instances();
-        let mut cost = 0;
-
-        for instance_info in instances.iter() {
-            let airgroup_id = instance_info.airgroup_id;
-            let air_id = instance_info.air_id;
-
-            let setup = self.sctx.get_setup(airgroup_id, air_id)?;
-            let n_bits = setup.stark_info.stark_struct.n_bits;
-            let total_cols: u64 = setup
-                .stark_info
-                .map_sections_n
-                .iter()
-                .filter(|(key, _)| *key != "const")
-                .map(|(_, value)| *value)
-                .sum();
-            let area = (1 << n_bits) * total_cols;
-            cost += area;
-        }
-        Ok(cost)
-    }
-
     pub fn execute(
         &self,
         witness_lib_path: PathBuf,
