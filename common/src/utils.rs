@@ -157,7 +157,6 @@ pub fn initialize_logger(verbose_mode: VerboseMode, rank: Option<&RankInfo>) {
 
     let is_terminal = std::io::stdout().is_terminal() && std::env::var("NO_COLOR").is_err();
 
-    println!("Is terminal: {is_terminal}");
     let _ = IS_TERMINAL.set(is_terminal);
 
     // Disable ANSI/colors globally when not in a terminal
