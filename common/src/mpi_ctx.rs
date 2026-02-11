@@ -23,6 +23,12 @@ use proofman_starks_lib_c::{
     initialize_agg_readiness_tracker_c, free_agg_readiness_tracker_c, agg_is_ready_c, reset_agg_readiness_tracker_c,
 };
 
+pub struct RankInfo {
+    pub world_rank: i32,
+    pub local_rank: i32,
+    pub n_processes: i32,
+}
+
 pub struct MpiCtx {
     #[cfg(distributed)]
     pub universe: Universe,

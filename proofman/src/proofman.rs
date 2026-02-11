@@ -4,7 +4,7 @@ use fields::{ExtensionField, Transcript, PrimeField64, GoldilocksQuinticExtensio
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
     RowInfo, DebugInfo, MemoryHandler, MpiCtx, PackedInfo, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType,
-    SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
+    RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -336,12 +336,12 @@ where
         self.pctx.mpi_ctx.broadcast(buf);
     }
 
-    pub fn get_world_rank(&self) -> i32 {
-        self.pctx.mpi_ctx.rank
-    }
-
-    pub fn get_local_rank(&self) -> i32 {
-        self.pctx.mpi_ctx.node_rank
+    pub fn get_rank_info(&self) -> RankInfo {
+        RankInfo {
+            world_rank: self.pctx.mpi_ctx.rank,
+            local_rank: self.pctx.mpi_ctx.node_rank,
+            n_processes: self.pctx.mpi_ctx.n_processes,
+        }
     }
 
     pub fn get_n_processes(&self) -> i32 {
@@ -1297,7 +1297,9 @@ where
 
         let mpi_ctx = Arc::new(MpiCtx::new());
 
-        initialize_logger(verbose_mode, Some(mpi_ctx.rank));
+        let rank_info =
+            RankInfo { world_rank: mpi_ctx.rank, local_rank: mpi_ctx.node_rank, n_processes: mpi_ctx.n_processes };
+        initialize_logger(verbose_mode, Some(&rank_info));
 
         let (pctx, sctx, setups_vadcop, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
             Self::initialize_proofman(

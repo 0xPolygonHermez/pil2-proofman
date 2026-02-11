@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock, Mutex};
 use std::path::PathBuf;
 
 use fields::PrimeField64;
-use proofman_common::{BufferPool, DebugInfo, ModeName, ProofCtx, ProofmanResult, SetupCtx};
+use proofman_common::{BufferPool, DebugInfo, RankInfo, ModeName, ProofCtx, ProofmanResult, SetupCtx};
 use crate::WitnessComponent;
 use libloading::Library;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,12 +37,12 @@ impl<F: PrimeField64> WitnessManager<F> {
         }
     }
 
-    pub fn get_world_rank(&self) -> i32 {
-        self.pctx.mpi_ctx.rank
-    }
-
-    pub fn get_local_rank(&self) -> i32 {
-        self.pctx.mpi_ctx.node_rank
+    pub fn get_rank_info(&self) -> RankInfo {
+        RankInfo {
+            world_rank: self.pctx.mpi_ctx.rank,
+            local_rank: self.pctx.mpi_ctx.node_rank,
+            n_processes: self.pctx.mpi_ctx.n_processes,
+        }
     }
 
     pub fn set_witness_initialized(&self) {

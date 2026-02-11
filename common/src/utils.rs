@@ -25,10 +25,13 @@ use tracing_subscriber::fmt;
 use std::sync::OnceLock;
 use yansi::Color;
 use yansi::Paint;
-use colored::Colorize;
 use std::io::IsTerminal;
+use colored::Colorize;
+use crate::RankInfo;
 
 static GLOBAL_RANK: OnceLock<i32> = OnceLock::new();
+static VERBOSE_MODE: OnceLock<VerboseMode> = OnceLock::new();
+static IS_TERMINAL: OnceLock<bool> = OnceLock::new();
 
 use crate::InstancesInfo;
 
@@ -53,21 +56,31 @@ where
             timer.format_time(&mut fake_writer)?;
         }
 
-        if std::io::stdout().is_terminal() {
+        let is_terminal = IS_TERMINAL.get().copied().unwrap_or(false);
+
+        if is_terminal {
             write!(writer, "{} ", time_str.dimmed())?;
         } else {
             write!(writer, "{time_str} ")?;
         }
 
         if let Some(rank) = GLOBAL_RANK.get().copied() {
-            let rank_str = match std::io::stdout().is_terminal() {
+            let rank_str = match is_terminal {
                 true => format!("[rank={rank}]").dimmed(),
                 false => format!("[rank={rank}]").into(),
             };
             write!(writer, "{rank_str} ")?;
         }
 
-        if std::io::stdout().is_terminal() {
+        let target = event.metadata().target();
+        let show_target =
+            VERBOSE_MODE.get().map(|vm| matches!(vm, VerboseMode::Debug | VerboseMode::Trace)).unwrap_or(false);
+
+        if is_terminal {
+            if show_target {
+                write!(writer, "{} ", target.dimmed())?;
+            }
+
             let level_str = match *event.metadata().level() {
                 tracing::Level::TRACE => "TRACE".paint(Color::Cyan),
                 tracing::Level::DEBUG => "DEBUG".paint(Color::Blue),
@@ -77,7 +90,17 @@ where
             };
             write!(writer, "{level_str}: ")?;
         } else {
-            write!(writer, "{}: ", event.metadata().level())?;
+            let level_str = match *event.metadata().level() {
+                tracing::Level::TRACE => "TRACE",
+                tracing::Level::DEBUG => "DEBUG",
+                tracing::Level::INFO => "INFO",
+                tracing::Level::WARN => "WARN",
+                tracing::Level::ERROR => "ERROR",
+            };
+            if show_target {
+                write!(writer, "{target} ")?;
+            }
+            write!(writer, "{level_str}: ")?;
         }
 
         let mut visitor = MessageVisitor::new();
@@ -121,19 +144,35 @@ pub fn set_global_rank(rank: i32) {
     let _ = GLOBAL_RANK.set(rank);
 }
 
-pub fn initialize_logger(verbose_mode: VerboseMode, rank: Option<i32>) {
-    if dispatcher::has_been_set() {
-        return;
+pub fn initialize_logger(verbose_mode: VerboseMode, rank: Option<&RankInfo>) {
+    if GLOBAL_RANK.get().is_none() {
+        if let Some(r) = rank {
+            if r.n_processes > 1 {
+                set_global_rank(r.world_rank);
+            }
+        }
     }
 
-    if let Some(r) = rank {
-        set_global_rank(r);
+    let _ = VERBOSE_MODE.set(verbose_mode);
+
+    let is_terminal = std::io::stdout().is_terminal() && std::env::var("NO_COLOR").is_err();
+
+    println!("Is terminal: {is_terminal}");
+    let _ = IS_TERMINAL.set(is_terminal);
+
+    // Disable ANSI/colors globally when not in a terminal
+    if !is_terminal {
+        yansi::disable();
+    }
+
+    if dispatcher::has_been_set() {
+        return;
     }
 
     let stdout_layer = tracing_subscriber::fmt::layer()
         .event_format(RankFormatter)
         .with_writer(std::io::stdout)
-        .with_ansi(false)
+        .with_ansi(is_terminal)
         .with_filter(LevelFilter::from(verbose_mode));
 
     tracing_subscriber::registry().with(stdout_layer).init();
