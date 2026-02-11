@@ -466,29 +466,6 @@ where
         Ok(())
     }
 
-    pub fn get_execution_cost(&self) -> ProofmanResult<u64> {
-        let instances = self.pctx.dctx_get_instances();
-        let mut cost = 0;
-
-        for instance_info in instances.iter() {
-            let airgroup_id = instance_info.airgroup_id;
-            let air_id = instance_info.air_id;
-
-            let setup = self.sctx.get_setup(airgroup_id, air_id)?;
-            let n_bits = setup.stark_info.stark_struct.n_bits;
-            let total_cols: u64 = setup
-                .stark_info
-                .map_sections_n
-                .iter()
-                .filter(|(key, _)| *key != "const")
-                .map(|(_, value)| *value)
-                .sum();
-            let area = (1 << n_bits) * total_cols;
-            cost += area;
-        }
-        Ok(cost)
-    }
-
     pub fn execute(
         &self,
         witness_lib_path: PathBuf,
@@ -499,7 +476,7 @@ where
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
+        let mut witness_lib = witness_lib(verbose_mode, Some(self.get_rank_info()))?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
@@ -664,7 +641,7 @@ where
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
+        let mut witness_lib = witness_lib(verbose_mode, Some(self.get_rank_info()))?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
@@ -782,7 +759,7 @@ where
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
+        let mut witness_lib = witness_lib(verbose_mode, Some(self.get_rank_info()))?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
@@ -907,7 +884,7 @@ where
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
+        let mut witness_lib = witness_lib(verbose_mode, Some(self.get_rank_info()))?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
@@ -1214,7 +1191,7 @@ where
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
+        let mut witness_lib = witness_lib(verbose_mode, Some(self.get_rank_info()))?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
