@@ -88,6 +88,10 @@ namespace PlonkGPU {
         void* d_piBuffer = nullptr;   // GPU: PI accumulator
         void* d_lagBuffer = nullptr;  // GPU: one Lagrange slice
 
+        void* d_evalA = nullptr;      // GPU: A wire evaluations (4N elements)
+        void* d_evalB = nullptr;      // GPU: B wire evaluations (4N elements)
+        void* d_evalC = nullptr;      // GPU: C wire evaluations (4N elements)
+
         BinFileUtils::BinFile* fdZkeyPtr = nullptr;
 
         bool preAllocated = false;
@@ -132,7 +136,7 @@ namespace PlonkGPU {
 
         void computeWirePolynomials();
 
-        void computeWirePolynomial(std::string polName, FrElement blindingFactors[]);
+        void computeWirePolynomial(std::string polName, FrElement blindingFactors[], void* d_evalTarget = nullptr);
 
         void computeZ();
 
@@ -155,7 +159,8 @@ namespace PlonkGPU {
             FrElement *evaluations, FrElement *reservedBuffer, u_int64_t length, u_int64_t blindLength, u_int32_t power);
         
         Evaluations<Engine>* evaluationsFromPolynomialGPU(
-            FrElement *reservedBuffer, Polynomial<Engine> &polynomial, u_int32_t extensionLength, u_int32_t power);
+            FrElement *reservedBuffer, Polynomial<Engine> &polynomial, u_int32_t extensionLength, u_int32_t power,
+            void* d_evalTarget = nullptr);
     };
 }
 

@@ -405,7 +405,9 @@ extern "C" void compute_t_evaluations_gpu(
     const void* omega4xPtr, const void* omega1Ptr,
     const void* Z1Ptr, const void* Z2Ptr, const void* Z3Ptr,
     uint64_t domainSize,
-    void* dScratch0, void* dScratch1)
+    void* dScratch0, void* dScratch1,
+    bool evalsOnGPU,
+    const void* dEvalA, const void* dEvalB, const void* dEvalC)
 {
     uint64_t fullN = 4 * domainSize;
     size_t fullBytes = fullN * sizeof(Element);
@@ -440,25 +442,32 @@ extern "C" void compute_t_evaluations_gpu(
     const Element* dQO = dStaticBase + 7 * fullN;
     const Element* dQC = dStaticBase + 8 * fullN;
 
-    // Reuse pre-allocated GPU buffers for T and Tz outputs;
-    // allocate only the dynamic input arrays (A, B, C, Z)
+    // Reuse pre-allocated GPU buffers for T and Tz outputs
     Element *dT  = (Element*)dScratch0;
     Element *dTz = (Element*)dScratch1;
     Element *dA, *dB, *dC, *dZ;
 
-    CHECKCUDAERR(cudaMalloc(&dA, fullBytes));
-    CHECKCUDAERR(cudaMalloc(&dB, fullBytes));
-    CHECKCUDAERR(cudaMalloc(&dC, fullBytes));
+    if (evalsOnGPU) {
+        // A, B, C already on GPU — use device pointers directly
+        dA = (Element*)dEvalA;
+        dB = (Element*)dEvalB;
+        dC = (Element*)dEvalC;
+    } else {
+        // Allocate and H2D for A, B, C
+        CHECKCUDAERR(cudaMalloc(&dA, fullBytes));
+        CHECKCUDAERR(cudaMalloc(&dB, fullBytes));
+        CHECKCUDAERR(cudaMalloc(&dC, fullBytes));
+        CHECKCUDAERR(cudaMemcpy(dA, evalA, fullBytes, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(dB, evalB, fullBytes, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(dC, evalC, fullBytes, cudaMemcpyHostToDevice));
+    }
+
+    // Z still uploaded from CPU (will be GPU-resident in Step 4)
     CHECKCUDAERR(cudaMalloc(&dZ, (fullN + 4) * sizeof(Element)));
 
     // Pre-load PI(X) into dT (from host) and L_0(X) into dTz (D2D from static buffer)
     CHECKCUDAERR(cudaMemcpy(dT, piPrecomp, fullBytes, cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(dTz, dL0, fullBytes, cudaMemcpyDeviceToDevice));
-
-    // Copy dynamic eval arrays H2D
-    CHECKCUDAERR(cudaMemcpy(dA, evalA, fullBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dB, evalB, fullBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dC, evalC, fullBytes, cudaMemcpyHostToDevice));
 
     // Z: fullN elements + 4 extra wrapping around to the start
     CHECKCUDAERR(cudaMemcpy(dZ, hEvalZ, fullBytes, cudaMemcpyHostToDevice));
@@ -482,13 +491,26 @@ extern "C" void compute_t_evaluations_gpu(
     CHECKCUDAERR(cudaMemcpy(tOut, dT, fullBytes, cudaMemcpyDeviceToHost));
     CHECKCUDAERR(cudaMemcpy(tzOut, dTz, fullBytes, cudaMemcpyDeviceToHost));
 
-    // Free only dynamic device memory (dT/dTz are pre-allocated, managed externally)
-    cudaFree(dA); cudaFree(dB); cudaFree(dC); cudaFree(dZ);
+    // Free only dynamically allocated device memory
+    if (!evalsOnGPU) {
+        cudaFree(dA); cudaFree(dB); cudaFree(dC);
+    }
+    cudaFree(dZ);
 }
 
 // ============================================================================
 // Async GPU transfer for static evaluation arrays
 // ============================================================================
+
+extern "C" void memcpy_h2d_gpu(void* dst, const void* src, size_t bytes)
+{
+    CHECKCUDAERR(cudaMemcpy(dst, src, bytes, cudaMemcpyHostToDevice));
+}
+
+extern "C" void memcpy_d2h_gpu(void* dst, const void* src, size_t bytes)
+{
+    CHECKCUDAERR(cudaMemcpy(dst, src, bytes, cudaMemcpyDeviceToHost));
+}
 
 extern "C" void alloc_static_eval_buffers_gpu(
     void** dBuffer,
