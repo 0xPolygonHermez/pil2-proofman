@@ -954,6 +954,10 @@ void free_final_snark_prover(void *snark_prover) {
 void gen_final_snark_proof(void *prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark) {
     genFinalSnarkProof(prover, circomWitnessFinal, proof, publicsSnark);
 }
+
+void pre_allocate_final_snark_prover(void *snark_prover) {
+    // No-op for CPU
+}
 #endif
 
 void free_json_string(char* json_str) {

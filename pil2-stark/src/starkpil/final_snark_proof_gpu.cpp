@@ -89,6 +89,11 @@ void freeFinalSnarkProverGPU(void *snark_prover) {
     }
 }
 
+void preAllocateFinalSnarkProverGPU(void *snark_prover) {
+    FinalSnarkGPU* finalSnarkProver = (FinalSnarkGPU*)snark_prover;
+    finalSnarkProver->prover->preAllocate();
+}
+
 uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover) {
     FinalSnarkGPU* finalSnarkProver = (FinalSnarkGPU*)snark_prover;
     return finalSnarkProver->protocolId;

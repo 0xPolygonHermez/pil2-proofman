@@ -121,6 +121,7 @@ extern "C" {
     void *init_final_snark_prover(char* zkeyFile);
     void free_final_snark_prover(void *snark_prover);
     void gen_final_snark_proof(void *snark_prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark);
+    void pre_allocate_final_snark_prover(void *snark_prover);
     void free_json_string(char* json_str);
     void snark_proof_bytes_to_json(uint8_t* proof_bytes,uint64_t proof_size,uint8_t* public_bytes,uint64_t public_size,int protocol_id,char** proof_json_out,char** publics_json_out);
 

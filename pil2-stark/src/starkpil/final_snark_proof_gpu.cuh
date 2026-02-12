@@ -16,6 +16,8 @@ struct IFinalSnarkProverGPU {
     prove(AltBn128::FrElement* witnessFinal, WtnsUtils::Header* wtnsHeader = NULL) = 0;
 
     virtual uint32_t nPublics() const = 0;
+
+    virtual void preAllocate() {}
 };
 
 // GPU Prover classes
@@ -34,6 +36,8 @@ public:
     }
 
     uint32_t nPublics() const override { return nPublics_; }
+
+    void preAllocate() override { prover_.preAllocate(); }
 };
 
 class FflonkFinalProverGPU : public IFinalSnarkProverGPU {
@@ -63,5 +67,6 @@ struct FinalSnarkGPU {
 int getProtocolIdFromBinFileGPU(BinFileUtils::BinFile *fdZkey);
 std::unique_ptr<IFinalSnarkProverGPU> initFinalSnarkProverGPU(BinFileUtils::BinFile *fdZkey);
 void genFinalSnarkProofGPU(void *proverSnark, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark);
+void preAllocateFinalSnarkProverGPU(void *snark_prover);
 
 #endif // FINAL_SNARK_PROOF_GPU_CUH

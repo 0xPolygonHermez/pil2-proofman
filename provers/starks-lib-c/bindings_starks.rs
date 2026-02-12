@@ -462,6 +462,8 @@ extern "C" {
         publicsSnark: *mut u8,
     );
 
+    pub fn pre_allocate_final_snark_prover(prover: *mut ::std::os::raw::c_void);
+
     pub fn free_json_string(json_str: *mut ::std::os::raw::c_char);
 
     pub fn snark_proof_bytes_to_json(

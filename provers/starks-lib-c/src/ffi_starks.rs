@@ -1131,6 +1131,11 @@ pub fn free_final_snark_prover_c(snark_prover: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn pre_allocate_final_snark_prover_c(snark_prover: *mut c_void) {
+    unsafe { pre_allocate_final_snark_prover(snark_prover) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn gen_final_snark_proof_c(
     prover: *mut c_void,
     circomWitnessFinal: *mut u8,
@@ -2146,6 +2151,11 @@ pub fn get_snark_protocol_id_c(_snark_prover: *mut c_void) -> u64 {
 #[cfg(feature = "no_lib_link")]
 pub fn free_final_snark_prover_c(_snark_prover: *mut c_void) {
     trace!("··· {}", "free_final_snark_prover: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn pre_allocate_final_snark_prover_c(_snark_prover: *mut c_void) {
+    trace!("··· {}", "pre_allocate_final_snark_prover: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]

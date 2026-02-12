@@ -89,6 +89,8 @@ namespace PlonkGPU {
         void* d_lagBuffer = nullptr;  // GPU: one Lagrange slice
 
         BinFileUtils::BinFile* fdZkeyPtr = nullptr;
+
+        bool preAllocated = false;
     public:
         PlonkProverGPU(Engine &E);
         PlonkProverGPU(Engine &E, void* reservedMemoryPtr, uint64_t reservedMemorySize);
@@ -98,6 +100,8 @@ namespace PlonkGPU {
         void setZkey(BinFileUtils::BinFile *fdZkey);
 
         u_int32_t getNPublic() const { return zkey->nPublic; }
+
+        void preAllocate();
 
         std::tuple <std::vector<uint8_t>, std::vector<uint8_t>> prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns);
         std::tuple <std::vector<uint8_t>, std::vector<uint8_t>> prove(BinFileUtils::BinFile *fdZkey, FrElement *wtns, WtnsUtils::Header* wtnsHeader = NULL);

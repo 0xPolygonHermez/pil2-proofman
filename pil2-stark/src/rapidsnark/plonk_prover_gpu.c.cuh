@@ -466,6 +466,14 @@ namespace PlonkGPU
     }
 
     template <typename Engine>
+    void PlonkProverGPU<Engine>::preAllocate()
+    {
+        LOG_TRACE("> Pre-allocating GPU static eval buffers (round0)");
+        round0();
+        preAllocated = true;
+    }
+
+    template <typename Engine>
     std::tuple<std::vector<uint8_t>, std::vector<uint8_t>> PlonkProverGPU<Engine>::prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns)
     {
         this->setZkey(fdZkey);
@@ -559,8 +567,13 @@ namespace PlonkGPU
         double startTime = omp_get_wtime();
 
         // ROUND 0. Launch async GPU transfer of static eval arrays
-        LOG_TRACE("> ROUND 0 (async static eval transfer)");
-        round0();
+        if (!preAllocated) {
+            LOG_TRACE("> ROUND 0 (async static eval transfer)");
+            round0();
+        } else {
+            LOG_TRACE("> ROUND 0 skipped (pre-allocated)");
+        }
+        preAllocated = false;
 
         LOG_TRACE("> Computing Additions");
 

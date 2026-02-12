@@ -15,6 +15,7 @@ use crate::check_const_tree;
 use std::fs;
 use proofman_starks_lib_c::{
     init_final_snark_prover_c, free_final_snark_prover_c, get_snark_protocol_id_c, snark_proof_bytes_to_json_c,
+    pre_allocate_final_snark_prover_c,
 };
 use crate::{verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof};
 use serde::{Deserialize, Serialize};
@@ -228,6 +229,9 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
         timer_start_info!(GENERATING_SNARK_PROOF);
+        // Pre-allocate GPU buffers (overlaps static eval transfers with witness computation)
+        pre_allocate_final_snark_prover_c(self.snark_prover);
+
         let (snark_proof_bytes, snark_publics_bytes) =
             generate_snark_proof(self.snark_prover, &self.setup_snark_path, recursivef_proof)?;
 
