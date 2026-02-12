@@ -1295,12 +1295,13 @@ pub fn set_omp_num_threads_c(num_threads: u64) {
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn gen_device_buffers_c(
-    max_sizes: *mut ::std::os::raw::c_void,
+    n_streams: u64,
+    n_recursive_streams: u64,
     node_rank: u32,
     node_n_processes: u32,
     arity: u32,
 ) -> *mut ::std::os::raw::c_void {
-    unsafe { gen_device_buffers(max_sizes, node_rank, node_n_processes, arity) }
+    unsafe { gen_device_buffers(n_streams, n_recursive_streams, node_rank, node_n_processes, arity) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1346,6 +1347,25 @@ pub fn gen_device_streams_c(
             max_n_bits_ext,
             merkle_tree_arity,
         )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn alloc_device_large_buffers_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    aux_trace_area: u64,
+    aux_trace_recursive_area: u64,
+    const_pols_area: u64,
+    const_pols_aggregation_area: u64,
+) {
+    unsafe {
+        alloc_device_large_buffers(
+            d_buffers,
+            aux_trace_area,
+            aux_trace_recursive_area,
+            const_pols_area,
+            const_pols_aggregation_area,
+        );
     }
 }
 
@@ -2234,7 +2254,8 @@ pub fn set_omp_num_threads(_num_threads: u64) {
 
 #[cfg(feature = "no_lib_link")]
 pub fn gen_device_buffers_c(
-    _max_sizes: *mut ::std::os::raw::c_void,
+    _n_streams: u64,
+    _n_recursive_streams: u64,
     _node_rank: u32,
     _node_n_processes: u32,
     _arity: u32,
@@ -2284,6 +2305,21 @@ pub fn gen_device_streams_c(
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "set_max_size_thread: This is a mock call because there is no linked library");
     0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn alloc_device_large_buffers_c(
+    _d_buffers: *mut ::std::os::raw::c_void,
+    _aux_trace_area: u64,
+    _aux_trace_recursive_area: u64,
+    _const_pols_area: u64,
+    _const_pols_aggregation_area: u64,
+) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "alloc_device_large_buffers: This is a mock call because there is no linked library"
+    );
 }
 
 #[cfg(feature = "no_lib_link")]

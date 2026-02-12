@@ -528,7 +528,8 @@ extern "C" {
     // GPU/Device Management
     // ========================================================================================
     pub fn gen_device_buffers(
-        maxSizes_: *mut ::std::os::raw::c_void,
+        n_streams: u64,
+        n_recursive_streams: u64,
         node_rank: u32,
         node_size: u32,
         arity: u32,
@@ -576,6 +577,14 @@ extern "C" {
         max_n_bits_ext: u64,
         merkle_tree_arity: u64,
     ) -> u64;
+
+    pub fn alloc_device_large_buffers(
+        d_buffers_: *mut ::std::os::raw::c_void,
+        auxTraceArea: u64,
+        auxTraceRecursiveArea: u64,
+        totalConstPols: u64,
+        totalConstPolsAggregation: u64,
+    );   
     
     pub fn get_instances_ready(
         d_buffers_: *mut ::std::os::raw::c_void,

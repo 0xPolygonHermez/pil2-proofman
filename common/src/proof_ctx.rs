@@ -16,18 +16,9 @@ use crate::{
 use std::ffi::c_void;
 use proofman_starks_lib_c::{
     check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
+    alloc_device_large_buffers_c,
 };
 use proofman_util::DeviceBuffer;
-
-#[derive(Debug)]
-pub struct MaxSizes {
-    pub total_const_area: u64,
-    pub aux_trace_area: u64,
-    pub aux_trace_recursive_area: u64,
-    pub total_const_area_aggregation: u64,
-    pub n_streams: u64,
-    pub n_recursive_streams: u64,
-}
 
 #[derive(Debug)]
 pub struct Values<F> {
@@ -993,18 +984,9 @@ impl<F: PrimeField64> ProofCtx<F> {
             );
         }
 
-        let max_sizes = MaxSizes {
-            total_const_area,
-            aux_trace_area: max_prover_buffer_size,
-            aux_trace_recursive_area: max_prover_recursive2_buffer_size,
-            total_const_area_aggregation,
-            n_streams: n_streams_per_gpu as u64,
-            n_recursive_streams: n_recursive_streams_per_gpu as u64,
-        };
-
-        let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
         let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
-            max_sizes_ptr,
+            n_streams_per_gpu as u64,
+            n_recursive_streams_per_gpu as u64,
             self.mpi_ctx.node_rank as u32,
             self.mpi_ctx.node_n_processes as usize as u32,
             self.global_info.transcript_arity as u32,
@@ -1022,6 +1004,14 @@ impl<F: PrimeField64> ProofCtx<F> {
             max_pinned_proof_size,
             sctx.max_n_bits_ext as u64,
             self.global_info.transcript_arity as u64,
+        );
+
+        alloc_device_large_buffers_c(
+            d_buffers.get_ptr(),
+            max_prover_buffer_size,
+            max_prover_recursive2_buffer_size,
+            total_const_area,
+            total_const_area_aggregation,
         );
 
         self.d_buffers = d_buffers;
