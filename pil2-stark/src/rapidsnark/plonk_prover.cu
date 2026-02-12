@@ -146,14 +146,18 @@ __global__ void computePIAccumulateKernel(
 }
 
 extern "C" void compute_pi_gpu(
-    void* piOut,                  
-    const void* evalLagrange,     
-    const void* publicA,          
+    void* piOut,
+    const void* evalLagrange,
+    const void* publicA,
     uint64_t fullN, uint32_t nPublic)
 {
     size_t fullBytes = fullN * sizeof(Element);
     const Element* hLagrange = (const Element*)evalLagrange;
     const Element* hPublicA  = (const Element*)publicA;
+
+    // Use a non-blocking stream so GPU work doesn't serialize with the default stream
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
     // Allocate device: PI accumulator + one lagrange slice
     Element *dPI, *dLag;
@@ -161,26 +165,27 @@ extern "C" void compute_pi_gpu(
     CHECKCUDAERR(cudaMalloc(&dLag, fullBytes));
 
     // Zero the PI accumulator
-    CHECKCUDAERR(cudaMemset(dPI, 0, fullBytes));
+    CHECKCUDAERR(cudaMemsetAsync(dPI, 0, fullBytes, stream));
 
     uint32_t threadsPerBlock = 256;
     uint32_t blocks = (uint32_t)(fullN / threadsPerBlock);
 
     for (uint32_t j = 0; j < nPublic; j++) {
         // Upload lagrange slice j
-        CHECKCUDAERR(cudaMemcpy(dLag, hLagrange + j * fullN, fullBytes, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpyAsync(dLag, hLagrange + j * fullN, fullBytes, cudaMemcpyHostToDevice, stream));
 
-        computePIAccumulateKernel<<<blocks, threadsPerBlock>>>(
+        computePIAccumulateKernel<<<blocks, threadsPerBlock, 0, stream>>>(
             dPI, dLag, hPublicA[j], fullN);
 
         CHECKCUDAERR(cudaGetLastError());
     }
 
-    CHECKCUDAERR(cudaDeviceSynchronize());
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
     CHECKCUDAERR(cudaMemcpy(piOut, dPI, fullBytes, cudaMemcpyDeviceToHost));
 
     cudaFree(dPI);
     cudaFree(dLag);
+    CHECKCUDAERR(cudaStreamDestroy(stream));
 }
 
 // ============================================================================

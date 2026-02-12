@@ -452,6 +452,8 @@ namespace PlonkGPU
 
         polPtr["Wxi"] = buffers["Tz"];
 
+        buffers["PI"] = buffers["Tz"];
+
         buffers["Z"] = polPtr["T"];
 
         // Pre-allocate GPU + pinned buffers for async static eval transfer (two threads)
@@ -729,6 +731,19 @@ namespace PlonkGPU
         FrElement bFactorsC[2] = {blindingFactors[6], blindingFactors[5]};
 
         computeWirePolynomial("A", bFactorsA);
+
+        // Launch async PI — buffers["A"] is ready
+        {
+            uint64_t fullN = 4 * (uint64_t)zkey->domainSize;
+            auto piOut = buffers["PI"];
+            auto lagrangeEval = evaluations["lagrange"]->eval;
+            auto publicA = buffers["A"];
+            uint32_t nPub = zkey->nPublic;
+            asyncComputePI = std::thread([piOut, lagrangeEval, publicA, fullN, nPub]() {
+                compute_pi_gpu((void*)piOut, (const void*)lagrangeEval,
+                               (const void*)publicA, fullN, nPub);
+            });
+        }
         computeWirePolynomial("B", bFactorsB);
         computeWirePolynomial("C", bFactorsC);
 
@@ -992,23 +1007,19 @@ namespace PlonkGPU
         Z3[2] = E.fr.set(-8);
         Z3[3] = E.fr.sub(E.fr.set(2), E.fr.mul(E.fr.set(2), w2));
 
+        // Wait for async PI computation (launched in computeWirePolynomials)
+        if (asyncComputePI.joinable()) {
+            double t0 = omp_get_wtime();
+            asyncComputePI.join();
+            std::cout << "[computeT] PI join completed, waited: " << omp_get_wtime() - t0 << endl;
+        }        
         // Wait for async Q eval transfer to complete (QL-QC needed by compute_t_evaluations_gpu)
         if (asyncTransferQ.joinable()) {
             double joinStart = omp_get_wtime();
             asyncTransferQ.join();
             std::cout <<" [computeT] Q join completed, waited: "<<omp_get_wtime() - joinStart<<std::endl;
         }
-        double pistart = omp_get_wtime();
-
-        // Precompute PI(X) = -sum_j L_j(X) * publicA[j] on GPU
-        uint64_t fullN = 4 * (uint64_t)zkey->domainSize;
-        FrElement* piBuffer = (FrElement*)calloc(fullN, sizeof(FrElement));
-        compute_pi_gpu(
-            (void*)piBuffer,
-            (const void*)evaluationsLagrange->eval,
-            (const void*)buffersA,
-            fullN, zkey->nPublic);
-        std::cout <<" [computeT] computed PI in "<<omp_get_wtime() - pistart<<std::endl;
+        
         double tstart = omp_get_wtime();
         compute_t_evaluations_gpu(
             (void*)buffersT,
@@ -1019,7 +1030,7 @@ namespace PlonkGPU
             (const void*)evaluationsZ->eval,
             d_staticEvalsBuffer,
             (const void*)evaluationsLagrange->eval,
-            (const void*)piBuffer,
+            (const void*)buffers["PI"],
             (const void*)blindingFactors,
             (const void*)&beta,
             (const void*)&gamma,
@@ -1033,7 +1044,6 @@ namespace PlonkGPU
             (const void*)Z2,
             (const void*)Z3,
             zkey->domainSize);
-        free(piBuffer);
         std::cout<<" [computeT] computed T evaluations in "<<omp_get_wtime() - tstart<<std::endl;
         // Compute the coefficients of the polynomial T(X) from buffers.T using GPU IFFT
         LOG_TRACE("··· Computing T ifft (GPU)");

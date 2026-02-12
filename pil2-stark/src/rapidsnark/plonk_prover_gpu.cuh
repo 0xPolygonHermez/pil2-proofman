@@ -77,6 +77,7 @@ namespace PlonkGPU {
 
         std::thread asyncTransferSigma;   // S1,S2,S3 — join before computeZ
         std::thread asyncTransferQ;       // QL-QC — join before computeT
+        std::thread asyncComputePI;       // PI(X) — join in computeT before compute_t_evaluations_gpu
         void* d_staticEvalsBuffer = nullptr;
         size_t staticEvalsBufferSize = 0;
         void* pinnedS = nullptr;
