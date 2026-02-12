@@ -87,4 +87,32 @@ extern "C" void intt_bn128_gpu(void* data, uint32_t lg_n) {
     }
 }
 
+extern "C" void ntt_bn128_gpu_dev_ptr(void* d_data, uint32_t lg_n) {
+    fr_t* d_fr = reinterpret_cast<fr_t*>(d_data);
+    
+    auto& gpu = select_gpu(-1);
+    stream_t& stream = gpu;
+    
+    NTT::Base_dev_ptr(stream, d_fr, lg_n,
+                      NTT::InputOutputOrder::NN,
+                      NTT::Direction::forward,
+                      NTT::Type::standard);
+    
+    CUDA_OK(cudaStreamSynchronize(stream));
+}
+
+extern "C" void intt_bn128_gpu_dev_ptr(void* d_data, uint32_t lg_n) {
+    fr_t* d_fr = reinterpret_cast<fr_t*>(d_data);
+    
+    auto& gpu = select_gpu(-1);
+    stream_t& stream = gpu;
+    
+    NTT::Base_dev_ptr(stream, d_fr, lg_n,
+                      NTT::InputOutputOrder::NN,
+                      NTT::Direction::inverse,
+                      NTT::Type::standard);
+    
+    CUDA_OK(cudaStreamSynchronize(stream));
+}
+
 #endif // !__CUDA_ARCH__

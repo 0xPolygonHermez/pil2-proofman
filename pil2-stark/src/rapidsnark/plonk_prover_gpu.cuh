@@ -117,6 +117,8 @@ namespace PlonkGPU {
         void calculateAdditions();
 
         FrElement getWitness(u_int64_t idx);
+        
+        void round0();
 
         void round1();
 
@@ -133,8 +135,6 @@ namespace PlonkGPU {
         void computeWirePolynomial(std::string polName, FrElement blindingFactors[]);
 
         void computeZ();
-
-        void round0();
 
         void computeT();
 

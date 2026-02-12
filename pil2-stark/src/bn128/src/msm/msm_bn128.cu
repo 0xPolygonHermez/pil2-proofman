@@ -65,4 +65,25 @@ extern "C" void msm_bn128_gpu(void* out, const void* points, const void* scalars
     }
 }
 
+// Device pointer version 
+extern "C" void msm_bn128_gpu_dev_ptr(void* out, const void* d_points, const void* d_scalars, size_t npoints, bool mont) {
+    
+    point_t* host_out = reinterpret_cast<point_t*>(out);
+    
+    // Wrap device pointers in dev_ptr_t - sppark detects is_device_ptr and skips HtoD copy
+    dev_ptr_t<affine_t> gpu_points(const_cast<affine_t*>(reinterpret_cast<const affine_t*>(d_points)), npoints);
+    dev_ptr_t<scalar_t> gpu_scalars(const_cast<scalar_t*>(reinterpret_cast<const scalar_t*>(d_scalars)), npoints);
+    
+    try {
+        msm_t<bucket_t, point_t, affine_t, scalar_t> msm{nullptr, npoints};
+        RustError err = msm.invoke(*host_out, gpu_points, npoints, gpu_scalars, mont);
+        
+        if (err.code != 0) {
+            host_out->inf();
+        }
+    } catch (const cuda_error& e) {
+        host_out->inf();
+    }
+}
+
 #endif // !__CUDA_ARCH__
