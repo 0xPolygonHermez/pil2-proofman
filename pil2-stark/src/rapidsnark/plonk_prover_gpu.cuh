@@ -82,7 +82,11 @@ namespace PlonkGPU {
         size_t staticEvalsBufferSize = 0;
         void* pinnedS = nullptr;
         void* pinnedQ = nullptr;
+        void* pinnedPI = nullptr;
         size_t pinnedSize = 0;
+
+        void* d_piBuffer = nullptr;   // GPU: PI accumulator
+        void* d_lagBuffer = nullptr;  // GPU: one Lagrange slice
 
         BinFileUtils::BinFile* fdZkeyPtr = nullptr;
     public:

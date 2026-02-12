@@ -14,6 +14,8 @@
 using Fr = BN128GPUScalarField;
 using Element = Fr::Element;
 
+typedef void (*FileReadFn)(void* dest, uint32_t sectionId, uint64_t offset, uint64_t len, void* ctx);
+
 // ============================================================================
 // computeZ GPU kernel
 // ============================================================================
@@ -147,22 +149,20 @@ __global__ void computePIAccumulateKernel(
 
 extern "C" void compute_pi_gpu(
     void* piOut,
-    const void* evalLagrange,
+    FileReadFn readFn, void* readCtx,
+    uint32_t lagrangeSectionId,
+    uint64_t lagrangeBaseOffset,
+    uint64_t lagrangeStride,
     const void* publicA,
-    uint64_t fullN, uint32_t nPublic)
+    uint64_t fullN, uint32_t nPublic,
+    void* dPI, void* dLag,
+    void* pinnedBuf, size_t pinnedSize)
 {
     size_t fullBytes = fullN * sizeof(Element);
-    const Element* hLagrange = (const Element*)evalLagrange;
-    const Element* hPublicA  = (const Element*)publicA;
+    const Element* hPublicA = (const Element*)publicA;
 
-    // Use a non-blocking stream so GPU work doesn't serialize with the default stream
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-
-    // Allocate device: PI accumulator + one lagrange slice
-    Element *dPI, *dLag;
-    CHECKCUDAERR(cudaMalloc(&dPI, fullBytes));
-    CHECKCUDAERR(cudaMalloc(&dLag, fullBytes));
 
     // Zero the PI accumulator
     CHECKCUDAERR(cudaMemsetAsync(dPI, 0, fullBytes, stream));
@@ -171,11 +171,23 @@ extern "C" void compute_pi_gpu(
     uint32_t blocks = (uint32_t)(fullN / threadsPerBlock);
 
     for (uint32_t j = 0; j < nPublic; j++) {
-        // Upload lagrange slice j
-        CHECKCUDAERR(cudaMemcpyAsync(dLag, hLagrange + j * fullN, fullBytes, cudaMemcpyHostToDevice, stream));
+        // Transfer L_j from file to GPU (chunked if slice > pinnedSize)
+        uint64_t remaining = fullBytes;
+        uint64_t fileOffset = lagrangeBaseOffset + j * lagrangeStride;
+        uint8_t* dDst = (uint8_t*)dLag;
+
+        while (remaining > 0) {
+            size_t chunk = (remaining < pinnedSize) ? (size_t)remaining : pinnedSize;
+            CHECKCUDAERR(cudaStreamSynchronize(stream));
+            readFn(pinnedBuf, lagrangeSectionId, fileOffset, chunk, readCtx);
+            CHECKCUDAERR(cudaMemcpyAsync(dDst, pinnedBuf, chunk, cudaMemcpyHostToDevice, stream));
+            dDst += chunk;
+            fileOffset += chunk;
+            remaining -= chunk;
+        }
 
         computePIAccumulateKernel<<<blocks, threadsPerBlock, 0, stream>>>(
-            dPI, dLag, hPublicA[j], fullN);
+            (Element*)dPI, (Element*)dLag, hPublicA[j], fullN);
 
         CHECKCUDAERR(cudaGetLastError());
     }
@@ -183,8 +195,6 @@ extern "C" void compute_pi_gpu(
     CHECKCUDAERR(cudaStreamSynchronize(stream));
     CHECKCUDAERR(cudaMemcpy(piOut, dPI, fullBytes, cudaMemcpyDeviceToHost));
 
-    cudaFree(dPI);
-    cudaFree(dLag);
     CHECKCUDAERR(cudaStreamDestroy(stream));
 }
 
@@ -386,8 +396,7 @@ extern "C" void compute_t_evaluations_gpu(
     void* tOut, void* tzOut,
     const void* evalA, const void* evalB,
     const void* evalC, const void* evalZ,
-    const void* dStaticEvals,    // GPU pointer — 8 arrays already uploaded (S1,S2,S3,QL,QR,QM,QO,QC)
-    const void* evalLagrange0,   // fullN elements — L_0(X) for e4
+    const void* dStaticEvals,    // GPU pointer — 9 arrays: S1,S2,S3,L0,QL,QR,QM,QO,QC
     const void* piPrecomp,       // fullN elements — precomputed PI(X)
     const void* blindFactors,
     const void* betaPtr, const void* gammaPtr,
@@ -395,7 +404,8 @@ extern "C" void compute_t_evaluations_gpu(
     const void* k1Ptr, const void* k2Ptr,
     const void* omega4xPtr, const void* omega1Ptr,
     const void* Z1Ptr, const void* Z2Ptr, const void* Z3Ptr,
-    uint64_t domainSize)
+    uint64_t domainSize,
+    void* dScratch0, void* dScratch1)
 {
     uint64_t fullN = 4 * domainSize;
     size_t fullBytes = fullN * sizeof(Element);
@@ -418,31 +428,32 @@ extern "C" void compute_t_evaluations_gpu(
 
     const Element* hEvalZ = (const Element*)evalZ;
 
-    // Static evals are already on GPU: S1,S2,S3,QL,QR,QM,QO,QC (each fullN elements)
+    // Static evals on GPU: S1(0), S2(1), S3(2), L0(3), QL(4), QR(5), QM(6), QO(7), QC(8)
     const Element* dStaticBase = (const Element*)dStaticEvals;
     const Element* dS1 = dStaticBase + 0 * fullN;
     const Element* dS2 = dStaticBase + 1 * fullN;
     const Element* dS3 = dStaticBase + 2 * fullN;
-    const Element* dQL = dStaticBase + 3 * fullN;
-    const Element* dQR = dStaticBase + 4 * fullN;
-    const Element* dQM = dStaticBase + 5 * fullN;
-    const Element* dQO = dStaticBase + 6 * fullN;
-    const Element* dQC = dStaticBase + 7 * fullN;
+    const Element* dL0 = dStaticBase + 3 * fullN;
+    const Element* dQL = dStaticBase + 4 * fullN;
+    const Element* dQR = dStaticBase + 5 * fullN;
+    const Element* dQM = dStaticBase + 6 * fullN;
+    const Element* dQO = dStaticBase + 7 * fullN;
+    const Element* dQC = dStaticBase + 8 * fullN;
 
-    // Allocate device arrays: 2 output + 4 dynamic input (A, B, C, Z)
-    Element *dT, *dTz;
+    // Reuse pre-allocated GPU buffers for T and Tz outputs;
+    // allocate only the dynamic input arrays (A, B, C, Z)
+    Element *dT  = (Element*)dScratch0;
+    Element *dTz = (Element*)dScratch1;
     Element *dA, *dB, *dC, *dZ;
 
-    CHECKCUDAERR(cudaMalloc(&dT, fullBytes));
-    CHECKCUDAERR(cudaMalloc(&dTz, fullBytes));
     CHECKCUDAERR(cudaMalloc(&dA, fullBytes));
     CHECKCUDAERR(cudaMalloc(&dB, fullBytes));
     CHECKCUDAERR(cudaMalloc(&dC, fullBytes));
     CHECKCUDAERR(cudaMalloc(&dZ, (fullN + 4) * sizeof(Element)));
 
-    // Pre-load PI(X) into dT and L_0(X) into dTz (kernel reads before overwriting)
+    // Pre-load PI(X) into dT (from host) and L_0(X) into dTz (D2D from static buffer)
     CHECKCUDAERR(cudaMemcpy(dT, piPrecomp, fullBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dTz, evalLagrange0, fullBytes, cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(dTz, dL0, fullBytes, cudaMemcpyDeviceToDevice));
 
     // Copy dynamic eval arrays H2D
     CHECKCUDAERR(cudaMemcpy(dA, evalA, fullBytes, cudaMemcpyHostToDevice));
@@ -471,8 +482,7 @@ extern "C" void compute_t_evaluations_gpu(
     CHECKCUDAERR(cudaMemcpy(tOut, dT, fullBytes, cudaMemcpyDeviceToHost));
     CHECKCUDAERR(cudaMemcpy(tzOut, dTz, fullBytes, cudaMemcpyDeviceToHost));
 
-    // Free only dynamic device memory (static evals are managed externally)
-    cudaFree(dT); cudaFree(dTz);
+    // Free only dynamic device memory (dT/dTz are pre-allocated, managed externally)
     cudaFree(dA); cudaFree(dB); cudaFree(dC); cudaFree(dZ);
 }
 
@@ -501,8 +511,6 @@ extern "C" void free_pinned_buffer_gpu(void* pinnedBuffer)
 {
     if (pinnedBuffer) cudaFreeHost(pinnedBuffer);
 }
-
-typedef void (*FileReadFn)(void* dest, uint32_t sectionId, uint64_t offset, uint64_t len, void* ctx);
 
 extern "C" void start_static_eval_transfer_gpu(
     FileReadFn readFn, void* readCtx,

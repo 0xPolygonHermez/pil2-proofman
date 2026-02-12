@@ -17,6 +17,7 @@
 using namespace CPlusPlusLogging;
 
 // GPU function declarations (implemented in CUDA, linked via extern "C")
+typedef void (*FileReadFn)(void* dest, uint32_t sectionId, uint64_t offset, uint64_t len, void* ctx);
 extern "C" void msm_bn128_gpu(void* out, const void* points, const void* scalars, size_t npoints, bool montgomery);
 extern "C" void ntt_bn128_gpu(void* data, uint32_t lg_n);
 extern "C" void intt_bn128_gpu(void* data, uint32_t lg_n);
@@ -27,15 +28,19 @@ extern "C" void compute_z_ratios_gpu(
     const void* omega, uint64_t domainSize);
 extern "C" void compute_pi_gpu(
     void* piOut,
-    const void* evalLagrange,
+    FileReadFn readFn, void* readCtx,
+    uint32_t lagrangeSectionId,
+    uint64_t lagrangeBaseOffset,
+    uint64_t lagrangeStride,
     const void* publicA,
-    uint64_t fullN, uint32_t nPublic);
+    uint64_t fullN, uint32_t nPublic,
+    void* dPI, void* dLag,
+    void* pinnedBuf, size_t pinnedSize);
 extern "C" void compute_t_evaluations_gpu(
     void* tOut, void* tzOut,
     const void* evalA, const void* evalB,
     const void* evalC, const void* evalZ,
     const void* dStaticEvals,
-    const void* evalLagrange0,
     const void* piPrecomp,
     const void* blindFactors,
     const void* beta, const void* gamma,
@@ -43,12 +48,12 @@ extern "C" void compute_t_evaluations_gpu(
     const void* k1, const void* k2,
     const void* omega4x, const void* omega1,
     const void* Z1, const void* Z2, const void* Z3,
-    uint64_t domainSize);
+    uint64_t domainSize,
+    void* dScratch0, void* dScratch1);
 extern "C" void alloc_static_eval_buffers_gpu(void** dBuffer, uint64_t buffeSize);
 extern "C" void free_static_eval_buffers_gpu(void* dBuffer);
 extern "C" void alloc_pinned_buffer_gpu(void** pinnedBuffer, size_t pinnedSize);
 extern "C" void free_pinned_buffer_gpu(void* pinnedBuffer);
-typedef void (*FileReadFn)(void* dest, uint32_t sectionId, uint64_t offset, uint64_t len, void* ctx);
 extern "C" void start_static_eval_transfer_gpu(
     FileReadFn readFn, void* readCtx,
     void* dBuffer, void* pinnedBuffer, size_t pinnedSize,
@@ -119,11 +124,17 @@ namespace PlonkGPU
         }
 
         free_static_eval_buffers_gpu(d_staticEvalsBuffer);
+        free_static_eval_buffers_gpu(d_piBuffer);
+        free_static_eval_buffers_gpu(d_lagBuffer);
         free_pinned_buffer_gpu(pinnedQ);
         free_pinned_buffer_gpu(pinnedS);
+        free_pinned_buffer_gpu(pinnedPI);
         d_staticEvalsBuffer = nullptr;
+        d_piBuffer = nullptr;
+        d_lagBuffer = nullptr;
         pinnedQ = nullptr;
         pinnedS = nullptr;
+        pinnedPI = nullptr;
 
         delete fft;
 
@@ -137,8 +148,6 @@ namespace PlonkGPU
         delete polynomials["Sigma1"];
         delete polynomials["Sigma2"];
         delete polynomials["Sigma3"];
-
-        delete evaluations["lagrange"];
     }
 
     template <typename Engine>
@@ -206,9 +215,8 @@ namespace PlonkGPU
         // Precomputed 1 > polynomials buffer
         uint64_t lengthPrecomputedBigBuffer = 0;
         lengthPrecomputedBigBuffer += zkey->domainSize * 1 * 8; // Polynomials QL, QR, QM, QO, QC, Sigma1, Sigma2 & Sigma3
-        // Precomputed 2 > evaluations buffer (Sigma & Q evals read from file directly to GPU)
-        lengthPrecomputedBigBuffer += zkey->domainSize * 4 * zkey->nPublic; // Evaluations Lagrange1
-        // Precomputed 3 > ptau buffer
+        // Lagrange evals read from file on demand (not loaded to CPU memory)
+        // Precomputed 2 > ptau buffer
         lengthPrecomputedBigBuffer += (zkey->domainSize + 6) * sizeof(G1PointAffine) / sizeof(FrElement); // PTau buffer
 
         precomputedBigBuffer = new FrElement[lengthPrecomputedBigBuffer];
@@ -222,9 +230,7 @@ namespace PlonkGPU
         polPtr["QO"] = polPtr["QM"] + zkey->domainSize;
         polPtr["QC"] = polPtr["QO"] + zkey->domainSize;
 
-        evalPtr["lagrange"] = polPtr["QC"] + zkey->domainSize;
-
-        PTau = (G1PointAffine *)(evalPtr["lagrange"] + zkey->domainSize * 4 * zkey->nPublic);
+        PTau = (G1PointAffine *)(polPtr["QC"] + zkey->domainSize);
 
         // Read Q selectors polynomials and evaluations
         LOG_TRACE("... Loading QL, QR, QM, QO, & QC polynomial coefficients and evaluations");
@@ -298,22 +304,7 @@ namespace PlonkGPU
 
         // Sigma evals (S1, S2, S3) are read from file directly to GPU in round0 (not loaded to CPU memory)
 
-        // Read Lagrange polynomials & evaluations from zkey file
-        LOG_TRACE("... Loading Lagrange evaluations");
-        evaluations["lagrange"] = new Evaluations<Engine>(E, evalPtr["lagrange"], zkey->domainSize * 4 * zkey->nPublic);
-        for (uint64_t i = 0; i < zkey->nPublic; i++)
-        {
-            if (dr) {
-                fdZkey->readSectionToParallel(evaluations["lagrange"]->eval + zkey->domainSize * 4 * i,
-                                      Zkey::ZKEY_PL_LAGRANGE_SECTION,
-                                      sDomain + sDomain * 5 * i,
-                                      sDomain * 4);
-            } else {
-                ThreadUtils::parcpy(evaluations["lagrange"]->eval + zkey->domainSize * 4 * i,
-                                    (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_LAGRANGE_SECTION) + zkey->domainSize + zkey->domainSize * 5 * i,
-                                    sDomain * 4, nThreads);
-            }
-        }
+        // Lagrange evals: L_0 transferred to GPU async in round0; L_j read from file in async PI thread
         LOG_TRACE("... Loading Powers of Tau evaluations");
 
         if (dr) {
@@ -457,12 +448,18 @@ namespace PlonkGPU
         buffers["Z"] = polPtr["T"];
 
         // Pre-allocate GPU + pinned buffers for async static eval transfer (two threads)
-        staticEvalsBufferSize = 8 * 4 * (uint64_t)zkey->domainSize * 32;
+        staticEvalsBufferSize = 9 * 4 * (uint64_t)zkey->domainSize * 32;
         pinnedSize = 512ULL * 1024 * 1024;  // 512 MB per thread
         if (pinnedSize > staticEvalsBufferSize) pinnedSize = staticEvalsBufferSize;
         alloc_static_eval_buffers_gpu(&d_staticEvalsBuffer, staticEvalsBufferSize);
         alloc_pinned_buffer_gpu(&pinnedQ, pinnedSize);
         alloc_pinned_buffer_gpu(&pinnedS, pinnedSize);
+        alloc_pinned_buffer_gpu(&pinnedPI, pinnedSize);
+
+        // Pre-allocate GPU buffers for PI computation (dPI accumulator + dLag scratch)
+        uint64_t fullBytes = 4 * (uint64_t)zkey->domainSize * 32;
+        alloc_static_eval_buffers_gpu(&d_piBuffer, fullBytes);
+        alloc_static_eval_buffers_gpu(&d_lagBuffer, fullBytes);
 
         // Store file pointer for file-based GPU transfer in round0
         fdZkeyPtr = fdZkey;
@@ -662,18 +659,19 @@ namespace PlonkGPU
             static_cast<BinFileUtils::BinFile*>(ctx)->readSectionToParallel(dest, sectionId, offset, len, 8);
         };
 
-        // Sigma arrays (S1,S2,S3) — eval offsets within SIGMA section
-        std::array<uint32_t, 3> sSids = { Zkey::ZKEY_PL_SIGMA_SECTION, Zkey::ZKEY_PL_SIGMA_SECTION, Zkey::ZKEY_PL_SIGMA_SECTION };
-        std::array<uint64_t, 3> sOffs = { sDomain * 1, sDomain * 6, sDomain * 11 };
-        std::array<uint64_t, 3> sSizes = { evalSize, evalSize, evalSize };
+        // GPU layout: S1, S2, S3, L_0
+        std::array<uint32_t, 4> sSids = { Zkey::ZKEY_PL_SIGMA_SECTION, Zkey::ZKEY_PL_SIGMA_SECTION,
+                                           Zkey::ZKEY_PL_SIGMA_SECTION, Zkey::ZKEY_PL_LAGRANGE_SECTION };
+        std::array<uint64_t, 4> sOffs = { sDomain * 1, sDomain * 6, sDomain * 11, sDomain };
+        std::array<uint64_t, 4> sSizes = { evalSize, evalSize, evalSize, evalSize };
 
-        uint64_t sigmaBytes = 3 * evalSize;
+        uint64_t sigmaAndL0Bytes = 4 * evalSize;
 
         asyncTransferSigma = std::thread([readFn, dBuf, this, pinSize,
                                           sSids, sOffs, sSizes]() {
             start_static_eval_transfer_gpu(readFn, (void*)this->fdZkeyPtr,
                                            dBuf, this->pinnedS, pinSize,
-                                           sSids.data(), sOffs.data(), sSizes.data(), 3);
+                                           sSids.data(), sOffs.data(), sSizes.data(), 4);
         });
 
         // Q arrays (QL,QR,QM,QO,QC) — evals start at offset sDomain in each section
@@ -683,7 +681,7 @@ namespace PlonkGPU
         std::array<uint64_t, 5> qOffs = { sDomain, sDomain, sDomain, sDomain, sDomain };
         std::array<uint64_t, 5> qSizes = { evalSize, evalSize, evalSize, evalSize, evalSize };
 
-        void* dBufQ = (void*)((uint8_t*)dBuf + sigmaBytes);
+        void* dBufQ = (void*)((uint8_t*)dBuf + sigmaAndL0Bytes);
 
         asyncTransferQ = std::thread([readFn, dBufQ, this, pinSize,
                                       qSids, qOffs, qSizes]() {
@@ -732,16 +730,32 @@ namespace PlonkGPU
 
         computeWirePolynomial("A", bFactorsA);
 
-        // Launch async PI — buffers["A"] is ready
+        // Launch async PI — buffers["A"] is ready, Lagrange read from file on demand
         {
             uint64_t fullN = 4 * (uint64_t)zkey->domainSize;
             auto piOut = buffers["PI"];
-            auto lagrangeEval = evaluations["lagrange"]->eval;
             auto publicA = buffers["A"];
             uint32_t nPub = zkey->nPublic;
-            asyncComputePI = std::thread([piOut, lagrangeEval, publicA, fullN, nPub]() {
-                compute_pi_gpu((void*)piOut, (const void*)lagrangeEval,
-                               (const void*)publicA, fullN, nPub);
+            auto fdPtr = fdZkeyPtr;
+            uint64_t sd = sDomain;
+            auto dPI = d_piBuffer;
+            auto dLag = d_lagBuffer;
+            auto pinBuf = pinnedPI;
+            auto pinSz = pinnedSize;
+
+            FileReadFn piReadFn = [](void* dest, uint32_t sectionId,
+                                     uint64_t offset, uint64_t len, void* ctx) {
+                static_cast<BinFileUtils::BinFile*>(ctx)->readSectionToParallel(
+                    dest, sectionId, offset, len, 8);
+            };
+
+            asyncComputePI = std::thread([piOut, piReadFn, fdPtr, sd, publicA, fullN, nPub,
+                                          dPI, dLag, pinBuf, pinSz]() {
+                compute_pi_gpu((void*)piOut, piReadFn, (void*)fdPtr,
+                               Zkey::ZKEY_PL_LAGRANGE_SECTION,
+                               sd, sd * 5,
+                               (const void*)publicA, fullN, nPub,
+                               dPI, dLag, pinBuf, pinSz);
             });
         }
         computeWirePolynomial("B", bFactorsB);
@@ -977,7 +991,6 @@ namespace PlonkGPU
         auto evaluationsB = evaluations["B"];
         auto evaluationsC = evaluations["C"];
         auto evaluationsZ = evaluations["Z"];
-        auto evaluationsLagrange = evaluations["lagrange"];
 
         // Preloaded constants
         auto beta = challenges["beta"];
@@ -1029,7 +1042,6 @@ namespace PlonkGPU
             (const void*)evaluationsC->eval,
             (const void*)evaluationsZ->eval,
             d_staticEvalsBuffer,
-            (const void*)evaluationsLagrange->eval,
             (const void*)buffers["PI"],
             (const void*)blindingFactors,
             (const void*)&beta,
@@ -1043,7 +1055,8 @@ namespace PlonkGPU
             (const void*)Z1,
             (const void*)Z2,
             (const void*)Z3,
-            zkey->domainSize);
+            zkey->domainSize,
+            d_piBuffer, d_lagBuffer);
         std::cout<<" [computeT] computed T evaluations in "<<omp_get_wtime() - tstart<<std::endl;
         // Compute the coefficients of the polynomial T(X) from buffers.T using GPU IFFT
         LOG_TRACE("··· Computing T ifft (GPU)");
