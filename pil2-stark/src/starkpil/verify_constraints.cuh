@@ -37,32 +37,35 @@ __global__ void verifyConstraintKernel(
     __syncthreads();
 
     uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
-    if (row >= N || row < firstRow || row > lastRow) return;
+    bool outOfRange = (row >= N || row < firstRow || row > lastRow);
 
     uint64_t v0 = 0, v1 = 0, v2 = 0;
     bool invalid = false;
 
-    if constexpr (DIM == 1) {
-        v0 = dest[row].fe;
-        invalid = !isGoldilocksZero(v0);
-    } else {
-        uint64_t base = 3 * row;
-        v0 = dest[base].fe;
-        v1 = dest[base + 1].fe;
-        v2 = dest[base + 2].fe;
-        invalid = !isGoldilocksZero(v0)
-               | !isGoldilocksZero(v1)
-               | !isGoldilocksZero(v2);
+    if (!outOfRange) {
+        if constexpr (DIM == 1) {
+            v0 = dest[row].fe;
+            invalid = !isGoldilocksZero(v0);
+        } else {
+            uint64_t base = 3 * row;
+            v0 = dest[base].fe;
+            v1 = dest[base + 1].fe;
+            v2 = dest[base + 2].fe;
+            invalid = !isGoldilocksZero(v0)
+                   | !isGoldilocksZero(v1)
+                   | !isGoldilocksZero(v2);
+        }
     }
 
-    if (!invalid) return;
-
-    uint32_t idx = atomicAdd(&s_count, 1);
-    if (idx < BLOCK_MAX) {
-        s_rows[idx] = row;
-        s_vals[idx][0] = v0;
-        s_vals[idx][1] = v1;
-        s_vals[idx][2] = v2;
+    if (invalid) {
+        uint32_t idx = atomicAdd(&s_count, 1);
+        
+        if (idx < BLOCK_MAX) {
+            s_rows[idx] = row;
+            s_vals[idx][0] = v0;
+            s_vals[idx][1] = v1;
+            s_vals[idx][2] = v2;
+        }
     }
 
     __syncthreads();
@@ -261,7 +264,7 @@ void verifyConstraintsGPU(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t stre
             CHECKCUDAERR(cudaMemsetAsync(pBufferGPU, 0, N * FIELD_EXTENSION * sizeof(Goldilocks::Element), stream));
             
             // Calculate constraint expression on GPU
-            Dest constraintDest(NULL, N, 0);
+            Dest constraintDest(NULL, N, 0, 0, true, i);
             constraintDest.addParams(i, destDim);
             constraintDest.dest_gpu = pBufferGPU;
             countId++;
