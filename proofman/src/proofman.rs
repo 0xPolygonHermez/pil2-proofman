@@ -982,8 +982,14 @@ where
         let (witness_handler, witness_handles) =
             self.calc_witness_handler(witness_done.clone(), self.memory_handler.clone(), minimal_memory, false);
 
-        let my_instances_no_tables =
-            my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+        let my_instances_no_tables = my_instances
+            .iter()
+            .filter(|idx| {
+                !self.pctx.dctx_is_table(**idx)
+                    && skip_prover_instance(&self.pctx, **idx).map(|(skip, _)| !skip).unwrap_or(false)
+            })
+            .copied()
+            .collect::<Vec<_>>();
 
         timer_start_debug!(CALCULATING_WITNESS);
         self.calculate_witness(
@@ -1007,7 +1013,12 @@ where
 
         drop(witness_handles);
 
-        let my_instances_tables = self.pctx.dctx_get_my_tables();
+        let my_instances_tables = self
+            .pctx
+            .dctx_get_my_tables()
+            .into_iter()
+            .filter(|idx| skip_prover_instance(&self.pctx, *idx).map(|(skip, _)| !skip).unwrap_or(false))
+            .collect::<Vec<_>>();
 
         timer_start_debug!(CALCULATING_TABLES);
 

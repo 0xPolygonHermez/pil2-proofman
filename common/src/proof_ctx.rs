@@ -46,7 +46,7 @@ impl<F> Default for Values<F> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct InstancesInfo {
     pub constraints: Vec<usize>,
     pub hint_ids: Vec<usize>,
@@ -114,7 +114,7 @@ impl BorshDeserialize for ProofOptions {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct DebugInfo {
     pub debug_instances: AirGroupMap,
     pub debug_global_instances: Vec<usize>,

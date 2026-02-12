@@ -165,18 +165,7 @@ pub fn verify_constraints_proof<F: PrimeField64>(
     let constraints = verify_constraints(pctx, sctx, instance_id, n_print_constraints, stream_id)?;
 
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
-    let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
     let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
-    let (skip, _) = skip_prover_instance(pctx, instance_id)?;
-    if skip {
-        tracing::info!(
-            "{}",
-            format!("··· \u{2713} Skipping Instance #{air_instance_id} of {air_name} [{airgroup_id}:{air_id}]")
-                .bright_yellow()
-                .bold()
-        );
-        return Ok(true);
-    };
 
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
