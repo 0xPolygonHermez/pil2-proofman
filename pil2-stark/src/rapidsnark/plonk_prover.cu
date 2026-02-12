@@ -29,6 +29,7 @@ __global__ void computeZRatiosKernel(
     const Element* __restrict__ sigma1,
     const Element* __restrict__ sigma2,
     const Element* __restrict__ sigma3,
+    uint32_t sigmaStride,
     Element beta,
     Element gamma,
     Element k1,
@@ -50,9 +51,9 @@ __global__ void computeZRatiosKernel(
     Element num = Fr::mul(num1, Fr::mul(num2, num3));
 
     // den = (a + beta*sigma1[i] + gamma)(b + beta*sigma2[i] + gamma)(c + beta*sigma3[i] + gamma)
-    Element den1 = Fr::add(Fr::add(buffA[i], Fr::mul(beta, sigma1[i])), gamma);
-    Element den2 = Fr::add(Fr::add(buffB[i], Fr::mul(beta, sigma2[i])), gamma);
-    Element den3 = Fr::add(Fr::add(buffC[i], Fr::mul(beta, sigma3[i])), gamma);
+    Element den1 = Fr::add(Fr::add(buffA[i], Fr::mul(beta, sigma1[i * sigmaStride])), gamma);
+    Element den2 = Fr::add(Fr::add(buffB[i], Fr::mul(beta, sigma2[i * sigmaStride])), gamma);
+    Element den3 = Fr::add(Fr::add(buffC[i], Fr::mul(beta, sigma3[i * sigmaStride])), gamma);
     Element den = Fr::mul(den1, Fr::mul(den2, den3));
 
     // ratio[i] = num * den^{-1}
@@ -60,26 +61,21 @@ __global__ void computeZRatiosKernel(
 }
 
 extern "C" void compute_z_ratios_gpu(
-    void* ratioOut,          
-    const void* buffA,       
-    const void* buffB,       
-    const void* buffC,       
-    const void* sigma1Eval,  
-    const void* sigma2Eval,  
-    const void* sigma3Eval,  
-    const void* betaPtr,     
-    const void* gammaPtr,    
-    const void* k1Ptr,       
-    const void* k2Ptr,       
-    const void* omegaPtr,    
+    void* ratioOut,
+    const void* buffA,
+    const void* buffB,
+    const void* buffC,
+    const void* dStaticEvals,
+    const void* betaPtr,
+    const void* gammaPtr,
+    const void* k1Ptr,
+    const void* k2Ptr,
+    const void* omegaPtr,
     uint64_t domainSize)
 {
     const Element* hBuffA = (const Element*)buffA;
     const Element* hBuffB = (const Element*)buffB;
     const Element* hBuffC = (const Element*)buffC;
-    const Element* hSigma1 = (const Element*)sigma1Eval;
-    const Element* hSigma2 = (const Element*)sigma2Eval;
-    const Element* hSigma3 = (const Element*)sigma3Eval;
 
     Element beta  = *(const Element*)betaPtr;
     Element gamma = *(const Element*)gammaPtr;
@@ -88,48 +84,34 @@ extern "C" void compute_z_ratios_gpu(
     Element omega = *(const Element*)omegaPtr;
 
     size_t arrayBytes = domainSize * sizeof(Element);
+    uint64_t fullN = 4 * domainSize;
 
-    // Extract sigma values at stride 4 into compact arrays
-    Element* hSigma1Compact = (Element*)malloc(arrayBytes);
-    Element* hSigma2Compact = (Element*)malloc(arrayBytes);
-    Element* hSigma3Compact = (Element*)malloc(arrayBytes);
-    for (uint64_t i = 0; i < domainSize; i++) {
-        hSigma1Compact[i] = hSigma1[i * 4];
-        hSigma2Compact[i] = hSigma2[i * 4];
-        hSigma3Compact[i] = hSigma3[i * 4];
-    }
+    // Sigma evals are already on GPU in d_staticEvalsBuffer: S1, S2, S3 (each fullN elements)
+    const Element* dStaticBase = (const Element*)dStaticEvals;
+    const Element* dS1 = dStaticBase + 0 * fullN;
+    const Element* dS2 = dStaticBase + 1 * fullN;
+    const Element* dS3 = dStaticBase + 2 * fullN;
 
-    // Allocate device memory
+    // Allocate device memory for A, B, C and output
     Element *dRatioOut, *dBuffA, *dBuffB, *dBuffC;
-    Element *dSigma1, *dSigma2, *dSigma3;
 
     CHECKCUDAERR(cudaMalloc(&dRatioOut, arrayBytes));
     CHECKCUDAERR(cudaMalloc(&dBuffA, arrayBytes));
     CHECKCUDAERR(cudaMalloc(&dBuffB, arrayBytes));
     CHECKCUDAERR(cudaMalloc(&dBuffC, arrayBytes));
-    CHECKCUDAERR(cudaMalloc(&dSigma1, arrayBytes));
-    CHECKCUDAERR(cudaMalloc(&dSigma2, arrayBytes));
-    CHECKCUDAERR(cudaMalloc(&dSigma3, arrayBytes));
 
     // Copy inputs H2D
     CHECKCUDAERR(cudaMemcpy(dBuffA, hBuffA, arrayBytes, cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(dBuffB, hBuffB, arrayBytes, cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(dBuffC, hBuffC, arrayBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dSigma1, hSigma1Compact, arrayBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dSigma2, hSigma2Compact, arrayBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dSigma3, hSigma3Compact, arrayBytes, cudaMemcpyHostToDevice));
 
-    free(hSigma1Compact);
-    free(hSigma2Compact);
-    free(hSigma3Compact);
-
-    // Launch kernel
+    // Launch kernel — sigma arrays use stride 4 (full eval size = 4 * domainSize)
     uint32_t threadsPerBlock = 256;
     uint32_t blocks = (uint32_t)((domainSize + threadsPerBlock - 1) / threadsPerBlock);
 
     computeZRatiosKernel<<<blocks, threadsPerBlock>>>(
         dRatioOut, dBuffA, dBuffB, dBuffC,
-        dSigma1, dSigma2, dSigma3,
+        dS1, dS2, dS3, 4,
         beta, gamma, k1, k2, omega,
         domainSize);
 
@@ -144,9 +126,6 @@ extern "C" void compute_z_ratios_gpu(
     cudaFree(dBuffA);
     cudaFree(dBuffB);
     cudaFree(dBuffC);
-    cudaFree(dSigma1);
-    cudaFree(dSigma2);
-    cudaFree(dSigma3);
 }
 
 // ============================================================================
@@ -402,10 +381,7 @@ extern "C" void compute_t_evaluations_gpu(
     void* tOut, void* tzOut,
     const void* evalA, const void* evalB,
     const void* evalC, const void* evalZ,
-    const void* evalQM, const void* evalQL,
-    const void* evalQR, const void* evalQO,
-    const void* evalQC, const void* evalS1,
-    const void* evalS2, const void* evalS3,
+    const void* dStaticEvals,    // GPU pointer — 8 arrays already uploaded (S1,S2,S3,QL,QR,QM,QO,QC)
     const void* evalLagrange0,   // fullN elements — L_0(X) for e4
     const void* piPrecomp,       // fullN elements — precomputed PI(X)
     const void* blindFactors,
@@ -437,12 +413,20 @@ extern "C" void compute_t_evaluations_gpu(
 
     const Element* hEvalZ = (const Element*)evalZ;
 
-    // Allocate device arrays (14 input + 2 output = 16 buffers, but PI and L_0
-    // are pre-loaded into the output buffers dT and dTz to save 2 allocations)
+    // Static evals are already on GPU: S1,S2,S3,QL,QR,QM,QO,QC (each fullN elements)
+    const Element* dStaticBase = (const Element*)dStaticEvals;
+    const Element* dS1 = dStaticBase + 0 * fullN;
+    const Element* dS2 = dStaticBase + 1 * fullN;
+    const Element* dS3 = dStaticBase + 2 * fullN;
+    const Element* dQL = dStaticBase + 3 * fullN;
+    const Element* dQR = dStaticBase + 4 * fullN;
+    const Element* dQM = dStaticBase + 5 * fullN;
+    const Element* dQO = dStaticBase + 6 * fullN;
+    const Element* dQC = dStaticBase + 7 * fullN;
+
+    // Allocate device arrays: 2 output + 4 dynamic input (A, B, C, Z)
     Element *dT, *dTz;
     Element *dA, *dB, *dC, *dZ;
-    Element *dQM, *dQL, *dQR, *dQO, *dQC;
-    Element *dS1, *dS2, *dS3;
 
     CHECKCUDAERR(cudaMalloc(&dT, fullBytes));
     CHECKCUDAERR(cudaMalloc(&dTz, fullBytes));
@@ -450,20 +434,12 @@ extern "C" void compute_t_evaluations_gpu(
     CHECKCUDAERR(cudaMalloc(&dB, fullBytes));
     CHECKCUDAERR(cudaMalloc(&dC, fullBytes));
     CHECKCUDAERR(cudaMalloc(&dZ, (fullN + 4) * sizeof(Element)));
-    CHECKCUDAERR(cudaMalloc(&dQM, fullBytes));
-    CHECKCUDAERR(cudaMalloc(&dQL, fullBytes));
-    CHECKCUDAERR(cudaMalloc(&dQR, fullBytes));
-    CHECKCUDAERR(cudaMalloc(&dQO, fullBytes));
-    CHECKCUDAERR(cudaMalloc(&dQC, fullBytes));
-    CHECKCUDAERR(cudaMalloc(&dS1, fullBytes));
-    CHECKCUDAERR(cudaMalloc(&dS2, fullBytes));
-    CHECKCUDAERR(cudaMalloc(&dS3, fullBytes));
 
     // Pre-load PI(X) into dT and L_0(X) into dTz (kernel reads before overwriting)
     CHECKCUDAERR(cudaMemcpy(dT, piPrecomp, fullBytes, cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(dTz, evalLagrange0, fullBytes, cudaMemcpyHostToDevice));
 
-    // Copy eval arrays H2D
+    // Copy dynamic eval arrays H2D
     CHECKCUDAERR(cudaMemcpy(dA, evalA, fullBytes, cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(dB, evalB, fullBytes, cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(dC, evalC, fullBytes, cudaMemcpyHostToDevice));
@@ -471,15 +447,6 @@ extern "C" void compute_t_evaluations_gpu(
     // Z: fullN elements + 4 extra wrapping around to the start
     CHECKCUDAERR(cudaMemcpy(dZ, hEvalZ, fullBytes, cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(dZ + fullN, hEvalZ, 4 * sizeof(Element), cudaMemcpyHostToDevice));
-
-    CHECKCUDAERR(cudaMemcpy(dQM, evalQM, fullBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dQL, evalQL, fullBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dQR, evalQR, fullBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dQO, evalQO, fullBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dQC, evalQC, fullBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dS1, evalS1, fullBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dS2, evalS2, fullBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dS3, evalS3, fullBytes, cudaMemcpyHostToDevice));
 
     // Launch kernel
     uint32_t threadsPerBlock = 256;
@@ -499,9 +466,73 @@ extern "C" void compute_t_evaluations_gpu(
     CHECKCUDAERR(cudaMemcpy(tOut, dT, fullBytes, cudaMemcpyDeviceToHost));
     CHECKCUDAERR(cudaMemcpy(tzOut, dTz, fullBytes, cudaMemcpyDeviceToHost));
 
-    // Free device memory
+    // Free only dynamic device memory (static evals are managed externally)
     cudaFree(dT); cudaFree(dTz);
     cudaFree(dA); cudaFree(dB); cudaFree(dC); cudaFree(dZ);
-    cudaFree(dQM); cudaFree(dQL); cudaFree(dQR); cudaFree(dQO); cudaFree(dQC);
-    cudaFree(dS1); cudaFree(dS2); cudaFree(dS3);
+}
+
+// ============================================================================
+// Async GPU transfer for static evaluation arrays
+// ============================================================================
+
+extern "C" void alloc_static_eval_buffers_gpu(
+    void** dBuffer,
+    uint64_t gpuBytes)
+{
+    CHECKCUDAERR(cudaMalloc(dBuffer, gpuBytes));
+}
+
+extern "C" void free_static_eval_buffers_gpu(void* dBuffer)
+{
+    if (dBuffer) cudaFree(dBuffer);
+}
+
+extern "C" void alloc_pinned_buffer_gpu(void** pinnedBuffer, size_t pinnedSize)
+{
+    CHECKCUDAERR(cudaMallocHost(pinnedBuffer, pinnedSize));
+}
+
+extern "C" void free_pinned_buffer_gpu(void* pinnedBuffer)
+{
+    if (pinnedBuffer) cudaFreeHost(pinnedBuffer);
+}
+
+typedef void (*FileReadFn)(void* dest, uint32_t sectionId, uint64_t offset, uint64_t len, void* ctx);
+
+extern "C" void start_static_eval_transfer_gpu(
+    FileReadFn readFn, void* readCtx,
+    void* dBuffer, void* pinnedBuffer, size_t pinnedSize,
+    const uint32_t* sectionIds, const uint64_t* byteOffsets, const uint64_t* byteSizes, int numArrays)
+{
+    size_t halfSize = pinnedSize / 2;
+    uint8_t* buf[2] = { (uint8_t*)pinnedBuffer, (uint8_t*)pinnedBuffer + halfSize };
+    uint8_t* gpuDst = (uint8_t*)dBuffer;
+    int cur = 0;
+    bool first = true;
+    int chunk_idx = 0;
+
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+
+    for (int arr = 0; arr < numArrays; arr++) {
+        uint64_t remaining = byteSizes[arr];
+        uint64_t off = byteOffsets[arr];
+        while (remaining > 0) {
+            size_t chunk = (remaining < (uint64_t)halfSize) ? (size_t)remaining : halfSize;
+
+            readFn(buf[cur], sectionIds[arr], off, chunk, readCtx);
+
+            if (!first) CHECKCUDAERR(cudaStreamSynchronize(stream));
+            CHECKCUDAERR(cudaMemcpyAsync(gpuDst, buf[cur], chunk, cudaMemcpyHostToDevice, stream));
+
+            gpuDst += chunk;
+            off += chunk;
+            remaining -= chunk;
+            cur ^= 1;
+            first = false;
+            chunk_idx++;
+        }
+    }
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+    CHECKCUDAERR(cudaStreamDestroy(stream));
 }

@@ -416,7 +416,7 @@ namespace Plonk
         // buffers.Tz   ← denArr, polynomials.Wxi
         // polynomials.T ← buffers.Z
 
-        buffersLength = zkey->domainSize * 3; // Buffers A, B, C, tmp
+        buffersLength = zkey->domainSize * 3; // Buffers A, B, C
 
         if (NULL == this->reservedMemoryPtr)
         {

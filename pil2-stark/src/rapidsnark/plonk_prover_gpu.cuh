@@ -3,6 +3,7 @@
 
 #include <string>
 #include <map>
+#include <thread>
 #include "snark_proof.hpp"
 #include "binfile_utils.hpp"
 #include <gmp.h>
@@ -73,6 +74,16 @@ namespace PlonkGPU {
 
         Keccak256Transcript<Engine> *transcript;
         SnarkProof<Engine> *proof;
+
+        std::thread asyncTransferSigma;   // S1,S2,S3 — join before computeZ
+        std::thread asyncTransferQ;       // QL-QC — join before computeT
+        void* d_staticEvalsBuffer = nullptr;
+        size_t staticEvalsBufferSize = 0;
+        void* pinnedS = nullptr;
+        void* pinnedQ = nullptr;
+        size_t pinnedSize = 0;
+
+        BinFileUtils::BinFile* fdZkeyPtr = nullptr;
     public:
         PlonkProverGPU(Engine &E);
         PlonkProverGPU(Engine &E, void* reservedMemoryPtr, uint64_t reservedMemorySize);
@@ -113,6 +124,8 @@ namespace PlonkGPU {
         void computeWirePolynomial(std::string polName, FrElement blindingFactors[]);
 
         void computeZ();
+
+        void round0();
 
         void computeT();
 
