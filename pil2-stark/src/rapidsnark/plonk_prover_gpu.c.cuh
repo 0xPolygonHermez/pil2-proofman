@@ -24,6 +24,7 @@ extern "C" void ntt_bn128_gpu_dev_ptr(void* d_data, uint32_t lg_n);
 extern "C" void intt_bn128_gpu_dev_ptr(void* d_data, uint32_t lg_n);
 extern "C" void memcpy_h2d_gpu(void* dst, const void* src, size_t bytes);
 extern "C" void memcpy_d2h_gpu(void* dst, const void* src, size_t bytes);
+extern "C" void memcpy_d2d_gpu(void* dst, const void* src, size_t bytes);
 extern "C" void ntt_bn128_gpu(void* data, uint32_t lg_n);
 extern "C" void intt_bn128_gpu(void* data, uint32_t lg_n);
 extern "C" void compute_z_ratios_gpu(
@@ -56,7 +57,10 @@ extern "C" void compute_t_evaluations_gpu(
     uint64_t domainSize,
     void* dScratch0, void* dScratch1,
     bool evalsOnGPU,
-    const void* dEvalA, const void* dEvalB, const void* dEvalC);
+    const void* dEvalA, const void* dEvalB, const void* dEvalC,
+    const void* dEvalZ,
+    bool piOnGPU,
+    bool tResultOnGPU);
 extern "C" void alloc_static_eval_buffers_gpu(void** dBuffer, uint64_t buffeSize);
 extern "C" void free_static_eval_buffers_gpu(void* dBuffer);
 extern "C" void alloc_pinned_buffer_gpu(void** pinnedBuffer, size_t pinnedSize);
@@ -136,6 +140,7 @@ namespace PlonkGPU
         free_static_eval_buffers_gpu(d_evalA);
         free_static_eval_buffers_gpu(d_evalB);
         free_static_eval_buffers_gpu(d_evalC);
+        free_static_eval_buffers_gpu(d_evalZ);
         free_pinned_buffer_gpu(pinnedQ);
         free_pinned_buffer_gpu(pinnedS);
         free_pinned_buffer_gpu(pinnedPI);
@@ -145,6 +150,7 @@ namespace PlonkGPU
         d_evalA = nullptr;
         d_evalB = nullptr;
         d_evalC = nullptr;
+        d_evalZ = nullptr;
         pinnedQ = nullptr;
         pinnedS = nullptr;
         pinnedPI = nullptr;
@@ -389,7 +395,8 @@ namespace PlonkGPU
         // NON-PRECOMPUTED BIG BUFFER
         ////////////////////////////////////////////////////
         lengthNonPrecomputedBigBuffer = 0;
-        lengthNonPrecomputedBigBuffer += zkey->domainSize * 4 * 4;   // Evaluations A, B, C & Z
+        // evalPtr[A/B/C/Z] removed: wire evals stay on GPU (d_evalA/B/C),
+        // Z evals overlap with buffers["Tz"], wire staging overlaps with polPtr["Tz"]
         lengthNonPrecomputedBigBuffer += zkey->domainSize * 4 * 4;   // Buffers T, Tz & Polynomials T, Tz
         lengthNonPrecomputedBigBuffer += (zkey->domainSize + 2) * 3; // Polynomials A, B & C
         lengthNonPrecomputedBigBuffer += zkey->domainSize + 3;       // Polynomial Z
@@ -422,13 +429,7 @@ namespace PlonkGPU
             nonPrecomputedBigBuffer = this->reservedMemoryPtr;
         }
 
-        //L,A,B,C,Sigma1,Sigma2,Z
-        evalPtr["A"] = &nonPrecomputedBigBuffer[0];
-        evalPtr["B"] = evalPtr["A"] + zkey->domainSize * 4;
-        evalPtr["C"] = evalPtr["B"] + zkey->domainSize * 4;
-        evalPtr["Z"] = evalPtr["C"] + zkey->domainSize * 4;
-
-        buffers["T"] = evalPtr["Z"] + zkey->domainSize * 4;
+        buffers["T"] = &nonPrecomputedBigBuffer[0];
         buffers["Tz"] = buffers["T"] + zkey->domainSize * 4;
         polPtr["T"] = buffers["Tz"] + zkey->domainSize * 4;
         polPtr["Tz"] = polPtr["T"] + zkey->domainSize * 4;
@@ -460,6 +461,14 @@ namespace PlonkGPU
 
         buffers["Z"] = polPtr["T"];
 
+        // Eval buffer overlaps: wire evals (A/B/C) use polPtr["Tz"] as shared staging
+        // (processed sequentially, D2H skipped — data stays on GPU in d_evalA/B/C).
+        // Z evals use buffers["Tz"] (PI stays on GPU, doesn't write this CPU buffer).
+        evalPtr["A"] = polPtr["Tz"];
+        evalPtr["B"] = polPtr["Tz"];
+        evalPtr["C"] = polPtr["Tz"];
+        evalPtr["Z"] = buffers["Tz"];
+
         // Pre-allocate GPU + pinned buffers for async static eval transfer (two threads)
         // Static eval buffer: 9 eval arrays (PTau uploaded per-MSM for now — will be
         // persistent after computeT's internal allocations are removed in later steps)
@@ -476,10 +485,8 @@ namespace PlonkGPU
         alloc_static_eval_buffers_gpu(&d_piBuffer, fullBytes);
         alloc_static_eval_buffers_gpu(&d_lagBuffer, fullBytes);
 
-        // Pre-allocate GPU buffers for wire evaluations (A, B, C stay on GPU after FFT)
-        alloc_static_eval_buffers_gpu(&d_evalA, fullBytes);
-        alloc_static_eval_buffers_gpu(&d_evalB, fullBytes);
-        alloc_static_eval_buffers_gpu(&d_evalC, fullBytes);
+        // d_evalA/B/C allocated lazily in computeWirePolynomials (not here,
+        // because recursive F proof runs between setZkey and prove and needs GPU memory)
 
         // Store file pointer for file-based GPU transfer in round0
         fdZkeyPtr = fdZkey;
@@ -761,12 +768,20 @@ namespace PlonkGPU
         FrElement bFactorsB[2] = {blindingFactors[4], blindingFactors[3]};
         FrElement bFactorsC[2] = {blindingFactors[6], blindingFactors[5]};
 
+        // Allocate GPU buffers for wire evaluations (deferred from setZkey
+        // to avoid holding memory during recursive F proof generation)
+        if (!d_evalA) {
+            uint64_t fullBytes = 4 * (uint64_t)zkey->domainSize * 32;
+            alloc_static_eval_buffers_gpu(&d_evalA, fullBytes);
+            alloc_static_eval_buffers_gpu(&d_evalB, fullBytes);
+            alloc_static_eval_buffers_gpu(&d_evalC, fullBytes);
+        }
+
         computeWirePolynomial("A", bFactorsA, d_evalA);
 
         // Launch async PI — buffers["A"] is ready, Lagrange read from file on demand
         {
             uint64_t fullN = 4 * (uint64_t)zkey->domainSize;
-            auto piOut = buffers["PI"];
             auto publicA = buffers["A"];
             uint32_t nPub = zkey->nPublic;
             auto fdPtr = fdZkeyPtr;
@@ -782,9 +797,9 @@ namespace PlonkGPU
                     dest, sectionId, offset, len, 8);
             };
 
-            asyncComputePI = std::thread([piOut, piReadFn, fdPtr, sd, publicA, fullN, nPub,
+            asyncComputePI = std::thread([piReadFn, fdPtr, sd, publicA, fullN, nPub,
                                           dPI, dLag, pinBuf, pinSz]() {
-                compute_pi_gpu((void*)piOut, piReadFn, (void*)fdPtr,
+                compute_pi_gpu(nullptr, piReadFn, (void*)fdPtr,
                                Zkey::ZKEY_PL_LAGRANGE_SECTION,
                                sd, sd * 5,
                                (const void*)publicA, fullN, nPub,
@@ -899,6 +914,16 @@ namespace PlonkGPU
         LOG_TRACE("> Computing Z polynomial commitment (GPU)");
         G1Point Z = multiExponentiationGPU(polynomials["Z"]);
         proof->addPolynomialCommitment("Z", Z);
+
+        // After Z MSM frees its temp buffers, allocate d_evalZ and upload Z evals from CPU
+        // (deferred from computeZ to avoid OOM during MSM temp allocs)
+        if (!d_evalZ) {
+            uint64_t fullBytes = 4 * (uint64_t)zkey->domainSize * sizeof(FrElement);
+            alloc_static_eval_buffers_gpu(&d_evalZ, fullBytes + 4 * sizeof(FrElement));
+            memcpy_h2d_gpu(d_evalZ, evaluations["Z"]->eval, fullBytes);
+            // Set wrap-around: d_evalZ[fullN..fullN+3] = d_evalZ[0..3]
+            memcpy_d2d_gpu((uint8_t*)d_evalZ + fullBytes, d_evalZ, 4 * sizeof(FrElement));
+        }
     }
 
     template <typename Engine>
@@ -961,11 +986,11 @@ namespace PlonkGPU
         }
 
         // Compute polynomial coefficients z(X) from buffers.Z using GPU IFFT
-        LOG_TRACE("··· Computing Z ifft (GPU)");
+        LOG_TRACE("··· Computing Z ifft (GPU dev_ptr)");
         polynomials["Z"] = polynomialFromEvaluationsGPU(buffersZ, polPtr["Z"], zkey->domainSize, 3, zkeyPower);
 
-        // Compute extended evaluations of z(X) polynomial using GPU FFT
-        LOG_TRACE("··· Computing Z fft (GPU)");
+        // Compute extended evaluations of z(X) using GPU FFT (temp alloc — d_evalZ allocated after Z MSM)
+        LOG_TRACE("··· Computing Z fft (GPU dev_ptr)");
         evaluations["Z"] = evaluationsFromPolynomialGPU(evalPtr["Z"], *polynomials["Z"], zkey->domainSize * 4, zkeyPower + 2);
 
         // Blind z(X) polynomial coefficients with blinding scalars b
@@ -1090,18 +1115,36 @@ namespace PlonkGPU
             (const void*)Z3,
             zkey->domainSize,
             d_piBuffer, d_lagBuffer,
-            true, d_evalA, d_evalB, d_evalC);
+            true, d_evalA, d_evalB, d_evalC, d_evalZ,
+            true,
+            true);  // tResultOnGPU: T/Tz stay on GPU for IFFT
         std::cout<<" [computeT] computed T evaluations in "<<omp_get_wtime() - tstart<<std::endl;
-        // Compute the coefficients of the polynomial T(X) from buffers.T using GPU IFFT
+
+        // Free GPU-resident evals (no longer needed after computeT kernel)
+        free_static_eval_buffers_gpu(d_evalA); d_evalA = nullptr;
+        free_static_eval_buffers_gpu(d_evalB); d_evalB = nullptr;
+        free_static_eval_buffers_gpu(d_evalC); d_evalC = nullptr;
+        free_static_eval_buffers_gpu(d_evalZ); d_evalZ = nullptr;
+
+        uint64_t fullN = 4 * (uint64_t)zkey->domainSize;
+        uint64_t fullBytes = fullN * sizeof(FrElement);
+
+        // T IFFT in-place on GPU (d_piBuffer holds T evals from kernel), then D2H
         LOG_TRACE("··· Computing T ifft (GPU)");
-        polynomials["T"] = polynomialFromEvaluationsGPU(buffers["T"], polPtr["T"], zkey->domainSize * 4, 0, zkeyPower + 2);
+        polynomials["T"] = new Polynomial<Engine>(E, polPtr["T"], fullN, 0);
+        intt_bn128_gpu_dev_ptr(d_piBuffer, zkeyPower + 2);
+        memcpy_d2h_gpu(polynomials["T"]->coef, d_piBuffer, fullBytes);
+        polynomials["T"]->fixDegree();
 
         // Divide the polynomial T by Z_H(X)
         polynomials["T"]->divZh(zkey->domainSize, 4);
 
-        // Compute the coefficients of the polynomial Tz(X) from buffers.Tz using GPU IFFT
+        // Tz IFFT in-place on GPU (d_lagBuffer holds Tz evals from kernel), then D2H
         LOG_TRACE("··· Computing Tz ifft (GPU)");
-        polynomials["Tz"] = polynomialFromEvaluationsGPU(buffers["Tz"], polPtr["Tz"], zkey->domainSize * 4, 0, zkeyPower + 2);
+        polynomials["Tz"] = new Polynomial<Engine>(E, polPtr["Tz"], fullN, 0);
+        intt_bn128_gpu_dev_ptr(d_lagBuffer, zkeyPower + 2);
+        memcpy_d2h_gpu(polynomials["Tz"]->coef, d_lagBuffer, fullBytes);
+        polynomials["Tz"]->fixDegree();
 
         // Add the polynomial Tz to T to get the final polynomial T
         polynomials["T"]->add(*polynomials["Tz"]);
@@ -1512,10 +1555,9 @@ namespace PlonkGPU
         }
 
         if (d_evalTarget) {
-            // Use persistent GPU buffer: H2D → FFT in-place → D2H (GPU copy stays for computeT)
+            // Use persistent GPU buffer: H2D → FFT in-place (evals stay on GPU, no D2H needed)
             memcpy_h2d_gpu(d_evalTarget, evals->eval, extensionLength * sizeof(FrElement));
             ntt_bn128_gpu_dev_ptr(d_evalTarget, power);
-            memcpy_d2h_gpu(evals->eval, d_evalTarget, extensionLength * sizeof(FrElement));
         } else {
             // Temp GPU buffer path
             void* dBuf;

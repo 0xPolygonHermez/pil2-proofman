@@ -193,7 +193,11 @@ extern "C" void compute_pi_gpu(
     }
 
     CHECKCUDAERR(cudaStreamSynchronize(stream));
-    CHECKCUDAERR(cudaMemcpy(piOut, dPI, fullBytes, cudaMemcpyDeviceToHost));
+
+    // D2H to CPU only if caller needs it; when piOut == NULL, PI stays on GPU in dPI
+    if (piOut) {
+        CHECKCUDAERR(cudaMemcpy(piOut, dPI, fullBytes, cudaMemcpyDeviceToHost));
+    }
 
     CHECKCUDAERR(cudaStreamDestroy(stream));
 }
@@ -407,7 +411,10 @@ extern "C" void compute_t_evaluations_gpu(
     uint64_t domainSize,
     void* dScratch0, void* dScratch1,
     bool evalsOnGPU,
-    const void* dEvalA, const void* dEvalB, const void* dEvalC)
+    const void* dEvalA, const void* dEvalB, const void* dEvalC,
+    const void* dEvalZ,
+    bool piOnGPU,
+    bool tResultOnGPU)
 {
     uint64_t fullN = 4 * domainSize;
     size_t fullBytes = fullN * sizeof(Element);
@@ -462,16 +469,23 @@ extern "C" void compute_t_evaluations_gpu(
         CHECKCUDAERR(cudaMemcpy(dC, evalC, fullBytes, cudaMemcpyHostToDevice));
     }
 
-    // Z still uploaded from CPU (will be GPU-resident in Step 4)
-    CHECKCUDAERR(cudaMalloc(&dZ, (fullN + 4) * sizeof(Element)));
+    if (dEvalZ) {
+        // Z already on GPU with wrap-around set
+        dZ = (Element*)dEvalZ;
+    } else {
+        // Allocate and H2D for Z (fullN + 4 elements for wrap-around)
+        CHECKCUDAERR(cudaMalloc(&dZ, (fullN + 4) * sizeof(Element)));
+        CHECKCUDAERR(cudaMemcpy(dZ, hEvalZ, fullBytes, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(dZ + fullN, hEvalZ, 4 * sizeof(Element), cudaMemcpyHostToDevice));
+    }
 
-    // Pre-load PI(X) into dT (from host) and L_0(X) into dTz (D2D from static buffer)
-    CHECKCUDAERR(cudaMemcpy(dT, piPrecomp, fullBytes, cudaMemcpyHostToDevice));
+    // Pre-load PI(X) into dT and L_0(X) into dTz
+    if (piOnGPU) {
+        // PI already in dT (= d_piBuffer) from async compute_pi_gpu — skip H2D
+    } else {
+        CHECKCUDAERR(cudaMemcpy(dT, piPrecomp, fullBytes, cudaMemcpyHostToDevice));
+    }
     CHECKCUDAERR(cudaMemcpy(dTz, dL0, fullBytes, cudaMemcpyDeviceToDevice));
-
-    // Z: fullN elements + 4 extra wrapping around to the start
-    CHECKCUDAERR(cudaMemcpy(dZ, hEvalZ, fullBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dZ + fullN, hEvalZ, 4 * sizeof(Element), cudaMemcpyHostToDevice));
 
     // Launch kernel
     uint32_t threadsPerBlock = 256;
@@ -487,15 +501,19 @@ extern "C" void compute_t_evaluations_gpu(
     CHECKCUDAERR(cudaGetLastError());
     CHECKCUDAERR(cudaDeviceSynchronize());
 
-    // Copy results D2H
-    CHECKCUDAERR(cudaMemcpy(tOut, dT, fullBytes, cudaMemcpyDeviceToHost));
-    CHECKCUDAERR(cudaMemcpy(tzOut, dTz, fullBytes, cudaMemcpyDeviceToHost));
+    // Copy results D2H (skip if caller will IFFT on GPU and D2H later)
+    if (!tResultOnGPU) {
+        CHECKCUDAERR(cudaMemcpy(tOut, dT, fullBytes, cudaMemcpyDeviceToHost));
+        CHECKCUDAERR(cudaMemcpy(tzOut, dTz, fullBytes, cudaMemcpyDeviceToHost));
+    }
 
     // Free only dynamically allocated device memory
     if (!evalsOnGPU) {
         cudaFree(dA); cudaFree(dB); cudaFree(dC);
     }
-    cudaFree(dZ);
+    if (!dEvalZ) {
+        cudaFree(dZ);
+    }
 }
 
 // ============================================================================
@@ -510,6 +528,11 @@ extern "C" void memcpy_h2d_gpu(void* dst, const void* src, size_t bytes)
 extern "C" void memcpy_d2h_gpu(void* dst, const void* src, size_t bytes)
 {
     CHECKCUDAERR(cudaMemcpy(dst, src, bytes, cudaMemcpyDeviceToHost));
+}
+
+extern "C" void memcpy_d2d_gpu(void* dst, const void* src, size_t bytes)
+{
+    CHECKCUDAERR(cudaMemcpy(dst, src, bytes, cudaMemcpyDeviceToDevice));
 }
 
 extern "C" void alloc_static_eval_buffers_gpu(

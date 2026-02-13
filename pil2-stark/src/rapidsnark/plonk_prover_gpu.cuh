@@ -91,6 +91,7 @@ namespace PlonkGPU {
         void* d_evalA = nullptr;      // GPU: A wire evaluations (4N elements)
         void* d_evalB = nullptr;      // GPU: B wire evaluations (4N elements)
         void* d_evalC = nullptr;      // GPU: C wire evaluations (4N elements)
+        void* d_evalZ = nullptr;      // GPU: Z eval (4N + 4 elements, extra 4 for wrap-around)
 
         BinFileUtils::BinFile* fdZkeyPtr = nullptr;
 
