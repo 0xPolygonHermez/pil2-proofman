@@ -119,11 +119,6 @@ pub fn get_tree_size_c(p_stark_info: *mut c_void) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_const_offset_c(p_stark_info: *mut c_void) -> u64 {
-    unsafe { get_const_pols_offset(p_stark_info) }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
 pub fn get_map_totaln_custom_commits_fixed_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_map_total_n_custom_commits_fixed(p_stark_info) }
 }

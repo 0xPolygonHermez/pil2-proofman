@@ -895,7 +895,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             true => {
                 check_device_memory_c(self.mpi_ctx.node_rank as u32, self.mpi_ctx.node_n_processes as usize as u32)
                     as f64
-                    * 0.99
+                    * 0.995
             }
             false => 0.0,
         };

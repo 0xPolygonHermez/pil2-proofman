@@ -286,10 +286,6 @@ void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3) {
     ((StarkInfo *)pStarkInfo)->setMemoryExpressions(nTmp1, nTmp3);
 }
 
-uint64_t get_const_pols_offset(void *pStarkInfo) {
-    return ((StarkInfo *)pStarkInfo)->mapOffsets[std::make_pair("const", false)];
-}
-
 uint64_t get_map_total_n(void *pStarkInfo)
 {
     return ((StarkInfo *)pStarkInfo)->mapTotalN;

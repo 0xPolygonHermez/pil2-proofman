@@ -90,12 +90,14 @@ void *gen_device_buffers(uint64_t n_streams, uint64_t n_recursive_streams, uint3
         d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
         d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
+        d_buffers->gpuMemoryBlocks = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->n_streams = n_streams;
         d_buffers->n_recursive_streams = n_recursive_streams;
         d_buffers->n_total_streams = d_buffers->n_gpus * (d_buffers->n_streams + d_buffers->n_recursive_streams);
         for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
             d_buffers->d_aux_trace[i] = (gl64_t **)malloc(n_streams * sizeof(gl64_t*));
             d_buffers->d_aux_traceAggregation[i] = (gl64_t **)malloc(n_recursive_streams * sizeof(gl64_t*));
+            d_buffers->gpuMemoryBlocks[i] = nullptr;
         }
         
         // Allocate mutex array using placement new
@@ -146,6 +148,7 @@ void *gen_device_buffers(uint64_t n_streams, uint64_t n_recursive_streams, uint3
         d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
         d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
+        d_buffers->gpuMemoryBlocks = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->n_streams = n_streams;
         d_buffers->n_recursive_streams = n_recursive_streams;
         d_buffers->n_total_streams = (d_buffers->n_streams + d_buffers->n_recursive_streams);
@@ -153,6 +156,7 @@ void *gen_device_buffers(uint64_t n_streams, uint64_t n_recursive_streams, uint3
         // Allocate the second level arrays for the single GPU
         d_buffers->d_aux_trace[0] = (gl64_t **)malloc(n_streams * sizeof(gl64_t*));
         d_buffers->d_aux_traceAggregation[0] = (gl64_t **)malloc(n_recursive_streams * sizeof(gl64_t*));
+        d_buffers->gpuMemoryBlocks[0] = nullptr;
         
         // Allocate mutex array using placement new
         d_buffers->mutex_pinned = (std::mutex*)malloc(d_buffers->n_gpus * sizeof(std::mutex));
@@ -211,6 +215,7 @@ void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_
         // Allocate one large contiguous block of GPU memory
         gl64_t *gpuMemoryBlock;
         CHECKCUDAERR(cudaMalloc(&gpuMemoryBlock, totalGpuMemoryPerGpu));
+        d_buffers->gpuMemoryBlocks[i] = gpuMemoryBlock;  // Store the base pointer
         zklog.info("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + 
                    ": Allocated " + std::to_string(totalGpuMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + 
                    " GB of contiguous GPU memory");
@@ -301,11 +306,11 @@ void free_device_buffers(void *d_buffers_)
     for (int i = 0; i < d_buffers->n_gpus; ++i) {
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
         
-        // Free the single large GPU memory block (pointed to by d_constPols)
-        // All other GPU pointers (d_constPolsAggregation, d_aux_trace, d_aux_traceAggregation) 
-        // point into this same block, so we only free it once
-        if (d_buffers->d_constPols[i] != nullptr) {
-            CHECKCUDAERR(cudaFree(d_buffers->d_constPols[i]));
+        // Free the single large GPU memory block
+        // All other GPU pointers (d_constPols, d_constPolsAggregation, d_aux_trace, d_aux_traceAggregation) 
+        // point into this same block, so we only free it once using the stored base pointer
+        if (d_buffers->gpuMemoryBlocks != nullptr && d_buffers->gpuMemoryBlocks[i] != nullptr) {
+            CHECKCUDAERR(cudaFree(d_buffers->gpuMemoryBlocks[i]));
         }
         
         // Free CPU pointer arrays
@@ -326,6 +331,7 @@ void free_device_buffers(void *d_buffers_)
     free(d_buffers->d_constPolsAggregation);
     free(d_buffers->pinned_buffer);
     free(d_buffers->pinned_buffer_extra);
+    free(d_buffers->gpuMemoryBlocks);
 
     if (d_buffers->streamsData != nullptr) {
         for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {

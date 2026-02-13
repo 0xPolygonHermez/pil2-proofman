@@ -400,6 +400,7 @@ struct DeviceCommitBuffers
     gl64_t ***d_aux_traceAggregation;
     Goldilocks::Element **pinned_buffer;
     Goldilocks::Element **pinned_buffer_extra;
+    gl64_t **gpuMemoryBlocks;  // Stores the base pointer for each GPU's contiguous memory block
     bool recursive;
     uint64_t max_size_proof;
 
