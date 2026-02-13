@@ -111,6 +111,8 @@ pub struct AirInfo {
     pub instance_ids: Vec<usize>,
     pub num_columns_trace: u64,
     pub name_columns_trace: Vec<String>,
+    pub num_columns_fixed: u64,
+    pub name_columns_fixed: Vec<String>,
     pub num_rows: usize,
 }
 
@@ -622,6 +624,13 @@ where
                         instance_ids: info.instance_ids.clone(),
                         num_columns_trace,
                         name_columns_trace,
+                        num_columns_fixed: setup.stark_info.n_constants as u64,
+                        name_columns_fixed: setup
+                            .stark_info
+                            .const_pols_map
+                            .as_ref()
+                            .map(|pols| pols.iter().map(|pol| pol.name.clone()).collect())
+                            .unwrap(),
                         num_rows: air.num_rows,
                     });
                 } else {
@@ -635,14 +644,32 @@ where
         Ok(result)
     }
 
+    pub fn get_instance_fixed(
+        &self,
+        instance_id: usize,
+        first_row: usize,
+        num_rows: usize,
+        offset: Option<usize>,
+    ) -> ProofmanResult<Vec<RowInfo>> {
+        let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
+        let setup = self.sctx.get_setup(airgroup_id, air_id)?;
+
+        if !setup.const_pols_loaded.load(Ordering::Acquire) {
+            setup.load_const_pols();
+        }
+
+        Ok(setup.get_const_pols(first_row, num_rows, offset))
+    }
+
     pub fn get_instance_trace(
         &self,
         instance_id: usize,
         first_row: usize,
         num_rows: usize,
+        offset: Option<usize>,
     ) -> ProofmanResult<Vec<RowInfo>> {
         if self.pctx.dctx_is_instance_calculated(instance_id) {
-            return Ok(self.pctx.get_air_instance_trace(instance_id, first_row, num_rows));
+            return Ok(self.pctx.get_air_instance_trace(instance_id, first_row, num_rows, offset));
         }
 
         self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
@@ -653,7 +680,7 @@ where
             self.memory_handler.to_be_released_buffer(instance_id, true);
         }
 
-        Ok(self.pctx.get_air_instance_trace(instance_id, first_row, num_rows))
+        Ok(self.pctx.get_air_instance_trace(instance_id, first_row, num_rows, offset))
     }
 
     pub fn compute_witness(

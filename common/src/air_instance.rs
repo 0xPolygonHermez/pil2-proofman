@@ -224,10 +224,13 @@ impl<F: PrimeField64> AirInstance<F> {
         AirInstance::new(trace_info)
     }
 
-    pub fn get_trace(&self, first_row: usize, n_rows: usize) -> Vec<RowInfo> {
-        let end_row = (first_row + n_rows).min(self.trace.len() / self.n_cols_trace);
+    pub fn get_trace(&self, first_row: usize, n_rows: usize, offset: Option<usize>) -> Vec<RowInfo> {
+        let offset = offset.unwrap_or(1);
+        let num_rows_available = self.trace.len() / self.n_cols_trace;
 
-        (first_row..end_row)
+        (0..n_rows)
+            .map(|i| first_row + i * offset)
+            .take_while(|&row| row < num_rows_available)
             .map(|row| {
                 let start = row * self.n_cols_trace;
                 let end = start + self.n_cols_trace;

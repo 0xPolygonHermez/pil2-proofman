@@ -822,8 +822,14 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.air_instances[instance_id].read().unwrap().get_stream_id()
     }
 
-    pub fn get_air_instance_trace(&self, instance_id: usize, first_row: usize, n_rows: usize) -> Vec<RowInfo> {
-        self.air_instances[instance_id].read().unwrap().get_trace(first_row, n_rows)
+    pub fn get_air_instance_trace(
+        &self,
+        instance_id: usize,
+        first_row: usize,
+        n_rows: usize,
+        offset: Option<usize>,
+    ) -> Vec<RowInfo> {
+        self.air_instances[instance_id].read().unwrap().get_trace(first_row, n_rows, offset)
     }
 
     pub fn get_air_instance_air_values(
