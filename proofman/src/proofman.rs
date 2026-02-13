@@ -102,15 +102,21 @@ pub struct AirExecuteInfo {
     pub instance_ids: Vec<usize>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ExecuteResult {
-    pub airs: Vec<AirExecuteInfo>,
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AirInfo {
+    pub name: String,
+    pub airgroup_id: u64,
+    pub air_id: u64,
+    pub num_instances: usize,
+    pub instance_ids: Vec<usize>,
+    pub num_columns_trace: u64,
+    pub name_columns_trace: Vec<String>,
+    pub num_rows: usize,
 }
 
-impl ExecuteResult {
-    pub fn find(&self, airgroup_id: usize, air_id: usize) -> Option<&AirExecuteInfo> {
-        self.airs.iter().find(|info| info.airgroup_id == airgroup_id && info.air_id == air_id)
-    }
+#[derive(Debug, Clone, Serialize)]
+pub struct PlanningInfo {
+    pub planning_info: Vec<AirInfo>,
 }
 
 struct CancellationThread {
@@ -472,7 +478,7 @@ where
         public_inputs_path: Option<PathBuf>,
         output_path: Option<PathBuf>,
         verbose_mode: VerboseMode,
-    ) -> ProofmanResult<ExecuteResult> {
+    ) -> ProofmanResult<PlanningInfo> {
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
@@ -486,11 +492,11 @@ where
         self.execute_(output_path)
     }
 
-    pub fn execute_from_lib(&self, output_path: Option<PathBuf>) -> ProofmanResult<ExecuteResult> {
+    pub fn execute_from_lib(&self, output_path: Option<PathBuf>) -> ProofmanResult<PlanningInfo> {
         self.execute_(output_path)
     }
 
-    pub fn execute_(&self, output_path: Option<PathBuf>) -> ProofmanResult<ExecuteResult> {
+    pub fn execute_(&self, output_path: Option<PathBuf>) -> ProofmanResult<PlanningInfo> {
         self.pctx.dctx_setup(1, vec![0], 0)?;
 
         self.cancellation_info.write().unwrap().reset();
@@ -594,17 +600,37 @@ where
             wtr.flush()?;
         }
 
-        let result = ExecuteResult {
-            airs: air_info
-                .values()
-                .map(|info| AirExecuteInfo {
-                    airgroup_id: info.airgroup_id,
-                    air_id: info.air_id,
-                    num_instances: info.instance_count,
-                    instance_ids: info.instance_ids.clone(),
-                })
-                .collect(),
-        };
+        let mut planning_info = Vec::new();
+        for (airgroup_id, _) in self.pctx.global_info.air_groups.iter().enumerate() {
+            for (air_id, air) in self.pctx.global_info.airs[airgroup_id].iter().enumerate() {
+                let setup = self.sctx.get_setup(airgroup_id, air_id)?;
+                let air_name = &air.name;
+                if let Some(info) = air_info.get(air_name) {
+                    let num_columns_trace = setup.stark_info.map_sections_n["cm1"];
+                    let name_columns_trace: Vec<String> = setup
+                        .stark_info
+                        .cm_pols_map
+                        .as_ref()
+                        .map(|pols| pols.iter().filter(|pol| pol.stage == 1).map(|pol| pol.name.clone()).collect())
+                        .unwrap();
+
+                    planning_info.push(AirInfo {
+                        name: air.name.clone(),
+                        airgroup_id: airgroup_id as u64,
+                        air_id: air_id as u64,
+                        num_instances: info.instance_count,
+                        instance_ids: info.instance_ids.clone(),
+                        num_columns_trace,
+                        name_columns_trace,
+                        num_rows: air.num_rows,
+                    });
+                } else {
+                    println!("  No execution result found for Air ID: {}", air_id);
+                }
+            }
+        }
+
+        let result = PlanningInfo { planning_info };
 
         Ok(result)
     }

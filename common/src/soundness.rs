@@ -55,11 +55,11 @@ pub struct TomlCircuit {
     pub name: String,
     pub group: String,
     #[serde(flatten)]
-    pub air: AirInfo,
+    pub air: AirInfoSoundness,
 }
 
 #[derive(Serialize, Clone)]
-pub struct AirInfo {
+pub struct AirInfoSoundness {
     pub trace_length: u64,
     pub rho: f64,
     pub air_max_degree: u64,
@@ -79,7 +79,7 @@ pub struct AirInfo {
 }
 
 impl AirTableRow {
-    fn from_air_info(name: &str, air: &AirInfo) -> Self {
+    fn from_air_info(name: &str, air: &AirInfoSoundness) -> Self {
         AirTableRow {
             name: name.to_string(),
             trace_length: air.trace_length,
@@ -147,7 +147,7 @@ pub fn print_soundness_table(soundness: &SoundnessToml) {
     }
 }
 
-pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, AirInfo) {
+pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, AirInfoSoundness) {
     let witness_cols = setup
         .stark_info
         .map_sections_n
@@ -157,7 +157,7 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
         .sum::<u64>();
     (
         setup.air_name.clone(),
-        AirInfo {
+        AirInfoSoundness {
             trace_length: 1 << setup.stark_info.stark_struct.n_bits,
             rho: 1.0 / (1 << (setup.stark_info.stark_struct.n_bits_ext - setup.stark_info.stark_struct.n_bits)) as f64,
             air_max_degree: setup.stark_info.q_deg + 1,

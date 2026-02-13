@@ -1217,6 +1217,7 @@ name = "proofman-starks-lib-c"
 version = "0.16.0"
 dependencies = [
  "crossbeam-channel",
+ "tracing",
 ]
 
 [[package]]
