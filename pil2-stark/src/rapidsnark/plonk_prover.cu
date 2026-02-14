@@ -73,7 +73,8 @@ extern "C" void compute_z_ratios_gpu(
     const void* k1Ptr,
     const void* k2Ptr,
     const void* omegaPtr,
-    uint64_t domainSize)
+    uint64_t domainSize,
+    void* dTemp4N)
 {
     const Element* hBuffA = (const Element*)buffA;
     const Element* hBuffB = (const Element*)buffB;
@@ -94,13 +95,11 @@ extern "C" void compute_z_ratios_gpu(
     const Element* dS2 = dStaticBase + 1 * fullN;
     const Element* dS3 = dStaticBase + 2 * fullN;
 
-    // Allocate device memory for A, B, C and output
-    Element *dRatioOut, *dBuffA, *dBuffB, *dBuffC;
-
-    CHECKCUDAERR(cudaMalloc(&dRatioOut, arrayBytes));
-    CHECKCUDAERR(cudaMalloc(&dBuffA, arrayBytes));
-    CHECKCUDAERR(cudaMalloc(&dBuffB, arrayBytes));
-    CHECKCUDAERR(cudaMalloc(&dBuffC, arrayBytes));
+    // Use pre-allocated GPU buffer: split into 4 sub-regions of N elements each
+    Element* dRatioOut = (Element*)dTemp4N;
+    Element* dBuffA = dRatioOut + domainSize;
+    Element* dBuffB = dBuffA + domainSize;
+    Element* dBuffC = dBuffB + domainSize;
 
     // Copy inputs H2D
     CHECKCUDAERR(cudaMemcpy(dBuffA, hBuffA, arrayBytes, cudaMemcpyHostToDevice));
@@ -122,12 +121,6 @@ extern "C" void compute_z_ratios_gpu(
 
     // Copy result D2H
     CHECKCUDAERR(cudaMemcpy(ratioOut, dRatioOut, arrayBytes, cudaMemcpyDeviceToHost));
-
-    // Free device memory
-    cudaFree(dRatioOut);
-    cudaFree(dBuffA);
-    cudaFree(dBuffB);
-    cudaFree(dBuffC);
 }
 
 // ============================================================================

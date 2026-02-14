@@ -90,6 +90,14 @@ namespace PlonkGPU {
 
         void* dPTau = nullptr;        // GPU: persistent Powers of Tau (domainSize+6 G1PointAffine)
 
+        void* d_unifiedBuffer = nullptr;  // Single GPU allocation for all buffers
+        uint64_t unifiedBufferSize = 0;
+        void* dPolCoefA = nullptr;        // Wire A polynomial coefficients on GPU
+        void* dPolCoefB = nullptr;
+        void* dPolCoefC = nullptr;
+        void* dPolCoefZ = nullptr;
+        void* dAux = nullptr;             // Reusable GPU scratch buffer
+
         BinFileUtils::BinFile* fdZkeyPtr = nullptr;
 
         bool preAllocated = false;

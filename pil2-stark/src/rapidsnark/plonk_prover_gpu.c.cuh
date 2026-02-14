@@ -31,7 +31,8 @@ extern "C" void compute_z_ratios_gpu(
     void* ratioOut, const void* buffA, const void* buffB, const void* buffC,
     const void* dStaticEvals,
     const void* beta, const void* gamma, const void* k1, const void* k2,
-    const void* omega, uint64_t domainSize);
+    const void* omega, uint64_t domainSize,
+    void* dTemp4N);
 extern "C" void compute_pi_gpu(
     void* piOut,
     FileReadFn readFn, void* readCtx,
@@ -161,17 +162,27 @@ namespace PlonkGPU
             delete[] nonPrecomputedBigBuffer;
         }
 
-        free_static_eval_buffers_gpu(d_staticEvalsBuffer);
-        free_static_eval_buffers_gpu(d_piBuffer);
-        free_static_eval_buffers_gpu(d_lagBuffer);
-        free_static_eval_buffers_gpu(dPTau);
+        if (d_unifiedBuffer) {
+            free_static_eval_buffers_gpu(d_unifiedBuffer);
+            d_unifiedBuffer = nullptr;
+            d_staticEvalsBuffer = nullptr;
+            d_piBuffer = nullptr;
+            d_lagBuffer = nullptr;
+            dPTau = nullptr;
+            dPolCoefA = dPolCoefB = dPolCoefC = dPolCoefZ = dAux = nullptr;
+        } else {
+            free_static_eval_buffers_gpu(d_staticEvalsBuffer);
+            free_static_eval_buffers_gpu(d_piBuffer);
+            free_static_eval_buffers_gpu(d_lagBuffer);
+            free_static_eval_buffers_gpu(dPTau);
+            d_staticEvalsBuffer = nullptr;
+            d_piBuffer = nullptr;
+            d_lagBuffer = nullptr;
+            dPTau = nullptr;
+        }
         free_pinned_buffer_gpu(pinnedQ);
         free_pinned_buffer_gpu(pinnedS);
         free_pinned_buffer_gpu(pinnedPI);
-        d_staticEvalsBuffer = nullptr;
-        d_piBuffer = nullptr;
-        d_lagBuffer = nullptr;
-        dPTau = nullptr;
         pinnedQ = nullptr;
         pinnedS = nullptr;
         pinnedPI = nullptr;
@@ -482,20 +493,13 @@ namespace PlonkGPU
 
         buffers["Z"] = polPtr["T"];
 
-        // Pre-allocate GPU + pinned buffers for async static eval transfer (two threads)
-        // Static eval buffer: 9 eval arrays; PTau persistent on GPU after round0
+        // Compute static eval buffer size (GPU alloc deferred to round0 as part of unified buffer)
         staticEvalsBufferSize = 9 * 4 * (uint64_t)zkey->domainSize * 32;
         pinnedSize = 512ULL * 1024 * 1024;  // 512 MB per thread
         if (pinnedSize > staticEvalsBufferSize) pinnedSize = staticEvalsBufferSize;
-        alloc_static_eval_buffers_gpu(&d_staticEvalsBuffer, staticEvalsBufferSize);
         alloc_pinned_buffer_gpu(&pinnedQ, pinnedSize);
         alloc_pinned_buffer_gpu(&pinnedS, pinnedSize);
         alloc_pinned_buffer_gpu(&pinnedPI, pinnedSize);
-
-        // Pre-allocate GPU buffers for PI computation (dPI accumulator + dLag scratch)
-        uint64_t fullBytes = 4 * (uint64_t)zkey->domainSize * 32;
-        alloc_static_eval_buffers_gpu(&d_piBuffer, fullBytes);
-        alloc_static_eval_buffers_gpu(&d_lagBuffer, fullBytes);
 
         // Store file pointer for file-based GPU transfer in round0
         fdZkeyPtr = fdZkey;
@@ -699,6 +703,45 @@ namespace PlonkGPU
     template <typename Engine>
     void PlonkProverGPU<Engine>::round0()
     {
+        // Allocate unified GPU buffer on first call (after recursive F proof frees GPU memory)
+        if (!d_unifiedBuffer) {
+            uint64_t N = zkey->domainSize;
+            uint64_t fullN = 4 * N;
+            uint64_t fullBytes = fullN * sizeof(FrElement);
+            uint64_t ptauBytes = (N + 6) * sizeof(G1PointAffine);
+
+            uint64_t offset = 0;
+            offset += staticEvalsBufferSize;        // 9 static eval arrays (S1,S2,S3,L0,QL,QR,QM,QO,QC)
+            offset += fullBytes;                    // PI / T buffer
+            offset += fullBytes;                    // Lag / Tz buffer
+            offset += 4 * N * sizeof(FrElement);    // PolCoefA/B/C/Z
+            offset += ptauBytes;                    // PTau
+            offset = (offset + 255) & ~255ULL;      // align Aux to 256 bytes
+            offset += (fullN + 4) * sizeof(FrElement); // Aux scratch
+
+            unifiedBufferSize = offset;
+            alloc_static_eval_buffers_gpu(&d_unifiedBuffer, unifiedBufferSize);
+
+            // Set all pointers as offsets into unified buffer
+            uint8_t* base = (uint8_t*)d_unifiedBuffer;
+            uint64_t off = 0;
+            d_staticEvalsBuffer = base + off;   off += staticEvalsBufferSize;
+            d_piBuffer = base + off;            off += fullBytes;
+            d_lagBuffer = base + off;           off += fullBytes;
+            dPolCoefA = base + off;             off += N * sizeof(FrElement);
+            dPolCoefB = base + off;             off += N * sizeof(FrElement);
+            dPolCoefC = base + off;             off += N * sizeof(FrElement);
+            dPolCoefZ = base + off;             off += N * sizeof(FrElement);
+            dPTau = base + off;                 off += ptauBytes;
+            off = (off + 255) & ~255ULL;
+            dAux = base + off;
+
+            // Upload PTau (once)
+            memcpy_h2d_gpu(dPTau, PTau, ptauBytes);
+
+            std::cout << "[round0] Unified GPU buffer: " << unifiedBufferSize / (1024.0*1024*1024) << " GiB" << std::endl;
+        }
+
         void* dBuf = d_staticEvalsBuffer;
         size_t pinSize = pinnedSize;
         uint64_t evalSize = sDomain * 4;  // byte size of each eval array
@@ -739,12 +782,6 @@ namespace PlonkGPU
                                            qSids.data(), qOffs.data(), qSizes.data(), 5);
         });
 
-        // Persistent PTau on GPU — uploaded once, used for all MSMs
-        if (!dPTau) {
-            uint64_t ptauBytes = ((uint64_t)zkey->domainSize + 6) * sizeof(G1PointAffine);
-            alloc_static_eval_buffers_gpu(&dPTau, ptauBytes);
-            memcpy_h2d_gpu(dPTau, PTau, ptauBytes);
-        }
     }
 
     // ROUND 1
@@ -860,6 +897,10 @@ namespace PlonkGPU
         ss << "··· Computing " << polName << " ifft (GPU dev_ptr)";
         LOG_TRACE(ss);
         polynomials[polName] = polynomialFromEvaluationsGPU(buffersPol, polPtr[polName], zkey->domainSize, 2, zkeyPower);
+
+        // D2D IFFT result from dAux to persistent GPU slot for later use in computeT
+        void* dPolSlot = (polName == "A") ? dPolCoefA : (polName == "B") ? dPolCoefB : dPolCoefC;
+        memcpy_d2d_gpu(dPolSlot, dAux, zkey->domainSize * sizeof(FrElement));
     }
 
     // ROUND 2
@@ -966,7 +1007,8 @@ namespace PlonkGPU
             (const void*)&k1,
             (const void*)&k2,
             (const void*)&omega,
-            zkey->domainSize);
+            zkey->domainSize,
+            dAux);
 
         // Sequential prefix product over ratios to build Z evaluations
         // Z[0] = product of all ratios (should equal 1)
@@ -991,6 +1033,9 @@ namespace PlonkGPU
         // (eval computation deferred to computeT where it's done incrementally)
         LOG_TRACE("··· Computing Z ifft (GPU dev_ptr)");
         polynomials["Z"] = polynomialFromEvaluationsGPU(buffersZ, polPtr["Z"], zkey->domainSize, 3, zkeyPower);
+
+        // D2D IFFT result from dAux to persistent GPU slot for later use in computeT
+        memcpy_d2d_gpu(dPolCoefZ, dAux, zkey->domainSize * sizeof(FrElement));
 
         // Check degree
         if (polynomials["Z"]->getDegree() >= zkey->domainSize + 3)
@@ -1083,9 +1128,7 @@ namespace PlonkGPU
 
         double tstart = omp_get_wtime();
 
-        // Allocate ONE temp buffer for sequential eval computation (4N+4 elements for Z wrap-around)
-        void* dTemp;
-        alloc_static_eval_buffers_gpu(&dTemp, (fullN + 4) * sizeof(FrElement));
+        // Use persistent dAux buffer for sequential eval computation (4N+4 elements for Z wrap-around)
 
         // Static eval buffer pointers for D2D copies to Q slots
         // Layout: S1(0), S2(1), S3(2), L0(3), QL(4), QR(5), QM(6), QO(7), QC(8)
@@ -1095,62 +1138,62 @@ namespace PlonkGPU
         void* dQR_slot = dStaticBase + 5 * slotBytes;
         void* dQO_slot = dStaticBase + 7 * slotBytes;
 
-        // --- Wire A: H2D unblinded coefs → zero-pad → FFT → gate_A → D2D to QL slot ---
+        // --- Wire A: D2D unblinded coefs → zero-pad → FFT → gate_A → D2D to QL slot ---
         LOG_TRACE("··· Computing A evals + gate_A (GPU)");
-        memcpy_h2d_gpu(dTemp, polynomials["A"]->coef, N * sizeof(FrElement));
+        memcpy_d2d_gpu(dAux, dPolCoefA, N * sizeof(FrElement));
         {   // Apply blinding on CPU (H2D already captured unblinded data)
             FrElement bfA[2] = {blindingFactors[2], blindingFactors[1]};
             polynomials["A"]->blindCoefficients(bfA, 2);
         }
-        zero_pad_gpu(dTemp, N, fullN);
-        ntt_bn128_gpu_dev_ptr(dTemp, zkeyPower + 2);
-        compute_gate_a_gpu(d_piBuffer, d_lagBuffer, dTemp, d_staticEvalsBuffer,
+        zero_pad_gpu(dAux, N, fullN);
+        ntt_bn128_gpu_dev_ptr(dAux, zkeyPower + 2);
+        compute_gate_a_gpu(d_piBuffer, d_lagBuffer, dAux, d_staticEvalsBuffer,
                            (const void*)blindingFactors, (const void*)&omega_4x, N);
-        memcpy_d2d_gpu(dQL_slot, dTemp, slotBytes);
+        memcpy_d2d_gpu(dQL_slot, dAux, slotBytes);
 
-        // --- Wire B: H2D → zero-pad → FFT → gate_B → D2D to QR slot ---
+        // --- Wire B: D2D → zero-pad → FFT → gate_B → D2D to QR slot ---
         LOG_TRACE("··· Computing B evals + gate_B (GPU)");
-        memcpy_h2d_gpu(dTemp, polynomials["B"]->coef, N * sizeof(FrElement));
+        memcpy_d2d_gpu(dAux, dPolCoefB, N * sizeof(FrElement));
         {
             FrElement bfB[2] = {blindingFactors[4], blindingFactors[3]};
             polynomials["B"]->blindCoefficients(bfB, 2);
         }
-        zero_pad_gpu(dTemp, N, fullN);
-        ntt_bn128_gpu_dev_ptr(dTemp, zkeyPower + 2);
-        compute_gate_b_gpu(d_piBuffer, d_lagBuffer, dTemp, d_staticEvalsBuffer,
+        zero_pad_gpu(dAux, N, fullN);
+        ntt_bn128_gpu_dev_ptr(dAux, zkeyPower + 2);
+        compute_gate_b_gpu(d_piBuffer, d_lagBuffer, dAux, d_staticEvalsBuffer,
                            (const void*)blindingFactors, (const void*)&omega_4x, N);
-        memcpy_d2d_gpu(dQR_slot, dTemp, slotBytes);
+        memcpy_d2d_gpu(dQR_slot, dAux, slotBytes);
 
-        // --- Wire C: H2D → zero-pad → FFT → gate_C → D2D to QO slot ---
+        // --- Wire C: D2D → zero-pad → FFT → gate_C → D2D to QO slot ---
         LOG_TRACE("··· Computing C evals + gate_C (GPU)");
-        memcpy_h2d_gpu(dTemp, polynomials["C"]->coef, N * sizeof(FrElement));
+        memcpy_d2d_gpu(dAux, dPolCoefC, N * sizeof(FrElement));
         {
             FrElement bfC[2] = {blindingFactors[6], blindingFactors[5]};
             polynomials["C"]->blindCoefficients(bfC, 2);
         }
-        zero_pad_gpu(dTemp, N, fullN);
-        ntt_bn128_gpu_dev_ptr(dTemp, zkeyPower + 2);
-        compute_gate_c_gpu(d_piBuffer, d_lagBuffer, dTemp, d_staticEvalsBuffer,
+        zero_pad_gpu(dAux, N, fullN);
+        ntt_bn128_gpu_dev_ptr(dAux, zkeyPower + 2);
+        compute_gate_c_gpu(d_piBuffer, d_lagBuffer, dAux, d_staticEvalsBuffer,
                            (const void*)blindingFactors, (const void*)&omega_4x, N);
-        memcpy_d2d_gpu(dQO_slot, dTemp, slotBytes);
+        memcpy_d2d_gpu(dQO_slot, dAux, slotBytes);
 
-        // --- Z: H2D → zero-pad → FFT → set wrap-around ---
+        // --- Z: D2D → zero-pad → FFT → set wrap-around ---
         LOG_TRACE("··· Computing Z evals (GPU)");
-        memcpy_h2d_gpu(dTemp, polynomials["Z"]->coef, N * sizeof(FrElement));
+        memcpy_d2d_gpu(dAux, dPolCoefZ, N * sizeof(FrElement));
         {
             FrElement bfZ[3] = {blindingFactors[9], blindingFactors[8], blindingFactors[7]};
             polynomials["Z"]->blindCoefficients(bfZ, 3);
         }
-        zero_pad_gpu(dTemp, N, fullN);
-        ntt_bn128_gpu_dev_ptr(dTemp, zkeyPower + 2);
-        memcpy_d2d_gpu((uint8_t*)dTemp + fullBytes, dTemp, 4 * sizeof(FrElement));
+        zero_pad_gpu(dAux, N, fullN);
+        ntt_bn128_gpu_dev_ptr(dAux, zkeyPower + 2);
+        memcpy_d2d_gpu((uint8_t*)dAux + fullBytes, dAux, 4 * sizeof(FrElement));
 
         // --- QM + Permutation kernel ---
         LOG_TRACE("··· Computing QM + permutation (GPU)");
         compute_qm_permutation_gpu(
             d_piBuffer, d_lagBuffer,
             dQL_slot, dQR_slot, dQO_slot,
-            dTemp,
+            dAux,
             d_staticEvalsBuffer,
             (const void*)blindingFactors,
             (const void*)&beta, (const void*)&gamma,
@@ -1159,8 +1202,6 @@ namespace PlonkGPU
             (const void*)&omega_4x, (const void*)&omega1,
             (const void*)Z1, (const void*)Z2, (const void*)Z3,
             N);
-
-        free_static_eval_buffers_gpu(dTemp);
 
         std::cout << " [computeT] incremental T evals in " << omp_get_wtime() - tstart << endl;
 
@@ -1544,13 +1585,10 @@ namespace PlonkGPU
         };
         JacobianPoint gpuResult;
 
-        // Upload scalars to temp GPU buffer; use persistent dPTau for points
+        // Upload scalars to persistent dAux buffer; use persistent dPTau for points
         size_t npoints = polynomial->getDegree() + 1;
-        void *dScalars;
-        alloc_static_eval_buffers_gpu(&dScalars, npoints * sizeof(FrElement));
-        memcpy_h2d_gpu(dScalars, pol, npoints * sizeof(FrElement));
-        msm_bn128_gpu_dev_ptr(&gpuResult, dPTau, dScalars, npoints, false);
-        free_static_eval_buffers_gpu(dScalars);
+        memcpy_h2d_gpu(dAux, pol, npoints * sizeof(FrElement));
+        msm_bn128_gpu_dev_ptr(&gpuResult, dPTau, dAux, npoints, false);
 
         // Convert from standard Jacobian to Extended Jacobian
         // x = X, y = Y, zz = Z², zzz = Z³
@@ -1572,13 +1610,11 @@ namespace PlonkGPU
         int nThreads = omp_get_max_threads() / 2;
         ThreadUtils::parcpy(pol->coef, evaluations, length * sizeof(FrElement), nThreads);
 
-        // GPU IFFT using dev_ptr: H2D → IFFT in-place → D2H
-        void* dBuf;
-        alloc_static_eval_buffers_gpu(&dBuf, length * sizeof(FrElement));
-        memcpy_h2d_gpu(dBuf, pol->coef, length * sizeof(FrElement));
-        intt_bn128_gpu_dev_ptr(dBuf, power);
-        memcpy_d2h_gpu(pol->coef, dBuf, length * sizeof(FrElement));
-        free_static_eval_buffers_gpu(dBuf);
+        // GPU IFFT using dev_ptr: H2D → IFFT in-place → D2H (uses persistent dAux buffer)
+        memcpy_h2d_gpu(dAux, pol->coef, length * sizeof(FrElement));
+        intt_bn128_gpu_dev_ptr(dAux, power);
+        memcpy_d2h_gpu(pol->coef, dAux, length * sizeof(FrElement));
+        // IFFT result remains in dAux — caller can D2D to PolCoef slot
 
         pol->fixDegree();
 
