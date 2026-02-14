@@ -98,6 +98,11 @@ namespace PlonkGPU {
         void* dPolCoefZ = nullptr;
         void* dAux = nullptr;             // Reusable GPU scratch buffer
 
+        // GPU pointers for split T1/T2/T3 (in repurposed d_staticEvalsBuffer after computeT)
+        void* dT1 = nullptr;
+        void* dT2 = nullptr;
+        void* dT3 = nullptr;
+
         BinFileUtils::BinFile* fdZkeyPtr = nullptr;
 
         bool preAllocated = false;
@@ -161,6 +166,9 @@ namespace PlonkGPU {
         void applyBlindingCorrection(G1Point &commitment, FrElement *bFactors, u_int32_t nFactors);
 
         G1Point multiExponentiationGPU(Polynomial<Engine> *polynomial);
+
+        // GPU MSM from device-resident Montgomery-form scalars (mont=true, no fromMontgomery or H2D)
+        G1Point multiExponentiationGPU_devptr(void* dScalars, size_t npoints);
 
         // GPU-accelerated IFFT: evaluations → polynomial coefficients
         Polynomial<Engine>* polynomialFromEvaluationsGPU(

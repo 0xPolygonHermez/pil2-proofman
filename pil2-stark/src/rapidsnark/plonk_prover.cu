@@ -550,6 +550,11 @@ extern "C" void free_pinned_buffer_gpu(void* pinnedBuffer)
     if (pinnedBuffer) cudaFreeHost(pinnedBuffer);
 }
 
+extern "C" void cuda_device_sync()
+{
+    cudaDeviceSynchronize();
+}
+
 extern "C" void start_static_eval_transfer_gpu(
     FileReadFn readFn, void* readCtx,
     void* dBuffer, void* pinnedBuffer, size_t pinnedSize,
@@ -907,4 +912,401 @@ extern "C" void compute_qm_permutation_gpu(
     CHECKCUDAERR(cudaGetLastError());
     // Must sync before INTT which runs on its own stream
     CHECKCUDAERR(cudaDeviceSynchronize());
+}
+
+// ============================================================================
+// GPU Parallel Prefix Scan — Multiplicative (for Z polynomial)
+// ============================================================================
+
+// Block-level inclusive scan: 256 threads, 4 elements/thread = 1024 elems/block
+__global__ void mulScanBlockKernel(Element* data, Element* blockTotals, uint64_t N)
+{
+    __shared__ Element sdata[256];
+    uint32_t tid = threadIdx.x;
+    uint64_t blockStart = (uint64_t)blockIdx.x * 1024;
+
+    // Phase 1: Each thread loads 4 elements and does local inclusive scan
+    Element local[4];
+    for (int k = 0; k < 4; k++) {
+        uint64_t gi = blockStart + tid * 4 + k;
+        local[k] = (gi < N) ? data[gi] : Fr::one();
+    }
+    local[1] = Fr::mul(local[0], local[1]);
+    local[2] = Fr::mul(local[1], local[2]);
+    local[3] = Fr::mul(local[2], local[3]);
+
+    // Store per-thread aggregate in shared memory
+    sdata[tid] = local[3];
+    __syncthreads();
+
+    // Phase 2: Hillis-Steele inclusive scan on 256 aggregates
+    for (uint32_t stride = 1; stride < 256; stride <<= 1) {
+        Element val = (tid >= stride) ? Fr::mul(sdata[tid - stride], sdata[tid]) : sdata[tid];
+        __syncthreads();
+        sdata[tid] = val;
+        __syncthreads();
+    }
+
+    // Save block total
+    if (tid == 255 && blockTotals != nullptr) {
+        blockTotals[blockIdx.x] = sdata[255];
+    }
+
+    // Phase 3: Compute exclusive prefix for this thread from scanned aggregates
+    Element threadPrefix = (tid > 0) ? sdata[tid - 1] : Fr::one();
+
+    // Phase 4: Apply prefix to each local element and write back
+    for (int k = 0; k < 4; k++) {
+        uint64_t gi = blockStart + tid * 4 + k;
+        if (gi < N) {
+            data[gi] = Fr::mul(threadPrefix, local[k]);
+        }
+    }
+}
+
+// Propagate: multiply each block's elements by the scanned block prefix
+__global__ void mulScanPropagateKernel(Element* data, const Element* blockPrefixes, uint64_t N)
+{
+    uint64_t blockStart = (uint64_t)blockIdx.x * 1024;
+    uint32_t tid = threadIdx.x;
+    Element prefix = blockPrefixes[blockIdx.x];
+    for (int k = 0; k < 4; k++) {
+        uint64_t gi = blockStart + tid * 4 + k;
+        if (gi < N) {
+            data[gi] = Fr::mul(prefix, data[gi]);
+        }
+    }
+}
+
+// Rotate left by 1: dst[0] = src[N-1], dst[i] = src[i-1] for i > 0
+__global__ void rotateLeftKernel(Element* dst, const Element* src, uint64_t N)
+{
+    uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= N) return;
+    dst[i] = src[(i == 0) ? N - 1 : i - 1];
+}
+
+// Recursive scan — operates in-place on dData
+static void mulScanRecursive(Element* dData, uint64_t N, Element* dWork)
+{
+    if (N <= 1) return;
+    uint32_t numBlocks = (uint32_t)((N + 1023) / 1024);
+
+    if (numBlocks == 1) {
+        mulScanBlockKernel<<<1, 256>>>(dData, nullptr, N);
+        CHECKCUDAERR(cudaGetLastError());
+        return;
+    }
+
+    mulScanBlockKernel<<<numBlocks, 256>>>(dData, dWork, N);
+    CHECKCUDAERR(cudaGetLastError());
+
+    Element* nextWork = dWork + numBlocks;
+    mulScanRecursive(dWork, numBlocks, nextWork);
+
+    if (numBlocks > 1) {
+        mulScanPropagateKernel<<<numBlocks - 1, 256>>>(dData + 1024, dWork, N - 1024);
+        CHECKCUDAERR(cudaGetLastError());
+    }
+}
+
+extern "C" void gpu_prefix_scan_multiply(void* dData, uint64_t N, void* dWork)
+{
+    mulScanRecursive((Element*)dData, N, (Element*)dWork);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+}
+
+extern "C" void rotate_left_gpu(void* dst, const void* src, uint64_t N)
+{
+    uint32_t threads = 256;
+    uint32_t blocks = (uint32_t)((N + threads - 1) / threads);
+    rotateLeftKernel<<<blocks, threads>>>((Element*)dst, (const Element*)src, N);
+    CHECKCUDAERR(cudaGetLastError());
+    CHECKCUDAERR(cudaDeviceSynchronize());
+}
+
+// ============================================================================
+// GPU Parallel Prefix Scan — Affine (for divByZerofier)
+// ============================================================================
+
+struct AffinePair {
+    Element a;
+    Element b;
+};
+
+__device__ __forceinline__ AffinePair affineCompose(const AffinePair& f1, const AffinePair& f2) {
+    AffinePair r;
+    r.a = Fr::mul(f2.a, f1.a);
+    r.b = Fr::add(Fr::mul(f2.a, f1.b), f2.b);
+    return r;
+}
+
+__device__ __forceinline__ AffinePair affineIdentity() {
+    AffinePair r;
+    r.a = Fr::one();
+    r.b = Fr::zero();
+    return r;
+}
+
+__global__ void affineScanBlockKernel(AffinePair* pairs, AffinePair* blockTotals, uint64_t N)
+{
+    __shared__ AffinePair sdata[256];
+    uint32_t tid = threadIdx.x;
+    uint64_t blockStart = (uint64_t)blockIdx.x * 1024;
+
+    AffinePair local[4];
+    for (int k = 0; k < 4; k++) {
+        uint64_t gi = blockStart + tid * 4 + k;
+        local[k] = (gi < N) ? pairs[gi] : affineIdentity();
+    }
+    local[1] = affineCompose(local[0], local[1]);
+    local[2] = affineCompose(local[1], local[2]);
+    local[3] = affineCompose(local[2], local[3]);
+
+    sdata[tid] = local[3];
+    __syncthreads();
+
+    for (uint32_t stride = 1; stride < 256; stride <<= 1) {
+        AffinePair val = (tid >= stride) ? affineCompose(sdata[tid - stride], sdata[tid]) : sdata[tid];
+        __syncthreads();
+        sdata[tid] = val;
+        __syncthreads();
+    }
+
+    if (tid == 255 && blockTotals != nullptr) {
+        blockTotals[blockIdx.x] = sdata[255];
+    }
+
+    AffinePair threadPrefix = (tid > 0) ? sdata[tid - 1] : affineIdentity();
+
+    for (int k = 0; k < 4; k++) {
+        uint64_t gi = blockStart + tid * 4 + k;
+        if (gi < N) {
+            pairs[gi] = affineCompose(threadPrefix, local[k]);
+        }
+    }
+}
+
+__global__ void affineScanPropagateKernel(AffinePair* pairs, const AffinePair* blockPrefixes, uint64_t N)
+{
+    uint64_t blockStart = (uint64_t)blockIdx.x * 1024;
+    uint32_t tid = threadIdx.x;
+    AffinePair prefix = blockPrefixes[blockIdx.x];
+    for (int k = 0; k < 4; k++) {
+        uint64_t gi = blockStart + tid * 4 + k;
+        if (gi < N) {
+            pairs[gi] = affineCompose(prefix, pairs[gi]);
+        }
+    }
+}
+
+static void affineScanRecursive(AffinePair* dPairs, uint64_t N, AffinePair* dWork)
+{
+    if (N <= 1) return;
+    uint32_t numBlocks = (uint32_t)((N + 1023) / 1024);
+
+    if (numBlocks == 1) {
+        affineScanBlockKernel<<<1, 256>>>(dPairs, nullptr, N);
+        CHECKCUDAERR(cudaGetLastError());
+        return;
+    }
+
+    affineScanBlockKernel<<<numBlocks, 256>>>(dPairs, dWork, N);
+    CHECKCUDAERR(cudaGetLastError());
+
+    AffinePair* nextWork = dWork + numBlocks;
+    affineScanRecursive(dWork, numBlocks, nextWork);
+
+    if (numBlocks > 1) {
+        affineScanPropagateKernel<<<numBlocks - 1, 256>>>(dPairs + 1024, dWork, N - 1024);
+        CHECKCUDAERR(cudaGetLastError());
+    }
+}
+
+__global__ void buildAffinePairsKernel(AffinePair* pairs, const Element* coefs, Element alpha, uint64_t numPairs)
+{
+    uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numPairs) return;
+    AffinePair p;
+    p.a = alpha;
+    p.b = Fr::mul(Fr::sub(Fr::zero(), alpha), coefs[i + 1]);
+    pairs[i] = p;
+}
+
+__global__ void applyAffineScanKernel(Element* coefs, const AffinePair* scannedPairs, Element y0, uint64_t numPairs)
+{
+    uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numPairs) return;
+    coefs[i + 1] = Fr::add(Fr::mul(scannedPairs[i].a, y0), scannedPairs[i].b);
+}
+
+extern "C" void compute_div_zerofier_gpu(
+    void* dCoefs, uint64_t length,
+    const void* alphaPtr, const void* y0Ptr,
+    void* dPairWork)
+{
+    Element alpha = *(const Element*)alphaPtr;
+    Element y0    = *(const Element*)y0Ptr;
+    uint64_t numPairs = length - 1;
+    AffinePair* dPairs = (AffinePair*)dPairWork;
+
+    uint32_t threads = 256;
+    uint32_t blocks = (uint32_t)((numPairs + threads - 1) / threads);
+    buildAffinePairsKernel<<<blocks, threads>>>(dPairs, (Element*)dCoefs, alpha, numPairs);
+    CHECKCUDAERR(cudaGetLastError());
+    CHECKCUDAERR(cudaDeviceSynchronize());
+
+    AffinePair* dRecursiveWork = dPairs + numPairs;
+    affineScanRecursive(dPairs, numPairs, dRecursiveWork);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+
+    applyAffineScanKernel<<<blocks, threads>>>((Element*)dCoefs, dPairs, y0, numPairs);
+    CHECKCUDAERR(cudaGetLastError());
+
+    CHECKCUDAERR(cudaMemcpy(dCoefs, &y0, sizeof(Element), cudaMemcpyHostToDevice));
+
+    CHECKCUDAERR(cudaDeviceSynchronize());
+}
+
+// ============================================================================
+// compute_z_ratios_gpu variant — keeps result on GPU (no D2H)
+// ============================================================================
+
+// ============================================================================
+// GPU divZh + T+Tz addition (combined kernel)
+// ============================================================================
+// Each thread handles one column j across all 4 chunks.
+// divZh on T only (negate chunk 0, sequential subtraction), then add Tz to result.
+// This matches the original CPU order: divZh(T) + Tz
+__global__ void divZhAddKernel(Element* T, const Element* Tz, uint64_t N)
+{
+    uint64_t j = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (j >= N) return;
+
+    // Load T chunks (without Tz)
+    Element t0 = T[j];
+    Element t1 = T[N + j];
+    Element t2 = T[2*N + j];
+    Element t3 = T[3*N + j];
+
+    // divZh on T only: negate first chunk, then sequential subtraction
+    Element c0 = Fr::sub(Fr::zero(), t0);
+    Element c1 = Fr::sub(c0, t1);
+    Element c2 = Fr::sub(c1, t2);
+    Element c3 = Fr::sub(c2, t3);
+
+    // Add Tz to the divZh result
+    T[j]       = Fr::add(c0, Tz[j]);
+    T[N + j]   = Fr::add(c1, Tz[N + j]);
+    T[2*N + j] = Fr::add(c2, Tz[2*N + j]);
+    T[3*N + j] = Fr::add(c3, Tz[3*N + j]);
+}
+
+extern "C" void divzh_add_gpu(void* dT, const void* dTz, uint64_t N)
+{
+    uint32_t threads = 256;
+    uint32_t blocks = (uint32_t)((N + threads - 1) / threads);
+    divZhAddKernel<<<blocks, threads>>>((Element*)dT, (const Element*)dTz, N);
+    CHECKCUDAERR(cudaGetLastError());
+    CHECKCUDAERR(cudaDeviceSynchronize());
+}
+
+// ============================================================================
+// GPU T split + blinding kernel
+// ============================================================================
+// Splits combined T polynomial (3N+6 coefficients) into T1, T2, T3 with blinding:
+//   T1[0..N-1] = T[0..N-1], T1[N] = bf10                  (N+1 elements)
+//   T2[0..N-1] = T[N..2N-1], T2[0] -= bf10, T2[N] = bf11  (N+1 elements)
+//   T3[0..N+5] = T[2N..3N+5], T3[0] -= bf11               (N+6 elements)
+__global__ void splitTBlindingKernel(
+    Element* T1, Element* T2, Element* T3,
+    const Element* Tcombined, Element bf10, Element bf11, uint64_t N)
+{
+    uint64_t j = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (j > N + 5) return;
+
+    // T1: N+1 elements
+    if (j <= N) {
+        T1[j] = (j < N) ? Tcombined[j] : bf10;
+    }
+
+    // T2: N+1 elements
+    if (j <= N) {
+        Element val = (j < N) ? Tcombined[N + j] : bf11;
+        T2[j] = (j == 0) ? Fr::sub(val, bf10) : val;
+    }
+
+    // T3: N+6 elements (j can be up to N+5)
+    {
+        Element val = Tcombined[2*N + j];
+        T3[j] = (j == 0) ? Fr::sub(val, bf11) : val;
+    }
+}
+
+extern "C" void split_t_blinding_gpu(
+    void* dT1, void* dT2, void* dT3,
+    const void* dTcombined,
+    const void* bf10Ptr, const void* bf11Ptr, uint64_t N)
+{
+    Element bf10 = *(const Element*)bf10Ptr;
+    Element bf11 = *(const Element*)bf11Ptr;
+    uint32_t threads = 256;
+    uint32_t blocks = (uint32_t)((N + 6 + threads - 1) / threads);
+    splitTBlindingKernel<<<blocks, threads>>>(
+        (Element*)dT1, (Element*)dT2, (Element*)dT3,
+        (const Element*)dTcombined, bf10, bf11, N);
+    CHECKCUDAERR(cudaGetLastError());
+    CHECKCUDAERR(cudaDeviceSynchronize());
+}
+
+// ============================================================================
+// compute_z_ratios_gpu variant — keeps result on GPU (no D2H)
+// ============================================================================
+
+extern "C" void compute_z_ratios_gpu_no_d2h(
+    const void* buffA, const void* buffB, const void* buffC,
+    const void* dStaticEvals,
+    const void* betaPtr, const void* gammaPtr,
+    const void* k1Ptr, const void* k2Ptr, const void* omegaPtr,
+    uint64_t domainSize, void* dTemp4N)
+{
+    const Element* hBuffA = (const Element*)buffA;
+    const Element* hBuffB = (const Element*)buffB;
+    const Element* hBuffC = (const Element*)buffC;
+
+    Element beta  = *(const Element*)betaPtr;
+    Element gamma = *(const Element*)gammaPtr;
+    Element k1    = *(const Element*)k1Ptr;
+    Element k2    = *(const Element*)k2Ptr;
+    Element omega = *(const Element*)omegaPtr;
+
+    size_t arrayBytes = domainSize * sizeof(Element);
+    uint64_t fullN = 4 * domainSize;
+
+    const Element* dStaticBase = (const Element*)dStaticEvals;
+    const Element* dS1 = dStaticBase + 0 * fullN;
+    const Element* dS2 = dStaticBase + 1 * fullN;
+    const Element* dS3 = dStaticBase + 2 * fullN;
+
+    Element* dRatioOut = (Element*)dTemp4N;
+    Element* dBuffA = dRatioOut + domainSize;
+    Element* dBuffB = dBuffA + domainSize;
+    Element* dBuffC = dBuffB + domainSize;
+
+    CHECKCUDAERR(cudaMemcpy(dBuffA, hBuffA, arrayBytes, cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(dBuffB, hBuffB, arrayBytes, cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(dBuffC, hBuffC, arrayBytes, cudaMemcpyHostToDevice));
+
+    uint32_t threadsPerBlock = 256;
+    uint32_t blocks = (uint32_t)((domainSize + threadsPerBlock - 1) / threadsPerBlock);
+
+    computeZRatiosKernel<<<blocks, threadsPerBlock>>>(
+        dRatioOut, dBuffA, dBuffB, dBuffC,
+        dS1, dS2, dS3, 4,
+        beta, gamma, k1, k2, omega,
+        domainSize);
+
+    CHECKCUDAERR(cudaGetLastError());
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    // No D2H — ratios stay in dTemp4N[0..domainSize)
 }

@@ -86,6 +86,23 @@ extern "C" void compute_gate_c_gpu(
     const void* evalC, const void* dStaticEvals,
     const void* blindFactors, const void* omega4xPtr,
     uint64_t domainSize);
+extern "C" void cuda_device_sync();
+extern "C" void compute_z_ratios_gpu_no_d2h(
+    const void* buffA, const void* buffB, const void* buffC,
+    const void* dStaticEvals,
+    const void* betaPtr, const void* gammaPtr,
+    const void* k1Ptr, const void* k2Ptr, const void* omegaPtr,
+    uint64_t domainSize, void* dTemp4N);
+extern "C" void gpu_prefix_scan_multiply(void* dData, uint64_t N, void* dWork);
+extern "C" void rotate_left_gpu(void* dst, const void* src, uint64_t N);
+extern "C" void compute_div_zerofier_gpu(
+    void* dCoefs, uint64_t length,
+    const void* alphaPtr, const void* y0Ptr, void* dPairWork);
+extern "C" void divzh_add_gpu(void* dT, const void* dTz, uint64_t N);
+extern "C" void split_t_blinding_gpu(
+    void* dT1, void* dT2, void* dT3,
+    const void* dTcombined,
+    const void* bf10Ptr, const void* bf11Ptr, uint64_t N);
 extern "C" void compute_qm_permutation_gpu(
     void* tOut, void* tzOut,
     const void* evalA, const void* evalB, const void* evalC,
@@ -624,26 +641,37 @@ namespace PlonkGPU
         calculateAdditions();
 
         // START PLONK PROVER PROTOCOL
+        double tRound;
 
         // ROUND 1. Compute C1(X) polynomial
         LOG_TRACE("> ROUND 1");
+        tRound = omp_get_wtime();
         round1();
+        std::cout << "[TIMING] Round 1 (wire polys + commits): " << omp_get_wtime() - tRound << "s" << std::endl;
 
         // ROUND 2. Compute C2(X) polynomial
         LOG_TRACE("> ROUND 2");
+        tRound = omp_get_wtime();
         round2();
+        std::cout << "[TIMING] Round 2 (Z poly + commit): " << omp_get_wtime() - tRound << "s" << std::endl;
 
         // ROUND 3. Compute opening evaluations
         LOG_TRACE("> ROUND 3");
+        tRound = omp_get_wtime();
         round3();
+        std::cout << "[TIMING] Round 3 (T poly + commits): " << omp_get_wtime() - tRound << "s" << std::endl;
 
         // ROUND 4. Compute W(X) polynomial
         LOG_TRACE("> ROUND 4");
+        tRound = omp_get_wtime();
         round4();
+        std::cout << "[TIMING] Round 4 (evaluations): " << omp_get_wtime() - tRound << "s" << std::endl;
 
         // ROUND 5. Compute W'(X) polynomial
         LOG_TRACE("> ROUND 5");
+        tRound = omp_get_wtime();
         round5();
+        std::cout << "[TIMING] Round 5 (linearization + commits): " << omp_get_wtime() - tRound << "s" << std::endl;
 
         // Prepare public inputs
         std::vector<uint8_t> publicBytes;
@@ -799,26 +827,35 @@ namespace PlonkGPU
 
         // STEP 1.2 - Compute wire polynomials a(X), b(X) and c(X)
         LOG_TRACE("> Computing A, B, C wire polynomials");
+        double t0 = omp_get_wtime();
         computeWirePolynomials();
+        cuda_device_sync();
+        std::cout << "[TIMING]   wirePolynomials (3xIFFT+D2D): " << omp_get_wtime() - t0 << "s" << std::endl;
 
         // STEP 1.3 - Compute [a]_1, [b]_1, [c]_1
-        // MSM uses unblinded coefficients, then CPU correction adds blinding contribution
-        LOG_TRACE("> Computing A, B, C polynomial commitments (GPU)");
-        G1Point A = multiExponentiationGPU(polynomials["A"]);
+        // GPU-direct MSM from dPolCoef slots (mont=true), then CPU blinding correction
+        LOG_TRACE("> Computing A, B, C polynomial commitments (GPU devptr)");
+        t0 = omp_get_wtime();
+        G1Point A = multiExponentiationGPU_devptr(dPolCoefA, zkey->domainSize);
         {
             FrElement bfA[2] = {blindingFactors[2], blindingFactors[1]};
             applyBlindingCorrection(A, bfA, 2);
         }
-        G1Point B = multiExponentiationGPU(polynomials["B"]);
+        std::cout << "[TIMING]   MSM A (devptr): " << omp_get_wtime() - t0 << "s" << std::endl;
+        t0 = omp_get_wtime();
+        G1Point B = multiExponentiationGPU_devptr(dPolCoefB, zkey->domainSize);
         {
             FrElement bfB[2] = {blindingFactors[4], blindingFactors[3]};
             applyBlindingCorrection(B, bfB, 2);
         }
-        G1Point C = multiExponentiationGPU(polynomials["C"]);
+        std::cout << "[TIMING]   MSM B (devptr): " << omp_get_wtime() - t0 << "s" << std::endl;
+        t0 = omp_get_wtime();
+        G1Point C = multiExponentiationGPU_devptr(dPolCoefC, zkey->domainSize);
         {
             FrElement bfC[2] = {blindingFactors[6], blindingFactors[5]};
             applyBlindingCorrection(C, bfC, 2);
         }
+        std::cout << "[TIMING]   MSM C (devptr): " << omp_get_wtime() - t0 << "s" << std::endl;
 
         // First output of the prover is ([A]_1, [B]_1, [C]_1)
         proof->addPolynomialCommitment("A", A);
@@ -956,24 +993,27 @@ namespace PlonkGPU
 
         // STEP 2.2 - Compute permutation polynomial z(X)
         LOG_TRACE("> Computing Z polynomial");
+        double t0 = omp_get_wtime();
         computeZ();
+        cuda_device_sync();
+        std::cout << "[TIMING]   computeZ (ratios+product+IFFT): " << omp_get_wtime() - t0 << "s" << std::endl;
 
         // The second output of the prover is ([C2]_1)
-        // MSM uses unblinded coefficients, then CPU correction adds blinding contribution
-        LOG_TRACE("> Computing Z polynomial commitment (GPU)");
-        G1Point Z = multiExponentiationGPU(polynomials["Z"]);
+        // GPU-direct MSM from dPolCoefZ (mont=true), then CPU blinding correction
+        LOG_TRACE("> Computing Z polynomial commitment (GPU devptr)");
+        t0 = omp_get_wtime();
+        G1Point Z = multiExponentiationGPU_devptr(dPolCoefZ, zkey->domainSize);
         {
             FrElement bfZ[3] = {blindingFactors[9], blindingFactors[8], blindingFactors[7]};
             applyBlindingCorrection(Z, bfZ, 3);
         }
+        std::cout << "[TIMING]   MSM Z (devptr): " << omp_get_wtime() - t0 << "s" << std::endl;
         proof->addPolynomialCommitment("Z", Z);
     }
 
     template <typename Engine>
     void PlonkProverGPU<Engine>::computeZ()
     {
-        FrElement *zratioArray = buffers["zratioArray"];
-
         auto buffersA = buffers["A"];
         auto buffersB = buffers["B"];
         auto buffersC = buffers["C"];
@@ -985,60 +1025,65 @@ namespace PlonkGPU
             std::cout<<"[computeZ] sigma join completed, waited: " << omp_get_wtime() - t0 <<endl;
         }
 
-        LOG_TRACE("··· Computing Z evaluations (GPU)");
+        LOG_TRACE("··· Computing Z evaluations (GPU prefix scan)");
 
-        // Preloaded constants
         auto beta = challenges["beta"];
         auto gamma = challenges["gamma"];
         auto k1 = *((FrElement *)zkey->k1);
         auto k2 = *((FrElement *)zkey->k2);
-
-        // Primitive root of unity: omega = root(zkeyPower, 1)
         FrElement omega = fft->root(zkeyPower, 1);
 
-        compute_z_ratios_gpu(
-            (void*)zratioArray,
-            (const void*)buffersA,
-            (const void*)buffersB,
-            (const void*)buffersC,
+        uint64_t N = zkey->domainSize;
+
+        // Step 1: Compute z_ratios on GPU — ratios stay in dAux[0..N)
+        double tz0 = omp_get_wtime();
+        compute_z_ratios_gpu_no_d2h(
+            (const void*)buffersA, (const void*)buffersB, (const void*)buffersC,
             d_staticEvalsBuffer,
-            (const void*)&beta,
-            (const void*)&gamma,
-            (const void*)&k1,
-            (const void*)&k2,
-            (const void*)&omega,
-            zkey->domainSize,
-            dAux);
+            (const void*)&beta, (const void*)&gamma,
+            (const void*)&k1, (const void*)&k2, (const void*)&omega,
+            N, dAux);
+        std::cout << "[TIMING]     z_ratios GPU (no D2H): " << omp_get_wtime() - tz0 << "s" << std::endl;
 
-        // Sequential prefix product over ratios to build Z evaluations
-        // Z[0] = product of all ratios (should equal 1)
-        // Z[i] = product of ratios[0..i-1] for i > 0
-        auto buffersZ = buffers["Z"];
+        // Step 2: GPU inclusive multiplicative prefix scan on dAux[0..N)
+        // Workspace for block totals at dAux[4*N..] (within Aux bounds)
+        tz0 = omp_get_wtime();
+        void* dScanWork = (void*)((FrElement*)dAux + 4 * N);
+        gpu_prefix_scan_multiply(dAux, N, dScanWork);
 
-        FrElement prev = zratioArray[0];
-        for (u_int64_t i = 0; i < zkey->domainSize - 1; i++)
-        {
-            FrElement cur = zratioArray[i + 1];
-            buffersZ[i + 1] = prev;
-            prev = E.fr.mul(prev, cur);
-        }
-        buffersZ[0] = prev;
+        // Step 3: Rotate left by 1: dAux[0..N) → dAux[N..2N)
+        // Z[0] = scan[N-1] (total product), Z[i] = scan[i-1] for i >= 1
+        void* dZevals = (void*)((FrElement*)dAux + N);
+        rotate_left_gpu(dZevals, dAux, N);
+        std::cout << "[TIMING]     z GPU prefix scan + rotate: " << omp_get_wtime() - tz0 << "s" << std::endl;
 
-        if (!E.fr.eq(buffersZ[0], E.fr.one()))
+        // Step 4: Verify Z[0] == 1 (D2H single element)
+        FrElement z0;
+        memcpy_d2h_gpu(&z0, dZevals, sizeof(FrElement));
+        if (!E.fr.eq(z0, E.fr.one()))
         {
             throw std::runtime_error("Copy constraints does not match");
         }
 
-        // Compute polynomial coefficients z(X) from buffers.Z using GPU IFFT
-        // (eval computation deferred to computeT where it's done incrementally)
-        LOG_TRACE("··· Computing Z ifft (GPU dev_ptr)");
-        polynomials["Z"] = polynomialFromEvaluationsGPU(buffersZ, polPtr["Z"], zkey->domainSize, 3, zkeyPower);
+        // Step 5: Create Polynomial on CPU (zeros CPU buffer, fine — overwritten by D2H)
+        polynomials["Z"] = new Polynomial<Engine>(E, polPtr["Z"], N, 3);
 
-        // D2D IFFT result from dAux to persistent GPU slot for later use in computeT
-        memcpy_d2d_gpu(dPolCoefZ, dAux, zkey->domainSize * sizeof(FrElement));
+        // Step 6: IFFT on dZevals (dAux[N..2N)) — evaluations already on GPU
+        LOG_TRACE("··· Computing Z ifft (GPU dev_ptr)");
+        tz0 = omp_get_wtime();
+        intt_bn128_gpu_dev_ptr(dZevals, zkeyPower);
+
+        // Step 7: D2H IFFT result to CPU polynomial
+        memcpy_d2h_gpu(polynomials["Z"]->coef, dZevals, N * sizeof(FrElement));
+
+        // Step 8: D2D to persistent PolCoefZ slot for computeT
+        memcpy_d2d_gpu(dPolCoefZ, dZevals, N * sizeof(FrElement));
+        std::cout << "[TIMING]     z IFFT+D2H+D2D: " << omp_get_wtime() - tz0 << "s" << std::endl;
+
+        polynomials["Z"]->fixDegree();
 
         // Check degree
-        if (polynomials["Z"]->getDegree() >= zkey->domainSize + 3)
+        if (polynomials["Z"]->getDegree() >= N + 3)
         {
             throw std::runtime_error("Z Polynomial is not well calculated");
         }
@@ -1063,15 +1108,24 @@ namespace PlonkGPU
         LOG_TRACE(ss);
 
         // Compute quotient polynomial T(X)
-        // (computeT also applies blindCoefficients to A/B/C/Z after each H2D capture)
+        // (computeT also applies blindCoefficients to A/B/C/Z after each D2D capture)
         LOG_TRACE("> Computing T polynomial");
+        double t0 = omp_get_wtime();
         computeT();
+        std::cout << "[TIMING]   computeT total: " << omp_get_wtime() - t0 << "s" << std::endl;
 
-        // Compute [T1]_1, [T2]_1, [T3]_1
-        LOG_TRACE("> Computing T1, T2 & T3 polynomial commitments (GPU)");
-        G1Point T1 = multiExponentiationGPU(polynomials["T1"]);
-        G1Point T2 = multiExponentiationGPU(polynomials["T2"]);
-        G1Point T3 = multiExponentiationGPU(polynomials["T3"]);
+        // Compute [T1]_1, [T2]_1, [T3]_1 from GPU-resident split polynomials (mont=true)
+        // Blinding already applied in GPU splitTBlinding kernel — no applyBlindingCorrection needed
+        LOG_TRACE("> Computing T1, T2 & T3 polynomial commitments (GPU devptr)");
+        t0 = omp_get_wtime();
+        G1Point T1 = multiExponentiationGPU_devptr(dT1, zkey->domainSize + 1);
+        std::cout << "[TIMING]   MSM T1 (devptr): " << omp_get_wtime() - t0 << "s" << std::endl;
+        t0 = omp_get_wtime();
+        G1Point T2 = multiExponentiationGPU_devptr(dT2, zkey->domainSize + 1);
+        std::cout << "[TIMING]   MSM T2 (devptr): " << omp_get_wtime() - t0 << "s" << std::endl;
+        t0 = omp_get_wtime();
+        G1Point T3 = multiExponentiationGPU_devptr(dT3, zkey->domainSize + 6);
+        std::cout << "[TIMING]   MSM T3 (devptr): " << omp_get_wtime() - t0 << "s" << std::endl;
 
         proof->addPolynomialCommitment("T1", T1);
         proof->addPolynomialCommitment("T2", T2);
@@ -1138,8 +1192,10 @@ namespace PlonkGPU
         void* dQR_slot = dStaticBase + 5 * slotBytes;
         void* dQO_slot = dStaticBase + 7 * slotBytes;
 
+        double tWire;
         // --- Wire A: D2D unblinded coefs → zero-pad → FFT → gate_A → D2D to QL slot ---
         LOG_TRACE("··· Computing A evals + gate_A (GPU)");
+        tWire = omp_get_wtime();
         memcpy_d2d_gpu(dAux, dPolCoefA, N * sizeof(FrElement));
         {   // Apply blinding on CPU (H2D already captured unblinded data)
             FrElement bfA[2] = {blindingFactors[2], blindingFactors[1]};
@@ -1150,9 +1206,11 @@ namespace PlonkGPU
         compute_gate_a_gpu(d_piBuffer, d_lagBuffer, dAux, d_staticEvalsBuffer,
                            (const void*)blindingFactors, (const void*)&omega_4x, N);
         memcpy_d2d_gpu(dQL_slot, dAux, slotBytes);
+        std::cout << "[TIMING]     wire A (D2D+pad+NTT+gate+D2D): " << omp_get_wtime() - tWire << "s" << std::endl;
 
         // --- Wire B: D2D → zero-pad → FFT → gate_B → D2D to QR slot ---
         LOG_TRACE("··· Computing B evals + gate_B (GPU)");
+        tWire = omp_get_wtime();
         memcpy_d2d_gpu(dAux, dPolCoefB, N * sizeof(FrElement));
         {
             FrElement bfB[2] = {blindingFactors[4], blindingFactors[3]};
@@ -1163,9 +1221,11 @@ namespace PlonkGPU
         compute_gate_b_gpu(d_piBuffer, d_lagBuffer, dAux, d_staticEvalsBuffer,
                            (const void*)blindingFactors, (const void*)&omega_4x, N);
         memcpy_d2d_gpu(dQR_slot, dAux, slotBytes);
+        std::cout << "[TIMING]     wire B (D2D+pad+NTT+gate+D2D): " << omp_get_wtime() - tWire << "s" << std::endl;
 
         // --- Wire C: D2D → zero-pad → FFT → gate_C → D2D to QO slot ---
         LOG_TRACE("··· Computing C evals + gate_C (GPU)");
+        tWire = omp_get_wtime();
         memcpy_d2d_gpu(dAux, dPolCoefC, N * sizeof(FrElement));
         {
             FrElement bfC[2] = {blindingFactors[6], blindingFactors[5]};
@@ -1176,9 +1236,11 @@ namespace PlonkGPU
         compute_gate_c_gpu(d_piBuffer, d_lagBuffer, dAux, d_staticEvalsBuffer,
                            (const void*)blindingFactors, (const void*)&omega_4x, N);
         memcpy_d2d_gpu(dQO_slot, dAux, slotBytes);
+        std::cout << "[TIMING]     wire C (D2D+pad+NTT+gate+D2D): " << omp_get_wtime() - tWire << "s" << std::endl;
 
         // --- Z: D2D → zero-pad → FFT → set wrap-around ---
         LOG_TRACE("··· Computing Z evals (GPU)");
+        tWire = omp_get_wtime();
         memcpy_d2d_gpu(dAux, dPolCoefZ, N * sizeof(FrElement));
         {
             FrElement bfZ[3] = {blindingFactors[9], blindingFactors[8], blindingFactors[7]};
@@ -1187,8 +1249,10 @@ namespace PlonkGPU
         zero_pad_gpu(dAux, N, fullN);
         ntt_bn128_gpu_dev_ptr(dAux, zkeyPower + 2);
         memcpy_d2d_gpu((uint8_t*)dAux + fullBytes, dAux, 4 * sizeof(FrElement));
+        std::cout << "[TIMING]     wire Z (D2D+pad+NTT+wrap): " << omp_get_wtime() - tWire << "s" << std::endl;
 
         // --- QM + Permutation kernel ---
+        tWire = omp_get_wtime();
         LOG_TRACE("··· Computing QM + permutation (GPU)");
         compute_qm_permutation_gpu(
             d_piBuffer, d_lagBuffer,
@@ -1203,72 +1267,60 @@ namespace PlonkGPU
             (const void*)Z1, (const void*)Z2, (const void*)Z3,
             N);
 
-        std::cout << " [computeT] incremental T evals in " << omp_get_wtime() - tstart << endl;
+        std::cout << "[TIMING]     QM+perm kernel: " << omp_get_wtime() - tWire << "s" << std::endl;
+        std::cout << "[TIMING]     incremental T evals total: " << omp_get_wtime() - tstart << "s" << std::endl;
 
-        // T IFFT in-place on GPU (d_piBuffer holds T evals), then D2H
+        // T IFFT in-place on GPU (no D2H — stays in d_piBuffer)
         LOG_TRACE("··· Computing T ifft (GPU)");
-        polynomials["T"] = new Polynomial<Engine>(E, polPtr["T"], fullN, 0);
+        tWire = omp_get_wtime();
         intt_bn128_gpu_dev_ptr(d_piBuffer, zkeyPower + 2);
-        memcpy_d2h_gpu(polynomials["T"]->coef, d_piBuffer, fullBytes);
-        polynomials["T"]->fixDegree();
+        std::cout << "[TIMING]     T INTT (GPU): " << omp_get_wtime() - tWire << "s" << std::endl;
 
-        // Divide the polynomial T by Z_H(X)
-        polynomials["T"]->divZh(N, 4);
-
-        // Tz IFFT in-place on GPU (d_lagBuffer holds Tz evals), then D2H
+        // Tz IFFT in-place on GPU (no D2H — stays in d_lagBuffer)
         LOG_TRACE("··· Computing Tz ifft (GPU)");
-        polynomials["Tz"] = new Polynomial<Engine>(E, polPtr["Tz"], fullN, 0);
+        tWire = omp_get_wtime();
         intt_bn128_gpu_dev_ptr(d_lagBuffer, zkeyPower + 2);
-        memcpy_d2h_gpu(polynomials["Tz"]->coef, d_lagBuffer, fullBytes);
-        polynomials["Tz"]->fixDegree();
+        std::cout << "[TIMING]     Tz INTT (GPU): " << omp_get_wtime() - tWire << "s" << std::endl;
 
-        // Add the polynomial Tz to T to get the final polynomial T
-        polynomials["T"]->add(*polynomials["Tz"]);
+        // GPU: divZh + T+Tz add in one fused kernel (no D2H)
+        tWire = omp_get_wtime();
+        divzh_add_gpu(d_piBuffer, d_lagBuffer, N);
+        std::cout << "[TIMING]     divZh+add (GPU): " << omp_get_wtime() - tWire << "s" << std::endl;
 
-        // Check degree
-        if (polynomials["T"]->getDegree() >= 3 * zkey->domainSize + 6)
+        // Degree check: D2H single element at index 3N+6 to verify zero
         {
-            throw std::runtime_error("T Polynomial is not well calculated");
+            FrElement degCheck;
+            memcpy_d2h_gpu(&degCheck, (FrElement*)d_piBuffer + 3*N + 6, sizeof(FrElement));
+            if (!E.fr.isZero(degCheck)) {
+                throw std::runtime_error("T Polynomial is not well calculated");
+            }
         }
 
-        // t(x) has degree 3n + 5, we are going to split t(x) into three smaller polynomials:
-        // T1' and T2'  with a degree < n and T3' with a degree n+5
-        // such that t(x) = T1'(X) + X^n T2'(X) + X^{2n} T3'(X)
-        // To randomize the parts we use blinding scalars b_10 and b_11 in a way that doesn't change t(X):
-        // T1(X) = T1'(X) + b_10 X^n
-        // T2(X) = T2'(X) - b_10 + b_11 X^n
-        // T3(X) = T3'(X) - b_11
-        // such that
-        // t(X) = T1(X) + X^n T2(X) + X^2n T3(X)
-        LOG_TRACE("··· Computing T1, T2, T3 polynomials");
-        int nThreads = omp_get_max_threads() / 2;
+        // GPU: Split T into T1/T2/T3 with blinding, into freed d_staticEvalsBuffer
+        // Layout: T1 (N+1), T2 (N+1), T3 (N+6) — all contiguous in d_staticEvalsBuffer
+        LOG_TRACE("··· Computing T1, T2, T3 polynomials (GPU split+blind)");
+        tWire = omp_get_wtime();
+        dT1 = d_staticEvalsBuffer;
+        dT2 = (FrElement*)d_staticEvalsBuffer + (N + 1);
+        dT3 = (FrElement*)d_staticEvalsBuffer + 2 * (N + 1);
 
+        split_t_blinding_gpu(dT1, dT2, dT3, d_piBuffer,
+                             &blindingFactors[10], &blindingFactors[11], N);
+
+        // D2H T1/T2/T3 into CPU polynomial objects (needed by Round 4 evals + Round 5 computeR)
+        // Create Polynomial FIRST (zeros buffer), then D2H overwrites
         polynomials["T1"] = new Polynomial<Engine>(E, polPtr["T1"], zkey->domainSize, 1);
-        ThreadUtils::parcpy(polynomials["T1"]->coef, &polynomials["T"]->coef[0], zkey->domainSize * sizeof(FrElement), nThreads);
-
         polynomials["T2"] = new Polynomial<Engine>(E, polPtr["T2"], zkey->domainSize, 1);
-        ThreadUtils::parcpy(polynomials["T2"]->coef, &polynomials["T"]->coef[zkey->domainSize], zkey->domainSize * sizeof(FrElement), nThreads);
-
         polynomials["T3"] = new Polynomial<Engine>(E, polPtr["T3"], zkey->domainSize, 6);
-        ThreadUtils::parcpy(polynomials["T3"]->coef, &polynomials["T"]->coef[zkey->domainSize * 2], (zkey->domainSize + 6) * sizeof(FrElement), nThreads);
 
-        // Add blinding scalar b_10 as a new coefficient n
-        polynomials["T1"]->coef[zkey->domainSize] = blindingFactors[10];
-
-        // compute t_mid(X)
-        // Subtract blinding scalar b_10 to the lowest coefficient of t_mid
-        auto lowestMid = E.fr.sub(polynomials["T2"]->coef[0], blindingFactors[10]);
-        polynomials["T2"]->coef[0] = lowestMid;
-        polynomials["T2"]->coef[zkey->domainSize] = blindingFactors[11];
-
-        // compute t_high(X)
-        // Subtract blinding scalar b_11 to the lowest coefficient of t_high
-        auto lowestHigh = E.fr.sub(polynomials["T3"]->coef[0], blindingFactors[11]);
-        polynomials["T3"]->coef[0] = lowestHigh;
+        memcpy_d2h_gpu(polynomials["T1"]->coef, dT1, (N + 1) * sizeof(FrElement));
+        memcpy_d2h_gpu(polynomials["T2"]->coef, dT2, (N + 1) * sizeof(FrElement));
+        memcpy_d2h_gpu(polynomials["T3"]->coef, dT3, (N + 6) * sizeof(FrElement));
 
         polynomials["T1"]->fixDegree();
         polynomials["T2"]->fixDegree();
         polynomials["T3"]->fixDegree();
+        std::cout << "[TIMING]     T split+blind+D2H (GPU): " << omp_get_wtime() - tWire << "s" << std::endl;
     }
 
     // ROUND 4
@@ -1328,20 +1380,34 @@ namespace PlonkGPU
 
         // STEP 5.2 Compute linearisation polynomial r(X)
         LOG_TRACE("> Computing linearisation polynomial R(X)");
+        double t0 = omp_get_wtime();
         computeR();
+        std::cout << "[TIMING]   computeR+Wxi (fused): " << omp_get_wtime() - t0 << "s" << std::endl;
 
         // STEP 5.3 Compute opening proof polynomial Wxi(X)
+        // After computeWxi, result is in dAux on GPU — MSM directly from there
         LOG_TRACE("> Computing opening proof polynomial Wxi(X) polynomial");
+        t0 = omp_get_wtime();
         computeWxi();
+        std::cout << "[TIMING]   computeWxi (divByZerofier): " << omp_get_wtime() - t0 << "s" << std::endl;
+
+        LOG_TRACE("> Computing Wxi polynomial commitment (GPU devptr)");
+        t0 = omp_get_wtime();
+        // Wxi is in dAux after divByZerofier, use conservative npoints (upper bound on degree)
+        G1Point commitWxi = multiExponentiationGPU_devptr(dAux, polynomials["Wxi"]->getLength() - 1);
+        std::cout << "[TIMING]   MSM Wxi (devptr): " << omp_get_wtime() - t0 << "s" << std::endl;
 
         // STEP 5.4 Compute opening proof polynomial Wxiw(X)
+        // After computeWxiw, result is in dAux — MSM directly from there
         LOG_TRACE("> Computing opening proof polynomial Wxiw(X) polynomial");
+        t0 = omp_get_wtime();
         computeWxiw();
+        std::cout << "[TIMING]   computeWxiw: " << omp_get_wtime() - t0 << "s" << std::endl;
 
-        // The fifth output of the prover is ([Wxi]_1, [Wxiw]_1)
-        LOG_TRACE("> Computing Wxi, Wxiw polynomial commitments (GPU)");
-        G1Point commitWxi = multiExponentiationGPU(polynomials["Wxi"]);
-        G1Point commitWxiw = multiExponentiationGPU(polynomials["Wxiw"]);
+        LOG_TRACE("> Computing Wxiw polynomial commitment (GPU devptr)");
+        t0 = omp_get_wtime();
+        G1Point commitWxiw = multiExponentiationGPU_devptr(dAux, polynomials["Wxiw"]->getLength() - 1);
+        std::cout << "[TIMING]   MSM Wxiw (devptr): " << omp_get_wtime() - t0 << "s" << std::endl;
 
         proof->addPolynomialCommitment("Wxi", commitWxi);
         proof->addPolynomialCommitment("Wxiw", commitWxiw);
@@ -1435,29 +1501,7 @@ namespace PlonkGPU
 
         auto e4 = E.fr.mul(eval_l1, challenges["alpha2"]);
 
-        polynomials["R"] = new Polynomial<Engine>(E, polPtr["R"], zkey->domainSize + 6);
-        polynomials["R"]->addBlinding(*polynomials["QM"], coef_ab);
-        auto eval_a = proof->getEvaluationCommitment("eval_a");
-        polynomials["R"]->addBlinding(*polynomials["QL"], eval_a);
-        auto eval_b = proof->getEvaluationCommitment("eval_b");
-        polynomials["R"]->addBlinding(*polynomials["QR"], eval_b);
-        auto eval_c = proof->getEvaluationCommitment("eval_c");
-        polynomials["R"]->addBlinding(*polynomials["QO"], eval_c);
-        polynomials["R"]->add(*polynomials["QC"]);
-        polynomials["R"]->addBlinding(*polynomials["Z"], e2);
-        auto val = E.fr.mul(e3, challenges["beta"]);
-        polynomials["R"]->subBlinding(*polynomials["Sigma3"], val);
-        polynomials["R"]->addBlinding(*polynomials["Z"], e4);
-
-        auto tmp = polynomials["T3"];
-        auto xin2 = E.fr.square(challenges["xin"]);
-        tmp->mulScalar(xin2);
-        tmp->addBlinding(*polynomials["T2"], challenges["xin"]);
-        tmp->add(*polynomials["T1"]);
-        tmp->mulScalar(challenges["zh"]);
-
-        polynomials["R"]->sub(*tmp);
-
+        // Precompute r0
         auto r0 = E.fr.sub(eval_pi, E.fr.mul(e3, E.fr.add(proof->getEvaluationCommitment("eval_c"), challenges["gamma"])));
         r0 = E.fr.sub(r0, e4);
 
@@ -1465,39 +1509,114 @@ namespace PlonkGPU
         ss << "··· r0: " << E.fr.toString(r0);
         LOG_TRACE(ss);
 
-        polynomials["R"]->addScalar(r0);
+        // Precompute combined scalars for fused R+Wxi loop
+        auto e2_plus_e4 = E.fr.add(e2, e4);
+        auto e3_beta = E.fr.mul(e3, challenges["beta"]);
+        FrElement neg_zh;
+        E.fr.neg(neg_zh, challenges["zh"]);
+        auto xin = challenges["xin"];
+        auto xin2 = E.fr.square(xin);
+
+        auto eval_a = proof->getEvaluationCommitment("eval_a");
+        auto eval_b = proof->getEvaluationCommitment("eval_b");
+        auto eval_c = proof->getEvaluationCommitment("eval_c");
+        auto v1 = challenges["v1"];
+        auto v2 = challenges["v2"];
+        auto v3 = challenges["v3"];
+        auto v4 = challenges["v4"];
+        auto v5 = challenges["v5"];
+        auto eval_s1 = proof->getEvaluationCommitment("eval_s1");
+        auto eval_s2 = proof->getEvaluationCommitment("eval_s2");
+
+        auto wxi_offset = E.fr.mul(v1, eval_a);
+        wxi_offset = E.fr.add(wxi_offset, E.fr.mul(v2, eval_b));
+        wxi_offset = E.fr.add(wxi_offset, E.fr.mul(v3, eval_c));
+        wxi_offset = E.fr.add(wxi_offset, E.fr.mul(v4, eval_s1));
+        wxi_offset = E.fr.add(wxi_offset, E.fr.mul(v5, eval_s2));
+
+        // Fused R+Wxi: single pass writes Wxi directly, skipping intermediate R
+        polynomials["Wxi"] = new Polynomial<Engine>(E, polPtr["Wxi"], zkey->domainSize + 6);
+        FrElement *wxiCoef = polynomials["Wxi"]->coef;
+        FrElement *qm = polynomials["QM"]->coef;
+        FrElement *ql = polynomials["QL"]->coef;
+        FrElement *qr = polynomials["QR"]->coef;
+        FrElement *qo = polynomials["QO"]->coef;
+        FrElement *qc = polynomials["QC"]->coef;
+        FrElement *zCoef = polynomials["Z"]->coef;
+        FrElement *s3 = polynomials["Sigma3"]->coef;
+        FrElement *t1 = polynomials["T1"]->coef;
+        FrElement *t2 = polynomials["T2"]->coef;
+        FrElement *t3 = polynomials["T3"]->coef;
+        FrElement *aCoef = polynomials["A"]->coef;
+        FrElement *bCoef = polynomials["B"]->coef;
+        FrElement *cCoef = polynomials["C"]->coef;
+        FrElement *s1Coef = polynomials["Sigma1"]->coef;
+        FrElement *s2Coef = polynomials["Sigma2"]->coef;
+
+        uint64_t N = zkey->domainSize;
+
+        #pragma omp parallel for
+        for (uint64_t i = 0; i < N + 6; i++) {
+            FrElement val = E.fr.zero();
+
+            if (i < N) {
+                val = E.fr.mul(qm[i], coef_ab);
+                val = E.fr.add(val, E.fr.mul(ql[i], eval_a));
+                val = E.fr.add(val, E.fr.mul(qr[i], eval_b));
+                val = E.fr.add(val, E.fr.mul(qo[i], eval_c));
+                val = E.fr.add(val, qc[i]);
+                val = E.fr.sub(val, E.fr.mul(s3[i], e3_beta));
+                val = E.fr.add(val, E.fr.mul(s1Coef[i], v4));
+                val = E.fr.add(val, E.fr.mul(s2Coef[i], v5));
+            }
+
+            if (i < N + 3) {
+                val = E.fr.add(val, E.fr.mul(zCoef[i], e2_plus_e4));
+            }
+
+            if (i < N + 2) {
+                val = E.fr.add(val, E.fr.mul(aCoef[i], v1));
+                val = E.fr.add(val, E.fr.mul(bCoef[i], v2));
+                val = E.fr.add(val, E.fr.mul(cCoef[i], v3));
+            }
+
+            // T combination: -zh * (T1[i] + xin*T2[i] + xin²*T3[i])
+            FrElement tval = E.fr.mul(t3[i], xin2);
+            if (i < N + 1) {
+                tval = E.fr.add(tval, t1[i]);
+                tval = E.fr.add(tval, E.fr.mul(t2[i], xin));
+            }
+            val = E.fr.add(val, E.fr.mul(tval, neg_zh));
+
+            wxiCoef[i] = val;
+        }
+
+        // Scalar adjustments at index 0
+        wxiCoef[0] = E.fr.add(wxiCoef[0], r0);
+        wxiCoef[0] = E.fr.sub(wxiCoef[0], wxi_offset);
     }
 
     template <typename Engine>
     void PlonkProverGPU<Engine>::computeWxi()
     {
-        polynomials["Wxi"] = new Polynomial<Engine>(E, polPtr["Wxi"], zkey->domainSize + 6);
-        polynomials["Wxi"]->add(*polynomials["R"]);
-        polynomials["Wxi"]->addBlinding(*polynomials["A"], challenges["v1"]);
-        polynomials["Wxi"]->addBlinding(*polynomials["B"], challenges["v2"]);
-        polynomials["Wxi"]->addBlinding(*polynomials["C"], challenges["v3"]);
-        polynomials["Wxi"]->addBlinding(*polynomials["Sigma1"], challenges["v4"]);
-        polynomials["Wxi"]->addBlinding(*polynomials["Sigma2"], challenges["v5"]);
+        // Wxi polynomial already computed by fused R+Wxi loop in computeR()
+        // GPU divByZerofier — result stays on GPU in dAux for devptr MSM
+        uint64_t len = polynomials["Wxi"]->getLength();
+        FrElement xi = challenges["xi"];
+        FrElement alpha;
+        E.fr.inv(alpha, xi);           // alpha = 1/xi
+        FrElement negAlpha;
+        E.fr.neg(negAlpha, alpha);
+        FrElement y0 = E.fr.mul(negAlpha, polynomials["Wxi"]->coef[0]);
 
-        auto eval_a = proof->getEvaluationCommitment("eval_a");
-        auto eval_b = proof->getEvaluationCommitment("eval_b");
-        auto eval_c = proof->getEvaluationCommitment("eval_c");
-        auto eval_s1 = proof->getEvaluationCommitment("eval_s1");
-        auto eval_s2 = proof->getEvaluationCommitment("eval_s2");
+        // H2D coefficients → dAux
+        memcpy_h2d_gpu(dAux, polynomials["Wxi"]->coef, len * sizeof(FrElement));
 
-        auto val = E.fr.mul(challenges["v1"], eval_a);
-        polynomials["Wxi"]->subScalar(val);
-        val = E.fr.mul(challenges["v2"], eval_b);
-        polynomials["Wxi"]->subScalar(val);
-        val = E.fr.mul(challenges["v3"], eval_c);
-        polynomials["Wxi"]->subScalar(val);
-        val = E.fr.mul(challenges["v4"], eval_s1);
-        polynomials["Wxi"]->subScalar(val);
-        val = E.fr.mul(challenges["v5"], eval_s2);
-        polynomials["Wxi"]->subScalar(val);
+        // GPU affine scan — workspace starts after coefficient data
+        void* dPairWork = (void*)((FrElement*)dAux + len);
+        compute_div_zerofier_gpu(dAux, len, (const void*)&alpha, (const void*)&y0, dPairWork);
 
-        polynomials["Wxi"]->divByZerofier(1, challenges["xi"]);
-        polynomials["Wxi"]->fixDegree();
+        // Result stays in dAux for GPU-direct MSM (no D2H needed)
     }
 
     template <typename Engine>
@@ -1507,7 +1626,22 @@ namespace PlonkGPU
         auto val = proof->getEvaluationCommitment("eval_zw");
         polynomials["Wxiw"]->subScalar(val);
 
-        polynomials["Wxiw"]->divByZerofier(1, challenges["xiw"]);
+        // GPU divByZerofier — result stays on GPU in dAux for devptr MSM
+        uint64_t len = polynomials["Wxiw"]->getLength();
+        FrElement xiw = challenges["xiw"];
+        FrElement alpha;
+        E.fr.inv(alpha, xiw);
+        FrElement negAlpha;
+        E.fr.neg(negAlpha, alpha);
+        FrElement y0 = E.fr.mul(negAlpha, polynomials["Wxiw"]->coef[0]);
+
+        // H2D full polynomial (N+3 elements, includes blinding terms)
+        memcpy_h2d_gpu(dAux, polynomials["Wxiw"]->coef, len * sizeof(FrElement));
+
+        void* dPairWork = (void*)((FrElement*)dAux + len);
+        compute_div_zerofier_gpu(dAux, len, (const void*)&alpha, (const void*)&y0, dPairWork);
+
+        // Result stays in dAux for GPU-direct MSM (no D2H needed)
     }
 
     template <typename Engine>
@@ -1596,6 +1730,33 @@ namespace PlonkGPU
         value.y = gpuResult.Y;
         E.f1.square(value.zz, gpuResult.Z);           // zz = Z²
         E.f1.mul(value.zzz, value.zz, gpuResult.Z);   // zzz = Z³
+
+        return value;
+    }
+
+    // GPU MSM from device-resident Montgomery-form scalars (mont=true)
+    // Eliminates polynomialFromMontgomery + H2D — scalars stay on GPU
+    template <typename Engine>
+    typename Engine::G1Point PlonkProverGPU<Engine>::multiExponentiationGPU_devptr(
+        void* dScalars, size_t npoints)
+    {
+        G1Point value;
+
+        struct JacobianPoint {
+            typename Engine::F1Element X;
+            typename Engine::F1Element Y;
+            typename Engine::F1Element Z;
+        };
+        JacobianPoint gpuResult;
+
+        // mont=true: MSM handles Montgomery→normal conversion internally
+        msm_bn128_gpu_dev_ptr(&gpuResult, dPTau, dScalars, npoints, true);
+
+        // Convert from standard Jacobian to Extended Jacobian
+        value.x = gpuResult.X;
+        value.y = gpuResult.Y;
+        E.f1.square(value.zz, gpuResult.Z);
+        E.f1.mul(value.zzz, value.zz, gpuResult.Z);
 
         return value;
     }
