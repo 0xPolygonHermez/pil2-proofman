@@ -88,10 +88,7 @@ namespace PlonkGPU {
         void* d_piBuffer = nullptr;   // GPU: PI accumulator
         void* d_lagBuffer = nullptr;  // GPU: one Lagrange slice
 
-        void* d_evalA = nullptr;      // GPU: A wire evaluations (4N elements)
-        void* d_evalB = nullptr;      // GPU: B wire evaluations (4N elements)
-        void* d_evalC = nullptr;      // GPU: C wire evaluations (4N elements)
-        void* d_evalZ = nullptr;      // GPU: Z eval (4N + 4 elements, extra 4 for wrap-around)
+        void* dPTau = nullptr;        // GPU: persistent Powers of Tau (domainSize+6 G1PointAffine)
 
         BinFileUtils::BinFile* fdZkeyPtr = nullptr;
 
@@ -137,7 +134,7 @@ namespace PlonkGPU {
 
         void computeWirePolynomials();
 
-        void computeWirePolynomial(std::string polName, FrElement blindingFactors[], void* d_evalTarget = nullptr);
+        void computeWirePolynomial(std::string polName, FrElement blindingFactors[]);
 
         void computeZ();
 
@@ -153,15 +150,13 @@ namespace PlonkGPU {
 
         FrElement *polynomialFromMontgomery(Polynomial<Engine> *polynomial);
 
+        void applyBlindingCorrection(G1Point &commitment, FrElement *bFactors, u_int32_t nFactors);
+
         G1Point multiExponentiationGPU(Polynomial<Engine> *polynomial);
 
-        // GPU-accelerated FFT/IFFT methods
+        // GPU-accelerated IFFT: evaluations → polynomial coefficients
         Polynomial<Engine>* polynomialFromEvaluationsGPU(
             FrElement *evaluations, FrElement *reservedBuffer, u_int64_t length, u_int64_t blindLength, u_int32_t power);
-        
-        Evaluations<Engine>* evaluationsFromPolynomialGPU(
-            FrElement *reservedBuffer, Polynomial<Engine> &polynomial, u_int32_t extensionLength, u_int32_t power,
-            void* d_evalTarget = nullptr);
     };
 }
 

@@ -594,3 +594,324 @@ extern "C" void start_static_eval_transfer_gpu(
     CHECKCUDAERR(cudaStreamSynchronize(stream));
     CHECKCUDAERR(cudaStreamDestroy(stream));
 }
+
+// ============================================================================
+// Incremental computeT kernels — process one wire at a time
+// ============================================================================
+
+// Zero elements [startElem, endElem) on GPU device buffer
+__global__ void zeroPadKernel(Element* __restrict__ buf, uint64_t startElem, uint64_t count)
+{
+    uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    buf[startElem + i] = Fr::zero();
+}
+
+extern "C" void zero_pad_gpu(void* buf, uint64_t startElem, uint64_t endElem)
+{
+    uint64_t count = endElem - startElem;
+    uint32_t threadsPerBlock = 256;
+    uint32_t blocks = (uint32_t)((count + threadsPerBlock - 1) / threadsPerBlock);
+    zeroPadKernel<<<blocks, threadsPerBlock>>>((Element*)buf, startElem, count);
+    CHECKCUDAERR(cudaGetLastError());
+    // Must sync before NTT which runs on its own stream (non-blocking)
+    CHECKCUDAERR(cudaDeviceSynchronize());
+}
+
+// Constants struct for incremental gate kernels
+struct IncrGateConst {
+    Element bf[10];       // blindingFactors[0..9] — raw values (not Montgomery)
+    Element omega_4x;     // primitive root of the 4x extended domain
+    uint64_t fullN;
+};
+
+// Gate A kernel: T = a*QL + PI,  Tz = ap*QL
+// PI is pre-loaded in tOut; this kernel OVERWRITES tOut with the result.
+// ap(i) = bf[2] + bf[1]*omega^i  (derivative of a's blind polynomial)
+__global__ void kernelGateA(
+    Element* __restrict__ tOut,              // IN: PI(X), OUT: T accumulator
+    Element* __restrict__ tzOut,             // OUT: Tz accumulator (first write)
+    const Element* __restrict__ evalA,       // evalsA (4N elements)
+    const Element* __restrict__ evalQL,      // QL evaluations (4N elements)
+    IncrGateConst c)
+{
+    uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= c.fullN) return;
+
+    Element a  = evalA[i];
+    Element ql = evalQL[i];
+    Element pi = tOut[i];    // read PI before overwriting
+
+    Element omega = Fr::pow(c.omega_4x, (uint32_t)i);
+    Element ap = Fr::add(c.bf[2], Fr::mul(c.bf[1], omega));
+
+    tOut[i]  = Fr::add(Fr::mul(a, ql), pi);    // T = a*QL + PI
+    tzOut[i] = Fr::mul(ap, ql);                 // Tz = ap*QL  (first write)
+}
+
+// Gate B kernel: T += b*QR,  Tz += bp*QR
+// bp(i) = bf[4] + bf[3]*omega^i
+__global__ void kernelGateB(
+    Element* __restrict__ tOut,
+    Element* __restrict__ tzOut,
+    const Element* __restrict__ evalB,
+    const Element* __restrict__ evalQR,
+    IncrGateConst c)
+{
+    uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= c.fullN) return;
+
+    Element b  = evalB[i];
+    Element qr = evalQR[i];
+
+    Element omega = Fr::pow(c.omega_4x, (uint32_t)i);
+    Element bp = Fr::add(c.bf[4], Fr::mul(c.bf[3], omega));
+
+    tOut[i]  = Fr::add(tOut[i], Fr::mul(b, qr));
+    tzOut[i] = Fr::add(tzOut[i], Fr::mul(bp, qr));
+}
+
+// Gate C kernel: T += c*QO + QC,  Tz += cp*QO
+// cp(i) = bf[6] + bf[5]*omega^i
+__global__ void kernelGateC(
+    Element* __restrict__ tOut,
+    Element* __restrict__ tzOut,
+    const Element* __restrict__ evalC,
+    const Element* __restrict__ evalQO,
+    const Element* __restrict__ evalQC,
+    IncrGateConst c)
+{
+    uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= c.fullN) return;
+
+    Element cc = evalC[i];
+    Element qo = evalQO[i];
+    Element qc = evalQC[i];
+
+    Element omega = Fr::pow(c.omega_4x, (uint32_t)i);
+    Element cp = Fr::add(c.bf[6], Fr::mul(c.bf[5], omega));
+
+    tOut[i]  = Fr::add(Fr::add(tOut[i], Fr::mul(cc, qo)), qc);
+    tzOut[i] = Fr::add(tzOut[i], Fr::mul(cp, qo));
+}
+
+// QM + Permutation kernel: computes a*b*QM + e2 - e3 + e4 and all derivatives
+// evalsA/B/C are read from the overwritten Q slots (QL/QR/QO positions).
+// evalsZ is in a separate temp buffer.
+struct QMPermConst {
+    Element bf[10];
+    Element Z1[4], Z2[4], Z3[4];
+    Element beta, gamma, alpha, alpha2, k1, k2;
+    Element omega_4x, omega1;
+    uint64_t fullN;
+};
+
+__global__ void kernelQMPermutation(
+    Element* __restrict__ tOut,
+    Element* __restrict__ tzOut,
+    const Element* __restrict__ evalA,       // stored in QL slot after gate_A
+    const Element* __restrict__ evalB,       // stored in QR slot after gate_B
+    const Element* __restrict__ evalC,       // stored in QO slot after gate_C
+    const Element* __restrict__ evalZ,       // 4N+4 elements (wrap-around)
+    const Element* __restrict__ evalQM,
+    const Element* __restrict__ evalS1,
+    const Element* __restrict__ evalS2,
+    const Element* __restrict__ evalS3,
+    const Element* __restrict__ evalL0,      // L_0 evaluations
+    QMPermConst c)
+{
+    uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= c.fullN) return;
+
+    Element a  = evalA[i];
+    Element b  = evalB[i];
+    Element cc = evalC[i];
+    Element z  = evalZ[i];
+    Element zW = evalZ[i + 4];    // wrap-around
+
+    Element qm = evalQM[i];
+    Element s1 = evalS1[i];
+    Element s2 = evalS2[i];
+    Element s3 = evalS3[i];
+    Element lagrange = evalL0[i];
+
+    // Compute roots of unity
+    Element omega   = Fr::pow(c.omega_4x, (uint32_t)i);
+    Element omega2  = Fr::square(omega);
+    Element omegaW  = Fr::mul(omega, c.omega1);
+    Element omegaW2 = Fr::square(omegaW);
+
+    // Blinding derivatives
+    Element ap = Fr::add(c.bf[2], Fr::mul(c.bf[1], omega));
+    Element bp = Fr::add(c.bf[4], Fr::mul(c.bf[3], omega));
+    Element cp = Fr::add(c.bf[6], Fr::mul(c.bf[5], omega));
+    Element zp  = Fr::add(Fr::add(Fr::mul(c.bf[7], omega2), Fr::mul(c.bf[8], omega)), c.bf[9]);
+    Element zWp = Fr::add(Fr::add(Fr::mul(c.bf[7], omegaW2), Fr::mul(c.bf[8], omegaW)), c.bf[9]);
+
+    // a*b*QM term
+    Element abqm, abqmz;
+    mulz_mul2(abqm, abqmz, a, b, ap, bp, c.Z1, (uint32_t)(i % 4));
+    abqm  = Fr::mul(abqm, qm);
+    abqmz = Fr::mul(abqmz, qm);
+
+    // e2: permutation numerator
+    Element betaw = Fr::mul(c.beta, omega);
+    Element e2a = Fr::add(Fr::add(a, betaw), c.gamma);
+    Element e2b = Fr::add(Fr::add(b, Fr::mul(betaw, c.k1)), c.gamma);
+    Element e2c = Fr::add(Fr::add(cc, Fr::mul(betaw, c.k2)), c.gamma);
+
+    Element e2, e2z;
+    mulz_mul4(e2, e2z, e2a, e2b, e2c, z, ap, bp, cp, zp, c.Z1, c.Z2, c.Z3, (uint32_t)(i % 4));
+    e2  = Fr::mul(e2, c.alpha);
+    e2z = Fr::mul(e2z, c.alpha);
+
+    // e3: permutation denominator
+    Element e3a = Fr::add(Fr::add(a, Fr::mul(c.beta, s1)), c.gamma);
+    Element e3b = Fr::add(Fr::add(b, Fr::mul(c.beta, s2)), c.gamma);
+    Element e3c = Fr::add(Fr::add(cc, Fr::mul(c.beta, s3)), c.gamma);
+
+    Element e3, e3z;
+    mulz_mul4(e3, e3z, e3a, e3b, e3c, zW, ap, bp, cp, zWp, c.Z1, c.Z2, c.Z3, (uint32_t)(i % 4));
+    e3  = Fr::mul(e3, c.alpha);
+    e3z = Fr::mul(e3z, c.alpha);
+
+    // e4: L1 constraint  alpha2 * (z - 1) * L0
+    Element e4 = Fr::mul(Fr::mul(Fr::sub(z, Fr::one()), lagrange), c.alpha2);
+    Element e4z = Fr::mul(Fr::mul(zp, lagrange), c.alpha2);
+
+    // Accumulate: T += a*b*QM + e2 - e3 + e4
+    Element contrib  = Fr::add(Fr::sub(Fr::add(abqm, e2), e3), e4);
+    Element contribz = Fr::add(Fr::sub(Fr::add(abqmz, e2z), e3z), e4z);
+
+    tOut[i]  = Fr::add(tOut[i], contrib);
+    tzOut[i] = Fr::add(tzOut[i], contribz);
+}
+
+// C wrapper for incremental gate kernels
+extern "C" void compute_gate_a_gpu(
+    void* tOut, void* tzOut,
+    const void* evalA, const void* dStaticEvals,
+    const void* blindFactors, const void* omega4xPtr,
+    uint64_t domainSize)
+{
+    uint64_t fullN = 4 * domainSize;
+
+    IncrGateConst c;
+    memcpy(c.bf, blindFactors, 10 * sizeof(Element));
+    c.omega_4x = *(const Element*)omega4xPtr;
+    c.fullN = fullN;
+
+    // QL is at offset 4*fullN in static evals buffer (slot 4)
+    const Element* dQL = (const Element*)dStaticEvals + 4 * fullN;
+
+    uint32_t threadsPerBlock = 256;
+    uint32_t blocks = (uint32_t)(fullN / threadsPerBlock);
+
+    kernelGateA<<<blocks, threadsPerBlock>>>(
+        (Element*)tOut, (Element*)tzOut,
+        (const Element*)evalA, dQL, c);
+    CHECKCUDAERR(cudaGetLastError());
+}
+
+extern "C" void compute_gate_b_gpu(
+    void* tOut, void* tzOut,
+    const void* evalB, const void* dStaticEvals,
+    const void* blindFactors, const void* omega4xPtr,
+    uint64_t domainSize)
+{
+    uint64_t fullN = 4 * domainSize;
+
+    IncrGateConst c;
+    memcpy(c.bf, blindFactors, 10 * sizeof(Element));
+    c.omega_4x = *(const Element*)omega4xPtr;
+    c.fullN = fullN;
+
+    // QR is at offset 5*fullN in static evals buffer (slot 5)
+    const Element* dQR = (const Element*)dStaticEvals + 5 * fullN;
+
+    uint32_t threadsPerBlock = 256;
+    uint32_t blocks = (uint32_t)(fullN / threadsPerBlock);
+
+    kernelGateB<<<blocks, threadsPerBlock>>>(
+        (Element*)tOut, (Element*)tzOut,
+        (const Element*)evalB, dQR, c);
+    CHECKCUDAERR(cudaGetLastError());
+}
+
+extern "C" void compute_gate_c_gpu(
+    void* tOut, void* tzOut,
+    const void* evalC, const void* dStaticEvals,
+    const void* blindFactors, const void* omega4xPtr,
+    uint64_t domainSize)
+{
+    uint64_t fullN = 4 * domainSize;
+
+    IncrGateConst c;
+    memcpy(c.bf, blindFactors, 10 * sizeof(Element));
+    c.omega_4x = *(const Element*)omega4xPtr;
+    c.fullN = fullN;
+
+    // QO at offset 7*fullN, QC at offset 8*fullN in static evals buffer
+    const Element* dQO = (const Element*)dStaticEvals + 7 * fullN;
+    const Element* dQC = (const Element*)dStaticEvals + 8 * fullN;
+
+    uint32_t threadsPerBlock = 256;
+    uint32_t blocks = (uint32_t)(fullN / threadsPerBlock);
+
+    kernelGateC<<<blocks, threadsPerBlock>>>(
+        (Element*)tOut, (Element*)tzOut,
+        (const Element*)evalC, dQO, dQC, c);
+    CHECKCUDAERR(cudaGetLastError());
+}
+
+extern "C" void compute_qm_permutation_gpu(
+    void* tOut, void* tzOut,
+    const void* evalA, const void* evalB, const void* evalC,
+    const void* evalZ,
+    const void* dStaticEvals,
+    const void* blindFactors,
+    const void* betaPtr, const void* gammaPtr,
+    const void* alphaPtr, const void* alpha2Ptr,
+    const void* k1Ptr, const void* k2Ptr,
+    const void* omega4xPtr, const void* omega1Ptr,
+    const void* Z1Ptr, const void* Z2Ptr, const void* Z3Ptr,
+    uint64_t domainSize)
+{
+    uint64_t fullN = 4 * domainSize;
+
+    QMPermConst c;
+    memcpy(c.bf, blindFactors, 10 * sizeof(Element));
+    memcpy(c.Z1, Z1Ptr, 4 * sizeof(Element));
+    memcpy(c.Z2, Z2Ptr, 4 * sizeof(Element));
+    memcpy(c.Z3, Z3Ptr, 4 * sizeof(Element));
+    c.beta     = *(const Element*)betaPtr;
+    c.gamma    = *(const Element*)gammaPtr;
+    c.alpha    = *(const Element*)alphaPtr;
+    c.alpha2   = *(const Element*)alpha2Ptr;
+    c.k1       = *(const Element*)k1Ptr;
+    c.k2       = *(const Element*)k2Ptr;
+    c.omega_4x = *(const Element*)omega4xPtr;
+    c.omega1   = *(const Element*)omega1Ptr;
+    c.fullN    = fullN;
+
+    // Static eval layout: S1(0), S2(1), S3(2), L0(3), QL(4), QR(5), QM(6), QO(7), QC(8)
+    const Element* dStaticBase = (const Element*)dStaticEvals;
+    const Element* dS1 = dStaticBase + 0 * fullN;
+    const Element* dS2 = dStaticBase + 1 * fullN;
+    const Element* dS3 = dStaticBase + 2 * fullN;
+    const Element* dL0 = dStaticBase + 3 * fullN;
+    const Element* dQM = dStaticBase + 6 * fullN;
+
+    uint32_t threadsPerBlock = 256;
+    uint32_t blocks = (uint32_t)(fullN / threadsPerBlock);
+
+    kernelQMPermutation<<<blocks, threadsPerBlock>>>(
+        (Element*)tOut, (Element*)tzOut,
+        (const Element*)evalA, (const Element*)evalB, (const Element*)evalC,
+        (const Element*)evalZ,
+        dQM, dS1, dS2, dS3, dL0,
+        c);
+    CHECKCUDAERR(cudaGetLastError());
+    // Must sync before INTT which runs on its own stream
+    CHECKCUDAERR(cudaDeviceSynchronize());
+}
