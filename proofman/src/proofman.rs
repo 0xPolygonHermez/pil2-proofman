@@ -635,7 +635,12 @@ where
                         .stark_info
                         .airvalues_map
                         .as_ref()
-                        .map(|pols| pols.iter().flat_map(|pol| expand_column_name(&pol.name, &pol.lengths)).collect())
+                        .map(|pols| {
+                            pols.iter()
+                                .filter(|pol| pol.stage == 1)
+                                .flat_map(|pol| expand_column_name(&pol.name, &pol.lengths))
+                                .collect()
+                        })
                         .unwrap();
 
                     planning_info.push(AirInfo {
@@ -646,9 +651,13 @@ where
                         instance_ids: info.instance_ids.clone(),
                         num_columns_trace,
                         name_columns_trace,
-                        num_columns_fixed: setup.stark_info.n_constants as u64,
+                        num_columns_fixed: setup.stark_info.n_constants,
                         name_columns_fixed,
-                        num_airvalues: setup.stark_info.airvalues_map.as_ref().map_or(0, |pols| pols.len() as u64),
+                        num_airvalues: setup
+                            .stark_info
+                            .airvalues_map
+                            .as_ref()
+                            .map_or(0, |pols| pols.iter().filter(|pol| pol.stage == 1).count() as u64),
                         name_airvalues,
                         num_rows: air.num_rows,
                     });
@@ -710,16 +719,18 @@ where
     }
 
     pub fn get_instance_air_values(&self, instance_id: usize) -> ProofmanResult<Vec<u64>> {
+        let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
+        let setup = self.sctx.get_setup(airgroup_id, air_id)?;
+        let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();
+
         if self.pctx.dctx_is_instance_calculated(instance_id) {
-            return Ok(self.pctx.get_instance_air_values(instance_id)?);
+            return self.pctx.get_instance_air_values(instance_id, airvalues_map);
         }
 
         self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
         self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
 
-        let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
         Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true)?;
-        let setup = self.sctx.get_setup(airgroup_id, air_id)?;
         let steps_params = self.pctx.get_air_instance_params(instance_id, false);
 
         calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
@@ -729,7 +740,7 @@ where
             self.memory_handler.to_be_released_buffer(instance_id, true);
         }
 
-        Ok(self.pctx.get_instance_air_values(instance_id)?)
+        self.pctx.get_instance_air_values(instance_id, airvalues_map)
     }
 
     pub fn compute_witness(
