@@ -167,7 +167,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-compiler
-          ref: develop-0.8.0
+          ref: develop-0.9.0
           path: pil2-compiler
 
       - name: Install pil2-compiler dependencies
@@ -288,7 +288,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-compiler
-          ref: develop-0.8.0
+          ref: develop-0.9.0
           path: pil2-compiler
 
       - name: Install pil2-compiler dependencies
@@ -408,7 +408,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-compiler
-          ref: develop-0.8.0
+          ref: develop-0.9.0
           path: pil2-compiler
 
       - name: Install pil2-compiler dependencies
