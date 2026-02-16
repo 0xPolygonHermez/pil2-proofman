@@ -228,12 +228,8 @@ impl StarkInfo {
     }
 }
 
-/// Expands a column name based on its indices (lengths).
-/// For example:
-/// - name="selread", lengths=[0, 2] -> "selread[0][2]"
-/// - name="flag", lengths=[] or [1] -> "flag"
 pub fn expand_column_name(name: &str, lengths: &[u64]) -> Vec<String> {
-    if lengths.is_empty() || (lengths.len() == 1 && lengths[0] == 1) {
+    if lengths.is_empty() {
         return vec![name.to_string()];
     }
 
