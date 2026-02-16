@@ -891,12 +891,16 @@ impl<F: PrimeField64> ProofCtx<F> {
         aggregation: bool,
         gpu_params: &ParamsGPU,
     ) -> ProofmanResult<(u64, u64, u64)> {
+        let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
+            self.mpi_ctx.node_rank as u32,
+            self.mpi_ctx.node_n_processes as usize as u32,
+            self.global_info.transcript_arity as u32,
+            sctx.max_n_bits_ext as u32,
+        )));
+
         let mut free_memory_gpu = match cfg!(feature = "gpu") {
-            true => {
-                check_device_memory_c(self.mpi_ctx.node_rank as u32, self.mpi_ctx.node_n_processes as usize as u32)
-                    as f64
-                    * 0.995
-            }
+            true => check_device_memory_c(self.mpi_ctx.node_rank as u32, self.mpi_ctx.node_n_processes as usize as u32)
+                as f64,
             false => 0.0,
         };
 
@@ -984,14 +988,6 @@ impl<F: PrimeField64> ProofCtx<F> {
             );
         }
 
-        let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
-            n_streams_per_gpu as u64,
-            n_recursive_streams_per_gpu as u64,
-            self.mpi_ctx.node_rank as u32,
-            self.mpi_ctx.node_n_processes as usize as u32,
-            self.global_info.transcript_arity as u32,
-        )));
-
         let max_pinned_proof_size = match aggregation {
             true => sctx.max_pinned_proof_size.max(setups_vadcop.max_pinned_proof_size) as u64,
             false => sctx.max_pinned_proof_size as u64,
@@ -999,10 +995,11 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         let n_gpus: u64 = gen_device_streams_c(
             d_buffers.get_ptr(),
+            n_streams_per_gpu as u64,
+            n_recursive_streams_per_gpu as u64,
             max_prover_buffer_size,
             max_prover_recursive2_buffer_size,
             max_pinned_proof_size,
-            sctx.max_n_bits_ext as u64,
             self.global_info.transcript_arity as u64,
         );
 

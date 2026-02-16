@@ -1290,13 +1290,12 @@ pub fn set_omp_num_threads_c(num_threads: u64) {
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn gen_device_buffers_c(
-    n_streams: u64,
-    n_recursive_streams: u64,
     node_rank: u32,
     node_n_processes: u32,
     arity: u32,
+    max_n_bits_ext: u32,
 ) -> *mut ::std::os::raw::c_void {
-    unsafe { gen_device_buffers(n_streams, n_recursive_streams, node_rank, node_n_processes, arity) }
+    unsafe { gen_device_buffers(node_rank, node_n_processes, arity, max_n_bits_ext) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1327,19 +1326,21 @@ pub fn free_device_buffers_recursivef_c(d_buffers: *mut u8) {
 #[allow(clippy::too_many_arguments)]
 pub fn gen_device_streams_c(
     d_buffers: *mut ::std::os::raw::c_void,
+    n_streams: u64,
+    n_recursive_streams: u64,
     max_size_buffer: u64,
     max_size_buffer_aggregation: u64,
     max_pinned_proof_size: u64,
-    max_n_bits_ext: u64,
     merkle_tree_arity: u64,
 ) -> u64 {
     unsafe {
         gen_device_streams(
             d_buffers,
+            n_streams,
+            n_recursive_streams,
             max_size_buffer,
             max_size_buffer_aggregation,
             max_pinned_proof_size,
-            max_n_bits_ext,
             merkle_tree_arity,
         )
     }
@@ -2249,11 +2250,10 @@ pub fn set_omp_num_threads(_num_threads: u64) {
 
 #[cfg(feature = "no_lib_link")]
 pub fn gen_device_buffers_c(
-    _n_streams: u64,
-    _n_recursive_streams: u64,
     _node_rank: u32,
     _node_n_processes: u32,
     _arity: u32,
+    _max_n_bits_ext: u32,
 ) -> *mut ::std::os::raw::c_void {
     trace!(
         "{}: ··· {}",
@@ -2292,10 +2292,11 @@ pub fn free_device_buffers_recursivef_c(_d_buffers: *mut u8) {
 #[allow(clippy::too_many_arguments)]
 pub fn gen_device_streams_c(
     _d_buffers: *mut ::std::os::raw::c_void,
+    _n_streams: u64,
+    _n_recursive_streams: u64,
     _max_size_buffer: u64,
     _max_size_buffer_aggregation: u64,
     _max_pinned_proof_size: u64,
-    _max_n_bits_ext: u64,
     _merkle_tree_arity: u64,
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "set_max_size_thread: This is a mock call because there is no linked library");

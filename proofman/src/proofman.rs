@@ -3567,7 +3567,10 @@ where
             pctx.set_device_buffers(&sctx, &setups_vadcop, aggregation, gpu_params)?;
 
         load_device_setups(&pctx, &sctx, &setups_vadcop, aggregation, packed_info)?;
+
+        timer_start_info!(LOADING_CONSTANTS);
         load_device_const_pols(&pctx, &sctx, &setups_vadcop, aggregation)?;
+        timer_stop_and_log_info!(LOADING_CONSTANTS);
 
         let pctx = Arc::new(pctx);
 

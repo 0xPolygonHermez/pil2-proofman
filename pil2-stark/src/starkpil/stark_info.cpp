@@ -673,7 +673,7 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
             maxNBlocks = 512;
 
             uint64_t tmpsUsed = nTmp1 + (nTmp3 + 2) * FIELD_EXTENSION;
-            uint64_t maxTotal = recursive ? mapTotalN + (1 << 26) : mapTotalN + (1 << 24);
+            uint64_t maxTotal = recursive ? mapTotalN + (1 << 26) : mapTotalN + (1 << 25);
             while((mapBuffHelper + tmpsUsed * nrowsPack * maxNBlocks) > maxTotal) {
                 if (nrowsPack > 128) {
                     nrowsPack /= 2;

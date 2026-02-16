@@ -792,7 +792,7 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {}
 
 // Recursive proof
 // ================================================================================= 
-void *gen_device_buffers(uint64_t n_streams, uint64_t n_recursive_streams, uint32_t node_rank, uint32_t node_size, uint32_t arity)
+void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity, uint32_t max_n_bits_ext)
 {
     DeviceCommitBuffersCPU *d_buffers = new DeviceCommitBuffersCPU();
     return (void *)d_buffers;
@@ -802,7 +802,7 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
 }
 void free_device_buffers_recursivef(void *d_buffers_){}
 
-uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t max_n_bits_ext, uint64_t merkleTreeArity) { return 1; }
+uint64_t gen_device_streams(void *d_buffers_, uint64_t nStreams, uint64_t nStreamsRecursive, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity) { return 1; }
 
 void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation) {}
 

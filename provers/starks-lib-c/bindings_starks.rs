@@ -526,11 +526,10 @@ extern "C" {
     // GPU/Device Management
     // ========================================================================================
     pub fn gen_device_buffers(
-        n_streams: u64,
-        n_recursive_streams: u64,
         node_rank: u32,
         node_size: u32,
         arity: u32,
+        max_n_bits_ext: u32,
     ) -> *mut ::std::os::raw::c_void;
 
     pub fn gen_device_buffers_recursivef(
@@ -569,10 +568,11 @@ extern "C" {
     
     pub fn gen_device_streams(
         d_buffers_: *mut ::std::os::raw::c_void,
+        nStreams: u64,
+        nStreamsRecursive: u64,
         maxSizeProverBuffer: u64,
         maxSizeProverBufferAggregation: u64,
         maxProofSize: u64,
-        max_n_bits_ext: u64,
         merkle_tree_arity: u64,
     ) -> u64;
 
