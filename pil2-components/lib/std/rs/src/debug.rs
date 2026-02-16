@@ -365,7 +365,7 @@ pub fn print_debug_info<F: PrimeField64>(
             }
             let shared_data = &data.shared_data;
             let bus_data = bus_info.as_ref().and_then(|info| info.get(val));
-            print_diffs(pctx, sctx, max_values_to_print, shared_data, bus_data, false, &mut output)?;
+            print_diffs(pctx, sctx, max_values_to_print, shared_data, bus_data, false, *val, &mut output)?;
         }
 
         if len_overassumed > 0 {
@@ -385,7 +385,7 @@ pub fn print_debug_info<F: PrimeField64>(
 
             let shared_data = &data.shared_data;
             let bus_data = bus_info.as_ref().and_then(|info| info.get(val));
-            print_diffs(pctx, sctx, max_values_to_print, shared_data, bus_data, true, &mut output)?;
+            print_diffs(pctx, sctx, max_values_to_print, shared_data, bus_data, true, *val, &mut output)?;
         }
 
         if len_overproven > 0 {
@@ -444,6 +444,7 @@ pub fn print_debug_info<F: PrimeField64>(
         shared_data: &SharedData,
         bus_data: Option<&BusValueInfo>,
         proves: bool,
+        hash: u64,
         output: &mut dyn Write,
     ) -> ProofmanResult<()> {
         let val = &shared_data.vals;
@@ -459,6 +460,7 @@ pub fn print_debug_info<F: PrimeField64>(
         writeln!(output, "\t    ==================================================").expect("Write error");
         writeln!(output, "\t    • Value (decimal): [{}]", val).expect("Write error");
         writeln!(output, "\t      Value (hex):     [{}]", vals_hex).expect("Write error");
+        writeln!(output, "\t      Hash:            0x{:016x}", hash).expect("Write error");
         writeln!(output, "\t      Appears {} {} across the following:", num, num_str).expect("Write error");
 
         // Print global data first (if it exists)

@@ -129,6 +129,7 @@ pub fn parse_debug_values_to_hashes<F: PrimeField64>(pctx: &Arc<ProofCtx<F>>) ->
             }
         }
 
+        
         let hash = hash_vals(&parsed_values);
         hashes.push(hash);
     }
