@@ -93,9 +93,9 @@ void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity,
         d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
         d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
-        d_buffers->gpuMemoryBlocks = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+        d_buffers->gpuMemoryBuffer = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
-            d_buffers->gpuMemoryBlocks[i] = nullptr;
+            d_buffers->gpuMemoryBuffer[i] = nullptr;
         }
         
         // Allocate mutex array using placement new
@@ -146,8 +146,8 @@ void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity,
         d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
         d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
-        d_buffers->gpuMemoryBlocks = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
-        d_buffers->gpuMemoryBlocks[0] = nullptr;
+        d_buffers->gpuMemoryBuffer = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+        d_buffers->gpuMemoryBuffer[0] = nullptr;
         
         // Allocate mutex array using placement new
         d_buffers->mutex_pinned = (std::mutex*)malloc(d_buffers->n_gpus * sizeof(std::mutex));
@@ -172,7 +172,7 @@ void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_
     uint64_t totalAuxTraceSize = d_buffers->n_streams * auxTraceSize;
     uint64_t totalAuxTraceRecursiveSize = d_buffers->n_recursive_streams * auxTraceRecursiveSize;
     
-    uint64_t totalGpuMemoryPerGpu = constPolsSize + constPolsAggregationSize + 
+    uint64_t totalGpuMemoryPerGpu = constPolsAggregationSize + 
                                      totalAuxTraceSize + totalAuxTraceRecursiveSize;
     
     uint64_t totalPinnedMemoryPerGpu = 2 * d_buffers->pinned_size * sizeof(Goldilocks::Element);
@@ -184,6 +184,8 @@ void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_
     zklog.info("  - Auxiliary trace recursive (" + std::to_string(d_buffers->n_recursive_streams) + " streams): " + std::to_string(totalAuxTraceRecursiveSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
     zklog.info("  - Total GPU memory per GPU: " + std::to_string(totalGpuMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + " GB");
     zklog.info("  - Total pinned memory per GPU: " + std::to_string(totalPinnedMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + " GB");
+
+    d_buffers->constPolsSize = constPolsSize;
 
     // Allocate large GPU buffers with a single malloc per GPU
     for (int i = 0; i < d_buffers->n_gpus; i++) {
@@ -206,22 +208,16 @@ void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_
         // Allocate one large contiguous block of GPU memory
         gl64_t *gpuMemoryBlock;
         CHECKCUDAERR(cudaMalloc(&gpuMemoryBlock, totalGpuMemoryPerGpu));
-        d_buffers->gpuMemoryBlocks[i] = gpuMemoryBlock;  // Store the base pointer
+        d_buffers->gpuMemoryBuffer[i] = gpuMemoryBlock;  // Store the base pointer
         zklog.info("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + 
                    ": Allocated " + std::to_string(totalGpuMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + 
                    " GB of contiguous GPU memory");
         
+        CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[i], constPolsSize));
+        
         // Set up pointers to different sections of the memory block
         uint64_t offset = 0;
-        
-        // Constant polynomials
-        d_buffers->d_constPols[i] = gpuMemoryBlock + offset;
-        offset += totalConstPols;
-        
-        // Constant polynomials aggregation
-        d_buffers->d_constPolsAggregation[i] = gpuMemoryBlock + offset;
-        offset += totalConstPolsAggregation;
-        
+                
         // Auxiliary trace buffers (non-recursive)
         for (int j = 0; j < d_buffers->n_streams; ++j) {
             d_buffers->d_aux_trace[i][j] = gpuMemoryBlock + offset;
@@ -233,6 +229,10 @@ void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_
             d_buffers->d_aux_traceAggregation[i][j] = gpuMemoryBlock + offset;
             offset += auxTraceRecursiveArea;
         }
+
+        // Constant polynomials aggregation
+        d_buffers->d_constPolsAggregation[i] = gpuMemoryBlock + offset;
+        offset += totalConstPolsAggregation;
         
         // Allocate pinned host buffers separately (one block per buffer type)
         CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
@@ -306,10 +306,14 @@ void free_device_buffers(void *d_buffers_)
         // Free the single large GPU memory block
         // All other GPU pointers (d_constPols, d_constPolsAggregation, d_aux_trace, d_aux_traceAggregation) 
         // point into this same block, so we only free it once using the stored base pointer
-        if (d_buffers->gpuMemoryBlocks != nullptr && d_buffers->gpuMemoryBlocks[i] != nullptr) {
-            CHECKCUDAERR(cudaFree(d_buffers->gpuMemoryBlocks[i]));
+        if (d_buffers->gpuMemoryBuffer != nullptr && d_buffers->gpuMemoryBuffer[i] != nullptr) {
+            CHECKCUDAERR(cudaFree(d_buffers->gpuMemoryBuffer[i]));
         }
         
+        if (d_buffers->d_constPols != nullptr && d_buffers->d_constPols[i] != nullptr) {
+            CHECKCUDAERR(cudaFree(d_buffers->d_constPols[i]));
+        }
+
         // Free CPU pointer arrays
         if (d_buffers->d_aux_trace[i] != nullptr) {
             free(d_buffers->d_aux_trace[i]);
@@ -328,7 +332,7 @@ void free_device_buffers(void *d_buffers_)
     free(d_buffers->d_constPolsAggregation);
     free(d_buffers->pinned_buffer);
     free(d_buffers->pinned_buffer_extra);
-    free(d_buffers->gpuMemoryBlocks);
+    free(d_buffers->gpuMemoryBuffer);
 
     if (d_buffers->streamsData != nullptr) {
         for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
@@ -973,17 +977,9 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
         
         // Always reuse first buffer for d_aux_trace
         d_buffers->owns_aux_trace = false;
-        d_buffers->d_aux_trace = d_commit_buffers->d_aux_trace[0][0];
-        
-        // If there's more than one stream, reuse second buffer for d_const_tree
-        if (d_commit_buffers->n_streams > 1) {
-            d_buffers->owns_const_tree = false;
-            d_buffers->d_const_tree = d_commit_buffers->d_aux_trace[0][1];
-        } else {
-            // Only one stream available, allocate d_const_tree
-            d_buffers->owns_const_tree = true;
-            CHECKCUDAERR(cudaMalloc(&d_buffers->d_const_tree, sizeConstTree));
-        }
+        d_buffers->owns_const_tree = false;
+        d_buffers->d_aux_trace = d_commit_buffers->gpuMemoryBuffer[0];
+        d_buffers->d_const_tree = &d_commit_buffers->gpuMemoryBuffer[0][sizeAuxTrace];
     }
 
     // Always copy const pols and const tree to device
@@ -1003,6 +999,22 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
     CHECKCUDAERR(cudaGetLastError());
     
     return (void*)d_buffers;
+}
+
+void alloc_fixed_pols_buffer_gpu(void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+
+    uint32_t gpuId = 0;
+    cudaSetDevice(gpuId);
+    CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[gpuId], d_buffers->constPolsSize));
+}
+
+void free_fixed_pols_buffer_gpu(void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+
+    uint32_t gpuId = 0;
+    cudaSetDevice(gpuId);
+    CHECKCUDAERR(cudaFree(d_buffers->d_constPols[gpuId]));
 }
 
 void free_device_buffers_recursivef(void *d_buffers_) {

@@ -600,6 +600,9 @@ extern "C" {
     
     pub fn get_num_gpus() -> u64;
 
+    pub fn alloc_fixed_pols_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void);
+    pub fn free_fixed_pols_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void);
+
     // Callback Management
     // ========================================================================================
     pub fn register_proof_done_callback(cb: ProofDoneCallback);

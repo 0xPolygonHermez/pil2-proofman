@@ -802,6 +802,9 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
 }
 void free_device_buffers_recursivef(void *d_buffers_){}
 
+void alloc_fixed_pols_buffer_gpu(void *d_buffers_) {}
+void free_fixed_pols_buffer_gpu(void *d_buffers_) {}
+
 uint64_t gen_device_streams(void *d_buffers_, uint64_t nStreams, uint64_t nStreamsRecursive, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity) { return 1; }
 
 void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation) {}

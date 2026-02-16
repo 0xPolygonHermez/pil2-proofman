@@ -1392,6 +1392,20 @@ pub fn get_num_gpus_c() -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn alloc_fixed_pols_buffer_gpu_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe {
+        alloc_fixed_pols_buffer_gpu(d_buffers);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn free_fixed_pols_buffer_gpu_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe {
+        free_fixed_pols_buffer_gpu(d_buffers);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn free_device_buffers_c(d_buffers: *mut ::std::os::raw::c_void) {
     unsafe {
         free_device_buffers(d_buffers);
@@ -2340,6 +2354,24 @@ pub fn check_device_memory_c(_node_rank: u32, _node_size: u32) -> u64 {
 pub fn get_num_gpus_c() -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_num_gpus: This is a mock call because there is no linked library");
     0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn alloc_fixed_pols_buffer_gpu_c(_d_buffers: *mut ::std::os::raw::c_void) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "alloc_fixed_pols_buffer_gpu: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn free_fixed_pols_buffer_gpu_c(_d_buffers: *mut ::std::os::raw::c_void) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "free_fixed_pols_buffer_gpu: This is a mock call because there is no linked library"
+    );
 }
 
 #[cfg(feature = "no_lib_link")]
