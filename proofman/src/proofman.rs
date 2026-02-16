@@ -70,6 +70,7 @@ use std::ffi::c_void;
 use proofman_util::{
     create_buffer_fast, timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug,
 };
+use proofman_common::expand_column_name;
 
 use serde::Serialize;
 
@@ -113,6 +114,8 @@ pub struct AirInfo {
     pub name_columns_trace: Vec<String>,
     pub num_columns_fixed: u64,
     pub name_columns_fixed: Vec<String>,
+    pub name_airvalues: Vec<String>,
+    pub num_airvalues: u64,
     pub num_rows: usize,
 }
 
@@ -613,7 +616,31 @@ where
                         .stark_info
                         .cm_pols_map
                         .as_ref()
-                        .map(|pols| pols.iter().filter(|pol| pol.stage == 1).map(|pol| pol.name.clone()).collect())
+                        .map(|pols| {
+                            pols.iter()
+                                .filter(|pol| pol.stage == 1)
+                                .flat_map(|pol| expand_column_name(&pol.name, &pol.lengths))
+                                .collect()
+                        })
+                        .unwrap();
+
+                    let name_columns_fixed: Vec<String> = setup
+                        .stark_info
+                        .const_pols_map
+                        .as_ref()
+                        .map(|pols| pols.iter().flat_map(|pol| expand_column_name(&pol.name, &pol.lengths)).collect())
+                        .unwrap();
+
+                    let name_airvalues: Vec<String> = setup
+                        .stark_info
+                        .airvalues_map
+                        .as_ref()
+                        .map(|pols| {
+                            pols.iter()
+                                .filter(|pol| pol.stage == 1)
+                                .flat_map(|pol| expand_column_name(&pol.name, &pol.lengths))
+                                .collect()
+                        })
                         .unwrap();
 
                     planning_info.push(AirInfo {
@@ -624,13 +651,14 @@ where
                         instance_ids: info.instance_ids.clone(),
                         num_columns_trace,
                         name_columns_trace,
-                        num_columns_fixed: setup.stark_info.n_constants as u64,
-                        name_columns_fixed: setup
+                        num_columns_fixed: setup.stark_info.n_constants,
+                        name_columns_fixed,
+                        num_airvalues: setup
                             .stark_info
-                            .const_pols_map
+                            .airvalues_map
                             .as_ref()
-                            .map(|pols| pols.iter().map(|pol| pol.name.clone()).collect())
-                            .unwrap(),
+                            .map_or(0, |pols| pols.iter().filter(|pol| pol.stage == 1).count() as u64),
+                        name_airvalues,
                         num_rows: air.num_rows,
                     });
                 } else {
@@ -675,12 +703,44 @@ where
         self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
         self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
 
+        let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
+        Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true)?;
+        let setup = self.sctx.get_setup(airgroup_id, air_id)?;
+        let steps_params = self.pctx.get_air_instance_params(instance_id, false);
+
+        calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
+
         let is_shared_buffer = self.pctx.is_shared_buffer(instance_id);
         if is_shared_buffer {
             self.memory_handler.to_be_released_buffer(instance_id, true);
         }
 
         Ok(self.pctx.get_air_instance_trace(instance_id, first_row, num_rows, offset))
+    }
+
+    pub fn get_instance_air_values(&self, instance_id: usize) -> ProofmanResult<Vec<u64>> {
+        let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
+        let setup = self.sctx.get_setup(airgroup_id, air_id)?;
+        let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();
+
+        if self.pctx.dctx_is_instance_calculated(instance_id) {
+            return self.pctx.get_instance_air_values(instance_id, airvalues_map);
+        }
+
+        self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
+        self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
+
+        Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true)?;
+        let steps_params = self.pctx.get_air_instance_params(instance_id, false);
+
+        calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
+
+        let is_shared_buffer = self.pctx.is_shared_buffer(instance_id);
+        if is_shared_buffer {
+            self.memory_handler.to_be_released_buffer(instance_id, true);
+        }
+
+        self.pctx.get_instance_air_values(instance_id, airvalues_map)
     }
 
     pub fn compute_witness(

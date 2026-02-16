@@ -9,7 +9,7 @@ use std::io::Read;
 use std::fs;
 use fields::{PrimeField64, Transcript, Poseidon16};
 use crate::{
-    initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode,
+    initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PolMap, SetupCtx, StdMode,
     RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
 };
 
@@ -830,6 +830,19 @@ impl<F: PrimeField64> ProofCtx<F> {
         offset: Option<usize>,
     ) -> Vec<RowInfo> {
         self.air_instances[instance_id].read().unwrap().get_trace(first_row, n_rows, offset)
+    }
+
+    pub fn get_instance_air_values(&self, instance_id: usize, airvalues_map: &[PolMap]) -> ProofmanResult<Vec<u64>> {
+        let air_values = self.air_instances[instance_id].read().unwrap().get_air_values();
+
+        let mut result = Vec::new();
+        for (p, air_value) in airvalues_map.iter().enumerate() {
+            if air_value.stage == 1 {
+                result.push(air_values[p].as_canonical_u64());
+            }
+        }
+
+        Ok(result)
     }
 
     pub fn get_air_instance_air_values(

@@ -227,3 +227,12 @@ impl StarkInfo {
         serde_json::from_str(stark_info_json).expect("Failed to parse JSON file")
     }
 }
+
+pub fn expand_column_name(name: &str, lengths: &[u64]) -> Vec<String> {
+    if lengths.is_empty() {
+        return vec![name.to_string()];
+    }
+
+    let suffix = lengths.iter().map(|i| format!("[{}]", i)).collect::<String>();
+    vec![format!("{}{}", name, suffix)]
+}
