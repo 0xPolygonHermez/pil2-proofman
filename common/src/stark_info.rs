@@ -228,38 +228,15 @@ impl StarkInfo {
     }
 }
 
-/// Expands a column name based on its dimensions (lengths).
+/// Expands a column name based on its indices (lengths).
 /// For example:
-/// - name="selread", lengths=[2] -> ["selread[0]", "selread[1]"]
-/// - name="data", lengths=[2, 3] -> ["data[0][0]", "data[0][1]", "data[0][2]", "data[1][0]", "data[1][1]", "data[1][2]"]
-/// - name="flag", lengths=[] or [1] -> ["flag"]
+/// - name="selread", lengths=[0, 2] -> "selread[0][2]"
+/// - name="flag", lengths=[] or [1] -> "flag"
 pub fn expand_column_name(name: &str, lengths: &[u64]) -> Vec<String> {
     if lengths.is_empty() || (lengths.len() == 1 && lengths[0] == 1) {
         return vec![name.to_string()];
     }
 
-    fn generate_indices(lengths: &[u64], current: &mut Vec<u64>, results: &mut Vec<Vec<u64>>) {
-        if current.len() == lengths.len() {
-            results.push(current.clone());
-            return;
-        }
-
-        let dim_size = lengths[current.len()] as u64;
-        for i in 0..dim_size {
-            current.push(i);
-            generate_indices(lengths, current, results);
-            current.pop();
-        }
-    }
-
-    let mut indices = Vec::new();
-    generate_indices(lengths, &mut Vec::new(), &mut indices);
-
-    indices
-        .into_iter()
-        .map(|idx| {
-            let suffix = idx.iter().map(|i| format!("[{}]", i)).collect::<String>();
-            format!("{}{}", name, suffix)
-        })
-        .collect()
+    let suffix = lengths.iter().map(|i| format!("[{}]", i)).collect::<String>();
+    vec![format!("{}{}", name, suffix)]
 }
