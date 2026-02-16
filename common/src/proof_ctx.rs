@@ -832,6 +832,16 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.air_instances[instance_id].read().unwrap().get_trace(first_row, n_rows, offset)
     }
 
+    pub fn get_instance_air_values(&self, instance_id: usize) -> ProofmanResult<Vec<u64>> {
+        Ok(self.air_instances[instance_id]
+            .read()
+            .unwrap()
+            .get_air_values()
+            .iter()
+            .map(|&val| val.as_canonical_u64())
+            .collect())
+    }
+
     pub fn get_air_instance_air_values(
         &self,
         airgroup_id: usize,

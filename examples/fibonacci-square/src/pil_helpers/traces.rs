@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "9fbcab17edfcc4794c99a9d6558830e836abdb7a665d5e6e449e68d4c949885e";
+pub const PILOUT_HASH: &str = "c12ec85ed5cc77802cc041ca15366d6c70dbcc22e098fc64bee08b8b5091af12";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
@@ -85,7 +85,7 @@ trace_row!(FibonacciSquareFixedRow<F> {
 pub type FibonacciSquareFixed<F> = GenericTrace<FibonacciSquareFixedRow<F>, 4194304, 0, 0>;
 
 trace_row!(FibonacciSquareTraceRow<F> {
- a:F, b:F, test:F,
+ a:F, b:F, test:F, test2:F, test3:F,
 });
 pub type FibonacciSquareTrace<F> = GenericTrace<FibonacciSquareTraceRow<F>, 4194304, 0, 0>;
 
