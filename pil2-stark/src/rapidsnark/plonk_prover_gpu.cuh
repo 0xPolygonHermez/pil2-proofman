@@ -84,8 +84,10 @@ namespace PlonkGPU {
 
         // alias for specific regions of d_unifiedBuffer
         void* d_staticEvalsBuffer = nullptr;
-        void* d_piBuffer = nullptr;   
-        void* d_lagBuffer = nullptr;  
+        void* d_piBuffer = nullptr;  
+        void* d_lagBuffer = nullptr;
+        void* d_evalsT = nullptr;
+        void* d_evalsTz = nullptr;  
         void* d_ptau = nullptr;
         void* d_polCoefA = nullptr;
         void* d_polCoefB = nullptr;
@@ -99,6 +101,18 @@ namespace PlonkGPU {
         void* d_t1 = nullptr;
         void* d_t2 = nullptr;
         void* d_t3 = nullptr;
+        void* d_evalsS1 = nullptr;
+        void* d_evalsS2 = nullptr;
+        void* d_evalsS3 = nullptr;
+        void* d_evalsL0 = nullptr;
+        void* d_evalsQL = nullptr;
+        void* d_evalsQR = nullptr;
+        void* d_evalsQM = nullptr;
+        void* d_evalsQO = nullptr;
+        void* d_evalsQC = nullptr;
+        void* d_evalsA = nullptr;
+        void* d_evalsB = nullptr;
+        void* d_evalsC = nullptr;
         void* d_coefQM = nullptr;
         void* d_coefQL = nullptr;
         void* d_coefQR = nullptr;
@@ -114,6 +128,8 @@ namespace PlonkGPU {
         void* d_omegaTidN = nullptr;        // omega^(0..255) for N
         void* d_omegaBasesNExt = nullptr;   // omega_4x^(blockIdx*256) for NExt
         void* d_omegaTidNExt = nullptr;     // omega_4x^(0..255) for NExt
+        void* d_blindings = nullptr;          
+
 
         void* pTauStream = nullptr;         // Non-blocking CUDA stream to copy pTau to GPU
         void* omegasStream = nullptr;       // Non-blocking CUDA stream to generate precomputed omega tables

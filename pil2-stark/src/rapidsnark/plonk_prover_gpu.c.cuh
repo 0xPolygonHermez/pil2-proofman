@@ -48,20 +48,20 @@ extern "C" void gpu_plonk_start_cpu_to_gpu_transfer(
 extern "C" void gpu_plonk_zero_pad(void* buf, uint64_t startElem, uint64_t endElem);
 extern "C" void gpu_plonk_compute_gate_a(
     void* tOut, void* tzOut,
-    const void* evalA, const void* dStaticEvals,
-    const void* blindFactors, const void* omega4xPtr,
+    const void* evalA, const void* evalQL,
+    const void* d_blindings,
     uint64_t N,
     const void* omegaBases, const void* omegaTid);
 extern "C" void gpu_plonk_compute_gate_b(
     void* tOut, void* tzOut,
-    const void* evalB, const void* dStaticEvals,
-    const void* blindFactors, const void* omega4xPtr,
+    const void* evalB, const void* evalQR,
+    const void* d_blindings,
     uint64_t N,
     const void* omegaBases, const void* omegaTid);
 extern "C" void gpu_plonk_compute_gate_c(
     void* tOut, void* tzOut,
-    const void* evalC, const void* dStaticEvals,
-    const void* blindFactors, const void* omega4xPtr,
+    const void* evalC, const void* evalQO, const void* evalQC,
+    const void* d_blindings,
     uint64_t N,
     const void* omegaBases, const void* omegaTid);
 
@@ -108,17 +108,17 @@ extern "C" void gpu_plonk_poly_eval_to_host(
     uint64_t N, void* dWork);
 extern "C" void gpu_plonk_split_t_blinding(
     void* d_t1, void* d_t2, void* d_t3,
-    const void* dTcombined,
-    const void* bf10Ptr, const void* bf11Ptr, uint64_t N);
-extern "C" void gpu_plonk_compute_qm_permutation(
+    const void* dTcombined, const void* d_blindings, uint64_t N);
+extern "C" void gpu_plonk_compute_qm_perm_l0(
     void* tOut, void* tzOut,
     const void* evalA, const void* evalB, const void* evalC,
-    const void* evalZ, const void* dStaticEvals,
-    const void* blindFactors,
+    const void* evalZ,
+    const void* evalQM, const void* evalS1, const void* evalS2, const void* evalS3, const void* evalL0,
+    const void* d_blindings,
     const void* beta, const void* gamma,
     const void* alpha, const void* alpha2,
     const void* k1, const void* k2,
-    const void* omega4x, const void* omega1,
+    const void* omega1,
     const void* Z1, const void* Z2, const void* Z3,
     uint64_t N,
     const void* omegaBases, const void* omegaTid);
@@ -229,6 +229,8 @@ namespace PlonkGPU
             d_staticEvalsBuffer = nullptr;
             d_piBuffer = nullptr;
             d_lagBuffer = nullptr;
+            d_evalsT = nullptr;
+            d_evalsTz = nullptr;
             d_ptau = nullptr;
             d_polCoefA = nullptr;
             d_polCoefB = nullptr;
@@ -241,6 +243,7 @@ namespace PlonkGPU
             d_scanWork = nullptr;            
             d_omegaBasesN = nullptr;
             d_omegaTidN = nullptr;
+            d_blindings = nullptr;
             d_omegaBasesNExt = nullptr;
             d_omegaTidNExt = nullptr;
             d_witness = nullptr;
@@ -257,6 +260,18 @@ namespace PlonkGPU
             d_t1 = nullptr;
             d_t2 = nullptr;
             d_t3 = nullptr;
+            d_evalsS1 = nullptr;
+            d_evalsS2 = nullptr;
+            d_evalsS3 = nullptr;
+            d_evalsL0 = nullptr;
+            d_evalsQL = nullptr;
+            d_evalsQR = nullptr;
+            d_evalsQM = nullptr;
+            d_evalsQO = nullptr;
+            d_evalsQC = nullptr;
+            d_evalsA = nullptr;
+            d_evalsB = nullptr;
+            d_evalsC = nullptr;
         } else {
             gpu_plonk_free_static_eval_buffers(d_staticEvalsBuffer);
             gpu_plonk_free_static_eval_buffers(d_piBuffer);
@@ -763,6 +778,7 @@ namespace PlonkGPU
             unifiedBufferSize += 256 * sizeof(FrElement);             // omega_4x tid table (0..255)
             unifiedBufferSize += numBlocksN * sizeof(FrElement);      // omega bases for N z_ratios kernel
             unifiedBufferSize += 256 * sizeof(FrElement);             // omega tid table (0..255)
+            unifiedBufferSize += (BLINDINGFACTORSLENGTH_PLONK_GPU + 1) * sizeof(FrElement); // blinding factors b_0..b_11
 
             gpu_plonk_cuda_malloc(&d_unifiedBuffer, unifiedBufferSize);
             std::cout << "[round0] Unified GPU buffer: " << unifiedBufferSize / (1024.0*1024*1024) << " GiB" << std::endl;
@@ -785,6 +801,7 @@ namespace PlonkGPU
         d_omegaTidNExt = base + off;         off += 256 * sizeof(FrElement);
         d_omegaBasesN = base + off;          off += numBlocksN * sizeof(FrElement);
         d_omegaTidN = base + off;            off += 256 * sizeof(FrElement);
+        d_blindings = base + off;            off += (BLINDINGFACTORSLENGTH_PLONK_GPU + 1) * sizeof(FrElement);
 
         // Derived aliases within d_aux
         uint32_t nDirect = zkey->nVars - zkey->nAdditions;
@@ -795,6 +812,18 @@ namespace PlonkGPU
         d_intWitness = (uint8_t*)d_witness + nDirect * sizeof(FrElement);             // [2N+nDirect..2N+nVars) internal witness 
         d_mapBuffers = (uint8_t*)d_intWitness + zkey->nAdditions * sizeof(FrElement); // [2N+nVars..) nConstraints*3 uint32_t wire maps
         d_scanWork   = (FrElement*)d_aux + 4 * N;                                     // [4N..4N+scanWorkElems) scan block totals (within d_aux)
+
+        // Static eval buffer slot aliases: S1(0), S2(1), S3(2), L0(3), QL(4), QR(5), QM(6), QO(7), QC(8)
+        uint8_t* dStatic = (uint8_t*)d_staticEvalsBuffer;
+        d_evalsS1 = dStatic + 0 * NExtBytes;
+        d_evalsS2 = dStatic + 1 * NExtBytes;
+        d_evalsS3 = dStatic + 2 * NExtBytes;
+        d_evalsL0 = dStatic + 3 * NExtBytes;
+        d_evalsQL = dStatic + 4 * NExtBytes;
+        d_evalsQR = dStatic + 5 * NExtBytes;
+        d_evalsQM = dStatic + 6 * NExtBytes;
+        d_evalsQO = dStatic + 7 * NExtBytes;
+        d_evalsQC = dStatic + 8 * NExtBytes;
 
         // Zkey coef aliases within d_staticEvalsBuffer slots 6 and 8
         FrElement* slot6 = (FrElement*)d_staticEvalsBuffer + 6 * NExt;
@@ -808,10 +837,17 @@ namespace PlonkGPU
         d_coefS2 = slot8 + 2*N;     
         d_coefS3 = slot8 + 3*N;
 
-        // T polynomial split aliases (reuse d_staticEvalsBuffer after evals are consumed)
+        // T & T polynomial split aliases (reuse d_staticEvalsBuffer after evals are consumed)
+        d_evalsT = d_piBuffer;             
+        d_evalsTz = d_lagBuffer;
         d_t1 = d_staticEvalsBuffer;
         d_t2 = (FrElement*)d_staticEvalsBuffer + (N + 1);
         d_t3 = (FrElement*)d_staticEvalsBuffer + 2 * (N + 1);
+
+        // Evals A, B, C aliases (reuse d_staticEvalsBuffer slots 4,5,7 after Q evals are consumed) 
+        d_evalsA = d_evalsQL;
+        d_evalsB = d_evalsQR;
+        d_evalsC = d_evalsQO;
 
                    
         if (!pTauStream) pTauStream = gpu_plonk_create_cuda_stream_nonblocking();
@@ -878,6 +914,9 @@ namespace PlonkGPU
             memset((void *)&(blindingFactors[i].v[0]), 0, sizeof(FrElement));
             randombytes_buf((void *)&(blindingFactors[i].v[0]), sizeof(FrElement) - 1);
         }
+
+        // Upload blinding factors to device (persistent for all rounds)
+        gpu_plonk_memcpy_h2d(d_blindings, blindingFactors, (BLINDINGFACTORSLENGTH_PLONK_GPU + 1) * sizeof(FrElement));
 
         // STEP 1.2 - Compute wire polynomials a(X), b(X) and c(X)
         LOG_TRACE("> Computing A, B, C wire polynomials");
@@ -968,8 +1007,9 @@ namespace PlonkGPU
             gpu_plonk_gather_witness(d_gathered, dMap + w * zkey->nConstraints,
                                d_witness, d_intWitness,
                                nDirect, zkey->nConstraints, N);
+            gpu_plonk_cuda_device_sync(); // synch before sspark
 
-            // IFFT in-place on d_gathered (sppark uses own stream, gather already synced)
+            // IFFT in-place on d_gathered (sppark uses own non-blocking stream)
             intt_bn128_gpu_dev_ptr(d_gathered, zkeyPower);
 
             // D2D to persistent GPU slot
@@ -1142,41 +1182,32 @@ namespace PlonkGPU
         LOG_TRACE(ss);
 
         // Compute quotient polynomial T(X)
-        // (computeT also applies blindCoefficients to A/B/C/Z after each D2D capture)
         LOG_TRACE("> Computing T polynomial");
 #ifdef PLONK_GPU_TIMING
         double t0 = omp_get_wtime();
 #endif
         computeT();
+        gpu_plonk_cuda_device_sync(); // computeT kernels (default stream) → sppark MSMs
 #ifdef PLONK_GPU_TIMING
         std::cout << "[TIMING]   computeT total: " << omp_get_wtime() - t0 << "s" << std::endl;
 #endif
 
-        // Zkey coef transfer batch 2: QM, QL, QR, QO → slot 6 (QM eval slot, now free after QMPerm)
-        // Batch 1 (QC, S1, S2, S3 → slot 8) was launched in computeT after gate_C.
-        // Uses pinnedQ staging (free after asyncTransferQ join at start of computeT).
-        {
-            size_t polyBytes = N * sizeof(FrElement);
+        // Qcoef transfer batch 2: QM, QL, QR, QO → slot 6 (QM eval slot, now free)
+        // Batch 1 (QC, S1, S2, S3 → slot 8) was launched in computeT after gate_C.        
+        size_t polyBytes = N * sizeof(FrElement);
 
-            std::array<void*, 4> dsts = {d_coefQM, d_coefQL, d_coefQR, d_coefQO};
-            std::array<const void*, 4> srcs = {
-                polPtr["QM"], polPtr["QL"],
-                polPtr["QR"], polPtr["QO"]};
-            std::array<size_t, 4> sizes = {polyBytes, polyBytes, polyBytes, polyBytes};
+        std::array<void*, 4> dsts = {d_coefQM, d_coefQL, d_coefQR, d_coefQO};
+        std::array<const void*, 4> srcs = {polPtr["QM"], polPtr["QL"],polPtr["QR"], polPtr["QO"]};
+        std::array<size_t, 4> sizes = {polyBytes, polyBytes, polyBytes, polyBytes};
 
-            void* pinBuf = pinnedQ;     // Free after Q join at start of computeT
-            size_t pinSz = pinnedSize;
-
-            asyncTransferPolsBatch2 = std::thread([dsts, srcs, sizes, pinBuf, pinSz]() {
-                void* d[4]; const void* s[4]; size_t sz[4];
-                for (int i = 0; i < 4; i++) { d[i] = dsts[i]; s[i] = srcs[i]; sz[i] = sizes[i]; }
-                gpu_plonk_start_cpu_to_gpu_transfer(d, s, sz, 4, pinBuf, pinSz);
-            });
-        }
-
-        // GPU-resident MSM — no D2H needed (T1/T2/T3 stay on GPU in d_staticEvalsBuffer,
-        // used directly by R+Wxi kernel in round5 via d_t1/d_t2/d_t3 pointers)
-        // Blinding already applied in GPU splitTBlinding kernel — no applyBlindingCorrection needed
+        asyncTransferPolsBatch2 = std::thread([dsts, srcs, sizes, this]() {
+            void* d[4]; 
+            const void* s[4]; 
+            size_t sz[4];
+            for (int i = 0; i < 4; i++) { d[i] = dsts[i]; s[i] = srcs[i]; sz[i] = sizes[i]; }
+            gpu_plonk_start_cpu_to_gpu_transfer(d, s, sz, 4, this->pinnedQ, this->pinnedSize);
+        });
+    
         LOG_TRACE("> Computing T1, T2 & T3 commitments (MSM devptr)");
 
         void* dTSlots[3] = {d_t1, d_t2, d_t3};
@@ -1208,8 +1239,6 @@ namespace PlonkGPU
         auto k1 = *((FrElement *)zkey->k1);
         auto k2 = *((FrElement *)zkey->k2);
         auto omega1 = fft->root(zkeyPower, 1);
-        FrElement omega_4x = fft->root(zkeyPower + 2, 1);
-
         // Precompute MulZ Z1/Z2/Z3 constants (from mul_z.c.hpp)
         FrElement w2 = fft->root(2, 1);
         FrElement Z1[4], Z2[4], Z3[4];
@@ -1252,171 +1281,152 @@ namespace PlonkGPU
         double tWire;
 #endif
 
-        // Static eval buffer pointers for D2D copies to Q slots
-        // Layout: S1(0), S2(1), S3(2), L0(3), QL(4), QR(5), QM(6), QO(7), QC(8)
-        uint8_t* dStaticBase = (uint8_t*)d_staticEvalsBuffer;
-        size_t slotBytes = NExt * sizeof(FrElement);
-        void* dQL_slot = dStaticBase + 4 * slotBytes;
-        void* dQR_slot = dStaticBase + 5 * slotBytes;
-        void* dQO_slot = dStaticBase + 7 * slotBytes;
-
-        // --- Wire A: D2D unblinded coefs → zero-pad → FFT → gate_A → D2D to QL slot ---
+        // --- Wire A: D2D unblinded coefs → zero-pad → FFT → gate_A → D2D to evalsA slot ---
         LOG_TRACE("··· Computing A evals + gate_A (GPU)");
 #ifdef PLONK_GPU_TIMING
         tWire = omp_get_wtime();
 #endif
         gpu_plonk_memcpy_d2d(d_aux, d_polCoefA, N * sizeof(FrElement));
         gpu_plonk_zero_pad(d_aux, N, NExt);
+        gpu_plonk_cuda_device_sync(); // default-stream zero_pad → sppark NTT
         ntt_bn128_gpu_dev_ptr(d_aux, zkeyPower + 2);
-        gpu_plonk_compute_gate_a(d_piBuffer, d_lagBuffer, d_aux, d_staticEvalsBuffer,
-                           (const void*)blindingFactors, (const void*)&omega_4x, N,
+        gpu_plonk_compute_gate_a(d_evalsT, d_evalsTz, d_aux, d_evalsQL,
+                           d_blindings, N,
                            d_omegaBasesNExt, d_omegaTidNExt);
-        gpu_plonk_memcpy_d2d(dQL_slot, d_aux, slotBytes);
+        gpu_plonk_memcpy_d2d(d_evalsA, d_aux, NExtBytes);
 #ifdef PLONK_GPU_TIMING
         std::cout << "[TIMING]     wire A (D2D+pad+NTT+gate+D2D): " << omp_get_wtime() - tWire << "s" << std::endl;
 #endif
 
-        // --- Wire B: D2D → zero-pad → FFT → gate_B → D2D to QR slot ---
+        // --- Wire B: D2D → zero-pad → FFT → gate_B → D2D to evalsB slot ---
         LOG_TRACE("··· Computing B evals + gate_B (GPU)");
 #ifdef PLONK_GPU_TIMING
         tWire = omp_get_wtime();
 #endif
         gpu_plonk_memcpy_d2d(d_aux, d_polCoefB, N * sizeof(FrElement));
         gpu_plonk_zero_pad(d_aux, N, NExt);
+        gpu_plonk_cuda_device_sync(); // default-stream zero_pad → sppark NTT
         ntt_bn128_gpu_dev_ptr(d_aux, zkeyPower + 2);
-        gpu_plonk_compute_gate_b(d_piBuffer, d_lagBuffer, d_aux, d_staticEvalsBuffer,
-                           (const void*)blindingFactors, (const void*)&omega_4x, N,
+        gpu_plonk_compute_gate_b(d_evalsT, d_evalsTz, d_aux, d_evalsQR,
+                           d_blindings, N,
                            d_omegaBasesNExt, d_omegaTidNExt);
-        gpu_plonk_memcpy_d2d(dQR_slot, d_aux, slotBytes);
+        gpu_plonk_memcpy_d2d(d_evalsB, d_aux, NExtBytes);
 #ifdef PLONK_GPU_TIMING
         std::cout << "[TIMING]     wire B (D2D+pad+NTT+gate+D2D): " << omp_get_wtime() - tWire << "s" << std::endl;
 #endif
 
-        // --- Wire C: D2D → zero-pad → FFT → gate_C → D2D to QO slot ---
+        // --- Wire C: D2D → zero-pad → FFT → gate_C → D2D to evalsC slot ---
         LOG_TRACE("··· Computing C evals + gate_C (GPU)");
 #ifdef PLONK_GPU_TIMING
         tWire = omp_get_wtime();
 #endif
         gpu_plonk_memcpy_d2d(d_aux, d_polCoefC, N * sizeof(FrElement));
         gpu_plonk_zero_pad(d_aux, N, NExt);
+        gpu_plonk_cuda_device_sync(); // default-stream zero_pad → sppark NTT
         ntt_bn128_gpu_dev_ptr(d_aux, zkeyPower + 2);
-        gpu_plonk_compute_gate_c(d_piBuffer, d_lagBuffer, d_aux, d_staticEvalsBuffer,
-                           (const void*)blindingFactors, (const void*)&omega_4x, N,
+        gpu_plonk_compute_gate_c(d_evalsT, d_evalsTz, d_aux, d_evalsQO, d_evalsQC,
+                           d_blindings, N,
                            d_omegaBasesNExt, d_omegaTidNExt);
-        gpu_plonk_memcpy_d2d(dQO_slot, d_aux, slotBytes);
+        gpu_plonk_memcpy_d2d(d_evalsC, d_aux, NExtBytes);
 #ifdef PLONK_GPU_TIMING
         std::cout << "[TIMING]     wire C (D2D+pad+NTT+gate+D2D): " << omp_get_wtime() - tWire << "s" << std::endl;
 #endif
 
         // --- Early zkey coef transfer batch 1: QC, S1, S2, S3 → slot 8 ---
-        // Slot 8 (QC evals) is now free — gate_C was the last reader.
-        // Sync to ensure gate_C kernel has finished reading slot 8 before H2D overwrites it.
-        gpu_plonk_cuda_device_sync();
-        {
-            size_t polyBytes = N * sizeof(FrElement);
+        // Slot 8 (QC evals) is now free — gate_C was the last reader.         
+        gpu_plonk_cuda_device_sync(); // Sync to ensure gate_C kernel can be used
+        
+        std::array<void*, 4> dsts = {d_coefQC, d_coefS1, d_coefS2, d_coefS3};
+        std::array<const void*, 4> srcs = { polPtr["QC"], polPtr["Sigma1"], polPtr["Sigma2"], polPtr["Sigma3"]};
+        std::array<size_t, 4> sizes = {NBytes, NBytes, NBytes, NBytes};
 
-            std::array<void*, 4> dsts = {d_coefQC, d_coefS1, d_coefS2, d_coefS3};
-            std::array<const void*, 4> srcs = {
-                polPtr["QC"], polPtr["Sigma1"],
-                polPtr["Sigma2"], polPtr["Sigma3"]};
-            std::array<size_t, 4> sizes = {polyBytes, polyBytes, polyBytes, polyBytes};
+        void* pinBuf = pinnedS;
+        size_t pinSz = pinnedSize;
 
-            void* pinBuf = pinnedS;
-            size_t pinSz = pinnedSize;
-
-            asyncTransferPolsBatch1 = std::thread([dsts, srcs, sizes, pinBuf, pinSz]() {
-                void* d[4]; const void* s[4]; size_t sz[4];
-                for (int i = 0; i < 4; i++) { d[i] = dsts[i]; s[i] = srcs[i]; sz[i] = sizes[i]; }
-                gpu_plonk_start_cpu_to_gpu_transfer(d, s, sz, 4, pinBuf, pinSz);
-            });
-        }
-
+        asyncTransferPolsBatch1 = std::thread([dsts, srcs, sizes, this]() {
+            void* d[4]; const void* s[4]; size_t sz[4];
+            for (int i = 0; i < 4; i++) { d[i] = dsts[i]; s[i] = srcs[i]; sz[i] = sizes[i]; }
+            gpu_plonk_start_cpu_to_gpu_transfer(d, s, sz, 4, this->pinnedS, this->pinnedSize);
+        });
+        
         // --- Z: D2D → zero-pad → FFT → set wrap-around ---
-        // Note: Z blinding is handled entirely on GPU now — no CPU polynomial needed.
-        // The gate kernels compute zp derivatives from blindingFactors directly.
         LOG_TRACE("··· Computing Z evals (GPU)");
 #ifdef PLONK_GPU_TIMING
         tWire = omp_get_wtime();
 #endif
         gpu_plonk_memcpy_d2d(d_aux, d_polCoefZ, N * sizeof(FrElement));
         gpu_plonk_zero_pad(d_aux, N, NExt);
+        gpu_plonk_cuda_device_sync(); // default-stream zero_pad → sppark NTT
         ntt_bn128_gpu_dev_ptr(d_aux, zkeyPower + 2);
+        // Wrap-around: copy first 4 elements to d_aux[NExt..NExt+4) so QM+perm+L0 kernel can read z(X*omega)
         gpu_plonk_memcpy_d2d((uint8_t*)d_aux + NExtBytes, d_aux, 4 * sizeof(FrElement));
 #ifdef PLONK_GPU_TIMING
         std::cout << "[TIMING]     wire Z (D2D+pad+NTT+wrap): " << omp_get_wtime() - tWire << "s" << std::endl;
 #endif
 
-        // --- QM + Permutation kernel ---
+        // --- QM + Permutation + L0 kernel --- (rest of constraints)
 #ifdef PLONK_GPU_TIMING
         tWire = omp_get_wtime();
 #endif
-        LOG_TRACE("··· Computing QM + permutation (GPU)");
-        gpu_plonk_compute_qm_permutation(
-            d_piBuffer, d_lagBuffer,
-            dQL_slot, dQR_slot, dQO_slot,
+        LOG_TRACE("··· Computing QM + permutation + L0 (GPU)");
+        gpu_plonk_compute_qm_perm_l0(
+            d_evalsT, d_evalsTz,
+            d_evalsA, d_evalsB, d_evalsC,
             d_aux,
-            d_staticEvalsBuffer,
-            (const void*)blindingFactors,
+            d_evalsQM, d_evalsS1, d_evalsS2, d_evalsS3, d_evalsL0,
+            d_blindings,
             (const void*)&beta, (const void*)&gamma,
             (const void*)&alpha, (const void*)&alpha2,
             (const void*)&k1, (const void*)&k2,
-            (const void*)&omega_4x, (const void*)&omega1,
+            (const void*)&omega1,
             (const void*)Z1, (const void*)Z2, (const void*)Z3,
             N,
             d_omegaBasesNExt, d_omegaTidNExt);
+        
+            gpu_plonk_cuda_device_sync(); // ensure qm_perm_l0 is done before we can call sppark functions that use their own stream
 
 #ifdef PLONK_GPU_TIMING
-        std::cout << "[TIMING]     QM+perm kernel: " << omp_get_wtime() - tWire << "s" << std::endl;
+        std::cout << "[TIMING]     QM+perm+L0 kernel: " << omp_get_wtime() - tWire << "s" << std::endl;
         std::cout << "[TIMING]     incremental T evals total: " << omp_get_wtime() - tstart << "s" << std::endl;
 #endif
 
-        // T IFFT in-place on GPU (no D2H — stays in d_piBuffer)
+        // T IFFT in-place
         LOG_TRACE("··· Computing T ifft (GPU)");
 #ifdef PLONK_GPU_TIMING
         tWire = omp_get_wtime();
 #endif
-        intt_bn128_gpu_dev_ptr(d_piBuffer, zkeyPower + 2);
+        intt_bn128_gpu_dev_ptr(d_evalsT, zkeyPower + 2);
 #ifdef PLONK_GPU_TIMING
         std::cout << "[TIMING]     T INTT (GPU): " << omp_get_wtime() - tWire << "s" << std::endl;
 #endif
 
-        // Tz IFFT in-place on GPU (no D2H — stays in d_lagBuffer)
+        // Tz IFFT in-place 
         LOG_TRACE("··· Computing Tz ifft (GPU)");
 #ifdef PLONK_GPU_TIMING
         tWire = omp_get_wtime();
 #endif
-        intt_bn128_gpu_dev_ptr(d_lagBuffer, zkeyPower + 2);
+        intt_bn128_gpu_dev_ptr(d_evalsTz, zkeyPower + 2);
 #ifdef PLONK_GPU_TIMING
         std::cout << "[TIMING]     Tz INTT (GPU): " << omp_get_wtime() - tWire << "s" << std::endl;
 #endif
 
-        // GPU: divZh + T+Tz add in one fused kernel (no D2H)
+        // GPU: divZh + T+Tz add in one fused kernel
 #ifdef PLONK_GPU_TIMING
         tWire = omp_get_wtime();
 #endif
-        gpu_plonk_divzh_add(d_piBuffer, d_lagBuffer, N);
+        gpu_plonk_divzh_add(d_evalsT, d_evalsTz, N);
 #ifdef PLONK_GPU_TIMING
         std::cout << "[TIMING]     divZh+add (GPU): " << omp_get_wtime() - tWire << "s" << std::endl;
 #endif
-
-        // Degree check: D2H single element at index 3N+6 to verify zero
-        {
-            FrElement degCheck;
-            gpu_plonk_memcpy_d2h(&degCheck, (FrElement*)d_piBuffer + 3*N + 6, sizeof(FrElement));
-            if (!E.fr.isZero(degCheck)) {
-                throw std::runtime_error("T Polynomial is not well calculated");
-            }
-        }
-
-        // GPU: Split T into T1/T2/T3 with blinding, into freed d_staticEvalsBuffer
-        // Layout: T1 (N+1), T2 (N+1), T3 (N+6) — all contiguous in d_staticEvalsBuffer
+    
+        // GPU: Split T into T1/T2/T3 with blinding,
         LOG_TRACE("··· Computing T1, T2, T3 polynomials (GPU split+blind)");
 #ifdef PLONK_GPU_TIMING
         tWire = omp_get_wtime();
 #endif
 
-        gpu_plonk_split_t_blinding(d_t1, d_t2, d_t3, d_piBuffer,
-                             &blindingFactors[10], &blindingFactors[11], N);
+        gpu_plonk_split_t_blinding(d_t1, d_t2, d_t3, d_evalsT,
+                             d_blindings, N);
 
         // D2H deferred to round3 where it overlaps with MSMs via async stream
 #ifdef PLONK_GPU_TIMING
@@ -1444,24 +1454,19 @@ namespace PlonkGPU
         ss << "··· challenges.xi: " << E.fr.toString(challenges["xi"]);
         LOG_TRACE(ss);
 
-        // Fourth output of the prover is ( a(xi), b(xi), c(xi), s1(xi), s2(xi), z(xiw) )
-        // GPU evaluation on unblinded coefficients + CPU blinding correction.
-        // d_aux is available as scratch for block partial sums (65536 FrElements).
-
         // Ensure both zkey H2D batches are complete
         // Batch 1 (QC,S1,S2,S3 → slot 8): launched in computeT after gate_C, uses pinnedS
         // Batch 2 (QM,QL,QR,QO → slot 6): launched after computeT, uses pinnedQ
-        {
+        
 #ifdef PLONK_GPU_TIMING
-            double t0j = omp_get_wtime();
+        double t0j = omp_get_wtime();
 #endif
-            if (asyncTransferPolsBatch1.joinable()) asyncTransferPolsBatch1.join();
-            if (asyncTransferPolsBatch2.joinable()) asyncTransferPolsBatch2.join();
+        if (asyncTransferPolsBatch1.joinable()) asyncTransferPolsBatch1.join();
+        if (asyncTransferPolsBatch2.joinable()) asyncTransferPolsBatch2.join();
 #ifdef PLONK_GPU_TIMING
-            std::cout << "[round4] zkey H2D join waited: " << omp_get_wtime() - t0j << "s" << std::endl;
+        std::cout << "[round4] zkey H2D join waited: " << omp_get_wtime() - t0j << "s" << std::endl;
 #endif
-        }
-
+        
         auto xi = challenges["xi"];
         auto xiw = challenges["xiw"];
 
@@ -1492,7 +1497,6 @@ namespace PlonkGPU
         gpu_plonk_poly_eval_to_host(&eval_b, d_polCoefB, &xi, N, d_aux);
         gpu_plonk_poly_eval_to_host(&eval_c, d_polCoefC, &xi, N, d_aux);
 
-        // Blinding corrections for A, B, C (same bf arrays as in computeT)
         FrElement bfA[2] = {blindingFactors[2], blindingFactors[1]};
         FrElement bfB[2] = {blindingFactors[4], blindingFactors[3]};
         FrElement bfC[2] = {blindingFactors[6], blindingFactors[5]};
@@ -1562,6 +1566,7 @@ namespace PlonkGPU
         t0 = omp_get_wtime();
 #endif
         computeWxi();
+        gpu_plonk_cuda_device_sync(); // divByZerofier (default stream) → sppark MSM
 #ifdef PLONK_GPU_TIMING
         std::cout << "[TIMING]   computeWxi (divByZerofier): " << omp_get_wtime() - t0 << "s" << std::endl;
 #endif
@@ -1582,6 +1587,7 @@ namespace PlonkGPU
         t0 = omp_get_wtime();
 #endif
         computeWxiw();
+        gpu_plonk_cuda_device_sync(); // divByZerofier (default stream) → sppark MSM
 #ifdef PLONK_GPU_TIMING
         std::cout << "[TIMING]   computeWxiw: " << omp_get_wtime() - t0 << "s" << std::endl;
 #endif
