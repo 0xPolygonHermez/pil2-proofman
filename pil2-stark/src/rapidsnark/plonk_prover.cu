@@ -16,121 +16,10 @@ using Element = Fr::Element;
 
 typedef void (*FileReadFn)(void* dest, uint32_t sectionId, uint64_t offset, uint64_t len, void* ctx);
 
-// ============================================================================
-// computeZ GPU kernel
-// ============================================================================
-
-// domainSize is always a power of 2 (2^zkeyPower), and threadsPerBlock=256=2^8,
-// so every warp is fully occupied. This is required because Fr::reciprocal()
-// uses warp-level shuffle instructions (__shfl_xor_sync) internally.
-__global__ void computeZRatiosKernel(
-    Element* __restrict__ ratioOut,
-    const Element* __restrict__ buffA,
-    const Element* __restrict__ buffB,
-    const Element* __restrict__ buffC,
-    const Element* __restrict__ sigma1,
-    const Element* __restrict__ sigma2,
-    const Element* __restrict__ sigma3,
-    uint32_t sigmaStride,
-    Element beta,
-    Element gamma,
-    Element k1,
-    Element k2,
-    Element omega,
-    uint64_t domainSize)
-{
-    uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= domainSize) return;
-
-    // omega_i = omega^i
-    Element omega_i = Fr::pow(omega, (uint32_t)i);
-    Element betaw = Fr::mul(beta, omega_i);
-
-    // num = (a + beta*omega^i + gamma)(b + k1*beta*omega^i + gamma)(c + k2*beta*omega^i + gamma)
-    Element num1 = Fr::add(Fr::add(buffA[i], betaw), gamma);
-    Element num2 = Fr::add(Fr::add(buffB[i], Fr::mul(k1, betaw)), gamma);
-    Element num3 = Fr::add(Fr::add(buffC[i], Fr::mul(k2, betaw)), gamma);
-    Element num = Fr::mul(num1, Fr::mul(num2, num3));
-
-    // den = (a + beta*sigma1[i] + gamma)(b + beta*sigma2[i] + gamma)(c + beta*sigma3[i] + gamma)
-    Element den1 = Fr::add(Fr::add(buffA[i], Fr::mul(beta, sigma1[i * sigmaStride])), gamma);
-    Element den2 = Fr::add(Fr::add(buffB[i], Fr::mul(beta, sigma2[i * sigmaStride])), gamma);
-    Element den3 = Fr::add(Fr::add(buffC[i], Fr::mul(beta, sigma3[i * sigmaStride])), gamma);
-    Element den = Fr::mul(den1, Fr::mul(den2, den3));
-
-    // ratio[i] = num * den^{-1}
-    ratioOut[i] = Fr::mul(num, Fr::reciprocal(den));
-}
-
-extern "C" void compute_z_ratios_gpu(
-    void* ratioOut,
-    const void* buffA,
-    const void* buffB,
-    const void* buffC,
-    const void* dStaticEvals,
-    const void* betaPtr,
-    const void* gammaPtr,
-    const void* k1Ptr,
-    const void* k2Ptr,
-    const void* omegaPtr,
-    uint64_t domainSize,
-    void* dTemp4N)
-{
-    const Element* hBuffA = (const Element*)buffA;
-    const Element* hBuffB = (const Element*)buffB;
-    const Element* hBuffC = (const Element*)buffC;
-
-    Element beta  = *(const Element*)betaPtr;
-    Element gamma = *(const Element*)gammaPtr;
-    Element k1    = *(const Element*)k1Ptr;
-    Element k2    = *(const Element*)k2Ptr;
-    Element omega = *(const Element*)omegaPtr;
-
-    size_t arrayBytes = domainSize * sizeof(Element);
-    uint64_t fullN = 4 * domainSize;
-
-    // Sigma evals are already on GPU in d_staticEvalsBuffer: S1, S2, S3 (each fullN elements)
-    const Element* dStaticBase = (const Element*)dStaticEvals;
-    const Element* dS1 = dStaticBase + 0 * fullN;
-    const Element* dS2 = dStaticBase + 1 * fullN;
-    const Element* dS3 = dStaticBase + 2 * fullN;
-
-    // Use pre-allocated GPU buffer: split into 4 sub-regions of N elements each
-    Element* dRatioOut = (Element*)dTemp4N;
-    Element* dBuffA = dRatioOut + domainSize;
-    Element* dBuffB = dBuffA + domainSize;
-    Element* dBuffC = dBuffB + domainSize;
-
-    // Copy inputs H2D
-    CHECKCUDAERR(cudaMemcpy(dBuffA, hBuffA, arrayBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dBuffB, hBuffB, arrayBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dBuffC, hBuffC, arrayBytes, cudaMemcpyHostToDevice));
-
-    // Launch kernel — sigma arrays use stride 4 (full eval size = 4 * domainSize)
-    uint32_t threadsPerBlock = 256;
-    uint32_t blocks = (uint32_t)((domainSize + threadsPerBlock - 1) / threadsPerBlock);
-
-    computeZRatiosKernel<<<blocks, threadsPerBlock>>>(
-        dRatioOut, dBuffA, dBuffB, dBuffC,
-        dS1, dS2, dS3, 4,
-        beta, gamma, k1, k2, omega,
-        domainSize);
-
-    CHECKCUDAERR(cudaGetLastError());
-    CHECKCUDAERR(cudaDeviceSynchronize());
-
-    // Copy result D2H
-    CHECKCUDAERR(cudaMemcpy(ratioOut, dRatioOut, arrayBytes, cudaMemcpyDeviceToHost));
-}
-
-// ============================================================================
-// computePI GPU kernel — precompute PI(X) = -sum_j L_j(X) * publicA[j]
-// ============================================================================
-
 // pi[i] -= lagrange[i] * publicVal   (one public input at a time)
 __global__ void computePIAccumulateKernel(
     Element* __restrict__ pi,
-    const Element* __restrict__ lagrange,  // fullN elements (one L_j slice)
+    const Element* __restrict__ lagrange,  // NExt elements (one L_j slice)
     Element publicVal,
     uint64_t n)
 {
@@ -140,18 +29,18 @@ __global__ void computePIAccumulateKernel(
     pi[i] = Fr::sub(pi[i], Fr::mul(lagrange[i], publicVal));
 }
 
-extern "C" void compute_pi_gpu(
+extern "C" void gpu_plonk_compute_pi(
     void* piOut,
     FileReadFn readFn, void* readCtx,
     uint32_t lagrangeSectionId,
     uint64_t lagrangeBaseOffset,
     uint64_t lagrangeStride,
     const void* publicA,
-    uint64_t fullN, uint32_t nPublic,
+    uint64_t NExt, uint32_t nPublic,
     void* dPI, void* dLag,
     void* pinnedBuf, size_t pinnedSize)
 {
-    size_t fullBytes = fullN * sizeof(Element);
+    size_t fullBytes = NExt * sizeof(Element);
     const Element* hPublicA = (const Element*)publicA;
 
     cudaStream_t stream;
@@ -161,7 +50,7 @@ extern "C" void compute_pi_gpu(
     CHECKCUDAERR(cudaMemsetAsync(dPI, 0, fullBytes, stream));
 
     uint32_t threadsPerBlock = 256;
-    uint32_t blocks = (uint32_t)(fullN / threadsPerBlock);
+    uint32_t blocks = (uint32_t)(NExt / threadsPerBlock);
 
     for (uint32_t j = 0; j < nPublic; j++) {
         // Transfer L_j from file to GPU (chunked if slice > pinnedSize)
@@ -180,7 +69,7 @@ extern "C" void compute_pi_gpu(
         }
 
         computePIAccumulateKernel<<<blocks, threadsPerBlock, 0, stream>>>(
-            (Element*)dPI, (Element*)dLag, hPublicA[j], fullN);
+            (Element*)dPI, (Element*)dLag, hPublicA[j], NExt);
 
         CHECKCUDAERR(cudaGetLastError());
     }
@@ -271,7 +160,7 @@ struct ComputeTConst {
     Element Z1[4], Z2[4], Z3[4];
     Element beta, gamma, alpha, alpha2, k1, k2;
     Element omega_4x, omega1;
-    uint64_t fullN;
+    uint64_t NExt;
 };
 
 // tOut is pre-loaded with PI(X); kernel reads pi from tOut[i] before overwriting with result.
@@ -282,7 +171,7 @@ __global__ void computeTEvaluationsKernel(
     const Element* __restrict__ evalA,
     const Element* __restrict__ evalB,
     const Element* __restrict__ evalC,
-    const Element* __restrict__ evalZ,       // fullN + 4 elements (for zW wrap-around)
+    const Element* __restrict__ evalZ,       // NExt + 4 elements (for zW wrap-around)
     const Element* __restrict__ evalQM,
     const Element* __restrict__ evalQL,
     const Element* __restrict__ evalQR,
@@ -294,7 +183,7 @@ __global__ void computeTEvaluationsKernel(
     ComputeTConst c)
 {
     uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= c.fullN) return;
+    if (i >= c.NExt) return;
 
     // Read PI and L_0 from output buffers before overwriting
     Element pi = tOut[i];
@@ -389,19 +278,19 @@ __global__ void computeTEvaluationsKernel(
     tzOut[i] = tz;
 }
 
-extern "C" void compute_t_evaluations_gpu(
+extern "C" void gpu_plonk_compute_t_evaluations(
     void* tOut, void* tzOut,
     const void* evalA, const void* evalB,
     const void* evalC, const void* evalZ,
     const void* dStaticEvals,    // GPU pointer — 9 arrays: S1,S2,S3,L0,QL,QR,QM,QO,QC
-    const void* piPrecomp,       // fullN elements — precomputed PI(X)
+    const void* piPrecomp,       // NExt elements — precomputed PI(X)
     const void* blindFactors,
     const void* betaPtr, const void* gammaPtr,
     const void* alphaPtr, const void* alpha2Ptr,
     const void* k1Ptr, const void* k2Ptr,
     const void* omega4xPtr, const void* omega1Ptr,
     const void* Z1Ptr, const void* Z2Ptr, const void* Z3Ptr,
-    uint64_t domainSize,
+    uint64_t N,
     void* dScratch0, void* dScratch1,
     bool evalsOnGPU,
     const void* dEvalA, const void* dEvalB, const void* dEvalC,
@@ -409,8 +298,8 @@ extern "C" void compute_t_evaluations_gpu(
     bool piOnGPU,
     bool tResultOnGPU)
 {
-    uint64_t fullN = 4 * domainSize;
-    size_t fullBytes = fullN * sizeof(Element);
+    uint64_t NExt = 4 * N;
+    size_t fullBytes = NExt * sizeof(Element);
 
     // Prepare constants struct
     ComputeTConst consts;
@@ -426,21 +315,21 @@ extern "C" void compute_t_evaluations_gpu(
     consts.k2       = *(const Element*)k2Ptr;
     consts.omega_4x = *(const Element*)omega4xPtr;
     consts.omega1   = *(const Element*)omega1Ptr;
-    consts.fullN    = fullN;
+    consts.NExt    = NExt;
 
     const Element* hEvalZ = (const Element*)evalZ;
 
     // Static evals on GPU: S1(0), S2(1), S3(2), L0(3), QL(4), QR(5), QM(6), QO(7), QC(8)
     const Element* dStaticBase = (const Element*)dStaticEvals;
-    const Element* dS1 = dStaticBase + 0 * fullN;
-    const Element* dS2 = dStaticBase + 1 * fullN;
-    const Element* dS3 = dStaticBase + 2 * fullN;
-    const Element* dL0 = dStaticBase + 3 * fullN;
-    const Element* dQL = dStaticBase + 4 * fullN;
-    const Element* dQR = dStaticBase + 5 * fullN;
-    const Element* dQM = dStaticBase + 6 * fullN;
-    const Element* dQO = dStaticBase + 7 * fullN;
-    const Element* dQC = dStaticBase + 8 * fullN;
+    const Element* dS1 = dStaticBase + 0 * NExt;
+    const Element* dS2 = dStaticBase + 1 * NExt;
+    const Element* dS3 = dStaticBase + 2 * NExt;
+    const Element* dL0 = dStaticBase + 3 * NExt;
+    const Element* dQL = dStaticBase + 4 * NExt;
+    const Element* dQR = dStaticBase + 5 * NExt;
+    const Element* dQM = dStaticBase + 6 * NExt;
+    const Element* dQO = dStaticBase + 7 * NExt;
+    const Element* dQC = dStaticBase + 8 * NExt;
 
     // Reuse pre-allocated GPU buffers for T and Tz outputs
     Element *dT  = (Element*)dScratch0;
@@ -466,15 +355,15 @@ extern "C" void compute_t_evaluations_gpu(
         // Z already on GPU with wrap-around set
         dZ = (Element*)dEvalZ;
     } else {
-        // Allocate and H2D for Z (fullN + 4 elements for wrap-around)
-        CHECKCUDAERR(cudaMalloc(&dZ, (fullN + 4) * sizeof(Element)));
+        // Allocate and H2D for Z (NExt + 4 elements for wrap-around)
+        CHECKCUDAERR(cudaMalloc(&dZ, (NExt + 4) * sizeof(Element)));
         CHECKCUDAERR(cudaMemcpy(dZ, hEvalZ, fullBytes, cudaMemcpyHostToDevice));
-        CHECKCUDAERR(cudaMemcpy(dZ + fullN, hEvalZ, 4 * sizeof(Element), cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(dZ + NExt, hEvalZ, 4 * sizeof(Element), cudaMemcpyHostToDevice));
     }
 
     // Pre-load PI(X) into dT and L_0(X) into dTz
     if (piOnGPU) {
-        // PI already in dT (= d_piBuffer) from async compute_pi_gpu — skip H2D
+        // PI already in dT (= d_piBuffer) from async gpu_plonk_compute_pi — skip H2D
     } else {
         CHECKCUDAERR(cudaMemcpy(dT, piPrecomp, fullBytes, cudaMemcpyHostToDevice));
     }
@@ -482,7 +371,7 @@ extern "C" void compute_t_evaluations_gpu(
 
     // Launch kernel
     uint32_t threadsPerBlock = 256;
-    uint32_t blocks = (uint32_t)(fullN / threadsPerBlock);
+    uint32_t blocks = (uint32_t)(NExt / threadsPerBlock);
 
     computeTEvaluationsKernel<<<blocks, threadsPerBlock>>>(
         dT, dTz,
@@ -513,49 +402,81 @@ extern "C" void compute_t_evaluations_gpu(
 // Async GPU transfer for static evaluation arrays
 // ============================================================================
 
-extern "C" void memcpy_h2d_gpu(void* dst, const void* src, size_t bytes)
+extern "C" void gpu_plonk_memcpy_h2d(void* dst, const void* src, size_t bytes)
 {
     CHECKCUDAERR(cudaMemcpy(dst, src, bytes, cudaMemcpyHostToDevice));
 }
 
-extern "C" void memcpy_d2h_gpu(void* dst, const void* src, size_t bytes)
+extern "C" void gpu_plonk_memcpy_d2h(void* dst, const void* src, size_t bytes)
 {
     CHECKCUDAERR(cudaMemcpy(dst, src, bytes, cudaMemcpyDeviceToHost));
 }
 
-extern "C" void memcpy_d2d_gpu(void* dst, const void* src, size_t bytes)
+extern "C" void gpu_plonk_memcpy_d2d(void* dst, const void* src, size_t bytes)
 {
     CHECKCUDAERR(cudaMemcpy(dst, src, bytes, cudaMemcpyDeviceToDevice));
 }
 
-extern "C" void alloc_static_eval_buffers_gpu(
+extern "C" void gpu_plonk_cuda_malloc(
     void** dBuffer,
     uint64_t gpuBytes)
 {
     CHECKCUDAERR(cudaMalloc(dBuffer, gpuBytes));
 }
 
-extern "C" void free_static_eval_buffers_gpu(void* dBuffer)
+extern "C" void gpu_plonk_free_static_eval_buffers(void* dBuffer)
 {
     if (dBuffer) cudaFree(dBuffer);
 }
 
-extern "C" void alloc_pinned_buffer_gpu(void** pinnedBuffer, size_t pinnedSize)
+extern "C" void gpu_plonk_cuda_malloc_pinned_buffer(void** pinnedBuffer, size_t pinnedSize)
 {
     CHECKCUDAERR(cudaMallocHost(pinnedBuffer, pinnedSize));
 }
 
-extern "C" void free_pinned_buffer_gpu(void* pinnedBuffer)
+extern "C" void gpu_plonk_free_pinned_buffer(void* pinnedBuffer)
 {
     if (pinnedBuffer) cudaFreeHost(pinnedBuffer);
 }
 
-extern "C" void cuda_device_sync()
+extern "C" void gpu_plonk_cuda_device_sync()
 {
     cudaDeviceSynchronize();
 }
 
-extern "C" void start_static_eval_transfer_gpu(
+extern "C" void* gpu_plonk_create_cuda_stream_nonblocking()
+{
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+    return (void*)stream;
+}
+
+extern "C" void gpu_plonk_destroy_cuda_stream(void* stream)
+{
+    CHECKCUDAERR(cudaStreamDestroy((cudaStream_t)stream));
+}
+
+extern "C" void gpu_plonk_sync_cuda_stream(void* stream)
+{
+    CHECKCUDAERR(cudaStreamSynchronize((cudaStream_t)stream));
+}
+
+extern "C" void gpu_plonk_memcpy_h2d_async(void* dst, const void* src, size_t bytes, void* stream)
+{
+    CHECKCUDAERR(cudaMemcpyAsync(dst, src, bytes, cudaMemcpyHostToDevice, (cudaStream_t)stream));
+}
+
+extern "C" void gpu_plonk_pin_host_memory(void* ptr, size_t bytes)
+{
+    CHECKCUDAERR(cudaHostRegister(ptr, bytes, cudaHostRegisterDefault));
+}
+
+extern "C" void gpu_plonk_unpin_host_memory(void* ptr)
+{
+    CHECKCUDAERR(cudaHostUnregister(ptr));
+}
+
+extern "C" void gpu_plonk_start_static_eval_transfer(
     FileReadFn readFn, void* readCtx,
     void* dBuffer, void* pinnedBuffer, size_t pinnedSize,
     const uint32_t* sectionIds, const uint64_t* byteOffsets, const uint64_t* byteSizes, int numArrays)
@@ -593,6 +514,45 @@ extern "C" void start_static_eval_transfer_gpu(
     CHECKCUDAERR(cudaStreamDestroy(stream));
 }
 
+// CPU-to-GPU transfer using double-buffered pinned staging (same pattern as
+// gpu_plonk_start_static_eval_transfer but reads from host memory instead of file).
+extern "C" void gpu_plonk_start_cpu_to_gpu_transfer(
+    void** dDsts, const void** hostSrcs, const size_t* sizes, int numArrays,
+    void* pinnedBuffer, size_t pinnedSize)
+{
+    size_t halfSize = pinnedSize / 2;
+    uint8_t* buf[2] = { (uint8_t*)pinnedBuffer, (uint8_t*)pinnedBuffer + halfSize };
+    int cur = 0;
+    bool first = true;
+
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+
+    for (int arr = 0; arr < numArrays; arr++) {
+        uint64_t remaining = sizes[arr];
+        uint64_t srcOff = 0;
+        uint8_t* gpuDst = (uint8_t*)dDsts[arr];
+        const uint8_t* hostSrc = (const uint8_t*)hostSrcs[arr];
+
+        while (remaining > 0) {
+            size_t chunk = (remaining < (uint64_t)halfSize) ? (size_t)remaining : halfSize;
+
+            memcpy(buf[cur], hostSrc + srcOff, chunk);
+
+            if (!first) CHECKCUDAERR(cudaStreamSynchronize(stream));
+            CHECKCUDAERR(cudaMemcpyAsync(gpuDst, buf[cur], chunk, cudaMemcpyHostToDevice, stream));
+
+            gpuDst += chunk;
+            srcOff += chunk;
+            remaining -= chunk;
+            cur ^= 1;
+            first = false;
+        }
+    }
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+    CHECKCUDAERR(cudaStreamDestroy(stream));
+}
+
 // ============================================================================
 // Incremental computeT kernels — process one wire at a time
 // ============================================================================
@@ -605,7 +565,7 @@ __global__ void zeroPadKernel(Element* __restrict__ buf, uint64_t startElem, uin
     buf[startElem + i] = Fr::zero();
 }
 
-extern "C" void zero_pad_gpu(void* buf, uint64_t startElem, uint64_t endElem)
+extern "C" void gpu_plonk_zero_pad(void* buf, uint64_t startElem, uint64_t endElem)
 {
     uint64_t count = endElem - startElem;
     uint32_t threadsPerBlock = 256;
@@ -620,7 +580,7 @@ extern "C" void zero_pad_gpu(void* buf, uint64_t startElem, uint64_t endElem)
 struct IncrGateConst {
     Element bf[10];       // blindingFactors[0..9] — raw values (not Montgomery)
     Element omega_4x;     // primitive root of the 4x extended domain
-    uint64_t fullN;
+    uint64_t NExt;
 };
 
 // Gate A kernel: T = a*QL + PI,  Tz = ap*QL
@@ -631,16 +591,18 @@ __global__ void kernelGateA(
     Element* __restrict__ tzOut,             // OUT: Tz accumulator (first write)
     const Element* __restrict__ evalA,       // evalsA (4N elements)
     const Element* __restrict__ evalQL,      // QL evaluations (4N elements)
+    const Element* __restrict__ omegaBases,  // precomputed omega^(blockIdx*256)
+    const Element* __restrict__ omegaTid,    // precomputed omega^0..omega^255
     IncrGateConst c)
 {
     uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= c.fullN) return;
+    if (i >= c.NExt) return;
 
     Element a  = evalA[i];
     Element ql = evalQL[i];
     Element pi = tOut[i];    // read PI before overwriting
 
-    Element omega = Fr::pow(c.omega_4x, (uint32_t)i);
+    Element omega = Fr::mul(omegaBases[blockIdx.x], omegaTid[threadIdx.x]);
     Element ap = Fr::add(c.bf[2], Fr::mul(c.bf[1], omega));
 
     tOut[i]  = Fr::add(Fr::mul(a, ql), pi);    // T = a*QL + PI
@@ -654,15 +616,17 @@ __global__ void kernelGateB(
     Element* __restrict__ tzOut,
     const Element* __restrict__ evalB,
     const Element* __restrict__ evalQR,
+    const Element* __restrict__ omegaBases,
+    const Element* __restrict__ omegaTid,
     IncrGateConst c)
 {
     uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= c.fullN) return;
+    if (i >= c.NExt) return;
 
     Element b  = evalB[i];
     Element qr = evalQR[i];
 
-    Element omega = Fr::pow(c.omega_4x, (uint32_t)i);
+    Element omega = Fr::mul(omegaBases[blockIdx.x], omegaTid[threadIdx.x]);
     Element bp = Fr::add(c.bf[4], Fr::mul(c.bf[3], omega));
 
     tOut[i]  = Fr::add(tOut[i], Fr::mul(b, qr));
@@ -677,16 +641,18 @@ __global__ void kernelGateC(
     const Element* __restrict__ evalC,
     const Element* __restrict__ evalQO,
     const Element* __restrict__ evalQC,
+    const Element* __restrict__ omegaBases,
+    const Element* __restrict__ omegaTid,
     IncrGateConst c)
 {
     uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= c.fullN) return;
+    if (i >= c.NExt) return;
 
     Element cc = evalC[i];
     Element qo = evalQO[i];
     Element qc = evalQC[i];
 
-    Element omega = Fr::pow(c.omega_4x, (uint32_t)i);
+    Element omega = Fr::mul(omegaBases[blockIdx.x], omegaTid[threadIdx.x]);
     Element cp = Fr::add(c.bf[6], Fr::mul(c.bf[5], omega));
 
     tOut[i]  = Fr::add(Fr::add(tOut[i], Fr::mul(cc, qo)), qc);
@@ -701,7 +667,7 @@ struct QMPermConst {
     Element Z1[4], Z2[4], Z3[4];
     Element beta, gamma, alpha, alpha2, k1, k2;
     Element omega_4x, omega1;
-    uint64_t fullN;
+    uint64_t NExt;
 };
 
 __global__ void kernelQMPermutation(
@@ -716,10 +682,12 @@ __global__ void kernelQMPermutation(
     const Element* __restrict__ evalS2,
     const Element* __restrict__ evalS3,
     const Element* __restrict__ evalL0,      // L_0 evaluations
+    const Element* __restrict__ omegaBases,
+    const Element* __restrict__ omegaTid,
     QMPermConst c)
 {
     uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= c.fullN) return;
+    if (i >= c.NExt) return;
 
     Element a  = evalA[i];
     Element b  = evalB[i];
@@ -733,8 +701,8 @@ __global__ void kernelQMPermutation(
     Element s3 = evalS3[i];
     Element lagrange = evalL0[i];
 
-    // Compute roots of unity
-    Element omega   = Fr::pow(c.omega_4x, (uint32_t)i);
+    // Compute roots of unity (precomputed base + per-thread table)
+    Element omega   = Fr::mul(omegaBases[blockIdx.x], omegaTid[threadIdx.x]);
     Element omega2  = Fr::square(omega);
     Element omegaW  = Fr::mul(omega, c.omega1);
     Element omegaW2 = Fr::square(omegaW);
@@ -786,83 +754,89 @@ __global__ void kernelQMPermutation(
 }
 
 // C wrapper for incremental gate kernels
-extern "C" void compute_gate_a_gpu(
+extern "C" void gpu_plonk_compute_gate_a(
     void* tOut, void* tzOut,
     const void* evalA, const void* dStaticEvals,
     const void* blindFactors, const void* omega4xPtr,
-    uint64_t domainSize)
+    uint64_t N,
+    const void* omegaBases, const void* omegaTid)
 {
-    uint64_t fullN = 4 * domainSize;
+    uint64_t NExt = 4 * N;
 
     IncrGateConst c;
     memcpy(c.bf, blindFactors, 10 * sizeof(Element));
     c.omega_4x = *(const Element*)omega4xPtr;
-    c.fullN = fullN;
+    c.NExt = NExt;
 
-    // QL is at offset 4*fullN in static evals buffer (slot 4)
-    const Element* dQL = (const Element*)dStaticEvals + 4 * fullN;
+    // QL is at offset 4*NExt in static evals buffer (slot 4)
+    const Element* dQL = (const Element*)dStaticEvals + 4 * NExt;
 
     uint32_t threadsPerBlock = 256;
-    uint32_t blocks = (uint32_t)(fullN / threadsPerBlock);
+    uint32_t blocks = (uint32_t)(NExt / threadsPerBlock);
 
     kernelGateA<<<blocks, threadsPerBlock>>>(
         (Element*)tOut, (Element*)tzOut,
-        (const Element*)evalA, dQL, c);
+        (const Element*)evalA, dQL,
+        (const Element*)omegaBases, (const Element*)omegaTid, c);
     CHECKCUDAERR(cudaGetLastError());
 }
 
-extern "C" void compute_gate_b_gpu(
+extern "C" void gpu_plonk_compute_gate_b(
     void* tOut, void* tzOut,
     const void* evalB, const void* dStaticEvals,
     const void* blindFactors, const void* omega4xPtr,
-    uint64_t domainSize)
+    uint64_t N,
+    const void* omegaBases, const void* omegaTid)
 {
-    uint64_t fullN = 4 * domainSize;
+    uint64_t NExt = 4 * N;
 
     IncrGateConst c;
     memcpy(c.bf, blindFactors, 10 * sizeof(Element));
     c.omega_4x = *(const Element*)omega4xPtr;
-    c.fullN = fullN;
+    c.NExt = NExt;
 
-    // QR is at offset 5*fullN in static evals buffer (slot 5)
-    const Element* dQR = (const Element*)dStaticEvals + 5 * fullN;
+    // QR is at offset 5*NExt in static evals buffer (slot 5)
+    const Element* dQR = (const Element*)dStaticEvals + 5 * NExt;
 
     uint32_t threadsPerBlock = 256;
-    uint32_t blocks = (uint32_t)(fullN / threadsPerBlock);
+    uint32_t blocks = (uint32_t)(NExt / threadsPerBlock);
 
     kernelGateB<<<blocks, threadsPerBlock>>>(
         (Element*)tOut, (Element*)tzOut,
-        (const Element*)evalB, dQR, c);
+        (const Element*)evalB, dQR,
+        (const Element*)omegaBases, (const Element*)omegaTid, c);
     CHECKCUDAERR(cudaGetLastError());
 }
 
-extern "C" void compute_gate_c_gpu(
+extern "C" void gpu_plonk_compute_gate_c(
     void* tOut, void* tzOut,
     const void* evalC, const void* dStaticEvals,
     const void* blindFactors, const void* omega4xPtr,
-    uint64_t domainSize)
+    uint64_t N,
+    const void* omegaBases, const void* omegaTid)
 {
-    uint64_t fullN = 4 * domainSize;
+    uint64_t NExt = 4 * N;
 
     IncrGateConst c;
     memcpy(c.bf, blindFactors, 10 * sizeof(Element));
     c.omega_4x = *(const Element*)omega4xPtr;
-    c.fullN = fullN;
+    c.NExt = NExt;
 
-    // QO at offset 7*fullN, QC at offset 8*fullN in static evals buffer
-    const Element* dQO = (const Element*)dStaticEvals + 7 * fullN;
-    const Element* dQC = (const Element*)dStaticEvals + 8 * fullN;
+    // QO at offset 7*NExt, QC at offset 8*NExt in static evals buffer
+    const Element* dQO = (const Element*)dStaticEvals + 7 * NExt;
+    const Element* dQC = (const Element*)dStaticEvals + 8 * NExt;
 
     uint32_t threadsPerBlock = 256;
-    uint32_t blocks = (uint32_t)(fullN / threadsPerBlock);
+    uint32_t blocks = (uint32_t)(NExt / threadsPerBlock);
 
     kernelGateC<<<blocks, threadsPerBlock>>>(
         (Element*)tOut, (Element*)tzOut,
-        (const Element*)evalC, dQO, dQC, c);
+        (const Element*)evalC, dQO, dQC,
+        (const Element*)omegaBases, (const Element*)omegaTid, c);
     CHECKCUDAERR(cudaGetLastError());
 }
 
-extern "C" void compute_qm_permutation_gpu(
+extern "C" void gpu_plonk_compute_qm_permutation(
     void* tOut, void* tzOut,
     const void* evalA, const void* evalB, const void* evalC,
     const void* evalZ,
@@ -873,9 +847,10 @@ extern "C" void compute_qm_permutation_gpu(
     const void* k1Ptr, const void* k2Ptr,
     const void* omega4xPtr, const void* omega1Ptr,
     const void* Z1Ptr, const void* Z2Ptr, const void* Z3Ptr,
-    uint64_t domainSize)
+    uint64_t N,
+    const void* omegaBases, const void* omegaTid)
 {
-    uint64_t fullN = 4 * domainSize;
+    uint64_t NExt = 4 * N;
 
     QMPermConst c;
     memcpy(c.bf, blindFactors, 10 * sizeof(Element));
@@ -890,33 +865,65 @@ extern "C" void compute_qm_permutation_gpu(
     c.k2       = *(const Element*)k2Ptr;
     c.omega_4x = *(const Element*)omega4xPtr;
     c.omega1   = *(const Element*)omega1Ptr;
-    c.fullN    = fullN;
+    c.NExt    = NExt;
 
     // Static eval layout: S1(0), S2(1), S3(2), L0(3), QL(4), QR(5), QM(6), QO(7), QC(8)
     const Element* dStaticBase = (const Element*)dStaticEvals;
-    const Element* dS1 = dStaticBase + 0 * fullN;
-    const Element* dS2 = dStaticBase + 1 * fullN;
-    const Element* dS3 = dStaticBase + 2 * fullN;
-    const Element* dL0 = dStaticBase + 3 * fullN;
-    const Element* dQM = dStaticBase + 6 * fullN;
+    const Element* dS1 = dStaticBase + 0 * NExt;
+    const Element* dS2 = dStaticBase + 1 * NExt;
+    const Element* dS3 = dStaticBase + 2 * NExt;
+    const Element* dL0 = dStaticBase + 3 * NExt;
+    const Element* dQM = dStaticBase + 6 * NExt;
 
     uint32_t threadsPerBlock = 256;
-    uint32_t blocks = (uint32_t)(fullN / threadsPerBlock);
+    uint32_t blocks = (uint32_t)(NExt / threadsPerBlock);
 
     kernelQMPermutation<<<blocks, threadsPerBlock>>>(
         (Element*)tOut, (Element*)tzOut,
         (const Element*)evalA, (const Element*)evalB, (const Element*)evalC,
         (const Element*)evalZ,
         dQM, dS1, dS2, dS3, dL0,
+        (const Element*)omegaBases, (const Element*)omegaTid,
         c);
     CHECKCUDAERR(cudaGetLastError());
     // Must sync before INTT which runs on its own stream
     CHECKCUDAERR(cudaDeviceSynchronize());
 }
 
-// ============================================================================
-// GPU Parallel Prefix Scan — Multiplicative (for Z polynomial)
-// ============================================================================
+// Precompute omega^(i * blockSize) for all block indices
+__global__ void kernelPrecomputeOmegaBases(
+    Element* __restrict__ bases,
+    Element omega,
+    uint32_t blockSize,
+    uint32_t numBlocks)
+{
+    uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numBlocks) return;
+    bases[i] = Fr::pow(omega, (uint32_t)(i * blockSize));
+}
+
+// Precompute omega^0 .. omega^255
+__global__ void kernelPrecomputeOmegaTid(
+    Element* __restrict__ table,
+    Element omega)
+{
+    uint32_t i = threadIdx.x;
+    table[i] = Fr::pow(omega, i);
+}
+
+extern "C" void gpu_plonk_precompute_omega_tables_async(
+    void* dBases, void* dTid, const void* omega4xPtr,
+    uint32_t blockSize, uint32_t numBlocks, void* stream)
+{
+    Element omega = *(const Element*)omega4xPtr;
+    cudaStream_t s = (cudaStream_t)stream;
+    uint32_t t = 256;
+    uint32_t b = (numBlocks + t - 1) / t;
+    kernelPrecomputeOmegaBases<<<b, t, 0, s>>>((Element*)dBases, omega, blockSize, numBlocks);
+    CHECKCUDAERR(cudaGetLastError());
+    kernelPrecomputeOmegaTid<<<1, 256, 0, s>>>((Element*)dTid, omega);
+    CHECKCUDAERR(cudaGetLastError());
+}
 
 // Block-level inclusive scan: 256 threads, 4 elements/thread = 1024 elems/block
 __global__ void mulScanBlockKernel(Element* data, Element* blockTotals, uint64_t N)
@@ -1004,25 +1011,22 @@ static void mulScanRecursive(Element* dData, uint64_t N, Element* dWork)
     Element* nextWork = dWork + numBlocks;
     mulScanRecursive(dWork, numBlocks, nextWork);
 
-    if (numBlocks > 1) {
-        mulScanPropagateKernel<<<numBlocks - 1, 256>>>(dData + 1024, dWork, N - 1024);
-        CHECKCUDAERR(cudaGetLastError());
-    }
+    mulScanPropagateKernel<<<numBlocks - 1, 256>>>(dData + 1024, dWork, N - 1024);
+    CHECKCUDAERR(cudaGetLastError());
+    
 }
 
-extern "C" void gpu_prefix_scan_multiply(void* dData, uint64_t N, void* dWork)
+extern "C" void gpu_plonk_prefix_scan_multiply(void* dData, uint64_t N, void* dWork)
 {
     mulScanRecursive((Element*)dData, N, (Element*)dWork);
-    CHECKCUDAERR(cudaDeviceSynchronize());
 }
 
-extern "C" void rotate_left_gpu(void* dst, const void* src, uint64_t N)
+extern "C" void gpu_plonk_rotate_left(void* dst, const void* src, uint64_t N)
 {
     uint32_t threads = 256;
     uint32_t blocks = (uint32_t)((N + threads - 1) / threads);
     rotateLeftKernel<<<blocks, threads>>>((Element*)dst, (const Element*)src, N);
     CHECKCUDAERR(cudaGetLastError());
-    CHECKCUDAERR(cudaDeviceSynchronize());
 }
 
 // ============================================================================
@@ -1140,7 +1144,7 @@ __global__ void applyAffineScanKernel(Element* coefs, const AffinePair* scannedP
     coefs[i + 1] = Fr::add(Fr::mul(scannedPairs[i].a, y0), scannedPairs[i].b);
 }
 
-extern "C" void compute_div_zerofier_gpu(
+extern "C" void gpu_plonk_compute_div_zerofier(
     void* dCoefs, uint64_t length,
     const void* alphaPtr, const void* y0Ptr,
     void* dPairWork)
@@ -1167,10 +1171,6 @@ extern "C" void compute_div_zerofier_gpu(
 
     CHECKCUDAERR(cudaDeviceSynchronize());
 }
-
-// ============================================================================
-// compute_z_ratios_gpu variant — keeps result on GPU (no D2H)
-// ============================================================================
 
 // ============================================================================
 // GPU divZh + T+Tz addition (combined kernel)
@@ -1202,7 +1202,7 @@ __global__ void divZhAddKernel(Element* T, const Element* Tz, uint64_t N)
     T[3*N + j] = Fr::add(c3, Tz[3*N + j]);
 }
 
-extern "C" void divzh_add_gpu(void* dT, const void* dTz, uint64_t N)
+extern "C" void gpu_plonk_divzh_add(void* dT, const void* dTz, uint64_t N)
 {
     uint32_t threads = 256;
     uint32_t blocks = (uint32_t)((N + threads - 1) / threads);
@@ -1243,7 +1243,7 @@ __global__ void splitTBlindingKernel(
     }
 }
 
-extern "C" void split_t_blinding_gpu(
+extern "C" void gpu_plonk_split_t_blinding(
     void* dT1, void* dT2, void* dT3,
     const void* dTcombined,
     const void* bf10Ptr, const void* bf11Ptr, uint64_t N)
@@ -1259,54 +1259,366 @@ extern "C" void split_t_blinding_gpu(
     CHECKCUDAERR(cudaDeviceSynchronize());
 }
 
-// ============================================================================
-// compute_z_ratios_gpu variant — keeps result on GPU (no D2H)
-// ============================================================================
+// Fused gather+z_ratios — reads witness+maps from GPU, uses precomputed omega tables
+__global__ void kernelGatherZRatios(
+    Element* __restrict__ ratioOut,
+    const uint32_t* __restrict__ mapA,
+    const uint32_t* __restrict__ mapB,
+    const uint32_t* __restrict__ mapC,
+    const Element* __restrict__ witness,
+    const Element* __restrict__ intWitness,
+    uint32_t nDirect,
+    uint64_t nConstraints,
+    const Element* __restrict__ sigma1,
+    const Element* __restrict__ sigma2,
+    const Element* __restrict__ sigma3,
+    uint32_t sigmaStride,
+    Element beta,
+    Element gamma,
+    Element k1,
+    Element k2,
+    const Element* __restrict__ omegaBases,
+    const Element* __restrict__ omegaTid,
+    uint64_t N)
+{
+    uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= N) return;
 
-extern "C" void compute_z_ratios_gpu_no_d2h(
-    const void* buffA, const void* buffB, const void* buffC,
+    Element a, b, c;
+    if (i < nConstraints) {
+        // Inline gather + Montgomery for wire A
+        uint32_t idxA = mapA[i];
+        a = (idxA < nDirect) ? witness[idxA] : intWitness[idxA - nDirect];
+        Fr::toMontgomery(a);
+
+        // Inline gather + Montgomery for wire B
+        uint32_t idxB = mapB[i];
+        b = (idxB < nDirect) ? witness[idxB] : intWitness[idxB - nDirect];
+        Fr::toMontgomery(b);
+
+        // Inline gather + Montgomery for wire C
+        uint32_t idxC = mapC[i];
+        c = (idxC < nDirect) ? witness[idxC] : intWitness[idxC - nDirect];
+        Fr::toMontgomery(c);
+    } else {
+        // Zero-pad region
+        a = Fr::zero();
+        b = Fr::zero();
+        c = Fr::zero();
+    }
+
+    // omega^i from precomputed tables: omega^(blockIdx*256) * omega^(threadIdx)
+    Element omega_i = Fr::mul(omegaBases[blockIdx.x], omegaTid[threadIdx.x]);
+    Element betaw = Fr::mul(beta, omega_i);
+    
+    // Z(X) := numArr / denArr
+    // numArr := (a + beta·ω + gamma)(b + beta·ω·k1 + gamma)(c + beta·ω·k2 + gamma)
+    Element num1 = Fr::add(Fr::add(a, betaw), gamma);
+    Element num2 = Fr::add(Fr::add(b, Fr::mul(k1, betaw)), gamma);
+    Element num3 = Fr::add(Fr::add(c, Fr::mul(k2, betaw)), gamma);
+    Element num = Fr::mul(num1, Fr::mul(num2, num3));
+
+    // denArr := (a + beta·sigma1 + gamma)(b + beta·sigma2 + gamma)(c + beta·sigma3 + gamma)
+    Element den1 = Fr::add(Fr::add(a, Fr::mul(beta, sigma1[i * sigmaStride])), gamma);
+    Element den2 = Fr::add(Fr::add(b, Fr::mul(beta, sigma2[i * sigmaStride])), gamma);
+    Element den3 = Fr::add(Fr::add(c, Fr::mul(beta, sigma3[i * sigmaStride])), gamma);
+    Element den = Fr::mul(den1, Fr::mul(den2, den3));
+
+    ratioOut[i] = Fr::mul(num, Fr::reciprocal(den));
+}
+
+extern "C" void gpu_plonk_compute_z_ratios_gather(
+    void* ratioOut,
+    const void* mapA, const void* mapB, const void* mapC,
+    const void* witness, const void* intWitness,
+    uint32_t nDirect, uint64_t nConstraints,
     const void* dStaticEvals,
     const void* betaPtr, const void* gammaPtr,
-    const void* k1Ptr, const void* k2Ptr, const void* omegaPtr,
-    uint64_t domainSize, void* dTemp4N)
+    const void* k1Ptr, const void* k2Ptr,
+    uint64_t N,
+    const void* omegaBases, const void* omegaTid)
 {
-    const Element* hBuffA = (const Element*)buffA;
-    const Element* hBuffB = (const Element*)buffB;
-    const Element* hBuffC = (const Element*)buffC;
-
     Element beta  = *(const Element*)betaPtr;
     Element gamma = *(const Element*)gammaPtr;
     Element k1    = *(const Element*)k1Ptr;
     Element k2    = *(const Element*)k2Ptr;
-    Element omega = *(const Element*)omegaPtr;
 
-    size_t arrayBytes = domainSize * sizeof(Element);
-    uint64_t fullN = 4 * domainSize;
-
+    uint64_t NExt = 4 * N;
     const Element* dStaticBase = (const Element*)dStaticEvals;
-    const Element* dS1 = dStaticBase + 0 * fullN;
-    const Element* dS2 = dStaticBase + 1 * fullN;
-    const Element* dS3 = dStaticBase + 2 * fullN;
-
-    Element* dRatioOut = (Element*)dTemp4N;
-    Element* dBuffA = dRatioOut + domainSize;
-    Element* dBuffB = dBuffA + domainSize;
-    Element* dBuffC = dBuffB + domainSize;
-
-    CHECKCUDAERR(cudaMemcpy(dBuffA, hBuffA, arrayBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dBuffB, hBuffB, arrayBytes, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(dBuffC, hBuffC, arrayBytes, cudaMemcpyHostToDevice));
+    const Element* dS1 = dStaticBase + 0 * NExt;
+    const Element* dS2 = dStaticBase + 1 * NExt;
+    const Element* dS3 = dStaticBase + 2 * NExt;
 
     uint32_t threadsPerBlock = 256;
-    uint32_t blocks = (uint32_t)((domainSize + threadsPerBlock - 1) / threadsPerBlock);
+    uint32_t blocks = (uint32_t)((N + threadsPerBlock - 1) / threadsPerBlock);
 
-    computeZRatiosKernel<<<blocks, threadsPerBlock>>>(
-        dRatioOut, dBuffA, dBuffB, dBuffC,
+    kernelGatherZRatios<<<blocks, threadsPerBlock>>>(
+        (Element*)ratioOut,
+        (const uint32_t*)mapA, (const uint32_t*)mapB, (const uint32_t*)mapC,
+        (const Element*)witness, (const Element*)intWitness,
+        nDirect, nConstraints,
         dS1, dS2, dS3, 4,
-        beta, gamma, k1, k2, omega,
-        domainSize);
+        beta, gamma, k1, k2,
+        (const Element*)omegaBases, (const Element*)omegaTid,
+        N);
 
     CHECKCUDAERR(cudaGetLastError());
     CHECKCUDAERR(cudaDeviceSynchronize());
-    // No D2H — ratios stay in dTemp4N[0..domainSize)
+}
+
+// ============================================================================
+// GPU computeR+Wxi kernel — replaces fused CPU loop
+// ============================================================================
+// Computes Wxi polynomial coefficients directly on GPU from 15 input polynomials.
+// All inputs are GPU-resident: A/B/C/Z at dPolCoef, T1/T2/T3 at dT slots,
+// QM/QL/QR/QO/QC/S1/S2/S3 uploaded to repurposed d_piBuffer/d_lagBuffer.
+
+struct RWxiConst {
+    Element coef_ab, eval_a, eval_b, eval_c;
+    Element e2_plus_e4, e3_beta;
+    Element v1, v2, v3, v4, v5;
+    Element neg_zh, xin, xin2;
+    Element r0, wxi_offset;
+    // Blinding correction: blindCoefficients modifies CPU poly coefs but GPU dPolCoef has unblinded IFFT data.
+    // blindDelta[j] = v1*bfA[j] + v2*bfB[j] + v3*bfC[j] + e2_plus_e4*bfZ[j]
+    // Subtracted at i=j (j=0,1,2), added at i=N+j.
+    Element blindDelta[3];
+    uint64_t N;
+};
+
+__global__ void computeRWxiKernel(
+    Element* __restrict__ wxi,
+    const Element* __restrict__ polA, const Element* __restrict__ polB,
+    const Element* __restrict__ polC, const Element* __restrict__ polZ,
+    const Element* __restrict__ polQM, const Element* __restrict__ polQL,
+    const Element* __restrict__ polQR, const Element* __restrict__ polQO,
+    const Element* __restrict__ polQC,
+    const Element* __restrict__ polS1, const Element* __restrict__ polS2,
+    const Element* __restrict__ polS3,
+    const Element* __restrict__ polT1, const Element* __restrict__ polT2,
+    const Element* __restrict__ polT3,
+    RWxiConst c)
+{
+    uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= c.N + 6) return;
+
+    Element val = Fr::zero();
+
+    // Phase 1: zkey selectors + sigmas (i < N)
+    if (i < c.N) {
+        val = Fr::mul(polQM[i], c.coef_ab);
+        val = Fr::add(val, Fr::mul(polQL[i], c.eval_a));
+        val = Fr::add(val, Fr::mul(polQR[i], c.eval_b));
+        val = Fr::add(val, Fr::mul(polQO[i], c.eval_c));
+        val = Fr::add(val, polQC[i]);
+        val = Fr::sub(val, Fr::mul(polS3[i], c.e3_beta));
+        val = Fr::add(val, Fr::mul(polS1[i], c.v4));
+        val = Fr::add(val, Fr::mul(polS2[i], c.v5));
+    }
+
+    // Phase 2: Z polynomial (i < N — GPU has unblinded IFFT data)
+    if (i < c.N) {
+        val = Fr::add(val, Fr::mul(polZ[i], c.e2_plus_e4));
+    }
+
+    // Phase 3: Wire polynomials (i < N — GPU has unblinded IFFT data)
+    if (i < c.N) {
+        val = Fr::add(val, Fr::mul(polA[i], c.v1));
+        val = Fr::add(val, Fr::mul(polB[i], c.v2));
+        val = Fr::add(val, Fr::mul(polC[i], c.v3));
+    }
+
+    // Phase 3b: Blinding corrections for A/B/C/Z
+    // CPU blindCoefficients subtracts bf at low indices and adds bf at high indices.
+    // blindDelta[j] = combined correction = v1*bfA[j] + v2*bfB[j] + v3*bfC[j] + e2_plus_e4*bfZ[j]
+    if (i < 3) {
+        val = Fr::sub(val, c.blindDelta[i]);
+    }
+    if (i >= c.N && i < c.N + 3) {
+        val = Fr::add(val, c.blindDelta[i - c.N]);
+    }
+
+    // Phase 4: Quotient polynomial combination
+    // T3 has N+6 elements, T1/T2 have N+1 elements each
+    Element tval = Fr::mul(polT3[i], c.xin2);
+    if (i <= c.N) {
+        tval = Fr::add(tval, polT1[i]);
+        tval = Fr::add(tval, Fr::mul(polT2[i], c.xin));
+    }
+    val = Fr::add(val, Fr::mul(tval, c.neg_zh));
+
+    // Phase 5: Scalar adjustments at index 0
+    if (i == 0) {
+        val = Fr::add(val, c.r0);
+        val = Fr::sub(val, c.wxi_offset);
+    }
+
+    wxi[i] = val;
+}
+
+extern "C" void gpu_plonk_compute_r_wxi(
+    void* wxi,
+    const void* polA, const void* polB, const void* polC, const void* polZ,
+    const void* polQM, const void* polQL, const void* polQR, const void* polQO,
+    const void* polQC,
+    const void* polS1, const void* polS2, const void* polS3,
+    const void* polT1, const void* polT2, const void* polT3,
+    const void* constants, uint64_t N)
+{
+    uint32_t threads = 256;
+    uint32_t blocks = (uint32_t)((N + 6 + threads - 1) / threads);
+    RWxiConst c = *(const RWxiConst*)constants;
+    computeRWxiKernel<<<blocks, threads>>>(
+        (Element*)wxi,
+        (const Element*)polA, (const Element*)polB, (const Element*)polC, (const Element*)polZ,
+        (const Element*)polQM, (const Element*)polQL, (const Element*)polQR, (const Element*)polQO,
+        (const Element*)polQC,
+        (const Element*)polS1, (const Element*)polS2, (const Element*)polS3,
+        (const Element*)polT1, (const Element*)polT2, (const Element*)polT3,
+        c);
+    CHECKCUDAERR(cudaGetLastError());
+    CHECKCUDAERR(cudaDeviceSynchronize());
+}
+
+__global__ void kernelGatherWitness(
+    Element* __restrict__ evalOut,
+    const uint32_t* __restrict__ mapBuffer,
+    const Element* __restrict__ witness,
+    const Element* __restrict__ intWitness,
+    uint32_t nDirect,
+    uint64_t n)
+{
+    uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+
+    uint32_t idx = mapBuffer[i];
+    Element val;
+    if (idx < nDirect) {
+        val = witness[idx];
+    } else {
+        val = intWitness[idx - nDirect];
+    }
+    // Convert normal form → Montgomery form
+    Fr::toMontgomery(val);
+    evalOut[i] = val;
+}
+
+extern "C" void gpu_plonk_gather_witness(
+    void* evalOut, const void* mapBuffer,
+    const void* witness, const void* intWitness,
+    uint32_t nDirect, uint64_t nConstraints, uint64_t N)
+{
+    uint32_t threads = 256;
+    uint32_t blocks = (uint32_t)((nConstraints + threads - 1) / threads);
+    kernelGatherWitness<<<blocks, threads>>>(
+        (Element*)evalOut,
+        (const uint32_t*)mapBuffer,
+        (const Element*)witness,
+        (const Element*)intWitness,
+        nDirect, nConstraints);
+    CHECKCUDAERR(cudaGetLastError());
+
+    // Zero-pad evalOut[nConstraints..N) for IFFT
+    if (nConstraints < N) {
+        size_t padBytes = (N - nConstraints) * sizeof(Element);
+        CHECKCUDAERR(cudaMemset((Element*)evalOut + nConstraints, 0, padBytes));
+    }
+    // This is necessary becasue sppark's IFFT is lanuched into specific CUDA stream, and we need to ensure the gather+pad completes before IFFT starts.
+    CHECKCUDAERR(cudaDeviceSynchronize());
+}
+
+// ============================================================================
+// Phase 10: GPU polynomial evaluation at a single point
+// ============================================================================
+// Evaluates P(x) = sum_{i=0}^{N-1} coef[i] * x^i using parallel monomial evaluation.
+// Phase 1: Each thread computes coef[i]*x^i, block-level reduction → per-block partial sum.
+// Phase 2: Iterative reduction of block partial sums → single result.
+
+__global__ void kernelPolyEval(
+    Element* __restrict__ blockResults,
+    const Element* __restrict__ coefs,
+    Element point,
+    uint64_t N)
+{
+    __shared__ Element sdata[256];
+    uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (i < N) {
+        Element xi = Fr::pow(point, (uint32_t)i);
+        sdata[threadIdx.x] = Fr::mul(coefs[i], xi);
+    } else {
+        sdata[threadIdx.x] = Fr::zero();
+    }
+    __syncthreads();
+
+    // Block-level tree reduction
+    for (uint32_t s = 128; s > 0; s >>= 1) {
+        if (threadIdx.x < s) {
+            sdata[threadIdx.x] = Fr::add(sdata[threadIdx.x], sdata[threadIdx.x + s]);
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        blockResults[blockIdx.x] = sdata[0];
+    }
+}
+
+// Reduction kernel: sums data[0..count) → data[0..numBlocks)
+__global__ void kernelReduceSum(
+    Element* __restrict__ data,
+    uint64_t count)
+{
+    __shared__ Element sdata[256];
+    uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    sdata[threadIdx.x] = (i < count) ? data[i] : Fr::zero();
+    __syncthreads();
+
+    for (uint32_t s = 128; s > 0; s >>= 1) {
+        if (threadIdx.x < s)
+            sdata[threadIdx.x] = Fr::add(sdata[threadIdx.x], sdata[threadIdx.x + s]);
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        data[blockIdx.x] = sdata[0];
+    }
+}
+
+// Evaluate polynomial on GPU, return result to host.
+// hostResult: HOST pointer for single FrElement output
+// coefs: DEVICE pointer to N coefficient FrElements (Montgomery form)
+// pointPtr: HOST pointer to single FrElement (evaluation point, Montgomery form)
+// N: number of coefficients
+// dWork: device scratch buffer, must hold >= ceil(N/256) FrElements
+extern "C" void gpu_plonk_poly_eval_to_host(
+    void* hostResult,
+    const void* coefs,
+    const void* pointPtr,
+    uint64_t N,
+    void* dWork)
+{
+    Element point = *(const Element*)pointPtr;
+    uint32_t threads = 256;
+
+    // Phase 1: N elements → numBlocks partial sums
+    uint32_t numBlocks = (uint32_t)((N + threads - 1) / threads);
+    Element* work = (Element*)dWork;
+
+    kernelPolyEval<<<numBlocks, threads>>>(
+        work, (const Element*)coefs, point, N);
+    CHECKCUDAERR(cudaGetLastError());
+
+    // Phase 2+: Iterative reduction until 1 element remains
+    uint64_t count = numBlocks;
+    while (count > 1) {
+        uint32_t nb = (uint32_t)((count + threads - 1) / threads);
+        kernelReduceSum<<<nb, threads>>>(work, count);
+        CHECKCUDAERR(cudaGetLastError());
+        count = nb;
+    }
+
+    // D2H single result element (32 bytes)
+    CHECKCUDAERR(cudaMemcpy(hostResult, work, sizeof(Element), cudaMemcpyDeviceToHost));
+    CHECKCUDAERR(cudaDeviceSynchronize());
 }

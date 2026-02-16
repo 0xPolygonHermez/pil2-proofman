@@ -20,6 +20,7 @@ using json = nlohmann::json;
 using namespace std::chrono;
 
 #define BLINDINGFACTORSLENGTH_PLONK_GPU 11
+#define PLONK_GPU_TIMING  // Comment out to disable sub-round timing prints
 
 namespace PlonkGPU {
 
@@ -35,7 +36,10 @@ namespace PlonkGPU {
         Zkey::PlonkZkeyHeader *zkey;
         u_int32_t zkeyPower;
         std::string curveName;
-        size_t sDomain;
+        size_t N;
+        size_t NBytes;
+        size_t NExt;
+        size_t NExtBytes;
 
         FrElement *reservedMemoryPtr;
         uint64_t reservedMemorySize;
@@ -53,21 +57,11 @@ namespace PlonkGPU {
 
         Zkey::Addition<Engine> *additionsBuff;
 
-        FrElement *inverses;
-        FrElement *products;
-
-        // This is the length of the buffer that must be zeroed after each proof (starting from buffers["A"] pointer)
-        u_int64_t buffersLength;
-
         std::map<std::string, FrElement *> polPtr;
-        std::map<std::string, FrElement *> evalPtr;
 
         std::map<std::string, u_int32_t *> mapBuffers;
         std::map<std::string, FrElement *> buffers;
-        std::map<std::string, Polynomial<Engine> *> polynomials;
-        std::map<std::string, Evaluations<Engine> *> evaluations;
 
-        std::map <std::string, FrElement> toInverse;
         std::map <std::string, FrElement> challenges;
 
         FrElement blindingFactors[BLINDINGFACTORSLENGTH_PLONK_GPU + 1];
@@ -75,37 +69,62 @@ namespace PlonkGPU {
         Keccak256Transcript<Engine> *transcript;
         SnarkProof<Engine> *proof;
 
-        std::thread asyncTransferSigma;   // S1,S2,S3 — join before computeZ
-        std::thread asyncTransferQ;       // QL-QC — join before computeT
-        std::thread asyncComputePI;       // PI(X) — join in computeT before compute_t_evaluations_gpu
-        void* d_staticEvalsBuffer = nullptr;
-        size_t staticEvalsBufferSize = 0;
+        std::thread asyncTransferSigma;      // S1,S2,S3 — join before computeZ
+        std::thread asyncTransferQ;          // QL-QC — join before computeT
+        std::thread asyncComputePI;          // PI(X) — join in computeT before compute_t_evaluations_gpu
+        std::thread asyncTransferPolsBatch1;  // zkey batch 1 (QC,S1,S2,S3 coefs → slot 8) — launched in computeT after gate_C
+        std::thread asyncTransferPolsBatch2;  // zkey batch 2 (QM,QL,QR,QO coefs → slot 6) — launched after computeT
+        size_t pinnedSize = 0;
         void* pinnedS = nullptr;
         void* pinnedQ = nullptr;
         void* pinnedPI = nullptr;
-        size_t pinnedSize = 0;
-
-        void* d_piBuffer = nullptr;   // GPU: PI accumulator
-        void* d_lagBuffer = nullptr;  // GPU: one Lagrange slice
-
-        void* dPTau = nullptr;        // GPU: persistent Powers of Tau (domainSize+6 G1PointAffine)
 
         void* d_unifiedBuffer = nullptr;  // Single GPU allocation for all buffers
         uint64_t unifiedBufferSize = 0;
-        void* dPolCoefA = nullptr;        // Wire A polynomial coefficients on GPU
-        void* dPolCoefB = nullptr;
-        void* dPolCoefC = nullptr;
-        void* dPolCoefZ = nullptr;
-        void* dAux = nullptr;             // Reusable GPU scratch buffer
 
-        // GPU pointers for split T1/T2/T3 (in repurposed d_staticEvalsBuffer after computeT)
-        void* dT1 = nullptr;
-        void* dT2 = nullptr;
-        void* dT3 = nullptr;
+        // alias for specific regions of d_unifiedBuffer
+        void* d_staticEvalsBuffer = nullptr;
+        void* d_piBuffer = nullptr;   
+        void* d_lagBuffer = nullptr;  
+        void* d_ptau = nullptr;
+        void* d_polCoefA = nullptr;
+        void* d_polCoefB = nullptr;
+        void* d_polCoefC = nullptr;
+        void* d_polCoefZ = nullptr;
+        void* d_aux = nullptr;
+        void* d_gathered = nullptr;     
+        void* d_ratios = nullptr;       
+        void* d_zEvals = nullptr;     
+        void* d_scanWork = nullptr;
+        void* d_t1 = nullptr;
+        void* d_t2 = nullptr;
+        void* d_t3 = nullptr;
+        void* d_coefQM = nullptr;
+        void* d_coefQL = nullptr;
+        void* d_coefQR = nullptr;
+        void* d_coefQO = nullptr;
+        void* d_coefQC = nullptr;
+        void* d_coefS1 = nullptr;
+        void* d_coefS2 = nullptr;
+        void* d_coefS3 = nullptr;
+        void* d_witness = nullptr;
+        void* d_intWitness = nullptr;
+        void* d_mapBuffers = nullptr;
+        void* d_omegaBasesN = nullptr;      // omega^(blockIdx*256) for N
+        void* d_omegaTidN = nullptr;        // omega^(0..255) for N
+        void* d_omegaBasesNExt = nullptr;   // omega_4x^(blockIdx*256) for NExt
+        void* d_omegaTidNExt = nullptr;     // omega_4x^(0..255) for NExt
 
+        void* pTauStream = nullptr;         // Non-blocking CUDA stream to copy pTau to GPU
+        void* omegasStream = nullptr;       // Non-blocking CUDA stream to generate precomputed omega tables
+        void* pinnedD2HStaging = nullptr;   // Pinned staging buffer for async D2H
+        size_t pinnedD2HStagingSize = 0;
+       
         BinFileUtils::BinFile* fdZkeyPtr = nullptr;
 
         bool preAllocated = false;
+        bool precomputedPinned = false;
+
     public:
         PlonkProverGPU(Engine &E);
         PlonkProverGPU(Engine &E, void* reservedMemoryPtr, uint64_t reservedMemorySize);
@@ -147,8 +166,6 @@ namespace PlonkGPU {
 
         void computeWirePolynomials();
 
-        void computeWirePolynomial(std::string polName, FrElement blindingFactors[]);
-
         void computeZ();
 
         void computeT();
@@ -159,20 +176,10 @@ namespace PlonkGPU {
 
         void computeWxiw();
 
-        void batchInverse(FrElement *elements, u_int64_t length);
-
-        FrElement *polynomialFromMontgomery(Polynomial<Engine> *polynomial);
-
         void applyBlindingCorrection(G1Point &commitment, FrElement *bFactors, u_int32_t nFactors);
-
-        G1Point multiExponentiationGPU(Polynomial<Engine> *polynomial);
 
         // GPU MSM from device-resident Montgomery-form scalars (mont=true, no fromMontgomery or H2D)
         G1Point multiExponentiationGPU_devptr(void* dScalars, size_t npoints);
-
-        // GPU-accelerated IFFT: evaluations → polynomial coefficients
-        Polynomial<Engine>* polynomialFromEvaluationsGPU(
-            FrElement *evaluations, FrElement *reservedBuffer, u_int64_t length, u_int64_t blindLength, u_int32_t power);
     };
 }
 
