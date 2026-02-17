@@ -332,6 +332,10 @@ where
         self.pctx.global_info.get_proving_key_path()
     }
 
+    pub fn get_device_buffers_ptr(&self) -> *mut c_void {
+        self.pctx.get_device_buffers_ptr()
+    }
+
     pub fn get_preallocated_buffers(&self) -> (Arc<Vec<F>>, *mut c_void, Arc<AtomicBool>) {
         (self.aux_trace.clone(), self.pctx.get_device_buffers_ptr(), self.reload_fixed_pols_gpu.clone())
     }
