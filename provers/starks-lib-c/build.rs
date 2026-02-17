@@ -274,7 +274,7 @@ fn ensure_blst_compiled(pil2_stark_path: &Path) {
     eprintln!("blst library not found at {}, compiling...", blst_lib.display());
 
     let build_script = blst_path.join("build.sh");
-    
+
     // Track blst build script and source files for changes
     println!("cargo:rerun-if-changed={}", build_script.display());
     println!("cargo:rerun-if-changed={}", blst_path.join("src").display());
