@@ -9,25 +9,16 @@ use std::io::Read;
 use std::fs;
 use fields::{PrimeField64, Transcript, Poseidon16};
 use crate::{
-    initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode,
+    initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PolMap, SetupCtx, StdMode,
     RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
 };
 
 use std::ffi::c_void;
 use proofman_starks_lib_c::{
     check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
+    get_unified_buffer_gpu_c, alloc_device_large_buffers_c,
 };
 use proofman_util::DeviceBuffer;
-
-#[derive(Debug)]
-pub struct MaxSizes {
-    pub total_const_area: u64,
-    pub aux_trace_area: u64,
-    pub aux_trace_recursive_area: u64,
-    pub total_const_area_aggregation: u64,
-    pub n_streams: u64,
-    pub n_recursive_streams: u64,
-}
 
 #[derive(Debug)]
 pub struct Values<F> {
@@ -46,7 +37,7 @@ impl<F> Default for Values<F> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct InstancesInfo {
     pub constraints: Vec<usize>,
     pub hint_ids: Vec<usize>,
@@ -114,7 +105,7 @@ impl BorshDeserialize for ProofOptions {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct DebugInfo {
     pub debug_instances: AirGroupMap,
     pub debug_global_instances: Vec<usize>,
@@ -822,8 +813,27 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.air_instances[instance_id].read().unwrap().get_stream_id()
     }
 
-    pub fn get_air_instance_trace(&self, instance_id: usize, first_row: usize, n_rows: usize) -> Vec<RowInfo> {
-        self.air_instances[instance_id].read().unwrap().get_trace(first_row, n_rows)
+    pub fn get_air_instance_trace(
+        &self,
+        instance_id: usize,
+        first_row: usize,
+        n_rows: usize,
+        offset: Option<usize>,
+    ) -> Vec<RowInfo> {
+        self.air_instances[instance_id].read().unwrap().get_trace(first_row, n_rows, offset)
+    }
+
+    pub fn get_instance_air_values(&self, instance_id: usize, airvalues_map: &[PolMap]) -> ProofmanResult<Vec<u64>> {
+        let air_values = self.air_instances[instance_id].read().unwrap().get_air_values();
+
+        let mut result = Vec::new();
+        for (p, air_value) in airvalues_map.iter().enumerate() {
+            if air_value.stage == 1 {
+                result.push(air_values[p].as_canonical_u64());
+            }
+        }
+
+        Ok(result)
     }
 
     pub fn get_air_instance_air_values(
@@ -881,12 +891,16 @@ impl<F: PrimeField64> ProofCtx<F> {
         aggregation: bool,
         gpu_params: &ParamsGPU,
     ) -> ProofmanResult<(u64, u64, u64)> {
+        let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
+            self.mpi_ctx.node_rank as u32,
+            self.mpi_ctx.node_n_processes as usize as u32,
+            self.global_info.transcript_arity as u32,
+            sctx.max_n_bits_ext as u32,
+        )));
+
         let mut free_memory_gpu = match cfg!(feature = "gpu") {
-            true => {
-                check_device_memory_c(self.mpi_ctx.node_rank as u32, self.mpi_ctx.node_n_processes as usize as u32)
-                    as f64
-                    * 0.99
-            }
+            true => check_device_memory_c(self.mpi_ctx.node_rank as u32, self.mpi_ctx.node_n_processes as usize as u32)
+                as f64,
             false => 0.0,
         };
 
@@ -974,23 +988,6 @@ impl<F: PrimeField64> ProofCtx<F> {
             );
         }
 
-        let max_sizes = MaxSizes {
-            total_const_area,
-            aux_trace_area: max_prover_buffer_size,
-            aux_trace_recursive_area: max_prover_recursive2_buffer_size,
-            total_const_area_aggregation,
-            n_streams: n_streams_per_gpu as u64,
-            n_recursive_streams: n_recursive_streams_per_gpu as u64,
-        };
-
-        let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
-        let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
-            max_sizes_ptr,
-            self.mpi_ctx.node_rank as u32,
-            self.mpi_ctx.node_n_processes as usize as u32,
-            self.global_info.transcript_arity as u32,
-        )));
-
         let max_pinned_proof_size = match aggregation {
             true => sctx.max_pinned_proof_size.max(setups_vadcop.max_pinned_proof_size) as u64,
             false => sctx.max_pinned_proof_size as u64,
@@ -998,11 +995,20 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         let n_gpus: u64 = gen_device_streams_c(
             d_buffers.get_ptr(),
+            n_streams_per_gpu as u64,
+            n_recursive_streams_per_gpu as u64,
             max_prover_buffer_size,
             max_prover_recursive2_buffer_size,
             max_pinned_proof_size,
-            sctx.max_n_bits_ext as u64,
             self.global_info.transcript_arity as u64,
+        );
+
+        alloc_device_large_buffers_c(
+            d_buffers.get_ptr(),
+            max_prover_buffer_size,
+            max_prover_recursive2_buffer_size,
+            total_const_area,
+            total_const_area_aggregation,
         );
 
         self.d_buffers = d_buffers;
@@ -1012,5 +1018,9 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn get_device_buffers_ptr(&self) -> *mut c_void {
         self.d_buffers.get_ptr()
+    }
+
+    pub fn get_unified_buffer_gpu(&self) -> *mut c_void {
+        get_unified_buffer_gpu_c(self.d_buffers.get_ptr())
     }
 }

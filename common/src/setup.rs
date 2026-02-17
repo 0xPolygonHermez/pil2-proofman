@@ -8,6 +8,8 @@ use std::io::Read;
 use libloading::{Library, Symbol};
 use std::ffi::CString;
 use bytemuck::cast_slice;
+use std::sync::atomic::{AtomicBool, Ordering};
+use crate::RowInfo;
 
 use proofman_starks_lib_c::set_memory_expressions_c;
 use proofman_starks_lib_c::{
@@ -82,6 +84,7 @@ pub struct Setup<F: PrimeField64> {
     pub n_cols: u64,
     pub n_operations_quotient: u64,
     pub preallocate: bool,
+    pub const_pols_loaded: AtomicBool,
 }
 
 impl<F: PrimeField64> Drop for Setup<F> {
@@ -314,15 +317,20 @@ impl<F: PrimeField64> Setup<F> {
             n_cols,
             n_operations_quotient,
             preallocate,
+            const_pols_loaded: AtomicBool::new(false),
         }
     }
 
     pub fn load_const_pols(&self) {
+        if self.const_pols_loaded.load(Ordering::Acquire) {
+            return;
+        }
         load_const_pols_c(
             self.const_pols.as_ptr() as *mut u8,
             self.const_pols_path.as_str(),
             self.const_pols_size as u64 * 8,
         );
+        self.const_pols_loaded.store(true, Ordering::Release);
     }
 
     pub fn load_const_pols_tree(&self) {
@@ -335,6 +343,22 @@ impl<F: PrimeField64> Setup<F> {
             (const_pols_tree_size * 8) as u64,
             &(self.setup_path.display().to_string() + ".verkey.json"),
         );
+    }
+
+    pub fn get_const_pols(&self, first_row: usize, num_rows: usize, offset: Option<usize>) -> Vec<RowInfo> {
+        let offset = offset.unwrap_or(1);
+        let num_rows_available = self.const_pols.len() / self.stark_info.n_constants as usize;
+
+        (0..num_rows)
+            .map(|i| first_row + i * offset)
+            .take_while(|&row| row < num_rows_available)
+            .map(|row| {
+                let start = row * self.stark_info.n_constants as usize;
+                let end = start + self.stark_info.n_constants as usize;
+                let values = self.const_pols[start..end].iter().map(|v| F::as_canonical_u64(v)).collect();
+                RowInfo { row, values }
+            })
+            .collect()
     }
 
     pub fn get_const_ptr(&self) -> *mut u8 {

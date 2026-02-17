@@ -172,6 +172,8 @@ pub struct StarkInfo {
     #[serde(default, rename = "nStages")]
     pub n_stages: u32,
 
+    #[serde(rename = "constPolsMap")]
+    pub const_pols_map: Option<Vec<PolMap>>,
     #[serde(rename = "cmPolsMap")]
     pub cm_pols_map: Option<Vec<PolMap>>,
     #[serde(rename = "publicsMap")]
@@ -224,4 +226,13 @@ impl StarkInfo {
     pub fn from_json(stark_info_json: &str) -> Self {
         serde_json::from_str(stark_info_json).expect("Failed to parse JSON file")
     }
+}
+
+pub fn expand_column_name(name: &str, lengths: &[u64]) -> Vec<String> {
+    if lengths.is_empty() {
+        return vec![name.to_string()];
+    }
+
+    let suffix = lengths.iter().map(|i| format!("[{}]", i)).collect::<String>();
+    vec![format!("{}{}", name, suffix)]
 }

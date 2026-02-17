@@ -1,9 +1,9 @@
 use crate::WitnessManager;
 use fields::PrimeField64;
-use proofman_common::{ProofCtx, ProofmanResult, VerboseMode};
+use proofman_common::{ProofCtx, ProofmanResult, VerboseMode, RankInfo};
 
 /// This is the type of the function that is used to load a witness library.
-pub type WitnessLibInitFn<F> = fn(VerboseMode, Option<i32>) -> ProofmanResult<Box<dyn WitnessLibrary<F>>>;
+pub type WitnessLibInitFn<F> = fn(VerboseMode, Option<RankInfo>) -> ProofmanResult<Box<dyn WitnessLibrary<F>>>;
 
 pub trait WitnessLibrary<F: PrimeField64> {
     fn register_witness(&mut self, wcm: &WitnessManager<F>) -> ProofmanResult<()>;
@@ -26,9 +26,9 @@ macro_rules! witness_library {
         #[no_mangle]
         pub extern "Rust" fn init_library(
             verbose_mode: proofman_common::VerboseMode,
-            rank: Option<i32>,
+            rank: Option<proofman_common::RankInfo>,
         ) -> proofman_common::ProofmanResult<Box<dyn witness::WitnessLibrary<$field_type>>> {
-            proofman_common::initialize_logger(verbose_mode, rank);
+            proofman_common::initialize_logger(verbose_mode, rank.as_ref());
 
             Ok(Box::new($lib_name))
         }

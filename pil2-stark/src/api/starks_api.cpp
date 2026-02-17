@@ -286,10 +286,6 @@ void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3) {
     ((StarkInfo *)pStarkInfo)->setMemoryExpressions(nTmp1, nTmp3);
 }
 
-uint64_t get_const_pols_offset(void *pStarkInfo) {
-    return ((StarkInfo *)pStarkInfo)->mapOffsets[std::make_pair("const", false)];
-}
-
 uint64_t get_map_total_n(void *pStarkInfo)
 {
     return ((StarkInfo *)pStarkInfo)->mapTotalN;
@@ -796,7 +792,7 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {}
 
 // Recursive proof
 // ================================================================================= 
-void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size, uint32_t arity)
+void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity, uint32_t max_n_bits_ext)
 {
     DeviceCommitBuffersCPU *d_buffers = new DeviceCommitBuffersCPU();
     return (void *)d_buffers;
@@ -806,7 +802,12 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
 }
 void free_device_buffers_recursivef(void *d_buffers_){}
 
-uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t max_n_bits_ext, uint64_t merkleTreeArity) { return 1; }
+void alloc_fixed_pols_buffer_gpu(void *d_buffers_) {}
+void free_fixed_pols_buffer_gpu(void *d_buffers_) {}
+
+uint64_t gen_device_streams(void *d_buffers_, uint64_t nStreams, uint64_t nStreamsRecursive, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity) { return 1; }
+
+void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation) {}
 
 void get_instances_ready(void *d_buffers, int64_t* instances_ready) {}
 
@@ -815,6 +816,10 @@ void reset_device_streams(void *d_buffers_) {}
 uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size) { return 0; }
 
 uint64_t get_num_gpus(){ return 1;}
+
+void *get_unified_buffer_gpu(void *d_buffers_) {
+    return nullptr;
+}
 
 void free_device_buffers(void *d_buffers_) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;

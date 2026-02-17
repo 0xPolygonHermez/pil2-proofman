@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     pub fn test_poseidon2_16() {
-        let mut input = [
+        let input = [
             Goldilocks::new(0),
             Goldilocks::new(1),
             Goldilocks::new(2),
@@ -300,7 +300,7 @@ mod tests {
             Goldilocks::new(14),
             Goldilocks::new(15),
         ];
-        let output = poseidon2_hash::<Goldilocks, Poseidon16, 16>(&mut input);
+        let output = poseidon2_hash::<Goldilocks, Poseidon16, 16>(&input);
 
         assert_eq!(output[0], Goldilocks::new(9639188652563994454));
         assert_eq!(output[1], Goldilocks::new(12273372933164734616));
@@ -322,8 +322,8 @@ mod tests {
 
     #[test]
     pub fn test_poseidon2_4() {
-        let mut input = [Goldilocks::new(0), Goldilocks::new(1), Goldilocks::new(2), Goldilocks::new(3)];
-        let output = poseidon2_hash::<Goldilocks, Poseidon4, 4>(&mut input);
+        let input = [Goldilocks::new(0), Goldilocks::new(1), Goldilocks::new(2), Goldilocks::new(3)];
+        let output = poseidon2_hash::<Goldilocks, Poseidon4, 4>(&input);
 
         assert_eq!(output[0], Goldilocks::new(8466914293353944746));
         assert_eq!(output[1], Goldilocks::new(9589318970755021278));
@@ -333,7 +333,7 @@ mod tests {
 
     #[test]
     pub fn test_poseidon2_8() {
-        let mut input = [
+        let input = [
             Goldilocks::new(0),
             Goldilocks::new(1),
             Goldilocks::new(2),
@@ -343,7 +343,7 @@ mod tests {
             Goldilocks::new(6),
             Goldilocks::new(7),
         ];
-        let output = poseidon2_hash::<Goldilocks, Poseidon8, 8>(&mut input);
+        let output = poseidon2_hash::<Goldilocks, Poseidon8, 8>(&input);
 
         assert_eq!(output[0], Goldilocks::new(14266028122062624699));
         assert_eq!(output[1], Goldilocks::new(5353147180106052723));
@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     pub fn test_poseidon2_12() {
-        let mut input = [
+        let input = [
             Goldilocks::new(0),
             Goldilocks::new(1),
             Goldilocks::new(2),
@@ -371,7 +371,7 @@ mod tests {
             Goldilocks::new(10),
             Goldilocks::new(11),
         ];
-        let output = poseidon2_hash::<Goldilocks, Poseidon12, 12>(&mut input);
+        let output = poseidon2_hash::<Goldilocks, Poseidon12, 12>(&input);
 
         assert_eq!(output[0], Goldilocks::new(138186169299091649));
         assert_eq!(output[1], Goldilocks::new(2237493815125627916));

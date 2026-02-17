@@ -4,7 +4,7 @@ use fields::{ExtensionField, Transcript, PrimeField64, GoldilocksQuinticExtensio
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
     RowInfo, DebugInfo, MemoryHandler, MpiCtx, PackedInfo, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType,
-    SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
+    RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -31,6 +31,7 @@ use rand::{SeedableRng, seq::SliceRandom};
 use rand::rngs::StdRng;
 use proofman_common::{ProofmanResult, ProofmanError, Setup};
 use proofman_util::VadcopFinalProof;
+use crate::check_const_paths;
 
 #[cfg(distributed)]
 use mpi::topology::Communicator;
@@ -49,8 +50,8 @@ use std::{
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
 use crate::{
-    calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, initialize_setup_info,
-    N_RECURSIVE_PROOFS_PER_AGGREGATION,
+    calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, load_device_setups,
+    load_device_const_pols, N_RECURSIVE_PROOFS_PER_AGGREGATION,
 };
 use crate::{verify_constraints_proof, verify_basic_proof, verify_global_constraints_proof};
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
@@ -69,6 +70,7 @@ use std::ffi::c_void;
 use proofman_util::{
     create_buffer_fast, timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug,
 };
+use proofman_common::expand_column_name;
 
 use serde::Serialize;
 
@@ -101,15 +103,25 @@ pub struct AirExecuteInfo {
     pub instance_ids: Vec<usize>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ExecuteResult {
-    pub airs: Vec<AirExecuteInfo>,
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AirInfo {
+    pub name: String,
+    pub airgroup_id: u64,
+    pub air_id: u64,
+    pub num_instances: usize,
+    pub instance_ids: Vec<usize>,
+    pub num_columns_trace: u64,
+    pub name_columns_trace: Vec<String>,
+    pub num_columns_fixed: u64,
+    pub name_columns_fixed: Vec<String>,
+    pub name_airvalues: Vec<String>,
+    pub num_airvalues: u64,
+    pub num_rows: usize,
 }
 
-impl ExecuteResult {
-    pub fn find(&self, airgroup_id: usize, air_id: usize) -> Option<&AirExecuteInfo> {
-        self.airs.iter().find(|info| info.airgroup_id == airgroup_id && info.air_id == air_id)
-    }
+#[derive(Debug, Clone, Serialize)]
+pub struct PlanningInfo {
+    pub planning_info: Vec<AirInfo>,
 }
 
 struct CancellationThread {
@@ -319,8 +331,8 @@ where
         self.pctx.global_info.get_proving_key_path()
     }
 
-    pub fn get_device_buffers_ptr(&self) -> *mut std::ffi::c_void {
-        self.pctx.get_device_buffers_ptr()
+    pub fn get_buffers(&self) -> (Arc<Vec<F>>, *mut c_void) {
+        (self.aux_trace.clone(), self.pctx.get_device_buffers_ptr())
     }
 
     pub fn set_barrier(&self) {
@@ -335,12 +347,12 @@ where
         self.pctx.mpi_ctx.broadcast(buf);
     }
 
-    pub fn get_world_rank(&self) -> i32 {
-        self.pctx.mpi_ctx.rank
-    }
-
-    pub fn get_local_rank(&self) -> i32 {
-        self.pctx.mpi_ctx.node_rank
+    pub fn get_rank_info(&self) -> RankInfo {
+        RankInfo {
+            world_rank: self.pctx.mpi_ctx.rank,
+            local_rank: self.pctx.mpi_ctx.node_rank,
+            n_processes: self.pctx.mpi_ctx.n_processes,
+        }
     }
 
     pub fn get_n_processes(&self) -> i32 {
@@ -471,11 +483,11 @@ where
         public_inputs_path: Option<PathBuf>,
         output_path: Option<PathBuf>,
         verbose_mode: VerboseMode,
-    ) -> ProofmanResult<ExecuteResult> {
+    ) -> ProofmanResult<PlanningInfo> {
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
+        let mut witness_lib = witness_lib(verbose_mode, Some(self.get_rank_info()))?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
@@ -485,11 +497,11 @@ where
         self.execute_(output_path)
     }
 
-    pub fn execute_from_lib(&self, output_path: Option<PathBuf>) -> ProofmanResult<ExecuteResult> {
+    pub fn execute_from_lib(&self, output_path: Option<PathBuf>) -> ProofmanResult<PlanningInfo> {
         self.execute_(output_path)
     }
 
-    pub fn execute_(&self, output_path: Option<PathBuf>) -> ProofmanResult<ExecuteResult> {
+    pub fn execute_(&self, output_path: Option<PathBuf>) -> ProofmanResult<PlanningInfo> {
         self.pctx.dctx_setup(1, vec![0], 0)?;
 
         self.cancellation_info.write().unwrap().reset();
@@ -593,19 +605,88 @@ where
             wtr.flush()?;
         }
 
-        let result = ExecuteResult {
-            airs: air_info
-                .values()
-                .map(|info| AirExecuteInfo {
-                    airgroup_id: info.airgroup_id,
-                    air_id: info.air_id,
-                    num_instances: info.instance_count,
-                    instance_ids: info.instance_ids.clone(),
-                })
-                .collect(),
-        };
+        let mut planning_info = Vec::new();
+        for (airgroup_id, _) in self.pctx.global_info.air_groups.iter().enumerate() {
+            for (air_id, air) in self.pctx.global_info.airs[airgroup_id].iter().enumerate() {
+                let setup = self.sctx.get_setup(airgroup_id, air_id)?;
+                let air_name = &air.name;
+                if let Some(info) = air_info.get(air_name) {
+                    let num_columns_trace = setup.stark_info.map_sections_n["cm1"];
+                    let name_columns_trace: Vec<String> = setup
+                        .stark_info
+                        .cm_pols_map
+                        .as_ref()
+                        .map(|pols| {
+                            pols.iter()
+                                .filter(|pol| pol.stage == 1)
+                                .flat_map(|pol| expand_column_name(&pol.name, &pol.lengths))
+                                .collect()
+                        })
+                        .unwrap();
+
+                    let name_columns_fixed: Vec<String> = setup
+                        .stark_info
+                        .const_pols_map
+                        .as_ref()
+                        .map(|pols| pols.iter().flat_map(|pol| expand_column_name(&pol.name, &pol.lengths)).collect())
+                        .unwrap();
+
+                    let name_airvalues: Vec<String> = setup
+                        .stark_info
+                        .airvalues_map
+                        .as_ref()
+                        .map(|pols| {
+                            pols.iter()
+                                .filter(|pol| pol.stage == 1)
+                                .flat_map(|pol| expand_column_name(&pol.name, &pol.lengths))
+                                .collect()
+                        })
+                        .unwrap();
+
+                    planning_info.push(AirInfo {
+                        name: air.name.clone(),
+                        airgroup_id: airgroup_id as u64,
+                        air_id: air_id as u64,
+                        num_instances: info.instance_count,
+                        instance_ids: info.instance_ids.clone(),
+                        num_columns_trace,
+                        name_columns_trace,
+                        num_columns_fixed: setup.stark_info.n_constants,
+                        name_columns_fixed,
+                        num_airvalues: setup
+                            .stark_info
+                            .airvalues_map
+                            .as_ref()
+                            .map_or(0, |pols| pols.iter().filter(|pol| pol.stage == 1).count() as u64),
+                        name_airvalues,
+                        num_rows: air.num_rows,
+                    });
+                } else {
+                    println!("  No execution result found for Air ID: {}", air_id);
+                }
+            }
+        }
+
+        let result = PlanningInfo { planning_info };
 
         Ok(result)
+    }
+
+    pub fn get_instance_fixed(
+        &self,
+        instance_id: usize,
+        first_row: usize,
+        num_rows: usize,
+        offset: Option<usize>,
+    ) -> ProofmanResult<Vec<RowInfo>> {
+        let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
+        let setup = self.sctx.get_setup(airgroup_id, air_id)?;
+
+        if !setup.const_pols_loaded.load(Ordering::Acquire) {
+            setup.load_const_pols();
+        }
+
+        Ok(setup.get_const_pols(first_row, num_rows, offset))
     }
 
     pub fn get_instance_trace(
@@ -613,20 +694,53 @@ where
         instance_id: usize,
         first_row: usize,
         num_rows: usize,
+        offset: Option<usize>,
     ) -> ProofmanResult<Vec<RowInfo>> {
         if self.pctx.dctx_is_instance_calculated(instance_id) {
-            return Ok(self.pctx.get_air_instance_trace(instance_id, first_row, num_rows));
+            return Ok(self.pctx.get_air_instance_trace(instance_id, first_row, num_rows, offset));
         }
 
         self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
         self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
+
+        let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
+        Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true)?;
+        let setup = self.sctx.get_setup(airgroup_id, air_id)?;
+        let steps_params = self.pctx.get_air_instance_params(instance_id, false);
+
+        calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
 
         let is_shared_buffer = self.pctx.is_shared_buffer(instance_id);
         if is_shared_buffer {
             self.memory_handler.to_be_released_buffer(instance_id, true);
         }
 
-        Ok(self.pctx.get_air_instance_trace(instance_id, first_row, num_rows))
+        Ok(self.pctx.get_air_instance_trace(instance_id, first_row, num_rows, offset))
+    }
+
+    pub fn get_instance_air_values(&self, instance_id: usize) -> ProofmanResult<Vec<u64>> {
+        let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
+        let setup = self.sctx.get_setup(airgroup_id, air_id)?;
+        let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();
+
+        if self.pctx.dctx_is_instance_calculated(instance_id) {
+            return self.pctx.get_instance_air_values(instance_id, airvalues_map);
+        }
+
+        self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
+        self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
+
+        Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true)?;
+        let steps_params = self.pctx.get_air_instance_params(instance_id, false);
+
+        calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
+
+        let is_shared_buffer = self.pctx.is_shared_buffer(instance_id);
+        if is_shared_buffer {
+            self.memory_handler.to_be_released_buffer(instance_id, true);
+        }
+
+        self.pctx.get_instance_air_values(instance_id, airvalues_map)
     }
 
     pub fn compute_witness(
@@ -640,7 +754,7 @@ where
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
+        let mut witness_lib = witness_lib(verbose_mode, Some(self.get_rank_info()))?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
@@ -758,7 +872,7 @@ where
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
+        let mut witness_lib = witness_lib(verbose_mode, Some(self.get_rank_info()))?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
@@ -883,7 +997,7 @@ where
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
+        let mut witness_lib = witness_lib(verbose_mode, Some(self.get_rank_info()))?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
@@ -981,8 +1095,14 @@ where
         let (witness_handler, witness_handles) =
             self.calc_witness_handler(witness_done.clone(), self.memory_handler.clone(), minimal_memory, false);
 
-        let my_instances_no_tables =
-            my_instances.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
+        let my_instances_no_tables = my_instances
+            .iter()
+            .filter(|idx| {
+                !self.pctx.dctx_is_table(**idx)
+                    && skip_prover_instance(&self.pctx, **idx).map(|(skip, _)| !skip).unwrap_or(false)
+            })
+            .copied()
+            .collect::<Vec<_>>();
 
         timer_start_debug!(CALCULATING_WITNESS);
         self.calculate_witness(
@@ -1006,7 +1126,12 @@ where
 
         drop(witness_handles);
 
-        let my_instances_tables = self.pctx.dctx_get_my_tables();
+        let my_instances_tables = self
+            .pctx
+            .dctx_get_my_tables()
+            .into_iter()
+            .filter(|idx| skip_prover_instance(&self.pctx, *idx).map(|(skip, _)| !skip).unwrap_or(false))
+            .collect::<Vec<_>>();
 
         timer_start_debug!(CALCULATING_TABLES);
 
@@ -1190,7 +1315,7 @@ where
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, Some(self.mpi_ctx.rank))?;
+        let mut witness_lib = witness_lib(verbose_mode, Some(self.get_rank_info()))?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
@@ -1296,7 +1421,9 @@ where
 
         let mpi_ctx = Arc::new(MpiCtx::new());
 
-        initialize_logger(verbose_mode, Some(mpi_ctx.rank));
+        let rank_info =
+            RankInfo { world_rank: mpi_ctx.rank, local_rank: mpi_ctx.node_rank, n_processes: mpi_ctx.n_processes };
+        initialize_logger(verbose_mode, Some(&rank_info));
 
         let (pctx, sctx, setups_vadcop, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
             Self::initialize_proofman(
@@ -3439,13 +3566,19 @@ where
         let (n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
             pctx.set_device_buffers(&sctx, &setups_vadcop, aggregation, gpu_params)?;
 
-        initialize_setup_info(&pctx, &sctx, &setups_vadcop, aggregation, packed_info)?;
+        load_device_setups(&pctx, &sctx, &setups_vadcop, aggregation, packed_info)?;
+
+        timer_start_info!(LOADING_CONSTANTS);
+        load_device_const_pols(&pctx, &sctx, &setups_vadcop, aggregation)?;
+        timer_stop_and_log_info!(LOADING_CONSTANTS);
 
         let pctx = Arc::new(pctx);
 
         if !verify_constraints {
             check_tree_paths(&pctx, &sctx)?;
         }
+
+        check_const_paths(&pctx, &sctx)?;
 
         if aggregation {
             check_tree_paths_vadcop(&pctx, &setups_vadcop)?;

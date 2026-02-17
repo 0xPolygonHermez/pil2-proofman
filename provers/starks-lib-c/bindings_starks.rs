@@ -35,9 +35,7 @@ extern "C" {
     pub fn set_memory_expressions(pStarkInfo: *mut ::std::os::raw::c_void, nTmp1: u64, nTmp3: u64);
     
     pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
-    
-    pub fn get_const_pols_offset(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
-    
+        
     pub fn get_map_total_n_custom_commits_fixed(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
     
     pub fn get_tree_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
@@ -530,10 +528,10 @@ extern "C" {
     // GPU/Device Management
     // ========================================================================================
     pub fn gen_device_buffers(
-        maxSizes_: *mut ::std::os::raw::c_void,
         node_rank: u32,
         node_size: u32,
         arity: u32,
+        max_n_bits_ext: u32,
     ) -> *mut ::std::os::raw::c_void;
 
     pub fn gen_device_buffers_recursivef(
@@ -572,12 +570,21 @@ extern "C" {
     
     pub fn gen_device_streams(
         d_buffers_: *mut ::std::os::raw::c_void,
+        nStreams: u64,
+        nStreamsRecursive: u64,
         maxSizeProverBuffer: u64,
         maxSizeProverBufferAggregation: u64,
         maxProofSize: u64,
-        max_n_bits_ext: u64,
         merkle_tree_arity: u64,
     ) -> u64;
+
+    pub fn alloc_device_large_buffers(
+        d_buffers_: *mut ::std::os::raw::c_void,
+        auxTraceArea: u64,
+        auxTraceRecursiveArea: u64,
+        totalConstPols: u64,
+        totalConstPolsAggregation: u64,
+    );   
     
     pub fn get_instances_ready(
         d_buffers_: *mut ::std::os::raw::c_void,
@@ -594,6 +601,11 @@ extern "C" {
     ) -> u64;
     
     pub fn get_num_gpus() -> u64;
+
+    pub fn get_unified_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
+
+    pub fn alloc_fixed_pols_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void);
+    pub fn free_fixed_pols_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void);
 
     // Callback Management
     // ========================================================================================

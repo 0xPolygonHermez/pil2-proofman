@@ -318,7 +318,7 @@ void StarkInfo::load(json j)
             mapOffsets[std::make_pair("airvalues", false)] = mapTotalN;
             mapTotalN += airValuesSize;
 
-            mapOffsets[std::make_pair("challenges", false)] = mapTotalN;
+            mapOffsets[std::make_pair("challenge", false)] = mapTotalN;
             mapTotalN += 2 * FIELD_EXTENSION;
         }
         
@@ -467,8 +467,10 @@ void StarkInfo::setMapOffsets() {
         }
     }
 
-    mapOffsets[std::make_pair("const", false)] = mapTotalN;
-    mapTotalN += N * nConstants;
+    if (gpu) {
+        mapOffsets[std::make_pair("const", false)] = mapTotalN;
+        mapTotalN += N * nConstants;
+    }
 
     if(gpu) {
         mapOffsets[std::make_pair("custom_fixed", false)] = mapTotalN;
@@ -671,7 +673,8 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
             maxNBlocks = 512;
 
             uint64_t tmpsUsed = nTmp1 + (nTmp3 + 2) * FIELD_EXTENSION;
-            while((mapBuffHelper + tmpsUsed * nrowsPack * maxNBlocks) > (mapTotalN + (1 << 25))) {
+            uint64_t maxTotal = recursive ? mapTotalN + (1 << 26) : mapTotalN + (1 << 25);
+            while((mapBuffHelper + tmpsUsed * nrowsPack * maxNBlocks) > maxTotal) {
                 if (nrowsPack > 128) {
                     nrowsPack /= 2;
                 } else {

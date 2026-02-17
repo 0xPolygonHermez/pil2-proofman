@@ -54,6 +54,7 @@ pub struct SnarkWrapper<F: PrimeField64> {
     pub setup_recursivef: Setup<F>,
     pub vadcop_final_verkey: Vec<u64>,
     pub aux_trace: Arc<Vec<F>>,
+    pub unified_buffer_gpu: Option<*mut c_void>,
     pub snark_prover: *mut c_void,
     pub proving_key_path: PathBuf,
     pub protocol: SnarkProtocol,
@@ -126,6 +127,15 @@ impl<F: PrimeField64> Drop for SnarkWrapper<F> {
 
 impl<F: PrimeField64> SnarkWrapper<F> {
     pub fn new(proving_key_path: &Path, verbose_mode: VerboseMode) -> ProofmanResult<Self> {
+        Self::new_with_buffers(proving_key_path, verbose_mode, None, None)
+    }
+
+    pub fn new_with_buffers(
+        proving_key_path: &Path,
+        verbose_mode: VerboseMode,
+        _aux_trace: Option<Arc<Vec<F>>>,
+        unified_buffer_gpu: Option<*mut c_void>,
+    ) -> ProofmanResult<Self> {
         initialize_logger(verbose_mode, None);
 
         let setup_recursivef_path =
@@ -163,7 +173,9 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         timer_stop_and_log_info!(LOADING_RECURSIVE_F_SETUP);
 
-        let aux_trace = if cfg!(feature = "gpu") {
+        let aux_trace = if let Some(buffer) = _aux_trace {
+            buffer
+        } else if cfg!(feature = "gpu") {
             Arc::new(Vec::new())
         } else {
             Arc::new(create_buffer_fast(setup_recursivef.prover_buffer_size as usize))
@@ -191,6 +203,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             proving_key_path: proving_key_path.to_path_buf(),
             protocol,
             vadcop_final_verkey,
+            unified_buffer_gpu,
         })
     }
 
@@ -199,7 +212,6 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         &self,
         vadcop_proof: &VadcopFinalProof,
         output_dir_path: Option<PathBuf>,
-        device_buffers_ptr: Option<*mut c_void>,
     ) -> ProofmanResult<SnarkProof> {
         let output_dir_path = match output_dir_path.as_deref() {
             Some(path) => path,
@@ -224,7 +236,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             &self.vadcop_final_verkey,
             output_dir_path,
             self.setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
-            device_buffers_ptr,
+            self.unified_buffer_gpu,
         )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 

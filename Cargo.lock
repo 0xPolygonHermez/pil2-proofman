@@ -638,8 +638,6 @@ checksum = "7714e70437a7dc3ac8eb7e6f8df75fd8eb422675fc7678aff7364301092b1017"
 dependencies = [
  "equivalent",
  "hashbrown",
- "serde",
- "serde_core",
 ]
 
 [[package]]
@@ -1175,7 +1173,6 @@ dependencies = [
  "csv",
  "env",
  "fields",
- "indexmap",
  "lazy_static",
  "libloading",
  "mpi",
@@ -1212,7 +1209,6 @@ version = "0.16.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "rayon",
  "syn 2.0.114",
 ]
 
@@ -1231,10 +1227,8 @@ dependencies = [
  "bincode",
  "bytemuck",
  "colored",
- "fields",
  "serde",
  "sysinfo",
- "tracing",
 ]
 
 [[package]]

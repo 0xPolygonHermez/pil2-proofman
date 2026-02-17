@@ -186,15 +186,15 @@ impl ProveCmd {
                 vadcop_final_proof.save(self.output_dir.join("vadcop_final_proof.bin"))?;
 
                 if let Some(proving_key_snark) = &self.proving_key_snark {
-                    let snark_wrapper: SnarkWrapper<Goldilocks> =
-                        SnarkWrapper::new(proving_key_snark, self.verbose.into())?;
                     // Reuse device memory from device_buffers_ptr
-                    let device_buffers_ptr = proofman.get_device_buffers_ptr();
-                    snark_wrapper.generate_final_snark_proof(
-                        &vadcop_final_proof,
-                        Some(self.output_dir.clone()),
-                        Some(device_buffers_ptr),
+                    let (aux_trace, unified_buffer_ptr) = proofman.get_buffers();
+                    let snark_wrapper: SnarkWrapper<Goldilocks> = SnarkWrapper::new_with_buffers(
+                        proving_key_snark,
+                        self.verbose.into(),
+                        Some(aux_trace),
+                        Some(unified_buffer_ptr),
                     )?;
+                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, Some(self.output_dir.clone()))?;
                 }
             }
         }

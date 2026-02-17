@@ -28,16 +28,6 @@ extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 #include <mutex>
 
 
-struct MaxSizes
-{
-    uint64_t totalConstPols;
-    uint64_t auxTraceArea;
-    uint64_t auxTraceRecursiveArea;
-    uint64_t totalConstPolsAggregation;
-    uint64_t nStreams;
-    uint64_t nRecursiveStreams;
-};
-
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive = false, bool force_recursive = false);
 void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId);
 void closeStreamTimer(TimerGPU &timer, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, bool isProve);
@@ -52,7 +42,7 @@ void get_instances_ready(void *d_buffers_, int64_t* instances_ready) {
     }
 }
 
-void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size, uint32_t arity)
+void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity, uint32_t max_n_bits_ext)
 {
     int deviceCount;
     cudaError_t err = cudaGetDeviceCount(&deviceCount);
@@ -60,9 +50,36 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         std::cerr << "CUDA error getting device count: " << cudaGetErrorString(err) << std::endl;
         exit(1);
     }
-    MaxSizes *maxSizes = (MaxSizes *)maxSizes_;
 
+    uint32_t n_gpus = (uint32_t) deviceCount / node_size;
+    uint32_t my_gpu_ids[n_gpus];
+    for (uint32_t i = 0; i < n_gpus; i++) {
+        my_gpu_ids[i] = node_rank * n_gpus + i;
+    }
 
+    // Initialize small GPU constants (Poseidon2 and Transcript)
+    switch(arity){
+        case 2:
+            Poseidon2GoldilocksGPU<8>::initPoseidon2GPUConstants(my_gpu_ids, n_gpus);
+            break;
+        case 3:
+            Poseidon2GoldilocksGPU<12>::initPoseidon2GPUConstants(my_gpu_ids, n_gpus);
+            break;
+        case 4:
+            Poseidon2GoldilocksGPU<16>::initPoseidon2GPUConstants(my_gpu_ids, n_gpus);
+            break;
+        default:
+            zklog.error("Unsupported merkle tree arity. Supported arities are 2, 3 and 4.");
+            exit(1);
+    }
+
+    Poseidon2GoldilocksGPUGrinding::initPoseidon2GPUConstants(my_gpu_ids, n_gpus);
+    TranscriptGL_GPU::init_const(my_gpu_ids, n_gpus, arity);
+
+    //Generate static twiddles for the NTT
+    NTT_Goldilocks_GPU::init_twiddle_factors_and_r(max_n_bits_ext, n_gpus, my_gpu_ids);
+
+    // Create and initialize DeviceCommitBuffers structure (CPU allocations only)
     if(deviceCount >= node_size) {
        
         if (deviceCount % node_size != 0) {
@@ -71,7 +88,7 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         }
         
         DeviceCommitBuffers *d_buffers = new DeviceCommitBuffers();
-        d_buffers->n_gpus = (uint32_t) deviceCount / node_size;
+        d_buffers->n_gpus = n_gpus;
         d_buffers->gpus_g2l = (uint32_t *)malloc(deviceCount * sizeof(uint32_t));
         d_buffers->my_gpu_ids = (uint32_t *)malloc(d_buffers->n_gpus * sizeof(uint32_t));
         for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
@@ -84,12 +101,9 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
         d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
-        d_buffers->n_streams = maxSizes->nStreams;
-        d_buffers->n_recursive_streams = maxSizes->nRecursiveStreams;
-        d_buffers->n_total_streams = d_buffers->n_gpus * (d_buffers->n_streams + d_buffers->n_recursive_streams);
+        d_buffers->gpuMemoryBuffer = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
-            d_buffers->d_aux_trace[i] = (gl64_t **)malloc(maxSizes->nStreams * sizeof(gl64_t*));
-            d_buffers->d_aux_traceAggregation[i] = (gl64_t **)malloc(maxSizes->nRecursiveStreams * sizeof(gl64_t*));
+            d_buffers->gpuMemoryBuffer[i] = nullptr;
         }
         
         // Allocate mutex array using placement new
@@ -97,40 +111,6 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
             new (&d_buffers->mutex_pinned[i]) std::mutex();
         }
-
-        for (int i = 0; i < d_buffers->n_gpus; i++) {
-            cudaSetDevice(d_buffers->my_gpu_ids[i]);
-            CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[i], maxSizes->totalConstPols * sizeof(Goldilocks::Element)));
-            CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPolsAggregation[i], maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
-            CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
-            CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer_extra[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
-            for (int j = 0; j < maxSizes->nStreams; ++j) {
-                CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace[i][j], maxSizes->auxTraceArea * sizeof(Goldilocks::Element)));
-            }
-            for (int j = 0; j < maxSizes->nRecursiveStreams; ++j) {
-                CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_traceAggregation[i][j], maxSizes->auxTraceRecursiveArea * sizeof(Goldilocks::Element)));
-            }
-        }
-        switch(arity){
-            case 2:
-                Poseidon2GoldilocksGPU<8>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
-                break;
-            case 3:
-                Poseidon2GoldilocksGPU<12>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
-                break;
-            case 4:
-                Poseidon2GoldilocksGPU<16>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
-                break;
-            default:
-                zklog.error("Unsupported merkle tree arity. Supported arities are 2, 3 and 4.");
-                exit(1);
-        }
-
-        Poseidon2GoldilocksGPUGrinding::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
-        
-
-        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus, arity);
-
 
 #ifdef NUMA_NODE
         // Check device afinity with process NUMA node
@@ -174,56 +154,122 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
         d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
-        d_buffers->n_streams = maxSizes->nStreams;
-        d_buffers->n_recursive_streams = maxSizes->nRecursiveStreams;
-        d_buffers->n_total_streams = (d_buffers->n_streams + d_buffers->n_recursive_streams);
-        
-        // Allocate the second level arrays for the single GPU
-        d_buffers->d_aux_trace[0] = (gl64_t **)malloc(maxSizes->nStreams * sizeof(gl64_t*));
-        d_buffers->d_aux_traceAggregation[0] = (gl64_t **)malloc(maxSizes->nRecursiveStreams * sizeof(gl64_t*));
+        d_buffers->gpuMemoryBuffer = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+        d_buffers->gpuMemoryBuffer[0] = nullptr;
         
         // Allocate mutex array using placement new
         d_buffers->mutex_pinned = (std::mutex*)malloc(d_buffers->n_gpus * sizeof(std::mutex));
         for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
             new (&d_buffers->mutex_pinned[i]) std::mutex();
         }
-
-        cudaSetDevice(d_buffers->my_gpu_ids[0]);
-        for (int j = 0; j < maxSizes->nStreams; ++j) {
-            CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace[0][j], maxSizes->auxTraceArea * sizeof(Goldilocks::Element)));
-        }
-        for (int j = 0; j < maxSizes->nRecursiveStreams; ++j) {
-            CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_traceAggregation[0][j], maxSizes->auxTraceRecursiveArea * sizeof(Goldilocks::Element)));
-        }
-        CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[0], maxSizes->totalConstPols * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPolsAggregation[0], maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer[0], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer_extra[0], d_buffers->pinned_size * sizeof(Goldilocks::Element)));        
-        switch(arity){
-            case 2:
-                Poseidon2GoldilocksGPU<8>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
-                break;
-            case 3:
-                Poseidon2GoldilocksGPU<12>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
-                break;
-            case 4:
-                Poseidon2GoldilocksGPU<16>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
-                break;
-            default:
-                zklog.error("Unsupported merkle tree arity. Supported arities are 2, 3 and 4.");
-                exit(1);
-        }
-
-        Poseidon2GoldilocksGPUGrinding::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
         
-        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus, arity);
         return (void *)d_buffers;
     }
 }
 
-uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t max_n_bits_ext, uint64_t merkleTreeArity) {
+void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation)
+{
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+
+    // Calculate total memory needed per GPU
+    uint64_t constPolsSize = totalConstPols * sizeof(Goldilocks::Element);
+    uint64_t constPolsAggregationSize = totalConstPolsAggregation * sizeof(Goldilocks::Element);
+    uint64_t auxTraceSize = auxTraceArea * sizeof(Goldilocks::Element);
+    uint64_t auxTraceRecursiveSize = auxTraceRecursiveArea * sizeof(Goldilocks::Element);
+    
+    uint64_t totalAuxTraceSize = d_buffers->n_streams * auxTraceSize;
+    uint64_t totalAuxTraceRecursiveSize = d_buffers->n_recursive_streams * auxTraceRecursiveSize;
+    
+    uint64_t totalGpuMemoryPerGpu = constPolsAggregationSize + 
+                                     totalAuxTraceSize + totalAuxTraceRecursiveSize;
+    
+    uint64_t totalPinnedMemoryPerGpu = 2 * d_buffers->pinned_size * sizeof(Goldilocks::Element);
+
+    zklog.info("Memory allocation per GPU:");
+    zklog.info("  - Constant polynomials: " + std::to_string(constPolsSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("  - Constant polynomials aggregation: " + std::to_string(constPolsAggregationSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("  - Auxiliary trace (" + std::to_string(d_buffers->n_streams) + " streams): " + std::to_string(totalAuxTraceSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("  - Auxiliary trace recursive (" + std::to_string(d_buffers->n_recursive_streams) + " streams): " + std::to_string(totalAuxTraceRecursiveSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("  - Total GPU memory per GPU: " + std::to_string(totalGpuMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("  - Total pinned memory per GPU: " + std::to_string(totalPinnedMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + " GB");
+
+    d_buffers->constPolsSize = constPolsSize;
+
+    // Allocate large GPU buffers with a single malloc per GPU
+    for (int i = 0; i < d_buffers->n_gpus; i++) {
+        cudaSetDevice(d_buffers->my_gpu_ids[i]);
+        
+        // Check available GPU memory
+        size_t freeMem, totalMem;
+        CHECKCUDAERR(cudaMemGetInfo(&freeMem, &totalMem));
+        zklog.info("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + ": Available memory: " + 
+                   std::to_string(freeMem / (1024.0 * 1024.0 * 1024.0)) + " GB / " + 
+                   std::to_string(totalMem / (1024.0 * 1024.0 * 1024.0)) + " GB");
+        
+        if (freeMem < totalGpuMemoryPerGpu) {
+            zklog.error("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + 
+                       ": Insufficient memory. Need " + std::to_string(totalGpuMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + 
+                       " GB but only " + std::to_string(freeMem / (1024.0 * 1024.0 * 1024.0)) + " GB available");
+            exit(1);
+        }
+        
+        // Allocate one large contiguous block of GPU memory
+        gl64_t *gpuMemoryBlock;
+        CHECKCUDAERR(cudaMalloc(&gpuMemoryBlock, totalGpuMemoryPerGpu));
+        d_buffers->gpuMemoryBuffer[i] = gpuMemoryBlock;  // Store the base pointer
+        zklog.info("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + 
+                   ": Allocated " + std::to_string(totalGpuMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + 
+                   " GB of contiguous GPU memory");
+        
+        CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[i], constPolsSize));
+        
+        // Set up pointers to different sections of the memory block
+        uint64_t offset = 0;
+                
+        // Auxiliary trace buffers (non-recursive)
+        for (int j = 0; j < d_buffers->n_streams; ++j) {
+            d_buffers->d_aux_trace[i][j] = gpuMemoryBlock + offset;
+            offset += auxTraceArea;
+        }
+        
+        // Auxiliary trace buffers (recursive)
+        for (int j = 0; j < d_buffers->n_recursive_streams; ++j) {
+            d_buffers->d_aux_traceAggregation[i][j] = gpuMemoryBlock + offset;
+            offset += auxTraceRecursiveArea;
+        }
+
+        // Constant polynomials aggregation
+        d_buffers->d_constPolsAggregation[i] = gpuMemoryBlock + offset;
+        offset += totalConstPolsAggregation;
+        
+        // Allocate pinned host buffers separately (one block per buffer type)
+        CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer_extra[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
+        
+        // Verify we used exactly the amount we calculated
+        if (offset != totalGpuMemoryPerGpu / sizeof(Goldilocks::Element)) {
+            zklog.error("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + 
+                       ": Memory offset mismatch! Expected " + std::to_string(totalGpuMemoryPerGpu / sizeof(Goldilocks::Element)) + 
+                       " but got " + std::to_string(offset) + " elements");
+            exit(1);
+        }
+    }
+    
+    zklog.info("All GPU memory allocations successful");
+}
+
+uint64_t gen_device_streams(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity) {
     
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    d_buffers->n_streams = n_streams;
+    d_buffers->n_recursive_streams = n_recursive_streams;
+    d_buffers->n_total_streams = d_buffers->n_gpus * (d_buffers->n_streams + d_buffers->n_recursive_streams);
+    
+    // Allocate d_aux_trace arrays now that we know stream counts
+    for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
+        d_buffers->d_aux_trace[i] = (gl64_t **)malloc(n_streams * sizeof(gl64_t*));
+        d_buffers->d_aux_traceAggregation[i] = (gl64_t **)malloc(n_recursive_streams * sizeof(gl64_t*));
+    }
     d_buffers->max_size_proof = maxProofSize;
 
     if (d_buffers->streamsData != nullptr) {
@@ -246,9 +292,6 @@ uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint
         }
     }
 
-    //Generate static twiddles for the NTT
-    NTT_Goldilocks_GPU::init_twiddle_factors_and_r(max_n_bits_ext, (int) d_buffers->n_gpus, d_buffers->my_gpu_ids);
-
     return d_buffers->n_gpus;
 }
 
@@ -268,25 +311,26 @@ void free_device_buffers(void *d_buffers_)
     for (int i = 0; i < d_buffers->n_gpus; ++i) {
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
         
+        // Free the single large GPU memory block
+        // All other GPU pointers (d_constPols, d_constPolsAggregation, d_aux_trace, d_aux_traceAggregation) 
+        // point into this same block, so we only free it once using the stored base pointer
+        if (d_buffers->gpuMemoryBuffer != nullptr && d_buffers->gpuMemoryBuffer[i] != nullptr) {
+            CHECKCUDAERR(cudaFree(d_buffers->gpuMemoryBuffer[i]));
+        }
+        
+        if (d_buffers->d_constPols != nullptr && d_buffers->d_constPols[i] != nullptr) {
+            CHECKCUDAERR(cudaFree(d_buffers->d_constPols[i]));
+        }
+
+        // Free CPU pointer arrays
         if (d_buffers->d_aux_trace[i] != nullptr) {
-            for (int j = 0; j < d_buffers->n_streams; ++j) {  // You'll need to store nStreams or use a safe upper bound
-                if (d_buffers->d_aux_trace[i][j] != nullptr) {
-                    CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace[i][j]));
-                }
-            }
             free(d_buffers->d_aux_trace[i]);
         }
         if (d_buffers->d_aux_traceAggregation[i] != nullptr) {
-            for (int j = 0; j < d_buffers->n_recursive_streams; ++j) {  // You'll need to store nRecursiveStreams or use a safe upper bound
-                if (d_buffers->d_aux_traceAggregation[i][j] != nullptr) {
-                    CHECKCUDAERR(cudaFree(d_buffers->d_aux_traceAggregation[i][j]));
-                }
-            }
             free(d_buffers->d_aux_traceAggregation[i]);
         }
         
-        CHECKCUDAERR(cudaFree(d_buffers->d_constPols[i]));
-        CHECKCUDAERR(cudaFree(d_buffers->d_constPolsAggregation[i]));
+        // Free pinned host buffers
         CHECKCUDAERR(cudaFreeHost(d_buffers->pinned_buffer[i]));
         CHECKCUDAERR(cudaFreeHost(d_buffers->pinned_buffer_extra[i]));
     }
@@ -296,6 +340,7 @@ void free_device_buffers(void *d_buffers_)
     free(d_buffers->d_constPolsAggregation);
     free(d_buffers->pinned_buffer);
     free(d_buffers->pinned_buffer_extra);
+    free(d_buffers->gpuMemoryBuffer);
 
     if (d_buffers->streamsData != nullptr) {
         for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
@@ -908,7 +953,7 @@ void tile_const_pols(void *pStarkinfo, void *pConstPols, char *constFile, void *
 
 }
 
-void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pConstTree, uint64_t proverBufferSize, void *d_commit_buffers_) {
+void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pConstTree, uint64_t proverBufferSize, void *d_unifiedBuffer_) {
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     uint32_t gpuId = 0;
     cudaSetDevice(gpuId);
@@ -928,29 +973,20 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
     uint64_t sizeAuxTrace = proverBufferSize;
 
-    if (d_commit_buffers_ == nullptr) {
+    if (d_unifiedBuffer_ == nullptr) {
         // Allocate new device buffers
         d_buffers->owns_aux_trace = true;
         d_buffers->owns_const_tree = true;
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace, sizeAuxTrace));
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_const_tree, sizeConstTree));
     } else {
-        // Reuse buffers from DeviceCommitBuffers
-        DeviceCommitBuffers *d_commit_buffers = (DeviceCommitBuffers *)d_commit_buffers_;
+        gl64_t *d_unifiedBuffer = (gl64_t *)d_unifiedBuffer_;
         
         // Always reuse first buffer for d_aux_trace
         d_buffers->owns_aux_trace = false;
-        d_buffers->d_aux_trace = d_commit_buffers->d_aux_trace[0][0];
-        
-        // If there's more than one stream, reuse second buffer for d_const_tree
-        if (d_commit_buffers->n_streams > 1) {
-            d_buffers->owns_const_tree = false;
-            d_buffers->d_const_tree = d_commit_buffers->d_aux_trace[0][1];
-        } else {
-            // Only one stream available, allocate d_const_tree
-            d_buffers->owns_const_tree = true;
-            CHECKCUDAERR(cudaMalloc(&d_buffers->d_const_tree, sizeConstTree));
-        }
+        d_buffers->owns_const_tree = false;
+        d_buffers->d_aux_trace = d_unifiedBuffer;
+        d_buffers->d_const_tree = &d_unifiedBuffer[sizeAuxTrace];
     }
 
     // Always copy const pols and const tree to device
@@ -970,6 +1006,22 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
     CHECKCUDAERR(cudaGetLastError());
     
     return (void*)d_buffers;
+}
+
+void alloc_fixed_pols_buffer_gpu(void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+
+    uint32_t gpuId = 0;
+    cudaSetDevice(gpuId);
+    CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[gpuId], d_buffers->constPolsSize));
+}
+
+void free_fixed_pols_buffer_gpu(void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+
+    uint32_t gpuId = 0;
+    cudaSetDevice(gpuId);
+    CHECKCUDAERR(cudaFree(d_buffers->d_constPols[gpuId]));
 }
 
 void free_device_buffers_recursivef(void *d_buffers_) {
@@ -1333,10 +1385,10 @@ uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size) {
         return 0;
     }
 
-    zklog.trace("Process rank " + std::to_string(node_rank) + 
+    zklog.info("Process rank " + std::to_string(node_rank) + 
                 " sees GPU " + std::to_string(device_id));
-    zklog.trace("Free memory GPU: " + std::to_string(freeMem / (1024.0 * 1024.0)) + " MB");
-    zklog.trace("Total memory GPU: " + std::to_string(totalMem / (1024.0 * 1024.0)) + " MB");
+    zklog.info("Free memory GPU after CUDA context init: " + std::to_string(freeMem / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("Total memory GPU: " + std::to_string(totalMem / (1024.0 * 1024.0 * 1024.0)) + " GB");
 
     return freeMem;
 }
@@ -1349,6 +1401,12 @@ uint64_t get_num_gpus() {
         exit(1);
     }
     return deviceCount;
+}
+
+void *get_unified_buffer_gpu(void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    gl64_t *d_unifiedBuffer = d_buffers->gpuMemoryBuffer[0];
+    return (void *)d_unifiedBuffer;
 }
 
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive, bool force_recursive){

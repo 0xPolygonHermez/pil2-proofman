@@ -3,11 +3,12 @@ macro_rules! timer_start_info {
     ($name:ident) => {
         #[allow(non_snake_case)]
         let $name = std::time::Instant::now();
-        let escape_in = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let is_terminal = std::io::IsTerminal::is_terminal(&std::io::stdout()) && std::env::var("NO_COLOR").is_err();
+        let escape_in = match is_terminal {
             true => "\x1b[2m",
             false => "",
         };
-        let escape_out = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let escape_out = match is_terminal {
             true => "\x1b[37;0m",
             false => "",
         };
@@ -16,11 +17,12 @@ macro_rules! timer_start_info {
     ($name:ident, $($arg:tt)+) => {
         #[allow(non_snake_case)]
         let $name = std::time::Instant::now();
-        let escape_in = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let is_terminal = std::io::IsTerminal::is_terminal(&std::io::stdout()) && std::env::var("NO_COLOR").is_err();
+        let escape_in = match is_terminal {
             true => "\x1b[2m",
             false => "",
         };
-        let escape_out = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let escape_out = match is_terminal {
             true => "\x1b[37;0m",
             false => "",
         };
@@ -33,11 +35,12 @@ macro_rules! timer_stop_and_log_info {
     ($name:ident) => {
         #[allow(non_snake_case)]
         let $name = std::time::Instant::now() - $name;
-        let escape_in = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let is_terminal = std::io::IsTerminal::is_terminal(&std::io::stdout()) && std::env::var("NO_COLOR").is_err();
+        let escape_in = match is_terminal {
             true => "\x1b[2m",
             false => "",
         };
-        let escape_out = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let escape_out = match is_terminal {
             true => "\x1b[37;0m",
             false => "",
         };
@@ -46,11 +49,12 @@ macro_rules! timer_stop_and_log_info {
     ($name:ident, $($arg:tt)+) => {
         #[allow(non_snake_case)]
         let $name = std::time::Instant::now() - $name;
-        let escape_in = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let is_terminal = std::io::IsTerminal::is_terminal(&std::io::stdout()) && std::env::var("NO_COLOR").is_err();
+        let escape_in = match is_terminal {
             true => "\x1b[2m",
             false => "",
         };
-        let escape_out = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let escape_out = match is_terminal {
             true => "\x1b[37;0m",
             false => "",
         };
@@ -63,11 +67,12 @@ macro_rules! timer_start_debug {
     ($name:ident) => {
         #[allow(non_snake_case)]
         let $name = std::time::Instant::now();
-        let escape_in = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let is_terminal = std::io::IsTerminal::is_terminal(&std::io::stdout()) && std::env::var("NO_COLOR").is_err();
+        let escape_in = match is_terminal {
             true => "\x1b[2m",
             false => "",
         };
-        let escape_out = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let escape_out = match is_terminal {
             true => "\x1b[37;0m",
             false => "",
         };
@@ -76,11 +81,12 @@ macro_rules! timer_start_debug {
     ($name:ident, $($arg:tt)+) => {
         #[allow(non_snake_case)]
         let $name = std::time::Instant::now();
-        let escape_in = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let is_terminal = std::io::IsTerminal::is_terminal(&std::io::stdout()) && std::env::var("NO_COLOR").is_err();
+        let escape_in = match is_terminal {
             true => "\x1b[2m",
             false => "",
         };
-        let escape_out = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let escape_out = match is_terminal {
             true => "\x1b[37;0m",
             false => "",
         };
@@ -93,11 +99,12 @@ macro_rules! timer_stop_and_log_debug {
     ($name:ident) => {
         #[allow(non_snake_case)]
         let $name = std::time::Instant::now() - $name;
-        let escape_in = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let is_terminal = std::io::IsTerminal::is_terminal(&std::io::stdout()) && std::env::var("NO_COLOR").is_err();
+        let escape_in = match is_terminal {
             true => "\x1b[2m",
             false => "",
         };
-        let escape_out = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let escape_out = match is_terminal {
             true => "\x1b[37;0m",
             false => "",
         };
@@ -106,11 +113,12 @@ macro_rules! timer_stop_and_log_debug {
     ($name:ident, $($arg:tt)+) => {
         #[allow(non_snake_case)]
         let $name = std::time::Instant::now() - $name;
-        let escape_in = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let is_terminal = std::io::IsTerminal::is_terminal(&std::io::stdout()) && std::env::var("NO_COLOR").is_err();
+        let escape_in = match is_terminal {
             true => "\x1b[2m",
             false => "",
         };
-        let escape_out = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let escape_out = match is_terminal {
             true => "\x1b[37;0m",
             false => "",
         };
@@ -123,11 +131,12 @@ macro_rules! timer_start_trace {
     ($name:ident) => {
         #[allow(non_snake_case)]
         let $name = std::time::Instant::now();
-        let escape_in = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let is_terminal = std::io::IsTerminal::is_terminal(&std::io::stdout()) && std::env::var("NO_COLOR").is_err();
+        let escape_in = match is_terminal {
             true => "\x1b[2m",
             false => "",
         };
-        let escape_out = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let escape_out = match is_terminal {
             true => "\x1b[37;0m",
             false => "",
         };
@@ -136,11 +145,12 @@ macro_rules! timer_start_trace {
     ($name:ident, $($arg:tt)+) => {
         #[allow(non_snake_case)]
         let $name = std::time::Instant::now();
-        let escape_in = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let is_terminal = std::io::IsTerminal::is_terminal(&std::io::stdout()) && std::env::var("NO_COLOR").is_err();
+        let escape_in = match is_terminal {
             true => "\x1b[2m",
             false => "",
         };
-        let escape_out = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let escape_out = match is_terminal {
             true => "\x1b[37;0m",
             false => "",
         };
@@ -153,11 +163,12 @@ macro_rules! timer_stop_and_log_trace {
     ($name:ident) => {
         #[allow(non_snake_case)]
         let $name = std::time::Instant::now() - $name;
-        let escape_in = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let is_terminal = std::io::IsTerminal::is_terminal(&std::io::stdout()) && std::env::var("NO_COLOR").is_err();
+        let escape_in = match is_terminal {
             true => "\x1b[2m",
             false => "",
         };
-        let escape_out = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let escape_out = match is_terminal {
             true => "\x1b[37;0m",
             false => "",
         };
@@ -166,11 +177,12 @@ macro_rules! timer_stop_and_log_trace {
     ($name:ident, $($arg:tt)+) => {
         #[allow(non_snake_case)]
         let $name = std::time::Instant::now() - $name;
-        let escape_in = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let is_terminal = std::io::IsTerminal::is_terminal(&std::io::stdout()) && std::env::var("NO_COLOR").is_err();
+        let escape_in = match is_terminal {
             true => "\x1b[2m",
             false => "",
         };
-        let escape_out = match std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let escape_out = match is_terminal {
             true => "\x1b[37;0m",
             false => "",
         };
