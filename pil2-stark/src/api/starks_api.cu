@@ -973,7 +973,6 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
     uint64_t sizeConstPols = N * nConst * sizeof(Goldilocks::Element);
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
     uint64_t sizeAuxTrace = proverBufferSize;
-    uint64_t sizeAuxTrace_gl64 = sizeAuxTrace / sizeof(gl64_t);
 
     if (d_unifiedBuffer_ == nullptr) {
         // Allocate new device buffers
@@ -987,8 +986,8 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
         // Always reuse first buffer for d_aux_trace
         d_buffers->owns_aux_trace = false;
         d_buffers->owns_const_tree = false;
-        d_buffers->d_aux_trace = d_unifiedBuffer;
-        d_buffers->d_const_tree = &d_unifiedBuffer[sizeAuxTrace_gl64];
+        d_buffers->d_const_tree = d_unifiedBuffer;
+        d_buffers->d_aux_trace = d_unifiedBuffer + sizeConstTree;
     }
 
     // Always copy const pols and const tree to device
