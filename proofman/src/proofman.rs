@@ -241,6 +241,7 @@ pub struct ProofMan<F: PrimeField64> {
     cancellation_info: Arc<RwLock<CancellationInfo>>,
     execution_info: RwLock<ExecutionInfo>,
     verbose_mode: VerboseMode,
+    reload_fixed_pols_gpu: Arc<AtomicBool>,
 }
 
 #[derive(Debug, PartialEq, Clone, BorshSerialize, BorshDeserialize)]
@@ -331,8 +332,8 @@ where
         self.pctx.global_info.get_proving_key_path()
     }
 
-    pub fn get_buffers(&self) -> (Arc<Vec<F>>, *mut c_void) {
-        (self.aux_trace.clone(), self.pctx.get_device_buffers_ptr())
+    pub fn get_preallocated_buffers(&self) -> (Arc<Vec<F>>, *mut c_void, Arc<AtomicBool>) {
+        (self.aux_trace.clone(), self.pctx.get_device_buffers_ptr(), self.reload_fixed_pols_gpu.clone())
     }
 
     pub fn set_barrier(&self) {
@@ -1595,6 +1596,7 @@ where
             cancellation_info: Arc::new(RwLock::new(CancellationInfo::default())),
             verbose_mode,
             execution_info: RwLock::new(ExecutionInfo::default()),
+            reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -2951,6 +2953,13 @@ where
             return Err(ProofmanError::ProofmanError("Witness computation dynamic library not initialized".into()));
         }
 
+        if cfg!(feature = "gpu") && self.reload_fixed_pols_gpu.load(Ordering::SeqCst) {
+            timer_start_info!(RELOAD_FIXED_POLS);
+            load_device_const_pols(&self.pctx, &self.sctx, &self.setups, self.aggregation, true)?;
+            self.reload_fixed_pols_gpu.store(false, Ordering::SeqCst);
+            timer_stop_and_log_info!(RELOAD_FIXED_POLS);
+        }
+
         if let Err(e) = self.wcm.execute() {
             self.cancellation_info.write().unwrap().cancel(Some(e));
         }
@@ -3569,7 +3578,7 @@ where
         load_device_setups(&pctx, &sctx, &setups_vadcop, aggregation, packed_info)?;
 
         timer_start_info!(LOADING_CONSTANTS);
-        load_device_const_pols(&pctx, &sctx, &setups_vadcop, aggregation)?;
+        load_device_const_pols(&pctx, &sctx, &setups_vadcop, aggregation, false)?;
         timer_stop_and_log_info!(LOADING_CONSTANTS);
 
         let pctx = Arc::new(pctx);

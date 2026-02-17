@@ -673,7 +673,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     vadcop_final_verkey: &[u64],
     output_dir_path: &Path,
     prover_buffer_size: usize,
-    unified_buffer_gpu: Option<*mut c_void>,
+    unified_buffer_gpu: *mut c_void,
 ) -> ProofmanResult<*mut c_void> {
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
@@ -708,8 +708,6 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     let recursivef_json_path = output_dir_path.join("recursivef.json");
     let recursivef_json_str = recursivef_json_path.to_string_lossy().into_owned();
 
-    // if unified_buffer_gpu is provided, reuse those buffers otherwise pass null and the C++ code will allocate new ones
-    let unified_buffer_gpu = unified_buffer_gpu.unwrap_or(std::ptr::null_mut());
     let d_buffers = gen_device_buffers_recursivef_c(
         p_setup as *mut u8,
         setup.get_const_ptr(),

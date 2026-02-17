@@ -187,12 +187,13 @@ impl ProveCmd {
 
                 if let Some(proving_key_snark) = &self.proving_key_snark {
                     // Reuse device memory from device_buffers_ptr
-                    let (aux_trace, unified_buffer_ptr) = proofman.get_buffers();
-                    let snark_wrapper: SnarkWrapper<Goldilocks> = SnarkWrapper::new_with_buffers(
+                    let (aux_trace, d_buffers, reload_fixed_pols_gpu) = proofman.get_preallocated_buffers();
+                    let snark_wrapper: SnarkWrapper<Goldilocks> = SnarkWrapper::new_with_preallocated_buffers(
                         proving_key_snark,
                         self.verbose.into(),
                         Some(aux_trace),
-                        Some(unified_buffer_ptr),
+                        Some(d_buffers),
+                        Some(reload_fixed_pols_gpu),
                     )?;
                     snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, Some(self.output_dir.clone()))?;
                 }

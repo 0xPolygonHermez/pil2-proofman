@@ -398,7 +398,7 @@ void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, voi
     }
 }
 
-void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers_, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType) {
+void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers_, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType, bool onlyFirstGPU) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     uint64_t sizeConstPols = constSize * sizeof(Goldilocks::Element);
     
@@ -411,6 +411,7 @@ void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initia
     loadFileParallel(constPols, constFilename, sizeConstPols);
     
     for(int i=0; i<d_buffers->n_gpus; ++i){
+        if (onlyFirstGPU && i > 0) break;
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
         gl64_t *d_constPols = (strcmp(proofType, "basic") == 0) ? d_buffers->d_constPols[i] : d_buffers->d_constPolsAggregation[i];
         CHECKCUDAERR(cudaMemcpy(d_constPols + const_pols_offset, constPols, sizeConstPols, cudaMemcpyHostToDevice));
@@ -432,6 +433,7 @@ void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initia
         loadFileParallel(constTree, constTreeFilename, sizeConstTree);
         
         for(int i=0; i<d_buffers->n_gpus; ++i){
+            if (onlyFirstGPU && i > 0) break;
             cudaSetDevice(d_buffers->my_gpu_ids[i]);
             gl64_t *d_constTree = (strcmp(proofType, "basic") == 0) ? d_buffers->d_constPols[i] : d_buffers->d_constPolsAggregation[i];
             CHECKCUDAERR(cudaMemcpy(d_constTree + const_tree_offset, constTree, sizeConstTree, cudaMemcpyHostToDevice));

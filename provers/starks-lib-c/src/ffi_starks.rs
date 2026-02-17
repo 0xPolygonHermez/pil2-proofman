@@ -1460,6 +1460,7 @@ pub fn load_device_const_pols_c(
     const_tree_filename: &str,
     const_tree_size: u64,
     proof_type: &str,
+    only_first_gpu: bool,
 ) {
     let const_filename_name = CString::new(const_filename).unwrap();
     let const_filename_ptr = const_filename_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1481,6 +1482,7 @@ pub fn load_device_const_pols_c(
             const_tree_filename_ptr,
             const_tree_size,
             proof_type_ptr,
+            only_first_gpu,
         );
     }
 }
@@ -2430,6 +2432,7 @@ pub fn load_device_const_pols_c(
     _const_tree_filename: &str,
     _const_tree_size: u64,
     _proof_type: &str,
+    _only_first_gpu: bool,
 ) {
     trace!("{}: ··· {}", "ffi     ", "load_device_const_pols: This is a mock call because there is no linked library");
 }

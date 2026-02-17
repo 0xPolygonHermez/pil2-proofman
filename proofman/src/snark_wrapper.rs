@@ -15,8 +15,10 @@ use crate::check_const_tree;
 use std::fs;
 use proofman_starks_lib_c::{
     init_final_snark_prover_c, free_final_snark_prover_c, get_snark_protocol_id_c, snark_proof_bytes_to_json_c,
-    pre_allocate_final_snark_prover_c,
+    get_unified_buffer_gpu_c, free_fixed_pols_buffer_gpu_c, pre_allocate_final_snark_prover_c,
+    alloc_fixed_pols_buffer_gpu_c,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof};
 use serde::{Deserialize, Serialize};
 
@@ -54,7 +56,8 @@ pub struct SnarkWrapper<F: PrimeField64> {
     pub setup_recursivef: Setup<F>,
     pub vadcop_final_verkey: Vec<u64>,
     pub aux_trace: Arc<Vec<F>>,
-    pub unified_buffer_gpu: Option<*mut c_void>,
+    pub d_buffers: Option<*mut c_void>,
+    pub reload_fixed_pols_gpu: Option<Arc<AtomicBool>>,
     pub snark_prover: *mut c_void,
     pub proving_key_path: PathBuf,
     pub protocol: SnarkProtocol,
@@ -127,14 +130,15 @@ impl<F: PrimeField64> Drop for SnarkWrapper<F> {
 
 impl<F: PrimeField64> SnarkWrapper<F> {
     pub fn new(proving_key_path: &Path, verbose_mode: VerboseMode) -> ProofmanResult<Self> {
-        Self::new_with_buffers(proving_key_path, verbose_mode, None, None)
+        Self::new_with_preallocated_buffers(proving_key_path, verbose_mode, None, None, None)
     }
 
-    pub fn new_with_buffers(
+    pub fn new_with_preallocated_buffers(
         proving_key_path: &Path,
         verbose_mode: VerboseMode,
         _aux_trace: Option<Arc<Vec<F>>>,
-        unified_buffer_gpu: Option<*mut c_void>,
+        d_buffers: Option<*mut c_void>,
+        reload_fixed_pols_gpu: Option<Arc<AtomicBool>>,
     ) -> ProofmanResult<Self> {
         initialize_logger(verbose_mode, None);
 
@@ -203,7 +207,8 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             proving_key_path: proving_key_path.to_path_buf(),
             protocol,
             vadcop_final_verkey,
-            unified_buffer_gpu,
+            d_buffers,
+            reload_fixed_pols_gpu,
         })
     }
 
@@ -229,6 +234,11 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         }
         let proof = vadcop_proof.proof_with_publics_u64();
         timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
+        let unified_buffer_gpu = if let Some(d_buffers) = self.d_buffers {
+            get_unified_buffer_gpu_c(d_buffers)
+        } else {
+            std::ptr::null_mut()
+        };
         let recursivef_proof = generate_recursivef_proof(
             &self.setup_recursivef,
             &proof,
@@ -236,15 +246,16 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             &self.vadcop_final_verkey,
             output_dir_path,
             self.setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
-            self.unified_buffer_gpu,
+            unified_buffer_gpu,
         )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
         timer_start_info!(GENERATING_SNARK_PROOF);
-        let unified_buffer_gpu = self.unified_buffer_gpu.unwrap_or(std::ptr::null_mut());
+
         pre_allocate_final_snark_prover_c(self.snark_prover, unified_buffer_gpu);
-        if let Some(buffer) = self.unified_buffer_gpu {
-            //TODO: free constants
+
+        if let Some(d_buffer) = self.d_buffers {
+            free_fixed_pols_buffer_gpu_c(d_buffer);
         }
 
         let (snark_proof_bytes, snark_publics_bytes) =
@@ -256,8 +267,12 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             SnarkProof::new(snark_proof_bytes, public_bytes, snark_publics_bytes, self.protocol.protocol_id());
 
         timer_stop_and_log_info!(GENERATING_SNARK_PROOF);
-        if let Some(buffer) = self.unified_buffer_gpu {
-            //TODO: alloc constants and set
+
+        if let Some(d_buffer) = self.d_buffers {
+            alloc_fixed_pols_buffer_gpu_c(d_buffer);
+            if let Some(reload_flag) = &self.reload_fixed_pols_gpu {
+                reload_flag.store(true, Ordering::SeqCst);
+            }
         }
 
         Ok(snark_proof)
@@ -383,7 +398,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         &vadcop_final_verkey,
         output_dir_path,
         setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
-        None,
+        std::ptr::null_mut(),
     )?;
     timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 

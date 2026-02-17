@@ -556,6 +556,7 @@ extern "C" {
         constTreeFilename: *mut ::std::os::raw::c_char,
         constTreeSize: u64,
         proofType: *mut ::std::os::raw::c_char,
+        onlyFirstGPU: bool,
     );
     
     pub fn load_device_setup(

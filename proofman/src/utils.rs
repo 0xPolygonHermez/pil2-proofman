@@ -585,6 +585,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     setups: &SetupsVadcop<F>,
     aggregation: bool,
+    only_first_gpu: bool,
 ) -> ProofmanResult<()> {
     let d_buffers = pctx.get_device_buffers_ptr();
 
@@ -612,6 +613,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
                     tree_path,
                     setup.const_tree_size as u64,
                     proof_type,
+                    only_first_gpu,
                 );
                 offset += setup.const_pols_size_packed as u64;
                 if load_tree {
@@ -646,6 +648,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
                             tree_path,
                             setup.const_tree_size as u64,
                             proof_type,
+                            only_first_gpu,
                         );
                         _offset_aggregation += setup.const_pols_size_packed as u64;
                         if load_tree {
@@ -678,6 +681,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
                         tree_path,
                         setup.const_tree_size as u64,
                         proof_type,
+                        only_first_gpu,
                     );
                     _offset_aggregation += setup.const_pols_size_packed as u64;
                     if load_tree {
@@ -709,6 +713,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
                     tree_path,
                     setup.const_tree_size as u64,
                     proof_type,
+                    only_first_gpu,
                 );
                 _offset_aggregation += setup.const_pols_size_packed as u64;
                 if load_tree {
@@ -737,6 +742,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
                 tree_path,
                 setup_vadcop_final.const_tree_size as u64,
                 proof_type,
+                only_first_gpu,
             );
             _offset_aggregation += setup_vadcop_final.const_pols_size_packed as u64;
             if load_tree {
@@ -764,6 +770,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
                 tree_path,
                 setup_vadcop_final_compressed.const_tree_size as u64,
                 proof_type,
+                only_first_gpu,
             );
             _offset_aggregation += setup_vadcop_final_compressed.const_pols_size_packed as u64;
             if load_tree {
