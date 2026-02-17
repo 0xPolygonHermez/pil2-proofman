@@ -52,7 +52,8 @@ void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity,
     }
 
     uint32_t n_gpus = (uint32_t) deviceCount / node_size;
-    uint32_t my_gpu_ids[n_gpus];
+    assert(n_gpus < 32);
+    uint32_t my_gpu_ids[32];
     for (uint32_t i = 0; i < n_gpus; i++) {
         my_gpu_ids[i] = node_rank * n_gpus + i;
     }
@@ -669,7 +670,6 @@ void verify_constraints(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, v
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][string(proofType)][gpuLocalId];
 
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
-    StepsParams *params = (StepsParams *)params_;
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
     TimerGPU &timer = d_buffers->streamsData[streamId].timer;
 
@@ -703,7 +703,6 @@ void get_hint_field(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, void*
     
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
     
-    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", false)];
     uint64_t offsetPublicInputs = setupCtx.starkInfo.mapOffsets[std::make_pair("publics", false)];
     uint64_t offsetAirgroupValues = setupCtx.starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
@@ -974,6 +973,7 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
     uint64_t sizeConstPols = N * nConst * sizeof(Goldilocks::Element);
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
     uint64_t sizeAuxTrace = proverBufferSize;
+    uint64_t sizeAuxTrace_gl64 = sizeAuxTrace / sizeof(gl64_t);
 
     if (d_unifiedBuffer_ == nullptr) {
         // Allocate new device buffers
@@ -988,7 +988,7 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
         d_buffers->owns_aux_trace = false;
         d_buffers->owns_const_tree = false;
         d_buffers->d_aux_trace = d_unifiedBuffer;
-        d_buffers->d_const_tree = &d_unifiedBuffer[sizeAuxTrace];
+        d_buffers->d_const_tree = &d_unifiedBuffer[sizeAuxTrace_gl64];
     }
 
     // Always copy const pols and const tree to device
