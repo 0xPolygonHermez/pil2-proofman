@@ -31,6 +31,12 @@ fn main() {
         run_command("git", &["submodule", "update", "--recursive"], &pil2_stark_path);
     }
 
+    // For GPU builds, ensure submodules are initialized and blst is compiled
+    if cfg!(feature = "gpu") {
+        ensure_gpu_submodules_initialized(&pil2_stark_path);
+        ensure_blst_compiled(&pil2_stark_path);
+    }
+
     // Check if the `no_cpp_compilation` feature is enabled
     if cfg!(feature = "no_cpp_compilation") {
         println!("Skipping C++ compilation because `no_cpp_compilation` feature is enabled.");
@@ -239,4 +245,68 @@ fn find_source_files(dir: &Path) -> Vec<PathBuf> {
         }
     }
     source_files
+}
+
+/// Ensures GPU-required submodules (blst and sppark) are initialized
+fn ensure_gpu_submodules_initialized(pil2_stark_path: &Path) {
+    let blst_path = pil2_stark_path.join("external/blst");
+    let sppark_path = pil2_stark_path.join("external/sppark");
+
+    if !is_submodule_initialized(&blst_path) || !is_submodule_initialized(&sppark_path) {
+        eprintln!("GPU submodules not fully initialized, running git submodule update...");
+        let workspace_root = pil2_stark_path.parent().unwrap_or(pil2_stark_path);
+        run_command("git", &["submodule", "update", "--init", "--recursive"], workspace_root);
+    }
+}
+
+/// Ensures the blst library is compiled for GPU builds
+fn ensure_blst_compiled(pil2_stark_path: &Path) {
+    let blst_path = pil2_stark_path.join("external/blst");
+    let blst_lib = blst_path.join("libblst.a");
+
+    println!("cargo:rerun-if-changed={}", blst_lib.display());
+
+    if blst_lib.exists() {
+        eprintln!("blst library already exists at {}", blst_lib.display());
+        return;
+    }
+
+    eprintln!("blst library not found at {}, compiling...", blst_lib.display());
+
+    let build_script = blst_path.join("build.sh");
+    if !build_script.exists() {
+        panic!("blst build.sh not found at {}. Submodule init may have failed.", build_script.display());
+    }
+
+    // Run the blst build script
+    let status = Command::new("sh")
+        .arg("build.sh")
+        .current_dir(&blst_path)
+        .status()
+        .unwrap_or_else(|e| panic!("Failed to execute blst build.sh: {e}"));
+
+    if !status.success() {
+        panic!("blst build.sh failed with exit code {:?}", status.code());
+    }
+
+    // Verify the library was created
+    if !blst_lib.exists() {
+        panic!("blst compilation completed but libblst.a was not created at {}", blst_lib.display());
+    }
+
+    eprintln!("blst library successfully compiled at {}", blst_lib.display());
+}
+
+/// Checks if a git submodule is initialized (has .git file or directory with content)
+fn is_submodule_initialized(path: &Path) -> bool {
+    // Initialized submodules have a .git file (not directory) pointing to parent's .git/modules/
+    let git_path = path.join(".git");
+    if git_path.exists() {
+        return true;
+    }
+    // Fallback: check if directory exists and is not empty
+    if let Ok(mut entries) = fs::read_dir(path) {
+        return entries.next().is_some();
+    }
+    false
 }
