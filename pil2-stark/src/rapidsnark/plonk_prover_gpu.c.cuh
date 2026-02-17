@@ -1454,29 +1454,18 @@ namespace PlonkGPU
         ss << "··· challenges.xi: " << E.fr.toString(challenges["xi"]);
         LOG_TRACE(ss);
 
-        // Ensure both zkey H2D batches are complete
-        // Batch 1 (QC,S1,S2,S3 → slot 8): launched in computeT after gate_C, uses pinnedS
-        // Batch 2 (QM,QL,QR,QO → slot 6): launched after computeT, uses pinnedQ
-        
-#ifdef PLONK_GPU_TIMING
-        double t0j = omp_get_wtime();
-#endif
+        // Ensure zkey H2D batch 1 (QC,S1,S2,S3 → slot 8) is complete — needed for S1/S2 evals below
         if (asyncTransferPolsBatch1.joinable()) asyncTransferPolsBatch1.join();
-        if (asyncTransferPolsBatch2.joinable()) asyncTransferPolsBatch2.join();
-#ifdef PLONK_GPU_TIMING
-        std::cout << "[round4] zkey H2D join waited: " << omp_get_wtime() - t0j << "s" << std::endl;
-#endif
         
         auto xi = challenges["xi"];
         auto xiw = challenges["xiw"];
 
-        // Precompute xi^N for blinding corrections (omega^N = 1, so xiw^N = xi^N)
+        // Precompute xi^N for blinding corrections 
         FrElement xiN;
         E.fr.copy(xiN, xi);
         for (uint32_t p = 0; p < zkeyPower; p++) E.fr.square(xiN, xiN);
 
         // Helper: compute blinding correction = sum_j bf[j] * (x^(N+j) - x^j)
-        // where blindCoefficients(bf, len) does coef[j]-=bf[j], coef[N+j]+=bf[j]
         auto blindCorr = [&](FrElement &result, const FrElement bf[], int len,
                              const FrElement &x, const FrElement &xN) {
             FrElement xj = E.fr.one();
@@ -1513,7 +1502,7 @@ namespace PlonkGPU
         FrElement eval_zw;
         gpu_plonk_poly_eval_to_host(&eval_zw, d_polCoefZ, &xiw, N, d_aux);
         FrElement bfZ[3] = {blindingFactors[9], blindingFactors[8], blindingFactors[7]};
-        blindCorr(eval_zw, bfZ, 3, xiw, xiN);  // xiw^N = xi^N (omega^N = 1)
+        blindCorr(eval_zw, bfZ, 3, xiw, xiN);
 
         proof->addEvaluationCommitment("eval_a", eval_a);
         proof->addEvaluationCommitment("eval_b", eval_b);
@@ -1550,6 +1539,9 @@ namespace PlonkGPU
         }
 
         // STEP 5.2 Compute linearisation polynomial r(X)
+        // Ensure zkey H2D batch 2 (QM,QL,QR,QO → slot 6) is complete — needed by computeR kernel
+        if (asyncTransferPolsBatch2.joinable()) asyncTransferPolsBatch2.join();
+
         LOG_TRACE("> Computing linearisation polynomial R(X)");
 #ifdef PLONK_GPU_TIMING
         double t0 = omp_get_wtime();

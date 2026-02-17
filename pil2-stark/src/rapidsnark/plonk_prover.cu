@@ -1207,9 +1207,6 @@ extern "C" void gpu_plonk_gather_witness(
 
 
 // Evaluates P(x) = sum_{i=0}^{N-1} coef[i] * x^i using parallel monomial evaluation.
-// Phase 1: Each thread computes coef[i]*x^i, block-level reduction → per-block partial sum.
-// Phase 2: Iterative reduction of block partial sums → single result.
-
 __global__ void kernelPolyEval(
     Element* __restrict__ blockResults,
     const Element* __restrict__ coefs,
@@ -1240,14 +1237,16 @@ __global__ void kernelPolyEval(
     }
 }
 
-// Reduction kernel: sums data[0..count) → data[0..numBlocks)
+// Reduction kernel: sums dataIn[0..count) → dataOut[0..numBlocks)
+// dataIn and dataOut must not overlap.
 __global__ void kernelReduceSum(
-    Element* __restrict__ data,
+    const Element* __restrict__ dataIn,
+    Element* __restrict__ dataOut,
     uint64_t count)
 {
     __shared__ Element sdata[256];
     uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-    sdata[threadIdx.x] = (i < count) ? data[i] : Fr::zero();
+    sdata[threadIdx.x] = (i < count) ? dataIn[i] : Fr::zero();
     __syncthreads();
 
     for (uint32_t s = 128; s > 0; s >>= 1) {
@@ -1257,16 +1256,12 @@ __global__ void kernelReduceSum(
     }
 
     if (threadIdx.x == 0) {
-        data[blockIdx.x] = sdata[0];
+        dataOut[blockIdx.x] = sdata[0];
     }
 }
 
 // Evaluate polynomial on GPU, return result to host.
-// hostResult: HOST pointer for single FrElement output
-// coefs: DEVICE pointer to N coefficient FrElements (Montgomery form)
-// pointPtr: HOST pointer to single FrElement (evaluation point, Montgomery form)
-// N: number of coefficients
-// dWork: device scratch buffer, must hold >= ceil(N/256) FrElements
+// dWork: device scratch buffer, must hold >= sum_{k=1..L} ceil(N/256^k) FrElements (L = ceil(log256(N)))
 extern "C" void gpu_plonk_poly_eval_to_host(
     void* hostResult,
     const void* coefs,
@@ -1285,15 +1280,18 @@ extern "C" void gpu_plonk_poly_eval_to_host(
         work, (const Element*)coefs, point, N);
     CHECKCUDAERR(cudaGetLastError());
 
-    // Phase 2+: Iterative reduction until 1 element remains
+    // Phase 2+: Iterative reduction with non-overlapping read/write regions
     uint64_t count = numBlocks;
+    Element* readPtr = work;
+    Element* writePtr = work + count;
     while (count > 1) {
         uint32_t nb = (uint32_t)((count + threads - 1) / threads);
-        kernelReduceSum<<<nb, threads>>>(work, count);
+        kernelReduceSum<<<nb, threads>>>(readPtr, writePtr, count);
         CHECKCUDAERR(cudaGetLastError());
+        readPtr = writePtr;
+        writePtr += nb;
         count = nb;
     }
 
-    // D2H single result element (32 bytes)
-    CHECKCUDAERR(cudaMemcpy(hostResult, work, sizeof(Element), cudaMemcpyDeviceToHost));
+    CHECKCUDAERR(cudaMemcpy(hostResult, readPtr, sizeof(Element), cudaMemcpyDeviceToHost));
 }
