@@ -13,7 +13,7 @@ struct FinalSnarkGPU;
 extern void *initFinalSnarkProverGPU(char* zkeyFile);
 extern void freeFinalSnarkProverGPU(void *snark_prover);
 extern void genFinalSnarkProofGPU(void *proverSnark, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark);
-extern void preAllocateFinalSnarkProverGPU(void *snark_prover);
+extern void preAllocateFinalSnarkProverGPU(void *snark_prover, void* unified_buffer_gpu);
 extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 
 #ifdef __USE_CUDA__
@@ -1537,7 +1537,7 @@ void gen_final_snark_proof(void *prover, void *circomWitnessFinal, uint8_t* proo
     genFinalSnarkProofGPU(prover, circomWitnessFinal, proof, publicsSnark);
 }
 
-void pre_allocate_final_snark_prover(void *snark_prover) {
-    preAllocateFinalSnarkProverGPU(snark_prover);
+void pre_allocate_final_snark_prover(void *snark_prover, void* unified_buffer_gpu) {
+    preAllocateFinalSnarkProverGPU(snark_prover, unified_buffer_gpu);
 }
 #endif

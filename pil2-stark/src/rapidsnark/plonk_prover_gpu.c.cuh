@@ -525,9 +525,10 @@ namespace PlonkGPU
     }
 
     template <typename Engine>
-    void PlonkProverGPU<Engine>::preAllocate()
+    void PlonkProverGPU<Engine>::preAllocate(void* unified_buffer_gpu)
     {
         LOG_TRACE("> Pre-allocating GPU static eval buffers (round0)");
+        d_unifiedBuffer = unified_buffer_gpu;
         round0();
         preAllocated = true;
     }
@@ -631,7 +632,7 @@ namespace PlonkGPU
 #ifdef PLONK_GPU_TIMING
             double tSetup = omp_get_wtime();
 #endif
-            round0();
+                round0();
 #ifdef PLONK_GPU_TIMING
             std::cout << "[SETUP] round0: " << omp_get_wtime() - tSetup << "s" << std::endl;
 #endif

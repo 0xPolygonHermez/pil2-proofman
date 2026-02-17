@@ -1126,8 +1126,8 @@ pub fn free_final_snark_prover_c(snark_prover: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn pre_allocate_final_snark_prover_c(snark_prover: *mut c_void) {
-    unsafe { pre_allocate_final_snark_prover(snark_prover) }
+pub fn pre_allocate_final_snark_prover_c(snark_prover: *mut c_void, unified_buffer_gpu: *mut c_void) {
+    unsafe { pre_allocate_final_snark_prover(snark_prover, unified_buffer_gpu) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -2189,7 +2189,7 @@ pub fn free_final_snark_prover_c(_snark_prover: *mut c_void) {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn pre_allocate_final_snark_prover_c(_snark_prover: *mut c_void) {
+pub fn pre_allocate_final_snark_prover_c(_snark_prover: *mut c_void, _unified_buffer_gpu: *mut c_void) {
     trace!("··· {}", "pre_allocate_final_snark_prover: This is a mock call because there is no linked library");
 }
 

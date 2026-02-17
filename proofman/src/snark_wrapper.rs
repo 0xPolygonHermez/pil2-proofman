@@ -241,8 +241,11 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
         timer_start_info!(GENERATING_SNARK_PROOF);
-        // Pre-allocate GPU buffers (overlaps static eval transfers with witness computation)
-        pre_allocate_final_snark_prover_c(self.snark_prover);
+        let unified_buffer_gpu = self.unified_buffer_gpu.unwrap_or(std::ptr::null_mut());
+        pre_allocate_final_snark_prover_c(self.snark_prover, unified_buffer_gpu);
+        if let Some(buffer) = self.unified_buffer_gpu {
+            //TODO: free constants
+        }
 
         let (snark_proof_bytes, snark_publics_bytes) =
             generate_snark_proof(self.snark_prover, &self.setup_snark_path, recursivef_proof)?;
@@ -253,6 +256,9 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             SnarkProof::new(snark_proof_bytes, public_bytes, snark_publics_bytes, self.protocol.protocol_id());
 
         timer_stop_and_log_info!(GENERATING_SNARK_PROOF);
+        if let Some(buffer) = self.unified_buffer_gpu {
+            //TODO: alloc constants and set
+        }
 
         Ok(snark_proof)
     }

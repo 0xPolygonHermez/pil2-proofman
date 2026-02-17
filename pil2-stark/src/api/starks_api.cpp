@@ -960,7 +960,7 @@ void gen_final_snark_proof(void *prover, void *circomWitnessFinal, uint8_t* proo
     genFinalSnarkProof(prover, circomWitnessFinal, proof, publicsSnark);
 }
 
-void pre_allocate_final_snark_prover(void *snark_prover) {
+void pre_allocate_final_snark_prover(void *snark_prover, void* unified_buffer_gpu) {
     // No-op for CPU
 }
 #endif

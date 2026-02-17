@@ -151,7 +151,7 @@ namespace PlonkGPU {
 
         u_int32_t getNPublic() const { return zkey->nPublic; }
 
-        void preAllocate();
+        void preAllocate(void* unified_buffer_gpu);
 
         std::tuple <std::vector<uint8_t>, std::vector<uint8_t>> prove(BinFileUtils::BinFile *fdZkey, BinFileUtils::BinFile *fdWtns);
         std::tuple <std::vector<uint8_t>, std::vector<uint8_t>> prove(BinFileUtils::BinFile *fdZkey, FrElement *wtns, WtnsUtils::Header* wtnsHeader = NULL);
