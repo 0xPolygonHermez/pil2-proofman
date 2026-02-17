@@ -184,8 +184,6 @@ void calculateTraceInstance(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t st
     ExpsArguments *d_expsArgs = d_buffers->streamsData[stream_id].d_expsArgs;
     DestParamsGPU *d_destParams = d_buffers->streamsData[stream_id].d_destParams;
 
-    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-
     Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
     
     uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", false)];

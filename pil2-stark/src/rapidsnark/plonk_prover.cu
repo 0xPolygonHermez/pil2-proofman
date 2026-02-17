@@ -628,7 +628,8 @@ extern "C" void gpu_plonk_precompute_omega_tables_async(
 // Block-level inclusive scan: 256 threads, 4 elements/thread = 1024 elems/block
 __global__ void mulScanBlockKernel(Element* data, Element* blockTotals, uint64_t N)
 {
-    __shared__ Element sdata[256];
+    __shared__ unsigned char sdata_raw[256 * sizeof(Element)];
+    Element* sdata = reinterpret_cast<Element*>(sdata_raw);
     uint32_t tid = threadIdx.x;
     uint64_t blockStart = (uint64_t)blockIdx.x * 1024;
 
@@ -750,7 +751,8 @@ __device__ __forceinline__ AffinePair affineIdentity() {
 
 __global__ void affineScanBlockKernel(AffinePair* pairs, AffinePair* blockTotals, uint64_t N)
 {
-    __shared__ AffinePair sdata[256];
+    __shared__ unsigned char sdata_raw[256 * sizeof(AffinePair)];
+    AffinePair* sdata = reinterpret_cast<AffinePair*>(sdata_raw);
     uint32_t tid = threadIdx.x;
     uint64_t blockStart = (uint64_t)blockIdx.x * 1024;
 
@@ -1195,7 +1197,8 @@ __global__ void kernelPolyEval(
     Element point,
     uint64_t N)
 {
-    __shared__ Element sdata[256];
+    __shared__ unsigned char sdata_raw[256 * sizeof(Element)];
+    Element* sdata = reinterpret_cast<Element*>(sdata_raw);
     uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
 
     if (i < N) {
@@ -1226,7 +1229,8 @@ __global__ void kernelReduceSum(
     Element* __restrict__ dataOut,
     uint64_t count)
 {
-    __shared__ Element sdata[256];
+    __shared__ unsigned char sdata_raw[256 * sizeof(Element)];
+    Element* sdata = reinterpret_cast<Element*>(sdata_raw);
     uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     sdata[threadIdx.x] = (i < count) ? dataIn[i] : Fr::zero();
     __syncthreads();
