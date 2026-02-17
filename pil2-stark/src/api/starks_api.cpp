@@ -817,6 +817,10 @@ uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size) { return 0;
 
 uint64_t get_num_gpus(){ return 1;}
 
+void *get_unified_buffer_gpu(void *d_buffers_) {
+    return nullptr;
+}
+
 void free_device_buffers(void *d_buffers_) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     delete d_buffers;

@@ -16,7 +16,7 @@ use crate::{
 use std::ffi::c_void;
 use proofman_starks_lib_c::{
     check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
-    alloc_device_large_buffers_c,
+    get_unified_buffer_gpu_c, alloc_device_large_buffers_c,
 };
 use proofman_util::DeviceBuffer;
 
@@ -1018,5 +1018,9 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn get_device_buffers_ptr(&self) -> *mut c_void {
         self.d_buffers.get_ptr()
+    }
+
+    pub fn get_unified_buffer_gpu(&self) -> *mut c_void {
+        get_unified_buffer_gpu_c(self.d_buffers.get_ptr())
     }
 }

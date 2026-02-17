@@ -331,8 +331,8 @@ where
         self.pctx.global_info.get_proving_key_path()
     }
 
-    pub fn get_device_buffers_ptr(&self) -> *mut std::ffi::c_void {
-        self.pctx.get_device_buffers_ptr()
+    pub fn get_buffers(&self) -> (Arc<Vec<F>>, *mut c_void) {
+        (self.aux_trace.clone(), self.pctx.get_device_buffers_ptr())
     }
 
     pub fn set_barrier(&self) {

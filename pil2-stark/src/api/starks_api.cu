@@ -945,7 +945,7 @@ void tile_const_pols(void *pStarkinfo, void *pConstPols, char *constFile, void *
 
 }
 
-void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pConstTree, uint64_t proverBufferSize, void *d_commit_buffers_) {
+void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pConstTree, uint64_t proverBufferSize, void *d_unifiedBuffer_) {
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     uint32_t gpuId = 0;
     cudaSetDevice(gpuId);
@@ -965,21 +965,20 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
     uint64_t sizeAuxTrace = proverBufferSize;
 
-    if (d_commit_buffers_ == nullptr) {
+    if (d_unifiedBuffer_ == nullptr) {
         // Allocate new device buffers
         d_buffers->owns_aux_trace = true;
         d_buffers->owns_const_tree = true;
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace, sizeAuxTrace));
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_const_tree, sizeConstTree));
     } else {
-        // Reuse buffers from DeviceCommitBuffers
-        DeviceCommitBuffers *d_commit_buffers = (DeviceCommitBuffers *)d_commit_buffers_;
+        gl64_t *d_unifiedBuffer = (gl64_t *)d_unifiedBuffer_;
         
         // Always reuse first buffer for d_aux_trace
         d_buffers->owns_aux_trace = false;
         d_buffers->owns_const_tree = false;
-        d_buffers->d_aux_trace = d_commit_buffers->gpuMemoryBuffer[0];
-        d_buffers->d_const_tree = &d_commit_buffers->gpuMemoryBuffer[0][sizeAuxTrace];
+        d_buffers->d_aux_trace = d_unifiedBuffer;
+        d_buffers->d_const_tree = &d_unifiedBuffer[sizeAuxTrace];
     }
 
     // Always copy const pols and const tree to device
@@ -1394,6 +1393,12 @@ uint64_t get_num_gpus() {
         exit(1);
     }
     return deviceCount;
+}
+
+void *get_unified_buffer_gpu(void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    gl64_t *d_unifiedBuffer = d_buffers->gpuMemoryBuffer[0];
+    return (void *)d_unifiedBuffer;
 }
 
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive, bool force_recursive){
