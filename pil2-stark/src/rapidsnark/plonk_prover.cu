@@ -823,13 +823,13 @@ static void affineScanRecursive(AffinePair* dPairs, uint64_t N, AffinePair* dWor
     }
 }
 
-__global__ void buildAffinePairsKernel(AffinePair* pairs, const Element* coefs, Element alpha, uint64_t numPairs)
+__global__ void buildAffinePairsKernel(AffinePair* pairs, const Element* coefs, Element invBeta, uint64_t numPairs)
 {
     uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numPairs) return;
     AffinePair p;
-    p.a = alpha;
-    p.b = Fr::mul(Fr::sub(Fr::zero(), alpha), coefs[i + 1]);
+    p.a = invBeta;
+    p.b = Fr::mul(Fr::sub(Fr::zero(), invBeta), coefs[i + 1]);
     pairs[i] = p;
 }
 
@@ -842,23 +842,21 @@ __global__ void applyAffineScanKernel(Element* coefs, const AffinePair* scannedP
 
 extern "C" void gpu_plonk_compute_div_zerofier(
     void* dCoefs, uint64_t length,
-    const void* alphaPtr, const void* y0Ptr,
+    const void* invBetaPtr, const void* y0Ptr,
     void* dPairWork)
 {
-    Element alpha = *(const Element*)alphaPtr;
+    Element invBeta = *(const Element*)invBetaPtr;
     Element y0    = *(const Element*)y0Ptr;
     uint64_t numPairs = length - 1;
     AffinePair* dPairs = (AffinePair*)dPairWork;
 
     uint32_t threads = 256;
     uint32_t blocks = (uint32_t)((numPairs + threads - 1) / threads);
-    buildAffinePairsKernel<<<blocks, threads>>>(dPairs, (Element*)dCoefs, alpha, numPairs);
+    buildAffinePairsKernel<<<blocks, threads>>>(dPairs, (Element*)dCoefs, invBeta, numPairs);
     CHECKCUDAERR(cudaGetLastError());
-    CHECKCUDAERR(cudaDeviceSynchronize());
 
     AffinePair* dRecursiveWork = dPairs + numPairs;
     affineScanRecursive(dPairs, numPairs, dRecursiveWork);
-    CHECKCUDAERR(cudaDeviceSynchronize());
 
     applyAffineScanKernel<<<blocks, threads>>>((Element*)dCoefs, dPairs, y0, numPairs);
     CHECKCUDAERR(cudaGetLastError());
@@ -1051,18 +1049,12 @@ extern "C" void gpu_plonk_compute_z_ratios_gather(
 
 
 // Computes Wxi polynomial coefficients directly on GPU from 15 input polynomials.
-// All inputs are GPU-resident: A/B/C/Z at dPolCoef, T1/T2/T3 at dT slots,
-// QM/QL/QR/QO/QC/S1/S2/S3 uploaded to repurposed d_piBuffer/d_lagBuffer.
-
 struct RWxiConst {
     Element coef_ab, eval_a, eval_b, eval_c;
     Element e2_plus_e4, e3_beta;
     Element v1, v2, v3, v4, v5;
     Element neg_zh, xin, xin2;
     Element r0, wxi_offset;
-    // Blinding correction: blindCoefficients modifies CPU poly coefs but GPU dPolCoef has unblinded IFFT data.
-    // blindDelta[j] = v1*bfA[j] + v2*bfB[j] + v3*bfC[j] + e2_plus_e4*bfZ[j]
-    // Subtracted at i=j (j=0,1,2), added at i=N+j.
     Element blindDelta[3];
     uint64_t N;
 };
@@ -1085,7 +1077,7 @@ __global__ void computeRWxiKernel(
 
     Element val = Fr::zero();
 
-    // Phase 1: zkey selectors + sigmas (i < N)
+    
     if (i < c.N) {
         val = Fr::mul(polQM[i], c.coef_ab);
         val = Fr::add(val, Fr::mul(polQL[i], c.eval_a));
@@ -1095,23 +1087,13 @@ __global__ void computeRWxiKernel(
         val = Fr::sub(val, Fr::mul(polS3[i], c.e3_beta));
         val = Fr::add(val, Fr::mul(polS1[i], c.v4));
         val = Fr::add(val, Fr::mul(polS2[i], c.v5));
-    }
-
-    // Phase 2: Z polynomial (i < N — GPU has unblinded IFFT data)
-    if (i < c.N) {
         val = Fr::add(val, Fr::mul(polZ[i], c.e2_plus_e4));
-    }
-
-    // Phase 3: Wire polynomials (i < N — GPU has unblinded IFFT data)
-    if (i < c.N) {
         val = Fr::add(val, Fr::mul(polA[i], c.v1));
         val = Fr::add(val, Fr::mul(polB[i], c.v2));
         val = Fr::add(val, Fr::mul(polC[i], c.v3));
     }
 
     // Phase 3b: Blinding corrections for A/B/C/Z
-    // CPU blindCoefficients subtracts bf at low indices and adds bf at high indices.
-    // blindDelta[j] = combined correction = v1*bfA[j] + v2*bfB[j] + v3*bfC[j] + e2_plus_e4*bfZ[j]
     if (i < 3) {
         val = Fr::sub(val, c.blindDelta[i]);
     }
@@ -1119,7 +1101,7 @@ __global__ void computeRWxiKernel(
         val = Fr::add(val, c.blindDelta[i - c.N]);
     }
 
-    // Phase 4: Quotient polynomial combination
+    // Quotient polynomial combination
     // T3 has N+6 elements, T1/T2 have N+1 elements each
     Element tval = Fr::mul(polT3[i], c.xin2);
     if (i <= c.N) {
@@ -1128,7 +1110,7 @@ __global__ void computeRWxiKernel(
     }
     val = Fr::add(val, Fr::mul(tval, c.neg_zh));
 
-    // Phase 5: Scalar adjustments at index 0
+    // Scalar adjustments at index 0
     if (i == 0) {
         val = Fr::add(val, c.r0);
         val = Fr::sub(val, c.wxi_offset);

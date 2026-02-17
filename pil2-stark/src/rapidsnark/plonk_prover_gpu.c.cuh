@@ -101,7 +101,7 @@ extern "C" void gpu_plonk_prefix_scan_multiply(void* dData, uint64_t N, void* dW
 extern "C" void gpu_plonk_rotate_left(void* dst, const void* src, uint64_t N);
 extern "C" void gpu_plonk_compute_div_zerofier(
     void* dCoefs, uint64_t length,
-    const void* alphaPtr, const void* y0Ptr, void* dPairWork);
+    const void* invBetaPtr, const void* y0Ptr, void* dPairWork);
 extern "C" void gpu_plonk_divzh_add(void* dT, const void* dTz, uint64_t N);
 extern "C" void gpu_plonk_poly_eval_to_host(
     void* hostResult, const void* coefs, const void* pointPtr,
@@ -762,7 +762,19 @@ namespace PlonkGPU
         uint64_t ptauBytes = (N + 6) * sizeof(G1PointAffine);
         uint32_t numBlocks4N = (uint32_t)(NExt / 256);
         uint32_t numBlocksN = (uint32_t)(N / 256);
-        uint64_t scanWorkElems = N / 1024 + N / (1024 * 1024) + 1; // Prefix scan workspace: recursive blocks of 1024, 3 levels for N=2^24
+        uint64_t scanWorkElems = N / 1024 + N / (1024 * 1024) + 1; // mulScan workspace (round2): recursive blocks of 1024
+
+        // d_aux peak usage per round:
+        //   Round 1-3 (NTT): NExt + 4 FrElements (4N evals + Z wrap-around)
+        //   Round 2 (prefix scan): 4N + scanWorkElems
+        //   Round 5 (divByZerofier): (N+6) + 2*(N+5) + affineScanWork FrElements (~3N)
+        uint64_t auxElemsR3 = NExt + 4 + scanWorkElems;  // Round 1-3: NTT + Z wrap-around + scan workspace
+        uint64_t affineScanPairs = N + 5;  // numPairs for Wxi (largest case)
+        uint64_t affineScanWork = 0;
+        for (uint64_t n = affineScanPairs; n > 1; n = (n + 1023) / 1024)
+            affineScanWork += n;
+        uint64_t auxElemsR5 = (N + 6) + affineScanWork * 2;
+        uint64_t auxElems = std::max(auxElemsR3, auxElemsR5);
 
         if (!d_unifiedBuffer) {
 
@@ -773,7 +785,7 @@ namespace PlonkGPU
             unifiedBufferSize += 4 * NBytes;                          // PolCoefA/B/C/Z
             unifiedBufferSize += ptauBytes;                           // PTau
             unifiedBufferSize = (unifiedBufferSize + 255) & ~255ULL;  // align Aux to 256 bytes
-            unifiedBufferSize += (NExt + 4 + scanWorkElems) * sizeof(FrElement); // Aux scratch + scan workspace
+            unifiedBufferSize += auxElems * sizeof(FrElement);        // Aux scratch: max(round3 NTT, round5 affineScan)
             unifiedBufferSize += numBlocks4N * sizeof(FrElement);     // omega_4x bases for 4N gate kernels
             unifiedBufferSize += 256 * sizeof(FrElement);             // omega_4x tid table (0..255)
             unifiedBufferSize += numBlocksN * sizeof(FrElement);      // omega bases for N z_ratios kernel
@@ -796,7 +808,7 @@ namespace PlonkGPU
         d_polCoefZ = base + off;             off += NBytes;
         d_ptau = base + off;                 off += ptauBytes;
         off = (off + 255) & ~255ULL;
-        d_aux = base + off;                  off += (NExt + 4 + scanWorkElems) * sizeof(FrElement);
+        d_aux = base + off;                  off += auxElems * sizeof(FrElement);
         d_omegaBasesNExt = base + off;       off += numBlocks4N * sizeof(FrElement);
         d_omegaTidNExt = base + off;         off += 256 * sizeof(FrElement);
         d_omegaBasesN = base + off;          off += numBlocksN * sizeof(FrElement);
@@ -1340,9 +1352,6 @@ namespace PlonkGPU
         std::array<const void*, 4> srcs = { polPtr["QC"], polPtr["Sigma1"], polPtr["Sigma2"], polPtr["Sigma3"]};
         std::array<size_t, 4> sizes = {NBytes, NBytes, NBytes, NBytes};
 
-        void* pinBuf = pinnedS;
-        size_t pinSz = pinnedSize;
-
         asyncTransferPolsBatch1 = std::thread([dsts, srcs, sizes, this]() {
             void* d[4]; const void* s[4]; size_t sz[4];
             for (int i = 0; i < 4; i++) { d[i] = dsts[i]; s[i] = srcs[i]; sz[i] = sizes[i]; }
@@ -1548,7 +1557,7 @@ namespace PlonkGPU
 #endif
         computeR();
 #ifdef PLONK_GPU_TIMING
-        std::cout << "[TIMING]   computeR+Wxi (GPU): " << omp_get_wtime() - t0 << "s" << std::endl;
+        std::cout << "[TIMING]   computeR+Wxi_numerator (GPU): " << omp_get_wtime() - t0 << "s" << std::endl;
 #endif
 
         // STEP 5.3 Compute opening proof polynomial Wxi(X)
@@ -1720,7 +1729,6 @@ namespace PlonkGPU
         wxi_offset = E.fr.add(wxi_offset, E.fr.mul(v5, eval_s2));
 
         // GPU R+Wxi kernel: writes Wxi directly to d_aux on GPU
-        // Pack constants struct (binary-compatible with RWxiConst in plonk_prover.cu)
         struct {
             FrElement coef_ab, eval_a, eval_b, eval_c;
             FrElement e2_plus_e4, e3_beta;
@@ -1747,10 +1755,9 @@ namespace PlonkGPU
         rwxiConst.r0 = r0;
         rwxiConst.wxi_offset = wxi_offset;
 
-        // Blinding corrections: blindCoefficients modifies CPU polys but GPU dPolCoef has unblinded IFFT data.
+        // Blinding corrections:
         // blindDelta[j] = v1*bfA[j] + v2*bfB[j] + v3*bfC[j] + e2_plus_e4*bfZ[j]
         // where bfA = {bf[2],bf[1]}, bfB = {bf[4],bf[3]}, bfC = {bf[6],bf[5]}, bfZ = {bf[9],bf[8],bf[7]}
-        // At i=j: subtracted (CPU coef -= bf). At i=N+j: added (CPU coef += bf).
         rwxiConst.blindDelta[0] = E.fr.add(
             E.fr.add(E.fr.mul(v1, blindingFactors[2]), E.fr.mul(v2, blindingFactors[4])),
             E.fr.add(E.fr.mul(v3, blindingFactors[6]), E.fr.mul(e2_plus_e4, blindingFactors[9])));
@@ -1760,9 +1767,6 @@ namespace PlonkGPU
         rwxiConst.blindDelta[2] = E.fr.mul(e2_plus_e4, blindingFactors[7]);
 
         rwxiConst.N = N;
-
-        // Ensure zkey H2D (launched in round3 after computeT) is complete
-        // (synchronous H2D was used, so already done — this is a safety sync)
 
         gpu_plonk_compute_r_wxi(
             d_aux,
@@ -1778,42 +1782,34 @@ namespace PlonkGPU
     template <typename Engine>
     void PlonkProverGPU<Engine>::computeWxi()
     {
-        // Wxi already computed by GPU kernel in computeR() — sitting in d_aux[0..N+5]
-        // GPU divByZerofier — result stays on GPU in d_aux for devptr MSM
+        // Wxi numerator already computed by GPU kernel in computeR() 
         uint64_t len = N + 6;
         FrElement xi = challenges["xi"];
-        FrElement alpha;
-        E.fr.inv(alpha, xi);           // alpha = 1/xi
-        FrElement negAlpha;
-        E.fr.neg(negAlpha, alpha);
+        FrElement invBeta;
+        E.fr.inv(invBeta, xi);         
+        FrElement invBetaNeg;
+        E.fr.neg(invBetaNeg, invBeta);
 
-        // Get Wxi[0] from GPU (single element D2H)
+        // Get Wxi[0] from GPU 
         FrElement wxi0;
         gpu_plonk_memcpy_d2h(&wxi0, d_aux, sizeof(FrElement));
-        FrElement y0 = E.fr.mul(negAlpha, wxi0);
-
-        // No H2D needed — Wxi is already in d_aux from GPU kernel
+        FrElement y0 = E.fr.mul(invBetaNeg, wxi0);
 
         // GPU affine scan — workspace starts after coefficient data
         void* dPairWork = (void*)((FrElement*)d_aux + len);
-        gpu_plonk_compute_div_zerofier(d_aux, len, (const void*)&alpha, (const void*)&y0, dPairWork);
-
-        // Result stays in d_aux for GPU-direct MSM (no D2H needed)
+        gpu_plonk_compute_div_zerofier(d_aux, len, (const void*)&invBeta, (const void*)&y0, dPairWork);
+        // Result stays in d_aux for GPU-direct MSM 
     }
 
     template <typename Engine>
     void PlonkProverGPU<Engine>::computeWxiw()
     {
-        // GPU-native: build blinded Wxiw polynomial directly from d_polCoefZ on GPU.
-        // No CPU Z polynomial needed — applies blinding corrections via small D2H/H2D patches.
-        uint64_t len = N + 3;  // blinded polynomial length
+        uint64_t len = N + 3;
 
         // D2D unblinded Z coefficients → d_aux[0..N)
         gpu_plonk_memcpy_d2d(d_aux, d_polCoefZ, N * sizeof(FrElement));
 
         // Apply blinding corrections on CPU:
-        // blindCoefficients would do: coef[j] -= bf[j], coef[N+j] += bf[j] for j=0,1,2
-        // Plus subtract eval_zw from coef[0] (the subScalar step)
         FrElement bf[3] = {blindingFactors[9], blindingFactors[8], blindingFactors[7]};
         FrElement eval_zw = proof->getEvaluationCommitment("eval_zw");
 
@@ -1830,18 +1826,17 @@ namespace PlonkGPU
         gpu_plonk_memcpy_h2d(d_aux, lowCoef, 3 * sizeof(FrElement));
         gpu_plonk_memcpy_h2d((FrElement*)d_aux + N, bf, 3 * sizeof(FrElement));
 
-        // Compute divByZerofier parameters: alpha = 1/xiw, y0 = -alpha * coef[0]
+        // Compute divByZerofier parameters: invBeta = 1/xiw, y0 = invBetaNeg * coef[0]
         FrElement xiw = challenges["xiw"];
-        FrElement alpha;
-        E.fr.inv(alpha, xiw);
-        FrElement negAlpha;
-        E.fr.neg(negAlpha, alpha);
-        FrElement y0 = E.fr.mul(negAlpha, lowCoef[0]);
+        FrElement invBeta;
+        E.fr.inv(invBeta, xiw);
+        FrElement invBetaNeg;
+        E.fr.neg(invBetaNeg, invBeta);
+        FrElement y0 = E.fr.mul(invBetaNeg, lowCoef[0]);
 
         // GPU divByZerofier
         void* dPairWork = (void*)((FrElement*)d_aux + len);
-        gpu_plonk_compute_div_zerofier(d_aux, len, (const void*)&alpha, (const void*)&y0, dPairWork);
-
+        gpu_plonk_compute_div_zerofier(d_aux, len, (const void*)&invBeta, (const void*)&y0, dPairWork);
         // Result stays in d_aux for GPU-direct MSM (no D2H needed)
     }
 

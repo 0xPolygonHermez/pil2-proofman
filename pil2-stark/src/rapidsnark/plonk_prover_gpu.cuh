@@ -20,7 +20,7 @@ using json = nlohmann::json;
 using namespace std::chrono;
 
 #define BLINDINGFACTORSLENGTH_PLONK_GPU 11
-#define PLONK_GPU_TIMING  // Comment out to disable sub-round timing prints
+#define PLONK_GPU_TIMING
 
 namespace PlonkGPU {
 
@@ -69,11 +69,11 @@ namespace PlonkGPU {
         Keccak256Transcript<Engine> *transcript;
         SnarkProof<Engine> *proof;
 
-        std::thread asyncTransferSigma;      // S1,S2,S3 — join before computeZ
-        std::thread asyncTransferQ;          // QL-QC — join before computeT
-        std::thread asyncComputePI;          // PI(X) — join in computeT before compute_t_evaluations_gpu
-        std::thread asyncTransferPolsBatch1;  // zkey batch 1 (QC,S1,S2,S3 coefs → slot 8) — launched in computeT after gate_C
-        std::thread asyncTransferPolsBatch2;  // zkey batch 2 (QM,QL,QR,QO coefs → slot 6) — launched after computeT
+        std::thread asyncTransferSigma;       // S1,S2,S3 — join before computeZ
+        std::thread asyncTransferQ;           // QL-QC — join before computeT
+        std::thread asyncComputePI;           // PI(X) — join in computeT before compute_t_evaluations_gpu
+        std::thread asyncTransferPolsBatch1;  // zkey batch 1 (QC,S1,S2,S3 coefs → slot 8)
+        std::thread asyncTransferPolsBatch2;  // zkey batch 2 (QM,QL,QR,QO coefs → slot 6)
         size_t pinnedSize = 0;
         void* pinnedS = nullptr;
         void* pinnedQ = nullptr;
@@ -194,7 +194,6 @@ namespace PlonkGPU {
 
         void applyBlindingCorrection(G1Point &commitment, FrElement *bFactors, u_int32_t nFactors);
 
-        // GPU MSM from device-resident Montgomery-form scalars (mont=true, no fromMontgomery or H2D)
         G1Point multiExponentiationGPU_devptr(void* dScalars, size_t npoints);
     };
 }
