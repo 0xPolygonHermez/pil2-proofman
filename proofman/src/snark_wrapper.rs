@@ -2,7 +2,10 @@ use proofman_common::{
     GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree_snark,
     VerboseMode, initialize_logger,
 };
-use proofman_util::{timer_start_info, timer_stop_and_log_info, create_buffer_fast, VadcopFinalProof};
+use proofman_util::{
+    timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug, create_buffer_fast,
+    VadcopFinalProof,
+};
 use fields::PrimeField64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -218,6 +221,8 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         vadcop_proof: &VadcopFinalProof,
         output_dir_path: Option<PathBuf>,
     ) -> ProofmanResult<SnarkProof> {
+        timer_start_info!(GENERATING_WRAPPER_SNARK_PROOF);
+
         let output_dir_path = match output_dir_path.as_deref() {
             Some(path) => path,
             None => Path::new("tmp"),
@@ -233,7 +238,6 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             ));
         }
         let proof = vadcop_proof.proof_with_publics_u64();
-        timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
         let unified_buffer_gpu = if let Some(d_buffers) = self.d_buffers {
             get_unified_buffer_gpu_c(d_buffers)
         } else {
@@ -248,9 +252,8 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             self.setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
             unified_buffer_gpu,
         )?;
-        timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
-        timer_start_info!(GENERATING_SNARK_PROOF);
+        timer_start_debug!(GENERATING_SNARK_PROOF);
 
         pre_allocate_final_snark_prover_c(self.snark_prover, unified_buffer_gpu);
 
@@ -266,7 +269,9 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         let snark_proof =
             SnarkProof::new(snark_proof_bytes, public_bytes, snark_publics_bytes, self.protocol.protocol_id());
 
-        timer_stop_and_log_info!(GENERATING_SNARK_PROOF);
+        timer_stop_and_log_debug!(GENERATING_SNARK_PROOF);
+
+        timer_stop_and_log_info!(GENERATING_WRAPPER_SNARK_PROOF);
 
         if let Some(d_buffer) = self.d_buffers {
             alloc_fixed_pols_buffer_gpu_c(d_buffer);
