@@ -748,7 +748,7 @@ pub fn generate_snark_proof(
 ) -> ProofmanResult<(Vec<u8>, Vec<u8>)> {
     let witness = generate_witness_final_snark(proof, setup_path)?;
 
-    timer_start_trace!(CALCULATE_FINAL_PROOF);
+    timer_start_info!(CALCULATE_FINAL_PROOF);
 
     let snark_publics: Vec<u8> = vec![0; 32];
     let snark_publics_ptr = snark_publics.as_ptr() as *mut u8;
@@ -756,10 +756,10 @@ pub fn generate_snark_proof(
     let snark_proof: Vec<u8> = vec![0; 24 * 32];
     let snark_proof_ptr = snark_proof.as_ptr() as *mut u8;
 
-    tracing::info!("··· Generating final snark proof");
+    tracing::trace!("··· Generating final snark proof");
     gen_final_snark_proof_c(snark_prover, witness.as_ptr() as *mut u8, snark_proof_ptr, snark_publics_ptr);
-    timer_stop_and_log_trace!(CALCULATE_FINAL_PROOF);
-    tracing::info!("··· Final Snark Proof generated.");
+    timer_stop_and_log_info!(CALCULATE_FINAL_PROOF);
+    tracing::trace!("··· Final Snark Proof generated.");
 
     Ok((snark_proof, snark_publics))
 }

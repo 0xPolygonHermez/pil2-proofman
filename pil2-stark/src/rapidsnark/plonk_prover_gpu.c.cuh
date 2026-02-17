@@ -793,7 +793,7 @@ namespace PlonkGPU
             unifiedBufferSize += (BLINDINGFACTORSLENGTH_PLONK_GPU + 1) * sizeof(FrElement); // blinding factors b_0..b_11
 
             gpu_plonk_cuda_malloc(&d_unifiedBuffer, unifiedBufferSize);
-            std::cout << "[round0] Unified GPU buffer: " << unifiedBufferSize / (1024.0*1024*1024) << " GiB" << std::endl;
+            //std::cout << "[round0] Unified GPU buffer: " << unifiedBufferSize / (1024.0*1024*1024) << " GiB" << std::endl;
         }
 
         // Set all pointers as offsets into unified buffer
