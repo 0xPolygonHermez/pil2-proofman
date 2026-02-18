@@ -84,6 +84,24 @@ extern "C" void gpu_plonk_compute_pi(
     CHECKCUDAERR(cudaStreamDestroy(stream));
 }
 
+// Simplified PI computation for nPublic=1 when L1 evaluations are already on GPU (in dLag).
+extern "C" void gpu_plonk_compute_pi_single(
+    void* dPI, const void* dLag,
+    const void* publicVal, uint64_t NExt)
+{
+    size_t fullBytes = NExt * sizeof(Element);
+
+    CHECKCUDAERR(cudaMemset(dPI, 0, fullBytes));
+
+    uint32_t threadsPerBlock = 256;
+    uint32_t blocks = (uint32_t)(NExt / threadsPerBlock);
+
+    computePIAccumulateKernel<<<blocks, threadsPerBlock>>>(
+        (Element*)dPI, (const Element*)dLag, *((const Element*)publicVal), NExt);
+
+    CHECKCUDAERR(cudaGetLastError());
+}
+
 __device__ __forceinline__
 void mulz_mul2(Element& r, Element& rz,
                const Element& a, const Element& b,
@@ -396,9 +414,9 @@ __global__ void kernelGateC(
     tzOut[i] = Fr::add(tzOut[i], Fr::mul(cp, qo));
 }
 
-// QM + Permutation + L0 kernel: computes a*b*QM + (e2 - e3)*alpha + (z-1)*L0*alpha^2
+// QM + Permutation + L1 kernel: computes a*b*QM + (e2 - e3)*alpha + (z-1)*L1*alpha^2
 // and all blinding derivatives. Accumulates into T/Tz buffers from gate kernels.
-__global__ void kernelQMPermL0(
+__global__ void kernelQMPermL1(
     Element* __restrict__ tOut,
     Element* __restrict__ tzOut,
     const Element* __restrict__ evalA,
@@ -409,7 +427,7 @@ __global__ void kernelQMPermL0(
     const Element* __restrict__ evalS1,
     const Element* __restrict__ evalS2,
     const Element* __restrict__ evalS3,
-    const Element* __restrict__ evalL0,      // L_0 evaluations
+    const Element* __restrict__ evalL1,      // L_1 evaluations
     const Element* __restrict__ omegaBases,
     const Element* __restrict__ omegaTid,
     const Element* __restrict__ d_blindings,
@@ -438,7 +456,7 @@ __global__ void kernelQMPermL0(
     Element s1 = evalS1[i];
     Element s2 = evalS2[i];
     Element s3 = evalS3[i];
-    Element lagrange = evalL0[i];
+    Element lagrange = evalL1[i];
 
     // Compute roots of unity (precomputed base + per-thread table)
     Element omega   = Fr::mul(omegaBases[blockIdx.x], omegaTid[threadIdx.x]);
@@ -480,7 +498,7 @@ __global__ void kernelQMPermL0(
     e3  = Fr::mul(e3, alpha);
     e3z = Fr::mul(e3z, alpha);
 
-    // e4: L0 constraint  alpha2 * (z - 1) * L0
+    // e4: L1 constraint  alpha2 * (z - 1) * L1
     Element e4 = Fr::mul(Fr::mul(Fr::sub(z, Fr::one()), lagrange), alpha2);
     Element e4z = Fr::mul(Fr::mul(zp, lagrange), alpha2);
 
@@ -549,11 +567,11 @@ extern "C" void gpu_plonk_compute_gate_c(
     CHECKCUDAERR(cudaGetLastError());
 }
 
-extern "C" void gpu_plonk_compute_qm_perm_l0(
+extern "C" void gpu_plonk_compute_qm_perm_l1(
     void* tOut, void* tzOut,
     const void* evalA, const void* evalB, const void* evalC,
     const void* evalZ,
-    const void* evalQM, const void* evalS1, const void* evalS2, const void* evalS3, const void* evalL0,
+    const void* evalQM, const void* evalS1, const void* evalS2, const void* evalS3, const void* evalL1,
     const void* d_blindings,
     const void* betaPtr, const void* gammaPtr,
     const void* alphaPtr, const void* alpha2Ptr,
@@ -571,12 +589,12 @@ extern "C" void gpu_plonk_compute_qm_perm_l0(
     const Element* Z2 = (const Element*)Z2Ptr;
     const Element* Z3 = (const Element*)Z3Ptr;
 
-    kernelQMPermL0<<<blocks, threadsPerBlock>>>(
+    kernelQMPermL1<<<blocks, threadsPerBlock>>>(
         (Element*)tOut, (Element*)tzOut,
         (const Element*)evalA, (const Element*)evalB, (const Element*)evalC,
         (const Element*)evalZ,
         (const Element*)evalQM, (const Element*)evalS1, (const Element*)evalS2,
-        (const Element*)evalS3, (const Element*)evalL0,
+        (const Element*)evalS3, (const Element*)evalL1,
         (const Element*)omegaBases, (const Element*)omegaTid,
         (const Element*)d_blindings,
         Z1[0], Z1[1], Z1[2], Z1[3],
@@ -1350,3 +1368,4 @@ extern "C" void gpu_plonk_calculate_additions(
     }
     CHECKCUDAERR(cudaDeviceSynchronize());
 }
+
