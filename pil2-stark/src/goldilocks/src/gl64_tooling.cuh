@@ -400,9 +400,11 @@ struct DeviceCommitBuffers
     gl64_t ***d_aux_traceAggregation;
     Goldilocks::Element **pinned_buffer;
     Goldilocks::Element **pinned_buffer_extra;
+    gl64_t **gpuMemoryBuffer;
     bool recursive;
     uint64_t max_size_proof;
 
+    uint64_t constPolsSize;
     uint64_t pinned_size = 128 * 1024 * 1024; //256MB
 
     uint32_t  n_gpus;

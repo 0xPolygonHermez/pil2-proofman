@@ -459,14 +459,13 @@ pub fn calculate_max_witness_trace_size<F: PrimeField64>(
     Ok(max_witness_trace_size)
 }
 
-pub fn initialize_setup_info<F: PrimeField64>(
+pub fn load_device_setups<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     setups: &SetupsVadcop<F>,
     aggregation: bool,
     packed_info: &HashMap<(usize, usize), PackedInfo>,
 ) -> ProofmanResult<()> {
-    let mut offset = 0;
     let d_buffers = pctx.get_device_buffers_ptr();
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
@@ -486,6 +485,116 @@ pub fn initialize_setup_info<F: PrimeField64>(
                 setup.verkey.as_ptr() as *mut u8,
                 packed_info_air.as_ffi().get_ptr(),
             );
+        }
+    }
+
+    if aggregation {
+        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in air_group.iter().enumerate() {
+                if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                    let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
+                    let proof_type: &str = setup.setup_type.clone().into();
+                    if cfg!(feature = "gpu") {
+                        tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
+                    }
+                    load_device_setup_c(
+                        airgroup_id as u64,
+                        air_id as u64,
+                        proof_type,
+                        (&setup.p_setup).into(),
+                        d_buffers,
+                        setup.verkey.as_ptr() as *mut u8,
+                        std::ptr::null_mut(),
+                    );
+                }
+            }
+        }
+
+        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in air_group.iter().enumerate() {
+                let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
+                let proof_type: &str = setup.setup_type.clone().into();
+                if cfg!(feature = "gpu") {
+                    tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
+                }
+                load_device_setup_c(
+                    airgroup_id as u64,
+                    air_id as u64,
+                    proof_type,
+                    (&setup.p_setup).into(),
+                    d_buffers,
+                    setup.verkey.as_ptr() as *mut u8,
+                    std::ptr::null_mut(),
+                );
+            }
+        }
+
+        let n_airgroups = pctx.global_info.air_groups.len();
+        for airgroup_id in 0..n_airgroups {
+            let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?;
+            let proof_type: &str = setup.setup_type.clone().into();
+            if cfg!(feature = "gpu") {
+                tracing::debug!(airgroup_id, air_id = 0, proof_type, "Loading expressions setup in GPU");
+            }
+            load_device_setup_c(
+                airgroup_id as u64,
+                0_u64,
+                proof_type,
+                (&setup.p_setup).into(),
+                d_buffers,
+                setup.verkey.as_ptr() as *mut u8,
+                std::ptr::null_mut(),
+            );
+        }
+
+        let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
+        let proof_type: &str = setup_vadcop_final.setup_type.clone().into();
+        if cfg!(feature = "gpu") {
+            tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
+        }
+        load_device_setup_c(
+            0_u64,
+            0_u64,
+            proof_type,
+            (&setup_vadcop_final.p_setup).into(),
+            d_buffers,
+            setup_vadcop_final.verkey.as_ptr() as *mut u8,
+            std::ptr::null_mut(),
+        );
+
+        let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
+        let proof_type: &str = setup_vadcop_final_compressed.setup_type.clone().into();
+        if cfg!(feature = "gpu") {
+            tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
+        }
+        load_device_setup_c(
+            0_u64,
+            0_u64,
+            proof_type,
+            (&setup_vadcop_final_compressed.p_setup).into(),
+            d_buffers,
+            setup_vadcop_final_compressed.verkey.as_ptr() as *mut u8,
+            std::ptr::null_mut(),
+        );
+    }
+    Ok(())
+}
+
+pub fn load_device_const_pols<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
+    setups: &SetupsVadcop<F>,
+    aggregation: bool,
+    only_first_gpu: bool,
+) -> ProofmanResult<()> {
+    let d_buffers = pctx.get_device_buffers_ptr();
+
+    // Phase 2: Load all constant polynomials
+    let mut offset = 0;
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            let setup = sctx.get_setup(airgroup_id, air_id)?;
+            let proof_type: &str = setup.setup_type.clone().into();
             if cfg!(feature = "gpu") {
                 let const_pols_path = &setup.const_pols_path;
                 tracing::debug!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
@@ -504,6 +613,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                     tree_path,
                     setup.const_tree_size as u64,
                     proof_type,
+                    only_first_gpu,
                 );
                 offset += setup.const_pols_size_packed as u64;
                 if load_tree {
@@ -519,20 +629,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
             for (air_id, _) in air_group.iter().enumerate() {
                 if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
-
                     let proof_type: &str = setup.setup_type.clone().into();
-                    if cfg!(feature = "gpu") {
-                        tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
-                    }
-                    load_device_setup_c(
-                        airgroup_id as u64,
-                        air_id as u64,
-                        proof_type,
-                        (&setup.p_setup).into(),
-                        d_buffers,
-                        setup.verkey.as_ptr() as *mut u8,
-                        std::ptr::null_mut(),
-                    );
                     if cfg!(feature = "gpu") {
                         let const_pols_path = &setup.const_pols_path;
                         tracing::debug!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
@@ -551,6 +648,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                             tree_path,
                             setup.const_tree_size as u64,
                             proof_type,
+                            only_first_gpu,
                         );
                         _offset_aggregation += setup.const_pols_size_packed as u64;
                         if load_tree {
@@ -564,20 +662,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
-
                 let proof_type: &str = setup.setup_type.clone().into();
-                if cfg!(feature = "gpu") {
-                    tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
-                }
-                load_device_setup_c(
-                    airgroup_id as u64,
-                    air_id as u64,
-                    proof_type,
-                    (&setup.p_setup).into(),
-                    d_buffers,
-                    setup.verkey.as_ptr() as *mut u8,
-                    std::ptr::null_mut(),
-                );
                 if cfg!(feature = "gpu") {
                     let const_pols_path = &setup.const_pols_path;
                     tracing::debug!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
@@ -596,6 +681,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                         tree_path,
                         setup.const_tree_size as u64,
                         proof_type,
+                        only_first_gpu,
                     );
                     _offset_aggregation += setup.const_pols_size_packed as u64;
                     if load_tree {
@@ -608,20 +694,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
         let n_airgroups = pctx.global_info.air_groups.len();
         for airgroup_id in 0..n_airgroups {
             let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?;
-
             let proof_type: &str = setup.setup_type.clone().into();
-            if cfg!(feature = "gpu") {
-                tracing::debug!(airgroup_id, air_id = 0, proof_type, "Loading expressions setup in GPU");
-            }
-            load_device_setup_c(
-                airgroup_id as u64,
-                0_u64,
-                proof_type,
-                (&setup.p_setup).into(),
-                d_buffers,
-                setup.verkey.as_ptr() as *mut u8,
-                std::ptr::null_mut(),
-            );
             if cfg!(feature = "gpu") {
                 let const_pols_path = &setup.const_pols_path;
                 tracing::debug!(airgroup_id, air_id = 0, proof_type, "Loading const pols in GPU");
@@ -640,6 +713,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                     tree_path,
                     setup.const_tree_size as u64,
                     proof_type,
+                    only_first_gpu,
                 );
                 _offset_aggregation += setup.const_pols_size_packed as u64;
                 if load_tree {
@@ -649,20 +723,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
         }
 
         let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-
         let proof_type: &str = setup_vadcop_final.setup_type.clone().into();
-        if cfg!(feature = "gpu") {
-            tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
-        }
-        load_device_setup_c(
-            0_u64,
-            0_u64,
-            proof_type,
-            (&setup_vadcop_final.p_setup).into(),
-            d_buffers,
-            setup_vadcop_final.verkey.as_ptr() as *mut u8,
-            std::ptr::null_mut(),
-        );
         if cfg!(feature = "gpu") {
             let const_pols_path = &setup_vadcop_final.const_pols_path;
             tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading const pols in GPU");
@@ -681,6 +742,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                 tree_path,
                 setup_vadcop_final.const_tree_size as u64,
                 proof_type,
+                only_first_gpu,
             );
             _offset_aggregation += setup_vadcop_final.const_pols_size_packed as u64;
             if load_tree {
@@ -689,20 +751,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
         }
 
         let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
-
         let proof_type: &str = setup_vadcop_final_compressed.setup_type.clone().into();
-        if cfg!(feature = "gpu") {
-            tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
-        }
-        load_device_setup_c(
-            0_u64,
-            0_u64,
-            proof_type,
-            (&setup_vadcop_final_compressed.p_setup).into(),
-            d_buffers,
-            setup_vadcop_final_compressed.verkey.as_ptr() as *mut u8,
-            std::ptr::null_mut(),
-        );
         if cfg!(feature = "gpu") {
             let const_pols_path = &setup_vadcop_final_compressed.const_pols_path;
             tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading const pols in GPU");
@@ -721,6 +770,7 @@ pub fn initialize_setup_info<F: PrimeField64>(
                 tree_path,
                 setup_vadcop_final_compressed.const_tree_size as u64,
                 proof_type,
+                only_first_gpu,
             );
             _offset_aggregation += setup_vadcop_final_compressed.const_pols_size_packed as u64;
             if load_tree {

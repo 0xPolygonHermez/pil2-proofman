@@ -1622,7 +1622,252 @@ TEST(BN128_POSEIDON_GPU_TEST, grinding_gpu) {
     CHECKCUDAERR(cudaFree(d_nonceBlock));
 }
 
+// =====================
+// Device Pointer NTT/MSM Tests
+// =====================
 
+// Extern declarations for device pointer functions
+extern "C" void ntt_bn128_gpu_dev_ptr(void* d_data, uint32_t lg_n);
+extern "C" void intt_bn128_gpu_dev_ptr(void* d_data, uint32_t lg_n);
+extern "C" void msm_bn128_gpu_dev_ptr(void* out, const void* d_points, const void* d_scalars, size_t npoints, bool mont);
+
+// Also declare the host-pointer versions for comparison
+extern "C" void ntt_bn128_gpu(void* data, uint32_t lg_n);
+extern "C" void intt_bn128_gpu(void* data, uint32_t lg_n);
+extern "C" void msm_bn128_gpu(void* out, const void* points, const void* scalars, size_t npoints, bool mont);
+
+TEST(BN128_NTT_DEV_PTR, ntt_dev_ptr_vs_host_ptr) {
+    // Test: NTT with device pointer should produce same result as host pointer version
+    const uint32_t lg_n = 10;
+    const uint64_t n = 1ULL << lg_n;
+    
+    RawFr field;
+    
+    RawFr::Element* h_data_host = new RawFr::Element[n];
+    RawFr::Element* h_data_dev = new RawFr::Element[n];
+    
+    for (uint64_t i = 0; i < n; i++) {
+        field.fromUI(h_data_host[i], i + 1);
+        field.copy(h_data_dev[i], h_data_host[i]);
+    }
+    
+    ntt_bn128_gpu(h_data_host, lg_n);
+    
+    void* d_data;
+    CHECKCUDAERR(cudaMalloc(&d_data, n * sizeof(RawFr::Element)));
+    CHECKCUDAERR(cudaMemcpy(d_data, h_data_dev, n * sizeof(RawFr::Element), cudaMemcpyHostToDevice));
+    
+    ntt_bn128_gpu_dev_ptr(d_data, lg_n);
+    
+    CHECKCUDAERR(cudaMemcpy(h_data_dev, d_data, n * sizeof(RawFr::Element), cudaMemcpyDeviceToHost));
+    CHECKCUDAERR(cudaFree(d_data));
+    
+    // Compare
+    bool all_match = true;
+    for (uint64_t i = 0; i < n; i++) {
+        if (!field.eq(h_data_host[i], h_data_dev[i])) {
+            all_match = false;
+            printf("NTT dev_ptr mismatch at index %lu: host=%s, dev=%s\n", i,
+                   field.toString(h_data_host[i], 10).c_str(),
+                   field.toString(h_data_dev[i], 10).c_str());
+            if (i > 5) break;  // Limit output
+        }
+    }
+    
+    EXPECT_TRUE(all_match) << "NTT device pointer version differs from host pointer version";
+    
+    delete[] h_data_host;
+    delete[] h_data_dev;
+}
+
+TEST(BN128_NTT_DEV_PTR, intt_dev_ptr_vs_host_ptr) {
+    const uint32_t lg_n = 10;
+    const uint64_t n = 1ULL << lg_n;
+    
+    RawFr field;
+    
+    RawFr::Element* h_data_host = new RawFr::Element[n];
+    RawFr::Element* h_data_dev = new RawFr::Element[n];
+    
+    for (uint64_t i = 0; i < n; i++) {
+        field.fromUI(h_data_host[i], i + 1);
+        field.copy(h_data_dev[i], h_data_host[i]);
+    }
+    
+    intt_bn128_gpu(h_data_host, lg_n);
+    
+    void* d_data;
+    CHECKCUDAERR(cudaMalloc(&d_data, n * sizeof(RawFr::Element)));
+    CHECKCUDAERR(cudaMemcpy(d_data, h_data_dev, n * sizeof(RawFr::Element), cudaMemcpyHostToDevice));
+    
+    intt_bn128_gpu_dev_ptr(d_data, lg_n);
+    
+    CHECKCUDAERR(cudaMemcpy(h_data_dev, d_data, n * sizeof(RawFr::Element), cudaMemcpyDeviceToHost));
+    CHECKCUDAERR(cudaFree(d_data));
+    
+    // Compare
+    bool all_match = true;
+    for (uint64_t i = 0; i < n; i++) {
+        if (!field.eq(h_data_host[i], h_data_dev[i])) {
+            all_match = false;
+            printf("INTT dev_ptr mismatch at index %lu\n", i);
+            if (i > 5) break;
+        }
+    }
+    
+    EXPECT_TRUE(all_match) << "INTT device pointer version differs from host pointer version";
+    
+    delete[] h_data_host;
+    delete[] h_data_dev;
+}
+
+TEST(BN128_NTT_DEV_PTR, ntt_intt_roundtrip_dev_ptr) {
+    // Test: NTT followed by INTT using device pointers should recover original data
+    const uint32_t lg_n = 12;
+    const uint64_t n = 1ULL << lg_n;
+    
+    RawFr field;
+    
+    RawFr::Element* h_original = new RawFr::Element[n];
+    RawFr::Element* h_result = new RawFr::Element[n];
+    
+    for (uint64_t i = 0; i < n; i++) {
+        field.fromUI(h_original[i], (i * 17 + 5) % 1000000);
+    }
+    
+    void* d_data;
+    CHECKCUDAERR(cudaMalloc(&d_data, n * sizeof(RawFr::Element)));
+    CHECKCUDAERR(cudaMemcpy(d_data, h_original, n * sizeof(RawFr::Element), cudaMemcpyHostToDevice));
+    
+    ntt_bn128_gpu_dev_ptr(d_data, lg_n);
+    intt_bn128_gpu_dev_ptr(d_data, lg_n);
+    
+    CHECKCUDAERR(cudaMemcpy(h_result, d_data, n * sizeof(RawFr::Element), cudaMemcpyDeviceToHost));
+    CHECKCUDAERR(cudaFree(d_data));
+    
+    // Verify roundtrip
+    bool all_match = true;
+    for (uint64_t i = 0; i < n; i++) {
+        if (!field.eq(h_original[i], h_result[i])) {
+            all_match = false;
+            printf("Roundtrip mismatch at index %lu: expected=%s, got=%s\n", i,
+                   field.toString(h_original[i], 10).c_str(),
+                   field.toString(h_result[i], 10).c_str());
+            if (i > 5) break;
+        }
+    }
+    
+    EXPECT_TRUE(all_match) << "NTT->INTT roundtrip with device pointers failed";
+    
+    delete[] h_original;
+    delete[] h_result;
+}
+
+TEST(BN128_MSM_DEV_PTR, msm_dev_ptr_vs_host_ptr) {
+    // Test: MSM with device pointers should produce same result as host pointer version
+    AltBn128::G1PointAffine& G = AltBn128::G1.oneAffine();
+    
+    const size_t npoints = 64;
+    const size_t scalarSize = 32;
+    
+    PointAffineGPU* h_points = new PointAffineGPU[npoints];
+    BN128GPUScalarField::Element* h_scalars = new BN128GPUScalarField::Element[npoints];
+    
+    // Generate points: G, 2G, 3G, ..., nG
+    AltBn128::G1Point P;
+    AltBn128::G1PointAffine P_affine;
+    AltBn128::G1.copy(P, G);
+    
+    for (size_t i = 0; i < npoints; i++) {
+        AltBn128::G1.copy(P_affine, P);
+        memcpy(&h_points[i].x, &P_affine.x, sizeof(AltBn128::F1Element));
+        memcpy(&h_points[i].y, &P_affine.y, sizeof(AltBn128::F1Element));
+        AltBn128::G1Point temp;
+        AltBn128::G1.add(temp, P, G);
+        AltBn128::G1.copy(P, temp);
+    }
+    
+    // Generate scalars: small values for simplicity (in little-endian)
+    for (size_t i = 0; i < npoints; i++) {
+        AltBn128::FrElement scalar;
+        AltBn128::Fr.fromUI(scalar, (i + 1) * 1000);
+        
+        uint8_t beBytes[scalarSize];
+        AltBn128::Fr.toRprBE(scalar, beBytes, scalarSize);
+        uint8_t leBytes[scalarSize];
+        for (size_t j = 0; j < scalarSize; j++) {
+            leBytes[j] = beBytes[scalarSize - 1 - j];
+        }
+        memcpy(&h_scalars[i], leBytes, scalarSize);
+    }
+    
+    // Run host-pointer version
+    PointJacobianGPU host_result;
+    memset(&host_result, 0, sizeof(host_result));
+    msm_bn128_gpu(&host_result, h_points, h_scalars, npoints, false);
+    
+    // Allocate device memory
+    void* d_points;
+    void* d_scalars;
+    CHECKCUDAERR(cudaMalloc(&d_points, npoints * sizeof(PointAffineGPU)));
+    CHECKCUDAERR(cudaMalloc(&d_scalars, npoints * sizeof(BN128GPUScalarField::Element)));
+    CHECKCUDAERR(cudaMemcpy(d_points, h_points, npoints * sizeof(PointAffineGPU), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_scalars, h_scalars, npoints * sizeof(BN128GPUScalarField::Element), cudaMemcpyHostToDevice));
+    
+    // Run device-pointer version
+    PointJacobianGPU dev_result;
+    memset(&dev_result, 0, sizeof(dev_result));
+    msm_bn128_gpu_dev_ptr(&dev_result, d_points, d_scalars, npoints, false);
+    
+    CHECKCUDAERR(cudaFree(d_points));
+    CHECKCUDAERR(cudaFree(d_scalars));
+    
+    // Compare Jacobian coordinates
+    bool match = true;
+    
+    // Compare X, Y, Z fields
+    AltBn128::F1Element host_X, host_Y, host_Z;
+    AltBn128::F1Element dev_X, dev_Y, dev_Z;
+    memcpy(&host_X, &host_result.X, sizeof(AltBn128::F1Element));
+    memcpy(&host_Y, &host_result.Y, sizeof(AltBn128::F1Element));
+    memcpy(&host_Z, &host_result.Z, sizeof(AltBn128::F1Element));
+    memcpy(&dev_X, &dev_result.X, sizeof(AltBn128::F1Element));
+    memcpy(&dev_Y, &dev_result.Y, sizeof(AltBn128::F1Element));
+    memcpy(&dev_Z, &dev_result.Z, sizeof(AltBn128::F1Element));
+    
+    // Convert both to affine and compare
+    AltBn128::F1Element host_z2, host_z3, dev_z2, dev_z3;
+    AltBn128::F1.square(host_z2, host_Z);
+    AltBn128::F1.mul(host_z3, host_z2, host_Z);
+    AltBn128::F1.square(dev_z2, dev_Z);
+    AltBn128::F1.mul(dev_z3, dev_z2, dev_Z);
+    
+    AltBn128::F1Element host_z2_inv, host_z3_inv, dev_z2_inv, dev_z3_inv;
+    AltBn128::F1.inv(host_z2_inv, host_z2);
+    AltBn128::F1.inv(host_z3_inv, host_z3);
+    AltBn128::F1.inv(dev_z2_inv, dev_z2);
+    AltBn128::F1.inv(dev_z3_inv, dev_z3);
+    
+    AltBn128::F1Element host_affine_x, host_affine_y, dev_affine_x, dev_affine_y;
+    AltBn128::F1.mul(host_affine_x, host_X, host_z2_inv);
+    AltBn128::F1.mul(host_affine_y, host_Y, host_z3_inv);
+    AltBn128::F1.mul(dev_affine_x, dev_X, dev_z2_inv);
+    AltBn128::F1.mul(dev_affine_y, dev_Y, dev_z3_inv);
+    
+    if (!AltBn128::F1.eq(host_affine_x, dev_affine_x)) {
+        match = false;
+        printf("MSM dev_ptr X mismatch\n");
+    }
+    if (!AltBn128::F1.eq(host_affine_y, dev_affine_y)) {
+        match = false;
+        printf("MSM dev_ptr Y mismatch\n");
+    }
+    
+    EXPECT_TRUE(match) << "MSM device pointer version differs from host pointer version";
+    
+    delete[] h_points;
+    delete[] h_scalars;
+}
 
 int main(int argc, char **argv)
 {

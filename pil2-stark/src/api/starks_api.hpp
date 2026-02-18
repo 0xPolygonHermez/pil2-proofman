@@ -29,7 +29,6 @@ extern "C" {
     uint64_t get_proof_pinned_size(void *pStarkInfo);
     void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3);
     uint64_t get_map_total_n(void *pStarkInfo);
-    uint64_t get_const_pols_offset(void *pStarkInfo);
     uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
     uint64_t get_tree_size(void *pStarkInfo);
     void stark_info_free(void *pStarkInfo);
@@ -121,6 +120,7 @@ extern "C" {
     void *init_final_snark_prover(char* zkeyFile);
     void free_final_snark_prover(void *snark_prover);
     void gen_final_snark_proof(void *snark_prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark);
+    void pre_allocate_final_snark_prover(void *snark_prover, void* unified_buffer_gpu);
     void free_json_string(char* json_str);
     void snark_proof_bytes_to_json(uint8_t* proof_bytes,uint64_t proof_size,uint8_t* public_bytes,uint64_t public_size,int protocol_id,char** proof_json_out,char** publics_json_out);
 
@@ -163,17 +163,21 @@ extern "C" {
     
     // GPU calls
     // =================================================================================
-    void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size, uint32_t arity);
+    void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity, uint32_t max_n_bits_ext);
     void free_device_buffers(void *d_buffers);
     void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pConstTree, uint64_t proverBufferSize, void *d_commit_buffers);
     void free_device_buffers_recursivef(void *d_buffers);
-    void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType);
+    void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU);
     void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_,  void *packedInfo);
-    uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t max_n_bits_ext, uint64_t merkleTreeArity);
+    uint64_t gen_device_streams(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
+    void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation);
     void get_instances_ready(void *d_buffers, int64_t* instances_ready);
     void reset_device_streams(void *d_buffers_);
     uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size);
     uint64_t get_num_gpus();
+    void *get_unified_buffer_gpu(void *d_buffers_);
+    void alloc_fixed_pols_buffer_gpu(void *d_buffers_);
+    void free_fixed_pols_buffer_gpu(void *d_buffers_);
     
     typedef void (*ProofDoneCallback)(uint64_t instanceId, const char* proofType);
     

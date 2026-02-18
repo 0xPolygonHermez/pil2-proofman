@@ -50,8 +50,8 @@ use std::{
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
 use crate::{
-    calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, initialize_setup_info,
-    N_RECURSIVE_PROOFS_PER_AGGREGATION,
+    calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, load_device_setups,
+    load_device_const_pols, N_RECURSIVE_PROOFS_PER_AGGREGATION,
 };
 use crate::{verify_constraints_proof, verify_basic_proof, verify_global_constraints_proof};
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
@@ -261,6 +261,7 @@ pub struct ProofMan<F: PrimeField64> {
     cancellation_info: Arc<RwLock<CancellationInfo>>,
     execution_info: RwLock<ExecutionInfo>,
     verbose_mode: VerboseMode,
+    reload_fixed_pols_gpu: Arc<AtomicBool>,
 }
 
 #[derive(Debug, PartialEq, Clone, BorshSerialize, BorshDeserialize)]
@@ -351,8 +352,12 @@ where
         self.pctx.global_info.get_proving_key_path()
     }
 
-    pub fn get_device_buffers_ptr(&self) -> *mut std::ffi::c_void {
+    pub fn get_device_buffers_ptr(&self) -> *mut c_void {
         self.pctx.get_device_buffers_ptr()
+    }
+
+    pub fn get_preallocated_buffers(&self) -> (Arc<Vec<F>>, *mut c_void, Arc<AtomicBool>) {
+        (self.aux_trace.clone(), self.pctx.get_device_buffers_ptr(), self.reload_fixed_pols_gpu.clone())
     }
 
     pub fn set_barrier(&self) {
@@ -1605,6 +1610,7 @@ where
             cancellation_info: Arc::new(RwLock::new(CancellationInfo::default())),
             verbose_mode,
             execution_info: RwLock::new(ExecutionInfo::default()),
+            reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -2961,6 +2967,13 @@ where
             return Err(ProofmanError::ProofmanError("Witness computation dynamic library not initialized".into()));
         }
 
+        if cfg!(feature = "gpu") && self.reload_fixed_pols_gpu.load(Ordering::SeqCst) {
+            timer_start_info!(RELOAD_FIXED_POLS);
+            load_device_const_pols(&self.pctx, &self.sctx, &self.setups, self.aggregation, true)?;
+            self.reload_fixed_pols_gpu.store(false, Ordering::SeqCst);
+            timer_stop_and_log_info!(RELOAD_FIXED_POLS);
+        }
+
         if let Err(e) = self.wcm.execute() {
             self.cancellation_info.write().unwrap().cancel(Some(e));
         }
@@ -3576,7 +3589,11 @@ where
         let (n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
             pctx.set_device_buffers(&sctx, &setups_vadcop, aggregation, gpu_params)?;
 
-        initialize_setup_info(&pctx, &sctx, &setups_vadcop, aggregation, packed_info)?;
+        load_device_setups(&pctx, &sctx, &setups_vadcop, aggregation, packed_info)?;
+
+        timer_start_info!(LOADING_CONSTANTS);
+        load_device_const_pols(&pctx, &sctx, &setups_vadcop, aggregation, false)?;
+        timer_stop_and_log_info!(LOADING_CONSTANTS);
 
         let pctx = Arc::new(pctx);
 

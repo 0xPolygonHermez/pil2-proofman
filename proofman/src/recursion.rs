@@ -15,10 +15,7 @@ use proofman_common::{
 
 use std::os::raw::{c_void, c_char};
 
-use proofman_util::{
-    timer_start_info, timer_stop_and_log_info, timer_stop_and_log_trace, timer_start_trace, timer_start_debug,
-    timer_stop_and_log_debug,
-};
+use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug};
 
 use crate::{add_publics_circom, add_publics_aggregation};
 
@@ -673,8 +670,9 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     vadcop_final_verkey: &[u64],
     output_dir_path: &Path,
     prover_buffer_size: usize,
-    device_buffers_ptr: Option<*mut c_void>,
+    unified_buffer_gpu: *mut c_void,
 ) -> ProofmanResult<*mut c_void> {
+    timer_start_debug!(GENERATE_RECURSIVEF);
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
     let trace: Vec<F> = vec![F::ZERO; setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize];
@@ -686,7 +684,9 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
 
     updated_proof[4..].copy_from_slice(proof);
 
+    timer_start_debug!(GENERATE_RECURSIVEF_WITNESS);
     let circom_witness = generate_witness::<F>(setup, 0, &updated_proof, output_dir_path)?;
+    timer_stop_and_log_debug!(GENERATE_RECURSIVEF_WITNESS);
 
     let publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
@@ -708,16 +708,14 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     let recursivef_json_path = output_dir_path.join("recursivef.json");
     let recursivef_json_str = recursivef_json_path.to_string_lossy().into_owned();
 
-    // if device_buffers_ptr is provided, reuse those buffers otherwise pass null and the C++ code will allocate new ones
-    let d_commit_buffers = device_buffers_ptr.unwrap_or(std::ptr::null_mut());
     let d_buffers = gen_device_buffers_recursivef_c(
         p_setup as *mut u8,
         setup.get_const_ptr(),
         setup.get_const_tree_ptr(),
         prover_buffer_size as u64,
-        d_commit_buffers as *mut u8,
+        unified_buffer_gpu as *mut u8,
     );
-    timer_start_trace!(GENERATE_RECURSIVEF_PROOF);
+    timer_start_debug!(GENERATE_RECURSIVEF_PROOF);
     // prove
     let p_prove = gen_recursive_proof_final_c(
         p_setup,
@@ -733,11 +731,12 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         prover_buffer_size as u64,
         d_buffers,
     );
-    timer_stop_and_log_trace!(GENERATE_RECURSIVEF_PROOF);
+    timer_stop_and_log_debug!(GENERATE_RECURSIVEF_PROOF);
 
     // Free GPU buffers if have been allocated
     free_device_buffers_recursivef_c(d_buffers);
 
+    timer_stop_and_log_debug!(GENERATE_RECURSIVEF);
     Ok(p_prove)
 }
 
@@ -748,7 +747,7 @@ pub fn generate_snark_proof(
 ) -> ProofmanResult<(Vec<u8>, Vec<u8>)> {
     let witness = generate_witness_final_snark(proof, setup_path)?;
 
-    timer_start_trace!(CALCULATE_FINAL_PROOF);
+    timer_start_info!(CALCULATE_FINAL_PROOF);
 
     let snark_publics: Vec<u8> = vec![0; 32];
     let snark_publics_ptr = snark_publics.as_ptr() as *mut u8;
@@ -756,10 +755,10 @@ pub fn generate_snark_proof(
     let snark_proof: Vec<u8> = vec![0; 24 * 32];
     let snark_proof_ptr = snark_proof.as_ptr() as *mut u8;
 
-    tracing::info!("··· Generating final snark proof");
+    tracing::trace!("··· Generating final snark proof");
     gen_final_snark_proof_c(snark_prover, witness.as_ptr() as *mut u8, snark_proof_ptr, snark_publics_ptr);
-    timer_stop_and_log_trace!(CALCULATE_FINAL_PROOF);
-    tracing::info!("··· Final Snark Proof generated.");
+    timer_stop_and_log_info!(CALCULATE_FINAL_PROOF);
+    tracing::trace!("··· Final Snark Proof generated.");
 
     Ok((snark_proof, snark_publics))
 }

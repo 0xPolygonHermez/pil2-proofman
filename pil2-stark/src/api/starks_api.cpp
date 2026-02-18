@@ -286,10 +286,6 @@ void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3) {
     ((StarkInfo *)pStarkInfo)->setMemoryExpressions(nTmp1, nTmp3);
 }
 
-uint64_t get_const_pols_offset(void *pStarkInfo) {
-    return ((StarkInfo *)pStarkInfo)->mapOffsets[std::make_pair("const", false)];
-}
-
 uint64_t get_map_total_n(void *pStarkInfo)
 {
     return ((StarkInfo *)pStarkInfo)->mapTotalN;
@@ -796,7 +792,7 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {}
 
 // Recursive proof
 // ================================================================================= 
-void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size, uint32_t arity)
+void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity, uint32_t max_n_bits_ext)
 {
     DeviceCommitBuffersCPU *d_buffers = new DeviceCommitBuffersCPU();
     return (void *)d_buffers;
@@ -806,7 +802,12 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
 }
 void free_device_buffers_recursivef(void *d_buffers_){}
 
-uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t max_n_bits_ext, uint64_t merkleTreeArity) { return 1; }
+void alloc_fixed_pols_buffer_gpu(void *d_buffers_) {}
+void free_fixed_pols_buffer_gpu(void *d_buffers_) {}
+
+uint64_t gen_device_streams(void *d_buffers_, uint64_t nStreams, uint64_t nStreamsRecursive, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity) { return 1; }
+
+void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation) {}
 
 void get_instances_ready(void *d_buffers, int64_t* instances_ready) {}
 
@@ -815,6 +816,10 @@ void reset_device_streams(void *d_buffers_) {}
 uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size) { return 0; }
 
 uint64_t get_num_gpus(){ return 1;}
+
+void *get_unified_buffer_gpu(void *d_buffers_) {
+    return nullptr;
+}
 
 void free_device_buffers(void *d_buffers_) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
@@ -832,7 +837,7 @@ void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, voi
     }
 }
 
-void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType) {}
+void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType, bool onlyFirstGPU) {}
 
 uint64_t gen_recursive_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
@@ -916,6 +921,7 @@ uint64_t get_snark_protocol_id(void *snark_prover) {
     return finalSnarkProver->protocolId;
 }
 
+#ifndef __USE_CUDA__
 void *init_final_snark_prover(char* zkeyFile) {
 
     auto fdZkey = std::make_unique<BinFileUtils::BinFile>(std::string(zkeyFile), "zkey", 1, /*directRead=*/true);
@@ -953,6 +959,11 @@ void free_final_snark_prover(void *snark_prover) {
 void gen_final_snark_proof(void *prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark) {
     genFinalSnarkProof(prover, circomWitnessFinal, proof, publicsSnark);
 }
+
+void pre_allocate_final_snark_prover(void *snark_prover, void* unified_buffer_gpu) {
+    // No-op for CPU
+}
+#endif
 
 void free_json_string(char* json_str) {
     if (json_str != nullptr) {

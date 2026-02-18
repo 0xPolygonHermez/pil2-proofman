@@ -119,11 +119,6 @@ pub fn get_tree_size_c(p_stark_info: *mut c_void) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_const_offset_c(p_stark_info: *mut c_void) -> u64 {
-    unsafe { get_const_pols_offset(p_stark_info) }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
 pub fn get_map_totaln_custom_commits_fixed_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_map_total_n_custom_commits_fixed(p_stark_info) }
 }
@@ -1131,6 +1126,11 @@ pub fn free_final_snark_prover_c(snark_prover: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn pre_allocate_final_snark_prover_c(snark_prover: *mut c_void, unified_buffer_gpu: *mut c_void) {
+    unsafe { pre_allocate_final_snark_prover(snark_prover, unified_buffer_gpu) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn gen_final_snark_proof_c(
     prover: *mut c_void,
     circomWitnessFinal: *mut u8,
@@ -1295,12 +1295,12 @@ pub fn set_omp_num_threads_c(num_threads: u64) {
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn gen_device_buffers_c(
-    max_sizes: *mut ::std::os::raw::c_void,
     node_rank: u32,
     node_n_processes: u32,
     arity: u32,
+    max_n_bits_ext: u32,
 ) -> *mut ::std::os::raw::c_void {
-    unsafe { gen_device_buffers(max_sizes, node_rank, node_n_processes, arity) }
+    unsafe { gen_device_buffers(node_rank, node_n_processes, arity, max_n_bits_ext) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1331,21 +1331,42 @@ pub fn free_device_buffers_recursivef_c(d_buffers: *mut u8) {
 #[allow(clippy::too_many_arguments)]
 pub fn gen_device_streams_c(
     d_buffers: *mut ::std::os::raw::c_void,
+    n_streams: u64,
+    n_recursive_streams: u64,
     max_size_buffer: u64,
     max_size_buffer_aggregation: u64,
     max_pinned_proof_size: u64,
-    max_n_bits_ext: u64,
     merkle_tree_arity: u64,
 ) -> u64 {
     unsafe {
         gen_device_streams(
             d_buffers,
+            n_streams,
+            n_recursive_streams,
             max_size_buffer,
             max_size_buffer_aggregation,
             max_pinned_proof_size,
-            max_n_bits_ext,
             merkle_tree_arity,
         )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn alloc_device_large_buffers_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    aux_trace_area: u64,
+    aux_trace_recursive_area: u64,
+    const_pols_area: u64,
+    const_pols_aggregation_area: u64,
+) {
+    unsafe {
+        alloc_device_large_buffers(
+            d_buffers,
+            aux_trace_area,
+            aux_trace_recursive_area,
+            const_pols_area,
+            const_pols_aggregation_area,
+        );
     }
 }
 
@@ -1373,6 +1394,25 @@ pub fn check_device_memory_c(node_rank: u32, node_size: u32) -> u64 {
 #[cfg(not(feature = "no_lib_link"))]
 pub fn get_num_gpus_c() -> u64 {
     unsafe { get_num_gpus() }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_unified_buffer_gpu_c(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
+    unsafe { get_unified_buffer_gpu(d_buffers) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn alloc_fixed_pols_buffer_gpu_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe {
+        alloc_fixed_pols_buffer_gpu(d_buffers);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn free_fixed_pols_buffer_gpu_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe {
+        free_fixed_pols_buffer_gpu(d_buffers);
+    }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1420,6 +1460,7 @@ pub fn load_device_const_pols_c(
     const_tree_filename: &str,
     const_tree_size: u64,
     proof_type: &str,
+    only_first_gpu: bool,
 ) {
     let const_filename_name = CString::new(const_filename).unwrap();
     let const_filename_ptr = const_filename_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1441,6 +1482,7 @@ pub fn load_device_const_pols_c(
             const_tree_filename_ptr,
             const_tree_size,
             proof_type_ptr,
+            only_first_gpu,
         );
     }
 }
@@ -2149,6 +2191,11 @@ pub fn free_final_snark_prover_c(_snark_prover: *mut c_void) {
 }
 
 #[cfg(feature = "no_lib_link")]
+pub fn pre_allocate_final_snark_prover_c(_snark_prover: *mut c_void, _unified_buffer_gpu: *mut c_void) {
+    trace!("··· {}", "pre_allocate_final_snark_prover: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
 pub fn gen_final_snark_proof_c(
     _prover: *mut c_void,
     _circomWitnessFinal: *mut u8,
@@ -2234,10 +2281,10 @@ pub fn set_omp_num_threads(_num_threads: u64) {
 
 #[cfg(feature = "no_lib_link")]
 pub fn gen_device_buffers_c(
-    _max_sizes: *mut ::std::os::raw::c_void,
     _node_rank: u32,
     _node_n_processes: u32,
     _arity: u32,
+    _max_n_bits_ext: u32,
 ) -> *mut ::std::os::raw::c_void {
     trace!(
         "{}: ··· {}",
@@ -2276,14 +2323,30 @@ pub fn free_device_buffers_recursivef_c(_d_buffers: *mut u8) {
 #[allow(clippy::too_many_arguments)]
 pub fn gen_device_streams_c(
     _d_buffers: *mut ::std::os::raw::c_void,
+    _n_streams: u64,
+    _n_recursive_streams: u64,
     _max_size_buffer: u64,
     _max_size_buffer_aggregation: u64,
     _max_pinned_proof_size: u64,
-    _max_n_bits_ext: u64,
     _merkle_tree_arity: u64,
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "set_max_size_thread: This is a mock call because there is no linked library");
     0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn alloc_device_large_buffers_c(
+    _d_buffers: *mut ::std::os::raw::c_void,
+    _aux_trace_area: u64,
+    _aux_trace_recursive_area: u64,
+    _const_pols_area: u64,
+    _const_pols_aggregation_area: u64,
+) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "alloc_device_large_buffers: This is a mock call because there is no linked library"
+    );
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -2308,6 +2371,34 @@ pub fn check_device_memory_c(_node_rank: u32, _node_size: u32) -> u64 {
 pub fn get_num_gpus_c() -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_num_gpus: This is a mock call because there is no linked library");
     0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_unified_buffer_gpu_c(_d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "get_unified_buffer_gpu: This is a mock call because there is a linked library but the function is not implemented"
+    );
+    std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn alloc_fixed_pols_buffer_gpu_c(_d_buffers: *mut ::std::os::raw::c_void) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "alloc_fixed_pols_buffer_gpu: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn free_fixed_pols_buffer_gpu_c(_d_buffers: *mut ::std::os::raw::c_void) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "free_fixed_pols_buffer_gpu: This is a mock call because there is no linked library"
+    );
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -2341,6 +2432,7 @@ pub fn load_device_const_pols_c(
     _const_tree_filename: &str,
     _const_tree_size: u64,
     _proof_type: &str,
+    _only_first_gpu: bool,
 ) {
     trace!("{}: ··· {}", "ffi     ", "load_device_const_pols: This is a mock call because there is no linked library");
 }
