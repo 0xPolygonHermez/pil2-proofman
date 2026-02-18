@@ -71,11 +71,12 @@ namespace PlonkGPU {
         Keccak256Transcript<Engine> *transcript;
         SnarkProof<Engine> *proof;
 
-        std::thread asyncTransferSigma;       // S1,S2,S3 — join before computeZ
-        std::thread asyncTransferQ;           // QL-QC — join before computeT
+        std::thread asyncTransferSigma;       // evalConstPols=false: S1,S2,S3 — join before computeZ
+        std::thread asyncTransferQ;           // evalConstPols=false: QL-QC — join before computeT
         std::thread asyncComputePI;           // PI(X) — join in computeT before compute_t_evaluations_gpu
         std::thread asyncTransferPolsBatch1;  // zkey batch 1 (QC,S1,S2,S3 coefs → slot 8)
         std::thread asyncTransferPolsBatch2;  // zkey batch 2 (QM,QL,QR,QO coefs → slot 6)
+        std::thread asyncEvalNTT;             // evalConstPols=true: H2D + NTT for 9 eval polys
         size_t pinnedSize = 0;
         void* pinnedS = nullptr;
         void* pinnedQ = nullptr;
@@ -106,7 +107,7 @@ namespace PlonkGPU {
         void* d_evalsS1 = nullptr;
         void* d_evalsS2 = nullptr;
         void* d_evalsS3 = nullptr;
-        void* d_evalsL0 = nullptr;
+        void* d_evalsL1 = nullptr;
         void* d_evalsQL = nullptr;
         void* d_evalsQR = nullptr;
         void* d_evalsQM = nullptr;
@@ -148,6 +149,7 @@ namespace PlonkGPU {
         bool preAllocated = false;
         bool isMyDeviceBuffer = false;
         bool precomputedPinned = false;
+        bool evalConstPols = true;  
 
     public:
         PlonkProverGPU(Engine &E);
