@@ -222,6 +222,11 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         output_dir_path: Option<PathBuf>,
     ) -> ProofmanResult<SnarkProof> {
         timer_start_info!(GENERATING_WRAPPER_SNARK_PROOF);
+        
+        if let Some(d_buffer) = self.d_buffers {
+            free_fixed_pols_buffer_gpu_c(d_buffer);
+            println!("Freed fixed pols buffer on GPU");
+        }
 
         let output_dir_path = match output_dir_path.as_deref() {
             Some(path) => path,
@@ -257,10 +262,8 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         pre_allocate_final_snark_prover_c(self.snark_prover, unified_buffer_gpu);
 
-        if let Some(d_buffer) = self.d_buffers {
-            free_fixed_pols_buffer_gpu_c(d_buffer);
-        }
-
+        
+        
         let (snark_proof_bytes, snark_publics_bytes) =
             generate_snark_proof(self.snark_prover, &self.setup_snark_path, recursivef_proof)?;
 

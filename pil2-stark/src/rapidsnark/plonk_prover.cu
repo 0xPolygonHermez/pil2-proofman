@@ -174,7 +174,7 @@ extern "C" void gpu_plonk_cuda_malloc(
     CHECKCUDAERR(cudaMalloc(dBuffer, gpuBytes));
 }
 
-extern "C" void gpu_plonk_free_static_eval_buffers(void* dBuffer)
+extern "C" void gpu_plonk_cuda_free(void* dBuffer)
 {
     if (dBuffer) cudaFree(dBuffer);
 }
@@ -1280,4 +1280,73 @@ extern "C" void gpu_plonk_poly_eval_to_host(
     }
 
     CHECKCUDAERR(cudaMemcpy(hostResult, readPtr, sizeof(Element), cudaMemcpyDeviceToHost));
+}
+
+// Calculating additions (parallel per level)
+__global__ void kernelCalculateAdditions(
+    Element* __restrict__ buffInternalWitness,
+    const Element* __restrict__ buffWitness,
+    const uint32_t* __restrict__ signalId1Array,
+    const uint32_t* __restrict__ signalId2Array,
+    const Element* __restrict__ factor1Array,
+    const Element* __restrict__ factor2Array,
+    const uint8_t* __restrict__ levels,
+    uint8_t currentLevel,
+    uint32_t nAdditions,
+    uint32_t nDirect)  
+{
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= nAdditions) return;
+    if (levels[i] != currentLevel) return;
+
+    uint32_t signalId1 = signalId1Array[i];
+    uint32_t signalId2 = signalId2Array[i];
+    Element factor1 = factor1Array[i];
+    Element factor2 = factor2Array[i];
+
+    Element w1 = (signalId1 < nDirect)
+        ? buffWitness[signalId1]
+        : buffInternalWitness[signalId1 - nDirect];
+
+    Element w2 = (signalId2 < nDirect)
+        ? buffWitness[signalId2]
+        : buffInternalWitness[signalId2 - nDirect];
+
+    // Compute: result = factor1 * w1 + factor2 * w2
+    w1 = Fr::mul(factor1, w1);
+    w2 = Fr::mul(factor2, w2);
+    buffInternalWitness[i] = Fr::add(w1, w2);
+}
+
+extern "C" void gpu_plonk_calculate_additions(
+    void* d_buffInternalWitness,
+    const void* d_buffWitness,
+    const void* d_addSignalId1,
+    const void* d_addSignalId2,
+    const void* d_addFactor1,
+    const void* d_addFactor2,
+    const void* d_additionLevels,
+    uint8_t maxLevel,
+    uint32_t nAdditions,
+    uint32_t nDirect)
+{
+    uint32_t threads = 256;
+    uint32_t blocks = (nAdditions + threads - 1) / threads;
+
+    for (uint8_t level = 0; level <= maxLevel; level++) {
+        kernelCalculateAdditions<<<blocks, threads>>>(
+            (Element*)d_buffInternalWitness,
+            (const Element*)d_buffWitness,
+            (const uint32_t*)d_addSignalId1,
+            (const uint32_t*)d_addSignalId2,
+            (const Element*)d_addFactor1,
+            (const Element*)d_addFactor2,
+            (const uint8_t*)d_additionLevels,
+            level,
+            nAdditions,
+            nDirect
+        );
+        CHECKCUDAERR(cudaGetLastError());
+    }
+    CHECKCUDAERR(cudaDeviceSynchronize());
 }

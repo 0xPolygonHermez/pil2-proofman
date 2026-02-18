@@ -56,6 +56,8 @@ namespace PlonkGPU {
         FrElement *buffWitness;
 
         Zkey::Addition<Engine> *additionsBuff;
+        uint8_t *additionLevels;
+        uint8_t maxAdditionLevel;
 
         std::map<std::string, FrElement *> polPtr;
 
@@ -128,7 +130,12 @@ namespace PlonkGPU {
         void* d_omegaTidN = nullptr;        // omega^(0..255) for N
         void* d_omegaBasesNExt = nullptr;   // omega_4x^(blockIdx*256) for NExt
         void* d_omegaTidNExt = nullptr;     // omega_4x^(0..255) for NExt
-        void* d_blindings = nullptr;          
+        void* d_blindings = nullptr;
+        void* d_addSignalId1 = nullptr;     
+        void* d_addSignalId2 = nullptr;     
+        void* d_addFactor1 = nullptr;       
+        void* d_addFactor2 = nullptr;       
+        void* d_additionLevels = nullptr;   
 
 
         void* pTauStream = nullptr;         // Non-blocking CUDA stream to copy pTau to GPU
@@ -139,6 +146,7 @@ namespace PlonkGPU {
         BinFileUtils::BinFile* fdZkeyPtr = nullptr;
 
         bool preAllocated = false;
+        bool isMyDeviceBuffer = false;
         bool precomputedPinned = false;
 
     public:

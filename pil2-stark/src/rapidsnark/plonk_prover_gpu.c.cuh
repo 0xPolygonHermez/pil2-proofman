@@ -35,7 +35,7 @@ extern "C" void gpu_plonk_compute_pi(
     void* dPI, void* dLag,
     void* pinnedBuf, size_t pinnedSize);
 extern "C" void gpu_plonk_cuda_malloc(void** dBuffer, uint64_t buffeSize);
-extern "C" void gpu_plonk_free_static_eval_buffers(void* dBuffer);
+extern "C" void gpu_plonk_cuda_free(void* dBuffer);
 extern "C" void gpu_plonk_cuda_malloc_pinned_buffer(void** pinnedBuffer, size_t pinnedSize);
 extern "C" void gpu_plonk_free_pinned_buffer(void* pinnedBuffer);
 extern "C" void gpu_plonk_start_static_eval_transfer(
@@ -123,6 +123,18 @@ extern "C" void gpu_plonk_compute_qm_perm_l0(
     uint64_t N,
     const void* omegaBases, const void* omegaTid);
 
+extern "C" void gpu_plonk_calculate_additions(
+    void* d_buffInternalWitness,
+    const void* d_buffWitness,
+    const void* d_addSignalId1,
+    const void* d_addSignalId2,
+    const void* d_addFactor1,
+    const void* d_addFactor2,
+    const void* d_additionLevels,
+    uint8_t maxLevel,
+    uint32_t nAdditions,
+    uint32_t nDirect);
+
 namespace PlonkGPU
 {
     template <typename Engine>
@@ -138,9 +150,12 @@ namespace PlonkGPU
         mapBuffersBigBuffer = nullptr;
         buffInternalWitness = nullptr;
         additionsBuff = nullptr;
+        additionLevels = nullptr;
+        maxAdditionLevel = 0;
         fft = nullptr;
         transcript = nullptr;
         proof = nullptr;
+        isMyDeviceBuffer = false;
 
         curveName = CurveUtils::getCurveNameByEngine();
     }
@@ -184,6 +199,8 @@ namespace PlonkGPU
         buffInternalWitness = nullptr;
         delete[] additionsBuff;
         additionsBuff = nullptr;
+        delete[] additionLevels;
+        additionLevels = nullptr;
 
         if (zkey != NULL)
         {
@@ -224,7 +241,9 @@ namespace PlonkGPU
         }
 
         if (d_unifiedBuffer) {
-            gpu_plonk_free_static_eval_buffers(d_unifiedBuffer);
+            if(isMyDeviceBuffer) {
+                gpu_plonk_cuda_free(d_unifiedBuffer);
+            }
             d_unifiedBuffer = nullptr;
             d_staticEvalsBuffer = nullptr;
             d_piBuffer = nullptr;
@@ -273,10 +292,10 @@ namespace PlonkGPU
             d_evalsB = nullptr;
             d_evalsC = nullptr;
         } else {
-            gpu_plonk_free_static_eval_buffers(d_staticEvalsBuffer);
-            gpu_plonk_free_static_eval_buffers(d_piBuffer);
-            gpu_plonk_free_static_eval_buffers(d_lagBuffer);
-            gpu_plonk_free_static_eval_buffers(d_ptau);
+            gpu_plonk_cuda_free(d_staticEvalsBuffer);
+            gpu_plonk_cuda_free(d_piBuffer);
+            gpu_plonk_cuda_free(d_lagBuffer);
+            gpu_plonk_cuda_free(d_ptau);
             d_staticEvalsBuffer = nullptr;
             d_piBuffer = nullptr;
             d_lagBuffer = nullptr;
@@ -459,6 +478,21 @@ namespace PlonkGPU
             ThreadUtils::parcpy(additionsBuff, srcAdditions, additionsBytes, nThreads);
         }
 
+        LOG_TRACE("··· Precomputing addition dependency levels");
+        additionLevels = new uint8_t[zkey->nAdditions];
+        uint32_t nDirect = zkey->nVars - zkey->nAdditions;
+        maxAdditionLevel = 0;
+        for (uint32_t i = 0; i < zkey->nAdditions; i++) {
+            uint8_t l = 0;
+            if (additionsBuff[i].signalId1 >= nDirect)
+                l = std::max(l, (uint8_t)(additionLevels[additionsBuff[i].signalId1 - nDirect] + 1));
+            if (additionsBuff[i].signalId2 >= nDirect)
+                l = std::max(l, (uint8_t)(additionLevels[additionsBuff[i].signalId2 - nDirect] + 1));
+            additionLevels[i] = l;
+            maxAdditionLevel = std::max(maxAdditionLevel, l);
+        }
+        assert(maxAdditionLevel < 255);
+
         LOG_TRACE("··· Loading map buffers");
 
         if (dr) {
@@ -621,7 +655,11 @@ namespace PlonkGPU
         // We set it to zero to go faster in the exponentiations.
         buffWitness[0] = E.fr.zero();
 
-        // Until this point all calculations made are circuit depending and independent from the data, 
+        uint32_t nDirect = zkey->nVars - zkey->nAdditions;
+        LOG_TRACE("> Uploading witness to GPU");
+        gpu_plonk_memcpy_h2d(d_witness, buffWitness, nDirect * sizeof(FrElement));
+
+        // Until this point all calculations made are circuit depending and independent from the data,
         // from here is the proof calculation
 
         double startTime = omp_get_wtime();
@@ -727,17 +765,20 @@ namespace PlonkGPU
     template <typename Engine>
     void PlonkProverGPU<Engine>::calculateAdditions()
     {
-        for (u_int32_t i = 0; i < zkey->nAdditions; i++)
-        {
-            // Get witness value
-            FrElement witness1 = getWitness(additionsBuff[i].signalId1);
-            FrElement witness2 = getWitness(additionsBuff[i].signalId2);
+        uint32_t nDirect = zkey->nVars - zkey->nAdditions;
 
-            // Calculate final result
-            witness1 = E.fr.mul(additionsBuff[i].factor1, witness1);
-            witness2 = E.fr.mul(additionsBuff[i].factor2, witness2);
-            buffInternalWitness[i] = E.fr.add(witness1, witness2);
-        }
+        gpu_plonk_calculate_additions(
+            d_intWitness,              // output: internal witness results
+            d_witness,
+            d_addSignalId1,
+            d_addSignalId2,
+            d_addFactor1,
+            d_addFactor2,
+            d_additionLevels,
+            maxAdditionLevel,
+            zkey->nAdditions,
+            nDirect
+        );
     }
 
     template <typename Engine>
@@ -776,6 +817,7 @@ namespace PlonkGPU
             affineScanWork += n;
         uint64_t auxElemsR5 = (N + 6) + affineScanWork * 2;
         uint64_t auxElems = std::max(auxElemsR3, auxElemsR5);
+        uint32_t nDirect = zkey->nVars - zkey->nAdditions;
 
         if (!d_unifiedBuffer) {
 
@@ -793,6 +835,16 @@ namespace PlonkGPU
             unifiedBufferSize += 256 * sizeof(FrElement);             // omega tid table (0..255)
             unifiedBufferSize += (BLINDINGFACTORSLENGTH_PLONK_GPU + 1) * sizeof(FrElement); // blinding factors b_0..b_11
 
+            // GPU additions data - grouped by type for proper alignment (uint32_t at the end)
+            unifiedBufferSize += nDirect * sizeof(FrElement);          // primary witnesses
+            unifiedBufferSize += zkey->nAdditions * sizeof(FrElement); // internal witnesses
+            unifiedBufferSize += zkey->nAdditions * sizeof(FrElement); // addFactor1
+            unifiedBufferSize += zkey->nAdditions * sizeof(FrElement); // addFactor2
+            unifiedBufferSize += zkey->nAdditions * sizeof(uint32_t);  // addSignalId1
+            unifiedBufferSize += zkey->nAdditions * sizeof(uint32_t);  // addSignalId2
+            unifiedBufferSize += zkey->nAdditions;                     // additionLevels (uint8_t per addition)
+
+            isMyDeviceBuffer = true;
             gpu_plonk_cuda_malloc(&d_unifiedBuffer, unifiedBufferSize);
             //std::cout << "[round0] Unified GPU buffer: " << unifiedBufferSize / (1024.0*1024*1024) << " GiB" << std::endl;
         }
@@ -815,15 +867,19 @@ namespace PlonkGPU
         d_omegaBasesN = base + off;          off += numBlocksN * sizeof(FrElement);
         d_omegaTidN = base + off;            off += 256 * sizeof(FrElement);
         d_blindings = base + off;            off += (BLINDINGFACTORSLENGTH_PLONK_GPU + 1) * sizeof(FrElement);
+        d_witness = base + off;              off += nDirect * sizeof(FrElement);
+        d_intWitness = base + off;           off += zkey->nAdditions * sizeof(FrElement);
+        d_addFactor1 = base + off;           off += zkey->nAdditions * sizeof(FrElement);
+        d_addFactor2 = base + off;           off += zkey->nAdditions * sizeof(FrElement);
+        d_addSignalId1 = base + off;         off += zkey->nAdditions * sizeof(uint32_t);
+        d_addSignalId2 = base + off;         off += zkey->nAdditions * sizeof(uint32_t);
+        d_additionLevels = base + off;       off += zkey->nAdditions;
 
         // Derived aliases within d_aux
-        uint32_t nDirect = zkey->nVars - zkey->nAdditions;
         d_gathered   = d_aux;                                                         // [0..N) gather output / IFFT (round1)
         d_ratios     = d_aux;                                                         // [0..N) z_ratios / prefix scan (round2)
         d_zEvals     = (FrElement*)d_aux + N;                                         // [N..2N) rotated Z evaluations (round2)
-        d_witness    = (uint8_t*)d_aux + 2 * N * sizeof(FrElement);                   // [2N..2N+nDirect) direct witness values
-        d_intWitness = (uint8_t*)d_witness + nDirect * sizeof(FrElement);             // [2N+nDirect..2N+nVars) internal witness 
-        d_mapBuffers = (uint8_t*)d_intWitness + zkey->nAdditions * sizeof(FrElement); // [2N+nVars..) nConstraints*3 uint32_t wire maps
+        d_mapBuffers = (uint8_t*)d_aux + 2 * N * sizeof(FrElement);                   // [2N..2N+nConstraints*3*4) wire maps
         d_scanWork   = (FrElement*)d_aux + 4 * N;                                     // [4N..4N+scanWorkElems) scan block totals (within d_aux)
 
         // Static eval buffer slot aliases: S1(0), S2(1), S3(2), L0(3), QL(4), QR(5), QM(6), QO(7), QC(8)
@@ -872,6 +928,28 @@ namespace PlonkGPU
         FrElement omega = fft->root(zkeyPower, 1);
         gpu_plonk_precompute_omega_tables_async(d_omegaBasesNExt, d_omegaTidNExt, &omega_4x, 256, numBlocks4N, omegasStream);
         gpu_plonk_precompute_omega_tables_async(d_omegaBasesN, d_omegaTidN, &omega, 256, numBlocksN, omegasStream);
+
+        LOG_TRACE("··· Uploading additions to GPU");
+        //node:  thid could be done in a async thread
+        uint32_t* signalId1 = new uint32_t[zkey->nAdditions];
+        uint32_t* signalId2 = new uint32_t[zkey->nAdditions];
+        FrElement* factor1 = new FrElement[zkey->nAdditions];
+        FrElement* factor2 = new FrElement[zkey->nAdditions];
+        for (uint32_t i = 0; i < zkey->nAdditions; i++) {
+            signalId1[i] = additionsBuff[i].signalId1;
+            signalId2[i] = additionsBuff[i].signalId2;
+            factor1[i] = additionsBuff[i].factor1;
+            factor2[i] = additionsBuff[i].factor2;
+        }
+        gpu_plonk_memcpy_h2d(d_addSignalId1, signalId1, zkey->nAdditions * sizeof(uint32_t));
+        gpu_plonk_memcpy_h2d(d_addSignalId2, signalId2, zkey->nAdditions * sizeof(uint32_t));
+        gpu_plonk_memcpy_h2d(d_addFactor1, factor1, zkey->nAdditions * sizeof(FrElement));
+        gpu_plonk_memcpy_h2d(d_addFactor2, factor2, zkey->nAdditions * sizeof(FrElement));
+        gpu_plonk_memcpy_h2d(d_additionLevels, additionLevels, zkey->nAdditions);
+        delete[] signalId1;
+        delete[] signalId2;
+        delete[] factor1;
+        delete[] factor2;
 
         if (!pinnedD2HStaging) {
             pinnedD2HStagingSize = (N + 6) * sizeof(FrElement);
