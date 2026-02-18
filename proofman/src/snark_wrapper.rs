@@ -247,6 +247,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         } else {
             std::ptr::null_mut()
         };
+        timer_start_info!(GENERATING_RECURSIVEF_PROOF);
         let recursivef_proof = generate_recursivef_proof(
             &self.setup_recursivef,
             &proof,
@@ -256,6 +257,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             self.setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
             unified_buffer_gpu,
         )?;
+        timer_stop_and_log_info!(GENERATING_RECURSIVEF_PROOF);
 
         timer_start_debug!(GENERATING_SNARK_PROOF);
 
