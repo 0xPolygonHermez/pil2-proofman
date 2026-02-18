@@ -705,7 +705,7 @@ namespace PlonkGPU
         std::cout << "[SETUP] calculateAdditions (" << zkey->nAdditions << " additions): " << omp_get_wtime() - tSetup << "s" << std::endl;
 #endif
 
-        // Fill publics buffer on CPU for transcript
+        // Fill publics buffer on CPU for transcript (needed by round1)
         if (evalConstPols) {
             for (uint32_t i = 0; i < zkey->nPublic; i++) {
                 FrElement w = getWitness(mapBuffers["A"][i]);
@@ -713,19 +713,8 @@ namespace PlonkGPU
             }
         }
 
-        // START PLONK PROVER PROTOCOL
-
-        // ROUND 1. Compute C1(X) polynomial
-        LOG_TRACE("> ROUND 1");
-#ifdef PLONK_GPU_TIMING
-        double tRound = omp_get_wtime();
-#endif
-        round1();
-#ifdef PLONK_GPU_TIMING
-        std::cout << "[TIMING] Round 1 (wire polys + commits): " << omp_get_wtime() - tRound << "s" << std::endl;
-#endif
-
-        // Wait for async eval NTT (launched in round0/preAllocate) to complete
+        // Wait for async eval NTT (launched in round0/preAllocate) to complete.
+        // Must join before round1: to avoid concurrent calls from asyncEvalNTT and computeWirePolynomials
         if (evalConstPols && asyncEvalNTT.joinable()) {
 #ifdef PLONK_GPU_TIMING
             double t0 = omp_get_wtime();
@@ -750,6 +739,18 @@ namespace PlonkGPU
             std::cout << "[SETUP] compute PI (single): " << omp_get_wtime() - tPI << "s" << std::endl;
 #endif
         }
+
+        // START PLONK PROVER PROTOCOL
+
+        // ROUND 1. Compute C1(X) polynomial
+        LOG_TRACE("> ROUND 1");
+#ifdef PLONK_GPU_TIMING
+        double tRound = omp_get_wtime();
+#endif
+        round1();
+#ifdef PLONK_GPU_TIMING
+        std::cout << "[TIMING] Round 1 (wire polys + commits): " << omp_get_wtime() - tRound << "s" << std::endl;
+#endif
 
         // ROUND 2. Compute C2(X) polynomial
         LOG_TRACE("> ROUND 2");
