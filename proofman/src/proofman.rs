@@ -31,7 +31,7 @@ use rand::{SeedableRng, seq::SliceRandom};
 use rand::rngs::StdRng;
 use proofman_common::{ProofmanResult, ProofmanError, Setup};
 use proofman_util::VadcopFinalProof;
-use crate::check_const_paths;
+use crate::{check_const_paths, check_const_paths_vadcop};
 
 #[cfg(distributed)]
 use mpi::topology::Communicator;
@@ -465,7 +465,7 @@ where
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
-                calculate_fixed_tree(sctx.get_setup(airgroup_id, air_id)?);
+                calculate_fixed_tree(&pctx, sctx.get_setup(airgroup_id, air_id)?);
             }
         }
 
@@ -474,7 +474,7 @@ where
             for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
                 for (air_id, _) in air_group.iter().enumerate() {
                     if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                        calculate_fixed_tree(sctx_compressor.get_setup(airgroup_id, air_id)?);
+                        calculate_fixed_tree(&pctx, sctx_compressor.get_setup(airgroup_id, air_id)?);
                     }
                 }
             }
@@ -482,21 +482,20 @@ where
             let sctx_recursive1 = setups_aggregation.sctx_recursive1.as_ref().unwrap();
             for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
                 for (air_id, _) in air_group.iter().enumerate() {
-                    calculate_fixed_tree(sctx_recursive1.get_setup(airgroup_id, air_id)?);
+                    calculate_fixed_tree(&pctx, sctx_recursive1.get_setup(airgroup_id, air_id)?);
                 }
             }
 
             let sctx_recursive2 = setups_aggregation.sctx_recursive2.as_ref().unwrap();
             let n_airgroups = pctx.global_info.air_groups.len();
             for airgroup in 0..n_airgroups {
-                calculate_fixed_tree(sctx_recursive2.get_setup(airgroup, 0)?);
+                calculate_fixed_tree(&pctx, sctx_recursive2.get_setup(airgroup, 0)?);
             }
 
             let setup_vadcop_final = setups_aggregation.setup_vadcop_final.as_ref().unwrap();
-            calculate_fixed_tree(setup_vadcop_final);
-
+            calculate_fixed_tree(&pctx, setup_vadcop_final);
             let setup_vadcop_final_compressed = setups_aggregation.setup_vadcop_final_compressed.as_ref().unwrap();
-            calculate_fixed_tree(setup_vadcop_final_compressed);
+            calculate_fixed_tree(&pctx, setup_vadcop_final_compressed);
         }
 
         Ok(())
@@ -3591,22 +3590,26 @@ where
 
         load_device_setups(&pctx, &sctx, &setups_vadcop, aggregation, packed_info)?;
 
-        timer_start_info!(LOADING_CONSTANTS);
-        load_device_const_pols(&pctx, &sctx, &setups_vadcop, aggregation, false)?;
-        timer_stop_and_log_info!(LOADING_CONSTANTS);
-
-        let pctx = Arc::new(pctx);
+        timer_start_info!(LOADING_FIXED_POLS);
+        check_const_paths(&pctx, &sctx)?;
 
         if !verify_constraints {
             check_tree_paths(&pctx, &sctx)?;
         }
 
-        check_const_paths(&pctx, &sctx)?;
+        if aggregation {
+            check_const_paths_vadcop(&pctx, &setups_vadcop)?;
+            check_tree_paths_vadcop(&pctx, &setups_vadcop)?;
+        }
+
+        load_device_const_pols(&pctx, &sctx, &setups_vadcop, aggregation, false)?;
+        timer_stop_and_log_info!(LOADING_FIXED_POLS);
 
         if aggregation {
-            check_tree_paths_vadcop(&pctx, &setups_vadcop)?;
             initialize_witness_circom(&pctx, &setups_vadcop)?;
         }
+
+        let pctx = Arc::new(pctx);
 
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN);
 

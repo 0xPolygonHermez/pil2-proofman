@@ -39,9 +39,6 @@ test_pipeline() {
             --builddir "$BUILD"
 
         if [ "$SETUP_ONLY" != "true" ]; then
-            cargo run --bin proofman-cli check-setup \
-                --proving-key "$PROVING_KEY"
-
             cargo run --bin proofman-cli pil-helpers \
                 --pilout "$PILOUT_FILE" \
                 --path "$SRC" -o

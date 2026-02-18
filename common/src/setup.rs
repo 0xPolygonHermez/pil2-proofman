@@ -16,6 +16,7 @@ use proofman_starks_lib_c::{
     expressions_bin_new_c, stark_info_new_c, stark_info_free_c, expressions_bin_free_c, get_map_totaln_c,
     get_map_totaln_custom_commits_fixed_c, get_proof_size_c, get_max_n_tmp1_c, get_max_n_tmp3_c, get_const_tree_size_c,
     load_const_pols_c, load_const_tree_c, read_exec_file_c, get_proof_pinned_size_c, get_operations_quotient_c,
+    calculate_words_per_row_c,
 };
 use proofman_util::create_buffer_fast;
 
@@ -263,7 +264,7 @@ impl<F: PrimeField64> Setup<F> {
                             0
                         }
                     } else {
-                        0
+                        calculate_words_per_row_c(p_stark_info, &(setup_path.display().to_string() + ".const"))
                     };
                     const_pols_size_packed =
                         (words_per_row * (1 << stark_info.stark_struct.n_bits) + 1 + stark_info.n_constants) as usize;
