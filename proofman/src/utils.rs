@@ -225,6 +225,65 @@ pub fn print_summary<F: PrimeField64>(
     Ok(summary_info)
 }
 
+pub fn needs_const_tree_regeneration<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<bool> {
+    let const_pols_tree_path = &setup.const_pols_tree_path;
+    let const_pols_tree_size = setup.const_tree_size;
+
+    // Check if file exists
+    if !PathBuf::from(&const_pols_tree_path).exists() {
+        return Ok(true);
+    }
+
+    // Check file size
+    match fs::metadata(const_pols_tree_path) {
+        Ok(metadata) => {
+            let actual_size = metadata.len() as usize;
+            if actual_size != const_pols_tree_size * 8 {
+                return Ok(true);
+            }
+        }
+        Err(_) => return Ok(true),
+    }
+
+    // Validate the tree content
+    let mut file = File::open(const_pols_tree_path)?;
+    file.seek(SeekFrom::End(-32))?;
+
+    let mut buffer = [0u8; 32];
+    file.read_exact(&mut buffer)?;
+
+    if setup.setup_type != ProofType::RecursiveF {
+        let verkey_path = setup.verkey_file.clone();
+        let mut contents = String::new();
+        let mut file = File::open(verkey_path).unwrap();
+        let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read verkey path file: {err}"));
+        let verkey_u64: Vec<u64> = serde_json::from_str(&contents).unwrap();
+
+        for (i, verkey_val) in verkey_u64.iter().enumerate() {
+            let byte_range = i * 8..(i + 1) * 8;
+            let value = u64::from_le_bytes(buffer[byte_range].try_into()?);
+            if value != *verkey_val {
+                return Ok(true);
+            }
+        }
+    } else {
+        let verkey_path = setup.verkey_file.clone();
+        let mut contents = String::new();
+        let mut file = File::open(verkey_path).unwrap();
+        let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read verkey path file: {err}"));
+
+        let verkey_str: String = serde_json::from_str(&contents)
+            .map_err(|err| ProofmanError::InvalidSetup(format!("Failed to parse verkey as string: {}", err)))?;
+
+        let is_valid = verify_root_bn128_from_tree_c(const_pols_tree_path, &verkey_str);
+        if !is_valid {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
 pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, d_buffers: &Option<*mut c_void>) -> ProofmanResult<()> {
     let const_pols_tree_path = &setup.const_pols_tree_path;
     let const_pols_tree_size = setup.const_tree_size;
@@ -373,6 +432,40 @@ pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, d_buffers: &Option<*m
     Ok(())
 }
 
+pub fn needs_const_pols_gpu_regeneration<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<bool> {
+    if !cfg!(feature = "gpu") {
+        return Ok(false);
+    }
+
+    let n_constants = setup.stark_info.n_constants as usize;
+    let n_rows = 1usize << setup.stark_info.stark_struct.n_bits as usize;
+
+    // Check if file exists
+    if !PathBuf::from(&setup.const_pols_path).exists() {
+        return Ok(true);
+    }
+
+    // Check file size
+    let mut file = File::open(&setup.const_pols_path)?;
+    let mut words_per_row_bytes = [0u8; 8];
+    file.read_exact(&mut words_per_row_bytes)?;
+    let words_per_row = u64::from_le_bytes(words_per_row_bytes);
+
+    let expected_size = 8 + (n_constants * 8) + (n_rows * words_per_row as usize * 8);
+
+    match fs::metadata(&setup.const_pols_path) {
+        Ok(metadata) => {
+            let actual_size = metadata.len() as usize;
+            if actual_size != expected_size {
+                return Ok(true);
+            }
+        }
+        Err(_) => return Ok(true),
+    }
+
+    Ok(false)
+}
+
 fn check_const_pols_gpu<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<()> {
     if !cfg!(feature = "gpu") {
         return Ok(());
@@ -432,6 +525,30 @@ fn check_const_pols_gpu<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<()>
     Ok(())
 }
 
+pub fn needs_regeneration_fixed<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
+) -> ProofmanResult<(bool, bool)> {
+    let mut needs_const_regen = false;
+    let mut needs_tree_regen = false;
+
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            let setup = sctx.get_setup(airgroup_id, air_id)?;
+            if needs_const_pols_gpu_regeneration(setup)? {
+                needs_const_regen = true;
+                tracing::debug!("GPU const pols regeneration needed for [{}:{}]", airgroup_id, air_id);
+            }
+            if needs_const_tree_regeneration(setup)? {
+                needs_tree_regen = true;
+                tracing::debug!("Const tree regeneration needed for [{}:{}]", airgroup_id, air_id);
+            }
+        }
+    }
+
+    Ok((needs_const_regen, needs_tree_regen))
+}
+
 pub fn check_const_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
@@ -440,6 +557,86 @@ pub fn check_const_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>
         }
     }
     Ok(())
+}
+
+pub fn needs_regeneration_vadcop_fixed<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    setups: &SetupsVadcop<F>,
+) -> ProofmanResult<(bool, bool)> {
+    let mut needs_const_regen = false;
+    let mut needs_tree_regen = false;
+
+    let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                let setup = sctx_compressor.get_setup(airgroup_id, air_id)?;
+                if needs_const_pols_gpu_regeneration(setup)? {
+                    needs_const_regen = true;
+                    tracing::debug!(
+                        "Vadcop compressor const pols regeneration needed for [{}:{}]",
+                        airgroup_id,
+                        air_id
+                    );
+                }
+                if needs_const_tree_regeneration(setup)? {
+                    needs_tree_regen = true;
+                    tracing::debug!("Vadcop compressor tree regeneration needed for [{}:{}]", airgroup_id, air_id);
+                }
+            }
+        }
+    }
+
+    let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
+            if needs_const_pols_gpu_regeneration(setup)? {
+                needs_const_regen = true;
+                tracing::debug!("Vadcop recursive1 const pols regeneration needed for [{}:{}]", airgroup_id, air_id);
+            }
+            if needs_const_tree_regeneration(setup)? {
+                needs_tree_regen = true;
+                tracing::debug!("Vadcop recursive1 tree regeneration needed for [{}:{}]", airgroup_id, air_id);
+            }
+        }
+    }
+
+    let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap();
+    let n_airgroups = pctx.global_info.air_groups.len();
+    for airgroup in 0..n_airgroups {
+        let setup = sctx_recursive2.get_setup(airgroup, 0)?;
+        if needs_const_pols_gpu_regeneration(setup)? {
+            needs_const_regen = true;
+            tracing::debug!("Vadcop recursive2 const pols regeneration needed for airgroup {}", airgroup);
+        }
+        if needs_const_tree_regeneration(setup)? {
+            needs_tree_regen = true;
+            tracing::debug!("Vadcop recursive2 tree regeneration needed for airgroup {}", airgroup);
+        }
+    }
+
+    let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
+    if needs_const_pols_gpu_regeneration(setup_vadcop_final)? {
+        needs_const_regen = true;
+        tracing::debug!("Vadcop final const pols regeneration needed");
+    }
+    if needs_const_tree_regeneration(setup_vadcop_final)? {
+        needs_tree_regen = true;
+        tracing::debug!("Vadcop final tree regeneration needed");
+    }
+
+    let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
+    if needs_const_pols_gpu_regeneration(setup_vadcop_final_compressed)? {
+        needs_const_regen = true;
+        tracing::debug!("Vadcop final compressed const pols regeneration needed");
+    }
+    if needs_const_tree_regeneration(setup_vadcop_final_compressed)? {
+        needs_tree_regen = true;
+        tracing::debug!("Vadcop final compressed tree regeneration needed");
+    }
+
+    Ok((needs_const_regen, needs_tree_regen))
 }
 
 pub fn check_const_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) -> ProofmanResult<()> {
