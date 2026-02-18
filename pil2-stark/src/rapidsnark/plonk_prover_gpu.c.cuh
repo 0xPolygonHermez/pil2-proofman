@@ -1019,6 +1019,7 @@ namespace PlonkGPU
                 for (int i = 0; i < 9; i++) {
                     gpu_plonk_memcpy_h2d(slots[i], polPtr[names[i]], NBytes);
                     gpu_plonk_zero_pad(slots[i], N, NExt);
+                    gpu_plonk_cuda_device_sync(); // default-stream zero_pad → sppark NTT (non-blocking stream)
                     ntt_bn128_gpu_dev_ptr(slots[i], zkeyPower + 2);
                 }
                 gpu_plonk_cuda_device_sync();
