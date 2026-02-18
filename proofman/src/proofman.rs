@@ -3,7 +3,7 @@ use libloading::{Library, Symbol};
 use fields::{ExtensionField, Transcript, PrimeField64, GoldilocksQuinticExtension, Poseidon16};
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
-    RowInfo, DebugInfo, MemoryHandler, MpiCtx, PackedInfo, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType,
+    PolMap, RowInfo, DebugInfo, MemoryHandler, MpiCtx, PackedInfo, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType,
     RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
 };
 use colored::Colorize;
@@ -70,7 +70,6 @@ use std::ffi::c_void;
 use proofman_util::{
     create_buffer_fast, timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug,
 };
-use proofman_common::expand_column_name;
 
 use serde::Serialize;
 
@@ -103,7 +102,28 @@ pub struct AirExecuteInfo {
     pub instance_ids: Vec<usize>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Serialize)]
+pub struct ColumnName {
+    pub name: String,
+    pub lengths: Vec<u64>,
+}
+
+impl ColumnName {
+    pub fn new(pol: &PolMap) -> Self {
+        Self { name: pol.name.clone(), lengths: pol.lengths.clone() }
+    }
+
+    pub fn expand_column_name(&self) -> String {
+        if self.lengths.is_empty() {
+            return self.name.clone();
+        }
+
+        let suffix = self.lengths.iter().map(|i| format!("[{}]", i)).collect::<String>();
+        format!("{}{}", self.name, suffix)
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct AirInfo {
     pub name: String,
     pub airgroup_id: u64,
@@ -111,10 +131,10 @@ pub struct AirInfo {
     pub num_instances: usize,
     pub instance_ids: Vec<usize>,
     pub num_columns_trace: u64,
-    pub name_columns_trace: Vec<String>,
+    pub name_columns_trace: Vec<ColumnName>,
     pub num_columns_fixed: u64,
-    pub name_columns_fixed: Vec<String>,
-    pub name_airvalues: Vec<String>,
+    pub name_columns_fixed: Vec<ColumnName>,
+    pub name_airvalues: Vec<ColumnName>,
     pub num_airvalues: u64,
     pub num_rows: usize,
 }
@@ -617,35 +637,25 @@ where
                 let air_name = &air.name;
                 if let Some(info) = air_info.get(air_name) {
                     let num_columns_trace = setup.stark_info.map_sections_n["cm1"];
-                    let name_columns_trace: Vec<String> = setup
+                    let name_columns_trace: Vec<ColumnName> = setup
                         .stark_info
                         .cm_pols_map
                         .as_ref()
-                        .map(|pols| {
-                            pols.iter()
-                                .filter(|pol| pol.stage == 1)
-                                .flat_map(|pol| expand_column_name(&pol.name, &pol.lengths))
-                                .collect()
-                        })
+                        .map(|pols| pols.iter().filter(|pol| pol.stage == 1).map(ColumnName::new).collect())
                         .unwrap();
 
-                    let name_columns_fixed: Vec<String> = setup
+                    let name_columns_fixed: Vec<ColumnName> = setup
                         .stark_info
                         .const_pols_map
                         .as_ref()
-                        .map(|pols| pols.iter().flat_map(|pol| expand_column_name(&pol.name, &pol.lengths)).collect())
+                        .map(|pols| pols.iter().map(ColumnName::new).collect())
                         .unwrap();
 
-                    let name_airvalues: Vec<String> = setup
+                    let name_airvalues: Vec<ColumnName> = setup
                         .stark_info
                         .airvalues_map
                         .as_ref()
-                        .map(|pols| {
-                            pols.iter()
-                                .filter(|pol| pol.stage == 1)
-                                .flat_map(|pol| expand_column_name(&pol.name, &pol.lengths))
-                                .collect()
-                        })
+                        .map(|pols| pols.iter().filter(|pol| pol.stage == 1).map(ColumnName::new).collect())
                         .unwrap();
 
                     planning_info.push(AirInfo {
