@@ -1438,7 +1438,7 @@ where
 
         let rank_info =
             RankInfo { world_rank: mpi_ctx.rank, local_rank: mpi_ctx.node_rank, n_processes: mpi_ctx.n_processes };
-        initialize_logger(verbose_mode, Some(&rank_info));
+        initialize_logger(verbose_mode, Some(rank_info.local_rank));
 
         let (pctx, sctx, setups_vadcop, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
             Self::initialize_proofman(
