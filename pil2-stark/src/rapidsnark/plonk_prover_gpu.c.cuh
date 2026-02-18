@@ -1079,9 +1079,7 @@ namespace PlonkGPU
         });
         
 
-        LOG_TRACE("··· H2D witness + maps to GPU");
-        gpu_plonk_memcpy_h2d(d_witness, buffWitness, witnessBytes);
-        gpu_plonk_memcpy_h2d(d_intWitness, buffInternalWitness, intWitnessBytes);
+        LOG_TRACE("··· H2D maps to GPU");
         gpu_plonk_memcpy_h2d(d_mapBuffers, mapBuffersBigBuffer, mapBytes);
 
         // GPU gather + IFFT for each wire polynomial
