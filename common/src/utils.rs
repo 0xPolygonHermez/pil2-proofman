@@ -3,7 +3,7 @@ use crate::{
     AirGroupMap, AirIdMap, DebugInfo, GlobalInfo, InstanceMap, ModeName, ProofCtx, StdMode, VerboseMode,
     DEFAULT_PRINT_VALS,
 };
-use proofman_starks_lib_c::{set_log_level_c, init_gpu_setup_c, get_num_gpus_c};
+use proofman_starks_lib_c::set_log_level_c;
 use tracing::dispatcher;
 use tracing_subscriber::filter::LevelFilter;
 use std::path::PathBuf;
@@ -25,13 +25,10 @@ use tracing_subscriber::fmt;
 use std::sync::OnceLock;
 use yansi::Color;
 use yansi::Paint;
-use std::io::IsTerminal;
 use colored::Colorize;
-use crate::RankInfo;
+use std::io::IsTerminal;
 
 static GLOBAL_RANK: OnceLock<i32> = OnceLock::new();
-static VERBOSE_MODE: OnceLock<VerboseMode> = OnceLock::new();
-static IS_TERMINAL: OnceLock<bool> = OnceLock::new();
 
 use crate::InstancesInfo;
 
@@ -56,31 +53,21 @@ where
             timer.format_time(&mut fake_writer)?;
         }
 
-        let is_terminal = IS_TERMINAL.get().copied().unwrap_or(false);
-
-        if is_terminal {
+        if std::io::stdout().is_terminal() {
             write!(writer, "{} ", time_str.dimmed())?;
         } else {
             write!(writer, "{time_str} ")?;
         }
 
         if let Some(rank) = GLOBAL_RANK.get().copied() {
-            let rank_str = match is_terminal {
+            let rank_str = match std::io::stdout().is_terminal() {
                 true => format!("[rank={rank}]").dimmed(),
                 false => format!("[rank={rank}]").into(),
             };
             write!(writer, "{rank_str} ")?;
         }
 
-        let target = event.metadata().target();
-        let show_target =
-            VERBOSE_MODE.get().map(|vm| matches!(vm, VerboseMode::Debug | VerboseMode::Trace)).unwrap_or(false);
-
-        if is_terminal {
-            if show_target {
-                write!(writer, "{} ", target.dimmed())?;
-            }
-
+        if std::io::stdout().is_terminal() {
             let level_str = match *event.metadata().level() {
                 tracing::Level::TRACE => "TRACE".paint(Color::Cyan),
                 tracing::Level::DEBUG => "DEBUG".paint(Color::Blue),
@@ -90,17 +77,7 @@ where
             };
             write!(writer, "{level_str}: ")?;
         } else {
-            let level_str = match *event.metadata().level() {
-                tracing::Level::TRACE => "TRACE",
-                tracing::Level::DEBUG => "DEBUG",
-                tracing::Level::INFO => "INFO",
-                tracing::Level::WARN => "WARN",
-                tracing::Level::ERROR => "ERROR",
-            };
-            if show_target {
-                write!(writer, "{target} ")?;
-            }
-            write!(writer, "{level_str}: ")?;
+            write!(writer, "{}: ", event.metadata().level())?;
         }
 
         let mut visitor = MessageVisitor::new();
@@ -144,34 +121,19 @@ pub fn set_global_rank(rank: i32) {
     let _ = GLOBAL_RANK.set(rank);
 }
 
-pub fn initialize_logger(verbose_mode: VerboseMode, rank: Option<&RankInfo>) {
-    if GLOBAL_RANK.get().is_none() {
-        if let Some(r) = rank {
-            if r.n_processes > 1 {
-                set_global_rank(r.world_rank);
-            }
-        }
-    }
-
-    let _ = VERBOSE_MODE.set(verbose_mode);
-
-    let is_terminal = std::io::stdout().is_terminal() && std::env::var("NO_COLOR").is_err();
-
-    let _ = IS_TERMINAL.set(is_terminal);
-
-    // Disable ANSI/colors globally when not in a terminal
-    if !is_terminal {
-        yansi::disable();
-    }
-
+pub fn initialize_logger(verbose_mode: VerboseMode, rank: Option<i32>) {
     if dispatcher::has_been_set() {
         return;
+    }
+
+    if let Some(r) = rank {
+        set_global_rank(r);
     }
 
     let stdout_layer = tracing_subscriber::fmt::layer()
         .event_format(RankFormatter)
         .with_writer(std::io::stdout)
-        .with_ansi(is_terminal)
+        .with_ansi(false)
         .with_filter(LevelFilter::from(verbose_mode));
 
     tracing_subscriber::registry().with(stdout_layer).init();
@@ -500,16 +462,4 @@ pub fn join_thread(handle: std::thread::JoinHandle<ProofmanResult<()>>) -> Proof
             Err(ProofmanError::ProofmanError(panic_msg))
         }
     }
-}
-
-pub fn init_gpu_setup(max_n_bits_ext: u64) -> ProofmanResult<()> {
-    if cfg!(feature = "gpu") {
-        let n_gpus = get_num_gpus_c();
-        if n_gpus == 0 {
-            return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
-        }
-
-        init_gpu_setup_c(max_n_bits_ext);
-    }
-    Ok(())
 }
