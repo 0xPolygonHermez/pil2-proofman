@@ -31,7 +31,7 @@ use rand::{SeedableRng, seq::SliceRandom};
 use rand::rngs::StdRng;
 use proofman_common::{ProofmanResult, ProofmanError, Setup};
 use proofman_util::VadcopFinalProof;
-use crate::{check_const_paths, check_const_paths_vadcop};
+use crate::{check_const_paths, check_const_paths_vadcop, needs_regeneration_fixed, needs_regeneration_vadcop_fixed};
 
 #[cfg(distributed)]
 use mpi::topology::Communicator;
@@ -3590,18 +3590,40 @@ where
 
         load_device_setups(&pctx, &sctx, &setups_vadcop, aggregation, packed_info)?;
 
-        timer_start_info!(LOADING_FIXED_POLS);
-        check_const_paths(&pctx, &sctx)?;
+        let (needs_const_regen, needs_tree_regen) = needs_regeneration_fixed(&pctx, &sctx)?;
+        if needs_const_regen {
+            tracing::info!("Regenerating GPU constant polynomials (one-time setup)...");
+            timer_start_info!(REGENERATING_GPU_CONST_POLS);
+            check_const_paths(&pctx, &sctx)?;
+            timer_stop_and_log_info!(REGENERATING_GPU_CONST_POLS);
+        }
 
-        if !verify_constraints {
+        if !verify_constraints && needs_tree_regen {
+            tracing::info!("Regenerating constant trees (one-time setup)...");
+            timer_start_info!(REGENERATING_CONST_TREE);
             check_tree_paths(&pctx, &sctx)?;
+            timer_stop_and_log_info!(REGENERATING_CONST_TREE);
         }
 
         if aggregation {
-            check_const_paths_vadcop(&pctx, &setups_vadcop)?;
-            check_tree_paths_vadcop(&pctx, &setups_vadcop)?;
+            let (needs_vadcop_const_regen, needs_vadcop_tree_regen) =
+                needs_regeneration_vadcop_fixed(&pctx, &setups_vadcop)?;
+            if needs_vadcop_const_regen {
+                tracing::info!("Regenerating Vadcop constant polynomials (one-time setup)...");
+                timer_start_info!(REGENERATING_VADCOP_CONST_POLS);
+                check_const_paths_vadcop(&pctx, &setups_vadcop)?;
+                timer_stop_and_log_info!(REGENERATING_VADCOP_CONST_POLS);
+            }
+
+            if needs_vadcop_tree_regen {
+                tracing::info!("Regenerating Vadcop constant trees (one-time setup)...");
+                timer_start_info!(REGENERATING_VADCOP_CONST_TREE);
+                check_tree_paths_vadcop(&pctx, &setups_vadcop)?;
+                timer_stop_and_log_info!(REGENERATING_VADCOP_CONST_TREE);
+            }
         }
 
+        timer_start_info!(LOADING_FIXED_POLS);
         load_device_const_pols(&pctx, &sctx, &setups_vadcop, aggregation, false)?;
         timer_stop_and_log_info!(LOADING_FIXED_POLS);
 
