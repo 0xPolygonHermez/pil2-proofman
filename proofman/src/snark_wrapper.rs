@@ -173,7 +173,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         setup_recursivef.set_circom_circuit()?;
         setup_recursivef.set_exec_file_data()?;
 
-        check_const_tree(&setup_recursivef, false)?;
+        check_const_tree(&setup_recursivef, &d_buffers)?;
 
         setup_recursivef.load_const_pols();
         setup_recursivef.load_const_pols_tree();
@@ -247,7 +247,6 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         } else {
             std::ptr::null_mut()
         };
-        timer_start_info!(GENERATING_RECURSIVEF_PROOF);
         let recursivef_proof = generate_recursivef_proof(
             &self.setup_recursivef,
             &proof,
@@ -257,7 +256,6 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             self.setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
             unified_buffer_gpu,
         )?;
-        timer_stop_and_log_info!(GENERATING_RECURSIVEF_PROOF);
 
         timer_start_debug!(GENERATING_SNARK_PROOF);
 
@@ -338,7 +336,7 @@ pub fn check_setup_snark<F: PrimeField64>(
         None,
     );
 
-    calculate_fixed_tree_snark(&setup_recursivef);
+    calculate_fixed_tree_snark(&setup_recursivef, &None);
 
     Ok(())
 }
@@ -377,7 +375,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     setup_recursivef.set_circom_circuit()?;
     setup_recursivef.set_exec_file_data()?;
 
-    check_const_tree(&setup_recursivef, false)?;
+    check_const_tree(&setup_recursivef, &None)?;
 
     setup_recursivef.load_const_pols();
     setup_recursivef.load_const_pols_tree();

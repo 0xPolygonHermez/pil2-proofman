@@ -893,7 +893,7 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t air
     return streamId;
 }
 
-void tile_const_pols(void *pStarkinfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile) {
+void tile_const_pols(void *pStarkinfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu) {
 
     StarkInfo &starkInfo = *(StarkInfo *)pStarkinfo;
     uint64_t *h_constPols = (uint64_t *)pConstPols;
@@ -910,11 +910,17 @@ void tile_const_pols(void *pStarkinfo, void *pConstPols, char *constFile, void *
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
 
-    gl64_t * d_helper;
-    gl64_t * d_helperAux;
+    gl64_t *d_helper;
+    gl64_t *d_helperAux;
+    if (unified_buffer_gpu == nullptr) {
+        CHECKCUDAERR(cudaMalloc(&d_helper, sizeConstPolsExtended));
+        CHECKCUDAERR(cudaMalloc(&d_helperAux, sizeConstPolsExtended));
+    } else {
+        gl64_t * d_unifiedBuffer = (gl64_t *)unified_buffer_gpu;
+        d_helper = d_unifiedBuffer;
+        d_helperAux = d_unifiedBuffer + sizeConstPolsExtended;
+    }
 
-    CHECKCUDAERR(cudaMalloc(&d_helper, sizeConstPolsExtended));
-    CHECKCUDAERR(cudaMalloc(&d_helperAux, sizeConstPolsExtended));
     Goldilocks::Element *h_helperTiled = (Goldilocks::Element *)malloc(sizeConstTree);
 
     dim3 gridSize;
@@ -948,8 +954,10 @@ void tile_const_pols(void *pStarkinfo, void *pConstPols, char *constFile, void *
     fwTree.close();
 
     free(h_helperTiled);
-    CHECKCUDAERR(cudaFree(d_helper));
-    CHECKCUDAERR(cudaFree(d_helperAux));
+    if (unified_buffer_gpu == nullptr) {
+        CHECKCUDAERR(cudaFree(d_helper));
+        CHECKCUDAERR(cudaFree(d_helperAux));
+    }
     CHECKCUDAERR(cudaStreamDestroy(stream));
 
 }
@@ -1239,11 +1247,17 @@ void init_gpu_setup(uint64_t maxBitsExt) {
     NTT_Goldilocks_GPU::init_twiddle_factors_and_r(maxBitsExt, 1, my_gpu_ids);
 }
 
-void prepare_blocks(uint64_t *pol, uint64_t N, uint64_t nCols) {
+void prepare_blocks(uint64_t *pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu) {
     gl64_t *d_pol;
     gl64_t *d_aux;
-    cudaMalloc(&d_pol, N * nCols * sizeof(gl64_t));
-    cudaMalloc(&d_aux, N * nCols * sizeof(gl64_t));
+    if (unified_buffer_gpu == nullptr) {
+        CHECKCUDAERR(cudaMalloc(&d_pol, N * nCols * sizeof(gl64_t)));
+        CHECKCUDAERR(cudaMalloc(&d_aux, N * nCols * sizeof(gl64_t)));
+    } else {
+        gl64_t *d_unifiedBuffer = (gl64_t *)unified_buffer_gpu;
+        d_pol = d_unifiedBuffer;
+        d_aux = d_unifiedBuffer + (N * nCols);
+    }
     cudaMemcpy(d_pol, pol, N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice);
 
     cudaStream_t stream;
@@ -1257,8 +1271,10 @@ void prepare_blocks(uint64_t *pol, uint64_t N, uint64_t nCols) {
     ntt.prepare_blocks_trace(d_aux, d_pol, nCols, N, stream, timer);
 
     cudaMemcpy(pol, d_aux, N * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost);
-    cudaFree(d_pol);
-    cudaFree(d_aux);
+    if (unified_buffer_gpu == nullptr) {
+        CHECKCUDAERR(cudaFree(d_pol));
+        CHECKCUDAERR(cudaFree(d_aux));
+    }
     cudaStreamDestroy(stream);
 }
 
@@ -1320,7 +1336,7 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
     delete[] customCommitsPols;
 }
 
-void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress_) {
+void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress_, void *unified_buffer_gpu) {
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
     cudaSetDevice(deviceId);
@@ -1340,8 +1356,15 @@ void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pCons
 
     Goldilocks::Element* d_fixedPols;
     Goldilocks::Element* d_fixedTree;
-    cudaMalloc((void**)&d_fixedPols, NExtended * starkInfo.nConstants * sizeof(Goldilocks::Element));
-    cudaMalloc((void**)&d_fixedTree, treeSize * sizeof(Goldilocks::Element));
+    if (unified_buffer_gpu == nullptr) {
+        cudaMalloc((void**)&d_fixedPols, NExtended * starkInfo.nConstants * sizeof(Goldilocks::Element));
+        cudaMalloc((void**)&d_fixedTree, treeSize * sizeof(Goldilocks::Element));
+    } else {
+        Goldilocks::Element *d_unifiedBuffer = (Goldilocks::Element *)unified_buffer_gpu;
+        d_fixedPols = d_unifiedBuffer;
+        d_fixedTree = d_unifiedBuffer + (NExtended * starkInfo.nConstants);
+    }
+    
     cudaMemcpy(d_fixedPols, pConstPolsAddress, N * starkInfo.nConstants * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
     cudaMemset(d_fixedTree, 0, treeSize * sizeof(Goldilocks::Element));
 
@@ -1352,8 +1375,10 @@ void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pCons
 
     Goldilocks::Element *pConstTreeAddress = (Goldilocks::Element *)pConstTreeAddress_;
     cudaMemcpy(pConstTreeAddress, d_fixedTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
-    cudaFree(d_fixedPols);
-    cudaFree(d_fixedTree);
+    if (unified_buffer_gpu == nullptr) {
+        cudaFree(d_fixedPols);
+        cudaFree(d_fixedTree);
+    }
     TimerStopGPU(timer, STARK_GPU_CONST_TREE);
     cudaStreamDestroy(stream);
 }

@@ -334,6 +334,33 @@ uint64_t get_const_size(void *pStarkInfo) {
     return N * (*(StarkInfo *)pStarkInfo).nConstants;
 }
 
+uint64_t calculate_words_per_row(void *pStarkinfo, char *constPolsPath) {
+    StarkInfo &starkInfo = *(StarkInfo *)pStarkinfo;
+    uint64_t nCols = starkInfo.nConstants;
+    uint64_t nRows = 1ULL << starkInfo.starkStruct.nBits;
+    uint64_t constSize = nRows * nCols;
+    
+    // Load const pols from file
+    std::vector<uint64_t> constPols(constSize);
+    ConstTree constTree;
+    constTree.loadConstPols(constPols.data(), constPolsPath, constSize * sizeof(uint64_t));
+    
+    std::vector<uint64_t> pack_info(starkInfo.nConstants, 0);
+    uint64_t total_bits = 0;
+    for (uint64_t i = 0; i < starkInfo.nConstants; ++i) {
+        for (uint64_t row = 0; row < nRows; ++row) {
+            uint64_t val = constPols[row * nCols + i];
+            uint64_t bits = val == 0 ? 1 : 64 - __builtin_clzll(val);
+            if (bits > pack_info[i]) {
+                pack_info[i] = bits;
+            }
+        }
+        total_bits += pack_info[i];
+    }
+    uint64_t words_per_row = (total_bits + 63) / 64;
+    return words_per_row;
+}
+
 void pack_const_pols(void *pStarkinfo, void *pConstPols, char *constFile) {
     StarkInfo &starkInfo = *(StarkInfo *)pStarkinfo;
     uint64_t *constPols = (uint64_t *)pConstPols;
@@ -365,10 +392,10 @@ void pack_const_pols(void *pStarkinfo, void *pConstPols, char *constFile) {
 
 #ifndef __USE_CUDA__
 
-void tile_const_pols(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile){}
+void tile_const_pols(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu){}
 void init_gpu_setup(uint64_t maxBitsExt) {}
-void prepare_blocks(uint64_t* pol, uint64_t N, uint64_t nCols) {}
-void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress) {
+void prepare_blocks(uint64_t* pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu) {}
+void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress, void *unified_buffer_gpu) {
     ConstTree constTree;
     constTree.calculateConstTreeGL(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress);
 };

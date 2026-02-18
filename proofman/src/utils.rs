@@ -6,6 +6,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
+use std::os::raw::c_void;
 
 use colored::*;
 
@@ -14,7 +15,14 @@ use proofman_common::{
 };
 use proofman_starks_lib_c::load_device_const_pols_c;
 use proofman_starks_lib_c::load_device_setup_c;
+use proofman_starks_lib_c::get_unified_buffer_gpu_c;
 use proofman_starks_lib_c::verify_root_bn128_from_tree_c;
+use proofman_starks_lib_c::pack_const_pols_c;
+use proofman_starks_lib_c::{
+    calculate_const_tree_c, calculate_const_tree_bn128_c, write_const_tree_c, write_const_tree_bn128_c,
+    prepare_blocks_c, tile_const_pols_c, load_const_pols_c,
+};
+use proofman_util::create_buffer_fast;
 use proofman_common::{PackedInfo, VerboseMode, GlobalInfo};
 
 use pil_std_lib::Std;
@@ -217,123 +225,208 @@ pub fn print_summary<F: PrimeField64>(
     Ok(summary_info)
 }
 
-pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool) -> ProofmanResult<()> {
+pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, d_buffers: &Option<*mut c_void>) -> ProofmanResult<()> {
     let const_pols_tree_path = &setup.const_pols_tree_path;
-    let mut flags = String::new();
-    if aggregation {
-        flags.push_str(" -a");
-    }
-
-    let is_gpu = match cfg!(feature = "gpu") {
-        true => "--features gpu ",
-        false => "",
-    };
-
-    if !PathBuf::from(&const_pols_tree_path).exists() {
-        let options = match setup.setup_type {
-            ProofType::RecursiveF => "check-setup-snark --proving-key-snark",
-            _ => "check-setup --proving-key",
-        };
-        return Err(ProofmanError::InvalidSetup(format!(
-            "Error: Unable to find the constant tree at '{const_pols_tree_path}'.\n\
-            Please run the following command to generate it:\n\
-            \x1b[1mcargo run {is_gpu}--bin proofman-cli {options} <PROVING_KEY>{flags}\x1b[0m"
-        )));
-    }
-
-    let options = match setup.setup_type {
-        ProofType::RecursiveF => "check-setup-snark --proving-key-snark",
-        _ => "check-setup --proving-key",
-    };
-    let error_message = ProofmanError::InvalidSetup(format!(
-        "Error: The constant tree file at '{const_pols_tree_path}' exists but is invalid or corrupted.\n\
-        Please regenerate it by running:\n\
-        \x1b[1mcargo run {is_gpu}--bin proofman-cli {options} <PROVING_KEY>{flags}\x1b[0m"
-    ));
-
     let const_pols_tree_size = setup.const_tree_size;
-    match fs::metadata(const_pols_tree_path) {
-        Ok(metadata) => {
-            let actual_size = metadata.len() as usize;
-            if actual_size != const_pols_tree_size * 8 {
-                return Err(error_message);
-            }
-        }
-        Err(err) => {
-            return Err(ProofmanError::InvalidSetup(format!("Failed to get metadata for {}: {}", setup.air_name, err)));
-        }
-    }
 
-    // For GPU builds, verify GPU files exist and have correct sizes
-    if cfg!(feature = "gpu") {
-        // Check GPU const tree file
-        if !PathBuf::from(&setup.const_pols_tree_path).exists() {
-            return Err(ProofmanError::InvalidSetup(format!(
-                "Error: GPU constant tree file '{}' does not exist.\n\
-                Please run the following command to generate it:\n\
-                \x1b[1mcargo run {is_gpu}--bin proofman-cli {options} <PROVING_KEY>{flags}\x1b[0m",
-                setup.const_pols_tree_path
-            )));
-        }
+    let mut needs_regeneration = false;
+    let mut validation_failed = false;
 
-        match fs::metadata(&setup.const_pols_tree_path) {
+    // Check if file exists and has correct size
+    if PathBuf::from(&const_pols_tree_path).exists() {
+        match fs::metadata(const_pols_tree_path) {
             Ok(metadata) => {
                 let actual_size = metadata.len() as usize;
-                let expected_size = const_pols_tree_size * 8;
-                if actual_size != expected_size {
-                    return Err(ProofmanError::InvalidSetup(format!(
-                        "Error: GPU constant tree file '{}' has incorrect size ({} bytes, expected {} bytes).\n\
-                        Please regenerate it by running:\n\
-                        \x1b[1mcargo run {is_gpu}--bin proofman-cli {options} <PROVING_KEY>{flags}\x1b[0m",
-                        setup.const_pols_tree_path, actual_size, expected_size
-                    )));
+                if actual_size != const_pols_tree_size * 8 {
+                    tracing::trace!(
+                        "Constant tree file '{}' has incorrect size ({} bytes, expected {} bytes). Regenerating...",
+                        const_pols_tree_path,
+                        actual_size,
+                        const_pols_tree_size * 8
+                    );
+                    needs_regeneration = true;
+                } else {
+                    // Validate the tree content
+                    let mut file = File::open(const_pols_tree_path)?;
+                    file.seek(SeekFrom::End(-32))?;
+
+                    let mut buffer = [0u8; 32];
+                    file.read_exact(&mut buffer)?;
+
+                    if setup.setup_type != ProofType::RecursiveF {
+                        let verkey_path = setup.verkey_file.clone();
+                        let mut contents = String::new();
+                        let mut file = File::open(verkey_path).unwrap();
+                        let _ = file
+                            .read_to_string(&mut contents)
+                            .map_err(|err| format!("Failed to read verkey path file: {err}"));
+                        let verkey_u64: Vec<u64> = serde_json::from_str(&contents).unwrap();
+
+                        for (i, verkey_val) in verkey_u64.iter().enumerate() {
+                            let byte_range = i * 8..(i + 1) * 8;
+                            let value = u64::from_le_bytes(buffer[byte_range].try_into()?);
+                            if value != *verkey_val {
+                                validation_failed = true;
+                                break;
+                            }
+                        }
+                    } else {
+                        let verkey_path = setup.verkey_file.clone();
+                        let mut contents = String::new();
+                        let mut file = File::open(verkey_path).unwrap();
+                        let _ = file
+                            .read_to_string(&mut contents)
+                            .map_err(|err| format!("Failed to read verkey path file: {err}"));
+
+                        let verkey_str: String = serde_json::from_str(&contents).map_err(|err| {
+                            ProofmanError::InvalidSetup(format!("Failed to parse verkey as string: {}", err))
+                        })?;
+
+                        let is_valid = verify_root_bn128_from_tree_c(const_pols_tree_path, &verkey_str);
+                        if !is_valid {
+                            validation_failed = true;
+                        }
+                    }
+
+                    if validation_failed {
+                        tracing::trace!(
+                            "Constant tree file '{}' validation failed. Regenerating...",
+                            const_pols_tree_path
+                        );
+                        needs_regeneration = true;
+                    }
                 }
             }
             Err(err) => {
                 return Err(ProofmanError::InvalidSetup(format!(
-                    "Failed to get metadata for GPU const tree {}: {}",
+                    "Failed to get metadata for {}: {}",
                     setup.air_name, err
                 )));
             }
         }
+    } else {
+        tracing::trace!("Constant tree file '{}' does not exist. Generating...", const_pols_tree_path);
+        needs_regeneration = true;
     }
 
-    let mut file = File::open(const_pols_tree_path)?;
-    file.seek(SeekFrom::End(-32))?; // Move to 32 bytes before the end
+    // Regenerate the const tree if needed
+    if needs_regeneration {
+        let const_pols_size = (setup.stark_info.n_constants * (1 << setup.stark_info.stark_struct.n_bits)) as usize;
+        let mut const_pols: Vec<F> = create_buffer_fast(const_pols_size);
+        let const_pols_path = setup.setup_path.display().to_string() + ".const";
+        load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_pols.len() as u64 * 8);
 
-    let mut buffer = [0u8; 32];
-    file.read_exact(&mut buffer)?;
+        let const_tree: Vec<F> = create_buffer_fast(const_pols_tree_size);
+        let p_stark_info = setup.p_setup.p_stark_info;
 
-    if setup.setup_type != ProofType::RecursiveF {
-        let verkey_path = setup.verkey_file.clone();
+        let unified_buffer_gpu =
+            if let Some(d_buffers) = d_buffers { get_unified_buffer_gpu_c(*d_buffers) } else { std::ptr::null_mut() };
 
-        let mut contents = String::new();
-        let mut file = File::open(verkey_path).unwrap();
-        let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read verkey path file: {err}"));
-        let verkey_u64: Vec<u64> = serde_json::from_str(&contents).unwrap();
+        if setup.stark_info.stark_struct.verification_hash_type == "GL" {
+            if cfg!(feature = "gpu") {
+                prepare_blocks_c(
+                    const_pols.as_mut_ptr() as *mut u64,
+                    1 << setup.stark_info.stark_struct.n_bits,
+                    setup.stark_info.n_constants,
+                    unified_buffer_gpu,
+                );
+                calculate_const_tree_c(
+                    p_stark_info,
+                    const_pols.as_ptr() as *mut u8,
+                    const_tree.as_ptr() as *mut u8,
+                    unified_buffer_gpu,
+                );
+                write_const_tree_c(p_stark_info, const_tree.as_ptr() as *mut u8, const_pols_tree_path.as_str());
+            } else {
+                calculate_const_tree_c(
+                    p_stark_info,
+                    const_pols.as_ptr() as *mut u8,
+                    const_tree.as_ptr() as *mut u8,
+                    unified_buffer_gpu,
+                );
+                write_const_tree_c(p_stark_info, const_tree.as_ptr() as *mut u8, const_pols_tree_path.as_str());
+            }
+        } else {
+            // BN128 case (RecursiveF)
+            calculate_const_tree_bn128_c(p_stark_info, const_pols.as_ptr() as *mut u8, const_tree.as_ptr() as *mut u8);
 
-        for (i, verkey_val) in verkey_u64.iter().enumerate() {
-            let byte_range = i * 8..(i + 1) * 8;
-            let value = u64::from_le_bytes(buffer[byte_range].try_into()?);
-            if value != *verkey_val {
-                return Err(error_message);
+            // For RecursiveF, we need to write to CPU path first
+            let const_pols_tree_path_cpu = setup.setup_path.display().to_string() + ".consttree";
+            write_const_tree_bn128_c(p_stark_info, const_tree.as_ptr() as *mut u8, const_pols_tree_path_cpu.as_str());
+
+            // For GPU, use tile_const_pols_c to create both GPU const pols and GPU const tree
+            if cfg!(feature = "gpu") {
+                tile_const_pols_c(
+                    p_stark_info,
+                    const_pols.as_ptr() as *mut u8,
+                    setup.const_pols_path.as_str(),
+                    const_tree.as_ptr() as *mut u8,
+                    const_pols_tree_path.as_str(),
+                    unified_buffer_gpu,
+                );
+            }
+        }
+
+        tracing::trace!("Successfully generated constant tree file '{}'", const_pols_tree_path);
+    }
+
+    Ok(())
+}
+
+fn check_const_pols_gpu<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<()> {
+    if !cfg!(feature = "gpu") {
+        return Ok(());
+    }
+
+    let n_constants = setup.stark_info.n_constants as usize;
+    let n_rows = 1usize << setup.stark_info.stark_struct.n_bits as usize;
+
+    let mut needs_regeneration = false;
+    let expected_size;
+
+    // Check if file exists and has correct size
+    if PathBuf::from(&setup.const_pols_path).exists() {
+        let mut file = File::open(&setup.const_pols_path)?;
+        let mut words_per_row_bytes = [0u8; 8];
+        file.read_exact(&mut words_per_row_bytes)?;
+        let words_per_row = u64::from_le_bytes(words_per_row_bytes);
+
+        // Calculate expected size
+        expected_size = 8 + (n_constants * 8) + (n_rows * words_per_row as usize * 8);
+
+        match fs::metadata(&setup.const_pols_path) {
+            Ok(metadata) => {
+                let actual_size = metadata.len() as usize;
+                if actual_size != expected_size {
+                    tracing::trace!(
+                        "GPU constant polynomials file '{}' has incorrect size ({} bytes, expected {} bytes). Regenerating...",
+                        setup.const_pols_path, actual_size, expected_size
+                    );
+                    needs_regeneration = true;
+                }
+            }
+            Err(err) => {
+                return Err(ProofmanError::InvalidSetup(format!(
+                    "Failed to get metadata for GPU const pols {}: {}",
+                    setup.air_name, err
+                )));
             }
         }
     } else {
-        // RecursiveF verkey check - use C++ helper to verify root
-        let verkey_path = setup.verkey_file.clone();
-        let mut contents = String::new();
-        let mut file = File::open(verkey_path).unwrap();
-        let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read verkey path file: {err}"));
+        tracing::trace!("GPU constant polynomials file '{}' does not exist. Generating...", setup.const_pols_path);
+        needs_regeneration = true;
+    }
 
-        let verkey_str: String = serde_json::from_str(&contents)
-            .map_err(|err| ProofmanError::InvalidSetup(format!("Failed to parse verkey as string: {}", err)))?;
+    if needs_regeneration {
+        let const_pols_size = (setup.stark_info.n_constants * (1 << setup.stark_info.stark_struct.n_bits)) as usize;
+        let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
+        let const_pols_path = setup.setup_path.display().to_string() + ".const";
 
-        let is_valid = verify_root_bn128_from_tree_c(const_pols_tree_path, &verkey_str);
+        load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_pols.len() as u64 * 8);
 
-        if !is_valid {
-            return Err(error_message);
-        }
+        pack_const_pols_c(setup.p_setup.p_stark_info, const_pols.as_ptr() as *mut u8, setup.const_pols_path.as_str());
+
+        tracing::trace!("Successfully generated GPU constant polynomials file '{}'", setup.const_pols_path);
     }
 
     Ok(())
@@ -343,69 +436,19 @@ pub fn check_const_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx.get_setup(airgroup_id, air_id)?;
-            if cfg!(feature = "gpu") {
-                let mut file = File::open(&setup.const_pols_path)?;
-                let mut words_per_row_bytes = [0u8; 8];
-                file.read_exact(&mut words_per_row_bytes)?;
-                let words_per_row = u64::from_le_bytes(words_per_row_bytes);
-
-                // Calculate expected size
-                let n_constants = setup.stark_info.n_constants as usize;
-                let n_rows = 1usize << setup.stark_info.stark_struct.n_bits as usize;
-                let expected_size = 8 + (n_constants * 8) + (n_rows * words_per_row as usize * 8);
-
-                // Check GPU const pols file
-                if !PathBuf::from(&setup.const_pols_path).exists() {
-                    return Err(ProofmanError::InvalidSetup(format!(
-                        "Error: GPU constant polynomials file '{}' does not exist.\n\
-                Please run the following command to generate it:\n\
-                \x1b[1mcargo run --features gpu --bin proofman-cli <PROVING_KEY>\x1b[0m",
-                        setup.const_pols_path
-                    )));
-                }
-
-                match fs::metadata(&setup.const_pols_path) {
-                    Ok(metadata) => {
-                        let actual_size = metadata.len() as usize;
-                        if actual_size != expected_size {
-                            return Err(ProofmanError::InvalidSetup(format!(
-                        "Error: GPU constant polynomials file '{}' has incorrect size ({} bytes, expected {} bytes).\n\
-                        Please regenerate it by running:\n\
-                        \x1b[1mcargo run --features gpu --bin proofman-cli <PROVING_KEY>\x1b[0m",
-                        setup.const_pols_path, actual_size, expected_size
-                    )));
-                        }
-                    }
-                    Err(err) => {
-                        return Err(ProofmanError::InvalidSetup(format!(
-                            "Failed to get metadata for GPU const pols {}: {}",
-                            setup.air_name, err
-                        )));
-                    }
-                }
-            }
+            check_const_pols_gpu(setup)?;
         }
     }
     Ok(())
 }
 
-pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
-    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
-        for (air_id, _) in air_group.iter().enumerate() {
-            let setup = sctx.get_setup(airgroup_id, air_id)?;
-            check_const_tree(setup, false)?;
-        }
-    }
-    Ok(())
-}
-
-pub fn check_tree_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) -> ProofmanResult<()> {
+pub fn check_const_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) -> ProofmanResult<()> {
     let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                 let setup = sctx_compressor.get_setup(airgroup_id, air_id)?;
-                check_const_tree(setup, true)?;
+                check_const_pols_gpu(setup)?;
             }
         }
     }
@@ -414,7 +457,7 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &Set
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
-            check_const_tree(setup, true)?;
+            check_const_pols_gpu(setup)?;
         }
     }
 
@@ -422,11 +465,60 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &Set
     let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup in 0..n_airgroups {
         let setup = sctx_recursive2.get_setup(airgroup, 0)?;
-        check_const_tree(setup, true)?;
+        check_const_pols_gpu(setup)?;
     }
 
     let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-    check_const_tree(setup_vadcop_final, true)?;
+    check_const_pols_gpu(setup_vadcop_final)?;
+
+    let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
+    check_const_pols_gpu(setup_vadcop_final_compressed)?;
+    Ok(())
+}
+
+pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            let setup = sctx.get_setup(airgroup_id, air_id)?;
+            let d_buffers = if cfg!(feature = "gpu") { Some(pctx.get_device_buffers_ptr()) } else { None };
+            check_const_tree(setup, &d_buffers)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn check_tree_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) -> ProofmanResult<()> {
+    let d_buffers = if cfg!(feature = "gpu") { Some(pctx.get_device_buffers_ptr()) } else { None };
+    let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                let setup = sctx_compressor.get_setup(airgroup_id, air_id)?;
+                check_const_tree(setup, &d_buffers)?;
+            }
+        }
+    }
+
+    let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
+            check_const_tree(setup, &d_buffers)?;
+        }
+    }
+
+    let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap();
+    let n_airgroups = pctx.global_info.air_groups.len();
+    for airgroup in 0..n_airgroups {
+        let setup = sctx_recursive2.get_setup(airgroup, 0)?;
+        check_const_tree(setup, &d_buffers)?;
+    }
+
+    let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
+    check_const_tree(setup_vadcop_final, &d_buffers)?;
+
+    let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
+    check_const_tree(setup_vadcop_final_compressed, &d_buffers)?;
 
     Ok(())
 }

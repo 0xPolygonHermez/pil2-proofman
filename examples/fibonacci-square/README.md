@@ -164,8 +164,6 @@ In order to generate a proof in the GPU, the following commands needs to be exec
 
 ```bash
 cargo build --features gpu --workspace \
-&& cargo run --features gpu --bin proofman-cli check-setup --proving-key \
-     examples/fibonacci-square/build/provingKey/ -a \
 && cargo run --features gpu --bin proofman-cli gen-custom-commits-fixed \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
@@ -196,7 +194,6 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \
 && cargo build --workspace \
-&& cargo run --bin proofman-cli check-setup --proving-key examples/fibonacci-square/build/provingKey/ \
 && cargo run --bin proofman-cli gen-custom-commits-fixed \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
@@ -232,10 +229,7 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \
 && cargo build --workspace \
-&& cargo run --bin proofman-cli check-setup \
-     --proving-key examples/fibonacci-square/build/provingKey/ \
-     -a \
-&& cargo run --bin proofman-cli gen-custom-commits-fixed \
+cargo run --bin proofman-cli gen-custom-commits-fixed \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --custom-commits rom=examples/fibonacci-square/build/rom.bin \

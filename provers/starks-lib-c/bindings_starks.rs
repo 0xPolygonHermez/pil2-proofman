@@ -62,6 +62,11 @@ extern "C" {
     
     pub fn get_const_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
+    pub fn calculate_words_per_row(
+        pStarkinfo: *mut ::std::os::raw::c_void,
+        constPolsPath: *mut ::std::os::raw::c_char,
+    ) -> u64;
+
     pub fn init_gpu_setup(maxBitsExt: u64);
 
     pub fn pack_const_pols(
@@ -76,14 +81,16 @@ extern "C" {
         constFile: *mut ::std::os::raw::c_char,
         pConstTree: *mut ::std::os::raw::c_void,
         constTreeFile: *mut ::std::os::raw::c_char,
+        unified_buffer_gpu: *mut ::std::os::raw::c_void,
     ); 
 
-    pub fn prepare_blocks(pol: *mut u64, N: u64, nCols: u64);
+    pub fn prepare_blocks(pol: *mut u64, N: u64, nCols: u64, unified_buffer_gpu: *mut ::std::os::raw::c_void);
 
     pub fn calculate_const_tree(
         pStarkInfo: *mut ::std::os::raw::c_void,
         pConstPolsAddress: *mut ::std::os::raw::c_void,
         pConstTree: *mut ::std::os::raw::c_void,
+        unified_buffer_gpu: *mut ::std::os::raw::c_void,
     );
 
     pub fn calculate_const_tree_bn128(
