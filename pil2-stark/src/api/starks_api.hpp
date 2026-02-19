@@ -166,7 +166,7 @@ extern "C" {
     // =================================================================================
     void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity, uint32_t max_n_bits_ext);
     void free_device_buffers(void *d_buffers);
-    void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pConstTree, uint64_t proverBufferSize, void *d_commit_buffers);
+    void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffers);
     void free_device_buffers_recursivef(void *d_buffers);
     void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType, bool onlyFirstGPU);
     void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_,  void *packedInfo);
@@ -179,6 +179,7 @@ extern "C" {
     void *get_unified_buffer_gpu(void *d_buffers_);
     void alloc_fixed_pols_buffer_gpu(void *d_buffers_);
     void free_fixed_pols_buffer_gpu(void *d_buffers_);
+    void load_fixed_pols_recursivef(void *pSetupCtx_, void *pConstTree, void *d_buffers_);
     
     typedef void (*ProofDoneCallback)(uint64_t instanceId, const char* proofType);
     
