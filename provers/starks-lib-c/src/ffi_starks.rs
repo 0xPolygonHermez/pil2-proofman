@@ -1322,25 +1322,18 @@ pub fn gen_device_buffers_c(
 #[cfg(not(feature = "no_lib_link"))]
 pub fn gen_device_buffers_recursivef_c(
     p_setup_ctx: *mut u8,
-    p_const_pols: *mut u8,
-    p_const_tree: *mut u8,
     prover_buffer_size: u64,
     d_commit_buffers: *mut u8,
 ) -> *mut u8 {
     unsafe {
-        gen_device_buffers_recursivef(
-            p_setup_ctx as *mut c_void,
-            p_const_pols as *mut c_void,
-            p_const_tree as *mut c_void,
-            prover_buffer_size,
-            d_commit_buffers as *mut c_void,
-        ) as *mut u8
+        gen_device_buffers_recursivef(p_setup_ctx as *mut c_void, prover_buffer_size, d_commit_buffers as *mut c_void)
+            as *mut u8
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn free_device_buffers_recursivef_c(d_buffers: *mut u8) {
-    unsafe { free_device_buffers_recursivef(d_buffers as *mut c_void) }
+pub fn free_device_buffers_recursivef_c(d_buffers: *mut c_void) {
+    unsafe { free_device_buffers_recursivef(d_buffers) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1428,6 +1421,17 @@ pub fn alloc_fixed_pols_buffer_gpu_c(d_buffers: *mut ::std::os::raw::c_void) {
 pub fn free_fixed_pols_buffer_gpu_c(d_buffers: *mut ::std::os::raw::c_void) {
     unsafe {
         free_fixed_pols_buffer_gpu(d_buffers);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn load_fixed_pols_recursivef_c(
+    pSetupCtx: *mut ::std::os::raw::c_void,
+    pConstTree: *mut ::std::os::raw::c_void,
+    d_buffers: *mut ::std::os::raw::c_void,
+) {
+    unsafe {
+        load_fixed_pols_recursivef(pSetupCtx, pConstTree, d_buffers);
     }
 }
 
@@ -2325,8 +2329,6 @@ pub fn gen_device_buffers_c(
 #[cfg(feature = "no_lib_link")]
 pub fn gen_device_buffers_recursivef_c(
     _p_setup_ctx: *mut u8,
-    _p_const_pols: *mut u8,
-    _p_const_tree: *mut u8,
     _prover_buffer_size: u64,
     _d_commit_buffers: *mut u8,
 ) -> *mut u8 {
@@ -2339,7 +2341,7 @@ pub fn gen_device_buffers_recursivef_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn free_device_buffers_recursivef_c(_d_buffers: *mut u8) {
+pub fn free_device_buffers_recursivef_c(_d_buffers: *mut c_void) {
     trace!(
         "{}: ··· {}",
         "ffi     ",
@@ -2426,6 +2428,19 @@ pub fn free_fixed_pols_buffer_gpu_c(_d_buffers: *mut ::std::os::raw::c_void) {
         "{}: ··· {}",
         "ffi     ",
         "free_fixed_pols_buffer_gpu: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn load_fixed_pols_recursivef_c(
+    _pSetupCtx: *mut ::std::os::raw::c_void,
+    _pConstTree: *mut ::std::os::raw::c_void,
+    _d_buffers: *mut ::std::os::raw::c_void,
+) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "load_fixed_pols_recursivef: This is a mock call because there is no linked library"
     );
 }
 
