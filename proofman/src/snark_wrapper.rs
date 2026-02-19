@@ -259,10 +259,20 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         timer_start_debug!(GENERATING_SNARK_PROOF);
 
-        pre_allocate_final_snark_prover_c(self.snark_prover, unified_buffer_gpu);
-
+        // Spawn GPU pre-allocation on a separate thread so it overlaps with CPU witness computation
+        let prealloc_handle = {
+            let snark_prover = self.snark_prover as usize;
+            let buffer = unified_buffer_gpu as usize;
+            std::thread::spawn(move || {
+                pre_allocate_final_snark_prover_c(
+                    snark_prover as *mut std::ffi::c_void,
+                    buffer as *mut std::ffi::c_void,
+                );
+            })
+        };
+        
         let (snark_proof_bytes, snark_publics_bytes) =
-            generate_snark_proof(self.snark_prover, &self.setup_snark_path, recursivef_proof)?;
+            generate_snark_proof(self.snark_prover, &self.setup_snark_path, recursivef_proof, prealloc_handle)?;
 
         let publics_info = PublicsInfo::from_folder(&self.proving_key_path)?;
         let public_bytes = get_public_bytes_solidity(&publics_info, &proof[1..1 + proof[0] as usize])?;
