@@ -171,6 +171,14 @@ pub fn get_const_tree_size_c(pStarkInfo: *mut c_void) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn calculate_words_per_row_c(pStarkInfo: *mut c_void, const_pols_path: &str) -> u64 {
+    unsafe {
+        let const_pols_path_cstr = CString::new(const_pols_path).unwrap();
+        calculate_words_per_row(pStarkInfo, const_pols_path_cstr.as_ptr() as *mut std::os::raw::c_char)
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn load_const_tree_c(
     pStarkInfo: *mut c_void,
     pConstPolsTreeAddress: *mut u8,
@@ -218,6 +226,7 @@ pub fn tile_const_pols_c(
     constFile: &str,
     pConstTree: *mut u8,
     constTreeFile: &str,
+    unified_buffer_gpu: *mut c_void,
 ) {
     let const_file_cstr: CString = CString::new(constFile).unwrap();
     let const_tree_file_cstr: CString = CString::new(constTreeFile).unwrap();
@@ -228,24 +237,31 @@ pub fn tile_const_pols_c(
             const_file_cstr.as_ptr() as *mut std::os::raw::c_char,
             pConstTree as *mut std::os::raw::c_void,
             const_tree_file_cstr.as_ptr() as *mut std::os::raw::c_char,
+            unified_buffer_gpu,
         );
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn prepare_blocks_c(pol: *mut u64, N: u64, nCols: u64) {
+pub fn prepare_blocks_c(pol: *mut u64, N: u64, nCols: u64, unified_buffer_gpu: *mut c_void) {
     unsafe {
-        prepare_blocks(pol, N, nCols);
+        prepare_blocks(pol, N, nCols, unified_buffer_gpu);
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn calculate_const_tree_c(pStarkInfo: *mut c_void, pConstPols: *mut u8, pConstPolsTreeAddress: *mut u8) {
+pub fn calculate_const_tree_c(
+    pStarkInfo: *mut c_void,
+    pConstPols: *mut u8,
+    pConstPolsTreeAddress: *mut u8,
+    unified_buffer_gpu: *mut c_void,
+) {
     unsafe {
         calculate_const_tree(
             pStarkInfo,
             pConstPols as *mut std::os::raw::c_void,
             pConstPolsTreeAddress as *mut std::os::raw::c_void,
+            unified_buffer_gpu,
         );
     }
 }
@@ -1629,6 +1645,12 @@ pub fn get_const_size_c(_pStarkInfo: *mut c_void) -> u64 {
 }
 
 #[cfg(feature = "no_lib_link")]
+pub fn calculate_words_per_row_c(_pStarkInfo: *mut c_void, _const_pols_path: &str) -> u64 {
+    trace!("··· {}", "calculate_words_per_row: This is a mock call because there is no linked library");
+    100
+}
+
+#[cfg(feature = "no_lib_link")]
 pub fn load_const_tree_c(
     _pStarkInfo: *mut c_void,
     _pConstPolsTreeAddress: *mut u8,
@@ -1657,17 +1679,23 @@ pub fn tile_const_pols_c(
     _constFile: &str,
     _pConstTree: *mut u8,
     _constTreeFile: &str,
+    _unified_buffer_gpu: *mut c_void,
 ) {
     trace!("··· {}", "tile_const_pols: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn prepare_blocks_c(_pol: *mut u64, _N: u64, _nCols: u64) {
+pub fn prepare_blocks_c(_pol: *mut u64, _N: u64, _nCols: u64, _unified_buffer_gpu: *mut c_void) {
     trace!("··· {}", "prepare_blocks: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn calculate_const_tree_c(_pStarkInfo: *mut c_void, _pConstPols: *mut u8, _pConstPolsTreeAddress: *mut u8) {
+pub fn calculate_const_tree_c(
+    _pStarkInfo: *mut c_void,
+    _pConstPols: *mut u8,
+    _pConstPolsTreeAddress: *mut u8,
+    _unified_buffer_gpu: *mut c_void,
+) {
     trace!("··· {}", "calculate_const_tree: This is a mock call because there is no linked library");
 }
 

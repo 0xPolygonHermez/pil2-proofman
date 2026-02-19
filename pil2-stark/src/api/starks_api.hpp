@@ -37,13 +37,14 @@ extern "C" {
     // ========================================================================================
     void init_gpu_setup(uint64_t maxBitsExt);
     void pack_const_pols(void *pStarkinfo, void *pConstPols, char *constFile);
-    void tile_const_pols(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile);
-    void prepare_blocks(uint64_t* pol, uint64_t N, uint64_t nCols);
+    void tile_const_pols(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu);
+    void prepare_blocks(uint64_t* pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu);
     bool load_const_tree(void *pStarkInfo, void *pConstTree, char *treeFilename, uint64_t constTreeSize, char *verkeyFilename);
     void load_const_pols(void *pConstPols, char *constFilename, uint64_t constSize);
     uint64_t get_const_tree_size(void *pStarkInfo);
     uint64_t get_const_size(void *pStarkInfo);
-    void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTree);
+    uint64_t calculate_words_per_row(void *pStarkinfo, char *constPolsPath);
+    void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTree, void *unified_buffer_gpu);
     void calculate_const_tree_bn128(void *pStarkInfo, void *pConstPolsAddress, void *pConstTree);
     void write_const_tree(void *pStarkInfo, void *pConstTreeAddress, char *treeFilename);
     void write_const_tree_bn128(void *pStarkInfo, void *pConstTreeAddress, char *treeFilename);
