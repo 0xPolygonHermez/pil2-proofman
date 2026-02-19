@@ -744,8 +744,12 @@ pub fn generate_snark_proof(
     snark_prover: *mut c_void,
     setup_path: &Path,
     proof: *mut c_void,
+    prealloc_handle: std::thread::JoinHandle<()>,
 ) -> ProofmanResult<(Vec<u8>, Vec<u8>)> {
     let witness = generate_witness_final_snark(proof, setup_path)?;
+
+    // Wait for GPU pre-allocation
+    prealloc_handle.join().unwrap();
 
     timer_start_info!(CALCULATE_FINAL_PROOF);
 
@@ -843,6 +847,70 @@ fn generate_witness<F: PrimeField64>(
     }
 
     Ok(witness)
+}
+
+pub fn get_recursive_buffer_sizes<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    setups: &SetupsVadcop<F>,
+) -> ProofmanResult<usize> {
+    let mut max_prover_size = 0;
+
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                let setup_compressor = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
+                max_prover_size = max_prover_size.max(setup_compressor.prover_buffer_size);
+            }
+
+            let setup_recursive1 = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
+            max_prover_size = max_prover_size.max(setup_recursive1.prover_buffer_size);
+        }
+    }
+
+    let n_airgroups = pctx.global_info.air_groups.len();
+    for airgroup in 0..n_airgroups {
+        let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0)?;
+        max_prover_size = max_prover_size.max(setup.prover_buffer_size);
+    }
+
+    max_prover_size = max_prover_size
+        .max(setups.setup_vadcop_final.as_ref().unwrap().prover_buffer_size)
+        .max(setups.setup_vadcop_final_compressed.as_ref().unwrap().prover_buffer_size);
+
+    Ok(max_prover_size as usize)
+}
+
+#[derive(Debug)]
+pub struct Recursive2Proofs {
+    pub n_proofs: usize,
+    pub has_remaining: bool,
+}
+
+impl Recursive2Proofs {
+    pub fn new(n_proofs: usize, has_remaining: bool) -> Self {
+        Self { n_proofs, has_remaining }
+    }
+}
+
+pub fn total_recursive_proofs(mut n: usize) -> Recursive2Proofs {
+    let mut total = 0;
+    let mut rem = n % N_RECURSIVE_PROOFS_PER_AGGREGATION;
+    while n > 1 {
+        let next = n / N_RECURSIVE_PROOFS_PER_AGGREGATION;
+        rem = n % N_RECURSIVE_PROOFS_PER_AGGREGATION;
+        total += next;
+        if next != 0 {
+            n = next + rem;
+        } else if rem != 1 {
+            n = next;
+        }
+    }
+
+    if rem == 2 {
+        Recursive2Proofs::new(total + 1, true)
+    } else {
+        Recursive2Proofs::new(total, false)
+    }
 }
 
 pub fn get_recursive_buffer_sizes<F: PrimeField64>(
