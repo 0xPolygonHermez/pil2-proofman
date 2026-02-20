@@ -545,6 +545,7 @@ extern "C" {
         pSetupCtx_: *mut ::std::os::raw::c_void,
         proverBufferSize: u64,
         d_commit_buffers: *mut ::std::os::raw::c_void,
+        verkey: *mut ::std::os::raw::c_char,
     ) -> *mut ::std::os::raw::c_void;
 
     pub fn free_device_buffers_recursivef(d_buffers: *mut ::std::os::raw::c_void);

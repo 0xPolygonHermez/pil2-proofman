@@ -672,7 +672,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     prover_buffer_size: usize,
     d_buffers_recursivef: *mut c_void,
 ) -> ProofmanResult<*mut c_void> {
-    timer_start_debug!(GENERATE_RECURSIVEF);
+    timer_start_info!(GENERATE_RECURSIVEF);
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
     // Cast pointers to usize to make them Send-safe for threading
@@ -681,13 +681,13 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     let d_buffers_addr = d_buffers_recursivef as usize;
 
     let load_fixed_pols_handle = std::thread::spawn(move || {
-        timer_start_info!(LOAD_FIXED_POLS_RECURSIVEF);
+        timer_start_debug!(LOAD_FIXED_POLS_RECURSIVEF);
         load_fixed_pols_recursivef_c(
             p_setup_addr as *mut c_void,
             const_tree_ptr_addr as *mut c_void,
             d_buffers_addr as *mut c_void,
         );
-        timer_stop_and_log_info!(LOAD_FIXED_POLS_RECURSIVEF);
+        timer_stop_and_log_debug!(LOAD_FIXED_POLS_RECURSIVEF);
     });
 
     let trace: Vec<F> = vec![F::ZERO; setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize];
@@ -746,7 +746,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     );
     timer_stop_and_log_debug!(GENERATE_RECURSIVEF_PROOF);
 
-    timer_stop_and_log_debug!(GENERATE_RECURSIVEF);
+    timer_stop_and_log_info!(GENERATE_RECURSIVEF);
     Ok(p_prove)
 }
 

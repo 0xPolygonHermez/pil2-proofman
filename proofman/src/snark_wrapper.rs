@@ -207,10 +207,20 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         let d_buffers_vadcop = if let Some(d_buffers) = d_buffers { d_buffers } else { std::ptr::null_mut() };
 
         let p_setup: *mut c_void = (&setup_recursivef.p_setup).into();
+
+        let verkey_path = setup_recursivef.verkey_file.clone();
+        let mut contents = String::new();
+        let mut file = File::open(verkey_path).unwrap();
+        let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read verkey path file: {err}"));
+
+        let verkey_str: String = serde_json::from_str(&contents)
+            .map_err(|err| ProofmanError::InvalidSetup(format!("Failed to parse verkey as string: {}", err)))?;
+
         let d_buffers_recursivef = gen_device_buffers_recursivef_c(
             p_setup as *mut u8,
             setup_recursivef.prover_buffer_size as u64,
             d_buffers_vadcop as *mut u8,
+            &verkey_str,
         ) as *mut c_void;
 
         Ok(Self {
@@ -419,10 +429,20 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     let vadcop_final_verkey: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
 
     let p_setup: *mut c_void = (&setup_recursivef.p_setup).into();
+
+    let verkey_path = setup_recursivef.verkey_file.clone();
+    let mut contents = String::new();
+    let mut file = File::open(verkey_path).unwrap();
+    let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read verkey path file: {err}"));
+
+    let verkey_str: String = serde_json::from_str(&contents)
+        .map_err(|err| ProofmanError::InvalidSetup(format!("Failed to parse verkey as string: {}", err)))?;
+
     let d_buffers_recursivef = gen_device_buffers_recursivef_c(
         p_setup as *mut u8,
         setup_recursivef.prover_buffer_size as u64,
         std::ptr::null_mut(),
+        &verkey_str,
     ) as *mut c_void;
 
     timer_start_info!(GENERATING_RECURSIVE_F_PROOF);

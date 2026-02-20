@@ -1324,10 +1324,17 @@ pub fn gen_device_buffers_recursivef_c(
     p_setup_ctx: *mut u8,
     prover_buffer_size: u64,
     d_commit_buffers: *mut u8,
+    verkey: &str,
 ) -> *mut u8 {
+    let verkey_cstr = CString::new(verkey).unwrap();
+
     unsafe {
-        gen_device_buffers_recursivef(p_setup_ctx as *mut c_void, prover_buffer_size, d_commit_buffers as *mut c_void)
-            as *mut u8
+        gen_device_buffers_recursivef(
+            p_setup_ctx as *mut c_void,
+            prover_buffer_size,
+            d_commit_buffers as *mut c_void,
+            verkey_cstr.as_ptr() as *mut std::os::raw::c_char,
+        ) as *mut u8
     }
 }
 
@@ -2331,6 +2338,7 @@ pub fn gen_device_buffers_recursivef_c(
     _p_setup_ctx: *mut u8,
     _prover_buffer_size: u64,
     _d_commit_buffers: *mut u8,
+    _verkey: &str,
 ) -> *mut u8 {
     trace!(
         "{}: ··· {}",
