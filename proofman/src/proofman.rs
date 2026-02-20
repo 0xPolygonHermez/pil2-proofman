@@ -465,7 +465,7 @@ where
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
-                calculate_fixed_tree(&pctx, sctx.get_setup(airgroup_id, air_id)?);
+                calculate_fixed_tree(sctx.get_setup(airgroup_id, air_id)?);
             }
         }
 
@@ -474,7 +474,7 @@ where
             for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
                 for (air_id, _) in air_group.iter().enumerate() {
                     if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                        calculate_fixed_tree(&pctx, sctx_compressor.get_setup(airgroup_id, air_id)?);
+                        calculate_fixed_tree(sctx_compressor.get_setup(airgroup_id, air_id)?);
                     }
                 }
             }
@@ -482,20 +482,20 @@ where
             let sctx_recursive1 = setups_aggregation.sctx_recursive1.as_ref().unwrap();
             for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
                 for (air_id, _) in air_group.iter().enumerate() {
-                    calculate_fixed_tree(&pctx, sctx_recursive1.get_setup(airgroup_id, air_id)?);
+                    calculate_fixed_tree(sctx_recursive1.get_setup(airgroup_id, air_id)?);
                 }
             }
 
             let sctx_recursive2 = setups_aggregation.sctx_recursive2.as_ref().unwrap();
             let n_airgroups = pctx.global_info.air_groups.len();
             for airgroup in 0..n_airgroups {
-                calculate_fixed_tree(&pctx, sctx_recursive2.get_setup(airgroup, 0)?);
+                calculate_fixed_tree(sctx_recursive2.get_setup(airgroup, 0)?);
             }
 
             let setup_vadcop_final = setups_aggregation.setup_vadcop_final.as_ref().unwrap();
-            calculate_fixed_tree(&pctx, setup_vadcop_final);
+            calculate_fixed_tree(setup_vadcop_final);
             let setup_vadcop_final_compressed = setups_aggregation.setup_vadcop_final_compressed.as_ref().unwrap();
-            calculate_fixed_tree(&pctx, setup_vadcop_final_compressed);
+            calculate_fixed_tree(setup_vadcop_final_compressed);
         }
 
         Ok(())

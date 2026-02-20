@@ -336,7 +336,7 @@ pub fn check_setup_snark<F: PrimeField64>(
         None,
     );
 
-    calculate_fixed_tree_snark(&setup_recursivef, &None);
+    calculate_fixed_tree_snark(&setup_recursivef);
 
     Ok(())
 }
