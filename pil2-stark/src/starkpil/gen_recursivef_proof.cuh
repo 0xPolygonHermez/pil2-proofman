@@ -55,7 +55,11 @@ void calculateWitnessSTD_BN128_gpu(SetupCtx& setupCtx, StepsParams& h_params, St
     updateAirgroupValueGPU(setupCtx, h_params, d_params, hint[0], hintFieldNameAirgroupVal, "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
 }
 
-void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *d_aux_trace, Goldilocks::Element *d_constTree, Goldilocks::Element *h_publicInputs, std::string proofFile, TimerGPU &timer, cudaStream_t stream) {
+void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *d_aux_trace, Goldilocks::Element *h_publicInputs, std::string proofFile, DeviceRecursiveFBuffers *d_buffers) {
+
+    Goldilocks::Element *d_constTree = (Goldilocks::Element *)d_buffers->d_const_tree;
+    cudaStream_t stream = d_buffers->stream;
+    TimerGPU &timer = d_buffers->timer;
     
     TimerStartGPU(timer, STARK_GPU_PROOF);
     TimerStartGPU(timer, STARK_STEP_0);
@@ -142,8 +146,8 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
 
     d_transcript.reset(stream);
 
-    PoseidonBN128GPU::FrElement *constTreeRoot = ((PoseidonBN128GPU::FrElement *) starks.treesGL[setupCtx.starkInfo.nStages + 1]->get_nodes_ptr()) + starks.treesGL[setupCtx.starkInfo.nStages + 1]->numNodes - 1;
-    d_transcript.put(constTreeRoot, 1, stream, &timer);
+    // Use verification key from d_buffers instead of const tree root
+    d_transcript.put((PoseidonBN128GPU::FrElement *)d_buffers->d_verkey, 1, stream, &timer);
     if (setupCtx.starkInfo.nPublics > 0)
     {
         if (!setupCtx.starkInfo.starkStruct.hashCommits)

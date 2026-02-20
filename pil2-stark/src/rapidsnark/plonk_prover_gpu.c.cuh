@@ -34,6 +34,9 @@ extern "C" void gpu_plonk_compute_pi(
     uint64_t NExt, uint32_t nPublic,
     void* dPI, void* dLag,
     void* pinnedBuf, size_t pinnedSize);
+extern "C" void gpu_plonk_compute_pi_single(
+    void* dPI, const void* dLag,
+    const void* publicVal, uint64_t NExt);
 extern "C" void gpu_plonk_cuda_malloc(void** dBuffer, uint64_t buffeSize);
 extern "C" void gpu_plonk_cuda_free(void* dBuffer);
 extern "C" void gpu_plonk_cuda_malloc_pinned_buffer(void** pinnedBuffer, size_t pinnedSize);
@@ -109,11 +112,11 @@ extern "C" void gpu_plonk_poly_eval_to_host(
 extern "C" void gpu_plonk_split_t_blinding(
     void* d_t1, void* d_t2, void* d_t3,
     const void* dTcombined, const void* d_blindings, uint64_t N);
-extern "C" void gpu_plonk_compute_qm_perm_l0(
+extern "C" void gpu_plonk_compute_qm_perm_l1(
     void* tOut, void* tzOut,
     const void* evalA, const void* evalB, const void* evalC,
     const void* evalZ,
-    const void* evalQM, const void* evalS1, const void* evalS2, const void* evalS3, const void* evalL0,
+    const void* evalQM, const void* evalS1, const void* evalS2, const void* evalS3, const void* evalL1,
     const void* d_blindings,
     const void* beta, const void* gamma,
     const void* alpha, const void* alpha2,
@@ -156,6 +159,7 @@ namespace PlonkGPU
         transcript = nullptr;
         proof = nullptr;
         isMyDeviceBuffer = false;
+        evalConstPols = true; //this will be the default harcoded value
 
         curveName = CurveUtils::getCurveNameByEngine();
     }
@@ -282,7 +286,7 @@ namespace PlonkGPU
             d_evalsS1 = nullptr;
             d_evalsS2 = nullptr;
             d_evalsS3 = nullptr;
-            d_evalsL0 = nullptr;
+            d_evalsL1 = nullptr;
             d_evalsQL = nullptr;
             d_evalsQR = nullptr;
             d_evalsQM = nullptr;
@@ -384,7 +388,7 @@ namespace PlonkGPU
         // PRECOMPUTED BIG BUFFER
         ////////////////////////////////////////////////////
         uint64_t lengthPrecomputedBigBuffer = 0;
-        lengthPrecomputedBigBuffer += N * 1 * 8; 
+        lengthPrecomputedBigBuffer += N * 1 * 9; // S1-S3, QL-QC, L1
         lengthPrecomputedBigBuffer += (N + 6) * sizeof(G1PointAffine) / sizeof(FrElement); // PTau buffer
 
         precomputedBigBuffer = new FrElement[lengthPrecomputedBigBuffer];
@@ -397,8 +401,9 @@ namespace PlonkGPU
         polPtr["QM"] = polPtr["QR"] + N;
         polPtr["QO"] = polPtr["QM"] + N;
         polPtr["QC"] = polPtr["QO"] + N;
+        polPtr["L1"] = polPtr["QC"] + N;
 
-        PTau = (G1PointAffine *)(polPtr["QC"] + N);
+        PTau = (G1PointAffine *)(polPtr["L1"] + N);
 
         LOG_TRACE("... Loading QL, QR, QM, QO, & QC polynomial coefficients");
 
@@ -443,6 +448,18 @@ namespace PlonkGPU
                                 NBytes, nThreads);
             ThreadUtils::parcpy(polPtr["Sigma3"],
                                 (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_SIGMA_SECTION) + NBytes * 10,
+                                NBytes, nThreads);
+        }
+
+        LOG_TRACE("... Loading L1 polynomial coefficients");
+        if (zkey->nPublic != 1) {
+            throw std::runtime_error("GPU PLONK prover currently requires exactly 1 public input (nPublic=" + std::to_string(zkey->nPublic) + ")");
+        }
+        if (dr) {
+            fdZkey->readSectionToParallel(polPtr["L1"], Zkey::ZKEY_PL_LAGRANGE_SECTION, 0, NBytes);
+        } else {
+            ThreadUtils::parcpy(polPtr["L1"],
+                                (FrElement *)fdZkey->getSectionData(Zkey::ZKEY_PL_LAGRANGE_SECTION),
                                 NBytes, nThreads);
         }
 
@@ -548,7 +565,7 @@ namespace PlonkGPU
 
         // Pin precomputedBigBuffer for async H2D of zkey coef polys (round3) and PTau (round0)
         if (precomputedBigBuffer && !precomputedPinned) {
-            size_t pinBytes = 8 * N * sizeof(FrElement)   // 8 poly coef arrays
+            size_t pinBytes = 9 * N * sizeof(FrElement)  // 9 poly coef arrays (S1-S3, QL-QC, L1)
                             + (N + 6) * sizeof(G1PointAffine); // PTau
             gpu_plonk_pin_host_memory(precomputedBigBuffer, pinBytes);
             precomputedPinned = true;
@@ -664,9 +681,9 @@ namespace PlonkGPU
 
         double startTime = omp_get_wtime();
 
-        // ROUND 0. Launch async GPU transfer of static eval arrays
+        // ROUND 0
         if (!preAllocated) {
-            LOG_TRACE("> ROUND 0 (async static eval transfer)");
+            LOG_TRACE("> ROUND 0 (load data to GPU)");
 #ifdef PLONK_GPU_TIMING
             double tSetup = omp_get_wtime();
 #endif
@@ -687,6 +704,41 @@ namespace PlonkGPU
 #ifdef PLONK_GPU_TIMING
         std::cout << "[SETUP] calculateAdditions (" << zkey->nAdditions << " additions): " << omp_get_wtime() - tSetup << "s" << std::endl;
 #endif
+
+        // Fill publics buffer on CPU for transcript (needed by round1)
+        if (evalConstPols) {
+            for (uint32_t i = 0; i < zkey->nPublic; i++) {
+                FrElement w = getWitness(mapBuffers["A"][i]);
+                E.fr.toMontgomery(buffers["publics"][i], w);
+            }
+        }
+
+        // Wait for async eval NTT (launched in round0/preAllocate) to complete.
+        // Must join before round1: to avoid concurrent calls from asyncEvalNTT and computeWirePolynomials
+        if (evalConstPols && asyncEvalNTT.joinable()) {
+#ifdef PLONK_GPU_TIMING
+            double t0 = omp_get_wtime();
+#endif
+            asyncEvalNTT.join();
+            gpu_plonk_cuda_device_sync();
+#ifdef PLONK_GPU_TIMING
+            std::cout << "[SETUP] eval NTT join waited: " << omp_get_wtime() - t0 << "s" << std::endl;
+#endif
+        }
+
+        // Compute PI(X) — L1 evaluations already on GPU in d_evalsL1 from asyncEvalNTT
+        if (evalConstPols) {
+            LOG_TRACE("> Computing PI (simplified, nPublic=1)");
+#ifdef PLONK_GPU_TIMING
+            double tPI = omp_get_wtime();
+#endif
+            gpu_plonk_compute_pi_single(d_piBuffer, d_evalsL1,
+                                         &buffers["publics"][0], NExt);
+            gpu_plonk_cuda_device_sync();
+#ifdef PLONK_GPU_TIMING
+            std::cout << "[SETUP] compute PI (single): " << omp_get_wtime() - tPI << "s" << std::endl;
+#endif
+        }
 
         // START PLONK PROVER PROTOCOL
 
@@ -797,7 +849,7 @@ namespace PlonkGPU
         return E.fr.zero();
     }
 
-    // ROUND 0 — Launch async H2D transfer of static eval arrays
+    // ROUND 0 — Populate static eval arrays (file I/O or NTT from coefficients)
     template <typename Engine>
     void PlonkProverGPU<Engine>::round0()
     {
@@ -822,7 +874,7 @@ namespace PlonkGPU
         if (!d_unifiedBuffer) {
 
             uint64_t unifiedBufferSize = 0;
-            unifiedBufferSize += 9 * NExtBytes;                       // 9 static eval arrays (S1,S2,S3,L0,QL,QR,QM,QO,QC)
+            unifiedBufferSize += 9 * NExtBytes;                       // 9 static eval arrays (S1,S2,S3,L1,QL,QR,QM,QO,QC)
             unifiedBufferSize += NExtBytes;                           // PI / T buffer
             unifiedBufferSize += NExtBytes;                           // Lag / Tz buffer
             unifiedBufferSize += 4 * NBytes;                          // PolCoefA/B/C/Z
@@ -882,12 +934,12 @@ namespace PlonkGPU
         d_mapBuffers = (uint8_t*)d_aux + 2 * N * sizeof(FrElement);                   // [2N..2N+nConstraints*3*4) wire maps
         d_scanWork   = (FrElement*)d_aux + 4 * N;                                     // [4N..4N+scanWorkElems) scan block totals (within d_aux)
 
-        // Static eval buffer slot aliases: S1(0), S2(1), S3(2), L0(3), QL(4), QR(5), QM(6), QO(7), QC(8)
+        // Static eval buffer slot aliases: S1(0), S2(1), S3(2), L1(3), QL(4), QR(5), QM(6), QO(7), QC(8)
         uint8_t* dStatic = (uint8_t*)d_staticEvalsBuffer;
         d_evalsS1 = dStatic + 0 * NExtBytes;
         d_evalsS2 = dStatic + 1 * NExtBytes;
         d_evalsS3 = dStatic + 2 * NExtBytes;
-        d_evalsL0 = dStatic + 3 * NExtBytes;
+        d_evalsL1 = dStatic + 3 * NExtBytes;
         d_evalsQL = dStatic + 4 * NExtBytes;
         d_evalsQR = dStatic + 5 * NExtBytes;
         d_evalsQM = dStatic + 6 * NExtBytes;
@@ -956,40 +1008,56 @@ namespace PlonkGPU
             gpu_plonk_cuda_malloc_pinned_buffer(&pinnedD2HStaging, pinnedD2HStagingSize);
         }
 
-        // Start async transfer S1,S2,S3,L0
-        void* dBuf = d_staticEvalsBuffer;
+        if (evalConstPols) {
+            // Compute 9 polynomial evaluations from coefficients via GPU NTT (async)
+            LOG_TRACE("··· Launching async eval NTT (9 polys from coefficients)");
+            asyncEvalNTT = std::thread([this]() {
+                void* slots[9] = {d_evalsS1, d_evalsS2, d_evalsS3, d_evalsL1,
+                                    d_evalsQL, d_evalsQR, d_evalsQM, d_evalsQO, d_evalsQC};
+                const char* names[9] = {"Sigma1", "Sigma2", "Sigma3", "L1",
+                                          "QL", "QR", "QM", "QO", "QC"};
+                for (int i = 0; i < 9; i++) {
+                    gpu_plonk_memcpy_h2d(slots[i], polPtr[names[i]], NBytes);
+                    gpu_plonk_zero_pad(slots[i], N, NExt);
+                    gpu_plonk_cuda_device_sync(); // default-stream zero_pad → sppark NTT (non-blocking stream)
+                    ntt_bn128_gpu_dev_ptr(slots[i], zkeyPower + 2);
+                }
+                gpu_plonk_cuda_device_sync();
+            });
+        } else {
+            // Load pre-computed 4N evaluations from zkey file (async file I/O)
+            void* dBuf = d_staticEvalsBuffer;
 
-        // Callback that reads from the BinFile
-        FileReadFn readFn = [](void* dest, uint32_t sectionId, uint64_t offset, uint64_t len, void* ctx) {
-            static_cast<BinFileUtils::BinFile*>(ctx)->readSectionToParallel(dest, sectionId, offset, len, 8);
-        };
+            FileReadFn readFn = [](void* dest, uint32_t sectionId, uint64_t offset, uint64_t len, void* ctx) {
+                static_cast<BinFileUtils::BinFile*>(ctx)->readSectionToParallel(dest, sectionId, offset, len, 8);
+            };
 
-        std::array<uint32_t, 4> sSids = { Zkey::ZKEY_PL_SIGMA_SECTION, Zkey::ZKEY_PL_SIGMA_SECTION, Zkey::ZKEY_PL_SIGMA_SECTION, Zkey::ZKEY_PL_LAGRANGE_SECTION };
-        std::array<uint64_t, 4> sOffs = { NBytes * 1, NBytes * 6, NBytes * 11, NBytes };
-        std::array<uint64_t, 4> sSizes = { NExtBytes, NExtBytes, NExtBytes, NExtBytes };
+            std::array<uint32_t, 4> sSids = { Zkey::ZKEY_PL_SIGMA_SECTION, Zkey::ZKEY_PL_SIGMA_SECTION, Zkey::ZKEY_PL_SIGMA_SECTION, Zkey::ZKEY_PL_LAGRANGE_SECTION };
+            std::array<uint64_t, 4> sOffs = { NBytes * 1, NBytes * 6, NBytes * 11, NBytes };
+            std::array<uint64_t, 4> sSizes = { NExtBytes, NExtBytes, NExtBytes, NExtBytes };
 
-        asyncTransferSigma = std::thread([readFn, dBuf, this,
-                                          sSids, sOffs, sSizes]() {
-            gpu_plonk_start_static_eval_transfer(readFn, (void*)this->fdZkeyPtr,
-                                           dBuf, this->pinnedS, this->pinnedSize,
-                                           sSids.data(), sOffs.data(), sSizes.data(), 4);
-        });
+            asyncTransferSigma = std::thread([readFn, dBuf, this,
+                                              sSids, sOffs, sSizes]() {
+                gpu_plonk_start_static_eval_transfer(readFn, (void*)this->fdZkeyPtr,
+                                               dBuf, this->pinnedS, this->pinnedSize,
+                                               sSids.data(), sOffs.data(), sSizes.data(), 4);
+            });
 
-        // Start async transfer Q arrays (QL,QR,QM,QO,QC)
-        std::array<uint32_t, 5> qSids = {
-            Zkey::ZKEY_PL_QL_SECTION, Zkey::ZKEY_PL_QR_SECTION, Zkey::ZKEY_PL_QM_SECTION,
-            Zkey::ZKEY_PL_QO_SECTION, Zkey::ZKEY_PL_QC_SECTION };
-        std::array<uint64_t, 5> qOffs = { NBytes, NBytes, NBytes, NBytes, NBytes};
-        std::array<uint64_t, 5> qSizes = { NExtBytes, NExtBytes, NExtBytes, NExtBytes, NExtBytes };
+            std::array<uint32_t, 5> qSids = {
+                Zkey::ZKEY_PL_QL_SECTION, Zkey::ZKEY_PL_QR_SECTION, Zkey::ZKEY_PL_QM_SECTION,
+                Zkey::ZKEY_PL_QO_SECTION, Zkey::ZKEY_PL_QC_SECTION };
+            std::array<uint64_t, 5> qOffs = { NBytes, NBytes, NBytes, NBytes, NBytes};
+            std::array<uint64_t, 5> qSizes = { NExtBytes, NExtBytes, NExtBytes, NExtBytes, NExtBytes };
 
-        void* dBufQ = (void*)((uint8_t*)dBuf + 4 * NExtBytes);
+            void* dBufQ = (void*)((uint8_t*)dBuf + 4 * NExtBytes);
 
-        asyncTransferQ = std::thread([readFn, dBufQ, this,
-                                      qSids, qOffs, qSizes]() {
-            gpu_plonk_start_static_eval_transfer(readFn, (void*)this->fdZkeyPtr,
-                                           dBufQ, this->pinnedQ, this->pinnedSize,
-                                           qSids.data(), qOffs.data(), qSizes.data(), 5);
-        });
+            asyncTransferQ = std::thread([readFn, dBufQ, this,
+                                          qSids, qOffs, qSizes]() {
+                gpu_plonk_start_static_eval_transfer(readFn, (void*)this->fdZkeyPtr,
+                                               dBufQ, this->pinnedQ, this->pinnedSize,
+                                               qSids.data(), qOffs.data(), qSizes.data(), 5);
+            });
+        }
 
     }
 
@@ -1057,27 +1125,28 @@ namespace PlonkGPU
         size_t intWitnessBytes = zkey->nAdditions * sizeof(FrElement);
         size_t mapBytes = zkey->nConstraints * 3 * sizeof(uint32_t);
 
-        // Fill buffers["publics"][0..nPublic) on CPU for transcript/PI
-        for (uint32_t i = 0; i < zkey->nPublic; i++) {
-            FrElement w = getWitness(mapBuffers["A"][i]);
-            E.fr.toMontgomery(buffers["publics"][i], w);
+        if (!evalConstPols) {
+            // Fill buffers["publics"][0..nPublic) on CPU for transcript/PI
+            for (uint32_t i = 0; i < zkey->nPublic; i++) {
+                FrElement w = getWitness(mapBuffers["A"][i]);
+                E.fr.toMontgomery(buffers["publics"][i], w);
+            }
+
+            // Launch async PI computation on GPU (file-based L_j loading)
+            FileReadFn piReadFn = [](void* dest, uint32_t sectionId,
+                                        uint64_t offset, uint64_t len, void* ctx) {
+                static_cast<BinFileUtils::BinFile*>(ctx)->readSectionToParallel(
+                    dest, sectionId, offset, len, 8);
+            };
+
+            asyncComputePI = std::thread([piReadFn, this]() {
+                gpu_plonk_compute_pi(nullptr, piReadFn, (void*)this->fdZkeyPtr,
+                                Zkey::ZKEY_PL_LAGRANGE_SECTION,
+                                this->NBytes, this->NBytes * 5,
+                                (const void*)this->buffers["publics"], this->NExt, this->zkey->nPublic,
+                                this->d_piBuffer, this->d_lagBuffer, this->pinnedPI, this->pinnedSize);
+            });
         }
-
-        // Launch async PI computation on GPU 
-        FileReadFn piReadFn = [](void* dest, uint32_t sectionId,
-                                    uint64_t offset, uint64_t len, void* ctx) {
-            static_cast<BinFileUtils::BinFile*>(ctx)->readSectionToParallel(
-                dest, sectionId, offset, len, 8);
-        };
-
-        asyncComputePI = std::thread([piReadFn, this]() {
-            gpu_plonk_compute_pi(nullptr, piReadFn, (void*)this->fdZkeyPtr,
-                            Zkey::ZKEY_PL_LAGRANGE_SECTION,
-                            this->NBytes, this->NBytes * 5,
-                            (const void*)this->buffers["publics"], this->NExt, this->zkey->nPublic,
-                            this->d_piBuffer, this->d_lagBuffer, this->pinnedPI, this->pinnedSize);
-        });
-        
 
         LOG_TRACE("··· H2D maps to GPU");
         gpu_plonk_memcpy_h2d(d_mapBuffers, mapBuffersBigBuffer, mapBytes);
@@ -1185,7 +1254,7 @@ namespace PlonkGPU
     void PlonkProverGPU<Engine>::computeZ()
     {
         // Wait for sigma transfer to complete (S1,S2,S3 needed by z_ratios kernel)
-        if (asyncTransferSigma.joinable()) {
+        if ( !evalConstPols && asyncTransferSigma.joinable()) {
 #ifdef PLONK_GPU_TIMING
             double t0 = omp_get_wtime();
 #endif
@@ -1344,8 +1413,8 @@ namespace PlonkGPU
         Z3[2] = E.fr.set(-8);
         Z3[3] = E.fr.sub(E.fr.set(2), E.fr.mul(E.fr.set(2), w2));
 
-        // Wait for async PI computation (launched in computeWirePolynomials)
-        if (asyncComputePI.joinable()) {
+        // Wait for async PI computation (launched in computeWirePolynomials, only when !evalConstPols)
+        if (!evalConstPols && asyncComputePI.joinable()) {
 #ifdef PLONK_GPU_TIMING
             double t0 = omp_get_wtime();
 #endif
@@ -1355,7 +1424,7 @@ namespace PlonkGPU
 #endif
         }
         // Wait for async Q eval transfer to complete (QL-QC needed by gate kernels)
-        if (asyncTransferQ.joinable()) {
+        if (!evalConstPols && asyncTransferQ.joinable()) {
 #ifdef PLONK_GPU_TIMING
             double t0 = omp_get_wtime();
 #endif
@@ -1444,22 +1513,22 @@ namespace PlonkGPU
         gpu_plonk_zero_pad(d_aux, N, NExt);
         gpu_plonk_cuda_device_sync(); // default-stream zero_pad → sppark NTT
         ntt_bn128_gpu_dev_ptr(d_aux, zkeyPower + 2);
-        // Wrap-around: copy first 4 elements to d_aux[NExt..NExt+4) so QM+perm+L0 kernel can read z(X*omega)
+        // Wrap-around: copy first 4 elements to d_aux[NExt..NExt+4) so QM+perm+L1 kernel can read z(x*omega)
         gpu_plonk_memcpy_d2d((uint8_t*)d_aux + NExtBytes, d_aux, 4 * sizeof(FrElement));
 #ifdef PLONK_GPU_TIMING
         std::cout << "[TIMING]     wire Z (D2D+pad+NTT+wrap): " << omp_get_wtime() - tWire << "s" << std::endl;
 #endif
 
-        // --- QM + Permutation + L0 kernel --- (rest of constraints)
+        // --- QM + Permutation + L1 kernel --- (rest of constraints)
 #ifdef PLONK_GPU_TIMING
         tWire = omp_get_wtime();
 #endif
-        LOG_TRACE("··· Computing QM + permutation + L0 (GPU)");
-        gpu_plonk_compute_qm_perm_l0(
+        LOG_TRACE("··· Computing QM + permutation + L1 (GPU)");
+        gpu_plonk_compute_qm_perm_l1(
             d_evalsT, d_evalsTz,
             d_evalsA, d_evalsB, d_evalsC,
             d_aux,
-            d_evalsQM, d_evalsS1, d_evalsS2, d_evalsS3, d_evalsL0,
+            d_evalsQM, d_evalsS1, d_evalsS2, d_evalsS3, d_evalsL1,
             d_blindings,
             (const void*)&beta, (const void*)&gamma,
             (const void*)&alpha, (const void*)&alpha2,
@@ -1469,10 +1538,10 @@ namespace PlonkGPU
             N,
             d_omegaBasesNExt, d_omegaTidNExt);
         
-            gpu_plonk_cuda_device_sync(); // ensure qm_perm_l0 is done before we can call sppark functions that use their own stream
+            gpu_plonk_cuda_device_sync(); // ensure qm_perm_l1 is done before we can call sppark functions that use their own stream
 
 #ifdef PLONK_GPU_TIMING
-        std::cout << "[TIMING]     QM+perm+L0 kernel: " << omp_get_wtime() - tWire << "s" << std::endl;
+        std::cout << "[TIMING]     QM+perm+L1 kernel: " << omp_get_wtime() - tWire << "s" << std::endl;
         std::cout << "[TIMING]     incremental T evals total: " << omp_get_wtime() - tstart << "s" << std::endl;
 #endif
 

@@ -19,7 +19,7 @@ use std::fs;
 use proofman_starks_lib_c::{
     init_final_snark_prover_c, free_final_snark_prover_c, get_snark_protocol_id_c, snark_proof_bytes_to_json_c,
     get_unified_buffer_gpu_c, free_fixed_pols_buffer_gpu_c, pre_allocate_final_snark_prover_c,
-    alloc_fixed_pols_buffer_gpu_c,
+    alloc_fixed_pols_buffer_gpu_c, free_device_buffers_recursivef_c, gen_device_buffers_recursivef_c,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof};
@@ -62,6 +62,7 @@ pub struct SnarkWrapper<F: PrimeField64> {
     pub d_buffers: Option<*mut c_void>,
     pub reload_fixed_pols_gpu: Option<Arc<AtomicBool>>,
     pub snark_prover: *mut c_void,
+    pub d_buffers_recursivef: *mut c_void,
     pub proving_key_path: PathBuf,
     pub protocol: SnarkProtocol,
 }
@@ -128,6 +129,7 @@ impl SnarkProof {
 impl<F: PrimeField64> Drop for SnarkWrapper<F> {
     fn drop(&mut self) {
         free_final_snark_prover_c(self.snark_prover);
+        free_device_buffers_recursivef_c(self.d_buffers_recursivef);
     }
 }
 
@@ -202,6 +204,25 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         let protocol = SnarkProtocol::from_protocol_id(protocol_id)?;
         timer_stop_and_log_info!(INITIALIZING_FINAL_SNARK_PROVER);
 
+        let d_buffers_vadcop = if let Some(d_buffers) = d_buffers { d_buffers } else { std::ptr::null_mut() };
+
+        let p_setup: *mut c_void = (&setup_recursivef.p_setup).into();
+
+        let verkey_path = setup_recursivef.verkey_file.clone();
+        let mut contents = String::new();
+        let mut file = File::open(verkey_path).unwrap();
+        let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read verkey path file: {err}"));
+
+        let verkey_str: String = serde_json::from_str(&contents)
+            .map_err(|err| ProofmanError::InvalidSetup(format!("Failed to parse verkey as string: {}", err)))?;
+
+        let d_buffers_recursivef = gen_device_buffers_recursivef_c(
+            p_setup as *mut u8,
+            setup_recursivef.prover_buffer_size,
+            d_buffers_vadcop as *mut u8,
+            &verkey_str,
+        ) as *mut c_void;
+
         Ok(Self {
             aux_trace,
             setup_recursivef,
@@ -211,6 +232,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             protocol,
             vadcop_final_verkey,
             d_buffers,
+            d_buffers_recursivef,
             reload_fixed_pols_gpu,
         })
     }
@@ -242,11 +264,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             ));
         }
         let proof = vadcop_proof.proof_with_publics_u64();
-        let unified_buffer_gpu = if let Some(d_buffers) = self.d_buffers {
-            get_unified_buffer_gpu_c(d_buffers)
-        } else {
-            std::ptr::null_mut()
-        };
+
         let recursivef_proof = generate_recursivef_proof(
             &self.setup_recursivef,
             &proof,
@@ -254,15 +272,30 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             &self.vadcop_final_verkey,
             output_dir_path,
             self.setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
-            unified_buffer_gpu,
+            self.d_buffers_recursivef,
         )?;
 
         timer_start_debug!(GENERATING_SNARK_PROOF);
 
-        pre_allocate_final_snark_prover_c(self.snark_prover, unified_buffer_gpu);
+        // Spawn GPU pre-allocation on a separate thread so it overlaps with CPU witness computation
+        let prealloc_handle = {
+            let snark_prover = self.snark_prover as usize;
+            let unified_buffer_gpu = if let Some(d_buffers) = self.d_buffers {
+                get_unified_buffer_gpu_c(d_buffers)
+            } else {
+                std::ptr::null_mut()
+            };
+            let buffer = unified_buffer_gpu as usize;
+            std::thread::spawn(move || {
+                pre_allocate_final_snark_prover_c(
+                    snark_prover as *mut std::ffi::c_void,
+                    buffer as *mut std::ffi::c_void,
+                );
+            })
+        };
 
         let (snark_proof_bytes, snark_publics_bytes) =
-            generate_snark_proof(self.snark_prover, &self.setup_snark_path, recursivef_proof)?;
+            generate_snark_proof(self.snark_prover, &self.setup_snark_path, recursivef_proof, prealloc_handle)?;
 
         let publics_info = PublicsInfo::from_folder(&self.proving_key_path)?;
         let public_bytes = get_public_bytes_solidity(&publics_info, &proof[1..1 + proof[0] as usize])?;
@@ -395,6 +428,23 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     file.read_to_string(&mut json_str).expect("Unable to read file");
     let vadcop_final_verkey: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
 
+    let p_setup: *mut c_void = (&setup_recursivef.p_setup).into();
+
+    let verkey_path = setup_recursivef.verkey_file.clone();
+    let mut contents = String::new();
+    let mut file = File::open(verkey_path).unwrap();
+    let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read verkey path file: {err}"));
+
+    let verkey_str: String = serde_json::from_str(&contents)
+        .map_err(|err| ProofmanError::InvalidSetup(format!("Failed to parse verkey as string: {}", err)))?;
+
+    let d_buffers_recursivef = gen_device_buffers_recursivef_c(
+        p_setup as *mut u8,
+        setup_recursivef.prover_buffer_size,
+        std::ptr::null_mut(),
+        &verkey_str,
+    ) as *mut c_void;
+
     timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
     let recursivef_proof = generate_recursivef_proof(
         &setup_recursivef,
@@ -403,7 +453,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         &vadcop_final_verkey,
         output_dir_path,
         setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
-        std::ptr::null_mut(),
+        d_buffers_recursivef,
     )?;
     timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
@@ -418,6 +468,9 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     if setup_snark_path.parent().is_some_and(|p| p.exists()) {
         generate_witness_final_snark(recursivef_proof, &setup_snark_path)?;
     }
+
+    free_device_buffers_recursivef_c(d_buffers_recursivef);
+
     Ok(is_valid)
 }
 

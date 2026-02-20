@@ -11,6 +11,7 @@
 #include "transcriptGL.cuh"
 #include "expressions_gpu.cuh"
 #include <limits.h>
+#include "fr.hpp"
 #endif
 #include "gl64_t.cuh"
 
@@ -376,12 +377,13 @@ struct DeviceRecursiveFBuffers
     TimerGPU timer;
     gl64_t *d_aux_trace;
     gl64_t *d_const_tree;
+    RawFr::Element *d_verkey;  // Verification key on GPU
     uint8_t* pinnedBuffer;
     size_t pinnedBufferSize = 256 * 1024 * 1024;
     bool owns_aux_trace;
     bool owns_const_tree;
 
-    DeviceRecursiveFBuffers() : stream(), timer(), owns_aux_trace(true), owns_const_tree(true){
+    DeviceRecursiveFBuffers() : stream(), timer(), owns_aux_trace(true), owns_const_tree(true), d_verkey(nullptr){
         cudaStreamCreate(&stream);
         timer.init(stream);
         CHECKCUDAERR(cudaMallocHost((void**)&pinnedBuffer, pinnedBufferSize));
@@ -390,6 +392,7 @@ struct DeviceRecursiveFBuffers
     ~DeviceRecursiveFBuffers() {
         cudaStreamDestroy(stream);
         cudaFreeHost(pinnedBuffer);
+        if (d_verkey) cudaFree(d_verkey);
     }
 };
 struct DeviceCommitBuffers
