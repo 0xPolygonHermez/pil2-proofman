@@ -17,7 +17,6 @@ extern void preAllocateFinalSnarkProverGPU(void *snark_prover, void* unified_buf
 extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 
 #ifdef __USE_CUDA__
-#include "gen_recursive_proof.cuh"
 #include "verify_constraints.cuh"
 #include "gen_proof.cuh"
 #include "poseidon2_goldilocks.cuh"
@@ -962,7 +961,7 @@ void tile_const_pols(void *pStarkinfo, void *pConstPols, char *constFile, void *
 
 }
 
-void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffer_) {
+void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffer_,  char* verkey) {
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     uint32_t gpuId = 0;
     cudaSetDevice(gpuId);
@@ -996,6 +995,14 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize,
         d_buffers->d_const_tree = d_unifiedBuffer;
         d_buffers->d_aux_trace = d_unifiedBuffer + (sizeConstTree / 8);
     }
+
+    RawFr rawFr;
+    RawFr::Element verkeyElement;
+    rawFr.fromString(verkeyElement, verkey);
+    
+    // Allocate GPU memory and copy verkey to device
+    CHECKCUDAERR(cudaMalloc(&d_buffers->d_verkey, sizeof(RawFr::Element)));
+    CHECKCUDAERR(cudaMemcpy(d_buffers->d_verkey, &verkeyElement, sizeof(RawFr::Element), cudaMemcpyHostToDevice));
 
     return (void*)d_buffers;
 }   
@@ -1089,7 +1096,7 @@ void *gen_recursive_proof_final(void *pSetupCtx_, uint64_t airgroupId, uint64_t 
     copy_to_device_in_chunks((const uint8_t*)pConstPols, (uint8_t*)(d_aux_trace + offsetConstPols), sizeConstPols, pinnedBuffer, pinnedBufferSize, d_buffers->stream);
     CHECKCUDAERR(cudaGetLastError());
 
-    void* result = genRecursiveProofBN128_gpu(*setupCtx, airgroupId, airId, instanceId, (Goldilocks::Element *)d_aux_trace, (Goldilocks::Element *)d_buffers->d_const_tree, (Goldilocks::Element *)pPublicInputs, string(proof_file), d_buffers->timer, d_buffers->stream);
+    void* result = genRecursiveProofBN128_gpu(*setupCtx, airgroupId, airId, instanceId, (Goldilocks::Element *)d_aux_trace, (Goldilocks::Element *)pPublicInputs, string(proof_file), d_buffers);
 
     cudaStreamSynchronize(d_buffers->stream);
 

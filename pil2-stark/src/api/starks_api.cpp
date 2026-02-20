@@ -824,7 +824,7 @@ void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity,
     DeviceCommitBuffersCPU *d_buffers = new DeviceCommitBuffersCPU();
     return (void *)d_buffers;
 };
-void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffers){
+void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffers,  char* verkey){
     return nullptr;
 }
 void free_device_buffers_recursivef(void *d_buffers_){}
