@@ -68,23 +68,15 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
 
     uint64_t countId = 0;
 
-    StepsParams *params_pinned;
-    CHECKCUDAERR(cudaMallocHost((void **)&params_pinned, sizeof(StepsParams)));
-    //Goldilocks::Element *proof_buffer_pinned = d_buffers->streamsData[stream_id].pinned_buffer_proof;
-    Goldilocks::Element *pinned_exps_params;
-    uint64_t maxExps = 20000; // TODO: CALCULATE IT PROPERLY!
-    CHECKCUDAERR(cudaMallocHost((void **)&pinned_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
-    Goldilocks::Element *pinned_exps_args;
-    CHECKCUDAERR(cudaMallocHost((void **)&pinned_exps_args, maxExps * sizeof(ExpsArguments)));
+    StepsParams *params_pinned = d_buffers->params_pinned;
+    Goldilocks::Element *pinned_exps_params = d_buffers->pinned_exps_params;
+    Goldilocks::Element *pinned_exps_args = d_buffers->pinned_exps_args;
     TranscriptBN128_GPU d_transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, stream);
     TranscriptBN128_GPU d_transcript_helper(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, stream);
 
-    StepsParams *d_params;
-    CHECKCUDAERR(cudaMalloc((void **)&d_params, sizeof(StepsParams)));
-    ExpsArguments *d_expsArgs;
-    CHECKCUDAERR(cudaMalloc((void **)&d_expsArgs, maxExps * sizeof(ExpsArguments)));
-    DestParamsGPU *d_destParams;
-    CHECKCUDAERR(cudaMalloc((void **)&d_destParams, maxExps * 2 * sizeof(DestParamsGPU)));
+    StepsParams *d_params = d_buffers->d_params;
+    ExpsArguments *d_expsArgs = d_buffers->d_expsArgs;
+    DestParamsGPU *d_destParams = d_buffers->d_destParams;
 
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
@@ -140,7 +132,7 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.steps.size() - 1;
 
     gl64_t *d_queries_buff = (gl64_t *)d_aux_trace + offsetProofQueries;
-    
+
     // Use input_hash_nonce buffer as temporary storage for BN128 hash output
     PoseidonBN128GPU::FrElement * d_hash_gpu = (PoseidonBN128GPU::FrElement *)((Goldilocks::Element *)d_aux_trace + offsetInputHashNonce);
 
@@ -161,7 +153,7 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
         }
     }
     TimerStopGPU(timer, STARK_STEP_0);
-    
+
     TimerStartGPU(timer, STARK_COMMIT_STAGE_1);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
@@ -194,6 +186,14 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     TimerStopGPU(timer, STARK_COMMIT_STAGE_2);
 
     TimerStartGPU(timer, STARK_STEP_Q);
+    
+    if (d_buffers->load_initiated) {
+        TimerStartCategoryGPU(timer, LOAD_TREE_WAIT);
+        // Wait for the event recorded by background thread after GPU transfer completes
+        CHECKCUDAERR(cudaStreamWaitEvent(stream, d_buffers->load_complete_event, 0));
+        TimerStopCategoryGPU(timer, LOAD_TREE_WAIT);
+    }
+
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 1 ) {
@@ -344,17 +344,6 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     TimerStopGPU(timer, STARK_SAVE_PROOF);
     TimerStartGPU(timer, STARK_CLEANUP);
 
-
-    // free allocated pinned memory
-    cudaFreeHost(params_pinned);
-    cudaFreeHost(pinned_exps_params);
-    cudaFreeHost(pinned_exps_args);
-
-    //free device memory allocated
-    cudaFree(d_params);
-    cudaFree(d_expsArgs);
-    cudaFree(d_destParams);
-
     // Free stark trees (skip constants tree at nStages+1 - passed in from outside)
     for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2; i++)
     {
@@ -370,6 +359,11 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
 
     // Free AirInstanceInfo (and all its GPU allocations)
     delete air_instance_info;
+
+    // Join the const tree loading thread now that proof is complete
+    if (d_buffers->load_const_tree_thread.joinable()) {
+        d_buffers->load_const_tree_thread.join();
+    }
 
     TimerStopGPU(timer, STARK_CLEANUP);
     TimerStopGPU(timer,STARK_GPU_PROOF);

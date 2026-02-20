@@ -233,6 +233,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     }
     TimerStopGPU(timer, STARK_COMMIT_STAGE_2);
     TimerStartGPU(timer, STARK_STEP_Q);
+
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 1) {
@@ -242,6 +243,18 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     uint64_t zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
     computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, stream);
 
+    // Wait for const tree loading only if we initiated it
+    if (d_buffers->streamsData[stream_id].load_initiated) {
+        TimerStartCategoryGPU(timer, LOAD_TREE_WAIT);
+        // Brief spin-wait until thread has recorded the event (avoids undefined behavior)
+        while (!d_buffers->streamsData[stream_id].event_recorded.load(std::memory_order_acquire)) {
+            // CPU yields to avoid busy-waiting
+        }
+        // Now safely wait for event on GPU side (non-blocking for CPU)
+        CHECKCUDAERR(cudaStreamWaitEvent(stream, d_buffers->streamsData[stream_id].load_complete_event, 0));
+        TimerStopCategoryGPU(timer, LOAD_TREE_WAIT);
+    }
+    
     if (setupCtx.starkInfo.calculateFixedExtended && !reuse_constants) {
         TimerStartGPU(timer, FIXED_POLS_TREE);
         extendAndMerkelizeFixed(setupCtx, h_params.pConstPolsAddress, pConstPolsExtendedTreeAddress, timer, stream);

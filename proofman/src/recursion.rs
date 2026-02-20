@@ -680,15 +680,11 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     let const_tree_ptr_addr = setup.get_const_tree_ptr() as usize;
     let d_buffers_addr = d_buffers_recursivef as usize;
 
-    let load_fixed_pols_handle = std::thread::spawn(move || {
-        timer_start_debug!(LOAD_FIXED_POLS_RECURSIVEF);
-        load_fixed_pols_recursivef_c(
-            p_setup_addr as *mut c_void,
-            const_tree_ptr_addr as *mut c_void,
-            d_buffers_addr as *mut c_void,
-        );
-        timer_stop_and_log_debug!(LOAD_FIXED_POLS_RECURSIVEF);
-    });
+    load_fixed_pols_recursivef_c(
+        p_setup_addr as *mut c_void,
+        const_tree_ptr_addr as *mut c_void,
+        d_buffers_addr as *mut c_void,
+    );
 
     let trace: Vec<F> = vec![F::ZERO; setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize];
 
@@ -722,11 +718,6 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     std::fs::create_dir_all(output_dir_path)?;
     let recursivef_json_path = output_dir_path.join("recursivef.json");
     let recursivef_json_str = recursivef_json_path.to_string_lossy().into_owned();
-
-    // Wait for fixed pols loading to complete
-    timer_start_debug!(WAIT_LOAD_FIXED_POLS);
-    load_fixed_pols_handle.join().unwrap();
-    timer_stop_and_log_debug!(WAIT_LOAD_FIXED_POLS);
 
     timer_start_debug!(GENERATE_RECURSIVEF_PROOF);
     // prove

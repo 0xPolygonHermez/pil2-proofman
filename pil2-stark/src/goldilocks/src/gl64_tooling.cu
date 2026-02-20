@@ -153,11 +153,11 @@ void load_and_copy_to_device_in_chunks(
     uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
     std::lock_guard<std::mutex> lock(d_buffers->mutex_pinned[gpuLocalId]);
     
-    uint64_t block_size = d_buffers->pinned_size;
+    uint64_t block_size = d_buffers->pinnedBufferSizeLoadConstTree;
     
-    cudaStream_t stream = d_buffers->streamsData[streamId].stream;
-    Goldilocks::Element *pinned_buffer = d_buffers->pinned_buffer[gpuLocalId];
-    Goldilocks::Element *pinned_buffer_extra = d_buffers->pinned_buffer_extra[gpuLocalId];
+    cudaStream_t stream = d_buffers->streamsData[streamId].load_const_tree_stream;
+    Goldilocks::Element *pinned_buffer = d_buffers->pinnedBuffersLoadConstTree[gpuLocalId];
+    Goldilocks::Element *pinned_buffer_extra = d_buffers->pinnedBuffersLoadConstTreeExtra[gpuLocalId];
 
     uint64_t nBlocks = (total_size + block_size - 1) / block_size;
 
@@ -195,5 +195,11 @@ void load_and_copy_to_device_in_chunks(
         stream
     ));
 
+    // Record event to signal completion of all GPU transfers
+    CHECKCUDAERR(cudaEventRecord(d_buffers->streamsData[streamId].load_complete_event, stream));
+    
+    // Signal that event has been recorded so main stream can safely wait on it
+    d_buffers->streamsData[streamId].event_recorded.store(true, std::memory_order_release);
+    
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 }

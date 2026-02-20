@@ -7,11 +7,13 @@
 #ifndef __GOLDILOCKS_ENV__
 #include "gpu_timer.cuh"
 #include <mutex>
+#include <atomic>
 #include "cuda_utils.cuh"
 #include "transcriptGL.cuh"
 #include "expressions_gpu.cuh"
 #include <limits.h>
 #include "fr.hpp"
+#include <thread>
 #endif
 #include "gl64_t.cuh"
 
@@ -270,6 +272,11 @@ struct StreamData{
 
     //const data
     cudaStream_t stream;
+    cudaStream_t load_const_tree_stream;
+    cudaEvent_t load_complete_event;  // Event signaling background load completion
+    std::atomic<bool> load_initiated;  // Flag to track if background load was started
+    std::atomic<bool> event_recorded;  // Flag to track if event has been recorded
+    std::thread load_const_tree_thread;
     uint32_t gpuId;
     uint64_t localStreamId;
     StepsParams *pinned_params;
@@ -308,6 +315,8 @@ struct StreamData{
         uint64_t maxExps = 40000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
+        CHECKCUDAERR(cudaStreamCreate(&load_const_tree_stream));
+        CHECKCUDAERR(cudaEventCreate(&load_complete_event));
         timer.init(stream);
         gpuId = gpuId_;
         localStreamId = localStreamId_;
@@ -315,6 +324,8 @@ struct StreamData{
         cudaEventCreate(&end_event);
         instanceId = -1;
         status = 0;
+        load_initiated = false;
+        event_recorded = false;
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_proof, max_size_proof * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_args, maxExps * sizeof(ExpsArguments)));
@@ -341,6 +352,9 @@ struct StreamData{
     }
 
     ~StreamData() {
+        if (load_const_tree_thread.joinable()) {
+            load_const_tree_thread.join();
+        }
         delete transcript;
         delete transcript_helper;
         CHECKCUDAERR(cudaFree(params));
@@ -350,9 +364,17 @@ struct StreamData{
 
     void reset(bool reset_status){
         cudaSetDevice(gpuId);
+        // Join background thread before resetting stream
+        if (load_const_tree_thread.joinable()) {
+            load_const_tree_thread.join();
+        }
         cudaEventDestroy(end_event);
         cudaEventCreate(&end_event);
+        cudaEventDestroy(load_complete_event);
+        cudaEventCreate(&load_complete_event);
         status = reset_status ? 0 : 3;
+        load_initiated = false;
+        event_recorded = false;
 
         root = nullptr;
         pSetupCtx = nullptr;
@@ -361,8 +383,13 @@ struct StreamData{
 
     void free(){
         cudaSetDevice(gpuId);
+        if (load_const_tree_thread.joinable()) {
+            load_const_tree_thread.join();
+        }
         cudaStreamDestroy(stream);
+        cudaStreamDestroy(load_const_tree_stream);
         cudaEventDestroy(end_event);
+        cudaEventDestroy(load_complete_event);
         cudaFreeHost(pinned_buffer_proof);
         cudaFreeHost(pinned_buffer_exps_params);
         cudaFreeHost(pinned_buffer_exps_args);
@@ -382,16 +409,54 @@ struct DeviceRecursiveFBuffers
     size_t pinnedBufferSize = 256 * 1024 * 1024;
     bool owns_aux_trace;
     bool owns_const_tree;
+    std::thread load_const_tree_thread;
+    cudaStream_t load_const_tree_stream;
+    cudaEvent_t load_complete_event;  // Event signaling background load completion
+    std::atomic<bool> load_initiated;  // Flag to track if background load was started
+    uint8_t *pinnedBufferLoadConstTree;
+    
+    // Reusable allocations for proof generation
+    StepsParams *params_pinned;
+    Goldilocks::Element *pinned_exps_params;
+    Goldilocks::Element *pinned_exps_args;
+    StepsParams *d_params;
+    ExpsArguments *d_expsArgs;
+    DestParamsGPU *d_destParams;
 
-    DeviceRecursiveFBuffers() : stream(), timer(), owns_aux_trace(true), owns_const_tree(true), d_verkey(nullptr){
+
+    DeviceRecursiveFBuffers() : stream(), timer(), owns_aux_trace(true), owns_const_tree(true), d_verkey(nullptr), load_initiated(false) {
+        uint64_t maxExps = 20000;
         cudaStreamCreate(&stream);
         timer.init(stream);
         CHECKCUDAERR(cudaMallocHost((void**)&pinnedBuffer, pinnedBufferSize));
-
+        CHECKCUDAERR(cudaMallocHost((void**)&pinnedBufferLoadConstTree, pinnedBufferSize));
+        cudaStreamCreate(&load_const_tree_stream);
+        CHECKCUDAERR(cudaEventCreate(&load_complete_event));
+        
+        // Allocate reusable buffers
+        CHECKCUDAERR(cudaMallocHost((void **)&params_pinned, sizeof(StepsParams)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_exps_args, maxExps * sizeof(ExpsArguments)));
+        CHECKCUDAERR(cudaMalloc((void **)&d_params, sizeof(StepsParams)));
+        CHECKCUDAERR(cudaMalloc((void **)&d_expsArgs, maxExps * sizeof(ExpsArguments)));
+        CHECKCUDAERR(cudaMalloc((void **)&d_destParams, maxExps * 2 * sizeof(DestParamsGPU)));
     }
+    
     ~DeviceRecursiveFBuffers() {
+        if (load_const_tree_thread.joinable()) {
+            load_const_tree_thread.join();
+        }
         cudaStreamDestroy(stream);
+        cudaStreamDestroy(load_const_tree_stream);
+        cudaEventDestroy(load_complete_event);
         cudaFreeHost(pinnedBuffer);
+        cudaFreeHost(pinnedBufferLoadConstTree);
+        cudaFreeHost(params_pinned);
+        cudaFreeHost(pinned_exps_params);
+        cudaFreeHost(pinned_exps_args);
+        cudaFree(d_params);
+        cudaFree(d_expsArgs);
+        cudaFree(d_destParams);
         if (d_verkey) cudaFree(d_verkey);
     }
 };
@@ -408,7 +473,7 @@ struct DeviceCommitBuffers
     uint64_t max_size_proof;
 
     uint64_t constPolsSize;
-    uint64_t pinned_size = 128 * 1024 * 1024; //256MB
+    uint64_t pinned_size = 64 * 1024 * 1024;
 
     uint32_t  n_gpus;
     uint32_t* my_gpu_ids;
@@ -418,6 +483,11 @@ struct DeviceCommitBuffers
     uint32_t n_recursive_streams;
     std::mutex *mutex_pinned;
     StreamData *streamsData;
+    
+    // Const tree loading per GPU (pinned buffers shared across streams on same GPU)
+    Goldilocks::Element **pinnedBuffersLoadConstTree;    // One per GPU
+    Goldilocks::Element **pinnedBuffersLoadConstTreeExtra;    // One per GPU
+    size_t pinnedBufferSizeLoadConstTree = 128 * 1024 * 1024;  // 128MB
 
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;
 };
