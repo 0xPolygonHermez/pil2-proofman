@@ -237,8 +237,8 @@ $(BUILD_DIR)/%.asm.o: %.asm
 	$(AS) $(ASFLAGS) $< -o $@
 
 $(BUILD_DIR_GPU)/%.asm.o: %.asm
-	$(MKDIR_P) $(dir $@)
-	$(AS) $(ASFLAGS) $< -o $@
+    $(MKDIR_P) $(dir $@)
+    $(AS) $(ASFLAGS) $< -o $@
 
 # c++ source
 $(BUILD_DIR)/%.cpp.o: %.cpp
@@ -250,12 +250,12 @@ $(BUILD_DIR)/%.cc.o: %.cc
 	$(CXX) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR_GPU)/%.cpp.o: %.cpp
-	$(MKDIR_P) $(dir $@)
-	$(CXX) -D__USE_CUDA__ $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+    $(MKDIR_P) $(dir $@)
+    $(CXX) -D__USE_CUDA__ $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR_GPU)/%.cc.o: %.cc
-	$(MKDIR_P) $(dir $@)
-	$(CXX) -D__USE_CUDA__ $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+    $(MKDIR_P) $(dir $@)
+    $(CXX) -D__USE_CUDA__ $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 
 $(BUILD_DIR)/$(TARGET_BINFILE): $(OBJS_BINFILE)
@@ -263,13 +263,13 @@ $(BUILD_DIR)/$(TARGET_BINFILE): $(OBJS_BINFILE)
 
 # cuda source
 $(BUILD_DIR_GPU)/%.cu.o: %.cu
-	$(MKDIR_P) $(dir $@)
-	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -c $< -o $@
+    $(MKDIR_P) $(dir $@)
+    $(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -c $< -o $@
 
 # sppark utility (compile as CUDA to get proper GPU support)
 $(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
-	$(MKDIR_P) $(dir $@)
-	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
+    $(MKDIR_P) $(dir $@)
+    $(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
 
 .PHONY: clean
 
@@ -285,3 +285,4 @@ clean:
 -include $(DEPS_STARKS_LIB_GPU)
 
 MKDIR_P ?= mkdir -p
+
