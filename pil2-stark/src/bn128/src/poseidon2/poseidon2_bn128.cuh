@@ -35,15 +35,15 @@ public:
   static void initGPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
   static void freeGPUConstants();
 
-  // Linear hash for traces stored in row-major layout
-  static void linearHash(FrElement *d_output, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int t, bool custom, cudaStream_t stream);
-  // Linear hash for traces stored in tiled layout
-  static void linearHashTiles(FrElement *d_output, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int t, bool custom, cudaStream_t stream);
+    // Linear hash for traces stored in row-major layout
+    static void linearHash(FrElement *d_output, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int t, cudaStream_t stream);
+    // Linear hash for traces stored in tiled layout
+    static void linearHashTiles(FrElement *d_output, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int t, cudaStream_t stream);
 
-  // Merkle tree construction for row-major layout
-  static void merkletree(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, bool custom, cudaStream_t stream);
-  // Merkle tree construction for tiled layout
-  static void merkletreeTiles(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, bool custom, cudaStream_t stream);
+    // Merkle tree construction for row-major layout
+    static void merkletree(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, cudaStream_t stream);
+    // Merkle tree construction for tiled layout
+    static void merkletreeTiles(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, cudaStream_t stream);
 
   // Grinding (proof-of-work nonce search)
   // d_nonceBlock: device buffer for intermediate nonce storage (size: NONCES_LAUNCH_GRID_SIZE * sizeof(uint64_t))

@@ -2,6 +2,7 @@
 #include <vector>
 #include <iostream>
 #include <iomanip>
+#include <cstring>
 #include "../src/ffiasm/fr.hpp"
 #include "../src/ffiasm/alt_bn128.hpp"
 #include "../src/ffiasm/multiexp.hpp"
@@ -628,6 +629,123 @@ TEST(BN128_POSEIDON_TEST, grinding_cpu) {
   RawFr::Element res;
   field.fromMontgomery(res, verifyState[0]);
   
+  // Check that res.v[0] < level
+  ASSERT_LT(res.v[0], level);
+}
+
+// ==============================================================================
+// Poseidon2 linearHash tests (same inputs as GPU tests)
+// ==============================================================================
+
+TEST(BN128_POSEIDON2_TEST, linearHash_100_elements) {
+  Poseidon2BN128 p;
+  RawFr field;
+
+  Goldilocks::Element input[100];
+  for (size_t i = 0; i < 100; i++) {
+    input[i] = Goldilocks::fromU64(i);
+  }
+
+  RawFr::Element output;
+  p.linearHash(&output, input, 100, 16);
+
+  ASSERT_EQ(field.toString(output, 16), "1223b7e8f691cf33507e5231ac5c85499ced6860d1cb60f8d90190c474023503");
+}
+
+TEST(BN128_POSEIDON2_TEST, linearHash_trace_4rows_100cols) {
+  Poseidon2BN128 p;
+  RawFr field;
+
+  const size_t rows = 4;
+  const size_t cols = 100;
+
+  std::vector<Goldilocks::Element> trace(rows * cols);
+  for (size_t i = 0; i < rows * cols; i++) {
+    trace[i] = Goldilocks::fromU64(i);
+  }
+
+  std::vector<RawFr::Element> output(rows);
+  p.linearHash(output.data(), trace.data(), rows, cols, 16);
+
+  ASSERT_EQ(field.toString(output[0], 16), "1223b7e8f691cf33507e5231ac5c85499ced6860d1cb60f8d90190c474023503");
+  ASSERT_EQ(field.toString(output[1], 16), "75b21d37bc203cc9cf3fe65afe3f81395a5e57b3d79c4912da3bc59f218cbe3");
+  ASSERT_EQ(field.toString(output[2], 16), "19a1d95e83fbeba694220978285391fe0e95983977717f5511e0492ec002899b");
+  ASSERT_EQ(field.toString(output[3], 16), "169fcf3687c13e08f0564b367046722c902102ef0a480f3dab80b946c0e1bda9");
+}
+
+// ==============================================================================
+// Poseidon2 merkletree test (same inputs as GPU test)
+// ==============================================================================
+
+TEST(BN128_POSEIDON2_TEST, merkletree_8rows_100cols) {
+  Poseidon2BN128 p;
+  RawFr field;
+
+  const size_t rows = 8;
+  const size_t cols = 100;
+  const size_t arity = 4;
+
+  std::vector<Goldilocks::Element> trace(rows * cols);
+  for (size_t i = 0; i < rows * cols; i++) {
+    trace[i] = Goldilocks::fromU64(i);
+  }
+
+  // Tree: 8 leaves -> 2 nodes (arity=4, 8/4=2) -> padded to 4 -> 1 root
+  // Total: 8 + 4 + 1 = 13
+  const size_t numNodes = 13;
+  std::vector<RawFr::Element> tree(numNodes);
+
+  p.merkletree(tree.data(), trace.data(), rows, cols, arity);
+
+  // Verify root matches GPU test
+  ASSERT_EQ(field.toString(tree[numNodes - 1], 16), "11f9f97308a003637e3c402a1e78341e73736911f2c27eab7fac6e412038aa51");
+}
+
+// ==============================================================================
+// Poseidon2 grinding test (same inputs as GPU test)
+// ==============================================================================
+
+TEST(BN128_POSEIDON2_TEST, grinding_cpu) {
+  Poseidon2BN128 p;
+  RawFr field;
+
+  constexpr uint8_t n_bits = 8;
+
+  // Create input state with 3 elements (same as GPU test)
+  vector<RawFr::Element> state(3);
+  field.fromUI(state[0], 0x1234567890abcdefULL);
+  field.fromUI(state[1], 0xfedcba0987654321ULL);
+  field.fromUI(state[2], 0x0123456789abcdefULL);
+
+  uint64_t nonce = UINT64_MAX;
+
+  // Call CPU grinding function
+  p.grinding(nonce, state, n_bits);
+
+  // Verify we found a valid nonce
+  ASSERT_NE(nonce, UINT64_MAX);
+
+  // Verify the hash at nonce satisfies the grinding requirement
+  uint64_t level = (1ULL << (64 - n_bits));
+
+  // Compute the hash with the found nonce to verify
+  // Poseidon2 grinding: no capacity, state = [input[0], input[1], input[2], nonce]
+  vector<RawFr::Element> verifyState(state.size() + 1);
+  std::memcpy(&verifyState[0], &state[0], state.size() * sizeof(RawFr::Element));
+
+  // Append nonce
+  RawFr::Element tmp = field.zero();
+  tmp.v[0] = nonce;
+  field.toMontgomery(tmp, tmp);
+  verifyState[state.size()] = tmp;
+
+  // Compute hash
+  p.hash(verifyState);
+
+  // Convert from Montgomery and check
+  RawFr::Element res;
+  field.fromMontgomery(res, verifyState[0]);
+
   // Check that res.v[0] < level
   ASSERT_LT(res.v[0], level);
 }

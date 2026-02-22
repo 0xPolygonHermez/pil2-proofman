@@ -471,7 +471,7 @@ TEST(BN128_POSEIDON2_TEST, linearHash_gpu_4rows_100cols) {
     CHECKCUDAERR(cudaMemset(d_output, 0, rows * sizeof(BN128GPUScalarField::Element)));
     CHECKCUDAERR(cudaMemcpy(d_input, trace.data(), rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice));
 
-    Poseidon2BN128GPU::linearHash(d_output, d_input, cols, rows, t, false, 0);
+    Poseidon2BN128GPU::linearHash(d_output, d_input, cols, rows, t, 0);
     CHECKCUDAERR(cudaDeviceSynchronize());
 
     RawFr::Element* h_output = new RawFr::Element[rows];
@@ -523,10 +523,10 @@ TEST(BN128_POSEIDON2_TEST, linearHashTiles_gpu_256rows_100cols) {
     CHECKCUDAERR(cudaMemcpy(d_input_rowmajor, trace_rowmajor.data(), rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(d_input_tiled, trace_tiled.data(), rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice));
 
-    Poseidon2BN128GPU::linearHash(d_output_rowmajor, d_input_rowmajor, cols, rows, t, false, 0);
+    Poseidon2BN128GPU::linearHash(d_output_rowmajor, d_input_rowmajor, cols, rows, t, 0);
     CHECKCUDAERR(cudaDeviceSynchronize());
 
-    Poseidon2BN128GPU::linearHashTiles(d_output_tiled, d_input_tiled, cols, rows, t, false, 0);
+    Poseidon2BN128GPU::linearHashTiles(d_output_tiled, d_input_tiled, cols, rows, t, 0);
     CHECKCUDAERR(cudaDeviceSynchronize());
 
     std::vector<RawFr::Element> h_output_rowmajor(rows);
@@ -1330,7 +1330,7 @@ TEST(BN128_POSEIDON2_TEST, merkletree_gpu_8rows_100cols) {
     CHECKCUDAERR(cudaMemcpy(d_input, trace.data(), rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemset(d_tree, 0, numNodes * sizeof(BN128GPUScalarField::Element)));
 
-    Poseidon2BN128GPU::merkletree(d_tree, d_input, cols, rows, arity, false, 0);
+    Poseidon2BN128GPU::merkletree(d_tree, d_input, cols, rows, arity, 0);
     CHECKCUDAERR(cudaDeviceSynchronize());
 
     std::vector<RawFr::Element> h_tree(numNodes);
@@ -1340,7 +1340,7 @@ TEST(BN128_POSEIDON2_TEST, merkletree_gpu_8rows_100cols) {
     // (leaves are the first 'rows' elements of the tree)
     BN128GPUScalarField::Element* d_linear_output = nullptr;
     CHECKCUDAERR(cudaMalloc(&d_linear_output, rows * sizeof(BN128GPUScalarField::Element)));
-    Poseidon2BN128GPU::linearHash(d_linear_output, d_input, cols, rows, arity, false, 0);
+    Poseidon2BN128GPU::linearHash(d_linear_output, d_input, cols, rows, arity, 0);
     CHECKCUDAERR(cudaDeviceSynchronize());
 
     std::vector<RawFr::Element> h_linear(rows);
@@ -1401,10 +1401,10 @@ TEST(BN128_POSEIDON2_TEST, merkletreeTiles_gpu_256rows_100cols) {
     CHECKCUDAERR(cudaMemset(d_tree_rowmajor, 0, numNodes * sizeof(BN128GPUScalarField::Element)));
     CHECKCUDAERR(cudaMemset(d_tree_tiled, 0, numNodes * sizeof(BN128GPUScalarField::Element)));
 
-    Poseidon2BN128GPU::merkletree(d_tree_rowmajor, d_input_rowmajor, cols, rows, arity, false, 0);
+    Poseidon2BN128GPU::merkletree(d_tree_rowmajor, d_input_rowmajor, cols, rows, arity, 0);
     CHECKCUDAERR(cudaDeviceSynchronize());
 
-    Poseidon2BN128GPU::merkletreeTiles(d_tree_tiled, d_input_tiled, cols, rows, arity, false, 0);
+    Poseidon2BN128GPU::merkletreeTiles(d_tree_tiled, d_input_tiled, cols, rows, arity, 0);
     CHECKCUDAERR(cudaDeviceSynchronize());
 
     std::vector<RawFr::Element> h_tree_rowmajor(numNodes);

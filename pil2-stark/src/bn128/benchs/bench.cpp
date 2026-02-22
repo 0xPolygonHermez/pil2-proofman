@@ -717,4 +717,169 @@ BENCHMARK(POSEIDON_GRINDING_CPU_BENCH)
     ->Args({16})   // 16 bits - ~65536 expected hashes
     ->Args({20});  // 20 bits - ~1M expected hashes
 
+// =====================
+// Poseidon2 linearHash CPU Benchmark
+// =====================
+
+static void POSEIDON2_LINEARHASH_CPU_BENCH(benchmark::State &state) {
+    int inputSize = state.range(0);
+    int t = state.range(1);
+
+    Poseidon2BN128 poseidon2;
+
+    std::vector<Goldilocks::Element> input(inputSize);
+    for (int i = 0; i < inputSize; i++) {
+        input[i] = Goldilocks::fromU64(i);
+    }
+
+    RawFr::Element output;
+
+    for (auto _ : state) {
+        poseidon2.linearHash(&output, input.data(), inputSize, t);
+        benchmark::DoNotOptimize(output);
+    }
+
+    state.counters["inputSize"] = inputSize;
+    state.counters["t"] = t;
+    state.SetItemsProcessed(state.iterations());
+}
+
+BENCHMARK(POSEIDON2_LINEARHASH_CPU_BENCH)
+    ->Unit(benchmark::kMicrosecond)
+    ->UseRealTime()
+    ->Args({100, 16})    // 100 Goldilocks elements, t=16
+    ->Args({1000, 16})   // 1000 Goldilocks elements, t=16
+    ->Args({10000, 16})  // 10000 Goldilocks elements, t=16
+    ->Args({100, 8})     // 100 Goldilocks elements, t=8
+    ->Args({1000, 8})    // 1000 Goldilocks elements, t=8
+    ->Args({10000, 8});  // 10000 Goldilocks elements, t=8
+
+// ==========================================
+// Poseidon2 linearHash (trace) CPU Benchmark
+// ==========================================
+
+static void POSEIDON2_LINEARHASH_TRACE_CPU_BENCH(benchmark::State &state) {
+    int rows = state.range(0);
+    int cols = state.range(1);
+    int t = state.range(2);
+
+    Poseidon2BN128 poseidon2;
+
+    std::vector<Goldilocks::Element> trace(rows * cols);
+    for (int i = 0; i < rows * cols; i++) {
+        trace[i] = Goldilocks::fromU64(i);
+    }
+
+    std::vector<RawFr::Element> output(rows);
+
+    for (auto _ : state) {
+        poseidon2.linearHash(output.data(), trace.data(), rows, cols, t);
+        benchmark::DoNotOptimize(output);
+    }
+
+    state.counters["trace_rows"] = rows;
+    state.counters["trace_cols"] = cols;
+    state.counters["t"] = t;
+    state.SetItemsProcessed(state.iterations() * rows * cols);
+}
+
+BENCHMARK(POSEIDON2_LINEARHASH_TRACE_CPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Args({1024, 100, 16})      // 1K rows x 100 cols, t=16
+    ->Args({1024, 1000, 16})     // 1K rows x 1000 cols, t=16
+    ->Args({1 << 16, 100, 16})   // 64K rows x 100 cols, t=16
+    ->Args({1 << 16, 1000, 16})  // 64K rows x 1000 cols, t=16
+    ->Args({1 << 20, 100, 16})   // 1M rows x 100 cols, t=16
+    ->Args({1024, 100, 8})       // 1K rows x 100 cols, t=8
+    ->Args({1 << 16, 100, 8});   // 64K rows x 100 cols, t=8
+
+// ==========================================
+// Poseidon2 merkletree CPU Benchmark
+// ==========================================
+
+static void POSEIDON2_MERKLETREE_CPU_BENCH(benchmark::State &state) {
+    int rows = state.range(0);
+    int cols = state.range(1);
+    int arity = state.range(2);
+
+    Poseidon2BN128 poseidon2;
+
+    std::vector<Goldilocks::Element> trace(rows * cols);
+    for (int i = 0; i < rows * cols; i++) {
+        trace[i] = Goldilocks::fromU64(i);
+    }
+
+    uint64_t n = rows;
+    uint64_t nextN = ((n - 1) / arity) + 1;
+    uint64_t numNodes = nextN * arity;
+    while (n > 1) {
+        n = nextN;
+        nextN = ((n - 1) / arity) + 1;
+        if (n > 1) {
+            numNodes += nextN * arity;
+        } else {
+            numNodes += 1;
+        }
+    }
+
+    std::vector<RawFr::Element> tree(numNodes);
+
+    for (auto _ : state) {
+        poseidon2.merkletree(tree.data(), trace.data(), rows, cols, arity);
+        benchmark::DoNotOptimize(tree);
+    }
+
+    state.counters["trace_rows"] = rows;
+    state.counters["trace_cols"] = cols;
+    state.counters["arity"] = arity;
+    state.counters["numNodes"] = numNodes;
+    state.SetItemsProcessed(state.iterations() * rows * cols);
+}
+
+BENCHMARK(POSEIDON2_MERKLETREE_CPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Args({1024, 100, 16})       // 1K rows x 100 cols, arity=16
+    ->Args({1024, 1000, 16})      // 1K rows x 1000 cols, arity=16
+    ->Args({1 << 16, 100, 16})    // 64K rows x 100 cols, arity=16
+    ->Args({1 << 16, 1000, 16})   // 64K rows x 1000 cols, arity=16
+    ->Args({1 << 20, 100, 16})    // 1M rows x 100 cols, arity=16
+    ->Args({1 << 16, 100, 8})     // 64K rows x 100 cols, arity=8
+    ->Args({1 << 16, 100, 4});    // 64K rows x 100 cols, arity=4
+
+// ==========================================
+// Poseidon2 grinding CPU Benchmark
+// ==========================================
+
+static void POSEIDON2_GRINDING_CPU_BENCH(benchmark::State &state) {
+    int n_bits = state.range(0);
+
+    Poseidon2BN128 poseidon2;
+    RawFr field;
+
+    // Create input state with 3 elements
+    vector<RawFr::Element> input_state(3);
+    field.fromUI(input_state[0], 0x1234567890abcdefULL);
+    field.fromUI(input_state[1], 0xfedcba0987654321ULL);
+    field.fromUI(input_state[2], 0x0123456789abcdefULL);
+
+    for (auto _ : state) {
+        uint64_t nonce = UINT64_MAX;
+        poseidon2.grinding(nonce, input_state, n_bits);
+        benchmark::DoNotOptimize(nonce);
+        assert(nonce != UINT64_MAX);
+    }
+
+    state.counters["n_bits"] = n_bits;
+}
+
+BENCHMARK(POSEIDON2_GRINDING_CPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Args({8})    // 8 bits 
+    ->Args({12})   // 12 bits 
+    ->Args({16})   // 16 bits 
+    ->Args({20});  // 20 bits 
+
 BENCHMARK_MAIN();

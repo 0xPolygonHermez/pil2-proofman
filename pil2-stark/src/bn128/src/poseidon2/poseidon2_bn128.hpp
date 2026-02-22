@@ -5,6 +5,7 @@
 #include <string>
 #include "fr.hpp"
 #include "poseidon2_bn128_constants.hpp"
+#include "goldilocks_base_field.hpp"
 #include <cassert>
 using namespace std;
 
@@ -29,6 +30,10 @@ private:
 public:
   void hash(vector<FrElement> &state);
   void hash(vector<FrElement> &state, FrElement *result);
+    void linearHash(FrElement* output, Goldilocks::Element* input, uint64_t inputSize, uint64_t t);
+    void linearHash(FrElement* output, Goldilocks::Element* trace, uint64_t rows, uint64_t cols, uint64_t t);
+    void merkletree(FrElement* tree, Goldilocks::Element *trace, uint64_t rows, uint64_t cols, uint64_t arity);
+  void grinding(uint64_t &nonce, vector<FrElement> &state, const uint32_t n_bits);
 };
 
 void Poseidon2BN128::pow5(FrElement &x)

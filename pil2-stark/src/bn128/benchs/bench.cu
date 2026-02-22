@@ -775,11 +775,11 @@ static void POSEIDON2_LINEARHASH_GPU_BENCH(benchmark::State &state) {
     cudaMemcpy(d_input, h_input, rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice);
 
     // Warm-up
-    Poseidon2BN128GPU::linearHash(d_output, d_input, cols, rows, t, false, 0);
+    Poseidon2BN128GPU::linearHash(d_output, d_input, cols, rows, t, 0);
     cudaDeviceSynchronize();
 
     for (auto _ : state) {
-        Poseidon2BN128GPU::linearHash(d_output, d_input, cols, rows, t, false, 0);
+        Poseidon2BN128GPU::linearHash(d_output, d_input, cols, rows, t, 0);
         cudaDeviceSynchronize();
         benchmark::DoNotOptimize(d_output);
     }
@@ -826,11 +826,11 @@ static void POSEIDON2_LINEARHASHTILES_GPU_BENCH(benchmark::State &state) {
     cudaMemcpy(d_input, h_input, rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice);
 
     // Warm-up
-    Poseidon2BN128GPU::linearHashTiles(d_output, d_input, cols, rows, t, false, 0);
+    Poseidon2BN128GPU::linearHashTiles(d_output, d_input, cols, rows, t, 0);
     cudaDeviceSynchronize();
 
     for (auto _ : state) {
-        Poseidon2BN128GPU::linearHashTiles(d_output, d_input, cols, rows, t, false, 0);
+        Poseidon2BN128GPU::linearHashTiles(d_output, d_input, cols, rows, t, 0);
         cudaDeviceSynchronize();
         benchmark::DoNotOptimize(d_output);
     }
@@ -1043,11 +1043,11 @@ static void POSEIDON2_MERKLETREE_GPU_BENCH(benchmark::State &state) {
     cudaMemcpy(d_input, h_input, rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice);
 
     // Warm-up
-    Poseidon2BN128GPU::merkletree(d_tree, d_input, cols, rows, arity, false, 0);
+    Poseidon2BN128GPU::merkletree(d_tree, d_input, cols, rows, arity, 0);
     cudaDeviceSynchronize();
 
     for (auto _ : state) {
-        Poseidon2BN128GPU::merkletree(d_tree, d_input, cols, rows, arity, false, 0);
+        Poseidon2BN128GPU::merkletree(d_tree, d_input, cols, rows, arity, 0);
         cudaDeviceSynchronize();
         benchmark::DoNotOptimize(d_tree);
     }
@@ -1108,11 +1108,11 @@ static void POSEIDON2_MERKLETREETILES_GPU_BENCH(benchmark::State &state) {
     cudaMemcpy(d_input, h_input, rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice);
 
     // Warm-up
-    Poseidon2BN128GPU::merkletreeTiles(d_tree, d_input, cols, rows, arity, false, 0);
+    Poseidon2BN128GPU::merkletreeTiles(d_tree, d_input, cols, rows, arity, 0);
     cudaDeviceSynchronize();
 
     for (auto _ : state) {
-        Poseidon2BN128GPU::merkletreeTiles(d_tree, d_input, cols, rows, arity, false, 0);
+        Poseidon2BN128GPU::merkletreeTiles(d_tree, d_input, cols, rows, arity, 0);
         cudaDeviceSynchronize();
         benchmark::DoNotOptimize(d_tree);
     }

@@ -154,8 +154,7 @@ __device__ void poseidon2_bn128_hash_loop(
     const uint64_t *__restrict__ input,
     uint64_t num_cols,
     uint64_t num_rows,
-    int t,
-    bool custom
+    int t
 ) {
     uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -207,34 +206,33 @@ __global__ void linearHashGPUBN128P2(
     uint64_t *__restrict__ input,
     uint64_t num_cols,
     uint64_t num_rows,
-    int t,
-    bool custom
+    int t
 ) {
     uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
     if (row >= num_rows) return;
 
     BN128GPUScalarField::Element result;
-    poseidon2_bn128_hash_loop<TILED>(result, input, num_cols, num_rows, t, custom);
+    poseidon2_bn128_hash_loop<TILED>(result, input, num_cols, num_rows, t);
     output[row] = result;
 }
 
 // Linear hash for traces stored in row-major layout
-void Poseidon2BN128GPU::linearHash(FrElement *d_output, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int t, bool custom, cudaStream_t stream) {
+void Poseidon2BN128GPU::linearHash(FrElement *d_output, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int t, cudaStream_t stream) {
     int threadsPerBlock = 64;
     int numBlocks = (num_rows + threadsPerBlock - 1) / threadsPerBlock;
 
     linearHashGPUBN128P2<false><<<numBlocks, threadsPerBlock, 0, stream>>>(
-        d_output, d_input, num_cols, num_rows, t, custom
+        d_output, d_input, num_cols, num_rows, t
     );
 }
 
 // Linear hash for traces stored in tiled layout
-void Poseidon2BN128GPU::linearHashTiles(FrElement *d_output, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int t, bool custom, cudaStream_t stream) {
+void Poseidon2BN128GPU::linearHashTiles(FrElement *d_output, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int t, cudaStream_t stream) {
     int threadsPerBlock = 64;
     int numBlocks = (num_rows + threadsPerBlock - 1) / threadsPerBlock;
 
     linearHashGPUBN128P2<true><<<numBlocks, threadsPerBlock, 0, stream>>>(
-        d_output, d_input, num_cols, num_rows, t, custom
+        d_output, d_input, num_cols, num_rows, t
     );
 }
 
@@ -280,7 +278,6 @@ void merkletreeGPUBN128P2(
     uint64_t num_cols,
     uint64_t num_rows,
     uint64_t arity,
-    bool custom,
     cudaStream_t stream
 ) {
     if (num_rows == 0) return;
@@ -290,7 +287,7 @@ void merkletreeGPUBN128P2(
     int numBlocks = (num_rows + threadsPerBlock - 1) / threadsPerBlock;
 
     linearHashGPUBN128P2<TILED><<<numBlocks, threadsPerBlock, 0, stream>>>(
-        d_tree, d_input, num_cols, num_rows, t, custom
+        d_tree, d_input, num_cols, num_rows, t
     );
     CHECKCUDAERR(cudaGetLastError());
 
@@ -324,13 +321,13 @@ void merkletreeGPUBN128P2(
 }
 
 // Merkle tree for row-major layout
-void Poseidon2BN128GPU::merkletree(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, bool custom, cudaStream_t stream) {
-    merkletreeGPUBN128P2<false>(d_tree, d_input, num_cols, num_rows, arity, custom, stream);
+void Poseidon2BN128GPU::merkletree(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, cudaStream_t stream) {
+    merkletreeGPUBN128P2<false>(d_tree, d_input, num_cols, num_rows, arity, stream);
 }
 
 // Merkle tree for tiled layout
-void Poseidon2BN128GPU::merkletreeTiles(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, bool custom, cudaStream_t stream) {
-    merkletreeGPUBN128P2<true>(d_tree, d_input, num_cols, num_rows, arity, custom, stream);
+void Poseidon2BN128GPU::merkletreeTiles(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, cudaStream_t stream) {
+    merkletreeGPUBN128P2<true>(d_tree, d_input, num_cols, num_rows, arity, stream);
 }
 
 // =============================================================================
