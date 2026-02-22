@@ -10,7 +10,7 @@
 
 // Reduce a Goldilocks value to canonical form [0, MOD)
 // Input must be in range [0, 2^64), outputs [0, MOD)
-__device__ __forceinline__ uint64_t gl64_reduce(uint64_t val) {
+__device__ __forceinline__ uint64_t bn128_gl64_reduce(uint64_t val) {
     return (val >= GOLDILOCKS_PRIME) ? (val - GOLDILOCKS_PRIME) : val;
 }
 
@@ -38,7 +38,7 @@ __device__ __forceinline__ void bn128_load_fr_from_gl(
             } else {
                 idx = row * num_cols + col_k;
             }
-            uint64_t gl_val = gl64_reduce(input[idx]);
+            uint64_t gl_val = bn128_gl64_reduce(input[idx]);
             elem[k * 2] = (uint32_t)gl_val;
             elem[k * 2 + 1] = (uint32_t)(gl_val >> 32);
         }
