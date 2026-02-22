@@ -1,18 +1,8 @@
 #include "cuda_utils.cuh"
 #include "poseidon_bn128.cuh"
 #include "poseidon_bn128_constants.hpp"  // Shared CPU/GPU constants (binary compatible)
+#include "grinding_constants.hpp"
 #include <cuda_runtime.h>
-#include "data_layout.cuh"
-
-// Goldilocks prime constant
-#ifndef GOLDILOCKS_PRIME
-#define GOLDILOCKS_PRIME 0xFFFFFFFF00000001ULL
-#endif
-
-// Inline gl64_reduce - Reduce a Goldilocks value from partially reduced form [0, 2*MOD) to canonical form [0, MOD)
-__device__ __forceinline__ uint64_t gl64_reduce(uint64_t val) {
-    return (val >= GOLDILOCKS_PRIME) ? (val - GOLDILOCKS_PRIME) : val;
-}
 
 typedef PoseidonBN128GPU::FrElement FrElementGPU;
 
@@ -52,7 +42,6 @@ void PoseidonBN128GPU::hash(FrElement* d_state, int t) {
 }
 
 // Parallel hash kernel - uses 32 threads (one warp) for parallel mix operations
-// Shared memory layout: state[32] + tmp[32] = 64 FrElements
 __global__ void poseidon_hash_parallel_kernel(FrElementGPU *d_state, int t) {
     
     // Use raw uint32_t arrays to avoid dynamic initialization warning
@@ -163,38 +152,6 @@ void PoseidonBN128GPU::freeGPUConstants() {
 // Linear Hash GPU
 // =============================================================================
 
-// Load 3 Goldilocks elements into a BN128 Fr element (in registers)
-// Supports both row-major and tiled layouts via template parameter
-template<bool TILED>
-__device__ __forceinline__ void poseidon_bn128_load_fr_from_gl(
-    BN128GPUScalarField::Element &elem,
-    const uint64_t *input,
-    uint32_t row,
-    uint64_t base_col,
-    uint64_t num_rows,
-    uint64_t num_cols
-) {
-    elem[0] = elem[1] = elem[2] = elem[3] = 0;
-    elem[4] = elem[5] = elem[6] = elem[7] = 0;
-    
-    #pragma unroll
-    for (uint32_t k = 0; k < 3; k++) {
-        uint64_t col = base_col + k;
-        if (col < num_cols) {
-            uint64_t idx;
-            if constexpr (TILED) {
-                idx = getBufferOffset(row, col, num_rows, num_cols);
-            } else {
-                idx = row * num_cols + col;
-            }
-            // Reduce from partially reduced form [0, 2*MOD) to canonical form [0, MOD)
-            uint64_t gl_val = gl64_reduce(input[idx]);
-            elem[k * 2] = (uint32_t)gl_val;
-            elem[k * 2 + 1] = (uint32_t)(gl_val >> 32);
-        }
-    }
-}
-
 // Perform the hash loop for linear hash
 // Supports both row-major (TILED=false) and tiled (TILED=true) layouts
 template<bool TILED>
@@ -236,7 +193,7 @@ __device__ void poseidon_bn128_hash_loop(
         // and convert to Montgomery form
         for (uint32_t fr_idx = 0; fr_idx < batch; fr_idx++) {
             uint64_t base_col = (fr_offset + fr_idx) * 3;
-            poseidon_bn128_load_fr_from_gl<TILED>(state[fr_idx + 1], input, row, base_col, num_rows, num_cols);
+            bn128_load_fr_from_gl<TILED>(state[fr_idx + 1], input, row, base_col, num_rows, num_cols);
             BN128GPUScalarField::toMontgomery(state[fr_idx + 1]);
         }
         
@@ -413,12 +370,8 @@ void PoseidonBN128GPU::merkletreeTiles(FrElement *d_tree, uint64_t *d_input, uin
 // Grinding GPU Implementation
 // =============================================================================
 
-// Grinding constants for parallel search
-
-#define BN128_GRINDING_LAUNCH_BITS 19
-#define BN128_GRINDING_LAUNCH_BLOCKS_SIZE 512
-#define BN128_GRINDING_LAUNCH_GRID_SIZE \
-    (((1ULL << BN128_GRINDING_LAUNCH_BITS) + BN128_GRINDING_LAUNCH_BLOCKS_SIZE - 1) / BN128_GRINDING_LAUNCH_BLOCKS_SIZE)
+// Using common constants from grinding_constants.hpp:
+// NONCES_LAUNCH_BITS, NONCES_LAUNCH_BLOCKS, NONCES_LAUNCH_GRID_SIZE
 
 // Shared memory for block-level reduction
 extern __shared__ uint64_t grinding_shared[];
@@ -464,8 +417,6 @@ __global__ void grinding_kernel_bn128(
         return;
     }
     
-    // Initialize block's nonce to not found
-    d_nonceBlock[blockIdx.x] = UINT64_MAX;
     
     // Calculate starting nonce for this thread
     uint64_t idx = nonces_offset + (blockIdx.x * blockDim.x + threadIdx.x) * hashes_per_thread;
@@ -541,7 +492,7 @@ void PoseidonBN128GPU::grinding(uint64_t *d_nonce, uint64_t *d_nonceBlock, const
     double totalHashesRequired = (double(-double(security))) * log(2.0) / log(1.0 - 1.0 / double(1ULL << n_bits));
     uint64_t log_totalHashesRequired = (uint64_t)ceil(log2(totalHashesRequired));
     
-    uint64_t log_N = BN128_GRINDING_LAUNCH_BITS;  // 1<<BN128_GRINDING_LAUNCH_BITS nonces tryded per launch
+    uint64_t log_N = NONCES_LAUNCH_BITS;  // 1<<NONCES_LAUNCH_BITS nonces tried per launch
     uint64_t log_launch_iters = 7;  // 128 launch iterations
     
     uint64_t log_hashesPerThread;
@@ -552,8 +503,8 @@ void PoseidonBN128GPU::grinding(uint64_t *d_nonce, uint64_t *d_nonceBlock, const
     }
     uint64_t hashesPerThread = 1ULL << log_hashesPerThread;
     
-    dim3 blockSize(BN128_GRINDING_LAUNCH_BLOCKS_SIZE);
-    dim3 gridSize(BN128_GRINDING_LAUNCH_GRID_SIZE);
+    dim3 blockSize(NONCES_LAUNCH_BLOCKS);
+    dim3 gridSize(NONCES_LAUNCH_GRID_SIZE);
     
     size_t shared_mem_size = blockSize.x * sizeof(uint64_t);
     uint64_t nonces_offset = 0;

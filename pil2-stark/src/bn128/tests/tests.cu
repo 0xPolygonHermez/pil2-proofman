@@ -115,6 +115,8 @@ TEST(BN128_FQ, add)
 // Forward declarations for GPU kernels
 __global__ void init_state_kernel(BN128GPUScalarField::Element* state, int t);
 __global__ void from_montgomery_kernel(BN128GPUScalarField::Element* state, int t);
+__global__ void to_montgomery_kernel(BN128GPUScalarField::Element* state, int t);
+__global__ void setup_grinding_verify_state(BN128GPUScalarField::Element* d_verify_state, const BN128GPUScalarField::Element* d_state, uint64_t nonce);
 
 #if defined(__CUDACC__) && defined(__CUDA_ARCH__)
 // GPU kernel to initialize state values: state[i] = i (in Montgomery form)
@@ -136,7 +138,43 @@ __global__ void from_montgomery_kernel(BN128GPUScalarField::Element* state, int 
     }
 }
 
+// GPU kernel to convert state to Montgomery form
+__global__ void to_montgomery_kernel(BN128GPUScalarField::Element* state, int t) {
+    for (int i = 0; i < t; i++) {
+        state[i].v.to();
+    }
+}
+
+// GPU kernel to setup verification state exactly like grinding kernel does
+__global__ void setup_grinding_verify_state(BN128GPUScalarField::Element* d_verify_state, const BN128GPUScalarField::Element* d_state, uint64_t nonce) {
+    // Copy state[0..2] directly (same as grinding kernel)
+    d_verify_state[0] = d_state[0];
+    d_verify_state[1] = d_state[1];
+    d_verify_state[2] = d_state[2];
+    // Set nonce exactly like grinding kernel
+    d_verify_state[3] = BN128GPUScalarField::zero();
+    d_verify_state[3][0] = (uint32_t)nonce;
+    d_verify_state[3][1] = (uint32_t)(nonce >> 32);
+    BN128GPUScalarField::toMontgomery(d_verify_state[3]);
+}
+
 #endif
+
+// Helper function to convert row-major trace to tiled layout (CPU version of getBufferOffset)
+// Tile layout: TILE_HEIGHT=256 rows × TILE_WIDTH=4 cols per tile
+// Within each tile, data is stored column-major with TILE_HEIGHT stride
+static inline uint64_t getBufferOffsetCPU(uint64_t row, uint64_t col, uint64_t nRows, uint64_t nCols) {
+
+    uint64_t blockY = col / TILE_WIDTH;
+    uint64_t blockX = row / TILE_HEIGHT;
+    uint64_t nCols_block = (nCols - TILE_WIDTH * blockY < TILE_WIDTH)
+                           ? (nCols - TILE_WIDTH * blockY) : TILE_WIDTH;
+    uint64_t col_block = col % TILE_WIDTH;
+    uint64_t row_block = row % TILE_HEIGHT;
+
+    return blockY * TILE_WIDTH * nRows + blockX * nCols_block * TILE_HEIGHT
+           + col_block * TILE_HEIGHT + row_block;
+}
 
 TEST(BN128_POSEIDON2_TEST, hash_gpu_t2) {
     
@@ -350,6 +388,183 @@ TEST(BN128_POSEIDON2_TEST, hash_gpu_t16) {
     
     EXPECT_STREQ(hex0, "0fc2e6b758f493969e1d860f9a44ee3bdffdf796f382aa4ffb16fa4e9bcc333f");
     EXPECT_STREQ(hex15, "0e2ceb1f8fde5f80be1f41bd239fabdc2f6133a6a98920a55c42891c3a925152");
+}
+
+TEST(BN128_POSEIDON2_TEST, hash_parallel_gpu_all_t) {
+    Poseidon2BN128GPU p;
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1);
+
+    int t_values[] = {2, 3, 4, 8, 12, 16};
+    for (int ti = 0; ti < 6; ti++) {
+        int t = t_values[ti];
+        BN128GPUScalarField::Element* d_state_seq = nullptr;
+        BN128GPUScalarField::Element* d_state_par = nullptr;
+        BN128GPUScalarField::Element* h_state_seq = nullptr;
+        BN128GPUScalarField::Element* h_state_par = nullptr;
+
+        cudaMalloc(&d_state_seq, t * sizeof(BN128GPUScalarField::Element));
+        cudaMalloc(&d_state_par, t * sizeof(BN128GPUScalarField::Element));
+        h_state_seq = new BN128GPUScalarField::Element[t];
+        h_state_par = new BN128GPUScalarField::Element[t];
+
+        init_state_kernel<<<1, 1>>>(d_state_seq, t);
+        init_state_kernel<<<1, 1>>>(d_state_par, t);
+        cudaDeviceSynchronize();
+
+        p.hash(d_state_seq, t);
+        cudaDeviceSynchronize();
+
+        p.hashParallel(d_state_par, t);
+        cudaDeviceSynchronize();
+
+        from_montgomery_kernel<<<1, 1>>>(d_state_seq, t);
+        from_montgomery_kernel<<<1, 1>>>(d_state_par, t);
+        cudaDeviceSynchronize();
+
+        cudaMemcpy(h_state_seq, d_state_seq, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_state_par, d_state_par, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyDeviceToHost);
+        cudaFree(d_state_seq);
+        cudaFree(d_state_par);
+
+        // Compare all elements
+        bool all_match = true;
+        for (int i = 0; i < t; i++) {
+            for (int j = 0; j < 8; j++) {
+                if (h_state_seq[i][j] != h_state_par[i][j]) {
+                    all_match = false;
+                    printf("t=%d: Mismatch at state[%d][%d]: seq=%08x, par=%08x\n", t, i, j, h_state_seq[i][j], h_state_par[i][j]);
+                }
+            }
+        }
+
+        delete[] h_state_seq;
+        delete[] h_state_par;
+
+        EXPECT_TRUE(all_match) << "Parallel hash mismatch for t=" << t;
+    }
+}
+
+// =====================
+// Poseidon2 linearHash GPU Test
+// =====================
+
+TEST(BN128_POSEIDON2_TEST, linearHash_gpu_4rows_100cols) {
+    const size_t rows = 4;
+    const size_t cols = 100;
+    int t = 16;  
+
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1);
+
+    // Create trace: 4 rows × 100 cols Goldilocks elements (uint64_t)
+    std::vector<uint64_t> trace(rows * cols);
+    for (size_t i = 0; i < rows * cols; i++) {
+        trace[i] = i;
+    }
+
+    uint64_t* d_input = nullptr;
+    BN128GPUScalarField::Element* d_output = nullptr;
+    CHECKCUDAERR(cudaMalloc(&d_input, rows * cols * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMalloc(&d_output, rows * sizeof(BN128GPUScalarField::Element)));
+
+    CHECKCUDAERR(cudaMemset(d_output, 0, rows * sizeof(BN128GPUScalarField::Element)));
+    CHECKCUDAERR(cudaMemcpy(d_input, trace.data(), rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+
+    Poseidon2BN128GPU::linearHash(d_output, d_input, cols, rows, t, false, 0);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+
+    RawFr::Element* h_output = new RawFr::Element[rows];
+    CHECKCUDAERR(cudaMemcpy(h_output, d_output, rows * sizeof(RawFr::Element), cudaMemcpyDeviceToHost));
+
+    for (size_t i = 0; i < rows; i++) {
+        std::string hex = RawFr::field.toString(h_output[i], 16);
+
+        if (i == 0) EXPECT_EQ(hex, "1223b7e8f691cf33507e5231ac5c85499ced6860d1cb60f8d90190c474023503");
+        if (i == 1) EXPECT_EQ(hex, "75b21d37bc203cc9cf3fe65afe3f81395a5e57b3d79c4912da3bc59f218cbe3");
+        if (i == 2) EXPECT_EQ(hex, "19a1d95e83fbeba694220978285391fe0e95983977717f5511e0492ec002899b");
+        if (i == 3) EXPECT_EQ(hex, "169fcf3687c13e08f0564b367046722c902102ef0a480f3dab80b946c0e1bda9");
+    }
+
+    delete[] h_output;
+    cudaFree(d_input);
+    cudaFree(d_output);
+}
+
+TEST(BN128_POSEIDON2_TEST, linearHashTiles_gpu_256rows_100cols) {
+    const size_t rows = 256;
+    const size_t cols = 100;
+    int t = 16;
+
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1);
+
+    std::vector<uint64_t> trace_rowmajor(rows * cols);
+    for (size_t i = 0; i < rows * cols; i++) {
+        trace_rowmajor[i] = i;
+    }
+
+    std::vector<uint64_t> trace_tiled(rows * cols);
+    for (size_t row = 0; row < rows; row++) {
+        for (size_t col = 0; col < cols; col++) {
+            uint64_t tiled_idx = getBufferOffsetCPU(row, col, rows, cols);
+            trace_tiled[tiled_idx] = trace_rowmajor[row * cols + col];
+        }
+    }
+
+    uint64_t *d_input_rowmajor = nullptr, *d_input_tiled = nullptr;
+    BN128GPUScalarField::Element *d_output_rowmajor = nullptr, *d_output_tiled = nullptr;
+
+    CHECKCUDAERR(cudaMalloc(&d_input_rowmajor, rows * cols * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMalloc(&d_input_tiled, rows * cols * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMalloc(&d_output_rowmajor, rows * sizeof(BN128GPUScalarField::Element)));
+    CHECKCUDAERR(cudaMalloc(&d_output_tiled, rows * sizeof(BN128GPUScalarField::Element)));
+
+    CHECKCUDAERR(cudaMemcpy(d_input_rowmajor, trace_rowmajor.data(), rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_input_tiled, trace_tiled.data(), rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+
+    Poseidon2BN128GPU::linearHash(d_output_rowmajor, d_input_rowmajor, cols, rows, t, false, 0);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+
+    Poseidon2BN128GPU::linearHashTiles(d_output_tiled, d_input_tiled, cols, rows, t, false, 0);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+
+    std::vector<RawFr::Element> h_output_rowmajor(rows);
+    std::vector<RawFr::Element> h_output_tiled(rows);
+    CHECKCUDAERR(cudaMemcpy(h_output_rowmajor.data(), d_output_rowmajor, rows * sizeof(RawFr::Element), cudaMemcpyDeviceToHost));
+    CHECKCUDAERR(cudaMemcpy(h_output_tiled.data(), d_output_tiled, rows * sizeof(RawFr::Element), cudaMemcpyDeviceToHost));
+
+    int mismatches = 0;
+    for (size_t i = 0; i < rows; i++) {
+        const uint32_t* p_rowmajor = reinterpret_cast<const uint32_t*>(&h_output_rowmajor[i]);
+        const uint32_t* p_tiled = reinterpret_cast<const uint32_t*>(&h_output_tiled[i]);
+
+        bool match = true;
+        for (int j = 0; j < 8; j++) {
+            if (p_rowmajor[j] != p_tiled[j]) {
+                match = false;
+                break;
+            }
+        }
+
+        if (!match) {
+            mismatches++;
+            if (mismatches <= 5) {
+                std::string hex_rowmajor = RawFr::field.toString(h_output_rowmajor[i], 16);
+                std::string hex_tiled = RawFr::field.toString(h_output_tiled[i], 16);
+                printf("Row %zu MISMATCH:\n", i);
+                printf("  rowmajor: %s\n", hex_rowmajor.c_str());
+                printf("  tiled:    %s\n", hex_tiled.c_str());
+            }
+        }
+    }
+
+    EXPECT_EQ(mismatches, 0) << "Found " << mismatches << " mismatches between row-major and tiled results";
+
+    cudaFree(d_input_rowmajor);
+    cudaFree(d_input_tiled);
+    cudaFree(d_output_rowmajor);
+    cudaFree(d_output_tiled);
 }
 
 // =====================
@@ -1010,24 +1225,6 @@ TEST(BN128_POSEIDON_TEST, linearHash_gpu_4rows_100cols) {
     cudaFree(d_output);
 }
 
-// Helper function to convert row-major trace to tiled layout (CPU version of getBufferOffset)
-// Tile layout: TILE_HEIGHT=256 rows × TILE_WIDTH=4 cols per tile
-// Within each tile, data is stored column-major with TILE_HEIGHT stride
-static inline uint64_t getBufferOffsetCPU(uint64_t row, uint64_t col, uint64_t nRows, uint64_t nCols) {
-    const uint64_t TILE_HEIGHT = 256;
-    const uint64_t TILE_WIDTH = 4;
-    
-    uint64_t blockY = col / TILE_WIDTH;
-    uint64_t blockX = row / TILE_HEIGHT;
-    uint64_t nCols_block = (nCols - TILE_WIDTH * blockY < TILE_WIDTH) 
-                           ? (nCols - TILE_WIDTH * blockY) : TILE_WIDTH;
-    uint64_t col_block = col % TILE_WIDTH;
-    uint64_t row_block = row % TILE_HEIGHT;
-
-    return blockY * TILE_WIDTH * nRows + blockX * nCols_block * TILE_HEIGHT
-           + col_block * TILE_HEIGHT + row_block;
-}
-
 // Test linearHashTiles with tiled layout - should produce same results as linearHash with row-major
 TEST(BN128_POSEIDON_TEST, linearHashTiles_gpu_256rows_100cols) {
     const size_t rows = 256;  // Use TILE_HEIGHT to properly test tiled layout
@@ -1103,6 +1300,218 @@ TEST(BN128_POSEIDON_TEST, linearHashTiles_gpu_256rows_100cols) {
     cudaFree(d_input_tiled);
     cudaFree(d_output_rowmajor);
     cudaFree(d_output_tiled);
+}
+
+// =====================
+// Poseidon2 merkletree GPU Test
+// =====================
+
+TEST(BN128_POSEIDON2_TEST, merkletree_gpu_8rows_100cols) {
+    const size_t rows = 8;
+    const size_t cols = 100;
+    const size_t arity = 4;  // t = arity for Poseidon2
+    // Tree: 8 leaves → 2 nodes (no padding) → 4 padded (2 zeros) → 1 root
+    // Total: 8 + 4 + 1 = 13
+    const size_t numNodes = 13;
+
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1);
+
+    std::vector<uint64_t> trace(rows * cols);
+    for (size_t i = 0; i < rows * cols; i++) {
+        trace[i] = i;
+    }
+
+    uint64_t* d_input = nullptr;
+    BN128GPUScalarField::Element* d_tree = nullptr;
+    CHECKCUDAERR(cudaMalloc(&d_input, rows * cols * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMalloc(&d_tree, numNodes * sizeof(BN128GPUScalarField::Element)));
+
+    CHECKCUDAERR(cudaMemcpy(d_input, trace.data(), rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemset(d_tree, 0, numNodes * sizeof(BN128GPUScalarField::Element)));
+
+    Poseidon2BN128GPU::merkletree(d_tree, d_input, cols, rows, arity, false, 0);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+
+    std::vector<RawFr::Element> h_tree(numNodes);
+    CHECKCUDAERR(cudaMemcpy(h_tree.data(), d_tree, numNodes * sizeof(RawFr::Element), cudaMemcpyDeviceToHost));
+
+    // Verify leaves match linearHash output
+    // (leaves are the first 'rows' elements of the tree)
+    BN128GPUScalarField::Element* d_linear_output = nullptr;
+    CHECKCUDAERR(cudaMalloc(&d_linear_output, rows * sizeof(BN128GPUScalarField::Element)));
+    Poseidon2BN128GPU::linearHash(d_linear_output, d_input, cols, rows, arity, false, 0);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+
+    std::vector<RawFr::Element> h_linear(rows);
+    CHECKCUDAERR(cudaMemcpy(h_linear.data(), d_linear_output, rows * sizeof(RawFr::Element), cudaMemcpyDeviceToHost));
+
+    for (size_t i = 0; i < rows; i++) {
+        const uint32_t* p_tree = reinterpret_cast<const uint32_t*>(&h_tree[i]);
+        const uint32_t* p_linear = reinterpret_cast<const uint32_t*>(&h_linear[i]);
+        bool match = true;
+        for (int j = 0; j < 8; j++) {
+            if (p_tree[j] != p_linear[j]) { match = false; break; }
+        }
+        EXPECT_TRUE(match) << "Leaf " << i << " doesn't match linearHash output";
+    }
+
+    // Verify root
+    EXPECT_EQ(RawFr::field.toString(h_tree[numNodes - 1], 16), "11f9f97308a003637e3c402a1e78341e73736911f2c27eab7fac6e412038aa51");
+
+    cudaFree(d_input);
+    cudaFree(d_tree);
+    cudaFree(d_linear_output);
+}
+
+TEST(BN128_POSEIDON2_TEST, merkletreeTiles_gpu_256rows_100cols) {
+    const size_t rows = 256;
+    const size_t cols = 100;
+    const size_t arity = 4;
+    // Tree: 256 leaves → 64 → 16 → 4 → 1 (all divide evenly, no padding)
+    // Total: 256 + 64 + 16 + 4 + 1 = 341
+    const size_t numNodes = 341;
+
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1);
+
+    std::vector<uint64_t> trace_rowmajor(rows * cols);
+    for (size_t i = 0; i < rows * cols; i++) {
+        trace_rowmajor[i] = i;
+    }
+
+    std::vector<uint64_t> trace_tiled(rows * cols);
+    for (size_t row = 0; row < rows; row++) {
+        for (size_t col = 0; col < cols; col++) {
+            uint64_t tiled_idx = getBufferOffsetCPU(row, col, rows, cols);
+            trace_tiled[tiled_idx] = trace_rowmajor[row * cols + col];
+        }
+    }
+
+    uint64_t *d_input_rowmajor = nullptr, *d_input_tiled = nullptr;
+    BN128GPUScalarField::Element *d_tree_rowmajor = nullptr, *d_tree_tiled = nullptr;
+
+    CHECKCUDAERR(cudaMalloc(&d_input_rowmajor, rows * cols * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMalloc(&d_input_tiled, rows * cols * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMalloc(&d_tree_rowmajor, numNodes * sizeof(BN128GPUScalarField::Element)));
+    CHECKCUDAERR(cudaMalloc(&d_tree_tiled, numNodes * sizeof(BN128GPUScalarField::Element)));
+
+    CHECKCUDAERR(cudaMemcpy(d_input_rowmajor, trace_rowmajor.data(), rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_input_tiled, trace_tiled.data(), rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemset(d_tree_rowmajor, 0, numNodes * sizeof(BN128GPUScalarField::Element)));
+    CHECKCUDAERR(cudaMemset(d_tree_tiled, 0, numNodes * sizeof(BN128GPUScalarField::Element)));
+
+    Poseidon2BN128GPU::merkletree(d_tree_rowmajor, d_input_rowmajor, cols, rows, arity, false, 0);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+
+    Poseidon2BN128GPU::merkletreeTiles(d_tree_tiled, d_input_tiled, cols, rows, arity, false, 0);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+
+    std::vector<RawFr::Element> h_tree_rowmajor(numNodes);
+    std::vector<RawFr::Element> h_tree_tiled(numNodes);
+    CHECKCUDAERR(cudaMemcpy(h_tree_rowmajor.data(), d_tree_rowmajor, numNodes * sizeof(RawFr::Element), cudaMemcpyDeviceToHost));
+    CHECKCUDAERR(cudaMemcpy(h_tree_tiled.data(), d_tree_tiled, numNodes * sizeof(RawFr::Element), cudaMemcpyDeviceToHost));
+
+    int mismatches = 0;
+    for (size_t i = 0; i < numNodes; i++) {
+        const uint32_t* p_rowmajor = reinterpret_cast<const uint32_t*>(&h_tree_rowmajor[i]);
+        const uint32_t* p_tiled = reinterpret_cast<const uint32_t*>(&h_tree_tiled[i]);
+
+        bool match = true;
+        for (int j = 0; j < 8; j++) {
+            if (p_rowmajor[j] != p_tiled[j]) {
+                match = false;
+                break;
+            }
+        }
+
+        if (!match) {
+            mismatches++;
+            if (mismatches <= 5) {
+                std::string hex_rowmajor = RawFr::field.toString(h_tree_rowmajor[i], 16);
+                std::string hex_tiled = RawFr::field.toString(h_tree_tiled[i], 16);
+                printf("Node %zu MISMATCH:\n", i);
+                printf("  rowmajor: %s\n", hex_rowmajor.c_str());
+                printf("  tiled:    %s\n", hex_tiled.c_str());
+            }
+        }
+    }
+
+    EXPECT_EQ(mismatches, 0) << "Found " << mismatches << " mismatches between row-major and tiled merkletree results";
+
+    cudaFree(d_input_rowmajor);
+    cudaFree(d_input_tiled);
+    cudaFree(d_tree_rowmajor);
+    cudaFree(d_tree_tiled);
+}
+
+TEST(BN128_POSEIDON2_TEST, grinding_gpu) {
+    uint32_t gpu_id = 0;
+    Poseidon2BN128GPU::initGPUConstants(&gpu_id, 1);
+
+    const uint8_t n_bits = 8;
+
+    RawFr field;
+    RawFr::Element h_state[3];
+    field.fromUI(h_state[0], 0x1234567890abcdefULL);
+    field.fromUI(h_state[1], 0xfedcba0987654321ULL);
+    field.fromUI(h_state[2], 0x0123456789abcdefULL);
+
+    Poseidon2BN128GPU::FrElement *d_state;
+    uint64_t *d_nonce;
+    uint64_t *d_nonceBlock;
+
+    CHECKCUDAERR(cudaMalloc(&d_state, 3 * sizeof(Poseidon2BN128GPU::FrElement)));
+    CHECKCUDAERR(cudaMalloc(&d_nonce, sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMalloc(&d_nonceBlock, NONCES_LAUNCH_GRID_SIZE * sizeof(uint64_t))); 
+
+    CHECKCUDAERR(cudaMemcpy(d_state, h_state, 3 * sizeof(Poseidon2BN128GPU::FrElement), cudaMemcpyHostToDevice));
+
+    uint64_t init_nonce = UINT64_MAX;
+    CHECKCUDAERR(cudaMemcpy(d_nonce, &init_nonce, sizeof(uint64_t), cudaMemcpyHostToDevice));
+
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+
+    Poseidon2BN128GPU::grinding(d_nonce, d_nonceBlock, d_state, n_bits, stream);
+
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    uint64_t h_nonce;
+    CHECKCUDAERR(cudaMemcpy(&h_nonce, d_nonce, sizeof(uint64_t), cudaMemcpyDeviceToHost));
+
+    // Verify we found a valid nonce
+    ASSERT_NE(h_nonce, UINT64_MAX) << "GPU grinding did not find a nonce";
+
+    // Verify the hash has the expected number of leading zeros
+    Poseidon2BN128GPU::FrElement *d_verify_state;
+    CHECKCUDAERR(cudaMalloc(&d_verify_state, 4 * sizeof(Poseidon2BN128GPU::FrElement)));
+    setup_grinding_verify_state<<<1, 1>>>(d_verify_state, d_state, h_nonce);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+
+    // Hash the state
+    Poseidon2BN128GPU p;
+    p.hash(d_verify_state, 4);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+
+    from_montgomery_kernel<<<1, 1>>>(d_verify_state, 1);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+
+    RawFr::Element h_hash_result;
+    CHECKCUDAERR(cudaMemcpy(&h_hash_result, d_verify_state, sizeof(RawFr::Element), cudaMemcpyDeviceToHost));
+
+    uint64_t hash_low = h_hash_result.v[0];
+    uint64_t level = 1ULL << (64 - n_bits);
+    EXPECT_LT(hash_low, level) << "Hash does not have " << (int)n_bits << " leading zeros. "
+                               << "hash_low=" << std::hex << hash_low << ", level=" << level;
+
+    CHECKCUDAERR(cudaFree(d_verify_state));
+
+    // Cleanup
+    CHECKCUDAERR(cudaStreamDestroy(stream));
+    CHECKCUDAERR(cudaFree(d_state));
+    CHECKCUDAERR(cudaFree(d_nonce));
+    CHECKCUDAERR(cudaFree(d_nonceBlock));
 }
 
 // =====================
@@ -1588,7 +1997,7 @@ TEST(BN128_POSEIDON_GPU_TEST, grinding_gpu) {
     
     CHECKCUDAERR(cudaMalloc(&d_state, 3 * sizeof(PoseidonBN128GPU::FrElement)));
     CHECKCUDAERR(cudaMalloc(&d_nonce, sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMalloc(&d_nonceBlock, 256 * sizeof(uint64_t)));  // GRINDING_GRID_SIZE
+    CHECKCUDAERR(cudaMalloc(&d_nonceBlock, NONCES_LAUNCH_GRID_SIZE * sizeof(uint64_t)));
     
     // Copy state to device
     CHECKCUDAERR(cudaMemcpy(d_state, h_state, 3 * sizeof(PoseidonBN128GPU::FrElement), cudaMemcpyHostToDevice));

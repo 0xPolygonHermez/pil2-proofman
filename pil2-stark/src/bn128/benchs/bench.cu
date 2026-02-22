@@ -347,6 +347,54 @@ BENCHMARK(POSEIDON2_SEQ_GPU_BENCH)
     ->Args({12})
     ->Args({16});
 
+static void POSEIDON2_PARALLEL_GPU_BENCH(benchmark::State &state) {
+    int t = state.range(0);
+
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1);
+
+    BN128GPUScalarField::Element* d_state = nullptr;
+    cudaMalloc(&d_state, t * sizeof(BN128GPUScalarField::Element));
+
+    RawFr field;
+    RawFr::Element* h_state = new RawFr::Element[t];
+    for (int i = 0; i < t; i++) {
+        field.fromUI(h_state[i], i);
+    }
+
+    // Warm-up
+    cudaMemcpy(d_state, h_state, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyHostToDevice);
+    Poseidon2BN128GPU poseidon2;
+    poseidon2.hashParallel(d_state, t);
+    cudaDeviceSynchronize();
+
+    for (auto _ : state) {
+        cudaMemcpy(d_state, h_state, t * sizeof(BN128GPUScalarField::Element), cudaMemcpyHostToDevice);
+        for(int i = 0; i < POSEIDON2_NUM_HASHES; i++){
+            poseidon2.hashParallel(d_state, t);
+        }
+        cudaDeviceSynchronize();
+        benchmark::DoNotOptimize(d_state);
+    }
+
+    cudaFree(d_state);
+    delete[] h_state;
+
+    state.counters["t"] = t;
+    state.counters["hashes"] = POSEIDON2_NUM_HASHES;
+    state.SetItemsProcessed(state.iterations() * POSEIDON2_NUM_HASHES);
+}
+
+BENCHMARK(POSEIDON2_PARALLEL_GPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Args({2})
+    ->Args({3})
+    ->Args({4})
+    ->Args({8})
+    ->Args({12})
+    ->Args({16});
+
 // =====================
 // LinearHash GPU Benchmark
 // =====================
@@ -460,6 +508,112 @@ BENCHMARK(LINEARHASHTILES_GPU_BENCH)
     ->Args({1 << 20, 100, 17})   // 1M rows × 100 cols, t=17
     ->Args({1024, 100, 9})       // 1K rows × 100 cols, t=9
     ->Args({1 << 16, 100, 9});   // 64K rows × 100 cols, t=9
+
+// =====================
+// Poseidon2 LinearHash GPU Benchmark
+// =====================
+
+static void POSEIDON2_LINEARHASH_GPU_BENCH(benchmark::State &state) {
+    uint64_t rows = state.range(0);
+    uint64_t cols = state.range(1);
+    int t = state.range(2);
+
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1);
+
+    uint64_t* h_input = new uint64_t[rows * cols];
+    for (uint64_t i = 0; i < rows * cols; i++) {
+        h_input[i] = i;
+    }
+
+    uint64_t* d_input = nullptr;
+    BN128GPUScalarField::Element* d_output = nullptr;
+    cudaMalloc(&d_input, rows * cols * sizeof(uint64_t));
+    cudaMalloc(&d_output, rows * sizeof(BN128GPUScalarField::Element));
+
+    cudaMemcpy(d_input, h_input, rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice);
+
+    // Warm-up
+    Poseidon2BN128GPU::linearHash(d_output, d_input, cols, rows, t, false, 0);
+    cudaDeviceSynchronize();
+
+    for (auto _ : state) {
+        Poseidon2BN128GPU::linearHash(d_output, d_input, cols, rows, t, false, 0);
+        cudaDeviceSynchronize();
+        benchmark::DoNotOptimize(d_output);
+    }
+
+    cudaFree(d_input);
+    cudaFree(d_output);
+    delete[] h_input;
+
+    state.counters["rows"] = rows;
+    state.counters["cols"] = cols;
+    state.counters["t"] = t;
+    state.SetItemsProcessed(state.iterations() * rows * cols);
+}
+
+BENCHMARK(POSEIDON2_LINEARHASH_GPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Args({1024, 100, 16})
+    ->Args({1024, 1000, 16})
+    ->Args({1 << 16, 100, 16})
+    ->Args({1 << 16, 1000, 16})
+    ->Args({1 << 20, 100, 16})
+    ->Args({1024, 100, 8})
+    ->Args({1 << 16, 100, 8});
+
+static void POSEIDON2_LINEARHASHTILES_GPU_BENCH(benchmark::State &state) {
+    uint64_t rows = state.range(0);
+    uint64_t cols = state.range(1);
+    int t = state.range(2);
+
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1);
+
+    uint64_t* h_input = new uint64_t[rows * cols];
+    for (uint64_t i = 0; i < rows * cols; i++) {
+        h_input[i] = i;
+    }
+
+    uint64_t* d_input = nullptr;
+    BN128GPUScalarField::Element* d_output = nullptr;
+    cudaMalloc(&d_input, rows * cols * sizeof(uint64_t));
+    cudaMalloc(&d_output, rows * sizeof(BN128GPUScalarField::Element));
+
+    cudaMemcpy(d_input, h_input, rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice);
+
+    // Warm-up
+    Poseidon2BN128GPU::linearHashTiles(d_output, d_input, cols, rows, t, false, 0);
+    cudaDeviceSynchronize();
+
+    for (auto _ : state) {
+        Poseidon2BN128GPU::linearHashTiles(d_output, d_input, cols, rows, t, false, 0);
+        cudaDeviceSynchronize();
+        benchmark::DoNotOptimize(d_output);
+    }
+
+    cudaFree(d_input);
+    cudaFree(d_output);
+    delete[] h_input;
+
+    state.counters["rows"] = rows;
+    state.counters["cols"] = cols;
+    state.counters["t"] = t;
+    state.SetItemsProcessed(state.iterations() * rows * cols);
+}
+
+BENCHMARK(POSEIDON2_LINEARHASHTILES_GPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Args({1024, 100, 16})
+    ->Args({1024, 1000, 16})
+    ->Args({1 << 16, 100, 16})
+    ->Args({1 << 16, 1000, 16})
+    ->Args({1 << 20, 100, 16})
+    ->Args({1024, 100, 8})
+    ->Args({1 << 16, 100, 8});
 
 // =====================
 // Merkletree GPU Benchmark
@@ -610,6 +764,200 @@ BENCHMARK(MERKLETREETILES_GPU_BENCH)
     ->Args({1 << 16, 100, 4});    // 64K rows × 100 cols, arity=4
 
 // =====================
+// Poseidon2 Merkletree GPU Benchmark
+// =====================
+
+static void POSEIDON2_MERKLETREE_GPU_BENCH(benchmark::State &state) {
+    uint64_t rows = state.range(0);
+    uint64_t cols = state.range(1);
+    uint64_t arity = state.range(2);
+
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1);
+
+    uint64_t* h_input = new uint64_t[rows * cols];
+    for (uint64_t i = 0; i < rows * cols; i++) {
+        h_input[i] = i;
+    }
+
+    // Calculate tree size
+    uint64_t n = rows;
+    uint64_t nextN = ((n - 1) / arity) + 1;
+    uint64_t numNodes = nextN * arity;
+    while (n > 1) {
+        n = nextN;
+        nextN = ((n - 1) / arity) + 1;
+        if (n > 1) {
+            numNodes += nextN * arity;
+        } else {
+            numNodes += 1;
+        }
+    }
+
+    uint64_t* d_input = nullptr;
+    BN128GPUScalarField::Element* d_tree = nullptr;
+    cudaMalloc(&d_input, rows * cols * sizeof(uint64_t));
+    cudaMalloc(&d_tree, numNodes * sizeof(BN128GPUScalarField::Element));
+
+    cudaMemcpy(d_input, h_input, rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice);
+
+    // Warm-up
+    Poseidon2BN128GPU::merkletree(d_tree, d_input, cols, rows, arity, false, 0);
+    cudaDeviceSynchronize();
+
+    for (auto _ : state) {
+        Poseidon2BN128GPU::merkletree(d_tree, d_input, cols, rows, arity, false, 0);
+        cudaDeviceSynchronize();
+        benchmark::DoNotOptimize(d_tree);
+    }
+
+    cudaFree(d_input);
+    cudaFree(d_tree);
+    delete[] h_input;
+
+    state.counters["rows"] = rows;
+    state.counters["cols"] = cols;
+    state.counters["arity"] = arity;
+    state.counters["numNodes"] = numNodes;
+    state.SetItemsProcessed(state.iterations() * rows * cols);
+}
+
+BENCHMARK(POSEIDON2_MERKLETREE_GPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Args({1024, 100, 16})
+    ->Args({1024, 1000, 16})
+    ->Args({1 << 16, 100, 16})
+    ->Args({1 << 16, 1000, 16})
+    ->Args({1 << 20, 100, 16})
+    ->Args({1 << 16, 100, 8})
+    ->Args({1 << 16, 100, 4});
+
+static void POSEIDON2_MERKLETREETILES_GPU_BENCH(benchmark::State &state) {
+    uint64_t rows = state.range(0);
+    uint64_t cols = state.range(1);
+    uint64_t arity = state.range(2);
+
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1);
+
+    uint64_t* h_input = new uint64_t[rows * cols];
+    for (uint64_t i = 0; i < rows * cols; i++) {
+        h_input[i] = i;
+    }
+
+    uint64_t n = rows;
+    uint64_t nextN = ((n - 1) / arity) + 1;
+    uint64_t numNodes = nextN * arity;
+    while (n > 1) {
+        n = nextN;
+        nextN = ((n - 1) / arity) + 1;
+        if (n > 1) {
+            numNodes += nextN * arity;
+        } else {
+            numNodes += 1;
+        }
+    }
+
+    uint64_t* d_input = nullptr;
+    BN128GPUScalarField::Element* d_tree = nullptr;
+    cudaMalloc(&d_input, rows * cols * sizeof(uint64_t));
+    cudaMalloc(&d_tree, numNodes * sizeof(BN128GPUScalarField::Element));
+
+    cudaMemcpy(d_input, h_input, rows * cols * sizeof(uint64_t), cudaMemcpyHostToDevice);
+
+    // Warm-up
+    Poseidon2BN128GPU::merkletreeTiles(d_tree, d_input, cols, rows, arity, false, 0);
+    cudaDeviceSynchronize();
+
+    for (auto _ : state) {
+        Poseidon2BN128GPU::merkletreeTiles(d_tree, d_input, cols, rows, arity, false, 0);
+        cudaDeviceSynchronize();
+        benchmark::DoNotOptimize(d_tree);
+    }
+
+    cudaFree(d_input);
+    cudaFree(d_tree);
+    delete[] h_input;
+
+    state.counters["rows"] = rows;
+    state.counters["cols"] = cols;
+    state.counters["arity"] = arity;
+    state.counters["numNodes"] = numNodes;
+    state.SetItemsProcessed(state.iterations() * rows * cols);
+}
+
+BENCHMARK(POSEIDON2_MERKLETREETILES_GPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Args({1024, 100, 16})
+    ->Args({1024, 1000, 16})
+    ->Args({1 << 16, 100, 16})
+    ->Args({1 << 16, 1000, 16})
+    ->Args({1 << 20, 100, 16})
+    ->Args({1 << 16, 100, 8})
+    ->Args({1 << 16, 100, 4});
+
+// =====================
+// Poseidon2 Grinding GPU Benchmark
+// =====================
+
+static void POSEIDON2_GRINDING_GPU_BENCH(benchmark::State &state) {
+    int n_bits = state.range(0);
+
+    uint32_t gpu_idxs[] = {0};
+    Poseidon2BN128GPU::initGPUConstants(gpu_idxs, 1);
+
+    // Create a 3-element state for grinding
+    RawFr field;
+    RawFr::Element h_state[3];
+    for (int i = 0; i < 3; i++) {
+        field.fromUI(h_state[i], 1000 + i);
+    }
+
+    BN128GPUScalarField::Element *d_state;
+    uint64_t *d_nonce;
+    uint64_t *d_nonceBlock;
+
+    cudaMalloc(&d_state, 3 * sizeof(BN128GPUScalarField::Element));
+    cudaMalloc(&d_nonce, sizeof(uint64_t));
+    cudaMalloc(&d_nonceBlock, NONCES_LAUNCH_GRID_SIZE * sizeof(uint64_t));
+
+    cudaMemcpy(d_state, h_state, 3 * sizeof(BN128GPUScalarField::Element), cudaMemcpyHostToDevice);
+
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
+
+    // Warm-up
+    uint64_t init_nonce = UINT64_MAX;
+    cudaMemcpy(d_nonce, &init_nonce, sizeof(uint64_t), cudaMemcpyHostToDevice);
+    Poseidon2BN128GPU::grinding(d_nonce, d_nonceBlock, d_state, n_bits, stream);
+    cudaStreamSynchronize(stream);
+
+    for (auto _ : state) {
+        cudaMemcpy(d_nonce, &init_nonce, sizeof(uint64_t), cudaMemcpyHostToDevice);
+        Poseidon2BN128GPU::grinding(d_nonce, d_nonceBlock, d_state, n_bits, stream);
+        cudaStreamSynchronize(stream);
+        benchmark::DoNotOptimize(d_nonce);
+    }
+
+    cudaStreamDestroy(stream);
+    cudaFree(d_state);
+    cudaFree(d_nonce);
+    cudaFree(d_nonceBlock);
+
+    state.counters["n_bits"] = n_bits;
+}
+
+BENCHMARK(POSEIDON2_GRINDING_GPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime()
+    ->Arg(8)
+    ->Arg(12)
+    ->Arg(16)
+    ->Arg(20);
+
+// =====================
 // Poseidon Grinding GPU Benchmark
 // =====================
 
@@ -634,7 +982,7 @@ static void POSEIDON_GRINDING_GPU_BENCH(benchmark::State &state) {
     
     cudaMalloc(&d_state, 3 * sizeof(BN128GPUScalarField::Element));
     cudaMalloc(&d_nonce, sizeof(uint64_t));
-    cudaMalloc(&d_nonceBlock, 256 * sizeof(uint64_t));  // GRINDING_GRID_SIZE
+    cudaMalloc(&d_nonceBlock, NONCES_LAUNCH_GRID_SIZE * sizeof(uint64_t));
     
     // Copy state to device
     cudaMemcpy(d_state, h_state, 3 * sizeof(BN128GPUScalarField::Element), cudaMemcpyHostToDevice);

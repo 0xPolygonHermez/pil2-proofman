@@ -3,7 +3,8 @@
 
 #include <vector>
 #include <string>
-#include "bn128.cuh"
+#include "bn128_utils.cuh"
+#include "grinding_constants.hpp"
 #include <cassert>
 using namespace std;
 
