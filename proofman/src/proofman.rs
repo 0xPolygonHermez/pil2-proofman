@@ -345,6 +345,10 @@ where
         self.sctx.get_setup(airgroup_id, air_id)
     }
 
+    pub fn is_first_partition(&self) -> bool {
+        self.pctx.dctx_is_first_partition()
+    }
+
     pub fn get_execution_info(&self) -> ExecutionInfo {
         self.execution_info.read().unwrap().clone()
     }
