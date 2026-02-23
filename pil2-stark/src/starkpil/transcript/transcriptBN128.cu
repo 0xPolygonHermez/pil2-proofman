@@ -13,12 +13,12 @@ static int transcriptBN128_initialized = 0;
 #define DECLARE_SHARED_FR_ARRAYS() \
     __shared__ uint32_t _raw_shared_state[32 * 8]; \
     __shared__ uint32_t _raw_tmp[32 * 8]; \
-    Poseidon2BN128GPU::FrElement* shared_state = reinterpret_cast<Poseidon2BN128GPU::FrElement*>(_raw_shared_state); \
-    Poseidon2BN128GPU::FrElement* tmp = reinterpret_cast<Poseidon2BN128GPU::FrElement*>(_raw_tmp)
+    BN128GPUScalarField::Element* shared_state = reinterpret_cast<BN128GPUScalarField::Element*>(_raw_shared_state); \
+    BN128GPUScalarField::Element* tmp = reinterpret_cast<BN128GPUScalarField::Element*>(_raw_tmp)
 
 // Device constant memory for Poseidon2 C and D constants
-__device__ __constant__ Poseidon2BN128GPU::FrElement TRANSCRIPT_GPU_C[185]; // max size for t=16
-__device__ __constant__ Poseidon2BN128GPU::FrElement TRANSCRIPT_GPU_D[16];  // max size for t=16
+__device__ __constant__ BN128GPUScalarField::Element TRANSCRIPT_GPU_C[185]; // max size for t=16
+__device__ __constant__ BN128GPUScalarField::Element TRANSCRIPT_GPU_D[16];  // max size for t=16
 
 // Round counts for Poseidon2 partial rounds: for t=2,3,4,8,12,16
 __device__ __constant__ int TRANSCRIPT_N_ROUNDS_P[6] = {56, 56, 56, 57, 57, 57};
@@ -31,7 +31,7 @@ __device__ __forceinline__ int transcript_get_nRoundsP_pos(int t) {
 
 // Device helper: Convert BN128 Fr element and extract limbs
 // GPU BN128 elements are stored in Montgomery form as 8 uint32_t limbs
-__device__ void fromMontgomeryLimbs(uint64_t* result, Poseidon2BN128GPU::FrElement a) {
+__device__ void fromMontgomeryLimbs(uint64_t* result, BN128GPUScalarField::Element a) {
 
     BN128GPUScalarField::fromMontgomery(a);
     // The fr_t structure contains 8 uint32_t values in little-endian order
@@ -42,7 +42,7 @@ __device__ void fromMontgomeryLimbs(uint64_t* result, Poseidon2BN128GPU::FrEleme
     result[3] = ((uint64_t)a[7] << 32) | a[6];
 }
 
-__device__ void goldilocks_to_fr(Poseidon2BN128GPU::FrElement& result, const Goldilocks::Element& gl) {
+__device__ void goldilocks_to_fr(BN128GPUScalarField::Element& result, const Goldilocks::Element& gl) {
 
     result = BN128GPUScalarField::zero();
 
@@ -57,10 +57,10 @@ __device__ void goldilocks_to_fr(Poseidon2BN128GPU::FrElement& result, const Gol
 }
 
 // Parallel _updateStateBN128 - uses blockDim.x threads for parallel hash
-__device__ void _updateStateBN128(Poseidon2BN128GPU::FrElement* state, Poseidon2BN128GPU::FrElement* pending,
-                                  Poseidon2BN128GPU::FrElement* out, uint* pending_cursor, uint* out_cursor,
+__device__ void _updateStateBN128(BN128GPUScalarField::Element* state, BN128GPUScalarField::Element* pending,
+                                  BN128GPUScalarField::Element* out, uint* pending_cursor, uint* out_cursor,
                                   uint* out3_cursor, uint64_t arity,
-                                  Poseidon2BN128GPU::FrElement* shared_state, Poseidon2BN128GPU::FrElement* tmp)
+                                  BN128GPUScalarField::Element* shared_state, BN128GPUScalarField::Element* tmp)
 {
     int tid = threadIdx.x;
     int rate = arity - 1;
@@ -108,10 +108,10 @@ __device__ void _updateStateBN128(Poseidon2BN128GPU::FrElement* state, Poseidon2
 }
 
 // Parallel _add1BN128 - must be called with 32 threads
-__device__ void _add1BN128(Poseidon2BN128GPU::FrElement* state, Poseidon2BN128GPU::FrElement* pending,
-                           Poseidon2BN128GPU::FrElement* out, uint* pending_cursor, uint* out_cursor,
-                           uint* out3_cursor, uint64_t arity, const Poseidon2BN128GPU::FrElement& val,
-                           Poseidon2BN128GPU::FrElement* shared_state, Poseidon2BN128GPU::FrElement* tmp)
+__device__ void _add1BN128(BN128GPUScalarField::Element* state, BN128GPUScalarField::Element* pending,
+                           BN128GPUScalarField::Element* out, uint* pending_cursor, uint* out_cursor,
+                           uint* out3_cursor, uint64_t arity, const BN128GPUScalarField::Element& val,
+                           BN128GPUScalarField::Element* shared_state, BN128GPUScalarField::Element* tmp)
 {
     int tid = threadIdx.x;
     __shared__ bool need_hash;
@@ -132,15 +132,15 @@ __device__ void _add1BN128(Poseidon2BN128GPU::FrElement* state, Poseidon2BN128GP
 }
 
 // Kernel for adding Goldilocks elements - uses 32 threads
-__global__ void _addBN128_GL(Goldilocks::Element* input, uint64_t size, Poseidon2BN128GPU::FrElement* state,
-                             Poseidon2BN128GPU::FrElement* pending, Poseidon2BN128GPU::FrElement* out,
+__global__ void _addBN128_GL(Goldilocks::Element* input, uint64_t size, BN128GPUScalarField::Element* state,
+                             BN128GPUScalarField::Element* pending, BN128GPUScalarField::Element* out,
                              uint* pending_cursor, uint* out_cursor, uint* out3_cursor, uint64_t arity)
 {
     DECLARE_SHARED_FR_ARRAYS();
 
     for (uint64_t i = 0; i < size; i++)
     {
-        Poseidon2BN128GPU::FrElement fr_val;
+        BN128GPUScalarField::Element fr_val;
         // All threads convert (redundant but avoids sync issues)
         goldilocks_to_fr(fr_val, input[i]);
         __syncthreads();
@@ -150,8 +150,8 @@ __global__ void _addBN128_GL(Goldilocks::Element* input, uint64_t size, Poseidon
 }
 
 // Kernel for adding Fr elements - uses 32 threads
-__global__ void _addBN128_Fr(Poseidon2BN128GPU::FrElement* input, uint64_t size, Poseidon2BN128GPU::FrElement* state,
-                             Poseidon2BN128GPU::FrElement* pending, Poseidon2BN128GPU::FrElement* out,
+__global__ void _addBN128_Fr(BN128GPUScalarField::Element* input, uint64_t size, BN128GPUScalarField::Element* state,
+                             BN128GPUScalarField::Element* pending, BN128GPUScalarField::Element* out,
                              uint* pending_cursor, uint* out_cursor, uint* out3_cursor, uint64_t arity)
 {
     DECLARE_SHARED_FR_ARRAYS();
@@ -163,10 +163,10 @@ __global__ void _addBN128_Fr(Poseidon2BN128GPU::FrElement* input, uint64_t size,
 }
 
 // _getFields253 - must be called with 32 threads
-__device__ Poseidon2BN128GPU::FrElement _getFields253(Poseidon2BN128GPU::FrElement* state, Poseidon2BN128GPU::FrElement* pending,
-                                                     Poseidon2BN128GPU::FrElement* out, uint* pending_cursor, uint* out_cursor,
+__device__ BN128GPUScalarField::Element _getFields253(BN128GPUScalarField::Element* state, BN128GPUScalarField::Element* pending,
+                                                     BN128GPUScalarField::Element* out, uint* pending_cursor, uint* out_cursor,
                                                      uint* out3_cursor, uint64_t arity,
-                                                     Poseidon2BN128GPU::FrElement* shared_state, Poseidon2BN128GPU::FrElement* tmp)
+                                                     BN128GPUScalarField::Element* shared_state, BN128GPUScalarField::Element* tmp)
 {
     int tid = threadIdx.x;
     __shared__ bool found_result;
@@ -199,10 +199,10 @@ __device__ Poseidon2BN128GPU::FrElement _getFields253(Poseidon2BN128GPU::FrEleme
 }
 
 // _getFields1BN128 - must be called with 32 threads
-__device__ uint64_t _getFields1BN128(Poseidon2BN128GPU::FrElement* state, Poseidon2BN128GPU::FrElement* pending,
-                                     Poseidon2BN128GPU::FrElement* out, uint64_t* out3, uint* pending_cursor,
+__device__ uint64_t _getFields1BN128(BN128GPUScalarField::Element* state, BN128GPUScalarField::Element* pending,
+                                     BN128GPUScalarField::Element* out, uint64_t* out3, uint* pending_cursor,
                                      uint* out_cursor, uint* out3_cursor, uint64_t arity,
-                                     Poseidon2BN128GPU::FrElement* shared_state, Poseidon2BN128GPU::FrElement* tmp)
+                                     BN128GPUScalarField::Element* shared_state, BN128GPUScalarField::Element* tmp)
 {
     int tid = threadIdx.x;
     __shared__ uint64_t result;
@@ -231,7 +231,7 @@ __device__ uint64_t _getFields1BN128(Poseidon2BN128GPU::FrElement* state, Poseid
         // Try to get from out buffer and populate out3
         if (tid == 0) {
             if (*out_cursor > 0) {
-                Poseidon2BN128GPU::FrElement res = out[0];
+                BN128GPUScalarField::Element res = out[0];
 
                 // Shift remaining elements in out
                 for (uint i = 1; i < *out_cursor; i++) {
@@ -262,8 +262,8 @@ __device__ uint64_t _getFields1BN128(Poseidon2BN128GPU::FrElement* state, Poseid
 }
 
 // Kernel for getField - uses 32 threads
-__global__ void _getFieldBN128(uint64_t* output, Poseidon2BN128GPU::FrElement* state, Poseidon2BN128GPU::FrElement* pending,
-                               Poseidon2BN128GPU::FrElement* out, uint64_t* out3, uint* pending_cursor, uint* out_cursor,
+__global__ void _getFieldBN128(uint64_t* output, BN128GPUScalarField::Element* state, BN128GPUScalarField::Element* pending,
+                               BN128GPUScalarField::Element* out, uint64_t* out3, uint* pending_cursor, uint* out_cursor,
                                uint* out3_cursor, uint64_t arity)
 {
     DECLARE_SHARED_FR_ARRAYS();
@@ -281,8 +281,8 @@ __global__ void _getFieldBN128(uint64_t* output, Poseidon2BN128GPU::FrElement* s
 }
 
 // Kernel for getState - uses 32 threads
-__global__ void __getStateBN128(Poseidon2BN128GPU::FrElement* output, Poseidon2BN128GPU::FrElement* state,
-                                Poseidon2BN128GPU::FrElement* pending, Poseidon2BN128GPU::FrElement* out,
+__global__ void __getStateBN128(BN128GPUScalarField::Element* output, BN128GPUScalarField::Element* state,
+                                BN128GPUScalarField::Element* pending, BN128GPUScalarField::Element* out,
                                 uint* pending_cursor, uint* out_cursor, uint* out3_cursor, uint64_t arity)
 {
     DECLARE_SHARED_FR_ARRAYS();
@@ -303,8 +303,8 @@ __global__ void __getStateBN128(Poseidon2BN128GPU::FrElement* output, Poseidon2B
 }
 
 // Kernel for getPermutations - uses 32 threads
-__global__ void __getPermutationsBN128(uint64_t *res, uint64_t n, uint64_t nBits, Poseidon2BN128GPU::FrElement* state,
-                                       Poseidon2BN128GPU::FrElement* pending, Poseidon2BN128GPU::FrElement* out,
+__global__ void __getPermutationsBN128(uint64_t *res, uint64_t n, uint64_t nBits, BN128GPUScalarField::Element* state,
+                                       BN128GPUScalarField::Element* pending, BN128GPUScalarField::Element* out,
                                        uint* pending_cursor, uint* out_cursor, uint* out3_cursor, uint64_t arity)
 {
     DECLARE_SHARED_FR_ARRAYS();
@@ -315,20 +315,20 @@ __global__ void __getPermutationsBN128(uint64_t *res, uint64_t n, uint64_t nBits
     uint64_t NFields = (totalBits + 252) / 253;  // ceil((totalBits) / 253)
 
     // Only thread 0 manages the fields array
-    Poseidon2BN128GPU::FrElement* fields = nullptr;
+    BN128GPUScalarField::Element* fields = nullptr;
     if (tid == 0) {
-        fields = new Poseidon2BN128GPU::FrElement[NFields];
+        fields = new BN128GPUScalarField::Element[NFields];
     }
     __syncthreads();
 
     // Broadcast fields pointer to all threads via shared memory
-    __shared__ Poseidon2BN128GPU::FrElement* shared_fields;
+    __shared__ BN128GPUScalarField::Element* shared_fields;
     if (tid == 0) shared_fields = fields;
     __syncthreads();
     fields = shared_fields;
 
     for (uint64_t i = 0; i < NFields; i++) {
-        Poseidon2BN128GPU::FrElement field_val = _getFields253(state, pending, out, pending_cursor, out_cursor, out3_cursor, arity, shared_state, tmp);
+        BN128GPUScalarField::Element field_val = _getFields253(state, pending, out, pending_cursor, out_cursor, out3_cursor, arity, shared_state, tmp);
         if (tid == 0) {
             fields[i] = field_val;
         }
@@ -375,9 +375,9 @@ TranscriptBN128_GPU::TranscriptBN128_GPU(uint64_t arity, cudaStream_t stream)
     this->arity = arity;
     uint64_t rate = arity - 1;
 
-    CHECKCUDAERR(cudaMalloc((void**)&state, sizeof(Poseidon2BN128GPU::FrElement)));
-    CHECKCUDAERR(cudaMalloc((void**)&pending, rate * sizeof(Poseidon2BN128GPU::FrElement)));
-    CHECKCUDAERR(cudaMalloc((void**)&out, arity * sizeof(Poseidon2BN128GPU::FrElement)));
+    CHECKCUDAERR(cudaMalloc((void**)&state, sizeof(BN128GPUScalarField::Element)));
+    CHECKCUDAERR(cudaMalloc((void**)&pending, rate * sizeof(BN128GPUScalarField::Element)));
+    CHECKCUDAERR(cudaMalloc((void**)&out, arity * sizeof(BN128GPUScalarField::Element)));
     CHECKCUDAERR(cudaMalloc((void**)&out3, 3 * sizeof(uint64_t)));
     CHECKCUDAERR(cudaMalloc((void**)&pending_cursor, sizeof(uint)));
     CHECKCUDAERR(cudaMalloc((void**)&out_cursor, sizeof(uint)));
@@ -390,9 +390,9 @@ void TranscriptBN128_GPU::reset(cudaStream_t stream)
 {
     uint64_t rate = arity - 1;
     // Initialize state to zero
-    CHECKCUDAERR(cudaMemsetAsync(state, 0, sizeof(Poseidon2BN128GPU::FrElement), stream));
-    CHECKCUDAERR(cudaMemsetAsync(pending, 0, rate * sizeof(Poseidon2BN128GPU::FrElement), stream));
-    CHECKCUDAERR(cudaMemsetAsync(out, 0, arity * sizeof(Poseidon2BN128GPU::FrElement), stream));
+    CHECKCUDAERR(cudaMemsetAsync(state, 0, sizeof(BN128GPUScalarField::Element), stream));
+    CHECKCUDAERR(cudaMemsetAsync(pending, 0, rate * sizeof(BN128GPUScalarField::Element), stream));
+    CHECKCUDAERR(cudaMemsetAsync(out, 0, arity * sizeof(BN128GPUScalarField::Element), stream));
     CHECKCUDAERR(cudaMemsetAsync(out3, 0, 3 * sizeof(uint64_t), stream));
     CHECKCUDAERR(cudaMemsetAsync(pending_cursor, 0, sizeof(uint), stream));
     CHECKCUDAERR(cudaMemsetAsync(out_cursor, 0, sizeof(uint), stream));
@@ -446,7 +446,7 @@ void TranscriptBN128_GPU::put(Goldilocks::Element *input, uint64_t size, cudaStr
     if(timer != nullptr) TimerStopCategoryGPU((*timer), TRANSCRIPT_PUT);
 }
 
-void TranscriptBN128_GPU::put(Poseidon2BN128GPU::FrElement *input, uint64_t size, cudaStream_t stream, TimerGPU *timer)
+void TranscriptBN128_GPU::put(BN128GPUScalarField::Element *input, uint64_t size, cudaStream_t stream, TimerGPU *timer)
 {
     if(timer != nullptr) TimerStartCategoryGPU((*timer), TRANSCRIPT_PUT);
     _addBN128_Fr<<<1, 32, 0, stream>>>(input, size, state, pending, out, pending_cursor, out_cursor, out3_cursor, arity);
@@ -458,7 +458,7 @@ void TranscriptBN128_GPU::getField(uint64_t *output, cudaStream_t stream)
     _getFieldBN128<<<1, 32, 0, stream>>>(output, state, pending, out, out3, pending_cursor, out_cursor, out3_cursor, arity);
 }
 
-void TranscriptBN128_GPU::getState(Poseidon2BN128GPU::FrElement* output, cudaStream_t stream)
+void TranscriptBN128_GPU::getState(BN128GPUScalarField::Element* output, cudaStream_t stream)
 {
     __getStateBN128<<<1, 32, 0, stream>>>(output, state, pending, out, pending_cursor, out_cursor, out3_cursor, arity);
 }

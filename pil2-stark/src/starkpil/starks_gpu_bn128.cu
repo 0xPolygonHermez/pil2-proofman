@@ -34,8 +34,8 @@ __global__ void getTracePolsTilesBN128(gl64_t *d_treeTrace, uint64_t nCols, uint
 // Device function to recursively generate Merkle proof for BN128 trees
 // Writes BN128 siblings (RawFr::Element = 8 x uint32_t) to proof buffer
 __device__ void genMerkleProofBN128_(
-    Poseidon2BN128GPU::FrElement *nodes,
-    Poseidon2BN128GPU::FrElement *proof,
+    BN128GPUScalarField::Element *nodes,
+    BN128GPUScalarField::Element *proof,
     uint64_t idx,
     uint64_t offset,
     uint64_t n,
@@ -67,7 +67,7 @@ __device__ void genMerkleProofBN128_(
 // Kernel to generate Merkle proofs for BN128 trees
 // Each thread handles one query
 __global__ void genMerkleProofBN128(
-    Poseidon2BN128GPU::FrElement *d_nodes,
+    BN128GPUScalarField::Element *d_nodes,
     uint64_t nLeaves,
     uint64_t *d_friQueries,
     uint64_t nQueries,
@@ -83,7 +83,7 @@ __global__ void genMerkleProofBN128(
         uint64_t row = d_friQueries[idx_query];
         uint8_t *bufferBase = (uint8_t*)d_buffer;
         uint8_t *proofStart = bufferBase + idx_query * bufferWidth * sizeof(gl64_t) + maxTreeWidth * sizeof(gl64_t);
-        Poseidon2BN128GPU::FrElement *proof = (Poseidon2BN128GPU::FrElement *)proofStart; 
+        BN128GPUScalarField::Element *proof = (BN128GPUScalarField::Element *)proofStart; 
         
         genMerkleProofBN128_(d_nodes, proof, row, 0, nLeaves, arity, lastLevel);
     }
@@ -153,7 +153,7 @@ void proveQueries_bn128_gpu(
         dim3 nthreads(64);
         dim3 nblocks((nQueries + nthreads.x - 1) / nthreads.x);
         genMerkleProofBN128<<<nblocks, nthreads, 0, stream>>>(
-            (Poseidon2BN128GPU::FrElement *)trees[k]->nodes,
+            (BN128GPUScalarField::Element *)trees[k]->nodes,
             trees[k]->height,
             d_friQueries,
             nQueries,
@@ -203,7 +203,7 @@ void proveFRIQueries_bn128_gpu(
     dim3 nthreads(64);
     dim3 nblocks((nQueries + nthreads.x - 1) / nthreads.x);
     genMerkleProofBN128<<<nblocks, nthreads, 0, stream>>>(
-        (Poseidon2BN128GPU::FrElement *)treeFRI->nodes,
+        (BN128GPUScalarField::Element *)treeFRI->nodes,
         treeFRI->height,
         d_friQueries,
         nQueries,
@@ -217,7 +217,7 @@ void proveFRIQueries_bn128_gpu(
 }
 
 __global__ void convertGLToBN128ScalarField_kernel(
-    Poseidon2BN128GPU::FrElement *output,
+    BN128GPUScalarField::Element *output,
     const uint64_t *input,
     uint64_t n
 ) {
@@ -239,14 +239,14 @@ __global__ void convertGLToBN128ScalarField_kernel(
     }
 }
 
-void convertGLToBN128ScalarField(Poseidon2BN128GPU::FrElement *output, const uint64_t *input, uint64_t n, cudaStream_t stream) {
+void convertGLToBN128ScalarField(BN128GPUScalarField::Element *output, const uint64_t *input, uint64_t n, cudaStream_t stream) {
     if (n == 0) return;
     dim3 threads(32);
     dim3 blocks((n + threads.x - 1) / threads.x);
     convertGLToBN128ScalarField_kernel<<<blocks, threads, 0, stream>>>(output, input, n);
 }
 
-void calculateHashBN128_gpu(TranscriptBN128_GPU *d_transcript, Poseidon2BN128GPU::FrElement* hash, SetupCtx &setupCtx, Goldilocks::Element* buffer, uint64_t nElements, cudaStream_t stream) {
+void calculateHashBN128_gpu(TranscriptBN128_GPU *d_transcript, BN128GPUScalarField::Element* hash, SetupCtx &setupCtx, Goldilocks::Element* buffer, uint64_t nElements, cudaStream_t stream) {
 
     d_transcript->reset(stream);
     d_transcript->put(buffer, nElements, stream);
@@ -278,9 +278,9 @@ void extendAndMerkelize_bn128_gpu(uint64_t step, SetupCtx& setupCtx, MerkleTreeB
     
     Goldilocks::Element *pSource = d_aux_trace + offset_dst;
     treesGL[step - 1]->setSource(pSource);
-    Poseidon2BN128GPU::FrElement * pNodes;
+    BN128GPUScalarField::Element * pNodes;
     int64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-    cudaMalloc((void**)&pNodes, tree_size * sizeof(Poseidon2BN128GPU::FrElement));
+    cudaMalloc((void**)&pNodes, tree_size * sizeof(BN128GPUScalarField::Element));
     treesGL[step - 1]->setNodes((RawFr::Element*)pNodes);
 
 
@@ -314,9 +314,9 @@ void computeQ_bn128_gpu(uint64_t step, SetupCtx &setupCtx, MerkleTreeBN128 **tre
      
     Goldilocks::Element *pSource = d_aux_trace + offset_cmQ;
     treesGL[step - 1]->setSource(pSource);
-    Poseidon2BN128GPU::FrElement * pNodes;
+    BN128GPUScalarField::Element * pNodes;
     int64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-    cudaMalloc((void**)&pNodes, tree_size * sizeof(Poseidon2BN128GPU::FrElement));
+    cudaMalloc((void**)&pNodes, tree_size * sizeof(BN128GPUScalarField::Element));
     treesGL[step - 1]->setNodes((RawFr::Element*)pNodes);
 
     if (nCols > 0)
@@ -348,16 +348,16 @@ void merkelizeFRI_bn128_gpu(SetupCtx& setupCtx, StepsParams &h_params, uint64_t 
     transposeFRI<<<nBlocks, nThreads, 0, stream>>>((gl64_t *)treeFRI->source, (gl64_t *)pol, pol2N, width);
     
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    Poseidon2BN128GPU::FrElement * pNodes;
+    BN128GPUScalarField::Element * pNodes;
     int64_t tree_size = treeFRI->getNumNodes(treeFRI->height);
-    cudaMalloc((void**)&pNodes, tree_size * sizeof(Poseidon2BN128GPU::FrElement));
+    cudaMalloc((void**)&pNodes, tree_size * sizeof(BN128GPUScalarField::Element));
     treeFRI->setNodes((RawFr::Element*)pNodes);
-    Poseidon2BN128GPU::merkletree((Poseidon2BN128GPU::FrElement*) treeFRI->nodes, (uint64_t *)treeFRI->source, treeFRI->width, treeFRI->height, setupCtx.starkInfo.starkStruct.merkleTreeArity, stream);
+    Poseidon2BN128GPU::merkletree((BN128GPUScalarField::Element*) treeFRI->nodes, (uint64_t *)treeFRI->source, treeFRI->width, treeFRI->height, setupCtx.starkInfo.starkStruct.merkleTreeArity, stream);
     
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 
     if(d_transcript != nullptr) {
-        d_transcript->put((Poseidon2BN128GPU::FrElement*)&treeFRI->nodes[tree_size - 1], uint64_t(1), stream);
+        d_transcript->put((BN128GPUScalarField::Element*)&treeFRI->nodes[tree_size - 1], uint64_t(1), stream);
     }
 }
 

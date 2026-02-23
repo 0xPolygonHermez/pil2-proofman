@@ -4,7 +4,7 @@
 #include "grinding_constants.hpp"
 #include <cuda_runtime.h>
 
-typedef Poseidon2BN128GPU::FrElement FrElementGPU;
+typedef BN128GPUScalarField::Element FrElementGPU;
 
 // Device constant memory - uninitialized, will be copied at runtime
 __device__ __constant__ FrElementGPU GPU_C2[72];

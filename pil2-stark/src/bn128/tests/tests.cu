@@ -1457,15 +1457,15 @@ TEST(BN128_POSEIDON2_TEST, grinding_gpu) {
     field.fromUI(h_state[1], 0xfedcba0987654321ULL);
     field.fromUI(h_state[2], 0x0123456789abcdefULL);
 
-    Poseidon2BN128GPU::FrElement *d_state;
+    BN128GPUScalarField::Element *d_state;
     uint64_t *d_nonce;
     uint64_t *d_nonceBlock;
 
-    CHECKCUDAERR(cudaMalloc(&d_state, 3 * sizeof(Poseidon2BN128GPU::FrElement)));
+    CHECKCUDAERR(cudaMalloc(&d_state, 3 * sizeof(BN128GPUScalarField::Element)));
     CHECKCUDAERR(cudaMalloc(&d_nonce, sizeof(uint64_t)));
     CHECKCUDAERR(cudaMalloc(&d_nonceBlock, NONCES_LAUNCH_GRID_SIZE * sizeof(uint64_t))); 
 
-    CHECKCUDAERR(cudaMemcpy(d_state, h_state, 3 * sizeof(Poseidon2BN128GPU::FrElement), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_state, h_state, 3 * sizeof(BN128GPUScalarField::Element), cudaMemcpyHostToDevice));
 
     uint64_t init_nonce = UINT64_MAX;
     CHECKCUDAERR(cudaMemcpy(d_nonce, &init_nonce, sizeof(uint64_t), cudaMemcpyHostToDevice));
@@ -1484,8 +1484,8 @@ TEST(BN128_POSEIDON2_TEST, grinding_gpu) {
     ASSERT_NE(h_nonce, UINT64_MAX) << "GPU grinding did not find a nonce";
 
     // Verify the hash has the expected number of leading zeros
-    Poseidon2BN128GPU::FrElement *d_verify_state;
-    CHECKCUDAERR(cudaMalloc(&d_verify_state, 4 * sizeof(Poseidon2BN128GPU::FrElement)));
+    BN128GPUScalarField::Element *d_verify_state;
+    CHECKCUDAERR(cudaMalloc(&d_verify_state, 4 * sizeof(BN128GPUScalarField::Element)));
     setup_grinding_verify_state<<<1, 1>>>(d_verify_state, d_state, h_nonce);
     CHECKCUDAERR(cudaDeviceSynchronize());
 
