@@ -118,12 +118,11 @@ extern "C" void gpu_plonk_compute_qm_perm_l1(
     const void* evalA, const void* evalB, const void* evalC,
     const void* evalZ,
     const void* evalQM, const void* evalS1, const void* evalS2, const void* evalS3, const void* evalL1,
-    const void* d_blindings,
+    const void* d_blindings, const void* d_zvals,
     const void* beta, const void* gamma,
     const void* alpha, const void* alpha2,
     const void* k1, const void* k2,
     const void* omega1,
-    const void* Z1, const void* Z2, const void* Z3,
     uint64_t N,
     const void* omegaBases, const void* omegaTid);
 
@@ -273,6 +272,7 @@ namespace PlonkGPU
             d_omegaBasesN = nullptr;
             d_omegaTidN = nullptr;
             d_blindings = nullptr;
+            d_zvals = nullptr;
             d_omegaBasesNExt = nullptr;
             d_omegaTidNExt = nullptr;
             d_witness = nullptr;
@@ -892,6 +892,7 @@ namespace PlonkGPU
             unifiedBufferSize += numBlocksN * sizeof(FrElement);      // omega bases for N z_ratios kernel
             unifiedBufferSize += 256 * sizeof(FrElement);             // omega tid table (0..255)
             unifiedBufferSize += (BLINDINGFACTORSLENGTH_PLONK_GPU + 1) * sizeof(FrElement); // blinding factors b_0..b_11
+            unifiedBufferSize += 12 * sizeof(FrElement);                                    // Z1[4], Z2[4], Z3[4] for QM+perm+L1
 
             // GPU additions data - grouped by type for proper alignment (uint32_t at the end)
             unifiedBufferSize += nDirect * sizeof(FrElement);          // primary witnesses
@@ -925,6 +926,7 @@ namespace PlonkGPU
         d_omegaBasesN = base + off;          off += numBlocksN * sizeof(FrElement);
         d_omegaTidN = base + off;            off += 256 * sizeof(FrElement);
         d_blindings = base + off;            off += (BLINDINGFACTORSLENGTH_PLONK_GPU + 1) * sizeof(FrElement);
+        d_zvals = base + off;                off += 12 * sizeof(FrElement);
         d_witness = base + off;              off += nDirect * sizeof(FrElement);
         d_intWitness = base + off;           off += zkey->nAdditions * sizeof(FrElement);
         d_addFactor1 = base + off;           off += zkey->nAdditions * sizeof(FrElement);
@@ -1418,6 +1420,11 @@ namespace PlonkGPU
         Z3[2] = E.fr.set(-8);
         Z3[3] = E.fr.sub(E.fr.set(2), E.fr.mul(E.fr.set(2), w2));
 
+        // Upload Z1/Z2/Z3 to d_zvals on GPU (used by QM+perm+L1 kernel via shared memory)
+        gpu_plonk_memcpy_h2d(d_zvals, Z1, 4 * sizeof(FrElement));
+        gpu_plonk_memcpy_h2d((uint8_t*)d_zvals + 4 * sizeof(FrElement), Z2, 4 * sizeof(FrElement));
+        gpu_plonk_memcpy_h2d((uint8_t*)d_zvals + 8 * sizeof(FrElement), Z3, 4 * sizeof(FrElement));
+
         // Wait for async PI computation (launched in computeWirePolynomials, only when !evalConstPols)
         if (!evalConstPols && asyncComputePI.joinable()) {
 #ifdef PLONK_GPU_TIMING
@@ -1534,12 +1541,11 @@ namespace PlonkGPU
             d_evalsA, d_evalsB, d_evalsC,
             d_aux,
             d_evalsQM, d_evalsS1, d_evalsS2, d_evalsS3, d_evalsL1,
-            d_blindings,
+            d_blindings, d_zvals,
             (const void*)&beta, (const void*)&gamma,
             (const void*)&alpha, (const void*)&alpha2,
             (const void*)&k1, (const void*)&k2,
             (const void*)&omega1,
-            (const void*)Z1, (const void*)Z2, (const void*)Z3,
             N,
             d_omegaBasesNExt, d_omegaTidNExt);
         

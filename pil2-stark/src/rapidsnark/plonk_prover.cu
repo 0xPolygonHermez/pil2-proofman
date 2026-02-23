@@ -102,11 +102,13 @@ extern "C" void gpu_plonk_compute_pi_single(
     CHECKCUDAERR(cudaGetLastError());
 }
 
+
+
 __device__ __forceinline__
-void mulz_mul2(Element& r, Element& rz,
+void mulz_mul2_scalar(Element& r, Element& rz,
                const Element& a, const Element& b,
                const Element& ap, const Element& bp,
-               const Element* Z1, uint32_t p)
+               const Element& z1p)
 {
     Element a_b   = Fr::mul(a, b);
     Element a_bp  = Fr::mul(a, bp);
@@ -116,17 +118,16 @@ void mulz_mul2(Element& r, Element& rz,
     r = a_b;
 
     Element a0 = Fr::add(a_bp, ap_b);
-    rz = Fr::add(a0, Fr::mul(Z1[p], ap_bp));
+    rz = Fr::add(a0, Fr::mul(z1p, ap_bp));
 }
 
 __device__ __forceinline__
-void mulz_mul4(Element& r, Element& rz,
+void mulz_mul4_scalar(Element& r, Element& rz,
                const Element& a, const Element& b,
                const Element& c, const Element& d,
                const Element& ap, const Element& bp,
                const Element& cp, const Element& dp,
-               const Element* Z1, const Element* Z2, const Element* Z3,
-               uint32_t p)
+               const Element& z1p, const Element& z2p, const Element& z3p)
 {
     Element a_b   = Fr::mul(a, b);
     Element a_bp  = Fr::mul(a, bp);
@@ -164,9 +165,9 @@ void mulz_mul4(Element& r, Element& rz,
     Element a3 = Fr::mul(ap_bp, cp_dp);
 
     rz = a0;
-    rz = Fr::add(rz, Fr::mul(Z1[p], a1));
-    rz = Fr::add(rz, Fr::mul(Z2[p], a2));
-    rz = Fr::add(rz, Fr::mul(Z3[p], a3));
+    rz = Fr::add(rz, Fr::mul(z1p, a1));
+    rz = Fr::add(rz, Fr::mul(z2p, a2));
+    rz = Fr::add(rz, Fr::mul(z3p, a3));
 }
 
 
@@ -425,6 +426,7 @@ __global__ void kernelGateC(
 
 // QM + Permutation + L1 kernel: computes a*b*QM + (e2 - e3)*alpha + (z-1)*L1*alpha^2
 // and all blinding derivatives. Accumulates into T/Tz buffers from gate kernels.
+// Uses shared memory for blindings, zvals, and omegaTid to reduce register pressure.
 __global__ void kernelQMPermL1(
     Element* __restrict__ tOut,
     Element* __restrict__ tzOut,
@@ -440,20 +442,36 @@ __global__ void kernelQMPermL1(
     const Element* __restrict__ omegaBases,
     const Element* __restrict__ omegaTid,
     const Element* __restrict__ d_blindings,
-    Element Z1_0, Element Z1_1, Element Z1_2, Element Z1_3,
-    Element Z2_0, Element Z2_1, Element Z2_2, Element Z2_3,
-    Element Z3_0, Element Z3_1, Element Z3_2, Element Z3_3,
+    const Element* __restrict__ d_zvals, 
     Element beta, Element gamma, Element alpha, Element alpha2,
     Element k1, Element k2, Element omega1,
     uint64_t NExt)
 {
+    // Shared memory layout: blindings[12] + zvals[12] + omegaTid[256]
+    __shared__ unsigned char smem_raw[(12 + 12 + 256) * sizeof(Element)];
+    Element* sBlindings = reinterpret_cast<Element*>(smem_raw);
+    Element* sZvals     = sBlindings + 12;
+    Element* sOmegaTid  = sZvals + 12;
+
+    // Cooperative load: first 12 threads load blindings, next 12 load zvals
+    if (threadIdx.x < 12) {
+        sBlindings[threadIdx.x] = d_blindings[threadIdx.x];
+    }
+    if (threadIdx.x >= 12 && threadIdx.x < 24) {
+        sZvals[threadIdx.x - 12] = d_zvals[threadIdx.x - 12];
+    }
+    // All 256 threads load omegaTid
+    sOmegaTid[threadIdx.x] = omegaTid[threadIdx.x];
+    __syncthreads();
+
     uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= NExt) return;
 
-    // Reconstruct Z arrays for mulz functions
-    const Element Z1[4] = {Z1_0, Z1_1, Z1_2, Z1_3};
-    const Element Z2[4] = {Z2_0, Z2_1, Z2_2, Z2_3};
-    const Element Z3[4] = {Z3_0, Z3_1, Z3_2, Z3_3};
+    // Select Z values for this thread's position (i % 4)
+    uint32_t p = (uint32_t)(i & 3);
+    Element z1p = sZvals[p];       // Z1[p]
+    Element z2p = sZvals[4 + p];   // Z2[p]
+    Element z3p = sZvals[8 + p];   // Z3[p]
 
     Element a  = evalA[i];
     Element b  = evalB[i];
@@ -467,22 +485,22 @@ __global__ void kernelQMPermL1(
     Element s3 = evalS3[i];
     Element lagrange = evalL1[i];
 
-    // Compute roots of unity (precomputed base + per-thread table)
-    Element omega   = Fr::mul(omegaBases[blockIdx.x], omegaTid[threadIdx.x]);
+    // Compute roots of unity (precomputed base + per-thread table from shared mem)
+    Element omega   = Fr::mul(omegaBases[blockIdx.x], sOmegaTid[threadIdx.x]);
     Element omega2  = Fr::square(omega);
     Element omegaW  = Fr::mul(omega, omega1);
     Element omegaW2 = Fr::square(omegaW);
 
-    // Blinding derivatives
-    Element ap = Fr::add(d_blindings[2], Fr::mul(d_blindings[1], omega));
-    Element bp = Fr::add(d_blindings[4], Fr::mul(d_blindings[3], omega));
-    Element cp = Fr::add(d_blindings[6], Fr::mul(d_blindings[5], omega));
-    Element zp  = Fr::add(Fr::add(Fr::mul(d_blindings[7], omega2), Fr::mul(d_blindings[8], omega)), d_blindings[9]);
-    Element zWp = Fr::add(Fr::add(Fr::mul(d_blindings[7], omegaW2), Fr::mul(d_blindings[8], omegaW)), d_blindings[9]);
+    // Blinding derivatives (read from shared memory)
+    Element ap = Fr::add(sBlindings[2], Fr::mul(sBlindings[1], omega));
+    Element bp = Fr::add(sBlindings[4], Fr::mul(sBlindings[3], omega));
+    Element cp = Fr::add(sBlindings[6], Fr::mul(sBlindings[5], omega));
+    Element zp  = Fr::add(Fr::add(Fr::mul(sBlindings[7], omega2), Fr::mul(sBlindings[8], omega)), sBlindings[9]);
+    Element zWp = Fr::add(Fr::add(Fr::mul(sBlindings[7], omegaW2), Fr::mul(sBlindings[8], omegaW)), sBlindings[9]);
 
     // a*b*QM term
     Element abqm, abqmz;
-    mulz_mul2(abqm, abqmz, a, b, ap, bp, Z1, (uint32_t)(i % 4));
+    mulz_mul2_scalar(abqm, abqmz, a, b, ap, bp, z1p);
     abqm  = Fr::mul(abqm, qm);
     abqmz = Fr::mul(abqmz, qm);
 
@@ -493,7 +511,7 @@ __global__ void kernelQMPermL1(
     Element e2c = Fr::add(Fr::add(cc, Fr::mul(betaw, k2)), gamma);
 
     Element e2, e2z;
-    mulz_mul4(e2, e2z, e2a, e2b, e2c, z, ap, bp, cp, zp, Z1, Z2, Z3, (uint32_t)(i % 4));
+    mulz_mul4_scalar(e2, e2z, e2a, e2b, e2c, z, ap, bp, cp, zp, z1p, z2p, z3p);
     e2  = Fr::mul(e2, alpha);
     e2z = Fr::mul(e2z, alpha);
 
@@ -503,7 +521,7 @@ __global__ void kernelQMPermL1(
     Element e3c = Fr::add(Fr::add(cc, Fr::mul(beta, s3)), gamma);
 
     Element e3, e3z;
-    mulz_mul4(e3, e3z, e3a, e3b, e3c, zW, ap, bp, cp, zWp, Z1, Z2, Z3, (uint32_t)(i % 4));
+    mulz_mul4_scalar(e3, e3z, e3a, e3b, e3c, zW, ap, bp, cp, zWp, z1p, z2p, z3p);
     e3  = Fr::mul(e3, alpha);
     e3z = Fr::mul(e3z, alpha);
 
@@ -581,12 +599,11 @@ extern "C" void gpu_plonk_compute_qm_perm_l1(
     const void* evalA, const void* evalB, const void* evalC,
     const void* evalZ,
     const void* evalQM, const void* evalS1, const void* evalS2, const void* evalS3, const void* evalL1,
-    const void* d_blindings,
+    const void* d_blindings, const void* d_zvals,
     const void* betaPtr, const void* gammaPtr,
     const void* alphaPtr, const void* alpha2Ptr,
     const void* k1Ptr, const void* k2Ptr,
     const void* omega1Ptr,
-    const void* Z1Ptr, const void* Z2Ptr, const void* Z3Ptr,
     uint64_t N,
     const void* omegaBases, const void* omegaTid)
 {
@@ -594,11 +611,10 @@ extern "C" void gpu_plonk_compute_qm_perm_l1(
     uint32_t threadsPerBlock = 256;
     uint32_t blocks = (uint32_t)(NExt / threadsPerBlock);
 
-    const Element* Z1 = (const Element*)Z1Ptr;
-    const Element* Z2 = (const Element*)Z2Ptr;
-    const Element* Z3 = (const Element*)Z3Ptr;
+    // Shared memory: 12 blindings + 12 zvals + 256 omegaTid = 280 Elements
+    size_t sharedBytes = (12 + 12 + 256) * sizeof(Element);
 
-    kernelQMPermL1<<<blocks, threadsPerBlock>>>(
+    kernelQMPermL1<<<blocks, threadsPerBlock, sharedBytes>>>(
         (Element*)tOut, (Element*)tzOut,
         (const Element*)evalA, (const Element*)evalB, (const Element*)evalC,
         (const Element*)evalZ,
@@ -606,9 +622,7 @@ extern "C" void gpu_plonk_compute_qm_perm_l1(
         (const Element*)evalS3, (const Element*)evalL1,
         (const Element*)omegaBases, (const Element*)omegaTid,
         (const Element*)d_blindings,
-        Z1[0], Z1[1], Z1[2], Z1[3],
-        Z2[0], Z2[1], Z2[2], Z2[3],
-        Z3[0], Z3[1], Z3[2], Z3[3],
+        (const Element*)d_zvals,
         *(const Element*)betaPtr, *(const Element*)gammaPtr,
         *(const Element*)alphaPtr, *(const Element*)alpha2Ptr,
         *(const Element*)k1Ptr, *(const Element*)k2Ptr,
