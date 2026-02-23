@@ -271,49 +271,6 @@ pub enum ProvePhase {
     Full,
 }
 
-#[derive(Debug, Clone)]
-pub struct ProofInfo {
-    pub input_data_path: Option<PathBuf>,
-    pub n_partitions: usize,
-    pub partition_ids: Vec<u32>,
-    pub worker_index: usize,
-}
-
-impl BorshSerialize for ProofInfo {
-    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
-        // Handle the Option<PathBuf> properly
-        let path_string = self.input_data_path.as_ref().map(|p| p.to_string_lossy().to_string());
-
-        BorshSerialize::serialize(&path_string, writer)?;
-        BorshSerialize::serialize(&self.n_partitions, writer)?;
-        BorshSerialize::serialize(&self.partition_ids, writer)?;
-        BorshSerialize::serialize(&self.worker_index, writer)?;
-        Ok(())
-    }
-}
-
-impl BorshDeserialize for ProofInfo {
-    fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
-        let input_data_path_string: Option<String> = BorshDeserialize::deserialize_reader(reader)?;
-        let input_data_path = input_data_path_string.map(PathBuf::from);
-        let n_partitions = usize::deserialize_reader(reader)?;
-        let partition_ids = Vec::<u32>::deserialize_reader(reader)?;
-        let worker_index = usize::deserialize_reader(reader)?;
-        Ok(Self { input_data_path, n_partitions, partition_ids, worker_index })
-    }
-}
-
-impl ProofInfo {
-    pub fn new(
-        input_data_path: Option<PathBuf>,
-        n_partitions: usize,
-        partition_ids: Vec<u32>,
-        worker_index: usize,
-    ) -> Self {
-        Self { input_data_path, n_partitions, partition_ids, worker_index }
-    }
-}
-
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct ContributionsInfo {
     pub challenge: Vec<u64>,
@@ -323,9 +280,9 @@ pub struct ContributionsInfo {
 
 #[derive(Debug, BorshSerialize, BorshDeserialize)]
 pub enum ProvePhaseInputs {
-    Contributions(ProofInfo),
+    Contributions(),
     Internal(Vec<ContributionsInfo>),
-    Full(ProofInfo),
+    Full(),
 }
 
 #[derive(Debug)]
@@ -501,6 +458,15 @@ where
         Ok(())
     }
 
+    pub fn set_partition(
+        &self,
+        n_partitions: usize,
+        partition_ids: Vec<u32>,
+        worker_index: usize,
+    ) -> ProofmanResult<()> {
+        self.pctx.dctx_setup(n_partitions, partition_ids, worker_index)
+    }
+
     pub fn execute(
         &self,
         witness_lib_path: PathBuf,
@@ -526,7 +492,7 @@ where
     }
 
     pub fn execute_(&self, output_path: Option<PathBuf>) -> ProofmanResult<PlanningInfo> {
-        self.pctx.dctx_setup(1, vec![0], 0)?;
+        self.set_partition(1, vec![0], 0)?;
 
         self.cancellation_info.write().unwrap().reset();
         self.reset()?;
@@ -787,7 +753,7 @@ where
     }
 
     pub fn compute_witness_(&self, options: ProofOptions) -> ProofmanResult<()> {
-        self.pctx.dctx_setup(1, vec![0], 0)?;
+        self.set_partition(1, vec![0], 0)?;
 
         self.cancellation_info.write().unwrap().reset();
         self.reset()?;
@@ -901,7 +867,7 @@ where
     }
 
     fn _get_debug_info(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
-        self.pctx.dctx_setup(1, vec![0], 0)?;
+        self.set_partition(1, vec![0], 0)?;
 
         self.pctx.set_debug_info(debug_info);
         self.cancellation_info.write().unwrap().reset();
@@ -1031,7 +997,7 @@ where
             return Err(ProofmanError::InvalidConfiguration("Packed witnesses are not supported in this mode".into()));
         }
 
-        self.pctx.dctx_setup(1, vec![0], 0)?;
+        self.set_partition(1, vec![0], 0)?;
 
         self.pctx.set_debug_info(debug_info);
         self.cancellation_info.write().unwrap().reset();
@@ -1348,8 +1314,8 @@ where
             ));
         }
 
-        let phase_inputs = ProvePhaseInputs::Full(ProofInfo::new(input_data_path, 1, vec![0], 0));
-        self._generate_proof(phase_inputs, options, ProvePhase::Full)
+        self.set_partition(1, vec![0], 0)?;
+        self._generate_proof(ProvePhaseInputs::Full(), options, ProvePhase::Full)
     }
 
     #[allow(clippy::type_complexity)]
@@ -1736,13 +1702,12 @@ where
         let _cancellation_thread = CancellationThread::new(self.cancellation_info.clone(), self.mpi_ctx.clone());
 
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
-            let proof_info = match phase_inputs {
-                ProvePhaseInputs::Full(proof_info) => proof_info,
-                ProvePhaseInputs::Contributions(proof_info) => proof_info,
-                _ => return Err(ProofmanError::InvalidParameters("Invalid phase inputs for contributions".into())),
-            };
+            if !self.pctx.is_setup_partition_init() {
+                return Err(ProofmanError::InvalidParameters(
+                    "Setup partition must be initialized before generating contributions".into(),
+                ));
+            }
 
-            self.pctx.dctx_setup(proof_info.n_partitions, proof_info.partition_ids.clone(), proof_info.worker_index)?;
             self.cancellation_info.write().unwrap().reset();
             self.reset()?;
             self.pctx.dctx_reset();

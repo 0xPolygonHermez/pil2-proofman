@@ -349,6 +349,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.mpi_ctx.reset();
     }
 
+    pub fn is_setup_partition_init(&self) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.is_setup_partition_init()
+    }
+
     pub fn set_proof_tx(&self, proof_tx: Option<crossbeam_channel::Sender<usize>>) {
         *self.proof_tx.write().unwrap() = proof_tx;
     }
