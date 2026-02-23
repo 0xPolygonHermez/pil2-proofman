@@ -141,6 +141,7 @@ namespace PlonkGPU {
 
         void* pTauStream = nullptr;         // Non-blocking CUDA stream to copy pTau to GPU
         void* omegasStream = nullptr;       // Non-blocking CUDA stream to generate precomputed omega tables
+        void* evalNTTStream = nullptr;      // Non-blocking CUDA stream for asyncEvalNTT H2D + zero_pad
         void* pinnedD2HStaging = nullptr;   // Pinned staging buffer for async D2H
         size_t pinnedD2HStagingSize = 0;
        

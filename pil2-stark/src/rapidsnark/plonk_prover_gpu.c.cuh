@@ -49,6 +49,7 @@ extern "C" void gpu_plonk_start_cpu_to_gpu_transfer(
     void** dDsts, const void** hostSrcs, const size_t* sizes, int numArrays,
     void* pinnedBuffer, size_t pinnedSize);
 extern "C" void gpu_plonk_zero_pad(void* buf, uint64_t startElem, uint64_t endElem);
+extern "C" void gpu_plonk_zero_pad_async(void* buf, uint64_t startElem, uint64_t endElem, void* stream);
 extern "C" void gpu_plonk_compute_gate_a(
     void* tOut, void* tzOut,
     const void* evalA, const void* evalQL,
@@ -237,6 +238,11 @@ namespace PlonkGPU
         if(omegasStream) {
             gpu_plonk_destroy_cuda_stream(omegasStream);
             omegasStream = nullptr;
+        }
+
+        if (evalNTTStream) {
+            gpu_plonk_destroy_cuda_stream(evalNTTStream);
+            evalNTTStream = nullptr;
         }
 
         if (pinnedD2HStaging) {
@@ -981,35 +987,13 @@ namespace PlonkGPU
         gpu_plonk_precompute_omega_tables_async(d_omegaBasesNExt, d_omegaTidNExt, &omega_4x, 256, numBlocks4N, omegasStream);
         gpu_plonk_precompute_omega_tables_async(d_omegaBasesN, d_omegaTidN, &omega, 256, numBlocksN, omegasStream);
 
-        LOG_TRACE("··· Uploading additions to GPU");
-        //node:  thid could be done in a async thread
-        uint32_t* signalId1 = new uint32_t[zkey->nAdditions];
-        uint32_t* signalId2 = new uint32_t[zkey->nAdditions];
-        FrElement* factor1 = new FrElement[zkey->nAdditions];
-        FrElement* factor2 = new FrElement[zkey->nAdditions];
-        for (uint32_t i = 0; i < zkey->nAdditions; i++) {
-            signalId1[i] = additionsBuff[i].signalId1;
-            signalId2[i] = additionsBuff[i].signalId2;
-            factor1[i] = additionsBuff[i].factor1;
-            factor2[i] = additionsBuff[i].factor2;
-        }
-        gpu_plonk_memcpy_h2d(d_addSignalId1, signalId1, zkey->nAdditions * sizeof(uint32_t));
-        gpu_plonk_memcpy_h2d(d_addSignalId2, signalId2, zkey->nAdditions * sizeof(uint32_t));
-        gpu_plonk_memcpy_h2d(d_addFactor1, factor1, zkey->nAdditions * sizeof(FrElement));
-        gpu_plonk_memcpy_h2d(d_addFactor2, factor2, zkey->nAdditions * sizeof(FrElement));
-        gpu_plonk_memcpy_h2d(d_additionLevels, additionLevels, zkey->nAdditions);
-        delete[] signalId1;
-        delete[] signalId2;
-        delete[] factor1;
-        delete[] factor2;
-
         if (!pinnedD2HStaging) {
             pinnedD2HStagingSize = (N + 6) * sizeof(FrElement);
             gpu_plonk_cuda_malloc_pinned_buffer(&pinnedD2HStaging, pinnedD2HStagingSize);
         }
 
         if (evalConstPols) {
-            // Compute 9 polynomial evaluations from coefficients via GPU NTT (async)
+            if (!evalNTTStream) evalNTTStream = gpu_plonk_create_cuda_stream_nonblocking();
             LOG_TRACE("··· Launching async eval NTT (9 polys from coefficients)");
             asyncEvalNTT = std::thread([this]() {
                 void* slots[9] = {d_evalsS1, d_evalsS2, d_evalsS3, d_evalsL1,
@@ -1017,12 +1001,12 @@ namespace PlonkGPU
                 const char* names[9] = {"Sigma1", "Sigma2", "Sigma3", "L1",
                                           "QL", "QR", "QM", "QO", "QC"};
                 for (int i = 0; i < 9; i++) {
-                    gpu_plonk_memcpy_h2d(slots[i], polPtr[names[i]], NBytes);
-                    gpu_plonk_zero_pad(slots[i], N, NExt);
-                    gpu_plonk_cuda_device_sync(); // default-stream zero_pad → sppark NTT (non-blocking stream)
+                    gpu_plonk_memcpy_h2d_async(slots[i], polPtr[names[i]], NBytes, evalNTTStream);
+                    gpu_plonk_zero_pad_async(slots[i], N, NExt, evalNTTStream);
+                    gpu_plonk_sync_cuda_stream(evalNTTStream); 
                     ntt_bn128_gpu_dev_ptr(slots[i], zkeyPower + 2);
                 }
-                gpu_plonk_cuda_device_sync();
+                gpu_plonk_cuda_device_sync(); // ensure all sppark NTTs complete
             });
         } else {
             // Load pre-computed 4N evaluations from zkey file (async file I/O)
@@ -1058,6 +1042,27 @@ namespace PlonkGPU
                                                qSids.data(), qOffs.data(), qSizes.data(), 5);
             });
         }
+
+        LOG_TRACE("··· Uploading additions to GPU");
+        uint32_t* signalId1 = new uint32_t[zkey->nAdditions];
+        uint32_t* signalId2 = new uint32_t[zkey->nAdditions];
+        FrElement* factor1 = new FrElement[zkey->nAdditions];
+        FrElement* factor2 = new FrElement[zkey->nAdditions];
+        for (uint32_t i = 0; i < zkey->nAdditions; i++) {
+            signalId1[i] = additionsBuff[i].signalId1;
+            signalId2[i] = additionsBuff[i].signalId2;
+            factor1[i] = additionsBuff[i].factor1;
+            factor2[i] = additionsBuff[i].factor2;
+        }
+        gpu_plonk_memcpy_h2d(d_addSignalId1, signalId1, zkey->nAdditions * sizeof(uint32_t));
+        gpu_plonk_memcpy_h2d(d_addSignalId2, signalId2, zkey->nAdditions * sizeof(uint32_t));
+        gpu_plonk_memcpy_h2d(d_addFactor1, factor1, zkey->nAdditions * sizeof(FrElement));
+        gpu_plonk_memcpy_h2d(d_addFactor2, factor2, zkey->nAdditions * sizeof(FrElement));
+        gpu_plonk_memcpy_h2d(d_additionLevels, additionLevels, zkey->nAdditions);
+        delete[] signalId1;
+        delete[] signalId2;
+        delete[] factor1;
+        delete[] factor2;
 
     }
 

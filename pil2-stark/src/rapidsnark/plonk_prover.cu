@@ -338,6 +338,15 @@ extern "C" void gpu_plonk_zero_pad(void* buf, uint64_t startElem, uint64_t endEl
     CHECKCUDAERR(cudaGetLastError());
 }
 
+extern "C" void gpu_plonk_zero_pad_async(void* buf, uint64_t startElem, uint64_t endElem, void* stream)
+{
+    uint64_t count = endElem - startElem;
+    uint32_t threadsPerBlock = 256;
+    uint32_t blocks = (uint32_t)((count + threadsPerBlock - 1) / threadsPerBlock);
+    zeroPadKernel<<<blocks, threadsPerBlock, 0, (cudaStream_t)stream>>>((Element*)buf, startElem, count);
+    CHECKCUDAERR(cudaGetLastError());
+}
+
 // Gate A kernel: T = a*QL + PI,  Tz = ap*QL
 // PI is pre-loaded in tOut; this kernel OVERWRITES tOut with the result.
 // ap(i) = bf[2] + bf[1]*omega^i  (derivative of a's blind polynomial)
