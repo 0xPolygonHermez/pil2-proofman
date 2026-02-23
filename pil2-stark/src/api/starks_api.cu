@@ -1079,7 +1079,8 @@ void load_fixed_pols_recursivef(void *pSetupCtx_, void *pConstTree, void *d_buff
         cudaSetDevice(gpuId);
         copy_to_device_in_chunks((const uint8_t*)pConstTree, (uint8_t*)d_const_tree, sizeConstTree, pinnedBuffer, pinnedBufferSize, stream);
         CHECKCUDAERR(cudaGetLastError());
-        CHECKCUDAERR(cudaEventRecord(d_buffers->load_complete_event, stream));
+        //CHECKCUDAERR(cudaEventRecord(d_buffers->load_complete_event, stream));
+        //CHECKCUDAERR(cudaStreamSynchronize(stream));
     });
 }
 

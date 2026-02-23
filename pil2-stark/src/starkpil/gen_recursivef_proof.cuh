@@ -190,7 +190,11 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     if (d_buffers->load_initiated) {
         TimerStartCategoryGPU(timer, LOAD_TREE_WAIT);
         // Wait for the event recorded by background thread after GPU transfer completes
-        CHECKCUDAERR(cudaStreamWaitEvent(stream, d_buffers->load_complete_event, 0));
+        //CHECKCUDAERR(cudaStreamWaitEvent(stream, d_buffers->load_complete_event, 0));
+        // Join the const tree loading thread now that proof is complete
+        if (d_buffers->load_const_tree_thread.joinable()) {
+            d_buffers->load_const_tree_thread.join();
+        }
         TimerStopCategoryGPU(timer, LOAD_TREE_WAIT);
     }
 
@@ -359,11 +363,6 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
 
     // Free AirInstanceInfo (and all its GPU allocations)
     delete air_instance_info;
-
-    // Join the const tree loading thread now that proof is complete
-    if (d_buffers->load_const_tree_thread.joinable()) {
-        d_buffers->load_const_tree_thread.join();
-    }
 
     TimerStopGPU(timer, STARK_CLEANUP);
     TimerStopGPU(timer,STARK_GPU_PROOF);
