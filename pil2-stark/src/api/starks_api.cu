@@ -23,7 +23,7 @@ extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 #include "poseidon2_goldilocks.cuh"
 #include "hints.cuh"
 #include "gen_recursivef_proof.cuh"
-#include "poseidon_bn128.cuh"
+#include "poseidon2/poseidon2_bn128.cuh"
 #include <cuda_runtime.h>
 #include <mutex>
 
@@ -971,9 +971,9 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pC
     
     NTT_Goldilocks_GPU::init_twiddle_factors_and_r(22, 1, &gpuId); //max nBitsExt=21
     
-    // Initialize BN128 Poseidon GPU constants for merkletree and transcript
-    PoseidonBN128GPU::initGPUConstants(&gpuId, 1);
-    uint64_t transcriptArity = setupCtx->starkInfo.starkStruct.merkleTreeCustom ? setupCtx->starkInfo.starkStruct.merkleTreeArity : 16;
+    // Initialize BN128 Poseidon2 GPU constants for merkletree and transcript
+    Poseidon2BN128GPU::initGPUConstants(&gpuId, 1);
+    uint64_t transcriptArity = setupCtx->starkInfo.starkStruct.merkleTreeArity;
     TranscriptBN128_GPU::init_const(&gpuId, 1, transcriptArity);
 
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);

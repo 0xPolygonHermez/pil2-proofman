@@ -72,8 +72,8 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     CHECKCUDAERR(cudaMallocHost((void **)&pinned_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
     Goldilocks::Element *pinned_exps_args;
     CHECKCUDAERR(cudaMallocHost((void **)&pinned_exps_args, maxExps * sizeof(ExpsArguments)));
-    TranscriptBN128_GPU d_transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, stream);
-    TranscriptBN128_GPU d_transcript_helper(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, stream);
+    TranscriptBN128_GPU d_transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, stream);
+    TranscriptBN128_GPU d_transcript_helper(setupCtx.starkInfo.starkStruct.merkleTreeArity, stream);
 
     StepsParams *d_params;
     CHECKCUDAERR(cudaMalloc((void **)&d_params, sizeof(StepsParams)));
@@ -138,11 +138,11 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     gl64_t *d_queries_buff = (gl64_t *)d_aux_trace + offsetProofQueries;
     
     // Use input_hash_nonce buffer as temporary storage for BN128 hash output
-    PoseidonBN128GPU::FrElement * d_hash_gpu = (PoseidonBN128GPU::FrElement *)((Goldilocks::Element *)d_aux_trace + offsetInputHashNonce);
+    Poseidon2BN128GPU::FrElement * d_hash_gpu = (Poseidon2BN128GPU::FrElement *)((Goldilocks::Element *)d_aux_trace + offsetInputHashNonce);
 
     d_transcript.reset(stream);
 
-    PoseidonBN128GPU::FrElement *constTreeRoot = ((PoseidonBN128GPU::FrElement *) starks.treesGL[setupCtx.starkInfo.nStages + 1]->get_nodes_ptr()) + starks.treesGL[setupCtx.starkInfo.nStages + 1]->numNodes - 1;
+    Poseidon2BN128GPU::FrElement *constTreeRoot = ((Poseidon2BN128GPU::FrElement *) starks.treesGL[setupCtx.starkInfo.nStages + 1]->get_nodes_ptr()) + starks.treesGL[setupCtx.starkInfo.nStages + 1]->numNodes - 1;
     d_transcript.put(constTreeRoot, 1, stream, &timer);
     if (setupCtx.starkInfo.nPublics > 0)
     {
@@ -292,11 +292,11 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     }
 
     TimerStartCategoryGPU(timer, GRINDING);
-    PoseidonBN128GPU::FrElement *d_grinding_state = (PoseidonBN128GPU::FrElement *)(d_aux_trace + offsetInputHashNonce);
+    Poseidon2BN128GPU::FrElement *d_grinding_state = (Poseidon2BN128GPU::FrElement *)(d_aux_trace + offsetInputHashNonce);
     convertGLToBN128ScalarField(d_grinding_state, (const uint64_t *)h_params.challenges, FIELD_EXTENSION, stream);
     CHECKCUDAERR(cudaGetLastError());
     
-    PoseidonBN128GPU::grinding((uint64_t *)d_nonce, (uint64_t *)d_nonceBlocks, d_grinding_state, setupCtx.starkInfo.starkStruct.powBits, stream);
+    Poseidon2BN128GPU::grinding((uint64_t *)d_nonce, (uint64_t *)d_nonceBlocks, d_grinding_state, setupCtx.starkInfo.starkStruct.powBits, stream);
     CHECKCUDAERR(cudaGetLastError());
     TimerStopCategoryGPU(timer, GRINDING);
     TimerStartCategoryGPU(timer, FRI);

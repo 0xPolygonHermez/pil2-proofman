@@ -136,7 +136,7 @@ else
     # Linux - include all files including assembly
     SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
 endif
-SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/bn128/src/msm ./src/bn128/src/ntt ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc" -or -name "*.cu")
+SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/bn128/src/poseidon2 ./src/bn128/src/msm ./src/bn128/src/ntt ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc" -or -name "*.cu")
 # Sppark utility for GPU (provides gpu_props function)
 SPPARK_GPU_OBJ := $(BUILD_DIR_GPU)/external/sppark/util/all_gpus.o
 OBJS_STARKS_LIB := $(SRCS_STARKS_LIB:%=$(BUILD_DIR)/%.o)
@@ -237,8 +237,8 @@ $(BUILD_DIR)/%.asm.o: %.asm
 	$(AS) $(ASFLAGS) $< -o $@
 
 $(BUILD_DIR_GPU)/%.asm.o: %.asm
-    $(MKDIR_P) $(dir $@)
-    $(AS) $(ASFLAGS) $< -o $@
+	$(MKDIR_P) $(dir $@)
+	$(AS) $(ASFLAGS) $< -o $@
 
 # c++ source
 $(BUILD_DIR)/%.cpp.o: %.cpp
@@ -250,12 +250,12 @@ $(BUILD_DIR)/%.cc.o: %.cc
 	$(CXX) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR_GPU)/%.cpp.o: %.cpp
-    $(MKDIR_P) $(dir $@)
-    $(CXX) -D__USE_CUDA__ $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+	$(MKDIR_P) $(dir $@)
+	$(CXX) -D__USE_CUDA__ $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR_GPU)/%.cc.o: %.cc
-    $(MKDIR_P) $(dir $@)
-    $(CXX) -D__USE_CUDA__ $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+	$(MKDIR_P) $(dir $@)
+	$(CXX) -D__USE_CUDA__ $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 
 $(BUILD_DIR)/$(TARGET_BINFILE): $(OBJS_BINFILE)
@@ -263,13 +263,13 @@ $(BUILD_DIR)/$(TARGET_BINFILE): $(OBJS_BINFILE)
 
 # cuda source
 $(BUILD_DIR_GPU)/%.cu.o: %.cu
-    $(MKDIR_P) $(dir $@)
-    $(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -c $< -o $@
+	$(MKDIR_P) $(dir $@)
+	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -c $< -o $@
 
 # sppark utility (compile as CUDA to get proper GPU support)
 $(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
-    $(MKDIR_P) $(dir $@)
-    $(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
+	$(MKDIR_P) $(dir $@)
+	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
 
 .PHONY: clean
 
