@@ -1,5 +1,5 @@
-#ifndef POSEIDON2_BN128_HPP
-#define POSEIDON2_BN128_HPP
+#ifndef POSEIDON2_BN128_CUH
+#define POSEIDON2_BN128_CUH
 
 #include <vector>
 #include <string>

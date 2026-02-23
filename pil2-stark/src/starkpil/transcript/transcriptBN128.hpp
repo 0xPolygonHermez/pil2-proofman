@@ -2,7 +2,7 @@
 #define TRANSCRIPT_BN128_CLASS
 
 #include "fr.hpp"
-#include "poseidon_bn128.hpp"
+#include "poseidon2_bn128.hpp"
 #include <cstring>
 #include "goldilocks_base_field.hpp"
 
@@ -22,8 +22,8 @@ public:
     std::vector<RawFr::Element> out;
     std::vector<uint64_t> out3;
 
-    TranscriptBN128(uint64_t arity, bool custom) : state(1, RawFr::field.zero()), out(1, RawFr::field.zero()) {
-        transcriptArity = custom ? arity : 16;
+    TranscriptBN128(uint64_t arity, bool custom = false) : state(1, RawFr::field.zero()), out(1, RawFr::field.zero()) {
+        transcriptArity = arity;
     }
     
     void put(Goldilocks::Element *input, uint64_t size);

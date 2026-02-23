@@ -25,7 +25,7 @@ void TranscriptBN128::_add1(RawFr::Element input)
 {
     pending.push_back(input);
     out.clear();
-    if (pending.size() == transcriptArity)
+    if (pending.size() == transcriptArity - 1)
     {
         _updateState();
     }
@@ -85,13 +85,15 @@ uint64_t TranscriptBN128::getFields1()
 
 void TranscriptBN128::_updateState()
 {
-    while (pending.size() < transcriptArity)
+    uint64_t rate = transcriptArity - 1;
+    while (pending.size() < rate)
     {
         pending.push_back(RawFr::field.zero());
     }
 
-    PoseidonBN128 p;
-    out.insert(out.end(), state.begin(), state.end());
+    Poseidon2BN128 p;
+    out.clear();
+    out.push_back(state[0]);
     out.insert(out.end(), pending.begin(), pending.end());
 
     p.hash(out);

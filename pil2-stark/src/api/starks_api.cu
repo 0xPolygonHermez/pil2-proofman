@@ -22,8 +22,8 @@ extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 #include "gen_proof.cuh"
 #include "poseidon2_goldilocks.cuh"
 #include "hints.cuh"
+#include "poseidon2_bn128.cuh"
 #include "gen_recursivef_proof.cuh"
-#include "poseidon2/poseidon2_bn128.cuh"
 #include <cuda_runtime.h>
 #include <mutex>
 

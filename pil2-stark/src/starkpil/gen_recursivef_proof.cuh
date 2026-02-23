@@ -8,6 +8,7 @@
 #include "starks_gpu.cuh"
 #include "hints.cuh"
 #include "gpu_timer.cuh"
+#include "poseidon2_bn128.cuh"
 #include <iomanip>
 
 

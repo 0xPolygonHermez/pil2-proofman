@@ -5,6 +5,7 @@
 #include "starks_gpu.cuh"
 #include "data_layout.cuh"
 #include "fri/fri.hpp"
+#include "poseidon2_bn128.cuh"
 
 class gl64_t;
 
