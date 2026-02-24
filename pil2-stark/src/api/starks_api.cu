@@ -1034,15 +1034,17 @@ void load_fixed_pols_recursivef(void *pSetupCtx_, void *pConstTree, void *d_buff
 
     gl64_t * d_aux_trace = (gl64_t *)d_buffers->d_aux_trace;
     gl64_t * d_const_tree = (gl64_t *)d_buffers->d_const_tree;
-    uint8_t * pinnedBuffer = d_buffers->pinnedBuffer;
+    uint8_t * pinnedBuffer = d_buffers->pinnedBufferConstTree;
     uint64_t pinnedBufferSize = d_buffers->pinnedBufferSize;
-    cudaStream_t stream = d_buffers->stream;
+    cudaStream_t stream = d_buffers->stream_const_tree;
     
     // Copy const tree to device
     copy_to_device_in_chunks((const uint8_t*)pConstTree, (uint8_t*)d_const_tree, sizeConstTree, pinnedBuffer, pinnedBufferSize, stream);
     CHECKCUDAERR(cudaGetLastError());
     
-    cudaStreamSynchronize(stream);
+    // Signal that const tree copy is complete
+    d_buffers->const_tree_loaded.store(true, std::memory_order_release);
+    
 }
 
 void free_device_buffers_recursivef(void *d_buffers_) {
