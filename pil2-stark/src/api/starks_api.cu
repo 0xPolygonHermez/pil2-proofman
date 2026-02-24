@@ -973,9 +973,6 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize,
     uint64_t transcriptArity = setupCtx->starkInfo.starkStruct.merkleTreeCustom ? setupCtx->starkInfo.starkStruct.merkleTreeArity : 16;
     TranscriptBN128_GPU::init_const(&gpuId, 1, transcriptArity);
 
-    uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
-    uint64_t nConst = setupCtx->starkInfo.nConstants;
-    uint64_t sizeConstPols = N * nConst * sizeof(Goldilocks::Element);
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
     uint64_t sizeAuxTrace = proverBufferSize;
 
@@ -1032,13 +1029,14 @@ void load_fixed_pols_recursivef(void *pSetupCtx_, void *pConstTree, void *d_buff
 
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
 
-    gl64_t * d_aux_trace = (gl64_t *)d_buffers->d_aux_trace;
     gl64_t * d_const_tree = (gl64_t *)d_buffers->d_const_tree;
     uint8_t * pinnedBuffer = d_buffers->pinnedBufferConstTree;
     uint64_t pinnedBufferSize = d_buffers->pinnedBufferSize;
     cudaStream_t stream = d_buffers->stream_const_tree;
+    // Reset const tree loaded flag before starting a new copy
+    d_buffers->const_tree_loaded.store(false, std::memory_order_relaxed);
     
-    // Copy const tree to device
+    // Copy const tree to device (synchronizes internally)
     copy_to_device_in_chunks((const uint8_t*)pConstTree, (uint8_t*)d_const_tree, sizeConstTree, pinnedBuffer, pinnedBufferSize, stream);
     CHECKCUDAERR(cudaGetLastError());
     

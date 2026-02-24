@@ -20,7 +20,7 @@ using json = nlohmann::json;
 using namespace std::chrono;
 
 #define BLINDINGFACTORSLENGTH_PLONK_GPU 11
-#define PLONK_GPU_TIMING
+// #define PLONK_GPU_TIMING  // Uncomment or pass -DPLONK_GPU_TIMING at compile time to enable
 
 namespace PlonkGPU {
 

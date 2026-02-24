@@ -1128,8 +1128,6 @@ namespace PlonkGPU
     {
 
         uint32_t nDirect = zkey->nVars - zkey->nAdditions;
-        size_t witnessBytes = nDirect * sizeof(FrElement);
-        size_t intWitnessBytes = zkey->nAdditions * sizeof(FrElement);
         size_t mapBytes = zkey->nConstraints * 3 * sizeof(uint32_t);
 
         if (!evalConstPols) {

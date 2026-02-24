@@ -740,14 +740,14 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         d_buffers_recursivef as *mut u8,
     );
     timer_stop_and_log_debug!(GENERATE_RECURSIVEF_PROOF);
-    
+
     // Join the background thread (should be done by now since proof waited for copy event)
     if let Err(e) = load_fixed_pols_handle.join() {
         tracing::warn!("Fixed pols loading thread panicked: {:?}", e);
     }
-    
+
     timer_stop_and_log_info!(GENERATE_RECURSIVEF);
-    
+
     Ok(p_prove)
 }
 
