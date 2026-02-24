@@ -33,7 +33,7 @@ public:
     uint out_cursor = 0;
     uint state_cursor = 0;
 
-    TranscriptGL(uint64_t arity, bool custom)
+    TranscriptGL(uint64_t arity)
     {
         this->arity = arity;
         transcriptStateSize = HASH_SIZE;

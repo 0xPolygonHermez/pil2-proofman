@@ -141,7 +141,7 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     d_transcript.reset(stream);
 
     // Use verification key from d_buffers instead of const tree root
-    d_transcript.put((PoseidonBN128GPU::FrElement *)d_buffers->d_verkey, 1, stream, &timer);
+    d_transcript.put((BN128GPUScalarField::Element *)d_buffers->d_verkey, 1, stream, &timer);
     if (setupCtx.starkInfo.nPublics > 0)
     {
         if (!setupCtx.starkInfo.starkStruct.hashCommits)

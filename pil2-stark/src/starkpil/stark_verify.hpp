@@ -69,7 +69,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
 
     Goldilocks::Element challenges[(starkInfo.challengesMap.size() + starkInfo.starkStruct.steps.size() + 1) * FIELD_EXTENSION];
 
-    TranscriptType transcript(starkInfo.starkStruct.transcriptArity, starkInfo.starkStruct.merkleTreeCustom);
+    TranscriptType transcript(starkInfo.starkStruct.transcriptArity);
     if(!challengesVadcop) {
         transcript.put(&verkey[0], nFieldElements);
         if(starkInfo.nPublics > 0) {
@@ -77,7 +77,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
                 transcript.put(&publics[0], starkInfo.nPublics);
             } else {
                 ElementType hash[nFieldElements];
-                TranscriptType transcriptHash(starkInfo.starkStruct.transcriptArity, starkInfo.starkStruct.merkleTreeCustom);
+                TranscriptType transcriptHash(starkInfo.starkStruct.transcriptArity);
                 transcriptHash.put(&publics[0], starkInfo.nPublics);
                 transcriptHash.getState(hash);
                 transcript.put(hash, nFieldElements);
@@ -138,7 +138,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         transcript.put(&evals[0], starkInfo.evMap.size()  * FIELD_EXTENSION);
     } else {
         ElementType hash[nFieldElements];
-        TranscriptType transcriptHash(starkInfo.starkStruct.transcriptArity, starkInfo.starkStruct.merkleTreeCustom);
+        TranscriptType transcriptHash(starkInfo.starkStruct.transcriptArity);
         transcriptHash.put(&evals[0], starkInfo.evMap.size()  * FIELD_EXTENSION);
         transcriptHash.getState(hash);
         transcript.put(hash, nFieldElements);
@@ -179,7 +179,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
                 transcript.put(&finalPol[0],finalPolSize*FIELD_EXTENSION);
             } else {
                 ElementType hash[nFieldElements];
-                TranscriptType transcriptHash(starkInfo.starkStruct.transcriptArity, starkInfo.starkStruct.merkleTreeCustom);
+                TranscriptType transcriptHash(starkInfo.starkStruct.transcriptArity);
                 transcriptHash.put(&finalPol[0], finalPolSize*FIELD_EXTENSION);
                 transcriptHash.getState(hash);
                 transcript.put(hash, nFieldElements);
@@ -205,7 +205,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         // TODO
     }
 
-    TranscriptType transcriptPermutation(starkInfo.starkStruct.transcriptArity, starkInfo.starkStruct.merkleTreeCustom);
+    TranscriptType transcriptPermutation(starkInfo.starkStruct.transcriptArity);
     transcriptPermutation.put(challenge, FIELD_EXTENSION);    
     transcriptPermutation.put(&nonce, 1);
     transcriptPermutation.getPermutations(friQueries, starkInfo.starkStruct.nQueries, starkInfo.starkStruct.steps[0].nBits);
