@@ -113,17 +113,14 @@ fn get_global_hint_f<F: PrimeField64>(
     let challenges = if let Some(pctx) = pctx { pctx.get_challenges_ptr() } else { std::ptr::null_mut() };
     let proof_values = if let Some(pctx) = pctx { pctx.get_proof_values_ptr() } else { std::ptr::null_mut() };
     let airgroup_values = if let Some(pctx) = pctx {
-        let mut airgroup_values_air_instances = Vec::new();
         let my_instances = pctx.dctx_get_process_instances();
-        for instance_id in my_instances.iter() {
+        let mut airgroup_values_air_instances = vec![Vec::new(); my_instances.len()];
+        for (my_instance_idx, instance_id) in my_instances.iter().enumerate() {
             if !skip_prover_instance(pctx, *instance_id)?.0 {
                 let (airgroup_id, air_id) = pctx.dctx_get_instance_info(*instance_id)?;
                 let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id)?;
-                airgroup_values_air_instances.push(pctx.get_air_instance_airgroup_values(
-                    airgroup_id,
-                    air_id,
-                    air_instance_id,
-                )?);
+                airgroup_values_air_instances[my_instance_idx] =
+                    pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id)?;
             }
         }
         let mut airgroupvals = aggregate_airgroupvals(pctx, &airgroup_values_air_instances)?;

@@ -51,6 +51,7 @@ pub struct DistributionCtx {
     pub aux_table_map: Vec<i32>,               // Map from aux tables to original instances
 
     // Worker-level distribution
+    pub partition_set: bool,          // Whether the partition assignation is done
     pub instance_partition: Vec<i32>, // Which partition each instance belongs to (>=0 assigned, -1 unassigned, -2 appended table)
     pub worker_instances: Vec<usize>, // Indexes of instances assigned to this worker
     pub partition_count: Vec<u32>,    // #instances in each partition (does not include tables)
@@ -122,6 +123,7 @@ impl DistributionCtx {
             process_weight: Vec::new(),
             worker_index: -1,
             assignation_done: false,
+            partition_set: false,
         }
     }
 
@@ -146,6 +148,7 @@ impl DistributionCtx {
 
         self.partition_count = vec![0; n_partitions];
         self.partition_weight = vec![0; n_partitions];
+        self.partition_set = true;
         Ok(())
     }
 
@@ -196,6 +199,7 @@ impl DistributionCtx {
 
         //control
         self.assignation_done = false;
+        self.partition_set = false;
     }
 
     /// Verify that the static configuration has been properly set up
@@ -227,6 +231,11 @@ impl DistributionCtx {
         }
 
         Ok(())
+    }
+
+    #[inline]
+    pub fn is_setup_partition_init(&self) -> bool {
+        self.partition_set
     }
 
     /// Check if the current process is the owner of a given instance
