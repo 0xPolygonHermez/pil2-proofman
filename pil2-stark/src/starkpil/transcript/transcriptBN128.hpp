@@ -22,7 +22,7 @@ public:
     std::vector<RawFr::Element> out;
     std::vector<uint64_t> out3;
 
-    TranscriptBN128(uint64_t arity, bool custom = false) : state(1, RawFr::field.zero()), out(1, RawFr::field.zero()) {
+    TranscriptBN128(uint64_t arity) : state(1, RawFr::field.zero()), out(1, RawFr::field.zero()) {
         transcriptArity = arity;
     }
     
