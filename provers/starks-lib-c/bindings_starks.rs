@@ -543,10 +543,9 @@ extern "C" {
 
     pub fn gen_device_buffers_recursivef(
         pSetupCtx_: *mut ::std::os::raw::c_void,
-        pConstPols: *mut ::std::os::raw::c_void,
-        pConstTree: *mut ::std::os::raw::c_void,
         proverBufferSize: u64,
         d_commit_buffers: *mut ::std::os::raw::c_void,
+        verkey: *mut ::std::os::raw::c_char,
     ) -> *mut ::std::os::raw::c_void;
 
     pub fn free_device_buffers_recursivef(d_buffers: *mut ::std::os::raw::c_void);
@@ -614,6 +613,7 @@ extern "C" {
 
     pub fn alloc_fixed_pols_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void);
     pub fn free_fixed_pols_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void);
+    pub fn load_fixed_pols_recursivef(pSetupCtx: *mut ::std::os::raw::c_void, pConstTree: *mut ::std::os::raw::c_void, d_buffers: *mut ::std::os::raw::c_void);
 
     // Callback Management
     // ========================================================================================

@@ -670,10 +670,25 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     vadcop_final_verkey: &[u64],
     output_dir_path: &Path,
     prover_buffer_size: usize,
-    unified_buffer_gpu: *mut c_void,
+    d_buffers_recursivef: *mut c_void,
 ) -> ProofmanResult<*mut c_void> {
-    timer_start_debug!(GENERATE_RECURSIVEF);
+    timer_start_info!(GENERATE_RECURSIVEF);
     let p_setup: *mut c_void = (&setup.p_setup).into();
+
+    // Cast pointers to usize to make them Send-safe for threading
+    let p_setup_addr = p_setup as usize;
+    let const_tree_ptr_addr = setup.get_const_tree_ptr() as usize;
+    let d_buffers_addr = d_buffers_recursivef as usize;
+
+    let load_fixed_pols_handle = std::thread::spawn(move || {
+        timer_start_debug!(LOAD_FIXED_POLS_RECURSIVEF);
+        load_fixed_pols_recursivef_c(
+            p_setup_addr as *mut c_void,
+            const_tree_ptr_addr as *mut c_void,
+            d_buffers_addr as *mut c_void,
+        );
+        timer_stop_and_log_debug!(LOAD_FIXED_POLS_RECURSIVEF);
+    });
 
     let trace: Vec<F> = vec![F::ZERO; setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize];
 
@@ -708,13 +723,6 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     let recursivef_json_path = output_dir_path.join("recursivef.json");
     let recursivef_json_str = recursivef_json_path.to_string_lossy().into_owned();
 
-    let d_buffers = gen_device_buffers_recursivef_c(
-        p_setup as *mut u8,
-        setup.get_const_ptr(),
-        setup.get_const_tree_ptr(),
-        prover_buffer_size as u64,
-        unified_buffer_gpu as *mut u8,
-    );
     timer_start_debug!(GENERATE_RECURSIVEF_PROOF);
     // prove
     let p_prove = gen_recursive_proof_final_c(
@@ -729,14 +737,17 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         0,
         0,
         prover_buffer_size as u64,
-        d_buffers,
+        d_buffers_recursivef as *mut u8,
     );
     timer_stop_and_log_debug!(GENERATE_RECURSIVEF_PROOF);
 
-    // Free GPU buffers if have been allocated
-    free_device_buffers_recursivef_c(d_buffers);
+    // Join the background thread (should be done by now since proof waited for copy event)
+    if let Err(e) = load_fixed_pols_handle.join() {
+        tracing::warn!("Fixed pols loading thread panicked: {:?}", e);
+    }
 
-    timer_stop_and_log_debug!(GENERATE_RECURSIVEF);
+    timer_stop_and_log_info!(GENERATE_RECURSIVEF);
+
     Ok(p_prove)
 }
 
@@ -744,8 +755,12 @@ pub fn generate_snark_proof(
     snark_prover: *mut c_void,
     setup_path: &Path,
     proof: *mut c_void,
+    prealloc_handle: std::thread::JoinHandle<()>,
 ) -> ProofmanResult<(Vec<u8>, Vec<u8>)> {
     let witness = generate_witness_final_snark(proof, setup_path)?;
+
+    // Wait for GPU pre-allocation
+    prealloc_handle.join().unwrap();
 
     timer_start_info!(CALCULATE_FINAL_PROOF);
 

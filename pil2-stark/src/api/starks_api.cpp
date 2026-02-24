@@ -824,13 +824,14 @@ void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity,
     DeviceCommitBuffersCPU *d_buffers = new DeviceCommitBuffersCPU();
     return (void *)d_buffers;
 };
-void *gen_device_buffers_recursivef(void *pSetupCtx_, void *pConstPols, void *pConstTree, uint64_t proverBufferSize, void *d_commit_buffers){
+void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffers,  char* verkey){
     return nullptr;
 }
 void free_device_buffers_recursivef(void *d_buffers_){}
 
 void alloc_fixed_pols_buffer_gpu(void *d_buffers_) {}
 void free_fixed_pols_buffer_gpu(void *d_buffers_) {}
+void load_fixed_pols_recursivef(void *pSetupCtx_, void *pConstTree, void *d_buffers_) {}
 
 uint64_t gen_device_streams(void *d_buffers_, uint64_t nStreams, uint64_t nStreamsRecursive, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity) { return 1; }
 

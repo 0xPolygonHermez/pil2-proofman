@@ -20,7 +20,7 @@ using json = nlohmann::json;
 using namespace std::chrono;
 
 #define BLINDINGFACTORSLENGTH_PLONK_GPU 11
-//#define PLONK_GPU_TIMING
+// #define PLONK_GPU_TIMING  // Uncomment or pass -DPLONK_GPU_TIMING at compile time to enable
 
 namespace PlonkGPU {
 
@@ -71,11 +71,12 @@ namespace PlonkGPU {
         Keccak256Transcript<Engine> *transcript;
         SnarkProof<Engine> *proof;
 
-        std::thread asyncTransferSigma;       // S1,S2,S3 — join before computeZ
-        std::thread asyncTransferQ;           // QL-QC — join before computeT
+        std::thread asyncTransferSigma;       // evalConstPols=false: S1,S2,S3 — join before computeZ
+        std::thread asyncTransferQ;           // evalConstPols=false: QL-QC — join before computeT
         std::thread asyncComputePI;           // PI(X) — join in computeT before compute_t_evaluations_gpu
         std::thread asyncTransferPolsBatch1;  // zkey batch 1 (QC,S1,S2,S3 coefs → slot 8)
         std::thread asyncTransferPolsBatch2;  // zkey batch 2 (QM,QL,QR,QO coefs → slot 6)
+        std::thread asyncEvalNTT;             // evalConstPols=true: H2D + NTT for 9 eval polys
         size_t pinnedSize = 0;
         void* pinnedS = nullptr;
         void* pinnedQ = nullptr;
@@ -106,7 +107,7 @@ namespace PlonkGPU {
         void* d_evalsS1 = nullptr;
         void* d_evalsS2 = nullptr;
         void* d_evalsS3 = nullptr;
-        void* d_evalsL0 = nullptr;
+        void* d_evalsL1 = nullptr;
         void* d_evalsQL = nullptr;
         void* d_evalsQR = nullptr;
         void* d_evalsQM = nullptr;
@@ -131,6 +132,7 @@ namespace PlonkGPU {
         void* d_omegaBasesNExt = nullptr;   // omega_4x^(blockIdx*256) for NExt
         void* d_omegaTidNExt = nullptr;     // omega_4x^(0..255) for NExt
         void* d_blindings = nullptr;
+        void* d_zvals = nullptr;           
         void* d_addSignalId1 = nullptr;     
         void* d_addSignalId2 = nullptr;     
         void* d_addFactor1 = nullptr;       
@@ -140,6 +142,7 @@ namespace PlonkGPU {
 
         void* pTauStream = nullptr;         // Non-blocking CUDA stream to copy pTau to GPU
         void* omegasStream = nullptr;       // Non-blocking CUDA stream to generate precomputed omega tables
+        void* evalNTTStream = nullptr;      // Non-blocking CUDA stream for asyncEvalNTT H2D + zero_pad
         void* pinnedD2HStaging = nullptr;   // Pinned staging buffer for async D2H
         size_t pinnedD2HStagingSize = 0;
        
@@ -148,6 +151,7 @@ namespace PlonkGPU {
         bool preAllocated = false;
         bool isMyDeviceBuffer = false;
         bool precomputedPinned = false;
+        bool evalConstPols = true;  
 
     public:
         PlonkProverGPU(Engine &E);

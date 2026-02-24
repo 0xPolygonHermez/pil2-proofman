@@ -167,7 +167,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
 
     d_transcript->reset(stream);
     if (recursive) {
-        d_transcript->put((Goldilocks::Element *)(starks.treesGL[setupCtx.starkInfo.nStages+1]->get_nodes_ptr()) + starks.treesGL[setupCtx.starkInfo.nStages + 1]->numNodes - HASH_SIZE, HASH_SIZE, stream);
+        d_transcript->put(air_instance_info->verkeyRoot, HASH_SIZE, stream);
         if (setupCtx.starkInfo.nPublics > 0)
         {
             if (!setupCtx.starkInfo.starkStruct.hashCommits)
