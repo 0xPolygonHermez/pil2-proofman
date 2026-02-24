@@ -873,6 +873,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     setups: &SetupsVadcop<F>,
+    verify_constraints: bool,
     aggregation: bool,
     only_first_gpu: bool,
 ) -> ProofmanResult<()> {
@@ -887,7 +888,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
             if cfg!(feature = "gpu") {
                 let const_pols_path = &setup.const_pols_path;
                 tracing::debug!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
-                let load_tree = setup.preallocate;
+                let load_tree = setup.preallocate && !verify_constraints;
                 let tree_path = match load_tree {
                     true => &setup.const_pols_tree_path,
                     false => "",
@@ -922,7 +923,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
                     if cfg!(feature = "gpu") {
                         let const_pols_path = &setup.const_pols_path;
                         tracing::debug!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
-                        let load_tree = setup.preallocate;
+                        let load_tree = setup.preallocate && !verify_constraints;
                         let tree_path = match load_tree {
                             true => &setup.const_pols_tree_path,
                             false => "",
@@ -955,7 +956,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
                 if cfg!(feature = "gpu") {
                     let const_pols_path = &setup.const_pols_path;
                     tracing::debug!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
-                    let load_tree = setup.preallocate;
+                    let load_tree = setup.preallocate && !verify_constraints;
                     let tree_path = match load_tree {
                         true => &setup.const_pols_tree_path,
                         false => "",
@@ -987,7 +988,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
             if cfg!(feature = "gpu") {
                 let const_pols_path = &setup.const_pols_path;
                 tracing::debug!(airgroup_id, air_id = 0, proof_type, "Loading const pols in GPU");
-                let load_tree = setup.preallocate;
+                let load_tree = setup.preallocate && !verify_constraints;
                 let tree_path = match load_tree {
                     true => &setup.const_pols_tree_path,
                     false => "",
@@ -1016,7 +1017,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
         if cfg!(feature = "gpu") {
             let const_pols_path = &setup_vadcop_final.const_pols_path;
             tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading const pols in GPU");
-            let load_tree = setup_vadcop_final.preallocate;
+            let load_tree = setup_vadcop_final.preallocate && !verify_constraints;
             let tree_path = match load_tree {
                 true => &setup_vadcop_final.const_pols_tree_path,
                 false => "",
@@ -1044,7 +1045,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
         if cfg!(feature = "gpu") {
             let const_pols_path = &setup_vadcop_final_compressed.const_pols_path;
             tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading const pols in GPU");
-            let load_tree = setup_vadcop_final_compressed.preallocate;
+            let load_tree = setup_vadcop_final_compressed.preallocate && !verify_constraints;
             let tree_path = match load_tree {
                 true => &setup_vadcop_final_compressed.const_pols_tree_path,
                 false => "",

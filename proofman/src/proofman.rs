@@ -2937,7 +2937,14 @@ where
 
         if cfg!(feature = "gpu") && self.reload_fixed_pols_gpu.load(Ordering::SeqCst) {
             timer_start_info!(RELOAD_FIXED_POLS);
-            load_device_const_pols(&self.pctx, &self.sctx, &self.setups, self.aggregation, true)?;
+            load_device_const_pols(
+                &self.pctx,
+                &self.sctx,
+                &self.setups,
+                self.verify_constraints,
+                self.aggregation,
+                true,
+            )?;
             self.reload_fixed_pols_gpu.store(false, Ordering::SeqCst);
             timer_stop_and_log_info!(RELOAD_FIXED_POLS);
         }
@@ -3593,7 +3600,7 @@ where
         }
 
         timer_start_info!(LOADING_FIXED_POLS);
-        load_device_const_pols(&pctx, &sctx, &setups_vadcop, aggregation, false)?;
+        load_device_const_pols(&pctx, &sctx, &setups_vadcop, verify_constraints, aggregation, false)?;
         timer_stop_and_log_info!(LOADING_FIXED_POLS);
 
         if aggregation {
