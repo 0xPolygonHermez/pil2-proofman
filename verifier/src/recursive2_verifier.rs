@@ -4306,5 +4306,5 @@ fn verifier_info() -> VerifierInfo {
 }
 
 pub fn verify_recursive2(proof: &VadcopFinalProof, vk: &[u8]) -> bool {
-    stark_verify::<Poseidon16, 16>(proof, vk, &verifier_info(), q_verify, query_verify)
+    stark_verify::<Poseidon16, 16>(&proof.proof_with_publics(), vk, &verifier_info(), q_verify, query_verify)
 }
