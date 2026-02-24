@@ -9,6 +9,7 @@
 #include "hints.cuh"
 #include "gpu_timer.cuh"
 #include <iomanip>
+#include <thread>
 
 
 
@@ -68,23 +69,15 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
 
     uint64_t countId = 0;
 
-    StepsParams *params_pinned;
-    CHECKCUDAERR(cudaMallocHost((void **)&params_pinned, sizeof(StepsParams)));
-    //Goldilocks::Element *proof_buffer_pinned = d_buffers->streamsData[stream_id].pinned_buffer_proof;
-    Goldilocks::Element *pinned_exps_params;
-    uint64_t maxExps = 20000; // TODO: CALCULATE IT PROPERLY!
-    CHECKCUDAERR(cudaMallocHost((void **)&pinned_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
-    Goldilocks::Element *pinned_exps_args;
-    CHECKCUDAERR(cudaMallocHost((void **)&pinned_exps_args, maxExps * sizeof(ExpsArguments)));
+    StepsParams *params_pinned = d_buffers->params_pinned;
+    Goldilocks::Element *pinned_exps_params = d_buffers->pinned_exps_params;
+    Goldilocks::Element *pinned_exps_args = d_buffers->pinned_exps_args;
     TranscriptBN128_GPU d_transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, stream);
     TranscriptBN128_GPU d_transcript_helper(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, stream);
 
-    StepsParams *d_params;
-    CHECKCUDAERR(cudaMalloc((void **)&d_params, sizeof(StepsParams)));
-    ExpsArguments *d_expsArgs;
-    CHECKCUDAERR(cudaMalloc((void **)&d_expsArgs, maxExps * sizeof(ExpsArguments)));
-    DestParamsGPU *d_destParams;
-    CHECKCUDAERR(cudaMalloc((void **)&d_destParams, maxExps * 2 * sizeof(DestParamsGPU)));
+    StepsParams *d_params = d_buffers->d_params;
+    ExpsArguments *d_expsArgs = d_buffers->d_expsArgs;
+    DestParamsGPU *d_destParams = d_buffers->d_destParams;
 
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
@@ -192,6 +185,13 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     TimerStartGPU(timer, STARK_COMMIT_STAGE_2);
     commitStage_bn128_gpu(2, setupCtx, starks.treesGL, h_params.trace, d_aux_trace, &d_transcript, timer, stream);     
     TimerStopGPU(timer, STARK_COMMIT_STAGE_2);
+
+    TimerStartCategoryGPU(timer, LOAD_TREE_WAIT);
+        // Wait for background thread to finish const tree copy (CPU blocks here until copy is done)
+        while (!d_buffers->const_tree_loaded.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+    TimerStopCategoryGPU(timer, LOAD_TREE_WAIT)
 
     TimerStartGPU(timer, STARK_STEP_Q);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
@@ -343,17 +343,6 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     }
     TimerStopGPU(timer, STARK_SAVE_PROOF);
     TimerStartGPU(timer, STARK_CLEANUP);
-
-
-    // free allocated pinned memory
-    cudaFreeHost(params_pinned);
-    cudaFreeHost(pinned_exps_params);
-    cudaFreeHost(pinned_exps_args);
-
-    //free device memory allocated
-    cudaFree(d_params);
-    cudaFree(d_expsArgs);
-    cudaFree(d_destParams);
 
     // Free stark trees (skip constants tree at nStages+1 - passed in from outside)
     for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2; i++)

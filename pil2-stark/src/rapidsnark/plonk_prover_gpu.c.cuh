@@ -49,6 +49,7 @@ extern "C" void gpu_plonk_start_cpu_to_gpu_transfer(
     void** dDsts, const void** hostSrcs, const size_t* sizes, int numArrays,
     void* pinnedBuffer, size_t pinnedSize);
 extern "C" void gpu_plonk_zero_pad(void* buf, uint64_t startElem, uint64_t endElem);
+extern "C" void gpu_plonk_zero_pad_async(void* buf, uint64_t startElem, uint64_t endElem, void* stream);
 extern "C" void gpu_plonk_compute_gate_a(
     void* tOut, void* tzOut,
     const void* evalA, const void* evalQL,
@@ -117,12 +118,11 @@ extern "C" void gpu_plonk_compute_qm_perm_l1(
     const void* evalA, const void* evalB, const void* evalC,
     const void* evalZ,
     const void* evalQM, const void* evalS1, const void* evalS2, const void* evalS3, const void* evalL1,
-    const void* d_blindings,
+    const void* d_blindings, const void* d_zvals,
     const void* beta, const void* gamma,
     const void* alpha, const void* alpha2,
     const void* k1, const void* k2,
     const void* omega1,
-    const void* Z1, const void* Z2, const void* Z3,
     uint64_t N,
     const void* omegaBases, const void* omegaTid);
 
@@ -239,6 +239,11 @@ namespace PlonkGPU
             omegasStream = nullptr;
         }
 
+        if (evalNTTStream) {
+            gpu_plonk_destroy_cuda_stream(evalNTTStream);
+            evalNTTStream = nullptr;
+        }
+
         if (pinnedD2HStaging) {
             gpu_plonk_free_pinned_buffer(pinnedD2HStaging);
             pinnedD2HStaging = nullptr;
@@ -267,6 +272,7 @@ namespace PlonkGPU
             d_omegaBasesN = nullptr;
             d_omegaTidN = nullptr;
             d_blindings = nullptr;
+            d_zvals = nullptr;
             d_omegaBasesNExt = nullptr;
             d_omegaTidNExt = nullptr;
             d_witness = nullptr;
@@ -886,6 +892,7 @@ namespace PlonkGPU
             unifiedBufferSize += numBlocksN * sizeof(FrElement);      // omega bases for N z_ratios kernel
             unifiedBufferSize += 256 * sizeof(FrElement);             // omega tid table (0..255)
             unifiedBufferSize += (BLINDINGFACTORSLENGTH_PLONK_GPU + 1) * sizeof(FrElement); // blinding factors b_0..b_11
+            unifiedBufferSize += 12 * sizeof(FrElement);                                    // Z1[4], Z2[4], Z3[4] for QM+perm+L1
 
             // GPU additions data - grouped by type for proper alignment (uint32_t at the end)
             unifiedBufferSize += nDirect * sizeof(FrElement);          // primary witnesses
@@ -919,6 +926,7 @@ namespace PlonkGPU
         d_omegaBasesN = base + off;          off += numBlocksN * sizeof(FrElement);
         d_omegaTidN = base + off;            off += 256 * sizeof(FrElement);
         d_blindings = base + off;            off += (BLINDINGFACTORSLENGTH_PLONK_GPU + 1) * sizeof(FrElement);
+        d_zvals = base + off;                off += 12 * sizeof(FrElement);
         d_witness = base + off;              off += nDirect * sizeof(FrElement);
         d_intWitness = base + off;           off += zkey->nAdditions * sizeof(FrElement);
         d_addFactor1 = base + off;           off += zkey->nAdditions * sizeof(FrElement);
@@ -981,35 +989,13 @@ namespace PlonkGPU
         gpu_plonk_precompute_omega_tables_async(d_omegaBasesNExt, d_omegaTidNExt, &omega_4x, 256, numBlocks4N, omegasStream);
         gpu_plonk_precompute_omega_tables_async(d_omegaBasesN, d_omegaTidN, &omega, 256, numBlocksN, omegasStream);
 
-        LOG_TRACE("··· Uploading additions to GPU");
-        //node:  thid could be done in a async thread
-        uint32_t* signalId1 = new uint32_t[zkey->nAdditions];
-        uint32_t* signalId2 = new uint32_t[zkey->nAdditions];
-        FrElement* factor1 = new FrElement[zkey->nAdditions];
-        FrElement* factor2 = new FrElement[zkey->nAdditions];
-        for (uint32_t i = 0; i < zkey->nAdditions; i++) {
-            signalId1[i] = additionsBuff[i].signalId1;
-            signalId2[i] = additionsBuff[i].signalId2;
-            factor1[i] = additionsBuff[i].factor1;
-            factor2[i] = additionsBuff[i].factor2;
-        }
-        gpu_plonk_memcpy_h2d(d_addSignalId1, signalId1, zkey->nAdditions * sizeof(uint32_t));
-        gpu_plonk_memcpy_h2d(d_addSignalId2, signalId2, zkey->nAdditions * sizeof(uint32_t));
-        gpu_plonk_memcpy_h2d(d_addFactor1, factor1, zkey->nAdditions * sizeof(FrElement));
-        gpu_plonk_memcpy_h2d(d_addFactor2, factor2, zkey->nAdditions * sizeof(FrElement));
-        gpu_plonk_memcpy_h2d(d_additionLevels, additionLevels, zkey->nAdditions);
-        delete[] signalId1;
-        delete[] signalId2;
-        delete[] factor1;
-        delete[] factor2;
-
         if (!pinnedD2HStaging) {
             pinnedD2HStagingSize = (N + 6) * sizeof(FrElement);
             gpu_plonk_cuda_malloc_pinned_buffer(&pinnedD2HStaging, pinnedD2HStagingSize);
         }
 
         if (evalConstPols) {
-            // Compute 9 polynomial evaluations from coefficients via GPU NTT (async)
+            if (!evalNTTStream) evalNTTStream = gpu_plonk_create_cuda_stream_nonblocking();
             LOG_TRACE("··· Launching async eval NTT (9 polys from coefficients)");
             asyncEvalNTT = std::thread([this]() {
                 void* slots[9] = {d_evalsS1, d_evalsS2, d_evalsS3, d_evalsL1,
@@ -1017,12 +1003,12 @@ namespace PlonkGPU
                 const char* names[9] = {"Sigma1", "Sigma2", "Sigma3", "L1",
                                           "QL", "QR", "QM", "QO", "QC"};
                 for (int i = 0; i < 9; i++) {
-                    gpu_plonk_memcpy_h2d(slots[i], polPtr[names[i]], NBytes);
-                    gpu_plonk_zero_pad(slots[i], N, NExt);
-                    gpu_plonk_cuda_device_sync(); // default-stream zero_pad → sppark NTT (non-blocking stream)
+                    gpu_plonk_memcpy_h2d_async(slots[i], polPtr[names[i]], NBytes, evalNTTStream);
+                    gpu_plonk_zero_pad_async(slots[i], N, NExt, evalNTTStream);
+                    gpu_plonk_sync_cuda_stream(evalNTTStream); 
                     ntt_bn128_gpu_dev_ptr(slots[i], zkeyPower + 2);
                 }
-                gpu_plonk_cuda_device_sync();
+                gpu_plonk_cuda_device_sync(); // ensure all sppark NTTs complete
             });
         } else {
             // Load pre-computed 4N evaluations from zkey file (async file I/O)
@@ -1058,6 +1044,27 @@ namespace PlonkGPU
                                                qSids.data(), qOffs.data(), qSizes.data(), 5);
             });
         }
+
+        LOG_TRACE("··· Uploading additions to GPU");
+        uint32_t* signalId1 = new uint32_t[zkey->nAdditions];
+        uint32_t* signalId2 = new uint32_t[zkey->nAdditions];
+        FrElement* factor1 = new FrElement[zkey->nAdditions];
+        FrElement* factor2 = new FrElement[zkey->nAdditions];
+        for (uint32_t i = 0; i < zkey->nAdditions; i++) {
+            signalId1[i] = additionsBuff[i].signalId1;
+            signalId2[i] = additionsBuff[i].signalId2;
+            factor1[i] = additionsBuff[i].factor1;
+            factor2[i] = additionsBuff[i].factor2;
+        }
+        gpu_plonk_memcpy_h2d(d_addSignalId1, signalId1, zkey->nAdditions * sizeof(uint32_t));
+        gpu_plonk_memcpy_h2d(d_addSignalId2, signalId2, zkey->nAdditions * sizeof(uint32_t));
+        gpu_plonk_memcpy_h2d(d_addFactor1, factor1, zkey->nAdditions * sizeof(FrElement));
+        gpu_plonk_memcpy_h2d(d_addFactor2, factor2, zkey->nAdditions * sizeof(FrElement));
+        gpu_plonk_memcpy_h2d(d_additionLevels, additionLevels, zkey->nAdditions);
+        delete[] signalId1;
+        delete[] signalId2;
+        delete[] factor1;
+        delete[] factor2;
 
     }
 
@@ -1121,8 +1128,6 @@ namespace PlonkGPU
     {
 
         uint32_t nDirect = zkey->nVars - zkey->nAdditions;
-        size_t witnessBytes = nDirect * sizeof(FrElement);
-        size_t intWitnessBytes = zkey->nAdditions * sizeof(FrElement);
         size_t mapBytes = zkey->nConstraints * 3 * sizeof(uint32_t);
 
         if (!evalConstPols) {
@@ -1413,6 +1418,11 @@ namespace PlonkGPU
         Z3[2] = E.fr.set(-8);
         Z3[3] = E.fr.sub(E.fr.set(2), E.fr.mul(E.fr.set(2), w2));
 
+        // Upload Z1/Z2/Z3 to d_zvals on GPU (used by QM+perm+L1 kernel via shared memory)
+        gpu_plonk_memcpy_h2d(d_zvals, Z1, 4 * sizeof(FrElement));
+        gpu_plonk_memcpy_h2d((uint8_t*)d_zvals + 4 * sizeof(FrElement), Z2, 4 * sizeof(FrElement));
+        gpu_plonk_memcpy_h2d((uint8_t*)d_zvals + 8 * sizeof(FrElement), Z3, 4 * sizeof(FrElement));
+
         // Wait for async PI computation (launched in computeWirePolynomials, only when !evalConstPols)
         if (!evalConstPols && asyncComputePI.joinable()) {
 #ifdef PLONK_GPU_TIMING
@@ -1529,12 +1539,11 @@ namespace PlonkGPU
             d_evalsA, d_evalsB, d_evalsC,
             d_aux,
             d_evalsQM, d_evalsS1, d_evalsS2, d_evalsS3, d_evalsL1,
-            d_blindings,
+            d_blindings, d_zvals,
             (const void*)&beta, (const void*)&gamma,
             (const void*)&alpha, (const void*)&alpha2,
             (const void*)&k1, (const void*)&k2,
             (const void*)&omega1,
-            (const void*)Z1, (const void*)Z2, (const void*)Z3,
             N,
             d_omegaBasesNExt, d_omegaTidNExt);
         

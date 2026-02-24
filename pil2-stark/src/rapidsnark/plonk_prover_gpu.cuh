@@ -20,7 +20,7 @@ using json = nlohmann::json;
 using namespace std::chrono;
 
 #define BLINDINGFACTORSLENGTH_PLONK_GPU 11
-//#define PLONK_GPU_TIMING
+// #define PLONK_GPU_TIMING  // Uncomment or pass -DPLONK_GPU_TIMING at compile time to enable
 
 namespace PlonkGPU {
 
@@ -132,6 +132,7 @@ namespace PlonkGPU {
         void* d_omegaBasesNExt = nullptr;   // omega_4x^(blockIdx*256) for NExt
         void* d_omegaTidNExt = nullptr;     // omega_4x^(0..255) for NExt
         void* d_blindings = nullptr;
+        void* d_zvals = nullptr;           
         void* d_addSignalId1 = nullptr;     
         void* d_addSignalId2 = nullptr;     
         void* d_addFactor1 = nullptr;       
@@ -141,6 +142,7 @@ namespace PlonkGPU {
 
         void* pTauStream = nullptr;         // Non-blocking CUDA stream to copy pTau to GPU
         void* omegasStream = nullptr;       // Non-blocking CUDA stream to generate precomputed omega tables
+        void* evalNTTStream = nullptr;      // Non-blocking CUDA stream for asyncEvalNTT H2D + zero_pad
         void* pinnedD2HStaging = nullptr;   // Pinned staging buffer for async D2H
         size_t pinnedD2HStagingSize = 0;
        

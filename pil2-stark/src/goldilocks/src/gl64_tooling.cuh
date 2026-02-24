@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cassert>
+#include <atomic>
 #include "goldilocks_base_field.hpp"
 #ifndef __GOLDILOCKS_ENV__
 #include "gpu_timer.cuh"
@@ -374,24 +375,54 @@ struct DeviceRecursiveFBuffers
 {
     
     cudaStream_t stream;
+    cudaStream_t stream_const_tree;
     TimerGPU timer;
     gl64_t *d_aux_trace;
     gl64_t *d_const_tree;
     RawFr::Element *d_verkey;  // Verification key on GPU
     uint8_t* pinnedBuffer;
+    uint8_t* pinnedBufferConstTree;
     size_t pinnedBufferSize = 256 * 1024 * 1024;
     bool owns_aux_trace;
     bool owns_const_tree;
+    std::atomic<bool> const_tree_loaded{false};  // CPU flag: true when const tree copy is complete
+    // Reusable allocations for proof generation
+    StepsParams *params_pinned;
+    Goldilocks::Element *pinned_exps_params;
+    Goldilocks::Element *pinned_exps_args;
+    StepsParams *d_params;
+    ExpsArguments *d_expsArgs;
+    DestParamsGPU *d_destParams;
 
-    DeviceRecursiveFBuffers() : stream(), timer(), owns_aux_trace(true), owns_const_tree(true), d_verkey(nullptr){
+
+    DeviceRecursiveFBuffers() : owns_aux_trace(true), owns_const_tree(true), d_verkey(nullptr), const_tree_loaded(false) {
+        uint64_t maxExps = 20000;
         cudaStreamCreate(&stream);
+        cudaStreamCreate(&stream_const_tree);
         timer.init(stream);
+        
         CHECKCUDAERR(cudaMallocHost((void**)&pinnedBuffer, pinnedBufferSize));
-
+        CHECKCUDAERR(cudaMallocHost((void**)&pinnedBufferConstTree, pinnedBufferSize));
+        // Allocate reusable buffers
+        CHECKCUDAERR(cudaMallocHost((void **)&params_pinned, sizeof(StepsParams)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_exps_args, maxExps * sizeof(ExpsArguments)));
+        CHECKCUDAERR(cudaMalloc((void **)&d_params, sizeof(StepsParams)));
+        CHECKCUDAERR(cudaMalloc((void **)&d_expsArgs, maxExps * sizeof(ExpsArguments)));
+        CHECKCUDAERR(cudaMalloc((void **)&d_destParams, maxExps * 2 * sizeof(DestParamsGPU)));
     }
+    
     ~DeviceRecursiveFBuffers() {
         cudaStreamDestroy(stream);
+        cudaStreamDestroy(stream_const_tree);
         cudaFreeHost(pinnedBuffer);
+        cudaFreeHost(pinnedBufferConstTree);
+        cudaFreeHost(params_pinned);
+        cudaFreeHost(pinned_exps_params);
+        cudaFreeHost(pinned_exps_args);
+        cudaFree(d_params);
+        cudaFree(d_expsArgs);
+        cudaFree(d_destParams);
         if (d_verkey) cudaFree(d_verkey);
     }
 };
