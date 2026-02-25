@@ -2772,14 +2772,6 @@ where
                     }],
                 );
 
-                println!(
-                    "Accumulated challenge calculated (first 10 digits): {:?}",
-                    &accumulated_challenge.clone()[..10]
-                );
-
-                println!("Global challenge calculated: {:?}", global_challenge_calculated);
-                println!("Global challenge from pctx: {:?}", global_challenge);
-
                 if global_challenge_calculated != *global_challenge {
                     let error =
                         "Global challenge calculated from contributions does not match the global challenge from pctx"
@@ -2876,7 +2868,6 @@ where
                     recursive2_airgroup_proofs.push(proof);
 
                     if recursive2_airgroup_proofs.len() >= N_RECURSIVE_PROOFS_PER_AGGREGATION {
-                        println!("Generating outer aggregation",);
                         let p1 = recursive2_airgroup_proofs.pop().unwrap();
                         let p2 = recursive2_airgroup_proofs.pop().unwrap();
                         let p3 = recursive2_airgroup_proofs.pop().unwrap();
@@ -2895,7 +2886,6 @@ where
                         rec2_witness_tx_clone.send(witness).unwrap();
                     }
                     total_outer_agg_proofs.decrement();
-                    println!("Total outer aggregation proofs remaining: {}", total_outer_agg_proofs.get_count());
                 }
             });
             self.handle_recursives.lock().unwrap().push(handle_recursive);
