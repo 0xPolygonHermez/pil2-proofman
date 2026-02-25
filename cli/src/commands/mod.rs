@@ -16,3 +16,4 @@ pub mod stats;
 pub mod execute;
 pub mod gen_witness;
 pub mod setup_rust;
+pub mod setup_rust2;
