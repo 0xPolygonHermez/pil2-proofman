@@ -32,7 +32,7 @@ public:
   void hash(vector<FrElement> &state, FrElement *result);
     void linearHash(FrElement* output, Goldilocks::Element* input, uint64_t inputSize, uint64_t t);
     void linearHash(FrElement* output, Goldilocks::Element* trace, uint64_t rows, uint64_t cols, uint64_t t);
-    void merkletree(FrElement* tree, Goldilocks::Element *trace, uint64_t rows, uint64_t cols, uint64_t arity);
+    void merkletree(FrElement* tree, Goldilocks::Element *trace, uint64_t rows, uint64_t cols, uint64_t linearHashArity, uint64_t arity);
   void grinding(uint64_t &nonce, vector<FrElement> &state, const uint32_t n_bits);
 };
 

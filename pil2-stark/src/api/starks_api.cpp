@@ -661,7 +661,7 @@ uint64_t commit_witness(void *pSetupCtx_, void *params_, uint64_t instanceId, ui
 
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];    
 
-    MerkleTreeGL mt(setupCtx->starkInfo.starkStruct.merkleTreeArity, setupCtx->starkInfo.starkStruct.lastLevelVerification, true, NExtended, nCols);
+    MerkleTreeGL mt(setupCtx->starkInfo.starkStruct.merkleTreeArity,  setupCtx->starkInfo.starkStruct.transcriptArity, setupCtx->starkInfo.starkStruct.lastLevelVerification, true, NExtended, nCols);
 
     uint64_t offset_src = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
     uint64_t offset_dst = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];

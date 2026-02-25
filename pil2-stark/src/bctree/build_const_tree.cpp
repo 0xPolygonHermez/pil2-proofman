@@ -47,7 +47,7 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
     if (verificationHashType == "GL") {
         TimerStart(MERKELIZE_CONST_TREE);
         Goldilocks::Element root[4];
-        MerkleTreeGL mt(arity, lastLevelVerification, custom, NExtended, nPols);
+        MerkleTreeGL mt(arity, arity, lastLevelVerification, custom, NExtended, nPols);
         Goldilocks::Element *buffNodes = new Goldilocks::Element[mt.numNodes];
         mt.setSource(pConstPolsExt);
         mt.setNodes(buffNodes);
@@ -77,9 +77,10 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
         TimerStart(MERKELIZE_CONST_TREE);
         RawFr::Element rootC;
         uint64_t merkleTreeArity = starkInfoJson["starkStruct"].contains("merkleTreeArity") ? starkInfoJson["starkStruct"]["merkleTreeArity"].get<uint64_t>() : 16;
+        uint64_t transcriptArity = starkInfoJson["starkStruct"].contains("transcriptArity") ? starkInfoJson["starkStruct"]["transcriptArity"].get<uint64_t>() : 8;
         bool merkleTreeCustom = starkInfoJson["starkStruct"].contains("merkleTreeCustom") ? starkInfoJson["starkStruct"]["merkleTreeCustom"].get<bool>() : false;
 
-        MerkleTreeBN128 mt(merkleTreeArity, 0, merkleTreeCustom, NExtended, nPols);
+        MerkleTreeBN128 mt(merkleTreeArity, transcriptArity, 0, merkleTreeCustom, NExtended, nPols);
         RawFr::Element *buffNodes = new RawFr::Element[mt.numNodes];
         mt.setSource(pConstPolsExt);
         mt.setNodes(buffNodes);

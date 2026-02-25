@@ -41,9 +41,9 @@ public:
     static void linearHashTiles(FrElement *d_output, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int t, cudaStream_t stream);
 
     // Merkle tree construction for row-major layout
-    static void merkletree(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, cudaStream_t stream);
+    static void merkletree(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t linearHashArity, uint64_t arity, cudaStream_t stream);
     // Merkle tree construction for tiled layout
-    static void merkletreeTiles(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, cudaStream_t stream);
+    static void merkletreeTiles(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t linearHashArity, uint64_t arity, cudaStream_t stream);
 
   // Grinding (proof-of-work nonce search)
   // d_nonceBlock: device buffer for intermediate nonce storage (size: NONCES_LAUNCH_GRID_SIZE * sizeof(uint64_t))

@@ -3,10 +3,11 @@
 #include <algorithm> // std::max
 #include <cassert>
 
-MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, uint64_t _last_level_verification, bool _custom, uint64_t _height, uint64_t _width, bool allocateSource, bool allocateNodes) : height(_height), width(_width)
+MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, uint64_t _transcriptArity, uint64_t _last_level_verification, bool _custom, uint64_t _height, uint64_t _width, bool allocateSource, bool allocateNodes) : height(_height), width(_width)
 {
 
     arity = _arity;
+    transcriptArity = _transcriptArity;
     last_level_verification = _last_level_verification;
     custom = _custom;
     numNodes = getNumNodes(height);
@@ -23,12 +24,13 @@ MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, uint64_t _last_level_verificat
    
 }
 
-MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, uint64_t _last_level_verification, bool _custom, Goldilocks::Element *tree, uint64_t height_, uint64_t width_)
+MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, uint64_t _transcriptArity, uint64_t _last_level_verification, bool _custom, Goldilocks::Element *tree, uint64_t height_, uint64_t width_)
 {
     width = width_;
     height = height_;
     source = tree;
     arity = _arity;
+    transcriptArity = _transcriptArity;
     last_level_verification = _last_level_verification;
     custom = _custom;
     numNodes = getNumNodes(height);
@@ -180,8 +182,6 @@ void MerkleTreeBN128::calculateRootFromProof(RawFr::Element *value, std::vector<
 
     Poseidon2BN128 p;
     std::vector<RawFr::Element> elements(arity);
-    std::memset(&elements[0], 0, arity * sizeof(RawFr::Element));
-
     for(uint64_t i = 0; i < arity; ++i) {
         std::memcpy(&elements[i], &mp[offset][i], sizeof(RawFr::Element));
     }
@@ -198,8 +198,7 @@ bool MerkleTreeBN128::verifyGroupProof(RawFr::Element* root, RawFr::Element* lev
     RawFr::Element value[1];
     value[0] = RawFr::field.zero();
     Poseidon2BN128 p;
-    p.linearHash(value, v.data(), width, arity);
-
+    p.linearHash(value, v.data(), width, transcriptArity);
     uint64_t queryIdx = idx;
     calculateRootFromProof(&value[0], mp, queryIdx, 0);
 
@@ -219,7 +218,7 @@ bool MerkleTreeBN128::verifyGroupProof(RawFr::Element* root, RawFr::Element* lev
 void MerkleTreeBN128::merkelize()
 {
     Poseidon2BN128 p;
-    p.merkletree(nodes, source, height, width, arity);
+    p.merkletree(nodes, source, height, width, transcriptArity, arity);
 }
 
 void MerkleTreeBN128::writeFile(std::string constTreeFile) {

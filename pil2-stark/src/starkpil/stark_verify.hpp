@@ -202,7 +202,31 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
             return false;
         }
     } else {
-        // TODO
+        std::vector<RawFr::Element> verifyState(4);
+
+        for (uint64_t k = 0; k < 3; k++)
+        {
+            RawFr::Element tmp = RawFr::field.zero();
+            tmp.v[0] = Goldilocks::toU64(challenge[k]);
+            RawFr::field.toMontgomery(tmp, tmp);
+            verifyState[k] = tmp;
+        }
+
+        RawFr::Element tmp = RawFr::field.zero();
+        tmp.v[0] = Goldilocks::toU64(nonce);
+        RawFr::field.toMontgomery(tmp, tmp);
+        verifyState[3] = tmp;
+
+        Poseidon2BN128 p;
+        p.hash(verifyState);
+
+        RawFr::Element res;
+        RawFr::field.fromMontgomery(res, verifyState[0]);
+        
+        if (res.v[0] >= (1ULL << (64 - starkInfo.starkStruct.powBits))) {
+            zklog.error("starkVerify: PoW verification failed");
+            return false;
+        }
     }
 
     TranscriptType transcriptPermutation(starkInfo.starkStruct.transcriptArity);
@@ -379,7 +403,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         zklog.trace("Verifying stage " +  to_string(s + 1) + " Merkle tree");
         std::string section = "cm" + to_string(s + 1);
         uint64_t nCols = starkInfo.mapSectionsN[section];
-        MerkleTreeType tree(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, nCols);
+        MerkleTreeType tree(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.transcriptArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, nCols);
         ElementType root[nFieldElements];
         ElementType level[nFieldElements * numNodesLevel];
         if(nFieldElements == 1) {
@@ -441,7 +465,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     }
 
     zklog.trace("Verifying constant Merkle tree");
-    MerkleTreeType treeC(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants);
+    MerkleTreeType treeC(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.transcriptArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants);
 
     ElementType levelC[nFieldElements * numNodesLevel];
     if(nFieldElements == 1) {
@@ -501,7 +525,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         std::string section = starkInfo.customCommits[c].name + "0";
         zklog.trace("Verifying custom commit " + section + " Merkle tree root");
         uint64_t nCols = starkInfo.mapSectionsN[section];
-        MerkleTreeType tree(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, nCols);
+        MerkleTreeType tree(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.transcriptArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, nCols);
         ElementType root[nFieldElements];
         ElementType level[nFieldElements * numNodesLevel];
         for(uint64_t j = 0; j < nFieldElements; ++j) {
@@ -565,7 +589,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     for (uint64_t step=1; step< starkInfo.starkStruct.steps.size(); step++) {
         uint64_t nGroups = 1 << starkInfo.starkStruct.steps[step].nBits;
         uint64_t groupSize = (1 << starkInfo.starkStruct.steps[step - 1].nBits) / nGroups;
-        MerkleTreeType treeFRI(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, nGroups, groupSize * FIELD_EXTENSION);
+        MerkleTreeType treeFRI(starkInfo.starkStruct.merkleTreeArity,  starkInfo.starkStruct.transcriptArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, nGroups, groupSize * FIELD_EXTENSION);
         ElementType root[nFieldElements];
         ElementType level[nFieldElements * numNodesLevel];
         if (nFieldElements == 1) {

@@ -59,7 +59,7 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
 
     uint64_t nFieldElements = 1;
 
-    TranscriptBN128 transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity);
+    TranscriptBN128 transcript(setupCtx.starkInfo.starkStruct.transcriptArity);
 
     Goldilocks::Element evals[setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION];
     Goldilocks::Element challenges[setupCtx.starkInfo.challengesMap.size() * FIELD_EXTENSION];
@@ -257,7 +257,7 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
     p.grinding(nonce, challengeRawFr, setupCtx.starkInfo.starkStruct.powBits);
     TimerStopAndLog(STARK_NONCE_GRINDING);
     TimerStart(STARK_FRI_QUERIES);
-    TranscriptBN128 transcriptPermutation(setupCtx.starkInfo.starkStruct.merkleTreeArity);
+    TranscriptBN128 transcriptPermutation(setupCtx.starkInfo.starkStruct.transcriptArity);
     starks.addTranscriptGL(transcriptPermutation, challenge, FIELD_EXTENSION);
     starks.addTranscriptGL(transcriptPermutation, (Goldilocks::Element *)&nonce, 1);
     transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits);

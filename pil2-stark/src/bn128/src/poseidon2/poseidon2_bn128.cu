@@ -277,17 +277,17 @@ void merkletreeGPUBN128P2(
     uint64_t *d_input,
     uint64_t num_cols,
     uint64_t num_rows,
+    uint64_t linearHashArity,
     uint64_t arity,
     cudaStream_t stream
 ) {
     if (num_rows == 0) return;
 
-    int t = arity;  
     int threadsPerBlock = 64;
     int numBlocks = (num_rows + threadsPerBlock - 1) / threadsPerBlock;
 
     linearHashGPUBN128P2<TILED><<<numBlocks, threadsPerBlock, 0, stream>>>(
-        d_tree, d_input, num_cols, num_rows, t
+        d_tree, d_input, num_cols, num_rows, linearHashArity
     );
     CHECKCUDAERR(cudaGetLastError());
 
@@ -310,7 +310,7 @@ void merkletreeGPUBN128P2(
 
         numBlocks = (nextN + threadsPerBlock - 1) / threadsPerBlock;
         hashTreeKernelBN128P2<<<numBlocks, threadsPerBlock, 0, stream>>>(
-            d_tree, nextN, nextIndex, pending + extraZeros, t
+            d_tree, nextN, nextIndex, pending + extraZeros, arity
         );
         CHECKCUDAERR(cudaGetLastError());
 
@@ -321,13 +321,13 @@ void merkletreeGPUBN128P2(
 }
 
 // Merkle tree for row-major layout
-void Poseidon2BN128GPU::merkletree(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, cudaStream_t stream) {
-    merkletreeGPUBN128P2<false>(d_tree, d_input, num_cols, num_rows, arity, stream);
+void Poseidon2BN128GPU::merkletree(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t linearHashArity, uint64_t arity, cudaStream_t stream) {
+    merkletreeGPUBN128P2<false>(d_tree, d_input, num_cols, num_rows, linearHashArity, arity, stream);
 }
 
 // Merkle tree for tiled layout
-void Poseidon2BN128GPU::merkletreeTiles(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, cudaStream_t stream) {
-    merkletreeGPUBN128P2<true>(d_tree, d_input, num_cols, num_rows, arity, stream);
+void Poseidon2BN128GPU::merkletreeTiles(FrElement *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, uint64_t linearHashArity, uint64_t arity, cudaStream_t stream) {
+    merkletreeGPUBN128P2<true>(d_tree, d_input, num_cols, num_rows, linearHashArity, arity, stream);
 }
 
 // =============================================================================

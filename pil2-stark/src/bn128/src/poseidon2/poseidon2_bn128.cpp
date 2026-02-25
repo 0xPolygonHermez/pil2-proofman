@@ -86,10 +86,9 @@ void Poseidon2BN128::linearHash(FrElement* output, Goldilocks::Element* trace, u
 	}
 }
 
-void Poseidon2BN128::merkletree(FrElement* tree, Goldilocks::Element *trace, uint64_t rows, uint64_t cols, uint64_t arity)
+void Poseidon2BN128::merkletree(FrElement* tree, Goldilocks::Element *trace, uint64_t rows, uint64_t cols, uint64_t transcriptArity, uint64_t arity)
 {
-	
-	linearHash(tree, trace, rows, cols, arity);
+	linearHash(tree, trace, rows, cols, transcriptArity);
 
 	//Build tree levels (compressor mode: no capacity)
 	RawFr::Element *cursor = &tree[0];

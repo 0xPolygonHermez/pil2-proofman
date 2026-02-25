@@ -1307,7 +1307,7 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
 
-    MerkleTreeGL mt(arity, 0, true, NExtended, nCols);
+    MerkleTreeGL mt(arity, arity, 0, true, NExtended, nCols);
 
     uint64_t treeSize = (NExtended * nCols) + mt.numNodes;
     Goldilocks::Element* customCommitsTree = new Goldilocks::Element[treeSize];
@@ -1370,7 +1370,7 @@ void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pCons
 
     uint64_t N = 1 << starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << starkInfo.starkStruct.nBitsExt;
-    MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, true, NExtended, starkInfo.nConstants);
+    MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, true, NExtended, starkInfo.nConstants);
     uint64_t treeSize = (NExtended * starkInfo.nConstants) + mt.numNodes;
 
     Goldilocks::Element* d_fixedPols;

@@ -18,8 +18,8 @@ private:
 
 public:
     MerkleTreeBN128(){};
-    MerkleTreeBN128(uint64_t arity, uint64_t last_level_verification, bool custom, Goldilocks::Element *tree, uint64_t height, uint64_t width);
-    MerkleTreeBN128(uint64_t arity, uint64_t last_level_verification, bool custom, uint64_t _height, uint64_t _width, bool allocateSource = false, bool allocateNodes = false);
+    MerkleTreeBN128(uint64_t arity, uint64_t transcriptArity, uint64_t last_level_verification, bool custom, Goldilocks::Element *tree, uint64_t height, uint64_t width);
+    MerkleTreeBN128(uint64_t arity, uint64_t transcriptArity, uint64_t last_level_verification, bool custom, uint64_t _height, uint64_t _width, bool allocateSource = false, bool allocateNodes = false);
     ~MerkleTreeBN128();
 
     uint64_t numNodes;
@@ -33,6 +33,7 @@ public:
     bool isNodesAllocated = false;
 
     uint64_t arity;
+    uint64_t transcriptArity;
     uint64_t last_level_verification = 0;
     bool custom;
     uint64_t nFieldElements = 1;

@@ -4,9 +4,10 @@
 
 
 
-MerkleTreeGL::MerkleTreeGL(uint64_t _arity, uint64_t _last_level_verification, bool _custom, uint64_t _height, uint64_t _width, bool allocateSource, bool allocateNodes) : height(_height), width(_width)
+MerkleTreeGL::MerkleTreeGL(uint64_t _arity, uint64_t _transcriptArity, uint64_t _last_level_verification, bool _custom, uint64_t _height, uint64_t _width, bool allocateSource, bool allocateNodes) : height(_height), width(_width)
 {
     arity = _arity;
+    transcriptArity = _transcriptArity;
     last_level_verification = _last_level_verification;
     numNodes = getNumNodes(height);
     custom = _custom;
@@ -20,12 +21,13 @@ MerkleTreeGL::MerkleTreeGL(uint64_t _arity, uint64_t _last_level_verification, b
     }
 };
 
-MerkleTreeGL::MerkleTreeGL(uint64_t _arity, uint64_t _last_level_verification, bool _custom, Goldilocks::Element *tree, uint64_t height_, uint64_t width_)
+MerkleTreeGL::MerkleTreeGL(uint64_t _arity, uint64_t _transcriptArity, uint64_t _last_level_verification, bool _custom, Goldilocks::Element *tree, uint64_t height_, uint64_t width_)
 {
     width = width_;
     height = height_;
     source = tree;
     arity = _arity;
+    transcriptArity = _transcriptArity;
     last_level_verification = _last_level_verification;
     custom = _custom;
     numNodes = getNumNodes(height);
