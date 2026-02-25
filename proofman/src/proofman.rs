@@ -276,6 +276,7 @@ pub struct ContributionsInfo {
     pub challenge: Vec<u64>,
     pub airgroup_id: usize,
     pub worker_index: u32,
+    pub aggregated: bool,
 }
 
 #[derive(Debug, BorshSerialize, BorshDeserialize)]
@@ -1902,9 +1903,15 @@ where
                     challenge: internal_contribution_u64,
                     worker_index: self.pctx.get_worker_index()? as u32,
                     airgroup_id: 0,
+                    aggregated: false,
                 }]));
             }
-            &vec![ContributionsInfo { challenge: internal_contribution_u64, worker_index: 0, airgroup_id: 0 }]
+            &vec![ContributionsInfo {
+                challenge: internal_contribution_u64,
+                worker_index: 0,
+                airgroup_id: 0,
+                aggregated: false,
+            }]
         } else {
             match phase_inputs {
                 ProvePhaseInputs::Internal(ref contributions) => contributions,
@@ -2502,9 +2509,16 @@ where
 
                     let worker_index = self.pctx.get_worker_index()? as u32;
                     let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
-                    if let Some(contrib) = self.worker_contributions.read().unwrap().iter().find(|contrib| {
+                    let mut worker_contributions = self.worker_contributions.write().unwrap();
+                    if let Some(contrib) = worker_contributions.iter_mut().find(|contrib| {
                         contrib.worker_index == worker_index && contrib.airgroup_id == proof.airgroup_id as usize
                     }) {
+                        if contrib.aggregated {
+                            self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(
+                                "Proof contribution was already aggregated".into(),
+                            )));
+                        }
+                        contrib.aggregated = true;
                         for (c, value) in contrib.challenge.iter().enumerate() {
                             if *value != proof_acc_challenge[c] {
                                 self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(
@@ -2747,6 +2761,7 @@ where
                         challenge: accumulated_challenge.clone(),
                         airgroup_id: 0,
                         worker_index: 0,
+                        aggregated: true,
                     }],
                 );
 
@@ -2762,6 +2777,30 @@ where
                     let error =
                         "Global challenge calculated from contributions does not match the global challenge from pctx"
                             .to_string();
+
+                    self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(error.clone())));
+                    return Err(ProofmanError::InvalidProof(error));
+                }
+
+                let worker_contributions = self.worker_contributions.read().unwrap();
+                let mut not_received_contributions = Vec::new();
+                for contrib in worker_contributions.iter() {
+                    if !contrib.aggregated {
+                        not_received_contributions.push((contrib.worker_index, contrib.airgroup_id));
+                    }
+                }
+
+                if !not_received_contributions.is_empty() {
+                    let error = format!(
+                        "Not received contributions from workers: {:?}",
+                        not_received_contributions
+                            .iter()
+                            .map(|(worker_index, airgroup_id)| format!(
+                                "(worker {}, airgroup {})",
+                                worker_index, airgroup_id
+                            ))
+                            .collect::<Vec<_>>()
+                    );
 
                     self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(error.clone())));
                     return Err(ProofmanError::InvalidProof(error));
