@@ -2536,6 +2536,7 @@ where
                     }
 
                     self.recursive2_proofs[proof.airgroup_id as usize].write().unwrap().push(agg_proof);
+                    self.received_agg_proofs.write().unwrap()[proof.airgroup_id as usize].push(worker_index as usize);
                 }
                 if phase == ProvePhase::Internal {
                     timer_stop_and_log_info!(GENERATING_PROOFS);
@@ -2693,18 +2694,22 @@ where
                 id
             };
 
-            self.total_outer_agg_proofs.increment();
             launch_callback_c(id as u64, ProofType::Recursive2.into());
         }
 
         if last_proof || self.cancellation_info.read().unwrap().token.is_cancelled() {
+            let mut total_proofs_to_be_done = 0;
             if !self.cancellation_info.read().unwrap().token.is_cancelled() {
                 for (airgroup_id, worker_indexes) in self.received_agg_proofs.read().unwrap().iter().enumerate() {
                     let n_agg_proofs = worker_indexes.len();
-                    if n_agg_proofs == 0 {
+                    if n_agg_proofs == 1 && worker_indexes[0] == self.pctx.get_worker_index()? as usize {
                         continue;
                     }
-                    let n_agg_proofs_to_be_done = total_recursive_proofs(n_agg_proofs + 1);
+                    let n_agg_proofs_to_be_done = total_recursive_proofs(n_agg_proofs);
+                    println!(
+                        "Airgroup {}: {} proofs received, {:?} aggregations to be done",
+                        airgroup_id, n_agg_proofs, n_agg_proofs_to_be_done
+                    );
                     if n_agg_proofs_to_be_done.has_remaining {
                         let setup = self.setups.get_setup(airgroup_id, 0, &ProofType::Recursive2)?;
                         let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
@@ -2719,13 +2724,14 @@ where
                             id
                         };
 
-                        self.total_outer_agg_proofs.increment();
                         launch_callback_c(id as u64, ProofType::Recursive2.into());
                     }
+                    total_proofs_to_be_done += n_agg_proofs_to_be_done.n_proofs;
                 }
             }
 
-            self.total_outer_agg_proofs.wait_until_zero_and_check_streams(
+            self.total_outer_agg_proofs.wait_until_value_and_check_streams(
+                total_proofs_to_be_done,
                 || get_stream_proofs_non_blocking_c(self.pctx.get_device_buffers_ptr()),
                 &self.cancellation_info,
             );
@@ -2760,27 +2766,6 @@ where
             if !final_proof {
                 return Ok(Some(agg_proofs_data));
             } else {
-                let global_challenge = self.pctx.get_global_challenge().clone();
-                let accumulated_challenge = get_accumulated_challenge(&self.pctx, &agg_proofs_data[0].proof);
-                let global_challenge_calculated = calculate_global_challenge(
-                    &self.pctx,
-                    &[ContributionsInfo {
-                        challenge: accumulated_challenge.clone(),
-                        airgroup_id: 0,
-                        worker_index: 0,
-                        aggregated: true,
-                    }],
-                );
-
-                if global_challenge_calculated != *global_challenge {
-                    let error =
-                        "Global challenge calculated from contributions does not match the global challenge from pctx"
-                            .to_string();
-
-                    self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(error.clone())));
-                    return Err(ProofmanError::InvalidProof(error));
-                }
-
                 let worker_contributions = self.worker_contributions.read().unwrap();
                 let mut not_received_contributions = Vec::new();
                 for contrib in worker_contributions.iter() {
@@ -2800,6 +2785,27 @@ where
                             ))
                             .collect::<Vec<_>>()
                     );
+
+                    self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(error.clone())));
+                    return Err(ProofmanError::InvalidProof(error));
+                }
+
+                let global_challenge = self.pctx.get_global_challenge().clone();
+                let accumulated_challenge = get_accumulated_challenge(&self.pctx, &agg_proofs_data[0].proof);
+                let global_challenge_calculated = calculate_global_challenge(
+                    &self.pctx,
+                    &[ContributionsInfo {
+                        challenge: accumulated_challenge.clone(),
+                        airgroup_id: 0,
+                        worker_index: 0,
+                        aggregated: true,
+                    }],
+                );
+
+                if global_challenge_calculated != *global_challenge {
+                    let error =
+                        "Global challenge calculated from contributions does not match the global challenge from pctx"
+                            .to_string();
 
                     self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(error.clone())));
                     return Err(ProofmanError::InvalidProof(error));
@@ -2849,7 +2855,6 @@ where
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
             let rec2_witness_tx_clone = self.rec2_witness_tx.clone();
             let recursive_rx_clone = self.recursive_rx.clone();
-            let total_outer_agg_proofs = self.total_outer_agg_proofs.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
             let output_dir_path = output_dir_path.to_path_buf();
             let handle_recursive = std::thread::spawn(move || {
@@ -2882,10 +2887,8 @@ where
                                 break;
                             }
                         };
-                        total_outer_agg_proofs.increment();
                         rec2_witness_tx_clone.send(witness).unwrap();
                     }
-                    total_outer_agg_proofs.decrement();
                 }
             });
             self.handle_recursives.lock().unwrap().push(handle_recursive);
@@ -2901,6 +2904,7 @@ where
         let rec2_witness_rx = self.rec2_witness_rx.clone();
         let cancellation_info_clone = self.cancellation_info.clone();
         let output_dir_path_clone = output_dir_path.to_path_buf();
+        let total_outer_agg_proofs = self.total_outer_agg_proofs.clone();
         let outer_aggregations_handle = std::thread::spawn(move || loop {
             if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                 break;
@@ -2938,6 +2942,7 @@ where
             let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
             let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
 
+            println!("Generating outer aggregation proof for airgroup {}, proof id {}", new_proof_ref.airgroup_id, id);
             if let Err(e) = generate_recursive_proof(
                 &pctx_clone,
                 &setups_clone,
@@ -2954,6 +2959,7 @@ where
                 break;
             }
 
+            total_outer_agg_proofs.increment();
             if cfg!(not(feature = "gpu")) {
                 launch_callback_c(id as u64, ProofType::Recursive2.into());
             }
