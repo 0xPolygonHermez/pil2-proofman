@@ -628,7 +628,7 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
 
-    MerkleTreeGL mt(arity, 0, true, NExtended, nCols, true, true);
+    MerkleTreeGL mt(arity, arity, 0, true, NExtended, nCols, true, true);
 
     NTT_Goldilocks ntt(N);
     ntt.extendPol(mt.source, (Goldilocks::Element *)buffer, NExtended, N, nCols);
