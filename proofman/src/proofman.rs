@@ -2625,9 +2625,16 @@ where
             let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
             let mut stored_contributions = Vec::new();
             for w in &proof.worker_indexes {
-                if let Some(contrib) = self.worker_contributions.read().unwrap().iter().find(|contrib| {
+                let mut worker_contributions = self.worker_contributions.write().unwrap();
+                if let Some(contrib) = worker_contributions.iter_mut().find(|contrib| {
                     contrib.worker_index == *w as u32 && contrib.airgroup_id == proof.airgroup_id as usize
                 }) {
+                    if contrib.aggregated {
+                        self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(
+                            "Proof contribution was already aggregated".into(),
+                        )));
+                    }
+                    contrib.aggregated = true;
                     stored_contributions.push(contrib.challenge.iter().map(|&x| F::from_u64(x)).collect());
                 } else {
                     self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::ProofmanError(format!(
@@ -2757,7 +2764,7 @@ where
                 let accumulated_challenge = get_accumulated_challenge(&self.pctx, &agg_proofs_data[0].proof);
                 let global_challenge_calculated = calculate_global_challenge(
                     &self.pctx,
-                    &vec![ContributionsInfo {
+                    &[ContributionsInfo {
                         challenge: accumulated_challenge.clone(),
                         airgroup_id: 0,
                         worker_index: 0,
