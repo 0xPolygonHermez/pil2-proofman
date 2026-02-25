@@ -379,7 +379,7 @@ where
 
         let error = if let Some(e) = error {
             if !matches!(e, ProofmanError::MpiCancellation(_)) && notify_mpi {
-                tracing::info!("Notifying error to other MPI processes: {:?}", e);
+                tracing::warn!("Notifying error to other MPI processes: {:?}", e);
                 self.mpi_ctx.notify_cancellation();
             }
             Err(e)
@@ -2498,6 +2498,28 @@ where
                 for proof in &agg_proofs {
                     let agg_proof =
                         Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, None, proof.proof.clone());
+
+                    let worker_index = self.pctx.get_worker_index()? as u32;
+                    let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
+                    if let Some(contrib) = self.worker_contributions.read().unwrap().iter().find(|contrib| {
+                        contrib.worker_index == worker_index && contrib.airgroup_id == proof.airgroup_id as usize
+                    }) {
+                        for (c, value) in contrib.challenge.iter().enumerate() {
+                            if *value != proof_acc_challenge[c] {
+                                self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(
+                                    "Proof contribution challenge does not match expected accumulated challenge previously committed".into(),
+                                )));
+                                break;
+                            }
+                        }
+                    } else {
+                        self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::ProofmanError(format!(
+                            "Missing contribution from worker {} and airgroup id {}",
+                            worker_index, proof.airgroup_id
+                        ))));
+                        break;
+                    }
+
                     self.recursive2_proofs[proof.airgroup_id as usize].write().unwrap().push(agg_proof);
                 }
                 if phase == ProvePhase::Internal {
