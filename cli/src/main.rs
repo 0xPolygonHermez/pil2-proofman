@@ -5,7 +5,6 @@ mod commands;
 use commands::gen_custom_commits_fixed::GenCustomCommitsFixedCmd;
 use commands::get_constraints::GetConstraintsCmd;
 use commands::pil_helpers::PilHelpersCmd;
-use commands::setup_rust::SetupRustCmd;
 use commands::setup_rust2::SetupRust2Cmd;
 use commands::prove::ProveCmd;
 use commands::prove_snark::ProveSnarkCmd;
@@ -48,7 +47,6 @@ pub enum Commands {
     GetConstraints(GetConstraintsCmd),
     GenCustomCommitsFixed(GenCustomCommitsFixedCmd),
     GenWitness(GenWitnessCmd),
-    SetupRust(SetupRustCmd),
     SetupRust2(SetupRust2Cmd),
 }
 
@@ -75,7 +73,6 @@ fn main() {
         Commands::Stats(args) => args.run(),
         Commands::Execute(args) => args.run(),
         Commands::GenWitness(args) => args.run(),
-        Commands::SetupRust(args) => args.run(),
         Commands::SetupRust2(args) => args.run(),
     };
 

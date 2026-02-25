@@ -39,7 +39,7 @@ members = [
     # Examples
     "examples/fibonacci-square",
     "examples/test-recursive",
-    "macros-test",
+    "macros-test", "setup",
 ]
 
 default-members = [

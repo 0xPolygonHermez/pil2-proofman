@@ -1,6 +1,6 @@
 // use serde_json::Value as JsonValue;
 use std::collections::HashMap;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[allow(dead_code)]
 #[derive(Deserialize, Debug, Clone)]
@@ -14,7 +14,7 @@ pub struct Boundary {
 }
 
 #[allow(dead_code)]
-#[derive(Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct StepStruct {
     #[serde(rename = "nBits")]
     pub n_bits: u64,
@@ -31,7 +31,7 @@ pub struct SecurityInfo {
 }
 
 #[allow(dead_code)]
-#[derive(Default, Deserialize, Debug, Clone)]
+#[derive(Default, Serialize, Deserialize, Debug, Clone)]
 pub struct StarkStruct {
     #[serde(rename = "nBits")]
     pub n_bits: u64,
@@ -53,6 +53,8 @@ pub struct StarkStruct {
     pub steps: Vec<StepStruct>,
     #[serde(rename = "powBits")]
     pub pow_bits: u64,
+    #[serde(rename = "lastLevelVerification")]
+    pub last_level_verification: Option<u64>,
 }
 
 #[allow(dead_code)]
