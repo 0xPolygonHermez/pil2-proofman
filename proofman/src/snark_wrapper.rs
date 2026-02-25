@@ -218,7 +218,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         let d_buffers_recursivef = gen_device_buffers_recursivef_c(
             p_setup as *mut u8,
-            setup_recursivef.prover_buffer_size,
+            (setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>()) as u64,
             d_buffers_vadcop as *mut u8,
             &verkey_str,
         ) as *mut c_void;
@@ -440,7 +440,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
 
     let d_buffers_recursivef = gen_device_buffers_recursivef_c(
         p_setup as *mut u8,
-        setup_recursivef.prover_buffer_size,
+        (setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>()) as u64,
         std::ptr::null_mut(),
         &verkey_str,
     ) as *mut c_void;

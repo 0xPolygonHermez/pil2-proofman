@@ -86,7 +86,7 @@ __device__ void _updateStateBN128(BN128GPUScalarField::Element* state, BN128GPUS
     __syncthreads();
 
     const int nRoundsP = TRANSCRIPT_N_ROUNDS_P[transcript_get_nRoundsP_pos(t)];
-
+    
     // Call the Poseidon2 parallel hash function
     Poseidon2BN128GPU poseidon2;
     poseidon2.hash_parallel_(shared_state, tmp, t, TRANSCRIPT_GPU_C, TRANSCRIPT_GPU_D, nRoundsP);
