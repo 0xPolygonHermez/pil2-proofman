@@ -22,7 +22,7 @@ use proofman_starks_lib_c::{
     alloc_fixed_pols_buffer_gpu_c, free_device_buffers_recursivef_c, gen_device_buffers_recursivef_c,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
-use crate::{verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof};
+use crate::{verify_proof_bn128, generate_recursivef_proof, generate_snark_proof};
 use serde::{Deserialize, Serialize};
 
 pub enum SnarkProtocol {
@@ -463,11 +463,6 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
 
     let is_valid = verify_proof_bn128(recursivef_proof, &setup_recursivef, Some(publics));
     timer_stop_and_log_info!(VERIFY_RECURSIVE_F_PROOF);
-
-    let setup_snark_path = PathBuf::from(format!("{}/{}/{}", proving_key_path.display(), "final", "final"));
-    if setup_snark_path.parent().is_some_and(|p| p.exists()) {
-        generate_witness_final_snark(recursivef_proof, &setup_snark_path)?;
-    }
 
     free_device_buffers_recursivef_c(d_buffers_recursivef);
 
