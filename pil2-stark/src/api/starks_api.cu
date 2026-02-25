@@ -970,11 +970,11 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize,
     
     // Initialize BN128 Poseidon2 GPU constants for merkletree and transcript
     Poseidon2BN128GPU::initGPUConstants(&gpuId, 1);
-    uint64_t transcriptArity = setupCtx->starkInfo.starkStruct.merkleTreeArity;
+    uint64_t transcriptArity = setupCtx->starkInfo.starkStruct.transcriptArity;
     TranscriptBN128_GPU::init_const(&gpuId, 1, transcriptArity);
 
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
-    
+
     if (d_commit_buffer_ == nullptr) {
         NTT_Goldilocks_GPU::init_twiddle_factors_and_r(22, 1, &gpuId); //max nBitsExt=21
         // Allocate new device buffers
