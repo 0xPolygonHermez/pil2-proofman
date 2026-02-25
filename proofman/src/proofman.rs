@@ -1932,7 +1932,8 @@ where
             }
         }
 
-        calculate_global_challenge(&self.pctx, all_partial_contributions_u64);
+        let mut global_challenge = calculate_global_challenge(&self.pctx, all_partial_contributions_u64);
+        self.pctx.set_global_challenge(2, &mut global_challenge);
 
         timer_start_info!(GENERATING_PROOFS);
 
@@ -2738,6 +2739,27 @@ where
             if !final_proof {
                 return Ok(Some(agg_proofs_data));
             } else {
+                let global_challenge = self.pctx.get_global_challenge().clone();
+                let accumulated_challenge = get_accumulated_challenge(&self.pctx, &agg_proofs_data[0].proof);
+                let global_challenge_calculated = calculate_global_challenge(
+                    &self.pctx,
+                    &vec![ContributionsInfo { challenge: accumulated_challenge, airgroup_id: 0, worker_index: 0 }],
+                );
+
+                println!("Accumulated challenge calculated (first 10 digits): {:?}", &accumulated_challenge[..10]);
+
+                println!("Global challenge calculated: {:?}", global_challenge_calculated);
+                println!("Global challenge from pctx: {:?}", global_challenge);
+
+                if global_challenge_calculated != *global_challenge {
+                    let error =
+                        "Global challenge calculated from contributions does not match the global challenge from pctx"
+                            .to_string();
+
+                    self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(error.clone())));
+                    return Err(ProofmanError::InvalidProof(error));
+                }
+
                 let vadcop_proof_final = generate_vadcop_final_proof(
                     &self.pctx,
                     &self.setups,
@@ -2801,6 +2823,11 @@ where
                     recursive2_airgroup_proofs.push(proof);
 
                     if recursive2_airgroup_proofs.len() >= N_RECURSIVE_PROOFS_PER_AGGREGATION {
+                        println!(
+                            "Generating outer aggregation for airgroup {} with {} proofs",
+                            proof.airgroup_id,
+                            recursive2_airgroup_proofs.len()
+                        );
                         let p1 = recursive2_airgroup_proofs.pop().unwrap();
                         let p2 = recursive2_airgroup_proofs.pop().unwrap();
                         let p3 = recursive2_airgroup_proofs.pop().unwrap();
@@ -2819,6 +2846,7 @@ where
                         rec2_witness_tx_clone.send(witness).unwrap();
                     }
                     total_outer_agg_proofs.decrement();
+                    println!("Total outer aggregation proofs remaining: {}", total_outer_agg_proofs.get());
                 }
             });
             self.handle_recursives.lock().unwrap().push(handle_recursive);
