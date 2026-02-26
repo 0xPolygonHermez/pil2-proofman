@@ -9,7 +9,7 @@ use pil_std_lib::{get_hint_field_constant_as_string, get_hint_field_constant_as_
 use std::path::PathBuf;
 use std::sync::Arc;
 use fields::PrimeField64;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 #[derive(Tabled)]
 pub struct AirTableRow {
@@ -223,7 +223,7 @@ pub fn get_bus_air_info<F: PrimeField64>(pctx: &ProofCtx<F>, setup: &Setup<F>) -
 
         let num_rows = 1 << setup.stark_info.stark_struct.n_bits;
 
-        let mut bus_info: HashMap<String, BusInfo> = HashMap::new();
+        let mut bus_info: BTreeMap<String, BusInfo> = BTreeMap::new();
 
         for hint in debug_data_hints {
             let opids = get_hint_field_constant_a(

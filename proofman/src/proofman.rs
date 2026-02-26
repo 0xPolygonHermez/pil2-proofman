@@ -3669,7 +3669,6 @@ where
             preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::Basic));
             preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::Recursive1));
             preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::Recursive2));
-            preloaded_const.push(PreLoadedConst::new(0, 0, ProofType::VadcopFinal));
         }
 
         let sctx: Arc<SetupCtx<F>> = Arc::new(SetupCtx::new(
