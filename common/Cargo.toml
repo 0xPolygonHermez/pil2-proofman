@@ -29,7 +29,6 @@ num_cpus = "1.17.0"
 env = "1.0.1"
 yansi = "1.0.1"
 colored.workspace = true
-tabled = "0.7"
 bincode.workspace = true
 bytemuck.workspace = true
 
