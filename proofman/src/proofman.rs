@@ -2745,10 +2745,6 @@ where
                         continue;
                     }
                     let n_agg_proofs_to_be_done = total_recursive_proofs(n_agg_proofs);
-                    println!(
-                        "Airgroup {}: {} proofs received, {:?} aggregations to be done",
-                        airgroup_id, n_agg_proofs, n_agg_proofs_to_be_done
-                    );
                     if n_agg_proofs_to_be_done.has_remaining {
                         let setup = self.setups.get_setup(airgroup_id, 0, &ProofType::Recursive2)?;
                         let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
@@ -2981,7 +2977,6 @@ where
             let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
             let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
 
-            println!("Generating outer aggregation proof for airgroup {}, proof id {}", new_proof_ref.airgroup_id, id);
             if let Err(e) = generate_recursive_proof(
                 &pctx_clone,
                 &setups_clone,
