@@ -84,7 +84,7 @@ where
     partial_contribution_u64
 }
 
-pub fn calculate_global_challenge<F>(pctx: &ProofCtx<F>, all_partial_contributions_u64: &[ContributionsInfo])
+pub fn calculate_global_challenge<F>(pctx: &ProofCtx<F>, all_partial_contributions_u64: &[ContributionsInfo]) -> [F; 3]
 where
     F: PrimeField64,
     GoldilocksQuinticExtension: ExtensionField<F>,
@@ -110,7 +110,7 @@ where
     transcript.get_field(&mut global_challenge);
 
     tracing::info!("··· Global challenge: [{}, {}, {}]", global_challenge[0], global_challenge[1], global_challenge[2]);
-    pctx.set_global_challenge(2, &mut global_challenge);
+    global_challenge
 }
 
 pub fn add_contributions<F>(pctx: &ProofCtx<F>, values: &[Vec<F>]) -> Vec<F>
