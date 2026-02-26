@@ -62,7 +62,7 @@ use crate::{
 use crate::total_recursive_proofs;
 use crate::check_tree_paths;
 use crate::Counter;
-use crate::AggProofs;
+use crate::{AggProofs, AggProofsRegister};
 use crate::aggregate_worker_proofs;
 
 use std::ffi::c_void;
@@ -2596,6 +2596,30 @@ where
         }
     }
 
+    pub fn register_aggregated_proofs(&self, agg_proofs: Vec<AggProofsRegister>) -> ProofmanResult<()> {
+        let mut received = self.received_agg_proofs.write().unwrap();
+
+        for proof in agg_proofs {
+            let airgroup_vec = &mut received[proof.airgroup_id as usize];
+
+            for &worker_idx in &proof.worker_indexes {
+                if airgroup_vec.contains(&worker_idx) {
+                    let error_message = ProofmanError::InvalidProof(format!(
+                        "Received duplicated proof from worker {} for airgroup {}",
+                        worker_idx, proof.airgroup_id
+                    ));
+                    self.cancellation_info.write().unwrap().cancel(Some(error_message));
+                    break;
+                }
+                airgroup_vec.push(worker_idx);
+            }
+        }
+
+        self.check_cancel(false)?;
+
+        Ok(())
+    }
+
     pub fn receive_aggregated_proofs(
         &self,
         agg_proofs: Vec<AggProofs>,
@@ -2620,6 +2644,21 @@ where
         }
 
         for proof in agg_proofs {
+            {
+                let received = self.received_agg_proofs.read().unwrap();
+                let airgroup_vec = &received[proof.airgroup_id as usize];
+
+                for &worker_idx in &proof.worker_indexes {
+                    if !airgroup_vec.contains(&worker_idx) {
+                        self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(format!(
+                            "Received proof from worker {} for airgroup {} was not registered",
+                            worker_idx, proof.airgroup_id
+                        ))));
+                        break;
+                    }
+                }
+            }
+
             if self.cancellation_info.read().unwrap().token.is_cancelled() {
                 break;
             }
@@ -2634,6 +2673,7 @@ where
                         self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(
                             "Proof contribution was already aggregated".into(),
                         )));
+                        break;
                     }
                     contrib.aggregated = true;
                     stored_contributions.push(contrib.challenge.iter().map(|&x| F::from_u64(x)).collect());
@@ -2685,7 +2725,6 @@ where
                     break;
                 }
             }
-            self.received_agg_proofs.write().unwrap()[proof.airgroup_id as usize].extend(proof.worker_indexes);
             let id = {
                 let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
                 let id = rec2_proofs.len();
@@ -2702,7 +2741,7 @@ where
             if !self.cancellation_info.read().unwrap().token.is_cancelled() {
                 for (airgroup_id, worker_indexes) in self.received_agg_proofs.read().unwrap().iter().enumerate() {
                     let n_agg_proofs = worker_indexes.len();
-                    if n_agg_proofs == 1 && worker_indexes[0] == self.pctx.get_worker_index()? as usize {
+                    if n_agg_proofs == 1 && worker_indexes[0] == self.pctx.get_worker_index()? {
                         continue;
                     }
                     let n_agg_proofs_to_be_done = total_recursive_proofs(n_agg_proofs);
