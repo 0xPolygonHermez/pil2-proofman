@@ -1525,6 +1525,7 @@ name = "setup"
 version = "0.16.0"
 dependencies = [
  "anyhow",
+ "colored",
  "pilout",
  "proofman-common",
  "serde",

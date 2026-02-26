@@ -1,3 +1,4 @@
+use colored::Colorize;
 use pilout::pilout_proxy::PilOutProxy;
 use proofman_common::{StarkStruct, StepStruct};
 use serde_json::json;
@@ -104,11 +105,21 @@ fn run_part1_rust(config: &SetupConfig, settings_json: &serde_json::Value) -> Re
             if let Some(fp) = config.fixed.as_deref() {
                 let src = fp.join(format!("{}.fixed", air_name));
                 let dst = files_dir.join(format!("{}.const", air_name));
-                tracing::info!("Copying {} → {}", src.display(), dst.display());
+                let base = &config.builddir;
+                let src_display = src.strip_prefix(base).unwrap_or(&src);
+                let dst_display = dst.strip_prefix(base).unwrap_or(&dst);
+                tracing::info!("Copying {} → {}", src_display.display(), dst_display.display());
+
                 std::fs::copy(&src, &dst).map_err(|e| anyhow::anyhow!("Failed to copy {}: {}", src.display(), e))?;
             }
 
-            tracing::info!("Air [{airgroup_id}][{air_id}] '{}': nBits={n_bits}, numRows={num_rows}", air_name);
+            tracing::info!(
+                "Air {airgroup_id}:{air_id} {}: nBits={n_bits}, numRows={} {}",
+                air_name.bright_white().bold(),
+                num_rows,
+                format!("(2^{})", num_rows.ilog2()).dimmed()
+            );
+
             air_row.push(stark_struct);
         }
 
@@ -196,31 +207,93 @@ fn generate_stark_struct(settings: &serde_json::Map<String, serde_json::Value>, 
     }
 }
 
-/// Delegate Part 2 to the Node.js wrapper.
+/// Delegate Part 2 to the Node.js wrapper, calling the three sub-steps in sequence.
 fn run_part2_js(
     config: &SetupConfig,
     starkstructs: serde_json::Value,
     stark_structs: Vec<Vec<StarkStruct>>,
 ) -> Result<()> {
-    let args = json!({
-        "config": {
-            "airout": {
-                "airoutFilename": config.pilout.to_string_lossy()
-            },
-            "setup": {
-                "settings":            &starkstructs,
-                "genAggregationSetup": config.recursive,
-                "optImPols":           config.impols,
-                "binFiles":            config.binfiles.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
-                "stdPath":             config.std_path.as_ref().map(|p| p.to_string_lossy().to_string()),
-                "fixedPath":           config.fixed.as_ref().map(|p| p.to_string_lossy().to_string()),
-            }
+    let node_config = create_node_config(config, starkstructs);
+    let builddir = config.builddir.to_string_lossy().to_string();
+
+    // Stark setup generation
+    let stark_structs_json = serde_json::to_value(&stark_structs)?;
+    let setup = stark_setup(config, &node_config, &builddir, stark_structs_json)?;
+
+    // Circuit generation
+    let global_data = generate_circuits(config, &node_config, &builddir, setup)?;
+
+    // Write global data to disk
+    write_global_data(config, &builddir, global_data)?;
+
+    Ok(())
+}
+
+fn create_node_config(config: &SetupConfig, starkstructs: serde_json::Value) -> serde_json::Value {
+    let node_config = json!({
+        "airout": {
+            "airoutFilename": config.pilout.to_string_lossy()
         },
-        "buildDir":     &config.builddir.to_string_lossy().to_string(),
-        "starkStructs": serde_json::to_value(&stark_structs)?,
+        "setup": {
+            "settings":            &starkstructs,
+            "genAggregationSetup": config.recursive,
+            "optImPols":           config.impols,
+            "binFiles":            config.binfiles.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+            "stdPath":             config.std_path.as_ref().map(|p| p.to_string_lossy().to_string()),
+            "fixedPath":           config.fixed.as_ref().map(|p| p.to_string_lossy().to_string()),
+        }
     });
+    node_config
+}
 
-    call_node(&config.js_root, WRAPPER, config.max_old_space_size, "setup_part2", args)?;
+fn stark_setup(
+    config: &SetupConfig,
+    node_config: &serde_json::Value,
+    builddir_str: &str,
+    stark_structs_json: serde_json::Value,
+) -> Result<serde_json::Value, anyhow::Error> {
+    call_node(
+        &config.js_root,
+        WRAPPER,
+        config.max_old_space_size,
+        "stark_setup",
+        json!({ "config": &node_config, "buildDir": &builddir_str, "starkStructs": stark_structs_json }),
+    )?
+    .ok_or_else(|| anyhow::anyhow!("stark_setup returned no value"))
+}
 
+fn generate_circuits(
+    config: &SetupConfig,
+    node_config: &serde_json::Value,
+    builddir_str: &str,
+    setup: serde_json::Value,
+) -> Result<serde_json::Value, anyhow::Error> {
+    let global_data = call_node(
+        &config.js_root,
+        WRAPPER,
+        config.max_old_space_size,
+        "generate_circuits",
+        json!({ "config": &node_config, "buildDir": &builddir_str, "setup": setup }),
+    )?
+    .ok_or_else(|| anyhow::anyhow!("generate_circuits returned no value"))?;
+    Ok(global_data)
+}
+
+fn write_global_data(
+    config: &SetupConfig,
+    builddir_str: &str,
+    global_data: serde_json::Value,
+) -> Result<(), anyhow::Error> {
+    call_node(
+        &config.js_root,
+        WRAPPER,
+        config.max_old_space_size,
+        "write_global_data",
+        json!({
+            "buildDir":          &builddir_str,
+            "globalInfo":        &global_data["globalInfo"],
+            "globalConstraints": &global_data["globalConstraints"],
+        }),
+    )?;
     Ok(())
 }

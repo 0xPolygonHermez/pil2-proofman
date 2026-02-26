@@ -14,4 +14,6 @@ proofman-common = { path = "../common" }
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+colored = "3"
+
 anyhow = "1.0"
