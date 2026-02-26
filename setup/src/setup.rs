@@ -5,7 +5,9 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::js_runner::run_part2_js;
+use crate::node_bridge::call_node;
+
+const WRAPPER: &str = "src/cmd/setup_cmd_wrapper.js";
 
 /// Configuration for setup generation.
 #[derive(Debug, Clone)]
@@ -102,11 +104,11 @@ fn run_part1_rust(config: &SetupConfig, settings_json: &serde_json::Value) -> Re
             if let Some(fp) = config.fixed.as_deref() {
                 let src = fp.join(format!("{}.fixed", air_name));
                 let dst = files_dir.join(format!("{}.const", air_name));
-                eprintln!("[INFO]  Copying {} → {}", src.display(), dst.display());
+                tracing::info!("Copying {} → {}", src.display(), dst.display());
                 std::fs::copy(&src, &dst).map_err(|e| anyhow::anyhow!("Failed to copy {}: {}", src.display(), e))?;
             }
 
-            eprintln!("[INFO]  Air [{airgroup_id}][{air_id}] '{}': nBits={n_bits}, numRows={num_rows}", air_name);
+            tracing::info!("Air [{airgroup_id}][{air_id}] '{}': nBits={n_bits}, numRows={num_rows}", air_name);
             air_row.push(stark_struct);
         }
 
@@ -182,7 +184,6 @@ fn generate_stark_struct(settings: &serde_json::Map<String, serde_json::Value>, 
     StarkStruct {
         n_bits,
         n_bits_ext,
-        n_queries: 0,
         verification_hash_type,
         merkle_tree_arity,
         transcript_arity,
@@ -191,5 +192,35 @@ fn generate_stark_struct(settings: &serde_json::Map<String, serde_json::Value>, 
         pow_bits,
         hash_commits,
         steps,
+        ..Default::default()
     }
+}
+
+/// Delegate Part 2 to the Node.js wrapper.
+fn run_part2_js(
+    config: &SetupConfig,
+    starkstructs: serde_json::Value,
+    stark_structs: Vec<Vec<StarkStruct>>,
+) -> Result<()> {
+    let args = json!({
+        "config": {
+            "airout": {
+                "airoutFilename": config.pilout.to_string_lossy()
+            },
+            "setup": {
+                "settings":            &starkstructs,
+                "genAggregationSetup": config.recursive,
+                "optImPols":           config.impols,
+                "binFiles":            config.binfiles.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+                "stdPath":             config.std_path.as_ref().map(|p| p.to_string_lossy().to_string()),
+                "fixedPath":           config.fixed.as_ref().map(|p| p.to_string_lossy().to_string()),
+            }
+        },
+        "buildDir":     &config.builddir.to_string_lossy().to_string(),
+        "starkStructs": serde_json::to_value(&stark_structs)?,
+    });
+
+    call_node(&config.js_root, WRAPPER, config.max_old_space_size, "setup_part2", args)?;
+
+    Ok(())
 }
