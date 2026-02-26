@@ -1,18 +1,15 @@
-use crate::Setup;
 use serde::Serialize;
 use tabled::{Tabled, Table};
-use crate::ProofType;
-use crate::ParamsGPU;
-use crate::VerboseMode;
-use crate::ProofmanResult;
-use crate::ProofmanError;
-use crate::MpiCtx;
-use crate::ProofCtx;
-use crate::SetupCtx;
-use crate::SetupsVadcop;
+use proofman_common::{
+    Setup, SetupsVadcop, ProofType, ParamsGPU, ProofmanError, ProofmanResult, MpiCtx, ProofCtx, SetupCtx, VerboseMode,
+    format_bytes,
+};
+use proofman_hints::{get_hint_ids_by_name, get_hint_field_constant_a, HintFieldOptions};
+use pil_std_lib::{get_hint_field_constant_as_string, get_hint_field_constant_as_field, get_hint_field_constant_as};
 use std::path::PathBuf;
 use std::sync::Arc;
 use fields::PrimeField64;
+use std::collections::HashMap;
 
 #[derive(Tabled)]
 pub struct AirTableRow {
@@ -51,11 +48,41 @@ pub struct ZkevmConfig {
 }
 
 #[derive(Serialize)]
+pub struct Lookup {
+    pub name: String,
+    pub logup_type: String,
+
+    #[serde(rename = "rows_L")]
+    pub rows_l: u32,
+
+    #[serde(rename = "rows_T")]
+    pub rows_t: u32,
+
+    #[serde(rename = "num_columns_S")]
+    pub num_columns_s: u32,
+
+    #[serde(rename = "num_columns_M")]
+    pub num_columns_m: u32,
+
+    pub grinding_bits_lookup: u32,
+}
+
+#[derive(Debug)]
+pub struct BusInfo {
+    pub rows: u32,
+    pub num_expressions: u32,
+    pub num_assumes: u32,
+    pub num_proves: u32,
+}
+
+#[derive(Serialize)]
 pub struct TomlCircuit {
     pub name: String,
     pub group: String,
     #[serde(flatten)]
     pub air: AirInfoSoundness,
+
+    pub lookups: Vec<Lookup>,
 }
 
 #[derive(Serialize, Clone)]
@@ -179,9 +206,107 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
             fri_early_stop_degree: 1 << setup.stark_info.stark_struct.steps.last().unwrap().n_bits,
             grinding_query_phase: setup.stark_info.stark_struct.pow_bits,
             gap_to_radius: setup.stark_info.security.proximity_gap,
-            proof_size: crate::format_bytes(setup.proof_size as f64 * 8.0),
+            proof_size: format_bytes(setup.proof_size as f64 * 8.0),
         },
     )
+}
+
+pub fn get_bus_air_info<F: PrimeField64>(pctx: &ProofCtx<F>, setup: &Setup<F>) -> ProofmanResult<Vec<Lookup>> {
+    let p_expressions_bin = setup.p_setup.p_expressions_bin;
+
+    let mut lookups = vec![];
+
+    for piop_type in ["gprod", "gsum"] {
+        let debug_data_name = format!("{}_debug_data", piop_type);
+
+        let debug_data_hints = get_hint_ids_by_name(p_expressions_bin, &debug_data_name);
+
+        let num_rows = 1 << setup.stark_info.stark_struct.n_bits;
+
+        let mut bus_info: HashMap<String, BusInfo> = HashMap::new();
+
+        for hint in debug_data_hints {
+            let opids = get_hint_field_constant_a(
+                pctx,
+                setup,
+                setup.airgroup_id,
+                setup.air_id,
+                hint as usize,
+                "opids",
+                HintFieldOptions::default(),
+            )?;
+
+            let name_piop = get_hint_field_constant_as_string(
+                pctx,
+                setup,
+                setup.airgroup_id,
+                setup.air_id,
+                hint as usize,
+                "name_piop",
+                HintFieldOptions::default(),
+            )?;
+
+            let len_expressions = get_hint_field_constant_as_field(
+                pctx,
+                setup,
+                setup.airgroup_id,
+                setup.air_id,
+                hint as usize,
+                "len_expressions",
+                HintFieldOptions::default(),
+            )?;
+
+            let type_piop = get_hint_field_constant_as::<u64, F>(
+                pctx,
+                setup,
+                setup.airgroup_id,
+                setup.air_id,
+                hint as usize,
+                "type_piop",
+                HintFieldOptions::default(),
+            )?;
+
+            let is_assume = match type_piop {
+                0 | 2 => true,
+                1 => false,
+                _ => unreachable!(),
+            };
+
+            let name = format!("{}_{}_{}", name_piop, piop_type, opids);
+
+            let entry = bus_info.entry(name.clone()).or_insert(BusInfo {
+                rows: num_rows,
+                num_expressions: len_expressions.as_canonical_u64() as u32,
+                num_assumes: 0,
+                num_proves: 0,
+            });
+
+            if is_assume {
+                entry.num_assumes += 1;
+            } else {
+                entry.num_proves += 1;
+            }
+        }
+
+        println!("BUS INFO for {}:{} {:?} {:?}", setup.airgroup_id, setup.air_id, setup.setup_type, bus_info);
+        let lookups_air_info: Vec<Lookup> = bus_info
+            .into_iter()
+            .map(|(name, info)| {
+                let num_columns_m = if info.num_assumes > 0 { info.num_assumes } else { (info.num_proves > 0) as u32 };
+                Lookup {
+                    name,
+                    logup_type: "univariate".to_string(),
+                    rows_l: if info.num_assumes > 0 { info.rows } else { 0 },
+                    rows_t: if info.num_proves > 0 { info.rows } else { 0 },
+                    num_columns_s: info.num_expressions,
+                    num_columns_m,
+                    grinding_bits_lookup: 0,
+                }
+            })
+            .collect();
+        lookups.extend(lookups_air_info);
+    }
+    Ok(lookups)
 }
 
 pub fn soundness_info<F: PrimeField64>(
@@ -209,8 +334,15 @@ pub fn soundness_info<F: PrimeField64>(
 
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
-            let (air_name, air_info) = get_soundness_air_info(sctx.get_setup(airgroup_id, air_id)?);
-            circuits.push(TomlCircuit { name: air_name, group: "basic".to_string(), air: air_info });
+            let setup = sctx.get_setup(airgroup_id, air_id)?;
+            let (air_name, air_info) = get_soundness_air_info(setup);
+            let lookup_info = get_bus_air_info(&pctx, setup)?;
+            circuits.push(TomlCircuit {
+                name: air_name,
+                group: "basic".to_string(),
+                air: air_info,
+                lookups: lookup_info,
+            });
         }
     }
 
@@ -219,11 +351,14 @@ pub fn soundness_info<F: PrimeField64>(
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                    let (air_name, air_info) = get_soundness_air_info(sctx_compressor.get_setup(airgroup_id, air_id)?);
+                    let setup = sctx_compressor.get_setup(airgroup_id, air_id)?;
+                    let (air_name, air_info) = get_soundness_air_info(setup);
+                    let lookup_info = get_bus_air_info(&pctx, setup)?;
                     circuits.push(TomlCircuit {
                         name: format!("{}-compressor", air_name),
                         group: "compression".to_string(),
                         air: air_info,
+                        lookups: lookup_info,
                     });
                 }
             }
@@ -233,32 +368,46 @@ pub fn soundness_info<F: PrimeField64>(
         let n_airgroups = pctx.global_info.air_groups.len();
         if n_airgroups > 1 {
             for airgroup in 0..n_airgroups {
-                let (_, air_info) = get_soundness_air_info(sctx_recursive2.get_setup(airgroup, 0)?);
+                let setup = sctx_recursive2.get_setup(airgroup, 0)?;
+                let (_, air_info) = get_soundness_air_info(setup);
+                let lookup_info = get_bus_air_info(&pctx, setup)?;
                 circuits.push(TomlCircuit {
                     name: format!("Recursive2 - Airgroup_{}", airgroup),
                     group: "aggregation".to_string(),
                     air: air_info,
+                    lookups: lookup_info,
                 });
             }
         } else {
-            let (_, air_info) = get_soundness_air_info(sctx_recursive2.get_setup(0, 0)?);
+            let setup = sctx_recursive2.get_setup(0, 0)?;
+            let (_, air_info) = get_soundness_air_info(setup);
+            let lookup_info = get_bus_air_info(&pctx, setup)?;
             circuits.push(TomlCircuit {
                 name: "Recursive2".to_string(),
                 group: "aggregation".to_string(),
                 air: air_info,
+                lookups: lookup_info,
             });
         }
 
         let setup_final_circuit = setups_aggregation.setup_vadcop_final.as_ref().unwrap();
         let (_, final_air_info) = get_soundness_air_info(setup_final_circuit);
-        circuits.push(TomlCircuit { name: "Final".to_string(), group: "final".to_string(), air: final_air_info });
+        let lookup_info = get_bus_air_info(&pctx, setup_final_circuit)?;
+        circuits.push(TomlCircuit {
+            name: "Final".to_string(),
+            group: "final".to_string(),
+            air: final_air_info,
+            lookups: lookup_info,
+        });
 
         let setup_final_compressed_circuit = setups_aggregation.setup_vadcop_final_compressed.as_ref().unwrap();
         let (_, final_compressed_air_info) = get_soundness_air_info(setup_final_compressed_circuit);
+        let lookup_info_c = get_bus_air_info(&pctx, setup_final_compressed_circuit)?;
         circuits.push(TomlCircuit {
             name: "Final_Compressed".to_string(),
             group: "final_compressed".to_string(),
             air: final_compressed_air_info,
+            lookups: lookup_info_c,
         });
     }
 

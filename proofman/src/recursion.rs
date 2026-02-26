@@ -28,6 +28,18 @@ pub type GetWitnessFinalFunc =
 pub const N_RECURSIVE_PROOFS_PER_AGGREGATION: usize = 3;
 
 #[derive(Debug, BorshSerialize, BorshDeserialize)]
+pub struct AggProofsRegister {
+    pub airgroup_id: u64,
+    pub worker_indexes: Vec<usize>,
+}
+
+impl AggProofsRegister {
+    pub fn new(airgroup_id: u64, worker_indexes: Vec<usize>) -> Self {
+        Self { airgroup_id, worker_indexes }
+    }
+}
+
+#[derive(Debug, BorshSerialize, BorshDeserialize)]
 pub struct AggProofs {
     pub airgroup_id: u64,
     pub proof: Vec<u64>,

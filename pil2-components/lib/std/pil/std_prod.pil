@@ -68,8 +68,9 @@ private function update_piop_prod(const int name, const int surname, const int t
     }
 
     if (update_type != PROD_UPDATE_TYPE_GLOBAL) {
-        @gprod_debug_data{name_piop: name_str, type_piop: type, busid: opid, num_reps: sel, name_exprs: name_exprs, 
-                          expressions: expressions, deg_expr: degree(sum_exprs), deg_sel: degree(sel)};
+        int opids[1] = [opid];
+         @gprod_debug_data{name_piop: name_str, type_piop: type, opids: opids, busid: opid, num_reps: sel, name_exprs: name_exprs,
+                        expressions: expressions, len_expressions: exprs_num, deg_expr: degree(sum_exprs), deg_sel: degree(sel)};
     } else {
         // Save the information and issue it in a global context
         container proof.std.gprod.hint alias gprodhint {
@@ -77,6 +78,7 @@ private function update_piop_prod(const int name, const int surname, const int t
             string name_piop[ARRAY_SIZE];
             expr type_piop[ARRAY_SIZE];
             string name_exprs[ARRAY_SIZE][64];
+            int opids[ARRAY_SIZE][1];
             int busid[ARRAY_SIZE];
             expr num_reps[ARRAY_SIZE];
             expr expressions[ARRAY_SIZE][64];
@@ -84,6 +86,7 @@ private function update_piop_prod(const int name, const int surname, const int t
             int num_global_hints = 0;
         }
 
+    
         gprodhint.airgroup_id[gprodhint.num_global_hints] = AIRGROUP_ID;
         gprodhint.name_piop[gprodhint.num_global_hints] = name_str;
         gprodhint.type_piop[gprodhint.num_global_hints] = type;
@@ -92,6 +95,7 @@ private function update_piop_prod(const int name, const int surname, const int t
             gprodhint.expressions[gprodhint.num_global_hints][i] = expressions[i];
         }
         gprodhint.exprs_num[gprodhint.num_global_hints] = exprs_num;
+        gprodhint.opids[gprodhint.num_global_hints][0] = opid;
         gprodhint.busid[gprodhint.num_global_hints] = opid;
         gprodhint.num_reps[gprodhint.num_global_hints] = sel;
         gprodhint.num_global_hints++;
@@ -1156,7 +1160,7 @@ private function piop_gprod_issue_global_debug_hints() {
             tmp_name_exprs[j] = name_exprs[i][j];
             tmp_exprs[j] = expressions[i][j];
         }
-        @gprod_debug_data_global{airgroup_id: airgroup_id[i], name_piop: name_piop[i], type_piop: type_piop[i], busid: busid[i], num_reps: num_reps[i], name_exprs: tmp_name_exprs, expressions: tmp_exprs};
+        @gprod_debug_data_global{airgroup_id: airgroup_id[i], name_piop: name_piop[i], type_piop: type_piop[i], opids: opids[i], busid: busid[i], num_reps: num_reps[i], name_exprs: tmp_name_exprs, expressions: tmp_exprs, len_expressions: exprs_num};
     }
 }
 

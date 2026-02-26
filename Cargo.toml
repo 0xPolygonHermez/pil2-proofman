@@ -21,6 +21,7 @@ members = [
     "witness",
     "util",
     "verifier",
+    "soundness",
 
     # PIL2 components library
     "pil2-components/lib/std/rs",
@@ -55,6 +56,7 @@ default-members = [
     "witness",
     "util",
     "verifier",
+    "soundness",
 ]
 
 resolver = "2"
@@ -68,6 +70,8 @@ proofman-macros = { path = "macros" }
 proofman = { path = "proofman" }
 proofman-common = { path = "common" }
 proofman-hints = { path = "hints" }
+proofman-soundness = { path = "soundness" }
+proofman-verifier = { path = "verifier" }
 proofman-util = { path = "util" }
 proofman-cli = { path = "cli" }
 pil-std-lib = { path = "pil2-components/lib/std/rs" }

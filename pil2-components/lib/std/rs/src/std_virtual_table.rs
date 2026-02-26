@@ -68,8 +68,8 @@ impl<F: PrimeField64> StdVirtualTable<F> {
 
             let hint_opt = HintFieldOptions::default();
             let table_ids = get_hint_field_constant_a_as::<usize, F>(
-                sctx,
                 pctx,
+                setup,
                 airgroup_id,
                 air_id,
                 hint_id,
@@ -77,8 +77,8 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 hint_opt.clone(),
             )?;
             let acc_heights = get_hint_field_constant_a_as::<u64, F>(
-                sctx,
                 pctx,
+                setup,
                 airgroup_id,
                 air_id,
                 hint_id,
@@ -86,8 +86,8 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 hint_opt.clone(),
             )?;
             let num_muls = get_hint_field_constant_as::<usize, F>(
-                sctx,
                 pctx,
+                setup,
                 airgroup_id,
                 air_id,
                 hint_id,

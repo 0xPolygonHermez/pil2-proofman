@@ -141,11 +141,11 @@ pub fn extract_hint_fields<F: PrimeField64>(
         .iter()
         .enumerate()
         .map(|(i, &hint)| {
-            let busid = get_hint_field(sctx, pctx, instance_id, hint as usize, "busid", HintFieldOptions::default())?;
+            let busid = get_hint_field(pctx, setup, instance_id, hint as usize, "busid", HintFieldOptions::default())?;
 
             let type_piop = get_hint_field_constant_as::<u64, F>(
-                sctx,
                 pctx,
+                setup,
                 airgroup_id,
                 air_id,
                 hint as usize,
@@ -157,11 +157,11 @@ pub fn extract_hint_fields<F: PrimeField64>(
             }
 
             let num_reps =
-                get_hint_field(sctx, pctx, instance_id, hint as usize, "num_reps", HintFieldOptions::default())?;
+                get_hint_field(pctx, setup, instance_id, hint as usize, "num_reps", HintFieldOptions::default())?;
 
             let deg_expr = get_hint_field_constant_as_field(
-                sctx,
                 pctx,
+                setup,
                 airgroup_id,
                 air_id,
                 hint as usize,
@@ -170,8 +170,8 @@ pub fn extract_hint_fields<F: PrimeField64>(
             )?;
 
             let deg_mul = get_hint_field_constant_as_field(
-                sctx,
                 pctx,
+                setup,
                 airgroup_id,
                 air_id,
                 hint as usize,
@@ -180,8 +180,8 @@ pub fn extract_hint_fields<F: PrimeField64>(
             )?;
 
             let name_piop = get_hint_field_constant_as_string(
-                sctx,
                 pctx,
+                setup,
                 airgroup_id,
                 air_id,
                 hint as usize,
@@ -190,8 +190,8 @@ pub fn extract_hint_fields<F: PrimeField64>(
             )?;
 
             let name_exprs = get_hint_field_constant_a_as_string(
-                sctx,
                 pctx,
+                setup,
                 airgroup_id,
                 air_id,
                 hint as usize,
@@ -200,7 +200,7 @@ pub fn extract_hint_fields<F: PrimeField64>(
             )?;
 
             let expressions =
-                get_hint_field_a(sctx, pctx, instance_id, hint as usize, "expressions", HintFieldOptions::default())?;
+                get_hint_field_a(pctx, setup, instance_id, hint as usize, "expressions", HintFieldOptions::default())?;
 
             Ok(HintMetadata {
                 hint,
