@@ -43,13 +43,24 @@ pub fn generate_setup(config: &SetupConfig) -> Result<()> {
         None => json!({}),
     };
 
-    let stark_structs = run_part1_rust(config, &starkstructs)?;
+    let stark_structs = create_stark_structs(config, &starkstructs)?;
 
-    run_part2_js(config, starkstructs, stark_structs)
+    let node_config = create_node_config(config, starkstructs);
+    let builddir = config.builddir.to_string_lossy().to_string();
+
+    // JS: Stark setup generation
+    let stark_structs_json = serde_json::to_value(&stark_structs)?;
+    let setup = stark_setup(config, &node_config, &builddir, stark_structs_json)?;
+
+    // JS: Circuit generation
+    let global_data = generate_circuits(config, &node_config, &builddir, setup)?;
+
+    // JS: Write global data to disk
+    write_global_data(config, &builddir, global_data)
 }
 
-/// Port of JS Part 1: generate per-air starkStruct configs and write them to disk.
-fn run_part1_rust(config: &SetupConfig, settings_json: &serde_json::Value) -> Result<Vec<Vec<StarkStruct>>> {
+/// Generate per-air starkStruct configs
+fn create_stark_structs(config: &SetupConfig, settings_json: &serde_json::Value) -> Result<Vec<Vec<StarkStruct>>> {
     if !config.binfiles.is_empty() && config.fixed.is_none() {
         return Err(anyhow::anyhow!("binFiles case not yet implemented in Rust Part 1. Use --fixed/-u instead."));
     }
@@ -205,28 +216,6 @@ fn generate_stark_struct(settings: &serde_json::Map<String, serde_json::Value>, 
         steps,
         ..Default::default()
     }
-}
-
-/// Delegate Part 2 to the Node.js wrapper, calling the three sub-steps in sequence.
-fn run_part2_js(
-    config: &SetupConfig,
-    starkstructs: serde_json::Value,
-    stark_structs: Vec<Vec<StarkStruct>>,
-) -> Result<()> {
-    let node_config = create_node_config(config, starkstructs);
-    let builddir = config.builddir.to_string_lossy().to_string();
-
-    // Stark setup generation
-    let stark_structs_json = serde_json::to_value(&stark_structs)?;
-    let setup = stark_setup(config, &node_config, &builddir, stark_structs_json)?;
-
-    // Circuit generation
-    let global_data = generate_circuits(config, &node_config, &builddir, setup)?;
-
-    // Write global data to disk
-    write_global_data(config, &builddir, global_data)?;
-
-    Ok(())
 }
 
 fn create_node_config(config: &SetupConfig, starkstructs: serde_json::Value) -> serde_json::Value {
