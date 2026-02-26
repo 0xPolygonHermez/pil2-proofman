@@ -76,12 +76,12 @@ private function update_piop_prod(const int name, const int surname, const int t
         container proof.std.gprod.hint alias gprodhint {
             int airgroup_id[ARRAY_SIZE];
             string name_piop[ARRAY_SIZE];
-            const expr type_piop[ARRAY_SIZE];
+            expr type_piop[ARRAY_SIZE];
             string name_exprs[ARRAY_SIZE][64];
             int opids[ARRAY_SIZE][1];
             int busid[ARRAY_SIZE];
-            const expr num_reps[ARRAY_SIZE];
-            const expr expressions[ARRAY_SIZE][64];
+            expr num_reps[ARRAY_SIZE];
+            expr expressions[ARRAY_SIZE][64];
             int exprs_num[ARRAY_SIZE];
             int num_global_hints = 0;
         }
@@ -107,7 +107,7 @@ private function update_piop_prod(const int name, const int surname, const int t
     initial_checks_prod(name, surname, type, update_type, opid, exprs_num);
 
     // selected vector to simple expression reduction
-    const expr exprs_compressed = compress_exprs(opid, expressions);
+    expr exprs_compressed = compress_exprs(opid, expressions);
 
     switch (update_type) {
         case PROD_UPDATE_TYPE_GLOBAL:
@@ -161,8 +161,8 @@ private function init_proof_containers_prod(const int name, const int surname, c
         // Direct-related data, used to update `gprod` at the proof level
         int direct_gprod_nargs = 0;
         int direct_gprod_type[ARRAY_SIZE];
-        const expr direct_gprod_s[ARRAY_SIZE];
-        const expr direct_gprod_e[ARRAY_SIZE];
+        expr direct_gprod_s[ARRAY_SIZE];
+        expr direct_gprod_e[ARRAY_SIZE];
 
         // For global hints
         int air_count = 0;
@@ -192,14 +192,14 @@ private function init_air_containers_prod(const int name) {
         // Assumes and proves of the air
         int gprod_nargs = 0;
         int gprod_type[ARRAY_SIZE];
-        const expr gprod_s[ARRAY_SIZE];
-        const expr gprod_e[ARRAY_SIZE];
+        expr gprod_s[ARRAY_SIZE];
+        expr gprod_e[ARRAY_SIZE];
 
         // Direct-related data, used to update `gprod` at the air level
         int direct_gprod_nargs = 0;
         int direct_gprod_type[ARRAY_SIZE];
-        const expr direct_gprod_s[ARRAY_SIZE];
-        const expr direct_gprod_e[ARRAY_SIZE];
+        expr direct_gprod_s[ARRAY_SIZE];
+        expr direct_gprod_e[ARRAY_SIZE];
     }
 }
 
@@ -223,7 +223,7 @@ private function initial_checks_prod(const int name, const int surname, const in
     // The same opid can appear in different airs, so we keep track of the number of proves and assumes
     // for final checks
     string air_name_to_use;
-    if (update_type == PROD_UPDATE_TYPE_GLOBAL) {
+    if (update_type == SUM_UPDATE_TYPE_GLOBAL) {
         air_name_to_use = "GLOBAL";
     } else {
         air_name_to_use = AIR_NAME;
@@ -849,7 +849,7 @@ private function piop_gprod_air() {
         }
     }
 
-    const expr result;
+    expr result;
     if (STD_MODE == STD_MODE_ONE_INSTANCE) {
         result = 1;
     } else {
@@ -1154,8 +1154,8 @@ private function piop_gprod_issue_global_debug_hints() {
     @gprod_debug_data_global{num_global_hints: num_global_hints}
     for (int i = 0; i < num_global_hints; i++) {
         int exprs_num = exprs_num[i];
-        const expr tmp_name_exprs[exprs_num];
-        const expr tmp_exprs[exprs_num];
+        expr tmp_name_exprs[exprs_num];
+        expr tmp_exprs[exprs_num];
         for (int j = 0; j < exprs_num; j++) {
             tmp_name_exprs[j] = name_exprs[i][j];
             tmp_exprs[j] = expressions[i][j];
