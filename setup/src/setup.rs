@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::node_bridge::call_node;
+use crate::{global_constraints_bin::write_global_data, node_bridge::call_node};
 
 const WRAPPER: &str = "src/cmd/setup_cmd_wrapper.js";
 
@@ -46,17 +46,16 @@ pub fn generate_setup(config: &SetupConfig) -> Result<()> {
     let stark_structs = create_stark_structs(config, &starkstructs)?;
 
     let node_config = create_node_config(config, starkstructs);
-    let builddir = config.builddir.to_string_lossy().to_string();
 
     // JS: Stark setup generation
     let stark_structs_json = serde_json::to_value(&stark_structs)?;
-    let setup = stark_setup(config, &node_config, &builddir, stark_structs_json)?;
+    let setup = stark_setup(config, &node_config, stark_structs_json)?;
 
     // JS: Circuit generation
-    let global_data = generate_circuits(config, &node_config, &builddir, setup)?;
+    let global_data = generate_circuits(config, &node_config, setup)?;
 
-    // JS: Write global data to disk
-    write_global_data(config, &builddir, global_data)
+    // Write global data to disk
+    write_global_data(&config.builddir, &global_data)
 }
 
 /// Generate per-air starkStruct configs
@@ -238,15 +237,15 @@ fn create_node_config(config: &SetupConfig, starkstructs: serde_json::Value) -> 
 fn stark_setup(
     config: &SetupConfig,
     node_config: &serde_json::Value,
-    builddir_str: &str,
     stark_structs_json: serde_json::Value,
 ) -> Result<serde_json::Value, anyhow::Error> {
+    let builddir = config.builddir.to_string_lossy();
     call_node(
         &config.js_root,
         WRAPPER,
         config.max_old_space_size,
         "stark_setup",
-        json!({ "config": &node_config, "buildDir": &builddir_str, "starkStructs": stark_structs_json }),
+        json!({ "config": &node_config, "buildDir": &*builddir, "starkStructs": stark_structs_json }),
     )?
     .ok_or_else(|| anyhow::anyhow!("stark_setup returned no value"))
 }
@@ -254,35 +253,15 @@ fn stark_setup(
 fn generate_circuits(
     config: &SetupConfig,
     node_config: &serde_json::Value,
-    builddir_str: &str,
     setup: serde_json::Value,
 ) -> Result<serde_json::Value, anyhow::Error> {
-    let global_data = call_node(
-        &config.js_root,
-        WRAPPER,
-        config.max_old_space_size,
-        "generate_circuits",
-        json!({ "config": &node_config, "buildDir": &builddir_str, "setup": setup }),
-    )?
-    .ok_or_else(|| anyhow::anyhow!("generate_circuits returned no value"))?;
-    Ok(global_data)
-}
-
-fn write_global_data(
-    config: &SetupConfig,
-    builddir_str: &str,
-    global_data: serde_json::Value,
-) -> Result<(), anyhow::Error> {
+    let builddir = config.builddir.to_string_lossy();
     call_node(
         &config.js_root,
         WRAPPER,
         config.max_old_space_size,
-        "write_global_data",
-        json!({
-            "buildDir":          &builddir_str,
-            "globalInfo":        &global_data["globalInfo"],
-            "globalConstraints": &global_data["globalConstraints"],
-        }),
-    )?;
-    Ok(())
+        "generate_circuits",
+        json!({ "config": &node_config, "buildDir": &*builddir, "setup": setup }),
+    )?
+    .ok_or_else(|| anyhow::anyhow!("generate_circuits returned no value"))
 }

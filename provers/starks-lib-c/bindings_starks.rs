@@ -526,6 +526,31 @@ extern "C" {
         fixedPolsInfo: *mut ::std::os::raw::c_void,
     );
 
+    // BinFile Writer
+    // ========================================================================================
+    pub fn binfile_writer_new(
+        filename: *const ::std::os::raw::c_char,
+        type_: *const ::std::os::raw::c_char,
+        version: u32,
+        n_sections: u32,
+    ) -> *mut ::std::os::raw::c_void;
+    pub fn binfile_writer_free(writer: *mut ::std::os::raw::c_void);
+    pub fn binfile_writer_start_section(writer: *mut ::std::os::raw::c_void, section_id: u32);
+    pub fn binfile_writer_end_section(writer: *mut ::std::os::raw::c_void);
+    pub fn binfile_writer_write_u8(writer: *mut ::std::os::raw::c_void, value: u8);
+    pub fn binfile_writer_write_u16(writer: *mut ::std::os::raw::c_void, value: u16);
+    pub fn binfile_writer_write_u32(writer: *mut ::std::os::raw::c_void, value: u32);
+    pub fn binfile_writer_write_u64(writer: *mut ::std::os::raw::c_void, value: u64);
+    pub fn binfile_writer_write_bytes(
+        writer: *mut ::std::os::raw::c_void,
+        buffer: *const ::std::os::raw::c_void,
+        len: u64,
+    );
+    pub fn binfile_writer_write_string(
+        writer: *mut ::std::os::raw::c_void,
+        str_: *const ::std::os::raw::c_char,
+    );
+
     // OpenMP
     // ========================================================================================
     pub fn get_omp_max_threads() -> u64;

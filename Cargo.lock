@@ -1528,6 +1528,7 @@ dependencies = [
  "colored",
  "pilout",
  "proofman-common",
+ "proofman-starks-lib-c",
  "serde",
  "serde_json",
  "tracing",

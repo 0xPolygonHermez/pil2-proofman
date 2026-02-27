@@ -1298,6 +1298,111 @@ pub fn write_fixed_cols_bin_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn binfile_writer_new_c(filename: &str, type_: &str, version: u32, n_sections: u32) -> *mut c_void {
+    let filename = CString::new(filename).unwrap();
+    let type_ = CString::new(type_).unwrap();
+    unsafe { binfile_writer_new(filename.as_ptr(), type_.as_ptr(), version, n_sections) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn binfile_writer_free_c(writer: *mut c_void) {
+    unsafe { binfile_writer_free(writer) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn binfile_writer_start_section_c(writer: *mut c_void, section_id: u32) {
+    unsafe { binfile_writer_start_section(writer, section_id) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn binfile_writer_end_section_c(writer: *mut c_void) {
+    unsafe { binfile_writer_end_section(writer) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn binfile_writer_write_u8_c(writer: *mut c_void, value: u8) {
+    unsafe { binfile_writer_write_u8(writer, value) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn binfile_writer_write_u16_c(writer: *mut c_void, value: u16) {
+    unsafe { binfile_writer_write_u16(writer, value) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn binfile_writer_write_u32_c(writer: *mut c_void, value: u32) {
+    unsafe { binfile_writer_write_u32(writer, value) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn binfile_writer_write_u64_c(writer: *mut c_void, value: u64) {
+    unsafe { binfile_writer_write_u64(writer, value) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn binfile_writer_write_bytes_c(writer: *mut c_void, buffer: *const c_void, len: u64) {
+    unsafe { binfile_writer_write_bytes(writer, buffer, len) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn binfile_writer_write_string_c(writer: *mut c_void, s: &str) {
+    let s = CString::new(s).unwrap();
+    unsafe { binfile_writer_write_string(writer, s.as_ptr()) }
+}
+
+// no_lib_link mocks
+#[cfg(feature = "no_lib_link")]
+pub fn binfile_writer_new_c(_filename: &str, _type_: &str, _version: u32, _n_sections: u32) -> *mut c_void {
+    trace!("··· {}", "binfile_writer_new: This is a mock call because there is no linked library");
+    std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn binfile_writer_free_c(_writer: *mut c_void) {
+    trace!("··· {}", "binfile_writer_free: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn binfile_writer_start_section_c(_writer: *mut c_void, _section_id: u32) {
+    trace!("··· {}", "binfile_writer_start_section: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn binfile_writer_end_section_c(_writer: *mut c_void) {
+    trace!("··· {}", "binfile_writer_end_section: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn binfile_writer_write_u8_c(_writer: *mut c_void, _value: u8) {
+    trace!("··· {}", "binfile_writer_write_u8: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn binfile_writer_write_u16_c(_writer: *mut c_void, _value: u16) {
+    trace!("··· {}", "binfile_writer_write_u16: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn binfile_writer_write_u32_c(_writer: *mut c_void, _value: u32) {
+    trace!("··· {}", "binfile_writer_write_u32: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn binfile_writer_write_u64_c(_writer: *mut c_void, _value: u64) {
+    trace!("··· {}", "binfile_writer_write_u64: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn binfile_writer_write_bytes_c(_writer: *mut c_void, _buffer: *const c_void, _len: u64) {
+    trace!("··· {}", "binfile_writer_write_bytes: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn binfile_writer_write_string_c(_writer: *mut c_void, _s: &str) {
+    trace!("··· {}", "binfile_writer_write_string: This is a mock call because there is no linked library");
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn get_omp_max_threads_c() -> u64 {
     unsafe { get_omp_max_threads() }
 }

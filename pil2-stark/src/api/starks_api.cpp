@@ -1080,6 +1080,48 @@ void write_fixed_cols_bin(char* binFile, char* airgroupName, char* airName, uint
     writeFixedColsBin(string(binFile), string(airgroupName), string(airName), N, nFixedPols, (FixedPolsInfo *)fixedPolsInfo);
 }
 
+// BinFile Writer
+// =================================================================================
+void *binfile_writer_new(const char *filename, const char *type, uint32_t version, uint32_t n_sections) {
+    return new BinFileUtils::BinFileWriter(std::string(filename), std::string(type), version, n_sections);
+}
+
+void binfile_writer_free(void *writer) {
+    delete (BinFileUtils::BinFileWriter *)writer;
+}
+
+void binfile_writer_start_section(void *writer, uint32_t section_id) {
+    ((BinFileUtils::BinFileWriter *)writer)->startWriteSection(section_id);
+}
+
+void binfile_writer_end_section(void *writer) {
+    ((BinFileUtils::BinFileWriter *)writer)->endWriteSection();
+}
+
+void binfile_writer_write_u8(void *writer, uint8_t value) {
+    ((BinFileUtils::BinFileWriter *)writer)->writeU8LE(value);
+}
+
+void binfile_writer_write_u16(void *writer, uint16_t value) {
+    ((BinFileUtils::BinFileWriter *)writer)->writeU16LE(value);
+}
+
+void binfile_writer_write_u32(void *writer, uint32_t value) {
+    ((BinFileUtils::BinFileWriter *)writer)->writeU32LE(value);
+}
+
+void binfile_writer_write_u64(void *writer, uint64_t value) {
+    ((BinFileUtils::BinFileWriter *)writer)->writeU64LE(value);
+}
+
+void binfile_writer_write_bytes(void *writer, const void *buffer, uint64_t len) {
+    ((BinFileUtils::BinFileWriter *)writer)->write((void *)buffer, len);
+}
+
+void binfile_writer_write_string(void *writer, const char *str) {
+    ((BinFileUtils::BinFileWriter *)writer)->writeString(std::string(str));
+}
+
 uint64_t get_omp_max_threads(){
     return omp_get_max_threads();
 }
