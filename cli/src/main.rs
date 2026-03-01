@@ -5,7 +5,7 @@ mod commands;
 use commands::gen_custom_commits_fixed::GenCustomCommitsFixedCmd;
 use commands::get_constraints::GetConstraintsCmd;
 use commands::pil_helpers::PilHelpersCmd;
-use commands::setup_rust2::SetupRust2Cmd;
+use commands::setup::SetupCmd;
 use commands::prove::ProveCmd;
 use commands::prove_snark::ProveSnarkCmd;
 use commands::verify_constraints::VerifyConstraintsCmd;
@@ -16,7 +16,7 @@ use commands::verify_snark::VerifySnark;
 use commands::gen_witness::GenWitnessCmd;
 use commands::execute::ExecuteCmd;
 use commands::pilout::{PiloutSubcommands, PiloutCmd};
-use commands::setup::CheckSetupCmd;
+use commands::check_setup::CheckSetupCmd;
 use commands::setup_snark::CheckSetupSnarkCmd;
 use commands::soundness::SoundnessCmd;
 use proofman_util::cli::print_banner;
@@ -47,7 +47,7 @@ pub enum Commands {
     GetConstraints(GetConstraintsCmd),
     GenCustomCommitsFixed(GenCustomCommitsFixedCmd),
     GenWitness(GenWitnessCmd),
-    SetupRust2(SetupRust2Cmd),
+    Setup(SetupCmd),
 }
 
 fn main() {
@@ -73,7 +73,7 @@ fn main() {
         Commands::Stats(args) => args.run(),
         Commands::Execute(args) => args.run(),
         Commands::GenWitness(args) => args.run(),
-        Commands::SetupRust2(args) => args.run(),
+        Commands::Setup(args) => args.run(),
     };
 
     if let Err(e) = result {

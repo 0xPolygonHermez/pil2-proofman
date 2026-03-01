@@ -23,6 +23,8 @@ use proofman_starks_lib_c::{
     binfile_writer_write_u32_c, binfile_writer_write_u64_c, binfile_writer_write_u8_c,
 };
 
+use crate::SetupConfig;
+
 const FIELD_EXTENSION: u64 = 3;
 
 // ---------------------------------------------------------------------------
@@ -601,11 +603,13 @@ fn to_json_indent1(v: &Value) -> Result<Vec<u8>> {
 ///
 /// `global_data` must have `globalInfo` and `globalConstraints` fields,
 /// exactly as returned by `generate_circuits` via the Node bridge.
-pub fn write_global_data(builddir: &Path, global_data: &Value) -> Result<()> {
+pub fn write_global_data(setup_config: &SetupConfig, global_data: &Value) -> Result<()> {
     let global_info = &global_data["globalInfo"];
     let global_constraints = &global_data["globalConstraints"];
 
-    let pk = builddir.join("provingKey");
+    let build_dir = &setup_config.builddir;
+
+    let pk = build_dir.join("provingKey");
 
     // pilout.globalInfo.json
     let gi_path = pk.join("pilout.globalInfo.json");
