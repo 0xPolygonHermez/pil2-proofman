@@ -12,17 +12,10 @@
 use std::collections::HashMap;
 use std::os::raw::c_void;
 use std::path::Path;
-
 use anyhow::{anyhow, Result};
 use serde::Serialize as _;
 use serde_json::Value;
-
-use proofman_starks_lib_c::{
-    binfile_writer_end_section_c, binfile_writer_free_c, binfile_writer_new_c, binfile_writer_start_section_c,
-    binfile_writer_write_bytes_c, binfile_writer_write_string_c, binfile_writer_write_u16_c,
-    binfile_writer_write_u32_c, binfile_writer_write_u64_c, binfile_writer_write_u8_c,
-};
-
+use proofman_starks_lib_c::*;
 use crate::SetupConfig;
 
 const FIELD_EXTENSION: u64 = 3;

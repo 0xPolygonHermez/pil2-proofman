@@ -6,9 +6,9 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::{global_constraints_bin::write_global_data, node_bridge::call_node};
+use crate::{write_global_data::write_global_data, node_bridge::call_node};
 
-const WRAPPER: &str = "src/cmd/setup_cmd_wrapper.js";
+const PIL2_PROOFMANJS_WRAPPER: &str = "src/cmd/setup_cmd_wrapper.js";
 
 /// Configuration for setup generation.
 #[derive(Debug, Clone)]
@@ -47,7 +47,7 @@ pub fn generate_setup(setup_config: &SetupConfig) -> Result<()> {
     let stark_setup_config = create_stark_setup_config(setup_config, &airs_settings);
 
     // JS: Stark setup generation
-    let stark_setup = stark_setup(setup_config, &stark_setup_config, airs_settings)?;
+    let stark_setup = stark_setup(setup_config, &stark_setup_config, &airs_settings)?;
 
     // JS: Circuit generation
     let global_data = generate_circuits(setup_config, &stark_setup_config, stark_setup)?;
@@ -230,13 +230,13 @@ fn create_stark_setup_config(setup_config: &SetupConfig, airs_settings: &serde_j
 fn stark_setup(
     setup_config: &SetupConfig,
     stark_setup_config: &serde_json::Value,
-    airs_settings: serde_json::Value,
+    airs_settings: &serde_json::Value,
 ) -> Result<serde_json::Value, anyhow::Error> {
     let stark_structs = create_stark_structs(setup_config, &airs_settings)?;
 
     call_node(
         &setup_config.js_root,
-        WRAPPER,
+        PIL2_PROOFMANJS_WRAPPER,
         setup_config.max_old_space_size,
         "stark_setup",
         json!({ "config": &stark_setup_config, "buildDir": &*setup_config.builddir.to_string_lossy(), "starkStructs": serde_json::to_value(&stark_structs)? }),
@@ -251,7 +251,7 @@ fn generate_circuits(
 ) -> Result<serde_json::Value, anyhow::Error> {
     call_node(
         &setup_config.js_root,
-        WRAPPER,
+        PIL2_PROOFMANJS_WRAPPER,
         setup_config.max_old_space_size,
         "generate_circuits",
         json!({ "config": &stark_setup_config, "buildDir": &*setup_config.builddir.to_string_lossy(), "setup": stark_setup }),
