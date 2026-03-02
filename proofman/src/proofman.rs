@@ -1795,6 +1795,10 @@ where
             timer_start_debug!(CALCULATING_INNER_CONTRIBUTIONS);
             timer_start_debug!(PREPARING_CONTRIBUTIONS);
 
+            if witness_start_time.read().unwrap().is_none() {
+                *witness_start_time.write().unwrap() = Some(std::time::Instant::now());
+            }
+
             let my_instances_tables = self.pctx.dctx_get_my_tables();
 
             let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
