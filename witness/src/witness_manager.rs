@@ -80,12 +80,14 @@ impl<F: PrimeField64> WitnessManager<F> {
 
     pub fn execute(&self) -> ProofmanResult<()> {
         self.execution_done.store(false, Ordering::SeqCst);
-        let n_components = self.components_std.read().unwrap().len();
+
+        let n_regular_components = self.components.read().unwrap().len();
+
         for (idx, component) in self.components_std.read().unwrap().iter().enumerate() {
             component.execute(
                 self.pctx.clone(),
                 self.sctx.clone(),
-                &self.components_instance_ids[n_components + idx],
+                &self.components_instance_ids[n_regular_components + idx],
             )?;
         }
 
