@@ -157,7 +157,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive1.max_n_bits_ext)
                 .max(sctx_recursive2.max_n_bits_ext)
                 .max(setup_vadcop_final.stark_info.stark_struct.n_bits_ext as usize);
-
+                
             SetupsVadcop {
                 sctx_compressor: Some(sctx_compressor),
                 sctx_recursive1: Some(sctx_recursive1),
@@ -216,6 +216,7 @@ pub struct SetupRepository<F: PrimeField64> {
     max_prover_buffer_size: usize,
     max_prover_trace_size: usize,
     max_pinned_proof_size: usize,
+    max_contributions_size: usize,
     total_const_pols_size: usize,
     total_const_tree_size: usize,
     global_bin: Option<*mut c_void>,
@@ -262,6 +263,7 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut max_prover_buffer_size = 0;
         let mut max_prover_trace_size = 0;
         let mut max_pinned_proof_size = 0;
+        let mut max_contributions_size = 0;
         let mut total_const_pols_size = 0;
         let mut total_const_tree_size = 0;
 
@@ -308,6 +310,9 @@ impl<F: PrimeField64> SetupRepository<F> {
                         if preallocate {
                             total_const_tree_size += setup.const_tree_size;
                         }
+                        if max_contributions_size < setup.contributions_size {
+                            max_contributions_size = setup.contributions_size;
+                        }
                     }
                     max_pinned_proof_size = max_pinned_proof_size.max(setup.pinned_proof_size);
                     max_n_bits_ext = max_n_bits_ext.max(n_bits_ext);
@@ -328,6 +333,7 @@ impl<F: PrimeField64> SetupRepository<F> {
             max_prover_buffer_size: max_prover_buffer_size as usize,
             max_prover_trace_size,
             max_pinned_proof_size: max_pinned_proof_size as usize,
+            max_contributions_size: max_contributions_size as usize,
             total_const_pols_size,
             total_const_tree_size,
             max_n_bits_ext: max_n_bits_ext as usize,
@@ -345,6 +351,7 @@ pub struct SetupCtx<F: PrimeField64> {
     pub max_prover_trace_size: usize,
     pub max_pinned_proof_size: usize,
     pub max_n_bits_ext: usize,
+    pub max_contributions_size: usize,
     pub total_const_pols_size: usize,
     pub total_const_tree_size: usize,
     setup_type: ProofType,
@@ -367,6 +374,7 @@ impl<F: PrimeField64> SetupCtx<F> {
         let max_pinned_proof_size = setup_repository.max_pinned_proof_size;
         let total_const_pols_size = setup_repository.total_const_pols_size;
         let total_const_tree_size = setup_repository.total_const_tree_size;
+        let max_contributions_size = setup_repository.max_contributions_size;
         let max_n_bits_ext = setup_repository.max_n_bits_ext;
         SetupCtx {
             setup_repository,
@@ -376,6 +384,7 @@ impl<F: PrimeField64> SetupCtx<F> {
             max_prover_trace_size,
             max_pinned_proof_size,
             max_n_bits_ext,
+            max_contributions_size,
             total_const_pols_size,
             total_const_tree_size,
             setup_type: setup_type.clone(),

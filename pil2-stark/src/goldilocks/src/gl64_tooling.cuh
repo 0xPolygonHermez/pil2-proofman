@@ -447,6 +447,8 @@ struct DeviceCommitBuffers
     uint32_t n_total_streams;
     uint32_t n_streams;
     uint32_t n_recursive_streams;
+    uint32_t init_offset_unused_memory_contributions;
+    uint32_t end_offset_unused_memory_contributions;
     std::mutex *mutex_pinned;
     StreamData *streamsData;
 

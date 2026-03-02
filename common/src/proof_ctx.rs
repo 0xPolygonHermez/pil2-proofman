@@ -998,6 +998,11 @@ impl<F: PrimeField64> ProofCtx<F> {
             false => sctx.max_pinned_proof_size as u64,
         };
 
+        let max_size_contributions = sctx.max_contributions_size as u64;
+
+        println!("max_size_buffer: {}", format_bytes(max_prover_buffer_size as f64 * 8.0));
+        println!("max_size_contributions: {}", format_bytes(max_size_contributions as f64 * 8.0));
+
         let n_gpus: u64 = gen_device_streams_c(
             d_buffers.get_ptr(),
             n_streams_per_gpu as u64,

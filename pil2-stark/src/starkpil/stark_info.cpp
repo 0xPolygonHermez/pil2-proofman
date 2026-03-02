@@ -570,6 +570,8 @@ void StarkInfo::setMapOffsets() {
 
     mapOffsets[std::make_pair("cm1", false)] = mapTotalN;
 
+    contributionsSize = mapTotalN + N * mapSectionsN["cm1"];
+
     mapOffsets[std::make_pair("cm2", true)] = mapTotalN;
     mapTotalN += NExtended * mapSectionsN["cm2"];
     mapOffsets[std::make_pair("mt2", true)] = mapTotalN;

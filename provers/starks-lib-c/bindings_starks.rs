@@ -36,6 +36,8 @@ extern "C" {
     
     pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
         
+    pub fn get_contributions_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+    
     pub fn get_map_total_n_custom_commits_fixed(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
     
     pub fn get_tree_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;

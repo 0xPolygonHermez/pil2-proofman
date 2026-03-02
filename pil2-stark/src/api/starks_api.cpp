@@ -291,6 +291,11 @@ uint64_t get_map_total_n(void *pStarkInfo)
     return ((StarkInfo *)pStarkInfo)->mapTotalN;
 }
 
+uint64_t get_contributions_size(void *pStarkInfo)
+{
+    return ((StarkInfo *)pStarkInfo)->contributionsSize;
+}
+
 uint64_t get_tree_size(void *pStarkInfo)
 {
     uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements((1 << ((StarkInfo *)pStarkInfo)->starkStruct.nBitsExt), 3);

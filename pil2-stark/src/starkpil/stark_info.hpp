@@ -190,6 +190,8 @@ public:
 
     uint64_t mapTotalN;
     uint64_t mapTotalNCustomCommitsFixed;
+
+    uint64_t contributionsSize;
     
     uint64_t maxNBlocks, nrowsPack;
     
