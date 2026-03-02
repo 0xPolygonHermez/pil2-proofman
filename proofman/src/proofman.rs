@@ -74,8 +74,8 @@ use proofman_util::{
 use serde::Serialize;
 
 #[derive(Default, Debug, Clone)]
-pub struct ExecutionInfo {
-    pub execution_time: f32,
+pub struct WitnessInfo {
+    pub witness_time: f32,
     pub publics: Vec<u64>,
     pub proof_values: Vec<u64>,
     pub summary_info: String,
@@ -259,7 +259,7 @@ pub struct ProofMan<F: PrimeField64> {
     max_witness_trace_size: usize,
     packed_info: HashMap<(usize, usize), PackedInfo>,
     cancellation_info: Arc<RwLock<CancellationInfo>>,
-    execution_info: RwLock<ExecutionInfo>,
+    witness_info: RwLock<WitnessInfo>,
     verbose_mode: VerboseMode,
     reload_fixed_pols_gpu: Arc<AtomicBool>,
 }
@@ -350,8 +350,8 @@ where
         self.pctx.dctx_is_first_partition()
     }
 
-    pub fn get_execution_info(&self) -> ExecutionInfo {
-        self.execution_info.read().unwrap().clone()
+    pub fn get_witness_info(&self) -> WitnessInfo {
+        self.witness_info.read().unwrap().clone()
     }
 
     pub fn get_publics(&self) -> Vec<u8> {
@@ -778,7 +778,7 @@ where
         let witness_done = Arc::new(Counter::new());
 
         let (witness_handler, witness_handles) =
-            self.calc_witness_handler(witness_done.clone(), memory_handler.clone(), options.minimal_memory, true);
+            self.calc_witness_handler(witness_done.clone(), memory_handler.clone(), options.minimal_memory, None, true);
 
         let _ = self.exec()?;
 
@@ -1078,7 +1078,7 @@ where
         }
 
         let (witness_handler, witness_handles) =
-            self.calc_witness_handler(witness_done.clone(), self.memory_handler.clone(), minimal_memory, false);
+            self.calc_witness_handler(witness_done.clone(), self.memory_handler.clone(), minimal_memory, None, false);
 
         let my_instances_no_tables = my_instances
             .iter()
@@ -1579,7 +1579,7 @@ where
             packed_info,
             cancellation_info: Arc::new(RwLock::new(CancellationInfo::default())),
             verbose_mode,
-            execution_info: RwLock::new(ExecutionInfo::default()),
+            witness_info: RwLock::new(WitnessInfo::default()),
             reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -1723,6 +1723,8 @@ where
             }
             let witness_done = Arc::new(Counter::new());
 
+            let witness_start_time: Arc<RwLock<Option<std::time::Instant>>> = Arc::new(RwLock::new(None));
+
             self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
 
             for _ in 0..self.n_streams {
@@ -1779,10 +1781,11 @@ where
                 witness_done.clone(),
                 self.memory_handler.clone(),
                 options.minimal_memory,
+                Some(witness_start_time.clone()),
                 false,
             );
 
-            let (execution_time, summary_info) = self.exec()?;
+            let summary_info = self.exec()?;
 
             if !options.test_mode {
                 Self::set_publics_custom_commits(&self.sctx, &self.pctx)?;
@@ -1887,7 +1890,10 @@ where
                 internal_contribution.iter().map(|&x| x.as_canonical_u64()).collect::<Vec<u64>>();
 
             if phase == ProvePhase::Contributions {
-                *self.execution_info.write().unwrap() = ExecutionInfo {
+                let witness_time =
+                    witness_start_time.read().unwrap().map(|start| start.elapsed().as_millis() as f32).unwrap_or(0.0);
+
+                *self.witness_info.write().unwrap() = WitnessInfo {
                     publics: self.pctx.get_publics().clone().into_iter().map(|p| p.as_canonical_u64()).collect(),
                     proof_values: self
                         .pctx
@@ -1897,7 +1903,7 @@ where
                         .map(|p| p.as_canonical_u64())
                         .collect(),
                     summary_info,
-                    execution_time,
+                    witness_time,
                 };
                 return Ok(ProvePhaseResult::Contributions(vec![ContributionsInfo {
                     challenge: internal_contribution_u64,
@@ -2368,8 +2374,13 @@ where
             self.pctx.set_witness_tx_priority(Some(self.witness_tx_priority.clone()));
         }
 
-        let (witness_handler, witness_handles) =
-            self.calc_witness_handler(witness_done.clone(), self.memory_handler.clone(), options.minimal_memory, false);
+        let (witness_handler, witness_handles) = self.calc_witness_handler(
+            witness_done.clone(),
+            self.memory_handler.clone(),
+            options.minimal_memory,
+            None,
+            false,
+        );
         timer_start_debug!(CALCULATING_WITNESS);
         self.calculate_witness(
             &instances_to_be_calculated,
@@ -3056,9 +3067,8 @@ where
         }
     }
 
-    fn exec(&self) -> ProofmanResult<(f32, String)> {
+    fn exec(&self) -> ProofmanResult<String> {
         timer_start_info!(EXECUTE);
-        let start_time = std::time::Instant::now();
 
         if !self.wcm.is_init_witness() {
             return Err(ProofmanError::ProofmanError("Witness computation dynamic library not initialized".into()));
@@ -3087,9 +3097,8 @@ where
         let global_summary =
             print_summary_info(&self.pctx, &self.sctx, &self.mpi_ctx, &self.packed_info, self.verbose_mode)?;
 
-        let elapsed = start_time.elapsed();
         timer_stop_and_log_info!(EXECUTE);
-        Ok((elapsed.as_secs_f32(), global_summary))
+        Ok(global_summary)
     }
 
     #[allow(clippy::type_complexity)]
@@ -3298,6 +3307,7 @@ where
         witness_done: Arc<Counter>,
         memory_handler: Arc<MemoryHandler<F>>,
         minimal_memory: bool,
+        witness_start_time: Option<Arc<RwLock<Option<std::time::Instant>>>>,
         stats: bool,
     ) -> (Option<std::thread::JoinHandle<()>>, Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>) {
         let witness_done_clone = witness_done.clone();
@@ -3312,6 +3322,7 @@ where
         let witness_rx_priority = self.witness_rx_priority.clone();
         let cancellation_info_clone = self.cancellation_info.clone();
         let n_threads_witness = self.num_threads_per_witness;
+        let witness_start_time_clone = witness_start_time.clone();
         let witness_handler = if !minimal_memory && (cfg!(feature = "gpu") || stats) {
             Some(std::thread::spawn(move || loop {
                 let instance_id = match witness_rx_priority.try_recv() {
@@ -3342,6 +3353,12 @@ where
                         Err(_) => break,
                     },
                 };
+
+                if let Some(witness_start_time_clone) = &witness_start_time_clone {
+                    if witness_start_time_clone.read().unwrap().is_none() {
+                        *witness_start_time_clone.write().unwrap() = Some(std::time::Instant::now());
+                    }
+                }
 
                 let (airgroup_id, air_id) = match pctx_clone.dctx_get_instance_info(instance_id) {
                     Ok(v) => v,
