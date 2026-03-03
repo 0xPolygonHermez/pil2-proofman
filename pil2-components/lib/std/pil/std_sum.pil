@@ -124,7 +124,7 @@ private function update_piop_sum(const int name, const int surname, const int ty
     initial_checks_sum(name, surname, type, update_type, opids, exprs_num);
 
     // selected vector to simple expression reduction
-    expr exprs_compressed = compress_exprs(busid, expressions);
+    const expr exprs_compressed = compress_exprs(busid, expressions);
 
     switch (update_type) {
         case SUM_UPDATE_TYPE_GLOBAL:
