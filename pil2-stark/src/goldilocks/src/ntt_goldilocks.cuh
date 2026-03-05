@@ -167,7 +167,7 @@ public:
     // IMPORTANT: Memory management is manual. Call free_twiddle_factors_and_r() explicitly
     // at application shutdown to release GPU memory. Twiddle factors persist across
     // instance creation/destruction to avoid recomputation overhead.
-    static void free_twiddle_factors_and_r();
+    static void free_twiddle_factors_and_r(uint32_t* gpu_ids);
 
     void prepare_blocks_trace(gl64_t* dst, gl64_t* src,uint64_t nCols,uint64_t nRows,cudaStream_t stream,TimerGPU &timer);
 

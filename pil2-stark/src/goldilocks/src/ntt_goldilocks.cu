@@ -466,7 +466,7 @@ void NTT_Goldilocks_GPU::init_twiddle_factors_and_r(uint64_t maxLogDomainSize_, 
     assert(maxLogDomainSize_ <= 32);
 
     if(maxLogDomainSize_ > maxLogDomainSize || nGPUs_available_ != nGPUs_available) {
-        free_twiddle_factors_and_r(); 
+        free_twiddle_factors_and_r(gpu_ids_); 
         maxLogDomainSize = maxLogDomainSize_;
         nGPUs_available = nGPUs_available_;
         d_fwd_twiddle_factors = new gl64_t*[nGPUs_available];
@@ -527,7 +527,7 @@ void NTT_Goldilocks_GPU::init_twiddle_factors_and_r(uint64_t maxLogDomainSize_, 
     CHECKCUDAERR(cudaGetLastError());
 }
 
-void NTT_Goldilocks_GPU::free_twiddle_factors_and_r() {
+void NTT_Goldilocks_GPU::free_twiddle_factors_and_r(uint32_t* gpu_ids) {
     static std::mutex free_mutex;
     std::lock_guard<std::mutex> lock(free_mutex);
 
@@ -539,7 +539,7 @@ void NTT_Goldilocks_GPU::free_twiddle_factors_and_r() {
 
     for(int i = 0; i < nGPUs_available; i++) {
         if(d_fwd_twiddle_factors[i] != nullptr && d_inv_twiddle_factors[i] != nullptr && d_r[i] != nullptr) {
-            cudaSetDevice(i);
+            cudaSetDevice(gpu_ids[i]);
             cudaFree(d_fwd_twiddle_factors[i]);
             cudaFree(d_inv_twiddle_factors[i]);
             cudaFree(d_r[i]);

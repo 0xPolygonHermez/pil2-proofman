@@ -57,6 +57,13 @@ void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity,
         my_gpu_ids[i] = node_rank * n_gpus + i;
     }
 
+    // Force CUDA context initialization
+    for (uint32_t i = 0; i < n_gpus; i++) {
+        cudaSetDevice(my_gpu_ids[i]);
+        cudaFree(0);
+    }
+    cudaDeviceSynchronize();
+
     // Initialize small GPU constants (Poseidon2 and Transcript)
     switch(arity){
         case 2:
@@ -78,6 +85,8 @@ void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity,
 
     //Generate static twiddles for the NTT
     NTT_Goldilocks_GPU::init_twiddle_factors_and_r(max_n_bits_ext, n_gpus, my_gpu_ids);
+
+    cudaDeviceSynchronize();
 
     // Create and initialize DeviceCommitBuffers structure (CPU allocations only)
     if(deviceCount >= node_size) {
