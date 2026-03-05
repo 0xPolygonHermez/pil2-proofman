@@ -295,6 +295,9 @@ pub enum ProvePhaseResult {
 
 impl<F: PrimeField64> Drop for ProofMan<F> {
     fn drop(&mut self) {
+        if let Err(e) = self.reset() {
+            eprintln!("Error during ProofMan cleanup: {:?}", e);
+        }
         free_device_buffers_c(self.pctx.get_device_buffers_ptr());
     }
 }

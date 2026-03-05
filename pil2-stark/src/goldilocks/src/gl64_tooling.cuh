@@ -373,7 +373,7 @@ struct StreamData{
 
 struct DeviceRecursiveFBuffers
 {
-    
+    uint32_t gpuId;
     cudaStream_t stream;
     cudaStream_t stream_const_tree;
     TimerGPU timer;

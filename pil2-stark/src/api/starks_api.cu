@@ -186,12 +186,13 @@ void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_
     uint64_t totalPinnedMemoryPerGpu = 2 * d_buffers->pinned_size * sizeof(Goldilocks::Element);
 
     zklog.info("Memory allocation per GPU:");
-    zklog.info("  - Constant polynomials: " + std::to_string(constPolsSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("  - Constant polynomials (separate): " + std::to_string(constPolsSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
     zklog.info("  - Constant polynomials aggregation: " + std::to_string(constPolsAggregationSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
     zklog.info("  - Auxiliary trace (" + std::to_string(d_buffers->n_streams) + " streams): " + std::to_string(totalAuxTraceSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
     zklog.info("  - Auxiliary trace recursive (" + std::to_string(d_buffers->n_recursive_streams) + " streams): " + std::to_string(totalAuxTraceRecursiveSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
-    zklog.info("  - Total GPU memory per GPU: " + std::to_string(totalGpuMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + " GB");
-    zklog.info("  - Total pinned memory per GPU: " + std::to_string(totalPinnedMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("  - Unified buffer per GPU: " + std::to_string(totalGpuMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("  - Total GPU memory per GPU: " + std::to_string((totalGpuMemoryPerGpu + constPolsSize) / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("  - Pinned host memory per GPU: " + std::to_string(totalPinnedMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + " GB");
 
     d_buffers->constPolsSize = constPolsSize;
 
@@ -206,22 +207,25 @@ void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_
                    std::to_string(freeMem / (1024.0 * 1024.0 * 1024.0)) + " GB / " + 
                    std::to_string(totalMem / (1024.0 * 1024.0 * 1024.0)) + " GB");
         
-        if (freeMem < totalGpuMemoryPerGpu) {
+        if (freeMem < totalGpuMemoryPerGpu + constPolsSize) {
             zklog.error("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + 
-                       ": Insufficient memory. Need " + std::to_string(totalGpuMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + 
+                       ": Insufficient memory. Need " + std::to_string((totalGpuMemoryPerGpu + constPolsSize) / (1024.0 * 1024.0 * 1024.0)) + 
                        " GB but only " + std::to_string(freeMem / (1024.0 * 1024.0 * 1024.0)) + " GB available");
             exit(1);
         }
         
-        // Allocate one large contiguous block of GPU memory
+        // Allocate one large contiguous block of GPU memory (unified buffer)
         gl64_t *gpuMemoryBlock;
         CHECKCUDAERR(cudaMalloc(&gpuMemoryBlock, totalGpuMemoryPerGpu));
         d_buffers->gpuMemoryBuffer[i] = gpuMemoryBlock;  // Store the base pointer
-        zklog.info("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + 
-                   ": Allocated " + std::to_string(totalGpuMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + 
-                   " GB of contiguous GPU memory");
         
+        // Allocate separate buffer for constant polynomials
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[i], constPolsSize));
+        
+        zklog.info("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + 
+                   ": Allocated " + std::to_string((totalGpuMemoryPerGpu + constPolsSize) / (1024.0 * 1024.0 * 1024.0)) + 
+                   " GB (" + std::to_string(totalGpuMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + 
+                   " GB unified + " + std::to_string(constPolsSize / (1024.0 * 1024.0 * 1024.0)) + " GB const pols)");
         
         // Set up pointers to different sections of the memory block
         uint64_t offset = 0;
@@ -964,9 +968,14 @@ void tile_const_pols(void *pStarkinfo, void *pConstPols, char *constFile, void *
 void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffer_,  char* verkey) {
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     uint32_t gpuId = 0;
+    if (d_commit_buffer_ != nullptr) {
+        DeviceCommitBuffers *d_commit_buffer = (DeviceCommitBuffers *)d_commit_buffer_;
+        gpuId = d_commit_buffer->my_gpu_ids[0];
+    }
     cudaSetDevice(gpuId);
     
     DeviceRecursiveFBuffers *d_buffers = new DeviceRecursiveFBuffers();
+    d_buffers->gpuId = gpuId;
     
     // Initialize BN128 Poseidon GPU constants for merkletree and transcript
     PoseidonBN128GPU::initGPUConstants(&gpuId, 1);
@@ -1007,24 +1016,24 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize,
 void alloc_fixed_pols_buffer_gpu(void *d_buffers_) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
 
-    uint32_t gpuId = 0;
+    uint32_t gpuId = d_buffers->my_gpu_ids[0];
     cudaSetDevice(gpuId);
-    CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[gpuId], d_buffers->constPolsSize));
+    CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[d_buffers->gpus_g2l[gpuId]], d_buffers->constPolsSize));
 }
 
 void free_fixed_pols_buffer_gpu(void *d_buffers_) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
 
-    uint32_t gpuId = 0;
+    uint32_t gpuId = d_buffers->my_gpu_ids[0];
     cudaSetDevice(gpuId);
-    CHECKCUDAERR(cudaFree(d_buffers->d_constPols[gpuId]));
+    CHECKCUDAERR(cudaFree(d_buffers->d_constPols[d_buffers->gpus_g2l[gpuId]]));
 }
 
 void load_fixed_pols_recursivef(void *pSetupCtx_, void *pConstTree, void *d_buffers_) {
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     DeviceRecursiveFBuffers *d_buffers = (DeviceRecursiveFBuffers *)d_buffers_;
     
-    uint32_t gpuId = 0;
+    uint32_t gpuId = d_buffers->gpuId;
     cudaSetDevice(gpuId);
 
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
@@ -1047,6 +1056,7 @@ void load_fixed_pols_recursivef(void *pSetupCtx_, void *pConstTree, void *d_buff
 
 void free_device_buffers_recursivef(void *d_buffers_) {
     DeviceRecursiveFBuffers *d_buffers = (DeviceRecursiveFBuffers *)d_buffers_;
+    cudaSetDevice(d_buffers->gpuId);
     if (d_buffers->owns_const_tree) {
         CHECKCUDAERR(cudaFree(d_buffers->d_const_tree));
     }
@@ -1060,7 +1070,7 @@ void *gen_recursive_proof_final(void *pSetupCtx_, uint64_t airgroupId, uint64_t 
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     DeviceRecursiveFBuffers *d_buffers = (DeviceRecursiveFBuffers *)d_buffers_;
     
-    uint32_t gpuId = 0;
+    uint32_t gpuId = d_buffers->gpuId;
     cudaSetDevice(gpuId);
 
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
@@ -1259,7 +1269,7 @@ void init_gpu_setup(uint64_t maxBitsExt) {
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
     cudaSetDevice(deviceId);
-    uint32_t my_gpu_ids[1] = {0};
+    uint32_t my_gpu_ids[1] = {(uint32_t)deviceId};
 
     // Uploads constants for all possible arities
     Poseidon2GoldilocksGPU<16>::initPoseidon2GPUConstants(my_gpu_ids, 1);
@@ -1402,40 +1412,94 @@ void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pCons
     cudaStreamDestroy(stream);
 }
 
-uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size) {
+uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size)
+{
     int deviceCount;
     cudaError_t err = cudaGetDeviceCount(&deviceCount);
     if (err != cudaSuccess) {
-        std::cerr << "CUDA error getting device count: " << cudaGetErrorString(err) << std::endl;
+        std::cerr << "CUDA error getting device count: "
+                  << cudaGetErrorString(err) << std::endl;
         exit(1);
     }
 
-    uint32_t device_id;
-
-    if (deviceCount >= node_size) {
-        // Each process gets multiple GPUs
-        uint32_t n_gpus_per_process = deviceCount / node_size;
-        device_id = node_rank * n_gpus_per_process;
-    } else {
-        // Each GPU is shared by multiple processes
-        device_id = node_rank % deviceCount;
-    }
-
-    cudaSetDevice(device_id);
-
-    uint64_t freeMem, totalMem;
-    err = cudaMemGetInfo(&freeMem, &totalMem);
-    if (err != cudaSuccess) {
-        std::cerr << "CUDA error: " << cudaGetErrorString(err) << std::endl;
+    if (deviceCount == 0) {
+        std::cerr << "No CUDA devices found." << std::endl;
         return 0;
     }
 
-    zklog.info("Process rank " + std::to_string(node_rank) + 
-                " sees GPU " + std::to_string(device_id));
-    zklog.info("Free memory GPU after CUDA context init: " + std::to_string(freeMem / (1024.0 * 1024.0 * 1024.0)) + " GB");
-    zklog.info("Total memory GPU: " + std::to_string(totalMem / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    uint64_t min_free_mem = std::numeric_limits<uint64_t>::max();
+    bool multi_gpu_per_process = deviceCount >= (int)node_size;
+    uint32_t n_gpus;
+    
+    if (multi_gpu_per_process) {
+        n_gpus = (uint32_t)deviceCount / node_size;
+        uint32_t first_gpu = node_rank * n_gpus;
+        
+        for (uint32_t i = 0; i < n_gpus; i++) {
+            uint32_t device_id = first_gpu + i;
+            
+            if (device_id >= (uint32_t)deviceCount) {
+                std::cerr << "Invalid device_id " << device_id
+                          << " (deviceCount=" << deviceCount << ")"
+                          << std::endl;
+                continue;
+            }
+            
+            cudaSetDevice(device_id);
+            
+            uint64_t freeMem, totalMem;
+            err = cudaMemGetInfo(&freeMem, &totalMem);
+            if (err != cudaSuccess) {
+                std::cerr << "CUDA error on GPU " << device_id << ": "
+                          << cudaGetErrorString(err) << std::endl;
+                continue;
+            }
+            
+            zklog.info("Process rank " + std::to_string(node_rank) +
+                       " - GPU " + std::to_string(device_id) +
+                       " [" + std::to_string(i) + "/" + std::to_string(n_gpus) + "]: " +
+                       std::to_string(freeMem / (1024.0 * 1024.0 * 1024.0)) + " GB free / " +
+                       std::to_string(totalMem / (1024.0 * 1024.0 * 1024.0)) + " GB total");
+            
+            min_free_mem = std::min(min_free_mem, freeMem);
+        }
+        
+        if (min_free_mem != std::numeric_limits<uint64_t>::max()) {
+            zklog.info("Process rank " + std::to_string(node_rank) +
+                       ": Using minimum memory across " + std::to_string(n_gpus) +
+                       " GPUs: " + std::to_string(min_free_mem / (1024.0 * 1024.0 * 1024.0)) + " GB");
+        }
+    } else {
+        uint32_t device_id = node_rank % deviceCount;
+        cudaSetDevice(device_id);
+        
+        uint64_t freeMem, totalMem;
+        err = cudaMemGetInfo(&freeMem, &totalMem);
+        if (err != cudaSuccess) {
+            std::cerr << "CUDA error on GPU " << device_id << ": "
+                      << cudaGetErrorString(err) << std::endl;
+            return 0;
+        }
+        
+        zklog.info("Process rank " + std::to_string(node_rank) +
+                   " uses shared GPU " + std::to_string(device_id) +
+                   ": " + std::to_string(freeMem / (1024.0 * 1024.0 * 1024.0)) + " GB free / " +
+                   std::to_string(totalMem / (1024.0 * 1024.0 * 1024.0)) + " GB total");
+        
+        min_free_mem = freeMem;
+    }
+    
+    // Check if we got valid memory info
+    if (min_free_mem == std::numeric_limits<uint64_t>::max()) {
+        std::cerr << "Failed to get memory info from any GPU for process rank " 
+                  << node_rank << std::endl;
+        return 0;
+    }
 
-    return freeMem;
+    zklog.info("Minimum free memory available for GPU usage: " + 
+               std::to_string(min_free_mem / (1024.0 * 1024.0 * 1024.0)) + " GB");
+
+    return min_free_mem;
 }
 
 uint64_t get_num_gpus() {
