@@ -904,8 +904,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         )));
 
         let mut free_memory_gpu = match cfg!(feature = "gpu") {
-            true => check_device_memory_c(self.mpi_ctx.node_rank as u32, self.mpi_ctx.node_n_processes as usize as u32)
-                as f64,
+            true => check_device_memory_c(self.mpi_ctx.node_rank as u32, self.mpi_ctx.node_n_processes as u32) as f64,
             false => 0.0,
         };
 

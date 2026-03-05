@@ -295,9 +295,106 @@ pub enum ProvePhaseResult {
 
 impl<F: PrimeField64> Drop for ProofMan<F> {
     fn drop(&mut self) {
+        if let Err(e) = self.reset() {
+            eprintln!("Error during ProofMan cleanup: {:?}", e);
+        }
         free_device_buffers_c(self.pctx.get_device_buffers_ptr());
     }
 }
+
+impl<F: PrimeField64> ProofMan<F> {
+    pub fn reset(&self) -> ProofmanResult<()> {
+        self.wcm.reset();
+
+        for proof_lock in self.proofs.iter() {
+            let mut proof = proof_lock.write().unwrap();
+            *proof = None;
+        }
+
+        for proof_lock in self.compressor_proofs.iter() {
+            let mut proof = proof_lock.write().unwrap();
+            *proof = None;
+        }
+
+        for proof_lock in self.recursive1_proofs.iter() {
+            let mut proof = proof_lock.write().unwrap();
+            *proof = None;
+        }
+
+        for proof_lock in self.recursive2_proofs.iter() {
+            let mut proofs = proof_lock.write().unwrap();
+            proofs.clear();
+        }
+
+        let mut ongoing_proofs = self.recursive2_proofs_ongoing.write().unwrap();
+        ongoing_proofs.clear();
+
+        clear_proof_done_callback_c();
+        self.pctx.set_witness_tx(None);
+        self.pctx.set_witness_tx_priority(None);
+        self.pctx.set_proof_tx(None);
+
+        for _ in 0..self.n_streams {
+            self.recursive_tx.send((u64::MAX - 1, "Recursive2".to_string())).unwrap();
+        }
+
+        let handles = self.handle_recursives.lock().unwrap().drain(..).collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        for _ in 0..self.n_streams {
+            self.contributions_tx.send(usize::MAX).ok();
+        }
+
+        let handles = self.handle_contributions.lock().unwrap().drain(..).collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        if self.outer_aggregations_handle.lock().unwrap().is_some() {
+            self.outer_agg_proofs_finished.store(true, Ordering::SeqCst);
+
+            let mut outer_aggregations_handle = self.outer_aggregations_handle.lock().unwrap();
+            if let Some(handle) = outer_aggregations_handle.take() {
+                handle.join().unwrap();
+            }
+        }
+
+        // Drain all relevant channels to ensure they are empty
+        while self.rx_threads.try_recv().is_ok() {}
+        while self.witness_rx.try_recv().is_ok() {}
+        while self.witness_rx_priority.try_recv().is_ok() {}
+        while self.contributions_rx.try_recv().is_ok() {}
+        while self.recursive_rx.try_recv().is_ok() {}
+        while self.proofs_rx.try_recv().is_ok() {}
+        while self.compressor_witness_rx.try_recv().is_ok() {}
+        while self.rec1_witness_rx.try_recv().is_ok() {}
+        while self.rec2_witness_rx.try_recv().is_ok() {}
+
+        self.worker_contributions.write().unwrap().clear();
+        reset_device_streams_c(self.pctx.get_device_buffers_ptr());
+
+        for inner_vec in self.received_agg_proofs.write().unwrap().iter_mut() {
+            inner_vec.clear();
+        }
+
+        for _ in 0..self.max_num_threads {
+            self.tx_threads.send(()).unwrap();
+        }
+
+        self.total_outer_agg_proofs.reset();
+
+        for instance_id in 0..MAX_INSTANCES as usize {
+            self.pctx.free_instance(instance_id);
+        }
+
+        self.memory_handler.reset()?;
+
+        Ok(())
+    }
+}
+
 impl<F: PrimeField64> ProofMan<F>
 where
     GoldilocksQuinticExtension: ExtensionField<F>,
@@ -1586,97 +1683,6 @@ where
 
     pub fn register_custom_commits(&self, custom_commits_fixed: HashMap<String, PathBuf>) -> ProofmanResult<()> {
         self.pctx.initialize_custom_commits(custom_commits_fixed, &self.sctx, false)
-    }
-
-    pub fn reset(&self) -> ProofmanResult<()> {
-        self.wcm.reset();
-
-        for proof_lock in self.proofs.iter() {
-            let mut proof = proof_lock.write().unwrap();
-            *proof = None;
-        }
-
-        for proof_lock in self.compressor_proofs.iter() {
-            let mut proof = proof_lock.write().unwrap();
-            *proof = None;
-        }
-
-        for proof_lock in self.recursive1_proofs.iter() {
-            let mut proof = proof_lock.write().unwrap();
-            *proof = None;
-        }
-
-        for proof_lock in self.recursive2_proofs.iter() {
-            let mut proofs = proof_lock.write().unwrap();
-            proofs.clear();
-        }
-
-        let mut ongoing_proofs = self.recursive2_proofs_ongoing.write().unwrap();
-        ongoing_proofs.clear();
-
-        clear_proof_done_callback_c();
-        self.pctx.set_witness_tx(None);
-        self.pctx.set_witness_tx_priority(None);
-        self.pctx.set_proof_tx(None);
-
-        for _ in 0..self.n_streams {
-            self.recursive_tx.send((u64::MAX - 1, "Recursive2".to_string())).unwrap();
-        }
-
-        let handles = self.handle_recursives.lock().unwrap().drain(..).collect::<Vec<_>>();
-        for handle in handles {
-            handle.join().unwrap();
-        }
-
-        for _ in 0..self.n_streams {
-            self.contributions_tx.send(usize::MAX).ok();
-        }
-
-        let handles = self.handle_contributions.lock().unwrap().drain(..).collect::<Vec<_>>();
-        for handle in handles {
-            handle.join().unwrap();
-        }
-
-        if self.outer_aggregations_handle.lock().unwrap().is_some() {
-            self.outer_agg_proofs_finished.store(true, Ordering::SeqCst);
-
-            let mut outer_aggregations_handle = self.outer_aggregations_handle.lock().unwrap();
-            if let Some(handle) = outer_aggregations_handle.take() {
-                handle.join().unwrap();
-            }
-        }
-
-        // Drain all relevant channels to ensure they are empty
-        while self.rx_threads.try_recv().is_ok() {}
-        while self.witness_rx.try_recv().is_ok() {}
-        while self.witness_rx_priority.try_recv().is_ok() {}
-        while self.contributions_rx.try_recv().is_ok() {}
-        while self.recursive_rx.try_recv().is_ok() {}
-        while self.proofs_rx.try_recv().is_ok() {}
-        while self.compressor_witness_rx.try_recv().is_ok() {}
-        while self.rec1_witness_rx.try_recv().is_ok() {}
-        while self.rec2_witness_rx.try_recv().is_ok() {}
-
-        self.worker_contributions.write().unwrap().clear();
-        reset_device_streams_c(self.pctx.get_device_buffers_ptr());
-
-        for inner_vec in self.received_agg_proofs.write().unwrap().iter_mut() {
-            inner_vec.clear();
-        }
-
-        for _ in 0..self.max_num_threads {
-            self.tx_threads.send(()).unwrap();
-        }
-
-        self.total_outer_agg_proofs.reset();
-
-        for instance_id in 0..MAX_INSTANCES as usize {
-            self.pctx.free_instance(instance_id);
-        }
-
-        self.memory_handler.reset()?;
-
-        Ok(())
     }
 
     pub fn register_witness(&self, witness_lib: &mut dyn WitnessLibrary<F>, library: Library) -> ProofmanResult<()> {
@@ -3682,7 +3688,7 @@ where
         packed_info: &HashMap<(usize, usize), PackedInfo>,
         verbose_mode: VerboseMode,
     ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64)> {
-        let mut pctx = ProofCtx::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx)?;
+        let mut pctx = ProofCtx::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx.clone())?;
         timer_start_info!(INITIALIZING_PROOFMAN);
 
         let mut preloaded_const = Vec::new();
@@ -3715,38 +3721,41 @@ where
 
         load_device_setups(&pctx, &sctx, &setups_vadcop, aggregation, packed_info)?;
 
-        let (needs_const_regen, needs_tree_regen) = needs_regeneration_fixed(&pctx, &sctx)?;
-        if needs_const_regen {
-            tracing::info!("Regenerating GPU constant polynomials (one-time setup)...");
-            timer_start_info!(REGENERATING_GPU_CONST_POLS);
-            check_const_paths(&pctx, &sctx)?;
-            timer_stop_and_log_info!(REGENERATING_GPU_CONST_POLS);
-        }
-
-        if !verify_constraints && needs_tree_regen {
-            tracing::info!("Regenerating constant trees (one-time setup)...");
-            timer_start_info!(REGENERATING_CONST_TREE);
-            check_tree_paths(&pctx, &sctx)?;
-            timer_stop_and_log_info!(REGENERATING_CONST_TREE);
-        }
-
-        if aggregation {
-            let (needs_vadcop_const_regen, needs_vadcop_tree_regen) =
-                needs_regeneration_vadcop_fixed(&pctx, &setups_vadcop)?;
-            if needs_vadcop_const_regen {
-                tracing::info!("Regenerating Vadcop constant polynomials (one-time setup)...");
-                timer_start_info!(REGENERATING_VADCOP_CONST_POLS);
-                check_const_paths_vadcop(&pctx, &setups_vadcop)?;
-                timer_stop_and_log_info!(REGENERATING_VADCOP_CONST_POLS);
+        if mpi_ctx.rank == 0 {
+            let (needs_const_regen, needs_tree_regen) = needs_regeneration_fixed(&pctx, &sctx)?;
+            if needs_const_regen {
+                tracing::info!("Regenerating GPU constant polynomials (one-time setup)...");
+                timer_start_info!(REGENERATING_GPU_CONST_POLS);
+                check_const_paths(&pctx, &sctx)?;
+                timer_stop_and_log_info!(REGENERATING_GPU_CONST_POLS);
             }
 
-            if needs_vadcop_tree_regen {
-                tracing::info!("Regenerating Vadcop constant trees (one-time setup)...");
-                timer_start_info!(REGENERATING_VADCOP_CONST_TREE);
-                check_tree_paths_vadcop(&pctx, &setups_vadcop)?;
-                timer_stop_and_log_info!(REGENERATING_VADCOP_CONST_TREE);
+            if !verify_constraints && needs_tree_regen {
+                tracing::info!("Regenerating constant trees (one-time setup)...");
+                timer_start_info!(REGENERATING_CONST_TREE);
+                check_tree_paths(&pctx, &sctx)?;
+                timer_stop_and_log_info!(REGENERATING_CONST_TREE);
+            }
+
+            if aggregation {
+                let (needs_vadcop_const_regen, needs_vadcop_tree_regen) =
+                    needs_regeneration_vadcop_fixed(&pctx, &setups_vadcop)?;
+                if needs_vadcop_const_regen {
+                    tracing::info!("Regenerating Vadcop constant polynomials (one-time setup)...");
+                    timer_start_info!(REGENERATING_VADCOP_CONST_POLS);
+                    check_const_paths_vadcop(&pctx, &setups_vadcop)?;
+                    timer_stop_and_log_info!(REGENERATING_VADCOP_CONST_POLS);
+                }
+
+                if needs_vadcop_tree_regen {
+                    tracing::info!("Regenerating Vadcop constant trees (one-time setup)...");
+                    timer_start_info!(REGENERATING_VADCOP_CONST_TREE);
+                    check_tree_paths_vadcop(&pctx, &setups_vadcop)?;
+                    timer_stop_and_log_info!(REGENERATING_VADCOP_CONST_TREE);
+                }
             }
         }
+        mpi_ctx.barrier();
 
         timer_start_info!(LOADING_FIXED_POLS);
         load_device_const_pols(&pctx, &sctx, &setups_vadcop, verify_constraints, aggregation, false)?;
