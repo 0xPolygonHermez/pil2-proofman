@@ -69,8 +69,8 @@ impl VadcopFinalProof {
     }
 
     pub fn proof_with_publics_u64(&self) -> Vec<u64> {
-        let public_values_u64: &[u64] = cast_slice(&self.public_values);
-        let proof_u64: &[u64] = cast_slice(&self.proof);
+        let public_values_u64 = self.get_publics();
+        let proof_u64 = self.get_proof();
 
         let mut result = Vec::with_capacity(1 + public_values_u64.len() + proof_u64.len());
         result.push(public_values_u64.len() as u64);

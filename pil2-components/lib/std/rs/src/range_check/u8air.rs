@@ -135,10 +135,8 @@ impl<F: PrimeField64> WitnessComponent<F> for U8Air {
         }
 
         self.calculated.store(false, Ordering::Relaxed);
-        self.multiplicities.par_iter().for_each(|vec| {
-            for v in vec.iter() {
-                v.store(0, Ordering::Relaxed);
-            }
+        self.multiplicities.par_iter().flat_map(|vec| vec.par_iter()).for_each(|v| {
+            v.store(0, Ordering::Relaxed);
         });
         self.table_instance_id.store(table_instance_id as u64, Ordering::SeqCst);
         Ok(())
