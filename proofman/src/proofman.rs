@@ -3688,7 +3688,7 @@ where
         packed_info: &HashMap<(usize, usize), PackedInfo>,
         verbose_mode: VerboseMode,
     ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64)> {
-        let mut pctx = ProofCtx::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx)?;
+        let mut pctx = ProofCtx::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx.clone())?;
         timer_start_info!(INITIALIZING_PROOFMAN);
 
         let mut preloaded_const = Vec::new();
@@ -3722,37 +3722,40 @@ where
         load_device_setups(&pctx, &sctx, &setups_vadcop, aggregation, packed_info)?;
 
         let (needs_const_regen, needs_tree_regen) = needs_regeneration_fixed(&pctx, &sctx)?;
-        if needs_const_regen {
-            tracing::info!("Regenerating GPU constant polynomials (one-time setup)...");
-            timer_start_info!(REGENERATING_GPU_CONST_POLS);
-            check_const_paths(&pctx, &sctx)?;
-            timer_stop_and_log_info!(REGENERATING_GPU_CONST_POLS);
-        }
-
-        if !verify_constraints && needs_tree_regen {
-            tracing::info!("Regenerating constant trees (one-time setup)...");
-            timer_start_info!(REGENERATING_CONST_TREE);
-            check_tree_paths(&pctx, &sctx)?;
-            timer_stop_and_log_info!(REGENERATING_CONST_TREE);
-        }
-
-        if aggregation {
-            let (needs_vadcop_const_regen, needs_vadcop_tree_regen) =
-                needs_regeneration_vadcop_fixed(&pctx, &setups_vadcop)?;
-            if needs_vadcop_const_regen {
-                tracing::info!("Regenerating Vadcop constant polynomials (one-time setup)...");
-                timer_start_info!(REGENERATING_VADCOP_CONST_POLS);
-                check_const_paths_vadcop(&pctx, &setups_vadcop)?;
-                timer_stop_and_log_info!(REGENERATING_VADCOP_CONST_POLS);
+        if mpi_ctx.rank == 0 {
+            if needs_const_regen {
+                tracing::info!("Regenerating GPU constant polynomials (one-time setup)...");
+                timer_start_info!(REGENERATING_GPU_CONST_POLS);
+                check_const_paths(&pctx, &sctx)?;
+                timer_stop_and_log_info!(REGENERATING_GPU_CONST_POLS);
             }
 
-            if needs_vadcop_tree_regen {
-                tracing::info!("Regenerating Vadcop constant trees (one-time setup)...");
-                timer_start_info!(REGENERATING_VADCOP_CONST_TREE);
-                check_tree_paths_vadcop(&pctx, &setups_vadcop)?;
-                timer_stop_and_log_info!(REGENERATING_VADCOP_CONST_TREE);
+            if !verify_constraints && needs_tree_regen {
+                tracing::info!("Regenerating constant trees (one-time setup)...");
+                timer_start_info!(REGENERATING_CONST_TREE);
+                check_tree_paths(&pctx, &sctx)?;
+                timer_stop_and_log_info!(REGENERATING_CONST_TREE);
+            }
+
+            if aggregation {
+                let (needs_vadcop_const_regen, needs_vadcop_tree_regen) =
+                    needs_regeneration_vadcop_fixed(&pctx, &setups_vadcop)?;
+                if needs_vadcop_const_regen {
+                    tracing::info!("Regenerating Vadcop constant polynomials (one-time setup)...");
+                    timer_start_info!(REGENERATING_VADCOP_CONST_POLS);
+                    check_const_paths_vadcop(&pctx, &setups_vadcop)?;
+                    timer_stop_and_log_info!(REGENERATING_VADCOP_CONST_POLS);
+                }
+
+                if needs_vadcop_tree_regen {
+                    tracing::info!("Regenerating Vadcop constant trees (one-time setup)...");
+                    timer_start_info!(REGENERATING_VADCOP_CONST_TREE);
+                    check_tree_paths_vadcop(&pctx, &setups_vadcop)?;
+                    timer_stop_and_log_info!(REGENERATING_VADCOP_CONST_TREE);
+                }
             }
         }
+        mpi_ctx.barrier();
 
         timer_start_info!(LOADING_FIXED_POLS);
         load_device_const_pols(&pctx, &sctx, &setups_vadcop, verify_constraints, aggregation, false)?;
