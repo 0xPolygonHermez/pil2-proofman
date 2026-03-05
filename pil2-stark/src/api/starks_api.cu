@@ -1003,7 +1003,7 @@ void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize,
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_const_tree, sizeConstTree));
     } else {
         DeviceCommitBuffers *d_commit_buffer = (DeviceCommitBuffers *)d_commit_buffer_;
-        gl64_t *d_unifiedBuffer = d_commit_buffer->gpuMemoryBuffer[0];
+        gl64_t *d_unifiedBuffer = d_commit_buffer->gpuMemoryBuffer[d_commit_buffer->gpus_g2l[gpuId]];
         // Always reuse first buffer for d_aux_trace
         d_buffers->owns_aux_trace = false;
         d_buffers->owns_const_tree = false;
@@ -1522,8 +1522,13 @@ uint64_t get_num_gpus() {
 }
 
 void *get_unified_buffer_gpu(void *d_buffers_) {
+    int deviceId;
+    CHECKCUDAERR(cudaGetDevice(&deviceId));
+    cudaSetDevice(deviceId);
+
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    gl64_t *d_unifiedBuffer = d_buffers->gpuMemoryBuffer[0];
+
+    gl64_t *d_unifiedBuffer = d_buffers->gpuMemoryBuffer[d_buffers->gpus_g2l[deviceId]];
     return (void *)d_unifiedBuffer;
 }
 

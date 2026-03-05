@@ -3721,8 +3721,8 @@ where
 
         load_device_setups(&pctx, &sctx, &setups_vadcop, aggregation, packed_info)?;
 
-        let (needs_const_regen, needs_tree_regen) = needs_regeneration_fixed(&pctx, &sctx)?;
         if mpi_ctx.rank == 0 {
+            let (needs_const_regen, needs_tree_regen) = needs_regeneration_fixed(&pctx, &sctx)?;
             if needs_const_regen {
                 tracing::info!("Regenerating GPU constant polynomials (one-time setup)...");
                 timer_start_info!(REGENERATING_GPU_CONST_POLS);
