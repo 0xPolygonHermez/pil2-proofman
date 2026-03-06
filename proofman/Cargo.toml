@@ -37,7 +37,6 @@ borsh.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 csv.workspace = true
-rand = "0.9"
 chrono = "0.4.42"
 
 # Distributed mode (mpi) is only supported on Linux x86_64
