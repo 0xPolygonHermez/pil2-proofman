@@ -82,7 +82,6 @@ log = { version = "0.4", default-features = false }
 env_logger = "0.11"
 bytes = "1.11.1"
 prost = "0.13"
-rand = "0.9"
 num-bigint = "0.4"
 prost-build = "0.13"
 num-traits = "0.2"
@@ -106,3 +105,4 @@ tokio-util = "0.7.16"
 rustc-hash = "2.1.1"
 itoa = "1.0.17"
 thiserror = { version = "2" }
+rand = "0.10"

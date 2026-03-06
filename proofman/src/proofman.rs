@@ -27,8 +27,7 @@ use csv::Writer;
 
 use tokio_util::sync::CancellationToken;
 
-use rand::{SeedableRng, seq::SliceRandom};
-use rand::rngs::StdRng;
+use crate::deterministic_shuffle;
 use proofman_common::{ProofmanResult, ProofmanError, Setup};
 use proofman_util::VadcopFinalProof;
 use crate::{check_const_paths, check_const_paths_vadcop, needs_regeneration_fixed, needs_regeneration_vadcop_fixed};
@@ -880,8 +879,7 @@ where
         let _ = self.exec()?;
 
         let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
-        let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
-        my_instances_sorted.shuffle(&mut rng);
+        deterministic_shuffle(&mut my_instances_sorted, self.mpi_ctx.rank as u64);
 
         let my_instances_sorted_no_tables =
             my_instances_sorted.iter().filter(|idx| !self.pctx.dctx_is_table(**idx)).copied().collect::<Vec<_>>();
@@ -1808,8 +1806,7 @@ where
             let my_instances_tables = self.pctx.dctx_get_my_tables();
 
             let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
-            let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
-            my_instances_sorted.shuffle(&mut rng);
+            deterministic_shuffle(&mut my_instances_sorted, self.mpi_ctx.rank as u64);
 
             timer_stop_and_log_debug!(PREPARING_CONTRIBUTIONS);
 
@@ -1969,8 +1966,7 @@ where
 
         let instances = self.pctx.dctx_get_instances();
         let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
-        let mut rng = StdRng::seed_from_u64(self.mpi_ctx.rank as u64);
-        my_instances_sorted.shuffle(&mut rng);
+        deterministic_shuffle(&mut my_instances_sorted, self.mpi_ctx.rank as u64);
 
         let mut n_airgroup_proofs = vec![0; n_airgroups];
         for (instance_id, instance_info) in instances.iter().enumerate() {

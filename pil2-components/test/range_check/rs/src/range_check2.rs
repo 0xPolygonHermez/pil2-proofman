@@ -6,7 +6,7 @@ use proofman_common::{AirInstance, FromTrace, ProofCtx, ProofmanResult, SetupCtx
 use proofman_common::BufferPool;
 
 use fields::PrimeField64;
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{SeedableRng, rngs::StdRng, RngExt};
 
 use crate::RangeCheck2Trace;
 
