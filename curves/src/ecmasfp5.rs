@@ -97,7 +97,7 @@ impl Add<&EcMasFp5> for &EcMasFp5 {
 
 #[cfg(test)]
 mod tests {
-    use rand::{rng, Rng};
+    use rand::{rng, RngExt};
 
     use super::*;
 

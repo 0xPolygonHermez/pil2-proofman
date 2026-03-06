@@ -404,7 +404,7 @@ mod tests {
 
     use rand::prelude::Distribution;
     use rand::distr::StandardUniform;
-    use rand::Rng;
+    use rand::{Rng, RngExt};
 
     impl Distribution<Goldilocks> for StandardUniform {
         fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Goldilocks {
