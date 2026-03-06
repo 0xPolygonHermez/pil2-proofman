@@ -11,7 +11,6 @@ pub struct StdMode {
     pub n_vals: usize,
     pub print_to_file: bool,
     pub fast_mode: bool,
-    pub store_row_info: bool,
     pub debug_values: Vec<Vec<String>>, // Store raw strings instead of hashes
 }
 
@@ -22,26 +21,25 @@ impl StdMode {
         n_vals: usize,
         print_to_file: bool,
         fast_mode: bool,
-        store_row_info: bool,
         debug_values: Vec<Vec<String>>,
     ) -> Self {
         if name.as_usize() != ModeName::Standard.as_usize() && n_vals == 0 {
             panic!("n_vals must be greater than 0");
         }
 
-        Self { name, opids, n_vals, print_to_file, fast_mode, store_row_info, debug_values }
+        Self { name, opids, n_vals, print_to_file, fast_mode, debug_values }
     }
 
     pub fn new_debug() -> Self {
-        Self::new(ModeName::Debug, Vec::new(), DEFAULT_PRINT_VALS, false, true, false, Vec::new())
+        Self::new(ModeName::Debug, Vec::new(), DEFAULT_PRINT_VALS, false, true, Vec::new())
     }
 }
 
 impl From<u8> for StdMode {
     fn from(v: u8) -> Self {
         match v {
-            0 => StdMode::new(ModeName::Standard, Vec::new(), DEFAULT_PRINT_VALS, false, false, false, Vec::new()),
-            1 => StdMode::new(ModeName::Debug, Vec::new(), DEFAULT_PRINT_VALS, false, true, false, Vec::new()),
+            0 => StdMode::new(ModeName::Standard, Vec::new(), DEFAULT_PRINT_VALS, false, false, Vec::new()),
+            1 => StdMode::new(ModeName::Debug, Vec::new(), DEFAULT_PRINT_VALS, false, true, Vec::new()),
             _ => panic!("Invalid mode"),
         }
     }
@@ -49,7 +47,7 @@ impl From<u8> for StdMode {
 
 impl Default for StdMode {
     fn default() -> Self {
-        StdMode::new(ModeName::Standard, Vec::new(), DEFAULT_PRINT_VALS, false, false, false, Vec::new())
+        StdMode::new(ModeName::Standard, Vec::new(), DEFAULT_PRINT_VALS, false, false, Vec::new())
     }
 }
 

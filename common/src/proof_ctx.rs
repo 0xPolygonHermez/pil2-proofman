@@ -112,6 +112,7 @@ pub struct DebugInfo {
     pub std_mode: StdMode,
     pub n_print_constraints: usize,
     pub skip_prover_instances: bool,
+    pub store_row_info: bool,
 }
 
 impl Default for DebugInfo {
@@ -122,6 +123,7 @@ impl Default for DebugInfo {
             std_mode: Default::default(),
             n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,
             skip_prover_instances: false,
+            store_row_info: false,
         }
     }
 }
@@ -134,6 +136,7 @@ impl DebugInfo {
             std_mode: StdMode::new_debug(),
             n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,
             skip_prover_instances: false,
+            store_row_info: false,
         }
     }
 }

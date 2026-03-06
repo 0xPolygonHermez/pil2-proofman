@@ -226,7 +226,7 @@ pub fn store_rows_info_air<F: PrimeField64>(
     air_id: usize,
     instance_id: usize,
 ) -> bool {
-    if pctx.debug_info.read().unwrap().std_mode.store_row_info {
+    if pctx.debug_info.read().unwrap().store_row_info {
         return true;
     }
 
@@ -262,8 +262,6 @@ struct StdDebugMode {
     #[serde(default = "default_fast_mode")]
     fast_mode: bool,
     #[serde(default)]
-    store_row_info: Option<bool>,
-    #[serde(default)]
     debug_values: Option<Vec<Vec<String>>>,
 }
 
@@ -279,6 +277,8 @@ struct DebugJson {
     n_print_constraints: Option<usize>,
     #[serde(default)]
     skip_prover_instances: Option<bool>,
+    #[serde(default)]
+    store_row_info: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -418,13 +418,11 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
     let global_constraints = json.global_constraints.unwrap_or_default();
 
     let std_mode = if json.std_mode.is_none() {
-        StdMode::new(ModeName::Standard, Vec::new(), 0, false, false, false, Vec::new())
+        StdMode::new(ModeName::Standard, Vec::new(), 0, false, false, Vec::new())
     } else {
         let mode = json.std_mode.unwrap_or_default();
         let fast_mode =
             if mode.opids.is_some() && !mode.opids.as_ref().unwrap().is_empty() { false } else { mode.fast_mode };
-
-        let store_row_info = mode.store_row_info.unwrap_or(false);
 
         let debug_values = mode.debug_values.unwrap_or_default();
 
@@ -434,19 +432,20 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
             mode.n_vals.unwrap_or(DEFAULT_PRINT_VALS),
             mode.print_to_file,
             fast_mode,
-            store_row_info,
             debug_values,
         )
     };
 
     let n_print_constraints = json.n_print_constraints.unwrap_or(DEFAULT_N_PRINT_CONSTRAINTS);
     let skip_prover_instances = json.skip_prover_instances.unwrap_or(false);
+    let store_row_info = json.store_row_info.unwrap_or(false);
     Ok(DebugInfo {
         debug_instances: airgroup_map.clone(),
         debug_global_instances: global_constraints,
         std_mode,
         n_print_constraints,
         skip_prover_instances,
+        store_row_info,
     })
 }
 
