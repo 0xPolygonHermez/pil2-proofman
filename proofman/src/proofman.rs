@@ -3942,6 +3942,7 @@ where
 
         if cfg!(not(feature = "gpu")) {
             steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
+            load_const_pols(setup, const_pols);
             steps_params.p_const_pols = const_pols.as_ptr() as *mut u8;
         }
 
