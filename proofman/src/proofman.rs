@@ -442,8 +442,8 @@ where
         self.sctx.get_setup(airgroup_id, air_id)
     }
 
-    pub fn is_first_partition(&self) -> bool {
-        self.pctx.dctx_is_first_partition()
+    pub fn is_first_process(&self) -> bool {
+        self.pctx.dctx_is_first_process()
     }
 
     pub fn get_witness_info(&self) -> WitnessInfo {
