@@ -462,7 +462,7 @@ impl DistributionCtx {
         if self.partition_mask[partition_id as usize] {
             let worker_instance_id = self.worker_instances.len();
             self.worker_instances.push(gid);
-            let process_id = worker_instance_id % self.n_processes;
+            let process_id = (worker_instance_id + 1) % self.n_processes;
             owner = process_id as i32;
             local_idx = self.process_count[process_id];
             self.process_count[process_id] += 1;
@@ -478,7 +478,7 @@ impl DistributionCtx {
     /// add an instance and assign it to a partition/process based only in the gid
     /// the instance added is not a table
     #[inline]
-    pub fn add_instance_first_partition(
+    pub fn add_instance_first_process(
         &mut self,
         airgroup_id: usize,
         air_id: usize,
@@ -494,15 +494,14 @@ impl DistributionCtx {
         self.instances_calculated.push(AtomicBool::new(false));
         self.n_instances += 1;
         let partition_id = 0;
+        let process_id = 0;
         self.instance_partition.push(partition_id as i32);
         self.partition_count[partition_id] += 1;
         self.partition_weight[partition_id] += weight;
         let mut local_idx = 0;
         let mut owner = -1;
         if self.partition_mask[partition_id] {
-            let worker_instance_id = self.worker_instances.len();
             self.worker_instances.push(gid);
-            let process_id = worker_instance_id % self.n_processes;
             owner = process_id as i32;
             local_idx = self.process_count[process_id];
             self.process_count[process_id] += 1;
@@ -513,6 +512,10 @@ impl DistributionCtx {
         }
         self.instance_process.push((owner, local_idx));
         Ok(gid)
+    }
+
+    pub fn is_first_process(&self) -> bool {
+        self.partition_mask[0] && self.process_id == 0
     }
 
     /// add an instance without assigning it to any partition/process

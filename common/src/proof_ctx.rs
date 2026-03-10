@@ -528,9 +528,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.worker_instances.clone()
     }
 
-    pub fn dctx_is_first_partition(&self) -> bool {
+    pub fn dctx_is_first_process(&self) -> bool {
         let dctx = self.dctx.read().unwrap();
-        dctx.partition_mask[0]
+        dctx.is_first_process()
     }
 
     pub fn dctx_reset_instances_calculated(&self) {
@@ -635,10 +635,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_instance(airgroup_id, air_id, weight)
     }
 
-    pub fn add_instance_assign_first_partition(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
+    pub fn add_instance_assign_first_process(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_first_partition(airgroup_id, air_id, weight)
+        dctx.add_instance_first_process(airgroup_id, air_id, weight)
     }
 
     pub fn add_instance(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
