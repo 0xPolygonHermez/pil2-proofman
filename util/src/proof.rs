@@ -76,7 +76,7 @@ impl VadcopFinalProof {
         result.extend_from_slice(&self.proof);
         result
     }
-    
+
     pub fn proof_with_publics_u64(&self) -> Vec<u64> {
         let public_values_u64 = self.get_publics();
         let proof_u64 = self.get_proof();
