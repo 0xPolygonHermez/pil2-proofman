@@ -16,6 +16,7 @@ pub fn verify_constraints<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     global_id: usize,
     n_print_constraints: u64,
+    stream_id: u64,
 ) -> ProofmanResult<Vec<ConstraintInfo>> {
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(global_id)?;
     let setup = sctx.get_setup(airgroup_id, air_id)?;
@@ -31,10 +32,12 @@ pub fn verify_constraints<F: PrimeField64>(
     let (skip, constraints_skip) = skip_prover_instance(pctx, global_id)?;
 
     if !skip {
-        if !constraints_skip.is_empty() {
-            constraints_info.iter_mut().for_each(|constraint| constraint.skip = true);
-            for constraint_id in &constraints_skip {
-                constraints_info[*constraint_id].skip = false;
+        if let Some(constraints_skip) = constraints_skip {
+            if !constraints_skip.constraints.is_empty() {
+                constraints_info.iter_mut().for_each(|constraint| constraint.skip = true);
+                for constraint_id in &constraints_skip.constraints {
+                    constraints_info[*constraint_id].skip = false;
+                }
             }
         }
 
@@ -52,7 +55,15 @@ pub fn verify_constraints<F: PrimeField64>(
             })
             .collect();
 
-        verify_constraints_c(p_setup, (&steps_params).into(), constraints_info_c.as_mut_ptr() as *mut c_void);
+        verify_constraints_c(
+            p_setup,
+            airgroup_id as u64,
+            air_id as u64,
+            (&steps_params).into(),
+            constraints_info_c.as_mut_ptr() as *mut c_void,
+            pctx.get_device_buffers_ptr(),
+            stream_id,
+        );
 
         for (info_c, info_rust) in constraints_info_c.iter().zip(constraints_info.iter_mut()) {
             info_rust.id = info_c.id;
@@ -149,22 +160,12 @@ pub fn verify_constraints_proof<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     instance_id: usize,
     n_print_constraints: u64,
+    stream_id: u64,
 ) -> ProofmanResult<bool> {
-    let constraints = verify_constraints(pctx, sctx, instance_id, n_print_constraints)?;
+    let constraints = verify_constraints(pctx, sctx, instance_id, n_print_constraints, stream_id)?;
 
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
-    let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
     let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
-    let (skip, _) = skip_prover_instance(pctx, instance_id)?;
-    if skip {
-        tracing::info!(
-            "{}",
-            format!("··· \u{2713} Skipping Instance #{air_instance_id} of {air_name} [{airgroup_id}:{air_id}]")
-                .bright_yellow()
-                .bold()
-        );
-        return Ok(true);
-    };
 
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 

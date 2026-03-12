@@ -1,12 +1,12 @@
 #include "zkglobals.hpp"
 #include "proof2zkinStark.hpp"
 #include "starks.hpp"
-#include "verify_constraints.hpp"
 #include "global_constraints.hpp"
-#include "gen_recursive_proof.hpp"
+#include "gen_recursivef_proof.hpp"
 #include "gen_proof.hpp"
 #include "logger.hpp"
 #include <filesystem>
+#include <fstream>
 #include "setup_ctx.hpp"
 #include "stark_verify.hpp"
 #include "exec_file.hpp"
@@ -17,6 +17,10 @@
 #include "mpi.h"
 #endif
 
+
+#ifndef __USE_CUDA__
+#include "verify_constraints.hpp"
+#endif
 
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
@@ -247,64 +251,6 @@ void reset_agg_readiness_tracker(){
 #endif
 }
 
-void save_challenges(void *pGlobalChallenge, char* globalInfoFile, char *fileDir) {
-
-    json globalInfo;
-    file2json(globalInfoFile, globalInfo);
-
-    Goldilocks::Element *globalChallenge = (Goldilocks::Element *)pGlobalChallenge;
-    
-    json challengesJson = json::array();
-    for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
-        challengesJson[k] = Goldilocks::toString(globalChallenge[k]);
-    }
-
-    json2file(challengesJson, string(fileDir) + "/global_challenges.json");
-}
-
-
-void save_publics(uint64_t numPublicInputs, void *pPublicInputs, char *fileDir) {
-
-    Goldilocks::Element* publicInputs = (Goldilocks::Element *)pPublicInputs;
-
-    // Generate publics
-    json publicStarkJson;
-    for (uint64_t i = 0; i < numPublicInputs; i++)
-    {
-        publicStarkJson[i] = Goldilocks::toString(publicInputs[i]);
-    }
-
-    // save publics to filestarks
-    json2file(publicStarkJson, string(fileDir) + "/publics.json");
-}
-
-void save_proof_values(void *pProofValues, char* globalInfoFile, char *fileDir) {
-    Goldilocks::Element* proofValues = (Goldilocks::Element *)pProofValues;
-
-    json globalInfo;
-    file2json(globalInfoFile, globalInfo);
-
-    json proofValuesJson;
-    uint64_t p = 0;
-    for(uint64_t i = 0; i < globalInfo["proofValuesMap"].size(); i++) {
-        proofValuesJson[i] = json::array();
-        if(globalInfo["proofValuesMap"][i]["stage"] == 1) {
-            proofValuesJson[i][0] = Goldilocks::toString(proofValues[p++]);
-            proofValuesJson[i][1] = "0";
-            proofValuesJson[i][2] = "0";
-        } else {
-            proofValuesJson[i][0] = Goldilocks::toString(proofValues[p++]);
-            proofValuesJson[i][1] = Goldilocks::toString(proofValues[p++]);
-            proofValuesJson[i][2] = Goldilocks::toString(proofValues[p++]);
-        }
-        
-    }
-
-    json2file(proofValuesJson, string(fileDir) + "/proof_values.json");
-}
-
-
-
 // SetupCtx
 // ========================================================================================
 
@@ -340,10 +286,6 @@ void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3) {
     ((StarkInfo *)pStarkInfo)->setMemoryExpressions(nTmp1, nTmp3);
 }
 
-uint64_t get_const_pols_offset(void *pStarkInfo) {
-    return ((StarkInfo *)pStarkInfo)->mapOffsets[std::make_pair("const", false)];
-}
-
 uint64_t get_map_total_n(void *pStarkInfo)
 {
     return ((StarkInfo *)pStarkInfo)->mapTotalN;
@@ -359,6 +301,11 @@ uint64_t get_tree_size(void *pStarkInfo)
 uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo)
 {
     return ((StarkInfo *)pStarkInfo)->mapTotalNCustomCommitsFixed;
+}
+
+uint64_t get_map_total_n_contributions(void *pStarkInfo)
+{
+    return ((StarkInfo *)pStarkInfo)->mapTotalNContributions;
 }
 
 void stark_info_free(void *pStarkInfo)
@@ -392,6 +339,33 @@ uint64_t get_const_size(void *pStarkInfo) {
     return N * (*(StarkInfo *)pStarkInfo).nConstants;
 }
 
+uint64_t calculate_words_per_row(void *pStarkinfo, char *constPolsPath) {
+    StarkInfo &starkInfo = *(StarkInfo *)pStarkinfo;
+    uint64_t nCols = starkInfo.nConstants;
+    uint64_t nRows = 1ULL << starkInfo.starkStruct.nBits;
+    uint64_t constSize = nRows * nCols;
+    
+    // Load const pols from file
+    std::vector<uint64_t> constPols(constSize);
+    ConstTree constTree;
+    constTree.loadConstPols(constPols.data(), constPolsPath, constSize * sizeof(uint64_t));
+    
+    std::vector<uint64_t> pack_info(starkInfo.nConstants, 0);
+    uint64_t total_bits = 0;
+    for (uint64_t i = 0; i < starkInfo.nConstants; ++i) {
+        for (uint64_t row = 0; row < nRows; ++row) {
+            uint64_t val = constPols[row * nCols + i];
+            uint64_t bits = val == 0 ? 1 : 64 - __builtin_clzll(val);
+            if (bits > pack_info[i]) {
+                pack_info[i] = bits;
+            }
+        }
+        total_bits += pack_info[i];
+    }
+    uint64_t words_per_row = (total_bits + 63) / 64;
+    return words_per_row;
+}
+
 void pack_const_pols(void *pStarkinfo, void *pConstPols, char *constFile) {
     StarkInfo &starkInfo = *(StarkInfo *)pStarkinfo;
     uint64_t *constPols = (uint64_t *)pConstPols;
@@ -422,9 +396,11 @@ void pack_const_pols(void *pStarkinfo, void *pConstPols, char *constFile) {
 }
 
 #ifndef __USE_CUDA__
+
+void tile_const_pols(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu){}
 void init_gpu_setup(uint64_t maxBitsExt) {}
-void prepare_blocks(uint64_t* pol, uint64_t N, uint64_t nCols) {}
-void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress) {
+void prepare_blocks(uint64_t* pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu) {}
+void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress, void *unified_buffer_gpu) {
     ConstTree constTree;
     constTree.calculateConstTreeGL(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress);
 };
@@ -444,6 +420,34 @@ void write_const_tree(void *pStarkInfo, void *pConstTreeAddress, char *treeFilen
 void write_const_tree_bn128(void *pStarkInfo, void *pConstTreeAddress, char *treeFilename) {
     ConstTree constTree;
     constTree.writeConstTreeFileBN128(*(StarkInfo *)pStarkInfo, pConstTreeAddress, treeFilename);
+}
+
+bool verify_root_bn128_from_tree(char *treeFilename, char *expectedRoot) {
+    // Open the tree file and read the last 32 bytes (the root)
+    std::ifstream file(treeFilename, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        return false;
+    }
+    
+    std::streamsize size = file.tellg();
+    if (size < 32) {
+        return false;
+    }
+    
+    // Seek to 32 bytes before the end
+    file.seekg(-32, std::ios::end);
+    
+    // Read the root (32 bytes = RawFr::Element)
+    RawFr::Element root;
+    file.read((char*)&root, sizeof(RawFr::Element));
+    file.close();
+    
+    // Convert root to string
+    RawFr rawFr;
+    std::string actualRoot = rawFr.toString(root);
+    
+    // Compare with expected root
+    return actualRoot == std::string(expectedRoot);
 }
 
 // Expressions Bin
@@ -488,7 +492,8 @@ void expressions_bin_free(void *pExpressionsBin)
 
 // Hints
 // ========================================================================================
-void get_hint_field(void *pSetupCtx, void* stepsParams, void* hintFieldValues, uint64_t hintId, char* hintFieldName, void* hintOptions) 
+#ifndef __USE_CUDA__
+void get_hint_field(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void* stepsParams, void* hintFieldValues, uint64_t hintId, char* hintFieldName, void* hintOptions, void *d_buffers_, uint64_t streamId, bool constant) 
 {
     SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
     ProverHelpers proverHelpers;
@@ -497,6 +502,7 @@ void get_hint_field(void *pSetupCtx, void* stepsParams, void* hintFieldValues, u
 
     getHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, expressionsCtx, (HintFieldInfo *) hintFieldValues, hintId, string(hintFieldName), *(HintFieldOptions *) hintOptions);
 }
+#endif
 
 uint64_t get_hint_field_values(void *pSetupCtx, uint64_t hintId, char* hintFieldName) {
     return getHintFieldValues(*(SetupCtx *)pSetupCtx, hintId, string(hintFieldName));
@@ -564,6 +570,18 @@ uint64_t set_hint_field(void *pSetupCtx, void* params, void *values, uint64_t hi
 // Starks
 // ========================================================================================
 
+void calculate_witness_expr(void *pSetupCtx, void * stepsParams)
+{
+    SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
+    StepsParams &params = *(StepsParams *)stepsParams;
+
+    ProverHelpers proverHelpers;
+
+    ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);
+
+    calculateWitnessExpr(setupCtx, params, expressionsCtx);
+}
+
 void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsParams)
 {
     SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
@@ -610,7 +628,7 @@ void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *buf
 }
 
 #ifndef __USE_CUDA__
-void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *buffer, char *bufferFile, bool check)
+void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile)
 {
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
@@ -625,7 +643,7 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     mt.getRoot(&rootGL[0]);
 
-    if(!check) {
+    if(std::string(bufferFile) != "") {
         std::string buffFile = string(bufferFile);
         ofstream fw(buffFile.c_str(), std::fstream::out | std::fstream::binary);
         writeFileParallel(buffFile, root, 32, 0);
@@ -636,28 +654,39 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
     }
 }
 
-uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *trace, void *auxTrace, void *d_buffers_, void *pSetupCtx_) {
+uint64_t commit_witness(void *pSetupCtx_, void *params_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers_) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
-    Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
-    Goldilocks::Element *auxTraceGL = (Goldilocks::Element *)auxTrace;
-    uint64_t N = 1 << nBits;
-    uint64_t NExtended = 1 << nBitsExt;
-
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    StepsParams *params = (StepsParams *)params_;
 
-    MerkleTreeGL mt(arity, setupCtx->starkInfo.starkStruct.lastLevelVerification, true, NExtended, nCols);
+    Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
+    Goldilocks::Element *auxTraceGL = (Goldilocks::Element *)params->aux_trace;
+    uint64_t N = 1 << setupCtx->starkInfo.starkStruct.nBits;
+    uint64_t NExtended = 1 << setupCtx->starkInfo.starkStruct.nBitsExt;
+
+    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];    
+
+    MerkleTreeGL mt(setupCtx->starkInfo.starkStruct.merkleTreeArity, setupCtx->starkInfo.starkStruct.lastLevelVerification, true, NExtended, nCols);
+
+    uint64_t offset_src = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
+    uint64_t offset_dst = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
+    uint64_t offset_mt = setupCtx->starkInfo.mapOffsets[std::make_pair("mt1", true)];
 
     PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
     if (packed_info != nullptr && packed_info->is_packed) {
-        d_buffers->unpack_cpu((uint64_t *)trace, (uint64_t*)&auxTraceGL[0], N, nCols, packed_info->num_packed_words, packed_info->unpack_info);
-    } else {
-        memcpy(auxTraceGL, trace, N * nCols * sizeof(Goldilocks::Element));
+        d_buffers->unpack_cpu((uint64_t *)params->trace, (uint64_t*)&auxTraceGL[offset_src], N, nCols, packed_info->num_packed_words, packed_info->unpack_info);
+        memcpy(params->trace, &params->aux_trace[offset_src], N * nCols * sizeof(Goldilocks::Element));
     }
     
+    ProverHelpers proverHelpers;
+    ExpressionsPack expressionsCtx(*setupCtx, &proverHelpers);
+
+    calculateWitnessExpr(*setupCtx, *params, expressionsCtx);
+
     NTT_Goldilocks ntt(N);
-    ntt.extendPol(&auxTraceGL[0], &auxTraceGL[0], NExtended, N, nCols, &auxTraceGL[NExtended * nCols]);
-    mt.setSource(&auxTraceGL[0]);
-    mt.setNodes(&auxTraceGL[NExtended * nCols]);
+    ntt.extendPol(&auxTraceGL[offset_dst], params->trace, NExtended, N, nCols, &auxTraceGL[offset_mt]);
+    mt.setSource(&auxTraceGL[offset_dst]);
+    mt.setNodes(&auxTraceGL[offset_mt]);
     mt.merkelize();
     mt.getRoot(rootGL);
 
@@ -693,10 +722,18 @@ void get_constraints_lines(void* pSetupCtx, uint8_t **constraintsLines)
     }
 }
 
-void verify_constraints(void *pSetupCtx, void* stepsParams, void* constraintsInfo)
+#ifndef __USE_CUDA__
+uint64_t initialize_instance(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* params_, void *d_buffers_) {
+    return 0;
+}
+
+void calculate_trace_instance(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *d_buffers, uint64_t streamId) {}
+
+void verify_constraints(void *pSetupCtx, uint64_t airgroupId, uint64_t airId,void* stepsParams, void* constraintsInfo, void *d_buffers, uint64_t streamId)
 {
     verifyConstraints(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, (ConstraintInfo *)constraintsInfo);
 }
+#endif
 
 // Global Constraints
 // =================================================================================
@@ -787,13 +824,23 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {}
 
 // Recursive proof
 // ================================================================================= 
-void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size, uint32_t arity)
+void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity, uint32_t max_n_bits_ext)
 {
     DeviceCommitBuffersCPU *d_buffers = new DeviceCommitBuffersCPU();
     return (void *)d_buffers;
 };
+void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffers,  char* verkey){
+    return nullptr;
+}
+void free_device_buffers_recursivef(void *d_buffers_){}
 
-uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t max_n_bits_ext, uint64_t merkleTreeArity) { return 1; }
+void alloc_fixed_pols_buffer_gpu(void *d_buffers_) {}
+void free_fixed_pols_buffer_gpu(void *d_buffers_) {}
+void load_fixed_pols_recursivef(void *pSetupCtx_, void *pConstTree, void *d_buffers_) {}
+
+uint64_t gen_device_streams(void *d_buffers_, uint64_t nStreams, uint64_t nStreamsRecursive, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity) { return 1; }
+
+void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation) {}
 
 void get_instances_ready(void *d_buffers, int64_t* instances_ready) {}
 
@@ -802,6 +849,10 @@ void reset_device_streams(void *d_buffers_) {}
 uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size) { return 0; }
 
 uint64_t get_num_gpus(){ return 1;}
+
+void *get_unified_buffer_gpu(void *d_buffers_) {
+    return nullptr;
+}
 
 void free_device_buffers(void *d_buffers_) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
@@ -819,12 +870,9 @@ void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, voi
     }
 }
 
-void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType) {}
+void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType, bool onlyFirstGPU) {}
 
-uint64_t gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream) {
-    json globalInfo;
-    file2json(globalInfoFile, globalInfo);
-
+uint64_t gen_recursive_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx;
 
@@ -864,6 +912,10 @@ uint64_t gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t air
     return 0;
 }
 
+void *gen_recursive_proof_final(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers) {
+    return genRecursiveProofBN128(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file));
+}
+
 #endif
 
 void launch_callback(uint64_t instanceId, char *proofType) {
@@ -882,12 +934,7 @@ void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint
 }
 
 
-void *gen_recursive_proof_final(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file) {
-    json globalInfo;
-    file2json(globalInfoFile, globalInfo);
 
-    return genRecursiveProofBN128(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file));
-}
 
 void read_exec_file(uint64_t *exec_data, char *exec_file, uint64_t nCommitedPols) {
     readExecFile(exec_data, string(exec_file), nCommitedPols);
@@ -897,8 +944,84 @@ void get_committed_pols(void *circomWitness, uint64_t* execData, void *witness, 
     getCommitedPols((Goldilocks::Element *)circomWitness, execData, (Goldilocks::Element *)witness, (Goldilocks::Element *)pPublics, sizeWitness, N, nPublics, nCommitedPols);
 }
 
-void gen_final_snark_proof(void *circomWitnessFinal, char* zkeyFile, char* outputDir) {
-    genFinalSnarkProof(circomWitnessFinal, string(zkeyFile), string(outputDir));
+void *load_zkey(char* zkeyFile) {
+    auto zkey = BinFileUtils::openExisting(zkeyFile, "zkey", 1);
+    return zkey.get();
+}
+
+uint64_t get_snark_protocol_id(void *snark_prover) {
+    FinalSnark* finalSnarkProver = (FinalSnark*)snark_prover;
+    return finalSnarkProver->protocolId;
+}
+
+#ifndef __USE_CUDA__
+void *init_final_snark_prover(char* zkeyFile) {
+
+    auto fdZkey = std::make_unique<BinFileUtils::BinFile>(std::string(zkeyFile), "zkey", 1, /*directRead=*/true);
+    uint64_t protocolId = getProtocolIdFromBinFile(fdZkey.get());
+
+    if (protocolId == Zkey::FFLONK_PROTOCOL_ID) {
+        // FFLONK protocol requires directRead=false (legacy code)
+        auto zkey = BinFileUtils::openExisting(zkeyFile, "zkey", 1);
+        BinFileUtils::BinFile *fdZkey = zkey.get();
+        uint64_t protocolId = Zkey::getProtocolIdFromZkey(fdZkey);
+        auto prover = initFinalSnarkProver(fdZkey);
+
+        FinalSnark *finalSnark = new FinalSnark{
+            .zkey = std::move(zkey),
+            .protocolId = protocolId,
+            .prover = std::move(prover)
+        };
+        return finalSnark;
+    }
+    auto prover = initFinalSnarkProver(fdZkey.get());
+    FinalSnark *finalSnark = new FinalSnark{
+        .zkey = std::move(fdZkey),
+        .protocolId = protocolId,
+        .prover = std::move(prover)
+    };
+    return finalSnark;
+}
+
+void free_final_snark_prover(void *snark_prover) {
+    if (snark_prover) {
+        delete static_cast<FinalSnark *>(snark_prover);
+    }
+}
+
+void gen_final_snark_proof(void *prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark) {
+    genFinalSnarkProof(prover, circomWitnessFinal, proof, publicsSnark);
+}
+
+void pre_allocate_final_snark_prover(void *snark_prover, void* unified_buffer_gpu) {
+    // No-op for CPU
+}
+#endif
+
+void free_json_string(char* json_str) {
+    if (json_str != nullptr) {
+        free(json_str);
+    }
+}
+
+void snark_proof_bytes_to_json(
+    uint8_t* proof_bytes,
+    uint64_t proof_size,
+    uint8_t* public_bytes,
+    uint64_t public_size,
+    int protocol_id,
+    char** proof_json_out,
+    char** publics_json_out
+) {
+    auto [proof_json, publics_json] = snark_proof_to_json(
+        proof_bytes, proof_size, public_bytes, public_size, protocol_id
+    );
+    
+    *proof_json_out = (char*)malloc(proof_json.size() + 1);
+    *publics_json_out = (char*)malloc(publics_json.size() + 1);
+    
+    strcpy(*proof_json_out, proof_json.c_str());
+    strcpy(*publics_json_out, publics_json.c_str());
 }
 
 void setLogLevel(uint64_t level) {
@@ -938,7 +1061,7 @@ bool stark_verify(uint64_t* proof, void *pStarkInfo, void *pExpressionsBin, char
 }
 
 bool stark_verify_bn128(void* jProof, void *pStarkInfo, void *pExpressionsBin, char *verkeyFile, void *pPublics) {
-    return starkVerify<RawFrP::Element>(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, nullptr, false, nullptr);
+    return starkVerify<RawFr::Element>(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, nullptr, false, nullptr);
 
 }
 
@@ -951,7 +1074,7 @@ bool stark_verify_from_file(char* proofFile, void *pStarkInfo, void *pExpression
     if (starkInfo.starkStruct.verificationHashType == "GL") {
         return starkVerify<Goldilocks::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
     } else {
-        return starkVerify<RawFrP::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
+        return starkVerify<RawFr::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
     }
 }
 

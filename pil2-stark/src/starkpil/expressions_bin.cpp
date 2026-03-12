@@ -419,8 +419,8 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
     expressionsBin->endReadSection();
     expressionsBin->startReadSection(CONSTRAINTS_SECTION);
 
-    uint32_t nOpsDebug = expressionsBin->readU32LE();
-    uint32_t nArgsDebug = expressionsBin->readU32LE();
+    nOpsDebug = expressionsBin->readU32LE();
+    nArgsDebug = expressionsBin->readU32LE();
     uint32_t nNumbersDebug = expressionsBin->readU32LE();
 
     expressionsBinArgsConstraints.ops = new uint8_t[nOpsDebug];
@@ -451,7 +451,7 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
 
         parserParamsConstraint.nArgs = expressionsBin->readU32LE();
         parserParamsConstraint.argsOffset = expressionsBin->readU32LE();
-
+        
         parserParamsConstraint.imPol = bool(expressionsBin->readU32LE());
         parserParamsConstraint.line = expressionsBin->readString();
 

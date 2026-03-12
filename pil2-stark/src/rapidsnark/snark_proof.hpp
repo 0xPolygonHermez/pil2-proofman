@@ -33,6 +33,10 @@ public :
     FrElement getEvaluationCommitment(const std::string &key);
 
     json toJson();
+
+    json toJsonRaw();
+
+    std::vector<uint8_t> toBytes(std::vector<std::string> orderedCommitments, std::vector<std::string> orderedEvaluations);
 };
 
 #include "snark_proof.c.hpp"

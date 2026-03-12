@@ -5,7 +5,7 @@ use witness::{WitnessComponent, execute, define_wc_with_std};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx, ProofmanResult};
 
 use fields::PrimeField64;
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{SeedableRng, rngs::StdRng, RngExt};
 
 use crate::RangeCheck4Trace;
 

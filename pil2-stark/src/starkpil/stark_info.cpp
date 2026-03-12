@@ -12,7 +12,6 @@ StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_cons
     verify_constraints = verify_constraints_;
     verify = verify_;
     gpu = gpu_;
-    recursive_final = final_;
     preallocate = preallocate_;
 
     // Load contents from json file
@@ -68,6 +67,8 @@ void StarkInfo::load(json j)
 
     qDeg = j["qDeg"];
     qDim = j["qDim"];
+
+    nConstraints = j["nConstraints"];
 
     friExpId = j["friExpId"];
     cExpId = j["cExpId"];
@@ -263,6 +264,7 @@ void StarkInfo::load(json j)
         gpu = false;
         mapTotalN = 0;
         mapTotalNCustomCommitsFixed = 0;
+        mapTotalNContributions = 0;
         mapOffsets[std::make_pair("const", false)] = 0;
         for(uint64_t stage = 1; stage <= nStages + 1; ++stage) {
             mapOffsets[std::make_pair("cm" + to_string(stage), false)] = mapTotalN;
@@ -281,9 +283,13 @@ void StarkInfo::load(json j)
         uint64_t NExtended = (1 << starkStruct.nBitsExt);
         mapTotalN = 0;
 
-        mapOffsets[std::make_pair("const", false)] = 0;
+        if(gpu) {
+            mapOffsets[std::make_pair("const", false)] = 0;
+            mapTotalN += N * nConstants;
+        }
 
         mapTotalNCustomCommitsFixed = 0;
+        mapTotalNContributions = 0;
 
         // Set offsets for custom commits fixed
         for(uint64_t i = 0; i < customCommits.size(); ++i) {
@@ -295,12 +301,35 @@ void StarkInfo::load(json j)
             }
         }
 
+        if(gpu) {
+            mapOffsets[std::make_pair("constraints", false)] = mapTotalN;
+            mapTotalN += N * 3;
+
+            mapOffsets[std::make_pair("custom_fixed", false)] = mapTotalN;
+            mapTotalN += mapTotalNCustomCommitsFixed;
+
+            mapOffsets[std::make_pair("publics", false)] = mapTotalN;
+            mapTotalN += nPublics;
+
+            mapOffsets[std::make_pair("proofvalues", false)] = mapTotalN;
+            mapTotalN += proofValuesSize;
+
+            mapOffsets[std::make_pair("airgroupvalues", false)] = mapTotalN;
+            mapTotalN += airgroupValuesSize;
+
+            mapOffsets[std::make_pair("airvalues", false)] = mapTotalN;
+            mapTotalN += airValuesSize;
+
+            mapOffsets[std::make_pair("challenge", false)] = mapTotalN;
+            mapTotalN += 2 * FIELD_EXTENSION;
+        }
+        
         for(uint64_t stage = 1; stage <= nStages; stage++) {
             mapOffsets[std::make_pair("cm" + to_string(stage), false)] = mapTotalN;
             mapTotalN += N * mapSectionsN["cm" + to_string(stage)];
         }
         mapOffsets[std::make_pair("q", true)] = mapTotalN;
-        mapTotalN += NExtended * FIELD_EXTENSION;
+        mapTotalN += N * FIELD_EXTENSION;
         mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN;
     } else {
         setMapOffsets();
@@ -429,7 +458,7 @@ void StarkInfo::setMapOffsets() {
 
     uint64_t numNodes = getNumNodesMT(NExtended);
 
-    if(!preallocate && gpu && !recursive_final) {    
+    if(!preallocate && gpu) {    
         mapOffsets[std::make_pair("const", true)] = mapTotalN;
         MerkleTreeGL mt(starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.merkleTreeCustom, NExtended, nConstants);
         uint64_t constTreeSize = (NExtended * nConstants) + numNodes;
@@ -440,10 +469,12 @@ void StarkInfo::setMapOffsets() {
         }
     }
 
-    mapOffsets[std::make_pair("const", false)] = mapTotalN;
-    mapTotalN += N * nConstants;
+    if (gpu) {
+        mapOffsets[std::make_pair("const", false)] = mapTotalN;
+        mapTotalN += N * nConstants;
+    }
 
-    if(gpu && !recursive_final) {
+    if(gpu) {
         mapOffsets[std::make_pair("custom_fixed", false)] = mapTotalN;
         mapTotalN += mapTotalNCustomCommitsFixed;
 
@@ -468,8 +499,16 @@ void StarkInfo::setMapOffsets() {
         mapOffsets[std::make_pair("nonce_blocks", false)] = mapTotalN;
         mapTotalN += NONCES_LAUNCH_GRID_SIZE;
 
+        // Align to 4 Goldilocks elements (32 bytes) for BN128 FrElement alignment
+        if (starkStruct.verificationHashType == "BN128") {
+            mapTotalN = ((mapTotalN + 3) / 4) * 4;  // Round up to next multiple of 4
+        }
         mapOffsets[std::make_pair("input_hash_nonce", false)] = mapTotalN;
-        mapTotalN += HASH_SIZE;
+        if (starkStruct.verificationHashType == "BN128") {
+            mapTotalN += 12;  // 3 BN128 FrElements = 12 Goldilocks elements
+        } else {
+            mapTotalN += HASH_SIZE;
+        }
 
         mapOffsets[std::make_pair("evals", false)] = mapTotalN;
         mapTotalN += evMap.size() * FIELD_EXTENSION;
@@ -501,7 +540,13 @@ void StarkInfo::setMapOffsets() {
         }
 
         uint64_t nSiblings = std::ceil(starkStruct.nBitsExt / std::log2(starkStruct.merkleTreeArity)) - starkStruct.lastLevelVerification;
-        uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+        uint64_t nSiblingsPerLevel;
+        if (starkStruct.verificationHashType == "BN128") {
+            // BN128: all arity siblings per level, each is 4 uint64_t (32 bytes)
+            nSiblingsPerLevel = starkStruct.merkleTreeArity * 4;
+        } else {
+            nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+        }
         maxProofSize = nSiblings * nSiblingsPerLevel;
 
         maxProofBuffSize = maxTreeWidth + maxProofSize;
@@ -524,8 +569,9 @@ void StarkInfo::setMapOffsets() {
     mapTotalN += NExtended * mapSectionsN["cm1"];
     mapOffsets[std::make_pair("mt1", true)] = mapTotalN;
     mapTotalN += numNodes;
-
+    
     mapOffsets[std::make_pair("cm1", false)] = mapTotalN;
+    mapTotalNContributions = recursive ? 0 : mapTotalN + N * mapSectionsN["cm1"];
 
     mapOffsets[std::make_pair("cm2", true)] = mapTotalN;
     mapTotalN += NExtended * mapSectionsN["cm2"];
@@ -540,7 +586,7 @@ void StarkInfo::setMapOffsets() {
     mapOffsets[std::make_pair("mt3", true)] = mapTotalN;
     mapTotalN += numNodes;
 
-    if(!gpu || (gpu && recursive_final)) {
+    if(!gpu) {
         mapOffsets[std::make_pair("evals", true)] = mapTotalN;
         mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
     }
@@ -551,7 +597,7 @@ void StarkInfo::setMapOffsets() {
     mapTotalN += NExtended * FIELD_EXTENSION;
 
     uint64_t maxSizeHelper = 0;
-    if(gpu && !recursive_final) {
+    if(gpu) {
         maxSizeHelper += boundaries.size() * NExtended;
         mapOffsets[std::make_pair("zi", true)] = mapTotalN;
         mapOffsets[std::make_pair("x", true)] = mapTotalN;
@@ -564,7 +610,7 @@ void StarkInfo::setMapOffsets() {
     mapOffsets[std::make_pair("lev", false)] = LEvSize;
     uint64_t maxOpenings = std::min(uint64_t(openingPoints.size()), uint64_t(4));
     LEvSize += maxOpenings * N * FIELD_EXTENSION;
-    if(!gpu || (gpu && recursive_final)) {
+    if(!gpu) {
         mapOffsets[std::make_pair("buff_helper_fft_lev", false)] = LEvSize;
         LEvSize += maxOpenings * N * FIELD_EXTENSION;
     } else {    
@@ -577,7 +623,7 @@ void StarkInfo::setMapOffsets() {
     mapOffsets[std::make_pair("buff_helper", false)] = mapTotalN;
     mapTotalN += NExtended * FIELD_EXTENSION;
 
-    if (!gpu || (gpu && recursive_final)) {
+    if (!gpu) {
         uint64_t maxTotalNStage2 = mapOffsets[std::make_pair("cm2", false)] + N * mapSectionsN["cm2"];
         mapOffsets[std::make_pair("buff_helper_fft_2", false)] = maxTotalNStage2;
         maxTotalNStage2 += NExtended * mapSectionsN["cm2"];
@@ -622,7 +668,7 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
         mapBuffHelper = mapTotalN;
     } else {
         mapBuffHelper =  mapOffsets[std::make_pair("mem_exps", false)];
-        if(!gpu || (gpu && recursive_final)) {
+        if(!gpu) {
             nrowsPack = NROWS_PACK;
             maxNBlocks = omp_get_max_threads();
         } else {
@@ -630,7 +676,8 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
             maxNBlocks = 512;
 
             uint64_t tmpsUsed = nTmp1 + (nTmp3 + 2) * FIELD_EXTENSION;
-            while((mapBuffHelper + tmpsUsed * nrowsPack * maxNBlocks) > (mapTotalN + (1 << 25))) {
+            uint64_t maxTotal = recursive ? mapTotalN + (1 << 26) : mapTotalN + (1 << 25);
+            while((mapBuffHelper + tmpsUsed * nrowsPack * maxNBlocks) > maxTotal) {
                 if (nrowsPack > 128) {
                     nrowsPack /= 2;
                 } else {
@@ -648,7 +695,7 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
     mapOffsets[std::make_pair("tmp3", false)] = mapBuffHelper;
     mapBuffHelper += memoryTmp3;
 
-    if(!gpu || (gpu && recursive_final)) {
+    if(!gpu) {
         uint64_t values = 3 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
         mapOffsets[std::make_pair("values", false)] = mapBuffHelper;
         mapBuffHelper += values;

@@ -41,12 +41,6 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::linear_hash_seq(Goldilocks::Element *o
     uint64_t remaining = size;
     Goldilocks::Element state[SPONGE_WIDTH];
 
-    if (size <= CAPACITY)
-    {
-        std::memcpy(output, input, size * sizeof(Goldilocks::Element));
-        std::memset(&output[size], 0, (CAPACITY - size) * sizeof(Goldilocks::Element));
-        return; // no need to hash
-    }
     while (remaining)
     {
         if (remaining == size)
@@ -441,12 +435,6 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::linear_hash_avx(Goldilocks::Element *o
     uint64_t remaining = size;
     Goldilocks::Element state[SPONGE_WIDTH];
 
-    if (size <= CAPACITY)
-    {
-        std::memcpy(output, input, size * sizeof(Goldilocks::Element));
-        std::memset(&output[size], 0, (CAPACITY - size) * sizeof(Goldilocks::Element));
-        return; // no need to hash
-    }
     while (remaining)
     {
         if (remaining == size)
@@ -484,15 +472,6 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::linear_hash_batch_avx(Goldilocks::Elem
     uint64_t remaining = size;
     Goldilocks::Element state[4*SPONGE_WIDTH];
 
-    if (size <= CAPACITY)
-    {
-        for(uint64_t i = 0; i < 4; ++i) {
-            std::memcpy(&output[i * CAPACITY], &input[i*size], size * sizeof(Goldilocks::Element));
-            std::memset(&output[i * CAPACITY + size], 0, (CAPACITY - size) * sizeof(Goldilocks::Element));
-        }
-        
-        return; // no need to hash
-    }
     while (remaining)
     {
         if (remaining == size)
@@ -697,15 +676,6 @@ void Poseidon2Goldilocks::linear_hash_batch_avx512(Goldilocks::Element *output, 
     uint64_t remaining = size;
     Goldilocks::Element state[8*SPONGE_WIDTH];
 
-    if (size <= CAPACITY)
-    {
-        for(uint64_t i = 0; i < 8; ++i) {
-            std::memcpy(&output[i * CAPACITY], &input[i*size], size * sizeof(Goldilocks::Element));
-            std::memset(&output[i * CAPACITY + size], 0, (CAPACITY - size) * sizeof(Goldilocks::Element));
-        }
-        
-        return; // no need to hash
-    }
     while (remaining)
     {
         if (remaining == size)

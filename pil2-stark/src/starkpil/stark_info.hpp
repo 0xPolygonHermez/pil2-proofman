@@ -170,6 +170,8 @@ public:
     uint64_t qDeg;
     uint64_t qDim;
 
+    uint64_t nConstraints;
+
     uint64_t friExpId;
     uint64_t cExpId;
 
@@ -182,12 +184,12 @@ public:
     bool verify_constraints = false;
     bool verify = false;
     bool gpu = false;
-    bool recursive_final = false;
     bool preallocate = false;
 
     bool calculateFixedExtended = false;
 
     uint64_t mapTotalN;
+    uint64_t mapTotalNContributions;
     uint64_t mapTotalNCustomCommitsFixed;
     
     uint64_t maxNBlocks, nrowsPack;

@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock, Mutex};
 use std::path::PathBuf;
 
 use fields::PrimeField64;
-use proofman_common::{BufferPool, DebugInfo, ModeName, ProofCtx, ProofmanResult, SetupCtx};
+use proofman_common::{BufferPool, DebugInfo, RankInfo, ModeName, ProofCtx, ProofmanResult, SetupCtx};
 use crate::WitnessComponent;
 use libloading::Library;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,12 +37,16 @@ impl<F: PrimeField64> WitnessManager<F> {
         }
     }
 
-    pub fn get_world_rank(&self) -> i32 {
-        self.pctx.mpi_ctx.rank
+    pub fn get_rank_info(&self) -> RankInfo {
+        RankInfo {
+            world_rank: self.pctx.mpi_ctx.rank,
+            local_rank: self.pctx.mpi_ctx.node_rank,
+            n_processes: self.pctx.mpi_ctx.n_processes,
+        }
     }
 
-    pub fn get_local_rank(&self) -> i32 {
-        self.pctx.mpi_ctx.node_rank
+    pub fn set_witness_initialized(&self) {
+        self.init.store(true, Ordering::SeqCst);
     }
 
     pub fn set_init_witness(&self, init: bool, library: Library) {
@@ -66,9 +70,9 @@ impl<F: PrimeField64> WitnessManager<F> {
         self.components_std.write().unwrap().push(component);
     }
 
-    pub fn gen_custom_commits_fixed(&self, check: bool) -> ProofmanResult<()> {
+    pub fn gen_custom_commits_fixed(&self) -> ProofmanResult<()> {
         for component in self.components.read().unwrap().iter() {
-            component.gen_custom_commits_fixed(self.pctx.clone(), self.sctx.clone(), check)?;
+            component.gen_custom_commits_fixed(self.pctx.clone(), self.sctx.clone())?;
         }
 
         Ok(())
@@ -76,13 +80,19 @@ impl<F: PrimeField64> WitnessManager<F> {
 
     pub fn execute(&self) -> ProofmanResult<()> {
         self.execution_done.store(false, Ordering::SeqCst);
-        let n_components = self.components_std.read().unwrap().len();
+
+        let n_regular_components = self.components.read().unwrap().len();
+
         for (idx, component) in self.components_std.read().unwrap().iter().enumerate() {
-            component.execute(self.pctx.clone(), &self.components_instance_ids[n_components + idx])?;
+            component.execute(
+                self.pctx.clone(),
+                self.sctx.clone(),
+                &self.components_instance_ids[n_regular_components + idx],
+            )?;
         }
 
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
-            component.execute(self.pctx.clone(), &self.components_instance_ids[idx])?;
+            component.execute(self.pctx.clone(), self.sctx.clone(), &self.components_instance_ids[idx])?;
         }
 
         self.pctx.dctx_assign_instances()?;
@@ -96,7 +106,7 @@ impl<F: PrimeField64> WitnessManager<F> {
     }
 
     pub fn debug(&self, instance_ids: &[usize], debug_info: &DebugInfo) -> ProofmanResult<()> {
-        if debug_info.std_mode.name == ModeName::Debug || !debug_info.debug_instances.is_empty() {
+        if debug_info.std_mode.name == ModeName::Debug {
             for (idx, component) in self.components.read().unwrap().iter().enumerate() {
                 let ids_hash_set: HashSet<usize> = instance_ids.iter().cloned().collect();
 

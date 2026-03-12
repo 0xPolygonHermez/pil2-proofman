@@ -187,7 +187,11 @@ fn add_packed_array_setter_getter(
     setter_getters.push(quote! {
         #[inline(always)]
         pub fn #setter_name(&mut self, #(#args: usize,)* value: #rust_type) {
-            debug_assert!((value as u128) < (1u128 << #bit_width), "Value out of range for {}", stringify!(#field_name));
+            debug_assert!(
+                (value as u128) < (1u128 << #bit_width),
+                "Value out of range for field {} (setter: {}): value={}, bit_width={}, max_value={}",
+                stringify!(#field_name), stringify!(#setter_name), value as u128, #bit_width, (1u128 << #bit_width) - 1
+            );
             let index = #flat;
             let bit_offset = #base_offset + index * #bit_width;
             let word_start = bit_offset / 64;
@@ -283,7 +287,11 @@ fn emit_contained_packed_accessor(
     quote! {
         #[inline(always)]
         pub fn #setter_name(&mut self, value: #rust_type) {
-            debug_assert!((value as u128) < (1u128 << #bit_width), "Value out of range");
+            debug_assert!(
+                (value as u128) < (1u128 << #bit_width),
+                "Value out of range (setter: {}): value={}, bit_width={}, max_value={}",
+                stringify!(#setter_name), value as u128, #bit_width, (1u128 << #bit_width) - 1
+            );
             const MASK_BITS: u64 = #mask_bits;
             const MASK: u64 = #mask;
             self.packed[#word_start] &= !MASK;
@@ -322,7 +330,11 @@ fn emit_split_packed_accessor(
     quote! {
         #[inline(always)]
         pub fn #setter_name(&mut self, value: #rust_type) {
-            debug_assert!((value as u128) < (1u128 << #bit_width), "Value out of range");
+            debug_assert!(
+                (value as u128) < (1u128 << #bit_width),
+                "Value out of range (setter: {}): value={}, bit_width={}, max_value={}",
+                stringify!(#setter_name), value as u128, #bit_width, (1u128 << #bit_width) - 1
+            );
             const LOW_MASK: u64 = #low_mask;
             const HIGH_MASK: u64 = #high_mask;
             self.packed[#word_start] &= !(LOW_MASK << #bit_start);

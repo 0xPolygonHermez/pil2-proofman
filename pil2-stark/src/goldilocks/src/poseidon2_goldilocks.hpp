@@ -138,13 +138,12 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::pow7(Goldilocks::Element &x)
 template<uint32_t SPONGE_WIDTH_T>
 inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::pow7_(Goldilocks::Element *x)
 {
-    Goldilocks::Element x2[SPONGE_WIDTH], x3[SPONGE_WIDTH], x4[SPONGE_WIDTH];
     for (uint32_t i = 0; i < SPONGE_WIDTH; ++i)
     {
-        x2[i] = x[i] * x[i];
-        x3[i] = x[i] * x2[i];
-        x4[i] = x2[i] * x2[i];
-        x[i] = x3[i] * x4[i];
+        Goldilocks::Element x2 = x[i] * x[i];
+        Goldilocks::Element x3 = x[i] * x2;
+        Goldilocks::Element x4 = x2 * x2;
+        x[i] = x3 * x4;
     }
 };
 
@@ -168,16 +167,15 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::prodadd_(Goldilocks::Element *x
 
 template<uint32_t SPONGE_WIDTH_T>
 inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::pow7add_(Goldilocks::Element *x, const Goldilocks::Element C[SPONGE_WIDTH])
-{
-    Goldilocks::Element x2[SPONGE_WIDTH], x3[SPONGE_WIDTH], x4[SPONGE_WIDTH];
-    
+{    
     for (uint32_t i = 0; i < SPONGE_WIDTH; ++i)
     {
+        
         Goldilocks::Element xi = x[i] + C[i];
-        x2[i] = xi * xi;
-        x3[i] = xi * x2[i];
-        x4[i] = x2[i] * x2[i];
-        x[i] = x3[i] * x4[i];
+        Goldilocks::Element x2 = xi * xi;
+        Goldilocks::Element x3 = xi * x2;
+        Goldilocks::Element x4 = x2 * x2;
+        x[i] = x3 * x4;
     }
 };
 

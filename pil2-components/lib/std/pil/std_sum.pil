@@ -85,18 +85,19 @@ private function update_piop_sum(const int name, const int surname, const int ty
     }
 
     if (update_type != SUM_UPDATE_TYPE_GLOBAL) {
-        @gsum_debug_data{name_piop: name_str, type_piop: type, busid: busid, num_reps: sel, name_exprs: name_exprs,
-                         expressions: expressions, deg_expr: degree(sum_exprs), deg_sel: degree(sel)};
+        @gsum_debug_data{name_piop: name_str, type_piop: type, opids: opids, busid: busid, num_reps: sel, name_exprs: name_exprs,
+                         expressions: expressions, len_expressions: exprs_num, deg_expr: degree(sum_exprs), deg_sel: degree(sel)};
     } else {
         // Save the information and issue it in a global context
         container proof.std.gsum.hint alias gsumhint {
             int airgroup_id[ARRAY_SIZE];
             string name_piop[ARRAY_SIZE];
-            expr type_piop[ARRAY_SIZE];
+            const expr type_piop[ARRAY_SIZE];
             string name_exprs[ARRAY_SIZE][64];
+            int opids[ARRAY_SIZE][64];
             int busid[ARRAY_SIZE];
-            expr num_reps[ARRAY_SIZE];
-            expr expressions[ARRAY_SIZE][64];
+            const expr num_reps[ARRAY_SIZE];
+            const expr expressions[ARRAY_SIZE][64];
             int exprs_num[ARRAY_SIZE];
             int num_global_hints = 0;
         }
@@ -109,6 +110,9 @@ private function update_piop_sum(const int name, const int surname, const int ty
             gsumhint.expressions[gsumhint.num_global_hints][i] = expressions[i];
         }
         gsumhint.exprs_num[gsumhint.num_global_hints] = exprs_num;
+        for (int i = 0; i < length(opids); i++) {
+            gsumhint.opids[gsumhint.num_global_hints][i] = opids[i];
+        }
         gsumhint.busid[gsumhint.num_global_hints] = busid;
         gsumhint.num_reps[gsumhint.num_global_hints] = sel;
         gsumhint.num_global_hints++;
@@ -120,7 +124,7 @@ private function update_piop_sum(const int name, const int surname, const int ty
     initial_checks_sum(name, surname, type, update_type, opids, exprs_num);
 
     // selected vector to simple expression reduction
-    expr exprs_compressed = compress_exprs(busid, expressions);
+    const expr exprs_compressed = compress_exprs(busid, expressions);
 
     switch (update_type) {
         case SUM_UPDATE_TYPE_GLOBAL:
@@ -173,8 +177,8 @@ private function init_proof_containers_sum(const int name, const int surname, co
 
         // Direct-related data, used to update `gsum` at the proof level
         int direct_gsum_nargs = 0;
-        expr direct_gsum_s[ARRAY_SIZE];
-        expr direct_gsum_e[ARRAY_SIZE];
+        const expr direct_gsum_s[ARRAY_SIZE];
+        const expr direct_gsum_e[ARRAY_SIZE];
 
         // For global hints
         int air_count = 0;
@@ -205,13 +209,13 @@ private function init_air_containers_sum() {
     container air.std.gsum {
         // Assumes and proves of the air
         int gsum_nargs = 0;
-        expr gsum_s[ARRAY_SIZE];
-        expr gsum_e[ARRAY_SIZE];
+        const expr gsum_s[ARRAY_SIZE];
+        const expr gsum_e[ARRAY_SIZE];
 
         // Direct-related data, used to update `gsum` at the air level
         int direct_gsum_nargs = 0;
-        expr direct_gsum_s[ARRAY_SIZE];
-        expr direct_gsum_e[ARRAY_SIZE];
+        const expr direct_gsum_s[ARRAY_SIZE];
+        const expr direct_gsum_e[ARRAY_SIZE];
     }
 }
 
@@ -681,7 +685,7 @@ private function piop_gsum_air() {
         }
     }
 
-    expr result;
+    const expr result;
     if (STD_MODE == STD_MODE_ONE_INSTANCE) {
         result = 0;
     } else {
@@ -979,13 +983,17 @@ private function piop_gsum_issue_global_debug_hints() {
     @gsum_debug_data_global{num_global_hints: num_global_hints}
     for (int i = 0; i < num_global_hints; i++) {
         int exprs_num = exprs_num[i];
-        expr tmp_name_exprs[exprs_num];
-        expr tmp_exprs[exprs_num];
+        const expr tmp_name_exprs[exprs_num];
+        const expr tmp_exprs[exprs_num];
         for (int j = 0; j < exprs_num; j++) {
             tmp_name_exprs[j] = name_exprs[i][j];
             tmp_exprs[j] = expressions[i][j];
         }
-        @gsum_debug_data_global{airgroup_id: airgroup_id[i], name_piop: name_piop[i], type_piop: type_piop[i], busid: busid[i], num_reps: num_reps[i], name_exprs: tmp_name_exprs, expressions: tmp_exprs};
+        const expr tmp_opids[length(opids[i])];
+        for (int j = 0; j < length(opids[i]); j++) {
+            tmp_opids[j] = opids[i][j];
+        }
+        @gsum_debug_data_global{airgroup_id: airgroup_id[i], name_piop: name_piop[i], type_piop: type_piop[i], opids: tmp_opids, busid: busid[i], num_reps: num_reps[i], name_exprs: tmp_name_exprs, expressions: tmp_exprs, len_expressions: exprs_num};
     }
 }
 

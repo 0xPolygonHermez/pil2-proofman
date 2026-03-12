@@ -239,6 +239,51 @@ void Polynomial<Engine>::add(Polynomial<Engine> &polynomial) {
     fixDegree();
 }
 
+template <typename Engine>
+void Polynomial<Engine>::addBlinding(Polynomial<Engine> &polynomial, FrElement &blindingValue)
+{
+    FrElement *newCoef = NULL;
+    bool resize = polynomial.length > this->length;
+
+    if (resize)
+    {
+        newCoef = new FrElement[polynomial.length];
+    }
+
+    u_int64_t thisLength = this->length;
+    u_int64_t polyLength = polynomial.length;
+
+#pragma omp parallel for
+    for (u_int64_t i = 0; i < std::max(thisLength, polyLength); i++)
+    {
+        FrElement a = i < thisLength ? this->coef[i] : E.fr.zero();
+        FrElement b = i < polyLength ? polynomial.coef[i] : E.fr.zero();
+
+        b = E.fr.mul(b, blindingValue);
+
+        FrElement sum;
+        E.fr.add(sum, a, b);
+
+        if (resize)
+        {
+            newCoef[i] = sum;
+        }
+        else
+        {
+            this->coef[i] = sum;
+        }
+    }
+
+    if (resize)
+    {
+        if (createBuffer)
+            delete[] this->coef;
+        this->coef = newCoef;
+    }
+
+    fixDegree();
+}
+
 //TODO when the polynomial subtracted is bigger than the current one
 template<typename Engine>
 void Polynomial<Engine>::sub(Polynomial<Engine> &polynomial) {
@@ -248,6 +293,25 @@ void Polynomial<Engine>::sub(Polynomial<Engine> &polynomial) {
     for (u_int64_t i = 0; i < length; i++) {
         FrElement a = i < this->length ? this->coef[i] : E.fr.zero();
         FrElement b = i < polynomial.length ? polynomial.coef[i] : E.fr.zero();
+        this->coef[i] = E.fr.sub(a, b);
+    }
+
+    fixDegree();
+}
+
+template <typename Engine>
+void Polynomial<Engine>::subBlinding(Polynomial<Engine> &polynomial, FrElement &blindingValue)
+{
+    u_int64_t length = std::max(this->length, polynomial.length);
+
+#pragma omp parallel for
+    for (u_int64_t i = 0; i < length; i++)
+    {
+        FrElement a = i < this->length ? this->coef[i] : E.fr.zero();
+        FrElement b = i < polynomial.length ? polynomial.coef[i] : E.fr.zero();
+
+        b = E.fr.mul(b, blindingValue);
+
         this->coef[i] = E.fr.sub(a, b);
     }
 
@@ -554,7 +618,7 @@ void Polynomial<Engine>::divZh(u_int64_t domainSize, int extension) {
         E.fr.neg(this->coef[i], this->coef[i]);
     }
 
-    int nThreads = pow(2, floor(log2(omp_get_max_threads())));
+    int nThreads = std::min((int)pow(2, floor(log2(omp_get_max_threads()))), (int)domainSize);
     uint64_t nElementsThread = domainSize / nThreads;
 
     assert(domainSize == nElementsThread * nThreads);

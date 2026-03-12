@@ -23,6 +23,13 @@ use proofman_starks_lib_c::{
     initialize_agg_readiness_tracker_c, free_agg_readiness_tracker_c, agg_is_ready_c, reset_agg_readiness_tracker_c,
 };
 
+#[derive(Clone, Debug)]
+pub struct RankInfo {
+    pub world_rank: i32,
+    pub local_rank: i32,
+    pub n_processes: i32,
+}
+
 pub struct MpiCtx {
     #[cfg(distributed)]
     pub universe: Universe,
@@ -36,7 +43,7 @@ pub struct MpiCtx {
     pub cancelled: AtomicU32,
 }
 
-const MPI_TAG_CANCEL_JOB: i32 = 999999;
+const _MPI_TAG_CANCEL_JOB: i32 = 999999;
 
 impl Default for MpiCtx {
     fn default() -> Self {
@@ -266,25 +273,25 @@ impl MpiCtx {
     }
 
     //rank 0 broadcasts to the rest of processes a msg of unknown size
-    //Root provides data in `buf`; others can pass an empty Vec that is filled with the message
+    //Root provides data in buf; others can pass an empty Vec that is filled with the message
+    //Uses point-to-point with matched_probe for thread safety (no message interleaving)
     pub fn broadcast(&self, _buf: &mut Vec<u8>) {
         #[cfg(distributed)]
         {
-            // global communication: rank 0 broadcasts to all processes
             if self.n_processes > 1 {
-                let root = self.world.process_at_rank(0);
-
-                // 1) Broadcast the length as u64
-                let mut len: u64 = if self.rank == 0 { _buf.len() as u64 } else { 0 };
-                root.broadcast_into(&mut len);
-
-                // 2) Resize non-root buffers to the incoming size
-                if self.rank != 0 {
-                    _buf.resize(len as usize, 0u8);
+                if self.rank == 0 {
+                    // Root sends to all other processes
+                    for dest in 1..self.n_processes {
+                        self.world.process_at_rank(dest).send(&_buf[..]);
+                    }
+                } else {
+                    // Non-root: matched_probe + matched_receive_into for thread-safe receive
+                    // This atomically binds to a specific message, preventing interleaving
+                    let (msg, status) = self.world.process_at_rank(0).matched_probe();
+                    let count = status.count(u8::equivalent_datatype()) as usize;
+                    _buf.resize(count, 0u8);
+                    msg.matched_receive_into(&mut _buf[..]);
                 }
-
-                // 3) Broadcast bytes into place
-                root.broadcast_into(&mut _buf[..]);
             }
         }
     }
@@ -515,7 +522,7 @@ impl MpiCtx {
                 let cancel_msg: [i32; 1] = [self.rank];
                 for rank in 0..self.n_processes {
                     if rank != self.rank {
-                        self.world.process_at_rank(rank).send_with_tag(&cancel_msg, MPI_TAG_CANCEL_JOB);
+                        self.world.process_at_rank(rank).send_with_tag(&cancel_msg, _MPI_TAG_CANCEL_JOB);
                     }
                 }
             }
@@ -527,8 +534,8 @@ impl MpiCtx {
         #[cfg(distributed)]
         {
             if self.cancelled.load(Ordering::SeqCst) == 0 {
-                if let Some(_status) = self.world.any_process().immediate_probe_with_tag(MPI_TAG_CANCEL_JOB) {
-                    let (msg, _) = self.world.any_process().receive_vec_with_tag::<i32>(MPI_TAG_CANCEL_JOB);
+                if let Some(_status) = self.world.any_process().immediate_probe_with_tag(_MPI_TAG_CANCEL_JOB) {
+                    let (msg, _) = self.world.any_process().receive_vec_with_tag::<i32>(_MPI_TAG_CANCEL_JOB);
 
                     if let Some(&failed_rank) = msg.first() {
                         return Some(ProofmanError::MpiCancellation(format!(

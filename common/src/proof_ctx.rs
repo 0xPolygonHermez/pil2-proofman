@@ -1,17 +1,24 @@
 use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 use crate::{MpiCtx, ProofmanError};
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::fs::File;
 use std::io::Read;
-
+use std::fs;
 use fields::{PrimeField64, Transcript, Poseidon16};
-
 use crate::{
-    initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode, StepsParams,
-    VerboseMode, ProofmanResult,
+    initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PolMap, SetupCtx, StdMode,
+    RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
 };
+
+use std::ffi::c_void;
+use proofman_starks_lib_c::{
+    check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
+    alloc_device_large_buffers_c,
+};
+use proofman_util::DeviceBuffer;
 
 #[derive(Debug)]
 pub struct Values<F> {
@@ -30,9 +37,17 @@ impl<F> Default for Values<F> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct InstancesInfo {
+    pub constraints: Vec<usize>,
+    pub hint_ids: Vec<usize>,
+    pub rows: Vec<usize>,
+    pub store_row_info: bool,
+}
+
 pub type AirGroupMap = HashMap<usize, AirIdMap>;
-pub type AirIdMap = HashMap<usize, InstanceMap>;
-pub type InstanceMap = HashMap<usize, Vec<usize>>;
+pub type AirIdMap = HashMap<usize, (bool, InstanceMap)>;
+pub type InstanceMap = HashMap<usize, InstancesInfo>;
 
 pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
 
@@ -41,11 +56,11 @@ pub struct ProofOptions {
     pub verify_constraints: bool,
     pub aggregation: bool,
     pub rma: bool,
-    pub final_snark: bool,
+    pub compressed: bool,
     pub verify_proofs: bool,
     pub save_proofs: bool,
     pub test_mode: bool,
-    pub output_dir_path: PathBuf,
+    pub output_dir_path: Option<PathBuf>,
     pub minimal_memory: bool,
 }
 
@@ -54,11 +69,11 @@ impl BorshSerialize for ProofOptions {
         BorshSerialize::serialize(&self.verify_constraints, writer)?;
         BorshSerialize::serialize(&self.aggregation, writer)?;
         BorshSerialize::serialize(&self.rma, writer)?;
-        BorshSerialize::serialize(&self.final_snark, writer)?;
+        BorshSerialize::serialize(&self.compressed, writer)?;
         BorshSerialize::serialize(&self.verify_proofs, writer)?;
         BorshSerialize::serialize(&self.save_proofs, writer)?;
         BorshSerialize::serialize(&self.test_mode, writer)?;
-        BorshSerialize::serialize(&self.output_dir_path.to_string_lossy().to_string(), writer)?;
+        BorshSerialize::serialize(&self.output_dir_path.as_ref().map(|p| p.to_string_lossy().to_string()), writer)?;
         BorshSerialize::serialize(&self.minimal_memory, writer)?;
         Ok(())
     }
@@ -69,33 +84,35 @@ impl BorshDeserialize for ProofOptions {
         let verify_constraints = bool::deserialize_reader(reader)?;
         let aggregation = bool::deserialize_reader(reader)?;
         let rma = bool::deserialize_reader(reader)?;
-        let final_snark = bool::deserialize_reader(reader)?;
+        let compressed = bool::deserialize_reader(reader)?;
         let verify_proofs = bool::deserialize_reader(reader)?;
         let save_proofs = bool::deserialize_reader(reader)?;
         let test_mode = bool::deserialize_reader(reader)?;
-        let output_dir_path_str = String::deserialize_reader(reader)?;
+        let output_dir_path: Option<String> = Option::<String>::deserialize_reader(reader)?;
         let minimal_memory = bool::deserialize_reader(reader)?;
 
         Ok(Self {
             verify_constraints,
             aggregation,
             rma,
-            final_snark,
+            compressed,
             verify_proofs,
             save_proofs,
             test_mode,
-            output_dir_path: PathBuf::from(output_dir_path_str),
+            output_dir_path: output_dir_path.map(PathBuf::from),
             minimal_memory,
         })
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct DebugInfo {
     pub debug_instances: AirGroupMap,
     pub debug_global_instances: Vec<usize>,
     pub std_mode: StdMode,
     pub n_print_constraints: usize,
+    pub skip_prover_instances: bool,
+    pub store_row_info: bool,
 }
 
 impl Default for DebugInfo {
@@ -105,6 +122,8 @@ impl Default for DebugInfo {
             debug_global_instances: Default::default(),
             std_mode: Default::default(),
             n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,
+            skip_prover_instances: false,
+            store_row_info: false,
         }
     }
 }
@@ -116,26 +135,44 @@ impl DebugInfo {
             debug_global_instances: Vec::new(),
             std_mode: StdMode::new_debug(),
             n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,
+            skip_prover_instances: false,
+            store_row_info: false,
         }
     }
 }
+impl Default for ProofOptions {
+    fn default() -> Self {
+        Self {
+            verify_constraints: false,
+            aggregation: true,
+            rma: false,
+            compressed: false,
+            verify_proofs: false,
+            minimal_memory: false,
+            save_proofs: false,
+            output_dir_path: None,
+            test_mode: false,
+        }
+    }
+}
+
 impl ProofOptions {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         verify_constraints: bool,
         aggregation: bool,
         rma: bool,
-        final_snark: bool,
+        compressed: bool,
         verify_proofs: bool,
         minimal_memory: bool,
         save_proofs: bool,
-        output_dir_path: PathBuf,
+        output_dir_path: Option<PathBuf>,
     ) -> Self {
         Self {
             verify_constraints,
             aggregation,
             rma,
-            final_snark,
+            compressed,
             verify_proofs,
             minimal_memory,
             save_proofs,
@@ -149,23 +186,40 @@ impl ProofOptions {
         verify_constraints: bool,
         aggregation: bool,
         rma: bool,
-        final_snark: bool,
+        compressed: bool,
         verify_proofs: bool,
         minimal_memory: bool,
         save_proofs: bool,
-        output_dir_path: PathBuf,
+        output_dir_path: Option<PathBuf>,
     ) -> Self {
         Self {
             verify_constraints,
             aggregation,
             rma,
-            final_snark,
+            compressed,
             verify_proofs,
             save_proofs,
             minimal_memory,
             output_dir_path,
             test_mode: true,
         }
+    }
+
+    pub fn minimal_memory(&mut self) {
+        self.minimal_memory = true;
+    }
+
+    pub fn use_rma(&mut self) {
+        self.rma = true;
+    }
+
+    pub fn compressed(&mut self) {
+        self.compressed = true;
+    }
+
+    pub fn save_proofs(&mut self, output_dir_path: Option<PathBuf>) {
+        self.save_proofs = true;
+        self.output_dir_path = output_dir_path;
     }
 }
 
@@ -227,25 +281,22 @@ pub struct ProofCtx<F: PrimeField64> {
     pub global_info: GlobalInfo,
     pub air_instances: Vec<RwLock<AirInstance<F>>>,
     pub weights: HashMap<(usize, usize), u64>,
-    pub custom_commits_fixed: HashMap<String, PathBuf>,
-    pub custom_commits_values: HashMap<String, Vec<u8>>,
+    pub custom_commits_values: Mutex<HashMap<String, (PathBuf, Vec<u8>)>>,
     pub dctx: RwLock<DistributionCtx>,
     pub debug_info: RwLock<DebugInfo>,
     pub aggregation: bool,
-    pub final_snark: bool,
     pub proof_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_tx_priority: RwLock<Option<crossbeam_channel::Sender<usize>>>,
+    pub d_buffers: Arc<DeviceBuffer>,
 }
 
-pub const MAX_INSTANCES: u64 = 10000;
+pub const MAX_INSTANCES: u64 = 1 << 17;
 
 impl<F: PrimeField64> ProofCtx<F> {
     pub fn create_ctx(
         proving_key_path: PathBuf,
-        custom_commits_fixed: HashMap<String, PathBuf>,
         aggregation: bool,
-        final_snark: bool,
         verbose_mode: VerboseMode,
         mpi_ctx: Arc<MpiCtx>,
     ) -> ProofmanResult<Self> {
@@ -280,14 +331,13 @@ impl<F: PrimeField64> ProofCtx<F> {
             air_instances,
             dctx: RwLock::new(dctx),
             debug_info: RwLock::new(DebugInfo::default()),
-            custom_commits_fixed,
-            custom_commits_values: HashMap::new(),
+            custom_commits_values: Mutex::new(HashMap::new()),
             weights,
             aggregation,
-            final_snark,
             witness_tx: RwLock::new(None),
             witness_tx_priority: RwLock::new(None),
             proof_tx: RwLock::new(None),
+            d_buffers: Arc::new(DeviceBuffer::default()),
         })
     }
 
@@ -300,6 +350,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         let mut dctx = self.dctx.write().unwrap();
         dctx.reset_instances();
         self.mpi_ctx.reset();
+    }
+
+    pub fn is_setup_partition_init(&self) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.is_setup_partition_init()
     }
 
     pub fn set_proof_tx(&self, proof_tx: Option<crossbeam_channel::Sender<usize>>) {
@@ -326,20 +381,74 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn initialize_custom_commits(&mut self, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
+    pub fn initialize_custom_commits(
+        &self,
+        custom_commits_fixed: HashMap<String, PathBuf>,
+        sctx: &SetupCtx<F>,
+        only_init: bool,
+    ) -> ProofmanResult<()> {
         tracing::info!("Initializing publics custom_commits");
         for (airgroup_id, airs) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in airs.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id)?;
-                for custom_commit in &setup.stark_info.custom_commits {
+                for (commit_id, custom_commit) in setup.stark_info.custom_commits.iter().enumerate() {
                     if custom_commit.stage_widths[0] > 0 {
-                        let custom_file_path = self.get_custom_commits_fixed_buffer(&custom_commit.name, true)?;
+                        let custom_file_path = custom_commits_fixed.get(&custom_commit.name).ok_or_else(|| {
+                            ProofmanError::ProofmanError(format!(
+                                "Custom commit file path for {} not found",
+                                custom_commit.name
+                            ))
+                        })?;
 
-                        let mut file = File::open(custom_file_path)?;
                         let mut root_bytes = [0u8; 32];
-                        file.read_exact(&mut root_bytes)?;
+                        if !only_init {
+                            if !PathBuf::from(&custom_file_path).exists() {
+                                let error_message = format!(
+                                    "Error: Unable to find {} custom commit at '{}'.\n\
+                                    Please run the following command:\n\
+                                    \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
+                                    custom_commit.name,
+                                    custom_file_path.display(),
+                                );
+                                tracing::warn!("{}", error_message);
+                                return Err(ProofmanError::ProofmanError(error_message));
+                            }
 
-                        self.custom_commits_values.insert(custom_commit.name.clone(), root_bytes.to_vec());
+                            let error_message = format!(
+                                "Error: The custom commit file for {} at '{}' exists but is invalid or corrupted.\n\
+                                Please regenerate it by running:\n\
+                                \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
+                                custom_commit.name,
+                                custom_file_path.display(),
+                            );
+
+                            let size = custom_commit_size_c((&setup.p_setup).into(), commit_id as u64) as usize;
+
+                            match fs::metadata(custom_file_path) {
+                                Ok(metadata) => {
+                                    let actual_size = metadata.len() as usize;
+                                    if actual_size != (size + 4) * 8 {
+                                        tracing::warn!("{}", error_message);
+                                        return Err(ProofmanError::ProofmanError(error_message));
+                                    }
+                                }
+                                Err(err) => {
+                                    let error_message = format!(
+                                        "Failed to open {} for custom_commit {}: {}",
+                                        setup.air_name, custom_commit.name, err
+                                    );
+                                    tracing::warn!("{}", error_message);
+                                    return Err(ProofmanError::ProofmanError(error_message));
+                                }
+                            }
+                            let mut file = File::open(custom_file_path)?;
+                            file.read_exact(&mut root_bytes)?;
+                        }
+
+                        self.custom_commits_values
+                            .lock()
+                            .unwrap()
+                            .insert(custom_commit.name.clone(), (custom_file_path.clone(), root_bytes.to_vec()));
                     }
                 }
             }
@@ -347,10 +456,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         Ok(())
     }
 
-    pub fn get_custom_commit_root(&self, name: &str) -> ProofmanResult<&[u8]> {
-        let root_bytes = self.custom_commits_values.get(name);
+    pub fn get_custom_commit_root(&self, name: &str) -> ProofmanResult<Vec<u8>> {
+        let custom_commit_lock = self.custom_commits_values.lock().unwrap();
+        let root_bytes = custom_commit_lock.get(name);
         match root_bytes {
-            Some(bytes) => Ok(bytes.as_slice()),
+            Some((_, bytes)) => Ok(bytes.clone()),
             None => Err(ProofmanError::ProofmanError(format!("Custom Commit {name} not found"))),
         }
     }
@@ -382,9 +492,10 @@ impl<F: PrimeField64> ProofCtx<F> {
     }
 
     pub fn get_custom_commits_fixed_buffer(&self, name: &str, return_error: bool) -> ProofmanResult<PathBuf> {
-        let file_name = self.custom_commits_fixed.get(name);
+        let custom_commits_lock = self.custom_commits_values.lock().unwrap();
+        let file_name = custom_commits_lock.get(name);
         match file_name {
-            Some(path) => Ok(path.to_path_buf()),
+            Some((path, _)) => Ok(path.to_path_buf()),
             None => {
                 if return_error {
                     Err(ProofmanError::ProofmanError(format!("Custom Commit Fixed {file_name:?} not found")))
@@ -417,9 +528,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.worker_instances.clone()
     }
 
-    pub fn dctx_is_first_partition(&self) -> bool {
+    pub fn dctx_is_first_process(&self) -> bool {
         let dctx = self.dctx.read().unwrap();
-        dctx.partition_mask[0]
+        dctx.is_first_process()
     }
 
     pub fn dctx_reset_instances_calculated(&self) {
@@ -432,6 +543,11 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn dctx_set_instance_calculated(&self, global_idx: usize) {
         let dctx = self.dctx.read().unwrap();
         dctx.instances_calculated[global_idx].store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn dctx_reset_instance_calculated(&self, global_idx: usize) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.instances_calculated[global_idx].store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn dctx_is_instance_calculated(&self, global_idx: usize) -> bool {
@@ -519,10 +635,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_instance(airgroup_id, air_id, weight)
     }
 
-    pub fn add_instance_assign_first_partition(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
+    pub fn add_instance_assign_first_process(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_first_partition(airgroup_id, air_id, weight)
+        dctx.add_instance_first_process(airgroup_id, air_id, weight)
     }
 
     pub fn add_instance(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
@@ -701,21 +817,31 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.air_instances[instance_id].read().unwrap().get_trace_ptr()
     }
 
+    pub fn get_air_instance_stream_id(&self, instance_id: usize) -> u64 {
+        self.air_instances[instance_id].read().unwrap().get_stream_id()
+    }
+
     pub fn get_air_instance_trace(
         &self,
-        airgroup_id: usize,
-        air_id: usize,
-        air_instance_id: usize,
-    ) -> ProofmanResult<Vec<F>> {
-        let dctx = self.dctx.read().unwrap();
-        let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
-        if let Some(index) = index {
-            Ok(self.air_instances[index].read().unwrap().get_trace())
-        } else {
-            Err(ProofmanError::OutOfBounds(format!(
-                "Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found"
-            )))
+        instance_id: usize,
+        first_row: usize,
+        n_rows: usize,
+        offset: Option<usize>,
+    ) -> Vec<RowInfo> {
+        self.air_instances[instance_id].read().unwrap().get_trace(first_row, n_rows, offset)
+    }
+
+    pub fn get_instance_air_values(&self, instance_id: usize, airvalues_map: &[PolMap]) -> ProofmanResult<Vec<u64>> {
+        let air_values = self.air_instances[instance_id].read().unwrap().get_air_values();
+
+        let mut result = Vec::new();
+        for (p, air_value) in airvalues_map.iter().enumerate() {
+            if air_value.stage == 1 {
+                result.push(air_values[p].as_canonical_u64());
+            }
         }
+
+        Ok(result)
     }
 
     pub fn get_air_instance_air_values(
@@ -758,5 +884,146 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn free_instance_traces(&self, instance_id: usize) -> (bool, Vec<F>) {
         self.air_instances[instance_id].write().unwrap().clear_traces()
+    }
+
+    pub fn set_instance_stream_id(&self, instance_id: usize, stream_id: u64) {
+        self.air_instances[instance_id].write().unwrap().set_stream_id(stream_id);
+    }
+
+    #[allow(clippy::type_complexity)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_device_buffers(
+        &mut self,
+        sctx: &SetupCtx<F>,
+        setups_vadcop: &SetupsVadcop<F>,
+        aggregation: bool,
+        gpu_params: &ParamsGPU,
+    ) -> ProofmanResult<(u64, u64, u64)> {
+        let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
+            self.mpi_ctx.node_rank as u32,
+            self.mpi_ctx.node_n_processes as usize as u32,
+            self.global_info.transcript_arity as u32,
+            sctx.max_n_bits_ext as u32,
+        )));
+
+        let mut free_memory_gpu = match cfg!(feature = "gpu") {
+            true => check_device_memory_c(self.mpi_ctx.node_rank as u32, self.mpi_ctx.node_n_processes as u32) as f64,
+            false => 0.0,
+        };
+
+        self.mpi_ctx.barrier();
+
+        let n_gpus = get_num_gpus_c();
+        let n_processes_node = self.mpi_ctx.node_n_processes as usize as u64;
+
+        let n_partitions = match cfg!(feature = "gpu") {
+            true => {
+                if n_gpus > n_processes_node {
+                    1
+                } else {
+                    n_processes_node.div_ceil(n_gpus)
+                }
+            }
+            false => 1,
+        };
+
+        free_memory_gpu /= n_partitions as f64;
+
+        let mut total_const_area = 0;
+        let mut total_const_area_aggregation = 0;
+
+        if cfg!(feature = "gpu") {
+            total_const_area += sctx.total_const_pols_size as u64;
+            total_const_area += sctx.total_const_tree_size as u64;
+            if aggregation {
+                total_const_area_aggregation += setups_vadcop.total_const_pols_size as u64;
+                total_const_area_aggregation += setups_vadcop.total_const_tree_size as u64;
+            }
+        }
+
+        let max_size_buffer = (free_memory_gpu / 8.0).floor() as u64 - total_const_area - total_const_area_aggregation;
+        let max_prover_buffer_size = sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size);
+
+        let n_streams_per_gpu = match cfg!(feature = "gpu") {
+            true => {
+                let max_number_proofs_per_gpu =
+                    gpu_params.max_number_streams.min(max_size_buffer as usize / max_prover_buffer_size);
+                if max_number_proofs_per_gpu < 1 {
+                    return Err(ProofmanError::InvalidConfiguration("Not enough GPU memory to run the proof".into()));
+                }
+                max_number_proofs_per_gpu
+            }
+            false => 1,
+        };
+
+        let max_prover_buffer_size =
+            sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_recursive_buffer_size) as u64;
+
+        let max_prover_recursive2_buffer_size = setups_vadcop.max_prover_recursive2_buffer_size as u64;
+
+        tracing::info!("Max prover buffer size: {}", format_bytes(max_prover_buffer_size as f64 * 8.0));
+        tracing::info!(
+            "Max prover recursive buffer size: {}",
+            format_bytes(setups_vadcop.max_prover_recursive_buffer_size as f64 * 8.0)
+        );
+        tracing::info!(
+            "Max prover recursive1/recursive2 buffer size: {}",
+            format_bytes(setups_vadcop.max_prover_recursive2_buffer_size as f64 * 8.0)
+        );
+
+        let mut gpu_available_memory = match cfg!(feature = "gpu") {
+            true => max_size_buffer as i64 - (n_streams_per_gpu * max_prover_buffer_size as usize) as i64,
+            false => 0,
+        };
+        let mut n_recursive_streams_per_gpu = 0;
+        if aggregation {
+            while gpu_available_memory > 0 && n_recursive_streams_per_gpu < 10 {
+                gpu_available_memory -= max_prover_recursive2_buffer_size as i64;
+                if gpu_available_memory < 0 {
+                    break;
+                }
+                n_recursive_streams_per_gpu += 1;
+            }
+        }
+
+        if cfg!(feature = "gpu") {
+            tracing::info!(
+                "Using {} streams per GPU for basic proofs and {} streams per GPU for recursive proofs. Using {} for fixed pols",
+                n_streams_per_gpu,
+                n_recursive_streams_per_gpu,
+                format_bytes((total_const_area + total_const_area_aggregation) as f64 * 8.0)
+            );
+        }
+
+        let max_pinned_proof_size = match aggregation {
+            true => sctx.max_pinned_proof_size.max(setups_vadcop.max_pinned_proof_size) as u64,
+            false => sctx.max_pinned_proof_size as u64,
+        };
+
+        let n_gpus: u64 = gen_device_streams_c(
+            d_buffers.get_ptr(),
+            n_streams_per_gpu as u64,
+            n_recursive_streams_per_gpu as u64,
+            max_prover_buffer_size,
+            max_prover_recursive2_buffer_size,
+            max_pinned_proof_size,
+            self.global_info.transcript_arity as u64,
+        );
+
+        alloc_device_large_buffers_c(
+            d_buffers.get_ptr(),
+            max_prover_buffer_size,
+            max_prover_recursive2_buffer_size,
+            total_const_area,
+            total_const_area_aggregation,
+        );
+
+        self.d_buffers = d_buffers;
+
+        Ok((n_streams_per_gpu as u64, n_recursive_streams_per_gpu as u64, n_gpus))
+    }
+
+    pub fn get_device_buffers_ptr(&self) -> *mut c_void {
+        self.d_buffers.get_ptr()
     }
 }

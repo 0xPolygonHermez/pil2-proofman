@@ -2,7 +2,7 @@ use crate::{ProofmanError, ProofmanResult};
 
 pub trait Trace<F>: Send {
     fn num_rows(&self) -> usize;
-    fn n_cols(&self) -> usize;
+    fn num_cols(&self) -> usize;
     fn airgroup_id(&self) -> usize;
     fn air_id(&self) -> usize;
     fn commit_id(&self) -> Option<usize>;
@@ -74,7 +74,8 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
         debug_assert!(num_rows & (num_rows - 1) == 0);
 
         let mut vec: Vec<std::mem::MaybeUninit<R>> = Vec::with_capacity(num_rows);
-        let buffer: Vec<R> = unsafe {
+        #[allow(unused_mut)]
+        let mut buffer: Vec<R> = unsafe {
             vec.set_len(num_rows);
             std::mem::transmute(vec)
         };
@@ -235,7 +236,7 @@ impl<
         NUM_ROWS
     }
 
-    fn n_cols(&self) -> usize {
+    fn num_cols(&self) -> usize {
         R::ROW_SIZE
     }
 

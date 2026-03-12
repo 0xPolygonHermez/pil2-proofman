@@ -13,9 +13,12 @@ fn _print_challenges<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &
 
     for instance_id in my_instances.iter() {
         let root_contribution = roots_contributions[*instance_id];
+        let (airgroup_id, air_id) = pctx.dctx_get_instance_info(*instance_id).unwrap();
         tracing::info!(
-            "··· Instance {}: Root contribution: [{}, {}, {}, {}]",
+            "··· Instance {} [{}:{}]: Root contribution: [{}, {}, {}, {}]",
             instance_id,
+            airgroup_id,
+            air_id,
             root_contribution[0],
             root_contribution[1],
             root_contribution[2],
@@ -81,7 +84,7 @@ where
     partial_contribution_u64
 }
 
-pub fn calculate_global_challenge<F>(pctx: &ProofCtx<F>, all_partial_contributions_u64: &[ContributionsInfo])
+pub fn calculate_global_challenge<F>(pctx: &ProofCtx<F>, all_partial_contributions_u64: &[ContributionsInfo]) -> [F; 3]
 where
     F: PrimeField64,
     GoldilocksQuinticExtension: ExtensionField<F>,
@@ -106,8 +109,7 @@ where
     let mut global_challenge = [F::ZERO; 3];
     transcript.get_field(&mut global_challenge);
 
-    tracing::info!("··· Global challenge: [{}, {}, {}]", global_challenge[0], global_challenge[1], global_challenge[2]);
-    pctx.set_global_challenge(2, &mut global_challenge);
+    global_challenge
 }
 
 pub fn add_contributions<F>(pctx: &ProofCtx<F>, values: &[Vec<F>]) -> Vec<F>

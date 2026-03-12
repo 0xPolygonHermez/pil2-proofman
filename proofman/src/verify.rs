@@ -7,7 +7,7 @@ use proofman_starks_lib_c::{
 
 use colored::*;
 
-use proofman_common::{ProofCtx, ProofType, ProofmanResult};
+use proofman_common::{ProofCtx, ProofType, ProofmanResult, Setup};
 
 use std::os::raw::c_void;
 
@@ -107,13 +107,11 @@ pub fn verify_proof<F: PrimeField64>(
     result
 }
 
-pub fn verify_proof_bn128<F: PrimeField64>(
-    p_proof: *mut c_void,
-    stark_info_path: String,
-    expressions_bin_path: String,
-    verkey_path: String,
-    publics: Option<Vec<F>>,
-) -> bool {
+pub fn verify_proof_bn128<F: PrimeField64>(p_proof: *mut c_void, setup: &Setup<F>, publics: Option<Vec<F>>) -> bool {
+    let stark_info_path = setup.setup_path.display().to_string() + ".starkinfo.json";
+    let expressions_bin_path = setup.setup_path.display().to_string() + ".verifier.bin";
+    let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
+
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, false, true, false, false);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
 

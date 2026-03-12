@@ -83,6 +83,21 @@ node ../pil2-proofman-js/src/main_setup.js \
      -b ./examples/fibonacci-square/build -r -u ./examples/fibonacci-square/build/fixed
 ```
 
+Additionally, to run the snark setup:
+
+```bash
+node ../pil2-proofman-js/src/main_setup_snark.js \
+     -b ./examples/fibonacci-square/build -t ./pil2-components/lib/std/pil \
+     -n plonk -p examples/fibonacci-square/src/publics_info.json -w <powers_of_tau>
+```
+
+If only wants to generate the recursive final for debugging purposes, run:
+
+```bash
+node ../pil2-proofman-js/src/main_setup_snark.js \
+     -b ./examples/fibonacci-square/build -t ./pil2-components/lib/std/pil -o
+```
+
 To run the aggregated proof, need to add -r to the previous command
 
 ### 2.3 Generate PIL Helpers
@@ -112,7 +127,8 @@ Verify the constraints by executing this command:
 cargo run --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
-     --public-inputs examples/fibonacci-square/src/inputs.json
+     --public-inputs examples/fibonacci-square/src/inputs.json \
+     --custom-commits rom=examples/fibonacci-square/build/rom.bin
 ```
 
 ### 2.6 Generate Proof
@@ -142,14 +158,12 @@ cargo run --bin proofman-cli prove \
      -a
 ```
 
-### 2.8 Generating GPU proof
+### 2.9 Generating GPU proof
 
 In order to generate a proof in the GPU, the following commands needs to be executed after generating the setup and pil-helpers
 
 ```bash
 cargo build --features gpu --workspace \
-&& cargo run --features gpu --bin proofman-cli check-setup --proving-key \
-     examples/fibonacci-square/build/provingKey/ -a \
 && cargo run --features gpu --bin proofman-cli gen-custom-commits-fixed \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
@@ -159,7 +173,7 @@ cargo build --features gpu --workspace \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --output-dir examples/fibonacci-square/build/proofs \
-     --custom-commits rom=examples/fibonacci-square/build/rom_gpu.bin -y -a
+     --custom-commits rom=examples/fibonacci-square/build/rom_gpu.bin -y -a -f
 ```
 ### 2.9 All at once
 
@@ -173,11 +187,13 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
 && node --max-old-space-size=65536 ../pil2-proofman-js/src/main_setup.js \
      -a ./examples/fibonacci-square/pil/build.pilout \
      -b ./examples/fibonacci-square/build -t pil2-components/lib/std/pil \
+&& node ../pil2-proofman-js/src/main_stats.js \
+     -a ./examples/fibonacci-square/pil/build.pilout \
+     -o ./examples/fibonacci-square/build/build.stats \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \
 && cargo build --workspace \
-&& cargo run --bin proofman-cli check-setup --proving-key examples/fibonacci-square/build/provingKey/ \
 && cargo run --bin proofman-cli gen-custom-commits-fixed \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
@@ -186,7 +202,7 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
-     --custom-commits rom=examples/fibonacci-square/build/rom.bin \
+     --custom-commits rom=examples/fibonacci-square/build/rom.bin -d \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
@@ -206,14 +222,14 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
      -a ./examples/fibonacci-square/pil/build.pilout \
      -b ./examples/fibonacci-square/build -t pil2-components/lib/std/pil \
      -r \
+&& node ../pil2-proofman-js/src/main_stats.js \
+     -a ./examples/fibonacci-square/pil/build.pilout \
+     -o ./examples/fibonacci-square/build/build.stats \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \
 && cargo build --workspace \
-&& cargo run --bin proofman-cli check-setup \
-     --proving-key examples/fibonacci-square/build/provingKey/ \
-     -a \
-&& cargo run --bin proofman-cli gen-custom-commits-fixed \
+cargo run --bin proofman-cli gen-custom-commits-fixed \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --custom-commits rom=examples/fibonacci-square/build/rom.bin \
@@ -229,8 +245,9 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
      --custom-commits rom=examples/fibonacci-square/build/rom.bin \
      --verify-proofs \
      --aggregation \
+     --compressed \
      --output-dir examples/fibonacci-square/build/proofs \
 && cargo run --bin proofman-cli verify-stark \
-     --proof ./examples/fibonacci-square/build/proofs/proofs/vadcop_final_proof.bin \
-     --verkey ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.verkey.bin
+     --proof ./examples/fibonacci-square/build/proofs/vadcop_final_proof.bin \
+     --verkey ./examples/fibonacci-square/build/provingKey/build/vadcop_final_compressed/vadcop_final_compressed.verkey.bin
 ```

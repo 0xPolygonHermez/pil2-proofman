@@ -1,3 +1,4 @@
+#include "bn128.cuh"
 #include "zkglobals.hpp"
 #include "proof2zkinStark.hpp"
 #include "starks.hpp"
@@ -7,24 +8,24 @@
 #include <cstring>
 #include <thread>
 
+
+struct FinalSnarkGPU;
+extern void *initFinalSnarkProverGPU(char* zkeyFile);
+extern void freeFinalSnarkProverGPU(void *snark_prover);
+extern void genFinalSnarkProofGPU(void *proverSnark, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark);
+extern void preAllocateFinalSnarkProverGPU(void *snark_prover, void* unified_buffer_gpu);
+extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
+
 #ifdef __USE_CUDA__
-#include "gen_recursive_proof.cuh"
+#include "verify_constraints.cuh"
 #include "gen_proof.cuh"
-#include "gen_commit.cuh"
 #include "poseidon2_goldilocks.cuh"
+#include "hints.cuh"
+#include "gen_recursivef_proof.cuh"
+#include "poseidon_bn128.cuh"
 #include <cuda_runtime.h>
 #include <mutex>
 
-
-struct MaxSizes
-{
-    uint64_t totalConstPols;
-    uint64_t auxTraceArea;
-    uint64_t auxTraceRecursiveArea;
-    uint64_t totalConstPolsAggregation;
-    uint64_t nStreams;
-    uint64_t nRecursiveStreams;
-};
 
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive = false, bool force_recursive = false);
 void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId);
@@ -40,7 +41,7 @@ void get_instances_ready(void *d_buffers_, int64_t* instances_ready) {
     }
 }
 
-void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size, uint32_t arity)
+void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity, uint32_t max_n_bits_ext)
 {
     int deviceCount;
     cudaError_t err = cudaGetDeviceCount(&deviceCount);
@@ -48,9 +49,46 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         std::cerr << "CUDA error getting device count: " << cudaGetErrorString(err) << std::endl;
         exit(1);
     }
-    MaxSizes *maxSizes = (MaxSizes *)maxSizes_;
 
+    uint32_t n_gpus = (uint32_t) deviceCount / node_size;
+    assert(n_gpus < 32);
+    uint32_t my_gpu_ids[32];
+    for (uint32_t i = 0; i < n_gpus; i++) {
+        my_gpu_ids[i] = node_rank * n_gpus + i;
+    }
 
+    // Force CUDA context initialization
+    for (uint32_t i = 0; i < n_gpus; i++) {
+        cudaSetDevice(my_gpu_ids[i]);
+        cudaFree(0);
+    }
+    cudaDeviceSynchronize();
+
+    // Initialize small GPU constants (Poseidon2 and Transcript)
+    switch(arity){
+        case 2:
+            Poseidon2GoldilocksGPU<8>::initPoseidon2GPUConstants(my_gpu_ids, n_gpus);
+            break;
+        case 3:
+            Poseidon2GoldilocksGPU<12>::initPoseidon2GPUConstants(my_gpu_ids, n_gpus);
+            break;
+        case 4:
+            Poseidon2GoldilocksGPU<16>::initPoseidon2GPUConstants(my_gpu_ids, n_gpus);
+            break;
+        default:
+            zklog.error("Unsupported merkle tree arity. Supported arities are 2, 3 and 4.");
+            exit(1);
+    }
+
+    Poseidon2GoldilocksGPUGrinding::initPoseidon2GPUConstants(my_gpu_ids, n_gpus);
+    TranscriptGL_GPU::init_const(my_gpu_ids, n_gpus, arity);
+
+    //Generate static twiddles for the NTT
+    NTT_Goldilocks_GPU::init_twiddle_factors_and_r(max_n_bits_ext, n_gpus, my_gpu_ids);
+
+    cudaDeviceSynchronize();
+
+    // Create and initialize DeviceCommitBuffers structure (CPU allocations only)
     if(deviceCount >= node_size) {
        
         if (deviceCount % node_size != 0) {
@@ -59,7 +97,7 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         }
         
         DeviceCommitBuffers *d_buffers = new DeviceCommitBuffers();
-        d_buffers->n_gpus = (uint32_t) deviceCount / node_size;
+        d_buffers->n_gpus = n_gpus;
         d_buffers->gpus_g2l = (uint32_t *)malloc(deviceCount * sizeof(uint32_t));
         d_buffers->my_gpu_ids = (uint32_t *)malloc(d_buffers->n_gpus * sizeof(uint32_t));
         for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
@@ -72,12 +110,9 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
         d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
-        d_buffers->n_streams = maxSizes->nStreams;
-        d_buffers->n_recursive_streams = maxSizes->nRecursiveStreams;
-        d_buffers->n_total_streams = d_buffers->n_gpus * (d_buffers->n_streams + d_buffers->n_recursive_streams);
+        d_buffers->gpuMemoryBuffer = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
-            d_buffers->d_aux_trace[i] = (gl64_t **)malloc(maxSizes->nStreams * sizeof(gl64_t*));
-            d_buffers->d_aux_traceAggregation[i] = (gl64_t **)malloc(maxSizes->nRecursiveStreams * sizeof(gl64_t*));
+            d_buffers->gpuMemoryBuffer[i] = nullptr;
         }
         
         // Allocate mutex array using placement new
@@ -85,40 +120,6 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
             new (&d_buffers->mutex_pinned[i]) std::mutex();
         }
-
-        for (int i = 0; i < d_buffers->n_gpus; i++) {
-            cudaSetDevice(d_buffers->my_gpu_ids[i]);
-            CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[i], maxSizes->totalConstPols * sizeof(Goldilocks::Element)));
-            CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPolsAggregation[i], maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
-            CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
-            CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer_extra[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
-            for (int j = 0; j < maxSizes->nStreams; ++j) {
-                CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace[i][j], maxSizes->auxTraceArea * sizeof(Goldilocks::Element)));
-            }
-            for (int j = 0; j < maxSizes->nRecursiveStreams; ++j) {
-                CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_traceAggregation[i][j], maxSizes->auxTraceRecursiveArea * sizeof(Goldilocks::Element)));
-            }
-        }
-        switch(arity){
-            case 2:
-                Poseidon2GoldilocksGPU<8>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
-                break;
-            case 3:
-                Poseidon2GoldilocksGPU<12>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
-                break;
-            case 4:
-                Poseidon2GoldilocksGPU<16>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
-                break;
-            default:
-                zklog.error("Unsupported merkle tree arity. Supported arities are 2, 3 and 4.");
-                exit(1);
-        }
-
-        Poseidon2GoldilocksGPUGrinding::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
-        
-
-        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus, arity);
-
 
 #ifdef NUMA_NODE
         // Check device afinity with process NUMA node
@@ -162,56 +163,126 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
         d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
         d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
-        d_buffers->n_streams = maxSizes->nStreams;
-        d_buffers->n_recursive_streams = maxSizes->nRecursiveStreams;
-        d_buffers->n_total_streams = (d_buffers->n_streams + d_buffers->n_recursive_streams);
-        
-        // Allocate the second level arrays for the single GPU
-        d_buffers->d_aux_trace[0] = (gl64_t **)malloc(maxSizes->nStreams * sizeof(gl64_t*));
-        d_buffers->d_aux_traceAggregation[0] = (gl64_t **)malloc(maxSizes->nRecursiveStreams * sizeof(gl64_t*));
+        d_buffers->gpuMemoryBuffer = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+        d_buffers->gpuMemoryBuffer[0] = nullptr;
         
         // Allocate mutex array using placement new
         d_buffers->mutex_pinned = (std::mutex*)malloc(d_buffers->n_gpus * sizeof(std::mutex));
         for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
             new (&d_buffers->mutex_pinned[i]) std::mutex();
         }
-
-        cudaSetDevice(d_buffers->my_gpu_ids[0]);
-        for (int j = 0; j < maxSizes->nStreams; ++j) {
-            CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace[0][j], maxSizes->auxTraceArea * sizeof(Goldilocks::Element)));
-        }
-        for (int j = 0; j < maxSizes->nRecursiveStreams; ++j) {
-            CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_traceAggregation[0][j], maxSizes->auxTraceRecursiveArea * sizeof(Goldilocks::Element)));
-        }
-        CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[0], maxSizes->totalConstPols * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPolsAggregation[0], maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer[0], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer_extra[0], d_buffers->pinned_size * sizeof(Goldilocks::Element)));        
-        switch(arity){
-            case 2:
-                Poseidon2GoldilocksGPU<8>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
-                break;
-            case 3:
-                Poseidon2GoldilocksGPU<12>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
-                break;
-            case 4:
-                Poseidon2GoldilocksGPU<16>::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
-                break;
-            default:
-                zklog.error("Unsupported merkle tree arity. Supported arities are 2, 3 and 4.");
-                exit(1);
-        }
-
-        Poseidon2GoldilocksGPUGrinding::initPoseidon2GPUConstants(d_buffers->my_gpu_ids, d_buffers->n_gpus);
         
-        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus, arity);
         return (void *)d_buffers;
     }
 }
 
-uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t max_n_bits_ext, uint64_t merkleTreeArity) {
+void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation)
+{
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+
+    // Calculate total memory needed per GPU
+    uint64_t constPolsSize = totalConstPols * sizeof(Goldilocks::Element);
+    uint64_t constPolsAggregationSize = totalConstPolsAggregation * sizeof(Goldilocks::Element);
+    uint64_t auxTraceSize = auxTraceArea * sizeof(Goldilocks::Element);
+    uint64_t auxTraceRecursiveSize = auxTraceRecursiveArea * sizeof(Goldilocks::Element);
+    
+    uint64_t totalAuxTraceSize = d_buffers->n_streams * auxTraceSize;
+    uint64_t totalAuxTraceRecursiveSize = d_buffers->n_recursive_streams * auxTraceRecursiveSize;
+    
+    uint64_t totalGpuMemoryPerGpu = constPolsAggregationSize + 
+                                     totalAuxTraceSize + totalAuxTraceRecursiveSize;
+    
+    uint64_t totalPinnedMemoryPerGpu = 2 * d_buffers->pinned_size * sizeof(Goldilocks::Element);
+
+    zklog.info("Memory allocation per GPU:");
+    zklog.info("  - Constant polynomials (separate): " + std::to_string(constPolsSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("  - Constant polynomials aggregation: " + std::to_string(constPolsAggregationSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("  - Auxiliary trace (" + std::to_string(d_buffers->n_streams) + " streams): " + std::to_string(totalAuxTraceSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("  - Auxiliary trace recursive (" + std::to_string(d_buffers->n_recursive_streams) + " streams): " + std::to_string(totalAuxTraceRecursiveSize / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("  - Unified buffer per GPU: " + std::to_string(totalGpuMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("  - Total GPU memory per GPU: " + std::to_string((totalGpuMemoryPerGpu + constPolsSize) / (1024.0 * 1024.0 * 1024.0)) + " GB");
+    zklog.info("  - Pinned host memory per GPU: " + std::to_string(totalPinnedMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + " GB");
+
+    d_buffers->constPolsSize = constPolsSize;
+
+    // Allocate large GPU buffers with a single malloc per GPU
+    for (int i = 0; i < d_buffers->n_gpus; i++) {
+        cudaSetDevice(d_buffers->my_gpu_ids[i]);
+        
+        // Check available GPU memory
+        size_t freeMem, totalMem;
+        CHECKCUDAERR(cudaMemGetInfo(&freeMem, &totalMem));
+        zklog.info("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + ": Available memory: " + 
+                   std::to_string(freeMem / (1024.0 * 1024.0 * 1024.0)) + " GB / " + 
+                   std::to_string(totalMem / (1024.0 * 1024.0 * 1024.0)) + " GB");
+        
+        if (freeMem < totalGpuMemoryPerGpu + constPolsSize) {
+            zklog.error("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + 
+                       ": Insufficient memory. Need " + std::to_string((totalGpuMemoryPerGpu + constPolsSize) / (1024.0 * 1024.0 * 1024.0)) + 
+                       " GB but only " + std::to_string(freeMem / (1024.0 * 1024.0 * 1024.0)) + " GB available");
+            exit(1);
+        }
+        
+        // Allocate one large contiguous block of GPU memory (unified buffer)
+        gl64_t *gpuMemoryBlock;
+        CHECKCUDAERR(cudaMalloc(&gpuMemoryBlock, totalGpuMemoryPerGpu));
+        d_buffers->gpuMemoryBuffer[i] = gpuMemoryBlock;  // Store the base pointer
+        
+        // Allocate separate buffer for constant polynomials
+        CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[i], constPolsSize));
+        
+        zklog.info("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + 
+                   ": Allocated " + std::to_string((totalGpuMemoryPerGpu + constPolsSize) / (1024.0 * 1024.0 * 1024.0)) + 
+                   " GB (" + std::to_string(totalGpuMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + 
+                   " GB unified + " + std::to_string(constPolsSize / (1024.0 * 1024.0 * 1024.0)) + " GB const pols)");
+        
+        // Set up pointers to different sections of the memory block
+        uint64_t offset = 0;
+                
+        // Auxiliary trace buffers (non-recursive)
+        for (int j = 0; j < d_buffers->n_streams; ++j) {
+            d_buffers->d_aux_trace[i][j] = gpuMemoryBlock + offset;
+            offset += auxTraceArea;
+        }
+        
+        // Auxiliary trace buffers (recursive)
+        for (int j = 0; j < d_buffers->n_recursive_streams; ++j) {
+            d_buffers->d_aux_traceAggregation[i][j] = gpuMemoryBlock + offset;
+            offset += auxTraceRecursiveArea;
+        }
+
+        // Constant polynomials aggregation
+        d_buffers->d_constPolsAggregation[i] = gpuMemoryBlock + offset;
+        offset += totalConstPolsAggregation;
+        
+        // Allocate pinned host buffers separately (one block per buffer type)
+        CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMallocHost(&d_buffers->pinned_buffer_extra[i], d_buffers->pinned_size * sizeof(Goldilocks::Element)));
+        
+        // Verify we used exactly the amount we calculated
+        if (offset != totalGpuMemoryPerGpu / sizeof(Goldilocks::Element)) {
+            zklog.error("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + 
+                       ": Memory offset mismatch! Expected " + std::to_string(totalGpuMemoryPerGpu / sizeof(Goldilocks::Element)) + 
+                       " but got " + std::to_string(offset) + " elements");
+            exit(1);
+        }
+    }
+    
+    zklog.info("All GPU memory allocations successful");
+}
+
+uint64_t gen_device_streams(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity) {
     
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    d_buffers->n_streams = n_streams;
+    d_buffers->n_recursive_streams = n_recursive_streams;
+    d_buffers->n_total_streams = d_buffers->n_gpus * (d_buffers->n_streams + d_buffers->n_recursive_streams);
+    
+    // Allocate d_aux_trace arrays now that we know stream counts
+    for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
+        d_buffers->d_aux_trace[i] = (gl64_t **)malloc(n_streams * sizeof(gl64_t*));
+        d_buffers->d_aux_traceAggregation[i] = (gl64_t **)malloc(n_recursive_streams * sizeof(gl64_t*));
+    }
     d_buffers->max_size_proof = maxProofSize;
 
     if (d_buffers->streamsData != nullptr) {
@@ -234,9 +305,6 @@ uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeProverBuffer, uint
         }
     }
 
-    //Generate static twiddles for the NTT
-    NTT_Goldilocks_GPU::init_twiddle_factors_and_r(max_n_bits_ext, (int) d_buffers->n_gpus, d_buffers->my_gpu_ids);
-
     return d_buffers->n_gpus;
 }
 
@@ -256,25 +324,26 @@ void free_device_buffers(void *d_buffers_)
     for (int i = 0; i < d_buffers->n_gpus; ++i) {
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
         
+        // Free the single large GPU memory block
+        // All other GPU pointers (d_constPols, d_constPolsAggregation, d_aux_trace, d_aux_traceAggregation) 
+        // point into this same block, so we only free it once using the stored base pointer
+        if (d_buffers->gpuMemoryBuffer != nullptr && d_buffers->gpuMemoryBuffer[i] != nullptr) {
+            CHECKCUDAERR(cudaFree(d_buffers->gpuMemoryBuffer[i]));
+        }
+        
+        if (d_buffers->d_constPols != nullptr && d_buffers->d_constPols[i] != nullptr) {
+            CHECKCUDAERR(cudaFree(d_buffers->d_constPols[i]));
+        }
+
+        // Free CPU pointer arrays
         if (d_buffers->d_aux_trace[i] != nullptr) {
-            for (int j = 0; j < d_buffers->n_streams; ++j) {  // You'll need to store nStreams or use a safe upper bound
-                if (d_buffers->d_aux_trace[i][j] != nullptr) {
-                    CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace[i][j]));
-                }
-            }
             free(d_buffers->d_aux_trace[i]);
         }
         if (d_buffers->d_aux_traceAggregation[i] != nullptr) {
-            for (int j = 0; j < d_buffers->n_recursive_streams; ++j) {  // You'll need to store nRecursiveStreams or use a safe upper bound
-                if (d_buffers->d_aux_traceAggregation[i][j] != nullptr) {
-                    CHECKCUDAERR(cudaFree(d_buffers->d_aux_traceAggregation[i][j]));
-                }
-            }
             free(d_buffers->d_aux_traceAggregation[i]);
         }
         
-        CHECKCUDAERR(cudaFree(d_buffers->d_constPols[i]));
-        CHECKCUDAERR(cudaFree(d_buffers->d_constPolsAggregation[i]));
+        // Free pinned host buffers
         CHECKCUDAERR(cudaFreeHost(d_buffers->pinned_buffer[i]));
         CHECKCUDAERR(cudaFreeHost(d_buffers->pinned_buffer_extra[i]));
     }
@@ -284,6 +353,7 @@ void free_device_buffers(void *d_buffers_)
     free(d_buffers->d_constPolsAggregation);
     free(d_buffers->pinned_buffer);
     free(d_buffers->pinned_buffer_extra);
+    free(d_buffers->gpuMemoryBuffer);
 
     if (d_buffers->streamsData != nullptr) {
         for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
@@ -341,7 +411,7 @@ void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, voi
     }
 }
 
-void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers_, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType) {
+void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers_, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType, bool onlyFirstGPU) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     uint64_t sizeConstPols = constSize * sizeof(Goldilocks::Element);
     
@@ -354,6 +424,7 @@ void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initia
     loadFileParallel(constPols, constFilename, sizeConstPols);
     
     for(int i=0; i<d_buffers->n_gpus; ++i){
+        if (onlyFirstGPU && i > 0) break;
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
         gl64_t *d_constPols = (strcmp(proofType, "basic") == 0) ? d_buffers->d_constPols[i] : d_buffers->d_constPolsAggregation[i];
         CHECKCUDAERR(cudaMemcpy(d_constPols + const_pols_offset, constPols, sizeConstPols, cudaMemcpyHostToDevice));
@@ -375,6 +446,7 @@ void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initia
         loadFileParallel(constTree, constTreeFilename, sizeConstTree);
         
         for(int i=0; i<d_buffers->n_gpus; ++i){
+            if (onlyFirstGPU && i > 0) break;
             cudaSetDevice(d_buffers->my_gpu_ids[i]);
             gl64_t *d_constTree = (strcmp(proofType, "basic") == 0) ? d_buffers->d_constPols[i] : d_buffers->d_constPolsAggregation[i];
             CHECKCUDAERR(cudaMemcpy(d_constTree + const_tree_offset, constTree, sizeConstTree, cudaMemcpyHostToDevice));
@@ -484,6 +556,223 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     return streamId;
 }
 
+uint64_t initialize_instance(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* params_, void *d_buffers_) {
+    auto key = std::make_pair(airgroupId, airId);
+    std::string proofType = "basic";
+
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    uint32_t streamId = selectStream(d_buffers, airgroupId, airId, proofType, false);
+    uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
+    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
+    cudaSetDevice(gpuId);
+
+    AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][string(proofType)][gpuLocalId];
+
+    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    StepsParams *params = (StepsParams *)params_;
+    cudaStream_t stream = d_buffers->streamsData[streamId].stream;
+    TimerGPU &timer = d_buffers->streamsData[streamId].timer;
+
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+
+    uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
+    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
+    uint64_t sizeTrace = N * (setupCtx->starkInfo.mapSectionsN["cm1"]) * sizeof(Goldilocks::Element);
+   
+    bool reuse_constants = d_buffers->streamsData[streamId].airgroupId == airgroupId && d_buffers->streamsData[streamId].airId == airId && d_buffers->streamsData[streamId].proofType == string("basic");
+
+    d_buffers->streamsData[streamId].pSetupCtx = pSetupCtx_;
+    d_buffers->streamsData[streamId].airgroupId = airgroupId;
+    d_buffers->streamsData[streamId].airId = airId;
+    d_buffers->streamsData[streamId].proofType = "basic";
+    d_buffers->streamsData[streamId].instanceId = instanceId;
+
+    uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
+    uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
+
+    if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0) {
+        Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
+        copy_to_device_in_chunks(d_buffers, params->pCustomCommitsFixed, pCustomCommitsFixed, setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element), streamId, timer);
+    }
+
+    uint64_t total_size = air_instance_info->is_packed ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : N * nCols * sizeof(Goldilocks::Element);
+    uint64_t *dst = (uint64_t *)(d_aux_trace + offsetStage1 + N * nCols);
+    copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);    
+    
+    size_t totalCopySize = 0;
+    totalCopySize += setupCtx->starkInfo.nPublics;
+    totalCopySize += setupCtx->starkInfo.proofValuesSize;
+    totalCopySize += setupCtx->starkInfo.airgroupValuesSize;
+    totalCopySize += setupCtx->starkInfo.airValuesSize;
+    totalCopySize += 2 * FIELD_EXTENSION;
+
+    Goldilocks::Element aux_values[totalCopySize];
+    uint64_t offset = 0;
+    memcpy(aux_values + offset, params->publicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
+    offset += setupCtx->starkInfo.nPublics;
+    if (setupCtx->starkInfo.proofValuesSize > 0) {
+        memcpy(aux_values + offset, params->proofValues, setupCtx->starkInfo.proofValuesSize * sizeof(Goldilocks::Element));
+        offset += setupCtx->starkInfo.proofValuesSize;
+    }
+    if (setupCtx->starkInfo.airgroupValuesSize > 0) {
+        memcpy(aux_values + offset, params->airgroupValues, setupCtx->starkInfo.airgroupValuesSize * sizeof(Goldilocks::Element));
+        offset += setupCtx->starkInfo.airgroupValuesSize;
+    }
+    if (setupCtx->starkInfo.airValuesSize > 0) {
+        memcpy(aux_values + offset, params->airValues, setupCtx->starkInfo.airValuesSize * sizeof(Goldilocks::Element));
+        offset += setupCtx->starkInfo.airValuesSize;
+    }
+    memcpy(aux_values + offset, (Goldilocks::Element *)params->challenges, 2 * FIELD_EXTENSION * sizeof(Goldilocks::Element));
+
+    copy_to_device_in_chunks(d_buffers, aux_values, (uint8_t*)(d_aux_trace + offsetPublicInputs), totalCopySize * sizeof(Goldilocks::Element), streamId, timer);
+    
+    gl64_t *d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
+    
+    uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
+    Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
+    if(!reuse_constants) {
+        unpack_fixed((uint64_t*)d_const_pols, (uint64_t*)(d_const_pols + 1), (uint64_t*)(d_const_pols + 1 + setupCtx->starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx->starkInfo.nConstants, N, stream, timer);
+        CHECKCUDAERR(cudaGetLastError());
+    }
+
+    uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
+    if (air_instance_info->is_packed) {
+        unpack_trace(air_instance_info, (uint64_t*)(d_aux_trace + offsetCm1 + N * nCols), (uint64_t*)(d_aux_trace + offsetCm1), nCols, N, stream, timer); 
+    } else {
+        NTT_Goldilocks_GPU ntt;
+        ntt.prepare_blocks_trace((gl64_t*)(d_aux_trace + offsetCm1), (gl64_t *)(d_aux_trace + offsetCm1 + N * nCols), nCols, N, stream, timer);
+    }
+
+    return streamId;
+}
+
+void calculate_trace_instance(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, void *params_, void *d_buffers_, uint64_t streamId) {
+    auto key = std::make_pair(airgroupId, airId);
+    std::string proofType = "basic";
+
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+
+    uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
+    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
+    cudaSetDevice(gpuId);
+
+    AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][string(proofType)][gpuLocalId];
+
+    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    StepsParams *params = (StepsParams *)params_;
+    cudaStream_t stream = d_buffers->streamsData[streamId].stream;
+    TimerGPU &timer = d_buffers->streamsData[streamId].timer;
+
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+
+    calculateTraceInstance(*setupCtx, d_aux_trace, streamId, d_buffers, air_instance_info, params->airgroupValues, timer, stream);
+}
+
+void verify_constraints(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, void* params_, void* constraintsInfo, void *d_buffers_, uint64_t streamId) {
+
+    auto key = std::make_pair(airgroupId, airId);
+    std::string proofType = "basic";
+
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+
+    uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
+    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
+    cudaSetDevice(gpuId);
+
+    AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][string(proofType)][gpuLocalId];
+
+    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    cudaStream_t stream = d_buffers->streamsData[streamId].stream;
+    TimerGPU &timer = d_buffers->streamsData[streamId].timer;
+
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+
+    verifyConstraintsGPU(*setupCtx, d_aux_trace, streamId, d_buffers, air_instance_info, (ConstraintInfo *)constraintsInfo, timer, stream);
+    cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
+    d_buffers->streamsData[streamId].status = 2;
+}
+
+void get_hint_field(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, void* stepsParams_, void* hintFieldValues, uint64_t hintId, char* hintFieldName, void* hintOptions, void *d_buffers_, uint64_t streamId, bool constant) {
+    SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx_;
+    
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    
+    uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
+    
+    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
+    cudaSetDevice(gpuId);
+    
+    ExpressionsGPU* expressions_gpu;
+    if(!constant) {
+        auto key = std::make_pair(airgroupId, airId);
+        std::string proofType = "basic";
+        AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][proofType][gpuLocalId];
+        expressions_gpu = air_instance_info->expressions_gpu;
+    }
+
+    cudaStream_t stream = d_buffers->streamsData[streamId].stream;
+    TimerGPU &timer = d_buffers->streamsData[streamId].timer;
+    
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+    
+    uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", false)];
+    uint64_t offsetPublicInputs = setupCtx.starkInfo.mapOffsets[std::make_pair("publics", false)];
+    uint64_t offsetAirgroupValues = setupCtx.starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
+    uint64_t offsetAirValues = setupCtx.starkInfo.mapOffsets[std::make_pair("airvalues", false)];
+    uint64_t offsetProofValues = setupCtx.starkInfo.mapOffsets[std::make_pair("proofvalues", false)];
+    uint64_t offsetChallenges = setupCtx.starkInfo.mapOffsets[std::make_pair("challenges", false)];
+    uint64_t offsetConstPols = setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)];
+    
+    // Create h_params pointing to GPU memory
+    StepsParams h_params = {
+        trace : (Goldilocks::Element *)d_aux_trace + offsetCm1,
+        aux_trace : (Goldilocks::Element *)d_aux_trace,
+        publicInputs : (Goldilocks::Element *)d_aux_trace + offsetPublicInputs,
+        proofValues : (Goldilocks::Element *)d_aux_trace + offsetProofValues,
+        challenges : (Goldilocks::Element *)d_aux_trace + offsetChallenges,
+        airgroupValues : (Goldilocks::Element *)d_aux_trace + offsetAirgroupValues,
+        airValues : (Goldilocks::Element *)d_aux_trace + offsetAirValues,
+        evals : nullptr,
+        xDivXSub : nullptr,
+        pConstPolsAddress: (Goldilocks::Element *)d_aux_trace + offsetConstPols,
+        pConstPolsExtendedTreeAddress: nullptr,
+        pCustomCommitsFixed: (Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)],
+    };
+    
+    StepsParams *d_params = d_buffers->streamsData[streamId].params;
+    ExpsArguments *d_expsArgs = d_buffers->streamsData[streamId].d_expsArgs;
+    DestParamsGPU *d_destParams = d_buffers->streamsData[streamId].d_destParams;
+    Goldilocks::Element *pinned_exps_params = d_buffers->streamsData[streamId].pinned_buffer_exps_params;
+    Goldilocks::Element *pinned_exps_args = d_buffers->streamsData[streamId].pinned_buffer_exps_args;
+    
+    // Copy h_params to device
+    StepsParams *params_pinned = d_buffers->streamsData[streamId].pinned_params;
+    memcpy(params_pinned, &h_params, sizeof(StepsParams));
+    CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams), cudaMemcpyHostToDevice, stream));
+    
+    uint64_t countId = 0;
+    
+    getHintFieldGPU(
+        setupCtx,
+        h_params,
+        d_params,
+        (HintFieldInfo *)hintFieldValues,
+        hintId,
+        std::string(hintFieldName),
+        *(HintFieldOptions *)hintOptions,
+        expressions_gpu,
+        d_expsArgs,
+        d_destParams,
+        pinned_exps_params,
+        pinned_exps_args,
+        countId,
+        timer,
+        stream
+    );
+    
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+}
+
 void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
     SetupCtx *setupCtx = (SetupCtx*) d_buffers->streamsData[streamId].pSetupCtx;
     uint64_t airgroupId = d_buffers->streamsData[streamId].airgroupId;
@@ -554,7 +843,7 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {
     d_buffers->streamsData[streamId].reset(false); 
 }
 
-uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream)
+uint64_t gen_recursive_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream)
 {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     bool aggregation = false;
@@ -616,9 +905,227 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
     return streamId;
 }
 
-uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *trace, void *auxTrace, void *d_buffers_, void *pSetupCtx_) {
+void tile_const_pols(void *pStarkinfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu) {
+
+    StarkInfo &starkInfo = *(StarkInfo *)pStarkinfo;
+    uint64_t *h_constPols = (uint64_t *)pConstPols;
+    uint64_t *h_constTree = (uint64_t *)pConstTree;
+
+    uint64_t N = (1 << starkInfo.starkStruct.nBits);
+    uint64_t NExtended = (1 << starkInfo.starkStruct.nBitsExt);
+    uint64_t nConst = starkInfo.nConstants;
+    uint64_t sizeConstPols = N * nConst * sizeof(Goldilocks::Element);
+    uint64_t sizeConstPolsExtended = NExtended * nConst * sizeof(Goldilocks::Element);
+    uint64_t sizeConstTree = get_const_tree_size((void *)&starkInfo) * sizeof(Goldilocks::Element);
+    uint64_t sizeConstOnlyTree = sizeConstTree - sizeConstPolsExtended;
+
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+
+    gl64_t *d_helper;
+    gl64_t *d_helperAux;
+    if (unified_buffer_gpu == nullptr) {
+        CHECKCUDAERR(cudaMalloc(&d_helper, sizeConstPolsExtended));
+        CHECKCUDAERR(cudaMalloc(&d_helperAux, sizeConstPolsExtended));
+    } else {
+        gl64_t * d_unifiedBuffer = (gl64_t *)unified_buffer_gpu;
+        d_helper = d_unifiedBuffer;
+        d_helperAux = d_unifiedBuffer + sizeConstPolsExtended;
+    }
+
+    Goldilocks::Element *h_helperTiled = (Goldilocks::Element *)malloc(sizeConstTree);
+
+    dim3 gridSize;
+    dim3 blockSize(32,32,1);
+    
+    // ConstPols
+    CHECKCUDAERR(cudaMemcpy(d_helper, h_constPols, sizeConstPols, cudaMemcpyHostToDevice));
+    gridSize = dim3((N + blockSize.x - 1) / blockSize.x, (nConst + blockSize.y - 1) / blockSize.y, 1);
+    fromRowMajorToTiled<<<gridSize, blockSize, 0, stream>>>(N, nConst, (uint64_t*)d_helper, (uint64_t*)d_helperAux);
+    CHECKCUDAERR(cudaMemcpy(h_helperTiled, d_helperAux, sizeConstPols, cudaMemcpyDeviceToHost));
+    ofstream fw(constFile, std::ios::out | std::ios::binary);
+    if (!fw.is_open()) {
+        zklog.error("Failed to open file for writing: " + string(constFile));
+        exitProcess();
+    }
+    fw.write((const char *)h_helperTiled, sizeConstPols);
+    fw.close();
+
+    // ConstTree
+    CHECKCUDAERR(cudaMemcpy(d_helper, h_constTree, sizeConstPolsExtended, cudaMemcpyHostToDevice));
+    gridSize = dim3((NExtended + blockSize.x - 1) / blockSize.x, (nConst + blockSize.y - 1) / blockSize.y, 1);
+    fromRowMajorToTiled<<<gridSize, blockSize, 0, stream>>>(NExtended, nConst, (uint64_t*)d_helper, (uint64_t*)d_helperAux);
+    CHECKCUDAERR(cudaMemcpy(h_helperTiled, d_helperAux, sizeConstPolsExtended, cudaMemcpyDeviceToHost));
+    memcpy(h_helperTiled + (sizeConstPolsExtended / sizeof(Goldilocks::Element)), (uint8_t*)pConstTree + sizeConstPolsExtended, sizeConstOnlyTree);
+    ofstream fwTree(constTreeFile, std::ios::out | std::ios::binary);
+    if (!fwTree.is_open()) {
+        zklog.error("Failed to open file for writing: " + string(constTreeFile));
+        exitProcess();
+    }
+    fwTree.write((const char *)h_helperTiled, sizeConstTree);
+    fwTree.close();
+
+    free(h_helperTiled);
+    if (unified_buffer_gpu == nullptr) {
+        CHECKCUDAERR(cudaFree(d_helper));
+        CHECKCUDAERR(cudaFree(d_helperAux));
+    }
+    CHECKCUDAERR(cudaStreamDestroy(stream));
+
+}
+
+void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffer_,  char* verkey) {
+    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    uint32_t gpuId = 0;
+    if (d_commit_buffer_ != nullptr) {
+        DeviceCommitBuffers *d_commit_buffer = (DeviceCommitBuffers *)d_commit_buffer_;
+        gpuId = d_commit_buffer->my_gpu_ids[0];
+    }
+    cudaSetDevice(gpuId);
+    
+    DeviceRecursiveFBuffers *d_buffers = new DeviceRecursiveFBuffers();
+    d_buffers->gpuId = gpuId;
+    
+    // Initialize BN128 Poseidon GPU constants for merkletree and transcript
+    PoseidonBN128GPU::initGPUConstants(&gpuId, 1);
+    uint64_t transcriptArity = setupCtx->starkInfo.starkStruct.merkleTreeCustom ? setupCtx->starkInfo.starkStruct.merkleTreeArity : 16;
+    TranscriptBN128_GPU::init_const(&gpuId, 1, transcriptArity);
+
+    uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
+    uint64_t sizeAuxTrace = proverBufferSize;
+
+    if (d_commit_buffer_ == nullptr) {
+        NTT_Goldilocks_GPU::init_twiddle_factors_and_r(22, 1, &gpuId); //max nBitsExt=21
+        // Allocate new device buffers
+        d_buffers->owns_aux_trace = true;
+        d_buffers->owns_const_tree = true;
+        CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace, sizeAuxTrace));
+        CHECKCUDAERR(cudaMalloc(&d_buffers->d_const_tree, sizeConstTree));
+    } else {
+        DeviceCommitBuffers *d_commit_buffer = (DeviceCommitBuffers *)d_commit_buffer_;
+        gl64_t *d_unifiedBuffer = d_commit_buffer->gpuMemoryBuffer[d_commit_buffer->gpus_g2l[gpuId]];
+        // Always reuse first buffer for d_aux_trace
+        d_buffers->owns_aux_trace = false;
+        d_buffers->owns_const_tree = false;
+        d_buffers->d_const_tree = d_unifiedBuffer;
+        d_buffers->d_aux_trace = d_unifiedBuffer + (sizeConstTree / 8);
+    }
+
+    RawFr rawFr;
+    RawFr::Element verkeyElement;
+    rawFr.fromString(verkeyElement, verkey);
+    
+    // Allocate GPU memory and copy verkey to device
+    CHECKCUDAERR(cudaMalloc(&d_buffers->d_verkey, sizeof(RawFr::Element)));
+    CHECKCUDAERR(cudaMemcpy(d_buffers->d_verkey, &verkeyElement, sizeof(RawFr::Element), cudaMemcpyHostToDevice));
+
+    return (void*)d_buffers;
+}   
+
+void alloc_fixed_pols_buffer_gpu(void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+
+    uint32_t gpuId = d_buffers->my_gpu_ids[0];
+    cudaSetDevice(gpuId);
+    CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[d_buffers->gpus_g2l[gpuId]], d_buffers->constPolsSize));
+}
+
+void free_fixed_pols_buffer_gpu(void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+
+    uint32_t gpuId = d_buffers->my_gpu_ids[0];
+    cudaSetDevice(gpuId);
+    CHECKCUDAERR(cudaFree(d_buffers->d_constPols[d_buffers->gpus_g2l[gpuId]]));
+}
+
+void load_fixed_pols_recursivef(void *pSetupCtx_, void *pConstTree, void *d_buffers_) {
+    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    DeviceRecursiveFBuffers *d_buffers = (DeviceRecursiveFBuffers *)d_buffers_;
+    
+    uint32_t gpuId = d_buffers->gpuId;
+    cudaSetDevice(gpuId);
+
+    uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
+
+    gl64_t * d_const_tree = (gl64_t *)d_buffers->d_const_tree;
+    uint8_t * pinnedBuffer = d_buffers->pinnedBufferConstTree;
+    uint64_t pinnedBufferSize = d_buffers->pinnedBufferSize;
+    cudaStream_t stream = d_buffers->stream_const_tree;
+    // Reset const tree loaded flag before starting a new copy
+    d_buffers->const_tree_loaded.store(false, std::memory_order_relaxed);
+    
+    // Copy const tree to device (synchronizes internally)
+    copy_to_device_in_chunks((const uint8_t*)pConstTree, (uint8_t*)d_const_tree, sizeConstTree, pinnedBuffer, pinnedBufferSize, stream);
+    CHECKCUDAERR(cudaGetLastError());
+    
+    // Signal that const tree copy is complete
+    d_buffers->const_tree_loaded.store(true, std::memory_order_release);
+    
+}
+
+void free_device_buffers_recursivef(void *d_buffers_) {
+    DeviceRecursiveFBuffers *d_buffers = (DeviceRecursiveFBuffers *)d_buffers_;
+    cudaSetDevice(d_buffers->gpuId);
+    if (d_buffers->owns_const_tree) {
+        CHECKCUDAERR(cudaFree(d_buffers->d_const_tree));
+    }
+    if (d_buffers->owns_aux_trace) {
+        CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace));
+    }
+    delete d_buffers;
+}
+
+void *gen_recursive_proof_final(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers_) {
+    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    DeviceRecursiveFBuffers *d_buffers = (DeviceRecursiveFBuffers *)d_buffers_;
+    
+    uint32_t gpuId = d_buffers->gpuId;
+    cudaSetDevice(gpuId);
+
+    uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
+    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
+    uint64_t sizeWitness = N * nCols * sizeof(Goldilocks::Element);
+    uint64_t sizePublicInputs = setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element);
+
+    gl64_t* d_aux_trace = d_buffers->d_aux_trace;
+    uint8_t* pinnedBuffer = d_buffers->pinnedBuffer;
+    uint64_t pinnedBufferSize = d_buffers->pinnedBufferSize;
+
+    dim3 gridSize;
+    dim3 blockSize(32,32,1);
+
+    // Copy and tile witness
+    uint64_t offsetCm1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
+    uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
+    gl64_t * d_witness_temp = d_aux_trace + offsetCm1Extended;
+    gl64_t * d_witness = d_aux_trace + offsetCm1;
+    copy_to_device_in_chunks((const uint8_t*)witness, (uint8_t*)d_witness_temp, sizeWitness, pinnedBuffer, pinnedBufferSize, d_buffers->stream);
+    gridSize = dim3((N + blockSize.x - 1) / blockSize.x, (nCols + blockSize.y - 1) / blockSize.y, 1);
+    fromRowMajorToTiled<<<gridSize, blockSize, 0, d_buffers->stream>>>(N, nCols, (uint64_t*)d_witness_temp, (uint64_t*)d_witness);
+    CHECKCUDAERR(cudaGetLastError());
+
+    // Copy public inputs
+    uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
+    CHECKCUDAERR(cudaMemcpyAsync(d_aux_trace + offsetPublicInputs, (const gl64_t*)pPublicInputs, sizePublicInputs, cudaMemcpyHostToDevice, d_buffers->stream));
+
+    uint64_t nConst = setupCtx->starkInfo.nConstants;
+    uint64_t sizeConstPols = N * nConst * sizeof(Goldilocks::Element);
+    // Copy const pols to device
+    uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
+    copy_to_device_in_chunks((const uint8_t*)pConstPols, (uint8_t*)(d_aux_trace + offsetConstPols), sizeConstPols, pinnedBuffer, pinnedBufferSize, d_buffers->stream);
+    CHECKCUDAERR(cudaGetLastError());
+
+    void* result = genRecursiveProofBN128_gpu(*setupCtx, airgroupId, airId, instanceId, (Goldilocks::Element *)d_aux_trace, (Goldilocks::Element *)pPublicInputs, string(proof_file), d_buffers);
+
+    cudaStreamSynchronize(d_buffers->stream);
+
+    return result;
+}
+
+uint64_t commit_witness(void *pSetupCtx_, void *params_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers_) {
 
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    StepsParams *params = (StepsParams *)params_;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     uint32_t streamId = selectStream(d_buffers, airgroupId, airId, "basic");
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
@@ -634,7 +1141,12 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
     cudaSetDevice(gpuId);
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key]["basic"][gpuLocalId];
 
-    uint64_t N = 1 << nBits;
+    uint64_t N = 1 << setupCtx->starkInfo.starkStruct.nBits;
+    uint64_t NExtended = 1 << setupCtx->starkInfo.starkStruct.nBitsExt;
+    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
+    uint64_t arity = setupCtx->starkInfo.starkStruct.merkleTreeArity;
+    uint64_t nBits = setupCtx->starkInfo.starkStruct.nBits;
+    uint64_t nBitsExt = setupCtx->starkInfo.starkStruct.nBitsExt;
 
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
     TimerGPU &timer = d_buffers->streamsData[streamId].timer;
@@ -644,8 +1156,102 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
     uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
     uint64_t total_size = air_instance_info->is_packed ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : sizeTrace;
     uint64_t *dst = (uint64_t*)(d_aux_trace + offsetStage1Extended);
-    copy_to_device_in_chunks(d_buffers, trace, dst, total_size, streamId, timer);
-    genCommit_gpu(arity, nBits, nBitsExt, nCols, d_aux_trace, d_buffers->streamsData[streamId].pinned_buffer_proof, setupCtx, air_instance_info, timer, stream);
+    copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
+    
+    uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(NExtended, arity);
+
+    uint64_t offset_src = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
+    uint64_t offset_dst = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
+    uint64_t offset_mt = setupCtx->starkInfo.mapOffsets[make_pair("mt1", true)];
+
+    Goldilocks::Element *pNodes = (Goldilocks::Element*)d_aux_trace + offset_mt;
+    NTT_Goldilocks_GPU ntt;
+
+    if (air_instance_info->is_packed) {
+        unpack_trace(air_instance_info, (uint64_t *)(d_aux_trace + offset_dst), (uint64_t *)(d_aux_trace + offset_src), nCols, N, stream, timer);
+    } else {
+        ntt.prepare_blocks_trace((gl64_t *)(d_aux_trace + offset_src), (gl64_t *)(d_aux_trace + offset_dst), nCols, N, stream, timer);
+    }
+
+    uint64_t nWitnessHints = setupCtx->expressionsBin.getNumberHintIdsByName("witness_calc");
+    if(nWitnessHints > 0) {
+        uint64_t countId = 0;
+        uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
+        uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
+        uint64_t offsetAirgroupValues = setupCtx->starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
+        uint64_t offsetAirValues = setupCtx->starkInfo.mapOffsets[std::make_pair("airvalues", false)];
+        uint64_t offsetProofValues = setupCtx->starkInfo.mapOffsets[std::make_pair("proofvalues", false)];
+
+        uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
+        gl64_t *d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
+        gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+        Goldilocks::Element *packed_const_pols = (Goldilocks::Element *)d_const_pols;
+        Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
+        uint64_t* d_num_packed_words = (uint64_t*) d_const_pols;
+        unpack_fixed(d_num_packed_words, (uint64_t*)(packed_const_pols + 1), (uint64_t*)(packed_const_pols + 1 + setupCtx->starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx->starkInfo.nConstants, N, stream, timer);
+        CHECKCUDAERR(cudaGetLastError());
+
+        Goldilocks::Element *pCustomCommitsFixed = nullptr;
+        if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0) {
+            pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
+            copy_to_device_in_chunks(d_buffers, params->pCustomCommitsFixed, pCustomCommitsFixed, setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element), streamId, timer);
+        }
+
+        size_t totalCopySize = 0;
+        totalCopySize += setupCtx->starkInfo.nPublics;
+        totalCopySize += setupCtx->starkInfo.proofValuesSize;
+        totalCopySize += setupCtx->starkInfo.airgroupValuesSize;
+        totalCopySize += setupCtx->starkInfo.airValuesSize;
+
+        Goldilocks::Element aux_values[totalCopySize];
+        uint64_t offset = 0;
+        memcpy(aux_values + offset, params->publicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
+        offset += setupCtx->starkInfo.nPublics;
+        if (setupCtx->starkInfo.proofValuesSize > 0) {
+            memcpy(aux_values + offset, params->proofValues, setupCtx->starkInfo.proofValuesSize * sizeof(Goldilocks::Element));
+            offset += setupCtx->starkInfo.proofValuesSize;
+        }
+        if (setupCtx->starkInfo.airgroupValuesSize > 0) {
+            memcpy(aux_values + offset, params->airgroupValues, setupCtx->starkInfo.airgroupValuesSize * sizeof(Goldilocks::Element));
+            offset += setupCtx->starkInfo.airgroupValuesSize;
+        }
+        if (setupCtx->starkInfo.airValuesSize > 0) {
+            memcpy(aux_values + offset, params->airValues, setupCtx->starkInfo.airValuesSize * sizeof(Goldilocks::Element));
+            offset += setupCtx->starkInfo.airValuesSize;
+        }
+
+        copy_to_device_in_chunks(d_buffers, aux_values, (uint8_t*)(d_aux_trace + offsetPublicInputs), totalCopySize * sizeof(Goldilocks::Element), streamId, timer);
+
+        StepsParams h_params = {
+            trace : (Goldilocks::Element *)d_aux_trace + offsetCm1,
+            aux_trace : (Goldilocks::Element *)d_aux_trace,
+            publicInputs : (Goldilocks::Element *)d_aux_trace + offsetPublicInputs,
+            proofValues : (Goldilocks::Element *)d_aux_trace + offsetProofValues,
+            challenges : nullptr,
+            airgroupValues : (Goldilocks::Element *)d_aux_trace + offsetAirgroupValues,
+            airValues : (Goldilocks::Element *)d_aux_trace + offsetAirValues,
+            evals : nullptr,
+            xDivXSub : nullptr,
+            pConstPolsAddress: d_const_pols_unpacked,
+            pConstPolsExtendedTreeAddress: nullptr,
+            pCustomCommitsFixed,
+        };
+
+        StepsParams *params_pinned = d_buffers->streamsData[streamId].pinned_params;
+        memcpy(params_pinned, &h_params, sizeof(StepsParams));
+        StepsParams *d_params =  d_buffers->streamsData[streamId].params;
+        CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams), cudaMemcpyHostToDevice, stream));
+
+        ExpsArguments *d_expsArgs = d_buffers->streamsData[streamId].d_expsArgs;
+        DestParamsGPU *d_destParams = d_buffers->streamsData[streamId].d_destParams;
+        Goldilocks::Element *pinned_exps_params = d_buffers->streamsData[streamId].pinned_buffer_exps_params;
+        Goldilocks::Element *pinned_exps_args = d_buffers->streamsData[streamId].pinned_buffer_exps_args;
+        
+        calculateWitnessExpr_gpu(*setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+    }
+
+    ntt.LDE_MerkleTree_GPU(pNodes, d_aux_trace, offset_dst, d_aux_trace, offset_src, nBits, nBitsExt, nCols, arity, timer, stream);
+    CHECKCUDAERR(cudaMemcpyAsync(d_buffers->streamsData[streamId].pinned_buffer_proof, &pNodes[tree_size - HASH_SIZE], HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
     return streamId;
@@ -672,18 +1278,24 @@ void init_gpu_setup(uint64_t maxBitsExt) {
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
     cudaSetDevice(deviceId);
-    uint32_t my_gpu_ids[1] = {0};
+    uint32_t my_gpu_ids[1] = {(uint32_t)deviceId};
 
     // Uploads constants for all possible arities
     Poseidon2GoldilocksGPU<16>::initPoseidon2GPUConstants(my_gpu_ids, 1);
     NTT_Goldilocks_GPU::init_twiddle_factors_and_r(maxBitsExt, 1, my_gpu_ids);
 }
 
-void prepare_blocks(uint64_t *pol, uint64_t N, uint64_t nCols) {
+void prepare_blocks(uint64_t *pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu) {
     gl64_t *d_pol;
     gl64_t *d_aux;
-    cudaMalloc(&d_pol, N * nCols * sizeof(gl64_t));
-    cudaMalloc(&d_aux, N * nCols * sizeof(gl64_t));
+    if (unified_buffer_gpu == nullptr) {
+        CHECKCUDAERR(cudaMalloc(&d_pol, N * nCols * sizeof(gl64_t)));
+        CHECKCUDAERR(cudaMalloc(&d_aux, N * nCols * sizeof(gl64_t)));
+    } else {
+        gl64_t *d_unifiedBuffer = (gl64_t *)unified_buffer_gpu;
+        d_pol = d_unifiedBuffer;
+        d_aux = d_unifiedBuffer + (N * nCols);
+    }
     cudaMemcpy(d_pol, pol, N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice);
 
     cudaStream_t stream;
@@ -697,18 +1309,17 @@ void prepare_blocks(uint64_t *pol, uint64_t N, uint64_t nCols) {
     ntt.prepare_blocks_trace(d_aux, d_pol, nCols, N, stream, timer);
 
     cudaMemcpy(pol, d_aux, N * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost);
-    cudaFree(d_pol);
-    cudaFree(d_aux);
+    if (unified_buffer_gpu == nullptr) {
+        CHECKCUDAERR(cudaFree(d_pol));
+        CHECKCUDAERR(cudaFree(d_aux));
+    }
     cudaStreamDestroy(stream);
 }
 
-void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *buffer, char *bufferFile, bool check)
+void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile)
 {   
-    int deviceId;
-    CHECKCUDAERR(cudaGetDevice(&deviceId));
-    cudaSetDevice(deviceId);
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    cudaSetDevice(d_buffers->my_gpu_ids[0]);
 
     TimerGPU timer;
 
@@ -722,12 +1333,17 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
     mt.setSource(customCommitsTree);
     mt.setNodes(&customCommitsTree[NExtended * nCols]);
 
-    gl64_t* d_buffer;
-    gl64_t* d_customCommitsPols;
-    gl64_t* d_customCommitsTree;
-    cudaMalloc((void**)&d_buffer, N * nCols * sizeof(gl64_t));
-    cudaMalloc((void**)&d_customCommitsPols, N * nCols * sizeof(gl64_t));
-    cudaMalloc((void**)&d_customCommitsTree, treeSize * sizeof(gl64_t));
+    uint32_t streamId = 0;
+    cudaStream_t stream = d_buffers->streamsData[streamId].stream;
+    
+    uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
+    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
+
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+
+    gl64_t* d_buffer = d_aux_trace;
+    gl64_t* d_customCommitsPols = d_aux_trace + N * nCols;
+    gl64_t* d_customCommitsTree = d_customCommitsPols + N * nCols;
     cudaMemset(d_customCommitsTree, 0, treeSize * sizeof(gl64_t));
     cudaMemcpy(d_buffer, buffer, N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice);
 
@@ -744,7 +1360,7 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
 
     Goldilocks::Element *customCommitsPols = new Goldilocks::Element[N * nCols];
     cudaMemcpy(customCommitsPols, d_customCommitsPols, N * nCols * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
-    if(!check) {
+    if(std::string(bufferFile) != "") {
         std::string buffFile = string(bufferFile);
         ofstream fw(buffFile.c_str(), std::fstream::out | std::fstream::binary);
         writeFileParallel(buffFile, root, 32, 0);
@@ -754,15 +1370,11 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
         fw.close();
     }
 
-    cudaFree(d_buffer);
-    cudaFree(d_customCommitsPols);
-    cudaFree(d_customCommitsTree);
     delete[] customCommitsTree;
     delete[] customCommitsPols;
-    cudaStreamDestroy(stream);
 }
 
-void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress_) {
+void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress_, void *unified_buffer_gpu) {
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
     cudaSetDevice(deviceId);
@@ -782,8 +1394,15 @@ void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pCons
 
     Goldilocks::Element* d_fixedPols;
     Goldilocks::Element* d_fixedTree;
-    cudaMalloc((void**)&d_fixedPols, NExtended * starkInfo.nConstants * sizeof(Goldilocks::Element));
-    cudaMalloc((void**)&d_fixedTree, treeSize * sizeof(Goldilocks::Element));
+    if (unified_buffer_gpu == nullptr) {
+        cudaMalloc((void**)&d_fixedPols, NExtended * starkInfo.nConstants * sizeof(Goldilocks::Element));
+        cudaMalloc((void**)&d_fixedTree, treeSize * sizeof(Goldilocks::Element));
+    } else {
+        Goldilocks::Element *d_unifiedBuffer = (Goldilocks::Element *)unified_buffer_gpu;
+        d_fixedPols = d_unifiedBuffer;
+        d_fixedTree = d_unifiedBuffer + (NExtended * starkInfo.nConstants);
+    }
+    
     cudaMemcpy(d_fixedPols, pConstPolsAddress, N * starkInfo.nConstants * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
     cudaMemset(d_fixedTree, 0, treeSize * sizeof(Goldilocks::Element));
 
@@ -794,46 +1413,102 @@ void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pCons
 
     Goldilocks::Element *pConstTreeAddress = (Goldilocks::Element *)pConstTreeAddress_;
     cudaMemcpy(pConstTreeAddress, d_fixedTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
-    cudaFree(d_fixedPols);
-    cudaFree(d_fixedTree);
+    if (unified_buffer_gpu == nullptr) {
+        cudaFree(d_fixedPols);
+        cudaFree(d_fixedTree);
+    }
     TimerStopGPU(timer, STARK_GPU_CONST_TREE);
     cudaStreamDestroy(stream);
 }
 
-uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size) {
+uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size)
+{
     int deviceCount;
     cudaError_t err = cudaGetDeviceCount(&deviceCount);
     if (err != cudaSuccess) {
-        std::cerr << "CUDA error getting device count: " << cudaGetErrorString(err) << std::endl;
+        std::cerr << "CUDA error getting device count: "
+                  << cudaGetErrorString(err) << std::endl;
         exit(1);
     }
 
-    uint32_t device_id;
-
-    if (deviceCount >= node_size) {
-        // Each process gets multiple GPUs
-        uint32_t n_gpus_per_process = deviceCount / node_size;
-        device_id = node_rank * n_gpus_per_process;
-    } else {
-        // Each GPU is shared by multiple processes
-        device_id = node_rank % deviceCount;
-    }
-
-    cudaSetDevice(device_id);
-
-    uint64_t freeMem, totalMem;
-    err = cudaMemGetInfo(&freeMem, &totalMem);
-    if (err != cudaSuccess) {
-        std::cerr << "CUDA error: " << cudaGetErrorString(err) << std::endl;
+    if (deviceCount == 0) {
+        std::cerr << "No CUDA devices found." << std::endl;
         return 0;
     }
 
-    zklog.trace("Process rank " + std::to_string(node_rank) + 
-                " sees GPU " + std::to_string(device_id));
-    zklog.trace("Free memory GPU: " + std::to_string(freeMem / (1024.0 * 1024.0)) + " MB");
-    zklog.trace("Total memory GPU: " + std::to_string(totalMem / (1024.0 * 1024.0)) + " MB");
+    uint64_t min_free_mem = std::numeric_limits<uint64_t>::max();
+    bool multi_gpu_per_process = deviceCount >= (int)node_size;
+    uint32_t n_gpus;
+    
+    if (multi_gpu_per_process) {
+        n_gpus = (uint32_t)deviceCount / node_size;
+        uint32_t first_gpu = node_rank * n_gpus;
+        
+        for (uint32_t i = 0; i < n_gpus; i++) {
+            uint32_t device_id = first_gpu + i;
+            
+            if (device_id >= (uint32_t)deviceCount) {
+                std::cerr << "Invalid device_id " << device_id
+                          << " (deviceCount=" << deviceCount << ")"
+                          << std::endl;
+                continue;
+            }
+            
+            cudaSetDevice(device_id);
+            
+            uint64_t freeMem, totalMem;
+            err = cudaMemGetInfo(&freeMem, &totalMem);
+            if (err != cudaSuccess) {
+                std::cerr << "CUDA error on GPU " << device_id << ": "
+                          << cudaGetErrorString(err) << std::endl;
+                continue;
+            }
+            
+            zklog.info("Process rank " + std::to_string(node_rank) +
+                       " - GPU " + std::to_string(device_id) +
+                       " [" + std::to_string(i) + "/" + std::to_string(n_gpus) + "]: " +
+                       std::to_string(freeMem / (1024.0 * 1024.0 * 1024.0)) + " GB free / " +
+                       std::to_string(totalMem / (1024.0 * 1024.0 * 1024.0)) + " GB total");
+            
+            min_free_mem = std::min(min_free_mem, freeMem);
+        }
+        
+        if (min_free_mem != std::numeric_limits<uint64_t>::max()) {
+            zklog.info("Process rank " + std::to_string(node_rank) +
+                       ": Using minimum memory across " + std::to_string(n_gpus) +
+                       " GPUs: " + std::to_string(min_free_mem / (1024.0 * 1024.0 * 1024.0)) + " GB");
+        }
+    } else {
+        uint32_t device_id = node_rank % deviceCount;
+        cudaSetDevice(device_id);
+        
+        uint64_t freeMem, totalMem;
+        err = cudaMemGetInfo(&freeMem, &totalMem);
+        if (err != cudaSuccess) {
+            std::cerr << "CUDA error on GPU " << device_id << ": "
+                      << cudaGetErrorString(err) << std::endl;
+            return 0;
+        }
+        
+        zklog.info("Process rank " + std::to_string(node_rank) +
+                   " uses shared GPU " + std::to_string(device_id) +
+                   ": " + std::to_string(freeMem / (1024.0 * 1024.0 * 1024.0)) + " GB free / " +
+                   std::to_string(totalMem / (1024.0 * 1024.0 * 1024.0)) + " GB total");
+        
+        min_free_mem = freeMem;
+    }
+    
+    // Check if we got valid memory info
+    if (min_free_mem == std::numeric_limits<uint64_t>::max()) {
+        std::cerr << "Failed to get memory info from any GPU for process rank " 
+                  << node_rank << std::endl;
+        return 0;
+    }
 
-    return freeMem;
+    zklog.info("Minimum free memory available for GPU usage: " + 
+               std::to_string(min_free_mem / (1024.0 * 1024.0 * 1024.0)) + " GB");
+
+    return min_free_mem;
 }
 
 uint64_t get_num_gpus() {
@@ -844,6 +1519,17 @@ uint64_t get_num_gpus() {
         exit(1);
     }
     return deviceCount;
+}
+
+void *get_unified_buffer_gpu(void *d_buffers_) {
+    int deviceId;
+    CHECKCUDAERR(cudaGetDevice(&deviceId));
+    cudaSetDevice(deviceId);
+
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+
+    gl64_t *d_unifiedBuffer = d_buffers->gpuMemoryBuffer[d_buffers->gpus_g2l[deviceId]];
+    return (void *)d_unifiedBuffer;
 }
 
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive, bool force_recursive){
@@ -944,7 +1630,7 @@ void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId){
 
         if(d_buffers->streamsData[streamId].root != nullptr) {
             get_commit_root(d_buffers, streamId);
-        } else {
+        } else if (d_buffers->streamsData[streamId].proofBuffer != nullptr) {
             get_proof(d_buffers, streamId);
         }
     }
@@ -960,5 +1646,21 @@ void closeStreamTimer(TimerGPU &timer, uint64_t instance_id, uint64_t airgroup_i
     else
         TimerLogCategoryContributionsGPU(timer, STARK_GPU_COMMIT);
     TimerResetGPU(timer);
+}
+
+void *init_final_snark_prover(char* zkeyFile) {
+    return initFinalSnarkProverGPU(zkeyFile);
+}
+
+void free_final_snark_prover(void *snark_prover) {
+    freeFinalSnarkProverGPU(snark_prover);
+}
+
+void gen_final_snark_proof(void *prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark) {
+    genFinalSnarkProofGPU(prover, circomWitnessFinal, proof, publicsSnark);
+}
+
+void pre_allocate_final_snark_prover(void *snark_prover, void* unified_buffer_gpu) {
+    preAllocateFinalSnarkProverGPU(snark_prover, unified_buffer_gpu);
 }
 #endif

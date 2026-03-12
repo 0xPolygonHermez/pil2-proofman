@@ -3,7 +3,7 @@ use std::sync::Arc;
 use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx, ProofmanResult};
 use fields::PrimeField64;
-use rand::{rng, Rng, SeedableRng, rngs::StdRng};
+use rand::{rng, RngExt, SeedableRng, rngs::StdRng};
 
 use crate::Permutation1_7Trace;
 

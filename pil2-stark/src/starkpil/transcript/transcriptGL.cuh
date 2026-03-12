@@ -9,12 +9,12 @@
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 
-__device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor, uint32_t arity);
-__device__ Goldilocks::Element _getFields1(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor, uint32_t arity);
-__global__ void _add(Goldilocks::Element* input, uint64_t size, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor, uint32_t arity);
-__global__ void _getField(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor, uint32_t arity);
-__global__ void __getState(Goldilocks::Element* output, uint64_t nOutputs, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor, uint32_t arity);
-__global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor, uint32_t arity);
+__device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity);
+__device__ Goldilocks::Element _getFields1(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity);
+__global__ void _add(Goldilocks::Element* input, uint64_t size, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity);
+__global__ void _getField(uint64_t* output, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity);
+__global__ void __getState(Goldilocks::Element* output, uint64_t nOutputs, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity);
+__global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity);
 
 class TranscriptGL_GPU
 {
@@ -33,18 +33,15 @@ public:
 
     uint *pending_cursor;
     uint *out_cursor;
-    uint *state_cursor;
 
     TranscriptGL_GPU(uint64_t arity, bool custom, cudaStream_t stream);
     ~TranscriptGL_GPU()
     {
-
         CHECKCUDAERR(cudaFree(state));
         CHECKCUDAERR(cudaFree(pending));
         CHECKCUDAERR(cudaFree(out));
         CHECKCUDAERR(cudaFree(pending_cursor));
         CHECKCUDAERR(cudaFree(out_cursor));
-        CHECKCUDAERR(cudaFree(state_cursor));
     }
     
     void reset(cudaStream_t stream) {
@@ -53,7 +50,6 @@ public:
         cudaMemsetAsync(out, 0, transcriptOutSize * sizeof(Goldilocks::Element), stream);
         cudaMemsetAsync(pending_cursor, 0, sizeof(uint), stream);
         cudaMemsetAsync(out_cursor, 0, sizeof(uint), stream);
-        cudaMemsetAsync(state_cursor, 0, sizeof(uint), stream);
     };
 
     void put(Goldilocks::Element *input, uint64_t size, cudaStream_t stream);

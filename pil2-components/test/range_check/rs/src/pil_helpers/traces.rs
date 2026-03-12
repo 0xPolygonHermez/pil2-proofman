@@ -16,7 +16,9 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "6ee57cb034bfdf23c6e39803244948fd930ddc97ccb5d05cbbe5caefe1b49476";
+pub const PILOUT_HASH: &str = "82340f76128a3e3df658762de3378af60f37b39f201ad2a7f79ec47330f19552";
+
+pub const MERKLE_TREE_ARITY: u64 = 4;
 
 //AIRGROUP CONSTANTS
 
@@ -191,12 +193,12 @@ pub type U8AirTrace<F> = GenericTrace<U8AirTraceRow<F>, 256, 9, 0>;
 
 
 trace_row!(SpecifiedRangesFixedRow<F> {
- RANGE: [F; 28], __L1__: F,
+ OPID: [F; 14], VALS: [F; 14], __L1__: F,
 });
 pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 32768, 10, 0>;
 
 trace_row!(SpecifiedRangesTraceRow<F> {
- mul:[F; 28],
+ mul:[F; 14],
 });
 pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 32768, 10, 0>;
 

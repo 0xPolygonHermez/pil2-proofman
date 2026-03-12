@@ -1,6 +1,8 @@
 use std::sync::{Arc, RwLock};
 
-use proofman_common::{write_custom_commit_trace, AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanResult, SetupCtx};
+use proofman_common::{
+    write_custom_commit_trace, AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanResult, SetupCtx, init_gpu_setup,
+};
 use witness::WitnessComponent;
 use fields::PrimeField64;
 
@@ -17,7 +19,12 @@ impl FibonacciSquare {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &RwLock<Vec<usize>>) -> ProofmanResult<()> {
+    fn execute(
+        &self,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        global_ids: &RwLock<Vec<usize>>,
+    ) -> ProofmanResult<()> {
         let global_id = pctx.add_instance(FibonacciSquareTrace::<F>::AIRGROUP_ID, FibonacciSquareTrace::<F>::AIR_ID)?;
         let instance_ids = vec![global_id];
         *self.instance_ids.write().unwrap() = instance_ids.clone();
@@ -72,12 +79,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         Ok(())
     }
 
-    fn gen_custom_commits_fixed(
-        &self,
-        pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx<F>>,
-        check: bool,
-    ) -> ProofmanResult<()> {
+    fn gen_custom_commits_fixed(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) -> ProofmanResult<()> {
         let buffer = vec![F::ZERO; FibonacciSquareRomTrace::<F>::ROW_SIZE * FibonacciSquareRomTrace::<F>::NUM_ROWS];
         let mut trace_rom = FibonacciSquareRomTrace::new_from_vec_zeroes(buffer)?;
 
@@ -90,24 +92,8 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
 
         let setup = sctx.get_setup(trace_rom.airgroup_id(), trace_rom.air_id())?;
         let blowup_factor = 1 << (setup.stark_info.stark_struct.n_bits_ext - setup.stark_info.stark_struct.n_bits);
-        write_custom_commit_trace::<F>(&mut trace_rom, blowup_factor, MERKLE_TREE_ARITY, &file_name, check)?;
-        Ok(())
-    }
-
-    fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) -> ProofmanResult<()> {
-        // let trace = FibonacciSquareTrace::new_from_vec(_pctx.get_air_instance_trace(0, 0, 0));
-        // let fixed = FibonacciSquareFixed::new_from_vec(_sctx.get_fixed(0, 0));
-        // let air_values = FibonacciSquareAirValues::new_from_vec(pctx.get_air_instance_air_values(0, 0, 0));
-        // let airgroup_values = FibonacciSquareAirGroupValues::new_from_vec(pctx.get_air_instance_airgroup_values(0, 0, 0));
-
-        // let publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
-        // let proof_values = BuildProofValues::from_vec_guard(pctx.get_proof_values());
-
-        // tracing::info!("  First row 1: {:?}", trace[1]);
-        // tracing::info!("  Air values: {:?}", air_values);
-        // tracing::info!("  Airgroup values: {:?}", airgroup_values);
-        // tracing::info!("  Publics: {:?}", publics);
-        // tracing::info!("  Proof values: {:?}", proof_values);
+        init_gpu_setup(setup.stark_info.stark_struct.n_bits_ext)?;
+        write_custom_commit_trace::<F>(&pctx, &mut trace_rom, blowup_factor, MERKLE_TREE_ARITY, &file_name)?;
         Ok(())
     }
 }

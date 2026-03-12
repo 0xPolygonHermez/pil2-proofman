@@ -37,7 +37,7 @@ pub struct VirtualTableAir {
 }
 
 impl<F: PrimeField64> StdVirtualTable<F> {
-    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: &SetupCtx<F>, shared_tables: bool) -> ProofmanResult<Arc<Self>> {
+    pub fn new(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, shared_tables: bool) -> ProofmanResult<Arc<Self>> {
         // Get relevant data from the global hint
         let virtual_table_global_hint = get_hint_ids_by_name(sctx.get_global_bin(), "virtual_table_data_global");
         if virtual_table_global_hint.is_empty() {
@@ -68,7 +68,8 @@ impl<F: PrimeField64> StdVirtualTable<F> {
 
             let hint_opt = HintFieldOptions::default();
             let table_ids = get_hint_field_constant_a_as::<usize, F>(
-                sctx,
+                pctx,
+                setup,
                 airgroup_id,
                 air_id,
                 hint_id,
@@ -76,7 +77,8 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 hint_opt.clone(),
             )?;
             let acc_heights = get_hint_field_constant_a_as::<u64, F>(
-                sctx,
+                pctx,
+                setup,
                 airgroup_id,
                 air_id,
                 hint_id,
@@ -84,7 +86,8 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 hint_opt.clone(),
             )?;
             let num_muls = get_hint_field_constant_as::<usize, F>(
-                sctx,
+                pctx,
+                setup,
                 airgroup_id,
                 air_id,
                 hint_id,
@@ -289,7 +292,12 @@ impl VirtualTableAir {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, _global_ids: &RwLock<Vec<usize>>) -> ProofmanResult<()> {
+    fn execute(
+        &self,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        _global_ids: &RwLock<Vec<usize>>,
+    ) -> ProofmanResult<()> {
         let (instance_found, mut table_instance_id) = pctx.dctx_find_process_table(self.airgroup_id, self.air_id)?;
 
         if !instance_found {
@@ -301,10 +309,8 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         }
 
         self.calculated.store(false, Ordering::Relaxed);
-        self.multiplicities.par_iter().for_each(|vec| {
-            for v in vec.iter() {
-                v.store(0, Ordering::Relaxed);
-            }
+        self.multiplicities.par_iter().flat_map(|vec| vec.par_iter()).for_each(|v| {
+            v.store(0, Ordering::Relaxed);
         });
 
         self.table_instance_id.store(table_instance_id as u64, Ordering::SeqCst);
@@ -327,7 +333,7 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         &self,
         stage: u32,
         pctx: Arc<ProofCtx<F>>,
-        _sctx: Arc<SetupCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
         _instance_ids: &[usize],
         _n_cores: usize,
         _buffer_pool: &dyn BufferPool<F>,
@@ -356,9 +362,12 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
                         chunk[col] = F::from_u64(vec[row].load(Ordering::Relaxed));
                     }
                 });
+                let setup = sctx.get_setup(self.airgroup_id, self.air_id)?;
+                let n_cols = setup.stark_info.map_sections_n["cm1"] as usize;
                 let air_instance = AirInstance::new(TraceInfo::new(
                     self.airgroup_id,
                     self.air_id,
+                    n_cols,
                     self.num_rows,
                     buffer,
                     false,

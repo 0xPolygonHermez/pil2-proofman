@@ -66,6 +66,23 @@ impl StatsCmd {
             Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone())?,
         };
 
+        let mut gpu_params = ParamsGPU::default();
+        if let Some(number_threads_witness) = self.number_threads_witness {
+            gpu_params.with_number_threads_pools_witness(number_threads_witness);
+        }
+        if let Some(max_witness_stored) = self.max_witness_stored {
+            gpu_params.with_max_witness_stored(max_witness_stored);
+        }
+
+        let proofman = ProofMan::<Goldilocks>::new(
+            self.proving_key.clone(),
+            true,
+            false,
+            gpu_params,
+            self.verbose.into(),
+            HashMap::new(),
+        )?;
+
         let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
         for commit in &self.custom_commits {
             if let Some((key, value)) = commit.split_once('=') {
@@ -74,25 +91,7 @@ impl StatsCmd {
                 eprintln!("Invalid commit format: {commit:?}");
             }
         }
-
-        let mut gpu_params = ParamsGPU::default();
-        if self.number_threads_witness.is_some() {
-            gpu_params.with_number_threads_pools_witness(self.number_threads_witness.unwrap());
-        }
-        if self.max_witness_stored.is_some() {
-            gpu_params.with_max_witness_stored(self.max_witness_stored.unwrap());
-        }
-
-        let proofman = ProofMan::<Goldilocks>::new(
-            self.proving_key.clone(),
-            custom_commits_map,
-            true,
-            false,
-            false,
-            gpu_params,
-            self.verbose.into(),
-            HashMap::new(),
-        )?;
+        proofman.register_custom_commits(custom_commits_map)?;
 
         match self.field {
             Field::Goldilocks => proofman.compute_witness(
@@ -100,7 +99,7 @@ impl StatsCmd {
                 self.public_inputs.clone(),
                 &debug_info,
                 self.verbose.into(),
-                ProofOptions::new(false, false, false, false, false, self.minimal_memory, false, PathBuf::new()),
+                ProofOptions::new(false, false, false, false, false, self.minimal_memory, false, None),
             )?,
         };
 

@@ -1,10 +1,9 @@
 require "std_constants.pil"
 require "std_lookup.pil"
 
-// TODO: Integrate the division table function here
+// TODO: Range check consult and write!
 
-// TODO: Improve specified_ranges division, so that it does not create a new multiplicity
-// for each opid, but instead fills the N up until the end
+// TODO: Integrate the division table function here
 
 /*
  * Module for performing selected range checks over expressions of any degree.
@@ -30,13 +29,13 @@ require "std_lookup.pil"
  *    First, obtain an ID for the range, then perform the range check using a user-defined range selector.
  *    Example:
  *        // Step 1: Obtain IDs for the desired ranges.
- *        int id_range_24 = range_check_id(0, 2**24-1);  // Range [0, 2^24-1]
- *        int id_range_16 = range_check_id(0, 2**16-1);  // Range [0, 2^16-1]
- *        int id_range_15 = range_check_id(0, 2**15-1);  // Range [0, 2^15-1]
+ *        int id_range_24 = dynamic_range_check_id(0, 2**24-1);  // Range [0, 2^24-1]
+ *        int id_range_16 = dynamic_range_check_id(0, 2**16-1);  // Range [0, 2^16-1]
+ *        int id_range_15 = dynamic_range_check_id(0, 2**15-1);  // Range [0, 2^15-1]
  *
  *        // Step 2: Perform range checks dynamically using a user-defined range selector.
  *        col witness sel_8, sel_16, sel_32;
- *        range_check_dynamic(expression, id_range_24 * sel_8 + id_range_16 * sel_16 + id_range_15 * sel_32);
+ *        dynamic_range_check(expression, id_range_24 * sel_8 + id_range_16 * sel_16 + id_range_15 * sel_32);
  *
  * **Parameter Details**:
  * - `predefined`: A flag indicating whether predefined ranges should be used.
@@ -45,7 +44,7 @@ require "std_lookup.pil"
  *      - U16: [0..65535]
  *
  * **Implementation Notes**:
- * - All range checks are internally reduced to a lookup check, implemented using the logup protocol.
+ * - All range checks are reduced to a lookup check using the LogUp protocol.
  *   For more details, refer to: https://eprint.iacr.org/2022/1530.
  * - This protocol is optimized for repeated lookups within the same range rather than across different ranges.
  * - To improve performance, the module attempts to "absorb" custom ranges into predefined ranges whenever possible.
@@ -142,13 +141,9 @@ const int U8AIR_OPID = 100;
 const int U16AIR_OPID = 101;
 
 int last_assigned_opid = U16AIR_OPID;
-private function next_available_opid(): int {
-    last_assigned_opid++;
-    return last_assigned_opid;
-}
-
-private function get_opid(const int min, const int max, const int predefined): int {
+private function generate_opid(const int min, const int max, const int predefined): int {
     if (predefined && min >= 0) {
+        // If the range is [0, R] with R <= MASK_8/MASK_16, we use the predefined opids
         if (max <= MASK_8) {
             return U8AIR_OPID;
         } else if (max <= MASK_16) {
@@ -156,7 +151,9 @@ private function get_opid(const int min, const int max, const int predefined): i
         }
     }
 
-    return next_available_opid();
+    // Generate a new opid
+    last_assigned_opid++;
+    return last_assigned_opid;
 }
 
 airtemplate U8Air(const int N = 2**8) {
@@ -200,47 +197,89 @@ airtemplate U16Air(const int N = 2**16) {
 }
 
 airtemplate SpecifiedRanges(const int N, const int opids[], const int opids_count, const int init_mins[], const int init_maxs[]) {
-    // Compute the number of columns needed
-    int col_num = 0;
-    int opids_len[opids_count];
+    // Pack ranges efficiently into groups of N rows each.
+    // Multiple opids can share the same column, distinguished by a OPID column
+    int total_rows = 0;
+    int acc_heights[opids_count];
+    int acc_heights_sum = 0;
     int init_mins_neg[opids_count];
+    const expr tVALS[opids_count];
     for (int i = 0; i < opids_count; i++) {
-        // Divide the range [min,max] to n ranges [min,min+N-1], [min+N,min+2N-1], ..., [min+(n-1)N,max]
         const int min = init_mins[i];
         const int max = init_maxs[i];
         const int range_size = max - min + 1;
-        const int divisions = (range_size + N - 1) / N;
-        opids_len[i] = divisions;
-        col_num += divisions;
-
-        // Since everything is mapped back to a field element, I need to know whether the range is negative
+        total_rows += range_size;
+        
         init_mins_neg[i] = (min < 0) ? 1 : 0;
+
+        acc_heights[i] = acc_heights_sum;
+        acc_heights_sum += range_size;
+
+        col fixed virtual(range_size) tmp = [min..max-1,max];
+        tVALS[i] = tmp;
     }
 
-    @specified_ranges_data{col_num: col_num, mins: init_mins, mins_neg: init_mins_neg, opids_count: opids_count, opids_len: opids_len};
+    // Number of groups (columns) needed
+    const int num_groups = (total_rows + N - 1) / N;
 
-    col fixed RANGE[col_num];
-    col witness mul[col_num];
-    int offset = 0;
+    @specified_ranges_data{opids_count: opids_count, mins: init_mins, mins_neg: init_mins_neg, 
+                           acc_heights: acc_heights, num_muls: num_groups};
+
+    // Track which opids go into which group
+    int group_opids[num_groups][opids_count];
+    int group_lens[num_groups];
+
+    // Create the fixed and witness columns
+    col fixed OPID[num_groups];
+    col fixed VALS[num_groups];
+    col witness mul[num_groups];
+
+    int current_group = 0;
+    int row_offset = 0;    
     for (int i = 0; i < opids_count; i++) {
         const int opid = opids[i];
         const int min = init_mins[i];
         const int max = init_maxs[i];
-
-        const int opid_len = opids_len[i];
-        for (int j = 0; j < opid_len; j++) {
-            const int idx = offset + j;
-            const int min_part = min + j * N;
-            const int max_part = (j == opid_len - 1) ? max : min + (j + 1) * N - 1;
-
-            if (min == max) {
-                RANGE[idx] = [min_part...];
+        int height = max - min + 1;
+        int value = min;
+        
+        while (height > 0) {
+            const int rows_available = N - row_offset;
+            const int h = (height <= rows_available) ? height : rows_available;
+            
+            // Track this opid in the current group
+            group_opids[current_group][group_lens[current_group]] = opid;
+            group_lens[current_group]++;
+            
+            // Fill OPID with opid for these rows
+            Tables.fill(opid, OPID[current_group], row_offset, h);
+            
+            // Fill VALS with values [value..value+h-1]
+            if (h == 1) {
+                VALS[current_group][row_offset] = value;
             } else {
-                RANGE[idx] = [min_part..max_part-1,max_part...];
+                Tables.copy(tVALS[i], value - min, VALS[current_group], row_offset, h);
             }
-            lookup_proves(opid, [RANGE[idx]], mul[idx], PIOP_NAME_RANGE_CHECK);
+            
+            value += h;
+            height -= h;
+            row_offset += h;
+            
+            if (row_offset >= N) {
+                current_group++;
+                row_offset = 0;
+            }
         }
-        offset += opid_len;
+    }
+    
+    // Perform the proves using dynamic lookup (multiple opids per group)
+    for (int i = 0; i < num_groups; i++) {
+        int opids_in_group[group_lens[i]];
+        for (int j = 0; j < group_lens[i]; j++) {
+            opids_in_group[j] = group_opids[i][j];
+        }
+        
+        lookup_proves_dynamic(opids: opids_in_group, busid: OPID[i], expressions: [VALS[i]], mul: mul[i]);
     }
 
     if (SPECIFIED_TABLE_VIRTUAL == 0) {
@@ -263,7 +302,7 @@ airtemplate SpecifiedRanges(const int N, const int opids[], const int opids_coun
  *       - U8: [0, 255]
  *       - U16: [0, 65535]
  */
-function range_check(const expr expression, const int min, const int max, const expr sel = 1, const int predefined = 0) {
+function range_check(const expr expression, const int min, const int max, const expr sel = 1, const int predefined = 0): int {
     range_validator(min, max);
 
     // Check if the range can be absorbed into the predefined ranges
@@ -315,6 +354,8 @@ function range_check(const expr expression, const int min, const int max, const 
 
     // Define the range check proves
     define_proves(absorb);
+
+    return opid;
 }
 
 /**
@@ -331,15 +372,18 @@ function range_check(const expr expression, const int min, const int max, const 
  *       - U8: [0, 255]
  *       - U16: [0, 65535]
  */
-function range_check_group(const expr expressions[], const int min, const int max, const expr sels[], const int predefined = 0) {
+function range_check_group(const expr expressions[], const int min, const int max, const expr sels[], const int predefined = 0): int {
     const int len = length(expressions);
     if (len != length(sels)) {
         error(`The length of expressions (${len}) and sels (${length(sels)}) should be the same`);
     }
 
+    int opid;
     for (int i = 0; i < len; i++) {
-        range_check(expressions[i], min, max, sels[i], predefined);
+        opid =range_check(expressions[i], min, max, sels[i], predefined);
     }
+
+    return opid;
 }
 
 /**
@@ -365,7 +409,16 @@ function range_check_group(const expr expressions[], const int min, const int ma
  */
 // TODO: Generalize to more than 2 ranges
 function multi_range_check(const expr expression, const int min1, const int max1, const int min2, const int max2, 
-                           const expr range_sel = 1, const expr sel = 1, const int predefined = 0): int {
+                           const expr range_sel = 1, const expr sel = 1, const int predefined = 0): int[] {
+    // Note: This solution improves the naive solution:
+    //   · range_check(expression, min1, max1, 0, sel*range_sel).
+    //   · range_check(expression, min2, max2, 0, sel*(1-range_sel)).
+    // by just performing 1 assumes and (at most) 2 proves instead
+    //
+    // Q: Can I do it with 1 assume and 1 prove? E.g.:
+    // lookup_assumes_dynamic([opid1,opid2], range_sel*(opid1-opid2) - opid2, [expression], sel, PIOP_NAME_RANGE_CHECK);
+    // lookup_proves(opid, [min1..max1-1,max1...]U[min2..max2-1,max2...], mul, PIOP_NAME_RANGE_CHECK);
+
     if (predefined) {
         error("WIP: Multi range check cannot be predefined");
     }
@@ -393,14 +446,7 @@ function multi_range_check(const expr expression, const int min1, const int max1
     // Define the prove
     define_proves(absorb: 0);
 
-    // Note: This solution improves the naive solution:
-    //   · range_check(expression, min1, max1, 0, sel*range_sel).
-    //   · range_check(expression, min2, max2, 0, sel*(1-range_sel)).
-    // by just performing 1 assumes and (at most) 2 proves instead
-    //
-    // Q: Can I do it with 1 assume and 1 prove? E.g.:
-    // lookup_assumes_dynamic([opid1,opid2], range_sel*(opid1-opid2) - opid2, [expression], sel, PIOP_NAME_RANGE_CHECK);
-    // lookup_proves(opid, [min1..max1-1,max1...]U[min2..max2-1,max2...], mul, PIOP_NAME_RANGE_CHECK);
+    return [opid1, opid2];
 }
 
 /**
@@ -412,7 +458,7 @@ function multi_range_check(const expr expression, const int min1, const int max1
  *
  * @return The ID of the range check.
  */
-function range_check_id(const int min, const int max, const int predefined = 0): int {
+function dynamic_range_check_id(const int min, const int max, const int predefined = 0): int {
     if (predefined) {
         error("WIP: Range check id cannot be predefined");
     }
@@ -448,7 +494,7 @@ function range_check_id(const int min, const int max, const int predefined = 0):
  * @param range_sel  The range selector that determines which range to apply for the check.
  * @param sel        A selector specifying which rows are subject to the range check.
  */
-function range_check_dynamic(const expr expression, const expr range_sel, const expr sel = 1) {
+function dynamic_range_check(const expr expression, const expr range_sel, const expr sel = 1) {
     use air.std.rcid;
 
     // Mark the dynamic range check as called
@@ -571,7 +617,7 @@ private function opid_process(const int min, const int max, const int predefined
     }
 
     // Otherwise, we get the corresponding opid
-    const int opid = get_opid(min, max, predefined);
+    const int opid = generate_opid(min, max, predefined);
 
     // Save range data
     rcproof.opids[rcproof.opids_count] = opid;
