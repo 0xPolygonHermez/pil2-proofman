@@ -3,6 +3,7 @@ use bytemuck::cast_slice;
 use libloading::{Library, Symbol};
 use fields::PrimeField64;
 use std::ffi::CString;
+use std::fmt;
 use proofman_starks_lib_c::*;
 use std::path::Path;
 use std::fs::File;
@@ -49,6 +50,12 @@ pub struct AggProofs {
 impl AggProofs {
     pub fn new(airgroup_id: u64, proof: Vec<u64>, worker_indexes: Vec<usize>) -> Self {
         Self { airgroup_id, proof, worker_indexes }
+    }
+}
+
+impl fmt::Display for AggProofs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "AggProofs {{ airgroup_id: {}, worker_indexes: {:?} }}", self.airgroup_id, self.worker_indexes)
     }
 }
 

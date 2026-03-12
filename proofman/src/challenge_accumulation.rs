@@ -109,7 +109,6 @@ where
     let mut global_challenge = [F::ZERO; 3];
     transcript.get_field(&mut global_challenge);
 
-    tracing::info!("··· Global challenge: [{}, {}, {}]", global_challenge[0], global_challenge[1], global_challenge[2]);
     global_challenge
 }
 

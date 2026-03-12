@@ -1953,6 +1953,12 @@ where
         }
 
         let mut global_challenge = calculate_global_challenge(&self.pctx, all_partial_contributions_u64);
+        tracing::info!(
+            "··· Global challenge: [{}, {}, {}]",
+            global_challenge[0],
+            global_challenge[1],
+            global_challenge[2]
+        );
         self.pctx.set_global_challenge(2, &mut global_challenge);
 
         timer_start_info!(GENERATING_PROOFS);
@@ -2644,6 +2650,7 @@ where
         final_proof: bool,
         options: &ProofOptions,
     ) -> ProofmanResult<Option<Vec<AggProofs>>> {
+        tracing::info!("Received {:?} aggregated proofs", agg_proofs);
         let output_dir_path = match options.output_dir_path.as_deref() {
             Some(path) => path,
             None => Path::new("tmp"),
@@ -2755,12 +2762,14 @@ where
 
         if last_proof || self.cancellation_info.read().unwrap().token.is_cancelled() {
             let mut total_proofs_to_be_done = 0;
+            let mut total_proofs_received = vec![0; self.received_agg_proofs.read().unwrap().len()];
             if !self.cancellation_info.read().unwrap().token.is_cancelled() {
                 for (airgroup_id, worker_indexes) in self.received_agg_proofs.read().unwrap().iter().enumerate() {
                     let n_agg_proofs = worker_indexes.len();
                     if n_agg_proofs == 1 && worker_indexes[0] == self.pctx.get_worker_index()? {
                         continue;
                     }
+                    total_proofs_received[airgroup_id] = n_agg_proofs;
                     let n_agg_proofs_to_be_done = total_recursive_proofs(n_agg_proofs);
                     if n_agg_proofs_to_be_done.has_remaining {
                         let setup = self.setups.get_setup(airgroup_id, 0, &ProofType::Recursive2)?;
@@ -2781,6 +2790,8 @@ where
                     total_proofs_to_be_done += n_agg_proofs_to_be_done.n_proofs;
                 }
             }
+
+            tracing::info!("Last proof received. {:?} proofs were received and waiting for {} aggregated proofs to be generated...", total_proofs_received, total_proofs_to_be_done);
 
             self.total_outer_agg_proofs.wait_until_value_and_check_streams(
                 total_proofs_to_be_done,
