@@ -4306,5 +4306,9 @@ fn verifier_info() -> VerifierInfo {
 }
 
 pub fn verify_vadcop_final_compressed(proof: &VadcopFinalProof, vk: &[u8]) -> bool {
+    stark_verify::<Poseidon8, 8>(&proof.proof_with_publics(), vk, &verifier_info(), q_verify, query_verify)
+}
+
+pub fn verify_vadcop_final_compressed_bytes(proof: &[u8], vk: &[u8]) -> bool {
     stark_verify::<Poseidon8, 8>(proof, vk, &verifier_info(), q_verify, query_verify)
 }

@@ -264,6 +264,7 @@ void StarkInfo::load(json j)
         gpu = false;
         mapTotalN = 0;
         mapTotalNCustomCommitsFixed = 0;
+        mapTotalNContributions = 0;
         mapOffsets[std::make_pair("const", false)] = 0;
         for(uint64_t stage = 1; stage <= nStages + 1; ++stage) {
             mapOffsets[std::make_pair("cm" + to_string(stage), false)] = mapTotalN;
@@ -288,6 +289,7 @@ void StarkInfo::load(json j)
         }
 
         mapTotalNCustomCommitsFixed = 0;
+        mapTotalNContributions = 0;
 
         // Set offsets for custom commits fixed
         for(uint64_t i = 0; i < customCommits.size(); ++i) {
@@ -567,8 +569,9 @@ void StarkInfo::setMapOffsets() {
     mapTotalN += NExtended * mapSectionsN["cm1"];
     mapOffsets[std::make_pair("mt1", true)] = mapTotalN;
     mapTotalN += numNodes;
-
+    
     mapOffsets[std::make_pair("cm1", false)] = mapTotalN;
+    mapTotalNContributions = recursive ? 0 : mapTotalN + N * mapSectionsN["cm1"];
 
     mapOffsets[std::make_pair("cm2", true)] = mapTotalN;
     mapTotalN += NExtended * mapSectionsN["cm2"];

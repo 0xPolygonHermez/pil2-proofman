@@ -273,25 +273,25 @@ impl MpiCtx {
     }
 
     //rank 0 broadcasts to the rest of processes a msg of unknown size
-    //Root provides data in `buf`; others can pass an empty Vec that is filled with the message
+    //Root provides data in buf; others can pass an empty Vec that is filled with the message
+    //Uses point-to-point with matched_probe for thread safety (no message interleaving)
     pub fn broadcast(&self, _buf: &mut Vec<u8>) {
         #[cfg(distributed)]
         {
-            // global communication: rank 0 broadcasts to all processes
             if self.n_processes > 1 {
-                let root = self.world.process_at_rank(0);
-
-                // 1) Broadcast the length as u64
-                let mut len: u64 = if self.rank == 0 { _buf.len() as u64 } else { 0 };
-                root.broadcast_into(&mut len);
-
-                // 2) Resize non-root buffers to the incoming size
-                if self.rank != 0 {
-                    _buf.resize(len as usize, 0u8);
+                if self.rank == 0 {
+                    // Root sends to all other processes
+                    for dest in 1..self.n_processes {
+                        self.world.process_at_rank(dest).send(&_buf[..]);
+                    }
+                } else {
+                    // Non-root: matched_probe + matched_receive_into for thread-safe receive
+                    // This atomically binds to a specific message, preventing interleaving
+                    let (msg, status) = self.world.process_at_rank(0).matched_probe();
+                    let count = status.count(u8::equivalent_datatype()) as usize;
+                    _buf.resize(count, 0u8);
+                    msg.matched_receive_into(&mut _buf[..]);
                 }
-
-                // 3) Broadcast bytes into place
-                root.broadcast_into(&mut _buf[..]);
             }
         }
     }

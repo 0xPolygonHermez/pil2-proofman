@@ -114,6 +114,11 @@ pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn get_map_totaln_contributions_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_map_total_n_contributions(p_stark_info) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn get_tree_size_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_tree_size(p_stark_info) }
 }
@@ -1589,6 +1594,12 @@ pub fn stark_info_new_c(
 #[cfg(feature = "no_lib_link")]
 pub fn get_map_totaln_c(_p_stark_info: *mut c_void) -> u64 {
     trace!("··· {}", "get_map_totaln: This is a mock call because there is no linked library");
+    100000000
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_map_totaln_contributions_c(_p_stark_info: *mut c_void) -> u64 {
+    trace!("··· {}", "get_map_totaln_contributions: This is a mock call because there is no linked library");
     100000000
 }
 

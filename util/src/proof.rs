@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::path::Path;
+use std::ops::Div;
 
 use bytemuck::cast_slice;
 
@@ -66,6 +67,14 @@ impl VadcopFinalProof {
         })?;
         let proof: VadcopFinalProof = bincode::deserialize_from(file)?;
         Ok(proof)
+    }
+
+    pub fn proof_with_publics(&self) -> Vec<u8> {
+        let mut result = Vec::with_capacity(8 + self.public_values.len() + self.proof.len());
+        result.extend_from_slice(&(self.public_values.len().div(8) as u64).to_le_bytes());
+        result.extend_from_slice(&self.public_values);
+        result.extend_from_slice(&self.proof);
+        result
     }
 
     pub fn proof_with_publics_u64(&self) -> Vec<u64> {
