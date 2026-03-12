@@ -1,108 +1,97 @@
-use std::{
-    collections::HashMap,
-    hash::{DefaultHasher, Hasher, Hash},
-};
+use std::collections::{HashSet, HashMap};
 
 use colored::Colorize;
 use fields::PrimeField64;
-use num_bigint::BigUint;
-use num_traits::Zero;
 use proofman_common::{ProofCtx, ProofmanResult};
-use proofman_hints::HintFieldOutput;
 
-use crate::normalize_vals;
-
-pub type DebugDataFast<F> = HashMap<F, SharedDataFast>; // opid -> sharedDataFast
-
-#[derive(Clone, Debug)]
-pub struct SharedDataFast {
-    pub global_values: Vec<BigUint>,
-    pub num_proves: BigUint,
-    pub num_assumes: BigUint,
+/// Small vec-based map for ~10 opids. Linear search is faster than hashing for small N.
+#[derive(Clone, Debug, Default)]
+pub struct DebugDataFast {
+    entries: Vec<(u64, i128)>, // (opid, balance)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn update_debug_data_fast<F: PrimeField64>(
-    debug_data_fast: &mut DebugDataFast<F>,
-    opid: F,
-    vals: Vec<HintFieldOutput<F>>,
-    is_proves: bool,
-    times: F,
-    is_global: bool,
-) -> ProofmanResult<()> {
-    let bus_opid_times = debug_data_fast.entry(opid).or_insert_with(|| SharedDataFast {
-        global_values: Vec::new(),
-        num_proves: BigUint::zero(),
-        num_assumes: BigUint::zero(),
-    });
+impl DebugDataFast {
+    #[inline]
+    pub fn new() -> Self {
+        Self { entries: Vec::with_capacity(16) } // Pre-allocate for ~10 opids
+    }
 
-    // Normalize the vector of values
-    let norm_vals = normalize_vals(&vals);
+    #[inline(always)]
+    pub fn get_or_insert(&mut self, opid: u64) -> &mut i128 {
+        // Linear search - faster than HashMap for N < ~20
+        let pos = self.entries.iter().position(|(id, _)| *id == opid);
+        if let Some(idx) = pos {
+            &mut self.entries[idx].1
+        } else {
+            self.entries.push((opid, 0));
+            &mut self.entries.last_mut().unwrap().1
+        }
+    }
 
-    let mut values = Vec::new();
-    for value in norm_vals.iter() {
-        match value {
-            HintFieldOutput::Field(f) => values.push(*f),
-            HintFieldOutput::FieldExtended(ef) => {
-                values.push(ef.value[0]);
-                values.push(ef.value[1]);
-                values.push(ef.value[2]);
+    #[inline(always)]
+    pub fn merge_into(&self, other: &mut DebugDataFast) {
+        for &(opid, balance) in &self.entries {
+            if balance != 0 {
+                let entry = other.get_or_insert(opid);
+                *entry = entry.wrapping_add(balance);
             }
         }
     }
+}
 
-    // Create hash of all values
-    let mut hasher = DefaultHasher::new();
-    values.hash(&mut hasher);
-    let hash_value = BigUint::from(hasher.finish());
+impl IntoIterator for DebugDataFast {
+    type Item = (u64, i128);
+    type IntoIter = std::vec::IntoIter<(u64, i128)>;
 
-    // If the value is global but it was already processed, skip it
-    if is_global {
-        if bus_opid_times.global_values.contains(&hash_value) {
-            return Ok(());
-        }
-        bus_opid_times.global_values.push(hash_value.clone());
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.into_iter()
+    }
+}
+
+pub type DebugDataFastGlobal = HashMap<u64, HashSet<u64>>;
+
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+pub fn update_debug_data_fast(
+    debug_data_fast: &mut DebugDataFast,
+    debug_data_fast_global: &mut DebugDataFastGlobal,
+    opid: u64,
+    hash: u64,
+    is_proves: bool,
+    times: u64,
+    is_global: bool,
+) -> ProofmanResult<()> {
+    // Skip duplicate global values
+    if is_global && !debug_data_fast_global.entry(opid).or_default().insert(hash) {
+        return Ok(());
     }
 
-    // Update the number of proves or assumes
+    let contribution = (hash as u128).wrapping_mul(times as u128) as i128;
+    let bus = debug_data_fast.get_or_insert(opid);
+
     if is_proves {
-        bus_opid_times.num_proves += hash_value * times.as_canonical_biguint();
+        *bus = bus.wrapping_add(contribution);
     } else {
-        bus_opid_times.num_assumes += hash_value * times.as_canonical_biguint();
+        *bus = bus.wrapping_sub(contribution);
     }
+
     Ok(())
 }
 
-pub fn check_invalid_opids<F: PrimeField64>(_pctx: &ProofCtx<F>, debugs_data_fasts: &mut [DebugDataFast<F>]) -> Vec<F> {
-    let mut debug_data_fast = HashMap::new();
-
-    for map in debugs_data_fasts {
-        for (opid, bus) in map.iter() {
-            if debug_data_fast.contains_key(opid) {
-                let bus_fast: &mut SharedDataFast = debug_data_fast.get_mut(opid).unwrap();
-                bus_fast.num_proves += bus.num_proves.clone();
-                bus_fast.num_assumes += bus.num_assumes.clone();
-            } else {
-                debug_data_fast.insert(*opid, bus.clone());
-            }
-        }
-    }
-
-    // TODO: SINCRONIZATION IN DISTRIBUTED MODE
-
+pub fn check_invalid_opids<F: PrimeField64>(_pctx: &ProofCtx<F>, debug_data_fast: DebugDataFast) -> Vec<u64> {
     let mut invalid_opids = Vec::new();
 
-    // Check if there are any invalid opids
-    for (opid, bus) in debug_data_fast.iter_mut() {
-        if bus.num_proves != bus.num_assumes {
-            invalid_opids.push(*opid);
+    for (opid, bus) in debug_data_fast.into_iter() {
+        if bus != 0 {
+            invalid_opids.push(opid);
         }
     }
 
     if !invalid_opids.is_empty() {
         tracing::error!(
             "··· {}",
-            format!("\u{2717} The following opids does not match {invalid_opids:?}").bright_red().bold()
+            format!("\u{2717} The following opids do not match {invalid_opids:?}").bright_red().bold()
         );
     } else {
         tracing::info!("··· {}", "\u{2713} All bus values match.".bright_green().bold());

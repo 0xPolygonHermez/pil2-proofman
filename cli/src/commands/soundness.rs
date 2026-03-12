@@ -7,7 +7,8 @@ use std::io::Write;
 use toml;
 use fields::Goldilocks;
 
-use proofman_common::{initialize_logger, print_soundness_table, soundness_info};
+use proofman_common::initialize_logger;
+use proofman_soundness::{print_soundness_table, soundness_info};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]

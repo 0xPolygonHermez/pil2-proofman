@@ -6,13 +6,17 @@ use commands::gen_custom_commits_fixed::GenCustomCommitsFixedCmd;
 use commands::get_constraints::GetConstraintsCmd;
 use commands::pil_helpers::PilHelpersCmd;
 use commands::prove::ProveCmd;
+use commands::prove_snark::ProveSnarkCmd;
 use commands::verify_constraints::VerifyConstraintsCmd;
+use commands::debug_info::DebugInfoCmd;
 use commands::stats::StatsCmd;
 use commands::verify_stark::VerifyStark;
+use commands::verify_snark::VerifySnark;
 use commands::gen_witness::GenWitnessCmd;
 use commands::execute::ExecuteCmd;
 use commands::pilout::{PiloutSubcommands, PiloutCmd};
 use commands::setup::CheckSetupCmd;
+use commands::setup_snark::CheckSetupSnarkCmd;
 use commands::soundness::SoundnessCmd;
 use proofman_util::cli::print_banner;
 
@@ -28,13 +32,17 @@ pub struct Cli {
 pub enum Commands {
     Pilout(PiloutCmd),
     CheckSetup(CheckSetupCmd),
+    CheckSetupSnark(CheckSetupSnarkCmd),
     Soundness(SoundnessCmd),
     Prove(ProveCmd),
+    ProveSnark(ProveSnarkCmd),
     PilHelpers(PilHelpersCmd),
     VerifyConstraints(VerifyConstraintsCmd),
+    DebugInfo(DebugInfoCmd),
     Stats(StatsCmd),
     Execute(ExecuteCmd),
     VerifyStark(VerifyStark),
+    VerifySnark(VerifySnark),
     GetConstraints(GetConstraintsCmd),
     GenCustomCommitsFixed(GenCustomCommitsFixedCmd),
     GenWitness(GenWitnessCmd),
@@ -49,13 +57,17 @@ fn main() {
             PiloutSubcommands::Inspect(args) => args.run(),
         },
         Commands::CheckSetup(args) => args.run(),
+        Commands::CheckSetupSnark(args) => args.run(),
         Commands::Soundness(args) => args.run(),
         Commands::Prove(args) => args.run(),
+        Commands::ProveSnark(args) => args.run(),
         Commands::PilHelpers(args) => args.run(),
         Commands::VerifyConstraints(args) => args.run(),
+        Commands::DebugInfo(args) => args.run(),
         Commands::GenCustomCommitsFixed(args) => args.run(),
         Commands::GetConstraints(args) => args.run(),
         Commands::VerifyStark(args) => args.run(),
+        Commands::VerifySnark(args) => args.run(),
         Commands::Stats(args) => args.run(),
         Commands::Execute(args) => args.run(),
         Commands::GenWitness(args) => args.run(),

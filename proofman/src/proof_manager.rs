@@ -2,8 +2,69 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Condvar, Mutex, RwLock,
 };
+use std::time::{Duration, Instant};
 
 use crate::CancellationInfo;
+
+pub const WAIT_TIMEOUT_SECONDS: u64 = 600;
+pub const WAIT_STATUS_INTERVAL_SECONDS: u64 = 60;
+
+struct WaitTimeoutTracker {
+    start_time: Instant,
+    last_status_print: Instant,
+    last_seen_value: Option<usize>,
+}
+
+impl WaitTimeoutTracker {
+    fn new() -> Self {
+        let now = Instant::now();
+        Self { start_time: now, last_status_print: now, last_seen_value: None }
+    }
+
+    /// Checks timeout and prints status. Returns true if should continue waiting, false if timeout.
+    fn check_and_log(
+        &mut self,
+        current: usize,
+        expected: usize,
+        message_type: &str,
+        cancellation_info: &RwLock<CancellationInfo>,
+    ) -> bool {
+        // Reset the 60s timer if counter has changed
+        if self.last_seen_value != Some(current) {
+            self.last_status_print = Instant::now();
+            self.last_seen_value = Some(current);
+        }
+
+        let elapsed = self.start_time.elapsed();
+
+        if elapsed.as_secs() >= WAIT_STATUS_INTERVAL_SECONDS
+            && self.last_status_print.elapsed().as_secs() >= WAIT_STATUS_INTERVAL_SECONDS
+        {
+            tracing::warn!(
+                "Counter still waiting {} after {}s - current: {}, expected: {}",
+                message_type,
+                elapsed.as_secs(),
+                current,
+                expected
+            );
+            self.last_status_print = Instant::now();
+        }
+
+        // Timeout after 10 minutes
+        if elapsed.as_secs() >= 600 {
+            tracing::error!(
+                "Counter timeout after 10 minutes {} - current: {}, expected: {}. Cancelling.",
+                message_type,
+                current,
+                expected
+            );
+            cancellation_info.write().unwrap().token.cancel();
+            return false;
+        }
+
+        true
+    }
+}
 
 pub struct Counter {
     counter: AtomicUsize,
@@ -57,25 +118,48 @@ impl Counter {
         cancellation_info: &RwLock<CancellationInfo>,
     ) {
         let mut guard = self.wait_lock.lock().unwrap();
+        let mut tracker = WaitTimeoutTracker::new();
+
         loop {
             if cancellation_info.read().unwrap().token.is_cancelled() {
                 break;
             }
-            if self.counter.load(Ordering::Acquire) >= self.threshold {
+
+            let current = self.counter.load(Ordering::Acquire);
+            if current >= self.threshold {
                 break;
             }
+
+            if !tracker.check_and_log(current, self.threshold, "for threshold", cancellation_info) {
+                break;
+            }
+
             check_streams();
-            let (g, _) = self.cvar.wait_timeout(guard, std::time::Duration::from_micros(100)).unwrap();
+            let (g, _) = self.cvar.wait_timeout(guard, Duration::from_micros(100)).unwrap();
             guard = g;
         }
     }
 
     pub fn wait_until_threshold(&self, cancellation_info: &RwLock<CancellationInfo>) {
         let mut guard = self.wait_lock.lock().unwrap();
-        while self.counter.load(Ordering::Acquire) < self.threshold
-            && !cancellation_info.read().unwrap().token.is_cancelled()
-        {
-            guard = self.cvar.wait(guard).unwrap();
+        let mut tracker = WaitTimeoutTracker::new();
+
+        loop {
+            if cancellation_info.read().unwrap().token.is_cancelled() {
+                break;
+            }
+
+            let current = self.counter.load(Ordering::Acquire);
+            if current >= self.threshold {
+                break;
+            }
+
+            if !tracker.check_and_log(current, self.threshold, "for threshold", cancellation_info) {
+                break;
+            }
+
+            let (g, _) = self.cvar.wait_timeout(guard, Duration::from_millis(100)).unwrap();
+            guard = g;
         }
     }
 
@@ -86,15 +170,24 @@ impl Counter {
         cancellation_info: &RwLock<CancellationInfo>,
     ) {
         let mut guard = self.wait_lock.lock().unwrap();
+        let mut tracker = WaitTimeoutTracker::new();
+
         loop {
             if cancellation_info.read().unwrap().token.is_cancelled() {
                 break;
             }
-            if self.counter.load(Ordering::Acquire) >= value {
+
+            let current = self.counter.load(Ordering::Acquire);
+            if current >= value {
                 break;
             }
+
+            if !tracker.check_and_log(current, value, "for value", cancellation_info) {
+                break;
+            }
+
             check_streams();
-            let (g, _) = self.cvar.wait_timeout(guard, std::time::Duration::from_micros(100)).unwrap();
+            let (g, _) = self.cvar.wait_timeout(guard, Duration::from_micros(100)).unwrap();
             guard = g;
         }
     }
@@ -105,8 +198,24 @@ impl Counter {
 
     pub fn wait_until_zero(&self, cancellation_info: &RwLock<CancellationInfo>) {
         let mut guard = self.wait_lock.lock().unwrap();
-        while self.counter.load(Ordering::Acquire) > 0 && !cancellation_info.read().unwrap().token.is_cancelled() {
-            guard = self.cvar.wait(guard).unwrap();
+        let mut tracker = WaitTimeoutTracker::new();
+
+        loop {
+            if cancellation_info.read().unwrap().token.is_cancelled() {
+                break;
+            }
+
+            let current = self.counter.load(Ordering::Acquire);
+            if current == 0 {
+                break;
+            }
+
+            if !tracker.check_and_log(current, 0, "to reach zero", cancellation_info) {
+                break;
+            }
+
+            let (g, _) = self.cvar.wait_timeout(guard, Duration::from_millis(100)).unwrap();
+            guard = g;
         }
     }
 
@@ -116,15 +225,24 @@ impl Counter {
         cancellation_info: &RwLock<CancellationInfo>,
     ) {
         let mut guard = self.wait_lock.lock().unwrap();
+        let mut tracker = WaitTimeoutTracker::new();
+
         loop {
             if cancellation_info.read().unwrap().token.is_cancelled() {
                 break;
             }
-            if self.counter.load(Ordering::Acquire) == 0 {
+
+            let current = self.counter.load(Ordering::Acquire);
+            if current == 0 {
                 break;
             }
+
+            if !tracker.check_and_log(current, 0, "to reach zero", cancellation_info) {
+                break;
+            }
+
             check_streams();
-            let (g, _) = self.cvar.wait_timeout(guard, std::time::Duration::from_micros(100)).unwrap();
+            let (g, _) = self.cvar.wait_timeout(guard, Duration::from_micros(100)).unwrap();
             guard = g;
         }
     }

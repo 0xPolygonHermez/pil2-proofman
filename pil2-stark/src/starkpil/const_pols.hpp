@@ -20,7 +20,7 @@ public:
     {   
         uint64_t NExtended = 1 << starkInfo.starkStruct.nBitsExt;
         MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, NExtended, starkInfo.nConstants);
-        return (NExtended * starkInfo.nConstants) + mt.numNodes * (sizeof(RawFrP::Element) / sizeof(Goldilocks::Element));
+        return (NExtended * starkInfo.nConstants) + mt.numNodes * (sizeof(RawFr::Element) / sizeof(Goldilocks::Element));
     }
 
     uint64_t getConstTreeSizeGL(StarkInfo& starkInfo)
@@ -58,13 +58,17 @@ public:
         ntt.extendPol(treeAddressGL, pConstPolsAddress, NExtended, N, starkInfo.nConstants);
         MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, NExtended, starkInfo.nConstants);
         mt.setSource(treeAddressGL);
-        mt.setNodes((RawFrP::Element *)(&treeAddressGL[starkInfo.nConstants * NExtended]));
+        mt.setNodes((RawFr::Element *)(&treeAddressGL[starkInfo.nConstants * NExtended]));
         mt.merkelize();
     }
 
     void writeConstTreeFileBN128(StarkInfo& starkInfo, void *treeAddress, std::string constTreeFile) {
         TimerStart(WRITING_TREE_FILE);
-        MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, (Goldilocks::Element *)treeAddress, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants);
+        Goldilocks::Element *treeAddressGL = (Goldilocks::Element *)treeAddress;
+        uint64_t NExtended = 1 << starkInfo.starkStruct.nBitsExt;
+        MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, NExtended, starkInfo.nConstants);
+        mt.setSource(treeAddressGL);
+        mt.setNodes((RawFr::Element *)(&treeAddressGL[starkInfo.nConstants * NExtended]));
         mt.writeFile(constTreeFile);
         TimerStopAndLog(WRITING_TREE_FILE);
     }
@@ -80,9 +84,9 @@ public:
 
         if (starkInfo.starkStruct.verificationHashType == "BN128") {
             MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, (Goldilocks::Element *)constTreePols, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants);
-            RawFrP::Element root[1];
+            RawFr::Element root[1];
             mt.getRoot(root);
-            if(RawFrP::field.toString(root[0], 10) != verkeyJson) {
+            if(RawFr::field.toString(root[0], 10) != verkeyJson) {
                 return false;
             }
         } else {

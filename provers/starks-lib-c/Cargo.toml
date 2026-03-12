@@ -10,8 +10,8 @@ categories = { workspace = true }
 build = "build.rs"
 
 [dependencies]
-tracing.workspace = true
 crossbeam-channel.workspace = true
+tracing.workspace = true
 
 [features]
 default = []

@@ -4,7 +4,7 @@ use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx, ProofmanResult};
 
 use fields::PrimeField64;
-use rand::{rng, rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
+use rand::{rng, rngs::StdRng, seq::SliceRandom, RngExt, SeedableRng};
 
 use crate::Permutation1_6Trace;
 

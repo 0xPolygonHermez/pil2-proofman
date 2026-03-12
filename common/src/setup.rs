@@ -7,16 +7,20 @@ use std::fs;
 use std::io::Read;
 use libloading::{Library, Symbol};
 use std::ffi::CString;
+use bytemuck::cast_slice;
+use std::sync::atomic::{AtomicBool, Ordering};
+use crate::RowInfo;
 
 use proofman_starks_lib_c::set_memory_expressions_c;
 use proofman_starks_lib_c::{
     expressions_bin_new_c, stark_info_new_c, stark_info_free_c, expressions_bin_free_c, get_map_totaln_c,
-    get_map_totaln_custom_commits_fixed_c, get_proof_size_c, get_max_n_tmp1_c, get_max_n_tmp3_c, get_const_tree_size_c,
-    load_const_pols_c, load_const_tree_c, read_exec_file_c, get_proof_pinned_size_c, get_operations_quotient_c,
+    get_map_totaln_custom_commits_fixed_c, get_map_totaln_contributions_c, get_proof_size_c, get_max_n_tmp1_c,
+    get_max_n_tmp3_c, get_const_tree_size_c, load_const_pols_c, load_const_tree_c, read_exec_file_c,
+    get_proof_pinned_size_c, get_operations_quotient_c, calculate_words_per_row_c,
 };
 use proofman_util::create_buffer_fast;
 
-use crate::{GlobalInfo, ProofmanError};
+use crate::{GlobalInfoAir, ProofmanError};
 use crate::ProofType;
 use crate::StarkInfo;
 use crate::ProofmanResult;
@@ -66,6 +70,7 @@ pub struct Setup<F: PrimeField64> {
     pub const_pols: Vec<F>,
     pub const_pols_tree: Vec<F>,
     pub prover_buffer_size: u64,
+    pub contributions_size: u64,
     pub custom_commits_fixed_buffer_size: u64,
     pub proof_size: u64,
     pub pinned_proof_size: u64,
@@ -76,10 +81,12 @@ pub struct Setup<F: PrimeField64> {
     pub circom_circuit: RwLock<Option<*mut c_void>>,
     pub air_name: String,
     pub verkey: Vec<F>,
+    pub verkey_file: String,
     pub exec_data: RwLock<Option<Vec<u64>>>,
     pub n_cols: u64,
     pub n_operations_quotient: u64,
     pub preallocate: bool,
+    pub const_pols_loaded: AtomicBool,
 }
 
 impl<F: PrimeField64> Drop for Setup<F> {
@@ -103,26 +110,22 @@ impl<F: PrimeField64> Drop for Setup<F> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 impl<F: PrimeField64> Setup<F> {
     pub fn new(
-        global_info: &GlobalInfo,
+        setup_path: &Path,
         airgroup_id: usize,
         air_id: usize,
+        air_info: &GlobalInfoAir,
         setup_type: &ProofType,
         verify_constraints: bool,
         preallocate: bool,
+        recursive2_path: Option<&PathBuf>,
     ) -> Self {
-        let setup_path = match setup_type {
-            ProofType::VadcopFinal => global_info.get_setup_path("vadcop_final"),
-            ProofType::RecursiveF => global_info.get_setup_path("recursivef"),
-            _ => global_info.get_air_setup_path(airgroup_id, air_id, setup_type),
-        };
-
-        let gpu = cfg!(feature = "gpu");
-
         let stark_info_path = match setup_type {
             ProofType::Recursive1 => {
-                let setup_path_recursive2 = global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive2);
+                let setup_path_recursive2 =
+                    recursive2_path.expect("recursive2_path must be provided for Recursive1 proof type");
                 setup_path_recursive2.display().to_string() + ".starkinfo.json"
             }
             _ => setup_path.display().to_string() + ".starkinfo.json",
@@ -130,16 +133,19 @@ impl<F: PrimeField64> Setup<F> {
 
         let expressions_bin_path = match setup_type {
             ProofType::Recursive1 => {
-                let setup_path_recursive2 = global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive2);
+                let setup_path_recursive2 =
+                    recursive2_path.expect("recursive2_path must be provided for Recursive1 proof type");
                 setup_path_recursive2.display().to_string() + ".bin"
             }
             _ => setup_path.display().to_string() + ".bin",
         };
-        let const_pols_path = match !gpu {
+
+        let const_pols_path = match !cfg!(feature = "gpu") {
             true => setup_path.display().to_string() + ".const",
             false => setup_path.display().to_string() + ".const_gpu",
         };
-        let const_pols_tree_path = match !gpu {
+
+        let const_pols_tree_path = match !cfg!(feature = "gpu") {
             true => setup_path.display().to_string() + ".consttree",
             false => setup_path.display().to_string() + ".consttree_gpu",
         };
@@ -151,16 +157,18 @@ impl<F: PrimeField64> Setup<F> {
             const_pols,
             const_pols_tree,
             verkey,
+            verkey_file,
             const_pols_size,
             const_pols_size_packed,
             const_tree_size,
             prover_buffer_size,
+            contributions_size,
             custom_commits_fixed_buffer_size,
             proof_size,
             pinned_proof_size,
             n_cols,
             n_operations_quotient,
-        ) = if setup_type == &ProofType::Compressor && !global_info.get_air_has_compressor(airgroup_id, air_id) {
+        ) = if setup_type == &ProofType::Compressor && !air_info.has_compressor.unwrap_or(false) {
             // If the condition is met, use None for each pointer
             (
                 StarkInfo::default(),
@@ -169,6 +177,8 @@ impl<F: PrimeField64> Setup<F> {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                String::new(),
+                0,
                 0,
                 0,
                 0,
@@ -186,14 +196,14 @@ impl<F: PrimeField64> Setup<F> {
             let stark_info = StarkInfo::from_json(&stark_info_json);
             let recursive = setup_type != &ProofType::Basic;
             let recursive_final = setup_type == &ProofType::RecursiveF;
-            let preallocate_const = preallocate && gpu;
+            let preallocate_const = preallocate && cfg!(feature = "gpu");
             let p_stark_info = stark_info_new_c(
                 stark_info_path.as_str(),
                 recursive_final,
                 recursive,
                 verify_constraints,
                 false,
-                gpu,
+                cfg!(feature = "gpu"),
                 preallocate_const,
             );
             let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
@@ -201,6 +211,7 @@ impl<F: PrimeField64> Setup<F> {
             let n_max_tmp3 = get_max_n_tmp3_c(expressions_bin);
             set_memory_expressions_c(p_stark_info, n_max_tmp1, n_max_tmp3);
             let prover_buffer_size = get_map_totaln_c(p_stark_info);
+            let contributions_size = get_map_totaln_contributions_c(p_stark_info);
             let custom_commits_fixed_buffer_size = get_map_totaln_custom_commits_fixed_c(p_stark_info);
             let proof_size = get_proof_size_c(p_stark_info);
             let pinned_proof_size = get_proof_pinned_size_c(p_stark_info);
@@ -210,7 +221,7 @@ impl<F: PrimeField64> Setup<F> {
 
             let n_operations_quotient = get_operations_quotient_c(expressions_bin, p_stark_info) as u64;
 
-            let verkey_file = setup_path.with_extension("verkey.json");
+            let verkey_file = setup_path.display().to_string() + ".verkey.json";
 
             let verkey = if setup_type == &ProofType::RecursiveF {
                 vec![]
@@ -224,7 +235,7 @@ impl<F: PrimeField64> Setup<F> {
 
             let n_cols = stark_info.map_sections_n["cm1"];
 
-            if verify_constraints {
+            if verify_constraints && !cfg!(feature = "gpu") {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
                 (
                     stark_info,
@@ -233,10 +244,12 @@ impl<F: PrimeField64> Setup<F> {
                     const_pols,
                     Vec::new(),
                     verkey,
+                    verkey_file,
                     const_pols_size,
                     0,
                     const_tree_size,
                     prover_buffer_size,
+                    contributions_size,
                     custom_commits_fixed_buffer_size,
                     proof_size,
                     pinned_proof_size,
@@ -247,7 +260,7 @@ impl<F: PrimeField64> Setup<F> {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
                 let const_pols_tree: Vec<F> = create_buffer_fast(const_tree_size);
                 let mut const_pols_size_packed = 0;
-                if gpu {
+                if cfg!(feature = "gpu") && setup_type != &ProofType::RecursiveF {
                     let words_per_row: u64 = if Path::new(&const_pols_path).exists() {
                         let bytes = fs::read(&const_pols_path).expect("Failed to read const_pols file");
                         if bytes.len() >= 8 {
@@ -256,7 +269,7 @@ impl<F: PrimeField64> Setup<F> {
                             0
                         }
                     } else {
-                        0
+                        calculate_words_per_row_c(p_stark_info, &(setup_path.display().to_string() + ".const"))
                     };
                     const_pols_size_packed =
                         (words_per_row * (1 << stark_info.stark_struct.n_bits) + 1 + stark_info.n_constants) as usize;
@@ -268,10 +281,12 @@ impl<F: PrimeField64> Setup<F> {
                     const_pols,
                     const_pols_tree,
                     verkey,
+                    verkey_file,
                     const_pols_size,
                     const_pols_size_packed,
                     const_tree_size,
                     prover_buffer_size,
+                    contributions_size,
                     custom_commits_fixed_buffer_size,
                     proof_size,
                     pinned_proof_size,
@@ -292,31 +307,38 @@ impl<F: PrimeField64> Setup<F> {
             const_pols,
             const_pols_tree,
             verkey,
+            verkey_file,
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
+            contributions_size,
             proof_size,
             pinned_proof_size,
             size_witness: RwLock::new(None),
             circom_circuit: RwLock::new(None),
             circom_library: RwLock::new(None),
             exec_data: RwLock::new(None),
-            setup_path: setup_path.clone(),
+            setup_path: setup_path.to_path_buf().clone(),
             setup_type: setup_type.clone(),
-            air_name: global_info.airs[airgroup_id][air_id].name.clone(),
+            air_name: air_info.name.clone(),
             const_pols_path,
             const_pols_tree_path,
             n_cols,
             n_operations_quotient,
             preallocate,
+            const_pols_loaded: AtomicBool::new(false),
         }
     }
 
     pub fn load_const_pols(&self) {
+        if self.const_pols_loaded.load(Ordering::Acquire) {
+            return;
+        }
         load_const_pols_c(
             self.const_pols.as_ptr() as *mut u8,
             self.const_pols_path.as_str(),
             self.const_pols_size as u64 * 8,
         );
+        self.const_pols_loaded.store(true, Ordering::Release);
     }
 
     pub fn load_const_pols_tree(&self) {
@@ -331,12 +353,33 @@ impl<F: PrimeField64> Setup<F> {
         );
     }
 
+    pub fn get_const_pols(&self, first_row: usize, num_rows: usize, offset: Option<usize>) -> Vec<RowInfo> {
+        let offset = offset.unwrap_or(1);
+        let num_rows_available = self.const_pols.len() / self.stark_info.n_constants as usize;
+
+        (0..num_rows)
+            .map(|i| first_row + i * offset)
+            .take_while(|&row| row < num_rows_available)
+            .map(|row| {
+                let start = row * self.stark_info.n_constants as usize;
+                let end = start + self.stark_info.n_constants as usize;
+                let values = self.const_pols[start..end].iter().map(|v| F::as_canonical_u64(v)).collect();
+                RowInfo { row, values }
+            })
+            .collect()
+    }
+
     pub fn get_const_ptr(&self) -> *mut u8 {
         self.const_pols.as_ptr() as *mut u8
     }
 
     pub fn get_const_tree_ptr(&self) -> *mut u8 {
         self.const_pols_tree.as_ptr() as *mut u8
+    }
+
+    pub fn get_vk(&self) -> Vec<u8> {
+        let verkey_u64: Vec<u64> = self.verkey.iter().map(|x| x.as_canonical_u64()).collect();
+        cast_slice(&verkey_u64).to_vec()
     }
 
     pub fn set_circom_circuit(&self) -> ProofmanResult<()> {

@@ -476,6 +476,50 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
     }
 }
 
+void calculateExpr(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx& expressionsCtx, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName,  HintFieldOptions *hintOptions) {
+    if(setupCtx.expressionsBin.hints.size() == 0) {
+        zklog.error("No hints were found.");
+        exitProcess();
+        exit(-1);
+    }
+
+    std::vector<Dest> dests;
+    Goldilocks::Element *buff = NULL;
+
+    for(uint64_t i = 0; i < nHints; ++i) {
+        Hint hint = setupCtx.expressionsBin.hints[hintId[i]];
+        std::string hintDest = hintFieldNameDest[i];
+        auto hintFieldDest = std::find_if(hint.fields.begin(), hint.fields.end(), [hintDest](const HintField& hintField) {
+            return hintField.name == hintDest;
+        });
+        HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
+
+        uint64_t offset = 0;
+        uint64_t nRows;
+        if(hintFieldDestVal.operand == opType::cm) {
+            offset = setupCtx.starkInfo.mapSectionsN["cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage)];
+            buff = &params.trace[setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos];
+            nRows = 1 << setupCtx.starkInfo.starkStruct.nBits;
+        } else if (hintFieldDestVal.operand == opType::airvalue) {
+            nRows = 1;
+            uint64_t pos = 0;
+            for(uint64_t i = 0; i < hintFieldDestVal.id; ++i) {
+                pos += setupCtx.starkInfo.airValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+            }
+            buff = &params.airValues[pos];
+        } else {
+            zklog.error("Only committed pols and airvalues can be set");
+            exitProcess();
+            exit(-1);
+        }
+
+        Dest destStruct(buff, nRows, offset);
+
+        addHintField(setupCtx, params, hintId[i], destStruct, hintFieldName[i], hintOptions[i]);
+        expressionsCtx.calculateExpressions(params, destStruct, nRows, false, false);
+    }
+}
+
 void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx& expressionsCtx, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2) {
     if(setupCtx.expressionsBin.hints.size() == 0) {
         zklog.error("No hints were found.");

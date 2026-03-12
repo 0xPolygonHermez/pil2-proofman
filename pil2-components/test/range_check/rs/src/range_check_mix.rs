@@ -5,7 +5,7 @@ use witness::{WitnessComponent, execute, define_wc_with_std};
 use proofman_common::{AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanError, ProofmanResult, SetupCtx};
 
 use fields::PrimeField64;
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{SeedableRng, rngs::StdRng, RngExt};
 use crate::RangeCheckMixTrace;
 
 define_wc_with_std!(RangeCheckMix, "RngChMix");

@@ -14,8 +14,9 @@ rm -rf ./pil2-components/test/simple/build/ \
      -a ./pil2-components/test/simple/build/build.pilout \
      -u ./pil2-components/test/simple/build/fixed \
      -b ./pil2-components/test/simple/build \
-&& cargo run  --bin proofman-cli check-setup \
-     --proving-key ./pil2-components/test/simple/build/provingKey \
+&& node ../pil2-proofman-js/src/main_stats.js \
+     -a pil2-components/test/simple/build/build.pilout \
+     -o pil2-components/test/simple/build/build.stats \
 && cargo run  --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/simple/build/build.pilout \
      --path ./pil2-components/test/simple/rs/src -o \
@@ -44,8 +45,9 @@ rm -rf ./pil2-components/test/connection/build/ \
      -a ./pil2-components/test/connection/build/build.pilout \
      -u ./pil2-components/test/connection/build/fixed \
      -b ./pil2-components/test/connection/build \
-&& cargo run  --bin proofman-cli check-setup \
-     --proving-key ./pil2-components/test/connection/build/provingKey \
+&& node ../pil2-proofman-js/src/main_stats.js \
+     -a pil2-components/test/connection/build/build.pilout \
+     -o pil2-components/test/connection/build/build.stats \
 && cargo run  --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/connection/build/build.pilout \
      --path ./pil2-components/test/connection/rs/src -o \
@@ -74,8 +76,9 @@ rm -rf ./pil2-components/test/diff_buses/build/ \
      -a ./pil2-components/test/diff_buses/build/diff_buses.pilout \
      -u ./pil2-components/test/diff_buses/build/fixed \
      -b ./pil2-components/test/diff_buses/build \
-&& cargo run  --bin proofman-cli check-setup \
-     --proving-key ./pil2-components/test/diff_buses/build/provingKey \
+&& node ../pil2-proofman-js/src/main_stats.js \
+     -a pil2-components/test/diff_buses/build/diff_buses.pilout \
+     -o pil2-components/test/diff_buses/build/diff_buses.stats \
 && cargo run  --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/diff_buses/build/diff_buses.pilout \
      --path ./pil2-components/test/diff_buses/rs/src -o \
@@ -104,8 +107,9 @@ rm -rf ./pil2-components/test/direct_update/build/ \
      -a ./pil2-components/test/direct_update/build/direct_update.pilout \
      -u ./pil2-components/test/direct_update/build/fixed \
      -b ./pil2-components/test/direct_update/build \
-&& cargo run --bin proofman-cli check-setup \
-     --proving-key ./pil2-components/test/direct_update/build/provingKey \
+&& node ../pil2-proofman-js/src/main_stats.js \
+     -a pil2-components/test/direct_update/build/direct_update.pilout \
+     -o pil2-components/test/direct_update/build/direct_update.stats \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/direct_update/build/direct_update.pilout \
      --path ./pil2-components/test/direct_update/rs/src -o \
@@ -133,8 +137,9 @@ rm -rf ./pil2-components/test/lookup/build/ \
      -a ./pil2-components/test/lookup/build/build.pilout \
      -u ./pil2-components/test/lookup/build/fixed \
      -b ./pil2-components/test/lookup/build \
-&& cargo run  --bin proofman-cli check-setup \
-     --proving-key ./pil2-components/test/lookup/build/provingKey \
+&& node ../pil2-proofman-js/src/main_stats.js \
+     -a pil2-components/test/lookup/build/build.pilout \
+     -o pil2-components/test/lookup/build/build.stats \
 && cargo run  --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/lookup/build/build.pilout \
      --path ./pil2-components/test/lookup/rs/src -o \
@@ -163,8 +168,9 @@ rm -rf ./pil2-components/test/one_instance/build/ \
      -a ./pil2-components/test/one_instance/build/build.pilout \
      -u ./pil2-components/test/one_instance/build/fixed \
      -b ./pil2-components/test/one_instance/build \
-&& cargo run  --bin proofman-cli check-setup \
-     --proving-key ./pil2-components/test/one_instance/build/provingKey \
+&& node ../pil2-proofman-js/src/main_stats.js \
+     -a pil2-components/test/one_instance/build/build.pilout \
+     -o pil2-components/test/one_instance/build/build.stats \
 && cargo run  --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/one_instance/build/build.pilout \
      --path ./pil2-components/test/one_instance/rs/src -o \
@@ -193,8 +199,9 @@ rm -rf ./pil2-components/test/permutation/build/ \
      -a ./pil2-components/test/permutation/build/build.pilout \
      -u ./pil2-components/test/permutation/build/fixed \
      -b ./pil2-components/test/permutation/build \
-&& cargo run  --bin proofman-cli check-setup \
-     --proving-key ./pil2-components/test/permutation/build/provingKey \
+&& node ../pil2-proofman-js/src/main_stats.js \
+     -a pil2-components/test/permutation/build/build.pilout \
+     -o pil2-components/test/permutation/build/build.stats \
 && cargo run  --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/permutation/build/build.pilout \
      --path ./pil2-components/test/permutation/rs/src -o \
@@ -223,8 +230,9 @@ rm -rf ./pil2-components/test/range_check/build/ \
      -a ./pil2-components/test/range_check/build/build.pilout \
      -u ./pil2-components/test/range_check/build/fixed \
      -b ./pil2-components/test/range_check/build \
-&& cargo run  --bin proofman-cli check-setup \
-     --proving-key ./pil2-components/test/range_check/build/provingKey \
+&& node ../pil2-proofman-js/src/main_stats.js \
+     -a pil2-components/test/range_check/build/build.pilout \
+     -o pil2-components/test/range_check/build/build.stats \
 && cargo run  --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/range_check/build/build.pilout \
      --path ./pil2-components/test/range_check/rs/src -o \
@@ -253,8 +261,9 @@ rm -rf ./pil2-components/test/virtual_tables/build/ \
      -a ./pil2-components/test/virtual_tables/build/build.pilout \
      -u ./pil2-components/test/virtual_tables/build/fixed \
      -b ./pil2-components/test/virtual_tables/build \
-&& cargo run  --bin proofman-cli check-setup \
-     --proving-key ./pil2-components/test/virtual_tables/build/provingKey \
+&& node ../pil2-proofman-js/src/main_stats.js \
+     -a pil2-components/test/virtual_tables/build/build.pilout \
+     -o pil2-components/test/virtual_tables/build/build.stats \
 && cargo run  --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/virtual_tables/build/build.pilout \
      --path ./pil2-components/test/virtual_tables/rs/src -o \

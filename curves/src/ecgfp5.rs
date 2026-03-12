@@ -98,7 +98,7 @@ impl Add<&EcGFp5> for &EcGFp5 {
 
 #[cfg(test)]
 mod tests {
-    use rand::{rng, Rng};
+    use rand::{rng, RngExt};
 
     use super::*;
 

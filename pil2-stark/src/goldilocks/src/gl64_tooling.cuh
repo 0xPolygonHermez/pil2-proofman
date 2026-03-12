@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cassert>
+#include <atomic>
 #include "goldilocks_base_field.hpp"
 #ifndef __GOLDILOCKS_ENV__
 #include "gpu_timer.cuh"
@@ -11,9 +12,20 @@
 #include "transcriptGL.cuh"
 #include "expressions_gpu.cuh"
 #include <limits.h>
+#include "fr.hpp"
 #endif
 #include "gl64_t.cuh"
 
+// Reduce a Goldilocks value from partially reduced form [0, 2*MOD) to canonical form [0, MOD)
+// This is needed when converting Goldilocks values to other field representations (e.g., BN128)
+__device__ __forceinline__ uint64_t gl64_reduce(uint64_t val) {
+    return (val >= GOLDILOCKS_PRIME) ? (val - GOLDILOCKS_PRIME) : val;
+}
+
+// Overload for Goldilocks::Element
+__device__ __forceinline__ uint64_t gl64_reduce(const Goldilocks::Element& gl) {
+    return gl64_reduce(gl.fe);
+}
 
 class gl64_gpu
 {
@@ -70,10 +82,15 @@ struct AirInstanceInfo {
         opening_points = d_openingPoints;
         expressions_gpu = new ExpressionsGPU(*setupCtx, setupCtx->starkInfo.nrowsPack, setupCtx->starkInfo.maxNBlocks);
 
-        Goldilocks::Element *d_verkeyRoot;
-        CHECKCUDAERR(cudaMalloc(&d_verkeyRoot, HASH_SIZE * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMemcpy(d_verkeyRoot, verkeyRoot_, HASH_SIZE * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-        verkeyRoot = d_verkeyRoot;
+        if(verkeyRoot_ == nullptr) {
+            verkeyRoot = nullptr;
+        }
+        else {
+            Goldilocks::Element *d_verkeyRoot;
+            CHECKCUDAERR(cudaMalloc(&d_verkeyRoot, HASH_SIZE * sizeof(Goldilocks::Element)));
+            CHECKCUDAERR(cudaMemcpy(d_verkeyRoot, verkeyRoot_, HASH_SIZE * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+            verkeyRoot = d_verkeyRoot;
+        }
 
         CHECKCUDAERR(cudaMalloc(&d_num_packed_words, sizeof(uint64_t)));
 
@@ -289,7 +306,7 @@ struct StreamData{
     std::mutex mutex_stream_selection;
     
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_, uint64_t merkleTreeArity){
-        uint64_t maxExps = 20000; // TODO: CALCULATE IT PROPERLY!
+        uint64_t maxExps = 40000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
         timer.init(stream);
@@ -353,6 +370,62 @@ struct StreamData{
         cudaFreeHost(pinned_params);
     }
 };
+
+struct DeviceRecursiveFBuffers
+{
+    uint32_t gpuId;
+    cudaStream_t stream;
+    cudaStream_t stream_const_tree;
+    TimerGPU timer;
+    gl64_t *d_aux_trace;
+    gl64_t *d_const_tree;
+    RawFr::Element *d_verkey;  // Verification key on GPU
+    uint8_t* pinnedBuffer;
+    uint8_t* pinnedBufferConstTree;
+    size_t pinnedBufferSize = 256 * 1024 * 1024;
+    bool owns_aux_trace;
+    bool owns_const_tree;
+    std::atomic<bool> const_tree_loaded{false};  // CPU flag: true when const tree copy is complete
+    // Reusable allocations for proof generation
+    StepsParams *params_pinned;
+    Goldilocks::Element *pinned_exps_params;
+    Goldilocks::Element *pinned_exps_args;
+    StepsParams *d_params;
+    ExpsArguments *d_expsArgs;
+    DestParamsGPU *d_destParams;
+
+
+    DeviceRecursiveFBuffers() : owns_aux_trace(true), owns_const_tree(true), d_verkey(nullptr), const_tree_loaded(false) {
+        uint64_t maxExps = 20000;
+        cudaStreamCreate(&stream);
+        cudaStreamCreate(&stream_const_tree);
+        timer.init(stream);
+        
+        CHECKCUDAERR(cudaMallocHost((void**)&pinnedBuffer, pinnedBufferSize));
+        CHECKCUDAERR(cudaMallocHost((void**)&pinnedBufferConstTree, pinnedBufferSize));
+        // Allocate reusable buffers
+        CHECKCUDAERR(cudaMallocHost((void **)&params_pinned, sizeof(StepsParams)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_exps_args, maxExps * sizeof(ExpsArguments)));
+        CHECKCUDAERR(cudaMalloc((void **)&d_params, sizeof(StepsParams)));
+        CHECKCUDAERR(cudaMalloc((void **)&d_expsArgs, maxExps * sizeof(ExpsArguments)));
+        CHECKCUDAERR(cudaMalloc((void **)&d_destParams, maxExps * 2 * sizeof(DestParamsGPU)));
+    }
+    
+    ~DeviceRecursiveFBuffers() {
+        cudaStreamDestroy(stream);
+        cudaStreamDestroy(stream_const_tree);
+        cudaFreeHost(pinnedBuffer);
+        cudaFreeHost(pinnedBufferConstTree);
+        cudaFreeHost(params_pinned);
+        cudaFreeHost(pinned_exps_params);
+        cudaFreeHost(pinned_exps_args);
+        cudaFree(d_params);
+        cudaFree(d_expsArgs);
+        cudaFree(d_destParams);
+        if (d_verkey) cudaFree(d_verkey);
+    }
+};
 struct DeviceCommitBuffers
 {
     gl64_t **d_constPols;
@@ -361,9 +434,11 @@ struct DeviceCommitBuffers
     gl64_t ***d_aux_traceAggregation;
     Goldilocks::Element **pinned_buffer;
     Goldilocks::Element **pinned_buffer_extra;
+    gl64_t **gpuMemoryBuffer;
     bool recursive;
     uint64_t max_size_proof;
 
+    uint64_t constPolsSize;
     uint64_t pinned_size = 128 * 1024 * 1024; //256MB
 
     uint32_t  n_gpus;
@@ -384,8 +459,16 @@ void copy_to_device_in_chunks(
     void* dst,
     uint64_t total_size,
     uint64_t streamId,
-    TimerGPU &timer
-    );
+    TimerGPU &timer);
+
+void copy_to_device_in_chunks(
+    const uint8_t* src,
+    uint8_t* dst,
+    uint64_t total_size_bytes,
+    uint8_t* pinnedBuffer,
+    uint64_t pinnedBufferSize,
+    cudaStream_t stream);
+
 
 void load_and_copy_to_device_in_chunks(
     DeviceCommitBuffers* d_buffers,
@@ -394,5 +477,12 @@ void load_and_copy_to_device_in_chunks(
     uint64_t total_size,
     uint64_t streamId
     );
+
+__global__ void fromRowMajorToTiled(
+    const uint64_t nRows,
+    const uint64_t nCols,
+    const uint64_t* __restrict__ input,
+    uint64_t* __restrict__ output
+);
 #endif
 #endif

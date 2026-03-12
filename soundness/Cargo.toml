@@ -1,0 +1,22 @@
+[package]
+name = "proofman-soundness"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+
+[dependencies]
+proofman-common = { workspace = true }
+proofman-hints = { workspace = true }
+pil-std-lib = { workspace = true }
+fields = { workspace = true }
+serde = { workspace = true }
+tabled = "0.7"
+itoa.workspace = true
+
+tracing.workspace = true
+
+[features]
+default = []

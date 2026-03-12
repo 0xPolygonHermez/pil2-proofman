@@ -26,6 +26,10 @@ airtemplate FibonacciSquare(const int N = 2**8) {
     col fixed L1 = [1,0...];
     col witness a,b;
 
+    col witness test;
+    col witness test2;
+    col witness test3;
+
     col rom stage(0) line;
     col rom stage(0) flags;
 
@@ -42,6 +46,13 @@ airtemplate FibonacciSquare(const int N = 2**8) {
     2*fibo1[0] - fibo1[1] === 0;
 
     line - (flags + 1) === 0;
+
+    test <== 2*a + b + fibo1[0] + 54*line + L1 * in1;
+
+    test2 <== 2*a + b;
+    test3 <== test2 + fibo1[0] + 54*line + L1 * in1;
+
+    test === test3;
 
     @test_hint{ custom_col: line, proof_val: value1 };
 

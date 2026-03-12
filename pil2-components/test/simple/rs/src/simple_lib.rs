@@ -4,7 +4,7 @@ use witness::{witness_library, WitnessLibrary, WitnessManager};
 
 use fields::PrimeField64;
 use fields::Goldilocks;
-use rand::{rng, Rng};
+use rand::{rng, RngExt};
 
 use crate::{SimpleLeft, SimpleRight};
 use proofman::register_std;

@@ -13,14 +13,16 @@ namespace R1cs
 {
     using FrElement = typename AltBn128::Engine::FrElement;
 
-    struct R1csConstraint {
+    struct R1csConstraint
+    {
         uint64_t signal_id;
         FrElement value;
 
         R1csConstraint(uint64_t id, const FrElement val) : signal_id(id), value(val) {};
     };
 
-    struct ConstraintCoefficients {
+    struct ConstraintCoefficients
+    {
         uint64_t signal_a;
         uint64_t signal_b;
         uint64_t signal_c;
@@ -31,7 +33,8 @@ namespace R1cs
         FrElement qc;
     };
 
-    struct AdditionCoefficients {
+    struct AdditionCoefficients
+    {
         uint64_t signal_a;
         uint64_t signal_b;
         FrElement value_a;
@@ -40,7 +43,8 @@ namespace R1cs
         AdditionCoefficients(uint64_t a, uint64_t b, FrElement va, FrElement vb) : signal_a(a), signal_b(b), value_a(va), value_b(vb) {};
     };
 
-    struct ConstraintReduceCoefficients {
+    struct ConstraintReduceCoefficients
+    {
         FrElement k;
         vector<uint64_t> signals;
         vector<FrElement> coefs;
@@ -51,18 +55,19 @@ namespace R1cs
         AltBn128::Engine &E;
 
     public:
-        R1csConstraintProcessor(AltBn128::Engine &E): E(E) {};
+        R1csConstraintProcessor(AltBn128::Engine &E) : E(E) {};
 
-        void processR1csConstraints(Fflonk::FflonkSetupSettings &settings,
+        void processR1csConstraints(FflonkSetupSettings &settings,
                                     vector<R1csConstraint> &lcA,
                                     vector<R1csConstraint> &lcB,
                                     vector<R1csConstraint> &lcC,
                                     std::vector<ConstraintCoefficients> &plonkConstraints,
                                     std::vector<R1cs::AdditionCoefficients> &plonkAdditions);
 
-        static ConstraintCoefficients getFflonkConstantConstraint(AltBn128::Engine &E, uint64_t signal_a) {
+        static ConstraintCoefficients getFflonkConstantConstraint(AltBn128::Engine &E, uint64_t signal_a)
+        {
             ConstraintCoefficients cc;
-            
+
             cc.signal_a = signal_a;
             cc.signal_b = 0;
             cc.signal_c = 0;
@@ -75,9 +80,10 @@ namespace R1cs
             return cc;
         }
 
-        static ConstraintCoefficients getFFlonkAdditionConstraint(uint64_t signal_a, uint64_t signal_b, uint64_t signal_c, FrElement ql, FrElement qr, FrElement qm, FrElement qo, FrElement qc) {
+        static ConstraintCoefficients getFFlonkAdditionConstraint(uint64_t signal_a, uint64_t signal_b, uint64_t signal_c, FrElement ql, FrElement qr, FrElement qm, FrElement qo, FrElement qc)
+        {
             ConstraintCoefficients cc;
-            
+
             cc.signal_a = signal_a;
             cc.signal_b = signal_b;
             cc.signal_c = signal_c;
@@ -90,9 +96,10 @@ namespace R1cs
             return cc;
         }
 
-        static ConstraintCoefficients getFFlonkMultiplicationConstraint(uint64_t signal_a, uint64_t signal_b, uint64_t signal_c, FrElement ql, FrElement qr, FrElement qm, FrElement qo, FrElement qc) {
+        static ConstraintCoefficients getFFlonkMultiplicationConstraint(uint64_t signal_a, uint64_t signal_b, uint64_t signal_c, FrElement ql, FrElement qr, FrElement qm, FrElement qo, FrElement qc)
+        {
             ConstraintCoefficients cc;
-            
+
             cc.signal_a = signal_a;
             cc.signal_b = signal_b;
             cc.signal_c = signal_c;
@@ -108,19 +115,19 @@ namespace R1cs
         int getLinearCombinationType(vector<R1csConstraint> &lc);
         void normalizeLinearCombination(vector<R1csConstraint> &lc);
         vector<R1csConstraint> joinLinearCombinations(vector<R1csConstraint> &lcA, vector<R1csConstraint> &lcB, FrElement k);
-        ConstraintReduceCoefficients reduceCoefs(Fflonk::FflonkSetupSettings &settings, 
-                        std::vector<R1cs::ConstraintCoefficients> &plonkConstraints,
-                        std::vector<R1cs::AdditionCoefficients> &plonkAdditions, vector<R1csConstraint> &linCom, uint32_t maxC);
-        void processR1csAdditionConstraint(Fflonk::FflonkSetupSettings &settings, 
-                                        std::vector<R1cs::ConstraintCoefficients> &plonkConstraints,
-                                        std::vector<R1cs::AdditionCoefficients> &plonkAdditions,
-                                        vector<R1csConstraint> &linCom);
-        void processR1csMultiplicationConstraint(Fflonk::FflonkSetupSettings &settings, 
-                                        std::vector<R1cs::ConstraintCoefficients> &plonkConstraints,
-                                        std::vector<R1cs::AdditionCoefficients> &plonkAdditions,
-                                        vector<R1csConstraint> &lcA,
-                                        vector<R1csConstraint> &lcB,
-                                        vector<R1csConstraint> &lcC);
+        ConstraintReduceCoefficients reduceCoefs(FflonkSetupSettings &settings,
+                                                 std::vector<R1cs::ConstraintCoefficients> &plonkConstraints,
+                                                 std::vector<R1cs::AdditionCoefficients> &plonkAdditions, vector<R1csConstraint> &linCom, uint32_t maxC);
+        void processR1csAdditionConstraint(FflonkSetupSettings &settings,
+                                           std::vector<R1cs::ConstraintCoefficients> &plonkConstraints,
+                                           std::vector<R1cs::AdditionCoefficients> &plonkAdditions,
+                                           vector<R1csConstraint> &linCom);
+        void processR1csMultiplicationConstraint(FflonkSetupSettings &settings,
+                                                 std::vector<R1cs::ConstraintCoefficients> &plonkConstraints,
+                                                 std::vector<R1cs::AdditionCoefficients> &plonkAdditions,
+                                                 vector<R1csConstraint> &lcA,
+                                                 vector<R1csConstraint> &lcB,
+                                                 vector<R1csConstraint> &lcC);
     };
 }
 #endif

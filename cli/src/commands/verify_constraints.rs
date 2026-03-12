@@ -61,6 +61,15 @@ impl VerifyConstraintsCmd {
             Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone())?,
         };
 
+        let proofman = ProofMan::<Goldilocks>::new(
+            self.proving_key.clone(),
+            true,
+            false,
+            ParamsGPU::default(),
+            self.verbose.into(),
+            HashMap::new(),
+        )?;
+
         let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
         for commit in &self.custom_commits {
             if let Some((key, value)) = commit.split_once('=') {
@@ -69,24 +78,13 @@ impl VerifyConstraintsCmd {
                 eprintln!("Invalid commit format: {commit:?}");
             }
         }
-
-        let proofman = ProofMan::<Goldilocks>::new(
-            self.proving_key.clone(),
-            custom_commits_map,
-            true,
-            false,
-            false,
-            ParamsGPU::default(),
-            self.verbose.into(),
-            HashMap::new(),
-        )?;
+        proofman.register_custom_commits(custom_commits_map)?;
 
         match self.field {
             Field::Goldilocks => proofman.verify_proof_constraints(
                 self.witness_lib.clone(),
                 self.public_inputs.clone(),
                 self.input_data.clone(),
-                PathBuf::new(),
                 &debug_info,
                 self.verbose.into(),
                 false,

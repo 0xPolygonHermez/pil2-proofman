@@ -6,14 +6,14 @@ void TranscriptBN128::put(Goldilocks::Element *input, uint64_t size)
 {
     for (uint64_t i = 0; i < size; i++)
     {
-        RawFrP::Element tmp = RawFrP::field.zero();
+        RawFr::Element tmp = RawFr::field.zero();
         tmp.v[0] = Goldilocks::toU64(input[i]);
-        RawFrP::field.toMontgomery(tmp, tmp);
+        RawFr::field.toMontgomery(tmp, tmp);
         _add1(tmp);
     }
 }
 
-void TranscriptBN128::put(RawFrP::Element *input, uint64_t size)
+void TranscriptBN128::put(RawFr::Element *input, uint64_t size)
 {
     for (uint64_t i = 0; i < size; i++)
     {
@@ -21,7 +21,7 @@ void TranscriptBN128::put(RawFrP::Element *input, uint64_t size)
     }
 }
 
-void TranscriptBN128::_add1(RawFrP::Element input)
+void TranscriptBN128::_add1(RawFr::Element input)
 {
     pending.push_back(input);
     out.clear();
@@ -31,7 +31,7 @@ void TranscriptBN128::_add1(RawFrP::Element input)
     }
 }
 
-void TranscriptBN128::getState(RawFrP::Element* output) {
+void TranscriptBN128::getState(RawFr::Element* output) {
 
     if(pending.size() > 0) {
         _updateState();
@@ -48,11 +48,11 @@ void TranscriptBN128::getField(uint64_t *output)
     }
 }
 
-RawFrP::Element TranscriptBN128::getFields253()
+RawFr::Element TranscriptBN128::getFields253()
 {
     if (out.size() > 0)
     {
-        RawFrP::Element res = out[0];
+        RawFr::Element res = out[0];
         out.erase(out.begin());
         return res;
     }
@@ -70,8 +70,8 @@ uint64_t TranscriptBN128::getFields1()
     }
     if (out.size() > 0)
     {
-        RawFrP::Element res;
-        RawFrP::field.fromMontgomery(res, out[0]);
+        RawFr::Element res;
+        RawFr::field.fromMontgomery(res, out[0]);
         out.erase(out.begin());
         out3.push_back(res.v[0]);
         out3.push_back(res.v[1]);
@@ -87,10 +87,10 @@ void TranscriptBN128::_updateState()
 {
     while (pending.size() < transcriptArity)
     {
-        pending.push_back(RawFrP::field.zero());
+        pending.push_back(RawFr::field.zero());
     }
 
-    Poseidon_opt p;
+    PoseidonBN128 p;
     out.insert(out.end(), state.begin(), state.end());
     out.insert(out.end(), pending.begin(), pending.end());
 
@@ -106,7 +106,7 @@ void TranscriptBN128::getPermutations(uint64_t *res, uint64_t n, uint64_t nBits)
     uint64_t totalBits = n * nBits;
 
     uint64_t NFields = floor((float)(totalBits - 1) / 253) + 1;
-    RawFrP::Element fields[NFields];
+    RawFr::Element fields[NFields];
 
     for (uint64_t i = 0; i < NFields; i++)
     {
@@ -123,7 +123,7 @@ void TranscriptBN128::getPermutations(uint64_t *res, uint64_t n, uint64_t nBits)
         {
             mpz_t n2;
             mpz_init(n2);
-            RawFrP::field.toMpz(n2, fields[curField]);
+            RawFr::field.toMpz(n2, fields[curField]);
             uint64_t bit = mpz_tstbit(n2, curBit);
             mpz_clear(n2);
 

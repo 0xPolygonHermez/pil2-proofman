@@ -30,7 +30,12 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
 impl<F: PrimeField64> WitnessComponent<F> for Compressor {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, global_ids: &RwLock<Vec<usize>>) -> ProofmanResult<()> {
+    fn execute(
+        &self,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        global_ids: &RwLock<Vec<usize>>,
+    ) -> ProofmanResult<()> {
         pctx.add_instance(0, 0)?;
         global_ids.write().unwrap().push(0);
         Ok(())
@@ -128,6 +133,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
             let air_instance = AirInstance::new(TraceInfo::new(
                 0,
                 0,
+                n_cols as usize,
                 1 << (setup.stark_info.stark_struct.n_bits),
                 trace,
                 false,

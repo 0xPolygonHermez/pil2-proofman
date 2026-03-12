@@ -21,8 +21,8 @@ inline uint64_t toU64(const Goldilocks::Element& element) {
 }
 
 template<>
-inline uint64_t toU64(const RawFrP::Element& element) {
-    throw std::runtime_error("Error: Cannot convert RawFrP::Element to U64.");
+inline uint64_t toU64(const RawFr::Element& element) {
+    throw std::runtime_error("Error: Cannot convert RawFr::Element to U64.");
 }
 
 template<>
@@ -31,8 +31,8 @@ inline std::string toString(const Goldilocks::Element& element) {
 }
 
 template<>
-inline std::string toString(const RawFrP::Element& element) {
-    return RawFrP::field.toString(element, 10);
+inline std::string toString(const RawFr::Element& element) {
+    return RawFr::field.toString(element, 10);
 }
 
 template <typename ElementType>
@@ -488,7 +488,6 @@ public:
         }
 
         // TODO: LAST LEVELS IN JSON
-        // TODO: POW BITS
 
         for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
             if(nFieldElements == 1) {
@@ -532,6 +531,9 @@ public:
                 j["finalPol"][i][l] = Goldilocks::toString(fri.pol[i][l]);
             }
         }
+
+        j["nonce"] = std::to_string(nonce);
+        
         return j;
     }
 };

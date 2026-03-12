@@ -43,6 +43,9 @@ pub enum ProofmanError {
     #[error("Slice conversion error: {0}")]
     SliceConversion(#[from] std::array::TryFromSliceError),
 
+    #[error("Bincode error: {0}")]
+    Bincode(#[from] Box<bincode::ErrorKind>),
+
     #[error("Proofman error: {0}")]
     ProofmanError(String),
 

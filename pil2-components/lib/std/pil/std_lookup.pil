@@ -83,7 +83,11 @@ function lookup(const int opid, const expr expressions[], const expr mul = 1, in
     if (name == PIOP_NAME_DEFAULT) name = DEFAULT_LOOKUP_NAME;
     if (surname == PIOP_SURNAME_DEFAULT) surname = DEFAULT_LOOKUP_SURNAME;
 
-    sum(name, surname, SUM_TYPE_FREE, [opid], opid, expressions, mul);
+    if (VIRTUAL == 1) {
+        error(`Virtual lookup not supported. Generated in AIR: ${AIR_NAME}`);
+    } else {
+        sum(name, surname, SUM_TYPE_FREE, [opid], opid, expressions, mul);
+    }
 }
 
 /**
@@ -117,5 +121,9 @@ function lookup_proves_dynamic(const int opids[], const expr busid, const expr e
     if (name == PIOP_NAME_DEFAULT) name = DEFAULT_LOOKUP_NAME;
     if (surname == PIOP_SURNAME_DEFAULT) surname = PIOP_SURNAME_DYNAMIC;
 
-    sum(name, surname, SUM_TYPE_PROVES, opids, busid, expressions, mul);
+    if (VIRTUAL == 1) {
+        error(`Dynamic virtual lookup proves not supported. Generated in AIR: ${AIR_NAME}`);
+    } else {
+        sum(name, surname, SUM_TYPE_PROVES, opids, busid, expressions, mul);
+    }
 }

@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.15.0"
+version = "0.16.0"
 edition = "2021"
 license = "Apache-2.0 or MIT"
 keywords = ["pil2-proofman", "prover", "zero-knowledge"]
@@ -21,6 +21,7 @@ members = [
     "witness",
     "util",
     "verifier",
+    "soundness",
 
     # PIL2 components library
     "pil2-components/lib/std/rs",
@@ -55,6 +56,7 @@ default-members = [
     "witness",
     "util",
     "verifier",
+    "soundness",
 ]
 
 resolver = "2"
@@ -68,6 +70,8 @@ proofman-macros = { path = "macros" }
 proofman = { path = "proofman" }
 proofman-common = { path = "common" }
 proofman-hints = { path = "hints" }
+proofman-soundness = { path = "soundness" }
+proofman-verifier = { path = "verifier" }
 proofman-util = { path = "util" }
 proofman-cli = { path = "cli" }
 pil-std-lib = { path = "pil2-components/lib/std/rs" }
@@ -76,9 +80,8 @@ pilout = { path = "pilout" }
 fields = { path = "fields" }
 log = { version = "0.4", default-features = false }
 env_logger = "0.11"
-bytes = "1.7"
+bytes = "1.11.1"
 prost = "0.13"
-rand = "0.9"
 num-bigint = "0.4"
 prost-build = "0.13"
 num-traits = "0.2"
@@ -94,8 +97,12 @@ libloading = "0.8.7"
 sysinfo = "0.35.1"
 blake3 = "1.3.1"
 csv = "1.3.1"
+bincode = "1.3.3"
 borsh = { version = "1.5", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tokio-util = "0.7.16"
+rustc-hash = "2.1.1"
+itoa = "1.0.17"
 thiserror = { version = "2" }
+rand = "0.10"

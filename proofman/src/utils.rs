@@ -2,18 +2,28 @@ use fields::PrimeField64;
 use num_traits::ToPrimitive;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
+use std::os::raw::c_void;
 
 use colored::*;
 
 use proofman_common::{
     format_bytes, MpiCtx, ParamsGPU, ProofCtx, ProofType, ProofmanError, ProofmanResult, Setup, SetupCtx, SetupsVadcop,
 };
-use proofman_util::DeviceBuffer;
 use proofman_starks_lib_c::load_device_const_pols_c;
-use proofman_starks_lib_c::custom_commit_size_c;
 use proofman_starks_lib_c::load_device_setup_c;
-use proofman_common::{PackedInfo, VerboseMode};
+use proofman_starks_lib_c::get_unified_buffer_gpu_c;
+use proofman_starks_lib_c::verify_root_bn128_from_tree_c;
+use proofman_starks_lib_c::pack_const_pols_c;
+use proofman_starks_lib_c::{
+    calculate_const_tree_c, calculate_const_tree_bn128_c, write_const_tree_c, write_const_tree_bn128_c,
+    prepare_blocks_c, tile_const_pols_c, load_const_pols_c,
+};
+use proofman_util::create_buffer_fast;
+use proofman_common::{PackedInfo, VerboseMode, GlobalInfo};
 
 use pil_std_lib::Std;
 use witness::WitnessManager;
@@ -24,10 +34,8 @@ pub fn print_summary_info<F: PrimeField64>(
     mpi_ctx: &MpiCtx,
     packed_info: &HashMap<(usize, usize), PackedInfo>,
     verbose_mode: VerboseMode,
-) -> ProofmanResult<()> {
-    if mpi_ctx.rank == 0 {
-        print_summary(pctx, sctx, packed_info, true, verbose_mode)?;
-    }
+) -> ProofmanResult<String> {
+    let summary = print_summary(pctx, sctx, packed_info, true, verbose_mode, mpi_ctx.rank == 0)?;
 
     if mpi_ctx.n_processes > 1 {
         let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info_process();
@@ -39,9 +47,9 @@ pub fn print_summary_info<F: PrimeField64>(
             max_deviation
         );
 
-        print_summary(pctx, sctx, packed_info, false, verbose_mode)?;
+        let _ = print_summary(pctx, sctx, packed_info, false, verbose_mode, true)?;
     }
-    Ok(())
+    Ok(summary)
 }
 
 pub fn print_summary<F: PrimeField64>(
@@ -50,7 +58,10 @@ pub fn print_summary<F: PrimeField64>(
     packed_info: &HashMap<(usize, usize), PackedInfo>,
     global: bool,
     verbose_mode: VerboseMode,
-) -> ProofmanResult<()> {
+    print_output: bool,
+) -> ProofmanResult<String> {
+    let mut summary_info = String::new();
+
     let mut air_info = HashMap::new();
 
     let mut air_instances = HashMap::new();
@@ -115,24 +126,32 @@ pub fn print_summary<F: PrimeField64>(
     air_groups.sort();
 
     if verbose_mode != VerboseMode::Info {
-        tracing::info!("{}", "--- TOTAL PROOF INSTANCES SUMMARY ------------------------".bright_white().bold());
-        tracing::info!("    ► {} Air instances found:", n_instances);
+        if print_output {
+            tracing::info!("{}", "--- TOTAL PROOF INSTANCES SUMMARY ------------------------".bright_white().bold());
+            tracing::info!("    ► {} Air instances found:", n_instances);
+        }
         for air_group in &air_groups {
             let air_group_instances = air_instances.get(*air_group).unwrap();
             let mut air_names: Vec<_> = air_group_instances.keys().collect();
             air_names.sort();
 
-            tracing::info!("      Air Group [{}]", air_group);
+            if print_output {
+                tracing::info!("      Air Group [{}]", air_group);
+            }
             for air_name in air_names {
                 let count = air_group_instances.get(air_name).unwrap();
                 let (n_bits, total_cols, _, _, _) = air_info.get(air_name).unwrap();
-                tracing::info!(
-                    "      {}",
-                    format!("· {count} x Air [{air_name}] ({total_cols} x 2^{n_bits})").bright_white().bold()
-                );
+                if print_output {
+                    tracing::info!(
+                        "      {}",
+                        format!("· {count} x Air [{air_name}] ({total_cols} x 2^{n_bits})").bright_white().bold()
+                    );
+                }
             }
         }
-        tracing::info!("{}", "--- TOTAL PROVER MEMORY USAGE ----------------------------".bright_white().bold());
+        if print_output {
+            tracing::info!("{}", "--- TOTAL PROVER MEMORY USAGE ----------------------------".bright_white().bold());
+        }
         for air_group in &air_groups {
             let air_group_instances = air_instances.get(*air_group).unwrap();
             let mut air_names: Vec<_> = air_group_instances.keys().collect();
@@ -142,31 +161,37 @@ pub fn print_summary<F: PrimeField64>(
                 let count = air_group_instances.get(air_name).unwrap();
                 let (_, _, _, memory_trace, memory_instance) = air_info.get(air_name).unwrap();
                 let gpu = cfg!(feature = "gpu");
-                if gpu {
-                    tracing::info!(
-                        "      · {}: {} GPU per each of {} instance | Witness CPU: {}",
-                        air_name,
-                        format_bytes(*memory_instance),
-                        count,
-                        format_bytes(*memory_trace),
-                    );
-                } else {
-                    tracing::info!(
-                        "      · {}: {} per each of {} instance | Witness : {}",
-                        air_name,
-                        format_bytes(*memory_instance),
-                        count,
-                        format_bytes(*memory_trace),
-                    );
+                if print_output {
+                    if gpu {
+                        tracing::info!(
+                            "      · {}: {} GPU per each of {} instance | Witness CPU: {}",
+                            air_name,
+                            format_bytes(*memory_instance),
+                            count,
+                            format_bytes(*memory_trace),
+                        );
+                    } else {
+                        tracing::info!(
+                            "      · {}: {} per each of {} instance | Witness : {}",
+                            air_name,
+                            format_bytes(*memory_instance),
+                            count,
+                            format_bytes(*memory_trace),
+                        );
+                    }
                 }
             }
         }
-        tracing::info!("      Total memory required by proofman: {}", format_bytes(max_prover_memory));
-        tracing::info!("----------------------------------------------------------");
-        tracing::info!("      Extra memory tables (CPU): {}", format_bytes(memory_tables));
-        tracing::info!("----------------------------------------------------------");
+        if print_output {
+            tracing::info!("      Total memory required by proofman: {}", format_bytes(max_prover_memory));
+            tracing::info!("----------------------------------------------------------");
+            tracing::info!("      Extra memory tables (CPU): {}", format_bytes(memory_tables));
+            tracing::info!("----------------------------------------------------------");
+        }
     } else {
-        tracing::info!("{}", "--- PROOF INSTANCES SUMMARY ---".bright_white().bold());
+        if print_output {
+            tracing::info!("{}", "--- PROOF INSTANCES SUMMARY ---".bright_white().bold());
+        }
 
         for air_group in &air_groups {
             let air_group_instances = air_instances.get(*air_group).unwrap();
@@ -181,155 +206,383 @@ pub fn print_summary<F: PrimeField64>(
                 })
                 .collect();
 
-            summary.push(format!("Total instances: {}", n_instances));
+            summary.push(format!("Total {} instances: {}", if global { "global" } else { "local" }, n_instances));
 
-            tracing::info!("{} | {}", air_group.bright_white().bold(), summary.join(" | "));
+            if print_output {
+                tracing::info!("{} | {}", air_group.bright_white().bold(), summary.join(" | "));
+            }
+
+            if global {
+                summary_info = summary.join(" | ");
+            }
         }
 
-        tracing::info!("{}", "--------------------------------".bright_white().bold());
+        if print_output {
+            tracing::info!("{}", "--------------------------------".bright_white().bold());
+        }
     }
 
-    Ok(())
+    Ok(summary_info)
 }
 
-fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool, final_snark: bool) -> ProofmanResult<()> {
+pub fn needs_const_tree_regeneration<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<bool> {
     let const_pols_tree_path = &setup.const_pols_tree_path;
-    let mut flags = String::new();
-    if aggregation {
-        flags.push_str(" -a");
-    }
-    if final_snark {
-        flags.push_str(" -f");
-    }
-
-    let is_gpu = match cfg!(feature = "gpu") {
-        true => "--features gpu ",
-        false => "",
-    };
-
-    if !PathBuf::from(&const_pols_tree_path).exists() {
-        let error_message = ProofmanError::InvalidSetup(format!(
-            "Error: Unable to find the constant tree at '{const_pols_tree_path}'.\n\
-            Please run the following command:\n\
-            \x1b[1mcargo run {is_gpu}--bin proofman-cli check-setup --proving-key <PROVING_KEY>{flags}\x1b[0m"
-        ));
-        return Err(error_message);
-    }
-
-    let error_message = ProofmanError::InvalidSetup(format!(
-        "Error: The constant tree file at '{const_pols_tree_path}' exists but is invalid or corrupted.\n\
-        Please regenerate it by running:\n\
-        \x1b[1mcargo run {is_gpu}--bin proofman-cli check-setup --proving-key <PROVING_KEY>{flags}\x1b[0m"
-    ));
-
     let const_pols_tree_size = setup.const_tree_size;
+
+    // Check if file exists
+    if !PathBuf::from(&const_pols_tree_path).exists() {
+        return Ok(true);
+    }
+
+    // Check file size
     match fs::metadata(const_pols_tree_path) {
         Ok(metadata) => {
             let actual_size = metadata.len() as usize;
             if actual_size != const_pols_tree_size * 8 {
-                return Err(error_message);
+                return Ok(true);
             }
         }
-        Err(err) => {
-            return Err(ProofmanError::InvalidSetup(format!("Failed to get metadata for {}: {}", setup.air_name, err)));
-        }
+        Err(_) => return Ok(true),
     }
-    if setup.setup_type != ProofType::RecursiveF {
-        let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
 
+    // Validate the tree content
+    let mut file = File::open(const_pols_tree_path)?;
+    file.seek(SeekFrom::End(-32))?;
+
+    let mut buffer = [0u8; 32];
+    file.read_exact(&mut buffer)?;
+
+    if setup.setup_type != ProofType::RecursiveF {
+        let verkey_path = setup.verkey_file.clone();
         let mut contents = String::new();
         let mut file = File::open(verkey_path).unwrap();
         let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read verkey path file: {err}"));
         let verkey_u64: Vec<u64> = serde_json::from_str(&contents).unwrap();
 
-        let mut file = File::open(const_pols_tree_path)?;
-        file.seek(SeekFrom::End(-32))?; // Move to 32 bytes before the end
-
-        let mut buffer = [0u8; 32];
-        file.read_exact(&mut buffer)?;
-
         for (i, verkey_val) in verkey_u64.iter().enumerate() {
             let byte_range = i * 8..(i + 1) * 8;
             let value = u64::from_le_bytes(buffer[byte_range].try_into()?);
             if value != *verkey_val {
-                return Err(error_message);
+                return Ok(true);
             }
         }
+    } else {
+        let verkey_path = setup.verkey_file.clone();
+        let mut contents = String::new();
+        let mut file = File::open(verkey_path).unwrap();
+        let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read verkey path file: {err}"));
+
+        let verkey_str: String = serde_json::from_str(&contents)
+            .map_err(|err| ProofmanError::InvalidSetup(format!("Failed to parse verkey as string: {}", err)))?;
+
+        let is_valid = verify_root_bn128_from_tree_c(const_pols_tree_path, &verkey_str);
+        if !is_valid {
+            return Ok(true);
+        }
     }
-    Ok(())
+
+    Ok(false)
 }
 
-pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
-    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
-        for (air_id, _) in air_group.iter().enumerate() {
-            let setup = sctx.get_setup(airgroup_id, air_id)?;
-            check_const_tree(setup, false, false)?;
+pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, d_buffers: &Option<*mut c_void>) -> ProofmanResult<()> {
+    let const_pols_tree_path = &setup.const_pols_tree_path;
+    let const_pols_tree_size = setup.const_tree_size;
 
-            let n_custom_commits = setup.stark_info.custom_commits.len();
+    let mut needs_regeneration = false;
+    let mut validation_failed = false;
 
-            for commit_id in 0..n_custom_commits {
-                if setup.stark_info.custom_commits[commit_id].stage_widths[0] > 0 {
-                    let custom_commit_file_path = pctx
-                        .get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name, false)
-                        .unwrap();
-
-                    if !PathBuf::from(&custom_commit_file_path).exists() {
-                        let error_message = format!(
-                            "Error: Unable to find {} custom commit at '{}'.\n\
-                            Please run the following command:\n\
-                            \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
-                            setup.stark_info.custom_commits[commit_id].name,
-                            custom_commit_file_path.display(),
-                        );
-                        tracing::warn!("{}", error_message);
-                        return Ok(());
-                    }
-
-                    let error_message = format!(
-                        "Error: The custom commit file for {} at '{}' exists but is invalid or corrupted.\n\
-                        Please regenerate it by running:\n\
-                        \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
-                        setup.stark_info.custom_commits[commit_id].name,
-                        custom_commit_file_path.display(),
+    // Check if file exists and has correct size
+    if PathBuf::from(&const_pols_tree_path).exists() {
+        match fs::metadata(const_pols_tree_path) {
+            Ok(metadata) => {
+                let actual_size = metadata.len() as usize;
+                if actual_size != const_pols_tree_size * 8 {
+                    tracing::trace!(
+                        "Constant tree file '{}' has incorrect size ({} bytes, expected {} bytes). Regenerating...",
+                        const_pols_tree_path,
+                        actual_size,
+                        const_pols_tree_size * 8
                     );
+                    needs_regeneration = true;
+                } else {
+                    // Validate the tree content
+                    let mut file = File::open(const_pols_tree_path)?;
+                    file.seek(SeekFrom::End(-32))?;
 
-                    let size = custom_commit_size_c((&setup.p_setup).into(), commit_id as u64) as usize;
+                    let mut buffer = [0u8; 32];
+                    file.read_exact(&mut buffer)?;
 
-                    match fs::metadata(custom_commit_file_path) {
-                        Ok(metadata) => {
-                            let actual_size = metadata.len() as usize;
-                            if actual_size != (size + 4) * 8 {
-                                tracing::warn!("{}", error_message);
-                                return Ok(());
+                    if setup.setup_type != ProofType::RecursiveF {
+                        let verkey_path = setup.verkey_file.clone();
+                        let mut contents = String::new();
+                        let mut file = File::open(verkey_path).unwrap();
+                        let _ = file
+                            .read_to_string(&mut contents)
+                            .map_err(|err| format!("Failed to read verkey path file: {err}"));
+                        let verkey_u64: Vec<u64> = serde_json::from_str(&contents).unwrap();
+
+                        for (i, verkey_val) in verkey_u64.iter().enumerate() {
+                            let byte_range = i * 8..(i + 1) * 8;
+                            let value = u64::from_le_bytes(buffer[byte_range].try_into()?);
+                            if value != *verkey_val {
+                                validation_failed = true;
+                                break;
                             }
                         }
-                        Err(err) => {
-                            tracing::warn!(
-                                "Failed to get metadata for {} for custom_commit {}: {}",
-                                setup.air_name,
-                                setup.stark_info.custom_commits[commit_id].name,
-                                err
-                            );
+                    } else {
+                        let verkey_path = setup.verkey_file.clone();
+                        let mut contents = String::new();
+                        let mut file = File::open(verkey_path).unwrap();
+                        let _ = file
+                            .read_to_string(&mut contents)
+                            .map_err(|err| format!("Failed to read verkey path file: {err}"));
+
+                        let verkey_str: String = serde_json::from_str(&contents).map_err(|err| {
+                            ProofmanError::InvalidSetup(format!("Failed to parse verkey as string: {}", err))
+                        })?;
+
+                        let is_valid = verify_root_bn128_from_tree_c(const_pols_tree_path, &verkey_str);
+                        if !is_valid {
+                            validation_failed = true;
                         }
+                    }
+
+                    if validation_failed {
+                        tracing::trace!(
+                            "Constant tree file '{}' validation failed. Regenerating...",
+                            const_pols_tree_path
+                        );
+                        needs_regeneration = true;
                     }
                 }
             }
+            Err(err) => {
+                return Err(ProofmanError::InvalidSetup(format!(
+                    "Failed to get metadata for {}: {}",
+                    setup.air_name, err
+                )));
+            }
+        }
+    } else {
+        tracing::trace!("Constant tree file '{}' does not exist. Generating...", const_pols_tree_path);
+        needs_regeneration = true;
+    }
+
+    // Regenerate the const tree if needed
+    if needs_regeneration {
+        let const_pols_size = (setup.stark_info.n_constants * (1 << setup.stark_info.stark_struct.n_bits)) as usize;
+        let mut const_pols: Vec<F> = create_buffer_fast(const_pols_size);
+        let const_pols_path = setup.setup_path.display().to_string() + ".const";
+        load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_pols.len() as u64 * 8);
+
+        let const_tree: Vec<F> = create_buffer_fast(const_pols_tree_size);
+        let p_stark_info = setup.p_setup.p_stark_info;
+
+        let unified_buffer_gpu =
+            if let Some(d_buffers) = d_buffers { get_unified_buffer_gpu_c(*d_buffers) } else { std::ptr::null_mut() };
+
+        if setup.stark_info.stark_struct.verification_hash_type == "GL" {
+            if cfg!(feature = "gpu") {
+                prepare_blocks_c(
+                    const_pols.as_mut_ptr() as *mut u64,
+                    1 << setup.stark_info.stark_struct.n_bits,
+                    setup.stark_info.n_constants,
+                    unified_buffer_gpu,
+                );
+                calculate_const_tree_c(
+                    p_stark_info,
+                    const_pols.as_ptr() as *mut u8,
+                    const_tree.as_ptr() as *mut u8,
+                    unified_buffer_gpu,
+                );
+                write_const_tree_c(p_stark_info, const_tree.as_ptr() as *mut u8, const_pols_tree_path.as_str());
+            } else {
+                calculate_const_tree_c(
+                    p_stark_info,
+                    const_pols.as_ptr() as *mut u8,
+                    const_tree.as_ptr() as *mut u8,
+                    unified_buffer_gpu,
+                );
+                write_const_tree_c(p_stark_info, const_tree.as_ptr() as *mut u8, const_pols_tree_path.as_str());
+            }
+        } else {
+            // BN128 case (RecursiveF)
+            calculate_const_tree_bn128_c(p_stark_info, const_pols.as_ptr() as *mut u8, const_tree.as_ptr() as *mut u8);
+
+            // For RecursiveF, we need to write to CPU path first
+            let const_pols_tree_path_cpu = setup.setup_path.display().to_string() + ".consttree";
+            write_const_tree_bn128_c(p_stark_info, const_tree.as_ptr() as *mut u8, const_pols_tree_path_cpu.as_str());
+
+            // For GPU, use tile_const_pols_c to create both GPU const pols and GPU const tree
+            if cfg!(feature = "gpu") {
+                tile_const_pols_c(
+                    p_stark_info,
+                    const_pols.as_ptr() as *mut u8,
+                    setup.const_pols_path.as_str(),
+                    const_tree.as_ptr() as *mut u8,
+                    const_pols_tree_path.as_str(),
+                    unified_buffer_gpu,
+                );
+            }
+        }
+
+        tracing::trace!("Successfully generated constant tree file '{}'", const_pols_tree_path);
+    }
+
+    Ok(())
+}
+
+pub fn needs_const_pols_gpu_regeneration<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<bool> {
+    if !cfg!(feature = "gpu") {
+        return Ok(false);
+    }
+
+    let n_constants = setup.stark_info.n_constants as usize;
+    let n_rows = 1usize << setup.stark_info.stark_struct.n_bits as usize;
+
+    // Check if file exists
+    if !PathBuf::from(&setup.const_pols_path).exists() {
+        return Ok(true);
+    }
+
+    // Check file size
+    let mut file = File::open(&setup.const_pols_path)?;
+    let mut words_per_row_bytes = [0u8; 8];
+    file.read_exact(&mut words_per_row_bytes)?;
+    let words_per_row = u64::from_le_bytes(words_per_row_bytes);
+
+    let expected_size = 8 + (n_constants * 8) + (n_rows * words_per_row as usize * 8);
+
+    match fs::metadata(&setup.const_pols_path) {
+        Ok(metadata) => {
+            let actual_size = metadata.len() as usize;
+            if actual_size != expected_size {
+                return Ok(true);
+            }
+        }
+        Err(_) => return Ok(true),
+    }
+
+    Ok(false)
+}
+
+fn check_const_pols_gpu<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<()> {
+    if !cfg!(feature = "gpu") {
+        return Ok(());
+    }
+
+    let n_constants = setup.stark_info.n_constants as usize;
+    let n_rows = 1usize << setup.stark_info.stark_struct.n_bits as usize;
+
+    let mut needs_regeneration = false;
+    let expected_size;
+
+    // Check if file exists and has correct size
+    if PathBuf::from(&setup.const_pols_path).exists() {
+        let mut file = File::open(&setup.const_pols_path)?;
+        let mut words_per_row_bytes = [0u8; 8];
+        file.read_exact(&mut words_per_row_bytes)?;
+        let words_per_row = u64::from_le_bytes(words_per_row_bytes);
+
+        // Calculate expected size
+        expected_size = 8 + (n_constants * 8) + (n_rows * words_per_row as usize * 8);
+
+        match fs::metadata(&setup.const_pols_path) {
+            Ok(metadata) => {
+                let actual_size = metadata.len() as usize;
+                if actual_size != expected_size {
+                    tracing::trace!(
+                        "GPU constant polynomials file '{}' has incorrect size ({} bytes, expected {} bytes). Regenerating...",
+                        setup.const_pols_path, actual_size, expected_size
+                    );
+                    needs_regeneration = true;
+                }
+            }
+            Err(err) => {
+                return Err(ProofmanError::InvalidSetup(format!(
+                    "Failed to get metadata for GPU const pols {}: {}",
+                    setup.air_name, err
+                )));
+            }
+        }
+    } else {
+        tracing::trace!("GPU constant polynomials file '{}' does not exist. Generating...", setup.const_pols_path);
+        needs_regeneration = true;
+    }
+
+    if needs_regeneration {
+        let const_pols_size = (setup.stark_info.n_constants * (1 << setup.stark_info.stark_struct.n_bits)) as usize;
+        let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
+        let const_pols_path = setup.setup_path.display().to_string() + ".const";
+
+        load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_pols.len() as u64 * 8);
+
+        pack_const_pols_c(setup.p_setup.p_stark_info, const_pols.as_ptr() as *mut u8, setup.const_pols_path.as_str());
+
+        tracing::trace!("Successfully generated GPU constant polynomials file '{}'", setup.const_pols_path);
+    }
+
+    Ok(())
+}
+
+pub fn needs_regeneration_fixed<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
+) -> ProofmanResult<(bool, bool)> {
+    let mut needs_const_regen = false;
+    let mut needs_tree_regen = false;
+
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            let setup = sctx.get_setup(airgroup_id, air_id)?;
+            if needs_const_pols_gpu_regeneration(setup)? {
+                needs_const_regen = true;
+                tracing::debug!("GPU const pols regeneration needed for [{}:{}]", airgroup_id, air_id);
+            }
+            if needs_const_tree_regeneration(setup)? {
+                needs_tree_regen = true;
+                tracing::debug!("Const tree regeneration needed for [{}:{}]", airgroup_id, air_id);
+            }
+        }
+    }
+
+    Ok((needs_const_regen, needs_tree_regen))
+}
+
+pub fn check_const_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            let setup = sctx.get_setup(airgroup_id, air_id)?;
+            check_const_pols_gpu(setup)?;
         }
     }
     Ok(())
 }
 
-pub fn check_tree_paths_vadcop<F: PrimeField64>(
+pub fn needs_regeneration_vadcop_fixed<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
-    final_snark: bool,
-) -> ProofmanResult<()> {
+) -> ProofmanResult<(bool, bool)> {
+    let mut needs_const_regen = false;
+    let mut needs_tree_regen = false;
+
     let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                 let setup = sctx_compressor.get_setup(airgroup_id, air_id)?;
-                check_const_tree(setup, true, false)?;
+                if needs_const_pols_gpu_regeneration(setup)? {
+                    needs_const_regen = true;
+                    tracing::debug!(
+                        "Vadcop compressor const pols regeneration needed for [{}:{}]",
+                        airgroup_id,
+                        air_id
+                    );
+                }
+                if needs_const_tree_regeneration(setup)? {
+                    needs_tree_regen = true;
+                    tracing::debug!("Vadcop compressor tree regeneration needed for [{}:{}]", airgroup_id, air_id);
+                }
             }
         }
     }
@@ -338,7 +591,14 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
-            check_const_tree(setup, true, false)?;
+            if needs_const_pols_gpu_regeneration(setup)? {
+                needs_const_regen = true;
+                tracing::debug!("Vadcop recursive1 const pols regeneration needed for [{}:{}]", airgroup_id, air_id);
+            }
+            if needs_const_tree_regeneration(setup)? {
+                needs_tree_regen = true;
+                tracing::debug!("Vadcop recursive1 tree regeneration needed for [{}:{}]", airgroup_id, air_id);
+            }
         }
     }
 
@@ -346,16 +606,116 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup in 0..n_airgroups {
         let setup = sctx_recursive2.get_setup(airgroup, 0)?;
-        check_const_tree(setup, true, false)?;
+        if needs_const_pols_gpu_regeneration(setup)? {
+            needs_const_regen = true;
+            tracing::debug!("Vadcop recursive2 const pols regeneration needed for airgroup {}", airgroup);
+        }
+        if needs_const_tree_regeneration(setup)? {
+            needs_tree_regen = true;
+            tracing::debug!("Vadcop recursive2 tree regeneration needed for airgroup {}", airgroup);
+        }
     }
 
     let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-    check_const_tree(setup_vadcop_final, true, false)?;
-
-    if final_snark {
-        let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
-        check_const_tree(setup_recursivef, true, true)?;
+    if needs_const_pols_gpu_regeneration(setup_vadcop_final)? {
+        needs_const_regen = true;
+        tracing::debug!("Vadcop final const pols regeneration needed");
     }
+    if needs_const_tree_regeneration(setup_vadcop_final)? {
+        needs_tree_regen = true;
+        tracing::debug!("Vadcop final tree regeneration needed");
+    }
+
+    let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
+    if needs_const_pols_gpu_regeneration(setup_vadcop_final_compressed)? {
+        needs_const_regen = true;
+        tracing::debug!("Vadcop final compressed const pols regeneration needed");
+    }
+    if needs_const_tree_regeneration(setup_vadcop_final_compressed)? {
+        needs_tree_regen = true;
+        tracing::debug!("Vadcop final compressed tree regeneration needed");
+    }
+
+    Ok((needs_const_regen, needs_tree_regen))
+}
+
+pub fn check_const_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) -> ProofmanResult<()> {
+    let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                let setup = sctx_compressor.get_setup(airgroup_id, air_id)?;
+                check_const_pols_gpu(setup)?;
+            }
+        }
+    }
+
+    let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
+            check_const_pols_gpu(setup)?;
+        }
+    }
+
+    let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap();
+    let n_airgroups = pctx.global_info.air_groups.len();
+    for airgroup in 0..n_airgroups {
+        let setup = sctx_recursive2.get_setup(airgroup, 0)?;
+        check_const_pols_gpu(setup)?;
+    }
+
+    let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
+    check_const_pols_gpu(setup_vadcop_final)?;
+
+    let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
+    check_const_pols_gpu(setup_vadcop_final_compressed)?;
+    Ok(())
+}
+
+pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            let setup = sctx.get_setup(airgroup_id, air_id)?;
+            let d_buffers = if cfg!(feature = "gpu") { Some(pctx.get_device_buffers_ptr()) } else { None };
+            check_const_tree(setup, &d_buffers)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn check_tree_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) -> ProofmanResult<()> {
+    let d_buffers = if cfg!(feature = "gpu") { Some(pctx.get_device_buffers_ptr()) } else { None };
+    let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                let setup = sctx_compressor.get_setup(airgroup_id, air_id)?;
+                check_const_tree(setup, &d_buffers)?;
+            }
+        }
+    }
+
+    let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
+            check_const_tree(setup, &d_buffers)?;
+        }
+    }
+
+    let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap();
+    let n_airgroups = pctx.global_info.air_groups.len();
+    for airgroup in 0..n_airgroups {
+        let setup = sctx_recursive2.get_setup(airgroup, 0)?;
+        check_const_tree(setup, &d_buffers)?;
+    }
+
+    let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
+    check_const_tree(setup_vadcop_final, &d_buffers)?;
+
+    let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
+    check_const_tree(setup_vadcop_final_compressed, &d_buffers)?;
 
     Ok(())
 }
@@ -388,15 +748,14 @@ pub fn calculate_max_witness_trace_size<F: PrimeField64>(
     Ok(max_witness_trace_size)
 }
 
-pub fn initialize_setup_info<F: PrimeField64>(
+pub fn load_device_setups<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     setups: &SetupsVadcop<F>,
-    d_buffers: &DeviceBuffer,
     aggregation: bool,
     packed_info: &HashMap<(usize, usize), PackedInfo>,
 ) -> ProofmanResult<()> {
-    let mut offset = 0;
+    let d_buffers = pctx.get_device_buffers_ptr();
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx.get_setup(airgroup_id, air_id)?;
@@ -411,14 +770,125 @@ pub fn initialize_setup_info<F: PrimeField64>(
                 air_id as u64,
                 proof_type,
                 (&setup.p_setup).into(),
-                d_buffers.get_ptr(),
+                d_buffers,
                 setup.verkey.as_ptr() as *mut u8,
                 packed_info_air.as_ffi().get_ptr(),
             );
+        }
+    }
+
+    if aggregation {
+        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in air_group.iter().enumerate() {
+                if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                    let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
+                    let proof_type: &str = setup.setup_type.clone().into();
+                    if cfg!(feature = "gpu") {
+                        tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
+                    }
+                    load_device_setup_c(
+                        airgroup_id as u64,
+                        air_id as u64,
+                        proof_type,
+                        (&setup.p_setup).into(),
+                        d_buffers,
+                        setup.verkey.as_ptr() as *mut u8,
+                        std::ptr::null_mut(),
+                    );
+                }
+            }
+        }
+
+        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in air_group.iter().enumerate() {
+                let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
+                let proof_type: &str = setup.setup_type.clone().into();
+                if cfg!(feature = "gpu") {
+                    tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
+                }
+                load_device_setup_c(
+                    airgroup_id as u64,
+                    air_id as u64,
+                    proof_type,
+                    (&setup.p_setup).into(),
+                    d_buffers,
+                    setup.verkey.as_ptr() as *mut u8,
+                    std::ptr::null_mut(),
+                );
+            }
+        }
+
+        let n_airgroups = pctx.global_info.air_groups.len();
+        for airgroup_id in 0..n_airgroups {
+            let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?;
+            let proof_type: &str = setup.setup_type.clone().into();
+            if cfg!(feature = "gpu") {
+                tracing::debug!(airgroup_id, air_id = 0, proof_type, "Loading expressions setup in GPU");
+            }
+            load_device_setup_c(
+                airgroup_id as u64,
+                0_u64,
+                proof_type,
+                (&setup.p_setup).into(),
+                d_buffers,
+                setup.verkey.as_ptr() as *mut u8,
+                std::ptr::null_mut(),
+            );
+        }
+
+        let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
+        let proof_type: &str = setup_vadcop_final.setup_type.clone().into();
+        if cfg!(feature = "gpu") {
+            tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
+        }
+        load_device_setup_c(
+            0_u64,
+            0_u64,
+            proof_type,
+            (&setup_vadcop_final.p_setup).into(),
+            d_buffers,
+            setup_vadcop_final.verkey.as_ptr() as *mut u8,
+            std::ptr::null_mut(),
+        );
+
+        let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
+        let proof_type: &str = setup_vadcop_final_compressed.setup_type.clone().into();
+        if cfg!(feature = "gpu") {
+            tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
+        }
+        load_device_setup_c(
+            0_u64,
+            0_u64,
+            proof_type,
+            (&setup_vadcop_final_compressed.p_setup).into(),
+            d_buffers,
+            setup_vadcop_final_compressed.verkey.as_ptr() as *mut u8,
+            std::ptr::null_mut(),
+        );
+    }
+    Ok(())
+}
+
+pub fn load_device_const_pols<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
+    setups: &SetupsVadcop<F>,
+    verify_constraints: bool,
+    aggregation: bool,
+    only_first_gpu: bool,
+) -> ProofmanResult<()> {
+    let d_buffers = pctx.get_device_buffers_ptr();
+
+    // Phase 2: Load all constant polynomials
+    let mut offset = 0;
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            let setup = sctx.get_setup(airgroup_id, air_id)?;
+            let proof_type: &str = setup.setup_type.clone().into();
             if cfg!(feature = "gpu") {
                 let const_pols_path = &setup.const_pols_path;
                 tracing::debug!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
-                let load_tree = setup.preallocate;
+                let load_tree = setup.preallocate && !verify_constraints;
                 let tree_path = match load_tree {
                     true => &setup.const_pols_tree_path,
                     false => "",
@@ -427,12 +897,13 @@ pub fn initialize_setup_info<F: PrimeField64>(
                     airgroup_id as u64,
                     air_id as u64,
                     offset,
-                    d_buffers.get_ptr(),
+                    d_buffers,
                     const_pols_path,
                     setup.const_pols_size_packed as u64,
                     tree_path,
                     setup.const_tree_size as u64,
                     proof_type,
+                    only_first_gpu,
                 );
                 offset += setup.const_pols_size_packed as u64;
                 if load_tree {
@@ -448,24 +919,11 @@ pub fn initialize_setup_info<F: PrimeField64>(
             for (air_id, _) in air_group.iter().enumerate() {
                 if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
-
                     let proof_type: &str = setup.setup_type.clone().into();
-                    if cfg!(feature = "gpu") {
-                        tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
-                    }
-                    load_device_setup_c(
-                        airgroup_id as u64,
-                        air_id as u64,
-                        proof_type,
-                        (&setup.p_setup).into(),
-                        d_buffers.get_ptr(),
-                        setup.verkey.as_ptr() as *mut u8,
-                        std::ptr::null_mut(),
-                    );
                     if cfg!(feature = "gpu") {
                         let const_pols_path = &setup.const_pols_path;
                         tracing::debug!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
-                        let load_tree = setup.preallocate;
+                        let load_tree = setup.preallocate && !verify_constraints;
                         let tree_path = match load_tree {
                             true => &setup.const_pols_tree_path,
                             false => "",
@@ -474,12 +932,13 @@ pub fn initialize_setup_info<F: PrimeField64>(
                             airgroup_id as u64,
                             air_id as u64,
                             _offset_aggregation,
-                            d_buffers.get_ptr(),
+                            d_buffers,
                             const_pols_path,
                             setup.const_pols_size_packed as u64,
                             tree_path,
                             setup.const_tree_size as u64,
                             proof_type,
+                            only_first_gpu,
                         );
                         _offset_aggregation += setup.const_pols_size_packed as u64;
                         if load_tree {
@@ -493,24 +952,11 @@ pub fn initialize_setup_info<F: PrimeField64>(
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
-
                 let proof_type: &str = setup.setup_type.clone().into();
-                if cfg!(feature = "gpu") {
-                    tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
-                }
-                load_device_setup_c(
-                    airgroup_id as u64,
-                    air_id as u64,
-                    proof_type,
-                    (&setup.p_setup).into(),
-                    d_buffers.get_ptr(),
-                    setup.verkey.as_ptr() as *mut u8,
-                    std::ptr::null_mut(),
-                );
                 if cfg!(feature = "gpu") {
                     let const_pols_path = &setup.const_pols_path;
                     tracing::debug!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
-                    let load_tree = setup.preallocate;
+                    let load_tree = setup.preallocate && !verify_constraints;
                     let tree_path = match load_tree {
                         true => &setup.const_pols_tree_path,
                         false => "",
@@ -519,12 +965,13 @@ pub fn initialize_setup_info<F: PrimeField64>(
                         airgroup_id as u64,
                         air_id as u64,
                         _offset_aggregation,
-                        d_buffers.get_ptr(),
+                        d_buffers,
                         const_pols_path,
                         setup.const_pols_size_packed as u64,
                         tree_path,
                         setup.const_tree_size as u64,
                         proof_type,
+                        only_first_gpu,
                     );
                     _offset_aggregation += setup.const_pols_size_packed as u64;
                     if load_tree {
@@ -537,24 +984,11 @@ pub fn initialize_setup_info<F: PrimeField64>(
         let n_airgroups = pctx.global_info.air_groups.len();
         for airgroup_id in 0..n_airgroups {
             let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?;
-
             let proof_type: &str = setup.setup_type.clone().into();
-            if cfg!(feature = "gpu") {
-                tracing::debug!(airgroup_id, air_id = 0, proof_type, "Loading expressions setup in GPU");
-            }
-            load_device_setup_c(
-                airgroup_id as u64,
-                0_u64,
-                proof_type,
-                (&setup.p_setup).into(),
-                d_buffers.get_ptr(),
-                setup.verkey.as_ptr() as *mut u8,
-                std::ptr::null_mut(),
-            );
             if cfg!(feature = "gpu") {
                 let const_pols_path = &setup.const_pols_path;
                 tracing::debug!(airgroup_id, air_id = 0, proof_type, "Loading const pols in GPU");
-                let load_tree = setup.preallocate;
+                let load_tree = setup.preallocate && !verify_constraints;
                 let tree_path = match load_tree {
                     true => &setup.const_pols_tree_path,
                     false => "",
@@ -563,12 +997,13 @@ pub fn initialize_setup_info<F: PrimeField64>(
                     airgroup_id as u64,
                     0_u64,
                     _offset_aggregation,
-                    d_buffers.get_ptr(),
+                    d_buffers,
                     const_pols_path,
                     setup.const_pols_size_packed as u64,
                     tree_path,
                     setup.const_tree_size as u64,
                     proof_type,
+                    only_first_gpu,
                 );
                 _offset_aggregation += setup.const_pols_size_packed as u64;
                 if load_tree {
@@ -578,24 +1013,11 @@ pub fn initialize_setup_info<F: PrimeField64>(
         }
 
         let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-
         let proof_type: &str = setup_vadcop_final.setup_type.clone().into();
-        if cfg!(feature = "gpu") {
-            tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
-        }
-        load_device_setup_c(
-            0_u64,
-            0_u64,
-            proof_type,
-            (&setup_vadcop_final.p_setup).into(),
-            d_buffers.get_ptr(),
-            setup_vadcop_final.verkey.as_ptr() as *mut u8,
-            std::ptr::null_mut(),
-        );
         if cfg!(feature = "gpu") {
             let const_pols_path = &setup_vadcop_final.const_pols_path;
             tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading const pols in GPU");
-            let load_tree = setup_vadcop_final.preallocate;
+            let load_tree = setup_vadcop_final.preallocate && !verify_constraints;
             let tree_path = match load_tree {
                 true => &setup_vadcop_final.const_pols_tree_path,
                 false => "",
@@ -604,27 +1026,52 @@ pub fn initialize_setup_info<F: PrimeField64>(
                 0_u64,
                 0_u64,
                 _offset_aggregation,
-                d_buffers.get_ptr(),
+                d_buffers,
                 const_pols_path,
                 setup_vadcop_final.const_pols_size_packed as u64,
                 tree_path,
                 setup_vadcop_final.const_tree_size as u64,
                 proof_type,
+                only_first_gpu,
             );
             _offset_aggregation += setup_vadcop_final.const_pols_size_packed as u64;
             if load_tree {
                 _offset_aggregation += setup_vadcop_final.const_tree_size as u64;
             }
         }
+
+        let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
+        let proof_type: &str = setup_vadcop_final_compressed.setup_type.clone().into();
+        if cfg!(feature = "gpu") {
+            let const_pols_path = &setup_vadcop_final_compressed.const_pols_path;
+            tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading const pols in GPU");
+            let load_tree = setup_vadcop_final_compressed.preallocate && !verify_constraints;
+            let tree_path = match load_tree {
+                true => &setup_vadcop_final_compressed.const_pols_tree_path,
+                false => "",
+            };
+            load_device_const_pols_c(
+                0_u64,
+                0_u64,
+                _offset_aggregation,
+                d_buffers,
+                const_pols_path,
+                setup_vadcop_final_compressed.const_pols_size_packed as u64,
+                tree_path,
+                setup_vadcop_final_compressed.const_tree_size as u64,
+                proof_type,
+                only_first_gpu,
+            );
+            _offset_aggregation += setup_vadcop_final_compressed.const_pols_size_packed as u64;
+            if load_tree {
+                _offset_aggregation += setup_vadcop_final_compressed.const_tree_size as u64;
+            }
+        }
     }
     Ok(())
 }
 
-pub fn initialize_witness_circom<F: PrimeField64>(
-    pctx: &ProofCtx<F>,
-    setups: &SetupsVadcop<F>,
-    final_snark: bool,
-) -> ProofmanResult<()> {
+pub fn initialize_witness_circom<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) -> ProofmanResult<()> {
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
@@ -649,11 +1096,9 @@ pub fn initialize_witness_circom<F: PrimeField64>(
     setup_vadcop_final.set_circom_circuit()?;
     setup_vadcop_final.set_exec_file_data()?;
 
-    if final_snark {
-        let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
-        setup_recursivef.set_circom_circuit()?;
-        setup_recursivef.set_exec_file_data()?;
-    }
+    let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
+    setup_vadcop_final_compressed.set_circom_circuit()?;
+    setup_vadcop_final_compressed.set_exec_file_data()?;
 
     Ok(())
 }
@@ -786,5 +1231,43 @@ pub fn print_roots<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[[
             air_id,
             contribution,
         );
+    }
+}
+
+pub fn get_vadcop_final_proof_vkey(proving_key_path: &Path, compressed: bool) -> ProofmanResult<Vec<u8>> {
+    let global_info = GlobalInfo::new(proving_key_path)?;
+    let setup_path = match compressed {
+        true => global_info.get_setup_path("vadcop_final_compressed"),
+        false => global_info.get_setup_path("vadcop_final"),
+    };
+
+    let verkey_file = setup_path.display().to_string() + ".verkey.bin";
+
+    let mut file = File::open(&verkey_file)
+        .map_err(|e| ProofmanError::InvalidSetup(format!("Failed to open verkey file '{}': {}", verkey_file, e)))?;
+
+    let mut contents = Vec::new();
+    file.read_to_end(&mut contents)
+        .map_err(|e| ProofmanError::InvalidSetup(format!("Failed to read verkey file '{}': {}", verkey_file, e)))?;
+
+    Ok(contents)
+}
+
+pub fn deterministic_shuffle<T>(slice: &mut [T], seed: u64) {
+    let len = slice.len();
+    if len <= 1 {
+        return;
+    }
+
+    const A: u64 = 1103515245;
+    const C: u64 = 12345;
+    const M: u64 = 1 << 31;
+
+    let mut state = seed;
+
+    for i in (1..len).rev() {
+        state = state.wrapping_mul(A).wrapping_add(C) % M;
+        let j = (state as usize) % (i + 1);
+        slice.swap(i, j);
     }
 }
