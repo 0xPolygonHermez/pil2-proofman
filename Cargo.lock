@@ -1216,6 +1216,7 @@ dependencies = [
  "env",
  "fields",
  "lazy_static",
+ "libc",
  "libloading",
  "mpi",
  "num_cpus",
