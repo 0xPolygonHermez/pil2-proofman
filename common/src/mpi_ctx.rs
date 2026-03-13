@@ -31,12 +31,11 @@ pub struct RankInfo {
 }
 
 /// Detect the NUMA node of the current process based on CPU affinity
-/// Assumes processes already pinned to specific CPUs
 #[cfg(target_os = "linux")]
 fn get_process_numa_node() -> i32 {
     let mut cpu: libc::c_uint = 0;
     let mut node: libc::c_uint = 0;
-
+    
     // getcpu syscall returns both CPU and NUMA node directly
     let ret = unsafe {
         libc::syscall(
@@ -46,7 +45,7 @@ fn get_process_numa_node() -> i32 {
             std::ptr::null_mut::<libc::c_void>(),
         )
     };
-
+    
     if ret == 0 {
         node as i32
     } else {
@@ -56,7 +55,7 @@ fn get_process_numa_node() -> i32 {
 
 #[cfg(not(target_os = "linux"))]
 fn get_process_numa_node() -> i32 {
-    -1 // Non-Linux: unknown NUMA node
+    0 // Non-Linux: assume single NUMA node
 }
 
 pub struct MpiCtx {
@@ -68,7 +67,8 @@ pub struct MpiCtx {
     pub n_processes: i32,
     pub node_rank: i32,
     pub node_n_processes: i32,
-    pub numa_nodes: Vec<i32>, // NUMA node for each process (indexed by node_rank)
+    pub numa_node: i32,
+    pub numa_nodes: Vec<i32>, // NUMA node for each process (indexed by rank)
     pub outer_agg_rank: AtomicI32,
     pub cancelled: AtomicU32,
 }
@@ -111,6 +111,7 @@ impl MpiCtx {
                 world,
                 node_rank,
                 node_n_processes,
+                numa_node,
                 numa_nodes,
                 outer_agg_rank: AtomicI32::new(-1),
                 cancelled: AtomicU32::new(0),
@@ -124,6 +125,7 @@ impl MpiCtx {
                 n_processes: 1,
                 node_rank: 0,
                 node_n_processes: 1,
+                numa_node,
                 numa_nodes: vec![numa_node],
                 outer_agg_rank: AtomicI32::new(0),
                 cancelled: AtomicU32::new(0),
@@ -186,6 +188,7 @@ impl MpiCtx {
             world,
             node_rank,
             node_n_processes,
+            numa_node,
             numa_nodes,
             outer_agg_rank: AtomicI32::new(-1),
             cancelled: AtomicU32::new(0),
