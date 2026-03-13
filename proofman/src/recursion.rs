@@ -40,7 +40,7 @@ impl AggProofsRegister {
     }
 }
 
-#[derive(Debug, BorshSerialize, BorshDeserialize)]
+#[derive(BorshSerialize, BorshDeserialize)]
 pub struct AggProofs {
     pub airgroup_id: u64,
     pub proof: Vec<u64>,
@@ -54,6 +54,12 @@ impl AggProofs {
 }
 
 impl fmt::Display for AggProofs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "AggProofs {{ airgroup_id: {}, worker_indexes: {:?} }}", self.airgroup_id, self.worker_indexes)
+    }
+}
+
+impl fmt::Debug for AggProofs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "AggProofs {{ airgroup_id: {}, worker_indexes: {:?} }}", self.airgroup_id, self.worker_indexes)
     }
