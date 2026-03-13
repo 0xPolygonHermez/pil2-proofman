@@ -140,6 +140,17 @@ void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, const int32_t* 
     // Verify we got the right number of GPUs (balance guarantee)
     assert(assigned_gpus.size() == my_gpu_count);
     
+    // Print GPU assignment for this rank
+    {
+        std::string gpu_info;
+        for (auto g : assigned_gpus) {
+            gpu_info += std::to_string(g) + "(numa" + std::to_string(gpu_numa_nodes[g]) + ") ";
+        }
+        zklog.info("GPU assignment: node_rank=" + std::to_string(node_rank) + 
+                  " numa=" + std::to_string(numa_node) + 
+                  " GPUs=[" + gpu_info + "]");
+    }
+    
     // Warn only if NUMA affinity couldn't be fully satisfied
     if (numa_node >= 0) {
         uint32_t numa_local_count = 0;
