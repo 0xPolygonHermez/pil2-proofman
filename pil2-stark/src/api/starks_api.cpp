@@ -824,7 +824,7 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {}
 
 // Recursive proof
 // ================================================================================= 
-void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity, uint32_t max_n_bits_ext)
+void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext)
 {
     DeviceCommitBuffersCPU *d_buffers = new DeviceCommitBuffersCPU();
     return (void *)d_buffers;

@@ -539,6 +539,7 @@ extern "C" {
     pub fn gen_device_buffers(
         node_rank: u32,
         node_size: u32,
+        numa_nodes: *const i32,
         arity: u32,
         max_n_bits_ext: u32,
     ) -> *mut ::std::os::raw::c_void;
