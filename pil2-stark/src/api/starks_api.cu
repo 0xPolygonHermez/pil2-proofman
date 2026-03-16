@@ -183,7 +183,7 @@ void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, const int32_t* 
     }
 
     // Force CUDA context initialization
-    uint32_t device_id;
+    int device_id;
     cudaGetDevice(&device_id);
     for (uint32_t i = 0; i < n_gpus; i++) {
         cudaSetDevice(my_gpu_ids[i]);
