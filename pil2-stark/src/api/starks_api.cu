@@ -138,7 +138,12 @@ void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, const int32_t* 
     }
     
     // Verify we got the right number of GPUs (balance guarantee)
-    assert(assigned_gpus.size() == my_gpu_count);
+    if(assigned_gpus.size() != my_gpu_count){
+        zklog.error("GPU assignment error: rank " + std::to_string(node_rank) + 
+                   " expected " + std::to_string(my_gpu_count) + " GPUs but got " + 
+                   std::to_string(assigned_gpus.size()));
+        exit(1);
+    }
     
     // Print GPU assignment for this rank
     {

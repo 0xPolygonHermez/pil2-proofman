@@ -1322,6 +1322,12 @@ pub fn gen_device_buffers_c(
     arity: u32,
     max_n_bits_ext: u32,
 ) -> *mut ::std::os::raw::c_void {
+    debug_assert!(
+        numa_nodes.len() >= node_n_processes as usize,
+        "numa_nodes slice length ({}) must be at least node_n_processes ({})",
+        numa_nodes.len(),
+        node_n_processes
+    );
     unsafe { gen_device_buffers(node_rank, node_n_processes, numa_nodes.as_ptr(), arity, max_n_bits_ext) }
 }
 
