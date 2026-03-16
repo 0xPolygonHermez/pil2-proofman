@@ -35,7 +35,7 @@ pub struct RankInfo {
 fn get_process_numa_node() -> i32 {
     let mut cpu: libc::c_uint = 0;
     let mut node: libc::c_uint = 0;
-    
+
     // getcpu syscall returns both CPU and NUMA node directly
     let ret = unsafe {
         libc::syscall(
@@ -45,7 +45,7 @@ fn get_process_numa_node() -> i32 {
             std::ptr::null_mut::<libc::c_void>(),
         )
     };
-    
+
     if ret == 0 {
         node as i32
     } else {
