@@ -56,7 +56,7 @@ fn get_process_numa_node() -> i32 {
 
 #[cfg(not(target_os = "linux"))]
 fn get_process_numa_node() -> i32 {
-    0 // Non-Linux: assume single NUMA node
+    -1 // Non-Linux: unknown NUMA node
 }
 
 pub struct MpiCtx {
