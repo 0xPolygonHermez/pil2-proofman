@@ -151,29 +151,28 @@ void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, const int32_t* 
                   " GPUs=[" + gpu_info + "]");
     }
     
-    // Warn only if NUMA affinity couldn't be fully satisfied
-    if (numa_node >= 0) {
-        uint32_t numa_local_count = 0;
-        for (auto g : assigned_gpus) {
-            if (gpu_numa_nodes[g] == numa_node && numa_node >= 0) numa_local_count++;
-        }
-        if (numa_local_count < my_gpu_count) {
-            std::string gpu_list;
-            for (auto g : assigned_gpus) {
-                gpu_list += std::to_string(g);
-                if (gpu_numa_nodes[g] == numa_node && numa_node >= 0) {
-                    gpu_list += "(local)";
-                } else {
-                    gpu_list += "(numa" + std::to_string(gpu_numa_nodes[g]) + ")";
-                }
-                gpu_list += " ";
-            }
-            zklog.warning("GPU NUMA affinity: node_rank=" + std::to_string(node_rank) + 
-                         " on NUMA " + std::to_string(numa_node) + " got " + 
-                         std::to_string(numa_local_count) + "/" + std::to_string(my_gpu_count) + 
-                         " NUMA-local GPUs: [" + gpu_list + "]");
-        }
+    // Warn only if NUMA affinity couldn't be fully satisfied    
+    uint32_t numa_local_count = 0;
+    for (auto g : assigned_gpus) {
+        if (gpu_numa_nodes[g] == numa_node && numa_node >= 0) numa_local_count++;
     }
+    if (numa_local_count < my_gpu_count) {
+        std::string gpu_list;
+        for (auto g : assigned_gpus) {
+            gpu_list += std::to_string(g);
+            if (gpu_numa_nodes[g] == numa_node && numa_node >= 0) {
+                gpu_list += "(local)";
+            } else {
+                gpu_list += "(numa" + std::to_string(gpu_numa_nodes[g]) + ")";
+            }
+            gpu_list += " ";
+        }
+        zklog.warning("GPU NUMA affinity: node_rank=" + std::to_string(node_rank) + 
+                        " on NUMA " + std::to_string(numa_node) + " got " + 
+                        std::to_string(numa_local_count) + "/" + std::to_string(my_gpu_count) + 
+                        " NUMA-local GPUs: [" + gpu_list + "]");
+    }
+    
     
     uint32_t n_gpus = assigned_gpus.size();
     assert(n_gpus > 0 && n_gpus < 32);
@@ -184,10 +183,13 @@ void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, const int32_t* 
     }
 
     // Force CUDA context initialization
+    uint32_t device_id;
+    cudaGetDevice(&device_id);
     for (uint32_t i = 0; i < n_gpus; i++) {
         cudaSetDevice(my_gpu_ids[i]);
         cudaFree(0);
     }
+    cudaSetDevice(device_id);
     cudaDeviceSynchronize();
 
     // Initialize small GPU constants (Poseidon2 and Transcript)
