@@ -30,6 +30,35 @@ pub struct RankInfo {
     pub n_processes: i32,
 }
 
+/// Detect the NUMA node of the current process based on CPU affinity
+/// Assumes processes already pinned to specific CPUs
+#[cfg(target_os = "linux")]
+fn get_process_numa_node() -> i32 {
+    let mut cpu: libc::c_uint = 0;
+    let mut node: libc::c_uint = 0;
+
+    // getcpu syscall returns both CPU and NUMA node directly
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_getcpu,
+            &mut cpu as *mut libc::c_uint,
+            &mut node as *mut libc::c_uint,
+            std::ptr::null_mut::<libc::c_void>(),
+        )
+    };
+
+    if ret == 0 {
+        node as i32
+    } else {
+        -1
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn get_process_numa_node() -> i32 {
+    -1 // Non-Linux: unknown NUMA node
+}
+
 pub struct MpiCtx {
     #[cfg(distributed)]
     pub universe: Universe,
@@ -39,6 +68,7 @@ pub struct MpiCtx {
     pub n_processes: i32,
     pub node_rank: i32,
     pub node_n_processes: i32,
+    pub numa_nodes: Vec<i32>, // NUMA node for each process (indexed by node_rank)
     pub outer_agg_rank: AtomicI32,
     pub cancelled: AtomicU32,
 }
@@ -64,6 +94,13 @@ impl MpiCtx {
             let node_rank = local_comm.rank();
             let node_n_processes = local_comm.size();
 
+            // Detect NUMA node for this process
+            let numa_node = get_process_numa_node();
+
+            // Gather NUMA nodes from all processes on the same physical node
+            let mut numa_nodes = vec![0i32; node_n_processes as usize];
+            local_comm.all_gather_into(&numa_node, &mut numa_nodes[..]);
+
             // Initialize the agg readiness tracker in the C library
             initialize_agg_readiness_tracker_c();
 
@@ -74,17 +111,20 @@ impl MpiCtx {
                 world,
                 node_rank,
                 node_n_processes,
+                numa_nodes,
                 outer_agg_rank: AtomicI32::new(-1),
                 cancelled: AtomicU32::new(0),
             }
         }
         #[cfg(not(distributed))]
         {
+            let numa_node = get_process_numa_node();
             MpiCtx {
                 rank: 0,
                 n_processes: 1,
                 node_rank: 0,
                 node_n_processes: 1,
+                numa_nodes: vec![numa_node],
                 outer_agg_rank: AtomicI32::new(0),
                 cancelled: AtomicU32::new(0),
             }
@@ -132,6 +172,13 @@ impl MpiCtx {
         let node_rank = local_comm.rank();
         let node_n_processes = local_comm.size();
 
+        // Detect NUMA node for this process
+        let numa_node = get_process_numa_node();
+
+        // Gather NUMA nodes from all processes on the same physical node
+        let mut numa_nodes = vec![0i32; node_n_processes as usize];
+        local_comm.all_gather_into(&numa_node, &mut numa_nodes[..]);
+
         MpiCtx {
             rank,
             n_processes,
@@ -139,9 +186,16 @@ impl MpiCtx {
             world,
             node_rank,
             node_n_processes,
+            numa_nodes,
             outer_agg_rank: AtomicI32::new(-1),
             cancelled: AtomicU32::new(0),
         }
+    }
+
+    /// Get the NUMA node for this process
+    #[inline]
+    pub fn numa_node(&self) -> i32 {
+        self.numa_nodes[self.node_rank as usize]
     }
 
     #[inline]

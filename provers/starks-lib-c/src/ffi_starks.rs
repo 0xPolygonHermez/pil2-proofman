@@ -1318,10 +1318,17 @@ pub fn set_omp_num_threads_c(num_threads: u64) {
 pub fn gen_device_buffers_c(
     node_rank: u32,
     node_n_processes: u32,
+    numa_nodes: &[i32],
     arity: u32,
     max_n_bits_ext: u32,
 ) -> *mut ::std::os::raw::c_void {
-    unsafe { gen_device_buffers(node_rank, node_n_processes, arity, max_n_bits_ext) }
+    debug_assert!(
+        numa_nodes.len() >= node_n_processes as usize,
+        "numa_nodes slice length ({}) must be at least node_n_processes ({})",
+        numa_nodes.len(),
+        node_n_processes
+    );
+    unsafe { gen_device_buffers(node_rank, node_n_processes, numa_nodes.as_ptr(), arity, max_n_bits_ext) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -2333,6 +2340,7 @@ pub fn set_omp_num_threads(_num_threads: u64) {
 pub fn gen_device_buffers_c(
     _node_rank: u32,
     _node_n_processes: u32,
+    _numa_nodes: &[i32],
     _arity: u32,
     _max_n_bits_ext: u32,
 ) -> *mut ::std::os::raw::c_void {
