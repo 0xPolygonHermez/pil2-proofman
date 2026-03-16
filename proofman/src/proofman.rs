@@ -78,6 +78,7 @@ pub struct WitnessInfo {
     pub publics: Vec<u64>,
     pub proof_values: Vec<u64>,
     pub summary_info: String,
+    pub total_instances: usize,
 }
 
 #[derive(Serialize)]
@@ -141,6 +142,7 @@ pub struct AirInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct PlanningInfo {
     pub planning_info: Vec<AirInfo>,
+    pub num_instances: usize,
 }
 
 struct CancellationThread {
@@ -748,7 +750,7 @@ where
             }
         }
 
-        let result = PlanningInfo { planning_info };
+        let result = PlanningInfo { planning_info, num_instances: total_instances };
 
         Ok(result)
     }
@@ -1911,6 +1913,7 @@ where
                         .collect(),
                     summary_info,
                     witness_time,
+                    total_instances: self.pctx.dctx_get_instances().len() as usize,
                 };
                 return Ok(ProvePhaseResult::Contributions(vec![ContributionsInfo {
                     challenge: internal_contribution_u64,
