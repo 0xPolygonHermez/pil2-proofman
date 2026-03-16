@@ -143,8 +143,9 @@ void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, const int32_t* 
     // Print GPU assignment for this rank
     {
         std::string gpu_info;
-        for (auto g : assigned_gpus) {
-            gpu_info += std::to_string(g) + "(numa" + std::to_string(gpu_numa_nodes[g]) + ") ";
+        for (size_t i = 0; i < assigned_gpus.size(); i++) {
+            if (i > 0) gpu_info += " ";
+            gpu_info += std::to_string(assigned_gpus[i]) + "(numa" + std::to_string(gpu_numa_nodes[assigned_gpus[i]]) + ")";
         }
         zklog.info("GPU assignment: node_rank=" + std::to_string(node_rank) + 
                   " numa=" + std::to_string(numa_node) + 
@@ -158,14 +159,15 @@ void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, const int32_t* 
     }
     if (numa_local_count < my_gpu_count) {
         std::string gpu_list;
-        for (auto g : assigned_gpus) {
+        for (size_t i = 0; i < assigned_gpus.size(); i++) {
+            if (i > 0) gpu_list += " ";
+            auto g = assigned_gpus[i];
             gpu_list += std::to_string(g);
             if (gpu_numa_nodes[g] == numa_node && numa_node >= 0) {
                 gpu_list += "(local)";
             } else {
                 gpu_list += "(numa" + std::to_string(gpu_numa_nodes[g]) + ")";
             }
-            gpu_list += " ";
         }
         zklog.warning("GPU NUMA affinity: node_rank=" + std::to_string(node_rank) + 
                         " on NUMA " + std::to_string(numa_node) + " got " + 
