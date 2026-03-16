@@ -68,8 +68,7 @@ pub struct MpiCtx {
     pub n_processes: i32,
     pub node_rank: i32,
     pub node_n_processes: i32,
-    pub numa_node: i32,
-    pub numa_nodes: Vec<i32>, // NUMA node for each process (indexed by rank)
+    pub numa_nodes: Vec<i32>, // NUMA node for each process (indexed by node_rank)
     pub outer_agg_rank: AtomicI32,
     pub cancelled: AtomicU32,
 }
@@ -112,7 +111,6 @@ impl MpiCtx {
                 world,
                 node_rank,
                 node_n_processes,
-                numa_node,
                 numa_nodes,
                 outer_agg_rank: AtomicI32::new(-1),
                 cancelled: AtomicU32::new(0),
@@ -126,7 +124,6 @@ impl MpiCtx {
                 n_processes: 1,
                 node_rank: 0,
                 node_n_processes: 1,
-                numa_node,
                 numa_nodes: vec![numa_node],
                 outer_agg_rank: AtomicI32::new(0),
                 cancelled: AtomicU32::new(0),
@@ -189,11 +186,16 @@ impl MpiCtx {
             world,
             node_rank,
             node_n_processes,
-            numa_node,
             numa_nodes,
             outer_agg_rank: AtomicI32::new(-1),
             cancelled: AtomicU32::new(0),
         }
+    }
+
+    /// Get the NUMA node for this process
+    #[inline]
+    pub fn numa_node(&self) -> i32 {
+        self.numa_nodes[self.node_rank as usize]
     }
 
     #[inline]
