@@ -31,6 +31,7 @@ pub struct RankInfo {
 }
 
 /// Detect the NUMA node of the current process based on CPU affinity
+/// Assumes processes already pinned to specific CPUs
 #[cfg(target_os = "linux")]
 fn get_process_numa_node() -> i32 {
     let mut cpu: libc::c_uint = 0;
