@@ -193,8 +193,8 @@ fn cuda_gencode_flags(archs: &[u32]) -> String {
         flags.push(format!("-gencode arch=compute_{arch},code=sm_{arch}"));
     }
     // sm_100-119 are separate, incompatible lineages — embed PTX for the highest arch in each lineage present.
-    let max_dc_blackwell = archs.iter().filter(|&&a| a >= 100 && a < 120).max().copied();
-    let max_other = archs.iter().filter(|&&a| a < 100 || a >= 120).max().copied();
+    let max_dc_blackwell = archs.iter().filter(|&&a| (100..120).contains(&a)).max().copied();
+    let max_other = archs.iter().filter(|&&a| !(100..120).contains(&a)).max().copied();
     match (max_dc_blackwell, max_other) {
         (Some(dc), Some(other)) => {
             flags.push(format!("-gencode arch=compute_{dc},code=compute_{dc}"));
