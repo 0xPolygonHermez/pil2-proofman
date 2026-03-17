@@ -58,9 +58,7 @@ fn main() {
     let archs_stamp_path = library_folder.join(".cuda_archs_stamp");
     let stamp_content = gencode_flags.as_deref().unwrap_or("auto");
     let archs_changed = if cfg!(feature = "gpu") {
-        fs::read_to_string(&archs_stamp_path)
-            .map(|s| s.trim() != stamp_content)
-            .unwrap_or(true)
+        fs::read_to_string(&archs_stamp_path).map(|s| s.trim() != stamp_content).unwrap_or(true)
     } else {
         false
     };
@@ -180,8 +178,7 @@ fn parse_cuda_archs() -> Option<Vec<u32>> {
             Some(vec![80, 86, 89, 90, 100, 120])
         }
         Ok(val) => {
-            let archs: Vec<u32> =
-                val.split(',').filter_map(|s| s.trim().parse::<u32>().ok()).collect();
+            let archs: Vec<u32> = val.split(',').filter_map(|s| s.trim().parse::<u32>().ok()).collect();
             if archs.is_empty() {
                 panic!("CUDA_ARCHS is set but contains no valid architecture numbers (e.g. '89', '89,90', or 'major')");
             }
@@ -308,7 +305,13 @@ fn find_source_files(dir: &Path) -> Vec<PathBuf> {
                 source_files.extend(find_source_files(&path));
             } else if let Some(ext) = path.extension() {
                 if cfg!(feature = "gpu") {
-                    if (ext == "c" || ext == "cpp" || ext == "h" || ext == "hpp" || ext == "cu" || ext == "cuh" || ext == "asm")
+                    if (ext == "c"
+                        || ext == "cpp"
+                        || ext == "h"
+                        || ext == "hpp"
+                        || ext == "cu"
+                        || ext == "cuh"
+                        || ext == "asm")
                         && path.file_name() != Some(std::ffi::OsStr::new("starks_lib_gpu.h"))
                     {
                         source_files.push(path);
