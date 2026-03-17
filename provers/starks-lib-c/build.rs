@@ -86,7 +86,9 @@ fn main() {
                     }
                     None => run_command("make", &["-j", "starks_lib_gpu"], &pil2_stark_path),
                 }
-                fs::write(&archs_stamp_path, stamp_content).ok();
+                if let Err(e) = fs::write(&archs_stamp_path, stamp_content) {
+                    eprintln!("Warning: failed to write CUDA arch stamp {:?}: {e} — next build will recompile", archs_stamp_path);
+                }
             } else {
                 eprintln!("`libstarks.a` not found! Compiling...");
                 run_command("make", &["clean"], &pil2_stark_path);
@@ -178,10 +180,23 @@ fn parse_cuda_archs() -> Option<Vec<u32>> {
             Some(vec![80, 86, 89, 90, 100, 120])
         }
         Ok(val) => {
-            let archs: Vec<u32> = val.split(',').filter_map(|s| s.trim().parse::<u32>().ok()).collect();
-            if archs.is_empty() {
-                panic!("CUDA_ARCHS is set but contains no valid architecture numbers (e.g. '89', '89,90', or 'major')");
+            let mut archs = Vec::new();
+            for token in val.split(',') {
+                let s = token.trim();
+                match s.parse::<u32>() {
+                    Ok(n) => archs.push(n),
+                    Err(_) => panic!(
+                        "CUDA_ARCHS contains invalid entry {:?} — expected integers (e.g. '89', '89,90', or 'major')",
+                        s
+                    ),
+                }
             }
+            if archs.is_empty() {
+                panic!("CUDA_ARCHS is set but empty — expected integers (e.g. '89', '89,90', or 'major')");
+            }
+            // Normalize: sort + dedup so stamp comparison is order/duplicate-independent
+            archs.sort_unstable();
+            archs.dedup();
             Some(archs)
         }
     }
@@ -246,7 +261,9 @@ fn track_file_changes(pil2_stark_path: &Path, gencode_flags: Option<&str>, stamp
                 }
                 None => run_command("make", &["-j", "starks_lib_gpu"], pil2_stark_path),
             }
-            fs::write(stamp_path, gencode_flags.unwrap_or("auto")).ok();
+            if let Err(e) = fs::write(stamp_path, gencode_flags.unwrap_or("auto")) {
+                eprintln!("Warning: failed to write CUDA arch stamp {:?}: {e} — next build will recompile", stamp_path);
+            }
         } else {
             run_command("make", &["-j", "starks_lib"], pil2_stark_path);
         }
