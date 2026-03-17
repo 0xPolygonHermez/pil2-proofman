@@ -5,8 +5,7 @@ use std::process::Command;
 use std::time::UNIX_EPOCH;
 
 fn main() {
-    // Tell Cargo to re-run this build script if the gpu feature changes
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_GPU");
+    println!("cargo:rerun-if-env-changed=CUDA_ARCHS");
 
     // **Check if the `no_lib_link` feature is enabled**
     if env::var("CARGO_FEATURE_NO_LIB_LINK").is_ok() {
@@ -37,6 +36,26 @@ fn main() {
         ensure_blst_compiled(&pil2_stark_path);
     }
 
+    let gencode_flags = if cfg!(feature = "gpu") {
+        let archs = parse_cuda_archs();
+        let flags = cuda_gencode_flags(&archs);
+        eprintln!("CUDA gencode flags: {}", flags);
+        Some(flags)
+    } else {
+        None
+    };
+
+    // Detect if CUDA_ARCHS changed since last build — stamp stores the last-used gencode flags.
+    let archs_stamp_path = library_folder.join(".cuda_archs_stamp");
+    let archs_changed = if cfg!(feature = "gpu") {
+        let current = gencode_flags.as_deref().unwrap_or("");
+        fs::read_to_string(&archs_stamp_path)
+            .map(|s| s.trim() != current)
+            .unwrap_or(true)
+    } else {
+        false
+    };
+
     // Check if the `no_cpp_compilation` feature is enabled
     if cfg!(feature = "no_cpp_compilation") {
         println!("Skipping C++ compilation because `no_cpp_compilation` feature is enabled.");
@@ -48,12 +67,14 @@ fn main() {
             );
         }
     } else {
-        // Check if the C++ library exists before recompiling
-        if !lib_file.exists() {
+        // Rebuild if library is missing or CUDA_ARCHS changed since last build
+        if !lib_file.exists() || archs_changed {
             if cfg!(feature = "gpu") {
-                eprintln!("`libstarksgpu.a` not found! Compiling...");
+                eprintln!("`libstarksgpu.a` missing or CUDA_ARCHS changed — recompiling...");
                 run_command("make", &["clean"], &pil2_stark_path);
-                run_command("make", &["-j", "starks_lib_gpu"], &pil2_stark_path);
+                let gencode_arg = format!("CUDA_GENCODE_FLAGS={}", gencode_flags.as_deref().unwrap_or(""));
+                run_command("make", &["-j", &gencode_arg, "starks_lib_gpu"], &pil2_stark_path);
+                fs::write(&archs_stamp_path, gencode_flags.as_deref().unwrap_or("")).ok();
             } else {
                 eprintln!("`libstarks.a` not found! Compiling...");
                 run_command("make", &["clean"], &pil2_stark_path);
@@ -78,7 +99,7 @@ fn main() {
     // Ensure Rust triggers a rebuild if the C++ source code changes
     // Skip this if no_cpp_compilation is enabled
     if !cfg!(feature = "no_cpp_compilation") {
-        track_file_changes(&pil2_stark_path);
+        track_file_changes(&pil2_stark_path, gencode_flags.as_deref(), &archs_stamp_path);
     }
 
     // Add platform-specific library search paths
@@ -120,8 +141,6 @@ fn main() {
         println!("cargo:rustc-link-search=native={}", blst_lib_path.display());
         println!("cargo:rustc-link-lib=static=blst");
 
-        // Specify the CUDA architecture
-        println!("cargo:rustc-env=CUDA_ARCH=sm_75"); // Adjust the architecture as needed
     }
 
     // Link required libraries with platform-specific handling
@@ -138,6 +157,42 @@ fn main() {
     }
 }
 
+fn parse_cuda_archs() -> Vec<u32> {
+    if let Ok(val) = env::var("CUDA_ARCHS") {
+        let archs: Vec<u32> = val.split(',')
+            .filter_map(|s| s.trim().parse::<u32>().ok())
+            .collect();
+        if archs.is_empty() {
+            panic!("CUDA_ARCHS is set but contains no valid architecture numbers (e.g. '89' or '89,90')");
+        }
+        archs
+    } else {
+        // Default: all major architectures since Ampere (Ampere/Ada/Hopper/Blackwell-DC/Blackwell-consumer)
+        vec![80, 86, 89, 90, 100, 120]
+    }
+}
+
+fn cuda_gencode_flags(archs: &[u32]) -> String {
+    let mut flags = Vec::new();
+    for &arch in archs {
+        flags.push(format!("-gencode arch=compute_{arch},code=sm_{arch}"));
+    }
+    // sm_100-119 are separate, incompatible lineages — embed PTX for the highest arch in each lineage present.
+    let max_dc_blackwell = archs.iter().filter(|&&a| a >= 100 && a < 120).max().copied();
+    let max_other = archs.iter().filter(|&&a| a < 100 || a >= 120).max().copied();
+    match (max_dc_blackwell, max_other) {
+        (Some(dc), Some(other)) => {
+            flags.push(format!("-gencode arch=compute_{dc},code=compute_{dc}"));
+            flags.push(format!("-gencode arch=compute_{other},code=compute_{other}"));
+        }
+        _ => {
+            let max_arch = *archs.iter().max().expect("archs list is empty");
+            flags.push(format!("-gencode arch=compute_{max_arch},code=compute_{max_arch}"));
+        }
+    }
+    flags.join(" ")
+}
+
 /// Runs an external command and checks for errors
 fn run_command(cmd: &str, args: &[&str], dir: &Path) {
     let status = Command::new(cmd)
@@ -152,7 +207,7 @@ fn run_command(cmd: &str, args: &[&str], dir: &Path) {
 }
 
 /// Tracks changes in the `pil2-stark` directory to trigger recompilation only when needed
-fn track_file_changes(pil2_stark_path: &Path) {
+fn track_file_changes(pil2_stark_path: &Path, gencode_flags: Option<&str>, stamp_path: &Path) {
     let source_files = find_source_files(pil2_stark_path);
     let lib_file: PathBuf = if cfg!(feature = "gpu") {
         pil2_stark_path.join("lib-gpu/libstarksgpu.a")
@@ -160,10 +215,7 @@ fn track_file_changes(pil2_stark_path: &Path) {
         pil2_stark_path.join("lib/libstarks.a")
     };
 
-    // Print tracked files for debugging
-    eprintln!("Tracking {} source files:", source_files.len());
     for file in &source_files {
-        eprintln!(" - {}", file.display());
         println!("cargo:rerun-if-changed={}", file.display());
     }
 
@@ -172,7 +224,9 @@ fn track_file_changes(pil2_stark_path: &Path) {
         eprintln!("Changes detected! Running `make clean` and recompiling...");
         run_command("make", &["clean"], pil2_stark_path);
         if cfg!(feature = "gpu") {
-            run_command("make", &["-j", "starks_lib_gpu"], pil2_stark_path);
+            let gencode_arg = format!("CUDA_GENCODE_FLAGS={}", gencode_flags.unwrap_or(""));
+            run_command("make", &["-j", &gencode_arg, "starks_lib_gpu"], pil2_stark_path);
+            fs::write(stamp_path, gencode_flags.unwrap_or("")).ok();
         } else {
             run_command("make", &["-j", "starks_lib"], pil2_stark_path);
         }
@@ -231,12 +285,12 @@ fn find_source_files(dir: &Path) -> Vec<PathBuf> {
                 source_files.extend(find_source_files(&path));
             } else if let Some(ext) = path.extension() {
                 if cfg!(feature = "gpu") {
-                    if (ext == "cpp" || ext == "h" || ext == "hpp" || ext == "cu" || ext == "cuh" || ext == "asm")
+                    if (ext == "c" || ext == "cpp" || ext == "h" || ext == "hpp" || ext == "cu" || ext == "cuh" || ext == "asm")
                         && path.file_name() != Some(std::ffi::OsStr::new("starks_lib_gpu.h"))
                     {
                         source_files.push(path);
                     }
-                } else if (ext == "cpp" || ext == "h" || ext == "hpp" || ext == "asm")
+                } else if (ext == "c" || ext == "cpp" || ext == "h" || ext == "hpp" || ext == "asm")
                     && path.file_name() != Some(std::ffi::OsStr::new("starks_lib.h"))
                 {
                     source_files.push(path);
