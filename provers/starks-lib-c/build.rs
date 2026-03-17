@@ -36,21 +36,30 @@ fn main() {
         ensure_blst_compiled(&pil2_stark_path);
     }
 
-    let gencode_flags = if cfg!(feature = "gpu") {
-        let archs = parse_cuda_archs();
-        let flags = cuda_gencode_flags(&archs);
-        eprintln!("CUDA gencode flags: {}", flags);
-        Some(flags)
+    // gencode_flags: None = auto-detect (delegate to Makefile configure.sh), Some = explicit archs
+    let gencode_flags: Option<String> = if cfg!(feature = "gpu") {
+        match parse_cuda_archs() {
+            None => {
+                eprintln!("CUDA_ARCHS not set — auto-detecting GPU arch from host");
+                None
+            }
+            Some(archs) => {
+                let flags = cuda_gencode_flags(&archs);
+                eprintln!("CUDA gencode flags: {}", flags);
+                Some(flags)
+            }
+        }
     } else {
         None
     };
 
-    // Detect if CUDA_ARCHS changed since last build — stamp stores the last-used gencode flags.
+    // Detect if CUDA_ARCHS changed since last build.
+    // Stamp stores "auto" for host-detected builds, or the gencode flags string for explicit builds.
     let archs_stamp_path = library_folder.join(".cuda_archs_stamp");
+    let stamp_content = gencode_flags.as_deref().unwrap_or("auto");
     let archs_changed = if cfg!(feature = "gpu") {
-        let current = gencode_flags.as_deref().unwrap_or("");
         fs::read_to_string(&archs_stamp_path)
-            .map(|s| s.trim() != current)
+            .map(|s| s.trim() != stamp_content)
             .unwrap_or(true)
     } else {
         false
@@ -72,9 +81,14 @@ fn main() {
             if cfg!(feature = "gpu") {
                 eprintln!("`libstarksgpu.a` missing or CUDA_ARCHS changed — recompiling...");
                 run_command("make", &["clean"], &pil2_stark_path);
-                let gencode_arg = format!("CUDA_GENCODE_FLAGS={}", gencode_flags.as_deref().unwrap_or(""));
-                run_command("make", &["-j", &gencode_arg, "starks_lib_gpu"], &pil2_stark_path);
-                fs::write(&archs_stamp_path, gencode_flags.as_deref().unwrap_or("")).ok();
+                match &gencode_flags {
+                    Some(flags) => {
+                        let gencode_arg = format!("CUDA_GENCODE_FLAGS={}", flags);
+                        run_command("make", &["-j", &gencode_arg, "starks_lib_gpu"], &pil2_stark_path);
+                    }
+                    None => run_command("make", &["-j", "starks_lib_gpu"], &pil2_stark_path),
+                }
+                fs::write(&archs_stamp_path, stamp_content).ok();
             } else {
                 eprintln!("`libstarks.a` not found! Compiling...");
                 run_command("make", &["clean"], &pil2_stark_path);
@@ -157,18 +171,23 @@ fn main() {
     }
 }
 
-fn parse_cuda_archs() -> Vec<u32> {
-    if let Ok(val) = env::var("CUDA_ARCHS") {
-        let archs: Vec<u32> = val.split(',')
-            .filter_map(|s| s.trim().parse::<u32>().ok())
-            .collect();
-        if archs.is_empty() {
-            panic!("CUDA_ARCHS is set but contains no valid architecture numbers (e.g. '89' or '89,90')");
+fn parse_cuda_archs() -> Option<Vec<u32>> {
+    match env::var("CUDA_ARCHS") {
+        Err(_) => None, // Not set → auto-detect via Makefile configure.sh
+        Ok(val) if val.trim().eq_ignore_ascii_case("major") => {
+            // All major architectures since Ampere: Ampere/Ada/Hopper/Blackwell-DC/Blackwell-consumer
+            // sm_100 = B100/B200/GB200 (datacenter Blackwell); sm_120 = RTX 5090/5080/5070/5060 (consumer Blackwell)
+            // Note: sm_100 and sm_120 are NOT cross-compatible (sm_100 has TMEM hardware sm_120 lacks)
+            Some(vec![80, 86, 89, 90, 100, 120])
         }
-        archs
-    } else {
-        // Default: all major architectures since Ampere (Ampere/Ada/Hopper/Blackwell-DC/Blackwell-consumer)
-        vec![80, 86, 89, 90, 100, 120]
+        Ok(val) => {
+            let archs: Vec<u32> =
+                val.split(',').filter_map(|s| s.trim().parse::<u32>().ok()).collect();
+            if archs.is_empty() {
+                panic!("CUDA_ARCHS is set but contains no valid architecture numbers (e.g. '89', '89,90', or 'major')");
+            }
+            Some(archs)
+        }
     }
 }
 
@@ -224,9 +243,14 @@ fn track_file_changes(pil2_stark_path: &Path, gencode_flags: Option<&str>, stamp
         eprintln!("Changes detected! Running `make clean` and recompiling...");
         run_command("make", &["clean"], pil2_stark_path);
         if cfg!(feature = "gpu") {
-            let gencode_arg = format!("CUDA_GENCODE_FLAGS={}", gencode_flags.unwrap_or(""));
-            run_command("make", &["-j", &gencode_arg, "starks_lib_gpu"], pil2_stark_path);
-            fs::write(stamp_path, gencode_flags.unwrap_or("")).ok();
+            match gencode_flags {
+                Some(flags) => {
+                    let gencode_arg = format!("CUDA_GENCODE_FLAGS={}", flags);
+                    run_command("make", &["-j", &gencode_arg, "starks_lib_gpu"], pil2_stark_path);
+                }
+                None => run_command("make", &["-j", "starks_lib_gpu"], pil2_stark_path),
+            }
+            fs::write(stamp_path, gencode_flags.unwrap_or("auto")).ok();
         } else {
             run_command("make", &["-j", "starks_lib"], pil2_stark_path);
         }

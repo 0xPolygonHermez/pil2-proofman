@@ -67,14 +67,17 @@ make starks_lib_gpu -j CUDA_GENCODE_FLAGS="-gencode arch=compute_89,code=sm_89 -
 When building via Cargo (pil2-proofman), use the `CUDA_ARCHS` environment variable instead — it generates the flags automatically:
 
 ```sh
+# Default: auto-detects host GPU architecture (same as direct make)
+cargo build --release --features gpu
+
+# All major architectures (distribution build): sm_80, sm_86, sm_89, sm_90, sm_100 + PTX, sm_120 + PTX
+CUDA_ARCHS="major" cargo build --release --features gpu
+
 # Single architecture
 CUDA_ARCHS="89" cargo build --release --features gpu
 
 # Multiple architectures
 CUDA_ARCHS="89,90" cargo build --release --features gpu
-
-# Default: sm_80, sm_86, sm_89, sm_90, sm_100 + PTX, sm_120 + PTX
-cargo build --release --features gpu
 ```
 
 To inspect which architectures are embedded in the compiled library:
