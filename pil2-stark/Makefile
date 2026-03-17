@@ -1,12 +1,23 @@
 # Platform detection for compiler and library paths
 UNAME_S := $(shell uname -s)
 ifneq ($(UNAME_S),Darwin)
-    ifndef CUDA_ARCH
+    ifdef CUDA_GENCODE_FLAGS
+        $(info CUDA_GENCODE_FLAGS defined externally: $(CUDA_GENCODE_FLAGS))
+    else ifdef CUDA_ARCH
+        # Legacy single-arch support: convert to gencode + PTX
+        CUDA_ARCH_NUM := $(subst sm_,,$(CUDA_ARCH))
+        CUDA_GENCODE_FLAGS := -gencode arch=compute_$(CUDA_ARCH_NUM),code=$(CUDA_ARCH) \
+                              -gencode arch=compute_$(CUDA_ARCH_NUM),code=compute_$(CUDA_ARCH_NUM)
+        $(info Converted CUDA_ARCH=$(CUDA_ARCH) to gencode flags)
+    else
+        # Auto-detect from host GPU (single arch, existing behavior)
         ROOT_DIR := $(dir $(realpath $(firstword $(MAKEFILE_LIST))))
         INFO := $(shell cd $(ROOT_DIR)/src/goldilocks && ./configure.sh && sleep 2)
         include $(ROOT_DIR)/src/goldilocks/CudaArch.mk
-    else
-        $(info CUDA_ARCH defined externally: $(CUDA_ARCH))
+        CUDA_ARCH_NUM := $(subst sm_,,$(CUDA_ARCH))
+        CUDA_GENCODE_FLAGS := -gencode arch=compute_$(CUDA_ARCH_NUM),code=$(CUDA_ARCH) \
+                              -gencode arch=compute_$(CUDA_ARCH_NUM),code=compute_$(CUDA_ARCH_NUM)
+        $(info Auto-detected $(CUDA_ARCH), gencode flags set)
     endif
 endif
 
@@ -58,7 +69,7 @@ WITNESS_LIB := ./witness_lib
 CXX := g++
 AS := nasm
 ASFLAGS := -f elf64
-NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 -arch=$(CUDA_ARCH) -DGL64_PARTIALLY_REDUCED -D__AVX2__ -D__USE_ASSEMBLY__ -D__ADX__ \
+NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 $(CUDA_GENCODE_FLAGS) -DGL64_PARTIALLY_REDUCED -D__AVX2__ -D__USE_ASSEMBLY__ -D__ADX__ \
              -I./external/sppark/ff -I./external/sppark -I./external/sppark/util -I./external/sppark/ec -I./external/blst/src \
              -DFEATURE_BN254 --diag-suppress 114
 
