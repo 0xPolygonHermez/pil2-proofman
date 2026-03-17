@@ -87,7 +87,10 @@ fn main() {
                     None => run_command("make", &["-j", "starks_lib_gpu"], &pil2_stark_path),
                 }
                 if let Err(e) = fs::write(&archs_stamp_path, stamp_content) {
-                    eprintln!("Warning: failed to write CUDA arch stamp {:?}: {e} — next build will recompile", archs_stamp_path);
+                    eprintln!(
+                        "Warning: failed to write CUDA arch stamp {:?}: {e} — next build will recompile",
+                        archs_stamp_path
+                    );
                 }
             } else {
                 eprintln!("`libstarks.a` not found! Compiling...");
