@@ -4,6 +4,7 @@ use proofman_util::VadcopFinalProof;
 
 #[rustfmt::skip]
 #[allow(clippy::all)]
+#[inline(never)]
 fn q_verify(challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>], _publics: &[Goldilocks], zi: &[CubicExtensionField<Goldilocks>]) -> CubicExtensionField<Goldilocks> {
     let mut tmp_3 = vec![CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] }; 56];
     tmp_3[0] = evals[53] + evals[126];
@@ -3838,6 +3839,7 @@ fn q_verify(challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtens
 
 #[rustfmt::skip]
 #[allow(clippy::all)]
+#[inline(never)]
 fn query_verify(challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>], vals: &[Vec<Goldilocks>], xdivxsub: &[CubicExtensionField<Goldilocks>]) -> CubicExtensionField<Goldilocks> {
     let mut tmp_3 = vec![CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] }; 3];
     tmp_3[0] = CubicExtensionField { value: [vals[2][0], vals[2][1], vals[2][2]] } - evals[0];

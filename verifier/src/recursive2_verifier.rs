@@ -2,6 +2,7 @@ use fields::{Goldilocks, CubicExtensionField, Field, Poseidon16};
 use crate::{Boundary, VerifierInfo, stark_verify};
 use proofman_util::VadcopFinalProof;
 
+#[inline(never)]
 #[rustfmt::skip]
 #[allow(clippy::all)]
 fn q_verify(challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>], _publics: &[Goldilocks], zi: &[CubicExtensionField<Goldilocks>]) -> CubicExtensionField<Goldilocks> {
@@ -3836,6 +3837,7 @@ fn q_verify(challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtens
     return tmp_3[0];
 }
 
+#[inline(never)]
 #[rustfmt::skip]
 #[allow(clippy::all)]
 fn query_verify(challenges: &[CubicExtensionField<Goldilocks>], evals: &[CubicExtensionField<Goldilocks>], vals: &[Vec<Goldilocks>], xdivxsub: &[CubicExtensionField<Goldilocks>]) -> CubicExtensionField<Goldilocks> {
