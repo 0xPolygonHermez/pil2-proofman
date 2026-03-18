@@ -886,6 +886,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.air_instances[instance_id].write().unwrap().clear_traces()
     }
 
+    pub fn free_instance_traces_keep_values(&self, instance_id: usize) -> (bool, Vec<F>) {
+        self.air_instances[instance_id].write().unwrap().clone_and_release_traces()
+    }
+
     pub fn set_instance_stream_id(&self, instance_id: usize, stream_id: u64) {
         self.air_instances[instance_id].write().unwrap().set_stream_id(stream_id);
     }

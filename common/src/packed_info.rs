@@ -1,6 +1,11 @@
 use std::os::raw::c_void;
 use serde::Serialize;
 
+pub struct AirsInfo {
+    pub is_priority: bool,
+    pub packed_info: PackedInfo,
+}
+
 #[derive(Debug)]
 #[repr(C)]
 pub struct PackedInfoFFI {

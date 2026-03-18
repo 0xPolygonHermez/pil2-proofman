@@ -334,6 +334,17 @@ impl<F: PrimeField64> AirInstance<F> {
         (shared_buffer, trace)
     }
 
+    pub fn clone_and_release_traces(&mut self) -> (bool, Vec<F>) {
+        let cloned_trace = self.trace.clone();
+        let original_trace = std::mem::take(&mut self.trace);
+        let shared_buffer = self.shared_buffer && !original_trace.is_empty();
+        self.shared_buffer = false; // Mark as not shared since we're releasing the original trace
+        self.trace = cloned_trace;
+        self.aux_trace = Vec::new();
+        self.fixed = Vec::new();
+        (shared_buffer, original_trace)
+    }
+
     pub fn clear_custom_commits_fixed_trace(&mut self) {
         self.custom_commits_fixed = Vec::new();
     }

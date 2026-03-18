@@ -2,8 +2,8 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use libloading::{Library, Symbol};
 use fields::{ExtensionField, Transcript, PrimeField64, GoldilocksQuinticExtension, Poseidon16};
 use proofman_common::{
-    calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
-    PolMap, RowInfo, DebugInfo, MemoryHandler, MpiCtx, PackedInfo, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType,
+    calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, AirsInfo,
+    CurveType, PolMap, RowInfo, DebugInfo, MemoryHandler, MpiCtx, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType,
     RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
 };
 use colored::Colorize;
@@ -20,7 +20,7 @@ use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::fs;
 use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
 use csv::Writer;
@@ -258,7 +258,7 @@ pub struct ProofMan<F: PrimeField64> {
     handle_contributions: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     worker_contributions: Arc<RwLock<Vec<ContributionsInfo>>>,
     max_witness_trace_size: usize,
-    packed_info: HashMap<(usize, usize), PackedInfo>,
+    airs_info: Arc<HashMap<(usize, usize), AirsInfo>>,
     cancellation_info: Arc<RwLock<CancellationInfo>>,
     witness_info: RwLock<WitnessInfo>,
     verbose_mode: VerboseMode,
@@ -1485,7 +1485,7 @@ where
         aggregation: bool,
         gpu_params: ParamsGPU,
         verbose_mode: VerboseMode,
-        packed_info: HashMap<(usize, usize), PackedInfo>,
+        airs_info: HashMap<(usize, usize), AirsInfo>,
     ) -> ProofmanResult<Self> {
         // Check proving_key_path exists
         if !proving_key_path.exists() {
@@ -1514,7 +1514,7 @@ where
                 verify_constraints,
                 aggregation,
                 &gpu_params,
-                &packed_info,
+                &airs_info,
                 verbose_mode,
             )?;
 
@@ -1529,7 +1529,7 @@ where
             false => 1,
         };
 
-        let max_witness_trace_size = calculate_max_witness_trace_size(&pctx, &sctx, &packed_info, &gpu_params)?;
+        let max_witness_trace_size = calculate_max_witness_trace_size(&pctx, &sctx, &airs_info, &gpu_params)?;
 
         let memory_handler = Arc::new(MemoryHandler::new(pctx.clone(), max_witness_stored, max_witness_trace_size));
 
@@ -1673,7 +1673,7 @@ where
             worker_contributions: Arc::new(RwLock::new(Vec::new())),
             n_gpus: n_gpus as usize,
             max_witness_trace_size,
-            packed_info,
+            airs_info: Arc::new(airs_info),
             cancellation_info: Arc::new(RwLock::new(CancellationInfo::default())),
             verbose_mode,
             witness_info: RwLock::new(WitnessInfo::default()),
@@ -1733,6 +1733,8 @@ where
 
             self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
 
+            let num_priority_witness = Arc::new(AtomicU64::new(0));
+
             for _ in 0..self.n_streams {
                 let pctx_clone = self.pctx.clone();
                 let sctx_clone = self.sctx.clone();
@@ -1743,6 +1745,8 @@ where
                 let memory_handler_clone = self.memory_handler.clone();
                 let contributions_rx_clone = self.contributions_rx.clone();
                 let cancellation_info_clone = self.cancellation_info.clone();
+                let num_priority_witness_clone = num_priority_witness.clone();
+                let airs_info_clone = self.airs_info.clone();
                 let contribution_handle = std::thread::spawn(move || loop {
                     if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                         break;
@@ -1764,6 +1768,24 @@ where
                             ) {
                                 cancellation_info_clone.write().unwrap().cancel(Some(e));
                                 break;
+                            }
+
+                            let (airgroup_id, air_id) = pctx_clone.dctx_get_instance_info(instance_id).unwrap();
+                            let is_priority = airs_info_clone
+                                .get(&(airgroup_id, air_id))
+                                .map(|info| info.is_priority)
+                                .unwrap_or(false);
+
+                            if num_priority_witness_clone.load(Ordering::SeqCst) < 5 && is_priority {
+                                num_priority_witness_clone.fetch_add(1, Ordering::SeqCst);
+                                let (is_shared_buffer, witness_buffer) =
+                                    pctx_clone.free_instance_traces_keep_values(instance_id);
+                                if is_shared_buffer {
+                                    if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
+                                        cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                        break;
+                                    }
+                                }
                             }
 
                             let is_shared_buffer = pctx_clone.is_shared_buffer(instance_id);
@@ -1880,6 +1902,8 @@ where
             let internal_contribution =
                 calculate_internal_contributions(&self.pctx, &self.roots_contributions, &self.values_contributions);
 
+            println!("NUM PRIORITY WITNESS: {}", num_priority_witness.load(Ordering::SeqCst));
+
             timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
 
             let contributions_size = match self.pctx.global_info.curve {
@@ -1913,7 +1937,7 @@ where
                         .collect(),
                     summary_info,
                     witness_time,
-                    total_instances: self.pctx.dctx_get_instances().len() as usize,
+                    total_instances: self.pctx.dctx_get_instances().len(),
                 };
                 return Ok(ProvePhaseResult::Contributions(vec![ContributionsInfo {
                     challenge: internal_contribution_u64,
@@ -2177,14 +2201,24 @@ where
         }
 
         my_instances_sorted.sort_by_key(|&id| {
-            (
-                if self.pctx.is_air_instance_stored(id) { 0 } else { 1 },
-                if self.pctx.global_info.get_air_has_compressor(instances[id].airgroup_id, instances[id].air_id) {
-                    0
-                } else {
-                    1
-                },
-            )
+            let (airgroup_id, air_id) = (instances[id].airgroup_id, instances[id].air_id);
+            let is_priority = self.airs_info.get(&(airgroup_id, air_id)).map(|info| info.is_priority).unwrap_or(false);
+            let is_stored = self.pctx.is_air_instance_stored(id);
+            let has_compressor = self.pctx.global_info.get_air_has_compressor(airgroup_id, air_id);
+
+            let priority_tier = if is_priority && is_stored {
+                0
+            } else if is_stored && has_compressor {
+                1
+            } else if is_stored {
+                2
+            } else if is_priority {
+                3
+            } else {
+                4
+            };
+
+            (priority_tier,)
         });
 
         let proofs_finished = Arc::new(AtomicBool::new(false));
@@ -3115,7 +3149,7 @@ where
         self.check_cancel(true)?;
 
         let global_summary =
-            print_summary_info(&self.pctx, &self.sctx, &self.mpi_ctx, &self.packed_info, self.verbose_mode)?;
+            print_summary_info(&self.pctx, &self.sctx, &self.mpi_ctx, &self.airs_info, self.verbose_mode)?;
 
         timer_stop_and_log_info!(EXECUTE);
         Ok(global_summary)
@@ -3695,7 +3729,7 @@ where
         verify_constraints: bool,
         aggregation: bool,
         gpu_params: &ParamsGPU,
-        packed_info: &HashMap<(usize, usize), PackedInfo>,
+        airs_info: &HashMap<(usize, usize), AirsInfo>,
         verbose_mode: VerboseMode,
     ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64)> {
         let mut pctx = ProofCtx::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx.clone())?;
@@ -3729,7 +3763,7 @@ where
         let (n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
             pctx.set_device_buffers(&sctx, &setups_vadcop, aggregation, gpu_params)?;
 
-        load_device_setups(&pctx, &sctx, &setups_vadcop, aggregation, packed_info)?;
+        load_device_setups(&pctx, &sctx, &setups_vadcop, aggregation, airs_info)?;
 
         if mpi_ctx.rank == 0 {
             let (needs_const_regen, needs_tree_regen) = needs_regeneration_fixed(&pctx, &sctx)?;

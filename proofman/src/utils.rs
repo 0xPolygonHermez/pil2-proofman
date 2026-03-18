@@ -23,7 +23,7 @@ use proofman_starks_lib_c::{
     prepare_blocks_c, tile_const_pols_c, load_const_pols_c,
 };
 use proofman_util::create_buffer_fast;
-use proofman_common::{PackedInfo, VerboseMode, GlobalInfo};
+use proofman_common::{AirsInfo, PackedInfo, VerboseMode, GlobalInfo};
 
 use pil_std_lib::Std;
 use witness::WitnessManager;
@@ -32,10 +32,10 @@ pub fn print_summary_info<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     mpi_ctx: &MpiCtx,
-    packed_info: &HashMap<(usize, usize), PackedInfo>,
+    airs_info: &HashMap<(usize, usize), AirsInfo>,
     verbose_mode: VerboseMode,
 ) -> ProofmanResult<String> {
-    let summary = print_summary(pctx, sctx, packed_info, true, verbose_mode, mpi_ctx.rank == 0)?;
+    let summary = print_summary(pctx, sctx, airs_info, true, verbose_mode, mpi_ctx.rank == 0)?;
 
     if mpi_ctx.n_processes > 1 {
         let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info_process();
@@ -47,7 +47,7 @@ pub fn print_summary_info<F: PrimeField64>(
             max_deviation
         );
 
-        let _ = print_summary(pctx, sctx, packed_info, false, verbose_mode, true)?;
+        let _ = print_summary(pctx, sctx, airs_info, false, verbose_mode, true)?;
     }
     Ok(summary)
 }
@@ -55,7 +55,7 @@ pub fn print_summary_info<F: PrimeField64>(
 pub fn print_summary<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
-    packed_info: &HashMap<(usize, usize), PackedInfo>,
+    airs_info: &HashMap<(usize, usize), AirsInfo>,
     global: bool,
     verbose_mode: VerboseMode,
     print_output: bool,
@@ -94,7 +94,8 @@ pub fn print_summary<F: PrimeField64>(
             let setup = sctx.get_setup(airgroup_id, air_id)?;
             let n_bits = setup.stark_info.stark_struct.n_bits;
             let memory_trace = if cfg!(feature = "gpu") && cfg!(feature = "packed") {
-                let num_packed_words = packed_info.get(&(airgroup_id, air_id)).map(|info| info.num_packed_words);
+                let num_packed_words =
+                    airs_info.get(&(airgroup_id, air_id)).map(|info| info.packed_info.num_packed_words);
                 if let Some(num_packed_words) = num_packed_words {
                     (num_packed_words * (1 << setup.stark_info.stark_struct.n_bits)) as f64 * 8.0
                 } else {
@@ -723,7 +724,7 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &Set
 pub fn calculate_max_witness_trace_size<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
-    packed_info: &HashMap<(usize, usize), PackedInfo>,
+    airs_info: &HashMap<(usize, usize), AirsInfo>,
     gpu_params: &ParamsGPU,
 ) -> ProofmanResult<usize> {
     let mut max_witness_trace_size = 0;
@@ -732,7 +733,7 @@ pub fn calculate_max_witness_trace_size<F: PrimeField64>(
             let setup = sctx.get_setup(airgroup_id, air_id)?;
             let n = 1 << setup.stark_info.stark_struct.n_bits;
             let num_packed_words =
-                packed_info.get(&(airgroup_id, air_id)).map(|info| info.num_packed_words).unwrap_or(0);
+                airs_info.get(&(airgroup_id, air_id)).map(|info| info.packed_info.num_packed_words).unwrap_or(0);
             let is_packed =
                 cfg!(feature = "gpu") && cfg!(feature = "packed") && gpu_params.pack_trace && num_packed_words > 0;
             let trace_size = if !is_packed {
@@ -753,7 +754,7 @@ pub fn load_device_setups<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     setups: &SetupsVadcop<F>,
     aggregation: bool,
-    packed_info: &HashMap<(usize, usize), PackedInfo>,
+    airs_info: &HashMap<(usize, usize), AirsInfo>,
 ) -> ProofmanResult<()> {
     let d_buffers = pctx.get_device_buffers_ptr();
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
@@ -763,8 +764,10 @@ pub fn load_device_setups<F: PrimeField64>(
             if cfg!(feature = "gpu") {
                 tracing::debug!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
             }
-            let packed_info_air =
-                packed_info.get(&(airgroup_id, air_id)).cloned().unwrap_or_else(|| PackedInfo::new(false, 0, vec![]));
+            let packed_info_air = airs_info
+                .get(&(airgroup_id, air_id))
+                .map(|info| info.packed_info.clone())
+                .unwrap_or_else(|| PackedInfo::new(false, 0, vec![]));
             load_device_setup_c(
                 airgroup_id as u64,
                 air_id as u64,
