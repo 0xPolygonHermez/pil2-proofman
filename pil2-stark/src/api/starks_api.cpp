@@ -492,7 +492,6 @@ void expressions_bin_free(void *pExpressionsBin)
 
 // Hints
 // ========================================================================================
-#ifndef __USE_CUDA__
 void get_hint_field(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void* stepsParams, void* hintFieldValues, uint64_t hintId, char* hintFieldName, void* hintOptions, void *d_buffers_, uint64_t streamId, bool constant) 
 {
     SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
@@ -502,7 +501,6 @@ void get_hint_field(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void* 
 
     getHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, expressionsCtx, (HintFieldInfo *) hintFieldValues, hintId, string(hintFieldName), *(HintFieldOptions *) hintOptions);
 }
-#endif
 
 uint64_t get_hint_field_values(void *pSetupCtx, uint64_t hintId, char* hintFieldName) {
     return getHintFieldValues(*(SetupCtx *)pSetupCtx, hintId, string(hintFieldName));
@@ -824,7 +822,7 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {}
 
 // Recursive proof
 // ================================================================================= 
-void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity, uint32_t max_n_bits_ext)
+void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext)
 {
     DeviceCommitBuffersCPU *d_buffers = new DeviceCommitBuffersCPU();
     return (void *)d_buffers;

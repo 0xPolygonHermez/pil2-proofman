@@ -15,7 +15,6 @@ extern void freeFinalSnarkProverGPU(void *snark_prover);
 extern void genFinalSnarkProofGPU(void *proverSnark, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark);
 extern void preAllocateFinalSnarkProverGPU(void *snark_prover, void* unified_buffer_gpu);
 extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
-
 #ifdef __USE_CUDA__
 #include "verify_constraints.cuh"
 #include "gen_proof.cuh"
@@ -25,6 +24,8 @@ extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 #include "poseidon_bn128.cuh"
 #include <cuda_runtime.h>
 #include <mutex>
+#include <algorithm>
+#include <map>
 
 
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive = false, bool force_recursive = false);
@@ -41,8 +42,10 @@ void get_instances_ready(void *d_buffers_, int64_t* instances_ready) {
     }
 }
 
-void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity, uint32_t max_n_bits_ext)
+void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext)
 {
+    int32_t numa_node = (numa_nodes != nullptr && node_rank < node_size) ? numa_nodes[node_rank] : -1;
+
     int deviceCount;
     cudaError_t err = cudaGetDeviceCount(&deviceCount);
     if (err != cudaSuccess) {
@@ -50,18 +53,150 @@ void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity,
         exit(1);
     }
 
-    uint32_t n_gpus = (uint32_t) deviceCount / node_size;
-    assert(n_gpus < 32);
+    if (deviceCount < (int)node_size) {
+        zklog.error("GPU sharing not supported: " + std::to_string(node_size) + 
+                   " processes but only " + std::to_string(deviceCount) + " GPUs available");
+        exit(1);
+    }
+
+    if (deviceCount % node_size != 0) {
+        zklog.warning("Uneven GPU distribution: " + std::to_string(deviceCount) + 
+                     " GPUs across " + std::to_string(node_size) + " processes");
+    }
+
+    // Helper lambda to get GPU NUMA node
+    auto get_gpu_numa_node = [](int gpu_id) -> int {
+        int numa_node = -1;
+#if CUDART_VERSION >= 12000
+        // CUDA 12+: cudaDevAttrHostNumaId
+        cudaError_t err = cudaDeviceGetAttribute(&numa_node, cudaDevAttrHostNumaId, gpu_id);
+#elif CUDART_VERSION >= 10020
+        // CUDA 10.2-11.x: cudaDevAttrNumaNodeId
+        cudaError_t err = cudaDeviceGetAttribute(&numa_node, cudaDevAttrNumaNodeId, gpu_id);
+#else
+        // Older CUDA: no NUMA support
+        cudaError_t err = cudaErrorNotSupported;
+#endif
+        if (err != cudaSuccess || numa_node < 0) {
+            return -1;
+        }
+        return numa_node;
+    };
+
+    // Build GPU NUMA affinity map
+    // If no process NUMA info available, put all GPUs in bucket -1 for simple distribution
+    std::vector<int> gpu_numa_nodes(deviceCount);
+    std::map<int, std::vector<int>> gpus_by_numa;
+    
+    for (int gpu = 0; gpu < deviceCount; gpu++) {
+        int gpu_numa = (numa_nodes != nullptr) ? get_gpu_numa_node(gpu) : -1;
+        gpu_numa_nodes[gpu] = gpu_numa;
+        gpus_by_numa[gpu_numa].push_back(gpu);
+    }
+
+    // Calculate how many GPUs each process should get
+    uint32_t base_gpus_per_process = deviceCount / node_size;
+    uint32_t remainder = deviceCount % node_size;
+    uint32_t my_gpu_count = base_gpus_per_process + (node_rank < remainder ? 1 : 0);
+    
+    // Map: rank -> assigned GPUs
+    std::map<uint32_t, std::vector<int>> rank_to_gpus;
+    
+    // First pass: each rank picks from its own NUMA node (or -1 if unknown)
+    for (uint32_t r = 0; r < node_size; r++) {
+        uint32_t r_gpu_count = base_gpus_per_process + (r < remainder ? 1 : 0);
+        int r_numa = (numa_nodes != nullptr) ? numa_nodes[r] : -1;
+        
+        while (rank_to_gpus[r].size() < r_gpu_count && !gpus_by_numa[r_numa].empty()) {
+            int gpu = gpus_by_numa[r_numa].back();
+            gpus_by_numa[r_numa].pop_back();
+            rank_to_gpus[r].push_back(gpu);
+        }
+    }
+    
+    // Collect remaining GPUs into a pool (deterministic order - std::map iterates by key)
+    std::vector<int> remaining_gpus;
+    for (auto& kv : gpus_by_numa) {
+        for (int gpu : kv.second) {
+            remaining_gpus.push_back(gpu);
+        }
+    }
+    
+    // Second pass: fill ranks that didn't get enough GPUs
+    size_t remaining_idx = 0;
+    for (uint32_t r = 0; r < node_size; r++) {
+        uint32_t r_gpu_count = base_gpus_per_process + (r < remainder ? 1 : 0);
+        while (rank_to_gpus[r].size() < r_gpu_count && remaining_idx < remaining_gpus.size()) {
+            rank_to_gpus[r].push_back(remaining_gpus[remaining_idx++]);
+        }
+    }
+    
+    // Extract my assignment
+    std::vector<uint32_t> assigned_gpus;
+    for (int gpu : rank_to_gpus[node_rank]) {
+        assigned_gpus.push_back(static_cast<uint32_t>(gpu));
+    }
+    
+    // Verify we got the right number of GPUs (balance guarantee)
+    if(assigned_gpus.size() != my_gpu_count){
+        zklog.error("GPU assignment error: rank " + std::to_string(node_rank) + 
+                   " expected " + std::to_string(my_gpu_count) + " GPUs but got " + 
+                   std::to_string(assigned_gpus.size()));
+        exit(1);
+    }
+    
+    // Print GPU assignment for this rank
+    {
+        std::string gpu_info;
+        for (size_t i = 0; i < assigned_gpus.size(); i++) {
+            if (i > 0) gpu_info += " ";
+            gpu_info += std::to_string(assigned_gpus[i]) + "(numa" + std::to_string(gpu_numa_nodes[assigned_gpus[i]]) + ")";
+        }
+        zklog.info("GPU assignment: node_rank=" + std::to_string(node_rank) + 
+                  " numa=" + std::to_string(numa_node) + 
+                  " GPUs=[" + gpu_info + "]");
+    }
+    
+    // Warn only if NUMA affinity couldn't be fully satisfied    
+    uint32_t numa_local_count = 0;
+    for (auto g : assigned_gpus) {
+        if (gpu_numa_nodes[g] == numa_node && numa_node >= 0) numa_local_count++;
+    }
+    if (numa_local_count < my_gpu_count) {
+        std::string gpu_list;
+        for (size_t i = 0; i < assigned_gpus.size(); i++) {
+            if (i > 0) gpu_list += " ";
+            auto g = assigned_gpus[i];
+            gpu_list += std::to_string(g);
+            if (gpu_numa_nodes[g] == numa_node && numa_node >= 0) {
+                gpu_list += "(local)";
+            } else {
+                gpu_list += "(numa" + std::to_string(gpu_numa_nodes[g]) + ")";
+            }
+        }
+        zklog.warning("GPU NUMA affinity: node_rank=" + std::to_string(node_rank) + 
+                        " on NUMA " + std::to_string(numa_node) + " got " + 
+                        std::to_string(numa_local_count) + "/" + std::to_string(my_gpu_count) + 
+                        " NUMA-local GPUs: [" + gpu_list + "]");
+    }
+    
+    
+    uint32_t n_gpus = assigned_gpus.size();
+    assert(n_gpus > 0 && n_gpus < 32);
+    
     uint32_t my_gpu_ids[32];
     for (uint32_t i = 0; i < n_gpus; i++) {
-        my_gpu_ids[i] = node_rank * n_gpus + i;
+        my_gpu_ids[i] = assigned_gpus[i];
     }
 
     // Force CUDA context initialization
+    int device_id;
+    cudaGetDevice(&device_id);
     for (uint32_t i = 0; i < n_gpus; i++) {
         cudaSetDevice(my_gpu_ids[i]);
         cudaFree(0);
     }
+    cudaSetDevice(device_id);
     cudaDeviceSynchronize();
 
     // Initialize small GPU constants (Poseidon2 and Transcript)
@@ -88,92 +223,33 @@ void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, uint32_t arity,
 
     cudaDeviceSynchronize();
 
-    // Create and initialize DeviceCommitBuffers structure (CPU allocations only)
-    if(deviceCount >= node_size) {
-       
-        if (deviceCount % node_size != 0) {
-            zklog.error("Device count must be divisible by number of processes per node");
-            exit(1);
-        }
-        
-        DeviceCommitBuffers *d_buffers = new DeviceCommitBuffers();
-        d_buffers->n_gpus = n_gpus;
-        d_buffers->gpus_g2l = (uint32_t *)malloc(deviceCount * sizeof(uint32_t));
-        d_buffers->my_gpu_ids = (uint32_t *)malloc(d_buffers->n_gpus * sizeof(uint32_t));
-        for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
-            d_buffers->my_gpu_ids[i] = node_rank * d_buffers->n_gpus + i;
-            d_buffers->gpus_g2l[d_buffers->my_gpu_ids[i]] = i;
-        }
-        d_buffers->d_aux_trace = (gl64_t ***)malloc(d_buffers->n_gpus * sizeof(gl64_t**));
-        d_buffers->d_aux_traceAggregation = (gl64_t ***)malloc(d_buffers->n_gpus * sizeof(gl64_t**));
-        d_buffers->d_constPols = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
-        d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
-        d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
-        d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
-        d_buffers->gpuMemoryBuffer = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
-        for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
-            d_buffers->gpuMemoryBuffer[i] = nullptr;
-        }
-        
-        // Allocate mutex array using placement new
-        d_buffers->mutex_pinned = (std::mutex*)malloc(d_buffers->n_gpus * sizeof(std::mutex));
-        for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
-            new (&d_buffers->mutex_pinned[i]) std::mutex();
-        }
-
-#ifdef NUMA_NODE
-        // Check device afinity with process NUMA node
-        for (int i = 0; i < d_buffers->n_gpus; i++) {
-            cudaDeviceProp prop;
-            cudaGetDeviceProperties(&prop, d_buffers->my_gpu_ids[i]);
-            if (prop.numaNode == -1) {
-                zklog.warning("Cannot verify NUMA affinity: GPU %d's NUMA node is unknown (prop.numaNode == -1). "
-                            "Assuming it matches process NUMA node %d", 
-                            d_buffers->my_gpu_ids[i], NUMA_NODE);
-            } 
-            else if (prop.numaNode != NUMA_NODE) {
-                zklog.error("NUMA affinity violation: GPU %d is on NUMA node %d, but process is bound to NUMA node %d",
-                        d_buffers->my_gpu_ids[i], prop.numaNode, NUMA_NODE);
-                exit(1);
-            }
-            else {
-                zklog.info("Verified GPU %d is on correct NUMA node %d", 
-                        d_buffers->my_gpu_ids[i], NUMA_NODE);
-            }
-        }
-#endif
-        return (void *)d_buffers;
-    } else {
-
-        if (node_size % deviceCount  != 0) {
-            zklog.error("Number of processes per node must be divisible by device count");
-            exit(1);
-        }
-        
-        DeviceCommitBuffers *d_buffers = new DeviceCommitBuffers();
-        d_buffers->n_gpus = 1;
-        d_buffers->gpus_g2l = (uint32_t *)malloc(deviceCount * sizeof(uint32_t));
-        d_buffers->my_gpu_ids = (uint32_t *)malloc(d_buffers->n_gpus * sizeof(uint32_t));
-        d_buffers->my_gpu_ids[0] = node_rank % deviceCount;
-        d_buffers->gpus_g2l[d_buffers->my_gpu_ids[0]] = 0;
-        
-        d_buffers->d_aux_trace = (gl64_t ***)malloc(d_buffers->n_gpus * sizeof(gl64_t**));
-        d_buffers->d_aux_traceAggregation = (gl64_t ***)malloc(d_buffers->n_gpus * sizeof(gl64_t**));
-        d_buffers->d_constPols = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
-        d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
-        d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
-        d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
-        d_buffers->gpuMemoryBuffer = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
-        d_buffers->gpuMemoryBuffer[0] = nullptr;
-        
-        // Allocate mutex array using placement new
-        d_buffers->mutex_pinned = (std::mutex*)malloc(d_buffers->n_gpus * sizeof(std::mutex));
-        for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
-            new (&d_buffers->mutex_pinned[i]) std::mutex();
-        }
-        
-        return (void *)d_buffers;
+    // Create and initialize DeviceCommitBuffers structure
+    DeviceCommitBuffers *d_buffers = new DeviceCommitBuffers();
+    d_buffers->n_gpus = n_gpus;
+    d_buffers->gpus_g2l = (uint32_t *)malloc(deviceCount * sizeof(uint32_t));
+    d_buffers->my_gpu_ids = (uint32_t *)malloc(d_buffers->n_gpus * sizeof(uint32_t));
+    for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
+        d_buffers->my_gpu_ids[i] = my_gpu_ids[i];
+        d_buffers->gpus_g2l[d_buffers->my_gpu_ids[i]] = i;
     }
+    d_buffers->d_aux_trace = (gl64_t ***)malloc(d_buffers->n_gpus * sizeof(gl64_t**));
+    d_buffers->d_aux_traceAggregation = (gl64_t ***)malloc(d_buffers->n_gpus * sizeof(gl64_t**));
+    d_buffers->d_constPols = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+    d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+    d_buffers->pinned_buffer = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
+    d_buffers->pinned_buffer_extra = (Goldilocks::Element **)malloc(d_buffers->n_gpus * sizeof(Goldilocks::Element *));
+    d_buffers->gpuMemoryBuffer = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+    for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
+        d_buffers->gpuMemoryBuffer[i] = nullptr;
+    }
+    
+    // Allocate mutex array using placement new
+    d_buffers->mutex_pinned = (std::mutex*)malloc(d_buffers->n_gpus * sizeof(std::mutex));
+    for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
+        new (&d_buffers->mutex_pinned[i]) std::mutex();
+    }
+    
+    return (void *)d_buffers;
 }
 
 void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation)
@@ -690,87 +766,6 @@ void verify_constraints(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, v
     verifyConstraintsGPU(*setupCtx, d_aux_trace, streamId, d_buffers, air_instance_info, (ConstraintInfo *)constraintsInfo, timer, stream);
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
-}
-
-void get_hint_field(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, void* stepsParams_, void* hintFieldValues, uint64_t hintId, char* hintFieldName, void* hintOptions, void *d_buffers_, uint64_t streamId, bool constant) {
-    SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx_;
-    
-    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    
-    uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
-    
-    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
-    cudaSetDevice(gpuId);
-    
-    ExpressionsGPU* expressions_gpu;
-    if(!constant) {
-        auto key = std::make_pair(airgroupId, airId);
-        std::string proofType = "basic";
-        AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][proofType][gpuLocalId];
-        expressions_gpu = air_instance_info->expressions_gpu;
-    }
-
-    cudaStream_t stream = d_buffers->streamsData[streamId].stream;
-    TimerGPU &timer = d_buffers->streamsData[streamId].timer;
-    
-    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
-    
-    uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", false)];
-    uint64_t offsetPublicInputs = setupCtx.starkInfo.mapOffsets[std::make_pair("publics", false)];
-    uint64_t offsetAirgroupValues = setupCtx.starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
-    uint64_t offsetAirValues = setupCtx.starkInfo.mapOffsets[std::make_pair("airvalues", false)];
-    uint64_t offsetProofValues = setupCtx.starkInfo.mapOffsets[std::make_pair("proofvalues", false)];
-    uint64_t offsetChallenges = setupCtx.starkInfo.mapOffsets[std::make_pair("challenges", false)];
-    uint64_t offsetConstPols = setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)];
-    
-    // Create h_params pointing to GPU memory
-    StepsParams h_params = {
-        trace : (Goldilocks::Element *)d_aux_trace + offsetCm1,
-        aux_trace : (Goldilocks::Element *)d_aux_trace,
-        publicInputs : (Goldilocks::Element *)d_aux_trace + offsetPublicInputs,
-        proofValues : (Goldilocks::Element *)d_aux_trace + offsetProofValues,
-        challenges : (Goldilocks::Element *)d_aux_trace + offsetChallenges,
-        airgroupValues : (Goldilocks::Element *)d_aux_trace + offsetAirgroupValues,
-        airValues : (Goldilocks::Element *)d_aux_trace + offsetAirValues,
-        evals : nullptr,
-        xDivXSub : nullptr,
-        pConstPolsAddress: (Goldilocks::Element *)d_aux_trace + offsetConstPols,
-        pConstPolsExtendedTreeAddress: nullptr,
-        pCustomCommitsFixed: (Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)],
-    };
-    
-    StepsParams *d_params = d_buffers->streamsData[streamId].params;
-    ExpsArguments *d_expsArgs = d_buffers->streamsData[streamId].d_expsArgs;
-    DestParamsGPU *d_destParams = d_buffers->streamsData[streamId].d_destParams;
-    Goldilocks::Element *pinned_exps_params = d_buffers->streamsData[streamId].pinned_buffer_exps_params;
-    Goldilocks::Element *pinned_exps_args = d_buffers->streamsData[streamId].pinned_buffer_exps_args;
-    
-    // Copy h_params to device
-    StepsParams *params_pinned = d_buffers->streamsData[streamId].pinned_params;
-    memcpy(params_pinned, &h_params, sizeof(StepsParams));
-    CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams), cudaMemcpyHostToDevice, stream));
-    
-    uint64_t countId = 0;
-    
-    getHintFieldGPU(
-        setupCtx,
-        h_params,
-        d_params,
-        (HintFieldInfo *)hintFieldValues,
-        hintId,
-        std::string(hintFieldName),
-        *(HintFieldOptions *)hintOptions,
-        expressions_gpu,
-        d_expsArgs,
-        d_destParams,
-        pinned_exps_params,
-        pinned_exps_args,
-        countId,
-        timer,
-        stream
-    );
-    
-    CHECKCUDAERR(cudaStreamSynchronize(stream));
 }
 
 void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
