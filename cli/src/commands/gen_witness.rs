@@ -2,12 +2,10 @@
 use clap::Parser;
 use regex::Regex;
 use proofman_common::{initialize_logger, ParamsGPU, SetupsVadcop, MpiCtx, ProofCtx, VerboseMode, ProofmanError, ProofType};
-use proofman::{GetWitnessFunc, initialize_witness_circom};
 use std::fs::File;
 use std::io::Read;
 use colored::Colorize;
 use fields::{Field, Goldilocks};
-use libloading::Symbol;
 use std::os::raw::c_void;
 use std::path::PathBuf;
 use bytemuck::cast_slice_mut;
@@ -44,8 +42,7 @@ impl GenWitnessCmd {
         let gpu_params = ParamsGPU::new(false);
 
         let setups_vadcop: Arc<SetupsVadcop<Goldilocks>> =
-            Arc::new(SetupsVadcop::new(&pctx.global_info, false, true, &gpu_params, &[]));
-        initialize_witness_circom(&pctx, &setups_vadcop)?;
+            Arc::new(SetupsVadcop::new(&pctx.global_info, false, true, &gpu_params, &[])?);
 
         let mut zkin_file = File::open(&self.proof)?;
         let mut zkin_u8 = Vec::new();
@@ -61,13 +58,12 @@ impl GenWitnessCmd {
 
         let setup = setups_vadcop.get_setup(airgroup_id, air_id, proof_type)?;
 
-        let mut witness_size = setup.size_witness.read().unwrap().unwrap();
-        witness_size += *setup.exec_data.read().unwrap().as_ref().unwrap().first().unwrap();
+        let witness_size = setup.get_circom_witness_size();
 
-        let witness: Vec<Goldilocks> = vec![Goldilocks::ZERO; witness_size as usize];
+        let mut witness: Vec<Goldilocks> = vec![Goldilocks::ZERO; witness_size as usize];
 
-        let circom_circuit_guard = setup.circom_circuit.read().unwrap();
-        let circom_circuit_ptr = match *circom_circuit_guard {
+        let state = setup.circom_state.read().unwrap();
+        let circom_circuit_ptr = match state.circuit {
             Some(ptr) => ptr,
             None => return Err(Box::new(ProofmanError::InvalidSetup("circom_circuit is not initialized".into()))),
         };
@@ -82,14 +78,14 @@ impl GenWitnessCmd {
         // zkin[publics_circom_size + null_proof_size..publics_circom_size + 2*null_proof_size].fill(0);
         // zkin[publics_circom_size + 2*null_proof_size..].fill(0);
 
+        let get_witness_fn =
+            state.get_witness_fn.ok_or(ProofmanError::InvalidSetup("GetWitness function not loaded".to_string()))?;
+
         timer_start_info!(WITNESS_GENERATION);
         let res = unsafe {
-            let library_guard = setup.circom_library.read().unwrap();
-            let library =
-                library_guard.as_ref().ok_or(ProofmanError::InvalidSetup("Circom library not loaded".to_string()))?;
-            let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-            get_witness(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_ptr() as *mut c_void, 1)
+            get_witness_fn(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_mut_ptr() as *mut c_void, 1)
         };
+        drop(state);
         timer_stop_and_log_info!(WITNESS_GENERATION);
 
         if res != 0 {

@@ -1071,38 +1071,6 @@ pub fn load_device_const_pols<F: PrimeField64>(
     Ok(())
 }
 
-pub fn initialize_witness_circom<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) -> ProofmanResult<()> {
-    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
-        for (air_id, _) in air_group.iter().enumerate() {
-            if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
-                setup.set_exec_file_data()?;
-                setup.set_circom_circuit()?;
-            }
-            let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
-            setup.set_exec_file_data()?;
-            setup.set_circom_circuit()?;
-        }
-    }
-
-    let n_airgroups = pctx.global_info.air_groups.len();
-    for airgroup in 0..n_airgroups {
-        let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0)?;
-        setup.set_circom_circuit()?;
-        setup.set_exec_file_data()?;
-    }
-
-    let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-    setup_vadcop_final.set_circom_circuit()?;
-    setup_vadcop_final.set_exec_file_data()?;
-
-    let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
-    setup_vadcop_final_compressed.set_circom_circuit()?;
-    setup_vadcop_final_compressed.set_exec_file_data()?;
-
-    Ok(())
-}
-
 pub fn add_publics_circom<F: PrimeField64>(
     proof: &mut [u64],
     initial_index: usize,

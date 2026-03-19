@@ -408,6 +408,14 @@ extern "C" {
         force_recursive_stream: bool,
     ) -> u64;
     
+    pub fn calculate_const_tree_fixed(
+        pSetupCtx_: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
+        proofType: *mut ::std::os::raw::c_char,
+        d_buffers_: *mut ::std::os::raw::c_void
+    );
+
     pub fn read_exec_file(exec_data: *mut u64, exec_file: *mut ::std::os::raw::c_char, nCommitedPols: u64);
     
     pub fn get_committed_pols(

@@ -1,6 +1,6 @@
 use proofman_common::{
     GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree_snark,
-    VerboseMode, initialize_logger,
+    MemoryHandlerRecursive, VerboseMode, initialize_logger,
 };
 use proofman_util::{
     timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug, create_buffer_fast,
@@ -65,6 +65,7 @@ pub struct SnarkWrapper<F: PrimeField64> {
     pub d_buffers_recursivef: *mut c_void,
     pub proving_key_path: PathBuf,
     pub protocol: SnarkProtocol,
+    pub memory_handler_recursive_witness: Arc<MemoryHandlerRecursive<F>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,10 +171,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             false,
             false,
             None,
-        );
-
-        setup_recursivef.set_circom_circuit()?;
-        setup_recursivef.set_exec_file_data()?;
+        )?;
 
         check_const_tree(&setup_recursivef, &d_buffers)?;
 
@@ -223,6 +221,14 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             &verkey_str,
         ) as *mut c_void;
 
+        let witness_size = setup_recursivef.get_circom_witness_size() as usize;
+        let trace_size = setup_recursivef.stark_info.map_sections_n["cm1"]
+            * (1 << setup_recursivef.stark_info.stark_struct.n_bits)
+            + setup_recursivef.stark_info.n_publics;
+
+        let memory_handler_recursive_witness =
+            Arc::new(MemoryHandlerRecursive::new(1, 0, witness_size, 0, trace_size as usize, 0));
+
         Ok(Self {
             aux_trace,
             setup_recursivef,
@@ -233,6 +239,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             vadcop_final_verkey,
             d_buffers,
             d_buffers_recursivef,
+            memory_handler_recursive_witness,
             reload_fixed_pols_gpu,
         })
     }
@@ -267,6 +274,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         let recursivef_proof = generate_recursivef_proof(
             &self.setup_recursivef,
+            &self.memory_handler_recursive_witness,
             &proof,
             &self.aux_trace,
             &self.vadcop_final_verkey,
@@ -358,7 +366,7 @@ pub fn check_setup_snark<F: PrimeField64>(
     let setup_recursivef_path =
         PathBuf::from(format!("{}/{}/{}", proving_key_snark_path.display(), "recursivef", "recursivef"));
 
-    let setup_recursivef: Setup<F> = Setup::new(
+    let setup_recursivef: Setup<F> = Setup::<F>::new(
         &setup_recursivef_path,
         0,
         0,
@@ -367,7 +375,7 @@ pub fn check_setup_snark<F: PrimeField64>(
         false,
         false,
         None,
-    );
+    )?;
 
     calculate_fixed_tree_snark(&setup_recursivef);
 
@@ -394,7 +402,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     let setup_recursivef_path =
         PathBuf::from(format!("{}/{}/{}", proving_key_path.display(), "recursivef", "recursivef"));
 
-    let setup_recursivef = Setup::new(
+    let setup_recursivef = Setup::<F>::new(
         &setup_recursivef_path,
         0,
         0,
@@ -403,10 +411,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         false,
         false,
         None,
-    );
-
-    setup_recursivef.set_circom_circuit()?;
-    setup_recursivef.set_exec_file_data()?;
+    )?;
 
     check_const_tree(&setup_recursivef, &None)?;
 
@@ -445,9 +450,18 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         &verkey_str,
     ) as *mut c_void;
 
+    let witness_size = setup_recursivef.get_circom_witness_size() as usize;
+    let trace_size = setup_recursivef.stark_info.map_sections_n["cm1"]
+        * (1 << setup_recursivef.stark_info.stark_struct.n_bits)
+        + setup_recursivef.stark_info.n_publics;
+
+    let memory_handler_recursive_witness =
+        Arc::new(MemoryHandlerRecursive::new(1, 0, witness_size, 0, trace_size as usize, 0));
+
     timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
     let recursivef_proof = generate_recursivef_proof(
         &setup_recursivef,
+        &memory_handler_recursive_witness,
         &proof,
         &aux_trace,
         &vadcop_final_verkey,
