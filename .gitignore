@@ -8,3 +8,4 @@ vendor
 MyLogFile.log
 .vscode/settings.json
 .vscode/c_cpp_properties.json
+pil2-stark/lib-gpu/*

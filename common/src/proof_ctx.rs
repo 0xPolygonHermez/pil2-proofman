@@ -901,7 +901,8 @@ impl<F: PrimeField64> ProofCtx<F> {
     ) -> ProofmanResult<(u64, u64, u64)> {
         let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
             self.mpi_ctx.node_rank as u32,
-            self.mpi_ctx.node_n_processes as usize as u32,
+            self.mpi_ctx.node_n_processes as u32,
+            &self.mpi_ctx.numa_nodes,
             self.global_info.transcript_arity as u32,
             sctx.max_n_bits_ext as u32,
         )));
