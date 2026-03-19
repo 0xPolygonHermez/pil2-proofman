@@ -24,9 +24,10 @@ use proofman_starks_lib_c::{
 };
 use proofman_util::create_buffer_fast;
 use proofman_common::{PackedInfo, VerboseMode, GlobalInfo};
-
-use pil_std_lib::Std;
+use proofman_hints::{HintFieldOptions, get_hint_ids_by_name, get_hint_field_constant_a};
+use pil_std_lib::{Std, get_hint_field_constant_as, get_hint_field_constant_a_as_string, get_hint_field_constant_as_string};
 use witness::WitnessManager;
+use crate::BusInfo;
 
 pub fn print_summary_info<F: PrimeField64>(
     pctx: &ProofCtx<F>,
@@ -1270,4 +1271,70 @@ pub fn deterministic_shuffle<T>(slice: &mut [T], seed: u64) {
         let j = (state as usize) % (i + 1);
         slice.swap(i, j);
     }
+}
+
+pub fn get_bus_info<F: PrimeField64>(pctx: &ProofCtx<F>, setup: &Setup<F>) -> ProofmanResult<Vec<BusInfo>> {
+    let p_expressions_bin = setup.p_setup.p_expressions_bin;
+
+    let mut bus_info = Vec::new();
+
+    for piop_type in ["gprod", "gsum"] {
+        let debug_data_name = format!("{}_debug_data", piop_type);
+
+        let debug_data_hints = get_hint_ids_by_name(p_expressions_bin, &debug_data_name);
+
+        for hint in debug_data_hints {
+            let opids = get_hint_field_constant_a(
+                pctx,
+                setup,
+                setup.airgroup_id,
+                setup.air_id,
+                hint as usize,
+                "opids",
+                HintFieldOptions::default(),
+            )?;
+
+            let name_piop = get_hint_field_constant_as_string(
+                pctx,
+                setup,
+                setup.airgroup_id,
+                setup.air_id,
+                hint as usize,
+                "name_piop",
+                HintFieldOptions::default(),
+            )?;
+
+            let name_expressions = get_hint_field_constant_a_as_string(
+                pctx,
+                setup,
+                setup.airgroup_id,
+                setup.air_id,
+                hint as usize,
+                "name_exprs",
+                HintFieldOptions::default(),
+            )?;
+
+            let type_piop = get_hint_field_constant_as::<u64, F>(
+                pctx,
+                setup,
+                setup.airgroup_id,
+                setup.air_id,
+                hint as usize,
+                "type_piop",
+                HintFieldOptions::default(),
+            )?;
+
+            let bus_info_entry = BusInfo {
+                hint_id: hint as usize,
+                opids: opids.to_string(),
+                name_piop,
+                name_expressions,
+                type_piop: type_piop.to_string(),
+                is_prod: piop_type == "gprod",
+            };
+            bus_info.push(bus_info_entry);
+        }
+    }
+
+    Ok(bus_info)
 }

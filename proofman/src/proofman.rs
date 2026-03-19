@@ -123,6 +123,16 @@ impl ColumnName {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct BusInfo {
+    pub hint_id: usize,
+    pub name_piop: String,
+    pub type_piop: String,
+    pub opids: String,
+    pub name_expressions: Vec<String>,
+    pub is_prod: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct AirInfo {
     pub name: String,
     pub airgroup_id: u64,
@@ -136,6 +146,7 @@ pub struct AirInfo {
     pub name_airvalues: Vec<ColumnName>,
     pub num_airvalues: u64,
     pub num_rows: usize,
+    pub bus_info: Vec<BusInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -724,6 +735,8 @@ where
                         .map(|pols| pols.iter().filter(|pol| pol.stage == 1).map(ColumnName::new).collect())
                         .unwrap();
 
+                    let bus_info = crate::get_bus_info(&self.pctx, setup)?;
+
                     planning_info.push(AirInfo {
                         name: air.name.clone(),
                         airgroup_id: airgroup_id as u64,
@@ -741,6 +754,7 @@ where
                             .map_or(0, |pols| pols.iter().filter(|pol| pol.stage == 1).count() as u64),
                         name_airvalues,
                         num_rows: air.num_rows,
+                        bus_info,
                     });
                 } else {
                     println!("  No execution result found for Air ID: {}", air_id);

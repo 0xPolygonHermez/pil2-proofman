@@ -288,7 +288,6 @@ pub fn get_bus_air_info<F: PrimeField64>(pctx: &ProofCtx<F>, setup: &Setup<F>) -
             }
         }
 
-        println!("BUS INFO for {}:{} {:?} {:?}", setup.airgroup_id, setup.air_id, setup.setup_type, bus_info);
         let lookups_air_info: Vec<Lookup> = bus_info
             .into_iter()
             .map(|(name, info)| {
