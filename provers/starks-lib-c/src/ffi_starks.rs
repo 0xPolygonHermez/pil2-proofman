@@ -1045,6 +1045,22 @@ pub fn gen_recursive_proof_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn calculate_const_tree_fixed_c(
+    p_setup_ctx: *mut c_void,
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    d_buffers: *mut c_void,
+) {
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe {
+        calculate_const_tree_fixed(p_setup_ctx, airgroup_id, air_id, proof_type_ptr, d_buffers);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
 pub fn gen_recursive_proof_final_c(
     p_setup_ctx: *mut c_void,
@@ -2183,6 +2199,17 @@ pub fn gen_recursive_proof_c(
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "gen_recursive_proof: This is a mock call because there is no linked library");
     0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn calculate_const_tree_fixed_c(
+    _p_setup_ctx: *mut c_void,
+    _airgroup_id: u64,
+    _air_id: u64,
+    _proof_type: &str,
+    _d_buffers: *mut c_void,
+) {
+    trace!("··· {}", "calculate_const_tree_fixed: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
