@@ -551,10 +551,12 @@ void NTT_Goldilocks_GPU::free_twiddle_factors_and_r(uint32_t* gpu_ids) {
     delete[] d_inv_twiddle_factors;
     delete[] d_r;
 
-    // Reset pointers to nullptr
+    // Reset pointers and sizes
     d_fwd_twiddle_factors = nullptr;
     d_inv_twiddle_factors = nullptr;
     d_r = nullptr;
+    maxLogDomainSize = 0;
+    nGPUs_available = 0;
 }
 
 __global__ void br_ntt_group(gl64_t *data, gl64_t *twiddles, gl64_t* d_r, uint32_t stage, uint32_t domain_size, uint32_t log_domain_size, uint32_t nCols, bool inverse, bool extend, uint64_t maxLogDomainSize)
