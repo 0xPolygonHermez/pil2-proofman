@@ -86,16 +86,6 @@ __device__ __forceinline__ void add_2(gl64_t *x, const gl64_t C[SPONGE_WIDTH_T])
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__device__ __forceinline__ void prod_2(gl64_t *x, const gl64_t alpha, const gl64_t C[SPONGE_WIDTH_T])
-{
-#pragma unroll
-    for (int i = 0; i < SPONGE_WIDTH_T; ++i)
-    {
-        x[i] = alpha * C[i];
-    }
-}
-
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void pow7add_2(gl64_t *x, const gl64_t C[SPONGE_WIDTH_T])
 {
     
@@ -354,15 +344,16 @@ public:
     static constexpr uint32_t N_PARTIAL_ROUNDS = SPONGE_WIDTH_T == 4 ? 21 : 22;
     static constexpr uint32_t N_ROUNDS = N_FULL_ROUNDS_TOTAL + N_PARTIAL_ROUNDS;
    
-    void static initPoseidon2GPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
+    void static initConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
 
-    void static linearHashCoalescedBlocks(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
+    void static linearHash(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
+    void static linearHashTiled(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
 
-    void static merkletreeCoalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
+    void static merkletree(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
 
-    void static merkletreeCoalescedBlocks(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
+    void static merkletreeTiled(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
 
-    void static hashFullResult(uint64_t * output, const uint64_t * input);
+    void static hashFullResult(uint64_t * output, const uint64_t * input, cudaStream_t stream = 0);
 
     void static grinding(uint64_t * d_nonce, uint64_t *d_nonceBlock, const uint64_t * d_in, const uint32_t n_bits, cudaStream_t stream);
     
@@ -555,8 +546,12 @@ __global__ void hash_gpu_3(uint32_t nextN, uint32_t nextIndex, uint32_t pending,
 
 using Poseidon2GoldilocksGPUGrinding = Poseidon2GoldilocksGPU<4>;  // SPONGE_WIDTH = 4
 
-// Dispatch merkletreeCoalescedBlocks by arity 
-void buildMerkleTreeBlocksGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
-                               uint64_t nCols, uint64_t nRows, cudaStream_t stream);
+// Dispatch merkletreeTiled by arity (block-tiled input layout)
+void buildMerkleTreeTilesGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
+                              uint64_t nCols, uint64_t nRows, cudaStream_t stream);
+
+// Dispatch merkletree by arity (flat row-major input layout)
+void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
+                         uint64_t nCols, uint64_t nRows, cudaStream_t stream);
 
 #endif
