@@ -141,24 +141,26 @@ __global__ void transposeSubBlocksBack_noBR_compact(gl64_t *src, uint64_t n_bits
 
 
 
-void NTT_Goldilocks_GPU::computeQ_inplace(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t n_bits, uint64_t n_bits_ext, uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream)
+void NTTGoldilocksGPU::computeQ(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
+                                Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
+                                uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper,
+                                TimerGPU &timer, cudaStream_t stream)
 {
-   
-    if (nCols == 0 || n_bits_ext == 0)
+    if (nCols == 0 || nBitsExt == 0)
     {
         return;
     }
 
     TimerStartCategoryGPU(timer, NTT);
 
-    if(n_bits_ext > maxLogDomainSize)
+    if(nBitsExt > maxLogDomainSize)
     {
-        printf("[NTT] ERROR: n_bits_ext %lu exceeds maxLogDomainSize %lu\n", n_bits_ext, maxLogDomainSize);
+        printf("[NTT] ERROR: nBitsExt %lu exceeds maxLogDomainSize %lu\n", nBitsExt, maxLogDomainSize);
         abort();
     }
 
-    uint64_t N = 1 << n_bits;
-    uint64_t NExtended = 1 << n_bits_ext;
+    uint64_t N = 1 << nBits;
+    uint64_t NExtended = 1 << nBitsExt;
     gl64_t* d_S = d_aux_trace + offset_helper;
     gl64_t *d_q = d_aux_trace + offset_q;
     gl64_t *d_cmQ = d_aux_trace + offset_cmQ;
@@ -169,88 +171,112 @@ void NTT_Goldilocks_GPU::computeQ_inplace(uint64_t offset_cmQ, uint64_t offset_q
              (qDim + block.y - 1) / block.y);
     int sharedMemSize = block.x * block.y * sizeof(gl64_t);
     transposeSubBlocksBackInPlace<<<grid0, block, sharedMemSize, stream>>>(d_q, NExtended, qDim);
-    ntt_cuda_blocks_par(d_q, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, qDim, true, false, stream, maxLogDomainSize);
+    ntt_cuda_blocks_par(d_q, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, nBitsExt, nBitsExt, qDim, true, false, stream, maxLogDomainSize);
 
     dim3 threads(TILE_HEIGHT, 1, 1);
     dim3 blocks((N + threads.x - 1) / threads.x, 1, 1);
-    applyS<<<blocks, threads, 0, stream>>>(d_cmQ, d_q, d_S, shiftIn, N, NExtended, n_bits_ext - n_bits, qDeg, qDim);
+    applyS<<<blocks, threads, 0, stream>>>(d_cmQ, d_q, d_S, shiftIn, N, NExtended, nBitsExt - nBits, qDeg, qDim);
 
     dim3 grid1((NExtended + block.x - 1) / block.x,
              (nCols + block.y - 1) / block.y);
-    ntt_cuda_blocks_par(d_cmQ, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, nCols, false, false, stream, maxLogDomainSize);
+    ntt_cuda_blocks_par(d_cmQ, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, nBitsExt, nBitsExt, nCols, false, false, stream, maxLogDomainSize);
     transposeSubBlocksInPlace<<<grid1, block, sharedMemSize, stream>>>(d_cmQ, NExtended, nCols);
 
     TimerStopCategoryGPU(timer, NTT);
 }
 
 
-void NTT_Goldilocks_GPU::LDE_GPU(gl64_t* d_dst_ntt, uint64_t offset_dst_ntt,
-                                    gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits,
-                                    u_int64_t n_bits_ext, u_int64_t nCols, TimerGPU &timer, cudaStream_t stream){
+void NTTGoldilocksGPU::LDE(gl64_t* d_dst, uint64_t offset_dst,
+                           gl64_t* d_src, uint64_t offset_src,
+                           uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
+                           TimerGPU &timer, cudaStream_t stream){
 
-    if (nCols == 0 || n_bits == 0)
+    if (nCols == 0 || nBits == 0)
     {
         return;
     }
     TimerStartCategoryGPU(timer, NTT);
-    if (n_bits_ext > maxLogDomainSize)
+    if (nBitsExt > maxLogDomainSize)
     {
-        printf("[NTT] ERROR: n_bits_ext %lu exceeds maxLogDomainSize %lu\n", n_bits_ext, maxLogDomainSize);
+        printf("[NTT] ERROR: nBitsExt %lu exceeds maxLogDomainSize %lu\n", nBitsExt, maxLogDomainSize);
         abort();
     }
 
-    uint64_t size = 1 << n_bits;
-    uint64_t ext_size = 1 << n_bits_ext;    
-    gl64_t *d_dst_ntt_ = &d_dst_ntt[offset_dst_ntt];
-    gl64_t *d_src_ntt_ = &d_src_ntt[offset_src_ntt];
+    uint64_t size = 1 << nBits;
+    uint64_t ext_size = 1 << nBitsExt;
+    gl64_t *d_dst_ = &d_dst[offset_dst];
+    gl64_t *d_src_ = &d_src[offset_src];
     dim3 block(TILE_HEIGHT, TILE_WIDTH);
     dim3 grid0((size + block.x - 1) / block.x,
              (nCols + block.y - 1) / block.y);
     int sharedMemSize = block.x * block.y * sizeof(gl64_t);
 
-    transposeSubBlocksBack_noBR_compact<<<grid0, block, sharedMemSize, stream>>>(d_src_ntt_, n_bits, d_dst_ntt_, n_bits_ext, nCols);
-    ntt_cuda_blocks_par1_noBR_compact(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, n_bits_ext, nCols, true, true, stream, maxLogDomainSize); 
-    ntt_cuda_blocks_par2_noBR(d_dst_ntt_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits_ext, n_bits_ext, nCols, false, false, stream, maxLogDomainSize);
+    transposeSubBlocksBack_noBR_compact<<<grid0, block, sharedMemSize, stream>>>(d_src_, nBits, d_dst_, nBitsExt, nCols);
+    ntt_cuda_blocks_par1_noBR_compact(d_dst_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, nBits, nBitsExt, nCols, true, true, stream, maxLogDomainSize);
+    ntt_cuda_blocks_par2_noBR(d_dst_, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, nBitsExt, nBitsExt, nCols, false, false, stream, maxLogDomainSize);
     dim3 grid1((ext_size + block.x - 1) / block.x,
              (nCols + block.y - 1) / block.y);
-    transposeSubBlocksInPlace<<<grid1, block, sharedMemSize, stream>>>(d_dst_ntt_, ext_size, nCols);
+    transposeSubBlocksInPlace<<<grid1, block, sharedMemSize, stream>>>(d_dst_, ext_size, nCols);
     TimerStopCategoryGPU(timer, NTT);
 
 }
 
 
 
-void NTT_Goldilocks_GPU::INTT_inplace(gl64_t *dst, u_int64_t n_bits, u_int64_t nCols, cudaStream_t stream)
+void NTTGoldilocksGPU::NTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
 {
-    if (nCols == 0 || n_bits == 0)
+    if (nCols == 0 || nBits == 0)
     {
         return;
     }
-    if (n_bits > maxLogDomainSize)
+    if (nBits > maxLogDomainSize)
     {
-        printf("[NTT] ERROR: n_bits %lu exceeds maxLogDomainSize %lu\n", n_bits, maxLogDomainSize);
+        printf("[NTT] ERROR: nBits %lu exceeds maxLogDomainSize %lu\n", nBits, maxLogDomainSize);
         abort();
     }
 
-    uint64_t N = 1 << n_bits;
+    uint64_t N = 1 << nBits;
 
     dim3 block_0(TILE_HEIGHT, TILE_WIDTH);
     dim3 grid_0((N + block_0.x - 1) / block_0.x,
              (nCols + block_0.y - 1) / block_0.y);
     int sharedMemSize_0 = block_0.x * block_0.y * sizeof(gl64_t);
     transposeSubBlocksBackInPlace<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, nCols);
-    ntt_cuda_blocks_par(dst, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, n_bits, n_bits, nCols, true, false, stream, maxLogDomainSize);
+    ntt_cuda_blocks_par(dst, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, nBits, nBits, nCols, false, false, stream, maxLogDomainSize);
+    transposeSubBlocksInPlace<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, nCols);
+}
+
+void NTTGoldilocksGPU::INTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
+{
+    if (nCols == 0 || nBits == 0)
+    {
+        return;
+    }
+    if (nBits > maxLogDomainSize)
+    {
+        printf("[NTT] ERROR: nBits %lu exceeds maxLogDomainSize %lu\n", nBits, maxLogDomainSize);
+        abort();
+    }
+
+    uint64_t N = 1 << nBits;
+
+    dim3 block_0(TILE_HEIGHT, TILE_WIDTH);
+    dim3 grid_0((N + block_0.x - 1) / block_0.x,
+             (nCols + block_0.y - 1) / block_0.y);
+    int sharedMemSize_0 = block_0.x * block_0.y * sizeof(gl64_t);
+    transposeSubBlocksBackInPlace<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, nCols);
+    ntt_cuda_blocks_par(dst, d_r, d_fwd_twiddle_factors, d_inv_twiddle_factors, nBits, nBits, nCols, true, false, stream, maxLogDomainSize);
     transposeSubBlocksInPlace<<<grid_0, block_0, sharedMemSize_0, stream>>>(dst, N, nCols);
 }
 
 // Static member definitions
-gl64_t **NTT_Goldilocks_GPU::d_fwd_twiddle_factors = nullptr;
-gl64_t **NTT_Goldilocks_GPU::d_inv_twiddle_factors = nullptr;
-gl64_t **NTT_Goldilocks_GPU::d_r = nullptr;
-uint64_t NTT_Goldilocks_GPU::maxLogDomainSize = 0;
-uint32_t NTT_Goldilocks_GPU::nGPUs_available = 0;
+gl64_t **NTTGoldilocksGPU::d_fwd_twiddle_factors = nullptr;
+gl64_t **NTTGoldilocksGPU::d_inv_twiddle_factors = nullptr;
+gl64_t **NTTGoldilocksGPU::d_r = nullptr;
+uint64_t NTTGoldilocksGPU::maxLogDomainSize = 0;
+uint32_t NTTGoldilocksGPU::nGPUs_available = 0;
 
-void NTT_Goldilocks_GPU::init_twiddle_factors_and_r(uint64_t maxLogDomainSize_, uint32_t nGPUs_input, uint32_t* gpu_ids_) {
+void NTTGoldilocksGPU::initConstants(uint64_t maxLogDomainSize_, uint32_t nGPUs_input, uint32_t* gpu_ids_) {
     static std::mutex init_mutex;
     std::lock_guard<std::mutex> lock(init_mutex);
 
@@ -260,7 +286,7 @@ void NTT_Goldilocks_GPU::init_twiddle_factors_and_r(uint64_t maxLogDomainSize_, 
     assert(maxLogDomainSize_ <= 32);
 
     if(maxLogDomainSize_ > maxLogDomainSize || nGPUs_available_ != nGPUs_available) {
-        free_twiddle_factors_and_r(gpu_ids_); 
+        freeConstants();
         maxLogDomainSize = maxLogDomainSize_;
         nGPUs_available = nGPUs_available_;
         d_fwd_twiddle_factors = new gl64_t*[nGPUs_available];
@@ -321,7 +347,7 @@ void NTT_Goldilocks_GPU::init_twiddle_factors_and_r(uint64_t maxLogDomainSize_, 
     CHECKCUDAERR(cudaGetLastError());
 }
 
-void NTT_Goldilocks_GPU::free_twiddle_factors_and_r(uint32_t* gpu_ids) {
+void NTTGoldilocksGPU::freeConstants() {
     static std::mutex free_mutex;
     std::lock_guard<std::mutex> lock(free_mutex);
 
@@ -333,7 +359,7 @@ void NTT_Goldilocks_GPU::free_twiddle_factors_and_r(uint32_t* gpu_ids) {
 
     for(int i = 0; i < nGPUs_available; i++) {
         if(d_fwd_twiddle_factors[i] != nullptr && d_inv_twiddle_factors[i] != nullptr && d_r[i] != nullptr) {
-            cudaSetDevice(gpu_ids[i]);
+            cudaSetDevice(i);
             cudaFree(d_fwd_twiddle_factors[i]);
             cudaFree(d_inv_twiddle_factors[i]);
             cudaFree(d_r[i]);
