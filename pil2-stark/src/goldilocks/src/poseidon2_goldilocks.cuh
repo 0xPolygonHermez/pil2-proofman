@@ -358,10 +358,9 @@ public:
 
     void static linearHashCoalescedBlocks(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
 
-    void static merkletreeCoalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads = 0, uint64_t dim = 1);
+    void static merkletreeCoalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
 
-    void static merkletreeCoalescedBlocks(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads = 0, uint64_t dim = 1);
-
+    void static merkletreeCoalescedBlocks(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
 
     void static hashFullResult(uint64_t * output, const uint64_t * input);
 
@@ -555,5 +554,9 @@ __global__ void hash_gpu_3(uint32_t nextN, uint32_t nextIndex, uint32_t pending,
 
 
 using Poseidon2GoldilocksGPUGrinding = Poseidon2GoldilocksGPU<4>;  // SPONGE_WIDTH = 4
+
+// Dispatch merkletreeCoalescedBlocks by arity 
+void buildMerkleTreeBlocksGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
+                               uint64_t nCols, uint64_t nRows, cudaStream_t stream);
 
 #endif

@@ -2,6 +2,7 @@
 #include "../src/poseidon2_goldilocks.cuh"
 #include "../src/poseidon2_goldilocks.hpp"
 #include "../src/ntt_goldilocks.cuh"
+#include "../src/gl64_tooling.cuh"
 #include "../src/merklehash_goldilocks.hpp"
 
 
@@ -219,7 +220,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_intt_multicol)
     CHECKCUDAERR(cudaMalloc((void**)&d_flat,  nElems * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc((void**)&d_tiled, nElems * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMemcpy(d_flat, h_ntt.data(), nElems * sizeof(gl64_t), cudaMemcpyHostToDevice));
-    gpu_ntt.prepare_blocks_trace(d_tiled, d_flat, nCols, nRows, stream, timer);
+    fromRowMajorToTiled(nRows, nCols, d_flat, d_tiled, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // GPU INTT in-place on block-tiled data
@@ -301,7 +302,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde)
     NTT_Goldilocks_GPU::free_twiddle_factors_and_r(&gpu_id);
 }
 
-// LDE_MerkleTree_GPU root must match CPU merkletree_seq built from the same extended polynomial.
+// LDE_GPU + buildMerkleTreeBlocksGPU root must match CPU merkletree_seq built from the same extended polynomial.
 TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree)
 {
     constexpr uint64_t n_bits     = 12;
@@ -332,9 +333,10 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree)
     CHECKCUDAERR(cudaMalloc((void**)&d_lde_mt,   nRows_ext * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc((void**)&d_tree_gpu, tree_size * sizeof(Goldilocks::Element)));
 
-    // GPU: LDE + merkle tree in one call
+    // GPU: LDE then merkle tree
     CHECKCUDAERR(cudaMemcpy(d_src, h_input.data(), nRows * sizeof(gl64_t), cudaMemcpyHostToDevice));
-    gpu_ntt.LDE_MerkleTree_GPU(d_tree_gpu, d_lde_mt, 0, d_src, 0, n_bits, n_bits_ext, nCols, arity, timer, stream);
+    gpu_ntt.LDE_GPU(d_lde_mt, 0, d_src, 0, n_bits, n_bits_ext, nCols, timer, stream);
+    buildMerkleTreeBlocksGPU(arity, (uint64_t*)d_tree_gpu, (uint64_t*)d_lde_mt, nCols, nRows_ext, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // CPU reference: extendPol then merkletree_seq
@@ -362,7 +364,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree)
     NTT_Goldilocks_GPU::free_twiddle_factors_and_r(&gpu_id);
 }
 
-// LDE_MerkleTree_GPU with multiple columns: block-tiled input via prepare_blocks_trace.
+// LDE_GPU + buildMerkleTreeBlocksGPU with multiple columns: block-tiled input via fromRowMajorToTiled.
 // GPU root must match CPU extendPol + merkletree_seq (both row-major).
 TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree_multicol)
 {
@@ -398,9 +400,10 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree_multicol)
 
     // GPU: flat → block-tiled → LDE + merkle tree
     CHECKCUDAERR(cudaMemcpy(d_flat, h_input.data(), nRows * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
-    gpu_ntt.prepare_blocks_trace(d_tiled, d_flat, nCols, nRows, stream, timer);
+    fromRowMajorToTiled(nRows, nCols, d_flat, d_tiled, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
-    gpu_ntt.LDE_MerkleTree_GPU(d_tree_gpu, d_lde, 0, d_tiled, 0, n_bits, n_bits_ext, nCols, arity, timer, stream);
+    gpu_ntt.LDE_GPU(d_lde, 0, d_tiled, 0, n_bits, n_bits_ext, nCols, timer, stream);
+    buildMerkleTreeBlocksGPU(arity, (uint64_t*)d_tree_gpu, (uint64_t*)d_lde, nCols, nRows_ext, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // CPU reference: extendPol (row-major) then merkletree_seq (row-major)
@@ -463,7 +466,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_linear_hash)
     CHECKCUDAERR(cudaMalloc((void**)&d_gpu_out, nRows * CAPACITY * sizeof(gl64_t)));
 
     CHECKCUDAERR(cudaMemcpy(d_flat, h_trace.data(), nRows * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
-    gpu_ntt.prepare_blocks_trace(d_tiled, d_flat, nCols, nRows, stream, timer);
+    fromRowMajorToTiled(nRows, nCols, d_flat, d_tiled, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     Poseidon2GoldilocksGPU<12>::linearHashCoalescedBlocks(
@@ -517,7 +520,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_coalescedblocks)
     CHECKCUDAERR(cudaMalloc((void**)&d_tree,  tree_size * sizeof(Goldilocks::Element)));
 
     CHECKCUDAERR(cudaMemcpy(d_flat, h_trace.data(), nRows * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
-    gpu_ntt.prepare_blocks_trace(d_tiled, d_flat, nCols, nRows, stream, timer);
+    fromRowMajorToTiled(nRows, nCols, d_flat, d_tiled, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     Poseidon2GoldilocksGPU<12>::merkletreeCoalescedBlocks(

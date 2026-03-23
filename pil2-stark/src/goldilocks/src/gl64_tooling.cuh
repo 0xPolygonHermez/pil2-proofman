@@ -478,11 +478,22 @@ void load_and_copy_to_device_in_chunks(
     uint64_t streamId
     );
 
+#endif
+
+// --- Data layout utilities 
 __global__ void fromRowMajorToTiled(
     const uint64_t nRows,
     const uint64_t nCols,
     const uint64_t* __restrict__ input,
     uint64_t* __restrict__ output
 );
-#endif
+
+void fromRowMajorToTiled(
+    uint64_t nRows,
+    uint64_t nCols,
+    gl64_t* src,
+    gl64_t* dst,
+    cudaStream_t stream
+);
+
 #endif
