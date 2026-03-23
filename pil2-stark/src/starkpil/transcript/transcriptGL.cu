@@ -30,13 +30,13 @@ __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pe
     }
     switch(arity){
         case 2:
-            poseidon2_hash_shared<Poseidon2Goldilocks<8>::RATE, Poseidon2Goldilocks<8>::CAPACITY, Poseidon2Goldilocks<8>::SPONGE_WIDTH, Poseidon2Goldilocks<8>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<8>::N_PARTIAL_ROUNDS>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
+            poseidon2PermuteSmem<Poseidon2Goldilocks<8>::RATE, Poseidon2Goldilocks<8>::CAPACITY, Poseidon2Goldilocks<8>::SPONGE_WIDTH, Poseidon2Goldilocks<8>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<8>::N_PARTIAL_ROUNDS>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
             break;
         case 3:
-            poseidon2_hash_shared<Poseidon2Goldilocks<12>::RATE, Poseidon2Goldilocks<12>::CAPACITY, Poseidon2Goldilocks<12>::SPONGE_WIDTH, Poseidon2Goldilocks<12>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<12>::N_PARTIAL_ROUNDS>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
+            poseidon2PermuteSmem<Poseidon2Goldilocks<12>::RATE, Poseidon2Goldilocks<12>::CAPACITY, Poseidon2Goldilocks<12>::SPONGE_WIDTH, Poseidon2Goldilocks<12>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<12>::N_PARTIAL_ROUNDS>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
             break;
         case 4:
-            poseidon2_hash_shared<Poseidon2Goldilocks<16>::RATE, Poseidon2Goldilocks<16>::CAPACITY, Poseidon2Goldilocks<16>::SPONGE_WIDTH, Poseidon2Goldilocks<16>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<16>::N_PARTIAL_ROUNDS>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
+            poseidon2PermuteSmem<Poseidon2Goldilocks<16>::RATE, Poseidon2Goldilocks<16>::CAPACITY, Poseidon2Goldilocks<16>::SPONGE_WIDTH, Poseidon2Goldilocks<16>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<16>::N_PARTIAL_ROUNDS>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
             break;
         default:
             assert(false && "Unsupported arity");
@@ -191,29 +191,29 @@ void TranscriptGL_GPU::init_const(uint32_t* gpu_ids, uint32_t num_gpu_ids, uint3
 
 void TranscriptGL_GPU::put(Goldilocks::Element *input, uint64_t size, cudaStream_t stream)
 {
-    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2_hash_shared
+    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2PermuteSmem
     _add<<<1,1, sharedMem, stream>>>(input, size, state, pending, out, pending_cursor, out_cursor,arity);
 }
 
 void TranscriptGL_GPU::getField(uint64_t* output, cudaStream_t stream)
 {
-    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2_hash_shared  
+    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2PermuteSmem  
     _getField<<<1, 1, sharedMem, stream>>>(output, state, pending, out, pending_cursor, out_cursor, arity);
     
 } 
 
 void TranscriptGL_GPU::getState(Goldilocks::Element* output, cudaStream_t stream) {
-    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2_hash_shared  
+    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2PermuteSmem  
     __getState<<<1, 1, sharedMem, stream>>>(output, transcriptStateSize, state, pending, out, pending_cursor, out_cursor,arity);
 }
 
 void TranscriptGL_GPU::getState(Goldilocks::Element* output, uint64_t nOutputs, cudaStream_t stream) {
-    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2_hash_shared 
+    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2PermuteSmem 
     __getState<<<1, 1, sharedMem, stream>>>(output, nOutputs, state, pending, out, pending_cursor, out_cursor,arity);
 }
 
 void TranscriptGL_GPU::getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, cudaStream_t stream)
 {
-    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2_hash_shared 
+    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2PermuteSmem 
     __getPermutations<<<1, 1, sharedMem, stream>>>(res, n, nBits, state, pending, out, pending_cursor, out_cursor, arity);
 }

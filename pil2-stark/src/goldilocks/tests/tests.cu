@@ -25,14 +25,14 @@ TEST(GOLDILOCKS_TEST, poseidon2)
     cudaMemcpy(d_in, in, 16 * sizeof(gl64_t), cudaMemcpyHostToDevice);
     cudaMalloc((void **)&d_out, 16 * sizeof(gl64_t));
    
-    Poseidon2GoldilocksGPU<4>::hashFullResult((uint64_t *)d_out, (uint64_t *)d_in);
+    Poseidon2GoldilocksGPU<4>::hash((uint64_t *)d_out, (uint64_t *)d_in);
     cudaMemcpy(out, d_out, 4 * sizeof(gl64_t), cudaMemcpyDeviceToHost);
     ASSERT_EQ(out[0].fe, uint64_t(0x758085b0af0a16aa));   
     ASSERT_EQ(out[1].fe, uint64_t(0x85141acc29c479de));
     ASSERT_EQ(out[2].fe, uint64_t(0x50127371e2b77ae5));
     ASSERT_EQ(out[3].fe, uint64_t(0xefee3a8033630029));
 
-    Poseidon2GoldilocksGPU<8>::hashFullResult((uint64_t *)d_out, (uint64_t *)d_in);
+    Poseidon2GoldilocksGPU<8>::hash((uint64_t *)d_out, (uint64_t *)d_in);
     cudaMemcpy(out, d_out, 8 * sizeof(gl64_t), cudaMemcpyDeviceToHost);
     ASSERT_EQ(out[0].fe, uint64_t(0xc5fb1cfe0b4697bb));   
     ASSERT_EQ(out[1].fe, uint64_t(0x4a4a32ff849af473));
@@ -43,7 +43,7 @@ TEST(GOLDILOCKS_TEST, poseidon2)
     ASSERT_EQ(out[6].fe, uint64_t(0xe8c993aa10da6c90));
     ASSERT_EQ(out[7].fe, uint64_t(0xa73104a95b68031c));
 
-    Poseidon2GoldilocksGPU<12>::hashFullResult((uint64_t *)d_out, (uint64_t *)d_in);
+    Poseidon2GoldilocksGPU<12>::hash((uint64_t *)d_out, (uint64_t *)d_in);
     cudaMemcpy(out, d_out, 12 * sizeof(gl64_t), cudaMemcpyDeviceToHost);
     ASSERT_EQ(out[0].fe, uint64_t(0x01eaef96bdf1c0c1));   
     ASSERT_EQ(out[1].fe, uint64_t(0x1f0d2cc525b2540c));
@@ -58,7 +58,7 @@ TEST(GOLDILOCKS_TEST, poseidon2)
     ASSERT_EQ(out[10].fe, uint64_t(0xec467926508fbe67));
     ASSERT_EQ(out[11].fe, uint64_t(0x6a50450ddf85a6ed));
 
-    Poseidon2GoldilocksGPU<16>::hashFullResult((uint64_t *)d_out, (uint64_t *)d_in);
+    Poseidon2GoldilocksGPU<16>::hash((uint64_t *)d_out, (uint64_t *)d_in);
     cudaMemcpy(out, d_out, 16 * sizeof(gl64_t), cudaMemcpyDeviceToHost);
     ASSERT_EQ(out[0].fe,uint64_t(0x85c54702470d9756));
     ASSERT_EQ(out[1].fe,uint64_t(0xaa53c7a7d52d9898));
@@ -126,7 +126,7 @@ TEST(GOLDILOCKS_TEST, grinding)
     cudaMemcpy(d_test_in, test_in, 4 * sizeof(gl64_t), cudaMemcpyHostToDevice);
     cudaMalloc((void **)&d_hash_out, 4 * sizeof(gl64_t));
     
-    Poseidon2GoldilocksGPU<4>::hashFullResult((uint64_t *)d_hash_out, (uint64_t *)d_test_in);
+    Poseidon2GoldilocksGPU<4>::hash((uint64_t *)d_hash_out, (uint64_t *)d_test_in);
     cudaStreamSynchronize(stream);
     
     Goldilocks::Element hash_result[4];
