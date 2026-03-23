@@ -6,6 +6,7 @@
 #include "../src/ntt_goldilocks.hpp"
 #include "../src/poseidon2_goldilocks.cuh"
 #include "../src/ntt_goldilocks.cuh"
+#include "../src/gl64_tooling.cuh"
 #include "../utils/cuda_utils.hpp"
 #include "../src/merklehash_goldilocks.hpp"
 
@@ -337,7 +338,7 @@ static void LDE_GPU_BENCH(benchmark::State &state)
 
     dim3 thr(128), blk((nRows + 127) / 128);
     initTrace<<<blk, thr, 0, stream>>>(d_flat, nRows, nCols);
-    gpu_ntt.prepare_blocks_trace(d_src, d_flat, nCols, nRows, stream, timer);
+    fromRowMajorToTiled(nRows, nCols, d_flat, d_src, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // Warm up
@@ -387,16 +388,18 @@ static void LDE_MERKLETREE_GPU_BENCH(benchmark::State &state)
 
     dim3 thr(128), blk((nRows + 127) / 128);
     initTrace<<<blk, thr, 0, stream>>>(d_flat, nRows, nCols);
-    gpu_ntt.prepare_blocks_trace(d_src, d_flat, nCols, nRows, stream, timer);
+    fromRowMajorToTiled(nRows, nCols, d_flat, d_src, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // Warm up
-    gpu_ntt.LDE_MerkleTree_GPU(d_tree, d_dst, 0, d_src, 0, n_bits, n_bits_ext, nCols, arity, timer, stream);
+    gpu_ntt.LDE_GPU(d_dst, 0, d_src, 0, n_bits, n_bits_ext, nCols, timer, stream);
+    buildMerkleTreeBlocksGPU(arity, (uint64_t*)d_tree, (uint64_t*)d_dst, nCols, nRows_ext, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     for (auto _ : state)
     {
-        gpu_ntt.LDE_MerkleTree_GPU(d_tree, d_dst, 0, d_src, 0, n_bits, n_bits_ext, nCols, arity, timer, stream);
+        gpu_ntt.LDE_GPU(d_dst, 0, d_src, 0, n_bits, n_bits_ext, nCols, timer, stream);
+        buildMerkleTreeBlocksGPU(arity, (uint64_t*)d_tree, (uint64_t*)d_dst, nCols, nRows_ext, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }
 

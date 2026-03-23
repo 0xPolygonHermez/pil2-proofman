@@ -715,8 +715,7 @@ uint64_t initialize_instance(void *pSetupCtx_, uint64_t airgroupId, uint64_t air
     if (air_instance_info->is_packed) {
         unpack_trace(air_instance_info, (uint64_t*)(d_aux_trace + offsetCm1 + N * nCols), (uint64_t*)(d_aux_trace + offsetCm1), nCols, N, stream, timer); 
     } else {
-        NTT_Goldilocks_GPU ntt;
-        ntt.prepare_blocks_trace((gl64_t*)(d_aux_trace + offsetCm1), (gl64_t *)(d_aux_trace + offsetCm1 + N * nCols), nCols, N, stream, timer);
+        fromRowMajorToTiled(N, nCols, (gl64_t *)(d_aux_trace + offsetCm1 + N * nCols), (gl64_t*)(d_aux_trace + offsetCm1), stream);
     }
 
     return streamId;
@@ -1165,7 +1164,7 @@ uint64_t commit_witness(void *pSetupCtx_, void *params_, uint64_t instanceId, ui
     if (air_instance_info->is_packed) {
         unpack_trace(air_instance_info, (uint64_t *)(d_aux_trace + offset_dst), (uint64_t *)(d_aux_trace + offset_src), nCols, N, stream, timer);
     } else {
-        ntt.prepare_blocks_trace((gl64_t *)(d_aux_trace + offset_src), (gl64_t *)(d_aux_trace + offset_dst), nCols, N, stream, timer);
+        fromRowMajorToTiled(N, nCols, (gl64_t *)(d_aux_trace + offset_dst), (gl64_t *)(d_aux_trace + offset_src), stream);
     }
 
     uint64_t nWitnessHints = setupCtx->expressionsBin.getNumberHintIdsByName("witness_calc");
@@ -1245,7 +1244,8 @@ uint64_t commit_witness(void *pSetupCtx_, void *params_, uint64_t instanceId, ui
         calculateWitnessExpr_gpu(*setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     }
 
-    ntt.LDE_MerkleTree_GPU(pNodes, d_aux_trace, offset_dst, d_aux_trace, offset_src, nBits, nBitsExt, nCols, arity, timer, stream);
+    ntt.LDE_GPU(d_aux_trace, offset_dst, d_aux_trace, offset_src, nBits, nBitsExt, nCols, timer, stream);
+    buildMerkleTreeBlocksGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_dst), nCols, 1ULL << nBitsExt, stream);
     CHECKCUDAERR(cudaMemcpyAsync(d_buffers->streamsData[streamId].pinned_buffer_proof, &pNodes[tree_size - HASH_SIZE], HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
@@ -1300,8 +1300,7 @@ void prepare_blocks(uint64_t *pol, uint64_t N, uint64_t nCols, void *unified_buf
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
     cudaSetDevice(deviceId);
-    NTT_Goldilocks_GPU ntt;
-    ntt.prepare_blocks_trace(d_aux, d_pol, nCols, N, stream, timer);
+    fromRowMajorToTiled(N, nCols, d_pol, d_aux, stream);
 
     cudaMemcpy(pol, d_aux, N * nCols * sizeof(gl64_t), cudaMemcpyDeviceToHost);
     if (unified_buffer_gpu == nullptr) {
@@ -1342,11 +1341,12 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
     cudaMemset(d_customCommitsTree, 0, treeSize * sizeof(gl64_t));
     cudaMemcpy(d_buffer, buffer, N * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice);
 
-    NTT_Goldilocks_GPU ntt;
-    ntt.prepare_blocks_trace(d_customCommitsPols, d_buffer, nCols, N, stream, timer);
+    fromRowMajorToTiled(N, nCols, d_buffer, d_customCommitsPols, stream);
 
+    NTT_Goldilocks_GPU ntt;
     Goldilocks::Element *pNodes = (Goldilocks::Element *)&d_customCommitsTree[nCols * NExtended];
-    ntt.LDE_MerkleTree_GPU(pNodes, (gl64_t *)d_customCommitsTree, 0, (gl64_t *)d_customCommitsPols, 0, nBits, nBitsExt, nCols, arity, timer, stream);
+    ntt.LDE_GPU((gl64_t *)d_customCommitsTree, 0, (gl64_t *)d_customCommitsPols, 0, nBits, nBitsExt, nCols, timer, stream);
+    buildMerkleTreeBlocksGPU(arity, (uint64_t*)pNodes, (uint64_t*)d_customCommitsTree, nCols, 1ULL << nBitsExt, stream);
 
     cudaMemcpy(customCommitsTree, d_customCommitsTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
 
@@ -1404,7 +1404,8 @@ void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pCons
     NTT_Goldilocks_GPU ntt;
 
     Goldilocks::Element *pNodes = d_fixedTree + starkInfo.nConstants * NExtended;
-    ntt.LDE_MerkleTree_GPU(pNodes, (gl64_t *)d_fixedTree, 0, (gl64_t *)d_fixedPols, 0, starkInfo.starkStruct.nBits, starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, starkInfo.starkStruct.merkleTreeArity, timer, stream);
+    ntt.LDE_GPU((gl64_t *)d_fixedTree, 0, (gl64_t *)d_fixedPols, 0, starkInfo.starkStruct.nBits, starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, timer, stream);
+    buildMerkleTreeBlocksGPU(starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)d_fixedTree, starkInfo.nConstants, 1ULL << starkInfo.starkStruct.nBitsExt, stream);
 
     Goldilocks::Element *pConstTreeAddress = (Goldilocks::Element *)pConstTreeAddress_;
     cudaMemcpy(pConstTreeAddress, d_fixedTree, treeSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);

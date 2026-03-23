@@ -145,20 +145,11 @@ public:
         assert(TILE_HEIGHT * TILE_WIDTH <= 1024); 
     }
 
-    void LDE_MerkleTree_GPU(Goldilocks::Element *d_tree, gl64_t* d_dst_ntt, uint64_t offset_dst_ntt,
-                                    gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits,
-                                    u_int64_t n_bits_ext, u_int64_t ncols, u_int64_t arity, TimerGPU &timer, cudaStream_t stream);
-
     void LDE_GPU(gl64_t* d_dst_ntt, uint64_t offset_dst_ntt,
                                     gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits,
                                     u_int64_t n_bits_ext, u_int64_t ncols, TimerGPU &timer, cudaStream_t stream);
 
     void computeQ_inplace(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t n_bits, uint64_t n_bits_ext, uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream);
-
-    void computeQ_MerkleTree_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q,
-                          uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t n_bits,
-                          uint64_t n_bits_ext, uint64_t nCols, uint64_t arity, gl64_t *d_aux_trace,
-                          uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream);
 
     void INTT_inplace(gl64_t *dst, u_int64_t n_bits, u_int64_t ncols, cudaStream_t stream);
 
@@ -168,9 +159,6 @@ public:
     // at application shutdown to release GPU memory. Twiddle factors persist across
     // instance creation/destruction to avoid recomputation overhead.
     static void free_twiddle_factors_and_r(uint32_t* gpu_ids);
-
-    void prepare_blocks_trace(gl64_t* dst, gl64_t* src,uint64_t nCols,uint64_t nRows,cudaStream_t stream,TimerGPU &timer);
-
 
 private:
     
