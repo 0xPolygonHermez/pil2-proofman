@@ -5,7 +5,6 @@
 #include "cuda_utils.cuh"
 #include <cuda_runtime.h>
 #include <sys/time.h>
-#include "ntt_goldilocks.hpp"
 #include "data_layout.cuh"
 #include "gpu_timer.cuh"
 
@@ -124,50 +123,48 @@ __device__ __constant__ uint64_t domain_size_inverse[33] = {
 
 class gl64_t;
 
-class NTT_Goldilocks_GPU : public NTT_Goldilocks {
+class NTTGoldilocksGPU {
 public:
-    using NTT_Goldilocks::NTT_Goldilocks;
+    NTTGoldilocksGPU() { checkKernelDims(); }
 
-    NTT_Goldilocks_GPU()
-       : NTT_Goldilocks() {
+    NTTGoldilocksGPU(uint64_t maxLogDomainSize_, uint32_t nGPUs_input = 0, uint32_t* gpu_ids = nullptr) {
+        initConstants(maxLogDomainSize_, nGPUs_input, gpu_ids);
+        checkKernelDims();
+    }
+
+    void LDE(gl64_t* d_dst, uint64_t offset_dst,
+             gl64_t* d_src, uint64_t offset_src,
+             uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
+             TimerGPU &timer, cudaStream_t stream);
+
+    void computeQ(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
+                  Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
+                  uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper,
+                  TimerGPU &timer, cudaStream_t stream);
+
+    void NTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);
+    void INTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);
+
+    static void initConstants(uint64_t maxLogDomainSize_, uint32_t nGPUs_input = 0, uint32_t* gpu_ids = nullptr);
+
+    // IMPORTANT: Memory management is manual. Call freeConstants() explicitly
+    // at application shutdown to release GPU memory. Twiddle factors persist across
+    // instance creation/destruction to avoid recomputation overhead.
+    static void freeConstants();
+
+private:
+    static void checkKernelDims() {
         assert(BATCH_HEIGHT == (1 << BATCH_HEIGHT_LOG2));
-        assert(BATCH_HEIGHT_DIV2 == (BATCH_HEIGHT>>1));
-        assert(BATCH_HEIGHT * BATCH_WIDTH <= 1024); 
+        assert(BATCH_HEIGHT_DIV2 == (BATCH_HEIGHT >> 1));
+        assert(BATCH_HEIGHT * BATCH_WIDTH <= 1024);
         assert(TILE_HEIGHT * TILE_WIDTH <= 1024);
     }
 
-    NTT_Goldilocks_GPU(uint64_t maxLogDomainSize_, uint32_t nGPUs_input = 0, uint32_t* gpu_ids = nullptr)
-       : NTT_Goldilocks() {
-        init_twiddle_factors_and_r(maxLogDomainSize_, nGPUs_input, gpu_ids);
-        assert(BATCH_HEIGHT == (1 << BATCH_HEIGHT_LOG2));
-        assert(BATCH_HEIGHT_DIV2 == (BATCH_HEIGHT>>1));
-        assert(BATCH_HEIGHT * BATCH_WIDTH <= 1024); 
-        assert(TILE_HEIGHT * TILE_WIDTH <= 1024); 
-    }
-
-    void LDE_GPU(gl64_t* d_dst_ntt, uint64_t offset_dst_ntt,
-                                    gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits,
-                                    u_int64_t n_bits_ext, u_int64_t ncols, TimerGPU &timer, cudaStream_t stream);
-
-    void computeQ_inplace(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t n_bits, uint64_t n_bits_ext, uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream);
-
-    void INTT_inplace(gl64_t *dst, u_int64_t n_bits, u_int64_t ncols, cudaStream_t stream);
-
-    static void init_twiddle_factors_and_r(uint64_t maxLogDomainSize_, uint32_t nGPUs_input = 0, uint32_t* gpu_ids = nullptr);
-
-    // IMPORTANT: Memory management is manual. Call free_twiddle_factors_and_r() explicitly
-    // at application shutdown to release GPU memory. Twiddle factors persist across
-    // instance creation/destruction to avoid recomputation overhead.
-    static void free_twiddle_factors_and_r(uint32_t* gpu_ids);
-
-private:
-    
     static uint64_t maxLogDomainSize;
     static uint32_t nGPUs_available;
     static gl64_t **d_fwd_twiddle_factors;
     static gl64_t **d_inv_twiddle_factors;
     static gl64_t **d_r;
-
 };
 
 #endif

@@ -32,7 +32,7 @@ static void LINEAR_HASH12_BENCH_GPU(benchmark::State &state)
     // Initialize GPU constants
     uint32_t gpu_id = 0;
     cudaGetDevice((int*)&gpu_id);
-    Poseidon2GoldilocksGPU<12>::initPoseidon2GPUConstants(&gpu_id, 1);
+    Poseidon2GoldilocksGPU<12>::initConstants(&gpu_id, 1);
 
     cudaStream_t stream;
     cudaStreamCreate(&stream);
@@ -52,7 +52,7 @@ static void LINEAR_HASH12_BENCH_GPU(benchmark::State &state)
 
     for (auto _ : state)
     {
-        Poseidon2GoldilocksGPU<12>::linearHashCoalescedBlocks((uint64_t *)d_hash_output, (uint64_t *)d_trace, trace_cols, TRACE_NROWS,stream);
+        Poseidon2GoldilocksGPU<12>::linearHashTiled((uint64_t *)d_hash_output, (uint64_t *)d_trace, trace_cols, TRACE_NROWS,stream);
         cudaStreamSynchronize(stream);
     }
 
@@ -67,7 +67,7 @@ static void LINEAR_HASH16_BENCH_GPU(benchmark::State &state)
     // Initialize GPU constants
     uint32_t gpu_id = 0;
     cudaGetDevice((int*)&gpu_id);
-    Poseidon2GoldilocksGPU<16>::initPoseidon2GPUConstants(&gpu_id, 1);
+    Poseidon2GoldilocksGPU<16>::initConstants(&gpu_id, 1);
 
     cudaStream_t stream;
     cudaStreamCreate(&stream);
@@ -87,7 +87,7 @@ static void LINEAR_HASH16_BENCH_GPU(benchmark::State &state)
 
     for (auto _ : state)
     {      
-        Poseidon2GoldilocksGPU<16>::linearHashCoalescedBlocks((uint64_t *)d_hash_output, (uint64_t *)d_trace, trace_cols, TRACE_NROWS,stream);
+        Poseidon2GoldilocksGPU<16>::linearHashTiled((uint64_t *)d_hash_output, (uint64_t *)d_trace, trace_cols, TRACE_NROWS,stream);
         cudaStreamSynchronize(stream);
     }
 
@@ -103,7 +103,7 @@ static void MERKLETREE12_BENCH_GPU(benchmark::State &state)
     // Initialize GPU constants
     uint32_t gpu_id = 0;
     cudaGetDevice((int*)&gpu_id);
-    Poseidon2GoldilocksGPU<12>::initPoseidon2GPUConstants(&gpu_id, 1);
+    Poseidon2GoldilocksGPU<12>::initConstants(&gpu_id, 1);
 
     cudaStream_t stream;
     cudaStreamCreate(&stream);
@@ -125,7 +125,7 @@ static void MERKLETREE12_BENCH_GPU(benchmark::State &state)
 
     for (auto _ : state)
     {
-        Poseidon2GoldilocksGPU<12>::merkletreeCoalescedBlocks(arity, (uint64_t*) d_tree, (uint64_t *)d_trace, trace_cols, TRACE_NROWS, stream);
+        Poseidon2GoldilocksGPU<12>::merkletreeTiled(arity, (uint64_t*) d_tree, (uint64_t *)d_trace, trace_cols, TRACE_NROWS, stream);
         cudaStreamSynchronize(stream);
     }
 
@@ -139,7 +139,7 @@ static void MERKLETREE16_BENCH_GPU(benchmark::State &state)
     // Initialize GPU constants
     uint32_t gpu_id = 0;
     cudaGetDevice((int*)&gpu_id);
-    Poseidon2GoldilocksGPU<16>::initPoseidon2GPUConstants(&gpu_id, 1);
+    Poseidon2GoldilocksGPU<16>::initConstants(&gpu_id, 1);
 
     cudaStream_t stream;
     cudaStreamCreate(&stream);
@@ -161,7 +161,7 @@ static void MERKLETREE16_BENCH_GPU(benchmark::State &state)
 
     for (auto _ : state)
     {
-        Poseidon2GoldilocksGPU<16>::merkletreeCoalescedBlocks(arity, (uint64_t*) d_tree, (uint64_t *)d_trace, trace_cols, TRACE_NROWS, stream);
+        Poseidon2GoldilocksGPU<16>::merkletreeTiled(arity, (uint64_t*) d_tree, (uint64_t *)d_trace, trace_cols, TRACE_NROWS, stream);
         cudaStreamSynchronize(stream);
     }
 
@@ -186,7 +186,7 @@ static void GRINDING_BENCH_GPU(benchmark::State &state)
     // Initialize GPU constants
     uint32_t gpu_id = 0;
     CHECKCUDAERR(cudaGetDevice((int*)&gpu_id));
-    Poseidon2GoldilocksGPUGrinding::initPoseidon2GPUConstants(&gpu_id, 1);
+    Poseidon2GoldilocksGPUGrinding::initConstants(&gpu_id, 1);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -279,7 +279,7 @@ static void INTT_GPU_BENCH(benchmark::State &state)
     uint64_t domain_size = 1ULL << n_bits;
     uint64_t nCols = 1;
 
-    NTT_Goldilocks_GPU gpu_ntt(24, 1, &gpu_id);
+    NTTGoldilocksGPU gpu_ntt(24, 1, &gpu_id);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -293,12 +293,12 @@ static void INTT_GPU_BENCH(benchmark::State &state)
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // Warm up
-    gpu_ntt.INTT_inplace(d_data, n_bits, nCols, stream);
+    gpu_ntt.INTT(d_data, n_bits, nCols, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     for (auto _ : state)
     {
-        gpu_ntt.INTT_inplace(d_data, n_bits, nCols, stream);
+        gpu_ntt.INTT(d_data, n_bits, nCols, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }
 
@@ -315,11 +315,11 @@ BENCHMARK(INTT_GPU_BENCH)
 
 // LDE benchmark — measures only the NTT+coset-extension step (no merkle build).
 // d_src is block-tiled (as produced by prepare_blocks_trace); allocated once, never modified.
-static void LDE_GPU_BENCH(benchmark::State &state)
+static void LDE_BENCH(benchmark::State &state)
 {
     uint32_t gpu_id = 0;
     CHECKCUDAERR(cudaGetDevice((int*)&gpu_id));
-    NTT_Goldilocks_GPU gpu_ntt(24, 1, &gpu_id);
+    NTTGoldilocksGPU gpu_ntt(24, 1, &gpu_id);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -342,12 +342,12 @@ static void LDE_GPU_BENCH(benchmark::State &state)
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // Warm up
-    gpu_ntt.LDE_GPU(d_dst, 0, d_src, 0, n_bits, n_bits_ext, nCols, timer, stream);
+    gpu_ntt.LDE(d_dst, 0, d_src, 0, n_bits, n_bits_ext, nCols, timer, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     for (auto _ : state)
     {
-        gpu_ntt.LDE_GPU(d_dst, 0, d_src, 0, n_bits, n_bits_ext, nCols, timer, stream);
+        gpu_ntt.LDE(d_dst, 0, d_src, 0, n_bits, n_bits_ext, nCols, timer, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }
 
@@ -355,7 +355,7 @@ static void LDE_GPU_BENCH(benchmark::State &state)
     CHECKCUDAERR(cudaFree(d_src));
     CHECKCUDAERR(cudaFree(d_dst));
     CHECKCUDAERR(cudaStreamDestroy(stream));
-    NTT_Goldilocks_GPU::free_twiddle_factors_and_r(&gpu_id);
+    NTTGoldilocksGPU::freeConstants();
 }
 
 // Full pipeline benchmark — LDE + merkle tree build (the prover's hot path).
@@ -363,8 +363,8 @@ static void LDE_MERKLETREE_GPU_BENCH(benchmark::State &state)
 {
     uint32_t gpu_id = 0;
     CHECKCUDAERR(cudaGetDevice((int*)&gpu_id));
-    Poseidon2GoldilocksGPU<12>::initPoseidon2GPUConstants(&gpu_id, 1);
-    NTT_Goldilocks_GPU gpu_ntt(24, 1, &gpu_id);
+    Poseidon2GoldilocksGPU<12>::initConstants(&gpu_id, 1);
+    NTTGoldilocksGPU gpu_ntt(24, 1, &gpu_id);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -392,14 +392,14 @@ static void LDE_MERKLETREE_GPU_BENCH(benchmark::State &state)
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // Warm up
-    gpu_ntt.LDE_GPU(d_dst, 0, d_src, 0, n_bits, n_bits_ext, nCols, timer, stream);
-    buildMerkleTreeBlocksGPU(arity, (uint64_t*)d_tree, (uint64_t*)d_dst, nCols, nRows_ext, stream);
+    gpu_ntt.LDE(d_dst, 0, d_src, 0, n_bits, n_bits_ext, nCols, timer, stream);
+    buildMerkleTreeTilesGPU(arity, (uint64_t*)d_tree, (uint64_t*)d_dst, nCols, nRows_ext, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     for (auto _ : state)
     {
-        gpu_ntt.LDE_GPU(d_dst, 0, d_src, 0, n_bits, n_bits_ext, nCols, timer, stream);
-        buildMerkleTreeBlocksGPU(arity, (uint64_t*)d_tree, (uint64_t*)d_dst, nCols, nRows_ext, stream);
+        gpu_ntt.LDE(d_dst, 0, d_src, 0, n_bits, n_bits_ext, nCols, timer, stream);
+        buildMerkleTreeTilesGPU(arity, (uint64_t*)d_tree, (uint64_t*)d_dst, nCols, nRows_ext, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }
 
@@ -408,10 +408,10 @@ static void LDE_MERKLETREE_GPU_BENCH(benchmark::State &state)
     CHECKCUDAERR(cudaFree(d_dst));
     CHECKCUDAERR(cudaFree(d_tree));
     CHECKCUDAERR(cudaStreamDestroy(stream));
-    NTT_Goldilocks_GPU::free_twiddle_factors_and_r(&gpu_id);
+    NTTGoldilocksGPU::freeConstants();
 }
 
-BENCHMARK(LDE_GPU_BENCH)
+BENCHMARK(LDE_BENCH)
     ->Unit(benchmark::kMillisecond)
     ->Arg(24)
     ->Arg(36)
@@ -427,13 +427,13 @@ BENCHMARK(LDE_MERKLETREE_GPU_BENCH)
     ->Arg(56)
     ->UseRealTime();
 
-// merkletreeCoalesced benchmark — flat row-major input (used by prover for FRI trees).
+// merkletree benchmark — flat row-major input (used by prover for FRI trees).
 // Complements MERKLETREE12_BENCH_GPU which uses block-tiled input (CoalescedBlocks).
 static void MERKLETREE_COALESCED12_BENCH_GPU(benchmark::State &state)
 {
     uint32_t gpu_id = 0;
     CHECKCUDAERR(cudaGetDevice((int*)&gpu_id));
-    Poseidon2GoldilocksGPU<12>::initPoseidon2GPUConstants(&gpu_id, 1);
+    Poseidon2GoldilocksGPU<12>::initConstants(&gpu_id, 1);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -452,13 +452,13 @@ static void MERKLETREE_COALESCED12_BENCH_GPU(benchmark::State &state)
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // Warm up
-    Poseidon2GoldilocksGPU<12>::merkletreeCoalesced(
+    Poseidon2GoldilocksGPU<12>::merkletree(
         arity, (uint64_t*)d_tree, (uint64_t*)d_trace, trace_cols, TRACE_NROWS, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     for (auto _ : state)
     {
-        Poseidon2GoldilocksGPU<12>::merkletreeCoalesced(
+        Poseidon2GoldilocksGPU<12>::merkletree(
             arity, (uint64_t*)d_tree, (uint64_t*)d_trace, trace_cols, TRACE_NROWS, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }

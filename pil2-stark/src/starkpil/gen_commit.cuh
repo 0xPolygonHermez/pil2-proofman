@@ -23,7 +23,7 @@ void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint6
         uint64_t offset_mt = setupCtx->starkInfo.mapOffsets[make_pair("mt1", true)];
 
         Goldilocks::Element *pNodes = (Goldilocks::Element*)dst + offset_mt;
-        NTT_Goldilocks_GPU ntt;
+        NTTGoldilocksGPU ntt;
 
         if (air_instance_info->is_packed) {
             unpack_trace(air_instance_info, (uint64_t *)(src + offset_dst), (uint64_t *)(src + offset_src), nCols, N, stream, timer);
@@ -31,8 +31,8 @@ void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint6
             fromRowMajorToTiled(N, nCols, (gl64_t *)(src + offset_dst), (gl64_t *)(src + offset_src), stream);
         }
         
-        ntt.LDE_GPU(dst, offset_dst, src, offset_src, nBits, nBitsExtended, nCols, timer, stream);
-        buildMerkleTreeBlocksGPU(arity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, 1ULL << nBitsExtended, stream);
+        ntt.LDE(dst, offset_dst, src, offset_src, nBits, nBitsExtended, nCols, timer, stream);
+        buildMerkleTreeTilesGPU(arity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, 1ULL << nBitsExtended, stream);
         CHECKCUDAERR(cudaMemcpyAsync(root_pinned, &pNodes[tree_size - HASH_SIZE], HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     } else {
         std::cout << "nCols must be greater than 0" << std::endl;
