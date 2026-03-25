@@ -8,6 +8,7 @@
 #include "data_layout.cuh"
 #include "gpu_timer.cuh"
 
+// Primitive roots of unity: omegas[k] is a generator of the multiplicative subgroup of order 2^k
 __device__ __constant__ uint64_t omegas[33] = {
     1,
     18446744069414584320ULL,
@@ -44,6 +45,7 @@ __device__ __constant__ uint64_t omegas[33] = {
     7277203076849721926ULL,
 };
 
+// Inverse roots of unity: omegas_inv[k] = omegas[k]^(-1) mod p. Used for inverse NTT twiddle factors.
 __device__ __constant__ uint64_t omegas_inv[33] = {
     0x1,
     0xffffffff00000000,
@@ -80,6 +82,7 @@ __device__ __constant__ uint64_t omegas_inv[33] = {
     0x16d265893b5b7e85,
 };
 
+// Domain size inverses: domain_size_inverse[k] = (2^k)^(-1) mod p. Applied as final scaling in INTT.
 __device__ __constant__ uint64_t domain_size_inverse[33] = {
     0x0000000000000001, // 1^{-1}
     0x7fffffff80000001, // 2^{-1}
