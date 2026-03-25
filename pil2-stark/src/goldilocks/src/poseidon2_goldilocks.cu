@@ -7,11 +7,9 @@
 #include "merklehash_goldilocks.hpp"
 #include "poseidon2_goldilocks.cuh"
 
-// #ifdef GPU_TIMING
+#ifdef GPU_TIMING
 #include "timer_gl.hpp"
-#include <cooperative_groups.h>
-namespace cg = cooperative_groups;
-// #endif
+#endif
 
 typedef uint32_t u32;
 typedef uint64_t u64;
@@ -19,28 +17,33 @@ typedef uint64_t u64;
 // CUDA Threads per Block
 #define TPB 128
 
-__device__ __constant__ uint64_t GPU_C_4[53]; 
+__device__ __constant__ uint64_t GPU_C_4[53];
 __device__ __constant__ uint64_t GPU_D_4[4];
-__device__ __constant__ uint64_t GPU_C_8[86]; 
+__device__ __constant__ uint64_t GPU_C_8[86];
 __device__ __constant__ uint64_t GPU_D_8[8];
-__device__ __constant__ uint64_t GPU_C_12[118]; 
+__device__ __constant__ uint64_t GPU_C_12[118];
 __device__ __constant__ uint64_t GPU_D_12[12];
-__device__ __constant__ uint64_t GPU_C_16[150]; 
+__device__ __constant__ uint64_t GPU_C_16[150];
 __device__ __constant__ uint64_t GPU_D_16[16];
 
-/* --- integration --- */
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__device__ void hash_one_2(gl64_t *out, gl64_t *const input, int tid)
+__global__ void merkleNodeKernel(uint32_t nextN, uint32_t nextIndex, uint32_t pending, uint64_t *cursor)
 {
-    
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= nextN)
+        return;
+
+    gl64_t* pol_input = (gl64_t *)(&cursor[nextIndex + tid * SPONGE_WIDTH_T]);
+    gl64_t* pol_output = (gl64_t *)(&cursor[nextIndex + (pending + tid) * CAPACITY_T]);
+
     const gl64_t *GPU_C_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_C_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_C_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_C_12 : (gl64_t *)GPU_C_16));
     const uint64_t N_VALS_C = SPONGE_WIDTH_T==4 ? 53 : (SPONGE_WIDTH_T==8 ? 86 : (SPONGE_WIDTH_T==12 ? 118 : 150));
     const gl64_t *GPU_D_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_D_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_D_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_D_12 : (gl64_t *)GPU_D_16));
-    
+
     __shared__ gl64_t GPU_C_SM[150];
     __shared__ gl64_t GPU_D_SM[16];
 
-    if (tid == 0)
+    if (threadIdx.x == 0)
     {
         mymemcpy((uint64_t *)GPU_C_SM, (uint64_t *)GPU_C_GL, N_VALS_C);
         mymemcpy((uint64_t *)GPU_D_SM, (uint64_t *)GPU_D_GL, SPONGE_WIDTH_T);
@@ -48,13 +51,13 @@ __device__ void hash_one_2(gl64_t *out, gl64_t *const input, int tid)
     __syncthreads();
 
     gl64_t aux[SPONGE_WIDTH_T];
-    hash_full_result_seq_2<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(aux, input, GPU_C_SM, GPU_D_SM);
-    mymemcpy((uint64_t *)out, (uint64_t *)aux, CAPACITY_T);
+    poseidon2PermuteReg<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(aux, pol_input, GPU_C_SM, GPU_D_SM);
+    mymemcpy((uint64_t *)pol_output, (uint64_t *)aux, CAPACITY_T);
 }
 
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::initPoseidon2GPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids)
-{    
+void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::initConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids)
+{
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
     static int initialized = 0;
@@ -72,215 +75,19 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::initPoseidon2GPUConstants(uint32_t*
             CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C_16, Poseidon2GoldilocksConstants::C16, 150 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
             CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D_16, Poseidon2GoldilocksConstants::D16, 16 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
         }
-        initialized = 1;        
+        initialized = 1;
     }
     cudaSetDevice(deviceId);
 }
 
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeCoalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim)
-{
-    if (num_rows == 0)
-    {
-        return;
-    }
-
-    u32 actual_tpb = TPB;
-    u32 actual_blks = (num_rows + TPB - 1) / TPB;
-
-
-    if (num_rows < TPB)
-    {
-        actual_tpb = num_rows;
-        actual_blks = 1;
-    }
-    linearHashGPU<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * 8, stream>>>(d_tree, d_input, num_cols * dim, num_rows);
-    CHECKCUDAERR(cudaGetLastError());
-
-    // Build the merkle tree
-    uint64_t pending = num_rows;
-    uint64_t nextN = (pending + (arity - 1)) / arity;
-    uint64_t nextIndex = 0;
-
-    while (pending > 1)
-    {
-        uint64_t extraZeros = (arity - (pending % arity)) % arity;
-        if (extraZeros > 0){
-
-            //std::memset(&cursor[nextIndex + pending * CAPACITY], 0, extraZeros * CAPACITY * sizeof(Goldilocks::Element));
-            CHECKCUDAERR(cudaMemsetAsync((uint64_t *)(d_tree + nextIndex + pending * CAPACITY), 0, extraZeros * CAPACITY * sizeof(uint64_t), stream));
-        }
-        if (nextN < TPB)
-        {
-            actual_tpb = nextN;
-            actual_blks = 1;
-        }
-        else
-        {
-            actual_tpb = TPB;
-            actual_blks = nextN / TPB + 1;
-        }
-        hash_gpu_3<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);       
-        nextIndex += (pending + extraZeros) * CAPACITY;
-        pending = (pending + (arity - 1)) / arity;
-        nextN = (pending + (arity - 1)) / arity;
-    }
-    CHECKCUDAERR(cudaGetLastError());
-}
-
-
-//repassar assumtions que faig, sponge width es 16
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__global__ void hash_gpu_16(uint64_t* data, int N)
-{
- 
-    for(int i=threadIdx.x; i <150; i+= blockDim.x){
-        scratchpad[16*blockDim.x + i] = GPU_C_16[i];
-    }
-    for(int i=threadIdx.x; i <16; i+= blockDim.x){
-        scratchpad[16*blockDim.x + 150 + i] = GPU_D_16[i];
-    }
-    gl64_t* C = scratchpad + 16*blockDim.x;
-    gl64_t* D = scratchpad + 16*blockDim.x + 150;
-
-    __syncthreads();
-    uint64_t* blockData = data + (blockIdx.x * blockDim.x) * 16;
-
-    //coalesced read of hasshes which are "romajor" sthore in scratchpad in colmajor
-    for(uint32_t i=0; i<16; i++){
-        uint32_t offset = i * blockDim.x + threadIdx.x;
-        uint32_t row = offset >> 4;
-        uint32_t col = offset & 0xF;
-        scratchpad[col * blockDim.x + row] = gl64_t(blockData[offset]);        
-    }
-    __syncthreads();
-    //poseidon2_hash<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
-    poseidon2_hash_with_constants<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>((gl64_t*) C,(gl64_t*) D);
-    uint64_t* outData = data + 16 * N + (blockIdx.x * blockDim.x) * 4;
-    //coalesced write of hashes that are in "colummajor" in scratchpad and write them in rowmajor in d_tree
-    __syncthreads();
-    for(uint32_t i=0; i<4; i++){
-        uint32_t offset = i * blockDim.x + threadIdx.x;
-        uint32_t row = offset >> 2;
-        uint32_t col = offset & 0x3;
-        outData[(row << 2) + col] = scratchpad[col * blockDim.x + row];
-    }
-}
-
-template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeCoalescedBlocks(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim)
-{
-    if (num_rows == 0)
-    {
-        return;
-    }
-
-    u32 actual_tpb = TPB;
-    u32 actual_blks = (num_rows + TPB - 1) / TPB;
-
-
-    if (num_rows < TPB)
-    {
-        actual_tpb = num_rows;
-        actual_blks = 1;
-    }
-    //linearHashGPUTiles_<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_tree, d_input, num_cols * dim, num_rows);
-    linearHashGPUTiles<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_tree, d_input, num_cols * dim, num_rows);
-    CHECKCUDAERR(cudaGetLastError());
-
-    // Build the merkle tree
-    uint64_t pending = num_rows;
-    uint64_t nextN = (pending + (arity - 1)) / arity;
-    uint64_t nextIndex = 0;
-
-    while (pending > 1)
-    {
-        uint64_t extraZeros = (arity - (pending % arity)) % arity;
-        if (extraZeros > 0){
-
-            //std::memset(&cursor[nextIndex + pending * CAPACITY], 0, extraZeros * CAPACITY * sizeof(Goldilocks::Element));
-            CHECKCUDAERR(cudaMemsetAsync((uint64_t *)(d_tree + nextIndex + pending * CAPACITY), 0, extraZeros * CAPACITY * sizeof(uint64_t), stream));
-        }
-        if (nextN < TPB)
-        {
-            actual_tpb = nextN;
-            actual_blks = 1;
-        }
-        else
-        {
-            actual_tpb = TPB;
-            actual_blks = nextN / TPB + 1;
-        }
-        if(actual_tpb == TPB && SPONGE_WIDTH == 16 && nextN >=128 && 0){
-            hash_gpu_16<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS> <<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t)+ (150+16) * sizeof(gl64_t), stream>>>(d_tree + nextIndex, nextN);  
-        }else{
-            hash_gpu_3<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);
-        }
-        nextIndex += (pending + extraZeros) * CAPACITY;
-        pending = (pending + (arity - 1)) / arity;
-        nextN = (pending + (arity - 1)) / arity;
-    }
-    CHECKCUDAERR(cudaGetLastError());
-}
-
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__global__ void linearHashGPUTiles_(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows)
-{
-
-    //const gl64_t *GPU_C_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_C_4 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_C_12 : (gl64_t *)GPU_C_16);
-    //const gl64_t *GPU_D_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_D_4 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_D_12 : (gl64_t *)GPU_D_16);
-    for(int i=0; i<150; i+= blockDim.x){
-        scratchpad[i] = GPU_C_16[i];
-    }
-    for(int i=0; i<16; i+= blockDim.x){
-        scratchpad[150 + i] = GPU_D_16[i];
-    }
-    __syncthreads();
-    const gl64_t *GPU_C_GL = scratchpad;
-    const gl64_t *GPU_D_GL = scratchpad + 150;
-
-    uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
-    if( row >= num_rows)
-        return;
-
-    gl64_t state[SPONGE_WIDTH_T];
-    #pragma unroll
-    for (uint32_t i = 0; i < CAPACITY_T; i++){
-        state[RATE_T+i] =  gl64_t(uint64_t(0));
-    }
-    for (uint32_t col = 0;;)
-    {
-        __syncwarp();
-        uint32_t delta = min(num_cols - col, RATE_T);
-        for (uint32_t i = 0; i < delta; i++) {
-            state[i] = input[getBufferOffset(row, col + i, num_rows, num_cols)];
-        }
-        for (uint32_t i = delta; i < RATE_T; i++) {
-            state[i] = gl64_t(uint64_t(0));
-        }
-        __syncwarp();
-        hash_full_result_seq_2_<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(state, GPU_C_GL, GPU_D_GL);
-
-        if ((col += RATE_T) >= num_cols)
-            break;
-        __syncwarp();
-        for (uint32_t i = 0; i < CAPACITY_T; i++)
-            state[i + RATE_T] = state[i];
-    }
-    uint64_t out_idx = row*CAPACITY_T;
-    for (uint32_t i = 0; i < CAPACITY_T; i++) {
-        output[out_idx+i] = state[i];            
-    }
-}
-
-template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::hashFullResult(uint64_t * output, const uint64_t * input){
-    hash_full_result_2<RATE,CAPACITY,SPONGE_WIDTH,N_FULL_ROUNDS_TOTAL,N_PARTIAL_ROUNDS ><<<1, 1, SPONGE_WIDTH*sizeof(gl64_t)>>>(output, input);
+void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::hash(uint64_t * output, const uint64_t * input, cudaStream_t stream){
+    hashKernel<RATE,CAPACITY,SPONGE_WIDTH,N_FULL_ROUNDS_TOTAL,N_PARTIAL_ROUNDS ><<<1, 1, SPONGE_WIDTH*sizeof(gl64_t), stream>>>(output, input);
     CHECKCUDAERR(cudaGetLastError());
 }
 
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::linearHashCoalescedBlocks(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream){
+void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::linearHashTiled(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream){
     u32 actual_tpb = TPB;
     u32 actual_blks = (num_rows + TPB - 1) / TPB;
     if (num_rows < TPB)
@@ -288,13 +95,25 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::linearHashCoalescedBlocks(uint64_t 
         actual_tpb = num_rows;
         actual_blks = 1;
     }
-    linearHashGPUTiles<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_hash_output, d_trace, num_cols, num_rows);
-    //linearHashGPUTiles_<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_hash_output, d_trace, num_cols, num_rows);
+    linearHashTiledKernel<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_hash_output, d_trace, num_cols, num_rows);
+    CHECKCUDAERR(cudaGetLastError());
+}
+
+template<uint32_t SPONGE_WIDTH_T>
+void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::linearHash(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream){
+    u32 actual_tpb = TPB;
+    u32 actual_blks = (num_rows + TPB - 1) / TPB;
+    if (num_rows < TPB)
+    {
+        actual_tpb = num_rows;
+        actual_blks = 1;
+    }
+    linearHashKernel<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_hash_output, d_trace, num_cols, num_rows);
     CHECKCUDAERR(cudaGetLastError());
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__global__ void grinding_calc_(uint64_t* nonce, uint64_t *__restrict__ nonceBlock, uint64_t *__restrict__ input, uint64_t n_bits, uint64_t hashes_per_thread, uint64_t nonces_offset)
+__global__ void grindingKernel(uint64_t* nonce, uint64_t *__restrict__ nonceBlock, uint64_t *__restrict__ input, uint64_t n_bits, uint64_t hashes_per_thread, uint64_t nonces_offset)
 {
 
     if(nonces_offset != 0 && nonce[0] != UINT64_MAX)
@@ -325,26 +144,26 @@ __global__ void grinding_calc_(uint64_t* nonce, uint64_t *__restrict__ nonceBloc
         return;
     }
     // scratchpad is declared globally, shared_nonces is allocated right after it
-    
+
     nonceBlock[blockIdx.x] = UINT64_MAX;
     uint64_t idx = nonces_offset + (blockIdx.x * blockDim.x + threadIdx.x) * hashes_per_thread;
     uint64_t level = 1ULL << (64 - n_bits);
     uint64_t locId = UINT64_MAX;
 
     for(uint32_t k=0; k<hashes_per_thread; k++){
-        uint64_t idx_k = idx + k;        
+        uint64_t idx_k = idx + k;
         #pragma unroll
         for (uint32_t i = 0; i < SPONGE_WIDTH_T-1; i++)
             scratchpad[i * blockDim.x + threadIdx.x] = input[i];
         scratchpad[(SPONGE_WIDTH_T-1) * blockDim.x + threadIdx.x] = idx_k;
-        poseidon2_hash<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
+        poseidon2PermuteSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
         // Compare the raw uint64 value, not the field element
         uint64_t hash_val = (uint64_t)scratchpad[threadIdx.x];
         if(hash_val < level){
             locId = idx_k;
             break;
         }
-    } 
+    }
     shared_nonces[threadIdx.x] = locId;
     __syncthreads();
     //reduce to find the minimum nonce value
@@ -358,34 +177,6 @@ __global__ void grinding_calc_(uint64_t* nonce, uint64_t *__restrict__ nonceBloc
     }
     if(threadIdx.x == 0){
         nonceBlock[blockIdx.x] = shared_nonces[0];
-    }   
-}
-
-
-__global__ void grinding_check_(uint64_t* nonce, uint64_t *__restrict__ nonceBlock, uint32_t n_blocks)
-{
-    
-    if(nonce[0] != UINT64_MAX)
-        return;
-    if(threadIdx.x > 31 || blockIdx.x > 0){
-        return;
-    }
-    uint32_t stride = min(blockDim.x, 32);
-    __shared__  uint64_t local_nonceBlock[32];
-    local_nonceBlock[threadIdx.x] = UINT64_MAX;
-    for(uint32_t i=threadIdx.x; i<n_blocks; i+=stride){
-        if(nonceBlock[i] != UINT64_MAX && local_nonceBlock[threadIdx.x] == UINT64_MAX){
-            local_nonceBlock[threadIdx.x] = nonceBlock[i];
-        }
-    }
-    __syncthreads();
-    nonce[0] = UINT64_MAX;
-    if(threadIdx.x == 0){
-        for(uint32_t i=0; i<stride; i++){
-            if(local_nonceBlock[i] < nonce[0]){
-                nonce[0] = local_nonceBlock[i];
-            }
-       }
     }
 }
 
@@ -410,7 +201,7 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_nonce, uint64
         log_hashesPerThread = 0;
     }
     uint64_t hashesPerThread = 1ULL << log_hashesPerThread;
-    
+
     dim3 blockSize( NONCES_LAUNCH_BLOCKS );
     dim3 gridSize( NONCES_LAUNCH_GRID_SIZE );
 
@@ -419,155 +210,205 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_nonce, uint64
     uint64_t nonces_per_iteration = N * hashesPerThread;
 
     for(int i=0; i<launch_iters; ++i){
-        grinding_calc_<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<gridSize, blockSize, shared_mem_size, stream>>>((uint64_t *)d_nonce, (uint64_t *)d_nonceBlock, (uint64_t *)d_in, n_bits, hashesPerThread, nonces_offset);
+        grindingKernel<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS><<<gridSize, blockSize, shared_mem_size, stream>>>((uint64_t *)d_nonce, (uint64_t *)d_nonceBlock, (uint64_t *)d_in, n_bits, hashesPerThread, nonces_offset);
         nonces_offset += nonces_per_iteration;
     }
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__device__  void poseidon2_hash()
+__device__  void poseidon2PermuteSmem()
 {
     const gl64_t *GPU_C_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_C_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_C_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_C_12 : (gl64_t *)GPU_C_16));
     const gl64_t *GPU_D_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_D_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_D_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_D_12 : (gl64_t *)GPU_D_16));
 
-    matmul_external_state_<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
+    mdsExternalSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
     for (int r = 0; r < (N_FULL_ROUNDS_TOTAL_T>>1); r++)
     {
-        pow7add_state_<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(&(GPU_C_GL[r * SPONGE_WIDTH_T]));
-        matmul_external_state_<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
+        sboxFullSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(&(GPU_C_GL[r * SPONGE_WIDTH_T]));
+        mdsExternalSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
     }
 
     for(int r = 0; r < N_PARTIAL_ROUNDS_T; r++)
     {
         scratchpad[threadIdx.x] = scratchpad[threadIdx.x] + GPU_C_GL[(N_FULL_ROUNDS_TOTAL_T>>1) * SPONGE_WIDTH_T + r];
-        pow7_2(scratchpad[threadIdx.x]);
+        pow7(scratchpad[threadIdx.x]);
         gl64_t sum_;
         sum_ = gl64_t(uint64_t(0));
-        add_state_2<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(&sum_);
-        prodadd_state_<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(GPU_D_GL, sum_);
+        sumAllSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(&sum_);
+        partialRoundMulSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(GPU_D_GL, sum_);
     }
 
     for (int r = 0; r < (N_FULL_ROUNDS_TOTAL_T>>1); r++)
     {
-        pow7add_state_<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(&(GPU_C_GL[(N_FULL_ROUNDS_TOTAL_T>>1) * SPONGE_WIDTH_T + N_PARTIAL_ROUNDS_T + r * SPONGE_WIDTH_T]));
-        matmul_external_state_<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
+        sboxFullSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(&(GPU_C_GL[(N_FULL_ROUNDS_TOTAL_T>>1) * SPONGE_WIDTH_T + N_PARTIAL_ROUNDS_T + r * SPONGE_WIDTH_T]));
+        mdsExternalSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
     }
 }
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__global__ void grinding_persistent_kernel(
-    uint64_t* __restrict__ d_nonce,           // global result (single uint64_t)
-    uint64_t* __restrict__ d_nonceBlock,      // per-block minima written here
-    const uint64_t* __restrict__ d_input,     
-    uint32_t n_bits,
-    uint32_t hashes_per_thread,
-    uint64_t max_iterations)
+template<uint32_t SPONGE_WIDTH_T>
+void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletree(
+    uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
+    uint64_t num_cols, uint64_t num_rows, cudaStream_t stream)
 {
-    cg::grid_group grid = cg::this_grid();
+    if (num_rows == 0) return;
 
-    uint64_t* shared_nonces = reinterpret_cast<uint64_t*>(scratchpad + (size_t)SPONGE_WIDTH_T * (size_t)blockDim.x);
-    const uint64_t level = 1ULL << (64 - n_bits);
-    const uint64_t nonces_per_iteration = gridDim.x * blockDim.x * (uint64_t)hashes_per_thread;
-
-    if (blockIdx.x == 0 && threadIdx.x == 0) {
-        *d_nonce = UINT64_MAX;
+    u32 actual_tpb = TPB;
+    u32 actual_blks = (num_rows + TPB - 1) / TPB;
+    if (num_rows < TPB)
+    {
+        actual_tpb = num_rows;
+        actual_blks = 1;
     }
-    grid.sync(); // ensure d_nonce initialized
+    linearHashKernel<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS>
+        <<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_tree, d_input, num_cols, num_rows);
+    CHECKCUDAERR(cudaGetLastError());
 
-    uint64_t iteration = 0;
-    while (true) {
-        
-        uint64_t offset = iteration * nonces_per_iteration;
+    uint64_t pending = num_rows;
+    uint64_t nextN = (pending + (arity - 1)) / arity;
+    uint64_t nextIndex = 0;
 
-        uint64_t nonce_base = offset + ( (uint64_t)blockIdx.x * (uint64_t)blockDim.x + (uint64_t)threadIdx.x ) * (uint64_t)hashes_per_thread;
-        uint64_t loc_nonce = UINT64_MAX;
+    while (pending > 1)
+    {
+        uint64_t extraZeros = (arity - (pending % arity)) % arity;
+        if (extraZeros > 0)
+            CHECKCUDAERR(cudaMemsetAsync((uint64_t *)(d_tree + nextIndex + pending * CAPACITY), 0, extraZeros * CAPACITY * sizeof(uint64_t), stream));
 
-        for (uint32_t k = 0; k < hashes_per_thread; ++k) {
-            uint64_t nonce_k = nonce_base + k;
-
-            #pragma unroll
-            for (uint32_t i = 0; i < SPONGE_WIDTH_T - 1; ++i) {
-                scratchpad[(size_t)i * blockDim.x + threadIdx.x] = d_input[i];
-            }
-            scratchpad[(size_t)(SPONGE_WIDTH_T - 1) * blockDim.x + threadIdx.x] = nonce_k;
-            poseidon2_hash<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
-            uint64_t hash_val = (uint64_t)scratchpad[threadIdx.x];
-            if (hash_val < level) {
-                loc_nonce = nonce_k;
-                break;
-            }
+        if (nextN < TPB)
+        {
+            actual_tpb = nextN;
+            actual_blks = 1;
         }
-        shared_nonces[threadIdx.x] = loc_nonce;
-        __syncthreads();
-
-        // intra-block reduction to find minimum (same as original)
-        uint32_t alive = blockDim.x >> 1;
-        while (alive > 0) {
-            if (threadIdx.x < alive) {
-                uint64_t a = shared_nonces[threadIdx.x];
-                uint64_t b = shared_nonces[threadIdx.x + alive];
-                if (b < a) shared_nonces[threadIdx.x] = b;
-            }
-            __syncthreads();
-            alive >>= 1;
+        else
+        {
+            actual_tpb = TPB;
+            actual_blks = nextN / TPB + 1;
         }
-
-        // thread 0 writes per-block minimum into global d_nonceBlock
-        if (threadIdx.x == 0) {
-            d_nonceBlock[blockIdx.x] = shared_nonces[0];
-        }
-
-        grid.sync(); // ensure all blocks have written their minima
-
-        // block 0 scans per-block minima to find global minimum and writes into d_nonce
-        if (blockIdx.x == 0 && threadIdx.x == 0) {
-            uint64_t found = UINT64_MAX;
-            for (uint32_t i = 0; i < gridDim.x; ++i) {
-                uint64_t v = d_nonceBlock[i];
-                if (v < found){
-                    found = v;
-                    break; // stop at first found (will be the minimum)
-                }
-            }
-            *d_nonce = found;
-        }
-
-        grid.sync(); // ensure all blocks see d_nonce
-
-        // if found or reached max iterations, exit
-        if (*d_nonce != UINT64_MAX) break;
-        ++iteration;
-        if (iteration >= max_iterations) break;
-
-    } 
-    grid.sync();
+        merkleNodeKernel<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS>
+            <<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);
+        nextIndex += (pending + extraZeros) * CAPACITY;
+        pending = (pending + (arity - 1)) / arity;
+        nextN = (pending + (arity - 1)) / arity;
+    }
+    CHECKCUDAERR(cudaGetLastError());
 }
 
+template<uint32_t SPONGE_WIDTH_T>
+void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeTiled(
+    uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
+    uint64_t num_cols, uint64_t num_rows, cudaStream_t stream)
+{
+    if (num_rows == 0) return;
 
-// Explicit instantiation for class methods
-template void Poseidon2GoldilocksGPUGrinding::initPoseidon2GPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
+    u32 actual_tpb = TPB;
+    u32 actual_blks = (num_rows + TPB - 1) / TPB;
+    if (num_rows < TPB)
+    {
+        actual_tpb = num_rows;
+        actual_blks = 1;
+    }
+    linearHashTiledKernel<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS>
+        <<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_tree, d_input, num_cols, num_rows);
+    CHECKCUDAERR(cudaGetLastError());
+
+    uint64_t pending = num_rows;
+    uint64_t nextN = (pending + (arity - 1)) / arity;
+    uint64_t nextIndex = 0;
+
+    while (pending > 1)
+    {
+        uint64_t extraZeros = (arity - (pending % arity)) % arity;
+        if (extraZeros > 0)
+            CHECKCUDAERR(cudaMemsetAsync((uint64_t *)(d_tree + nextIndex + pending * CAPACITY), 0, extraZeros * CAPACITY * sizeof(uint64_t), stream));
+
+        if (nextN < TPB)
+        {
+            actual_tpb = nextN;
+            actual_blks = 1;
+        }
+        else
+        {
+            actual_tpb = TPB;
+            actual_blks = nextN / TPB + 1;
+        }
+        merkleNodeKernel<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS>
+            <<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);
+        nextIndex += (pending + extraZeros) * CAPACITY;
+        pending = (pending + (arity - 1)) / arity;
+        nextN = (pending + (arity - 1)) / arity;
+    }
+    CHECKCUDAERR(cudaGetLastError());
+}
+
+void buildMerkleTreeTilesGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
+                              uint64_t nCols, uint64_t nRows, cudaStream_t stream)
+{
+    switch (arity)
+    {
+    case 2:
+        Poseidon2GoldilocksGPU<8>::merkletreeTiled(arity, d_tree, d_input, nCols, nRows, stream);
+        break;
+    case 3:
+        Poseidon2GoldilocksGPU<12>::merkletreeTiled(arity, d_tree, d_input, nCols, nRows, stream);
+        break;
+    case 4:
+        Poseidon2GoldilocksGPU<16>::merkletreeTiled(arity, d_tree, d_input, nCols, nRows, stream);
+        break;
+    default:
+#ifndef __GOLDILOCKS_ENV__
+        zklog.error("buildMerkleTreeTilesGPU: Unsupported arity");
+        exitProcess();
+#endif
+        exit(-1);
+    }
+}
+
+void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
+                         uint64_t nCols, uint64_t nRows, cudaStream_t stream)
+{
+    switch (arity)
+    {
+    case 2:
+        Poseidon2GoldilocksGPU<8>::merkletree(arity, d_tree, d_input, nCols, nRows, stream);
+        break;
+    case 3:
+        Poseidon2GoldilocksGPU<12>::merkletree(arity, d_tree, d_input, nCols, nRows, stream);
+        break;
+    case 4:
+        Poseidon2GoldilocksGPU<16>::merkletree(arity, d_tree, d_input, nCols, nRows, stream);
+        break;
+    default:
+#ifndef __GOLDILOCKS_ENV__
+        zklog.error("buildMerkleTreeGPU: Unsupported arity");
+        exitProcess();
+#endif
+        exit(-1);
+    }
+}
+
+// Explicit instantiation — Poseidon2
+template void Poseidon2GoldilocksGPUGrinding::initConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
 template void Poseidon2GoldilocksGPUGrinding::grinding(uint64_t * d_nonce, uint64_t *d_nonceBlock, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream);
 
-template void Poseidon2GoldilocksGPU<8>::initPoseidon2GPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
-template void Poseidon2GoldilocksGPU<8>::merkletreeCoalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim);
-template void Poseidon2GoldilocksGPU<8>::merkletreeCoalescedBlocks(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim);
-template void Poseidon2GoldilocksGPU<8>::hashFullResult(uint64_t * output, const uint64_t * input);
-template void Poseidon2GoldilocksGPU<12>::initPoseidon2GPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
-template void Poseidon2GoldilocksGPU<12>::merkletreeCoalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim);
-template void Poseidon2GoldilocksGPU<12>::merkletreeCoalescedBlocks(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim);
-template void Poseidon2GoldilocksGPU<12>::hashFullResult(uint64_t * output, const uint64_t * input);
-template void Poseidon2GoldilocksGPU<16>::initPoseidon2GPUConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
-template void Poseidon2GoldilocksGPU<16>::merkletreeCoalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim);
-template void Poseidon2GoldilocksGPU<16>::merkletreeCoalescedBlocks(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim);
-template void Poseidon2GoldilocksGPU<16>::hashFullResult(uint64_t * output, const uint64_t * input);
+template void Poseidon2GoldilocksGPU<8>::initConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
+template void Poseidon2GoldilocksGPU<8>::hash(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<12>::initConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
+template void Poseidon2GoldilocksGPU<12>::hash(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<16>::initConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
+template void Poseidon2GoldilocksGPU<16>::hash(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+
+template void Poseidon2GoldilocksGPU<8>::merkletree(uint32_t, uint64_t*, uint64_t*, uint64_t, uint64_t, cudaStream_t);
+template void Poseidon2GoldilocksGPU<8>::merkletreeTiled(uint32_t, uint64_t*, uint64_t*, uint64_t, uint64_t, cudaStream_t);
+template void Poseidon2GoldilocksGPU<12>::merkletree(uint32_t, uint64_t*, uint64_t*, uint64_t, uint64_t, cudaStream_t);
+template void Poseidon2GoldilocksGPU<12>::merkletreeTiled(uint32_t, uint64_t*, uint64_t*, uint64_t, uint64_t, cudaStream_t);
+template void Poseidon2GoldilocksGPU<16>::merkletree(uint32_t, uint64_t*, uint64_t*, uint64_t, uint64_t, cudaStream_t);
+template void Poseidon2GoldilocksGPU<16>::merkletreeTiled(uint32_t, uint64_t*, uint64_t*, uint64_t, uint64_t, cudaStream_t);
 
 #if __GOLDILOCKS_ENV__
-template void Poseidon2GoldilocksGPU<4>::hashFullResult(uint64_t * output, const uint64_t * input);
+template void Poseidon2GoldilocksGPU<4>::hash(uint64_t * output, const uint64_t * input, cudaStream_t stream);
 template void Poseidon2GoldilocksGPU<16>::grinding(uint64_t * d_nonce, uint64_t *d_nonceBlock, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream);
-template void Poseidon2GoldilocksGPU<16>::linearHashCoalescedBlocks(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
-template void Poseidon2GoldilocksGPU<12>::linearHashCoalescedBlocks(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<16>::linearHash(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<16>::linearHashTiled(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<12>::linearHash(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<12>::linearHashTiled(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
 template void Poseidon2GoldilocksGPU<12>::grinding(uint64_t * d_nonce, uint64_t *d_nonceBlock, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream);
-
 #endif
-
-

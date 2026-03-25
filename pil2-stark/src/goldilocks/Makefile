@@ -83,10 +83,10 @@ testscpu: $(OBJS) $(BUILD_DIR)/tests/tests.o
 benchscpu: $(BUILD_DIR)/benchs/bench.o $(OBJS)
 	$(CXX) $(BUILD_DIR)/benchs/bench.o $(OBJS) $(LDFLAGS) $(LDLIBS) -o $@
 
-testsgpu: $(BUILD_DIR_GPU)/tests/tests.cu.o $(BUILD_DIR_GPU)/src/goldilocks_base_field.cpp.o $(BUILD_DIR_GPU)/src/ntt_goldilocks.cu.o $(BUILD_DIR_GPU)/src/poseidon2_goldilocks.cu.o
+testsgpu: $(BUILD_DIR_GPU)/tests/tests.cu.o $(BUILD_DIR_GPU)/src/goldilocks_base_field.cpp.o $(BUILD_DIR_GPU)/src/ntt_goldilocks.cu.o $(BUILD_DIR_GPU)/src/ntt_goldilocks.cpp.o $(BUILD_DIR_GPU)/src/poseidon2_goldilocks.cu.o $(BUILD_DIR_GPU)/src/poseidon2_goldilocks.cpp.o $(BUILD_DIR_GPU)/src/gl64_tooling.cu.o
 	$(NVCC) $(NVCCFLAGS) -o $@ $^ -lgtest -lgmp
 
-benchsgpu: $(BUILD_DIR_GPU)/benchs/bench.cu.o $(BUILD_DIR_GPU)/src/goldilocks_base_field.cpp.o $(BUILD_DIR_GPU)/src/ntt_goldilocks.cu.o $(BUILD_DIR_GPU)/src/poseidon2_goldilocks.cu.o
+benchsgpu: $(BUILD_DIR_GPU)/benchs/bench.cu.o $(BUILD_DIR_GPU)/src/goldilocks_base_field.cpp.o $(BUILD_DIR_GPU)/src/ntt_goldilocks.cu.o $(BUILD_DIR_GPU)/src/ntt_goldilocks.cpp.o $(BUILD_DIR_GPU)/src/poseidon2_goldilocks.cu.o $(BUILD_DIR_GPU)/src/gl64_tooling.cu.o
 	$(NVCC) $(NVCCFLAGS) -o $@ $^ -lgtest -lgmp -lbenchmark
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
