@@ -260,7 +260,7 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletree(
         actual_blks = 1;
     }
     linearHashKernel<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS>
-        <<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * 8, stream>>>(d_tree, d_input, num_cols, num_rows);
+        <<<actual_blks, actual_tpb, actual_tpb * SPONGE_WIDTH * sizeof(gl64_t), stream>>>(d_tree, d_input, num_cols, num_rows);
     CHECKCUDAERR(cudaGetLastError());
 
     uint64_t pending = num_rows;
