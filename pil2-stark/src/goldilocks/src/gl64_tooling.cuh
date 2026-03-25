@@ -304,7 +304,7 @@ struct StreamData{
     bool recursive;
 
     std::mutex mutex_stream_selection;
-    
+
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_, uint64_t merkleTreeArity){
         uint64_t maxExps = 40000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);

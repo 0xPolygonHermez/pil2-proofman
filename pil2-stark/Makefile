@@ -69,9 +69,13 @@ WITNESS_LIB := ./witness_lib
 CXX := g++
 AS := nasm
 ASFLAGS := -f elf64
+CUDA_GRAPH ?= 1
 NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 $(CUDA_GENCODE_FLAGS) -DGL64_PARTIALLY_REDUCED -D__AVX2__ -D__USE_ASSEMBLY__ -D__ADX__ \
              -I./external/sppark/ff -I./external/sppark -I./external/sppark/util -I./external/sppark/ec -I./external/blst/src \
              -DFEATURE_BN254 --diag-suppress 114
+ifeq ($(CUDA_GRAPH), 1)
+    NVCCFLAGS += -DUSE_CUDA_GRAPH
+endif
 
 # Use the following flag to solve amxtileintrin.h incompatibility or use PROOFMAN_HOST_COMPILER_BIN variable to set the host compiler
 # NVCCFLAGS += --compiler-bindir=/usr/bin/g++-10

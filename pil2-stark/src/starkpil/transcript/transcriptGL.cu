@@ -83,6 +83,31 @@ __global__ void _add(Goldilocks::Element* input, uint64_t size,  Goldilocks::Ele
     }
 }
 
+__global__ void _add2(Goldilocks::Element* input1, uint64_t size1, Goldilocks::Element* input2, uint64_t size2, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity)
+{
+    uint32_t transcriptPendingSize = 4 * (arity - 1);
+    for (uint64_t i = 0; i < size1; i++)
+    {
+        pending[*pending_cursor] = input1[i];
+        (*pending_cursor) += 1;
+        *out_cursor = 0;
+        if (*pending_cursor == transcriptPendingSize)
+        {
+            _updateState(state, pending, out, pending_cursor, out_cursor, arity);
+        }
+    }
+    for (uint64_t i = 0; i < size2; i++)
+    {
+        pending[*pending_cursor] = input2[i];
+        (*pending_cursor) += 1;
+        *out_cursor = 0;
+        if (*pending_cursor == transcriptPendingSize)
+        {
+            _updateState(state, pending, out, pending_cursor, out_cursor, arity);
+        }
+    }
+}
+
 __global__ void _getField(uint64_t* output, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity)
 {
     for (int i = 0; i < 3; i++)
@@ -193,6 +218,12 @@ void TranscriptGL_GPU::put(Goldilocks::Element *input, uint64_t size, cudaStream
 {
     size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2PermuteSmem
     _add<<<1,1, sharedMem, stream>>>(input, size, state, pending, out, pending_cursor, out_cursor,arity);
+}
+
+void TranscriptGL_GPU::put2(Goldilocks::Element *input1, uint64_t size1, Goldilocks::Element *input2, uint64_t size2, cudaStream_t stream)
+{
+    size_t sharedMem = (arity*4) * sizeof(gl64_t);
+    _add2<<<1,1, sharedMem, stream>>>(input1, size1, input2, size2, state, pending, out, pending_cursor, out_cursor, arity);
 }
 
 void TranscriptGL_GPU::getField(uint64_t* output, cudaStream_t stream)
