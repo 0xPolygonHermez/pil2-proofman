@@ -1968,7 +1968,7 @@ where
                         .collect(),
                     summary_info,
                     witness_time,
-                    total_instances: self.pctx.dctx_get_instances().len() as usize,
+                    total_instances: self.pctx.dctx_get_instances().len(),
                 };
                 return Ok(ProvePhaseResult::Contributions(vec![ContributionsInfo {
                     challenge: internal_contribution_u64,
