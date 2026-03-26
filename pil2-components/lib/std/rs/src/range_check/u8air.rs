@@ -169,16 +169,6 @@ impl<F: PrimeField64> WitnessComponent<F> for U8Air {
         _buffer_pool: &dyn BufferPool<F>,
     ) -> ProofmanResult<()> {
         if stage == 1 {
-            // Skip if table was never initialized
-            if !self.initialized.load(Ordering::Relaxed) {
-                tracing::info!(
-                    "Skipping uninitialized U8 range check table (airgroup_id: {}, air_id: {})",
-                    self.airgroup_id,
-                    self.air_id
-                );
-                return Ok(());
-            }
-
             let table_instance_id = self.table_instance_id.load(Ordering::Relaxed) as usize;
 
             let instance_id = pctx.dctx_get_table_instance_idx(table_instance_id)?;
@@ -195,6 +185,16 @@ impl<F: PrimeField64> WitnessComponent<F> for U8Air {
             }
 
             if !self.shared_tables || pctx.dctx_is_my_process_instance(instance_id)? {
+                // Skip if table was never initialized
+                if !self.initialized.load(Ordering::Relaxed) {
+                    tracing::info!(
+                        "Skipping uninitialized U8 range check table (airgroup_id: {}, air_id: {})",
+                        self.airgroup_id,
+                        self.air_id
+                    );
+                    return Ok(());
+                }
+
                 let buffer_size = self.num_cols * self.num_rows;
                 let mut buffer = create_buffer_fast(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {

@@ -35,20 +35,19 @@ pub fn print_summary_info<F: PrimeField64>(
     packed_info: &HashMap<(usize, usize), PackedInfo>,
     verbose_mode: VerboseMode,
 ) -> ProofmanResult<String> {
-    let summary = print_summary(pctx, sctx, packed_info, true, verbose_mode, mpi_ctx.rank == 0)?;
+    let n_partitions = pctx.get_n_partitions();
+    let show_global = n_partitions <= 1;
+    let summary = print_summary(pctx, sctx, packed_info, true, mpi_ctx.rank, mpi_ctx.n_processes, verbose_mode, show_global && mpi_ctx.rank == 0)?;
+
+    let _ = print_summary(pctx, sctx, packed_info, false, mpi_ctx.rank, mpi_ctx.n_processes, verbose_mode, true)?;
 
     if mpi_ctx.n_processes > 1 {
         let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info_process();
         tracing::info!(
-            "Load balance. Average: {} max: {} min: {} deviation: {}",
-            average_weight,
-            max_weight,
-            min_weight,
-            max_deviation
+            "Load balance (processes). Average: {average_weight} max: {max_weight} min: {min_weight} deviation: {max_deviation:.2}%"
         );
-
-        let _ = print_summary(pctx, sctx, packed_info, false, verbose_mode, true)?;
     }
+
     Ok(summary)
 }
 
@@ -57,6 +56,8 @@ pub fn print_summary<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     packed_info: &HashMap<(usize, usize), PackedInfo>,
     global: bool,
+    rank: i32,
+    n_processes: i32,
     verbose_mode: VerboseMode,
     print_output: bool,
 ) -> ProofmanResult<String> {
@@ -67,17 +68,19 @@ pub fn print_summary<F: PrimeField64>(
     let mut air_instances = HashMap::new();
 
     let instances = pctx.dctx_get_instances();
-    let mut n_instances = instances.len();
 
-    let mut print = vec![global; instances.len()];
-
-    if !global {
+    let (print, n_instances) = if global {
+        let n = instances.len();
+        (vec![true; n], n)
+    } else {
         let my_instances = pctx.dctx_get_process_instances();
-        for instance_id in my_instances.iter() {
-            print[*instance_id] = true;
+        let n = my_instances.len();
+        let mut print = vec![false; instances.len()];
+        for id in my_instances {
+            print[id] = true;
         }
-        n_instances = my_instances.len();
-    }
+        (print, n)
+    };
 
     let max_prover_memory = sctx.max_prover_buffer_size as f64 * 8.0;
 
@@ -127,7 +130,12 @@ pub fn print_summary<F: PrimeField64>(
 
     if verbose_mode != VerboseMode::Info {
         if print_output {
-            tracing::info!("{}", "--- TOTAL PROOF INSTANCES SUMMARY ------------------------".bright_white().bold());
+            let header = if global {
+                "--- TOTAL PROOF INSTANCES SUMMARY ------------------------".to_string()
+            } else {
+                format!("--- PROOF INSTANCES SUMMARY [Process {rank}/{n_processes}] -------")
+            };
+            tracing::info!("{}", header.bright_white().bold());
             tracing::info!("    ► {} Air instances found:", n_instances);
         }
         for air_group in &air_groups {
@@ -190,7 +198,12 @@ pub fn print_summary<F: PrimeField64>(
         }
     } else {
         if print_output {
-            tracing::info!("{}", "--- PROOF INSTANCES SUMMARY ---".bright_white().bold());
+            let header = if global {
+                "--- PROOF INSTANCES SUMMARY ---".to_string()
+            } else {
+                format!("--- PROOF INSTANCES SUMMARY [Process {rank}/{n_processes}] ---")
+            };
+            tracing::info!("{}", header.bright_white().bold());
         }
 
         for air_group in &air_groups {
@@ -206,7 +219,8 @@ pub fn print_summary<F: PrimeField64>(
                 })
                 .collect();
 
-            summary.push(format!("Total {} instances: {}", if global { "global" } else { "local" }, n_instances));
+            let scope = if global { "global" } else { "process" };
+            summary.push(format!("Total {scope} instances: {n_instances}"));
 
             if print_output {
                 tracing::info!("{} | {}", air_group.bright_white().bold(), summary.join(" | "));
