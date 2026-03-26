@@ -192,6 +192,7 @@ impl<F: PrimeField64> WitnessComponent<F> for U8Air {
                         self.airgroup_id,
                         self.air_id
                     );
+                    pctx.dctx_skip_process_instance(instance_id);
                     return Ok(());
                 }
 

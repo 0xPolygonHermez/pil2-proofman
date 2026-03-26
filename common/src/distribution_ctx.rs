@@ -60,8 +60,9 @@ pub struct DistributionCtx {
     // Process-level distribution
     pub instance_process: Vec<(i32, usize)>, // For each instance: (process_id or -1 if other worker, local_idx)
     pub process_instances: Vec<usize>,       // Indexes of instances assigned to current process
-    pub process_count: Vec<usize>,           // #instances assigned to each process
-    pub process_weight: Vec<u64>,            // Total computational weight per process
+    pub skipped_process_instances: Vec<usize>, // Indexes of instances assigned to current process but skipped for some reason
+    pub process_count: Vec<usize>,             // #instances assigned to each process
+    pub process_weight: Vec<u64>,              // Total computational weight per process
 
     pub worker_index: i32, // Index of the current worker
 
@@ -119,6 +120,7 @@ impl DistributionCtx {
             partition_weight: Vec::new(),
             instance_process: Vec::new(),
             process_instances: Vec::new(),
+            skipped_process_instances: Vec::new(),
             process_count: Vec::new(),
             process_weight: Vec::new(),
             worker_index: -1,
@@ -194,6 +196,7 @@ impl DistributionCtx {
         // Process-level
         self.instance_process.clear();
         self.process_instances.clear();
+        self.skipped_process_instances.clear();
         self.process_count.fill(0);
         self.process_weight.fill(0);
 
@@ -236,6 +239,16 @@ impl DistributionCtx {
     #[inline]
     pub fn is_setup_partition_init(&self) -> bool {
         self.partition_set
+    }
+
+    pub fn skip_instance(&mut self, instance_id: usize) {
+        if !self.skipped_process_instances.contains(&instance_id) {
+            self.skipped_process_instances.push(instance_id);
+        }
+    }
+
+    pub fn is_skipped_instance(&self, instance_id: usize) -> bool {
+        self.skipped_process_instances.contains(&instance_id)
     }
 
     /// Check if the current process is the owner of a given instance

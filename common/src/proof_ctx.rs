@@ -568,14 +568,26 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances
             .iter()
             .enumerate()
-            .filter(|(id, inst)| inst.table && (dctx.process_instances.contains(id) || inst.shared))
+            .filter(|(id, inst)| {
+                inst.table && (dctx.process_instances.contains(id) || inst.shared) && !dctx.is_skipped_instance(*id)
+            })
             .map(|(id, _)| id)
             .collect()
     }
 
     pub fn dctx_get_process_instances(&self) -> Vec<usize> {
         let dctx = self.dctx.read().unwrap();
-        dctx.process_instances.clone()
+        dctx.process_instances.iter().copied().filter(|id| !dctx.is_skipped_instance(*id)).collect()
+    }
+
+    pub fn dctx_skip_process_instance(&self, instance_id: usize) {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.skip_instance(instance_id);
+    }
+
+    pub fn dctx_is_skipped_process_instance(&self, instance_id: usize) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.is_skipped_instance(instance_id)
     }
 
     pub fn dctx_get_process_owner_instance(&self, instance_id: usize) -> ProofmanResult<i32> {

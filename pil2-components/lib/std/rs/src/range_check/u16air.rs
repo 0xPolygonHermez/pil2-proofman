@@ -193,9 +193,10 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
                         self.airgroup_id,
                         self.air_id
                     );
+                    pctx.dctx_skip_process_instance(instance_id);
                     return Ok(());
                 }
-                
+
                 let buffer_size = self.num_cols * self.num_rows;
                 let mut buffer = create_buffer_fast(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {

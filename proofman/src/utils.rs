@@ -37,7 +37,16 @@ pub fn print_summary_info<F: PrimeField64>(
 ) -> ProofmanResult<String> {
     let n_partitions = pctx.get_n_partitions();
     let show_global = n_partitions <= 1;
-    let summary = print_summary(pctx, sctx, packed_info, true, mpi_ctx.rank, mpi_ctx.n_processes, verbose_mode, show_global && mpi_ctx.rank == 0)?;
+    let summary = print_summary(
+        pctx,
+        sctx,
+        packed_info,
+        true,
+        mpi_ctx.rank,
+        mpi_ctx.n_processes,
+        verbose_mode,
+        show_global && mpi_ctx.rank == 0,
+    )?;
 
     let _ = print_summary(pctx, sctx, packed_info, false, mpi_ctx.rank, mpi_ctx.n_processes, verbose_mode, true)?;
 

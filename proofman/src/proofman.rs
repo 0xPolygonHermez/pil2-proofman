@@ -2033,10 +2033,9 @@ where
         deterministic_shuffle(&mut my_instances_sorted, self.mpi_ctx.rank as u64);
 
         let mut n_airgroup_proofs = vec![0; n_airgroups];
-        for (instance_id, instance_info) in instances.iter().enumerate() {
-            if self.pctx.dctx_is_my_process_instance(instance_id)? {
-                n_airgroup_proofs[instance_info.airgroup_id] += 1;
-            }
+        for &instance_id in my_instances_sorted.iter() {
+            let instance_info = instances[instance_id];
+            n_airgroup_proofs[instance_info.airgroup_id] += 1;
         }
 
         if options.aggregation {
