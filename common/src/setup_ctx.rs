@@ -41,6 +41,10 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub sctx_recursive2: Option<SetupCtx<F>>,
     pub setup_vadcop_final: Option<Setup<F>>,
     pub setup_vadcop_final_compressed: Option<Setup<F>>,
+    pub max_witness_size: usize,
+    pub max_witness_size_compressor: usize,
+    pub max_trace_size: usize,
+    pub max_trace_size_compressor: usize,
     pub max_const_size: usize,
     pub max_const_tree_size: usize,
     pub max_prover_trace_size: usize,
@@ -63,14 +67,14 @@ impl<F: PrimeField64> SetupsVadcop<F> {
         aggregation: bool,
         gpu_params: &ParamsGPU,
         preloaded_const: &[PreLoadedConst],
-    ) -> Self {
+    ) -> ProofmanResult<Self> {
         if aggregation {
             let sctx_compressor =
-                SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints, gpu_params, preloaded_const);
+                SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints, gpu_params, preloaded_const)?;
             let sctx_recursive1 =
-                SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints, gpu_params, preloaded_const);
+                SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints, gpu_params, preloaded_const)?;
             let sctx_recursive2 =
-                SetupCtx::new(global_info, &ProofType::Recursive2, verify_constraints, gpu_params, preloaded_const);
+                SetupCtx::new(global_info, &ProofType::Recursive2, verify_constraints, gpu_params, preloaded_const)?;
             let preallocate_final =
                 gpu_params.preallocate || is_preload_fixed(0, 0, &ProofType::VadcopFinal, preloaded_const);
             let setup_vadcop_final = Setup::new(
@@ -82,7 +86,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 verify_constraints,
                 preallocate_final,
                 None,
-            );
+            )?;
 
             let setup_vadcop_final_compressed = Setup::new(
                 &global_info.get_setup_path("vadcop_final_compressed"),
@@ -93,7 +97,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 verify_constraints,
                 false,
                 None,
-            );
+            )?;
             let total_const_pols_size = sctx_compressor.total_const_pols_size
                 + sctx_recursive1.total_const_pols_size
                 + sctx_recursive2.total_const_pols_size
@@ -110,6 +114,10 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             let vadcop_final_trace_size = setup_vadcop_final.stark_info.map_sections_n["cm1"]
                 * (1 << setup_vadcop_final.stark_info.stark_struct.n_bits)
                 + setup_vadcop_final.stark_info.n_publics;
+
+            let vadcop_final_compressed_trace_size = setup_vadcop_final_compressed.stark_info.map_sections_n["cm1"]
+                * (1 << setup_vadcop_final_compressed.stark_info.stark_struct.n_bits)
+                + setup_vadcop_final_compressed.stark_info.n_publics;
 
             let max_const_size = sctx_compressor
                 .max_const_size
@@ -158,7 +166,22 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive2.max_n_bits_ext)
                 .max(setup_vadcop_final.stark_info.stark_struct.n_bits_ext as usize);
 
-            SetupsVadcop {
+            let max_witness_size = sctx_recursive1
+                .max_witness_size
+                .max(sctx_recursive2.max_witness_size)
+                .max(setup_vadcop_final.get_circom_witness_size())
+                .max(setup_vadcop_final_compressed.get_circom_witness_size());
+
+            let max_trace_size = sctx_recursive1
+                .max_trace_size
+                .max(sctx_recursive2.max_trace_size)
+                .max(vadcop_final_trace_size as usize)
+                .max(vadcop_final_compressed_trace_size as usize);
+
+            let max_witness_size_compressor = sctx_compressor.max_witness_size;
+            let max_trace_size_compressor = sctx_compressor.max_trace_size;
+
+            Ok(SetupsVadcop {
                 sctx_compressor: Some(sctx_compressor),
                 sctx_recursive1: Some(sctx_recursive1),
                 sctx_recursive2: Some(sctx_recursive2),
@@ -172,11 +195,15 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_prover_recursive2_buffer_size,
                 max_pinned_proof_size,
                 max_n_bits_ext,
+                max_witness_size,
+                max_trace_size,
+                max_witness_size_compressor,
+                max_trace_size_compressor,
                 total_const_pols_size,
                 total_const_tree_size,
-            }
+            })
         } else {
-            SetupsVadcop {
+            Ok(SetupsVadcop {
                 sctx_compressor: None,
                 sctx_recursive1: None,
                 sctx_recursive2: None,
@@ -192,7 +219,11 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_prover_recursive2_buffer_size: 0,
                 max_pinned_proof_size: 0,
                 max_n_bits_ext: 0,
-            }
+                max_witness_size: 0,
+                max_trace_size: 0,
+                max_witness_size_compressor: 0,
+                max_trace_size_compressor: 0,
+            })
         }
     }
 
@@ -217,6 +248,8 @@ pub struct SetupRepository<F: PrimeField64> {
     max_prover_contributions_size: usize,
     max_prover_trace_size: usize,
     max_pinned_proof_size: usize,
+    max_witness_size: usize,
+    max_trace_size: usize,
     total_const_pols_size: usize,
     total_const_tree_size: usize,
     global_bin: Option<*mut c_void>,
@@ -242,7 +275,7 @@ impl<F: PrimeField64> SetupRepository<F> {
         verify_constraints: bool,
         gpu_params: &ParamsGPU,
         preloaded_const: &[PreLoadedConst],
-    ) -> Self {
+    ) -> ProofmanResult<Self> {
         let mut setups = HashMap::new();
 
         let global_bin = match setup_type == &ProofType::Basic {
@@ -266,6 +299,8 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut max_pinned_proof_size = 0;
         let mut total_const_pols_size = 0;
         let mut total_const_tree_size = 0;
+        let mut max_witness_size = 0;
+        let mut max_trace_size = 0;
 
         // Initialize Hashmap for each airgroup_id, air_id
 
@@ -283,7 +318,7 @@ impl<F: PrimeField64> SetupRepository<F> {
                     verify_constraints,
                     preallocate,
                     Some(&global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2)),
-                );
+                )?;
                 if setup_type != &ProofType::Compressor || global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let n = 1 << setup.stark_info.stark_struct.n_bits;
                     let n_bits_ext = setup.stark_info.stark_struct.n_bits_ext;
@@ -316,6 +351,8 @@ impl<F: PrimeField64> SetupRepository<F> {
                     }
                     max_pinned_proof_size = max_pinned_proof_size.max(setup.pinned_proof_size);
                     max_n_bits_ext = max_n_bits_ext.max(n_bits_ext);
+                    max_witness_size = max_witness_size.max(setup.get_circom_witness_size());
+                    max_trace_size = max_trace_size.max(trace_size as usize);
                 }
                 setups.insert((airgroup_id, air_id), setup);
                 if setup_type == &ProofType::Recursive2 {
@@ -324,7 +361,7 @@ impl<F: PrimeField64> SetupRepository<F> {
             }
         }
 
-        Self {
+        Ok(Self {
             setups,
             global_bin,
             global_info_file,
@@ -336,8 +373,10 @@ impl<F: PrimeField64> SetupRepository<F> {
             max_pinned_proof_size: max_pinned_proof_size as usize,
             total_const_pols_size,
             total_const_tree_size,
+            max_witness_size,
+            max_trace_size,
             max_n_bits_ext: max_n_bits_ext as usize,
-        }
+        })
     }
 }
 
@@ -351,6 +390,8 @@ pub struct SetupCtx<F: PrimeField64> {
     pub max_prover_buffer_size: usize,
     pub max_prover_trace_size: usize,
     pub max_pinned_proof_size: usize,
+    pub max_witness_size: usize,
+    pub max_trace_size: usize,
     pub max_n_bits_ext: usize,
     pub total_const_pols_size: usize,
     pub total_const_tree_size: usize,
@@ -364,9 +405,9 @@ impl<F: PrimeField64> SetupCtx<F> {
         verify_constraints: bool,
         gpu_params: &ParamsGPU,
         preloaded_const: &[PreLoadedConst],
-    ) -> Self {
+    ) -> ProofmanResult<Self> {
         let setup_repository =
-            SetupRepository::new(global_info, setup_type, verify_constraints, gpu_params, preloaded_const);
+            SetupRepository::new(global_info, setup_type, verify_constraints, gpu_params, preloaded_const)?;
         let max_const_tree_size = setup_repository.max_const_tree_size;
         let max_const_size = setup_repository.max_const_size;
         let max_prover_contributions_size = setup_repository.max_prover_contributions_size;
@@ -375,20 +416,24 @@ impl<F: PrimeField64> SetupCtx<F> {
         let max_pinned_proof_size = setup_repository.max_pinned_proof_size;
         let total_const_pols_size = setup_repository.total_const_pols_size;
         let total_const_tree_size = setup_repository.total_const_tree_size;
+        let max_witness_size = setup_repository.max_witness_size;
+        let max_trace_size = setup_repository.max_trace_size;
         let max_n_bits_ext = setup_repository.max_n_bits_ext;
-        SetupCtx {
+        Ok(SetupCtx {
             setup_repository,
             max_const_tree_size,
             max_const_size,
             max_prover_contributions_size,
             max_prover_buffer_size,
+            max_witness_size,
+            max_trace_size,
             max_prover_trace_size,
             max_pinned_proof_size,
             max_n_bits_ext,
             total_const_pols_size,
             total_const_tree_size,
             setup_type: setup_type.clone(),
-        }
+        })
     }
 
     pub fn get_setup(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<&Setup<F>> {

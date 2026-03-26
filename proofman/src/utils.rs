@@ -542,6 +542,14 @@ pub fn needs_regeneration_fixed<F: PrimeField64>(
             if needs_const_tree_regeneration(setup)? {
                 needs_tree_regen = true;
                 tracing::debug!("Const tree regeneration needed for [{}:{}]", airgroup_id, air_id);
+                if cfg!(feature = "gpu") {
+                    needs_const_regen = true;
+                    tracing::debug!(
+                        "GPU const pols regeneration also needed for [{}:{}] due to tree regeneration",
+                        airgroup_id,
+                        air_id
+                    );
+                }
             }
         }
     }
@@ -582,6 +590,10 @@ pub fn needs_regeneration_vadcop_fixed<F: PrimeField64>(
                 if needs_const_tree_regeneration(setup)? {
                     needs_tree_regen = true;
                     tracing::debug!("Vadcop compressor tree regeneration needed for [{}:{}]", airgroup_id, air_id);
+                    if cfg!(feature = "gpu") {
+                        needs_const_regen = true;
+                        tracing::debug!("Vadcop compressor const pols regeneration also needed for [{}:{}] due to tree regeneration", airgroup_id, air_id);
+                    }
                 }
             }
         }
@@ -598,6 +610,14 @@ pub fn needs_regeneration_vadcop_fixed<F: PrimeField64>(
             if needs_const_tree_regeneration(setup)? {
                 needs_tree_regen = true;
                 tracing::debug!("Vadcop recursive1 tree regeneration needed for [{}:{}]", airgroup_id, air_id);
+                if cfg!(feature = "gpu") {
+                    needs_const_regen = true;
+                    tracing::debug!(
+                        "Vadcop recursive1 const pols regeneration also needed for [{}:{}] due to tree regeneration",
+                        airgroup_id,
+                        air_id
+                    );
+                }
             }
         }
     }
@@ -613,6 +633,13 @@ pub fn needs_regeneration_vadcop_fixed<F: PrimeField64>(
         if needs_const_tree_regeneration(setup)? {
             needs_tree_regen = true;
             tracing::debug!("Vadcop recursive2 tree regeneration needed for airgroup {}", airgroup);
+            if cfg!(feature = "gpu") {
+                needs_const_regen = true;
+                tracing::debug!(
+                    "Vadcop recursive2 const pols regeneration also needed for airgroup {} due to tree regeneration",
+                    airgroup
+                );
+            }
         }
     }
 
@@ -624,6 +651,10 @@ pub fn needs_regeneration_vadcop_fixed<F: PrimeField64>(
     if needs_const_tree_regeneration(setup_vadcop_final)? {
         needs_tree_regen = true;
         tracing::debug!("Vadcop final tree regeneration needed");
+        if cfg!(feature = "gpu") {
+            needs_const_regen = true;
+            tracing::debug!("Vadcop final const pols regeneration also needed due to tree regeneration");
+        }
     }
 
     let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
@@ -634,6 +665,10 @@ pub fn needs_regeneration_vadcop_fixed<F: PrimeField64>(
     if needs_const_tree_regeneration(setup_vadcop_final_compressed)? {
         needs_tree_regen = true;
         tracing::debug!("Vadcop final compressed tree regeneration needed");
+        if cfg!(feature = "gpu") {
+            needs_const_regen = true;
+            tracing::debug!("Vadcop final compressed const pols regeneration also needed due to tree regeneration");
+        }
     }
 
     Ok((needs_const_regen, needs_tree_regen))
@@ -1068,38 +1103,6 @@ pub fn load_device_const_pols<F: PrimeField64>(
             }
         }
     }
-    Ok(())
-}
-
-pub fn initialize_witness_circom<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) -> ProofmanResult<()> {
-    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
-        for (air_id, _) in air_group.iter().enumerate() {
-            if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
-                setup.set_exec_file_data()?;
-                setup.set_circom_circuit()?;
-            }
-            let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?;
-            setup.set_exec_file_data()?;
-            setup.set_circom_circuit()?;
-        }
-    }
-
-    let n_airgroups = pctx.global_info.air_groups.len();
-    for airgroup in 0..n_airgroups {
-        let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0)?;
-        setup.set_circom_circuit()?;
-        setup.set_exec_file_data()?;
-    }
-
-    let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-    setup_vadcop_final.set_circom_circuit()?;
-    setup_vadcop_final.set_exec_file_data()?;
-
-    let setup_vadcop_final_compressed = setups.setup_vadcop_final_compressed.as_ref().unwrap();
-    setup_vadcop_final_compressed.set_circom_circuit()?;
-    setup_vadcop_final_compressed.set_exec_file_data()?;
-
     Ok(())
 }
 

@@ -42,7 +42,7 @@ cargo run --bin proofman-cli verify-constraints \
 Finally, generate the proof using the following command:
 
 ```bash
-     cargo run --bin proofman-cli --features gpu prove \
+     cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libtest_recursive${PIL2_PROOFMAN_EXT}\
      --proving-key examples/test-recursive/build/provingKey/ \
      --output-dir examples/test-recursive/build/proofs -y -vv

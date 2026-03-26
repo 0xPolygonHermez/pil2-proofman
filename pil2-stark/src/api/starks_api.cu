@@ -899,6 +899,47 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t air
     return streamId;
 }
 
+void calculate_const_tree_fixed(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, char *proofType, void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    uint32_t streamId = selectStream(d_buffers, airgroupId, airId, proofType, false, false);
+    uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
+    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
+
+    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    cudaStream_t stream = d_buffers->streamsData[streamId].stream;
+    TimerGPU &timer = d_buffers->streamsData[streamId].timer;
+
+    auto key = std::make_pair(airgroupId, airId);
+    AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][string(proofType)][gpuLocalId];
+
+    if (air_instance_info->stored_tree) {
+        return;
+    }
+
+    d_buffers->streamsData[streamId].airgroupId = airgroupId;
+    d_buffers->streamsData[streamId].airId = airId;
+    d_buffers->streamsData[streamId].proofType = string(proofType);
+
+    gl64_t *d_const_pols = d_buffers->d_constPolsAggregation[gpuLocalId] + air_instance_info->const_pols_offset;
+
+    gl64_t * d_aux_trace = d_buffers->streamsData[streamId].recursive
+        ? (gl64_t *)d_buffers->d_aux_traceAggregation[gpuLocalId][d_buffers->streamsData[streamId].localStreamId]
+        : d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+
+    uint64_t N = 1 << setupCtx->starkInfo.starkStruct.nBits;
+    uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
+    uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
+    Goldilocks::Element *packed_const_pols = (Goldilocks::Element *)d_const_pols;
+    Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
+    uint64_t* d_num_packed_words = (uint64_t*) d_const_pols;
+    unpack_fixed(d_num_packed_words, (uint64_t*)(packed_const_pols + 1), (uint64_t*)(packed_const_pols + 1 + setupCtx->starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx->starkInfo.nConstants, N, stream, timer);
+    
+    gl64_t *d_const_tree = d_aux_trace + offsetConstTree;
+    extendAndMerkelizeFixed(*setupCtx, d_const_pols_unpacked, (Goldilocks::Element *)d_const_tree, timer, stream);
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+    d_buffers->streamsData[streamId].status = 3;
+}
+
 void tile_const_pols(void *pStarkinfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu) {
 
     StarkInfo &starkInfo = *(StarkInfo *)pStarkinfo;
@@ -1020,16 +1061,24 @@ void alloc_fixed_pols_buffer_gpu(void *d_buffers_) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
 
     uint32_t gpuId = d_buffers->my_gpu_ids[0];
+    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
     cudaSetDevice(gpuId);
-    CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[d_buffers->gpus_g2l[gpuId]], d_buffers->constPolsSize));
+    
+    if (d_buffers->d_constPols != nullptr && d_buffers->d_constPols[gpuLocalId] != nullptr) {
+        return;
+    }
+    
+    CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[gpuLocalId], d_buffers->constPolsSize));
 }
 
 void free_fixed_pols_buffer_gpu(void *d_buffers_) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
 
     uint32_t gpuId = d_buffers->my_gpu_ids[0];
+    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
     cudaSetDevice(gpuId);
-    CHECKCUDAERR(cudaFree(d_buffers->d_constPols[d_buffers->gpus_g2l[gpuId]]));
+    CHECKCUDAERR(cudaFree(d_buffers->d_constPols[gpuLocalId]));
+    d_buffers->d_constPols[gpuLocalId] = nullptr;
 }
 
 void load_fixed_pols_recursivef(void *pSetupCtx_, void *pConstTree, void *d_buffers_) {

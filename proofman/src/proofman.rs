@@ -3,8 +3,8 @@ use libloading::{Library, Symbol};
 use fields::{ExtensionField, Transcript, PrimeField64, GoldilocksQuinticExtension, Poseidon16};
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
-    PolMap, RowInfo, DebugInfo, MemoryHandler, MpiCtx, PackedInfo, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType,
-    RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
+    PolMap, RowInfo, DebugInfo, MemoryHandler, MemoryHandlerRecursive, MpiCtx, PackedInfo, ParamsGPU, Proof, ProofCtx,
+    ProofOptions, ProofType, RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -56,7 +56,7 @@ use crate::{verify_constraints_proof, verify_basic_proof, verify_global_constrai
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
 use crate::{
     get_accumulated_challenge, gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof,
-    generate_vadcop_final_proof, generate_vadcop_final_compressed_proof, initialize_witness_circom,
+    generate_vadcop_final_proof, generate_vadcop_final_compressed_proof,
 };
 use crate::total_recursive_proofs;
 use crate::check_tree_paths;
@@ -78,6 +78,7 @@ pub struct WitnessInfo {
     pub publics: Vec<u64>,
     pub proof_values: Vec<u64>,
     pub summary_info: String,
+    pub total_instances: usize,
 }
 
 #[derive(Serialize)]
@@ -141,6 +142,7 @@ pub struct AirInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct PlanningInfo {
     pub planning_info: Vec<AirInfo>,
+    pub num_instances: usize,
 }
 
 struct CancellationThread {
@@ -217,6 +219,7 @@ pub struct ProofMan<F: PrimeField64> {
     n_streams_non_recursive: usize,
     n_gpus: usize,
     memory_handler: Arc<MemoryHandler<F>>,
+    memory_handler_recursive_witness: Arc<MemoryHandlerRecursive<F>>,
     proofs: Arc<Vec<RwLock<Option<Proof<F>>>>>,
     compressor_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>>,
     recursive1_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>>,
@@ -248,7 +251,8 @@ pub struct ProofMan<F: PrimeField64> {
     rec2_witness_rx: Receiver<Proof<F>>,
     recursive_tx: Sender<(u64, String)>,
     recursive_rx: Receiver<(u64, String)>,
-    outer_aggregations_handle: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+    outer_aggregation_state: Mutex<OuterAggregationState>,
+    outer_aggregations_handle: Mutex<Option<std::thread::JoinHandle<()>>>,
     outer_agg_proofs_finished: Arc<AtomicBool>,
     total_outer_agg_proofs: Arc<Counter>,
     received_agg_proofs: Arc<RwLock<Vec<Vec<usize>>>>,
@@ -292,6 +296,11 @@ pub enum ProvePhaseResult {
     Full(Option<String>, Option<VadcopFinalProof>),
 }
 
+enum OuterAggregationState {
+    Idle,
+    Running,
+}
+
 impl<F: PrimeField64> Drop for ProofMan<F> {
     fn drop(&mut self) {
         if let Err(e) = self.reset() {
@@ -302,6 +311,46 @@ impl<F: PrimeField64> Drop for ProofMan<F> {
 }
 
 impl<F: PrimeField64> ProofMan<F> {
+    fn ensure_outer_aggregations_started(&self, output_dir_path: &Path, save_proofs: bool)
+    where
+        GoldilocksQuinticExtension: ExtensionField<F>,
+    {
+        let mut outer_aggregation_state = self.outer_aggregation_state.lock().unwrap();
+        if matches!(*outer_aggregation_state, OuterAggregationState::Running)
+            || self.cancellation_info.read().unwrap().token.is_cancelled()
+        {
+            return;
+        }
+
+        self.outer_aggregations(output_dir_path, save_proofs);
+        *outer_aggregation_state = OuterAggregationState::Running;
+    }
+
+    fn stop_outer_aggregations(&self) {
+        let mut outer_aggregation_state = self.outer_aggregation_state.lock().unwrap();
+        if matches!(*outer_aggregation_state, OuterAggregationState::Idle) {
+            return;
+        }
+
+        *outer_aggregation_state = OuterAggregationState::Idle;
+
+        self.outer_agg_proofs_finished.store(true, Ordering::SeqCst);
+        clear_proof_done_callback_c();
+        for _ in 0..self.n_streams {
+            self.recursive_tx.send((u64::MAX - 1, "Recursive2".to_string())).unwrap();
+        }
+
+        let handles = self.handle_recursives.lock().unwrap().drain(..).collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let handle_to_join = self.outer_aggregations_handle.lock().unwrap().take();
+        if let Some(handle) = handle_to_join {
+            handle.join().unwrap();
+        }
+    }
+
     pub fn reset(&self) -> ProofmanResult<()> {
         self.wcm.reset();
 
@@ -351,14 +400,7 @@ impl<F: PrimeField64> ProofMan<F> {
             handle.join().unwrap();
         }
 
-        if self.outer_aggregations_handle.lock().unwrap().is_some() {
-            self.outer_agg_proofs_finished.store(true, Ordering::SeqCst);
-
-            let mut outer_aggregations_handle = self.outer_aggregations_handle.lock().unwrap();
-            if let Some(handle) = outer_aggregations_handle.take() {
-                handle.join().unwrap();
-            }
-        }
+        self.stop_outer_aggregations();
 
         // Drain all relevant channels to ensure they are empty
         while self.rx_threads.try_recv().is_ok() {}
@@ -389,6 +431,7 @@ impl<F: PrimeField64> ProofMan<F> {
         }
 
         self.memory_handler.reset()?;
+        self.memory_handler_recursive_witness.reset()?;
 
         Ok(())
     }
@@ -427,11 +470,7 @@ where
     }
 
     pub fn get_rank_info(&self) -> RankInfo {
-        RankInfo {
-            world_rank: self.pctx.mpi_ctx.rank,
-            local_rank: self.pctx.mpi_ctx.node_rank,
-            n_processes: self.pctx.mpi_ctx.n_processes,
-        }
+        self.pctx.get_rank_info()
     }
 
     pub fn get_n_processes(&self) -> i32 {
@@ -508,9 +547,10 @@ where
         let pctx = ProofCtx::<F>::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx)?;
 
         let setups_aggregation =
-            Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, &ParamsGPU::new(false), &[]));
+            Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, &ParamsGPU::new(false), &[])?);
 
-        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &ParamsGPU::new(false), &[]);
+        let sctx: SetupCtx<F> =
+            SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &ParamsGPU::new(false), &[])?;
 
         if cfg!(feature = "gpu") {
             let n_gpus = get_num_gpus_c();
@@ -748,7 +788,7 @@ where
             }
         }
 
-        let result = PlanningInfo { planning_info };
+        let result = PlanningInfo { planning_info, num_instances: total_instances };
 
         Ok(result)
     }
@@ -1463,6 +1503,7 @@ where
 
         let vadcop_final_proof_compressed = generate_vadcop_final_compressed_proof(
             &self.pctx,
+            &self.memory_handler_recursive_witness,
             &self.setups,
             &vadcop_final_proof.proof_with_publics_u64(),
             &self.prover_buffer_recursive,
@@ -1527,9 +1568,23 @@ where
             false => 1,
         };
 
+        let max_witness_stored_compressor = match cfg!(feature = "gpu") {
+            true => n_gpus as usize * 4,
+            false => 1,
+        };
+
         let max_witness_trace_size = calculate_max_witness_trace_size(&pctx, &sctx, &packed_info, &gpu_params)?;
 
         let memory_handler = Arc::new(MemoryHandler::new(pctx.clone(), max_witness_stored, max_witness_trace_size));
+
+        let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new(
+            max_witness_stored,
+            max_witness_stored_compressor,
+            setups_vadcop.max_witness_size,
+            setups_vadcop.max_witness_size_compressor,
+            setups_vadcop.max_trace_size,
+            setups_vadcop.max_trace_size_compressor,
+        ));
 
         let n_airgroups = pctx.global_info.air_groups.len();
         let proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
@@ -1634,6 +1689,7 @@ where
             max_num_threads,
             num_threads_per_witness,
             memory_handler,
+            memory_handler_recursive_witness,
             proofs,
             compressor_proofs,
             recursive1_proofs,
@@ -1662,7 +1718,8 @@ where
             rec1_witness_rx,
             rec2_witness_tx,
             rec2_witness_rx,
-            outer_aggregations_handle: Arc::new(Mutex::new(None)),
+            outer_aggregation_state: Mutex::new(OuterAggregationState::Idle),
+            outer_aggregations_handle: Mutex::new(None),
             total_outer_agg_proofs: Arc::new(Counter::new()),
             received_agg_proofs,
             handle_recursives: Arc::new(Mutex::new(Vec::new())),
@@ -1911,6 +1968,7 @@ where
                         .collect(),
                     summary_info,
                     witness_time,
+                    total_instances: self.pctx.dctx_get_instances().len(),
                 };
                 return Ok(ProvePhaseResult::Contributions(vec![ContributionsInfo {
                     challenge: internal_contribution_u64,
@@ -2002,6 +2060,7 @@ where
 
         for _ in 0..self.n_streams {
             let pctx_clone = self.pctx.clone();
+            let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
             let setups_clone = self.setups.clone();
             let proofs_clone = self.proofs.clone();
             let compressor_proofs_clone = self.compressor_proofs.clone();
@@ -2075,6 +2134,7 @@ where
                             Some((p1, p2, p3)) => {
                                 match gen_witness_aggregation(
                                     &pctx_clone,
+                                    &memory_handler_recursive_witness,
                                     &setups_clone,
                                     &p1,
                                     &p2,
@@ -2096,7 +2156,13 @@ where
                         }
                     } else if new_proof_type == ProofType::Recursive1 as usize && p == ProofType::Compressor {
                         let compressor_proof = compressor_proofs_clone[id as usize].write().unwrap().take().unwrap();
-                        let w = gen_witness_recursive(&pctx_clone, &setups_clone, &compressor_proof, &output_dir_path);
+                        let w = gen_witness_recursive(
+                            &pctx_clone,
+                            &memory_handler_recursive_witness,
+                            &setups_clone,
+                            &compressor_proof,
+                            &output_dir_path,
+                        );
                         match w {
                             Ok(witness) => Some(witness),
                             Err(e) => {
@@ -2107,7 +2173,13 @@ where
                         }
                     } else {
                         let proof = proofs_clone[id as usize].write().unwrap().take().unwrap();
-                        let w = gen_witness_recursive(&pctx_clone, &setups_clone, &proof, &output_dir_path);
+                        let w = gen_witness_recursive(
+                            &pctx_clone,
+                            &memory_handler_recursive_witness,
+                            &setups_clone,
+                            &proof,
+                            &output_dir_path,
+                        );
                         match w {
                             Ok(witness) => Some(witness),
                             Err(e) => {
@@ -2174,14 +2246,21 @@ where
         }
 
         my_instances_sorted.sort_by_key(|&id| {
-            (
-                if self.pctx.is_air_instance_stored(id) { 0 } else { 1 },
-                if self.pctx.global_info.get_air_has_compressor(instances[id].airgroup_id, instances[id].air_id) {
-                    0
-                } else {
-                    1
-                },
-            )
+            let (airgroup_id, air_id) = (instances[id].airgroup_id, instances[id].air_id);
+            let is_stored = self.pctx.is_air_instance_stored(id);
+            let has_compressor = self.pctx.global_info.get_air_has_compressor(airgroup_id, air_id);
+
+            let priority_tier = if is_stored && has_compressor {
+                0
+            } else if is_stored {
+                1
+            } else if has_compressor {
+                2
+            } else {
+                3
+            };
+
+            (priority_tier,)
         });
 
         let proofs_finished = Arc::new(AtomicBool::new(false));
@@ -2204,7 +2283,7 @@ where
             let rec1_rx = self.rec1_witness_rx.clone();
             let n_streams_non_recursive = self.n_streams_non_recursive;
             let memory_handler_clone = self.memory_handler.clone();
-
+            let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
             let proofs_finished_clone = proofs_finished.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
             let handle_recursive = std::thread::spawn(move || loop {
@@ -2307,8 +2386,9 @@ where
 
                     if let Err(e) = generate_recursive_proof(
                         &pctx_clone,
+                        &memory_handler_recursive_witness,
                         &setups_clone,
-                        &witness,
+                        &mut witness,
                         new_proof_ref,
                         &prover_buffer_recursive,
                         &output_dir_path_clone,
@@ -2316,6 +2396,7 @@ where
                         &const_pols_clone,
                         options.save_proofs,
                         force_recursive_stream,
+                        None,
                     ) {
                         cancellation_info_clone.write().unwrap().cancel(Some(e));
                         break;
@@ -2325,8 +2406,9 @@ where
                     let new_proof_ref = compressor_lock.as_ref().unwrap();
                     if let Err(e) = generate_recursive_proof(
                         &pctx_clone,
+                        &memory_handler_recursive_witness,
                         &setups_clone,
-                        &witness,
+                        &mut witness,
                         new_proof_ref,
                         &prover_buffer_recursive,
                         &output_dir_path_clone,
@@ -2334,6 +2416,7 @@ where
                         &const_pols_clone,
                         options.save_proofs,
                         force_recursive_stream,
+                        None,
                     ) {
                         cancellation_info_clone.write().unwrap().cancel(Some(e));
                         break;
@@ -2343,8 +2426,9 @@ where
                     let new_proof_ref = recursive1_lock.as_ref().unwrap();
                     if let Err(e) = generate_recursive_proof(
                         &pctx_clone,
+                        &memory_handler_recursive_witness,
                         &setups_clone,
-                        &witness,
+                        &mut witness,
                         new_proof_ref,
                         &prover_buffer_recursive,
                         &output_dir_path_clone,
@@ -2352,6 +2436,7 @@ where
                         &const_pols_clone,
                         options.save_proofs,
                         force_recursive_stream,
+                        None,
                     ) {
                         cancellation_info_clone.write().unwrap().cancel(Some(e));
                         break;
@@ -2465,6 +2550,7 @@ where
 
                 aggregate_worker_proofs(
                     &self.pctx,
+                    &self.memory_handler_recursive_witness,
                     &self.mpi_ctx,
                     &self.setups,
                     recursive2_proofs_data,
@@ -2650,7 +2736,10 @@ where
         final_proof: bool,
         options: &ProofOptions,
     ) -> ProofmanResult<Option<Vec<AggProofs>>> {
-        tracing::info!("Received {:?} aggregated proofs", agg_proofs);
+        if !agg_proofs.is_empty() {
+            tracing::info!("Received {:?} aggregated proofs", agg_proofs);
+        }
+
         let output_dir_path = match options.output_dir_path.as_deref() {
             Some(path) => path,
             None => Path::new("tmp"),
@@ -2660,11 +2749,8 @@ where
             fs::create_dir_all(output_dir_path)?;
         }
 
-        if !agg_proofs.is_empty()
-            && !self.cancellation_info.read().unwrap().token.is_cancelled()
-            && self.outer_aggregations_handle.lock().unwrap().is_none()
-        {
-            self.outer_aggregations(output_dir_path, options.save_proofs);
+        if !agg_proofs.is_empty() {
+            self.ensure_outer_aggregations_started(output_dir_path, options.save_proofs);
         }
 
         for proof in agg_proofs {
@@ -2791,7 +2877,9 @@ where
                 }
             }
 
-            tracing::info!("Last proof received. {:?} proofs were received and waiting for {} aggregated proofs to be generated...", total_proofs_received, total_proofs_to_be_done);
+            if total_proofs_to_be_done > 0 {
+                tracing::info!("Last proof received. {:?} proofs were received and waiting for {} aggregated proofs to be generated...", total_proofs_received, total_proofs_to_be_done);
+            }
 
             self.total_outer_agg_proofs.wait_until_value_and_check_streams(
                 total_proofs_to_be_done,
@@ -2799,22 +2887,7 @@ where
                 &self.cancellation_info,
             );
             get_stream_proofs_c(self.pctx.get_device_buffers_ptr());
-            if self.outer_aggregations_handle.lock().unwrap().is_some() {
-                self.outer_agg_proofs_finished.store(true, Ordering::SeqCst);
-                clear_proof_done_callback_c();
-                for _ in 0..self.n_streams {
-                    self.recursive_tx.send((u64::MAX - 1, "Recursive2".to_string())).unwrap();
-                }
-
-                let handles = self.handle_recursives.lock().unwrap().drain(..).collect::<Vec<_>>();
-                for handle in handles {
-                    handle.join().unwrap();
-                }
-                let mut outer_aggregations_handle = self.outer_aggregations_handle.lock().unwrap();
-                if let Some(handle) = outer_aggregations_handle.take() {
-                    handle.join().unwrap();
-                }
-            }
+            self.stop_outer_aggregations();
 
             self.check_cancel(false)?;
 
@@ -2876,6 +2949,7 @@ where
 
                 let vadcop_proof_final = generate_vadcop_final_proof(
                     &self.pctx,
+                    &self.memory_handler_recursive_witness,
                     &self.setups,
                     &agg_proofs_data,
                     &self.prover_buffer_recursive,
@@ -2888,6 +2962,7 @@ where
                 if options.compressed {
                     let vadcop_final_proof_compressed = generate_vadcop_final_compressed_proof(
                         &self.pctx,
+                        &self.memory_handler_recursive_witness,
                         &self.setups,
                         &vadcop_proof_final.proof,
                         &self.prover_buffer_recursive,
@@ -2913,6 +2988,7 @@ where
 
         for _ in 0..self.n_streams {
             let pctx_clone = self.pctx.clone();
+            let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
             let setups_clone = self.setups.clone();
             let recursive2_proofs_clone = self.recursive2_proofs.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
@@ -2940,7 +3016,15 @@ where
                         let p2 = recursive2_airgroup_proofs.pop().unwrap();
                         let p3 = recursive2_airgroup_proofs.pop().unwrap();
 
-                        let w = gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3, &output_dir_path);
+                        let w = gen_witness_aggregation(
+                            &pctx_clone,
+                            &memory_handler_recursive_witness,
+                            &setups_clone,
+                            &p1,
+                            &p2,
+                            &p3,
+                            &output_dir_path,
+                        );
 
                         let witness = match w {
                             Ok(witness) => witness,
@@ -2968,6 +3052,7 @@ where
         let cancellation_info_clone = self.cancellation_info.clone();
         let output_dir_path_clone = output_dir_path.to_path_buf();
         let total_outer_agg_proofs = self.total_outer_agg_proofs.clone();
+        let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
         let outer_aggregations_handle = std::thread::spawn(move || loop {
             if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                 break;
@@ -3007,8 +3092,9 @@ where
 
             if let Err(e) = generate_recursive_proof(
                 &pctx_clone,
+                &memory_handler_recursive_witness,
                 &setups_clone,
-                &witness,
+                &mut witness,
                 new_proof_ref,
                 &prover_buffer_recursive,
                 &output_dir_path_clone,
@@ -3016,6 +3102,7 @@ where
                 &const_pols_clone,
                 save_proofs,
                 false,
+                None,
             ) {
                 cancellation_info_clone.write().unwrap().cancel(Some(e));
                 break;
@@ -3178,6 +3265,7 @@ where
         let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
         let cancellation_info_clone = self.cancellation_info.clone();
         let output_dir_path_clone = output_dir_path.clone();
+        let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
         let recursive2_handle = std::thread::spawn(move || {
             while let Ok(mut witness) = rec2_witness_rx.recv() {
                 if cancellation_info_clone.read().unwrap().token.is_cancelled() {
@@ -3208,8 +3296,9 @@ where
 
                 if let Err(e) = generate_recursive_proof(
                     &pctx_clone,
+                    &memory_handler_recursive_witness,
                     &setups_clone,
-                    &witness,
+                    &mut witness,
                     new_proof_ref,
                     &prover_buffer_recursive,
                     &output_dir_path_clone,
@@ -3217,6 +3306,7 @@ where
                     &const_pols_clone,
                     save_proofs,
                     false,
+                    None,
                 ) {
                     cancellation_info_clone.write().unwrap().cancel(Some(e));
                     break;
@@ -3231,6 +3321,7 @@ where
         let mut handle_recursives = Vec::new();
         for _ in 0..self.n_streams {
             let pctx_clone = self.pctx.clone();
+            let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
             let setups_clone = self.setups.clone();
             let recursive2_proofs_clone = self.recursive2_proofs.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
@@ -3259,7 +3350,15 @@ where
                         let p1 = recursive2_airgroup_proofs.pop().unwrap();
                         let p2 = recursive2_airgroup_proofs.pop().unwrap();
                         let p3 = recursive2_airgroup_proofs.pop().unwrap();
-                        let w = gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3, &output_dir_path);
+                        let w = gen_witness_aggregation(
+                            &pctx_clone,
+                            &memory_handler_recursive_witness,
+                            &setups_clone,
+                            &p1,
+                            &p2,
+                            &p3,
+                            &output_dir_path,
+                        );
                         let witness = match w {
                             Ok(witness) => witness,
                             Err(e) => {
@@ -3711,7 +3810,7 @@ where
             verify_constraints,
             gpu_params,
             &preloaded_const,
-        ));
+        )?);
 
         let setups_vadcop = Arc::new(SetupsVadcop::new(
             &pctx.global_info,
@@ -3719,9 +3818,9 @@ where
             aggregation,
             gpu_params,
             &preloaded_const,
-        ));
+        )?);
 
-        pctx.set_weights(&sctx)?;
+        pctx.set_weights(&sctx, &setups_vadcop, aggregation)?;
 
         let (n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
             pctx.set_device_buffers(&sctx, &setups_vadcop, aggregation, gpu_params)?;
@@ -3767,10 +3866,6 @@ where
         timer_start_info!(LOADING_FIXED_POLS);
         load_device_const_pols(&pctx, &sctx, &setups_vadcop, verify_constraints, aggregation, false)?;
         timer_stop_and_log_info!(LOADING_FIXED_POLS);
-
-        if aggregation {
-            initialize_witness_circom(&pctx, &setups_vadcop)?;
-        }
 
         let pctx = Arc::new(pctx);
 

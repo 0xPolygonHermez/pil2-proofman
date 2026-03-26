@@ -10,7 +10,7 @@ use std::fs;
 use fields::{PrimeField64, Transcript, Poseidon16};
 use crate::{
     initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PolMap, SetupCtx, StdMode,
-    RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
+    RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult, ProofType,
 };
 
 use std::ffi::c_void;
@@ -341,6 +341,14 @@ impl<F: PrimeField64> ProofCtx<F> {
         })
     }
 
+    pub fn get_rank_info(&self) -> crate::RankInfo {
+        crate::RankInfo {
+            world_rank: self.mpi_ctx.rank,
+            local_rank: self.mpi_ctx.node_rank,
+            n_processes: self.mpi_ctx.n_processes,
+        }
+    }
+
     pub fn set_debug_info(&self, debug_info: &DebugInfo) {
         let mut debug_info_guard = self.debug_info.write().unwrap();
         *debug_info_guard = debug_info.clone();
@@ -465,7 +473,12 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn set_weights(&mut self, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
+    pub fn set_weights(
+        &mut self,
+        sctx: &SetupCtx<F>,
+        setups_vadcop: &SetupsVadcop<F>,
+        aggregation: bool,
+    ) -> ProofmanResult<()> {
         for (airgroup_id, air_group) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id)?;
@@ -478,9 +491,26 @@ impl<F: PrimeField64> ProofCtx<F> {
                     .sum::<u64>();
                 total_cols += 3; // FRI polinomial
                 let n_openings = setup.stark_info.opening_points.len() as u64;
-                // let n_ops_quotient = setup.n_operations_quotient;
-                let weight = (total_cols + n_openings * 3) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
-                // weight += (n_ops_quotient / 10) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
+                let n_ops_quotient = setup.n_operations_quotient;
+                let mut weight = (total_cols + n_openings * 3) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
+                weight += (n_ops_quotient / 10) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
+                if aggregation && self.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                    let compressor_setup = setups_vadcop.get_setup(airgroup_id, air_id, &ProofType::Compressor)?;
+                    let compressor_total_cols = compressor_setup
+                        .stark_info
+                        .map_sections_n
+                        .iter()
+                        .filter(|(key, _)| *key != "const")
+                        .map(|(_, value)| *value)
+                        .sum::<u64>();
+                    let compressor_n_openings = compressor_setup.stark_info.opening_points.len() as u64;
+                    let compressor_n_ops_quotient = compressor_setup.n_operations_quotient;
+                    let mut compressor_weight = (compressor_total_cols + compressor_n_openings * 3)
+                        * (1 << (compressor_setup.stark_info.stark_struct.n_bits_ext));
+                    compressor_weight +=
+                        (compressor_n_ops_quotient / 10) * (1 << (compressor_setup.stark_info.stark_struct.n_bits_ext));
+                    weight += compressor_weight;
+                }
                 self.weights.insert((airgroup_id, air_id), weight);
             }
         }
