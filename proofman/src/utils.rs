@@ -60,6 +60,7 @@ pub fn print_summary_info<F: PrimeField64>(
     Ok(summary)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn print_summary<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
