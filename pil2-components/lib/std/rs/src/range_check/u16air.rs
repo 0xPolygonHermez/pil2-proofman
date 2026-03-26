@@ -27,7 +27,6 @@ pub struct U16Air {
     multiplicities: Vec<Vec<AtomicU64>>,
     table_instance_id: AtomicU64,
     calculated: AtomicBool,
-    initialized: AtomicBool,
     shared_tables: bool,
 }
 
@@ -59,7 +58,6 @@ impl<F: PrimeField64> AirComponent<F> for U16Air {
             multiplicities,
             table_instance_id: AtomicU64::new(0),
             calculated: AtomicBool::new(false),
-            initialized: AtomicBool::new(false),
             shared_tables,
         }))
     }
@@ -79,7 +77,6 @@ impl U16Air {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
-        self.initialized.store(true, Ordering::Relaxed);
 
         // Identify to which sub-range the value belongs
         let range_idx = (value as usize) >> self.shift;
@@ -95,7 +92,6 @@ impl U16Air {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
-        self.initialized.store(true, Ordering::Relaxed);
 
         for (value, multiplicity) in values.iter().enumerate() {
             if *multiplicity == 0 {
@@ -140,7 +136,6 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
         }
 
         self.calculated.store(false, Ordering::Relaxed);
-        self.initialized.store(false, Ordering::Relaxed);
         self.multiplicities.par_iter().flat_map(|vec| vec.par_iter()).for_each(|v| {
             v.store(0, Ordering::Relaxed);
         });
@@ -186,8 +181,19 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
             }
 
             if !self.shared_tables || pctx.dctx_is_my_process_instance(instance_id)? {
-                // Skip if table was never initialized
-                if !self.initialized.load(Ordering::Relaxed) {
+                let buffer_size = self.num_cols * self.num_rows;
+                let mut buffer = create_buffer_fast(buffer_size);
+                let any_nonzero = AtomicBool::new(false);
+                buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
+                    for (col, vec) in self.multiplicities.iter().enumerate() {
+                        let v = vec[row].load(Ordering::Relaxed);
+                        if v != 0 {
+                            any_nonzero.store(true, Ordering::Relaxed);
+                        }
+                        chunk[col] = F::from_u64(v);
+                    }
+                });
+                if !any_nonzero.load(Ordering::Relaxed) {
                     tracing::info!(
                         "Skipping uninitialized U16 range check table (airgroup_id: {}, air_id: {})",
                         self.airgroup_id,
@@ -196,14 +202,6 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
                     pctx.dctx_skip_process_instance(instance_id);
                     return Ok(());
                 }
-
-                let buffer_size = self.num_cols * self.num_rows;
-                let mut buffer = create_buffer_fast(buffer_size);
-                buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
-                    for (col, vec) in self.multiplicities.iter().enumerate() {
-                        chunk[col] = F::from_u64(vec[row].load(Ordering::Relaxed));
-                    }
-                });
                 let setup = sctx.get_setup(self.airgroup_id, self.air_id)?;
                 let n_cols = setup.stark_info.map_sections_n["cm1"] as usize;
                 let air_instance = AirInstance::new(TraceInfo::new(
