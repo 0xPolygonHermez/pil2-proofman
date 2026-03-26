@@ -221,7 +221,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             &verkey_str,
         ) as *mut c_void;
 
-        let witness_size = setup_recursivef.get_circom_witness_size() as usize;
+        let witness_size = setup_recursivef.get_circom_witness_size();
         let trace_size = setup_recursivef.stark_info.map_sections_n["cm1"]
             * (1 << setup_recursivef.stark_info.stark_struct.n_bits)
             + setup_recursivef.stark_info.n_publics;
@@ -450,7 +450,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         &verkey_str,
     ) as *mut c_void;
 
-    let witness_size = setup_recursivef.get_circom_witness_size() as usize;
+    let witness_size = setup_recursivef.get_circom_witness_size();
     let trace_size = setup_recursivef.stark_info.map_sections_n["cm1"]
         * (1 << setup_recursivef.stark_info.stark_struct.n_bits)
         + setup_recursivef.stark_info.n_publics;

@@ -309,7 +309,8 @@ impl<F: PrimeField64> Setup<F> {
             ProofType::Recursive1
             | ProofType::Recursive2
             | ProofType::VadcopFinal
-            | ProofType::VadcopFinalCompressed => true,
+            | ProofType::VadcopFinalCompressed
+            | ProofType::RecursiveF => true,
             _ => false,
         };
 

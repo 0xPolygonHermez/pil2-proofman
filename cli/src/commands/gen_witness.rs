@@ -60,7 +60,7 @@ impl GenWitnessCmd {
 
         let witness_size = setup.get_circom_witness_size();
 
-        let mut witness: Vec<Goldilocks> = vec![Goldilocks::ZERO; witness_size as usize];
+        let mut witness: Vec<Goldilocks> = vec![Goldilocks::ZERO; witness_size];
 
         let state = setup.circom_state.read().unwrap();
         let circom_circuit_ptr = match state.circuit {

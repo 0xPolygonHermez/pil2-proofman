@@ -389,7 +389,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     };
 
     if let Some(handle) = calculate_fixed_tree_handle {
-        handle.join().expect("Failed to join calculate_fixed_tree thread");
+        handle.join().map_err(|_| ProofmanError::ProofmanError("Failed to calculate fixed tree".into()))?;
     }
 
     let stream_id = gen_recursive_proof_c(
@@ -779,6 +779,7 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
     Ok(final_proof)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn generate_recursivef_proof<F: PrimeField64>(
     setup: &Setup<F>,
     memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
@@ -835,7 +836,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         setup.stark_info.n_publics,
         setup.stark_info.map_sections_n["cm1"],
     );
-    let _ = memory_handler_recursive_witness.release_buffer_witness(circom_witness);
+    memory_handler_recursive_witness.release_buffer_witness(circom_witness)?;
 
     // Create output directory if it doesn't exist
     std::fs::create_dir_all(output_dir_path)?;
@@ -858,7 +859,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         prover_buffer_size as u64,
         d_buffers_recursivef as *mut u8,
     );
-    let _ = memory_handler_recursive_witness.release_buffer_trace(trace)?;
+    memory_handler_recursive_witness.release_buffer_trace(trace)?;
     timer_stop_and_log_debug!(GENERATE_RECURSIVEF_PROOF);
 
     // Join the background thread (should be done by now since proof waited for copy event)

@@ -24,10 +24,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
         }
 
         let total_memory = n_buffers * buffer_size * std::mem::size_of::<F>();
-        tracing::info!(
-            "MemoryHandler::Total memory for basic traces: {}",
-            crate::format_bytes(total_memory as f64)
-        );
+        tracing::info!("MemoryHandler::Total memory for basic traces: {}", crate::format_bytes(total_memory as f64));
 
         Self {
             pctx,
