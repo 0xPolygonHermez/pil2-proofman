@@ -306,12 +306,7 @@ impl<F: PrimeField64> Setup<F> {
         // Skip compressors that don't exist
         let needs_circom = match setup_type {
             ProofType::Compressor => air_info.has_compressor.unwrap_or(false),
-            ProofType::Recursive1
-            | ProofType::Recursive2
-            | ProofType::VadcopFinal
-            | ProofType::VadcopFinalCompressed
-            | ProofType::RecursiveF => true,
-            _ => false,
+            _ => setup_type != &ProofType::Basic,
         };
 
         let (circom_library, circom_circuit, get_witness_fn, size_witness, exec_data) = if needs_circom {

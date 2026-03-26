@@ -78,6 +78,7 @@ pub struct WitnessInfo {
     pub publics: Vec<u64>,
     pub proof_values: Vec<u64>,
     pub summary_info: String,
+    pub total_instances: usize,
 }
 
 #[derive(Serialize)]
@@ -141,6 +142,7 @@ pub struct AirInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct PlanningInfo {
     pub planning_info: Vec<AirInfo>,
+    pub num_instances: usize,
 }
 
 struct CancellationThread {
@@ -249,7 +251,8 @@ pub struct ProofMan<F: PrimeField64> {
     rec2_witness_rx: Receiver<Proof<F>>,
     recursive_tx: Sender<(u64, String)>,
     recursive_rx: Receiver<(u64, String)>,
-    outer_aggregations_handle: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+    outer_aggregation_state: Mutex<OuterAggregationState>,
+    outer_aggregations_handle: Mutex<Option<std::thread::JoinHandle<()>>>,
     outer_agg_proofs_finished: Arc<AtomicBool>,
     total_outer_agg_proofs: Arc<Counter>,
     received_agg_proofs: Arc<RwLock<Vec<Vec<usize>>>>,
@@ -293,6 +296,11 @@ pub enum ProvePhaseResult {
     Full(Option<String>, Option<VadcopFinalProof>),
 }
 
+enum OuterAggregationState {
+    Idle,
+    Running,
+}
+
 impl<F: PrimeField64> Drop for ProofMan<F> {
     fn drop(&mut self) {
         if let Err(e) = self.reset() {
@@ -303,6 +311,46 @@ impl<F: PrimeField64> Drop for ProofMan<F> {
 }
 
 impl<F: PrimeField64> ProofMan<F> {
+    fn ensure_outer_aggregations_started(&self, output_dir_path: &Path, save_proofs: bool)
+    where
+        GoldilocksQuinticExtension: ExtensionField<F>,
+    {
+        let mut outer_aggregation_state = self.outer_aggregation_state.lock().unwrap();
+        if matches!(*outer_aggregation_state, OuterAggregationState::Running)
+            || self.cancellation_info.read().unwrap().token.is_cancelled()
+        {
+            return;
+        }
+
+        self.outer_aggregations(output_dir_path, save_proofs);
+        *outer_aggregation_state = OuterAggregationState::Running;
+    }
+
+    fn stop_outer_aggregations(&self) {
+        let mut outer_aggregation_state = self.outer_aggregation_state.lock().unwrap();
+        if matches!(*outer_aggregation_state, OuterAggregationState::Idle) {
+            return;
+        }
+
+        *outer_aggregation_state = OuterAggregationState::Idle;
+
+        self.outer_agg_proofs_finished.store(true, Ordering::SeqCst);
+        clear_proof_done_callback_c();
+        for _ in 0..self.n_streams {
+            self.recursive_tx.send((u64::MAX - 1, "Recursive2".to_string())).unwrap();
+        }
+
+        let handles = self.handle_recursives.lock().unwrap().drain(..).collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let handle_to_join = self.outer_aggregations_handle.lock().unwrap().take();
+        if let Some(handle) = handle_to_join {
+            handle.join().unwrap();
+        }
+    }
+
     pub fn reset(&self) -> ProofmanResult<()> {
         self.wcm.reset();
 
@@ -352,14 +400,7 @@ impl<F: PrimeField64> ProofMan<F> {
             handle.join().unwrap();
         }
 
-        if self.outer_aggregations_handle.lock().unwrap().is_some() {
-            self.outer_agg_proofs_finished.store(true, Ordering::SeqCst);
-
-            let mut outer_aggregations_handle = self.outer_aggregations_handle.lock().unwrap();
-            if let Some(handle) = outer_aggregations_handle.take() {
-                handle.join().unwrap();
-            }
-        }
+        self.stop_outer_aggregations();
 
         // Drain all relevant channels to ensure they are empty
         while self.rx_threads.try_recv().is_ok() {}
@@ -429,11 +470,7 @@ where
     }
 
     pub fn get_rank_info(&self) -> RankInfo {
-        RankInfo {
-            world_rank: self.pctx.mpi_ctx.rank,
-            local_rank: self.pctx.mpi_ctx.node_rank,
-            n_processes: self.pctx.mpi_ctx.n_processes,
-        }
+        self.pctx.get_rank_info()
     }
 
     pub fn get_n_processes(&self) -> i32 {
@@ -751,7 +788,7 @@ where
             }
         }
 
-        let result = PlanningInfo { planning_info };
+        let result = PlanningInfo { planning_info, num_instances: total_instances };
 
         Ok(result)
     }
@@ -1681,7 +1718,8 @@ where
             rec1_witness_rx,
             rec2_witness_tx,
             rec2_witness_rx,
-            outer_aggregations_handle: Arc::new(Mutex::new(None)),
+            outer_aggregation_state: Mutex::new(OuterAggregationState::Idle),
+            outer_aggregations_handle: Mutex::new(None),
             total_outer_agg_proofs: Arc::new(Counter::new()),
             received_agg_proofs,
             handle_recursives: Arc::new(Mutex::new(Vec::new())),
@@ -1930,6 +1968,7 @@ where
                         .collect(),
                     summary_info,
                     witness_time,
+                    total_instances: self.pctx.dctx_get_instances().len() as usize,
                 };
                 return Ok(ProvePhaseResult::Contributions(vec![ContributionsInfo {
                     challenge: internal_contribution_u64,
@@ -2207,14 +2246,21 @@ where
         }
 
         my_instances_sorted.sort_by_key(|&id| {
-            (
-                if self.pctx.is_air_instance_stored(id) { 0 } else { 1 },
-                if self.pctx.global_info.get_air_has_compressor(instances[id].airgroup_id, instances[id].air_id) {
-                    0
-                } else {
-                    1
-                },
-            )
+            let (airgroup_id, air_id) = (instances[id].airgroup_id, instances[id].air_id);
+            let is_stored = self.pctx.is_air_instance_stored(id);
+            let has_compressor = self.pctx.global_info.get_air_has_compressor(airgroup_id, air_id);
+
+            let priority_tier = if is_stored && has_compressor {
+                0
+            } else if is_stored {
+                1
+            } else if has_compressor {
+                2
+            } else {
+                3
+            };
+
+            (priority_tier,)
         });
 
         let proofs_finished = Arc::new(AtomicBool::new(false));
@@ -2703,11 +2749,8 @@ where
             fs::create_dir_all(output_dir_path)?;
         }
 
-        if !agg_proofs.is_empty()
-            && !self.cancellation_info.read().unwrap().token.is_cancelled()
-            && self.outer_aggregations_handle.lock().unwrap().is_none()
-        {
-            self.outer_aggregations(output_dir_path, options.save_proofs);
+        if !agg_proofs.is_empty() {
+            self.ensure_outer_aggregations_started(output_dir_path, options.save_proofs);
         }
 
         for proof in agg_proofs {
@@ -2844,22 +2887,7 @@ where
                 &self.cancellation_info,
             );
             get_stream_proofs_c(self.pctx.get_device_buffers_ptr());
-            if self.outer_aggregations_handle.lock().unwrap().is_some() {
-                self.outer_agg_proofs_finished.store(true, Ordering::SeqCst);
-                clear_proof_done_callback_c();
-                for _ in 0..self.n_streams {
-                    self.recursive_tx.send((u64::MAX - 1, "Recursive2".to_string())).unwrap();
-                }
-
-                let handles = self.handle_recursives.lock().unwrap().drain(..).collect::<Vec<_>>();
-                for handle in handles {
-                    handle.join().unwrap();
-                }
-                let mut outer_aggregations_handle = self.outer_aggregations_handle.lock().unwrap();
-                if let Some(handle) = outer_aggregations_handle.take() {
-                    handle.join().unwrap();
-                }
-            }
+            self.stop_outer_aggregations();
 
             self.check_cancel(false)?;
 
@@ -3792,7 +3820,7 @@ where
             &preloaded_const,
         )?);
 
-        pctx.set_weights(&sctx)?;
+        pctx.set_weights(&sctx, &setups_vadcop, aggregation)?;
 
         let (n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
             pctx.set_device_buffers(&sctx, &setups_vadcop, aggregation, gpu_params)?;

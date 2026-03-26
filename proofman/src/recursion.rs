@@ -958,7 +958,12 @@ fn generate_witness<F: PrimeField64>(
         state.get_witness_fn.ok_or(ProofmanError::InvalidSetup("GetWitness function not loaded".to_string()))?;
 
     let res: i64 = unsafe {
-        get_witness_fn(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_mut_ptr() as *mut c_void, 1)
+        get_witness_fn(
+            zkin.as_ptr() as *mut u64,
+            circom_circuit_ptr,
+            witness.as_mut_ptr() as *mut c_void,
+            rayon::current_num_threads() as u64,
+        )
     };
     drop(state);
 

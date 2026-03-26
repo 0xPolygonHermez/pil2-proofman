@@ -1061,16 +1061,24 @@ void alloc_fixed_pols_buffer_gpu(void *d_buffers_) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
 
     uint32_t gpuId = d_buffers->my_gpu_ids[0];
+    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
     cudaSetDevice(gpuId);
-    CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[d_buffers->gpus_g2l[gpuId]], d_buffers->constPolsSize));
+    
+    if (d_buffers->d_constPols != nullptr && d_buffers->d_constPols[gpuLocalId] != nullptr) {
+        return;
+    }
+    
+    CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[gpuLocalId], d_buffers->constPolsSize));
 }
 
 void free_fixed_pols_buffer_gpu(void *d_buffers_) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
 
     uint32_t gpuId = d_buffers->my_gpu_ids[0];
+    uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
     cudaSetDevice(gpuId);
-    CHECKCUDAERR(cudaFree(d_buffers->d_constPols[d_buffers->gpus_g2l[gpuId]]));
+    CHECKCUDAERR(cudaFree(d_buffers->d_constPols[gpuLocalId]));
+    d_buffers->d_constPols[gpuLocalId] = nullptr;
 }
 
 void load_fixed_pols_recursivef(void *pSetupCtx_, void *pConstTree, void *d_buffers_) {
