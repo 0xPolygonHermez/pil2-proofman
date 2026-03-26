@@ -33,6 +33,7 @@ pub struct VirtualTableAir {
     multiplicities: Vec<Vec<AtomicU64>>,
     table_instance_id: AtomicU64,
     calculated: AtomicBool,
+    initialized: AtomicBool,
     shared_tables: bool,
 }
 
@@ -125,6 +126,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 multiplicities,
                 table_instance_id: AtomicU64::new(0),
                 calculated: AtomicBool::new(false),
+                initialized: AtomicBool::new(false),
                 shared_tables,
             };
             virtual_tables.push(Arc::new(virtual_table_air));
@@ -194,6 +196,7 @@ impl VirtualTableAir {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
+        self.initialized.store(true, Ordering::Relaxed);
 
         // Get the table offset
         let table_offset = self.table_ids[id].1; // Acc height of the table
@@ -215,6 +218,7 @@ impl VirtualTableAir {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
+        self.initialized.store(true, Ordering::Relaxed);
 
         // Get the table offset
         let table_offset = self.table_ids[id].1; // Acc height of the table
@@ -244,6 +248,7 @@ impl VirtualTableAir {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
+        self.initialized.store(true, Ordering::Relaxed);
 
         // Get the table offset
         let table_offset = self.table_ids[id].1; // Acc height of the table
@@ -267,6 +272,7 @@ impl VirtualTableAir {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
+        self.initialized.store(true, Ordering::Relaxed);
 
         // Get the table offset
         let table_offset = self.table_ids[id].1; // Acc height of the table
@@ -309,6 +315,7 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         }
 
         self.calculated.store(false, Ordering::Relaxed);
+        self.initialized.store(false, Ordering::Relaxed);
         self.multiplicities.par_iter().flat_map(|vec| vec.par_iter()).for_each(|v| {
             v.store(0, Ordering::Relaxed);
         });
@@ -339,6 +346,16 @@ impl<F: PrimeField64> WitnessComponent<F> for VirtualTableAir {
         _buffer_pool: &dyn BufferPool<F>,
     ) -> ProofmanResult<()> {
         if stage == 1 {
+            // Skip if table was never initialized
+            if !self.initialized.load(Ordering::Relaxed) {
+                tracing::info!(
+                    "Skipping uninitialized virtual table (airgroup_id: {}, air_id: {})",
+                    self.airgroup_id,
+                    self.air_id
+                );
+                return Ok(());
+            }
+
             let table_instance_id = self.table_instance_id.load(Ordering::Relaxed) as usize;
 
             let instance_id = pctx.dctx_get_table_instance_idx(table_instance_id)?;

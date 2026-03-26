@@ -1860,8 +1860,6 @@ where
                 *witness_start_time.write().unwrap() = Some(std::time::Instant::now());
             }
 
-            let my_instances_tables = self.pctx.dctx_get_my_tables();
-
             let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
             deterministic_shuffle(&mut my_instances_sorted, self.mpi_ctx.rank as u64);
 
@@ -1899,6 +1897,8 @@ where
             drop(witness_handles);
 
             timer_start_debug!(CALCULATING_TABLES);
+
+            let my_instances_tables = self.pctx.dctx_get_my_tables();
 
             //evaluate witness for instances of type "tables"
             for instance_id in my_instances_tables.iter() {

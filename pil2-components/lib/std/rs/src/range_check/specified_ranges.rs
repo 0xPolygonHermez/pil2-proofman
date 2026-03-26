@@ -29,6 +29,7 @@ pub struct SpecifiedRanges {
     multiplicities: Vec<Vec<AtomicU64>>,
     table_instance_id: AtomicU64,
     calculated: AtomicBool,
+    initialized: AtomicBool,
     ranges: Vec<SpecifiedRange>,
     shared_tables: bool,
 }
@@ -114,6 +115,7 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
             multiplicities,
             table_instance_id: AtomicU64::new(0),
             calculated: AtomicBool::new(false),
+            initialized: AtomicBool::new(false),
             ranges,
             shared_tables,
         }))
@@ -134,6 +136,7 @@ impl SpecifiedRanges {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
+        self.initialized.store(true, Ordering::Relaxed);
 
         // Get the range for the given id
         let range = &self.ranges[id];
@@ -162,6 +165,7 @@ impl SpecifiedRanges {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
+        self.initialized.store(true, Ordering::Relaxed);
 
         // Get the range for the given id
         let range = &self.ranges[id];
@@ -214,6 +218,7 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
         }
 
         self.calculated.store(false, Ordering::Relaxed);
+        self.initialized.store(false, Ordering::Relaxed);
         self.multiplicities.par_iter().flat_map(|vec| vec.par_iter()).for_each(|v| {
             v.store(0, Ordering::Relaxed);
         });
@@ -243,6 +248,16 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
         _buffer_pool: &dyn BufferPool<F>,
     ) -> ProofmanResult<()> {
         if stage == 1 {
+            // Skip if table was never initialized
+            if !self.initialized.load(Ordering::Relaxed) {
+                tracing::info!(
+                    "Skipping uninitialized specified ranges table (airgroup_id: {}, air_id: {})",
+                    self.airgroup_id,
+                    self.air_id
+                );
+                return Ok(());
+            }
+
             let table_instance_id = self.table_instance_id.load(Ordering::Relaxed) as usize;
 
             let instance_id = pctx.dctx_get_table_instance_idx(table_instance_id)?;
