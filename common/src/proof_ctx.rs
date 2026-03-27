@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::RwLock};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::RwLock,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -629,6 +632,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.find_air_instance_id(global_idx)
     }
 
+    pub fn dctx_find_instance_id(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<(bool, usize)> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.find_instance_id(airgroup_id, air_id)
+    }
+
     pub fn dctx_find_process_instance(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<(bool, usize)> {
         let dctx = self.dctx.read().unwrap();
         dctx.find_process_instance(airgroup_id, air_id)
@@ -652,13 +660,8 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn add_instance_assign(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance(airgroup_id, air_id, weight)
-    }
-
-    pub fn add_instance_assign_first_process(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
-        let mut dctx = self.dctx.write().unwrap();
-        let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_first_process(airgroup_id, air_id, weight)
+        let has_compressor = self.global_info.get_air_has_compressor(airgroup_id, air_id);
+        dctx.add_instance(airgroup_id, air_id, weight, has_compressor)
     }
 
     pub fn add_instance(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
@@ -685,8 +688,20 @@ impl<F: PrimeField64> ProofCtx<F> {
     }
 
     pub fn dctx_assign_instances(&self) -> ProofmanResult<()> {
+        let compressor_airs: HashSet<(usize, usize)> = self
+            .global_info
+            .airs
+            .iter()
+            .enumerate()
+            .flat_map(|(ag_id, airs)| {
+                airs.iter()
+                    .enumerate()
+                    .filter(|(_, air)| air.has_compressor.unwrap_or(false))
+                    .map(move |(a_id, _)| (ag_id, a_id))
+            })
+            .collect();
         let mut dctx = self.dctx.write().unwrap();
-        dctx.assign_instances()
+        dctx.assign_instances(&compressor_airs)
     }
 
     pub fn dctx_load_balance_info_process(&self) -> (f64, u64, u64, f64) {
@@ -871,7 +886,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         air_instance_id: usize,
     ) -> ProofmanResult<Vec<F>> {
         let dctx = self.dctx.read().unwrap();
-        let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
+        let index = dctx.find_by_air_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
             Ok(self.air_instances[index].read().unwrap().get_air_values())
         } else {
@@ -888,7 +903,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         air_instance_id: usize,
     ) -> ProofmanResult<Vec<F>> {
         let dctx = self.dctx.read().unwrap();
-        let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
+        let index = dctx.find_by_air_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
             Ok(self.air_instances[index].read().unwrap().get_airgroup_values())
         } else {

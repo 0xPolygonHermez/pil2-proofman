@@ -158,7 +158,7 @@ impl Counter {
                 break;
             }
 
-            let (g, _) = self.cvar.wait_timeout(guard, Duration::from_millis(100)).unwrap();
+            let (g, _) = self.cvar.wait_timeout(guard, Duration::from_millis(1)).unwrap();
             guard = g;
         }
     }
@@ -214,7 +214,7 @@ impl Counter {
                 break;
             }
 
-            let (g, _) = self.cvar.wait_timeout(guard, Duration::from_millis(100)).unwrap();
+            let (g, _) = self.cvar.wait_timeout(guard, Duration::from_millis(1)).unwrap();
             guard = g;
         }
     }
