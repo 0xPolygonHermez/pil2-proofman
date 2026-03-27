@@ -3387,7 +3387,7 @@ where
                                 break;
                             }
                         };
-                        rec2_witness_tx_clone.send(witness).unwrap();
+                        rec2_witness_tx_clone.send(witness).ok();
                     }
                 }
             });
@@ -3416,12 +3416,12 @@ where
         );
         clear_proof_done_callback_c();
         drop(recursive_tx);
-        drop(rec2_witness_rx);
 
         for handle in handle_recursives {
             handle.join().unwrap();
         }
         drop(rec2_witness_tx);
+        drop(rec2_witness_rx);
 
         for handle in recursive2_handles {
             handle.join().unwrap();
