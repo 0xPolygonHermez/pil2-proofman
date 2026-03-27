@@ -646,8 +646,6 @@ impl DistributionCtx {
             self.partition_count[min_weight_idx] += 1;
             self.partition_weight[min_weight_idx] += self.instances[*gid].weight;
             if self.partition_mask[min_weight_idx] {
-                self.worker_instances.push(*gid);
-
                 // Select target process: compressor-count-first for compressor airs, weight-first otherwise
                 let mut min_weight_process_idx = 0;
                 if has_compressor {
@@ -719,11 +717,14 @@ impl DistributionCtx {
                 *c -= 1;
             }
 
+            self.instance_partition[*gid] = min_chunks_idx as i32;
+
             for chunk in chunks {
                 partitions_chunks[min_chunks_idx].insert(*chunk);
             }
 
             if self.partition_mask[min_chunks_idx] {
+                self.worker_instances.push(*gid);
                 let mut min_chunks = usize::MAX;
                 let mut min_process_id = 0;
                 for process_id in 0..self.n_processes {

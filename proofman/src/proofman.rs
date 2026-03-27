@@ -3387,7 +3387,10 @@ where
                                 break;
                             }
                         };
-                        rec2_witness_tx_clone.send(witness).ok();
+                        if rec2_witness_tx_clone.send(witness).is_err() {
+                            cancellation_info_clone.write().unwrap().cancel(None);
+                            break;
+                        }
                     }
                 }
             });
@@ -3589,7 +3592,7 @@ where
                 let threads_to_use_collect = match cfg!(feature = "gpu") || stats {
                     true => (self.pctx.dctx_get_instance_chunks(instance_id)? / 16)
                         .max(self.max_num_threads / 4)
-                        .min(self.max_num_threads),
+                        .min(n_threads_witness),
                     false => self.max_num_threads,
                 };
 
