@@ -283,8 +283,6 @@ function pack_tables() {
                         // Check bus (opid) grouping consistency
                         if (bus_group[idx] == -1) {
                             bus_group[idx] = i; // first time this bus appears
-                        } else if (bus_group[idx] != i) {
-                            error(`Table_id ${table_id} (opid ${vt.opid[idx]}) already assigned to group ${bus_group[idx]}, cannot also assign to group ${i}`);
                         }
 
                         table_group[k] = i;
