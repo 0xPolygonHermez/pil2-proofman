@@ -36,7 +36,6 @@ pub fn print_summary_info<F: PrimeField64>(
     verbose_mode: VerboseMode,
 ) -> ProofmanResult<String> {
     let n_partitions = pctx.get_n_partitions();
-    let show_global = n_partitions <= 1;
     let summary = print_summary(
         pctx,
         sctx,
@@ -45,10 +44,19 @@ pub fn print_summary_info<F: PrimeField64>(
         mpi_ctx.rank,
         mpi_ctx.n_processes,
         verbose_mode,
-        show_global && mpi_ctx.rank == 0,
+        n_partitions == 1 && mpi_ctx.rank == 0,
     )?;
 
-    let _ = print_summary(pctx, sctx, packed_info, false, mpi_ctx.rank, mpi_ctx.n_processes, verbose_mode, true)?;
+    let _ = print_summary(
+        pctx,
+        sctx,
+        packed_info,
+        false,
+        mpi_ctx.rank,
+        mpi_ctx.n_processes,
+        verbose_mode,
+        n_partitions != 1 || mpi_ctx.n_processes > 1,
+    )?;
 
     if mpi_ctx.n_processes > 1 {
         let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info_process();
@@ -95,10 +103,14 @@ pub fn print_summary<F: PrimeField64>(
     let max_prover_memory = sctx.max_prover_buffer_size as f64 * 8.0;
 
     let mut memory_tables = 0 as f64;
+    let mut total_weight: u64 = 0;
     for (instance_id, &instance_info) in instances.iter().enumerate() {
         let (airgroup_id, air_id, is_table) = (instance_info.airgroup_id, instance_info.air_id, instance_info.table);
         if !print[instance_id] {
             continue;
+        }
+        if !global {
+            total_weight += pctx.get_weight(airgroup_id, air_id);
         }
         let air_name = pctx.global_info.airs[airgroup_id][air_id].clone().name;
         let air_group_name = pctx.global_info.air_groups[airgroup_id].clone();
@@ -205,6 +217,10 @@ pub fn print_summary<F: PrimeField64>(
             tracing::info!("----------------------------------------------------------");
             tracing::info!("      Extra memory tables (CPU): {}", format_bytes(memory_tables));
             tracing::info!("----------------------------------------------------------");
+            if !global {
+                tracing::info!("      Total weight [Process {rank}/{n_processes}]: {total_weight}");
+                tracing::info!("----------------------------------------------------------");
+            }
         }
     } else {
         if print_output {
@@ -231,6 +247,9 @@ pub fn print_summary<F: PrimeField64>(
 
             let scope = if global { "global" } else { "process" };
             summary.push(format!("Total {scope} instances: {n_instances}"));
+            if !global {
+                summary.push(format!("Total weight: {total_weight}"));
+            }
 
             if print_output {
                 tracing::info!("{} | {}", air_group.bright_white().bold(), summary.join(" | "));
@@ -242,6 +261,9 @@ pub fn print_summary<F: PrimeField64>(
         }
 
         if print_output {
+            if !global {
+                tracing::info!("Total weight [Process {rank}/{n_processes}]: {total_weight}");
+            }
             tracing::info!("{}", "--------------------------------".bright_white().bold());
         }
     }
