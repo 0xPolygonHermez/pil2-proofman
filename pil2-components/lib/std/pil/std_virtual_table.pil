@@ -50,7 +50,7 @@ function set_group_virtual_tables(const int table_ids[]) {
             }
         }
 
-        // Check for outter duplicates
+        // Check for outer duplicates
         for (int j = 0; j < vt.num_groups; j++) {
             for (int k = 0; k < vt.group_len[j]; k++) {
                 if (vt.group[j][k] == table_id) {
@@ -435,13 +435,13 @@ function pack_tables() {
 
         VirtualTable(total_num_rows, ordered_tables_air[i], num_tables_air, total_height_air,
                      uids_pack, tables_pack, widths_pack, lens_pack, num_packing_groups, i,
-                     flat_opid_idx, flat_table_idx, flat_height, flat_table_id) alias `VirtualTable${i}`;
+                     flat_opid_idx, flat_table_idx, flat_table_id, flat_height, flat_width) alias `VirtualTable${i}`;
     }
 }
 airtemplate VirtualTable(const int N, const int tables[], const int num_tables, const int total_height, 
                          const int uids[][], const int table_idxs[][], const int widths[], const int lens[], 
                          const int num_groups, const int vt_idx,
-                         const int flat_opid_idx[], const int flat_table_idx[], const int flat_height[], const int flat_table_id[]) {   
+                         const int flat_opid_idx[], const int flat_table_idx[], const int flat_table_id[], const int flat_height[], const int flat_width[]) {   
     // Compute the number of fixed and witness columns
     int sum_widths = 0;
     for (int i = 0; i < num_groups; i++) {
@@ -474,7 +474,6 @@ airtemplate VirtualTable(const int N, const int tables[], const int num_tables, 
 
     // Prove the groups
     int col_offset = 0;
-    int table_id_offset = 0;
     int row_start = 0;
     for (int i = 0; i < num_groups; i++) {
         const int group_len = lens[i];
