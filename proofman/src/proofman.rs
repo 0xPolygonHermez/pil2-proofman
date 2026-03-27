@@ -3416,8 +3416,12 @@ where
         );
         clear_proof_done_callback_c();
         drop(recursive_tx);
-        drop(rec2_witness_tx);
         drop(rec2_witness_rx);
+
+        for handle in handle_recursives {
+            handle.join().unwrap();
+        }
+        drop(rec2_witness_tx);
 
         for handle in recursive2_handles {
             handle.join().unwrap();
