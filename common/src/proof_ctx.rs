@@ -148,7 +148,7 @@ impl Default for ProofOptions {
         Self {
             verify_constraints: false,
             aggregation: true,
-            rma: false,
+            rma: true,
             compressed: false,
             verify_proofs: false,
             minimal_memory: false,
@@ -210,10 +210,6 @@ impl ProofOptions {
 
     pub fn minimal_memory(&mut self) {
         self.minimal_memory = true;
-    }
-
-    pub fn use_rma(&mut self) {
-        self.rma = true;
     }
 
     pub fn compressed(&mut self) {

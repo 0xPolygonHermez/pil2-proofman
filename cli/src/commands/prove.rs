@@ -70,7 +70,7 @@ pub struct ProveCmd {
     pub preallocate: bool,
 
     #[clap(short = 'r', long, default_value_t = false)]
-    pub rma: bool,
+    pub no_rma: bool,
 
     #[clap(short = 'm', long, default_value_t = false)]
     pub minimal_memory: bool,
@@ -151,7 +151,7 @@ impl ProveCmd {
         let proof_options = ProofOptions::new(
             false,
             self.aggregation,
-            self.rma,
+            !self.no_rma,
             self.compressed,
             self.verify_proofs,
             self.minimal_memory,
