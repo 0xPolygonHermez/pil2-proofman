@@ -51,11 +51,12 @@ pub struct DistributionCtx {
     pub aux_table_map: Vec<i32>,               // Map from aux tables to original instances
 
     // Worker-level distribution
-    pub partition_set: bool,          // Whether the partition assignation is done
+    pub partition_set: bool,                  // Whether the partition assignation is done
     pub instance_partition: Vec<i32>, // Which partition each instance belongs to (>=0 assigned, -1 unassigned, -2 appended table)
     pub worker_instances: Vec<usize>, // Indexes of instances assigned to this worker
     pub partition_count: Vec<u32>,    // #instances in each partition (does not include tables)
     pub partition_weight: Vec<u64>,   // Total computational weight per partition (does not include tables)
+    pub partition_compressor_count: Vec<u32>, // #compressor instances assigned to each partition
 
     // Process-level distribution
     pub instance_process: Vec<(i32, usize)>, // For each instance: (process_id or -1 if other worker, local_idx)
@@ -63,6 +64,7 @@ pub struct DistributionCtx {
     pub skipped_process_instances: Vec<usize>, // Indexes of instances assigned to current process but skipped for some reason
     pub process_count: Vec<usize>,             // #instances assigned to each process
     pub process_weight: Vec<u64>,              // Total computational weight per process
+    pub process_compressor_count: Vec<u32>,    // #compressor instances assigned to each process
 
     pub worker_index: i32, // Index of the current worker
 
@@ -91,10 +93,12 @@ impl std::fmt::Debug for DistributionCtx {
             .field("worker_instances", &self.worker_instances)
             .field("partition_count", &self.partition_count)
             .field("partition_weight", &self.partition_weight)
+            .field("partition_compressor_count", &self.partition_compressor_count)
             .field("instance_process", &self.instance_process)
             .field("process_instances", &self.process_instances)
             .field("process_count", &self.process_count)
             .field("process_weight", &self.process_weight)
+            .field("process_compressor_count", &self.process_compressor_count)
             .field("assignation_done", &self.assignation_done);
         dbg.finish()
     }
@@ -118,11 +122,13 @@ impl DistributionCtx {
             worker_instances: Vec::new(),
             partition_count: Vec::new(),
             partition_weight: Vec::new(),
+            partition_compressor_count: Vec::new(),
             instance_process: Vec::new(),
             process_instances: Vec::new(),
             skipped_process_instances: Vec::new(),
             process_count: Vec::new(),
             process_weight: Vec::new(),
+            process_compressor_count: Vec::new(),
             worker_index: -1,
             assignation_done: false,
             partition_set: false,
@@ -150,6 +156,7 @@ impl DistributionCtx {
 
         self.partition_count = vec![0; n_partitions];
         self.partition_weight = vec![0; n_partitions];
+        self.partition_compressor_count = vec![0; n_partitions];
         self.partition_set = true;
         Ok(())
     }
@@ -168,6 +175,7 @@ impl DistributionCtx {
         self.process_id = process_id;
         self.process_count = vec![0; n_processes];
         self.process_weight = vec![0; n_processes];
+        self.process_compressor_count = vec![0; n_processes];
         Ok(())
     }
 
@@ -192,6 +200,7 @@ impl DistributionCtx {
         self.worker_instances.clear();
         self.partition_count.fill(0);
         self.partition_weight.fill(0);
+        self.partition_compressor_count.fill(0);
 
         // Process-level
         self.instance_process.clear();
@@ -199,6 +208,7 @@ impl DistributionCtx {
         self.skipped_process_instances.clear();
         self.process_count.fill(0);
         self.process_weight.fill(0);
+        self.process_compressor_count.fill(0);
 
         //control
         self.assignation_done = false;
@@ -413,6 +423,24 @@ impl DistributionCtx {
         }
     }
 
+    #[inline]
+    pub fn find_instance_id(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<(bool, usize)> {
+        let mut matches = self
+            .instances
+            .iter()
+            .enumerate()
+            .filter(|&(_gid, inst)| inst.airgroup_id == airgroup_id && inst.air_id == air_id)
+            .map(|(gid, _)| gid);
+
+        match (matches.next(), matches.next()) {
+            (None, _) => Ok((false, 0)),
+            (Some(gid), None) => Ok((true, gid)),
+            (Some(_), Some(_)) => Err(ProofmanError::InvalidAssignation(format!(
+                "Multiple instances found for airgroup_id: {airgroup_id}, air_id: {air_id}"
+            ))),
+        }
+    }
+
     /// Find a table with the given airgroup_id and air_id among the current process's tables
     /// Returns (found, local_index)
     #[inline]
@@ -437,9 +465,8 @@ impl DistributionCtx {
         }
     }
 
-    /// Of all the instances with the same airgroup and air_id find the one with the given air_instance_id
     #[inline]
-    pub fn find_instance_id(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Option<usize> {
+    pub fn find_by_air_instance_id(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Option<usize> {
         let mut count = 0;
         for (instance_idx, instance) in self.instances.iter().enumerate() {
             let (inst_airgroup_id, inst_air_id) = (instance.airgroup_id, instance.air_id);
@@ -456,7 +483,13 @@ impl DistributionCtx {
     /// add an instance and assign it to a partition/process based only in the gid
     /// the instance added is not a table
     #[inline]
-    pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> ProofmanResult<usize> {
+    pub fn add_instance(
+        &mut self,
+        airgroup_id: usize,
+        air_id: usize,
+        weight: u64,
+        has_compressor: bool,
+    ) -> ProofmanResult<usize> {
         if self.assignation_done {
             return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
@@ -470,55 +503,22 @@ impl DistributionCtx {
         self.instance_partition.push(partition_id as i32);
         self.partition_count[partition_id as usize] += 1;
         self.partition_weight[partition_id as usize] += weight;
+        if has_compressor {
+            self.partition_compressor_count[partition_id as usize] += 1;
+        }
         let mut local_idx = 0;
         let mut owner = -1;
         if self.partition_mask[partition_id as usize] {
             let worker_instance_id = self.worker_instances.len();
             self.worker_instances.push(gid);
-            let process_id = (worker_instance_id + 1) % self.n_processes;
+            let process_id = worker_instance_id % self.n_processes;
             owner = process_id as i32;
             local_idx = self.process_count[process_id];
             self.process_count[process_id] += 1;
             self.process_weight[process_id] += weight;
-            if process_id == self.process_id {
-                self.process_instances.push(gid);
+            if has_compressor {
+                self.process_compressor_count[process_id] += 1;
             }
-        }
-        self.instance_process.push((owner, local_idx));
-        Ok(gid)
-    }
-
-    /// add an instance and assign it to a partition/process based only in the gid
-    /// the instance added is not a table
-    #[inline]
-    pub fn add_instance_first_process(
-        &mut self,
-        airgroup_id: usize,
-        air_id: usize,
-        weight: u64,
-    ) -> ProofmanResult<usize> {
-        if self.assignation_done {
-            return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
-        }
-        self.validate_static_config().expect("Static configuration invalid or incomplete");
-        let gid: usize = self.instances.len();
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, weight));
-        self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
-        self.instances_calculated.push(AtomicBool::new(false));
-        self.n_instances += 1;
-        let partition_id = 0;
-        let process_id = 0;
-        self.instance_partition.push(partition_id as i32);
-        self.partition_count[partition_id] += 1;
-        self.partition_weight[partition_id] += weight;
-        let mut local_idx = 0;
-        let mut owner = -1;
-        if self.partition_mask[partition_id] {
-            self.worker_instances.push(gid);
-            owner = process_id as i32;
-            local_idx = self.process_count[process_id];
-            self.process_count[process_id] += 1;
-            self.process_weight[process_id] += weight;
             if process_id == self.process_id {
                 self.process_instances.push(gid);
             }
@@ -581,7 +581,7 @@ impl DistributionCtx {
     }
 
     /// Assign instances to partitions and processes
-    pub fn assign_instances(&mut self) -> ProofmanResult<()> {
+    pub fn assign_instances(&mut self, compressor_airs: &HashSet<(usize, usize)>) -> ProofmanResult<()> {
         if self.assignation_done {
             return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
@@ -607,32 +607,75 @@ impl DistributionCtx {
 
         let mut local_process_count = self.process_count.clone();
         for (gid, _) in &unassigned_instances {
-            let mut min_weight = u64::MAX;
+            let (airgroup_id, air_id) = self.get_instance_info(*gid)?;
+            let has_compressor = compressor_airs.contains(&(airgroup_id, air_id));
+
+            // Select target partition: compressor-count-first for compressor airs, weight-first otherwise
             let mut min_weight_idx = 0;
-            for (i, &weight) in self.partition_weight.iter().enumerate() {
-                if weight < min_weight {
-                    min_weight = weight;
-                    min_weight_idx = i;
-                } else if (min_weight == weight) && (self.partition_count[i] < self.partition_count[min_weight_idx]) {
-                    min_weight_idx = i;
+            if has_compressor {
+                let mut min_compressors = u32::MAX;
+                let mut min_weight = u64::MAX;
+                for (i, &weight) in self.partition_weight.iter().enumerate() {
+                    let compressors = self.partition_compressor_count[i];
+                    if compressors < min_compressors
+                        || (compressors == min_compressors && weight < min_weight)
+                        || (compressors == min_compressors
+                            && weight == min_weight
+                            && self.partition_count[i] < self.partition_count[min_weight_idx])
+                    {
+                        min_compressors = compressors;
+                        min_weight = weight;
+                        min_weight_idx = i;
+                    }
+                }
+                self.partition_compressor_count[min_weight_idx] += 1;
+            } else {
+                let mut min_weight = u64::MAX;
+                for (i, &weight) in self.partition_weight.iter().enumerate() {
+                    if weight < min_weight {
+                        min_weight = weight;
+                        min_weight_idx = i;
+                    } else if (min_weight == weight) && (self.partition_count[i] < self.partition_count[min_weight_idx])
+                    {
+                        min_weight_idx = i;
+                    }
                 }
             }
-            let (airgroup_id, air_id) = self.get_instance_info(*gid)?;
+
             *instances_assigned_partition[min_weight_idx].entry((airgroup_id, air_id)).or_insert(0) += 1;
             self.partition_count[min_weight_idx] += 1;
             self.partition_weight[min_weight_idx] += self.instances[*gid].weight;
             if self.partition_mask[min_weight_idx] {
-                self.worker_instances.push(*gid);
-                let mut min_weight = u64::MAX;
+                // Select target process: compressor-count-first for compressor airs, weight-first otherwise
                 let mut min_weight_process_idx = 0;
-                for (i, &weight) in self.process_weight.iter().enumerate() {
-                    if weight < min_weight {
-                        min_weight = weight;
-                        min_weight_process_idx = i;
-                    } else if (min_weight == weight)
-                        && (local_process_count[i] < local_process_count[min_weight_process_idx])
-                    {
-                        min_weight_process_idx = i;
+                if has_compressor {
+                    let mut min_compressors = u32::MAX;
+                    let mut min_weight = u64::MAX;
+                    for (i, &weight) in self.process_weight.iter().enumerate() {
+                        let compressors = self.process_compressor_count[i];
+                        if compressors < min_compressors
+                            || (compressors == min_compressors && weight < min_weight)
+                            || (compressors == min_compressors
+                                && weight == min_weight
+                                && local_process_count[i] < local_process_count[min_weight_process_idx])
+                        {
+                            min_compressors = compressors;
+                            min_weight = weight;
+                            min_weight_process_idx = i;
+                        }
+                    }
+                    self.process_compressor_count[min_weight_process_idx] += 1;
+                } else {
+                    let mut min_weight = u64::MAX;
+                    for (i, &weight) in self.process_weight.iter().enumerate() {
+                        if weight < min_weight {
+                            min_weight = weight;
+                            min_weight_process_idx = i;
+                        } else if (min_weight == weight)
+                            && (local_process_count[i] < local_process_count[min_weight_process_idx])
+                        {
+                            min_weight_process_idx = i;
+                        }
                     }
                 }
 
@@ -674,11 +717,14 @@ impl DistributionCtx {
                 *c -= 1;
             }
 
+            self.instance_partition[*gid] = min_chunks_idx as i32;
+
             for chunk in chunks {
                 partitions_chunks[min_chunks_idx].insert(*chunk);
             }
 
             if self.partition_mask[min_chunks_idx] {
+                self.worker_instances.push(*gid);
                 let mut min_chunks = usize::MAX;
                 let mut min_process_id = 0;
                 for process_id in 0..self.n_processes {
