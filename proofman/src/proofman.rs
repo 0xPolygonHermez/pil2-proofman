@@ -3592,7 +3592,8 @@ where
                 let threads_to_use_collect = match cfg!(feature = "gpu") || stats {
                     true => (self.pctx.dctx_get_instance_chunks(instance_id)? / 16)
                         .max(self.max_num_threads / 4)
-                        .min(n_threads_witness),
+                        .min(n_threads_witness)
+                        .min(self.max_num_threads),
                     false => self.max_num_threads,
                 };
 
