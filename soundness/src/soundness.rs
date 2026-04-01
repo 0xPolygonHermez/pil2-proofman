@@ -61,8 +61,8 @@ pub struct Lookup {
     #[serde(rename = "num_columns_S")]
     pub num_columns_s: u32,
 
-    #[serde(rename = "num_columns_M")]
-    pub num_columns_m: u32,
+    #[serde(rename = "num_lookups_M")]
+    pub num_lookups_m: u32,
 
     pub grinding_bits_lookup: u32,
 }
@@ -288,18 +288,17 @@ pub fn get_bus_air_info<F: PrimeField64>(pctx: &ProofCtx<F>, setup: &Setup<F>) -
             }
         }
 
-        println!("BUS INFO for {}:{} {:?} {:?}", setup.airgroup_id, setup.air_id, setup.setup_type, bus_info);
         let lookups_air_info: Vec<Lookup> = bus_info
             .into_iter()
             .map(|(name, info)| {
-                let num_columns_m = if info.num_assumes > 0 { info.num_assumes } else { (info.num_proves > 0) as u32 };
+                let num_lookups_m = if info.num_assumes > 0 { info.num_assumes } else { (info.num_proves > 0) as u32 };
                 Lookup {
                     name,
                     logup_type: "univariate".to_string(),
                     rows_l: if info.num_assumes > 0 { info.rows } else { 0 },
                     rows_t: if info.num_proves > 0 { info.rows } else { 0 },
                     num_columns_s: info.num_expressions,
-                    num_columns_m,
+                    num_lookups_m,
                     grinding_bits_lookup: 0,
                 }
             })
