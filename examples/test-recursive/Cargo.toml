@@ -30,5 +30,5 @@ libloading.workspace = true
 [features]
 default = []
 diagnostic = []
-dev = []
+
 gpu = ["proofman-common/gpu"]

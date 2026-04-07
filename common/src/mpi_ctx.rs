@@ -1,24 +1,24 @@
-#[cfg(distributed)]
+#[cfg(feature = "distributed")]
 use mpi::traits::*;
-#[cfg(distributed)]
+#[cfg(feature = "distributed")]
 use mpi::collective::CommunicatorCollectives;
-#[cfg(distributed)]
+#[cfg(feature = "distributed")]
 use mpi::datatype::PartitionMut;
-#[cfg(distributed)]
+#[cfg(feature = "distributed")]
 use mpi::environment::Universe;
-#[cfg(distributed)]
+#[cfg(feature = "distributed")]
 use mpi::topology::Communicator;
 
 use std::sync::atomic::{Ordering, AtomicU64, AtomicI32, AtomicU32};
 use fields::PrimeField64;
-#[cfg(distributed)]
+#[cfg(feature = "distributed")]
 use fields::CubicExtensionField;
 use crate::{GlobalInfo, ProofmanError};
 use crate::Proof;
 
 use crate::ProofmanResult;
 
-#[cfg(distributed)]
+#[cfg(feature = "distributed")]
 use proofman_starks_lib_c::{
     initialize_agg_readiness_tracker_c, free_agg_readiness_tracker_c, agg_is_ready_c, reset_agg_readiness_tracker_c,
 };
@@ -60,9 +60,9 @@ fn get_process_numa_node() -> i32 {
 }
 
 pub struct MpiCtx {
-    #[cfg(distributed)]
+    #[cfg(feature = "distributed")]
     pub universe: Universe,
-    #[cfg(distributed)]
+    #[cfg(feature = "distributed")]
     pub world: mpi::topology::SimpleCommunicator,
     pub rank: i32,
     pub n_processes: i32,
@@ -83,7 +83,7 @@ impl Default for MpiCtx {
 
 impl MpiCtx {
     pub fn new() -> Self {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         {
             let (universe, _threading) = mpi::initialize_with_threading(mpi::Threading::Multiple)
                 .expect("Failed to initialize MPI with threading");
@@ -116,7 +116,7 @@ impl MpiCtx {
                 cancelled: AtomicU32::new(0),
             }
         }
-        #[cfg(not(distributed))]
+        #[cfg(not(feature = "distributed"))]
         {
             let numa_node = get_process_numa_node();
             MpiCtx {
@@ -135,7 +135,7 @@ impl MpiCtx {
     /// the instance added is not a table
     #[inline]
     pub fn process_ready_for_outer_agg(&self) {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         {
             self.outer_agg_rank.store(agg_is_ready_c(), Ordering::SeqCst);
         }
@@ -151,7 +151,7 @@ impl MpiCtx {
     }
 
     pub fn reset_outer_agg_tracker(&self) {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         {
             self.outer_agg_rank.store(-1, Ordering::SeqCst);
             reset_agg_readiness_tracker_c();
@@ -163,7 +163,7 @@ impl MpiCtx {
         self.cancelled.store(0, Ordering::SeqCst);
     }
 
-    #[cfg(distributed)]
+    #[cfg(feature = "distributed")]
     pub fn new_with_universe(universe: Universe) -> Self {
         let world = universe.world();
         let rank = world.rank();
@@ -200,20 +200,20 @@ impl MpiCtx {
 
     #[inline]
     pub fn barrier(&self) {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         {
             self.world.barrier();
         }
     }
 
     pub fn distribute_roots(&self, values: Vec<u64>) -> Vec<u64> {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         {
             let mut all_values: Vec<u64> = vec![0u64; values.len() * self.n_processes as usize];
             self.world.all_gather_into(&values, &mut all_values);
             all_values
         }
-        #[cfg(not(distributed))]
+        #[cfg(not(feature = "distributed"))]
         {
             values.to_vec()
         }
@@ -224,7 +224,7 @@ impl MpiCtx {
         airgroupvalues: Vec<Vec<u64>>,
         _global_info: &GlobalInfo,
     ) -> Vec<Vec<F>> {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         {
             let airgroupvalues_flatten: Vec<u64> = airgroupvalues.into_iter().flatten().collect();
             let mut gathered_data: Vec<u64> = vec![0; airgroupvalues_flatten.len() * self.n_processes as usize];
@@ -281,7 +281,7 @@ impl MpiCtx {
             }
             airgroupvalues_full
         }
-        #[cfg(not(distributed))]
+        #[cfg(not(feature = "distributed"))]
         {
             airgroupvalues
                 .into_iter()
@@ -291,7 +291,7 @@ impl MpiCtx {
     }
 
     pub fn distribute_publics(&self, publics: Vec<u64>) -> Vec<u64> {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         {
             let local_size = publics.len() as i32;
             let mut sizes: Vec<i32> = vec![0; self.n_processes as usize];
@@ -320,7 +320,7 @@ impl MpiCtx {
             // Each process will now have the same complete dataset
             all_publics
         }
-        #[cfg(not(distributed))]
+        #[cfg(not(feature = "distributed"))]
         {
             publics
         }
@@ -330,7 +330,7 @@ impl MpiCtx {
     //Root provides data in buf; others can pass an empty Vec that is filled with the message
     //Uses point-to-point with matched_probe for thread safety (no message interleaving)
     pub fn broadcast(&self, _buf: &mut Vec<u8>) {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         {
             if self.n_processes > 1 {
                 if self.rank == 0 {
@@ -351,33 +351,33 @@ impl MpiCtx {
     }
 
     pub fn send_proof_to_rank(&self, _proof: &Vec<u64>, _airgroup_id: usize, _rank: i32) {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         // Send the proof directly - the vector already contains its length information
         self.world.process_at_rank(_rank).send_with_tag(_proof, _airgroup_id as i32);
     }
 
     pub fn recv_proof_from_rank(&self, _airgroup_id: usize, _rank: i32) -> Vec<u64> {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         {
             // Receive the proof directly as a vector
             let (proof_buffer, _) = self.world.process_at_rank(_rank).receive_vec_with_tag::<u64>(_airgroup_id as i32);
             proof_buffer
         }
-        #[cfg(not(distributed))]
+        #[cfg(not(feature = "distributed"))]
         {
             Vec::new()
         }
     }
 
     pub fn send_proof_agg_rank<F: PrimeField64>(&self, _proof: &Proof<F>) {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         self.world
             .process_at_rank(self.outer_agg_rank.load(Ordering::SeqCst))
             .send_with_tag(&_proof.proof[..], _proof.airgroup_id as i32);
     }
 
     pub fn check_incoming_proofs(&self, airgroup_id: usize) -> Option<Vec<u64>> {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         {
             if let Some(_status) = self.world.any_process().immediate_probe_with_tag(airgroup_id as i32) {
                 let (proof_data, _status) = self.world.any_process().receive_vec_with_tag::<u64>(airgroup_id as i32);
@@ -386,7 +386,7 @@ impl MpiCtx {
                 None
             }
         }
-        #[cfg(not(distributed))]
+        #[cfg(not(feature = "distributed"))]
         {
             _ = airgroup_id;
             None
@@ -395,7 +395,7 @@ impl MpiCtx {
 
     #[allow(unused_variables)]
     pub fn distribute_recursive2_proofs(&self, alives: &[usize], proofs: &mut [Vec<Option<Vec<u64>>>]) {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         {
             // Count number of aggregations that will be done
             let n_groups = alives.len();
@@ -471,7 +471,7 @@ impl MpiCtx {
     }
 
     pub fn distribute_multiplicity(&self, _multiplicity: &[AtomicU64], _owner: i32) {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         {
             //assert that I can operate with u32
             assert!(_multiplicity.len() < u32::MAX as usize);
@@ -507,7 +507,7 @@ impl MpiCtx {
     }
 
     pub fn distribute_multiplicities(&self, _multiplicities: &[Vec<AtomicU64>], _owner: i32) {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         {
             // Ensure that each multiplicity vector can be operated with u32
             let mut buff_size = 0;
@@ -564,7 +564,7 @@ impl MpiCtx {
     /// Notify all other MPI processes to cancel their current job
     /// This sends a cancellation message to all ranks except the current one
     pub fn notify_cancellation(&self) {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         {
             if self.cancelled.load(Ordering::SeqCst) == 1 {
                 // Already cancelled, no need to send again
@@ -585,7 +585,7 @@ impl MpiCtx {
 
     /// Check for incoming cancellation messages
     pub fn check_cancellation(&self) -> Option<ProofmanError> {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         {
             if self.cancelled.load(Ordering::SeqCst) == 0 {
                 if let Some(_status) = self.world.any_process().immediate_probe_with_tag(_MPI_TAG_CANCEL_JOB) {
@@ -606,7 +606,7 @@ impl MpiCtx {
 
 impl Drop for MpiCtx {
     fn drop(&mut self) {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         {
             free_agg_readiness_tracker_c();
         }
