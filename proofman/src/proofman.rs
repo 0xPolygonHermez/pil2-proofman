@@ -2902,27 +2902,40 @@ where
                 return Ok(Some(agg_proofs_data));
             } else {
                 let worker_contributions = self.worker_contributions.read().unwrap();
-                let mut not_received_contributions = Vec::new();
-                for contrib in worker_contributions.iter() {
-                    if !contrib.aggregated {
-                        not_received_contributions.push((contrib.worker_index, contrib.airgroup_id));
+                let received_agg_proofs = self.received_agg_proofs.read().unwrap();
+                let current_worker_index = self.pctx.get_worker_index().unwrap_or(0) as u32;
+
+                let requires_aggregation = received_agg_proofs.iter().any(|worker_indexes| {
+                    worker_indexes.len() > 1
+                        || (worker_indexes.len() == 1 && worker_indexes[0] != current_worker_index as usize)
+                });
+
+                if requires_aggregation {
+                    let mut not_received_contributions = Vec::new();
+                    for contrib in worker_contributions.iter() {
+                        if !contrib.aggregated {
+                            not_received_contributions.push((contrib.worker_index, contrib.airgroup_id));
+                        }
                     }
-                }
 
-                if !not_received_contributions.is_empty() {
-                    let error = format!(
-                        "Not received contributions from workers: {:?}",
-                        not_received_contributions
-                            .iter()
-                            .map(|(worker_index, airgroup_id)| format!(
-                                "(worker {}, airgroup {})",
-                                worker_index, airgroup_id
-                            ))
-                            .collect::<Vec<_>>()
-                    );
+                    if !not_received_contributions.is_empty() {
+                        let error = format!(
+                            "Not received contributions from workers: {:?}",
+                            not_received_contributions
+                                .iter()
+                                .map(|(worker_index, airgroup_id)| format!(
+                                    "(worker {}, airgroup {})",
+                                    worker_index, airgroup_id
+                                ))
+                                .collect::<Vec<_>>()
+                        );
 
-                    self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(error.clone())));
-                    return Err(ProofmanError::InvalidProof(error));
+                        self.cancellation_info
+                            .write()
+                            .unwrap()
+                            .cancel(Some(ProofmanError::InvalidProof(error.clone())));
+                        return Err(ProofmanError::InvalidProof(error));
+                    }
                 }
 
                 let global_challenge = self.pctx.get_global_challenge().clone();
