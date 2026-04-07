@@ -7,12 +7,6 @@ use std::time::UNIX_EPOCH;
 fn main() {
     println!("cargo:rerun-if-env-changed=CUDA_ARCHS");
 
-    // **Check if the `no_lib_link` feature is enabled**
-    if env::var("CARGO_FEATURE_NO_LIB_LINK").is_ok() {
-        println!("Skipping linking because `no_lib_link` feature is enabled.");
-        return;
-    }
-
     // Paths
     let pil2_stark_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pil2-stark");
     let library_folder =
@@ -63,43 +57,31 @@ fn main() {
         false
     };
 
-    // Check if the `no_cpp_compilation` feature is enabled
-    if cfg!(feature = "no_cpp_compilation") {
-        println!("Skipping C++ compilation because `no_cpp_compilation` feature is enabled.");
-        if !lib_file.exists() {
-            eprintln!("Warning: Library `{}` not found. Make sure to compile it manually.", lib_file.display());
-            eprintln!(
-                "Run: cd pil2-stark && make {}",
-                if cfg!(feature = "gpu") { "starks_lib_gpu" } else { "starks_lib" }
-            );
-        }
-    } else {
-        // Rebuild if library is missing or CUDA_ARCHS changed since last build
-        if !lib_file.exists() || archs_changed {
-            if cfg!(feature = "gpu") {
-                eprintln!("`libstarksgpu.a` missing or CUDA_ARCHS changed — recompiling...");
-                run_command("make", &["clean"], &pil2_stark_path);
-                match &gencode_flags {
-                    Some(flags) => {
-                        let gencode_arg = format!("CUDA_GENCODE_FLAGS={}", flags);
-                        run_command("make", &["-j", &gencode_arg, "starks_lib_gpu"], &pil2_stark_path);
-                    }
-                    None => run_command("make", &["-j", "starks_lib_gpu"], &pil2_stark_path),
+    // Rebuild if library is missing or CUDA_ARCHS changed since last build
+    if !lib_file.exists() || archs_changed {
+        if cfg!(feature = "gpu") {
+            eprintln!("`libstarksgpu.a` missing or CUDA_ARCHS changed — recompiling...");
+            run_command("make", &["clean"], &pil2_stark_path);
+            match &gencode_flags {
+                Some(flags) => {
+                    let gencode_arg = format!("CUDA_GENCODE_FLAGS={}", flags);
+                    run_command("make", &["-j", &gencode_arg, "starks_lib_gpu"], &pil2_stark_path);
                 }
-                if let Err(e) = fs::write(&archs_stamp_path, stamp_content) {
-                    eprintln!(
-                        "Warning: failed to write CUDA arch stamp {:?}: {e} — next build will recompile",
-                        archs_stamp_path
-                    );
-                }
-            } else {
-                eprintln!("`libstarks.a` not found! Compiling...");
-                run_command("make", &["clean"], &pil2_stark_path);
-                run_command("make", &["-j", "starks_lib"], &pil2_stark_path);
+                None => run_command("make", &["-j", "starks_lib_gpu"], &pil2_stark_path),
+            }
+            if let Err(e) = fs::write(&archs_stamp_path, stamp_content) {
+                eprintln!(
+                    "Warning: failed to write CUDA arch stamp {:?}: {e} — next build will recompile",
+                    archs_stamp_path
+                );
             }
         } else {
-            println!("C++ library already compiled, skipping rebuild.");
+            eprintln!("`libstarks.a` not found! Compiling...");
+            run_command("make", &["clean"], &pil2_stark_path);
+            run_command("make", &["-j", "starks_lib"], &pil2_stark_path);
         }
+    } else {
+        println!("C++ library already compiled, skipping rebuild.");
     }
 
     // Absolute path to the library
@@ -114,10 +96,7 @@ fn main() {
     }
 
     // Ensure Rust triggers a rebuild if the C++ source code changes
-    // Skip this if no_cpp_compilation is enabled
-    if !cfg!(feature = "no_cpp_compilation") {
-        track_file_changes(&pil2_stark_path, gencode_flags.as_deref(), &archs_stamp_path);
-    }
+    track_file_changes(&pil2_stark_path, gencode_flags.as_deref(), &archs_stamp_path);
 
     // Add platform-specific library search paths
     if cfg!(target_os = "macos") {
