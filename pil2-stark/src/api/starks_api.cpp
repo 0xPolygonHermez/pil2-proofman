@@ -18,8 +18,13 @@
 #endif
 
 
+#ifndef __USE_CUDA__
+#include "verify_constraints.hpp"
+#else
+// GPU build: verify_constraints.hpp is already compiled via verify_constraints.cuh in starks_api.cu,
 struct ConstraintInfo;
 void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *constraintsInfo);
+#endif
 
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
