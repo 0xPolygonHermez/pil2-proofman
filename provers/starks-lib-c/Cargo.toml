@@ -15,7 +15,4 @@ tracing.workspace = true
 
 [features]
 default = []
-no_lib_link = []
-disable_distributed = []
 gpu = []
-

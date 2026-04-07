@@ -344,8 +344,6 @@ impl<F: PrimeField64> Setup<F> {
 
             // Read exec file data
             let exec_filename = setup_path.display().to_string() + ".exec";
-            let exec_filename_str = CString::new(exec_filename.as_str()).unwrap();
-            let exec_filename_ptr = exec_filename_str.as_ptr() as *mut std::os::raw::c_char;
 
             let mut file = File::open(&exec_filename)?;
             let mut bytes = [0u8; 8];
@@ -358,7 +356,7 @@ impl<F: PrimeField64> Setup<F> {
 
             let exec_data_size = 2 + n_adds * 4 + n_smap * n_cols;
             let mut exec_file_data: Vec<u64> = vec![0; exec_data_size as usize];
-            read_exec_file_c(exec_file_data.as_mut_ptr(), exec_filename_ptr, n_cols);
+            read_exec_file_c(exec_file_data.as_mut_ptr(), exec_filename.as_str(), n_cols);
 
             (Some(library), Some(circom_circuit_ptr), get_witness_fn, Some(witness_size), Some(exec_file_data))
         } else {
