@@ -8,7 +8,7 @@ use proofman_common::{
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{get_num_gpus_c, init_gpu_setup_c};
+use proofman_starks_lib_c::{get_num_gpus_c, init_gpu_setup_c, set_gpu_mode_c};
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c, reset_device_streams_c,
     get_instances_ready_c, free_device_buffers_c,
@@ -548,6 +548,8 @@ where
             SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &ParamsGPU::new(false), &[])?;
 
         if cfg!(feature = "gpu") {
+            set_gpu_mode_c(true);
+
             let n_gpus = get_num_gpus_c();
             if n_gpus == 0 {
                 return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
@@ -3809,6 +3811,10 @@ where
         packed_info: &HashMap<(usize, usize), PackedInfo>,
         verbose_mode: VerboseMode,
     ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64)> {
+        if cfg!(feature = "gpu") {
+            set_gpu_mode_c(true);
+        }
+
         let mut pctx = ProofCtx::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx.clone())?;
         timer_start_info!(INITIALIZING_PROOFMAN);
 

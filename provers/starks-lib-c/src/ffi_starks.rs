@@ -1441,6 +1441,11 @@ pub fn get_num_gpus_c() -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn set_gpu_mode_c(use_gpu: bool) {
+    unsafe { set_gpu_mode(use_gpu) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn get_unified_buffer_gpu_c(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
     unsafe { get_unified_buffer_gpu(d_buffers) }
 }
@@ -2455,6 +2460,11 @@ pub fn check_device_memory_c(_node_rank: u32, _node_size: u32) -> u64 {
 pub fn get_num_gpus_c() -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_num_gpus: This is a mock call because there is no linked library");
     0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn set_gpu_mode_c(_use_gpu: bool) {
+    trace!("{}: ··· {}", "ffi     ", "set_gpu_mode: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]

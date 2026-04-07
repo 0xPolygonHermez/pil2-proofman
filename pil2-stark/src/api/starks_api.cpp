@@ -18,9 +18,8 @@
 #endif
 
 
-#ifndef __USE_CUDA__
-#include "verify_constraints.hpp"
-#endif
+struct ConstraintInfo;
+void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *constraintsInfo);
 
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
@@ -395,16 +394,10 @@ void pack_const_pols(void *pStarkinfo, void *pConstPols, char *constFile) {
     free(dst);
 }
 
-#ifndef __USE_CUDA__
-
-void tile_const_pols(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu){}
-void init_gpu_setup(uint64_t maxBitsExt) {}
-void prepare_blocks(uint64_t* pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu) {}
-void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress, void *unified_buffer_gpu) {
+void calculate_const_tree_cpu(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress, void *unified_buffer_gpu) {
     ConstTree constTree;
     constTree.calculateConstTreeGL(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress);
 };
-#endif
 
 
 void calculate_const_tree_bn128(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress) {
@@ -625,8 +618,7 @@ void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *buf
     loadFileParallel(&bufferGL[setupCtx.starkInfo.mapOffsets[std::make_pair(section, false)]], bufferFile, ((N + NExtended) * nCols + setupCtx.starkInfo.getNumNodesMT(NExtended)) * sizeof(Goldilocks::Element), true, 32);
 }
 
-#ifndef __USE_CUDA__
-void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile)
+void write_custom_commit_cpu(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile)
 {
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
@@ -652,7 +644,7 @@ void write_custom_commit(void* root, uint64_t arity, uint64_t nBits, uint64_t nB
     }
 }
 
-uint64_t commit_witness(void *pSetupCtx_, void *params_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers_) {
+uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers_) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     StepsParams *params = (StepsParams *)params_;
@@ -662,7 +654,7 @@ uint64_t commit_witness(void *pSetupCtx_, void *params_, uint64_t instanceId, ui
     uint64_t N = 1 << setupCtx->starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx->starkInfo.starkStruct.nBitsExt;
 
-    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];    
+    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
 
     MerkleTreeGL mt(setupCtx->starkInfo.starkStruct.merkleTreeArity, setupCtx->starkInfo.starkStruct.lastLevelVerification, true, NExtended, nCols);
 
@@ -675,7 +667,7 @@ uint64_t commit_witness(void *pSetupCtx_, void *params_, uint64_t instanceId, ui
         d_buffers->unpack_cpu((uint64_t *)params->trace, (uint64_t*)&auxTraceGL[offset_src], N, nCols, packed_info->num_packed_words, packed_info->unpack_info);
         memcpy(params->trace, &params->aux_trace[offset_src], N * nCols * sizeof(Goldilocks::Element));
     }
-    
+
     ProverHelpers proverHelpers;
     ExpressionsPack expressionsCtx(*setupCtx, &proverHelpers);
 
@@ -694,7 +686,6 @@ uint64_t commit_witness(void *pSetupCtx_, void *params_, uint64_t instanceId, ui
 
     return 0;
 }
-#endif
 
 // Constraints
 // =================================================================================
@@ -720,18 +711,10 @@ void get_constraints_lines(void* pSetupCtx, uint8_t **constraintsLines)
     }
 }
 
-#ifndef __USE_CUDA__
-uint64_t initialize_instance(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* params_, void *d_buffers_) {
-    return 0;
-}
-
-void calculate_trace_instance(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *d_buffers, uint64_t streamId) {}
-
-void verify_constraints(void *pSetupCtx, uint64_t airgroupId, uint64_t airId,void* stepsParams, void* constraintsInfo, void *d_buffers, uint64_t streamId)
+void verify_constraints_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId,void* stepsParams, void* constraintsInfo, void *d_buffers, uint64_t streamId)
 {
     verifyConstraints(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, (ConstraintInfo *)constraintsInfo);
 }
-#endif
 
 // Global Constraints
 // =================================================================================
@@ -786,10 +769,9 @@ uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globali
     return setHintFieldGlobalConstraint(globalInfo, *(ExpressionsBin*)p_globalinfo_bin, (Goldilocks::Element *)proofValues, (Goldilocks::Element *)values, hintId, string(hintFieldName));
 }
 
-#ifndef __USE_CUDA__
 // Gen proof
 // =================================================================================
-uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool skipRecalculation, uint64_t streamId, char *constPolsPath,  char *constTreePath)  {
+uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool skipRecalculation, uint64_t streamId, char *constPolsPath,  char *constTreePath)  {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx;
     StepsParams *params = (StepsParams *)params_;
@@ -816,48 +798,19 @@ uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_
     
     return 0;
 }
-void get_stream_proofs(void *d_buffers_){}
-void get_stream_proofs_non_blocking(void *d_buffers_){}
-void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {}
-
 // Recursive proof
-// ================================================================================= 
-void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext)
+// =================================================================================
+void *gen_device_buffers_cpu(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext)
 {
     DeviceCommitBuffersCPU *d_buffers = new DeviceCommitBuffersCPU();
     return (void *)d_buffers;
 };
-void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffers,  char* verkey){
-    return nullptr;
-}
-void free_device_buffers_recursivef(void *d_buffers_){}
-
-void alloc_fixed_pols_buffer_gpu(void *d_buffers_) {}
-void free_fixed_pols_buffer_gpu(void *d_buffers_) {}
-void load_fixed_pols_recursivef(void *pSetupCtx_, void *pConstTree, void *d_buffers_) {}
-
-uint64_t gen_device_streams(void *d_buffers_, uint64_t nStreams, uint64_t nStreamsRecursive, uint64_t maxSizeProverBuffer, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity) { return 1; }
-
-void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceArea, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation) {}
-
-void get_instances_ready(void *d_buffers, int64_t* instances_ready) {}
-
-void reset_device_streams(void *d_buffers_) {}
-
-uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size) { return 0; }
-
-uint64_t get_num_gpus(){ return 1;}
-
-void *get_unified_buffer_gpu(void *d_buffers_) {
-    return nullptr;
-}
-
-void free_device_buffers(void *d_buffers_) {
+void free_device_buffers_cpu(void *d_buffers_) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     delete d_buffers;
 }
 
-void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo_) {
+void load_device_setup_cpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo_) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
 
@@ -868,11 +821,7 @@ void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, voi
     }
 }
 
-void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType, bool onlyFirstGPU) {}
-
-void calculate_const_tree_fixed(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, char *proofType, void *d_buffers_) {}
-
-uint64_t gen_recursive_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream) {
+uint64_t gen_recursive_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx;
 
@@ -912,11 +861,9 @@ uint64_t gen_recursive_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airI
     return 0;
 }
 
-void *gen_recursive_proof_final(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers) {
+void *gen_recursive_proof_final_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers) {
     return genRecursiveProofBN128(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file));
 }
-
-#endif
 
 void launch_callback(uint64_t instanceId, char *proofType) {
     if (proof_done_callback != nullptr) {
@@ -954,8 +901,7 @@ uint64_t get_snark_protocol_id(void *snark_prover) {
     return finalSnarkProver->protocolId;
 }
 
-#ifndef __USE_CUDA__
-void *init_final_snark_prover(char* zkeyFile) {
+void *init_final_snark_prover_cpu(char* zkeyFile) {
 
     auto fdZkey = std::make_unique<BinFileUtils::BinFile>(std::string(zkeyFile), "zkey", 1, /*directRead=*/true);
     uint64_t protocolId = getProtocolIdFromBinFile(fdZkey.get());
@@ -983,20 +929,16 @@ void *init_final_snark_prover(char* zkeyFile) {
     return finalSnark;
 }
 
-void free_final_snark_prover(void *snark_prover) {
+void free_final_snark_prover_cpu(void *snark_prover) {
     if (snark_prover) {
         delete static_cast<FinalSnark *>(snark_prover);
     }
 }
 
-void gen_final_snark_proof(void *prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark) {
+void gen_final_snark_proof_cpu(void *prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark) {
     genFinalSnarkProof(prover, circomWitnessFinal, proof, publicsSnark);
 }
 
-void pre_allocate_final_snark_prover(void *snark_prover, void* unified_buffer_gpu) {
-    // No-op for CPU
-}
-#endif
 
 void free_json_string(char* json_str) {
     if (json_str != nullptr) {
