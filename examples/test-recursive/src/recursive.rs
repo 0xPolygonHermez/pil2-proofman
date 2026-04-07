@@ -72,8 +72,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
             let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
 
             let exec_filename = setup.setup_path.display().to_string() + ".exec";
-            let exec_filename_str = CString::new(exec_filename.clone()).unwrap();
-            let exec_filename_ptr = exec_filename_str.as_ptr() as *mut std::os::raw::c_char;
 
             let mut file = File::open(exec_filename.clone()).unwrap();
 
@@ -89,7 +87,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
 
             let exec_data_size = 2 + n_adds * 4 + n_smap * n_cols;
             let mut exec_file_data: Vec<u64> = vec![0; exec_data_size as usize];
-            read_exec_file_c(exec_file_data.as_mut_ptr(), exec_filename_ptr, n_cols);
+            read_exec_file_c(exec_file_data.as_mut_ptr(), exec_filename.as_str(), n_cols);
 
             let library: Library = unsafe { Library::new(rust_lib_path).unwrap() };
 

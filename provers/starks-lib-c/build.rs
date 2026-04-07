@@ -6,12 +6,6 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-env-changed=CUDA_ARCHS");
 
-    // **Check if the `no_lib_link` feature is enabled**
-    if cfg!(feature = "no_lib_link") {
-        println!("Skipping linking because `no_lib_link` feature is enabled.");
-        return;
-    }
-
     // Canonicalize to avoid ".." in rerun-if-changed paths
     let pil2_stark_path_raw = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pil2-stark");
     let pil2_stark_path = pil2_stark_path_raw.canonicalize().unwrap_or_else(|_| pil2_stark_path_raw.clone());
@@ -88,6 +82,8 @@ fn main() {
                 archs_stamp_path
             );
         }
+    } else {
+        println!("C++ library already compiled, skipping rebuild.");
     }
 
     // Absolute path to the library

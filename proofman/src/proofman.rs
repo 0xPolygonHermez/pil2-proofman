@@ -32,7 +32,7 @@ use proofman_common::{ProofmanResult, ProofmanError, Setup};
 use proofman_util::VadcopFinalProof;
 use crate::{check_const_paths, check_const_paths_vadcop, needs_regeneration_fixed, needs_regeneration_vadcop_fixed};
 
-#[cfg(distributed)]
+#[cfg(feature = "distributed")]
 use mpi::topology::Communicator;
 
 use proofman_starks_lib_c::{
@@ -489,7 +489,7 @@ where
     }
 
     pub fn split_active_processes(&self, _is_active: bool) {
-        #[cfg(distributed)]
+        #[cfg(feature = "distributed")]
         {
             let color =
                 if _is_active { mpi::topology::Color::with_value(1) } else { mpi::topology::Color::undefined() };
