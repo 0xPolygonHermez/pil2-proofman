@@ -188,6 +188,10 @@ extern "C" {
     void register_proof_done_callback(ProofDoneCallback cb);
     void launch_callback(uint64_t instanceId, char *proofType);
 
+    // Backend selection
+    // =================================================================================
+    void set_gpu_mode(bool use_gpu);
+
     // MPI calls
     // =================================================================================
     void initialize_agg_readiness_tracker();
