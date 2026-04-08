@@ -6,6 +6,7 @@ license = { workspace = true }
 keywords = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
+build = "build.rs"
 
 [dependencies]
 proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
@@ -38,7 +39,7 @@ mpi = { version = "0.8.0", optional = true }
 libc = "0.2"
 
 [features]
-default = ["distributed"]
-distributed = ["dep:mpi"]
+default = ["mpi"]
+mpi = ["dep:mpi"]
 diagnostic = ["proofman-macros/diagnostic"]
-gpu = ["proofman-starks-lib-c/gpu"]
+cpu-only = ["proofman-starks-lib-c/cpu-only"]

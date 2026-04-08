@@ -32,9 +32,6 @@ use proofman_common::{ProofmanResult, ProofmanError, Setup};
 use proofman_util::VadcopFinalProof;
 use crate::{check_const_paths, check_const_paths_vadcop, needs_regeneration_fixed, needs_regeneration_vadcop_fixed};
 
-#[cfg(feature = "distributed")]
-use mpi::topology::Communicator;
-
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c,
     calculate_witness_expressions_c, clear_proof_done_callback_c, launch_callback_c, initialize_instance_c,
@@ -486,15 +483,8 @@ where
         self.pctx.get_publics().iter().flat_map(|x| x.as_canonical_u64().to_le_bytes()).collect()
     }
 
-    pub fn split_active_processes(&self, _is_active: bool) {
-        #[cfg(feature = "distributed")]
-        {
-            let color =
-                if _is_active { mpi::topology::Color::with_value(1) } else { mpi::topology::Color::undefined() };
-
-            let _sub_comm = self.pctx.mpi_ctx.world.split_by_color(color);
-            self.pctx.mpi_ctx.world.split_shared(self.pctx.mpi_ctx.rank);
-        }
+    pub fn split_active_processes(&self, is_active: bool) {
+        self.pctx.mpi_ctx.split_active_processes(is_active);
     }
 
     fn check_cancel(&self, notify_mpi: bool) -> ProofmanResult<()> {
@@ -549,7 +539,11 @@ where
 
         let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, false, &[], gpu)?;
 
-        set_gpu_mode_c(gpu);
+        if !set_gpu_mode_c(gpu) {
+            return Err(ProofmanError::InvalidConfiguration(
+                "GPU mode requested but library was built without CUDA support".into(),
+            ));
+        }
         if gpu {
             let n_gpus = get_num_gpus_c();
             if n_gpus == 0 {
@@ -3765,7 +3759,11 @@ where
         proving_key_path: PathBuf,
         options: &ProofmanOptions,
     ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64)> {
-        set_gpu_mode_c(options.gpu);
+        if !set_gpu_mode_c(options.gpu) {
+            return Err(ProofmanError::InvalidConfiguration(
+                "GPU mode requested but library was built without CUDA support".into(),
+            ));
+        }
 
         let mut pctx = ProofCtx::create_ctx(
             proving_key_path,

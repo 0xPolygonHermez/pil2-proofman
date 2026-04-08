@@ -70,7 +70,7 @@ impl BorshSerialize for ProofOptions {
         BorshSerialize::serialize(&self.verify_constraints, writer)?;
         BorshSerialize::serialize(&self.aggregation, writer)?;
         BorshSerialize::serialize(&self.rma, writer)?;
-        // BorshSerialize::serialize(&self.compressed, writer)?;
+        BorshSerialize::serialize(&self.compressed, writer)?;
         BorshSerialize::serialize(&self.verify_proofs, writer)?;
         BorshSerialize::serialize(&self.output_dir_path.as_ref().map(|p| p.to_string_lossy().to_string()), writer)?;
         BorshSerialize::serialize(&self.minimal_memory, writer)?;

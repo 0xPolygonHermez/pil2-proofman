@@ -128,12 +128,13 @@ impl ProveCmd {
         if let Some(max_witness_stored) = self.max_witness_stored {
             options.with_max_witness_stored(max_witness_stored);
         }
-
-        let mut options = ProofmanOptions::default();
         if verify_constraints {
             options.verify_constraints();
         } else if !self.aggregation {
             options.no_aggregation();
+        }
+        if self.gpu {
+            options.gpu();
         }
         options.verbose_mode(self.verbose.into());
 
