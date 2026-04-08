@@ -19,7 +19,7 @@ use crate::{
 use std::ffi::c_void;
 use proofman_starks_lib_c::{
     check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
-    alloc_device_large_buffers_c,
+    alloc_device_large_buffers_c, set_gpu_mode_c,
 };
 use proofman_util::DeviceBuffer;
 
@@ -930,6 +930,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         aggregation: bool,
         gpu_params: &ParamsGPU,
     ) -> ProofmanResult<(u64, u64, u64)> {
+        if cfg!(feature = "gpu") {
+            set_gpu_mode_c(true);
+        }
+
         let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
             self.mpi_ctx.node_rank as u32,
             self.mpi_ctx.node_n_processes as u32,
