@@ -16,7 +16,7 @@ struct DeviceCommitBuffersCPU
     uint64_t airId;
     std::string proofType;
     
-    bool packedTrace;
+    bool packedTrace = false;
 
     std::map<std::pair<uint64_t, uint64_t>, PackedInfoCPU> packedInfo;
 
