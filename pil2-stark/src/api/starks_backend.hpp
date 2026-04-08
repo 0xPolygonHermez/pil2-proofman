@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <atomic>
 
 // Backend interface: function pointer table for CPU/GPU dispatched functions.
 // Only functions with distinct CPU and GPU implementations are listed here.
@@ -58,7 +59,7 @@ struct StarksBackend {
 };
 
 // Active backend pointer — set via set_gpu_mode()
-extern StarksBackend* active_backend;
+extern std::atomic<StarksBackend*> active_backend;
 
 // CPU backend (always available)
 extern StarksBackend cpu_backend;
