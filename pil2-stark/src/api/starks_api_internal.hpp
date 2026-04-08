@@ -15,6 +15,8 @@ struct DeviceCommitBuffersCPU
     uint64_t airgroupId;
     uint64_t airId;
     std::string proofType;
+    
+    bool packedTrace;
 
     std::map<std::pair<uint64_t, uint64_t>, PackedInfoCPU> packedInfo;
 
@@ -26,6 +28,8 @@ struct DeviceCommitBuffersCPU
     }
 
     PackedInfoCPU* getPackedInfo(uint64_t airgroupId, uint64_t airId) {
+        if (!packedTrace) return nullptr;
+
         auto it = packedInfo.find({airgroupId, airId});
         if (it != packedInfo.end())
             return &it->second;

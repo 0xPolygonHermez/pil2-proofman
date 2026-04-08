@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tabled::{Tabled, Table};
 use proofman_common::{
-    Setup, SetupsVadcop, ProofType, ParamsGPU, ProofmanError, ProofmanResult, MpiCtx, ProofCtx, SetupCtx, VerboseMode,
+    Setup, SetupsVadcop, ProofType, ProofmanError, ProofmanResult, MpiCtx, ProofCtx, SetupCtx, VerboseMode,
     format_bytes,
 };
 use proofman_hints::{get_hint_ids_by_name, get_hint_field_constant_a, HintFieldOptions};
@@ -322,12 +322,12 @@ pub fn soundness_info<F: PrimeField64>(
 
     let mpi_ctx = Arc::new(MpiCtx::new());
 
-    let pctx = ProofCtx::<F>::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx)?;
+    let pctx = ProofCtx::<F>::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx, false)?;
 
     let setups_aggregation =
-        Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, &ParamsGPU::new(false), &[])?);
+        Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, false, &[], false)?);
 
-    let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &ParamsGPU::new(false), &[])?;
+    let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, false, &[], false)?;
 
     let mut circuits = Vec::new();
 

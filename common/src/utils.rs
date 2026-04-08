@@ -501,10 +501,9 @@ pub fn join_thread(handle: std::thread::JoinHandle<ProofmanResult<()>>) -> Proof
     }
 }
 
-pub fn init_gpu_setup(max_n_bits_ext: u64) -> ProofmanResult<()> {
-    if cfg!(feature = "gpu") {
-        set_gpu_mode_c(true);
-
+pub fn init_gpu_setup(max_n_bits_ext: u64, gpu: bool) -> ProofmanResult<()> {
+    set_gpu_mode_c(gpu);
+    if gpu {
         let n_gpus = get_num_gpus_c();
         if n_gpus == 0 {
             return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));

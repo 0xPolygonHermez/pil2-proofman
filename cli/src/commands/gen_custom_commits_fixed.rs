@@ -2,7 +2,7 @@
 use clap::Parser;
 use libloading::{Library, Symbol};
 use std::sync::Arc;
-use proofman_common::{MpiCtx, ParamsGPU, ProofCtx, ProofType, SetupCtx, SetupsVadcop};
+use proofman_common::{MpiCtx, ProofCtx, ProofType, SetupCtx, SetupsVadcop};
 use std::{collections::HashMap, path::PathBuf};
 use colored::Colorize;
 use crate::commands::field::Field;
@@ -37,6 +37,9 @@ pub struct GenCustomCommitsFixedCmd {
 
     #[clap(short = 'c', long, value_name="KEY=VALUE", num_args(1..))]
     pub custom_commits: Vec<String>,
+
+    #[clap(short = 'g', long, default_value_t = false)]
+    pub gpu: bool,
 }
 
 impl GenCustomCommitsFixedCmd {
@@ -51,17 +54,16 @@ impl GenCustomCommitsFixedCmd {
         }
 
         let mpi_ctx = Arc::new(MpiCtx::new());
-        let mut pctx = ProofCtx::create_ctx(self.proving_key.clone(), false, self.verbose.into(), mpi_ctx)?;
+        let mut pctx = ProofCtx::create_ctx(self.proving_key.clone(), false, self.verbose.into(), mpi_ctx, self.gpu)?;
 
         tracing::info!("{}", format!("{} GenCustomCommitsFixed", format!("{: >12}", "Command").bright_green().bold()));
         tracing::info!("");
 
-        let params_gpu = ParamsGPU::new(false);
         let sctx =
-            Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, &params_gpu, &[])?);
+            Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, false, &[], self.gpu)?);
 
-        let setups_vadcop = Arc::new(SetupsVadcop::new(&pctx.global_info, false, false, &params_gpu, &[])?);
-        pctx.set_device_buffers(&sctx, &setups_vadcop, false, &params_gpu)?;
+        let setups_vadcop = Arc::new(SetupsVadcop::new(&pctx.global_info, false, false, false, &[], self.gpu)?);
+        pctx.set_device_buffers(&sctx, &setups_vadcop, false, self.gpu, 1)?;
         pctx.initialize_custom_commits(custom_commits_map, &sctx, true)?;
 
         let pctx = Arc::new(pctx);

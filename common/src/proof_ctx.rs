@@ -13,13 +13,13 @@ use std::fs;
 use fields::{PrimeField64, Transcript, Poseidon16};
 use crate::{
     initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PolMap, SetupCtx, StdMode,
-    RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
+    PackedInfo, RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
 };
 
 use std::ffi::c_void;
 use proofman_starks_lib_c::{
     check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
-    alloc_device_large_buffers_c, set_gpu_mode_c,
+    alloc_device_large_buffers_c,
 };
 use proofman_util::DeviceBuffer;
 
@@ -61,8 +61,6 @@ pub struct ProofOptions {
     pub rma: bool,
     pub compressed: bool,
     pub verify_proofs: bool,
-    pub save_proofs: bool,
-    pub test_mode: bool,
     pub output_dir_path: Option<PathBuf>,
     pub minimal_memory: bool,
 }
@@ -72,10 +70,8 @@ impl BorshSerialize for ProofOptions {
         BorshSerialize::serialize(&self.verify_constraints, writer)?;
         BorshSerialize::serialize(&self.aggregation, writer)?;
         BorshSerialize::serialize(&self.rma, writer)?;
-        BorshSerialize::serialize(&self.compressed, writer)?;
+        // BorshSerialize::serialize(&self.compressed, writer)?;
         BorshSerialize::serialize(&self.verify_proofs, writer)?;
-        BorshSerialize::serialize(&self.save_proofs, writer)?;
-        BorshSerialize::serialize(&self.test_mode, writer)?;
         BorshSerialize::serialize(&self.output_dir_path.as_ref().map(|p| p.to_string_lossy().to_string()), writer)?;
         BorshSerialize::serialize(&self.minimal_memory, writer)?;
         Ok(())
@@ -89,8 +85,6 @@ impl BorshDeserialize for ProofOptions {
         let rma = bool::deserialize_reader(reader)?;
         let compressed = bool::deserialize_reader(reader)?;
         let verify_proofs = bool::deserialize_reader(reader)?;
-        let save_proofs = bool::deserialize_reader(reader)?;
-        let test_mode = bool::deserialize_reader(reader)?;
         let output_dir_path: Option<String> = Option::<String>::deserialize_reader(reader)?;
         let minimal_memory = bool::deserialize_reader(reader)?;
 
@@ -100,8 +94,6 @@ impl BorshDeserialize for ProofOptions {
             rma,
             compressed,
             verify_proofs,
-            save_proofs,
-            test_mode,
             output_dir_path: output_dir_path.map(PathBuf::from),
             minimal_memory,
         })
@@ -152,9 +144,7 @@ impl Default for ProofOptions {
             compressed: false,
             verify_proofs: false,
             minimal_memory: false,
-            save_proofs: false,
             output_dir_path: None,
-            test_mode: false,
         }
     }
 }
@@ -168,44 +158,9 @@ impl ProofOptions {
         compressed: bool,
         verify_proofs: bool,
         minimal_memory: bool,
-        save_proofs: bool,
         output_dir_path: Option<PathBuf>,
     ) -> Self {
-        Self {
-            verify_constraints,
-            aggregation,
-            rma,
-            compressed,
-            verify_proofs,
-            minimal_memory,
-            save_proofs,
-            output_dir_path,
-            test_mode: false,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_test(
-        verify_constraints: bool,
-        aggregation: bool,
-        rma: bool,
-        compressed: bool,
-        verify_proofs: bool,
-        minimal_memory: bool,
-        save_proofs: bool,
-        output_dir_path: Option<PathBuf>,
-    ) -> Self {
-        Self {
-            verify_constraints,
-            aggregation,
-            rma,
-            compressed,
-            verify_proofs,
-            save_proofs,
-            minimal_memory,
-            output_dir_path,
-            test_mode: true,
-        }
+        Self { verify_constraints, aggregation, rma, compressed, verify_proofs, minimal_memory, output_dir_path }
     }
 
     pub fn minimal_memory(&mut self) {
@@ -215,42 +170,44 @@ impl ProofOptions {
     pub fn compressed(&mut self) {
         self.compressed = true;
     }
-
-    pub fn save_proofs(&mut self, output_dir_path: Option<PathBuf>) {
-        self.save_proofs = true;
-        self.output_dir_path = output_dir_path;
-    }
 }
 
 #[derive(Clone)]
-pub struct ParamsGPU {
-    pub preallocate: bool,
+pub struct ProofmanOptions {
+    pub preallocate_fixed_gpu: bool,
     pub max_number_streams: usize,
     pub number_threads_pools_witness: usize,
     pub are_threads_per_witness_set: bool,
     pub max_witness_stored: usize,
-    pub pack_trace: bool,
+    pub verify_constraints: bool,
+    pub aggregation: bool,
+    pub verbose_mode: VerboseMode,
+    pub gpu: bool,
+    pub packed: bool,
+    pub packed_info: HashMap<(usize, usize), PackedInfo>,
 }
 
-impl Default for ParamsGPU {
+impl Default for ProofmanOptions {
     fn default() -> Self {
         Self {
-            preallocate: false,
+            preallocate_fixed_gpu: false,
             max_number_streams: 20,
             number_threads_pools_witness: 4,
-            #[cfg(feature = "packed")]
             max_witness_stored: 10,
-            #[cfg(not(feature = "packed"))]
-            max_witness_stored: 4,
-            pack_trace: true,
             are_threads_per_witness_set: false,
+            packed: false,
+            gpu: false,
+            verify_constraints: false,
+            aggregation: true,
+            verbose_mode: VerboseMode::Info,
+            packed_info: HashMap::new(),
         }
     }
 }
 
-impl ParamsGPU {
-    pub fn new(preallocate: bool) -> Self {
-        Self { preallocate, ..Self::default() }
+impl ProofmanOptions {
+    pub fn new(preallocate_fixed_gpu: bool) -> Self {
+        Self { preallocate_fixed_gpu, ..Self::default() }
     }
 
     pub fn with_max_number_streams(&mut self, max_number_streams: usize) {
@@ -265,8 +222,30 @@ impl ParamsGPU {
         self.max_witness_stored = max_witness_stored;
     }
 
-    pub fn with_pack_trace(&mut self, pack_trace: bool) {
-        self.pack_trace = pack_trace;
+    pub fn packed(&mut self) {
+        self.packed = true;
+    }
+
+    pub fn gpu(&mut self) {
+        self.gpu = true;
+        self.packed = true;
+    }
+
+    pub fn verify_constraints(&mut self) {
+        self.verify_constraints = true;
+        self.aggregation = false;
+    }
+
+    pub fn no_aggregation(&mut self) {
+        self.aggregation = false;
+    }
+
+    pub fn verbose_mode(&mut self, verbose_mode: VerboseMode) {
+        self.verbose_mode = verbose_mode;
+    }
+
+    pub fn packed_info(&mut self, packed_info: HashMap<(usize, usize), PackedInfo>) {
+        self.packed_info = packed_info;
     }
 }
 
@@ -288,6 +267,7 @@ pub struct ProofCtx<F: PrimeField64> {
     pub witness_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_tx_priority: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub d_buffers: Arc<DeviceBuffer>,
+    pub gpu: bool,
 }
 
 pub const MAX_INSTANCES: u64 = 1 << 17;
@@ -298,6 +278,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         aggregation: bool,
         verbose_mode: VerboseMode,
         mpi_ctx: Arc<MpiCtx>,
+        gpu: bool,
     ) -> ProofmanResult<Self> {
         tracing::info!("Creating proof context");
 
@@ -337,6 +318,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             witness_tx_priority: RwLock::new(None),
             proof_tx: RwLock::new(None),
             d_buffers: Arc::new(DeviceBuffer::default()),
+            gpu,
         })
     }
 
@@ -928,12 +910,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         sctx: &SetupCtx<F>,
         setups_vadcop: &SetupsVadcop<F>,
         aggregation: bool,
-        gpu_params: &ParamsGPU,
+        gpu: bool,
+        max_number_streams_gpu: usize,
     ) -> ProofmanResult<(u64, u64, u64)> {
-        if cfg!(feature = "gpu") {
-            set_gpu_mode_c(true);
-        }
-
         let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
             self.mpi_ctx.node_rank as u32,
             self.mpi_ctx.node_n_processes as u32,
@@ -942,7 +921,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             sctx.max_n_bits_ext as u32,
         )));
 
-        let mut free_memory_gpu = match cfg!(feature = "gpu") {
+        let mut free_memory_gpu = match gpu {
             true => check_device_memory_c(self.mpi_ctx.node_rank as u32, self.mpi_ctx.node_n_processes as u32) as f64,
             false => 0.0,
         };
@@ -952,7 +931,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         let n_gpus = get_num_gpus_c();
         let n_processes_node = self.mpi_ctx.node_n_processes as usize as u64;
 
-        let n_partitions = match cfg!(feature = "gpu") {
+        let n_partitions = match gpu {
             true => {
                 if n_gpus > n_processes_node {
                     1
@@ -968,7 +947,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         let mut total_const_area = 0;
         let mut total_const_area_aggregation = 0;
 
-        if cfg!(feature = "gpu") {
+        if gpu {
             total_const_area += sctx.total_const_pols_size as u64;
             total_const_area += sctx.total_const_tree_size as u64;
             if aggregation {
@@ -980,10 +959,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         let max_size_buffer = (free_memory_gpu / 8.0).floor() as u64 - total_const_area - total_const_area_aggregation;
         let max_prover_buffer_size = sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size);
 
-        let n_streams_per_gpu = match cfg!(feature = "gpu") {
+        let n_streams_per_gpu = match gpu {
             true => {
                 let max_number_proofs_per_gpu =
-                    gpu_params.max_number_streams.min(max_size_buffer as usize / max_prover_buffer_size);
+                    max_number_streams_gpu.min(max_size_buffer as usize / max_prover_buffer_size);
                 if max_number_proofs_per_gpu < 1 {
                     return Err(ProofmanError::InvalidConfiguration("Not enough GPU memory to run the proof".into()));
                 }
@@ -1007,7 +986,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             format_bytes(setups_vadcop.max_prover_recursive2_buffer_size as f64 * 8.0)
         );
 
-        let mut gpu_available_memory = match cfg!(feature = "gpu") {
+        let mut gpu_available_memory = match gpu {
             true => max_size_buffer as i64 - (n_streams_per_gpu * max_prover_buffer_size as usize) as i64,
             false => 0,
         };
@@ -1022,7 +1001,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             }
         }
 
-        if cfg!(feature = "gpu") {
+        if gpu {
             tracing::info!(
                 "Using {} streams per GPU for basic proofs and {} streams per GPU for recursive proofs. Using {} for fixed pols",
                 n_streams_per_gpu,

@@ -24,7 +24,7 @@ pub trait TraceRow: Copy + Default + Send {
 
 #[derive(Default)]
 pub struct GenericTrace<
-    R: TraceRow,
+    R,
     const NUM_ROWS: usize,
     const AIRGROUP_ID: usize,
     const AIR_ID: usize,
@@ -46,13 +46,18 @@ pub struct GenericTrace<
     pub shared_buffer: bool,
 }
 
-impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID: usize, const COMMIT_ID: usize>
+impl<R, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID: usize, const COMMIT_ID: usize>
     GenericTrace<R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
 {
     pub const NUM_ROWS: usize = NUM_ROWS;
     pub const AIRGROUP_ID: usize = AIRGROUP_ID;
     pub const AIR_ID: usize = AIR_ID;
     pub const COMMIT_ID: usize = COMMIT_ID;
+}
+
+impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID: usize, const COMMIT_ID: usize>
+    GenericTrace<R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
+{
     pub const ROW_SIZE: usize = R::ROW_SIZE;
 
     pub fn new() -> Self {
@@ -189,10 +194,6 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
         unsafe { Vec::from_raw_parts(ptr as *mut F, original_len, original_capacity) }
     }
 
-    pub fn is_shared_buffer(&self) -> bool {
-        self.shared_buffer
-    }
-
     pub const fn num_rows(&self) -> usize {
         NUM_ROWS
     }
@@ -220,6 +221,14 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
         } else {
             Some(COMMIT_ID)
         }
+    }
+
+    pub const fn is_shared_buffer(&self) -> bool {
+        self.shared_buffer
+    }
+
+    pub const fn is_packed(&self) -> bool {
+        R::IS_PACKED
     }
 }
 
@@ -283,7 +292,7 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
     }
 }
 
-impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID: usize, const COMMIT_ID: usize> Drop
+impl<R, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID: usize, const COMMIT_ID: usize> Drop
     for GenericTrace<R, NUM_ROWS, AIRGROUP_ID, AIR_ID, COMMIT_ID>
 {
     fn drop(&mut self) {

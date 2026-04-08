@@ -8,7 +8,7 @@ use crate::commands::field::Field;
 use fields::Goldilocks;
 
 use proofman::ProofMan;
-use proofman_common::ParamsGPU;
+use proofman_common::ProofmanOptions;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -53,6 +53,12 @@ pub struct StatsCmd {
 
     #[clap(short = 'm', long, default_value_t = false)]
     pub minimal_memory: bool,
+
+    #[clap(long, default_value_t = false)]
+    pub packed: bool,
+
+    #[clap(short = 'g', long, default_value_t = false)]
+    pub gpu: bool,
 }
 
 impl StatsCmd {
@@ -66,22 +72,27 @@ impl StatsCmd {
             Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone())?,
         };
 
-        let mut gpu_params = ParamsGPU::default();
+        let mut options = ProofmanOptions::default();
         if let Some(number_threads_witness) = self.number_threads_witness {
-            gpu_params.with_number_threads_pools_witness(number_threads_witness);
+            options.with_number_threads_pools_witness(number_threads_witness);
         }
         if let Some(max_witness_stored) = self.max_witness_stored {
-            gpu_params.with_max_witness_stored(max_witness_stored);
+            options.with_max_witness_stored(max_witness_stored);
+        }
+        if self.packed {
+            options.packed();
         }
 
-        let proofman = ProofMan::<Goldilocks>::new(
-            self.proving_key.clone(),
-            true,
-            false,
-            gpu_params,
-            self.verbose.into(),
-            HashMap::new(),
-        )?;
+        let mut options = ProofmanOptions::default();
+        options.verify_constraints();
+        options.verbose_mode(self.verbose.into());
+
+        if self.gpu {
+            options.gpu();
+        } else if self.packed {
+            options.packed();
+        }
+        let proofman = ProofMan::<Goldilocks>::new(self.proving_key.clone(), options)?;
 
         let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
         for commit in &self.custom_commits {
@@ -99,7 +110,7 @@ impl StatsCmd {
                 self.public_inputs.clone(),
                 &debug_info,
                 self.verbose.into(),
-                ProofOptions::new(false, false, false, false, false, self.minimal_memory, false, None),
+                ProofOptions::new(false, false, false, false, false, self.minimal_memory, None),
             )?,
         };
 

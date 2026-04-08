@@ -810,6 +810,10 @@ void *gen_device_buffers_cpu(uint32_t node_rank, uint32_t node_size, const int32
     DeviceCommitBuffersCPU *d_buffers = new DeviceCommitBuffersCPU();
     return (void *)d_buffers;
 };
+void use_packed_trace_cpu(void *d_buffers_, bool packed) {
+    DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
+    d_buffers->packedTrace = packed;
+}
 void free_device_buffers_cpu(void *d_buffers_) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     delete d_buffers;

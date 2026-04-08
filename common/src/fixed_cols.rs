@@ -7,7 +7,7 @@ use proofman_starks_lib_c::{
 };
 use proofman_util::{create_buffer_fast, timer_start_info, timer_stop_and_log_info};
 
-use crate::{Setup, ProofType};
+use crate::Setup;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -60,7 +60,6 @@ pub fn write_fixed_cols_bin<F: PrimeField64>(
 }
 
 pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
-    let gpu = cfg!(feature = "gpu") && setup.setup_type != ProofType::RecursiveF;
     let const_pols_size = (setup.stark_info.n_constants * (1 << setup.stark_info.stark_struct.n_bits)) as usize;
     let const_pols_tree_size = setup.const_tree_size;
 
@@ -105,14 +104,14 @@ pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
         false
     };
 
-    if gpu {
+    if setup.gpu {
         pack_const_pols_c(p_stark_info, const_pols.as_ptr() as *mut u8, setup.const_pols_path.as_str());
     }
 
     if !valid_root {
         timer_start_info!(WRITING_CONST_TREE);
         if setup.stark_info.stark_struct.verification_hash_type == "GL" {
-            if gpu {
+            if setup.gpu {
                 let mut const_pols_transposed = const_pols.clone();
                 prepare_blocks_c(
                     const_pols_transposed.as_mut_ptr() as *mut u64,
@@ -193,7 +192,7 @@ pub fn calculate_fixed_tree_snark<F: PrimeField64>(setup: &Setup<F>) {
         write_const_tree_bn128_c(p_stark_info, const_tree.as_ptr() as *mut u8, const_pols_tree_path_cpu.as_str());
         timer_stop_and_log_info!(WRITING_CONST_TREE);
     }
-    if cfg!(feature = "gpu") {
+    if setup.gpu {
         // Check if GPU files already exist and have correct sizes
         let gpu_const_pols_valid = PathBuf::from(&setup.const_pols_path).exists()
             && std::fs::metadata(&setup.const_pols_path)
