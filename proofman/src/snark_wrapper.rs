@@ -350,7 +350,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             }
         }
 
-        if let None = self.snark_prover {
+        if self.snark_prover.is_none() {
             free_final_snark_prover_c(snark_prover);
         }
 

@@ -56,9 +56,6 @@ pub struct StatsCmd {
 
     #[clap(long, default_value_t = false)]
     pub packed: bool,
-
-    #[clap(short = 'g', long, default_value_t = false)]
-    pub gpu: bool,
 }
 
 impl StatsCmd {
@@ -83,13 +80,10 @@ impl StatsCmd {
             options.packed();
         }
 
-        let mut options = ProofmanOptions::default();
         options.verify_constraints();
         options.verbose_mode(self.verbose.into());
 
-        if self.gpu {
-            options.gpu();
-        } else if self.packed {
+        if self.packed {
             options.packed();
         }
         let proofman = ProofMan::<Goldilocks>::new(self.proving_key.clone(), options)?;

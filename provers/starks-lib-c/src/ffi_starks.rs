@@ -1351,7 +1351,7 @@ pub fn get_num_gpus_c() -> u64 {
     unsafe { get_num_gpus() }
 }
 
-pub fn set_gpu_mode_c(use_gpu: bool) {
+pub fn set_gpu_mode_c(use_gpu: bool) -> bool {
     unsafe { set_gpu_mode(use_gpu) }
 }
 

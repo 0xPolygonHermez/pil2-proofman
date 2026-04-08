@@ -169,13 +169,15 @@ std::atomic<StarksBackend*> active_backend(&cpu_backend);
 // Runtime backend switch
 // ============================================================================
 
-void set_gpu_mode(bool use_gpu) {
+bool set_gpu_mode(bool use_gpu) {
 #ifdef __USE_CUDA__
     active_backend.store(use_gpu ? &gpu_backend : &cpu_backend, std::memory_order_release);
+    return true;
 #else
     if (use_gpu) {
-        fprintf(stderr, "Warning: GPU mode requested but library was built without CUDA support. Using CPU backend.\n");
+        return false;
     }
+    return true;
 #endif
 }
 
