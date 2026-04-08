@@ -195,7 +195,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     
     if (!skipRecalculation) {
         uint64_t offsetCm1Extended = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", true)];
-        if (air_instance_info->is_packed) {
+        if (d_buffers->packedTrace && air_instance_info->is_packed) {
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm1"];
             unpack_trace(air_instance_info, (uint64_t*)h_params.aux_trace + offsetCm1Extended, (uint64_t*)h_params.trace, nCols, N, stream, timer); 
         } else {

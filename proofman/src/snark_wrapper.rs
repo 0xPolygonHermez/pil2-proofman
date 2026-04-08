@@ -17,9 +17,9 @@ use std::ffi::c_void;
 use crate::check_const_tree;
 use std::fs;
 use proofman_starks_lib_c::{
-    init_final_snark_prover_c, free_final_snark_prover_c, get_snark_protocol_id_c, snark_proof_bytes_to_json_c,
-    get_unified_buffer_gpu_c, free_fixed_pols_buffer_gpu_c, pre_allocate_final_snark_prover_c,
-    alloc_fixed_pols_buffer_gpu_c, free_device_buffers_recursivef_c, gen_device_buffers_recursivef_c,
+    init_final_snark_prover_c, free_final_snark_prover_c, snark_proof_bytes_to_json_c, get_unified_buffer_gpu_c,
+    free_fixed_pols_buffer_gpu_c, pre_allocate_final_snark_prover_c, alloc_fixed_pols_buffer_gpu_c,
+    free_device_buffers_recursivef_c, gen_device_buffers_recursivef_c,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof};
@@ -61,11 +61,12 @@ pub struct SnarkWrapper<F: PrimeField64> {
     pub aux_trace: Arc<Vec<F>>,
     pub d_buffers: Option<*mut c_void>,
     pub reload_fixed_pols_gpu: Option<Arc<AtomicBool>>,
-    pub snark_prover: *mut c_void,
+    pub snark_prover: Option<*mut c_void>,
     pub d_buffers_recursivef: *mut c_void,
     pub proving_key_path: PathBuf,
     pub protocol: SnarkProtocol,
     pub memory_handler_recursive_witness: Arc<MemoryHandlerRecursive<F>>,
+    pub gpu: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,14 +130,16 @@ impl SnarkProof {
 
 impl<F: PrimeField64> Drop for SnarkWrapper<F> {
     fn drop(&mut self) {
-        free_final_snark_prover_c(self.snark_prover);
+        if let Some(snark_prover) = self.snark_prover {
+            free_final_snark_prover_c(snark_prover);
+        }
         free_device_buffers_recursivef_c(self.d_buffers_recursivef);
     }
 }
 
 impl<F: PrimeField64> SnarkWrapper<F> {
-    pub fn new(proving_key_path: &Path, verbose_mode: VerboseMode) -> ProofmanResult<Self> {
-        Self::new_with_preallocated_buffers(proving_key_path, verbose_mode, None, None, None)
+    pub fn new(proving_key_path: &Path, verbose_mode: VerboseMode, preload: bool, gpu: bool) -> ProofmanResult<Self> {
+        Self::new_with_preallocated_buffers(proving_key_path, verbose_mode, None, None, None, preload, gpu)
     }
 
     pub fn new_with_preallocated_buffers(
@@ -145,6 +148,8 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         _aux_trace: Option<Arc<Vec<F>>>,
         d_buffers: Option<*mut c_void>,
         reload_fixed_pols_gpu: Option<Arc<AtomicBool>>,
+        preload: bool,
+        gpu: bool,
     ) -> ProofmanResult<Self> {
         initialize_logger(verbose_mode, None);
 
@@ -170,6 +175,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             &ProofType::RecursiveF,
             false,
             false,
+            gpu,
             None,
         )?;
 
@@ -182,25 +188,27 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         let aux_trace = if let Some(buffer) = _aux_trace {
             buffer
-        } else if cfg!(feature = "gpu") {
+        } else if gpu {
             Arc::new(Vec::new())
         } else {
             Arc::new(create_buffer_fast(setup_recursivef.prover_buffer_size as usize))
         };
 
-        timer_start_info!(INITIALIZING_FINAL_SNARK_PROVER);
-        let zkey_filename = setup_snark_path.display().to_string() + ".zkey";
-        let snark_prover = init_final_snark_prover_c(zkey_filename.as_str());
-        if snark_prover.is_null() {
-            return Err(std::io::Error::other(format!(
-                "Failed to initialize final snark prover from zkey file '{}'",
-                zkey_filename
-            ))
-            .into());
-        }
-        let protocol_id = get_snark_protocol_id_c(snark_prover);
-        let protocol = SnarkProtocol::from_protocol_id(protocol_id)?;
-        timer_stop_and_log_info!(INITIALIZING_FINAL_SNARK_PROVER);
+        let snark_prover = if preload {
+            timer_start_info!(INITIALIZING_FINAL_SNARK_PROVER);
+            let snark_prover = init_final_snark_prover_c(&(setup_snark_path.display().to_string() + ".zkey"));
+            if snark_prover.is_null() {
+                return Err(std::io::Error::other(format!(
+                    "Failed to initialize final snark prover from zkey file '{}'",
+                    setup_snark_path.display().to_string() + ".zkey"
+                ))
+                .into());
+            }
+            timer_stop_and_log_info!(INITIALIZING_FINAL_SNARK_PROVER);
+            Some(snark_prover)
+        } else {
+            None
+        };
 
         let d_buffers_vadcop = if let Some(d_buffers) = d_buffers { d_buffers } else { std::ptr::null_mut() };
 
@@ -235,12 +243,13 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             setup_snark_path,
             snark_prover,
             proving_key_path: proving_key_path.to_path_buf(),
-            protocol,
+            protocol: SnarkProtocol::Plonk, // Default to Plonk, can be changed later if needed
             vadcop_final_verkey,
             d_buffers,
             d_buffers_recursivef,
             memory_handler_recursive_witness,
             reload_fixed_pols_gpu,
+            gpu,
         })
     }
 
@@ -285,9 +294,24 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         timer_start_debug!(GENERATING_SNARK_PROOF);
 
-        // Spawn GPU pre-allocation on a separate thread so it overlaps with CPU witness computation
+        let snark_prover = match self.snark_prover {
+            Some(prover) => prover,
+            None => {
+                let prover = init_final_snark_prover_c(&(self.setup_snark_path.display().to_string() + ".zkey"));
+                if prover.is_null() {
+                    return Err(std::io::Error::other(format!(
+                        "Failed to initialize final snark prover from zkey file '{}'",
+                        self.setup_snark_path.display().to_string() + ".zkey"
+                    ))
+                    .into());
+                }
+                prover
+            }
+        };
+
+        //  Spawn GPU pre-allocation on a separate thread so it overlaps with CPU witness computation
         let prealloc_handle = {
-            let snark_prover = self.snark_prover as usize;
+            let snark_prover = snark_prover as usize;
             let unified_buffer_gpu = if let Some(d_buffers) = self.d_buffers {
                 get_unified_buffer_gpu_c(d_buffers)
             } else {
@@ -303,7 +327,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         };
 
         let (snark_proof_bytes, snark_publics_bytes) =
-            generate_snark_proof(self.snark_prover, &self.setup_snark_path, recursivef_proof, prealloc_handle)?;
+            generate_snark_proof(snark_prover, &self.setup_snark_path, recursivef_proof, prealloc_handle)?;
 
         let publics_info = PublicsInfo::from_folder(&self.proving_key_path)?;
         let public_bytes = get_public_bytes_solidity(&publics_info, &proof[1..1 + proof[0] as usize])?;
@@ -319,6 +343,10 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             if let Some(reload_flag) = &self.reload_fixed_pols_gpu {
                 reload_flag.store(true, Ordering::SeqCst);
             }
+        }
+
+        if let None = self.snark_prover {
+            free_final_snark_prover_c(snark_prover);
         }
 
         Ok(snark_proof)
@@ -360,6 +388,7 @@ pub fn get_public_bytes_solidity(publics_info: &PublicsInfo, vadcop_public_input
 pub fn check_setup_snark<F: PrimeField64>(
     proving_key_snark_path: &Path,
     verbose_mode: VerboseMode,
+    gpu: bool,
 ) -> ProofmanResult<()> {
     initialize_logger(verbose_mode, None);
 
@@ -374,6 +403,7 @@ pub fn check_setup_snark<F: PrimeField64>(
         &ProofType::RecursiveF,
         false,
         false,
+        gpu,
         None,
     )?;
 
@@ -387,6 +417,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     vadcop_proof: &VadcopFinalProof,
     output_dir_path: &Path,
     verbose_mode: VerboseMode,
+    gpu: bool,
 ) -> ProofmanResult<bool> {
     initialize_logger(verbose_mode, None);
 
@@ -410,6 +441,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         &ProofType::RecursiveF,
         false,
         false,
+        gpu,
         None,
     )?;
 
@@ -418,7 +450,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     setup_recursivef.load_const_pols();
     setup_recursivef.load_const_pols_tree();
 
-    let aux_trace = if cfg!(feature = "gpu") {
+    let aux_trace = if gpu {
         Arc::new(Vec::new())
     } else {
         Arc::new(create_buffer_fast(setup_recursivef.prover_buffer_size as usize))

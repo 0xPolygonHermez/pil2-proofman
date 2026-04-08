@@ -1249,6 +1249,12 @@ pub fn gen_device_buffers_c(
     unsafe { gen_device_buffers(node_rank, node_n_processes, numa_nodes.as_ptr(), arity, max_n_bits_ext) }
 }
 
+pub fn use_packed_trace_c(d_commit_buffers: *mut ::std::os::raw::c_void, packed_trace: bool) {
+    unsafe {
+        use_packed_trace(d_commit_buffers, packed_trace);
+    }
+}
+
 pub fn gen_device_buffers_recursivef_c(
     p_setup_ctx: *mut u8,
     prover_buffer_size: u64,

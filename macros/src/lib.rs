@@ -7,6 +7,7 @@ mod trace;
 mod trace_row;
 mod packed_row;
 mod unpacked_row;
+mod trait_row;
 
 #[proc_macro]
 pub fn trace(input: TokenStream) -> TokenStream {
