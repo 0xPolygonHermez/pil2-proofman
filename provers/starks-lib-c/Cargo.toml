@@ -15,4 +15,4 @@ tracing.workspace = true
 
 [features]
 default = []
-gpu = []
+cpu-only = []

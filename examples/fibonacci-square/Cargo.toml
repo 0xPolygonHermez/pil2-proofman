@@ -27,4 +27,3 @@ num-bigint.workspace = true
 [features]
 default = []
 diagnostic = []
-gpu = ["proofman-common/gpu"]

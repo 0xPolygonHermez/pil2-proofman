@@ -34,5 +34,5 @@ regex = "1.12.2"
 toml = "0.9.8"
 
 [features]
-default = ["distributed"]
-distributed = ["proofman/distributed", "proofman-common/distributed"]
+default = ["mpi"]
+mpi = ["proofman/mpi", "proofman-common/mpi"]
