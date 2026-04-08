@@ -8,7 +8,7 @@ use crate::commands::field::Field;
 use fields::Goldilocks;
 
 use proofman::ProofMan;
-use proofman_common::ParamsGPU;
+use proofman_common::ProofmanOptions;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -60,14 +60,11 @@ impl DebugInfoCmd {
             Some(debug_value) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone())?,
         };
 
-        let proofman = ProofMan::<Goldilocks>::new(
-            self.proving_key.clone(),
-            true,
-            false,
-            ParamsGPU::default(),
-            self.verbose.into(),
-            HashMap::new(),
-        )?;
+        let mut options = ProofmanOptions::default();
+        options.verify_constraints();
+        options.verbose_mode(self.verbose.into());
+
+        let proofman = ProofMan::<Goldilocks>::new(self.proving_key.clone(), options)?;
 
         let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
         for commit in &self.custom_commits {

@@ -8,7 +8,7 @@ use crate::commands::field::Field;
 use fields::Goldilocks;
 
 use proofman::ProofMan;
-use proofman_common::ParamsGPU;
+use proofman_common::ProofmanOptions;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -48,6 +48,9 @@ pub struct VerifyConstraintsCmd {
 
     #[clap(short = 'c', long, value_name="KEY=VALUE", num_args(1..))]
     pub custom_commits: Vec<String>,
+
+    #[clap(short = 'g', long, default_value_t = false)]
+    pub gpu: bool,
 }
 
 impl VerifyConstraintsCmd {
@@ -61,14 +64,14 @@ impl VerifyConstraintsCmd {
             Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone())?,
         };
 
-        let proofman = ProofMan::<Goldilocks>::new(
-            self.proving_key.clone(),
-            true,
-            false,
-            ParamsGPU::default(),
-            self.verbose.into(),
-            HashMap::new(),
-        )?;
+        let mut options = ProofmanOptions::default();
+        options.verify_constraints();
+        options.verbose_mode(self.verbose.into());
+        if self.gpu {
+            options.gpu();
+        }
+
+        let proofman = ProofMan::<Goldilocks>::new(self.proving_key.clone(), options)?;
 
         let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
         for commit in &self.custom_commits {
@@ -87,7 +90,6 @@ impl VerifyConstraintsCmd {
                 self.input_data.clone(),
                 &debug_info,
                 self.verbose.into(),
-                false,
             )?,
         };
 

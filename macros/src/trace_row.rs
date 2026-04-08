@@ -5,6 +5,7 @@ use syn::parse::{Parse, ParseStream};
 use syn::{Ident, Result, Token, braced, parse_macro_input, token};
 
 use crate::packed_row::packed_row_impl;
+use crate::trait_row::trait_impl;
 use crate::unpacked_row::unpacked_row_impl;
 
 /// This struct represents the input for the trace_row macro.
@@ -133,17 +134,20 @@ pub fn get_bit_count(input: &syn::parse::ParseBuffer<'_>, field_type: &str, min:
 pub fn trace_row_entrypoint(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let trace_input = parse_macro_input!(input as TraceRowInput);
 
-    // Generate packed struct name
+    // Generate struct names and trait name
     let packed_name = format_ident!("{}Packed", trace_input.name);
     let unpacked_name = format_ident!("{}", trace_input.name);
+    let trait_name = format_ident!("{}Ops", trace_input.name);
 
-    // Generate both packed and unpacked versions
+    // Generate both packed and unpacked structs, plus the shared trait
     let packed_tokens = packed_row_impl(&packed_name, &trace_input.generic, &trace_input.fields);
     let unpacked_tokens = unpacked_row_impl(&unpacked_name, &trace_input.generic, &trace_input.fields);
+    let trait_tokens = trait_impl(&trait_name, &unpacked_name, &packed_name, &trace_input.generic, &trace_input.fields);
 
     let combined = quote! {
         #packed_tokens
         #unpacked_tokens
+        #trait_tokens
     };
 
     proc_macro::TokenStream::from(combined)

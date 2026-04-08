@@ -18,4 +18,3 @@ tracing.workspace = true
 
 [features]
 default = []
-gpu = ["proofman-starks-lib-c/gpu"]

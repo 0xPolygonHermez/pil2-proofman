@@ -10,7 +10,7 @@ use fields::Goldilocks;
 use proofman::SnarkWrapper;
 use proofman::ProofMan;
 use proofman::ProvePhaseResult;
-use proofman_common::{ModeName, ProofOptions, ParamsGPU};
+use proofman_common::{ModeName, ProofOptions, ProofmanOptions};
 use std::fs;
 use std::path::Path;
 
@@ -84,8 +84,8 @@ pub struct ProveCmd {
     #[clap(short = 'x', long)]
     pub max_witness_stored: Option<usize>,
 
-    #[clap(short = 'b', long, default_value_t = false)]
-    pub save_proofs: bool,
+    #[clap(short = 'g', long, default_value_t = false)]
+    pub gpu: bool,
 }
 
 impl ProveCmd {
@@ -117,26 +117,27 @@ impl ProveCmd {
 
         let verify_constraints = debug_info.std_mode.name == ModeName::Debug;
 
-        let mut gpu_params = ParamsGPU::new(self.preallocate);
+        let mut options = ProofmanOptions::new(self.preallocate);
 
         if let Some(max_streams) = self.max_streams {
-            gpu_params.with_max_number_streams(max_streams);
+            options.with_max_number_streams(max_streams);
         }
         if let Some(number_threads_witness) = self.number_threads_witness {
-            gpu_params.with_number_threads_pools_witness(number_threads_witness);
+            options.with_number_threads_pools_witness(number_threads_witness);
         }
         if let Some(max_witness_stored) = self.max_witness_stored {
-            gpu_params.with_max_witness_stored(max_witness_stored);
+            options.with_max_witness_stored(max_witness_stored);
         }
 
-        let proofman = ProofMan::<Goldilocks>::new(
-            self.proving_key.clone(),
-            verify_constraints,
-            self.aggregation,
-            gpu_params,
-            self.verbose.into(),
-            HashMap::new(),
-        )?;
+        let mut options = ProofmanOptions::default();
+        if verify_constraints {
+            options.verify_constraints();
+        } else if !self.aggregation {
+            options.no_aggregation();
+        }
+        options.verbose_mode(self.verbose.into());
+
+        let proofman = ProofMan::<Goldilocks>::new(self.proving_key.clone(), options)?;
 
         let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
         for commit in &self.custom_commits {
@@ -155,7 +156,6 @@ impl ProveCmd {
             self.compressed,
             self.verify_proofs,
             self.minimal_memory,
-            self.save_proofs,
             Some(self.output_dir.clone()),
         );
         if debug_info.std_mode.name == ModeName::Debug {
@@ -166,7 +166,6 @@ impl ProveCmd {
                     None,
                     &debug_info.clone(),
                     self.verbose.into(),
-                    false,
                 )?,
             };
         } else {
@@ -187,7 +186,7 @@ impl ProveCmd {
 
                 if let Some(proving_key_snark) = &self.proving_key_snark {
                     let snark_wrapper: SnarkWrapper<Goldilocks> =
-                        SnarkWrapper::new(proving_key_snark, self.verbose.into())?;
+                        SnarkWrapper::new(proving_key_snark, self.verbose.into(), true, self.gpu)?;
                     snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, Some(self.output_dir.clone()))?;
                 }
             }

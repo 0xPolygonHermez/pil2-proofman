@@ -167,6 +167,7 @@ extern "C" {
     // GPU calls
     // =================================================================================
     void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext);
+    void use_packed_trace(void *d_buffers, bool packed);
     void free_device_buffers(void *d_buffers);
     void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffers, char* verkey);
     void free_device_buffers_recursivef(void *d_buffers);
