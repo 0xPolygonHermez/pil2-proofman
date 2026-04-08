@@ -465,7 +465,7 @@ struct DeviceCommitBuffers
     std::mutex *mutex_pinned;
     StreamData *streamsData;
 
-    bool packedTrace;
+    bool packedTrace = false;
 
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;
 };

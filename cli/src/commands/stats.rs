@@ -83,9 +83,6 @@ impl StatsCmd {
         options.verify_constraints();
         options.verbose_mode(self.verbose.into());
 
-        if self.packed {
-            options.packed();
-        }
         let proofman = ProofMan::<Goldilocks>::new(self.proving_key.clone(), options)?;
 
         let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
