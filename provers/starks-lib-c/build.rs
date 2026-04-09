@@ -14,9 +14,7 @@ fn main() {
 
     // Canonicalize to avoid ".." in rerun-if-changed paths
     let pil2_stark_path_raw = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pil2-stark");
-    let pil2_stark_path = pil2_stark_path_raw
-        .canonicalize()
-        .unwrap_or_else(|_| pil2_stark_path_raw.clone());
+    let pil2_stark_path = pil2_stark_path_raw.canonicalize().unwrap_or_else(|_| pil2_stark_path_raw.clone());
     let library_folder =
         if cfg!(feature = "gpu") { pil2_stark_path.join("lib-gpu") } else { pil2_stark_path.join("lib") };
     let library_name = if cfg!(feature = "gpu") { "starksgpu" } else { "starks" };
