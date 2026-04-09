@@ -2,7 +2,6 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::UNIX_EPOCH;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=CUDA_ARCHS");
@@ -13,8 +12,11 @@ fn main() {
         return;
     }
 
-    // Paths
-    let pil2_stark_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pil2-stark");
+    // Canonicalize to avoid ".." in rerun-if-changed paths
+    let pil2_stark_path_raw = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pil2-stark");
+    let pil2_stark_path = pil2_stark_path_raw
+        .canonicalize()
+        .unwrap_or_else(|_| pil2_stark_path_raw.clone());
     let library_folder =
         if cfg!(feature = "gpu") { pil2_stark_path.join("lib-gpu") } else { pil2_stark_path.join("lib") };
     let library_name = if cfg!(feature = "gpu") { "starksgpu" } else { "starks" };
@@ -63,43 +65,38 @@ fn main() {
         false
     };
 
-    // Check if the `no_cpp_compilation` feature is enabled
-    if cfg!(feature = "no_cpp_compilation") {
-        println!("Skipping C++ compilation because `no_cpp_compilation` feature is enabled.");
-        if !lib_file.exists() {
-            eprintln!("Warning: Library `{}` not found. Make sure to compile it manually.", lib_file.display());
+    let source_files = find_source_files(&pil2_stark_path);
+    for file in &source_files {
+        println!("cargo:rerun-if-changed={}", file.display());
+    }
+    println!("cargo:rerun-if-changed={}", pil2_stark_path.join("Makefile").display());
+    println!("cargo:rerun-if-changed={}", lib_file.display());
+
+    // Clean build only when CUDA architecture flags change
+    if archs_changed {
+        eprintln!("CUDA_ARCHS changed — running clean rebuild...");
+        run_command("make", &["clean"], &pil2_stark_path);
+        if let Err(e) = fs::write(&archs_stamp_path, stamp_content) {
             eprintln!(
-                "Run: cd pil2-stark && make {}",
-                if cfg!(feature = "gpu") { "starks_lib_gpu" } else { "starks_lib" }
+                "Warning: failed to write CUDA arch stamp {:?}: {e} — next build will recompile",
+                archs_stamp_path
             );
         }
-    } else {
-        // Rebuild if library is missing or CUDA_ARCHS changed since last build
-        if !lib_file.exists() || archs_changed {
-            if cfg!(feature = "gpu") {
-                eprintln!("`libstarksgpu.a` missing or CUDA_ARCHS changed — recompiling...");
-                run_command("make", &["clean"], &pil2_stark_path);
-                match &gencode_flags {
-                    Some(flags) => {
-                        let gencode_arg = format!("CUDA_GENCODE_FLAGS={}", flags);
-                        run_command("make", &["-j", &gencode_arg, "starks_lib_gpu"], &pil2_stark_path);
-                    }
-                    None => run_command("make", &["-j", "starks_lib_gpu"], &pil2_stark_path),
-                }
-                if let Err(e) = fs::write(&archs_stamp_path, stamp_content) {
-                    eprintln!(
-                        "Warning: failed to write CUDA arch stamp {:?}: {e} — next build will recompile",
-                        archs_stamp_path
-                    );
-                }
-            } else {
-                eprintln!("`libstarks.a` not found! Compiling...");
-                run_command("make", &["clean"], &pil2_stark_path);
-                run_command("make", &["-j", "starks_lib"], &pil2_stark_path);
+    }
+
+    // Delegate to Make — incremental builds via .d dependency files
+    let target = if cfg!(feature = "gpu") { "starks_lib_gpu" } else { "starks_lib" };
+    eprintln!("Running make -j {target}...");
+    if cfg!(feature = "gpu") {
+        match &gencode_flags {
+            Some(flags) => {
+                let gencode_arg = format!("CUDA_GENCODE_FLAGS={}", flags);
+                run_command("make", &["-j", &gencode_arg, target], &pil2_stark_path);
             }
-        } else {
-            println!("C++ library already compiled, skipping rebuild.");
+            None => run_command("make", &["-j", target], &pil2_stark_path),
         }
+    } else {
+        run_command("make", &["-j", target], &pil2_stark_path);
     }
 
     // Absolute path to the library
@@ -111,12 +108,6 @@ fn main() {
         } else {
             panic!("`libstarks.a` was not found at {}", lib_file.display());
         }
-    }
-
-    // Ensure Rust triggers a rebuild if the C++ source code changes
-    // Skip this if no_cpp_compilation is enabled
-    if !cfg!(feature = "no_cpp_compilation") {
-        track_file_changes(&pil2_stark_path, gencode_flags.as_deref(), &archs_stamp_path);
     }
 
     // Add platform-specific library search paths
@@ -237,82 +228,6 @@ fn run_command(cmd: &str, args: &[&str], dir: &Path) {
     if !status.success() {
         panic!("Command `{}` failed with exit code {:?}", cmd, status.code());
     }
-}
-
-/// Tracks changes in the `pil2-stark` directory to trigger recompilation only when needed
-fn track_file_changes(pil2_stark_path: &Path, gencode_flags: Option<&str>, stamp_path: &Path) {
-    let source_files = find_source_files(pil2_stark_path);
-    let lib_file: PathBuf = if cfg!(feature = "gpu") {
-        pil2_stark_path.join("lib-gpu/libstarksgpu.a")
-    } else {
-        pil2_stark_path.join("lib/libstarks.a")
-    };
-
-    for file in &source_files {
-        println!("cargo:rerun-if-changed={}", file.display());
-    }
-
-    // If any C++ source file changed, force a rebuild
-    if source_files_have_changed(&source_files, &lib_file) {
-        eprintln!("Changes detected! Running `make clean` and recompiling...");
-        run_command("make", &["clean"], pil2_stark_path);
-        if cfg!(feature = "gpu") {
-            match gencode_flags {
-                Some(flags) => {
-                    let gencode_arg = format!("CUDA_GENCODE_FLAGS={}", flags);
-                    run_command("make", &["-j", &gencode_arg, "starks_lib_gpu"], pil2_stark_path);
-                }
-                None => run_command("make", &["-j", "starks_lib_gpu"], pil2_stark_path),
-            }
-            if let Err(e) = fs::write(stamp_path, gencode_flags.unwrap_or("auto")) {
-                eprintln!("Warning: failed to write CUDA arch stamp {:?}: {e} — next build will recompile", stamp_path);
-            }
-        } else {
-            run_command("make", &["-j", "starks_lib"], pil2_stark_path);
-        }
-    } else {
-        println!("No C++ source changes detected, skipping rebuild.");
-    }
-}
-
-/// Checks if any `.cpp`, `.h`, or `.hpp` file has changed since the last build
-fn source_files_have_changed(source_files: &[PathBuf], lib_file: &Path) -> bool {
-    let mut modified_files: Vec<PathBuf> = Vec::new();
-
-    // Get the modification time of `libstarks.a`
-    let lib_modified_time = match fs::metadata(lib_file) {
-        Ok(metadata) => {
-            let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
-            eprintln!("`{}` last modified: {:?}", lib_file.display(), modified);
-            modified
-        }
-        Err(_) => {
-            eprintln!("Library `{}` does not exist, triggering rebuild.", lib_file.display());
-            return true; // If `libstarks.a` is missing, we must rebuild.
-        }
-    };
-
-    // Check if any `.cpp`, `.h`, or `.hpp` file has been modified after `libstarks.a`
-    for file in source_files {
-        if let Ok(metadata) = fs::metadata(file) {
-            if let Ok(modified_time) = metadata.modified() {
-                if modified_time > lib_modified_time {
-                    modified_files.push(file.clone());
-                }
-            }
-        }
-    }
-
-    // Print the list of modified files (if any)
-    if !modified_files.is_empty() {
-        eprintln!("Modified files detected:");
-        for file in &modified_files {
-            eprintln!(" - {}", file.display());
-        }
-        return true;
-    }
-
-    false // No changes detected
 }
 
 /// Finds all `.cpp`, `.h`, `.hpp`, `.c`, `.cuh` and `.asm` files in `pil2-stark` (recursive search)
