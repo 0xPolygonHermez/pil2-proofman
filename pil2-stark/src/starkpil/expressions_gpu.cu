@@ -328,8 +328,8 @@ __device__ __forceinline__ void load__(
     const int64_t stride = dExpsArgs->nextStridesExps[argOffset];
     const uint64_t logicalRow = isCyclic ? (r + stride) % domainSize : (r + stride);
 
-    // Use pack256 fast path when non-cyclic, stride==0, and blockDim==TILE_HEIGHT
-    const bool usePack256 = !isCyclic && stride == 0 && blockDim.x == TILE_HEIGHT;
+    // Use pack256 fast path when non-cyclic, stride==0, blockDim==TILE_HEIGHT, and TILE_WIDTH==4
+    const bool usePack256 = !isCyclic && stride == 0 && blockDim.x == TILE_HEIGHT && TILE_WIDTH == 4;
     const uint64_t chunkBase = row; // row is always blockDim.x-aligned
 
     // ConstPols
@@ -361,7 +361,7 @@ __device__ __forceinline__ void load__(
             out1 = nullptr;
             out2 = nullptr;
             return;
-        } else if (dim == 3 && (argIdx & 3) <= 1) {
+        } else if (dim == 3 && TILE_WIDTH == 4 && (argIdx & 3) <= 1) {
             // Same-tile fast path: all 3 extension columns in same tile
             // col_block values are argIdx&3, (argIdx+1)&3, (argIdx+2)&3 - all consecutive
             // Offsets differ by TILE_HEIGHT between consecutive columns in same tile
