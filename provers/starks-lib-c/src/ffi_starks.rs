@@ -1143,10 +1143,10 @@ pub fn add_publics_aggregation_c(proof: *mut u8, offset: u64, publics: *mut u8, 
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn init_final_snark_prover_c(zkeyFile: &str) -> *mut c_void {
+pub fn init_final_snark_prover_c(zkeyFile: &str, d_buffers_recursivef: *mut c_void) -> *mut c_void {
     let zkey_file_name = CString::new(zkeyFile).unwrap();
     let zkey_file_ptr = zkey_file_name.as_ptr() as *mut std::os::raw::c_char;
-    unsafe { init_final_snark_prover(zkey_file_ptr) }
+    unsafe { init_final_snark_prover(zkey_file_ptr, d_buffers_recursivef) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1163,8 +1163,12 @@ pub fn free_final_snark_prover_c(snark_prover: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn pre_allocate_final_snark_prover_c(snark_prover: *mut c_void, unified_buffer_gpu: *mut c_void) {
-    unsafe { pre_allocate_final_snark_prover(snark_prover, unified_buffer_gpu) }
+pub fn pre_allocate_final_snark_prover_c(
+    snark_prover: *mut c_void,
+    unified_buffer_gpu: *mut c_void,
+    d_buffers_recursivef: *mut c_void,
+) {
+    unsafe { pre_allocate_final_snark_prover(snark_prover, unified_buffer_gpu, d_buffers_recursivef) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1173,9 +1177,16 @@ pub fn gen_final_snark_proof_c(
     circomWitnessFinal: *mut u8,
     proof: *mut u8,
     publics_snark: *mut u8,
+    d_buffers_recursivef: *mut c_void,
 ) {
     unsafe {
-        gen_final_snark_proof(prover, circomWitnessFinal as *mut std::os::raw::c_void, proof, publics_snark);
+        gen_final_snark_proof(
+            prover,
+            circomWitnessFinal as *mut std::os::raw::c_void,
+            proof,
+            publics_snark,
+            d_buffers_recursivef,
+        );
     }
 }
 
@@ -2263,7 +2274,7 @@ pub fn add_publics_aggregation_c(_proof: *mut u8, _offset: u64, _publics: *mut u
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn init_final_snark_prover_c(_zkeyFile: &str) -> *mut c_void {
+pub fn init_final_snark_prover_c(_zkeyFile: &str, _d_buffers_recursivef: *mut c_void) -> *mut c_void {
     trace!("··· {}", "init_final_snark_prover: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
@@ -2280,7 +2291,11 @@ pub fn free_final_snark_prover_c(_snark_prover: *mut c_void) {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn pre_allocate_final_snark_prover_c(_snark_prover: *mut c_void, _unified_buffer_gpu: *mut c_void) {
+pub fn pre_allocate_final_snark_prover_c(
+    _snark_prover: *mut c_void,
+    _unified_buffer_gpu: *mut c_void,
+    _d_buffers_recursivef: *mut c_void,
+) {
     trace!("··· {}", "pre_allocate_final_snark_prover: This is a mock call because there is no linked library");
 }
 
@@ -2290,6 +2305,7 @@ pub fn gen_final_snark_proof_c(
     _circomWitnessFinal: *mut u8,
     _proof: *mut u8,
     _publics_snark: *mut u8,
+    _d_buffers_recursivef: *mut c_void,
 ) {
     trace!("··· {}", "gen_final_snark_proof: This is a mock call because there is no linked library");
 }

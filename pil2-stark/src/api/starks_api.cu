@@ -1693,7 +1693,11 @@ void closeStreamTimer(TimerGPU &timer, uint64_t instance_id, uint64_t airgroup_i
     TimerResetGPU(timer);
 }
 
-void *init_final_snark_prover_gpu(char* zkeyFile) {
+void *init_final_snark_prover_gpu(char* zkeyFile, void* d_buffers_recursivef) {
+    if (d_buffers_recursivef != nullptr) {
+        DeviceRecursiveFBuffers *d_buffers = (DeviceRecursiveFBuffers *)d_buffers_recursivef;
+        cudaSetDevice(d_buffers->gpuId);
+    }
     return initFinalSnarkProverGPU(zkeyFile);
 }
 
@@ -1701,11 +1705,19 @@ void free_final_snark_prover_gpu(void *snark_prover) {
     freeFinalSnarkProverGPU(snark_prover);
 }
 
-void gen_final_snark_proof_gpu(void *prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark) {
+void gen_final_snark_proof_gpu(void *prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark, void* d_buffers_recursivef) {
+    if (d_buffers_recursivef != nullptr) {
+        DeviceRecursiveFBuffers *d_buffers = (DeviceRecursiveFBuffers *)d_buffers_recursivef;
+        cudaSetDevice(d_buffers->gpuId);
+    }
     genFinalSnarkProofGPU(prover, circomWitnessFinal, proof, publicsSnark);
 }
 
-void pre_allocate_final_snark_prover_gpu(void *snark_prover, void* unified_buffer_gpu) {
+void pre_allocate_final_snark_prover_gpu(void *snark_prover, void* unified_buffer_gpu, void* d_buffers_recursivef) {
+    if (d_buffers_recursivef != nullptr) {
+        DeviceRecursiveFBuffers *d_buffers = (DeviceRecursiveFBuffers *)d_buffers_recursivef;
+        cudaSetDevice(d_buffers->gpuId);
+    }
     preAllocateFinalSnarkProverGPU(snark_prover, unified_buffer_gpu);
 }
 #endif
