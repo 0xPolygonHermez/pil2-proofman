@@ -7,7 +7,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CUDA_ARCHS");
 
     // **Check if the `no_lib_link` feature is enabled**
-    if env::var("CARGO_FEATURE_NO_LIB_LINK").is_ok() {
+    if cfg!(feature = "no_lib_link") {
         println!("Skipping linking because `no_lib_link` feature is enabled.");
         return;
     }
@@ -20,17 +20,7 @@ fn main() {
     let library_name = if cfg!(feature = "gpu") { "starksgpu" } else { "starks" };
     let lib_file = library_folder.join(format!("lib{library_name}.a"));
 
-    if !pil2_stark_path.exists() {
-        panic!("Missing `pil2-stark` submodule! Run `git submodule update --init --recursive`");
-    }
-
-    // Ensure `git submodule update --init --recursive` runs only if needed
-    if !pil2_stark_path.join(".git").exists() {
-        run_command("git", &["submodule", "init"], &pil2_stark_path);
-        run_command("git", &["submodule", "update", "--recursive"], &pil2_stark_path);
-    }
-
-    // For GPU builds, ensure submodules are initialized and blst is compiled
+    // For GPU builds, ensure submodules (blst, sppark) are initialized and blst is compiled
     if cfg!(feature = "gpu") {
         ensure_gpu_submodules_initialized(&pil2_stark_path);
         ensure_blst_compiled(&pil2_stark_path);
@@ -63,26 +53,19 @@ fn main() {
         false
     };
 
-    let source_files = find_source_files(&pil2_stark_path);
-    for file in &source_files {
+    let tracked_files = find_tracked_files(&pil2_stark_path);
+    for file in &tracked_files {
         println!("cargo:rerun-if-changed={}", file.display());
     }
-    println!("cargo:rerun-if-changed={}", pil2_stark_path.join("Makefile").display());
     println!("cargo:rerun-if-changed={}", lib_file.display());
 
     // Clean build only when CUDA architecture flags change
     if archs_changed {
         eprintln!("CUDA_ARCHS changed — running clean rebuild...");
         run_command("make", &["clean"], &pil2_stark_path);
-        if let Err(e) = fs::write(&archs_stamp_path, stamp_content) {
-            eprintln!(
-                "Warning: failed to write CUDA arch stamp {:?}: {e} — next build will recompile",
-                archs_stamp_path
-            );
-        }
     }
 
-    // Delegate to Make — incremental builds via .d dependency files
+    // Call make to build the library, passing gencode flags if set
     let target = if cfg!(feature = "gpu") { "starks_lib_gpu" } else { "starks_lib" };
     eprintln!("Running make -j {target}...");
     if cfg!(feature = "gpu") {
@@ -95,6 +78,16 @@ fn main() {
         }
     } else {
         run_command("make", &["-j", target], &pil2_stark_path);
+    }
+
+    // Write arch stamp after make succeeds (make creates the output directory)
+    if archs_changed {
+        if let Err(e) = fs::write(&archs_stamp_path, stamp_content) {
+            eprintln!(
+                "Warning: failed to write CUDA arch stamp {:?}: {e} — next build will recompile",
+                archs_stamp_path
+            );
+        }
     }
 
     // Absolute path to the library
@@ -228,36 +221,27 @@ fn run_command(cmd: &str, args: &[&str], dir: &Path) {
     }
 }
 
-/// Finds all `.cpp`, `.h`, `.hpp`, `.c`, `.cuh` and `.asm` files in `pil2-stark` (recursive search)
-fn find_source_files(dir: &Path) -> Vec<PathBuf> {
-    let mut source_files = Vec::new();
+/// Recursively finds all files in `pil2-stark`, skipping build output directories.
+fn find_tracked_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    if let Some(name) = dir.file_name().and_then(|n| n.to_str()) {
+        // Skip build output directories
+        if matches!(name, "build" | "build-gpu" | "lib" | "lib-gpu") {
+            return files;
+        }
+    }
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                source_files.extend(find_source_files(&path));
-            } else if let Some(ext) = path.extension() {
-                if cfg!(feature = "gpu") {
-                    if (ext == "c"
-                        || ext == "cpp"
-                        || ext == "h"
-                        || ext == "hpp"
-                        || ext == "cu"
-                        || ext == "cuh"
-                        || ext == "asm")
-                        && path.file_name() != Some(std::ffi::OsStr::new("starks_lib_gpu.h"))
-                    {
-                        source_files.push(path);
-                    }
-                } else if (ext == "c" || ext == "cpp" || ext == "h" || ext == "hpp" || ext == "asm")
-                    && path.file_name() != Some(std::ffi::OsStr::new("starks_lib.h"))
-                {
-                    source_files.push(path);
-                }
+                files.extend(find_tracked_files(&path));
+            } else if path.extension().and_then(|e| e.to_str()) != Some("mk") {
+                // .mk files may be regenerated by the build (e.g. CudaArch.mk)
+                files.push(path);
             }
         }
     }
-    source_files
+    files
 }
 
 /// Ensures GPU-required submodules (blst and sppark) are initialized
