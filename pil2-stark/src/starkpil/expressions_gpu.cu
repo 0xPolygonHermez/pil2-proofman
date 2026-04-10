@@ -832,13 +832,16 @@ __global__  void computeExpression_(StepsParams *d_params, DeviceArguments *d_de
     const uint8_t *active_ops = (nOps <= 256) ? ops_staged : g_ops;
     const uint16_t *active_args = (nArgs <= 2048) ? args_staged : g_args;
 
+    // k_min and k_max are multiples of nRowsPack (== blockDim.x when nblocks_ > 1).
+    // Chunk-level dispatch avoids per-iteration branching for the ~99% non-cyclic interior.
+    // For single-block launches (nchunks == 1), use the safe cyclic path unconditionally.
     uint64_t k_min_chunk = d_expsArgs->k_min / blockDim.x;
     uint64_t k_max_chunk = d_expsArgs->k_max / blockDim.x;
 
     while (chunk_idx < nchunks)
     {
         uint64_t i = chunk_idx * blockDim.x;
-        if (chunk_idx < k_min_chunk || chunk_idx >= k_max_chunk) {
+        if (nchunks == 1 || chunk_idx < k_min_chunk || chunk_idx >= k_max_chunk) {
             computeExpression_chunk_<true>(d_params, d_deviceArgs, d_expsArgs, d_destParams, expressions_params, bufferCommitsSize, i, active_ops, active_args);
         } else {
             computeExpression_chunk_<false>(d_params, d_deviceArgs, d_expsArgs, d_destParams, expressions_params, bufferCommitsSize, i, active_ops, active_args);

@@ -10,7 +10,7 @@
 #include "gpu_timer.cuh"
 #ifdef USE_CUDA_GRAPH
 #include "cuda_graph_cache.cuh"
-#include <mutex>
+#include <vector>
 #endif
 #include <iomanip>
 
@@ -87,16 +87,13 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
 
 #ifdef USE_CUDA_GRAPH
     {
-        static std::once_flag printFlag;
-        std::call_once(printFlag, []() {
+        static std::once_flag initFlag;
+        static std::vector<CudaGraphCache> cacheVec;
+        std::call_once(initFlag, [&]() {
             fprintf(stderr, "[cudaGraph] enabled (stream capture mode)\n");
+            cacheVec.resize(d_buffers->n_total_streams);
         });
-        static std::mutex cacheMapMutex;
-        static std::unordered_map<uint32_t, CudaGraphCache> cacheMap;
-        {
-            std::lock_guard<std::mutex> lock(cacheMapMutex);
-            cudagraph::current() = &cacheMap[stream_id];
-        }
+        cudagraph::current() = &cacheVec[stream_id];
         cudagraph::aggressive() = recursive;
     }
     cudaGetLastError();
