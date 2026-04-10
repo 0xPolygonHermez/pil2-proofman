@@ -11,6 +11,7 @@
 #ifdef USE_CUDA_GRAPH
 #include "cuda_graph_cache.cuh"
 #include <vector>
+#include <memory>
 #endif
 #include <iomanip>
 
@@ -88,12 +89,14 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
 #ifdef USE_CUDA_GRAPH
     {
         static std::once_flag initFlag;
-        static std::vector<CudaGraphCache> cacheVec;
+        static std::vector<std::unique_ptr<CudaGraphCache>> cacheVec;
         std::call_once(initFlag, [&]() {
-            fprintf(stderr, "[cudaGraph] enabled (stream capture mode)\n");
+            zklog.debug("[cudaGraph] enabled (stream capture mode)");
             cacheVec.resize(d_buffers->n_total_streams);
+            for (auto& entry : cacheVec) entry = std::make_unique<CudaGraphCache>();
         });
-        cudagraph::current() = &cacheVec[stream_id];
+        assert(stream_id < cacheVec.size());
+        cudagraph::current() = cacheVec[stream_id].get();
         cudagraph::aggressive() = recursive;
     }
     cudaGetLastError();

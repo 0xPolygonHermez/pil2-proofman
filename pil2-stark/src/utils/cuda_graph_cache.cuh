@@ -63,6 +63,7 @@ public:
         capturing_ = true;
         cudaError_t err = cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal);
         if (err != cudaSuccess) {
+            fprintf(stderr, "[cudaGraph] beginCapture failed: %s\n", cudaGetErrorString(err));
             clearCudaError();
             capturing_ = false;
         }
