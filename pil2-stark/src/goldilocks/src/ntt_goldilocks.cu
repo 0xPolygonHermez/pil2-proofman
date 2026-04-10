@@ -396,10 +396,19 @@ __global__ void nttDitButterflyKernel(gl64_t *data, gl64_t *twiddles, gl64_t* d_
                 uint32_t ggp = gbi & (ggs - 1);
                 factor = twiddles[ggp*((1 << maxLogDomainSize) >> (gs + 1))];
             }
-            for(int j=0; j<ncols_block; j++){
-                gl64_t odd_sub = tile[ j*BATCH_HEIGHT + index2] * factor;
-                tile[j*BATCH_HEIGHT +index2] = tile[j*BATCH_HEIGHT + index1] - odd_sub;
-                tile[j*BATCH_HEIGHT +index1] = tile[j*BATCH_HEIGHT + index1] + odd_sub;
+            if (ncols_block == BATCH_WIDTH) {
+                #pragma unroll
+                for(int j=0; j<BATCH_WIDTH; j++){
+                    gl64_t odd_sub = tile[ j*BATCH_HEIGHT + index2] * factor;
+                    tile[j*BATCH_HEIGHT +index2] = tile[j*BATCH_HEIGHT + index1] - odd_sub;
+                    tile[j*BATCH_HEIGHT +index1] = tile[j*BATCH_HEIGHT + index1] + odd_sub;
+                }
+            } else {
+                for(int j=0; j<ncols_block; j++){
+                    gl64_t odd_sub = tile[ j*BATCH_HEIGHT + index2] * factor;
+                    tile[j*BATCH_HEIGHT +index2] = tile[j*BATCH_HEIGHT + index1] - odd_sub;
+                    tile[j*BATCH_HEIGHT +index1] = tile[j*BATCH_HEIGHT + index1] + odd_sub;
+                }
             }
         }
         __syncthreads();
