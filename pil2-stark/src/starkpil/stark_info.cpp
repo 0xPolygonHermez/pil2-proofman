@@ -672,7 +672,7 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
             nrowsPack = NROWS_PACK;
             maxNBlocks = omp_get_max_threads();
         } else {
-            nrowsPack = 512;
+            nrowsPack = 256;
             maxNBlocks = 512;
 
             uint64_t tmpsUsed = nTmp1 + (nTmp3 + 2) * FIELD_EXTENSION;
