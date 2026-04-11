@@ -736,7 +736,7 @@ __device__ __forceinline__ void computeExpression_chunk_(
     const uint8_t * __restrict__ ops, const uint16_t * __restrict__ args)
 {
     gl64_t *a0, *a1, *a2, *b0, *b1, *b2;
-    gl64_t *res;
+    gl64_t *res = nullptr;
 
     uint64_t i_args = 0;
     uint64_t nOps = d_destParams[0].nOps;
@@ -781,7 +781,9 @@ __device__ __forceinline__ void computeExpression_chunk_(
         printf(" %lu consumed args - %lu expected args \n", i_args, d_destParams[0].nArgs);
     }
 
-    storePolynomial__(d_expsArgs, (Goldilocks::Element *)res, i);
+    if (res != nullptr) {
+        storePolynomial__(d_expsArgs, (Goldilocks::Element *)res, i);
+    }
 }
 
 __global__  void computeExpression_(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams)

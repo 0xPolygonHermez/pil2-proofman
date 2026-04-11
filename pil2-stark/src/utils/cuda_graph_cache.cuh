@@ -58,7 +58,7 @@ public:
         return ++hitCount_[key] >= CAPTURE_THRESHOLD;
     }
 
-    void beginCapture(uint64_t key, cudaStream_t stream) {
+    bool beginCapture(uint64_t key, cudaStream_t stream) {
         pending_key_ = key;
         capturing_ = true;
         cudaError_t err = cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal);
@@ -66,7 +66,9 @@ public:
             fprintf(stderr, "[cudaGraph] beginCapture failed: %s\n", cudaGetErrorString(err));
             clearCudaError();
             capturing_ = false;
+            return false;
         }
+        return true;
     }
 
     bool endCaptureAndLaunch(cudaStream_t stream) {

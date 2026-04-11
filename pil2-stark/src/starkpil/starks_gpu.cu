@@ -215,6 +215,7 @@ void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **trees
 {
     if (step <= setupCtx.starkInfo.nStages)
     {
+    
         extendAndMerkelize_inplace(step, setupCtx, treesGL, d_trace, d_aux_trace, d_transcript, skipRecalculation, timer, stream);
     }
     else
@@ -255,19 +256,18 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
             return;
         }
         if (graphCache->shouldCapture(key)) {
-            graphCache->beginCapture(key, stream);
-
-            NTTGoldilocksGPU ntt;
-            ntt.LDE(dst, offset_dst, src, offset_src, nBits, nBitsExt, nCols, timer, stream);
-            buildMerkleTreeTilesGPU(arity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, stream);
-
-            graphCache->endCaptureAndLaunch(stream);
-
-            if (d_transcript != nullptr) {
-                uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-                d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
+            if (graphCache->beginCapture(key, stream)) {
+                NTTGoldilocksGPU ntt;
+                ntt.LDE(dst, offset_dst, src, offset_src, nBits, nBitsExt, nCols, timer, stream);
+                buildMerkleTreeTilesGPU(arity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, stream);
+                if (graphCache->endCaptureAndLaunch(stream)) {
+                    if (d_transcript != nullptr) {
+                        uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
+                        d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
+                    }
+                    return;
+                }
             }
-            return;
         }
     }
 #endif
@@ -320,7 +320,7 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
     uint64_t qDim = setupCtx.starkInfo.qDim;
 
     Goldilocks::Element shiftIn = Goldilocks::exp(Goldilocks::inv(Goldilocks::shift()), N);
-
+     
     Goldilocks::Element* d_aux_traceGL = (Goldilocks::Element*) d_aux_trace;
 
     treesGL[step - 1]->setSource(d_aux_traceGL + offset_cmQ);
@@ -349,15 +349,17 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
                     return;
                 }
                 if (graphCache->shouldCapture(key)) {
-                    graphCache->beginCapture(key, stream);
-                    nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
-                    buildMerkleTreeTilesGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, stream);
-                    graphCache->endCaptureAndLaunch(stream);
-                    uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-                    if (d_transcript != nullptr) {
-                        d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
+                    if (graphCache->beginCapture(key, stream)) {
+                        nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
+                        buildMerkleTreeTilesGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, stream);
+                        if (graphCache->endCaptureAndLaunch(stream)) {
+                            uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
+                            if (d_transcript != nullptr) {
+                                d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
+                            }
+                            return;
+                        }
                     }
-                    return;
                 }
             }
         }

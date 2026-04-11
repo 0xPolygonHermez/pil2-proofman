@@ -397,6 +397,14 @@ void free_device_buffers_gpu(void *d_buffers_)
 {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
 
+    if (d_buffers->streamsData != nullptr) {
+        for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
+            d_buffers->streamsData[i].free();
+        }
+        delete[] d_buffers->streamsData;
+        d_buffers->streamsData = nullptr;
+    }
+
     for (int i = 0; i < d_buffers->n_gpus; ++i) {
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
         
@@ -430,13 +438,6 @@ void free_device_buffers_gpu(void *d_buffers_)
     free(d_buffers->pinned_buffer);
     free(d_buffers->pinned_buffer_extra);
     free(d_buffers->gpuMemoryBuffer);
-
-    if (d_buffers->streamsData != nullptr) {
-        for (uint64_t i = 0; i < d_buffers->n_total_streams; i++) {
-            d_buffers->streamsData[i].free();
-        }
-        delete[] d_buffers->streamsData;
-    }
 
     for (auto &outer_pair : d_buffers->air_instances) {
         for (auto &inner_pair : outer_pair.second) {

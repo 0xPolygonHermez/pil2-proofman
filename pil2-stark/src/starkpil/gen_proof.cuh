@@ -10,8 +10,6 @@
 #include "gpu_timer.cuh"
 #ifdef USE_CUDA_GRAPH
 #include "cuda_graph_cache.cuh"
-#include <vector>
-#include <memory>
 #endif
 #include <iomanip>
 
@@ -87,18 +85,8 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStartGPU(timer, STARK_STEP_0);
 
 #ifdef USE_CUDA_GRAPH
-    {
-        static std::once_flag initFlag;
-        static std::vector<std::unique_ptr<CudaGraphCache>> cacheVec;
-        std::call_once(initFlag, [&]() {
-            zklog.debug("[cudaGraph] enabled (stream capture mode)");
-            cacheVec.resize(d_buffers->n_total_streams);
-            for (auto& entry : cacheVec) entry = std::make_unique<CudaGraphCache>();
-        });
-        assert(stream_id < cacheVec.size());
-        cudagraph::current() = cacheVec[stream_id].get();
-        cudagraph::aggressive() = recursive;
-    }
+    cudagraph::current() = d_buffers->streamsData[stream_id].graph_cache.get();
+    cudagraph::aggressive() = recursive;
     cudaGetLastError();
 #endif
 
@@ -391,7 +379,25 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         if (cudagraph::aggressive()) {
             CudaGraphCache *graphCache = cudagraph::current();
             if (graphCache && graphCache->isCapturing()) {
-                graphCache->endCaptureAndLaunch(stream);
+                if (!graphCache->endCaptureAndLaunch(stream)) {
+                    // Capture failed — work was recorded but not executed.
+                    // Re-execute this step's work directly.
+                    if (step > 0) {
+                        uint64_t prevBits = setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
+                        fold_inplace(step, friPol_offset, offset_helper, d_challenge, nBitsExt, prevBits, currentBits, d_aux_trace, timer, stream);
+                    }
+                    if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1) {
+                        merkelizeFRI_inplace(setupCtx, h_params, step, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, d_transcript, timer, stream);
+                    } else {
+                        if(!setupCtx.starkInfo.starkStruct.hashCommits) {
+                            d_transcript->put((Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION, stream);
+                        } else {
+                            calculateHash(d_transcript_helper, d_challenge, setupCtx, (Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION, stream);
+                            d_transcript->put(d_challenge, HASH_SIZE, stream);
+                        }
+                    }
+                    d_transcript->getField((uint64_t *)d_challenge, stream);
+                }
             }
         }
 #endif
@@ -411,10 +417,12 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
             if (graphCache->tryLaunch(key, stream)) {
                 graphHandled = true;
             } else if (graphCache->shouldCapture(key)) {
-                graphCache->beginCapture(key, stream);
-                Poseidon2GoldilocksGPUGrinding::grinding((uint64_t *)d_nonce, (uint64_t *)d_nonceBlocks, (uint64_t *)d_input_hash_nonce, setupCtx.starkInfo.starkStruct.powBits, stream);
-                graphCache->endCaptureAndLaunch(stream);
-                graphHandled = true;
+                if (graphCache->beginCapture(key, stream)) {
+                    Poseidon2GoldilocksGPUGrinding::grinding((uint64_t *)d_nonce, (uint64_t *)d_nonceBlocks, (uint64_t *)d_input_hash_nonce, setupCtx.starkInfo.starkStruct.powBits, stream);
+                    if (graphCache->endCaptureAndLaunch(stream)) {
+                        graphHandled = true;
+                    }
+                }
             }
         }
     }
@@ -442,15 +450,15 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
             if (graphCache->tryLaunch(key, stream)) {
                 graphHandled = true;
             } else if (graphCache->shouldCapture(key)) {
-                graphCache->beginCapture(key, stream);
-
-                proveQueries_inplace(setupCtx, d_queries_buff, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesGL, nTrees, d_aux_trace, d_const_tree, setupCtx.starkInfo.nStages, stream);
-                for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {
-                    proveFRIQueries_inplace(setupCtx, &d_queries_buff[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize], step + 1, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesFRI[step], stream);
+                if (graphCache->beginCapture(key, stream)) {
+                    proveQueries_inplace(setupCtx, d_queries_buff, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesGL, nTrees, d_aux_trace, d_const_tree, setupCtx.starkInfo.nStages, stream);
+                    for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {
+                        proveFRIQueries_inplace(setupCtx, &d_queries_buff[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize], step + 1, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesFRI[step], stream);
+                    }
+                    if (graphCache->endCaptureAndLaunch(stream)) {
+                        graphHandled = true;
+                    }
                 }
-
-                graphCache->endCaptureAndLaunch(stream);
-                graphHandled = true;
             }
         }
     }
