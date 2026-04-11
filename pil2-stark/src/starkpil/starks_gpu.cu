@@ -1,5 +1,8 @@
 #include "starks.hpp"
 #include "starks_gpu.cuh"
+#ifdef USE_CUDA_GRAPH
+#include "cuda_graph_cache.cuh"
+#endif
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_cubic_extension.hpp"
 #include "goldilocks_cubic_extension.cuh"
@@ -237,6 +240,38 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
     Goldilocks::Element *pNodes = dstGL + setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)];
     treesGL[step - 1]->setNodes(pNodes);
 
+#ifdef USE_CUDA_GRAPH
+    CudaGraphCache *graphCache = cudagraph::current();
+    if (graphCache && !skipRecalculation && nCols > 0) {
+        uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
+        uint64_t nBitsExt = setupCtx.starkInfo.starkStruct.nBitsExt;
+        uint64_t arity = setupCtx.starkInfo.starkStruct.merkleTreeArity;
+        uint64_t ctxId = (uint64_t)(uintptr_t)&setupCtx;
+        uint64_t key = CudaGraphCache::makeKey(0x4C4445ULL ^ ctxId, nBits, nBitsExt, nCols, arity, step);
+        if (graphCache->tryLaunch(key, stream)) {
+            if (d_transcript != nullptr) {
+                uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
+                d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
+            }
+            return;
+        }
+        if (graphCache->shouldCapture(key)) {
+            if (graphCache->beginCapture(key, stream)) {
+                NTTGoldilocksGPU ntt;
+                ntt.LDE(dst, offset_dst, src, offset_src, nBits, nBitsExt, nCols, timer, stream);
+                buildMerkleTreeTilesGPU(arity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, stream);
+                if (graphCache->endCaptureAndLaunch(stream)) {
+                    if (d_transcript != nullptr) {
+                        uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
+                        d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
+                    }
+                    return;
+                }
+            }
+        }
+    }
+#endif
+
     if(!skipRecalculation) {
         NTTGoldilocksGPU ntt;
 
@@ -296,6 +331,40 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
     {
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft", false)];
         NTTGoldilocksGPU nttExtended;
+
+#ifdef USE_CUDA_GRAPH
+        if (cudagraph::aggressive()) {
+            CudaGraphCache *graphCache = cudagraph::current();
+            if (graphCache) {
+                uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
+                uint64_t nBitsExt = setupCtx.starkInfo.starkStruct.nBitsExt;
+                uint64_t arity = setupCtx.starkInfo.starkStruct.merkleTreeArity;
+                uint64_t ctxId = (uint64_t)(uintptr_t)&setupCtx;
+                uint64_t key = CudaGraphCache::makeKey(0x514D5400ULL ^ ctxId, nBits, nBitsExt, nCols, (qDeg << 32) | qDim, arity);
+                if (graphCache->tryLaunch(key, stream)) {
+                    uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
+                    if (d_transcript != nullptr) {
+                        d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
+                    }
+                    return;
+                }
+                if (graphCache->shouldCapture(key)) {
+                    if (graphCache->beginCapture(key, stream)) {
+                        nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
+                        buildMerkleTreeTilesGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, stream);
+                        if (graphCache->endCaptureAndLaunch(stream)) {
+                            uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
+                            if (d_transcript != nullptr) {
+                                d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+#endif
+
         nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
         TimerStartCategoryGPU(timer, MERKLE_TREE);
         buildMerkleTreeTilesGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, stream);
@@ -610,7 +679,7 @@ __device__ void intt_tinny(gl64_t *data, uint32_t N, uint32_t logN, gl64_t *d_tw
     }
 }
 
-__global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t *d_ppar, Goldilocks::Element omega_inv, uint64_t shift_, uint64_t W_, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits)
+__global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t *d_ppar, Goldilocks::Element omega_inv, uint64_t invShiftPow_, uint64_t invW_, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits)
 {
 
     extern __shared__ gl64_t s_twiddles[];
@@ -634,15 +703,8 @@ __global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t 
     if (id < sizeFoldedPol)
     {
 
-        gl64_t shift(shift_);
-        gl64_t invShift = shift.reciprocal();
-        for (uint32_t j = 0; j < nBitsExt - prevBits; j++)
-        {
-            invShift *= invShift;
-        }
-
-        gl64_t W(W_);
-        gl64_t invW = W.reciprocal();
+        gl64_t invShift(invShiftPow_);
+        gl64_t invW(invW_);
         // Evaluate the sinv value for the id current component
         gl64_t sinv = invShift;
         gl64_t base = invW;
@@ -712,12 +774,20 @@ void fold_inplace(uint64_t step, uint64_t friPol_offset, uint64_t offset_helper,
     uint64_t sizeFoldedPol = 1 << currentBits;
 
     Goldilocks::Element omega_inv = omegas_inv_[prevBits - currentBits];
-    
+
+    // Precompute invShift^(2^(nBitsExt-prevBits)) on CPU to avoid redundant per-thread computation
+    Goldilocks::Element invShiftPow = Goldilocks::inv(Goldilocks::shift());
+    for (uint32_t j = 0; j < nBitsExt - prevBits; j++) {
+        Goldilocks::square(invShiftPow, invShiftPow);
+    }
+    // Precompute invW on CPU
+    Goldilocks::Element invW = Goldilocks::inv(Goldilocks::w(prevBits));
+
     dim3 nThreads(256);
-    dim3 nBlocks((sizeFoldedPol) + nThreads.x - 1 / nThreads.x);
+    dim3 nBlocks((sizeFoldedPol + nThreads.x - 1) / nThreads.x);
     size_t sharedMem = halfRatio * sizeof(gl64_t);
     TimerStartCategoryGPU(timer, FRI);
-    fold<<<nBlocks, nThreads, sharedMem, stream>>>(step, d_friPol, (gl64_t *)d_challenge, d_ppar, omega_inv, Goldilocks::shift().fe, Goldilocks::w(prevBits).fe, nBitsExt, prevBits, currentBits);
+    fold<<<nBlocks, nThreads, sharedMem, stream>>>(step, d_friPol, (gl64_t *)d_challenge, d_ppar, omega_inv, invShiftPow.fe, invW.fe, nBitsExt, prevBits, currentBits);
     TimerStopCategoryGPU(timer, FRI);
     CHECKCUDAERR(cudaGetLastError());
 }
