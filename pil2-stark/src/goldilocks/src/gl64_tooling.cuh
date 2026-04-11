@@ -4,6 +4,10 @@
 #include <cstdint>
 #include <cassert>
 #include <atomic>
+#ifdef USE_CUDA_GRAPH
+#include <memory>
+#include "cuda_graph_cache.cuh"
+#endif
 #include "goldilocks_base_field.hpp"
 #ifndef __GOLDILOCKS_ENV__
 #include "gpu_timer.cuh"
@@ -303,8 +307,12 @@ struct StreamData{
         
     bool recursive;
 
+#ifdef USE_CUDA_GRAPH
+    std::unique_ptr<CudaGraphCache> graph_cache;
+#endif
+
     std::mutex mutex_stream_selection;
-    
+
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_, uint64_t merkleTreeArity){
         uint64_t maxExps = 40000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);
@@ -327,6 +335,10 @@ struct StreamData{
         airgroupId = UINT64_MAX;
         airId = UINT64_MAX;
         arity = merkleTreeArity;
+
+    #ifdef USE_CUDA_GRAPH
+        graph_cache = std::make_unique<CudaGraphCache>();
+    #endif
 
         transcript = new TranscriptGL_GPU(merkleTreeArity,
                                     true,
@@ -362,6 +374,9 @@ struct StreamData{
 
     void free(){
         cudaSetDevice(gpuId);
+#ifdef USE_CUDA_GRAPH
+        graph_cache.reset();
+#endif
         cudaStreamDestroy(stream);
         cudaEventDestroy(end_event);
         cudaFreeHost(pinned_buffer_proof);
