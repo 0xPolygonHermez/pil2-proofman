@@ -2609,6 +2609,71 @@ TEST(GOLDILOCKS_TEST, grinding_cpu)
     ASSERT_LT(Goldilocks::toU64(result[0]), level);
 }
 
+// Verify extendPol(output, input, NExt, N, ncols):
+//   input  = evaluations of polynomial p at plain N-th roots {omega_N^j}
+//   output = evaluations of p at the extended coset {shift * omega_NExt^j}
+//   (the coset shift is introduced internally by INTT(extend=true))
+//
+// Reference: Horner evaluation of p at each coset point — fully independent of
+// the NTT implementation, uses only field arithmetic.
+TEST(GOLDILOCKS_TEST, extendPol_correctness)
+{
+    struct Case { uint64_t N, NExt, ncols; };
+    const Case cases[] = {
+        {16,  64,  1},
+        {16,  32,  4},
+        {64,  256, 8},
+    };
+
+    for (const auto &c : cases) {
+        const uint64_t N = c.N, NExt = c.NExt, ncols = c.ncols;
+
+        // log2(NExt): NExt is always a power of 2
+        uint64_t log2NExt = 0;
+        for (uint64_t tmp = NExt; tmp > 1; tmp >>= 1) ++log2NExt;
+
+        // Polynomial coefficients coeff[k*ncols + col] for degree-N polynomial p
+        std::vector<Goldilocks::Element> coeff(N * ncols);
+        for (uint64_t k = 0; k < N; ++k)
+            for (uint64_t col = 0; col < ncols; ++col)
+                coeff[k * ncols + col] =
+                    Goldilocks::fromU64((k * ncols + col + 1) * 1000003ULL);
+
+        // input = NTT(coeff, N) = evaluations of p at plain N-th roots {omega_N^j}
+        // extendPol internally applies the coset shift via INTT(extend=true)
+        NTT_Goldilocks ntt_N(N);
+        std::vector<Goldilocks::Element> input(N * ncols);
+        ntt_N.NTT(input.data(), coeff.data(), N, ncols);
+
+        // extendPol: evaluations of p at the NExt-point coset {shift * omega_NExt^j}
+        std::vector<Goldilocks::Element> output(NExt * ncols, Goldilocks::zero());
+        ntt_N.extendPol(output.data(), input.data(), NExt, N, ncols);
+
+        // Reference: Horner evaluation of p(shift * omega_NExt^j) for each j
+        // p(x) = coeff[0] + coeff[1]*x + ... + coeff[N-1]*x^{N-1}
+        Goldilocks::Element omega = Goldilocks::w(log2NExt);  // primitive NExt-th root
+        Goldilocks::Element shift = Goldilocks::shift();
+        Goldilocks::Element omega_j = Goldilocks::one();
+        for (uint64_t j = 0; j < NExt; ++j) {
+            Goldilocks::Element x;  // shift * omega_NExt^j
+            Goldilocks::mul(x, shift, omega_j);
+
+            for (uint64_t col = 0; col < ncols; ++col) {
+                Goldilocks::Element val = coeff[(N - 1) * ncols + col];
+                for (int64_t k = (int64_t)N - 2; k >= 0; --k) {
+                    Goldilocks::mul(val, val, x);
+                    Goldilocks::add(val, val, coeff[k * ncols + col]);
+                }
+                ASSERT_EQ(Goldilocks::toU64(output[j * ncols + col]),
+                          Goldilocks::toU64(val))
+                    << "Mismatch at j=" << j << " col=" << col
+                    << " (N=" << N << " NExt=" << NExt << " ncols=" << ncols << ")";
+            }
+            Goldilocks::mul(omega_j, omega_j, omega);
+        }
+    }
+}
+
 int main(int argc, char **argv)
 {
     ::testing::InitGoogleTest(&argc, argv);
