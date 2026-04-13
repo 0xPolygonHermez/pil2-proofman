@@ -1589,8 +1589,9 @@ void *get_unified_buffer_gpu_gpu(void *d_buffers_) {
 
 void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffers_recursivef_) {
     if (d_buffers_ == nullptr) return nullptr;
+    if (d_buffers_recursivef_ == nullptr) return get_unified_buffer_gpu_gpu(d_buffers_);
     DeviceRecursiveFBuffers *d_bufs_rec = (DeviceRecursiveFBuffers *)d_buffers_recursivef_;
-    cudaSetDevice(d_bufs_rec->gpuId);
+    CHECKCUDAERR(cudaSetDevice(d_bufs_rec->gpuId));
     return get_unified_buffer_gpu(d_buffers_);
 }
 

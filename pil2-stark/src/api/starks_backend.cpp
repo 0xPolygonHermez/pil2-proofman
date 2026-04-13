@@ -146,6 +146,7 @@ StarksBackend gpu_backend = []() {
     backend.check_device_memory = check_device_memory_gpu;
     backend.get_num_gpus = get_num_gpus_gpu;
     backend.get_unified_buffer_gpu = get_unified_buffer_gpu_gpu;
+    backend.get_unified_buffer_gpu_for_recursivef = get_unified_buffer_gpu_for_recursivef_gpu;
     backend.alloc_fixed_pols_buffer_gpu = alloc_fixed_pols_buffer_gpu_gpu;
     backend.free_fixed_pols_buffer_gpu = free_fixed_pols_buffer_gpu_gpu;
     backend.load_fixed_pols_recursivef = load_fixed_pols_recursivef_gpu;
