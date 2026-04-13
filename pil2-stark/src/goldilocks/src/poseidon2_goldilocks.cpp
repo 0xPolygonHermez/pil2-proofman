@@ -621,7 +621,8 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx(Goldilocks::Eleme
 #ifdef __AVX512__
 
 
-void Poseidon2Goldilocks::hash_full_result_batch_avx512(Goldilocks::Element *state, const Goldilocks::Element *input) {
+template<uint32_t SPONGE_WIDTH_T>
+void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_batch_avx512(Goldilocks::Element *state, const Goldilocks::Element *input) {
     const int length = SPONGE_WIDTH * sizeof(Goldilocks::Element);
     std::memcpy(state, input, 8 * length);
     __m512i st[SPONGE_WIDTH];
@@ -671,7 +672,8 @@ void Poseidon2Goldilocks::hash_full_result_batch_avx512(Goldilocks::Element *sta
 }
 
 
-void Poseidon2Goldilocks::linear_hash_batch_avx512(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size)
+template<uint32_t SPONGE_WIDTH_T>
+void Poseidon2Goldilocks<SPONGE_WIDTH_T>::linear_hash_batch_avx512(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size)
 {
     uint64_t remaining = size;
     Goldilocks::Element state[8*SPONGE_WIDTH];
@@ -711,7 +713,8 @@ void Poseidon2Goldilocks::linear_hash_batch_avx512(Goldilocks::Element *output, 
     }
 }
 
-void Poseidon2Goldilocks::merkletree_batch_avx512(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads, uint64_t dim)
+template<uint32_t SPONGE_WIDTH_T>
+void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx512(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads, uint64_t dim)
 {
     if (num_rows == 0)
     {
