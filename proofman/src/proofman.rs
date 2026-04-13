@@ -534,10 +534,9 @@ where
 
         let pctx = ProofCtx::<F>::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx, gpu)?;
 
-        let setups_aggregation =
-            Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, false, &[], gpu)?);
+        let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, &[], gpu)?);
 
-        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, false, &[], gpu)?;
+        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], gpu)?;
 
         if !set_gpu_mode_c(gpu) {
             return Err(ProofmanError::InvalidConfiguration(
@@ -3785,7 +3784,6 @@ where
             &pctx.global_info,
             &ProofType::Basic,
             options.verify_constraints,
-            options.preallocate_fixed_gpu,
             &preloaded_const,
             options.gpu,
         )?);
@@ -3794,7 +3792,6 @@ where
             &pctx.global_info,
             options.verify_constraints,
             options.aggregation,
-            options.preallocate_fixed_gpu,
             &preloaded_const,
             options.gpu,
         )?);

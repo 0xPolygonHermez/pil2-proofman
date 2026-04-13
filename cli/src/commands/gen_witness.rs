@@ -40,7 +40,7 @@ impl GenWitnessCmd {
             ProofCtx::create_ctx(self.proving_key.clone(), true, self.verbose.into(), Arc::new(MpiCtx::new()), false)?;
 
         let setups_vadcop: Arc<SetupsVadcop<Goldilocks>> =
-            Arc::new(SetupsVadcop::new(&pctx.global_info, false, true, false, &[], false)?);
+            Arc::new(SetupsVadcop::new(&pctx.global_info, false, true, &[], false)?);
 
         let mut zkin_file = File::open(&self.proof)?;
         let mut zkin_u8 = Vec::new();
