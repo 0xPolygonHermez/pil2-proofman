@@ -61,10 +61,18 @@ fn trait_method_signatures(fields: &[TraceField]) -> Vec<TokenStream> {
             let (bits, dims, _) = collect_dimensions(&f.ty);
             let rust_ty = rust_type_for_bits(bits);
             let idx_args: Vec<Ident> = (0..dims.len()).map(|i| format_ident!("i{}", i)).collect();
+            let setter_all = format_ident!("set_all_{}", f.name);
+            let getter_all = format_ident!("get_all_{}", f.name);
+            let mut nested_type = rust_ty.clone();
+            for &len in dims.iter().rev() {
+                nested_type = quote! { [#nested_type; #len] };
+            }
 
             out.push(quote! {
                 fn #setter(&mut self, #(#idx_args: usize,)* value: #rust_ty);
                 fn #getter(&self, #(#idx_args: usize),*) -> #rust_ty;
+                fn #setter_all(&mut self, values: &#nested_type);
+                fn #getter_all(&self) -> #nested_type;
             });
         } else {
             let bits = compute_total_bits(&f.ty);
@@ -104,6 +112,12 @@ fn forwarding_methods(type_name: &Ident, fields: &[TraceField]) -> Vec<TokenStre
             let (bits, dims, _) = collect_dimensions(&f.ty);
             let rust_ty = rust_type_for_bits(bits);
             let idx_args: Vec<Ident> = (0..dims.len()).map(|i| format_ident!("i{}", i)).collect();
+            let setter_all = format_ident!("set_all_{}", f.name);
+            let getter_all = format_ident!("get_all_{}", f.name);
+            let mut nested_type = rust_ty.clone();
+            for &len in dims.iter().rev() {
+                nested_type = quote! { [#nested_type; #len] };
+            }
 
             out.push(quote! {
                 #[inline(always)]
@@ -113,6 +127,14 @@ fn forwarding_methods(type_name: &Ident, fields: &[TraceField]) -> Vec<TokenStre
                 #[inline(always)]
                 fn #getter(&self, #(#idx_args: usize),*) -> #rust_ty {
                     #type_name::#getter(self, #(#idx_args),*)
+                }
+                #[inline(always)]
+                fn #setter_all(&mut self, values: &#nested_type) {
+                    #type_name::#setter_all(self, values);
+                }
+                #[inline(always)]
+                fn #getter_all(&self) -> #nested_type {
+                    #type_name::#getter_all(self)
                 }
             });
         } else {

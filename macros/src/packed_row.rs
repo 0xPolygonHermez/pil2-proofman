@@ -171,12 +171,27 @@ fn add_packed_array_setter_getter(
     let total_len: usize = dims.iter().product();
     let base_offset = *offset;
     *offset += bit_width * total_len;
-
     let rust_type = type_for_bitwidth(bit_width);
-    let args = dimension_args(&acc_dims);
-    let flat = flatten_index_expr(&args, &acc_dims);
+
+    // Runtime params: i0: usize, ...
+    let runtime_idents: Vec<Ident> = dims.iter().enumerate().map(|(i, _)| format_ident!("i{}", i)).collect();
+
+    let runtime_flat = flatten_index_expr(&runtime_idents, &acc_dims);
+
     let setter_name = format_ident!("set_{}", field_name);
     let getter_name = format_ident!("get_{}", field_name);
+    let setter_name_all = format_ident!("set_all_{}", field_name);
+    let getter_name_all = format_ident!("get_all_{}", field_name);
+
+    // Build the nested array type matching the declared shape, e.g. [[u8; 4]; 3]
+    // dims is outermost-first, so wrap innermost-first.
+    let nested_type = {
+        let mut ty = rust_type.clone();
+        for &len in dims.iter().rev() {
+            ty = quote! { [#ty; #len] };
+        }
+        ty
+    };
 
     let conversion = if bit_width == 1 {
         quote! { raw_value != 0 }
@@ -184,58 +199,157 @@ fn add_packed_array_setter_getter(
         quote! { raw_value as #rust_type }
     };
 
+    // Precompute all word/bit/mask values per flat index at macro expansion time.
+    // Both the runtime and const-generic versions share these arms.
+    let mut setter_arms = Vec::with_capacity(total_len);
+    let mut getter_arms = Vec::with_capacity(total_len);
+
+    // Whole-array setter/getter: one statement per element, fully unrolled at
+    // compile time with all offsets/masks as immediate literals — no match, no branch.
+    // LLVM can vectorise the resulting straight-line code across the whole array.
+    let mut all_setter_stmts: Vec<TokenStream> = Vec::with_capacity(total_len);
+    let mut all_getter_stmts: Vec<TokenStream> = Vec::with_capacity(total_len);
+    // Combined clear mask per packed word, accumulated across all elements of this field.
+    // Enables a single AND per word in set_all instead of one AND per element.
+    let mut word_clear_masks: std::collections::BTreeMap<usize, u64> = std::collections::BTreeMap::new();
+
+    for flat_idx in 0..total_len {
+        let start = base_offset + flat_idx * bit_width;
+        let end = start + bit_width;
+        let word_start = start / 64;
+        let word_end = (end - 1) / 64;
+        let bit_start = start % 64;
+
+        // Compute per-dimension indices from flat_idx (row-major, dims outermost-first).
+        // e.g. for dims=[3,4]: idx0 = flat_idx / 4, idx1 = flat_idx % 4
+        let idx_exprs: Vec<TokenStream> = {
+            let mut exprs = Vec::with_capacity(dims.len());
+            // strides[k] = product of dims[k+1..]
+            let strides: Vec<usize> = (0..dims.len()).map(|k| dims[k + 1..].iter().product()).collect();
+            let mut rem = flat_idx;
+            for &stride in &strides {
+                let idx = rem / stride;
+                rem %= stride;
+                exprs.push(quote! { #idx });
+            }
+            exprs
+        };
+
+        // Nested index into `values`, e.g. values[2][3]
+        let values_access = quote! { values #( [#idx_exprs] )* };
+        // Nested index into `result`, e.g. result[2][3]
+        let result_access = quote! { result #( [#idx_exprs] )* };
+
+        if word_start == word_end {
+            let mask_bits = ((1u128 << bit_width) - 1) as u64;
+            let mask = mask_bits << bit_start;
+
+            setter_arms.push(quote! {
+                #flat_idx => {
+                    self.packed[#word_start] &= !(#mask as u64);
+                    self.packed[#word_start] |= ((value as u64) & (#mask_bits as u64)) << #bit_start;
+                }
+            });
+            getter_arms.push(quote! {
+                #flat_idx => {
+                    (self.packed[#word_start] >> #bit_start) & (#mask_bits as u64)
+                }
+            });
+
+            *word_clear_masks.entry(word_start).or_insert(0) |= mask;
+            all_setter_stmts.push(quote! {
+                self.packed[#word_start] |= ((#values_access as u64) & (#mask_bits as u64)) << #bit_start;
+            });
+            all_getter_stmts.push(quote! {
+                #result_access = {
+                    let raw_value = (self.packed[#word_start] >> #bit_start) & (#mask_bits as u64);
+                    #conversion
+                };
+            });
+        } else {
+            let low_bits = 64 - bit_start;
+            let high_bits = bit_width - low_bits;
+            let low_mask = ((1u128 << low_bits) - 1) as u64;
+            let high_mask = ((1u128 << high_bits) - 1) as u64;
+
+            setter_arms.push(quote! {
+                #flat_idx => {
+                    self.packed[#word_start] &= !(#low_mask << #bit_start);
+                    self.packed[#word_start] |= ((value as u64) & #low_mask) << #bit_start;
+                    self.packed[#word_end] &= !#high_mask;
+                    self.packed[#word_end] |= ((value as u64) >> #low_bits) & #high_mask;
+                }
+            });
+            getter_arms.push(quote! {
+                #flat_idx => {
+                    let low = (self.packed[#word_start] >> #bit_start) & #low_mask;
+                    let high = self.packed[#word_end] & #high_mask;
+                    (high << #low_bits) | low
+                }
+            });
+
+            *word_clear_masks.entry(word_start).or_insert(0) |= low_mask << bit_start;
+            *word_clear_masks.entry(word_end).or_insert(0) |= high_mask;
+            all_setter_stmts.push(quote! {
+                self.packed[#word_start] |= ((#values_access as u64) & #low_mask) << #bit_start;
+                self.packed[#word_end] |= ((#values_access as u64) >> #low_bits) & #high_mask;
+            });
+            all_getter_stmts.push(quote! {
+                #result_access = {
+                    let low = (self.packed[#word_start] >> #bit_start) & #low_mask;
+                    let high = self.packed[#word_end] & #high_mask;
+                    let raw_value = (high << #low_bits) | low;
+                    #conversion
+                };
+            });
+        }
+    }
+
+    // One AND per packed word to clear all bits occupied by this field — emitted before the ORs.
+    let bulk_clear_stmts: Vec<TokenStream> = word_clear_masks
+        .iter()
+        .map(|(&word, &combined_mask)| {
+            quote! { self.packed[#word] &= !(#combined_mask as u64); }
+        })
+        .collect();
+
     setter_getters.push(quote! {
+        // Runtime-indexed version — easy to use in regular loops
         #[inline(always)]
-        pub fn #setter_name(&mut self, #(#args: usize,)* value: #rust_type) {
+        pub fn #setter_name(&mut self, #(#runtime_idents: usize,)* value: #rust_type) {
             debug_assert!(
                 (value as u128) < (1u128 << #bit_width),
                 "Value out of range for field {} (setter: {}): value={}, bit_width={}, max_value={}",
                 stringify!(#field_name), stringify!(#setter_name), value as u128, #bit_width, (1u128 << #bit_width) - 1
             );
-            let index = #flat;
-            let bit_offset = #base_offset + index * #bit_width;
-            let word_start = bit_offset / 64;
-            let bit_start = bit_offset % 64;
-
-            if bit_start + #bit_width <= 64 {
-                const mask: u64 = ((1u128 << #bit_width) - 1) as u64;
-                self.packed[word_start] &= !(mask << bit_start);
-                self.packed[word_start] |= ((value as u64) & mask) << bit_start;
-            } else {
-                let low_bits = 64 - bit_start;
-                let high_bits = #bit_width - low_bits;
-                let low_mask: u64 = ((1u128 << low_bits) - 1) as u64;
-                let high_mask: u64 = ((1u128 << high_bits) - 1) as u64;
-
-                self.packed[word_start] &= !(low_mask << bit_start);
-                self.packed[word_start] |= ((value as u64) & low_mask) << bit_start;
-
-                self.packed[word_start + 1] &= !high_mask;
-                self.packed[word_start + 1] |= ((value as u64) >> low_bits) & high_mask;
+            match #runtime_flat {
+                #(#setter_arms)*
+                _ => panic!("Index out of bounds for field {}", stringify!(#field_name))
             }
         }
 
         #[inline(always)]
-        pub fn #getter_name(&self, #(#args: usize),*) -> #rust_type {
-            let index = #flat;
-            let bit_offset = #base_offset + index * #bit_width;
-            let word_start = bit_offset / 64;
-            let bit_start = bit_offset % 64;
-
-            let raw_value = if bit_start + #bit_width <= 64 {
-                const mask: u64 = ((1u128 << #bit_width) - 1) as u64;
-                (self.packed[word_start] >> bit_start) & mask
-            } else {
-                let low_bits = 64 - bit_start;
-                let high_bits = #bit_width - low_bits;
-                let low_mask: u64 = ((1u128 << low_bits) - 1) as u64;
-                let high_mask: u64 = ((1u128 << high_bits) - 1) as u64;
-
-                let low = (self.packed[word_start] >> bit_start) & low_mask;
-                let high = self.packed[word_start + 1] & high_mask;
-                (high << low_bits) | low
+        pub fn #getter_name(&self, #(#runtime_idents: usize),*) -> #rust_type {
+            let raw_value = match #runtime_flat {
+                #(#getter_arms)*
+                _ => panic!("Index out of bounds for field {}", stringify!(#field_name))
             };
             #conversion
+        }
+
+        // Whole-array versions — fully unrolled, no match/branch, LLVM-vectorisable.
+        // `values` and the return type preserve the declared shape (e.g. [[u8; 4]; 3]).
+        #[inline(always)]
+        pub fn #setter_name_all(&mut self, values: &#nested_type) {
+            #(#bulk_clear_stmts)*
+            #(#all_setter_stmts)*
+        }
+
+        #[inline(always)]
+        pub fn #getter_name_all(&self) -> #nested_type {
+            let mut result: #nested_type = unsafe { std::mem::zeroed() };
+            #(#all_getter_stmts)*
+            result
         }
     });
 }
@@ -249,10 +363,6 @@ fn type_for_bitwidth(width: usize) -> TokenStream {
         33..=64 => quote! { u64 },
         _ => quote! { u128 },
     }
-}
-
-fn dimension_args(dims: &[usize]) -> Vec<Ident> {
-    dims.iter().enumerate().map(|(i, _)| format_ident!("i{}", i)).collect()
 }
 
 fn flatten_index_expr(idents: &[Ident], dims: &[usize]) -> TokenStream {
