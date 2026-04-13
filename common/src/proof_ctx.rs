@@ -61,7 +61,6 @@ pub struct ProofOptions {
     pub rma: bool,
     pub compressed: bool,
     pub verify_proofs: bool,
-    pub output_dir_path: Option<PathBuf>,
     pub minimal_memory: bool,
 }
 
@@ -72,7 +71,6 @@ impl BorshSerialize for ProofOptions {
         BorshSerialize::serialize(&self.rma, writer)?;
         BorshSerialize::serialize(&self.compressed, writer)?;
         BorshSerialize::serialize(&self.verify_proofs, writer)?;
-        BorshSerialize::serialize(&self.output_dir_path.as_ref().map(|p| p.to_string_lossy().to_string()), writer)?;
         BorshSerialize::serialize(&self.minimal_memory, writer)?;
         Ok(())
     }
@@ -85,18 +83,9 @@ impl BorshDeserialize for ProofOptions {
         let rma = bool::deserialize_reader(reader)?;
         let compressed = bool::deserialize_reader(reader)?;
         let verify_proofs = bool::deserialize_reader(reader)?;
-        let output_dir_path: Option<String> = Option::<String>::deserialize_reader(reader)?;
         let minimal_memory = bool::deserialize_reader(reader)?;
 
-        Ok(Self {
-            verify_constraints,
-            aggregation,
-            rma,
-            compressed,
-            verify_proofs,
-            output_dir_path: output_dir_path.map(PathBuf::from),
-            minimal_memory,
-        })
+        Ok(Self { verify_constraints, aggregation, rma, compressed, verify_proofs, minimal_memory })
     }
 }
 
@@ -144,7 +133,6 @@ impl Default for ProofOptions {
             compressed: false,
             verify_proofs: false,
             minimal_memory: false,
-            output_dir_path: None,
         }
     }
 }
@@ -158,9 +146,8 @@ impl ProofOptions {
         compressed: bool,
         verify_proofs: bool,
         minimal_memory: bool,
-        output_dir_path: Option<PathBuf>,
     ) -> Self {
-        Self { verify_constraints, aggregation, rma, compressed, verify_proofs, minimal_memory, output_dir_path }
+        Self { verify_constraints, aggregation, rma, compressed, verify_proofs, minimal_memory }
     }
 
     pub fn minimal_memory(&mut self) {
