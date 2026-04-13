@@ -1462,6 +1462,14 @@ pub fn get_unified_buffer_gpu_c(d_buffers: *mut ::std::os::raw::c_void) -> *mut 
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn get_unified_buffer_gpu_for_recursivef_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    d_buffers_recursivef: *mut ::std::os::raw::c_void,
+) -> *mut ::std::os::raw::c_void {
+    unsafe { get_unified_buffer_gpu_for_recursivef(d_buffers, d_buffers_recursivef) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn alloc_fixed_pols_buffer_gpu_c(d_buffers: *mut ::std::os::raw::c_void) {
     unsafe {
         alloc_fixed_pols_buffer_gpu(d_buffers);
@@ -2490,6 +2498,15 @@ pub fn get_unified_buffer_gpu_c(_d_buffers: *mut ::std::os::raw::c_void) -> *mut
         "ffi     ",
         "get_unified_buffer_gpu: This is a mock call because there is a linked library but the function is not implemented"
     );
+    std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_unified_buffer_gpu_for_recursivef_c(
+    _d_buffers: *mut ::std::os::raw::c_void,
+    _d_buffers_recursivef: *mut ::std::os::raw::c_void,
+) -> *mut ::std::os::raw::c_void {
+    trace!("··· {}", "get_unified_buffer_gpu_for_recursivef: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 

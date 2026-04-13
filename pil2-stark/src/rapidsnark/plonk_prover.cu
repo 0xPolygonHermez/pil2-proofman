@@ -213,6 +213,11 @@ extern "C" void gpu_plonk_cuda_device_sync()
     cudaDeviceSynchronize();
 }
 
+extern "C" void gpu_plonk_set_device(int gpuId)
+{  
+    cudaSetDevice(gpuId);
+}
+
 extern "C" void* gpu_plonk_create_cuda_stream_nonblocking()
 {
     cudaStream_t stream;

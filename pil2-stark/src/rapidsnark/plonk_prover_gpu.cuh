@@ -148,6 +148,7 @@ namespace PlonkGPU {
        
         BinFileUtils::BinFile* fdZkeyPtr = nullptr;
 
+        int gpuId = 0;
         bool preAllocated = false;
         bool isMyDeviceBuffer = false;
         bool precomputedPinned = false;
@@ -155,6 +156,7 @@ namespace PlonkGPU {
 
     public:
         PlonkProverGPU(Engine &E);
+        PlonkProverGPU(Engine &E, int gpuId);
         PlonkProverGPU(Engine &E, void* reservedMemoryPtr, uint64_t reservedMemorySize);
 
         ~PlonkProverGPU();
@@ -172,7 +174,7 @@ namespace PlonkGPU {
         std::tuple <std::vector<uint8_t>, std::vector<uint8_t>> prove(FrElement *wtns, WtnsUtils::Header* wtnsHeader = NULL);
 
     protected:
-        void initialize(void* reservedMemoryPtr, uint64_t reservedMemorySize = 0);
+        void initialize(void* reservedMemoryPtr, uint64_t reservedMemorySize = 0, int gpuId = 0);
 
         void removePrecomputedData();
 

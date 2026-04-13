@@ -7,10 +7,11 @@
 #include "starks_api_internal.hpp"
 #include <cstring>
 #include <thread>
+#include <util/gpu_t.cuh>
 
 
 struct FinalSnarkGPU;
-extern void *initFinalSnarkProverGPU(char* zkeyFile);
+extern void *initFinalSnarkProverGPU(char* zkeyFile, int gpuId);
 extern void freeFinalSnarkProverGPU(void *snark_prover);
 extern void genFinalSnarkProofGPU(void *proverSnark, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark);
 extern void preAllocateFinalSnarkProverGPU(void *snark_prover, void* unified_buffer_gpu);
@@ -1016,8 +1017,17 @@ void *gen_device_buffers_recursivef_gpu(void *pSetupCtx_, uint64_t proverBufferS
         DeviceCommitBuffers *d_commit_buffer = (DeviceCommitBuffers *)d_commit_buffer_;
         gpuId = d_commit_buffer->my_gpu_ids[0];
     }
-    cudaSetDevice(gpuId);
     
+    // Force sppark's lazy GPU registry to initialize now, while we still control
+    // the current CUDA device. The first call into any sppark entry point
+    // (select_gpu, gpu_props, ngpus, all_gpus) constructs a function-local static
+    // gpus_t that probes every device and ends with cudaSetDevice(0) — silently
+    // clobbering whatever device the caller had selected. By triggering that
+    // one-time init here and restoring the device around it, later cudaSetDevice(N)
+    // calls stick and select_gpu(-1) resolves to the device we actually want.
+    (void)ngpus();
+    cudaSetDevice(gpuId);
+
     DeviceRecursiveFBuffers *d_buffers = new DeviceRecursiveFBuffers();
     d_buffers->gpuId = gpuId;
     
@@ -1577,6 +1587,13 @@ void *get_unified_buffer_gpu_gpu(void *d_buffers_) {
     return (void *)d_unifiedBuffer;
 }
 
+void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffers_recursivef_) {
+    if (d_buffers_ == nullptr) return nullptr;
+    DeviceRecursiveFBuffers *d_bufs_rec = (DeviceRecursiveFBuffers *)d_buffers_recursivef_;
+    cudaSetDevice(d_bufs_rec->gpuId);
+    return get_unified_buffer_gpu(d_buffers_);
+}
+
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive, bool force_recursive){
     uint32_t countFreeStreamsGPU[d_buffers->n_gpus];
     uint32_t countUnusedStreams[d_buffers->n_gpus];
@@ -1694,11 +1711,13 @@ void closeStreamTimer(TimerGPU &timer, uint64_t instance_id, uint64_t airgroup_i
 }
 
 void *init_final_snark_prover_gpu(char* zkeyFile, void* d_buffers_recursivef) {
+    int gpuId = 0;
     if (d_buffers_recursivef != nullptr) {
-        DeviceRecursiveFBuffers *d_buffers = (DeviceRecursiveFBuffers *)d_buffers_recursivef;
-        cudaSetDevice(d_buffers->gpuId);
+        DeviceRecursiveFBuffers *d_bufs = (DeviceRecursiveFBuffers *)d_buffers_recursivef;
+        gpuId = d_bufs->gpuId;
+        cudaSetDevice(gpuId);
     }
-    return initFinalSnarkProverGPU(zkeyFile);
+    return initFinalSnarkProverGPU(zkeyFile, gpuId);
 }
 
 void free_final_snark_prover_gpu(void *snark_prover) {

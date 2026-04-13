@@ -179,6 +179,7 @@ extern "C" {
     uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size);
     uint64_t get_num_gpus();
     void *get_unified_buffer_gpu(void *d_buffers_);
+    void *get_unified_buffer_gpu_for_recursivef(void *d_buffers_, void *d_buffers_recursivef_);
     void alloc_fixed_pols_buffer_gpu(void *d_buffers_);
     void free_fixed_pols_buffer_gpu(void *d_buffers_);
     void load_fixed_pols_recursivef(void *pSetupCtx_, void *pConstTree, void *d_buffers_);
