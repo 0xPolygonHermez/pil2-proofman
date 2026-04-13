@@ -66,9 +66,6 @@ pub struct ProveCmd {
     #[clap(short = 'c', long, value_name="KEY=VALUE", num_args(1..))]
     pub custom_commits: Vec<String>,
 
-    #[clap(short = 'z', long, default_value_t = false)]
-    pub preallocate: bool,
-
     #[clap(short = 'r', long, default_value_t = false)]
     pub no_rma: bool,
 
@@ -117,7 +114,7 @@ impl ProveCmd {
 
         let verify_constraints = debug_info.std_mode.name == ModeName::Debug;
 
-        let mut options = ProofmanOptions::new(self.preallocate);
+        let mut options = ProofmanOptions::new();
 
         if let Some(max_streams) = self.max_streams {
             options.with_max_number_streams(max_streams);

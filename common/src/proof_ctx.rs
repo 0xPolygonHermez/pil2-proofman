@@ -174,7 +174,6 @@ impl ProofOptions {
 
 #[derive(Clone)]
 pub struct ProofmanOptions {
-    pub preallocate_fixed_gpu: bool,
     pub max_number_streams: usize,
     pub number_threads_pools_witness: usize,
     pub are_threads_per_witness_set: bool,
@@ -190,7 +189,6 @@ pub struct ProofmanOptions {
 impl Default for ProofmanOptions {
     fn default() -> Self {
         Self {
-            preallocate_fixed_gpu: false,
             max_number_streams: 20,
             number_threads_pools_witness: 4,
             max_witness_stored: 10,
@@ -206,8 +204,8 @@ impl Default for ProofmanOptions {
 }
 
 impl ProofmanOptions {
-    pub fn new(preallocate_fixed_gpu: bool) -> Self {
-        Self { preallocate_fixed_gpu, ..Self::default() }
+    pub fn new() -> Self {
+        Self { ..Self::default() }
     }
 
     pub fn with_max_number_streams(&mut self, max_number_streams: usize) {
