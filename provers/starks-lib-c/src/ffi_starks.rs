@@ -1147,7 +1147,11 @@ pub fn free_final_snark_prover_c(snark_prover: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn pre_allocate_final_snark_prover_c(snark_prover: *mut c_void, unified_buffer_gpu: *mut c_void, d_buffers_recursivef: *mut c_void) {
+pub fn pre_allocate_final_snark_prover_c(
+    snark_prover: *mut c_void,
+    unified_buffer_gpu: *mut c_void,
+    d_buffers_recursivef: *mut c_void,
+) {
     unsafe { pre_allocate_final_snark_prover(snark_prover, unified_buffer_gpu, d_buffers_recursivef) }
 }
 
@@ -1160,7 +1164,13 @@ pub fn gen_final_snark_proof_c(
     d_buffers_recursivef: *mut c_void,
 ) {
     unsafe {
-        gen_final_snark_proof(prover, circomWitnessFinal as *mut std::os::raw::c_void, proof, publics_snark, d_buffers_recursivef);
+        gen_final_snark_proof(
+            prover,
+            circomWitnessFinal as *mut std::os::raw::c_void,
+            proof,
+            publics_snark,
+            d_buffers_recursivef,
+        );
     }
 }
 
@@ -1428,6 +1438,14 @@ pub fn get_num_gpus_c() -> u64 {
 #[cfg(not(feature = "no_lib_link"))]
 pub fn get_unified_buffer_gpu_c(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
     unsafe { get_unified_buffer_gpu(d_buffers) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_unified_buffer_gpu_for_recursivef_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    d_buffers_recursivef: *mut ::std::os::raw::c_void,
+) -> *mut ::std::os::raw::c_void {
+    unsafe { get_unified_buffer_gpu_for_recursivef(d_buffers, d_buffers_recursivef) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -2249,7 +2267,11 @@ pub fn free_final_snark_prover_c(_snark_prover: *mut c_void) {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn pre_allocate_final_snark_prover_c(_snark_prover: *mut c_void, _unified_buffer_gpu: *mut c_void, _d_buffers_recursivef: *mut c_void) {
+pub fn pre_allocate_final_snark_prover_c(
+    _snark_prover: *mut c_void,
+    _unified_buffer_gpu: *mut c_void,
+    _d_buffers_recursivef: *mut c_void,
+) {
     trace!("··· {}", "pre_allocate_final_snark_prover: This is a mock call because there is no linked library");
 }
 
@@ -2439,6 +2461,15 @@ pub fn get_unified_buffer_gpu_c(_d_buffers: *mut ::std::os::raw::c_void) -> *mut
         "ffi     ",
         "get_unified_buffer_gpu: This is a mock call because there is a linked library but the function is not implemented"
     );
+    std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_unified_buffer_gpu_for_recursivef_c(
+    _d_buffers: *mut ::std::os::raw::c_void,
+    _d_buffers_recursivef: *mut ::std::os::raw::c_void,
+) -> *mut ::std::os::raw::c_void {
+    trace!("··· {}", "get_unified_buffer_gpu_for_recursivef: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 

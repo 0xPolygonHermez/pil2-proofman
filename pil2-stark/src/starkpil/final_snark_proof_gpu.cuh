@@ -25,7 +25,7 @@ class PlonkFinalProverGPU : public IFinalSnarkProverGPU {
     PlonkGPU::PlonkProverGPU<AltBn128::Engine> prover_;
     uint32_t nPublics_;
 public:
-    PlonkFinalProverGPU(BinFileUtils::BinFile* fdZkey) : prover_(AltBn128::Engine::engine) {
+    PlonkFinalProverGPU(BinFileUtils::BinFile* fdZkey, int gpuId = 0) : prover_(AltBn128::Engine::engine, gpuId) {
         prover_.setZkey(fdZkey);
         nPublics_ = prover_.getNPublic();
     }
@@ -65,7 +65,7 @@ struct FinalSnarkGPU {
 };
 
 int getProtocolIdFromBinFileGPU(BinFileUtils::BinFile *fdZkey);
-std::unique_ptr<IFinalSnarkProverGPU> initFinalSnarkProverGPU(BinFileUtils::BinFile *fdZkey);
+std::unique_ptr<IFinalSnarkProverGPU> initFinalSnarkProverGPU(BinFileUtils::BinFile *fdZkey, int gpuId = 0);
 void genFinalSnarkProofGPU(void *proverSnark, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark);
 void preAllocateFinalSnarkProverGPU(void *snark_prover, void* unified_buffer_gpu);
 

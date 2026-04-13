@@ -18,7 +18,7 @@ use crate::check_const_tree;
 use std::fs;
 use proofman_starks_lib_c::{
     init_final_snark_prover_c, free_final_snark_prover_c, get_snark_protocol_id_c, snark_proof_bytes_to_json_c,
-    get_unified_buffer_gpu_c, free_fixed_pols_buffer_gpu_c, pre_allocate_final_snark_prover_c,
+    get_unified_buffer_gpu_for_recursivef_c, free_fixed_pols_buffer_gpu_c, pre_allocate_final_snark_prover_c,
     alloc_fixed_pols_buffer_gpu_c, free_device_buffers_recursivef_c, gen_device_buffers_recursivef_c,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -281,7 +281,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         let prealloc_handle = {
             let snark_prover = self.snark_prover as usize;
             let unified_buffer_gpu = if let Some(d_buffers) = self.d_buffers {
-                get_unified_buffer_gpu_c(d_buffers)
+                get_unified_buffer_gpu_for_recursivef_c(d_buffers, self.d_buffers_recursivef)
             } else {
                 std::ptr::null_mut()
             };
@@ -296,8 +296,13 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             })
         };
 
-        let (snark_proof_bytes, snark_publics_bytes) =
-            generate_snark_proof(self.snark_prover, &self.setup_snark_path, recursivef_proof, prealloc_handle, self.d_buffers_recursivef)?;
+        let (snark_proof_bytes, snark_publics_bytes) = generate_snark_proof(
+            self.snark_prover,
+            &self.setup_snark_path,
+            recursivef_proof,
+            prealloc_handle,
+            self.d_buffers_recursivef,
+        )?;
 
         let publics_info = PublicsInfo::from_folder(&self.proving_key_path)?;
         let public_bytes = get_public_bytes_solidity(&publics_info, &proof[1..1 + proof[0] as usize])?;

@@ -797,7 +797,13 @@ pub fn generate_snark_proof(
     let snark_proof_ptr = snark_proof.as_ptr() as *mut u8;
 
     tracing::trace!("··· Generating final snark proof");
-    gen_final_snark_proof_c(snark_prover, witness.as_ptr() as *mut u8, snark_proof_ptr, snark_publics_ptr, d_buffers_recursivef);
+    gen_final_snark_proof_c(
+        snark_prover,
+        witness.as_ptr() as *mut u8,
+        snark_proof_ptr,
+        snark_publics_ptr,
+        d_buffers_recursivef,
+    );
     timer_stop_and_log_info!(CALCULATE_FINAL_PROOF);
     tracing::trace!("··· Final Snark Proof generated.");
 

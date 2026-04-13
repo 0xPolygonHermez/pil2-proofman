@@ -852,6 +852,10 @@ void *get_unified_buffer_gpu(void *d_buffers_) {
     return nullptr;
 }
 
+void *get_unified_buffer_gpu_for_recursivef(void *d_buffers_, void *d_buffers_recursivef_) {
+    return nullptr;
+}
+
 void free_device_buffers(void *d_buffers_) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     delete d_buffers;
