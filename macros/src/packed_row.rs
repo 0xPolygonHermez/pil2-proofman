@@ -199,10 +199,23 @@ fn add_packed_array_setter_getter(
         quote! { raw_value as #rust_type }
     };
 
-    // Precompute all word/bit/mask values per flat index at macro expansion time.
-    // Both the runtime and const-generic versions share these arms.
-    let mut setter_arms = Vec::with_capacity(total_len);
-    let mut getter_arms = Vec::with_capacity(total_len);
+    // Per-dimension bounds checks for the runtime accessor. These fire in debug builds
+    // whenever an individual index is out of range for its dimension, even if the
+    // resulting flat index would (by chance) still map to a valid element.
+    let bounds_checks: Vec<TokenStream> = runtime_idents
+        .iter()
+        .zip(dims.iter())
+        .enumerate()
+        .map(|(dim_idx, (id, &dim))| {
+            quote! {
+                debug_assert!(
+                    #id < #dim,
+                    "Index out of bounds for field {} (dimension {}: {} >= {})",
+                    stringify!(#field_name), #dim_idx, #id, #dim
+                );
+            }
+        })
+        .collect();
 
     // Whole-array setter/getter: one statement per element, fully unrolled at
     // compile time with all offsets/masks as immediate literals — no match, no branch.
@@ -240,24 +253,24 @@ fn add_packed_array_setter_getter(
         // Nested index into `result`, e.g. result[2][3]
         let result_access = quote! { result #( [#idx_exprs] )* };
 
+        // Debug-only range validation for set_all (mirrors the per-element debug_assert
+        // in the scalar setter so the two APIs behave consistently in debug builds).
+        let set_all_debug_check = quote! {
+            debug_assert!(
+                (#values_access as u128) < (1u128 << #bit_width),
+                "set_all_{}: element [{}] value {} exceeds {}-bit max {}",
+                stringify!(#field_name), #flat_idx, #values_access as u128,
+                #bit_width, (1u128 << #bit_width) - 1
+            );
+        };
+
         if word_start == word_end {
             let mask_bits = ((1u128 << bit_width) - 1) as u64;
             let mask = mask_bits << bit_start;
 
-            setter_arms.push(quote! {
-                #flat_idx => {
-                    self.packed[#word_start] &= !(#mask as u64);
-                    self.packed[#word_start] |= ((value as u64) & (#mask_bits as u64)) << #bit_start;
-                }
-            });
-            getter_arms.push(quote! {
-                #flat_idx => {
-                    (self.packed[#word_start] >> #bit_start) & (#mask_bits as u64)
-                }
-            });
-
             *word_clear_masks.entry(word_start).or_insert(0) |= mask;
             all_setter_stmts.push(quote! {
+                #set_all_debug_check
                 self.packed[#word_start] |= ((#values_access as u64) & (#mask_bits as u64)) << #bit_start;
             });
             all_getter_stmts.push(quote! {
@@ -272,25 +285,10 @@ fn add_packed_array_setter_getter(
             let low_mask = ((1u128 << low_bits) - 1) as u64;
             let high_mask = ((1u128 << high_bits) - 1) as u64;
 
-            setter_arms.push(quote! {
-                #flat_idx => {
-                    self.packed[#word_start] &= !(#low_mask << #bit_start);
-                    self.packed[#word_start] |= ((value as u64) & #low_mask) << #bit_start;
-                    self.packed[#word_end] &= !#high_mask;
-                    self.packed[#word_end] |= ((value as u64) >> #low_bits) & #high_mask;
-                }
-            });
-            getter_arms.push(quote! {
-                #flat_idx => {
-                    let low = (self.packed[#word_start] >> #bit_start) & #low_mask;
-                    let high = self.packed[#word_end] & #high_mask;
-                    (high << #low_bits) | low
-                }
-            });
-
             *word_clear_masks.entry(word_start).or_insert(0) |= low_mask << bit_start;
             *word_clear_masks.entry(word_end).or_insert(0) |= high_mask;
             all_setter_stmts.push(quote! {
+                #set_all_debug_check
                 self.packed[#word_start] |= ((#values_access as u64) & #low_mask) << #bit_start;
                 self.packed[#word_end] |= ((#values_access as u64) >> #low_bits) & #high_mask;
             });
@@ -313,26 +311,63 @@ fn add_packed_array_setter_getter(
         })
         .collect();
 
+    // Typed zero initializer for the nested array type (e.g. `[false; 64]` or `[[0; 8]; 4]`).
+    // Generated instead of relying on `Default::default()` so that large array sizes like
+    // `[bool; 64]` work on all stable Rust versions (the const-generic Default impl for
+    // arrays was only stabilized in Rust 1.55).
+    let zero_init = zero_init_expr(bit_width, field_type);
+
     setter_getters.push(quote! {
-        // Runtime-indexed version — easy to use in regular loops
+        // Runtime-indexed version — arithmetic-based, O(1) generated code regardless of
+        // array size. Per-dimension bounds checks catch aliased out-of-range indices in
+        // debug builds (a flat-index match cannot detect e.g. i1 == dim1 when i0 is
+        // small enough that the flat index still falls within bounds).
         #[inline(always)]
         pub fn #setter_name(&mut self, #(#runtime_idents: usize,)* value: #rust_type) {
+            #(#bounds_checks)*
             debug_assert!(
                 (value as u128) < (1u128 << #bit_width),
                 "Value out of range for field {} (setter: {}): value={}, bit_width={}, max_value={}",
                 stringify!(#field_name), stringify!(#setter_name), value as u128, #bit_width, (1u128 << #bit_width) - 1
             );
-            match #runtime_flat {
-                #(#setter_arms)*
-                _ => panic!("Index out of bounds for field {}", stringify!(#field_name))
+            let flat: usize = #runtime_flat;
+            let bit_offset: usize = #base_offset + flat * #bit_width;
+            let word: usize = bit_offset / 64;
+            let bit_start: usize = bit_offset % 64;
+            if bit_start + #bit_width <= 64 {
+                let mask_bits: u64 = ((1u128 << #bit_width) - 1) as u64;
+                self.packed[word] &= !(mask_bits << bit_start);
+                self.packed[word] |= ((value as u64) & mask_bits) << bit_start;
+            } else {
+                let low_bits: usize = 64 - bit_start;
+                let high_bits: usize = #bit_width - low_bits;
+                let low_mask: u64 = ((1u128 << low_bits) - 1) as u64;
+                let high_mask: u64 = ((1u128 << high_bits) - 1) as u64;
+                self.packed[word] &= !(low_mask << bit_start);
+                self.packed[word] |= ((value as u64) & low_mask) << bit_start;
+                self.packed[word + 1] &= !high_mask;
+                self.packed[word + 1] |= ((value as u64) >> low_bits) & high_mask;
             }
         }
 
         #[inline(always)]
         pub fn #getter_name(&self, #(#runtime_idents: usize),*) -> #rust_type {
-            let raw_value = match #runtime_flat {
-                #(#getter_arms)*
-                _ => panic!("Index out of bounds for field {}", stringify!(#field_name))
+            #(#bounds_checks)*
+            let flat: usize = #runtime_flat;
+            let bit_offset: usize = #base_offset + flat * #bit_width;
+            let word: usize = bit_offset / 64;
+            let bit_start: usize = bit_offset % 64;
+            let raw_value: u64 = if bit_start + #bit_width <= 64 {
+                let mask_bits: u64 = ((1u128 << #bit_width) - 1) as u64;
+                (self.packed[word] >> bit_start) & mask_bits
+            } else {
+                let low_bits: usize = 64 - bit_start;
+                let high_bits: usize = #bit_width - low_bits;
+                let low_mask: u64 = ((1u128 << low_bits) - 1) as u64;
+                let high_mask: u64 = ((1u128 << high_bits) - 1) as u64;
+                let low = (self.packed[word] >> bit_start) & low_mask;
+                let high = self.packed[word + 1] & high_mask;
+                (high << low_bits) | low
             };
             #conversion
         }
@@ -347,7 +382,7 @@ fn add_packed_array_setter_getter(
 
         #[inline(always)]
         pub fn #getter_name_all(&self) -> #nested_type {
-            let mut result: #nested_type = unsafe { std::mem::zeroed() };
+            let mut result: #nested_type = #zero_init;
             #(#all_getter_stmts)*
             result
         }
@@ -461,6 +496,25 @@ fn emit_split_packed_accessor(
             let high = self.packed[#word_end] & HIGH_MASK;
             let raw_value = (high << #low_bits) | low;
             #getter_conversion
+        }
+    }
+}
+
+fn zero_init_expr(bit_width: usize, ty: &BitType) -> TokenStream {
+    let leaf = if bit_width == 1 {
+        quote! { false }
+    } else {
+        quote! { 0 }
+    };
+    array_zero_init(ty, leaf)
+}
+
+fn array_zero_init(ty: &BitType, leaf: TokenStream) -> TokenStream {
+    match ty {
+        BitType::Bit(_) | BitType::Generic => leaf,
+        BitType::Array(inner, len) => {
+            let inner_init = array_zero_init(inner, leaf);
+            quote! { [#inner_init; #len] }
         }
     }
 }

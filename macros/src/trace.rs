@@ -169,9 +169,9 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 );
 
                 buffer[..used_len]
-                .par_iter_mut()
-                .for_each(|x| {
-                    *x = <#generics>::default();
+                .par_chunks_mut(8192)
+                .for_each(|chunk| {
+                    chunk.fill(<#generics>::default());
                 });
 
                 let ptr = buffer.as_mut_ptr();

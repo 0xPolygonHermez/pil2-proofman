@@ -207,7 +207,7 @@ mod tests {
     fn test_set_all_2d_array_roundtrip() {
         let mut row = BitRowPacked::<Goldilocks>::default();
 
-        // Shape: [[u8; 8]; 4] — values are i*4 + j, staying within 4-bit range (0..15)
+        // Shape: [[u8; 8]; 4] — values are i*8 + j, staying within 4-bit range (0..15 via % 16)
         let values: [[u8; 8]; 4] = std::array::from_fn(|i| std::array::from_fn(|j| ((i * 8 + j) % 16) as u8));
 
         row.set_all_nibbles(&values);
@@ -285,6 +285,90 @@ mod tests {
         row_all.set_all_matrix(&values);
 
         assert_eq!(row_elem.packed, row_all.packed, "packed words differ: per-element vs set_all_matrix");
+    }
+
+    // --- Unpacked BitRow set_all / get_all tests ---
+
+    /// Unpacked BitRow: set_all_flags roundtrip and per-element agreement.
+    #[test]
+    fn test_unpacked_set_all_1d_roundtrip() {
+        let mut row = BitRow::<Goldilocks>::default();
+
+        let values: [bool; 64] = std::array::from_fn(|i| i % 2 == 0);
+        row.set_all_flags(&values);
+
+        let got = row.get_all_flags();
+        assert_eq!(got, values, "unpacked get_all_flags did not return what set_all_flags wrote");
+
+        for i in 0usize..64 {
+            assert_eq!(row.get_flags(i), values[i], "unpacked per-element get_flags({i}) disagrees with set_all_flags");
+        }
+    }
+
+    /// Unpacked BitRow: set_all_nibbles roundtrip and per-element agreement.
+    #[test]
+    fn test_unpacked_set_all_2d_roundtrip() {
+        let mut row = BitRow::<Goldilocks>::default();
+
+        let values: [[u8; 8]; 4] = std::array::from_fn(|i| std::array::from_fn(|j| ((i * 8 + j) % 16) as u8));
+        row.set_all_nibbles(&values);
+
+        let got = row.get_all_nibbles();
+        assert_eq!(got, values, "unpacked get_all_nibbles did not return what set_all_nibbles wrote");
+
+        for i in 0usize..4 {
+            for j in 0usize..8 {
+                assert_eq!(row.get_nibbles(i, j), values[i][j], "unpacked per-element get_nibbles({i},{j}) disagrees");
+            }
+        }
+    }
+
+    /// Unpacked BitRow: set_all_matrix roundtrip and per-element agreement.
+    #[test]
+    fn test_unpacked_set_all_3d_roundtrip() {
+        let mut row = BitRow::<Goldilocks>::default();
+
+        let values: [[[u8; 4]; 2]; 3] =
+            std::array::from_fn(|i| std::array::from_fn(|j| std::array::from_fn(|k| (i * 8 + j * 4 + k) as u8)));
+        row.set_all_matrix(&values);
+
+        let got = row.get_all_matrix();
+        assert_eq!(got, values, "unpacked get_all_matrix did not return what set_all_matrix wrote");
+
+        for i in 0usize..3 {
+            for j in 0usize..2 {
+                for k in 0usize..4 {
+                    assert_eq!(
+                        row.get_matrix(i, j, k),
+                        values[i][j][k],
+                        "unpacked per-element get_matrix({i},{j},{k}) disagrees"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Unpacked and packed set_all_* must produce identical logical values for all fields.
+    #[test]
+    fn test_unpacked_vs_packed_set_all_agreement() {
+        let mut unpacked = BitRow::<Goldilocks>::default();
+        let mut packed = BitRowPacked::<Goldilocks>::default();
+
+        let flags: [bool; 64] = std::array::from_fn(|i| i % 3 == 0);
+        let nibbles: [[u8; 8]; 4] = std::array::from_fn(|i| std::array::from_fn(|j| ((i * 8 + j) % 16) as u8));
+        let matrix: [[[u8; 4]; 2]; 3] =
+            std::array::from_fn(|i| std::array::from_fn(|j| std::array::from_fn(|k| (i * 8 + j * 4 + k) as u8)));
+
+        unpacked.set_all_flags(&flags);
+        packed.set_all_flags(&flags);
+        unpacked.set_all_nibbles(&nibbles);
+        packed.set_all_nibbles(&nibbles);
+        unpacked.set_all_matrix(&matrix);
+        packed.set_all_matrix(&matrix);
+
+        assert_eq!(unpacked.get_all_flags(), packed.get_all_flags(), "flags: unpacked vs packed disagree");
+        assert_eq!(unpacked.get_all_nibbles(), packed.get_all_nibbles(), "nibbles: unpacked vs packed disagree");
+        assert_eq!(unpacked.get_all_matrix(), packed.get_all_matrix(), "matrix: unpacked vs packed disagree");
     }
 
     /// Writing multiple rows via set_all doesn't bleed into adjacent rows.
