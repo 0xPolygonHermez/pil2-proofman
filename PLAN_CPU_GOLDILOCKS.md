@@ -207,7 +207,13 @@ All three gates must pass after every step. Gate (c) is load-bearing — Merkle-
   - *Commit: `test: add merkletree seq≡avx_batch cross-check`*
 - [ ] **0.5** `tests.cpp`: add explicit test exercising `merkletree(...)` and `merkletree_batch(...)` wrappers — characterizes the Severity-A bug so Phase 1 deletion is documented
   - *Commit: `test: document merkletree_batch wrapper Severity-A bug`*
-- [ ] **0.6** Record bench baseline: `make -j benchscpu && ./benchscpu > src/goldilocks/benchs/baseline/$(hostname).txt`
+- [ ] **0.6** `bench.cpp`: fill benchmark coverage gaps using current `_seq`/`_avx` API (before Phase 2 introduces the Mode parameter):
+  - `hash_full_result_seq` + `hash_full_result_avx` for widths {4, 8, 12}
+  - `linear_hash_seq` + `linear_hash_avx` for widths {4, 8, 12}
+  - `merkletree_seq` + `merkletree_batch_avx` for arities {3, 4}
+  - Standalone `INTT` benchmark (currently implicit inside extendPol only)
+  - *Commit: `bench: add missing width/arity/INTT benchmark coverage`*
+- [ ] **0.7** Record bench baseline: `make -j benchscpu && ./benchscpu > src/goldilocks/benchs/baseline/$(hostname).txt`
   - *Commit: `bench: record $(hostname) baseline`*
 
 **Verify**: gates (a), (b), (c) green.
@@ -224,7 +230,7 @@ All three gates must pass after every step. Gate (c) is load-bearing — Merkle-
   - *Commit: `refactor: delete dead merkletree wrapper (Severity-A bug)`*
 - [ ] **1.3** Delete the `merkletree_batch(...)` wrapper from [poseidon2_goldilocks.hpp:117-127](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.hpp#L117)
   - *Commit: `refactor: delete dead merkletree_batch wrapper`*
-- [ ] **1.4** Remove Phase-0 wrapper-characterization test (0.6) — replace with comment confirming wrappers are gone
+- [ ] **1.4** Remove Phase-0 wrapper-characterization test (0.5) — replace with comment confirming wrappers are gone
   - *Commit: `test: remove wrapper-bug test (wrappers deleted)`*
 
 **Verify**: gates (a), (b), (c) green.
@@ -414,7 +420,7 @@ Sweep all files touched during Phases 0–7 and remove development scaffolding c
 
 | Phase | Description | Steps | Done |
 |---|---|---|---|
-| 0 | Test & bench scaffolding | 6 | 1 |
+| 0 | Test & bench scaffolding | 7 | 1 |
 | 1 | Delete dead wrappers | 4 | 0 |
 | 2 | Introduce Poseidon2Mode + new API | 8 | 0 |
 | 3 | Migrate callers; make old API private | 9 | 0 |
@@ -423,7 +429,7 @@ Sweep all files touched during Phases 0–7 and remove development scaffolding c
 | 6 | Hygiene cleanup | 4 | 0 |
 | 7 | AVX512 implementation (AVX512 host) | 12 | 0 |
 | 8 | Comment audit | 4 | 0 |
-| **Total** | | **64** | **1** |
+| **Total** | | **65** | **1** |
 
 ---
 
@@ -431,7 +437,7 @@ Sweep all files touched during Phases 0–7 and remove development scaffolding c
 
 | Phase | Files modified |
 |---|---|
-| 0 | [pil2-stark/Makefile](pil2-stark/Makefile), [tests.cpp](pil2-stark/src/goldilocks/tests/tests.cpp), new [scripts/bench_compare.sh](pil2-stark/scripts/bench_compare.sh) |
+| 0 | [pil2-stark/src/goldilocks/Makefile](pil2-stark/src/goldilocks/Makefile), [tests.cpp](pil2-stark/src/goldilocks/tests/tests.cpp), new [scripts/bench_compare.sh](pil2-stark/scripts/bench_compare.sh) |
 | 1 | [poseidon2_goldilocks.hpp](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.hpp) |
 | 2 | [poseidon2_goldilocks.hpp](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.hpp) |
 | 3 | [poseidon2_goldilocks.hpp](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.hpp), [transcriptGL.cpp](pil2-stark/src/starkpil/transcript/transcriptGL.cpp), [stark_verify.hpp](pil2-stark/src/starkpil/stark_verify.hpp), [merkleTreeGL.cpp](pil2-stark/src/starkpil/merkleTree/merkleTreeGL.cpp), [tests.cpp](pil2-stark/src/goldilocks/tests/tests.cpp), [bench.cpp](pil2-stark/src/goldilocks/benchs/bench.cpp) |
