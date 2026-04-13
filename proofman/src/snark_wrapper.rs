@@ -15,7 +15,6 @@ use colored::Colorize;
 use std::io::Read;
 use std::ffi::c_void;
 use crate::check_const_tree;
-use std::fs;
 use proofman_starks_lib_c::{
     init_final_snark_prover_c, free_final_snark_prover_c, snark_proof_bytes_to_json_c, get_unified_buffer_gpu_c,
     free_fixed_pols_buffer_gpu_c, pre_allocate_final_snark_prover_c, alloc_fixed_pols_buffer_gpu_c,
@@ -254,24 +253,11 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn generate_final_snark_proof(
-        &self,
-        vadcop_proof: &VadcopFinalProof,
-        output_dir_path: Option<PathBuf>,
-    ) -> ProofmanResult<SnarkProof> {
+    pub fn generate_final_snark_proof(&self, vadcop_proof: &VadcopFinalProof) -> ProofmanResult<SnarkProof> {
         timer_start_info!(GENERATING_WRAPPER_SNARK_PROOF);
 
         if let Some(d_buffer) = self.d_buffers {
             free_fixed_pols_buffer_gpu_c(d_buffer);
-        }
-
-        let output_dir_path = match output_dir_path.as_deref() {
-            Some(path) => path,
-            None => Path::new("tmp"),
-        };
-
-        if !output_dir_path.exists() {
-            fs::create_dir_all(output_dir_path)?;
         }
 
         if vadcop_proof.compressed {
@@ -287,7 +273,6 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             &proof,
             &self.aux_trace,
             &self.vadcop_final_verkey,
-            output_dir_path,
             self.setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
             self.d_buffers_recursivef,
         )?;
@@ -415,7 +400,6 @@ pub fn check_setup_snark<F: PrimeField64>(
 pub fn generate_and_verify_recursivef<F: PrimeField64>(
     proving_key_path: &Path,
     vadcop_proof: &VadcopFinalProof,
-    output_dir_path: &Path,
     verbose_mode: VerboseMode,
     gpu: bool,
 ) -> ProofmanResult<bool> {
@@ -497,7 +481,6 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         &proof,
         &aux_trace,
         &vadcop_final_verkey,
-        output_dir_path,
         setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
         d_buffers_recursivef,
     )?;

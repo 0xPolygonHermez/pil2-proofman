@@ -11,8 +11,6 @@ use proofman::SnarkWrapper;
 use proofman::ProofMan;
 use proofman::ProvePhaseResult;
 use proofman_common::{ModeName, ProofOptions, ProofmanOptions};
-use std::fs;
-use std::path::Path;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -90,22 +88,6 @@ impl ProveCmd {
         println!("{} Prove", format!("{: >12}", "Command").bright_green().bold());
         println!();
 
-        if Path::new(&self.output_dir.join("proofs")).exists() {
-            // In distributed mode two different processes may enter here at the same time and try to remove the same directory
-            if let Err(e) = fs::remove_dir_all(self.output_dir.join("proofs")) {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    return Err(format!("Failed to remove the proofs directory: {e:?}").into());
-                }
-            }
-        }
-
-        if let Err(e) = fs::create_dir_all(self.output_dir.join("proofs")) {
-            if e.kind() != std::io::ErrorKind::AlreadyExists {
-                // prevent collision in distributed mode
-                return Err(format!("Failed to create the proofs directory: {e:?}").into());
-            }
-        }
-
         let debug_info = match &self.debug {
             None => DebugInfo::default(),
             Some(None) => DebugInfo::new_debug(),
@@ -154,7 +136,6 @@ impl ProveCmd {
             self.compressed,
             self.verify_proofs,
             self.minimal_memory,
-            Some(self.output_dir.clone()),
         );
         if debug_info.std_mode.name == ModeName::Debug {
             match self.field {
@@ -185,7 +166,7 @@ impl ProveCmd {
                 if let Some(proving_key_snark) = &self.proving_key_snark {
                     let snark_wrapper: SnarkWrapper<Goldilocks> =
                         SnarkWrapper::new(proving_key_snark, self.verbose.into(), true, self.gpu)?;
-                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, Some(self.output_dir.clone()))?;
+                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof)?;
                 }
             }
         }
