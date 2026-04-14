@@ -47,15 +47,16 @@ struct StarksBackend {
     uint64_t (*check_device_memory)(uint32_t node_rank, uint32_t node_size);
     uint64_t (*get_num_gpus)();
     void *(*get_unified_buffer_gpu)(void *d_buffers_);
+    void *(*get_unified_buffer_gpu_for_recursivef)(void *d_buffers_, void *d_buffers_recursivef_);
     void (*alloc_fixed_pols_buffer_gpu)(void *d_buffers_);
     void (*free_fixed_pols_buffer_gpu)(void *d_buffers_);
     void (*load_fixed_pols_recursivef)(void *pSetupCtx_, void *pConstTree, void *d_buffers_);
 
     // Final SNARK
-    void *(*init_final_snark_prover)(char* zkeyFile);
+    void *(*init_final_snark_prover)(char* zkeyFile, void* d_buffers_recursivef);
     void (*free_final_snark_prover)(void *snark_prover);
-    void (*gen_final_snark_proof)(void *snark_prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark);
-    void (*pre_allocate_final_snark_prover)(void *snark_prover, void* unified_buffer_gpu);
+    void (*gen_final_snark_proof)(void *snark_prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark, void* d_buffers_recursivef);
+    void (*pre_allocate_final_snark_prover)(void *snark_prover, void* unified_buffer_gpu, void* d_buffers_recursivef);
 };
 
 // Active backend pointer — set via set_gpu_mode()

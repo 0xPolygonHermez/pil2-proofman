@@ -73,6 +73,7 @@ extern "C" void gpu_plonk_precompute_omega_tables_async(
     void* dBases, void* dTid, const void* omega4xPtr,
     uint32_t blockSize, uint32_t numBlocks, void* stream);
 extern "C" void gpu_plonk_cuda_device_sync();
+extern "C" void gpu_plonk_set_device(int gpuId);
 extern "C" void* gpu_plonk_create_cuda_stream_nonblocking();
 extern "C" void gpu_plonk_destroy_cuda_stream(void* stream);
 extern "C" void gpu_plonk_sync_cuda_stream(void* stream);
@@ -141,8 +142,9 @@ extern "C" void gpu_plonk_calculate_additions(
 namespace PlonkGPU
 {
     template <typename Engine>
-    void PlonkProverGPU<Engine>::initialize(void *reservedMemoryPtr, uint64_t reservedMemorySize)
+    void PlonkProverGPU<Engine>::initialize(void *reservedMemoryPtr, uint64_t reservedMemorySize, int gpuId)
     {
+        this->gpuId = gpuId;
         zkey = NULL;
         this->reservedMemoryPtr = (FrElement *)reservedMemoryPtr;
         this->reservedMemorySize = reservedMemorySize;
@@ -168,6 +170,12 @@ namespace PlonkGPU
     PlonkProverGPU<Engine>::PlonkProverGPU(Engine &_E) : E(_E)
     {
         initialize(NULL);
+    }
+
+    template <typename Engine>
+    PlonkProverGPU<Engine>::PlonkProverGPU(Engine &_E, int gpuId) : E(_E)
+    {
+        initialize(NULL, 0, gpuId);
     }
 
     template <typename Engine>
@@ -998,6 +1006,7 @@ namespace PlonkGPU
             if (!evalNTTStream) evalNTTStream = gpu_plonk_create_cuda_stream_nonblocking();
             LOG_TRACE("··· Launching async eval NTT (9 polys from coefficients)");
             asyncEvalNTT = std::thread([this]() {
+                gpu_plonk_set_device(this->gpuId);
                 void* slots[9] = {d_evalsS1, d_evalsS2, d_evalsS3, d_evalsL1,
                                     d_evalsQL, d_evalsQR, d_evalsQM, d_evalsQO, d_evalsQC};
                 const char* names[9] = {"Sigma1", "Sigma2", "Sigma3", "L1",
@@ -1024,6 +1033,7 @@ namespace PlonkGPU
 
             asyncTransferSigma = std::thread([readFn, dBuf, this,
                                               sSids, sOffs, sSizes]() {
+                gpu_plonk_set_device(this->gpuId);
                 gpu_plonk_start_static_eval_transfer(readFn, (void*)this->fdZkeyPtr,
                                                dBuf, this->pinnedS, this->pinnedSize,
                                                sSids.data(), sOffs.data(), sSizes.data(), 4);
@@ -1039,6 +1049,7 @@ namespace PlonkGPU
 
             asyncTransferQ = std::thread([readFn, dBufQ, this,
                                           qSids, qOffs, qSizes]() {
+                gpu_plonk_set_device(this->gpuId);
                 gpu_plonk_start_static_eval_transfer(readFn, (void*)this->fdZkeyPtr,
                                                dBufQ, this->pinnedQ, this->pinnedSize,
                                                qSids.data(), qOffs.data(), qSizes.data(), 5);
@@ -1145,6 +1156,7 @@ namespace PlonkGPU
             };
 
             asyncComputePI = std::thread([piReadFn, this]() {
+                gpu_plonk_set_device(this->gpuId);
                 gpu_plonk_compute_pi(nullptr, piReadFn, (void*)this->fdZkeyPtr,
                                 Zkey::ZKEY_PL_LAGRANGE_SECTION,
                                 this->NBytes, this->NBytes * 5,
@@ -1364,6 +1376,7 @@ namespace PlonkGPU
         std::array<size_t, 4> sizes = {polyBytes, polyBytes, polyBytes, polyBytes};
 
         asyncTransferPolsBatch2 = std::thread([dsts, srcs, sizes, this]() {
+            gpu_plonk_set_device(this->gpuId);
             void* d[4]; 
             const void* s[4]; 
             size_t sz[4];
@@ -1509,6 +1522,7 @@ namespace PlonkGPU
         std::array<size_t, 4> sizes = {NBytes, NBytes, NBytes, NBytes};
 
         asyncTransferPolsBatch1 = std::thread([dsts, srcs, sizes, this]() {
+            gpu_plonk_set_device(this->gpuId);
             void* d[4]; const void* s[4]; size_t sz[4];
             for (int i = 0; i < 4; i++) { d[i] = dsts[i]; s[i] = srcs[i]; sz[i] = sizes[i]; }
             gpu_plonk_start_cpu_to_gpu_transfer(d, s, sz, 4, this->pinnedS, this->pinnedSize);
