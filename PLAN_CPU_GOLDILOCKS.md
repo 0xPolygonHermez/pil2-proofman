@@ -21,9 +21,9 @@ The GPU side (`NTTGoldilocksGPU`, `Poseidon2GoldilocksGPU<W>`) was recently clea
        Auto = 0,        // resolves to best variant compiled in via resolveAuto()
        Scalar,
        Avx,
-       AvxBatch,
-       Avx512,          // Phase 7 only — aborts loudly if not compiled in
-       Avx512Batch,     // Phase 7 only
+       AvxBatch,        // backs merkletree_batch_avx, linear_hash_batch_avx, etc.
+       Avx512,          // single-sponge AVX512 — only available after Phase 7
+       Avx512Batch,     // backs merkletree_batch_avx512; already implemented today
    };
    ```
    - `Auto` centralizes the `#ifdef` cascade via `resolveAuto()` (one place, not per call site).
@@ -45,13 +45,15 @@ The GPU side (`NTTGoldilocksGPU`, `Poseidon2GoldilocksGPU<W>`) was recently clea
    #endif
    }
    ```
-4. **Per-operation valid modes** — single-sponge ops reject Batch modes at runtime (abort with clear message):
+4. **Per-operation valid modes** — rule: *if the backing primitive exists, expose the mode*. Single-sponge ops (`hashFullResult`, `hash`) have no meaningful batched semantics, so `*Batch` modes abort at runtime. Everything else accepts all six modes. `Auto` still resolves sensibly per op via `resolveAuto(kind)`.
 
-   | Operation | Valid modes |
-   |---|---|
-   | `hashFullResult`, `hash` | `Auto`, `Scalar`, `Avx`, `Avx512` |
-   | `linearHash` | `Auto`, `Scalar`, `Avx`, `AvxBatch`, `Avx512`, `Avx512Batch` |
-   | `merkletree` | `Auto`, `Scalar`, `AvxBatch`, `Avx512Batch` |
+   | Operation | Valid modes | `Auto` resolves to |
+   |---|---|---|
+   | `hashFullResult`, `hash` | `Auto`, `Scalar`, `Avx`, `Avx512` | `Avx512` / `Avx` / `Scalar` |
+   | `linearHash` | all six modes | `Avx512Batch` / `AvxBatch` / `Scalar` |
+   | `merkletree` | all six modes | `Avx512Batch` / `AvxBatch` / `Scalar` |
+
+   For `merkletree`, the single-sponge `Avx` / `Avx512` modes produce correct trees (just slower than batched) and are exposed for benchmarking and A/B testing. Production callers use `Auto`.
 
 5. **`Layout` enum for GPU** — no default, every call site must be explicit:
    ```cpp
@@ -125,7 +127,9 @@ The GPU side (`NTTGoldilocksGPU`, `Poseidon2GoldilocksGPU<W>`) was recently clea
 
 ### 5.2 Poseidon2 — CPU vs GPU
 
-| Operation | CPU (after Phase 3+7) | GPU (after Phase 5) |
+Signatures below are final as of Phase 3. Phase 7 only wires up the single-sponge AVX512 backends for modes that already exist in the enum.
+
+| Operation | CPU (final signature; Phase 3) | GPU (after Phase 5) |
 |---|---|---|
 | Single-sponge full output | `static void hashFullResult(Element *out, const Element *in, Poseidon2Mode mode);` | (device-only) |
 | Single-sponge compressed | `static void hash(Element (&state)[CAPACITY], const Element (&in)[W], Poseidon2Mode mode);` | `static void hash(uint64_t *out, const uint64_t *in, cudaStream_t s=0);` |
@@ -205,12 +209,12 @@ All three gates must pass after every step. Gate (c) is load-bearing — Merkle-
   - *Commit: `test: add extendPol end-to-end correctness test`*
 - [x] **0.4** `tests.cpp`: add merkletree cross-check — `merkletree_seq ≡ merkletree_batch_avx` (and `≡ _batch_avx512` under `#ifdef __AVX512__`) for widths {4,8,12,16}, rows ∈ {2¹⁰, 2¹⁵}, cols ∈ {1, 8, 64, 100}
   - *Commit: `test: add merkletree seq≡avx_batch cross-check`*
-- [ ] **0.5** `tests.cpp`: add explicit test exercising `merkletree(...)` and `merkletree_batch(...)` wrappers — characterizes the Severity-A bug so Phase 1 deletion is documented
+- [x] **0.5** `tests.cpp`: add explicit test exercising `merkletree(...)` and `merkletree_batch(...)` wrappers — characterizes the Severity-A bug so Phase 1 deletion is documented
   - *Commit: `test: document merkletree_batch wrapper Severity-A bug`*
-- [ ] **0.6** `bench.cpp`: fill benchmark coverage gaps using current `_seq`/`_avx` API (before Phase 2 introduces the Mode parameter):
+- [x] **0.6** `bench.cpp`: fill benchmark coverage gaps using current `_seq`/`_avx` API (before Phase 2 introduces the Mode parameter):
   - `hash_full_result_seq` + `hash_full_result_avx` for widths {4, 8, 12}
-  - `linear_hash_seq` + `linear_hash_avx` for widths {4, 8, 12}
-  - `merkletree_seq` + `merkletree_batch_avx` for arities {3, 4}
+  - `linear_hash_seq` + `linear_hash_avx` for widths {8, 12} — W=4 has RATE=0 so linear_hash doesn't terminate; skipped
+  - `merkletree_seq` + `merkletree_batch_avx` for (W=12, arity=3) and (W=16, arity=4)
   - Standalone `INTT` benchmark (currently implicit inside extendPol only)
   - *Commit: `bench: add missing width/arity/INTT benchmark coverage`*
 - [ ] **0.7** Record bench baseline: `make -j benchscpu && ./benchscpu > src/goldilocks/benchs/baseline/$(hostname).txt`
@@ -221,6 +225,8 @@ All three gates must pass after every step. Gate (c) is load-bearing — Merkle-
 ---
 
 ### Phase 1 — Delete dead `merkletree`/`merkletree_batch` wrappers
+
+The name `merkletree` is reclaimed here so Phase 2 can rebuild it correctly with the mode parameter. The underlying primitives (`merkletree_seq`, `merkletree_avx`, `merkletree_batch_avx`, `merkletree_batch_avx512`) are untouched — every one is exposed again in Phase 2 via a `Poseidon2Mode` (see §2 valid-modes table), so no capability is lost.
 
 **Files**: [poseidon2_goldilocks.hpp](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.hpp).
 
@@ -253,9 +259,9 @@ All three gates must pass after every step. Gate (c) is load-bearing — Merkle-
   - *Commit: `api: add hash(mode) alongside hash_seq`*
 - [ ] **2.6** Add `static void linearHash(Element *out, Element *in, uint64_t size, Poseidon2Mode mode)`
   - *Commit: `api: add linearHash(mode) alongside linear_hash_seq`*
-- [ ] **2.7** Add `static void merkletree(Element *tree, Element *in, uint64_t nCols, uint64_t nRows, uint64_t arity, int nThreads, uint64_t dim, Poseidon2Mode mode)` — `Auto` uses `resolveAuto(m, Aggregating)`; `Avx512*` aborts until Phase 7
+- [ ] **2.7** Add `static void merkletree(Element *tree, Element *in, uint64_t nCols, uint64_t nRows, uint64_t arity, int nThreads, uint64_t dim, Poseidon2Mode mode)` — accepts all six modes; `Auto` uses `resolveAuto(m, Aggregating)` (→ `Avx512Batch`/`AvxBatch`/`Scalar`); `Scalar` → `merkletree_seq`, `Avx` → `merkletree_avx`, `AvxBatch` → `merkletree_batch_avx`, `Avx512Batch` → `merkletree_batch_avx512`; `Avx512` aborts until Phase 7 (step 7.8)
   - *Commit: `api: add merkletree(mode) replacing per-site #ifdef cascade`*
-- [ ] **2.8** `tests.cpp`: add equivalence tests — `hashFullResult(..., Scalar) ≡ hash_full_result_seq(...)`, `merkletree(..., Auto) ≡ merkletree(..., Scalar)` on same input
+- [ ] **2.8** `tests.cpp`: add equivalence tests — `hashFullResult(..., Scalar) ≡ hash_full_result_seq(...)`; for `merkletree`, iterate over every compiled-in mode (`Scalar`, `Avx`, `AvxBatch`, plus `Avx512Batch` under `#ifdef __AVX512__`) and assert identical roots; assert `merkletree(..., Auto)` matches whichever mode `resolveAuto(Aggregating)` picked
   - *Commit: `test: add new-API≡old-API equivalence tests`*
 
 **Verify**: gates (a), (b), (c) green. Old API still public — no callers migrated yet.
@@ -382,7 +388,7 @@ All three gates must pass after every step. Gate (c) is load-bearing — Merkle-
   - *Commit: `avx512: implement hash_full_result_avx512`*
 - [ ] **7.7** Implement `linear_hash_avx512`
   - *Commit: `avx512: implement linear_hash_avx512`*
-- [ ] **7.8** Implement `merkletree_avx512`
+- [ ] **7.8** Implement `merkletree_avx512` (single-sponge) — backs `merkletree(..., Avx512)` for benchmarking vs. `merkletree_batch_avx512`
   - *Commit: `avx512: implement merkletree_avx512`*
 - [ ] **7.9** Replace `Avx512`/`Avx512Batch` abort branches in Phase-2 dispatchers with real calls to new AVX512 functions; update `resolveAuto()` if needed
   - *Commit: `avx512: wire Avx512/Avx512Batch branches in mode dispatcher`*
@@ -420,7 +426,7 @@ Sweep all files touched during Phases 0–7 and remove development scaffolding c
 
 | Phase | Description | Steps | Done |
 |---|---|---|---|
-| 0 | Test & bench scaffolding | 7 | 4 |
+| 0 | Test & bench scaffolding | 7 | 6 |
 | 1 | Delete dead wrappers | 4 | 0 |
 | 2 | Introduce Poseidon2Mode + new API | 8 | 0 |
 | 3 | Migrate callers; make old API private | 9 | 0 |
@@ -429,7 +435,7 @@ Sweep all files touched during Phases 0–7 and remove development scaffolding c
 | 6 | Hygiene cleanup | 4 | 0 |
 | 7 | AVX512 implementation (AVX512 host) | 12 | 0 |
 | 8 | Comment audit | 4 | 0 |
-| **Total** | | **65** | **4** |
+| **Total** | | **65** | **6** |
 
 ---
 
