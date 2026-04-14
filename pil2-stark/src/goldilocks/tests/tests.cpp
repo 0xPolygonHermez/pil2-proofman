@@ -2740,6 +2740,73 @@ TEST(GOLDILOCKS_TEST, merkletree_seq_avxbatch_cross_check)
         }
     }
 }
+
+// Characterizes the dead `merkletree(...)` and `merkletree_batch(...)` wrappers
+// at poseidon2_goldilocks.hpp:99-127 before Phase 1 deletes them.
+//
+// Severity-A observations this test pins down:
+//   * `merkletree(...)` dispatches to the SINGLE-SPONGE `merkletree_avx` (not
+//     `merkletree_batch_avx`) — correct tree, but several× slower than the
+//     batched path the prover actually uses via its own #ifdef cascade.
+//   * `merkletree_batch(..., batch_size, ...)` accepts `batch_size` as its 5th
+//     parameter then forwards it positionally as `arity` into
+//     `merkletree_avx(..., arity, ...)`. Callers that expect "batch_size"
+//     semantics (independent of arity) silently build an arity=batch_size tree.
+//   * Neither wrapper ever reaches the `merkletree_avx512` path — the enabling
+//     branch is commented out and the `#if defined(__AVX2__) || __AVX512__`
+//     cascade always picks AVX2 first.
+//
+// Deleted in Phase 1 (step 1.4) once the wrappers themselves are removed.
+template<uint32_t W>
+static void merkleTreeWrapperCharacterization(uint64_t arity, uint64_t nrows, uint64_t ncols)
+{
+    uint64_t numElems = MerklehashGoldilocks::getTreeNumElements(nrows, arity);
+
+    std::vector<Goldilocks::Element> input(nrows * ncols);
+    for (uint64_t i = 0; i < nrows * ncols; ++i)
+        input[i] = Goldilocks::fromU64(i * 1000003ULL + 7);
+
+    std::vector<Goldilocks::Element> tree_ref(numElems);
+    Poseidon2Goldilocks<W>::merkletree_batch_avx(
+        tree_ref.data(), input.data(), ncols, nrows, arity);
+    Goldilocks::Element root_ref[4];
+    MerklehashGoldilocks::root((Goldilocks::Element*)root_ref, tree_ref.data(), numElems);
+
+    // Wrapper 1: merkletree(...) — arity passed directly.
+    std::vector<Goldilocks::Element> tree_w1(numElems);
+    Poseidon2Goldilocks<W>::merkletree(
+        tree_w1.data(), input.data(), ncols, nrows, arity);
+    Goldilocks::Element root_w1[4];
+    MerklehashGoldilocks::root((Goldilocks::Element*)root_w1, tree_w1.data(), numElems);
+    for (int i = 0; i < 4; ++i)
+        ASSERT_EQ(Goldilocks::toU64(root_ref[i]), Goldilocks::toU64(root_w1[i]))
+            << "merkletree(...) wrapper produced mismatched root at component " << i;
+
+    // Wrapper 2: merkletree_batch(..., batch_size=arity, ...). With batch_size
+    // aliased to arity (the only way anyone actually uses it in tests/benches),
+    // the output root matches the reference — but this is coincidental: the
+    // 5th parameter is forwarded as `arity` internally, so any caller passing
+    // a genuine batch_size != arity would silently build the wrong tree.
+    std::vector<Goldilocks::Element> tree_w2(numElems);
+    Poseidon2Goldilocks<W>::merkletree_batch(
+        tree_w2.data(), input.data(), ncols, nrows, /*batch_size=*/arity);
+    Goldilocks::Element root_w2[4];
+    MerklehashGoldilocks::root((Goldilocks::Element*)root_w2, tree_w2.data(), numElems);
+    for (int i = 0; i < 4; ++i)
+        ASSERT_EQ(Goldilocks::toU64(root_ref[i]), Goldilocks::toU64(root_w2[i]))
+            << "merkletree_batch(...) wrapper produced mismatched root at component " << i;
+}
+
+TEST(GOLDILOCKS_TEST, merkletree_wrapper_characterization)
+{
+    const uint64_t nrows = 256;
+    const uint64_t colSizes[] = { 1, 8, 64 };
+    for (uint64_t ncols : colSizes) {
+        merkleTreeWrapperCharacterization<8> (2, nrows, ncols);
+        merkleTreeWrapperCharacterization<12>(3, nrows, ncols);
+        merkleTreeWrapperCharacterization<16>(4, nrows, ncols);
+    }
+}
 #endif // __AVX2__
 
 int main(int argc, char **argv)
