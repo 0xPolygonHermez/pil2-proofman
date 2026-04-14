@@ -2745,6 +2745,140 @@ TEST(GOLDILOCKS_TEST, merkletree_seq_avxbatch_cross_check)
 // documented the Severity-A bug in the dead merkletree(...) and
 // merkletree_batch(...) wrappers. Those wrappers have been deleted, so the
 // test is gone too.
+
+// ---------------------------------------------------------------------------
+// Phase 2 (step 2.6): equivalence tests — new Mode-parameter API dispatches
+// to the same underlying primitives the prover currently calls, producing
+// bit-identical results. When callers are migrated in Phase 3, these tests
+// are the safety net.
+// ---------------------------------------------------------------------------
+
+TEST(GOLDILOCKS_TEST, mode_hashFullResult_equivalence)
+{
+    constexpr uint32_t W = Poseidon2Goldilocks<16>::SPONGE_WIDTH;
+    Goldilocks::Element in[W];
+    for (uint32_t i = 0; i < W; ++i) in[i] = Goldilocks::fromU64(i * 31 + 7);
+
+    Goldilocks::Element ref_seq[W];
+    Poseidon2Goldilocks<16>::hash_full_result_seq(ref_seq, in);
+
+    Goldilocks::Element via_scalar[W];
+    Poseidon2Goldilocks<16>::hashFullResult(via_scalar, in, Poseidon2Mode::Scalar);
+    for (uint32_t i = 0; i < W; ++i)
+        ASSERT_EQ(Goldilocks::toU64(ref_seq[i]), Goldilocks::toU64(via_scalar[i]));
+
+    Goldilocks::Element ref_avx[W];
+    Poseidon2Goldilocks<16>::hash_full_result_avx(ref_avx, in);
+
+    Goldilocks::Element via_avx[W];
+    Poseidon2Goldilocks<16>::hashFullResult(via_avx, in, Poseidon2Mode::Avx);
+    for (uint32_t i = 0; i < W; ++i)
+        ASSERT_EQ(Goldilocks::toU64(ref_avx[i]), Goldilocks::toU64(via_avx[i]));
+
+    // Auto — on this (AVX2, no AVX512) host should resolve to Avx.
+    Goldilocks::Element via_auto[W];
+    Poseidon2Goldilocks<16>::hashFullResult(via_auto, in, Poseidon2Mode::Auto);
+    for (uint32_t i = 0; i < W; ++i)
+        ASSERT_EQ(Goldilocks::toU64(ref_avx[i]), Goldilocks::toU64(via_auto[i]));
+}
+
+TEST(GOLDILOCKS_TEST, mode_hash_equivalence)
+{
+    constexpr uint32_t W = Poseidon2Goldilocks<16>::SPONGE_WIDTH;
+    constexpr uint32_t C = Poseidon2Goldilocks<16>::CAPACITY;
+    Goldilocks::Element in[W];
+    for (uint32_t i = 0; i < W; ++i) in[i] = Goldilocks::fromU64(i * 37 + 1);
+
+    Goldilocks::Element ref_seq[C], ref_avx[C];
+    Poseidon2Goldilocks<16>::hash_seq(ref_seq, in);
+    Poseidon2Goldilocks<16>::hash_avx(ref_avx, in);
+
+    Goldilocks::Element via_scalar[C], via_avx[C], via_auto[C];
+    Poseidon2Goldilocks<16>::hash(via_scalar, in, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<16>::hash(via_avx,    in, Poseidon2Mode::Avx);
+    Poseidon2Goldilocks<16>::hash(via_auto,   in, Poseidon2Mode::Auto);
+
+    for (uint32_t i = 0; i < C; ++i) {
+        ASSERT_EQ(Goldilocks::toU64(ref_seq[i]), Goldilocks::toU64(via_scalar[i]));
+        ASSERT_EQ(Goldilocks::toU64(ref_avx[i]), Goldilocks::toU64(via_avx[i]));
+        ASSERT_EQ(Goldilocks::toU64(ref_avx[i]), Goldilocks::toU64(via_auto[i])); // Auto → Avx on this host
+    }
+}
+
+TEST(GOLDILOCKS_TEST, mode_linearHash_equivalence)
+{
+    constexpr uint64_t size = 100;
+    std::vector<Goldilocks::Element> in(size);
+    for (uint64_t i = 0; i < size; ++i) in[i] = Goldilocks::fromU64(i * 13 + 5);
+
+    Goldilocks::Element ref_seq[HASH_SIZE], ref_avx[HASH_SIZE];
+    Poseidon2Goldilocks<16>::linear_hash_seq(ref_seq, in.data(), size);
+    Poseidon2Goldilocks<16>::linear_hash_avx(ref_avx, in.data(), size);
+
+    Goldilocks::Element via_scalar[HASH_SIZE], via_avx[HASH_SIZE], via_auto[HASH_SIZE];
+    Poseidon2Goldilocks<16>::linearHash(via_scalar, in.data(), size, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<16>::linearHash(via_avx,    in.data(), size, Poseidon2Mode::Avx);
+    Poseidon2Goldilocks<16>::linearHash(via_auto,   in.data(), size, Poseidon2Mode::Auto);
+
+    for (int i = 0; i < HASH_SIZE; ++i) {
+        ASSERT_EQ(Goldilocks::toU64(ref_seq[i]), Goldilocks::toU64(via_scalar[i]));
+        ASSERT_EQ(Goldilocks::toU64(ref_avx[i]), Goldilocks::toU64(via_avx[i]));
+        ASSERT_EQ(Goldilocks::toU64(ref_avx[i]), Goldilocks::toU64(via_auto[i])); // Auto → Avx on this host
+    }
+}
+
+// For merkletree, assert that every compiled-in mode produces the same root.
+template<uint32_t W>
+static void merkletreeModeEquivalence(uint64_t arity, uint64_t nrows, uint64_t ncols)
+{
+    uint64_t numElems = MerklehashGoldilocks::getTreeNumElements(nrows, arity);
+    std::vector<Goldilocks::Element> input(nrows * ncols);
+    for (uint64_t i = 0; i < nrows * ncols; ++i)
+        input[i] = Goldilocks::fromU64(i * 1000003ULL + 1);
+
+    auto rootOf = [&](Poseidon2Mode m, Goldilocks::Element out[4]) {
+        std::vector<Goldilocks::Element> tree(numElems);
+        Poseidon2Goldilocks<W>::merkletree(tree.data(), input.data(), ncols, nrows, arity,
+                                           /*nThreads=*/0, /*dim=*/1, m);
+        MerklehashGoldilocks::root((Goldilocks::Element*)out, tree.data(), numElems);
+    };
+
+    Goldilocks::Element r_scalar[4];
+    rootOf(Poseidon2Mode::Scalar, r_scalar);
+
+    Goldilocks::Element r_avx[4];        rootOf(Poseidon2Mode::Avx,        r_avx);
+    Goldilocks::Element r_avxbatch[4];   rootOf(Poseidon2Mode::AvxBatch,   r_avxbatch);
+    Goldilocks::Element r_auto[4];       rootOf(Poseidon2Mode::Auto,       r_auto);
+
+    for (int i = 0; i < 4; ++i) {
+        ASSERT_EQ(Goldilocks::toU64(r_scalar[i]), Goldilocks::toU64(r_avx[i]))
+            << "Scalar≠Avx at W=" << W << " arity=" << arity;
+        ASSERT_EQ(Goldilocks::toU64(r_scalar[i]), Goldilocks::toU64(r_avxbatch[i]))
+            << "Scalar≠AvxBatch at W=" << W << " arity=" << arity;
+        // Auto on AVX2 host resolves to AvxBatch.
+        ASSERT_EQ(Goldilocks::toU64(r_avxbatch[i]), Goldilocks::toU64(r_auto[i]))
+            << "Auto≠AvxBatch at W=" << W << " arity=" << arity;
+    }
+
+#ifdef __AVX512__
+    Goldilocks::Element r_avx512batch[4];
+    rootOf(Poseidon2Mode::Avx512Batch, r_avx512batch);
+    for (int i = 0; i < 4; ++i)
+        ASSERT_EQ(Goldilocks::toU64(r_scalar[i]), Goldilocks::toU64(r_avx512batch[i]))
+            << "Scalar≠Avx512Batch at W=" << W << " arity=" << arity;
+#endif
+}
+
+TEST(GOLDILOCKS_TEST, mode_merkletree_equivalence)
+{
+    const uint64_t nrows = 256;
+    const uint64_t colSizes[] = { 1, 8, 64 };
+    for (uint64_t ncols : colSizes) {
+        merkletreeModeEquivalence<8> (2, nrows, ncols);
+        merkletreeModeEquivalence<12>(3, nrows, ncols);
+        merkletreeModeEquivalence<16>(4, nrows, ncols);
+    }
+}
 #endif // __AVX2__
 
 int main(int argc, char **argv)
