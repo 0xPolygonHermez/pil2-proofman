@@ -188,8 +188,15 @@ cargo run --bin proofman-cli prove \
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --custom-commits rom=examples/fibonacci-square/build/rom.bin \
      --verify-proofs --aggregation --compressed \
-     --output-dir examples/fibonacci-square/build/proofs
+     --output-dir examples/fibonacci-square/build/proofs 2>&1 | tee /tmp/prove.log
+
+# Compare proof time against reference (zisk1, min of 3 baseline runs = 1052 ms)
+t=$(grep -oP 'GENERATE_VADCOP_FINAL_COMPRESSED_PROOF \(\K\d+' /tmp/prove.log | tail -1)
+echo "prove time: ${t} ms   reference: 1052 ms   delta: $(( (t - 1052) * 100 / 1052 ))%"
 ```
+
+**Proof-time reference**: `1052 ms` on `zisk1` (minimum of 3 runs before Phase 1).
+**Regression threshold**: unset for now — record the delta after each step; once we have 5–10 samples through Phases 1–2 we'll see the natural jitter band and pick a number. Until then, investigate anything >10 %.
 
 All three gates must pass after every step. Gate (c) is load-bearing — Merkle-root divergence makes the verifier reject.
 
@@ -217,7 +224,7 @@ All three gates must pass after every step. Gate (c) is load-bearing — Merkle-
   - `merkletree_seq` + `merkletree_batch_avx` for (W=12, arity=3) and (W=16, arity=4)
   - Standalone `INTT` benchmark (currently implicit inside extendPol only)
   - *Commit: `bench: add missing width/arity/INTT benchmark coverage`*
-- [ ] **0.7** Record bench baseline: `make -j benchscpu && ./benchscpu > src/goldilocks/benchs/baseline/$(hostname).txt`
+- [x] **0.7** Record bench baseline: `make -j benchscpu && ./benchscpu > src/goldilocks/benchs/baseline/$(hostname).txt`
   - *Commit: `bench: record $(hostname) baseline`*
 
 **Verify**: gates (a), (b), (c) green.
@@ -426,7 +433,7 @@ Sweep all files touched during Phases 0–7 and remove development scaffolding c
 
 | Phase | Description | Steps | Done |
 |---|---|---|---|
-| 0 | Test & bench scaffolding | 7 | 6 |
+| 0 | Test & bench scaffolding | 7 | 7 |
 | 1 | Delete dead wrappers | 4 | 0 |
 | 2 | Introduce Poseidon2Mode + new API | 8 | 0 |
 | 3 | Migrate callers; make old API private | 9 | 0 |
@@ -435,7 +442,7 @@ Sweep all files touched during Phases 0–7 and remove development scaffolding c
 | 6 | Hygiene cleanup | 4 | 0 |
 | 7 | AVX512 implementation (AVX512 host) | 12 | 0 |
 | 8 | Comment audit | 4 | 0 |
-| **Total** | | **65** | **6** |
+| **Total** | | **65** | **7** |
 
 ---
 
