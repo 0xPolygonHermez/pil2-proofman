@@ -464,7 +464,7 @@ extern "C" {
     // Final proof
     // ========================================================================================
 
-    pub fn init_final_snark_prover(zkeyFile: *mut ::std::os::raw::c_char) -> *mut ::std::os::raw::c_void;
+    pub fn init_final_snark_prover(zkeyFile: *mut ::std::os::raw::c_char, d_buffers_recursivef: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 
     pub fn get_snark_protocol_id(prover: *mut ::std::os::raw::c_void) -> u64;
 
@@ -475,9 +475,10 @@ extern "C" {
         circomWitnessFinal: *mut ::std::os::raw::c_void,
         proof: *mut u8,
         publicsSnark: *mut u8,
+        d_buffers_recursivef: *mut ::std::os::raw::c_void,
     );
 
-    pub fn pre_allocate_final_snark_prover(prover: *mut ::std::os::raw::c_void, unified_buffer_gpu: *mut ::std::os::raw::c_void);
+    pub fn pre_allocate_final_snark_prover(prover: *mut ::std::os::raw::c_void, unified_buffer_gpu: *mut ::std::os::raw::c_void, d_buffers_recursivef: *mut ::std::os::raw::c_void);
 
     pub fn free_json_string(json_str: *mut ::std::os::raw::c_char);
 
@@ -622,6 +623,7 @@ extern "C" {
     pub fn set_gpu_mode(use_gpu: bool);
 
     pub fn get_unified_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
+    pub fn get_unified_buffer_gpu_for_recursivef(d_buffers: *mut ::std::os::raw::c_void, d_buffers_recursivef: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 
     pub fn alloc_fixed_pols_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void);
     pub fn free_fixed_pols_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void);

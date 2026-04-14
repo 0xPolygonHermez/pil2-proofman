@@ -15,7 +15,7 @@ int getProtocolIdFromBinFileGPU(BinFileUtils::BinFile *fdZkey) {
     }
 }
 
-std::unique_ptr<IFinalSnarkProverGPU> initFinalSnarkProverGPU(BinFileUtils::BinFile *fdZkey) {
+std::unique_ptr<IFinalSnarkProverGPU> initFinalSnarkProverGPU(BinFileUtils::BinFile *fdZkey, int gpuId) {
     int protocolId = getProtocolIdFromBinFileGPU(fdZkey);
 
     if (protocolId == Zkey::FFLONK_PROTOCOL_ID) {
@@ -27,7 +27,7 @@ std::unique_ptr<IFinalSnarkProverGPU> initFinalSnarkProverGPU(BinFileUtils::BinF
 
     if (protocolId == Zkey::PLONK_PROTOCOL_ID) {
         TimerStart(PROVER_INIT_PLONK_GPU);
-        auto prover = std::make_unique<PlonkFinalProverGPU>(fdZkey);
+        auto prover = std::make_unique<PlonkFinalProverGPU>(fdZkey, gpuId);
         TimerStopAndLog(PROVER_INIT_PLONK_GPU);
         return prover;
     }
@@ -57,7 +57,7 @@ void genFinalSnarkProofGPU(void *proverSnark, void *circomWitnessFinal, uint8_t*
 
 // Wrapper functions callable from starks_api.cu via extern declarations
 
-void *initFinalSnarkProverGPU(char* zkeyFile) {
+void *initFinalSnarkProverGPU(char* zkeyFile, int gpuId) {
     auto fdZkey = std::make_unique<BinFileUtils::BinFile>(std::string(zkeyFile), "zkey", 1, /*directRead=*/true);
     uint64_t protocolId = getProtocolIdFromBinFileGPU(fdZkey.get());
 
@@ -65,7 +65,7 @@ void *initFinalSnarkProverGPU(char* zkeyFile) {
         // FFLONK protocol requires directRead=false (legacy code)
         auto zkey = BinFileUtils::openExisting(zkeyFile, "zkey", 1);
         BinFileUtils::BinFile *fdZkey = zkey.get();
-        auto prover = initFinalSnarkProverGPU(fdZkey);
+        auto prover = initFinalSnarkProverGPU(fdZkey, gpuId);
 
         FinalSnarkGPU *finalSnark = new FinalSnarkGPU{
             .zkey = std::move(zkey),
@@ -74,7 +74,7 @@ void *initFinalSnarkProverGPU(char* zkeyFile) {
         };
         return finalSnark;
     }
-    auto prover = initFinalSnarkProverGPU(fdZkey.get());
+    auto prover = initFinalSnarkProverGPU(fdZkey.get(), gpuId);
     FinalSnarkGPU *finalSnark = new FinalSnarkGPU{
         .zkey = std::move(fdZkey),
         .protocolId = protocolId,
