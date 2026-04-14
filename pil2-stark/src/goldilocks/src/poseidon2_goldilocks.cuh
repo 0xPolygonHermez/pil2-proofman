@@ -10,6 +10,14 @@
 
 extern __shared__ gl64_t scratchpad[];
 
+// GPU input layout selector (Phase 5).
+// Every linearHash / merkletree / buildMerkleTreeGPU call must pick one —
+// there is no default, because getting it wrong silently corrupts Merkle roots.
+enum class Layout : uint8_t {
+    RowMajor,   // nCols contiguous elements per row, rows stacked
+    Tiles,      // block-tiled layout produced by fromRowMajorToTiled
+};
+
 
 template<uint32_t SPONGE_WIDTH_T>
 class Poseidon2GoldilocksGPU  {
@@ -25,11 +33,9 @@ public:
 
     void static initConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
 
-    void static linearHash(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
-    void static linearHashTiled(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
+    void static linearHash(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, Layout layout, cudaStream_t stream);
 
-    void static merkletree(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
-    void static merkletreeTiled(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream);
+    void static merkletree(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, Layout layout, cudaStream_t stream);
 
     void static hash(uint64_t * output, const uint64_t * input, cudaStream_t stream = 0);
 
@@ -41,13 +47,10 @@ public:
 
 using Poseidon2GoldilocksGPUGrinding = Poseidon2GoldilocksGPU<4>;  // SPONGE_WIDTH = 4
 
-// Dispatch merkletreeTiled by arity (block-tiled input layout)
-void buildMerkleTreeTilesGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
-                              uint64_t nCols, uint64_t nRows, cudaStream_t stream);
-
-// Dispatch merkletree by arity (flat row-major input layout)
+// Dispatch merkletree by arity. Caller supplies the input `layout`
+// (Layout::RowMajor for flat row-major buffers, Layout::Tiles for block-tiled).
 void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
-                         uint64_t nCols, uint64_t nRows, cudaStream_t stream);
+                         uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream);
 
 // --- Forward declarations (defined in .cu) ---
 

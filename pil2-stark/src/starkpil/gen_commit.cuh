@@ -32,7 +32,7 @@ void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint6
         }
         
         ntt.LDE(dst, offset_dst, src, offset_src, nBits, nBitsExtended, nCols, timer, stream);
-        buildMerkleTreeTilesGPU(arity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, 1ULL << nBitsExtended, stream);
+        buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, 1ULL << nBitsExtended, Layout::Tiles, stream);
         CHECKCUDAERR(cudaMemcpyAsync(root_pinned, &pNodes[tree_size - HASH_SIZE], HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     } else {
         std::cout << "nCols must be greater than 0" << std::endl;

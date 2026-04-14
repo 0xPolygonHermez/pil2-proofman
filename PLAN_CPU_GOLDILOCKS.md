@@ -317,27 +317,27 @@ The name `merkletree` is reclaimed here so Phase 2 can rebuild it correctly with
 
 **Files**: [poseidon2_goldilocks.cuh](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.cuh), [poseidon2_goldilocks.cu](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.cu), and all GPU callers.
 
-- [ ] **5.1** Add `enum class Layout : uint8_t { RowMajor, Tiles };` near top of `poseidon2_goldilocks.cuh`
+- [x] **5.1** Add `enum class Layout : uint8_t { RowMajor, Tiles };` near top of `poseidon2_goldilocks.cuh`
   - *Commit: `api: add Layout enum to poseidon2_goldilocks.cuh`*
-- [ ] **5.2** Collapse `linearHash` + `linearHashTiled` → `linearHash(..., Layout layout)` in header; body dispatches to existing kernels
+- [x] **5.2** Collapse `linearHash` + `linearHashTiled` → `linearHash(..., Layout layout)` in header; body dispatches to existing kernels
   - *Commit: `api: collapse linearHash+linearHashTiled → linearHash(Layout)`*
-- [ ] **5.3** Collapse `merkletree` + `merkletreeTiled` → `merkletree(..., Layout layout)` in header
+- [x] **5.3** Collapse `merkletree` + `merkletreeTiled` → `merkletree(..., Layout layout)` in header
   - *Commit: `api: collapse merkletree+merkletreeTiled → merkletree(Layout)`*
-- [ ] **5.4** Collapse `buildMerkleTreeGPU` + `buildMerkleTreeTilesGPU` → `buildMerkleTreeGPU(..., Layout layout, ...)`
+- [x] **5.4** Collapse `buildMerkleTreeGPU` + `buildMerkleTreeTilesGPU` → `buildMerkleTreeGPU(..., Layout layout, ...)`
   - *Commit: `api: collapse buildMerkleTree*GPU → buildMerkleTreeGPU(Layout)`*
-- [ ] **5.5** Update `poseidon2_goldilocks.cu` implementations to match new signatures
+- [x] **5.5** Update `poseidon2_goldilocks.cu` implementations to match new signatures
   - *Commit: `impl: update poseidon2_goldilocks.cu for Layout parameter`*
-- [ ] **5.6** Update `starks_gpu.cu` — all `buildMerkleTreeTilesGPU(...)` → `buildMerkleTreeGPU(..., Layout::Tiles, ...)`; FRI site ([starks_gpu.cu:823](pil2-stark/src/starkpil/starks_gpu.cu#L823)) → `..., Layout::RowMajor, ...`
+- [x] **5.6** Update `starks_gpu.cu` — all `buildMerkleTreeTilesGPU(...)` → `buildMerkleTreeGPU(..., Layout::Tiles, ...)`; FRI site → `..., Layout::RowMajor, ...`
   - *Commit: `migrate: starks_gpu.cu → buildMerkleTreeGPU(Layout)`*
-- [ ] **5.7** Update `starks_api.cu` callers
+- [x] **5.7** Update `starks_api.cu` callers (3 sites)
   - *Commit: `migrate: starks_api.cu → buildMerkleTreeGPU(Layout)`*
-- [ ] **5.8** Update `gen_commit.cuh` callers
+- [x] **5.8** Update `gen_commit.cuh` callers (1 site)
   - *Commit: `migrate: gen_commit.cuh → buildMerkleTreeGPU(Layout)`*
-- [ ] **5.9** Update GPU `tests.cu`
+- [x] **5.9** Update GPU `tests.cu`
   - *Commit: `migrate: tests.cu → new Layout-parameter API`*
-- [ ] **5.10** Update GPU `bench.cu`
+- [x] **5.10** Update GPU `bench.cu`
   - *Commit: `migrate: bench.cu → new Layout-parameter API`*
-- [ ] **5.11** Delete old `linearHashTiled`, `merkletreeTiled`, `buildMerkleTreeTilesGPU` symbols
+- [x] **5.11** Delete old `linearHashTiled`, `merkletreeTiled`, `buildMerkleTreeTilesGPU` symbols. (The internal `linearHashTiledKernel` stays — it's the device kernel launched by the `Layout::Tiles` branch.)
   - *Commit: `api: delete superseded *Tiled and buildMerkleTreeTilesGPU symbols`*
 
 **Verify**: gates (a), (b), (c) green. A `Layout` swap silently corrupts Merkle roots — gate (c) `--verify-proofs` is the canary.
@@ -434,11 +434,11 @@ Live callers: [merkleTreeGL.hpp:78,81,84](pil2-stark/src/starkpil/merkleTree/mer
 | 2 | Introduce Poseidon2Mode + new API | 6 | 6 |
 | 3 | Migrate callers; make old API private | 9 | 9 |
 | 4 | NTT rename extendPol → LDE | 6 | 6 |
-| 5 | GPU Layout parameter | 11 | 0 |
+| 5 | GPU Layout parameter | 11 | 11 |
 | 6 | Hygiene cleanup | 4 | 0 |
 | 7 | AVX512 implementation (AVX512 host) | 12 | 0 |
 | 8 | Comment audit | 4 | 0 |
-| **Total** | | **63** | **32** |
+| **Total** | | **63** | **43** |
 
 ---
 
