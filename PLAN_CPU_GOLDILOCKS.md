@@ -18,7 +18,7 @@ The GPU side (`NTTGoldilocksGPU`, `Poseidon2GoldilocksGPU<W>`) was recently clea
 2. **`Poseidon2Mode` enum** — one public method per operation, mode as a parameter:
    ```cpp
    enum class Poseidon2Mode : uint8_t {
-       Auto = 0,        // resolves to best variant compiled in via resolveAuto()
+       Auto = 0,        // resolves to the best variant compiled in for that operation
        Scalar,
        Avx,
        AvxBatch,        // backs merkletree_batch_avx, linear_hash_batch_avx, etc.
@@ -26,32 +26,24 @@ The GPU side (`NTTGoldilocksGPU`, `Poseidon2GoldilocksGPU<W>`) was recently clea
        Avx512Batch,     // backs merkletree_batch_avx512; already implemented today
    };
    ```
-   - `Auto` centralizes the `#ifdef` cascade via `resolveAuto()` (one place, not per call site).
+   - `Auto` centralizes the `#ifdef` cascade inside the new public methods (one place per operation, not per call site).
    - Explicit modes abort loudly if the requested SIMD level was not compiled in — misuse is a build-config bug, not a silent fallback.
-3. **`resolveAuto()` helper** — single inline that encapsulates the `#ifdef` cascade:
-   ```cpp
-   enum class Poseidon2OpKind : uint8_t { SingleSponge, Aggregating };
+3. **Per-operation `Auto` resolution** — each public method resolves `Auto` according to the backends that make sense for that operation:
 
-   inline Poseidon2Mode resolveAuto(Poseidon2Mode m, Poseidon2OpKind op) {
-       if (m != Poseidon2Mode::Auto) return m;
-   #ifdef __AVX512__
-       return (op == Poseidon2OpKind::Aggregating) ? Poseidon2Mode::Avx512Batch
-                                                   : Poseidon2Mode::Avx512;
-   #elif defined(__AVX2__)
-       return (op == Poseidon2OpKind::Aggregating) ? Poseidon2Mode::AvxBatch
-                                                   : Poseidon2Mode::Avx;
-   #else
-       return Poseidon2Mode::Scalar;
-   #endif
-   }
-   ```
-4. **Per-operation valid modes** — rule: *if the backing primitive exists, expose the mode*. Single-sponge ops (`hashFullResult`, `hash`) have no meaningful batched semantics, so `*Batch` modes abort at runtime. Everything else accepts all six modes. `Auto` still resolves sensibly per op via `resolveAuto(kind)`.
+   | Operation | `Auto` resolves to |
+   |---|---|
+   | `hashFullResult`, `hash` | `Avx512` / `Avx` / `Scalar` |
+   | `linearHash`, `merkletree` | `Avx512Batch` / `AvxBatch` / `Scalar` |
+
+   If implementation convenience suggests a helper, it stays private to the implementation rather than becoming part of the public design.
+4. **Per-operation valid modes** — rule: *if the backing primitive exists, expose the mode*. Single-sponge ops (`hashFullResult`, `hash`) have no meaningful batched semantics, so `*Batch` modes abort at runtime. Everything else accepts all six modes.
 
    | Operation | Valid modes | `Auto` resolves to |
    |---|---|---|
-   | `hashFullResult`, `hash` | `Auto`, `Scalar`, `Avx`, `Avx512` | `Avx512` / `Avx` / `Scalar` |
-   | `linearHash` | all six modes | `Avx512Batch` / `AvxBatch` / `Scalar` |
+   | `hashFullResult`, `hash`, `linearHash` | `Auto`, `Scalar`, `Avx`, `Avx512` | `Avx512` / `Avx` / `Scalar` |
    | `merkletree` | all six modes | `Avx512Batch` / `AvxBatch` / `Scalar` |
+
+   `linearHash` is single-sponge only: the `linear_hash_batch_avx` / `linear_hash_batch_avx512` primitives hash 4 / 8 contiguous rows per call (different contract, not "same op with vectorization") and are internal building blocks of `merkletree`, not callable under the single-row public API. They remain private and reachable only via `merkletree(..., AvxBatch/Avx512Batch)`.
 
    For `merkletree`, the single-sponge `Avx` / `Avx512` modes produce correct trees (just slower than batched) and are exposed for benchmarking and A/B testing. Production callers use `Auto`.
 
@@ -252,25 +244,21 @@ The name `merkletree` is reclaimed here so Phase 2 can rebuild it correctly with
 
 ---
 
-### Phase 2 — Introduce `Poseidon2Mode` + `resolveAuto()` + new public API alongside old
+### Phase 2 — Introduce `Poseidon2Mode` + new public API alongside old
 
 **Files**: [poseidon2_goldilocks.hpp](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.hpp), [poseidon2_goldilocks.cpp](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.cpp) (or `.hpp` if header-only).
 
-- [ ] **2.1** Add `Poseidon2OpKind` enum (`SingleSponge`, `Aggregating`) near top of `poseidon2_goldilocks.hpp`
-  - *Commit: `api: add Poseidon2OpKind enum`*
-- [ ] **2.2** Add `Poseidon2Mode` enum (`Auto`, `Scalar`, `Avx`, `AvxBatch`, `Avx512`, `Avx512Batch`) near top of `poseidon2_goldilocks.hpp`
+- [x] **2.1** Add `Poseidon2Mode` enum (`Auto`, `Scalar`, `Avx`, `AvxBatch`, `Avx512`, `Avx512Batch`) near top of `poseidon2_goldilocks.hpp`
   - *Commit: `api: add Poseidon2Mode enum`*
-- [ ] **2.3** Add `resolveAuto(Poseidon2Mode m, Poseidon2OpKind op)` inline helper that centralizes the `#ifdef` cascade (see §2 design decisions)
-  - *Commit: `api: add resolveAuto() centralized SIMD dispatcher`*
-- [ ] **2.4** Add `static void hashFullResult(Element *out, const Element *in, Poseidon2Mode mode)` — dispatches to existing `_seq`/`_avx`; `Avx512*` aborts with clear message until Phase 7
+- [x] **2.2** Add `static void hashFullResult(Element *out, const Element *in, Poseidon2Mode mode)` — dispatches to existing `_seq`/`_avx`; `Auto` resolves locally to `Avx512` / `Avx` / `Scalar`; `Avx512*` aborts with clear message until Phase 7
   - *Commit: `api: add hashFullResult(mode) alongside hash_full_result_seq`*
-- [ ] **2.5** Add `static void hash(Element (&state)[CAPACITY], const Element (&in)[W], Poseidon2Mode mode)`
+- [x] **2.3** Add `static void hash(Element (&state)[CAPACITY], const Element (&in)[W], Poseidon2Mode mode)` — `Auto` resolves locally to `Avx512` / `Avx` / `Scalar`
   - *Commit: `api: add hash(mode) alongside hash_seq`*
-- [ ] **2.6** Add `static void linearHash(Element *out, Element *in, uint64_t size, Poseidon2Mode mode)`
+- [x] **2.4** Add `static void linearHash(Element *out, Element *in, uint64_t size, Poseidon2Mode mode)` — single-sponge only; valid modes `Auto`/`Scalar`/`Avx`/`Avx512`; `Auto` resolves locally to `Avx512` / `Avx` / `Scalar`; `*Batch` modes abort (those primitives have a 4/8-row contract, reachable only via `merkletree`)
   - *Commit: `api: add linearHash(mode) alongside linear_hash_seq`*
-- [ ] **2.7** Add `static void merkletree(Element *tree, Element *in, uint64_t nCols, uint64_t nRows, uint64_t arity, int nThreads, uint64_t dim, Poseidon2Mode mode)` — accepts all six modes; `Auto` uses `resolveAuto(m, Aggregating)` (→ `Avx512Batch`/`AvxBatch`/`Scalar`); `Scalar` → `merkletree_seq`, `Avx` → `merkletree_avx`, `AvxBatch` → `merkletree_batch_avx`, `Avx512Batch` → `merkletree_batch_avx512`; `Avx512` aborts until Phase 7 (step 7.8)
+- [x] **2.5** Add `static void merkletree(Element *tree, Element *in, uint64_t nCols, uint64_t nRows, uint64_t arity, int nThreads, uint64_t dim, Poseidon2Mode mode)` — accepts all six modes; `Auto` resolves locally to `Avx512Batch` / `AvxBatch` / `Scalar`; `Scalar` → `merkletree_seq`, `Avx` → `merkletree_avx`, `AvxBatch` → `merkletree_batch_avx`, `Avx512Batch` → `merkletree_batch_avx512`; `Avx512` aborts until Phase 7 (step 7.8)
   - *Commit: `api: add merkletree(mode) replacing per-site #ifdef cascade`*
-- [ ] **2.8** `tests.cpp`: add equivalence tests — `hashFullResult(..., Scalar) ≡ hash_full_result_seq(...)`; for `merkletree`, iterate over every compiled-in mode (`Scalar`, `Avx`, `AvxBatch`, plus `Avx512Batch` under `#ifdef __AVX512__`) and assert identical roots; assert `merkletree(..., Auto)` matches whichever mode `resolveAuto(Aggregating)` picked
+- [x] **2.6** `tests.cpp`: add equivalence tests — `hashFullResult(..., Scalar) ≡ hash_full_result_seq(...)`; for `merkletree`, iterate over every compiled-in mode (`Scalar`, `Avx`, `AvxBatch`, plus `Avx512Batch` under `#ifdef __AVX512__`) and assert identical roots; assert `merkletree(..., Auto)` matches the backend that the per-operation `Auto` resolution selected
   - *Commit: `test: add new-API≡old-API equivalence tests`*
 
 **Verify**: gates (a), (b), (c) green. Old API still public — no callers migrated yet.
@@ -399,7 +387,7 @@ The name `merkletree` is reclaimed here so Phase 2 can rebuild it correctly with
   - *Commit: `avx512: implement linear_hash_avx512`*
 - [ ] **7.8** Implement `merkletree_avx512` (single-sponge) — backs `merkletree(..., Avx512)` for benchmarking vs. `merkletree_batch_avx512`
   - *Commit: `avx512: implement merkletree_avx512`*
-- [ ] **7.9** Replace `Avx512`/`Avx512Batch` abort branches in Phase-2 dispatchers with real calls to new AVX512 functions; update `resolveAuto()` if needed
+- [ ] **7.9** Replace `Avx512`/`Avx512Batch` abort branches in Phase-2 dispatchers with real calls to new AVX512 functions
   - *Commit: `avx512: wire Avx512/Avx512Batch branches in mode dispatcher`*
 - [ ] **7.10** Run `testscpu_avx512` on AVX512 host; add cross-check: `Scalar ≡ Avx ≡ Avx512` for all (width, size) pairs
   - *Commit: `test: validate AVX512 correctness on AVX512 host`*
@@ -437,14 +425,14 @@ Sweep all files touched during Phases 0–7 and remove development scaffolding c
 |---|---|---|---|
 | 0 | Test & bench scaffolding | 7 | 7 |
 | 1 | Delete dead wrappers | 4 | 4 |
-| 2 | Introduce Poseidon2Mode + new API | 8 | 0 |
+| 2 | Introduce Poseidon2Mode + new API | 6 | 6 |
 | 3 | Migrate callers; make old API private | 9 | 0 |
 | 4 | NTT rename extendPol → LDE | 6 | 0 |
 | 5 | GPU Layout parameter | 11 | 0 |
 | 6 | Hygiene cleanup | 4 | 0 |
 | 7 | AVX512 implementation (AVX512 host) | 12 | 0 |
 | 8 | Comment audit | 4 | 0 |
-| **Total** | | **65** | **11** |
+| **Total** | | **63** | **17** |
 
 ---
 
