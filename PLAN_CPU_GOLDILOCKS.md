@@ -296,18 +296,18 @@ The name `merkletree` is reclaimed here so Phase 2 can rebuild it correctly with
 
 **Files**: [ntt_goldilocks.hpp](pil2-stark/src/goldilocks/src/ntt_goldilocks.hpp), [ntt_goldilocks.cpp](pil2-stark/src/goldilocks/src/ntt_goldilocks.cpp), all callers.
 
-- [ ] **4.1** Rename in `ntt_goldilocks.hpp` declaration + `ntt_goldilocks.cpp` definition; keep all parameters identical
+- [x] **4.1** Rename in `ntt_goldilocks.hpp` declaration + `ntt_goldilocks.cpp` definition; keep all parameters identical. Error message string updated too.
   - *Commit: `api: rename extendPol → LDE in ntt_goldilocks`*
-- [ ] **4.2** Update [const_pols.hpp:38](pil2-stark/src/starkpil/const_pols.hpp#L38) and [const_pols.hpp:58](pil2-stark/src/starkpil/const_pols.hpp#L58)
+- [x] **4.2** Updated [const_pols.hpp](pil2-stark/src/starkpil/const_pols.hpp) (2 call sites)
   - *Commit: `migrate: extendPol → LDE in const_pols.hpp`*
-- [ ] **4.3** Update [build_const_tree.cpp:44](pil2-stark/src/bctree/build_const_tree.cpp#L44)
+- [x] **4.3** Updated [build_const_tree.cpp](pil2-stark/src/bctree/build_const_tree.cpp) (1 call site)
   - *Commit: `migrate: extendPol → LDE in build_const_tree.cpp`*
-- [ ] **4.4** Update [starks_api.cpp:634](pil2-stark/src/api/starks_api.cpp#L634) and [starks_api.cpp:682](pil2-stark/src/api/starks_api.cpp#L682)
+- [x] **4.4** Updated [starks_api.cpp](pil2-stark/src/api/starks_api.cpp) (2 call sites)
   - *Commit: `migrate: extendPol → LDE in starks_api.cpp`*
-- [ ] **4.5** Update [starks.hpp:125-158](pil2-stark/src/starkpil/starks.hpp#L125) (all occurrences)
+- [x] **4.5** Updated [starks.hpp](pil2-stark/src/starkpil/starks.hpp) (4 call sites)
   - *Commit: `migrate: extendPol → LDE in starks.hpp`*
-- [ ] **4.6** Grep sweep: confirm zero remaining `extendPol` in `pil2-stark/src/` (excluding comments)
-  - *Commit: (none — sweep; fix any stragglers found)*
+- [x] **4.6** Grep sweep: zero remaining `extendPol` under `pil2-stark/`. Also migrated `tests.cpp` (test renamed `extendPol_correctness` → `LDE_correctness`), `tests.cu` (3 call sites), `bench.cpp` (1 call site + `EXTENDEDPOL_BENCH` renamed to `LDE_API_BENCH` — the pre-existing `LDE_BENCH`/`LDE_BLOCK_BENCH` names refer to a different manual-composition bench and were kept unchanged).
+  - *Commit: (none — sweep)*
 
 **Verify**: gates (a), (b), (c) green.
 
@@ -413,6 +413,18 @@ Sweep all files touched during Phases 0–7 and remove development scaffolding c
 
 ---
 
+### Post-refactor follow-up — `partial_merkle_tree` integration
+
+After Phase 8 lands, revisit `Poseidon2Goldilocks<W>::partial_merkle_tree`. It currently sits in the public API alongside the Mode-dispatched methods but doesn't follow that shape (single backend, `snake_case` name, no mode). Options to weigh:
+
+1. **Fold into the Mode API** — rename to `partialMerkleTree`, add a `Poseidon2Mode` parameter even though only `Scalar` is implemented today. Consistent shape; room to grow if an AVX variant ever lands.
+2. **Rename only** — `partialMerkleTree` (camelCase) without Mode, documenting it as a single-impl op parallel to `grinding`. No behavioral change.
+3. **Leave as-is** — `partial_merkle_tree` stays snake_case as a recognized exception for historical reasons.
+
+Live callers: [merkleTreeGL.hpp:78,81,84](pil2-stark/src/starkpil/merkleTree/merkleTreeGL.hpp#L78) (Merkle-proof verification path). Any choice requires updating all three call sites in lockstep. Decision should factor in whether an AVX partial-merkle implementation is on the roadmap.
+
+---
+
 ## 8. Progress
 
 | Phase | Description | Steps | Done |
@@ -421,12 +433,12 @@ Sweep all files touched during Phases 0–7 and remove development scaffolding c
 | 1 | Delete dead wrappers | 4 | 4 |
 | 2 | Introduce Poseidon2Mode + new API | 6 | 6 |
 | 3 | Migrate callers; make old API private | 9 | 9 |
-| 4 | NTT rename extendPol → LDE | 6 | 0 |
+| 4 | NTT rename extendPol → LDE | 6 | 6 |
 | 5 | GPU Layout parameter | 11 | 0 |
 | 6 | Hygiene cleanup | 4 | 0 |
 | 7 | AVX512 implementation (AVX512 host) | 12 | 0 |
 | 8 | Comment audit | 4 | 0 |
-| **Total** | | **63** | **26** |
+| **Total** | | **63** | **32** |
 
 ---
 

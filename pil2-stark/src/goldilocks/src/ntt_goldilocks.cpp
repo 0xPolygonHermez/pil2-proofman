@@ -366,7 +366,7 @@ void NTT_Goldilocks::reversePermutation(Goldilocks::Element *dst, uint64_t strid
     }
 }
 
-void NTT_Goldilocks::extendPol(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t N_Extended, uint64_t N, uint64_t ncols, Goldilocks::Element *buffer, u_int64_t nphase, u_int64_t nblock)
+void NTT_Goldilocks::LDE(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t N_Extended, uint64_t N, uint64_t ncols, Goldilocks::Element *buffer, u_int64_t nphase, u_int64_t nblock)
 {
     if (N == 0 || ncols == 0) {
         return;
@@ -379,7 +379,7 @@ void NTT_Goldilocks::extendPol(Goldilocks::Element *output, Goldilocks::Element 
     {
         tmp = (Goldilocks::Element *)malloc(N_Extended * ncols * sizeof(Goldilocks::Element));
         if(tmp == NULL){
-            std::cerr << "Error: NTT_Goldilocks::extendPol: Memory allocation failed" << std::endl;   
+            std::cerr << "Error: NTT_Goldilocks::LDE: Memory allocation failed" << std::endl;
             exit(1);
         }
     }

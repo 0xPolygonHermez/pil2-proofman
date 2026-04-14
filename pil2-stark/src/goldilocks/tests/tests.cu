@@ -297,7 +297,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_intt_multicol)
     NTTGoldilocksGPU::freeConstants();
 }
 
-// Correctness test: GPU LDE must match CPU extendPol element-by-element.
+// Correctness test: GPU LDE must match CPU LDE element-by-element.
 TEST(GOLDILOCKS_TEST, ntt_gpu_lde)
 {
     constexpr uint64_t n_bits     = 12;
@@ -313,7 +313,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde)
     // CPU reference
     std::vector<Goldilocks::Element> h_cpu(nRows_ext);
     NTT_Goldilocks cpu_ntt(nRows_ext);
-    cpu_ntt.extendPol(h_cpu.data(), h_input.data(), nRows_ext, nRows, nCols);
+    cpu_ntt.LDE(h_cpu.data(), h_input.data(), nRows_ext, nRows, nCols);
 
     uint32_t gpu_id = 0;
     cudaGetDevice((int*)&gpu_id);
@@ -381,10 +381,10 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree)
     buildMerkleTreeTilesGPU(arity, (uint64_t*)d_tree_gpu, (uint64_t*)d_lde_mt, nCols, nRows_ext, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
-    // CPU reference: extendPol then merkletree_seq
+    // CPU reference: LDE then merkletree_seq
     std::vector<Goldilocks::Element> h_cpu_lde(nRows_ext);
     NTT_Goldilocks cpu_ntt(nRows_ext);
-    cpu_ntt.extendPol(h_cpu_lde.data(), h_input.data(), nRows_ext, nRows, nCols);
+    cpu_ntt.LDE(h_cpu_lde.data(), h_input.data(), nRows_ext, nRows, nCols);
 
     std::vector<Goldilocks::Element> h_cpu_tree(tree_size);
     Poseidon2Goldilocks<12>::merkletree(h_cpu_tree.data(), h_cpu_lde.data(), nCols, nRows_ext, arity, /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::Scalar);
@@ -407,7 +407,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree)
 }
 
 // LDE + buildMerkleTreeTilesGPU with multiple columns: block-tiled input via fromRowMajorToTiled.
-// GPU root must match CPU extendPol + merkletree_seq (both row-major).
+// GPU root must match CPU LDE + merkletree_seq (both row-major).
 TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree_multicol)
 {
     constexpr uint64_t n_bits     = 12;
@@ -448,10 +448,10 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree_multicol)
     buildMerkleTreeTilesGPU(arity, (uint64_t*)d_tree_gpu, (uint64_t*)d_lde, nCols, nRows_ext, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
-    // CPU reference: extendPol (row-major) then merkletree_seq (row-major)
+    // CPU reference: LDE (row-major) then merkletree_seq (row-major)
     std::vector<Goldilocks::Element> h_cpu_lde(nRows_ext * nCols);
     NTT_Goldilocks cpu_ntt(nRows_ext);
-    cpu_ntt.extendPol(h_cpu_lde.data(), h_input.data(), nRows_ext, nRows, nCols);
+    cpu_ntt.LDE(h_cpu_lde.data(), h_input.data(), nRows_ext, nRows, nCols);
 
     std::vector<Goldilocks::Element> h_cpu_tree(tree_size);
     Poseidon2Goldilocks<12>::merkletree(h_cpu_tree.data(), h_cpu_lde.data(), nCols, nRows_ext, arity, /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::Scalar);

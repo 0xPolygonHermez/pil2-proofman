@@ -2311,7 +2311,7 @@ TEST(GOLDILOCKS_TEST, extendePol)
         }
     }
 
-    ntt.extendPol(a, a, FFT_SIZE << BLOWUP_FACTOR, FFT_SIZE, NUM_COLUMNS, b);
+    ntt.LDE(a, a, FFT_SIZE << BLOWUP_FACTOR, FFT_SIZE, NUM_COLUMNS, b);
 
     ASSERT_EQ(Goldilocks::toU64(a[0 * NUM_COLUMNS]), 0X3E7CA26D67147C31);
     ASSERT_EQ(Goldilocks::toU64(a[1 * NUM_COLUMNS]), 0X1310720153E0ABE4);
@@ -2495,14 +2495,14 @@ TEST(GOLDILOCKS_TEST, grinding_cpu)
     ASSERT_LT(Goldilocks::toU64(result[0]), level);
 }
 
-// Verify extendPol(output, input, NExt, N, ncols):
+// Verify LDE(output, input, NExt, N, ncols):
 //   input  = evaluations of polynomial p at plain N-th roots {omega_N^j}
 //   output = evaluations of p at the extended coset {shift * omega_NExt^j}
 //   (the coset shift is introduced internally by INTT(extend=true))
 //
 // Reference: Horner evaluation of p at each coset point — fully independent of
 // the NTT implementation, uses only field arithmetic.
-TEST(GOLDILOCKS_TEST, extendPol_correctness)
+TEST(GOLDILOCKS_TEST, LDE_correctness)
 {
     struct Case { uint64_t N, NExt, ncols; };
     const Case cases[] = {
@@ -2526,14 +2526,14 @@ TEST(GOLDILOCKS_TEST, extendPol_correctness)
                     Goldilocks::fromU64((k * ncols + col + 1) * 1000003ULL);
 
         // input = NTT(coeff, N) = evaluations of p at plain N-th roots {omega_N^j}
-        // extendPol internally applies the coset shift via INTT(extend=true)
+        // LDE internally applies the coset shift via INTT(extend=true)
         NTT_Goldilocks ntt_N(N);
         std::vector<Goldilocks::Element> input(N * ncols);
         ntt_N.NTT(input.data(), coeff.data(), N, ncols);
 
-        // extendPol: evaluations of p at the NExt-point coset {shift * omega_NExt^j}
+        // LDE: evaluations of p at the NExt-point coset {shift * omega_NExt^j}
         std::vector<Goldilocks::Element> output(NExt * ncols, Goldilocks::zero());
-        ntt_N.extendPol(output.data(), input.data(), NExt, N, ncols);
+        ntt_N.LDE(output.data(), input.data(), NExt, N, ncols);
 
         // Reference: Horner evaluation of p(shift * omega_NExt^j) for each j
         // p(x) = coeff[0] + coeff[1]*x + ... + coeff[N-1]*x^{N-1}

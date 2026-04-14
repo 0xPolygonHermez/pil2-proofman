@@ -890,7 +890,7 @@ static void LDE_BLOCK_BENCH(benchmark::State &state)
     free(a);
 }
 
-static void EXTENDEDPOL_BENCH(benchmark::State &state)
+static void LDE_API_BENCH(benchmark::State &state)
 {
     Goldilocks::Element *a = (Goldilocks::Element *)malloc((uint64_t)(FFT_SIZE << BLOWUP_FACTOR) * NUM_COLUMNS * sizeof(Goldilocks::Element));
     Goldilocks::Element *b = (Goldilocks::Element *)malloc((uint64_t)(FFT_SIZE << BLOWUP_FACTOR) * NUM_COLUMNS * sizeof(Goldilocks::Element));
@@ -915,7 +915,7 @@ static void EXTENDEDPOL_BENCH(benchmark::State &state)
     }
     for (auto _ : state)
     {
-        ntt.extendPol(b, a, FFT_SIZE << BLOWUP_FACTOR, FFT_SIZE, NUM_COLUMNS, c);
+        ntt.LDE(b, a, FFT_SIZE << BLOWUP_FACTOR, FFT_SIZE, NUM_COLUMNS, c);
     }
     free(a);
     free(b);
@@ -949,7 +949,7 @@ static void GRINDING_BENCH_CPU(benchmark::State &state)
 // ---------------------------------------------------------------------------
 // Step 0.6 additions (Phase 0): benchmark coverage for widths {4,8,12} and
 // arities {3,4} that the existing single-W16 benches do not reach, plus a
-// standalone INTT benchmark (INTT is currently only exercised inside extendPol).
+// standalone INTT benchmark (INTT is currently only exercised inside LDE).
 // These stay on the `_seq` / `_avx` / `_batch_avx` API until Phase 3 migrates
 // callers onto the Mode-parameter API.
 // ---------------------------------------------------------------------------
@@ -1248,7 +1248,7 @@ BENCHMARK(LDE_BLOCK_BENCH)
     ->DenseRange(omp_get_max_threads() / 2, omp_get_max_threads(), omp_get_max_threads() / 2)
     ->UseRealTime();
 
-BENCHMARK(EXTENDEDPOL_BENCH)
+BENCHMARK(LDE_API_BENCH)
     ->Unit(benchmark::kSecond)
     ->DenseRange(omp_get_max_threads() / 2, omp_get_max_threads(), omp_get_max_threads() / 2)
     ->UseRealTime();
