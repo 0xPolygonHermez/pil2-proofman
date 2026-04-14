@@ -1331,40 +1331,50 @@ BENCHMARK(GRINDING_BENCH_CPU)
     ->UseRealTime();
 
 // ---- Step 0.6 registrations ----
+// Use ->Name(...) with explicit suffixes so bench names contain no spaces
+// (default BENCHMARK_TEMPLATE formatting "<12, 3>" breaks bench_compare.sh's
+// whitespace-splitting awk parser).
 
-#define REG_TEMPLATE(NAME, ...)                                                  \
-    BENCHMARK_TEMPLATE(NAME, __VA_ARGS__)                                        \
-        ->Unit(benchmark::kMicrosecond)                                          \
+#define REG_W(NAME, W)                                                             \
+    BENCHMARK_TEMPLATE(NAME, W)->Name(#NAME "_" #W)                                \
+        ->Unit(benchmark::kMicrosecond)                                            \
         ->DenseRange(omp_get_max_threads() / 2, omp_get_max_threads(), omp_get_max_threads() / 2) \
         ->UseRealTime();
 
-REG_TEMPLATE(POSEIDON2_BENCH_FULL_W, 4)
-REG_TEMPLATE(POSEIDON2_BENCH_FULL_W, 8)
-REG_TEMPLATE(POSEIDON2_BENCH_FULL_W, 12)
+#define REG_AR(NAME, W, AR)                                                        \
+    BENCHMARK_TEMPLATE(NAME, W, AR)->Name(#NAME "_" #W "_" #AR)                    \
+        ->Unit(benchmark::kMicrosecond)                                            \
+        ->DenseRange(omp_get_max_threads() / 2, omp_get_max_threads(), omp_get_max_threads() / 2) \
+        ->UseRealTime();
+
+REG_W(POSEIDON2_BENCH_FULL_W, 4)
+REG_W(POSEIDON2_BENCH_FULL_W, 8)
+REG_W(POSEIDON2_BENCH_FULL_W, 12)
 
 #ifdef __AVX2__
-REG_TEMPLATE(POSEIDON2_BENCH_FULL_AVX_W, 4)
-REG_TEMPLATE(POSEIDON2_BENCH_FULL_AVX_W, 8)
-REG_TEMPLATE(POSEIDON2_BENCH_FULL_AVX_W, 12)
+REG_W(POSEIDON2_BENCH_FULL_AVX_W, 4)
+REG_W(POSEIDON2_BENCH_FULL_AVX_W, 8)
+REG_W(POSEIDON2_BENCH_FULL_AVX_W, 12)
 #endif
 
-REG_TEMPLATE(LINEAR_HASH_BENCH_W, 8)
-REG_TEMPLATE(LINEAR_HASH_BENCH_W, 12)
+REG_W(LINEAR_HASH_BENCH_W, 8)
+REG_W(LINEAR_HASH_BENCH_W, 12)
 
 #ifdef __AVX2__
-REG_TEMPLATE(LINEAR_HASH_BENCH_AVX_W, 8)
-REG_TEMPLATE(LINEAR_HASH_BENCH_AVX_W, 12)
+REG_W(LINEAR_HASH_BENCH_AVX_W, 8)
+REG_W(LINEAR_HASH_BENCH_AVX_W, 12)
 #endif
 
-REG_TEMPLATE(MERKLETREE_BENCH_AR, 12, 3)
-REG_TEMPLATE(MERKLETREE_BENCH_AR, 16, 4)
+REG_AR(MERKLETREE_BENCH_AR, 12, 3)
+REG_AR(MERKLETREE_BENCH_AR, 16, 4)
 
 #ifdef __AVX2__
-REG_TEMPLATE(MERKLETREE_BATCH_BENCH_AVX_AR, 12, 3)
-REG_TEMPLATE(MERKLETREE_BATCH_BENCH_AVX_AR, 16, 4)
+REG_AR(MERKLETREE_BATCH_BENCH_AVX_AR, 12, 3)
+REG_AR(MERKLETREE_BATCH_BENCH_AVX_AR, 16, 4)
 #endif
 
-#undef REG_TEMPLATE
+#undef REG_W
+#undef REG_AR
 
 BENCHMARK(INTT_BENCH)
     ->Unit(benchmark::kSecond)
