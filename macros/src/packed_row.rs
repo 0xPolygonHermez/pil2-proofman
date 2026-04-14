@@ -372,15 +372,17 @@ fn add_packed_array_setter_getter(
             #conversion
         }
 
-        // Whole-array versions — fully unrolled, no match/branch, LLVM-vectorisable.
+        // Whole-array versions — fully unrolled, all bit-offsets and masks are immediate
+        // literals.  No branches; LLVM can auto-vectorise the straight-line code.
         // `values` and the return type preserve the declared shape (e.g. [[u8; 4]; 3]).
-        #[inline(always)]
+        // #[inline] (not always) to let the compiler decide at each call site.
+        #[inline]
         pub fn #setter_name_all(&mut self, values: &#nested_type) {
             #(#bulk_clear_stmts)*
             #(#all_setter_stmts)*
         }
 
-        #[inline(always)]
+        #[inline]
         pub fn #getter_name_all(&self) -> #nested_type {
             let mut result: #nested_type = #zero_init;
             #(#all_getter_stmts)*
