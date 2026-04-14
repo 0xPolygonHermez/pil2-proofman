@@ -95,36 +95,7 @@ public:
     // void static merkletree_avx512(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads = 0, uint64_t dim = 1);
 #endif
 
-    // Wrapper:
-    inline void static merkletree(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity,int nThreads = 0, uint64_t dim = 1);
-    inline void static merkletree_batch(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t batch_size, int nThreads = 0, uint64_t dim = 1);
 };
-
-template<uint32_t SPONGE_WIDTH_T>
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity,int nThreads, uint64_t dim)
-{
-//#ifdef __AVX512__
-    // needs to be tested
-    // merkletree_avx512(tree, input, num_cols, num_rows, nThreads, dim);
-#if defined(__AVX2__) || defined(__AVX512__)
-    merkletree_avx(tree, input, num_cols, num_rows, arity, nThreads, dim);
-#else
-    merkletree_seq(tree, input, num_cols, num_rows, arity, nThreads, dim);
-#endif
-    
-}
-template<uint32_t SPONGE_WIDTH_T>
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t batch_size, int nThreads, uint64_t dim)
-{
-//#ifdef __AVX512__
-    // needs to be tested
-    //merkletree_batch_avx512(tree, input, num_cols, num_rows, batch_size, nThreads, dim);
-#if defined(__AVX2__) || defined(__AVX512__)
-    merkletree_avx(tree, input, num_cols, num_rows, batch_size, nThreads, dim);
-#else
-    merkletree_seq(tree, input, num_cols, num_rows, batch_size, nThreads, dim);
-#endif
-}
 
 template<uint32_t SPONGE_WIDTH_T>
 inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::pow7(Goldilocks::Element &x)

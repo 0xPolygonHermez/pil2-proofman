@@ -235,16 +235,18 @@ All three gates must pass after every step. Gate (c) is load-bearing — Merkle-
 
 The name `merkletree` is reclaimed here so Phase 2 can rebuild it correctly with the mode parameter. The underlying primitives (`merkletree_seq`, `merkletree_avx`, `merkletree_batch_avx`, `merkletree_batch_avx512`) are untouched — every one is exposed again in Phase 2 via a `Poseidon2Mode` (see §2 valid-modes table), so no capability is lost.
 
-**Files**: [poseidon2_goldilocks.hpp](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.hpp).
+**Files**: [poseidon2_goldilocks.hpp](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.hpp), [tests.cpp](pil2-stark/src/goldilocks/tests/tests.cpp).
 
-- [ ] **1.1** Grep confirm: no caller in `pil2-stark/src/` or `pil2-proofman/` references the *wrapper* `Poseidon2Goldilocks<W>::merkletree(` (non-variant signature). If found, investigate before continuing.
+**Execution order**: 1.1 → 1.4 → 1.2 → 1.3 (the characterization test calls both wrappers, so deleting a wrapper before the test breaks mid-series compilation — bisect-hostile).
+
+- [x] **1.1** Grep confirm: no caller in `pil2-stark/src/` or `pil2-proofman/` references the *wrapper* `Poseidon2Goldilocks<W>::merkletree(` (non-variant signature). If found, investigate before continuing.
   - *Commit: (none — audit step)*
-- [ ] **1.2** Delete the `merkletree(...)` wrapper from [poseidon2_goldilocks.hpp:104-115](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.hpp#L104)
-  - *Commit: `refactor: delete dead merkletree wrapper (Severity-A bug)`*
-- [ ] **1.3** Delete the `merkletree_batch(...)` wrapper from [poseidon2_goldilocks.hpp:117-127](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.hpp#L117)
-  - *Commit: `refactor: delete dead merkletree_batch wrapper`*
-- [ ] **1.4** Remove Phase-0 wrapper-characterization test (0.5) — replace with comment confirming wrappers are gone
+- [x] **1.4** Remove Phase-0 wrapper-characterization test (0.5) — replace with comment confirming wrappers are gone
   - *Commit: `test: remove wrapper-bug test (wrappers deleted)`*
+- [x] **1.2** Delete the `merkletree(...)` wrapper from [poseidon2_goldilocks.hpp:104-115](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.hpp#L104)
+  - *Commit: `refactor: delete dead merkletree wrapper (Severity-A bug)`*
+- [x] **1.3** Delete the `merkletree_batch(...)` wrapper from [poseidon2_goldilocks.hpp:117-127](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.hpp#L117)
+  - *Commit: `refactor: delete dead merkletree_batch wrapper`*
 
 **Verify**: gates (a), (b), (c) green.
 
@@ -434,7 +436,7 @@ Sweep all files touched during Phases 0–7 and remove development scaffolding c
 | Phase | Description | Steps | Done |
 |---|---|---|---|
 | 0 | Test & bench scaffolding | 7 | 7 |
-| 1 | Delete dead wrappers | 4 | 0 |
+| 1 | Delete dead wrappers | 4 | 4 |
 | 2 | Introduce Poseidon2Mode + new API | 8 | 0 |
 | 3 | Migrate callers; make old API private | 9 | 0 |
 | 4 | NTT rename extendPol → LDE | 6 | 0 |
@@ -442,7 +444,7 @@ Sweep all files touched during Phases 0–7 and remove development scaffolding c
 | 6 | Hygiene cleanup | 4 | 0 |
 | 7 | AVX512 implementation (AVX512 host) | 12 | 0 |
 | 8 | Comment audit | 4 | 0 |
-| **Total** | | **65** | **7** |
+| **Total** | | **65** | **11** |
 
 ---
 
