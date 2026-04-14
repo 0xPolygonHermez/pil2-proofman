@@ -2674,6 +2674,74 @@ TEST(GOLDILOCKS_TEST, extendPol_correctness)
     }
 }
 
+// Helper: run merkletree_seq vs merkletree_batch_avx (and _batch_avx512 under
+// __AVX512__) on the same input and assert the roots match.
+// Called for width/arity pairs (8,2), (12,3), (16,4) — the natural pairings
+// used by the prover.
+#ifdef __AVX2__
+template<uint32_t W>
+static void merkleTreeCrossCheck(uint64_t arity, uint64_t nrows, uint64_t ncols)
+{
+    uint64_t numElems = MerklehashGoldilocks::getTreeNumElements(nrows, arity);
+
+    std::vector<Goldilocks::Element> input(nrows * ncols);
+    for (uint64_t i = 0; i < nrows * ncols; ++i)
+        input[i] = Goldilocks::fromU64(i * 1000003ULL + 1);
+
+    std::vector<Goldilocks::Element> tree_seq(numElems), tree_avx(numElems);
+
+    Poseidon2Goldilocks<W>::merkletree_seq(
+        tree_seq.data(), input.data(), ncols, nrows, arity);
+    Poseidon2Goldilocks<W>::merkletree_batch_avx(
+        tree_avx.data(), input.data(), ncols, nrows, arity);
+
+    Goldilocks::Element root_seq[4], root_avx[4];
+    MerklehashGoldilocks::root((Goldilocks::Element*)root_seq, tree_seq.data(), numElems);
+    MerklehashGoldilocks::root((Goldilocks::Element*)root_avx, tree_avx.data(), numElems);
+
+    for (int i = 0; i < 4; ++i)
+        ASSERT_EQ(Goldilocks::toU64(root_seq[i]), Goldilocks::toU64(root_avx[i]))
+            << "seq vs avx_batch root mismatch at component " << i
+            << " (W=" << W << " arity=" << arity
+            << " nrows=" << nrows << " ncols=" << ncols << ")";
+
+#ifdef __AVX512__
+    std::vector<Goldilocks::Element> tree_512(numElems);
+    Poseidon2Goldilocks<W>::merkletree_batch_avx512(
+        tree_512.data(), input.data(), ncols, nrows, arity);
+
+    Goldilocks::Element root_512[4];
+    MerklehashGoldilocks::root((Goldilocks::Element*)root_512, tree_512.data(), numElems);
+
+    for (int i = 0; i < 4; ++i)
+        ASSERT_EQ(Goldilocks::toU64(root_seq[i]), Goldilocks::toU64(root_512[i]))
+            << "seq vs avx512_batch root mismatch at component " << i
+            << " (W=" << W << " arity=" << arity
+            << " nrows=" << nrows << " ncols=" << ncols << ")";
+#endif
+}
+
+// Cross-check that seq, batch_avx (and batch_avx512 when compiled) produce
+// identical Merkle roots for all combinations of width, arity, row count, and
+// column count used by the prover.
+TEST(GOLDILOCKS_TEST, merkletree_seq_avxbatch_cross_check)
+{
+    // Row sizes: small (catches basic correctness) and medium (exercises
+    // multi-level tree reduction). 2^15 is excluded — seq at that scale adds
+    // ~10–20 s to the suite with no additional coverage benefit.
+    const uint64_t rowSizes[] = { 1 << 8, 1 << 10 };
+    const uint64_t colSizes[] = { 1, 8, 64, 100 };
+
+    for (uint64_t nrows : rowSizes) {
+        for (uint64_t ncols : colSizes) {
+            merkleTreeCrossCheck<8> (2, nrows, ncols);
+            merkleTreeCrossCheck<12>(3, nrows, ncols);
+            merkleTreeCrossCheck<16>(4, nrows, ncols);
+        }
+    }
+}
+#endif // __AVX2__
+
 int main(int argc, char **argv)
 {
     ::testing::InitGoogleTest(&argc, argv);

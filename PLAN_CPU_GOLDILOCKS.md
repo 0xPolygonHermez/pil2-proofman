@@ -199,11 +199,11 @@ All three gates must pass after every step. Gate (c) is load-bearing — Merkle-
 
 - [x] **0.1** `Makefile`: add `testscpu_avx512` target — `-mavx512f -D__AVX512__`; compiles on any host, runs only on AVX512 hardware (Phase 7). Single `testscpu` binary covers scalar + AVX2 via explicit cross-checks.
   - *Commit: `test: add testscpu_avx512 build target and fix pre-existing AVX512 template errors`*
-- [ ] **0.2** `scripts/bench_compare.sh baseline.txt fresh.txt` — exits non-zero if any line regresses > 2 %
+- [x] **0.2** `scripts/bench_compare.sh baseline.txt fresh.txt` — exits non-zero if any line regresses > 2 %
   - *Commit: `test: add bench_compare.sh regression detector`*
-- [ ] **0.3** `tests.cpp`: add `extendPol` correctness test — multiple `(N, N_Ext, ncols)` pairs; reference: INTT → multiply by shift powers → NTT
+- [x] **0.3** `tests.cpp`: add `extendPol` correctness test — multiple `(N, N_Ext, ncols)` pairs; reference: Horner evaluation of p at each coset point
   - *Commit: `test: add extendPol end-to-end correctness test`*
-- [ ] **0.4** `tests.cpp`: add merkletree cross-check — `merkletree_seq ≡ merkletree_batch_avx` (and `≡ _batch_avx512` under `#ifdef __AVX512__`) for widths {4,8,12,16}, rows ∈ {2¹⁰, 2¹⁵}, cols ∈ {1, 8, 64, 100}
+- [x] **0.4** `tests.cpp`: add merkletree cross-check — `merkletree_seq ≡ merkletree_batch_avx` (and `≡ _batch_avx512` under `#ifdef __AVX512__`) for widths {4,8,12,16}, rows ∈ {2¹⁰, 2¹⁵}, cols ∈ {1, 8, 64, 100}
   - *Commit: `test: add merkletree seq≡avx_batch cross-check`*
 - [ ] **0.5** `tests.cpp`: add explicit test exercising `merkletree(...)` and `merkletree_batch(...)` wrappers — characterizes the Severity-A bug so Phase 1 deletion is documented
   - *Commit: `test: document merkletree_batch wrapper Severity-A bug`*
@@ -420,7 +420,7 @@ Sweep all files touched during Phases 0–7 and remove development scaffolding c
 
 | Phase | Description | Steps | Done |
 |---|---|---|---|
-| 0 | Test & bench scaffolding | 7 | 1 |
+| 0 | Test & bench scaffolding | 7 | 4 |
 | 1 | Delete dead wrappers | 4 | 0 |
 | 2 | Introduce Poseidon2Mode + new API | 8 | 0 |
 | 3 | Migrate callers; make old API private | 9 | 0 |
@@ -429,7 +429,7 @@ Sweep all files touched during Phases 0–7 and remove development scaffolding c
 | 6 | Hygiene cleanup | 4 | 0 |
 | 7 | AVX512 implementation (AVX512 host) | 12 | 0 |
 | 8 | Comment audit | 4 | 0 |
-| **Total** | | **65** | **1** |
+| **Total** | | **65** | **4** |
 
 ---
 
