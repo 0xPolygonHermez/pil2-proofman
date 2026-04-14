@@ -75,42 +75,6 @@ private:
 #endif
 
 public:
-    
-// Non-vectorized:
-    void static hash_full_result_seq(Goldilocks::Element *, const Goldilocks::Element *);
-    void static linear_hash_seq(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
-    void static partial_merkle_tree(Goldilocks::Element *root,Goldilocks::Element *input, uint64_t num_elements, uint64_t arity);
-    void static merkletree_seq(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads = 0, uint64_t dim = 1);
-    void static hash_seq(Goldilocks::Element (&state)[CAPACITY], const Goldilocks::Element (&input)[SPONGE_WIDTH]);
-    void static merkletree_batch_seq(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, uint64_t batch_size, int nThreads = 0, uint64_t dim = 1);
-    void static grinding(uint64_t& out_idx, const uint64_t* in, const uint32_t n_bits);
-
-
-    // Vectorized AVX:
-#ifdef __AVX2__
-    // Note, the functions that do not have the _avx suffix are the default ones to
-    // be used in the prover, they implement avx vectorixation though.
-    void static hash_full_result_batch_avx(Goldilocks::Element *, const Goldilocks::Element *);
-    void static hash_batch_avx(Goldilocks::Element (&state)[4 * CAPACITY], const Goldilocks::Element (&input)[4 * SPONGE_WIDTH]);
-    void static linear_hash_batch_avx(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
-    void static merkletree_batch_avx(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads = 0, uint64_t dim = 1);
-    void static hash_full_result_avx(Goldilocks::Element *, const Goldilocks::Element *);
-    void static hash_avx(Goldilocks::Element (&state)[CAPACITY], const Goldilocks::Element (&input)[SPONGE_WIDTH]);
-    void static linear_hash_avx(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
-    void static merkletree_avx(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads = 0, uint64_t dim = 1);
-#endif
-#ifdef __AVX512__
-    // Vectorized AVX512:
-    void static hash_full_result_batch_avx512(Goldilocks::Element *, const Goldilocks::Element *);
-    void static hash_batch_avx512(Goldilocks::Element (&state)[8 * CAPACITY], const Goldilocks::Element (&input)[8 * SPONGE_WIDTH]);
-    void static linear_hash_batch_avx512(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
-    void static merkletree_batch_avx512(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads = 0, uint64_t dim = 1);
-    // void static hash_full_result_avx512(Goldilocks::Element *, const Goldilocks::Element *);
-    // void static hash_avx512(Goldilocks::Element (&state)[4 * CAPACITY], const Goldilocks::Element (&input)[4 * SPONGE_WIDTH]);
-    // void static linear_hash_avx512(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
-    // void static merkletree_avx512(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads = 0, uint64_t dim = 1);
-#endif
-
     // Mode-dispatched public API (Phase 2 onwards).
     // See §2 of PLAN_CPU_GOLDILOCKS.md for the valid-modes table per operation.
     static void hashFullResult(Goldilocks::Element *output, const Goldilocks::Element *input,
@@ -124,8 +88,63 @@ public:
                            uint64_t num_cols, uint64_t num_rows, uint64_t arity,
                            int nThreads, uint64_t dim, Poseidon2Mode mode);
 
+    // Other public ops (no mode dispatch — single implementation each).
+    static void grinding(uint64_t &out_idx, const uint64_t *in, const uint32_t n_bits);
+    static void partial_merkle_tree(Goldilocks::Element *root, Goldilocks::Element *input,
+                                    uint64_t num_elements, uint64_t arity);
+
 private:
     [[noreturn]] static void abortMode(const char *op, Poseidon2Mode m);
+
+    // ---- Implementation primitives (Phase 3.8 — moved from public).
+    // These back the Mode API above. Reach them via Mode parameter, never directly.
+
+    // Scalar:
+    static void hash_full_result_seq(Goldilocks::Element *, const Goldilocks::Element *);
+    static void hash_seq(Goldilocks::Element (&state)[CAPACITY],
+                         const Goldilocks::Element (&input)[SPONGE_WIDTH]);
+    static void linear_hash_seq(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
+    static void merkletree_seq(Goldilocks::Element *tree, Goldilocks::Element *input,
+                               uint64_t num_cols, uint64_t num_rows, uint64_t arity,
+                               int nThreads = 0, uint64_t dim = 1);
+    // No mode backs merkletree_batch_seq — Phase 6 deletion candidate.
+    static void merkletree_batch_seq(Goldilocks::Element *tree, Goldilocks::Element *input,
+                                     uint64_t num_cols, uint64_t num_rows, uint64_t arity,
+                                     uint64_t batch_size, int nThreads = 0, uint64_t dim = 1);
+
+#ifdef __AVX2__
+    // AVX2 single-sponge:
+    static void hash_full_result_avx(Goldilocks::Element *, const Goldilocks::Element *);
+    static void hash_avx(Goldilocks::Element (&state)[CAPACITY],
+                         const Goldilocks::Element (&input)[SPONGE_WIDTH]);
+    static void linear_hash_avx(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
+    static void merkletree_avx(Goldilocks::Element *tree, Goldilocks::Element *input,
+                               uint64_t num_cols, uint64_t num_rows, uint64_t arity,
+                               int nThreads = 0, uint64_t dim = 1);
+    // AVX2 4-lane batch (internal building blocks of merkletree_batch_avx):
+    static void hash_full_result_batch_avx(Goldilocks::Element *, const Goldilocks::Element *);
+    static void hash_batch_avx(Goldilocks::Element (&state)[4 * CAPACITY],
+                               const Goldilocks::Element (&input)[4 * SPONGE_WIDTH]);
+    static void linear_hash_batch_avx(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
+    static void merkletree_batch_avx(Goldilocks::Element *tree, Goldilocks::Element *input,
+                                     uint64_t num_cols, uint64_t num_rows, uint64_t arity,
+                                     int nThreads = 0, uint64_t dim = 1);
+#endif
+#ifdef __AVX512__
+    // AVX512 8-lane batch:
+    static void hash_full_result_batch_avx512(Goldilocks::Element *, const Goldilocks::Element *);
+    static void hash_batch_avx512(Goldilocks::Element (&state)[8 * CAPACITY],
+                                  const Goldilocks::Element (&input)[8 * SPONGE_WIDTH]);
+    static void linear_hash_batch_avx512(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
+    static void merkletree_batch_avx512(Goldilocks::Element *tree, Goldilocks::Element *input,
+                                        uint64_t num_cols, uint64_t num_rows, uint64_t arity,
+                                        int nThreads = 0, uint64_t dim = 1);
+    // AVX512 single-sponge — Phase 7:
+    // static void hash_full_result_avx512(Goldilocks::Element *, const Goldilocks::Element *);
+    // static void hash_avx512(Goldilocks::Element (&state)[CAPACITY], const Goldilocks::Element (&input)[SPONGE_WIDTH]);
+    // static void linear_hash_avx512(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
+    // static void merkletree_avx512(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads = 0, uint64_t dim = 1);
+#endif
 
 };
 

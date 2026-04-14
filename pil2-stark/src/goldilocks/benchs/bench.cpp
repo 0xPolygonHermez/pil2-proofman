@@ -188,7 +188,7 @@ static void POSEIDON2_BENCH_FULL(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
         {
-            Poseidon2Goldilocks<16>::hash_full_result_seq((Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])result[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH], (Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH]);
+            Poseidon2Goldilocks<16>::hashFullResult(&result[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH], &x[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH], Poseidon2Mode::Scalar);
         }
     }
     // Check poseidon results poseidon ( 0 1 2 3 4 5 6 7 8 9 10 11 )
@@ -219,7 +219,7 @@ static void POSEIDON2_BENCH_FULL_AVX(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
         {
-            Poseidon2Goldilocks<16>::hash_full_result_avx((Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])result[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH], (Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH]);
+            Poseidon2Goldilocks<16>::hashFullResult(&result[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH], &x[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH], Poseidon2Mode::Avx);
         }
     }
     delete[] x;
@@ -231,34 +231,10 @@ static void POSEIDON2_BENCH_FULL_AVX(benchmark::State &state)
     state.counters["BytesProcessed"] = benchmark::Counter(input_size * sizeof(uint64_t), benchmark::Counter::kIsIterationInvariantRate, benchmark::Counter::OneK::kIs1024);
 }
 
-static void POSEIDON2_BENCH_FULL_AVX_BATCH(benchmark::State &state)
-{
-    uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)Poseidon2Goldilocks<16>::SPONGE_WIDTH;
-    Goldilocks::Element *x = new Goldilocks::Element[input_size];
-    Goldilocks::Element *result = new Goldilocks::Element[input_size];
-
-    for (uint64_t i = 0; i < input_size; i++)
-    {
-        x[i] = Goldilocks::fromU64(i);
-    }
-
-    // Benchmark
-    for (auto _ : state)
-    {
-#pragma omp parallel for num_threads(state.range(0)) schedule(static)
-        for (uint64_t i = 0; i < NUM_HASHES; i+= 4)
-        {
-            Poseidon2Goldilocks<16>::hash_full_result_batch_avx((Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])result[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH], (Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH]);
-        }
-    }
-    delete[] x;
-    delete[] result;
-    // Rate = time to process 1 posseidon per core
-    // BytesProcessed = total bytes processed per second on every iteration
-    int threads_core = 2 * state.range(0) / omp_get_max_threads(); // we assume hyperthreading
-    state.counters["Rate"] = benchmark::Counter(threads_core * (double)NUM_HASHES / (double)state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
-    state.counters["BytesProcessed"] = benchmark::Counter(input_size * sizeof(uint64_t), benchmark::Counter::kIsIterationInvariantRate, benchmark::Counter::OneK::kIs1024);
-}
+// NOTE: POSEIDON2_BENCH_FULL_AVX_BATCH was removed — it benched the private
+// primitive hash_full_result_batch_avx, which has no public Mode. The AVX
+// batch hash path is still exercised by the merkletree benches running in
+// AvxBatch mode (MERKLETREE_BATCH_BENCH_AVX and the _AR variants).
 #endif
 
 #ifdef __AVX512__
@@ -329,7 +305,7 @@ static void POSEIDON2_BENCH(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
         {
-            Poseidon2Goldilocks<16>::hash_seq((Goldilocks::Element(&)[Poseidon2Goldilocks<16>::CAPACITY])result[i * Poseidon2Goldilocks<16>::CAPACITY], (Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH]);
+            Poseidon2Goldilocks<16>::hash((Goldilocks::Element(&)[Poseidon2Goldilocks<16>::CAPACITY])result[i * Poseidon2Goldilocks<16>::CAPACITY], (Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH], Poseidon2Mode::Scalar);
         }
     }
 
@@ -361,7 +337,7 @@ static void POSEIDON2_BENCH_AVX(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
         {
-            Poseidon2Goldilocks<16>::hash_avx((Goldilocks::Element(&)[Poseidon2Goldilocks<16>::CAPACITY])result[i * Poseidon2Goldilocks<16>::CAPACITY], (Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH]);
+            Poseidon2Goldilocks<16>::hash((Goldilocks::Element(&)[Poseidon2Goldilocks<16>::CAPACITY])result[i * Poseidon2Goldilocks<16>::CAPACITY], (Goldilocks::Element(&)[Poseidon2Goldilocks<16>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<16>::SPONGE_WIDTH], Poseidon2Mode::Avx);
         }
     }
 
@@ -404,7 +380,7 @@ static void LINEAR_HASH_BENCH(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NROWS_HASH; i++)
         {
-            Poseidon2Goldilocks<16>::linear_hash_seq(&result[i * HASH_SIZE], &cols[i * NCOLS_HASH], NCOLS_HASH);
+            Poseidon2Goldilocks<16>::linearHash(&result[i * HASH_SIZE], &cols[i * NCOLS_HASH], NCOLS_HASH, Poseidon2Mode::Scalar);
         }
     }
 
@@ -448,7 +424,7 @@ static void LINEAR_HASH_BENCH_AVX(benchmark::State &state)
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NROWS_HASH; i++)
         {
-            Poseidon2Goldilocks<16>::linear_hash_avx(&result[i * HASH_SIZE], &cols[i * NCOLS_HASH], NCOLS_HASH);
+            Poseidon2Goldilocks<16>::linearHash(&result[i * HASH_SIZE], &cols[i * NCOLS_HASH], NCOLS_HASH, Poseidon2Mode::Avx);
         }
     }
 
@@ -535,7 +511,7 @@ static void MERKLETREE_BENCH(benchmark::State &state)
     // Benchmark
     for (auto _ : state)
     {
-        Poseidon2Goldilocks<16>::merkletree_seq(tree, cols, NCOLS_HASH, NROWS_HASH, state.range(0));
+        Poseidon2Goldilocks<16>::merkletree(tree, cols, NCOLS_HASH, NROWS_HASH, state.range(0), /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::Scalar);
     }
     Goldilocks::Element root[4];
     MerklehashGoldilocks::root(&(root[0]), tree, numElementsTree);
@@ -578,7 +554,7 @@ static void MERKLETREE_BENCH_AVX(benchmark::State &state)
     // Benchmark
     for (auto _ : state)
     {
-        Poseidon2Goldilocks<16>::merkletree_avx(tree, cols, NCOLS_HASH, NROWS_HASH, 3);
+        Poseidon2Goldilocks<16>::merkletree(tree, cols, NCOLS_HASH, NROWS_HASH, /*arity=*/3, /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::Avx);
     }
     Goldilocks::Element root[4];
     MerklehashGoldilocks::root(&(root[0]), tree, numElementsTree);
@@ -648,47 +624,10 @@ static void MERKLETREE_BENCH_AVX512(benchmark::State &state)
 }
 #endif
 
-static void MERKLETREE_BATCH_BENCH(benchmark::State &state)
-{
-    Goldilocks::Element *cols = new Goldilocks::Element[(uint64_t)NCOLS_HASH * (uint64_t)NROWS_HASH];
-
-    // Test vector: Fibonacci series on the columns and increase the initial values to the right,
-    // 1 2 3 4  5  6  ... NUM_COLS
-    // 1 2 3 4  5  6  ... NUM_COLS
-    // 2 4 6 8  10 12 ... NUM_COLS + NUM_COLS
-    // 3 6 9 12 15 18 ... NUM_COLS + NUM_COLS + NUM_COLS
-    for (uint64_t i = 0; i < NCOLS_HASH; i++)
-    {
-        cols[i] = Goldilocks::fromU64(i) + Goldilocks::one();
-        cols[i + NCOLS_HASH] = Goldilocks::fromU64(i) + Goldilocks::one();
-    }
-    for (uint64_t j = 2; j < NROWS_HASH; j++)
-    {
-        for (uint64_t i = 0; i < NCOLS_HASH; i++)
-        {
-            cols[j * NCOLS_HASH + i] = cols[(j - 2) * NCOLS_HASH + i] + cols[(j - 1) * NCOLS_HASH + i];
-        }
-    }
-
-    uint64_t numElementsTree = MerklehashGoldilocks::getTreeNumElements(NROWS_HASH);
-    Goldilocks::Element *tree = new Goldilocks::Element[numElementsTree];
-
-    // Benchmark
-    for (auto _ : state)
-    {
-        Poseidon2Goldilocks<16>::merkletree_batch_seq(tree, cols, NCOLS_HASH, NROWS_HASH, (NCOLS_HASH + 3) / 4, state.range(0));
-    }
-    Goldilocks::Element root[4];
-    MerklehashGoldilocks::root(&(root[0]), tree, numElementsTree);
-
-    // Rate = time to process 1 linear hash per core
-    // BytesProcessed = total bytes processed per second on every iteration
-    int threads_core = 2 * state.range(0) / omp_get_max_threads(); // we assume hyperthreading
-    state.counters["Rate"] = benchmark::Counter(threads_core * (((double)NROWS_HASH * (double)ceil((double)NCOLS_HASH / (double)Poseidon2Goldilocks<16>::RATE)) + log2(NROWS_HASH)) / state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
-    state.counters["BytesProcessed"] = benchmark::Counter((uint64_t)NROWS_HASH * (uint64_t)NCOLS_HASH * sizeof(Goldilocks::Element), benchmark::Counter::kIsIterationInvariantRate, benchmark::Counter::OneK::kIs1024);
-    delete[] cols;
-    delete[] tree;
-}
+// NOTE: MERKLETREE_BATCH_BENCH was removed — it benched the private primitive
+// merkletree_batch_seq, which is not backed by any public Mode (the scalar
+// path uses merkletree_seq, not merkletree_batch_seq). The primitive itself
+// is a Phase-6 deletion candidate.
 #ifdef __AVX2__
 static void MERKLETREE_BATCH_BENCH_AVX(benchmark::State &state)
 {
@@ -718,7 +657,7 @@ static void MERKLETREE_BATCH_BENCH_AVX(benchmark::State &state)
     // Benchmark
     for (auto _ : state)
     {
-        Poseidon2Goldilocks<16>::merkletree_batch_avx(tree, cols, NCOLS_HASH, NROWS_HASH, 3);
+        Poseidon2Goldilocks<16>::merkletree(tree, cols, NCOLS_HASH, NROWS_HASH, /*arity=*/3, /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::AvxBatch);
     }
     Goldilocks::Element root[4];
     MerklehashGoldilocks::root(&(root[0]), tree, numElementsTree);
@@ -1031,9 +970,10 @@ static void POSEIDON2_BENCH_FULL_W(benchmark::State &state)
     for (auto _ : state) {
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++) {
-            Poseidon2Goldilocks<W>::hash_full_result_seq(
-                (Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])result[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
-                (Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH]);
+            Poseidon2Goldilocks<W>::hashFullResult(
+                &result[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
+                &x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
+                Poseidon2Mode::Scalar);
         }
     }
     delete[] x; delete[] result;
@@ -1051,9 +991,10 @@ static void POSEIDON2_BENCH_FULL_AVX_W(benchmark::State &state)
     for (auto _ : state) {
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++) {
-            Poseidon2Goldilocks<W>::hash_full_result_avx(
-                (Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])result[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
-                (Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH]);
+            Poseidon2Goldilocks<W>::hashFullResult(
+                &result[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
+                &x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
+                Poseidon2Mode::Avx);
         }
     }
     delete[] x; delete[] result;
@@ -1073,7 +1014,7 @@ static void LINEAR_HASH_BENCH_W(benchmark::State &state)
     for (auto _ : state) {
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NROWS_HASH; i++) {
-            Poseidon2Goldilocks<W>::linear_hash_seq(&result[i * HASH_SIZE], &cols[i * NCOLS_HASH], NCOLS_HASH);
+            Poseidon2Goldilocks<W>::linearHash(&result[i * HASH_SIZE], &cols[i * NCOLS_HASH], NCOLS_HASH, Poseidon2Mode::Scalar);
         }
     }
     delete[] cols; delete[] result;
@@ -1091,7 +1032,7 @@ static void LINEAR_HASH_BENCH_AVX_W(benchmark::State &state)
     for (auto _ : state) {
 #pragma omp parallel for num_threads(state.range(0)) schedule(static)
         for (uint64_t i = 0; i < NROWS_HASH; i++) {
-            Poseidon2Goldilocks<W>::linear_hash_avx(&result[i * HASH_SIZE], &cols[i * NCOLS_HASH], NCOLS_HASH);
+            Poseidon2Goldilocks<W>::linearHash(&result[i * HASH_SIZE], &cols[i * NCOLS_HASH], NCOLS_HASH, Poseidon2Mode::Avx);
         }
     }
     delete[] cols; delete[] result;
@@ -1109,7 +1050,7 @@ static void MERKLETREE_BENCH_AR(benchmark::State &state)
     Goldilocks::Element *tree = new Goldilocks::Element[numElems];
 
     for (auto _ : state) {
-        Poseidon2Goldilocks<W>::merkletree_seq(tree, cols, NCOLS_HASH, nrows, ARITY);
+        Poseidon2Goldilocks<W>::merkletree(tree, cols, NCOLS_HASH, nrows, ARITY, /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::Scalar);
     }
     delete[] cols; delete[] tree;
 }
@@ -1126,7 +1067,7 @@ static void MERKLETREE_BATCH_BENCH_AVX_AR(benchmark::State &state)
     Goldilocks::Element *tree = new Goldilocks::Element[numElems];
 
     for (auto _ : state) {
-        Poseidon2Goldilocks<W>::merkletree_batch_avx(tree, cols, NCOLS_HASH, nrows, ARITY);
+        Poseidon2Goldilocks<W>::merkletree(tree, cols, NCOLS_HASH, nrows, ARITY, /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::AvxBatch);
     }
     delete[] cols; delete[] tree;
 }
@@ -1191,11 +1132,6 @@ BENCHMARK(POSEIDON2_BENCH_FULL)
 
 #ifdef __AVX2__
 BENCHMARK(POSEIDON2_BENCH_FULL_AVX)
-    ->Unit(benchmark::kMicrosecond)
-    ->DenseRange(omp_get_max_threads() / 2, omp_get_max_threads(), omp_get_max_threads() / 2)
-    ->UseRealTime();
-
-BENCHMARK(POSEIDON2_BENCH_FULL_AVX_BATCH)
     ->Unit(benchmark::kMicrosecond)
     ->DenseRange(omp_get_max_threads() / 2, omp_get_max_threads(), omp_get_max_threads() / 2)
     ->UseRealTime();
@@ -1278,10 +1214,6 @@ BENCHMARK(MERKLETREE_BENCH_AVX512)
     ->UseRealTime();
 #endif
 
-BENCHMARK(MERKLETREE_BATCH_BENCH)
-    ->Unit(benchmark::kMicrosecond)
-    ->DenseRange(omp_get_max_threads() / 2, omp_get_max_threads(), omp_get_max_threads() / 2)
-    ->UseRealTime();
 #ifdef __AVX2__
 BENCHMARK(MERKLETREE_BATCH_BENCH_AVX)
     ->Unit(benchmark::kMicrosecond)

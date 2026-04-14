@@ -387,7 +387,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree)
     cpu_ntt.extendPol(h_cpu_lde.data(), h_input.data(), nRows_ext, nRows, nCols);
 
     std::vector<Goldilocks::Element> h_cpu_tree(tree_size);
-    Poseidon2Goldilocks<12>::merkletree_seq(h_cpu_tree.data(), h_cpu_lde.data(), nCols, nRows_ext, arity);
+    Poseidon2Goldilocks<12>::merkletree(h_cpu_tree.data(), h_cpu_lde.data(), nCols, nRows_ext, arity, /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::Scalar);
 
     // Download GPU root and compare with CPU root element by element
     std::vector<Goldilocks::Element> h_gpu_root(HASH_SIZE);
@@ -454,7 +454,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree_multicol)
     cpu_ntt.extendPol(h_cpu_lde.data(), h_input.data(), nRows_ext, nRows, nCols);
 
     std::vector<Goldilocks::Element> h_cpu_tree(tree_size);
-    Poseidon2Goldilocks<12>::merkletree_seq(h_cpu_tree.data(), h_cpu_lde.data(), nCols, nRows_ext, arity);
+    Poseidon2Goldilocks<12>::merkletree(h_cpu_tree.data(), h_cpu_lde.data(), nCols, nRows_ext, arity, /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::Scalar);
 
     // Download GPU root and compare with CPU root
     std::vector<Goldilocks::Element> h_gpu_root(HASH_SIZE);
@@ -493,10 +493,11 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_linear_hash)
     // CPU reference: one linear_hash_seq call per row
     std::vector<Goldilocks::Element> h_cpu_out(nRows * CAPACITY);
     for (uint64_t i = 0; i < nRows; i++)
-        Poseidon2Goldilocks<12>::linear_hash_seq(
+        Poseidon2Goldilocks<12>::linearHash(
             h_cpu_out.data() + i * CAPACITY,
             h_trace.data() + i * nCols,
-            nCols);
+            nCols,
+            Poseidon2Mode::Scalar);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -549,7 +550,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_coalescedblocks)
 
     // CPU reference
     std::vector<Goldilocks::Element> h_cpu_tree(tree_size);
-    Poseidon2Goldilocks<12>::merkletree_seq(h_cpu_tree.data(), h_trace.data(), nCols, nRows, arity);
+    Poseidon2Goldilocks<12>::merkletree(h_cpu_tree.data(), h_trace.data(), nCols, nRows, arity, /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::Scalar);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -603,7 +604,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_coalesced)
 
     // CPU reference
     std::vector<Goldilocks::Element> h_cpu_tree(tree_size);
-    Poseidon2Goldilocks<12>::merkletree_seq(h_cpu_tree.data(), h_trace.data(), nCols, nRows, arity);
+    Poseidon2Goldilocks<12>::merkletree(h_cpu_tree.data(), h_trace.data(), nCols, nRows, arity, /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::Scalar);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -651,10 +652,11 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_linear_hash_flat)
     // CPU reference: one linear_hash_seq call per row
     std::vector<Goldilocks::Element> h_cpu_out(nRows * CAPACITY);
     for (uint64_t i = 0; i < nRows; i++)
-        Poseidon2Goldilocks<12>::linear_hash_seq(
+        Poseidon2Goldilocks<12>::linearHash(
             h_cpu_out.data() + i * CAPACITY,
             h_trace.data() + i * nCols,
-            nCols);
+            nCols,
+            Poseidon2Mode::Scalar);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));

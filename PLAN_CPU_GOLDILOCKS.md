@@ -269,30 +269,24 @@ The name `merkletree` is reclaimed here so Phase 2 can rebuild it correctly with
 
 **Files**: [transcriptGL.cpp](pil2-stark/src/starkpil/transcript/transcriptGL.cpp), [stark_verify.hpp](pil2-stark/src/starkpil/stark_verify.hpp), [merkleTreeGL.cpp](pil2-stark/src/starkpil/merkleTree/merkleTreeGL.cpp), [tests.cpp](pil2-stark/src/goldilocks/tests/tests.cpp), [bench.cpp](pil2-stark/src/goldilocks/benchs/bench.cpp), [poseidon2_goldilocks.hpp](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.hpp).
 
-- [ ] **3.1** `transcriptGL.cpp:22,25,28` — `hash_full_result_seq(out, in)` → `hashFullResult(out, in, Poseidon2Mode::Scalar)`
+- [x] **3.1** `transcriptGL.cpp:22,25,28` — `hash_full_result_seq(out, in)` → `hashFullResult(out, in, Poseidon2Mode::Scalar)`
   - *Commit: `migrate: transcriptGL hash_full_result_seq → hashFullResult`*
-- [ ] **3.2** `stark_verify.hpp:199` — same migration
+- [x] **3.2** `stark_verify.hpp:199` — same migration
   - *Commit: `migrate: stark_verify hash_full_result_seq → hashFullResult`*
-- [ ] **3.3** `merkleTreeGL.cpp:182,185,188` — `linear_hash_seq(...)` → `linearHash(..., Poseidon2Mode::Scalar)`
+- [x] **3.3** `merkleTreeGL.cpp:182,185,188` — `linear_hash_seq(...)` → `linearHash(..., Poseidon2Mode::Scalar)`
   - *Commit: `migrate: merkleTreeGL linear_hash_seq → linearHash`*
-- [ ] **3.4** `merkleTreeGL.cpp:236,250,264` — `hash_seq(...)` → `hash(..., Poseidon2Mode::Scalar)`
+- [x] **3.4** `merkleTreeGL.cpp:236,250,264` — `hash_seq(...)` → `hash(..., Poseidon2Mode::Scalar)`
   - *Commit: `migrate: merkleTreeGL hash_seq → hash`*
-- [ ] **3.5** `merkleTreeGL.cpp:280-306` — replace the manual per-arity `#ifdef` cascade (12 lines × 3 arities) with:
-  ```cpp
-  // arity 2:
-  Poseidon2Goldilocks<8>::merkletree(nodes, source, width, height, arity, 0, 1,
-                                     Poseidon2Mode::Auto);
-  // arity 3: Poseidon2Goldilocks<12>; arity 4: Poseidon2Goldilocks<16>
-  ```
+- [x] **3.5** `merkleTreeGL.cpp:280-306` — replace the manual per-arity `#ifdef` cascade with `merkletree(..., Poseidon2Mode::Auto)`
   - *Commit: `migrate: merkleTreeGL::merkelize() replace #ifdef cascade with merkletree(Auto)`*
-- [ ] **3.6** `tests.cpp`: update all test calls to Mode-parameter API; iterate over `{Scalar, Avx}` in cross-checks
+- [x] **3.6** `tests.cpp`: migrate tests to Mode-parameter API; tests now exercise only the public Mode interface (private primitives are validated implicitly via mode-equivalence checks). Direct-primitive tests (`poseidon2_avx_batch`, `merkletree_seq_avxbatch_cross_check`) deleted — covered by `mode_merkletree_equivalence`.
   - *Commit: `test: migrate tests to Mode-parameter API`*
-- [ ] **3.7** `bench.cpp`: update all bench calls to Mode-parameter API
+- [x] **3.7** `bench.cpp`: migrate to Mode API; benches that targeted private primitives without a public Mode equivalent (`POSEIDON2_BENCH_FULL_AVX_BATCH`, `MERKLETREE_BATCH_BENCH`) deleted.
   - *Commit: `bench: migrate benches to Mode-parameter API`*
-- [ ] **3.8** Move all `_seq`/`_avx`/`_avx512`/`_batch_*` public methods to `private:` in `poseidon2_goldilocks.hpp`
+- [x] **3.8** Move all `_seq`/`_avx`/`_batch_*` to `private:` in `poseidon2_goldilocks.hpp`. Public surface is now Mode API + `grinding` + `partial_merkle_tree`.
   - *Commit: `api: make _seq/_avx/_batch_* private`*
-- [ ] **3.9** Move `partial_merkle_tree` to `private:` (or delete if no internal caller surfaced)
-  - *Commit: `api: make partial_merkle_tree private`*
+- [x] **3.9** `partial_merkle_tree` — kept public after audit. It has live callers in [merkleTreeGL.hpp:78,81,84](pil2-stark/src/starkpil/merkleTree/merkleTreeGL.hpp#L78) (Merkle proof verification path) — backs no Mode but is a distinct standalone op, not a primitive of `merkletree`. Plan §3.2 originally listed it as unused; that was incorrect. No commit needed.
+  - *Commit: (none — audit; status unchanged)*
 
 **Verify**: gates (a), (b), (c) green. Any missed call site will fail to compile or produce a wrong Merkle root caught by (c).
 
@@ -426,13 +420,13 @@ Sweep all files touched during Phases 0–7 and remove development scaffolding c
 | 0 | Test & bench scaffolding | 7 | 7 |
 | 1 | Delete dead wrappers | 4 | 4 |
 | 2 | Introduce Poseidon2Mode + new API | 6 | 6 |
-| 3 | Migrate callers; make old API private | 9 | 0 |
+| 3 | Migrate callers; make old API private | 9 | 9 |
 | 4 | NTT rename extendPol → LDE | 6 | 0 |
 | 5 | GPU Layout parameter | 11 | 0 |
 | 6 | Hygiene cleanup | 4 | 0 |
 | 7 | AVX512 implementation (AVX512 host) | 12 | 0 |
 | 8 | Comment audit | 4 | 0 |
-| **Total** | | **63** | **17** |
+| **Total** | | **63** | **26** |
 
 ---
 

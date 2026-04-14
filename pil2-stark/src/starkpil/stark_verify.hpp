@@ -196,7 +196,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     if constexpr (std::is_same<ElementType, Goldilocks::Element>::value) {
         Goldilocks::Element result[4];
         Goldilocks::Element x[4] = {challenge[0], challenge[1], challenge[2], nonce};
-        Poseidon2GoldilocksGrinding::hash_full_result_seq(result, &x[0]);
+        Poseidon2GoldilocksGrinding::hashFullResult(result, &x[0], Poseidon2Mode::Scalar);
         if (Goldilocks::toU64(result[0]) >= (1ULL << (64 - starkInfo.starkStruct.powBits))) {
             zklog.error("starkVerify: PoW verification failed");
             return false;
