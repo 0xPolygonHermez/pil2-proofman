@@ -906,7 +906,7 @@ uint64_t get_snark_protocol_id(void *snark_prover) {
     return finalSnarkProver->protocolId;
 }
 
-void *init_final_snark_prover_cpu(char* zkeyFile) {
+void *init_final_snark_prover_cpu(char* zkeyFile, void* /*d_buffers_recursivef*/) {
 
     auto fdZkey = std::make_unique<BinFileUtils::BinFile>(std::string(zkeyFile), "zkey", 1, /*directRead=*/true);
     uint64_t protocolId = getProtocolIdFromBinFile(fdZkey.get());
@@ -940,7 +940,7 @@ void free_final_snark_prover_cpu(void *snark_prover) {
     }
 }
 
-void gen_final_snark_proof_cpu(void *prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark) {
+void gen_final_snark_proof_cpu(void *prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark, void* /*d_buffers_recursivef*/) {
     genFinalSnarkProof(prover, circomWitnessFinal, proof, publicsSnark);
 }
 

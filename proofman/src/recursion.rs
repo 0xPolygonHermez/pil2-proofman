@@ -877,6 +877,7 @@ pub fn generate_snark_proof(
     setup_path: &Path,
     proof: *mut c_void,
     prealloc_handle: std::thread::JoinHandle<()>,
+    d_buffers_recursivef: *mut c_void,
 ) -> ProofmanResult<(Vec<u8>, Vec<u8>)> {
     let witness = generate_witness_final_snark(proof, setup_path)?;
 
@@ -892,7 +893,13 @@ pub fn generate_snark_proof(
     let snark_proof_ptr = snark_proof.as_mut_ptr();
 
     tracing::trace!("··· Generating final snark proof");
-    gen_final_snark_proof_c(snark_prover, witness.as_ptr() as *mut u8, snark_proof_ptr, snark_publics_ptr);
+    gen_final_snark_proof_c(
+        snark_prover,
+        witness.as_ptr() as *mut u8,
+        snark_proof_ptr,
+        snark_publics_ptr,
+        d_buffers_recursivef,
+    );
     timer_stop_and_log_info!(CALCULATE_FINAL_PROOF);
     tracing::trace!("··· Final Snark Proof generated.");
 

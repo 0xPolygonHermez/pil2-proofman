@@ -18,7 +18,7 @@ use crate::check_const_tree;
 use std::fs;
 use proofman_starks_lib_c::{
     init_final_snark_prover_c, free_final_snark_prover_c, get_snark_protocol_id_c, snark_proof_bytes_to_json_c,
-    get_unified_buffer_gpu_c, free_fixed_pols_buffer_gpu_c, pre_allocate_final_snark_prover_c,
+    get_unified_buffer_gpu_for_recursivef_c, free_fixed_pols_buffer_gpu_c, pre_allocate_final_snark_prover_c,
     alloc_fixed_pols_buffer_gpu_c, free_device_buffers_recursivef_c, gen_device_buffers_recursivef_c,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -188,20 +188,6 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             Arc::new(create_buffer_fast(setup_recursivef.prover_buffer_size as usize))
         };
 
-        timer_start_info!(INITIALIZING_FINAL_SNARK_PROVER);
-        let zkey_filename = setup_snark_path.display().to_string() + ".zkey";
-        let snark_prover = init_final_snark_prover_c(zkey_filename.as_str());
-        if snark_prover.is_null() {
-            return Err(std::io::Error::other(format!(
-                "Failed to initialize final snark prover from zkey file '{}'",
-                zkey_filename
-            ))
-            .into());
-        }
-        let protocol_id = get_snark_protocol_id_c(snark_prover);
-        let protocol = SnarkProtocol::from_protocol_id(protocol_id)?;
-        timer_stop_and_log_info!(INITIALIZING_FINAL_SNARK_PROVER);
-
         let d_buffers_vadcop = if let Some(d_buffers) = d_buffers { d_buffers } else { std::ptr::null_mut() };
 
         let p_setup: *mut c_void = (&setup_recursivef.p_setup).into();
@@ -220,6 +206,20 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             d_buffers_vadcop as *mut u8,
             &verkey_str,
         ) as *mut c_void;
+
+        timer_start_info!(INITIALIZING_FINAL_SNARK_PROVER);
+        let zkey_filename = setup_snark_path.display().to_string() + ".zkey";
+        let snark_prover = init_final_snark_prover_c(zkey_filename.as_str(), d_buffers_recursivef);
+        if snark_prover.is_null() {
+            return Err(std::io::Error::other(format!(
+                "Failed to initialize final snark prover from zkey file '{}'",
+                zkey_filename
+            ))
+            .into());
+        }
+        let protocol_id = get_snark_protocol_id_c(snark_prover);
+        let protocol = SnarkProtocol::from_protocol_id(protocol_id)?;
+        timer_stop_and_log_info!(INITIALIZING_FINAL_SNARK_PROVER);
 
         let witness_size = setup_recursivef.get_circom_witness_size();
         let trace_size = setup_recursivef.stark_info.map_sections_n["cm1"]
@@ -289,21 +289,28 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         let prealloc_handle = {
             let snark_prover = self.snark_prover as usize;
             let unified_buffer_gpu = if let Some(d_buffers) = self.d_buffers {
-                get_unified_buffer_gpu_c(d_buffers)
+                get_unified_buffer_gpu_for_recursivef_c(d_buffers, self.d_buffers_recursivef)
             } else {
                 std::ptr::null_mut()
             };
             let buffer = unified_buffer_gpu as usize;
+            let d_buffers_recursivef = self.d_buffers_recursivef as usize;
             std::thread::spawn(move || {
                 pre_allocate_final_snark_prover_c(
                     snark_prover as *mut std::ffi::c_void,
                     buffer as *mut std::ffi::c_void,
+                    d_buffers_recursivef as *mut std::ffi::c_void,
                 );
             })
         };
 
-        let (snark_proof_bytes, snark_publics_bytes) =
-            generate_snark_proof(self.snark_prover, &self.setup_snark_path, recursivef_proof, prealloc_handle)?;
+        let (snark_proof_bytes, snark_publics_bytes) = generate_snark_proof(
+            self.snark_prover,
+            &self.setup_snark_path,
+            recursivef_proof,
+            prealloc_handle,
+            self.d_buffers_recursivef,
+        )?;
 
         let publics_info = PublicsInfo::from_folder(&self.proving_key_path)?;
         let public_bytes = get_public_bytes_solidity(&publics_info, &proof[1..1 + proof[0] as usize])?;
