@@ -624,10 +624,6 @@ static void MERKLETREE_BENCH_AVX512(benchmark::State &state)
 }
 #endif
 
-// NOTE: MERKLETREE_BATCH_BENCH was removed — it benched the private primitive
-// merkletree_batch_seq, which is not backed by any public Mode (the scalar
-// path uses merkletree_seq, not merkletree_batch_seq). The primitive itself
-// is a Phase-6 deletion candidate.
 #ifdef __AVX2__
 static void MERKLETREE_BATCH_BENCH_AVX(benchmark::State &state)
 {
@@ -747,9 +743,9 @@ static void NTT_BENCH(benchmark::State &state)
     for (auto _ : state)
     {
 #pragma omp parallel for num_threads(state.range(0))
-        for (u_int64_t i = 0; i < NUM_COLUMNS; i++)
+        for (uint64_t i = 0; i < NUM_COLUMNS; i++)
         {
-            u_int64_t offset = i * FFT_SIZE;
+            uint64_t offset = i * FFT_SIZE;
             gntt.NTT(a + offset, a + offset, FFT_SIZE);
         }
     }
@@ -1089,8 +1085,8 @@ static void INTT_BENCH(benchmark::State &state)
     }
     for (auto _ : state) {
 #pragma omp parallel for num_threads(state.range(0))
-        for (u_int64_t i = 0; i < NUM_COLUMNS; i++) {
-            u_int64_t offset = i * FFT_SIZE;
+        for (uint64_t i = 0; i < NUM_COLUMNS; i++) {
+            uint64_t offset = i * FFT_SIZE;
             gntt.INTT(a + offset, a + offset, FFT_SIZE);
         }
     }

@@ -348,14 +348,14 @@ The name `merkletree` is reclaimed here so Phase 2 can rebuild it correctly with
 
 **Files**: CPU goldilocks sources.
 
-- [ ] **6.1** `ntt_goldilocks.hpp` + `ntt_goldilocks.cpp`: `u_int64_t` → `uint64_t`, `u_int32_t` → `uint32_t` throughout
+- [x] **6.1** `ntt_goldilocks.hpp` + `ntt_goldilocks.cpp`: `u_int64_t` → `uint64_t`, `u_int32_t` → `uint32_t` throughout (80 occurrences). Also cleaned 4 occurrences in `bench.cpp` (from Phase 0.6 additions).
   - *Commit: `cleanup: u_int*_t → uint*_t in ntt_goldilocks`*
-- [ ] **6.2** `poseidon2_goldilocks.hpp` and AVX headers: same type substitution for any remaining occurrences
+- [x] **6.2** `poseidon2_goldilocks.hpp` and AVX headers: already clean (zero occurrences). Scope extended to `goldilocks_base_field.cpp` (4 occurrences) to leave the entire goldilocks tree consistent.
   - *Commit: `cleanup: u_int*_t → uint*_t in poseidon2_goldilocks`*
-- [ ] **6.3** Delete `partial_merkle_tree` body + declaration if no internal caller surfaced after Phase 3
-  - *Commit: `cleanup: delete partial_merkle_tree (no callers)`*
-- [ ] **6.4** Final grep sweep — zero `_seq`/`_avx`/`_avx512` outside `private:`; zero `merkletree_batch`; zero `extendPol`
-  - *Commit: (none — sweep; fix any found)*
+- [x] **6.3** Deleted `merkletree_batch_seq` (confirmed dead after Phase 3 — backs no mode, no caller). `partial_merkle_tree` kept — live callers in [merkleTreeGL.hpp:78,81,84](pil2-stark/src/starkpil/merkleTree/merkleTreeGL.hpp#L78) (see Post-refactor follow-up for integration options).
+  - *Commit: `cleanup: delete dead merkletree_batch_seq primitive`*
+- [x] **6.4** Final grep sweep — zero `_seq`/`_avx`/`_avx512` outside `private:`; zero `extendPol`; `merkletree_batch` only appears in the still-live `_avx`/`_avx512` variants (which back `AvxBatch`/`Avx512Batch` modes — retained per plan §2).
+  - *Commit: (none — sweep)*
 
 **Verify**: gates (a), (b), (c) green.
 
@@ -435,10 +435,10 @@ Live callers: [merkleTreeGL.hpp:78,81,84](pil2-stark/src/starkpil/merkleTree/mer
 | 3 | Migrate callers; make old API private | 9 | 9 |
 | 4 | NTT rename extendPol → LDE | 6 | 6 |
 | 5 | GPU Layout parameter | 11 | 11 |
-| 6 | Hygiene cleanup | 4 | 0 |
+| 6 | Hygiene cleanup | 4 | 4 |
 | 7 | AVX512 implementation (AVX512 host) | 12 | 0 |
 | 8 | Comment audit | 4 | 0 |
-| **Total** | | **63** | **43** |
+| **Total** | | **63** | **47** |
 
 ---
 

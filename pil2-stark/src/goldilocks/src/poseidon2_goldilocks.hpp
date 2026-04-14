@@ -107,10 +107,6 @@ private:
     static void merkletree_seq(Goldilocks::Element *tree, Goldilocks::Element *input,
                                uint64_t num_cols, uint64_t num_rows, uint64_t arity,
                                int nThreads = 0, uint64_t dim = 1);
-    // No mode backs merkletree_batch_seq — Phase 6 deletion candidate.
-    static void merkletree_batch_seq(Goldilocks::Element *tree, Goldilocks::Element *input,
-                                     uint64_t num_cols, uint64_t num_rows, uint64_t arity,
-                                     uint64_t batch_size, int nThreads = 0, uint64_t dim = 1);
 
 #ifdef __AVX2__
     // AVX2 single-sponge:
