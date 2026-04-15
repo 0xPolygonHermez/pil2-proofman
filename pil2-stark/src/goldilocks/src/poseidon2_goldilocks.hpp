@@ -17,17 +17,23 @@
 #define NONCES_LAUNCH_GRID_SIZE \
     (((1ULL << NONCES_LAUNCH_BITS) + NONCES_LAUNCH_BLOCKS - 1) / NONCES_LAUNCH_BLOCKS)
 
-// Mode selector for the Poseidon2 public API (Phase 2 onwards).
+// Mode selector for the Poseidon2 public API.
 // Auto resolves per-operation, inline, to the best backend compiled in.
-// Explicit modes whose backend isn't compiled in (or not yet implemented,
-// e.g. single-sponge Avx512 before Phase 7) abort loudly — this is a
+// Explicit modes whose backend isn't compiled in abort loudly — this is a
 // build-config bug, not a silent fallback.
+//
+// Avx512 (single-sponge) is intentionally unimplemented: at state sizes
+// 4..16 elements an 8-lane register offers no meaningful gain over the
+// 4-lane AVX2 path, and the real AVX512 win case (8 parallel sponges) is
+// already covered by Avx512Batch. Auto on AVX512 hosts therefore picks Avx
+// for single-sponge ops (hashFullResult, hash, linearHash) and Avx512Batch
+// for merkletree. Explicit Avx512 on a single-sponge op aborts.
 enum class Poseidon2Mode : uint8_t {
     Auto = 0,
     Scalar,
     Avx,
     AvxBatch,        // backs merkletree_batch_avx, linear_hash_batch_avx (internal 4-row contract)
-    Avx512,          // single-sponge AVX512 — only available after Phase 7
+    Avx512,          // reserved; single-sponge AVX512 is intentionally not implemented (see above)
     Avx512Batch,     // backs merkletree_batch_avx512 (internal 8-row contract)
 };
 
@@ -64,10 +70,6 @@ private:
     inline void static element_pow7_avx(__m256i &x);
 #endif
 #ifdef __AVX512__
-    // inline void static pow7_avx512(__m512i &st0, __m512i &st1, __m512i &st2);
-    // inline void static add_avx512(__m512i &st0, __m512i &st1, __m512i &st2, const Goldilocks::Element C[SPONGE_WIDTH]);
-    // inline void static add_avx512_a(__m512i &st0, __m512i &st1, __m512i &st2, const Goldilocks::Element C[SPONGE_WIDTH]);
-    // inline void static add_avx512_small(__m512i &st0, __m512i &st1, __m512i &st2, const Goldilocks::Element C[SPONGE_WIDTH]);
     inline void static matmul_external_batch_avx512(__m512i *x);
     inline void static matmul_m4_batch_avx512(__m512i &st0, __m512i &st1, __m512i &st2, __m512i &st3);
     inline void static pow7add_avx512(__m512i *x, const Goldilocks::Element C_[SPONGE_WIDTH]);
@@ -90,6 +92,7 @@ public:
 
     // Other public ops (no mode dispatch — single implementation each).
     static void grinding(uint64_t &out_idx, const uint64_t *in, const uint32_t n_bits);
+   
     static void partial_merkle_tree(Goldilocks::Element *root, Goldilocks::Element *input,
                                     uint64_t num_elements, uint64_t arity);
 
@@ -127,7 +130,8 @@ private:
                                      int nThreads = 0, uint64_t dim = 1);
 #endif
 #ifdef __AVX512__
-    // AVX512 8-lane batch:
+    // AVX512 8-lane batch (single-sponge AVX512 is intentionally not
+    // implemented — see Poseidon2Mode enum comment).
     static void hash_full_result_batch_avx512(Goldilocks::Element *, const Goldilocks::Element *);
     static void hash_batch_avx512(Goldilocks::Element (&state)[8 * CAPACITY],
                                   const Goldilocks::Element (&input)[8 * SPONGE_WIDTH]);
@@ -135,11 +139,6 @@ private:
     static void merkletree_batch_avx512(Goldilocks::Element *tree, Goldilocks::Element *input,
                                         uint64_t num_cols, uint64_t num_rows, uint64_t arity,
                                         int nThreads = 0, uint64_t dim = 1);
-    // AVX512 single-sponge — Phase 7:
-    // static void hash_full_result_avx512(Goldilocks::Element *, const Goldilocks::Element *);
-    // static void hash_avx512(Goldilocks::Element (&state)[CAPACITY], const Goldilocks::Element (&input)[SPONGE_WIDTH]);
-    // static void linear_hash_avx512(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
-    // static void merkletree_avx512(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads = 0, uint64_t dim = 1);
 #endif
 
 };
@@ -269,9 +268,7 @@ inline void Poseidon2Goldilocks<W>::hashFullResult(
     Goldilocks::Element *output, const Goldilocks::Element *input, Poseidon2Mode mode)
 {
     if (mode == Poseidon2Mode::Auto) {
-#ifdef __AVX512__
-        mode = Poseidon2Mode::Avx512;
-#elif defined(__AVX2__)
+#ifdef __AVX2__
         mode = Poseidon2Mode::Avx;
 #else
         mode = Poseidon2Mode::Scalar;
@@ -282,7 +279,6 @@ inline void Poseidon2Goldilocks<W>::hashFullResult(
 #ifdef __AVX2__
         case Poseidon2Mode::Avx:    hash_full_result_avx(output, input); return;
 #endif
-        // Avx512 single-sponge: Phase 7.
         default: break;
     }
     abortMode("hashFullResult", mode);
@@ -295,9 +291,7 @@ inline void Poseidon2Goldilocks<W>::hash(
     Poseidon2Mode mode)
 {
     if (mode == Poseidon2Mode::Auto) {
-#ifdef __AVX512__
-        mode = Poseidon2Mode::Avx512;
-#elif defined(__AVX2__)
+#ifdef __AVX2__
         mode = Poseidon2Mode::Avx;
 #else
         mode = Poseidon2Mode::Scalar;
@@ -318,9 +312,7 @@ inline void Poseidon2Goldilocks<W>::linearHash(
     Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size, Poseidon2Mode mode)
 {
     if (mode == Poseidon2Mode::Auto) {
-#ifdef __AVX512__
-        mode = Poseidon2Mode::Avx512;
-#elif defined(__AVX2__)
+#ifdef __AVX2__
         mode = Poseidon2Mode::Avx;
 #else
         mode = Poseidon2Mode::Scalar;
@@ -367,7 +359,7 @@ inline void Poseidon2Goldilocks<W>::merkletree(
         case Poseidon2Mode::Avx512Batch:
             merkletree_batch_avx512(tree, input, num_cols, num_rows, arity, nThreads, dim); return;
 #endif
-        // Avx512 single-sponge: Phase 7 (step 7.8) will wire merkletree_avx512.
+        // Avx512 single-sponge is intentionally unimplemented (see enum comment).
         default: break;
     }
     abortMode("merkletree", mode);

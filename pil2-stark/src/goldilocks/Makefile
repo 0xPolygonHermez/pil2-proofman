@@ -63,18 +63,10 @@ INC_FLAGS := $(addprefix -I,$(INC_DIRS))
 # Preprocessor flags
 CPPFLAGS := $(INC_FLAGS) -MMD -MP
 
-# AVX512 build — compiles on any host; run only on AVX512 hardware
-ifeq ($(UNAME_S),Linux)
-BUILD_DIR_AVX512 := ./build_avx512
-CXXFLAGS_AVX512  := $(CXXFLAGS) -mavx512f -D__AVX512__
-OBJS_AVX512      := $(patsubst $(SRC_DIR)/%.cpp, $(BUILD_DIR_AVX512)/%.o, $(SRCS))
-DEPS_AVX512      := $(OBJS_AVX512:.o=.d)
-endif
-
 # ----------------------
 # Default target
 # ----------------------
-.PHONY: all testscpu testscpu_avx512 benchscpu testsgpu benchsgpu clean help
+.PHONY: all testscpu benchscpu testsgpu benchsgpu clean help
 
 ifeq ($(UNAME_S),Linux)
 all: testscpu benchscpu
@@ -84,9 +76,6 @@ endif
 
 testscpu: $(OBJS) $(BUILD_DIR)/tests/tests.o
 	$(CXX) $(OBJS) $(BUILD_DIR)/tests/tests.o $(LDFLAGS) $(LDLIBS) -o $@
-
-testscpu_avx512: $(OBJS_AVX512) $(BUILD_DIR_AVX512)/tests/tests.o
-	$(CXX) $(OBJS_AVX512) $(BUILD_DIR_AVX512)/tests/tests.o $(LDFLAGS) $(LDLIBS) -o $@
 
 benchscpu: $(BUILD_DIR)/benchs/bench.o $(OBJS)
 	$(CXX) $(BUILD_DIR)/benchs/bench.o $(OBJS) $(LDFLAGS) $(LDLIBS) -o $@
@@ -109,14 +98,6 @@ $(BUILD_DIR)/tests/%.o: $(TEST_DIR)/%.cpp
 	$(MKDIR_P) $(dir $@)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -c $< -o $@
 
-$(BUILD_DIR_AVX512)/%.o: $(SRC_DIR)/%.cpp
-	$(MKDIR_P) $(dir $@)
-	$(CXX) $(CXXFLAGS_AVX512) $(CPPFLAGS) -c $< -o $@
-
-$(BUILD_DIR_AVX512)/tests/%.o: $(TEST_DIR)/%.cpp
-	$(MKDIR_P) $(dir $@)
-	$(CXX) $(CXXFLAGS_AVX512) $(CPPFLAGS) -c $< -o $@
-
 $(BUILD_DIR_GPU)/%.cu.o: %.cu
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) $(NVCCFLAGS) -c $< --output-file $@
@@ -133,7 +114,6 @@ clean:
 	rm -rf ./build testscpu benchscpu
 ifeq ($(UNAME_S),Linux)
 	rm -rf ./build_gpu testsgpu benchsgpu
-	rm -rf ./build_avx512 testscpu_avx512
 endif
 
 # ----------------------
@@ -141,20 +121,17 @@ endif
 # ----------------------
 .PHONY: help
 help:
-	@echo "make [target] [USE_AVX512=1|0]"
+	@echo "make [target]"
 	@echo "  clean         - Remove build artifacts (CPU and, on Linux, GPU)"
 	@echo "  distclean     - Remove all build artifacts and backup files"
 	@echo "  all (default) - Build all CPU (and GPU on Linux) binaries"
-	@echo "  testscpu        - Build the CPU test binary (scalar + AVX2 variants)"
-	@echo "  testscpu_avx512 - Build with AVX512 flags (run only on AVX512 hardware; Phase 7)"
+	@echo "  testscpu        - Build the CPU test binary (scalar + AVX2 + AVX512 auto-detected)"
 	@echo "  benchscpu       - Build the CPU benchmark binary (Google Benchmark)"
 ifeq ($(UNAME_S),Linux)
 	@echo "  testsgpu        - Build the GPU test binary (CUDA, Linux only)"
 	@echo "  benchsgpu       - Build the GPU benchmark binary (CUDA, Linux only)"
 endif
-	@echo "  USE_AVX512   - Force AVX512 on/off (default: auto-detect on Linux)"
 
 -include $(DEPS)
--include $(DEPS_AVX512)
 
 MKDIR_P ?= mkdir -p

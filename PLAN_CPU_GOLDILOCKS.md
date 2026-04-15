@@ -361,36 +361,30 @@ The name `merkletree` is reclaimed here so Phase 2 can rebuild it correctly with
 
 ---
 
-### Phase 7 — AVX512 implementation (requires AVX512 host)
+### Phase 7 — AVX512 validation on AVX512 host
 
-**Files**: [poseidon2_goldilocks_avx512.hpp](pil2-stark/src/goldilocks/src/poseidon2_goldilocks_avx512.hpp), [poseidon2_goldilocks.hpp](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.hpp).
+**Decision (supersedes the original Phase 7 plan)**: single-sponge AVX512 variants are **not implemented**. At the state sizes used by Poseidon2 (4–16 elements) an 8-lane `__m512i` offers no meaningful gain over the existing 4-lane `__m256i` single-sponge path, and the real AVX512 win case (hashing 8 parallel sponges) is already covered by `Avx512Batch`. Rather than invest engineering on a variant that would at best match AVX2 performance, Phase 7 is scoped to: validate the existing `Avx512Batch` path on AVX512 hardware, fix the pre-existing bugs that validation surfaces, and update the `Auto` resolution so callers don't inadvertently reach the unimplemented `Avx512` branch.
 
-- [ ] **7.1** Implement `pow7_avx512` — `__m256i` → `__m512i`, 4 lanes → 8
-  - *Commit: `avx512: implement pow7_avx512`*
-- [ ] **7.2** Implement `add_avx512`
-  - *Commit: `avx512: implement add_avx512`*
-- [ ] **7.3** Implement `add_avx512_small`
-  - *Commit: `avx512: implement add_avx512_small`*
-- [ ] **7.4** Implement `matmul_external_avx512`
-  - *Commit: `avx512: implement matmul_external_avx512`*
-- [ ] **7.5** Implement `hash_avx512` (single-element, uses 7.1–7.4)
-  - *Commit: `avx512: implement hash_avx512`*
-- [ ] **7.6** Implement `hash_full_result_avx512`
-  - *Commit: `avx512: implement hash_full_result_avx512`*
-- [ ] **7.7** Implement `linear_hash_avx512`
-  - *Commit: `avx512: implement linear_hash_avx512`*
-- [ ] **7.8** Implement `merkletree_avx512` (single-sponge) — backs `merkletree(..., Avx512)` for benchmarking vs. `merkletree_batch_avx512`
-  - *Commit: `avx512: implement merkletree_avx512`*
-- [ ] **7.9** Replace `Avx512`/`Avx512Batch` abort branches in Phase-2 dispatchers with real calls to new AVX512 functions
-  - *Commit: `avx512: wire Avx512/Avx512Batch branches in mode dispatcher`*
-- [ ] **7.10** Run `testscpu_avx512` on AVX512 host; add cross-check: `Scalar ≡ Avx ≡ Avx512` for all (width, size) pairs
-  - *Commit: `test: validate AVX512 correctness on AVX512 host`*
-- [ ] **7.11** Bench AVX512 vs AVX2; record `benchs/baseline/$(hostname)_avx512.txt`
-  - *Commit: `bench: record AVX512 baseline on AVX512 host`*
-- [ ] **7.12** Delete `testscpu_avx512` target from Makefile — AVX512 is now covered by `testscpu` auto-detection; compile-check target no longer needed
-  - *Commit: `cleanup: remove testscpu_avx512 target (AVX512 validated)`*
+The `Poseidon2Mode::Avx512` enum value is retained as a reserved-but-unimplemented value: explicit requests abort loudly (per plan §2.2 — "misuse is a build-config bug, not a silent fallback"), and `Auto` never resolves there.
 
-**Verify (AVX512 host)**: all 3 gates + `testscpu_avx512`. On non-AVX512 hosts: behavior identical to Phase 6.
+**Files**: [poseidon2_goldilocks.hpp](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.hpp), [poseidon2_goldilocks.cpp](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.cpp), [poseidon2_goldilocks_avx512.hpp](pil2-stark/src/goldilocks/src/poseidon2_goldilocks_avx512.hpp), [Makefile](pil2-stark/src/goldilocks/Makefile).
+
+- [x] **7.1** Update `Poseidon2Mode::Avx512` enum comment to document that single-sponge AVX512 is intentionally unimplemented (reason + pointer to `Avx512Batch`).
+  - *Commit: `avx512: document single-sponge Avx512 as intentionally unimplemented`*
+- [x] **7.2** Change `Auto` resolution in `hashFullResult` / `hash` / `linearHash` to pick `Avx` (not `Avx512`) on AVX512 hosts. `merkletree`'s `Auto` already resolves to `Avx512Batch` — unchanged.
+  - *Commit: `avx512: Auto resolution skips unimplemented single-sponge Avx512`*
+- [x] **7.3** Delete commented-out stale AVX512 single-sponge declarations in [poseidon2_goldilocks.hpp](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.hpp) and commented-out stale implementation blocks in [poseidon2_goldilocks.cpp](pil2-stark/src/goldilocks/src/poseidon2_goldilocks.cpp) / [poseidon2_goldilocks_avx512.hpp](pil2-stark/src/goldilocks/src/poseidon2_goldilocks_avx512.hpp). These referenced a retired Poseidon layout (SPONGE_WIDTH=24) and would never compile.
+  - *Commit: `avx512: delete stale commented-out single-sponge code`*
+- [x] **7.4** Fix pre-existing bug in `hash_full_result_batch_avx512`: constants were hardcoded to `C12`/`D12` regardless of `SPONGE_WIDTH`. For W=16 this read past the end of the 118-element `C12` / 12-element `D12` arrays and stack-smashed (first surfaced now that an AVX512 host exists). Port the same `SPONGE_WIDTH`-dispatched selector pattern used by `hash_full_result_batch_avx`.
+  - *Commit: `avx512: fix hardcoded C12/D12 in hash_full_result_batch_avx512`*
+- [x] **7.5** Fix pre-existing bug in `matmul_external_batch_avx512`: three `matmul_m4_batch_avx512` calls and an 8-element sum pattern were hardcoded for W=12. For W=8 this read past end of the register array (stack smash); for W=16 it missed `x[12..15]`. Port the `SPONGE_WIDTH`-parameterized loop used by `matmul_external_batch_avx`.
+  - *Commit: `avx512: fix W=12-hardcoded matmul_external_batch_avx512`*
+- [x] **7.6** Delete `testscpu_avx512` Makefile target and associated `BUILD_DIR_AVX512` machinery. Since Phase 0's introduction, AVX512 auto-detects when the host supports it, so a separate compile-check target serves no purpose. Help text and clean rule updated in lockstep.
+  - *Commit: `cleanup: remove testscpu_avx512 target (AVX512 now auto-detected)`*
+
+**Verify**: gate (a) `testscpu` — 35/35 pass on AVX512 host (including `mode_merkletree_equivalence` which now exercises `Avx512Batch` for W={8,12,16}, the path that surfaced the two pre-existing bugs). Gate (b) `benchscpu` — blocked by pre-existing libbenchmark 1.5.0 incompatibility (`->Name()` / `kSecond` unavailable); unrelated to Phase 7. Gate (c) end-to-end proof — run to verify `Avx512Batch` production path.
+
+**Not implemented**: the original 7.1–7.11 (real `pow7_avx512`, `matmul_external_avx512`, `hash_full_result_avx512`, `linear_hash_avx512`, `merkletree_avx512`). See decision note above.
 
 ---
 
@@ -436,9 +430,9 @@ Live callers: [merkleTreeGL.hpp:78,81,84](pil2-stark/src/starkpil/merkleTree/mer
 | 4 | NTT rename extendPol → LDE | 6 | 6 |
 | 5 | GPU Layout parameter | 11 | 11 |
 | 6 | Hygiene cleanup | 4 | 4 |
-| 7 | AVX512 implementation (AVX512 host) | 12 | 0 |
+| 7 | AVX512 validation on AVX512 host (scope reduced — see §7) | 6 | 6 |
 | 8 | Comment audit | 4 | 0 |
-| **Total** | | **63** | **47** |
+| **Total** | | **57** | **53** |
 
 ---
 
