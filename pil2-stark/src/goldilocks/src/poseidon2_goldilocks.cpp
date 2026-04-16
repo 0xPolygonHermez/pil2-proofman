@@ -73,7 +73,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::linear_hash_seq(Goldilocks::Element *o
 }
 
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2Goldilocks<SPONGE_WIDTH_T>::partial_merkle_tree(Goldilocks::Element *root,Goldilocks::Element *input, uint64_t num_elements, uint64_t arity)
+void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletreeReduce(Goldilocks::Element *root,Goldilocks::Element *input, uint64_t num_elements, uint64_t arity)
 {
     uint64_t numNodes = num_elements;
     uint64_t nodesLevel = num_elements;

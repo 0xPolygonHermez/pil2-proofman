@@ -93,7 +93,7 @@ public:
     // Other public ops (no mode dispatch — single implementation each).
     static void grinding(uint64_t &out_idx, const uint64_t *in, const uint32_t n_bits);
    
-    static void partial_merkle_tree(Goldilocks::Element *root, Goldilocks::Element *input,
+    static void merkletreeReduce(Goldilocks::Element *root, Goldilocks::Element *input,
                                     uint64_t num_elements, uint64_t arity);
 
 private:
