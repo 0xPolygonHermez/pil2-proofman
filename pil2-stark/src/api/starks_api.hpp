@@ -194,6 +194,15 @@ extern "C" {
     // =================================================================================
     bool set_gpu_mode(bool use_gpu);
 
+    // Build const tree
+    // =================================================================================
+    int build_const_tree_c(const char *const_file, const char *stark_info_file, const char *const_tree_file, const char *ver_key_file, uint64_t *out_root);
+
+    // SNARK setup (fflonk / plonk)
+    // =================================================================================
+    int fflonk_setup_c(const char *r1cs_file, const char *ptau_file, const char *zkey_file);
+    int plonk_setup_c(const char *r1cs_file, const char *ptau_file, const char *zkey_file);
+
     // MPI calls
     // =================================================================================
     void initialize_agg_readiness_tracker();

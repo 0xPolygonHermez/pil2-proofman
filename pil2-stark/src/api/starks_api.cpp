@@ -13,6 +13,9 @@
 #include "fixed_cols.hpp"
 #include "final_snark_proof.hpp"
 #include "starks_api_internal.hpp"
+#include "build_const_tree.hpp"
+#include "../rapidsnark/fflonk_setup.hpp"
+#include "../rapidsnark/plonk_setup.hpp"
 #ifdef __USE_MPI_RMA__
 #include "mpi.h"
 #endif
@@ -659,7 +662,7 @@ uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     uint64_t N = 1 << setupCtx->starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx->starkInfo.starkStruct.nBitsExt;
 
-    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
+    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];    
 
     MerkleTreeGL mt(setupCtx->starkInfo.starkStruct.merkleTreeArity, setupCtx->starkInfo.starkStruct.lastLevelVerification, true, NExtended, nCols);
 
@@ -672,7 +675,7 @@ uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId
         d_buffers->unpack_cpu((uint64_t *)params->trace, (uint64_t*)&auxTraceGL[offset_src], N, nCols, packed_info->num_packed_words, packed_info->unpack_info);
         memcpy(params->trace, &params->aux_trace[offset_src], N * nCols * sizeof(Goldilocks::Element));
     }
-
+    
     ProverHelpers proverHelpers;
     ExpressionsPack expressionsCtx(*setupCtx, &proverHelpers);
 
@@ -804,7 +807,7 @@ uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uin
     return 0;
 }
 // Recursive proof
-// =================================================================================
+// ================================================================================= 
 void *gen_device_buffers_cpu(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext)
 {
     DeviceCommitBuffersCPU *d_buffers = new DeviceCommitBuffersCPU();
@@ -944,7 +947,7 @@ void free_final_snark_prover_cpu(void *snark_prover) {
     }
 }
 
-void gen_final_snark_proof_cpu(void *prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark, void* /*d_buffers_recursivef*/) {
+void gen_final_snark_proof_cpu(void *prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark, void* d_buffers_recursivef) {
     genFinalSnarkProof(prover, circomWitnessFinal, proof, publicsSnark);
 }
 
@@ -1126,5 +1129,54 @@ uint64_t goldilocks_inv_ffi(const uint64_t *in1) {
 
 void register_proof_done_callback(ProofDoneCallback cb) {
     proof_done_callback = cb;
+}
+
+int build_const_tree_c(
+    const char *const_file,
+    const char *stark_info_file,
+    const char *const_tree_file,
+    const char *ver_key_file,
+    uint64_t *out_root
+)
+{
+    try {
+        buildConstTree(
+            std::string(const_file),
+            std::string(stark_info_file),
+            const_tree_file ? std::string(const_tree_file) : "",
+            ver_key_file ? std::string(ver_key_file) : "",
+            out_root
+        );
+        return 0;
+    } catch (const std::exception &e) {
+        zklog.error(std::string("build_const_tree_c exception: ") + e.what());
+        return -1;
+    }
+}
+
+int fflonk_setup_c(const char *r1cs_file, const char *ptau_file, const char *zkey_file)
+{
+    try {
+        auto fflonkSetup = new Fflonk::FflonkSetup(AltBn128::Engine::engine);
+        fflonkSetup->generateZkey(std::string(r1cs_file), std::string(ptau_file), std::string(zkey_file));
+        delete fflonkSetup;
+        return 0;
+    } catch (const std::exception &e) {
+        zklog.error(std::string("fflonk_setup_c exception: ") + e.what());
+        return -1;
+    }
+}
+
+int plonk_setup_c(const char *r1cs_file, const char *ptau_file, const char *zkey_file)
+{
+    try {
+        auto plonkSetup = new Plonk::PlonkSetup(AltBn128::Engine::engine);
+        plonkSetup->generateZkey(std::string(r1cs_file), std::string(ptau_file), std::string(zkey_file));
+        delete plonkSetup;
+        return 0;
+    } catch (const std::exception &e) {
+        zklog.error(std::string("plonk_setup_c exception: ") + e.what());
+        return -1;
+    }
 }
 

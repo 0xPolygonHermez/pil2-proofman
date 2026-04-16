@@ -52,26 +52,35 @@ fn main() {
     print_banner(false);
 
     let cli = Cli::parse();
-    let result = match &cli.command {
-        Commands::Pilout(args) => match &args.pilout_commands {
-            PiloutSubcommands::Inspect(args) => args.run(),
-        },
-        Commands::CheckSetup(args) => args.run(),
-        Commands::CheckSetupSnark(args) => args.run(),
-        Commands::Soundness(args) => args.run(),
-        Commands::Prove(args) => args.run(),
-        Commands::ProveSnark(args) => args.run(),
-        Commands::PilHelpers(args) => args.run(),
-        Commands::VerifyConstraints(args) => args.run(),
-        Commands::DebugInfo(args) => args.run(),
-        Commands::GenCustomCommitsFixed(args) => args.run(),
-        Commands::GetConstraints(args) => args.run(),
-        Commands::VerifyStark(args) => args.run(),
-        Commands::VerifySnark(args) => args.run(),
-        Commands::Stats(args) => args.run(),
-        Commands::Execute(args) => args.run(),
-        Commands::GenWitness(args) => args.run(),
-    };
+
+    // PIL expression trees in large AIRs (e.g. ZisK) can be thousands of levels
+    // deep, which overflows the default 8 MB main-thread stack. Run all commands
+    // on a thread with a larger stack to avoid the overflow.
+    let result = std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || match &cli.command {
+            Commands::Pilout(args) => match &args.pilout_commands {
+                PiloutSubcommands::Inspect(args) => args.run(),
+            },
+            Commands::CheckSetup(args) => args.run(),
+            Commands::CheckSetupSnark(args) => args.run(),
+            Commands::Soundness(args) => args.run(),
+            Commands::Prove(args) => args.run(),
+            Commands::ProveSnark(args) => args.run(),
+            Commands::PilHelpers(args) => args.run(),
+            Commands::VerifyConstraints(args) => args.run(),
+            Commands::DebugInfo(args) => args.run(),
+            Commands::GenCustomCommitsFixed(args) => args.run(),
+            Commands::GetConstraints(args) => args.run(),
+            Commands::VerifyStark(args) => args.run(),
+            Commands::VerifySnark(args) => args.run(),
+            Commands::Stats(args) => args.run(),
+            Commands::Execute(args) => args.run(),
+            Commands::GenWitness(args) => args.run(),
+        })
+        .expect("failed to spawn main thread")
+        .join()
+        .expect("main thread panicked");
 
     if let Err(e) = result {
         tracing::error!("{}", e);

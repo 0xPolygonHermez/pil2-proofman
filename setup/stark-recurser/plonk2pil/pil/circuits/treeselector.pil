@@ -1,0 +1,37 @@
+// TREESELECTOR4 GATE - Check that given 4 values and a key, checks that the output is correct
+// The tree is created as follows: if key = 0, even values are pushed up the tree, if the key = 1 the odd ones are pushed.
+// Therefore, we need to check that 
+// key == [0,0] -> [value1, value2, value3, value4] -> [value1, value3] -> [value1]
+// key == [1,0] -> [value1, value2, value3, value4] -> [value2, value4] -> [value2]
+// key == [0,1] -> [value1, value2, value3, value4] -> [value1, value3] -> [value3]
+// key == [1,1] -> [value1, value2, value3, value4] -> [value2, value4] -> [value4]
+
+// The values are stored from a[0], a[1], a[2] // a[3], a[4], a[5] // a[6], a[7], a[8] // a[9], a[10], a[11] 
+// The key is stored in [a[12], a[13]]
+// The output is stored in [a[14], a[15], a[16]]
+function treeselector4(const expr vals[][], const expr key[], const expr res[], const expr sel) {
+
+    const expr key00 = (1 - key[0]) * (1 - key[1]);
+    const expr key10 = key[0] * (1 - key[1]);
+    const expr key01 = (1 - key[0]) * key[1];
+    const expr key11 = key[0] * key[1];
+
+    sel * key00 * (vals[0][0] - res[0]) === 0;
+    sel * key00 * (vals[0][1] - res[1]) === 0;
+    sel * key00 * (vals[0][2] - res[2]) === 0;
+
+    sel * key10 * (vals[1][0] - res[0]) === 0;
+    sel * key10 * (vals[1][1] - res[1]) === 0;
+    sel * key10 * (vals[1][2] - res[2]) === 0;
+
+    sel * key01 * (vals[2][0] - res[0]) === 0;
+    sel * key01 * (vals[2][1] - res[1]) === 0;
+    sel * key01 * (vals[2][2] - res[2]) === 0;
+
+    sel * key11 * (vals[3][0] - res[0]) === 0;
+    sel * key11 * (vals[3][1] - res[1]) === 0;
+    sel * key11 * (vals[3][2] - res[2]) === 0;
+
+    sel * (key[0]*(1 - key[0])) === 0;
+    sel * (key[1]*(1 - key[1])) === 0;
+}
