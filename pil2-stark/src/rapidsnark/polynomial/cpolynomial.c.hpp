@@ -15,7 +15,7 @@ CPolynomial<Engine>::CPolynomial(Engine &_E, int n) : E(_E), n(n) {
 
 template<typename Engine>
 CPolynomial<Engine>::~CPolynomial() {
-    delete this->polynomials;
+    delete[] this->polynomials;
 }
 
 template<typename Engine>
