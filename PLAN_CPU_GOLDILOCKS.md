@@ -394,14 +394,14 @@ Sweep all files touched during Phases 0–7 and remove development scaffolding c
 
 **Files**: all modified `.hpp`, `.cpp`, `.cu`, `.cuh`, `tests.cpp`, `bench.cpp`, `Makefile`.
 
-- [ ] **8.1** Remove all `// TODO Phase N:` comments — these are development notes, not code documentation
+- [x] **8.1** Removed `// TODO Phase 7` comment and the empty `poseidon_avx512` test shell (lines 1610-1665). The test ran zero assertions — superseded by `mode_merkletree_equivalence` which exercises `Avx512Batch` on AVX512 hosts.
   - *Commit: `cleanup: remove TODO Phase N development comments`*
-- [ ] **8.2** Remove `// Phase 7 only`, `// build-only`, and similar scaffolding notes that described temporary constraints now resolved
+- [x] **8.2** Removed all `Phase N`, `Step N.N`, `Severity-A` references from code comments in tests.cpp, bench.cpp, poseidon2_goldilocks.hpp, poseidon2_goldilocks.cuh. Comments now describe what things ARE, not which refactor step created them.
   - *Commit: `cleanup: remove scaffolding comments (constraints resolved)`*
-- [ ] **8.3** Uncomment or delete `// TODO Phase 7` blocks in `tests.cpp` — either the test is now live (uncomment + adapt) or it was superseded (delete)
-  - *Commit: `cleanup: resolve all TODO Phase 7 test stubs`*
-- [ ] **8.4** Final grep sweep: zero occurrences of `TODO Phase`, `Phase 7 only`, `build-only`, `Severity-A`, `Severity-B`, `Severity-C` in non-comment prose; zero dead `#if 0` blocks introduced during this refactor
-  - *Commit: (none — sweep; fix any found)*
+- [x] **8.3** Deleted the entire pre-existing `#if 0` dead-test block (280 lines) in tests.cpp. It contained legacy tests referencing the nonexistent `PoseidonGoldilocks::` class, empty `merkletree_seq` shells, and `merkletree_avx` tests calling private primitives.
+  - *Commit: `cleanup: delete #if 0 dead-test block`*
+- [x] **8.4** Final grep sweep: zero `TODO Phase`, `Phase N`, `Severity-*` in code files; zero `#if 0` blocks introduced during this refactor. Pre-existing `#if 0 //__USE_CUDA__` block (CUDA tests, not our refactor) left as-is.
+  - *Commit: (none — sweep)*
 
 **Verify**: gates (a), (b), (c) green.
 
@@ -431,8 +431,8 @@ Live callers: [merkleTreeGL.hpp:78,81,84](pil2-stark/src/starkpil/merkleTree/mer
 | 5 | GPU Layout parameter | 11 | 11 |
 | 6 | Hygiene cleanup | 4 | 4 |
 | 7 | AVX512 validation on AVX512 host (scope reduced — see §7) | 6 | 6 |
-| 8 | Comment audit | 4 | 0 |
-| **Total** | | **57** | **53** |
+| 8 | Comment audit | 4 | 4 |
+| **Total** | | **57** | **57** |
 
 ---
 

@@ -10,7 +10,7 @@
 
 extern __shared__ gl64_t scratchpad[];
 
-// GPU input layout selector (Phase 5).
+// GPU input layout selector.
 // Every linearHash / merkletree / buildMerkleTreeGPU call must pick one —
 // there is no default, because getting it wrong silently corrupts Merkle roots.
 enum class Layout : uint8_t {

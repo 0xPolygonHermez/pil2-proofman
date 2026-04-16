@@ -806,11 +806,7 @@ static void GRINDING_BENCH_CPU(benchmark::State &state)
 }
 
 // ---------------------------------------------------------------------------
-// Step 0.6 additions (Phase 0): benchmark coverage for widths {4,8,12} and
-// arities {3,4} that the existing single-W16 benches do not reach, plus a
-// standalone INTT benchmark (INTT is currently only exercised inside LDE).
-// These stay on the `_seq` / `_avx` / `_batch_avx` API until Phase 3 migrates
-// callers onto the Mode-parameter API.
+// Benchmark coverage for widths {4,8,12}, arities {3,4}, and standalone INTT.
 // ---------------------------------------------------------------------------
 
 // Smaller row count for scalar merkletree at non-W16 widths — keeps baseline

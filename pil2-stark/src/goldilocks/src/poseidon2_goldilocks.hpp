@@ -77,7 +77,7 @@ private:
 #endif
 
 public:
-    // Mode-dispatched public API (Phase 2 onwards).
+    // Mode-dispatched public API.
     // See §2 of PLAN_CPU_GOLDILOCKS.md for the valid-modes table per operation.
     static void hashFullResult(Goldilocks::Element *output, const Goldilocks::Element *input,
                                Poseidon2Mode mode);
@@ -99,7 +99,7 @@ public:
 private:
     [[noreturn]] static void abortMode(const char *op, Poseidon2Mode m);
 
-    // ---- Implementation primitives (Phase 3.8 — moved from public).
+    // ---- Implementation primitives (private — reach via Mode parameter).
     // These back the Mode API above. Reach them via Mode parameter, never directly.
 
     // Scalar:
@@ -247,7 +247,7 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_seq(Goldilocks::Element (&
 }
 
 // ---------------------------------------------------------------------------
-// Mode-dispatched API (Phase 2)
+// Mode-dispatched API — inline template definitions.
 // ---------------------------------------------------------------------------
 
 template<uint32_t W>
