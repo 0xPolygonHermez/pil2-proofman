@@ -1,188 +1,193 @@
+// ---------------------------------------------------------------------------
+// bench_ntt_gpu.cu -- GPU NTT/INTT/LDE benchmarks
+//
+// Unified parameters for apples-to-apples comparison with CPU benchmarks:
+//   BENCH_NTT_NBITS      = 22 (fixed production size for NTT/INTT)
+//   BENCH_LDE_NBITS      = 20
+//   BENCH_LDE_BLOWUP_BITS = 2  (nBitsExt = 22, 4x blowup)
+//   BENCH_NCOLS           = {24, 36, 56}  (via ->Arg())
+//
+// Naming: OPERATION_GPU_BENCH
+// All benches use ->UseRealTime().
+// This file contains BENCHMARK_MAIN() -- the sole entry point for benchsgpu.
+// ---------------------------------------------------------------------------
+
 #include <benchmark/benchmark.h>
-#include <iostream>
+#include <cstdint>
 
 #include "../src/goldilocks_base_field.hpp"
-#include "../src/poseidon2_goldilocks.hpp"
 #include "../src/ntt_goldilocks.hpp"
-#include "../src/poseidon2_goldilocks.cuh"
 #include "../src/ntt_goldilocks.cuh"
 #include "../src/gl64_tooling.cuh"
 #include "../utils/cuda_utils.hpp"
-#include "../src/merklehash_goldilocks.hpp"
 
-#include <math.h> /* ceil */
-#include "omp.h"
+// ---------------------------------------------------------------------------
+// Unified parameters
+// ---------------------------------------------------------------------------
+static constexpr uint64_t BENCH_NTT_NBITS        = 22;
+static constexpr uint64_t BENCH_NTT_SIZE          = 1ULL << BENCH_NTT_NBITS;
 
+static constexpr uint64_t BENCH_LDE_NBITS         = 20;
+static constexpr uint64_t BENCH_LDE_SIZE           = 1ULL << BENCH_LDE_NBITS;
+static constexpr uint64_t BENCH_LDE_BLOWUP_BITS   = 2;
+static constexpr uint64_t BENCH_LDE_NBITS_EXT     = BENCH_LDE_NBITS + BENCH_LDE_BLOWUP_BITS;
+static constexpr uint64_t BENCH_LDE_SIZE_EXT       = 1ULL << BENCH_LDE_NBITS_EXT;
 
-#define TRACE_NROWS  (1 << 23)
+// Max domain size for NTTGoldilocksGPU init (must cover both NTT=22 and LDE_EXT=22)
+static constexpr uint64_t MAX_LOG_DOMAIN           = 24;
 
-static __global__ void initTrace(gl64_t *d_trace, uint64_t nRows, uint64_t nCols)
+// ---------------------------------------------------------------------------
+// GPU trace initialization kernel
+// ---------------------------------------------------------------------------
+static __global__ void initTraceKernel(gl64_t *d_data, uint64_t nElems, uint64_t nCols)
 {
-   uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-   if (idx < nRows)
-   {
-       for(int j = 0; j < nCols; j++)
-           d_trace[idx * nCols + j]=  uint64_t(idx + j);
-   }
+    uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < nElems)
+        for (uint64_t j = 0; j < nCols; j++)
+            d_data[idx * nCols + j] = uint64_t(idx + j);
 }
 
-static void INTT_GPU_BENCH(benchmark::State &state)
+// ===================================================================
+// NTT -- nBits=22, parameterized by nCols
+// ===================================================================
+
+static void NTT_GPU_BENCH(benchmark::State &state)
 {
     uint32_t gpu_id = 0;
-    CHECKCUDAERR(cudaGetDevice((int*)&gpu_id));
-
-    uint64_t n_bits = state.range(0);
-    uint64_t domain_size = 1ULL << n_bits;
-    uint64_t nCols = 1;
-
-    NTTGoldilocksGPU gpu_ntt(24, 1, &gpu_id);
+    CHECKCUDAERR(cudaGetDevice((int *)&gpu_id));
+    NTTGoldilocksGPU gpu_ntt(MAX_LOG_DOMAIN, 1, &gpu_id);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
 
-    gl64_t *d_data;
-    CHECKCUDAERR(cudaMalloc((void **)&d_data, domain_size * sizeof(gl64_t)));
+    uint64_t nCols = state.range(0);
 
-    dim3 threads(128);
-    dim3 blocks((domain_size + threads.x - 1) / threads.x);
-    initTrace<<<blocks, threads, 0, stream>>>(d_data, domain_size, nCols);
+    gl64_t *d_data;
+    CHECKCUDAERR(cudaMalloc((void **)&d_data, BENCH_NTT_SIZE * nCols * sizeof(gl64_t)));
+
+    dim3 thr(128), blk((BENCH_NTT_SIZE + 127) / 128);
+    initTraceKernel<<<blk, thr, 0, stream>>>(d_data, BENCH_NTT_SIZE, nCols);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // Warm up
-    gpu_ntt.INTT(d_data, n_bits, nCols, stream);
+    gpu_ntt.NTT(d_data, BENCH_NTT_NBITS, nCols, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
-    for (auto _ : state)
-    {
-        gpu_ntt.INTT(d_data, n_bits, nCols, stream);
+    for (auto _ : state) {
+        gpu_ntt.NTT(d_data, BENCH_NTT_NBITS, nCols, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }
 
     CHECKCUDAERR(cudaFree(d_data));
     CHECKCUDAERR(cudaStreamDestroy(stream));
+    NTTGoldilocksGPU::freeConstants();
 }
+
+// ===================================================================
+// INTT -- nBits=22, parameterized by nCols
+// ===================================================================
+
+static void INTT_GPU_BENCH(benchmark::State &state)
+{
+    uint32_t gpu_id = 0;
+    CHECKCUDAERR(cudaGetDevice((int *)&gpu_id));
+    NTTGoldilocksGPU gpu_ntt(MAX_LOG_DOMAIN, 1, &gpu_id);
+
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+
+    uint64_t nCols = state.range(0);
+
+    gl64_t *d_data;
+    CHECKCUDAERR(cudaMalloc((void **)&d_data, BENCH_NTT_SIZE * nCols * sizeof(gl64_t)));
+
+    dim3 thr(128), blk((BENCH_NTT_SIZE + 127) / 128);
+    initTraceKernel<<<blk, thr, 0, stream>>>(d_data, BENCH_NTT_SIZE, nCols);
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    // Warm up
+    gpu_ntt.INTT(d_data, BENCH_NTT_NBITS, nCols, stream);
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    for (auto _ : state) {
+        gpu_ntt.INTT(d_data, BENCH_NTT_NBITS, nCols, stream);
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
+    }
+
+    CHECKCUDAERR(cudaFree(d_data));
+    CHECKCUDAERR(cudaStreamDestroy(stream));
+    NTTGoldilocksGPU::freeConstants();
+}
+
+// ===================================================================
+// LDE -- nBits=20, nBitsExt=22, parameterized by nCols
+// Input is in tiled layout (fromRowMajorToTiled).
+// ===================================================================
+
+static void LDE_GPU_BENCH(benchmark::State &state)
+{
+    uint32_t gpu_id = 0;
+    CHECKCUDAERR(cudaGetDevice((int *)&gpu_id));
+    NTTGoldilocksGPU gpu_ntt(MAX_LOG_DOMAIN, 1, &gpu_id);
+
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+    TimerGPU timer(stream);
+
+    uint64_t nCols = state.range(0);
+
+    gl64_t *d_flat, *d_src, *d_dst;
+    CHECKCUDAERR(cudaMalloc((void **)&d_flat, BENCH_LDE_SIZE * nCols * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_src,  BENCH_LDE_SIZE * nCols * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_dst,  BENCH_LDE_SIZE_EXT * nCols * sizeof(gl64_t)));
+
+    dim3 thr(128), blk((BENCH_LDE_SIZE + 127) / 128);
+    initTraceKernel<<<blk, thr, 0, stream>>>(d_flat, BENCH_LDE_SIZE, nCols);
+    fromRowMajorToTiled(BENCH_LDE_SIZE, nCols, d_flat, d_src, stream);
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    // Warm up
+    gpu_ntt.LDE(d_dst, 0, d_src, 0, BENCH_LDE_NBITS, BENCH_LDE_NBITS_EXT, nCols, timer, stream);
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    for (auto _ : state) {
+        gpu_ntt.LDE(d_dst, 0, d_src, 0, BENCH_LDE_NBITS, BENCH_LDE_NBITS_EXT, nCols, timer, stream);
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
+    }
+
+    CHECKCUDAERR(cudaFree(d_flat));
+    CHECKCUDAERR(cudaFree(d_src));
+    CHECKCUDAERR(cudaFree(d_dst));
+    CHECKCUDAERR(cudaStreamDestroy(stream));
+    NTTGoldilocksGPU::freeConstants();
+}
+
+// ===================================================================
+// Registration
+// ===================================================================
+
+#define NCOLS_ARGS ->Arg(24)->Arg(36)->Arg(56)
+
+BENCHMARK(NTT_GPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    NCOLS_ARGS
+    ->UseRealTime();
 
 BENCHMARK(INTT_GPU_BENCH)
     ->Unit(benchmark::kMillisecond)
-    ->Arg(20)
-    ->Arg(22)
-    ->Arg(24)
+    NCOLS_ARGS
     ->UseRealTime();
 
-// LDE benchmark — measures only the NTT+coset-extension step (no merkle build).
-// d_src is block-tiled (as produced by prepare_blocks_trace); allocated once, never modified.
-static void LDE_BENCH(benchmark::State &state)
-{
-    uint32_t gpu_id = 0;
-    CHECKCUDAERR(cudaGetDevice((int*)&gpu_id));
-    NTTGoldilocksGPU gpu_ntt(24, 1, &gpu_id);
-
-    cudaStream_t stream;
-    CHECKCUDAERR(cudaStreamCreate(&stream));
-    TimerGPU timer(stream);
-
-    constexpr uint64_t n_bits     = 20;
-    constexpr uint64_t n_bits_ext = 22; // 4× blowup
-    const uint64_t nRows          = 1ULL << n_bits;
-    const uint64_t nRows_ext      = 1ULL << n_bits_ext;
-    const uint64_t nCols          = state.range(0);
-
-    gl64_t *d_flat, *d_src, *d_dst;
-    CHECKCUDAERR(cudaMalloc((void**)&d_flat, nRows * nCols * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc((void**)&d_src,  nRows * nCols * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc((void**)&d_dst,  nRows_ext * nCols * sizeof(gl64_t)));
-
-    dim3 thr(128), blk((nRows + 127) / 128);
-    initTrace<<<blk, thr, 0, stream>>>(d_flat, nRows, nCols);
-    fromRowMajorToTiled(nRows, nCols, d_flat, d_src, stream);
-    CHECKCUDAERR(cudaStreamSynchronize(stream));
-
-    // Warm up
-    gpu_ntt.LDE(d_dst, 0, d_src, 0, n_bits, n_bits_ext, nCols, timer, stream);
-    CHECKCUDAERR(cudaStreamSynchronize(stream));
-
-    for (auto _ : state)
-    {
-        gpu_ntt.LDE(d_dst, 0, d_src, 0, n_bits, n_bits_ext, nCols, timer, stream);
-        CHECKCUDAERR(cudaStreamSynchronize(stream));
-    }
-
-    CHECKCUDAERR(cudaFree(d_flat));
-    CHECKCUDAERR(cudaFree(d_src));
-    CHECKCUDAERR(cudaFree(d_dst));
-    CHECKCUDAERR(cudaStreamDestroy(stream));
-    NTTGoldilocksGPU::freeConstants();
-}
-
-// Full pipeline benchmark — LDE + merkle tree build (the prover's hot path).
-static void LDE_MERKLETREE_GPU_BENCH(benchmark::State &state)
-{
-    uint32_t gpu_id = 0;
-    CHECKCUDAERR(cudaGetDevice((int*)&gpu_id));
-    Poseidon2GoldilocksGPU<12>::initConstants(&gpu_id, 1);
-    NTTGoldilocksGPU gpu_ntt(24, 1, &gpu_id);
-
-    cudaStream_t stream;
-    CHECKCUDAERR(cudaStreamCreate(&stream));
-    TimerGPU timer(stream);
-
-    constexpr uint64_t n_bits     = 20;
-    constexpr uint64_t n_bits_ext = 22;
-    const uint64_t nRows          = 1ULL << n_bits;
-    const uint64_t nRows_ext      = 1ULL << n_bits_ext;
-    const uint64_t nCols          = state.range(0);
-    constexpr uint32_t arity      = 3;
-
-    uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(nRows_ext, arity);
-
-    gl64_t *d_flat, *d_src, *d_dst;
-    Goldilocks::Element *d_tree;
-    CHECKCUDAERR(cudaMalloc((void**)&d_flat, nRows * nCols * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc((void**)&d_src,  nRows * nCols * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc((void**)&d_dst,  nRows_ext * nCols * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc((void**)&d_tree, tree_size * sizeof(Goldilocks::Element)));
-
-    dim3 thr(128), blk((nRows + 127) / 128);
-    initTrace<<<blk, thr, 0, stream>>>(d_flat, nRows, nCols);
-    fromRowMajorToTiled(nRows, nCols, d_flat, d_src, stream);
-    CHECKCUDAERR(cudaStreamSynchronize(stream));
-
-    // Warm up
-    gpu_ntt.LDE(d_dst, 0, d_src, 0, n_bits, n_bits_ext, nCols, timer, stream);
-    buildMerkleTreeGPU(arity, (uint64_t*)d_tree, (uint64_t*)d_dst, nCols, nRows_ext, Layout::Tiles, stream);
-    CHECKCUDAERR(cudaStreamSynchronize(stream));
-
-    for (auto _ : state)
-    {
-        gpu_ntt.LDE(d_dst, 0, d_src, 0, n_bits, n_bits_ext, nCols, timer, stream);
-        buildMerkleTreeGPU(arity, (uint64_t*)d_tree, (uint64_t*)d_dst, nCols, nRows_ext, Layout::Tiles, stream);
-        CHECKCUDAERR(cudaStreamSynchronize(stream));
-    }
-
-    CHECKCUDAERR(cudaFree(d_flat));
-    CHECKCUDAERR(cudaFree(d_src));
-    CHECKCUDAERR(cudaFree(d_dst));
-    CHECKCUDAERR(cudaFree(d_tree));
-    CHECKCUDAERR(cudaStreamDestroy(stream));
-    NTTGoldilocksGPU::freeConstants();
-}
-
-BENCHMARK(LDE_BENCH)
+BENCHMARK(LDE_GPU_BENCH)
     ->Unit(benchmark::kMillisecond)
-    ->Arg(24)
-    ->Arg(36)
-    ->Arg(38)
-    ->Arg(56)
+    NCOLS_ARGS
     ->UseRealTime();
 
-BENCHMARK(LDE_MERKLETREE_GPU_BENCH)
-    ->Unit(benchmark::kMillisecond)
-    ->Arg(24)
-    ->Arg(36)
-    ->Arg(38)
-    ->Arg(56)
-    ->UseRealTime();
+#undef NCOLS_ARGS
 
-// merkletree benchmark — flat row-major input (used by prover for FRI trees).
-
+// ---------------------------------------------------------------------------
+// BENCHMARK_MAIN() -- sole entry point for the benchsgpu binary.
+// GPU bench files do NOT link -lbenchmark_main, so exactly one .cu file
+// must provide main().
+// ---------------------------------------------------------------------------
 BENCHMARK_MAIN();
