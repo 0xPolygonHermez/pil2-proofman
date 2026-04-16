@@ -597,7 +597,7 @@ impl DistributionCtx {
         }
 
         // Sort the unassigned instances by proof weight
-        unassigned_instances.sort_by(|a, b| b.1.cmp(&a.1));
+        unassigned_instances.sort_by_key(|b| std::cmp::Reverse(b.1));
 
         // Distribute the unassigned instances to the process with minimum weight each time
         // cost: O(n^2) may be optimized if needed
