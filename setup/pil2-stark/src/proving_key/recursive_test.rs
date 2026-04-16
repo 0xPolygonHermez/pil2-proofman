@@ -17,6 +17,7 @@ use crate::io::fixed_cols;
 use crate::output::witness_gen::WitnessTracker;
 use crate::proving_key::bctree;
 use crate::proving_key::recursive::compile_pil;
+use crate::commands::recursive_setup::resolve_path_env;
 use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
 
 /// Run the recursive test setup from a user-provided circom file.
@@ -46,7 +47,6 @@ pub fn gen_recursive_test_setup(
     build_dir: &str,
     circom_path: &str,
     circom_name: &str,
-    std_pil_path: &str,
     setup_type: &str,
     circom_exec: &str,
     circuits_gl_path: &str,
@@ -166,7 +166,8 @@ pub fn gen_recursive_test_setup(
     // Step 8: Compile PIL via pil2com (npm package).
     // -------------------------------------------------------------------------
     let pilout_path = build_inner.join(format!("{}.pilout", NAME_FILE));
-    compile_pil(pil_path.to_str().unwrap(), pilout_path.to_str().unwrap(), std_pil_path, recurser_pil_path)?;
+    let std_pil_path = resolve_path_env("STD_PIL_PATH", "pil2-components/lib/std/pil");
+    compile_pil(pil_path.to_str().unwrap(), pilout_path.to_str().unwrap(), &std_pil_path, recurser_pil_path)?;
 
     // -------------------------------------------------------------------------
     // Step 9: Load compiled pilout and run pil_info.

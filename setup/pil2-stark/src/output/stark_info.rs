@@ -36,11 +36,7 @@ pub fn build_starkinfo_output(
         merkle_tree_arity: stark_struct.merkle_tree_arity,
         transcript_arity: stark_struct.transcript_arity,
         merkle_tree_custom: stark_struct.merkle_tree_custom,
-        last_level_verification: if stark_struct.last_level_verification > 0 {
-            Some(stark_struct.last_level_verification)
-        } else {
-            None
-        },
+        last_level_verification: stark_struct.last_level_verification,
         pow_bits: fri_security.n_grinding_bits as usize,
         hash_commits: stark_struct.hash_commits,
         n_bits_ext: stark_struct.n_bits_ext,
