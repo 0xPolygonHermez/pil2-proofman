@@ -84,8 +84,9 @@ public:
     static void hash(Goldilocks::Element (&state)[CAPACITY],
                      const Goldilocks::Element (&input)[SPONGE_WIDTH],
                      Poseidon2Mode mode);
-    static void linearHash(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size,
-                           Poseidon2Mode mode);
+    
+    static void linearHash(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size, Poseidon2Mode mode);
+
     static void merkletree(Goldilocks::Element *tree, Goldilocks::Element *input,
                            uint64_t num_cols, uint64_t num_rows, uint64_t arity,
                            int nThreads, uint64_t dim, Poseidon2Mode mode);

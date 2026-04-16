@@ -33,11 +33,11 @@ public:
 
     void static initConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
 
+    void static hash(uint64_t * output, const uint64_t * input, cudaStream_t stream = 0);
+
     void static linearHash(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, Layout layout, cudaStream_t stream);
 
     void static merkletree(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, Layout layout, cudaStream_t stream);
-
-    void static hash(uint64_t * output, const uint64_t * input, cudaStream_t stream = 0);
 
     void static grinding(uint64_t * d_nonce, uint64_t *d_nonceBlock, const uint64_t * d_in, const uint32_t n_bits, cudaStream_t stream);
 
