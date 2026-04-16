@@ -333,4 +333,3 @@ fn is_submodule_initialized(path: &Path) -> bool {
     }
     false
 }
-
