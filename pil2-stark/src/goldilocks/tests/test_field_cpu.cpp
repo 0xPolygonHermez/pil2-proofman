@@ -1477,3 +1477,66 @@ TEST(GOLDILOCKS_TEST, inv)
     ASSERT_EQ(Goldilocks::inv(inE1), Goldilocks::inv(inE1_plus_p));
 }
 
+
+// ---------------------------------------------------------------------------
+// Field edge cases
+// ---------------------------------------------------------------------------
+
+TEST(GoldilocksField, add_edge_cases)
+{
+    Goldilocks::Element p_minus_1 = Goldilocks::fromU64(GOLDILOCKS_PRIME - 1);
+    Goldilocks::Element zero = Goldilocks::zero();
+    Goldilocks::Element one = Goldilocks::one();
+
+    // (p-1) + (p-1) = p-2 mod p
+    ASSERT_EQ(Goldilocks::toU64(p_minus_1 + p_minus_1), GOLDILOCKS_PRIME - 2);
+    // 0 + 0 = 0
+    ASSERT_EQ(Goldilocks::toU64(zero + zero), 0ULL);
+    // a + 0 = a (identity)
+    ASSERT_EQ(Goldilocks::toU64(p_minus_1 + zero), GOLDILOCKS_PRIME - 1);
+    ASSERT_EQ(Goldilocks::toU64(one + zero), 1ULL);
+}
+
+TEST(GoldilocksField, sub_edge_cases)
+{
+    Goldilocks::Element zero = Goldilocks::zero();
+    Goldilocks::Element one = Goldilocks::one();
+    Goldilocks::Element p_minus_1 = Goldilocks::fromU64(GOLDILOCKS_PRIME - 1);
+
+    // 0 - 1 = p-1 (wraps)
+    ASSERT_EQ(Goldilocks::toU64(zero - one), GOLDILOCKS_PRIME - 1);
+    // a - a = 0
+    ASSERT_EQ(Goldilocks::toU64(p_minus_1 - p_minus_1), 0ULL);
+    ASSERT_EQ(Goldilocks::toU64(one - one), 0ULL);
+}
+
+TEST(GoldilocksField, mul_edge_cases)
+{
+    Goldilocks::Element zero = Goldilocks::zero();
+    Goldilocks::Element one = Goldilocks::one();
+    Goldilocks::Element p_minus_1 = Goldilocks::fromU64(GOLDILOCKS_PRIME - 1);
+    Goldilocks::Element five = Goldilocks::fromU64(5);
+
+    // 0 * x = 0
+    ASSERT_EQ(Goldilocks::toU64(zero * five), 0ULL);
+    ASSERT_EQ(Goldilocks::toU64(zero * p_minus_1), 0ULL);
+    // 1 * x = x
+    ASSERT_EQ(Goldilocks::toU64(one * five), 5ULL);
+    ASSERT_EQ(Goldilocks::toU64(one * p_minus_1), GOLDILOCKS_PRIME - 1);
+    // (p-1) * (p-1) = 1 mod p (since p-1 ≡ -1)
+    ASSERT_EQ(Goldilocks::toU64(p_minus_1 * p_minus_1), 1ULL);
+}
+
+TEST(GoldilocksField, inv_edge_cases)
+{
+    Goldilocks::Element one = Goldilocks::one();
+    Goldilocks::Element p_minus_1 = Goldilocks::fromU64(GOLDILOCKS_PRIME - 1);
+    Goldilocks::Element seven = Goldilocks::fromU64(7);
+
+    // inv(1) = 1
+    ASSERT_EQ(Goldilocks::toU64(Goldilocks::inv(one)), 1ULL);
+    // inv(p-1) = p-1 (since (p-1)^2 = 1 mod p)
+    ASSERT_EQ(Goldilocks::toU64(Goldilocks::inv(p_minus_1)), GOLDILOCKS_PRIME - 1);
+    // inv(inv(x)) = x
+    ASSERT_EQ(Goldilocks::toU64(Goldilocks::inv(Goldilocks::inv(seven))), 7ULL);
+}

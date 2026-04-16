@@ -469,3 +469,26 @@ TEST(GOLDILOCKS_TEST, LDE_correctness)
         }
     }
 }
+
+// Standalone INTT: verify INTT(NTT(x)) = x explicitly
+TEST(GOLDILOCKS_TEST, intt_standalone_roundtrip)
+{
+    const uint64_t N = 16;
+    const uint64_t ncols = 3;
+    NTT_Goldilocks gntt(N);
+
+    std::vector<Goldilocks::Element> orig(N * ncols), a(N * ncols), b(N * ncols);
+    for (uint64_t i = 0; i < N * ncols; ++i)
+        orig[i] = Goldilocks::fromU64(i * 31 + 7);
+
+    std::memcpy(a.data(), orig.data(), N * ncols * sizeof(Goldilocks::Element));
+
+    // Forward NTT
+    gntt.NTT(b.data(), a.data(), N, ncols);
+    // Inverse NTT
+    gntt.INTT(a.data(), b.data(), N, ncols);
+
+    for (uint64_t i = 0; i < N * ncols; ++i)
+        ASSERT_EQ(Goldilocks::toU64(a[i]), Goldilocks::toU64(orig[i]))
+            << "INTT(NTT(x)) ≠ x at i=" << i;
+}

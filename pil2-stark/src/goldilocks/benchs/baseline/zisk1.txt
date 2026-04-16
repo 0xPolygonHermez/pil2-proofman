@@ -1,4 +1,4 @@
-2026-04-14T07:36:01+00:00
+2026-04-16T12:45:20+00:00
 Running ./benchscpu
 Run on (32 X 5700 MHz CPU s)
 CPU Caches:
@@ -6,89 +6,101 @@ CPU Caches:
   L1 Instruction 32 KiB (x16)
   L2 Unified 2048 KiB (x16)
   L3 Unified 36864 KiB (x1)
-Load Average: 0.18, 3.63, 7.73
+Load Average: 0.30, 0.29, 0.24
 ***WARNING*** CPU scaling is enabled, the benchmark real time measurements may be noisy and will incur extra overhead.
 ***WARNING*** Library was built as DEBUG. Timings may be affected.
 ------------------------------------------------------------------------------------------
 Benchmark                                                Time             CPU   Iterations
 ------------------------------------------------------------------------------------------
-ADD_OP_AVX_BENCH/real_time                            1313 us         1313 us          522
-SUB_OP_AVX_BENCH/real_time                            1850 us         1850 us          378
-MUL_OP_AVX_BENCH/real_time                            4146 us         4146 us          169
-ADD_OP_BENCH/real_time                                 507 us          507 us         1344
-SUB_OP_BENCH/real_time                                 506 us          506 us         1391
-MUL_OP_BENCH/real_time                                1573 us         1573 us          445
-INV_OP_BENCH/real_time                                9732 us         9731 us           72
-POSEIDON2_BENCH_FULL/16/real_time                   271389 us       226306 us            3 BytesProcessed=943.296Mi/s Rate=2.07053us
-POSEIDON2_BENCH_FULL/32/real_time                   165059 us       157420 us            4 BytesProcessed=1.51461Gi/s Rate=1.2593us
-POSEIDON2_BENCH_FULL_AVX/16/real_time               228049 us       193520 us            3 BytesProcessed=1.09626Gi/s Rate=1.73987us
-POSEIDON2_BENCH_FULL_AVX/32/real_time               148316 us       106321 us            5 BytesProcessed=1.68559Gi/s Rate=1.13156us
-POSEIDON2_BENCH_FULL_AVX_BATCH/16/real_time         230325 us       194823 us            3 BytesProcessed=1.08542Gi/s Rate=1.75724us
-POSEIDON2_BENCH_FULL_AVX_BATCH/32/real_time         160463 us       103412 us            4 BytesProcessed=1.558Gi/s Rate=1.22423us
-POSEIDON2_BENCH_FULL_AVX/16/real_time               223488 us       170610 us            3 BytesProcessed=1.11863Gi/s Rate=1.70508us
-POSEIDON2_BENCH_FULL_AVX/32/real_time               148382 us       106327 us            5 BytesProcessed=1.68484Gi/s Rate=1.13207us
-POSEIDON2_BENCH/16/real_time                        268755 us       229192 us            3 BytesProcessed=952.539Mi/s Rate=2.05044us
-POSEIDON2_BENCH/32/real_time                        171197 us       156492 us            4 BytesProcessed=1.4603Gi/s Rate=1.30613us
-POSEIDON2_BENCH_AVX/16/real_time                    223318 us       201265 us            3 BytesProcessed=1.11948Gi/s Rate=1.70378us
-POSEIDON2_BENCH_AVX/32/real_time                    148363 us       106081 us            5 BytesProcessed=1.68505Gi/s Rate=1.13192us
-POSEIDON2_BENCH/16/real_time                        271368 us       256720 us            3 BytesProcessed=943.369Mi/s Rate=2.07037us
-POSEIDON2_BENCH/32/real_time                        163532 us       155103 us            4 BytesProcessed=1.52875Gi/s Rate=1.24765us
-POSEIDON2_BENCH_AVX/16/real_time                    227728 us       193296 us            3 BytesProcessed=1.0978Gi/s Rate=1.73743us
-POSEIDON2_BENCH_AVX/32/real_time                    147278 us       106114 us            4 BytesProcessed=1.69747Gi/s Rate=1.12364us
-LINEAR_HASH_BENCH/16/real_time                    11298819 us      9303343 us            1 BytesProcessed=725.032Mi/s Rate=1.95916us
-LINEAR_HASH_BENCH/32/real_time                     7033833 us      6807503 us            1 BytesProcessed=1.13736Gi/s Rate=1.21963us
-LINEAR_HASH_BENCH_AVX/16/real_time                 8606819 us      8555131 us            1 BytesProcessed=951.803Mi/s Rate=1.49238us
-LINEAR_HASH_BENCH_AVX/32/real_time                 6049573 us      6037000 us            1 BytesProcessed=1.32241Gi/s Rate=1.04897us
-MERKLETREE_BENCH/16/real_time                      7415877 us      6026938 us            1 BytesProcessed=1.07877Gi/s Rate=1.28588us
-MERKLETREE_BENCH/32/real_time                      7232087 us      6968302 us            1 BytesProcessed=1.10618Gi/s Rate=1.25401us
-MERKLETREE_BENCH_AVX/16/real_time                  6316492 us      4922660 us            1 BytesProcessed=1.26653Gi/s Rate=1.09525us
-MERKLETREE_BENCH_AVX/32/real_time                  6306782 us      4919836 us            1 BytesProcessed=1.26848Gi/s Rate=1.09357us
-MERKLETREE_BATCH_BENCH/16/real_time               12331215 us     12214504 us            1 BytesProcessed=664.33Mi/s Rate=2.13817us
-MERKLETREE_BATCH_BENCH/32/real_time                9082931 us      9005659 us            1 BytesProcessed=901.911Mi/s Rate=1.57494us
-MERKLETREE_BATCH_BENCH_AVX/16/real_time            6695322 us      4839424 us            1 BytesProcessed=1.19486Gi/s Rate=1.16094us
-MERKLETREE_BATCH_BENCH_AVX/32/real_time            6487340 us      4768605 us            1 BytesProcessed=1.23317Gi/s Rate=1.12487us
-NTT_BENCH/16/real_time                                7.00 s          5.95 s             1
-NTT_BENCH/32/real_time                                5.15 s          5.09 s             1
-NTT_BLOCK_BENCH/16/real_time                          2.39 s          1.61 s             1
-NTT_BLOCK_BENCH/32/real_time                          3.14 s          2.46 s             1
-LDE_BENCH/16/real_time                                16.0 s          11.6 s             1
-LDE_BENCH/32/real_time                                10.0 s          8.56 s             1
-LDE_BLOCK_BENCH/16/real_time                          11.2 s          8.53 s             1
-LDE_BLOCK_BENCH/32/real_time                          11.7 s          10.2 s             1
-EXTENDEDPOL_BENCH/16/real_time                        6.88 s          6.63 s             1
-EXTENDEDPOL_BENCH/32/real_time                        5.82 s          5.36 s             1
-GRINDING_BENCH_CPU/20/real_time                       28.0 ms         24.1 ms           32
-GRINDING_BENCH_CPU/21/real_time                       40.1 ms         34.8 ms           18
-GRINDING_BENCH_CPU/22/real_time                       57.6 ms         50.4 ms            9
-GRINDING_BENCH_CPU/24/real_time                       98.1 ms         90.5 ms            7
-GRINDING_BENCH_CPU/25/real_time                        704 ms          590 ms            1
-POSEIDON2_BENCH_FULL_W_4/16/real_time                86083 us        48013 us            8
-POSEIDON2_BENCH_FULL_W_4/32/real_time                46564 us        41426 us           15
-POSEIDON2_BENCH_FULL_W_8/16/real_time               143974 us       133394 us            5
-POSEIDON2_BENCH_FULL_W_8/32/real_time                88002 us        81240 us            7
-POSEIDON2_BENCH_FULL_W_12/16/real_time              206963 us       131182 us            3
-POSEIDON2_BENCH_FULL_W_12/32/real_time              134894 us       106992 us            6
-POSEIDON2_BENCH_FULL_AVX_W_4/16/real_time            95340 us        85943 us            7
-POSEIDON2_BENCH_FULL_AVX_W_4/32/real_time            53909 us        46166 us           10
-POSEIDON2_BENCH_FULL_AVX_W_8/16/real_time           150262 us       135539 us            5
-POSEIDON2_BENCH_FULL_AVX_W_8/32/real_time            93814 us        68790 us            7
-POSEIDON2_BENCH_FULL_AVX_W_12/16/real_time          189264 us       171855 us            4
-POSEIDON2_BENCH_FULL_AVX_W_12/32/real_time          119036 us        86474 us            6
-LINEAR_HASH_BENCH_W_8/16/real_time                15589722 us     15506555 us            1
-LINEAR_HASH_BENCH_W_8/32/real_time                10499059 us     10279319 us            1
-LINEAR_HASH_BENCH_W_12/16/real_time               12325408 us     11681417 us            1
-LINEAR_HASH_BENCH_W_12/32/real_time                7892088 us      7632871 us            1
-LINEAR_HASH_BENCH_AVX_W_8/16/real_time            16882031 us     11089949 us            1
-LINEAR_HASH_BENCH_AVX_W_8/32/real_time            11048673 us      8850044 us            1
-LINEAR_HASH_BENCH_AVX_W_12/16/real_time           10453145 us      6697269 us            1
-LINEAR_HASH_BENCH_AVX_W_12/32/real_time            7008699 us      5560795 us            1
-MERKLETREE_BENCH_AR_12_3/16/real_time               258142 us       253559 us            3
-MERKLETREE_BENCH_AR_12_3/32/real_time               258575 us       253173 us            3
-MERKLETREE_BENCH_AR_16_4/16/real_time               230211 us       221034 us            3
-MERKLETREE_BENCH_AR_16_4/32/real_time               229046 us       222924 us            3
-MERKLETREE_BATCH_BENCH_AVX_AR_12_3/16/real_time     254514 us       163311 us            3
-MERKLETREE_BATCH_BENCH_AVX_AR_12_3/32/real_time     254631 us       163236 us            3
-MERKLETREE_BATCH_BENCH_AVX_AR_16_4/16/real_time     228003 us       181648 us            3
-MERKLETREE_BATCH_BENCH_AVX_AR_16_4/32/real_time     229881 us       146540 us            3
-INTT_BENCH/16/real_time                               7.02 s          6.99 s             1
-INTT_BENCH/32/real_time                               5.11 s          4.72 s             1
+ADD_OP_AVX_BENCH/real_time                            1302 us         1302 us          522
+SUB_OP_AVX_BENCH/real_time                            1849 us         1849 us          378
+MUL_OP_AVX_BENCH/real_time                            4200 us         4200 us          170
+ADD_OP_BENCH/real_time                                 504 us          504 us         1355
+SUB_OP_BENCH/real_time                                 502 us          502 us         1395
+MUL_OP_BENCH/real_time                                1568 us         1568 us          446
+INV_OP_BENCH/real_time                                9734 us         9733 us           73
+NTT_BENCH/16/real_time                                7.27 s          7.02 s             1
+NTT_BENCH/32/real_time                                5.51 s          5.03 s             1
+NTT_BLOCK_BENCH/16/real_time                          3.45 s          2.28 s             1
+NTT_BLOCK_BENCH/32/real_time                          3.16 s          2.20 s             1
+LDE_BENCH/16/real_time                                16.9 s          14.9 s             1
+LDE_BENCH/32/real_time                                13.5 s          10.3 s             1
+LDE_BLOCK_BENCH/16/real_time                          12.8 s          8.07 s             1
+LDE_BLOCK_BENCH/32/real_time                          13.0 s          7.71 s             1
+LDE_API_BENCH/16/real_time                            7.12 s          5.73 s             1
+LDE_API_BENCH/32/real_time                            7.74 s          4.69 s             1
+INTT_BENCH/16/real_time                               9.22 s          8.79 s             1
+INTT_BENCH/32/real_time                               6.74 s          4.75 s             1
+POSEIDON2_BENCH_FULL/16/real_time                   384529 us       238660 us            2 BytesProcessed=665.749Mi/s Rate=2.93373us
+POSEIDON2_BENCH_FULL/32/real_time                   269329 us       155907 us            2 BytesProcessed=950.509Mi/s Rate=2.05482us
+POSEIDON2_BENCH_FULL_AVX/16/real_time               315692 us       210756 us            2 BytesProcessed=810.917Mi/s Rate=2.40854us
+POSEIDON2_BENCH_FULL_AVX/32/real_time               259824 us        87058 us            2 BytesProcessed=985.281Mi/s Rate=1.9823us
+POSEIDON2_BENCH/16/real_time                        404141 us       202415 us            2 BytesProcessed=633.442Mi/s Rate=3.08335us
+POSEIDON2_BENCH/32/real_time                        259630 us       150771 us            3 BytesProcessed=986.017Mi/s Rate=1.98082us
+POSEIDON2_BENCH_AVX/16/real_time                    374330 us       232625 us            2 BytesProcessed=683.889Mi/s Rate=2.85591us
+POSEIDON2_BENCH_AVX/32/real_time                    259513 us       136226 us            3 BytesProcessed=986.461Mi/s Rate=1.97993us
+LINEAR_HASH_BENCH/16/real_time                    12481322 us      9597759 us            1 BytesProcessed=656.341Mi/s Rate=2.1642us
+LINEAR_HASH_BENCH/32/real_time                     9727325 us      6656958 us            1 BytesProcessed=842.164Mi/s Rate=1.68667us
+LINEAR_HASH_BENCH_AVX/16/real_time                11357935 us     10702353 us            1 BytesProcessed=721.258Mi/s Rate=1.96941us
+LINEAR_HASH_BENCH_AVX/32/real_time                 8512827 us      6564061 us            1 BytesProcessed=962.313Mi/s Rate=1.47608us
+MERKLETREE_BENCH/16/real_time                     10628704 us      6755897 us            1 BytesProcessed=770.743Mi/s Rate=1.84297us
+MERKLETREE_BENCH/32/real_time                      7010267 us      6792463 us            1 BytesProcessed=1.14118Gi/s Rate=1.21555us
+MERKLETREE_BENCH_AVX/16/real_time                  6399382 us      4911883 us            1 BytesProcessed=1.25012Gi/s Rate=1.10962us
+MERKLETREE_BENCH_AVX/32/real_time                  6287579 us      4912982 us            1 BytesProcessed=1.27235Gi/s Rate=1.09024us
+MERKLETREE_BATCH_BENCH_AVX/16/real_time            6789162 us      4766266 us            1 BytesProcessed=1.17835Gi/s Rate=1.17721us
+MERKLETREE_BATCH_BENCH_AVX/32/real_time            6540037 us      4763945 us            1 BytesProcessed=1.22323Gi/s Rate=1.13401us
+GRINDING_BENCH_CPU/20/real_time                       26.3 ms         22.0 ms           34
+GRINDING_BENCH_CPU/21/real_time                       40.0 ms         34.3 ms           18
+GRINDING_BENCH_CPU/22/real_time                       58.2 ms         50.8 ms            9
+GRINDING_BENCH_CPU/24/real_time                       97.9 ms         83.6 ms            7
+GRINDING_BENCH_CPU/25/real_time                        693 ms          581 ms            1
+POSEIDON2_BENCH_FULL_W_4/16/real_time                86879 us        47786 us            8
+POSEIDON2_BENCH_FULL_W_4/32/real_time                47155 us        44879 us           15
+POSEIDON2_BENCH_FULL_W_8/16/real_time               144744 us        81695 us            4
+POSEIDON2_BENCH_FULL_W_8/32/real_time                87611 us        82119 us            8
+POSEIDON2_BENCH_FULL_W_12/16/real_time              204985 us       171219 us            3
+POSEIDON2_BENCH_FULL_W_12/32/real_time              120784 us       117397 us            6
+POSEIDON2_BENCH_FULL_AVX_W_4/16/real_time            95404 us        64849 us            8
+POSEIDON2_BENCH_FULL_AVX_W_4/32/real_time            50908 us        45785 us           13
+POSEIDON2_BENCH_FULL_AVX_W_8/16/real_time           159990 us       128090 us            5
+POSEIDON2_BENCH_FULL_AVX_W_8/32/real_time            95676 us        70669 us            7
+POSEIDON2_BENCH_FULL_AVX_W_12/16/real_time          196817 us       125765 us            4
+POSEIDON2_BENCH_FULL_AVX_W_12/32/real_time          117821 us        86579 us            5
+LINEAR_HASH_BENCH_W_8/16/real_time                15935234 us     15327324 us            1
+LINEAR_HASH_BENCH_W_8/32/real_time                10509005 us     10300283 us            1
+LINEAR_HASH_BENCH_W_12/16/real_time               11654856 us     11486732 us            1
+LINEAR_HASH_BENCH_W_12/32/real_time                7772503 us      7632172 us            1
+LINEAR_HASH_BENCH_AVX_W_8/16/real_time            17602840 us     17150062 us            1
+LINEAR_HASH_BENCH_AVX_W_8/32/real_time            11497631 us     10601388 us            1
+LINEAR_HASH_BENCH_AVX_W_12/16/real_time           10818041 us      6758180 us            1
+LINEAR_HASH_BENCH_AVX_W_12/32/real_time            7006253 us      5565011 us            1
+POSEIDON2_HASH_W_4/16/real_time                      86877 us        55191 us            8
+POSEIDON2_HASH_W_4/32/real_time                      47501 us        41416 us           15
+POSEIDON2_HASH_W_8/16/real_time                     142858 us        81290 us            5
+POSEIDON2_HASH_W_8/32/real_time                      89012 us        79671 us            8
+POSEIDON2_HASH_W_12/16/real_time                    207025 us       122848 us            3
+POSEIDON2_HASH_W_12/32/real_time                    122416 us       116764 us            6
+POSEIDON2_HASH_AVX_W_4/16/real_time                  94896 us        64479 us            7
+POSEIDON2_HASH_AVX_W_4/32/real_time                  51146 us        47815 us           13
+POSEIDON2_HASH_AVX_W_8/16/real_time                 158827 us       111463 us            4
+POSEIDON2_HASH_AVX_W_8/32/real_time                  97221 us        70696 us            7
+POSEIDON2_HASH_AVX_W_12/16/real_time                188945 us       103024 us            4
+POSEIDON2_HASH_AVX_W_12/32/real_time                120627 us        87053 us            6
+MERKLETREE_BENCH_AR_8_2/16/real_time                348816 us       336222 us            2
+MERKLETREE_BENCH_AR_8_2/32/real_time                348958 us       335576 us            2
+MERKLETREE_BENCH_AR_12_3/16/real_time               286517 us       218309 us            3
+MERKLETREE_BENCH_AR_12_3/32/real_time               266879 us       244609 us            3
+MERKLETREE_BENCH_AR_16_4/16/real_time               224927 us       218215 us            3
+MERKLETREE_BENCH_AR_16_4/32/real_time               231254 us       215264 us            3
+MERKLETREE_AVX_AR_8_2/16/real_time                  410892 us       320128 us            2
+MERKLETREE_AVX_AR_8_2/32/real_time                  401658 us       293555 us            2
+MERKLETREE_AVX_AR_12_3/16/real_time                 245135 us       192352 us            3
+MERKLETREE_AVX_AR_12_3/32/real_time                 266034 us       211107 us            3
+MERKLETREE_AVX_AR_16_4/16/real_time                 214194 us       151357 us            3
+MERKLETREE_AVX_AR_16_4/32/real_time                 221994 us       178550 us            3
+MERKLETREE_BATCH_BENCH_AVX_AR_8_2/16/real_time      331930 us       264756 us            2
+MERKLETREE_BATCH_BENCH_AVX_AR_8_2/32/real_time      340384 us       248973 us            2
+MERKLETREE_BATCH_BENCH_AVX_AR_12_3/16/real_time     251188 us       164138 us            3
+MERKLETREE_BATCH_BENCH_AVX_AR_12_3/32/real_time     242968 us       163529 us            3
+MERKLETREE_BATCH_BENCH_AVX_AR_16_4/16/real_time     232260 us       147051 us            3
+MERKLETREE_BATCH_BENCH_AVX_AR_16_4/32/real_time     225417 us       146093 us            3

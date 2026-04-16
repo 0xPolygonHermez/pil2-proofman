@@ -25,7 +25,9 @@ ifeq ($(UNAME_S),Linux)
     CXXFLAGS = -std=c++17 -Wall -pthread -O3 -I./src -I/usr/include -I/usr/local/include -fopenmp -mavx2 -I/../utils
     CPPFLAGS =
     LDFLAGS  = -L/usr/lib -L/usr/local/lib
-    LDLIBS   = -fopenmp -lbenchmark -lbenchmark_main -lgtest -lgtest_main -lgmpxx -lgmp -lpthread -lstdc++
+    LDLIBS_COMMON = -fopenmp -lgmpxx -lgmp -lpthread -lstdc++
+    LDLIBS_TEST   = $(LDLIBS_COMMON) -lgtest -lgtest_main
+    LDLIBS_BENCH  = $(LDLIBS_COMMON) -lbenchmark -lbenchmark_main
 
 	  CXXFLAGS += -D__AVX2__
   	CXXFLAGS += -D__USE_ASSEMBLY__
@@ -113,13 +115,13 @@ all: testscpu benchscpu
 endif
 
 testscpu: $(OBJS) $(TEST_OBJS)
-	$(CXX) $(OBJS) $(TEST_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+	$(CXX) $(OBJS) $(TEST_OBJS) $(LDFLAGS) $(LDLIBS_TEST) -o $@
 
 benchscpu: $(BENCH_OBJS) $(OBJS)
-	$(CXX) $(BENCH_OBJS) $(OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+	$(CXX) $(BENCH_OBJS) $(OBJS) $(LDFLAGS) $(LDLIBS_BENCH) -o $@
 
 testsgpu: $(GPU_TEST_OBJS) $(GPU_SRC_OBJS)
-	$(NVCC) $(NVCCFLAGS) -o $@ $^ -lgtest -lgmp
+	$(NVCC) $(NVCCFLAGS) -o $@ $^ -lgtest -lgtest_main -lgmp
 
 benchsgpu: $(GPU_BENCH_OBJS) $(GPU_SRC_OBJS)
 	$(NVCC) $(NVCCFLAGS) -o $@ $^ -lgtest -lgmp -lbenchmark
