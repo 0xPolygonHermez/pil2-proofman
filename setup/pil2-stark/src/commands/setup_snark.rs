@@ -73,23 +73,25 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
 
     // Resolve tool paths (same logic as recursive_setup).
     let circuits_gl_path =
-        resolve_path_env("CIRCUITS_GL_PATH", "node_modules/stark-recurser/src/pil2circom/circuits.gl");
-    let recurser_circuits_path =
-        resolve_path_env("RECURSER_CIRCUITS_PATH", "node_modules/stark-recurser/src/recursion/helpers/circuits");
-    let std_pil_path = opts
-        .std_pil_path
-        .clone()
-        .or_else(|| std::env::var("STD_PIL_PATH").ok())
-        .unwrap_or_else(|| "pil2-components/lib/std/pil".to_string());
+        crate::proving_key::recursive::resolve_stark_recurser_subpath("CIRCUITS_GL_PATH", "src/pil2circom/circuits.gl");
+    let recurser_circuits_path = crate::proving_key::recursive::resolve_stark_recurser_subpath(
+        "RECURSER_CIRCUITS_PATH",
+        "src/recursion/helpers/circuits",
+    );
+    let std_pil_path =
+        opts.std_pil_path.clone().unwrap_or_else(|| resolve_path_env("STD_PIL_PATH", "pil2-components/lib/std/pil"));
     let recurser_pil_path = resolve_path_env("RECURSER_PIL_PATH", "setup/stark-recurser/plonk2pil/pil");
     let circom_helpers_dir = resolve_path_env("CIRCOM_HELPERS_DIR", "setup/circom");
     let goldilocks_src_dir = resolve_path_env("GOLDILOCKS_SRC_DIR", "pil2-stark/src/goldilocks/src");
     let circom_exec = resolve_circom_exec(&circom_helpers_dir);
 
-    // BN128 and circomlib paths (node_modules relative to cwd).
-    let circuits_bn128_path =
-        resolve_path_env("CIRCUITS_BN128_PATH", "node_modules/stark-recurser/src/pil2circom/circuits.bn128");
-    let circomlib_path = resolve_path_env("CIRCOMLIB_PATH", "node_modules/circomlib/circuits");
+    // BN128 and circomlib paths.
+    let circuits_bn128_path = crate::proving_key::recursive::resolve_stark_recurser_subpath(
+        "CIRCUITS_BN128_PATH",
+        "src/pil2circom/circuits.bn128",
+    );
+    let circomlib_path =
+        crate::proving_key::recursive::resolve_node_module_subpath("CIRCOMLIB_PATH", "circomlib", "circuits");
 
     // Create provingKeySnark directory.
     let snark_dir = PathBuf::from(build_dir).join("provingKeySnark");

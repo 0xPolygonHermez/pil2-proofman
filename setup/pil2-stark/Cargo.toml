@@ -28,7 +28,6 @@ indexmap = { version = "2", features = ["serde"] }
 rug = "1"
 tempfile = "3"
 rayon = { workspace = true }
-tikv-jemallocator = "0.6"
 clap = { version = "4.5.38", features = ["derive", "env"] }
 which = "6"
 

@@ -807,7 +807,8 @@ pub fn compile_pil(pil_path: &str, output_path: &str, std_pil_path: &str, recurs
 /// Find the `pil2com` JS binary, checking (in order):
 ///   1. `PIL2C_EXEC` environment variable
 ///   2. Local npm install: `node_modules/.bin/pil2com` (relative to cwd)
-///   3. Global install: `pil2com` on PATH
+///   3. Walk up from the executable's location to find `node_modules/.bin/pil2com`
+///   4. Global install: `pil2com` on PATH
 ///
 /// Install via: `npm install`  (reads package.json in the repo root)
 fn resolve_pil2com_exec() -> Option<String> {
@@ -821,6 +822,19 @@ fn resolve_pil2com_exec() -> Option<String> {
     if local_npm.is_file() {
         if let Ok(abs) = local_npm.canonicalize() {
             return abs.to_str().map(|s| s.to_string());
+        }
+    }
+    // Walk up from the executable's location
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent();
+        while let Some(d) = dir {
+            let candidate = d.join("node_modules/.bin/pil2com");
+            if candidate.is_file() {
+                if let Ok(abs) = candidate.canonicalize() {
+                    return abs.to_str().map(|s| s.to_string());
+                }
+            }
+            dir = d.parent();
         }
     }
     // Global install on PATH
@@ -843,7 +857,67 @@ pub(crate) fn resolve_stark_recurser_root() -> Option<PathBuf> {
     if local.is_dir() {
         return local.canonicalize().ok();
     }
+    // Walk up from the executable's location to find node_modules/stark-recurser.
+    // This handles running the binary from a different working directory (e.g. ~/zisk)
+    // while node_modules live next to where the binary was built/installed.
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent();
+        while let Some(d) = dir {
+            let candidate = d.join("node_modules/stark-recurser");
+            if candidate.is_dir() {
+                return candidate.canonicalize().ok();
+            }
+            dir = d.parent();
+        }
+    }
     None
+}
+
+/// Resolve a sub-path within the stark-recurser package, with an env-var override.
+///
+/// Checks (in order):
+///   1. The env var `env_var` (if set and non-empty)
+///   2. `<stark_recurser_root>/<sub_path>` (derived from `resolve_stark_recurser_root`)
+///   3. The literal `node_modules/stark-recurser/<sub_path>` (relative to cwd, as last resort)
+pub(crate) fn resolve_stark_recurser_subpath(env_var: &str, sub_path: &str) -> String {
+    if let Ok(v) = std::env::var(env_var) {
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    if let Some(root) = resolve_stark_recurser_root() {
+        return root.join(sub_path).to_string_lossy().into_owned();
+    }
+    format!("node_modules/stark-recurser/{sub_path}")
+}
+
+/// Resolve a path inside `node_modules/<package>/<sub_path>`, with an env-var override.
+/// Searches CWD first, then walks up from the executable (same logic as stark-recurser).
+pub(crate) fn resolve_node_module_subpath(env_var: &str, package: &str, sub_path: &str) -> String {
+    if let Ok(v) = std::env::var(env_var) {
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    let rel = PathBuf::from("node_modules").join(package).join(sub_path);
+    if rel.is_dir() {
+        if let Ok(abs) = rel.canonicalize() {
+            return abs.to_string_lossy().into_owned();
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent();
+        while let Some(d) = dir {
+            let candidate = d.join("node_modules").join(package).join(sub_path);
+            if candidate.is_dir() {
+                if let Ok(abs) = candidate.canonicalize() {
+                    return abs.to_string_lossy().into_owned();
+                }
+            }
+            dir = d.parent();
+        }
+    }
+    format!("node_modules/{package}/{sub_path}")
 }
 
 /// Call `node src/pil2circom/main_pil2circom.js` from the stark-recurser package.

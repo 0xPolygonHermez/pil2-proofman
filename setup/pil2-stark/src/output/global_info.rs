@@ -506,8 +506,7 @@ fn process_global_hint_values(
 fn process_global_single_hint_field(
     expr: &crate::expr::expression::Expression,
     _params: &crate::pil::gen_code::CodeGenParams,
-    #[allow(clippy::ptr_arg)]
-    expressions: &mut Vec<crate::expr::expression::Expression>,
+    #[allow(clippy::ptr_arg)] expressions: &mut Vec<crate::expr::expression::Expression>,
     pos: &[usize],
     print_ctx: Option<&crate::expr::print::PrintCtx>,
 ) -> crate::pil::gen_code::ProcessedHintField {
