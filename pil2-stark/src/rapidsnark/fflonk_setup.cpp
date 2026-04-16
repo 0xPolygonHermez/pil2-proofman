@@ -20,16 +20,27 @@ FflonkSetup::~FflonkSetup() {
 
 void FflonkSetup::reset() {
     delete fft;
+    fft = nullptr;
 
+    for (auto &p : polynomials) {
+        delete p.second;
+    }
     polynomials.clear();
+
+    delete[] PTau;
+    PTau = nullptr;
+
+    plonkConstraints.clear();
+    plonkAdditions.clear();
 }
 
 void FflonkSetup::generateZkey(string r1csFilename, string pTauFilename, string zkeyFilename) {
     LOG_INFO("FFLONK SETUP STARTED");
 
-    // STEP 1. Read PTau file
+    // STEP 1. Read PTau file — open in directRead mode so the entire file
+    // is NOT loaded into RAM; only the required section data is read on demand.
     LOG_INFO("> Opening PTau file");
-    auto fdPtau = openExisting(pTauFilename, "ptau", 1);
+    auto fdPtau = std::unique_ptr<BinFile>(new BinFile(pTauFilename, "ptau", 1, true));
     if (!fdPtau->sectionExists(12)) {
         throw new runtime_error("Powers of Tau file is not well prepared. Section 12 missing.");
     }
@@ -118,7 +129,7 @@ void FflonkSetup::generateZkey(string r1csFilename, string pTauFilename, string 
 
 void FflonkSetup::computeFFConstraints(BinFile &r1cs, R1csHeader &r1csHeader) {
     // Create r1cs processor
-    const auto r1csProcessor = new R1csConstraintProcessor(E);
+    auto r1csProcessor = new R1csConstraintProcessor(E);
 
     // Add public inputs and outputs
     for (uint64_t i = 0; i < settings.nPublics; i++) {
@@ -137,6 +148,7 @@ void FflonkSetup::computeFFConstraints(BinFile &r1cs, R1csHeader &r1csHeader) {
     }
 
     r1cs.endReadSection(false);
+    delete r1csProcessor;
 }
 
 array<vector<R1csConstraint>, 3> FflonkSetup::readR1csConstraint(R1csHeader &r1csHeader, BinFile &r1cs) {
@@ -380,7 +392,6 @@ void FflonkSetup::writeQMap(BinFileWriter &zkeyFile, uint32_t sectionNum, uint32
                                         : posConstraint == 6   ? "QO"
                                                                : "QC";
 
-    FrElement *buffer_coefs = new FrElement[settings.domainSize];
     FrElement *buffer_evals = new FrElement[settings.domainSize * 4];
     memset(buffer_evals, 0, settings.domainSize * 4 * sizeof(FrElement));
     for (uint64_t i = 0; i < plonkConstraints.size(); i++) {
@@ -392,14 +403,16 @@ void FflonkSetup::writeQMap(BinFileWriter &zkeyFile, uint32_t sectionNum, uint32
         buffer_evals[i] = value;
     }
 
-    polynomials[name] = Polynomial<AltBn128::Engine>::fromEvaluations(E, fft, buffer_evals, buffer_coefs, settings.domainSize);
+    // fromEvaluations without reservedBuffer: the Polynomial owns and will free its coef buffer
+    polynomials[name] = Polynomial<AltBn128::Engine>::fromEvaluations(E, fft, buffer_evals, settings.domainSize);
     polynomials[name]->fixDegree();
     Evaluations<AltBn128::Engine>(E, fft, buffer_evals, *polynomials[name], settings.domainSize * 4);
 
     zkeyFile.startWriteSection(sectionNum);
-    zkeyFile.write(buffer_coefs, settings.domainSize * sizeof(FrElement));
+    zkeyFile.write(polynomials[name]->coef, settings.domainSize * sizeof(FrElement));
     zkeyFile.write(buffer_evals, settings.domainSize * 4 * sizeof(FrElement));
     zkeyFile.endWriteSection();
+    delete[] buffer_evals;
 }
 
 void FflonkSetup::writeSigma(BinFileWriter &zkeyFile) {
@@ -442,19 +455,22 @@ void FflonkSetup::writeSigma(BinFileWriter &zkeyFile) {
                                                                         : Zkey::ZKEY_FF_SIGMA3_SECTION;
         auto name = "S" + to_string(i + 1);
 
-        FrElement *buffer_coefs = new FrElement[settings.domainSize];
         FrElement *buffer_evals = new FrElement[settings.domainSize * 4];
         memset(buffer_evals, 0, settings.domainSize * 4 * sizeof(FrElement));
 
-        polynomials[name] = Polynomial<AltBn128::Engine>::fromEvaluations(E, fft, &sigma[i * settings.domainSize], buffer_coefs, settings.domainSize);
+        // fromEvaluations without reservedBuffer: the Polynomial owns and will free its coef buffer
+        polynomials[name] = Polynomial<AltBn128::Engine>::fromEvaluations(E, fft, &sigma[i * settings.domainSize], settings.domainSize);
         polynomials[name]->fixDegree();
         Evaluations<AltBn128::Engine>(E, fft, buffer_evals, *polynomials[name], settings.domainSize * 4);
 
         zkeyFile.startWriteSection(sectionId);
-        zkeyFile.write(buffer_coefs, settings.domainSize * sizeof(FrElement));
+        zkeyFile.write(polynomials[name]->coef, settings.domainSize * sizeof(FrElement));
         zkeyFile.write(buffer_evals, settings.domainSize * 4 * sizeof(FrElement));
         zkeyFile.endWriteSection();
+        delete[] buffer_evals;
     }
+
+    delete[] sigma;
 }
 
 void FflonkSetup::buildSigma(FrElement *sigma, FrElement w, unordered_map<uint64_t, FrElement> &lastSeen, unordered_map<uint64_t, uint64_t> &firstPos, uint64_t signalId, uint64_t idx) {
@@ -479,7 +495,6 @@ void FflonkSetup::buildSigma(FrElement *sigma, FrElement w, unordered_map<uint64
 void FflonkSetup::writeLagrangePolynomials(BinFileWriter &zkeyFile) {
     auto l = max(settings.nPublics, (uint64_t)1);
 
-    FrElement *buffer_coefs = new FrElement[settings.domainSize];
     FrElement *buffer_evals = new FrElement[settings.domainSize * 4];
 
     zkeyFile.startWriteSection(Zkey::ZKEY_FF_LAGRANGE_SECTION);
@@ -489,14 +504,17 @@ void FflonkSetup::writeLagrangePolynomials(BinFileWriter &zkeyFile) {
 
         buffer_evals[i] = E.fr.one();
 
-        auto pol = Polynomial<AltBn128::Engine>::fromEvaluations(E, fft, buffer_evals, buffer_coefs, settings.domainSize);
+        // fromEvaluations without reservedBuffer: the Polynomial owns its coef buffer
+        auto pol = Polynomial<AltBn128::Engine>::fromEvaluations(E, fft, buffer_evals, settings.domainSize);
         pol->fixDegree();
         Evaluations<AltBn128::Engine>(E, fft, buffer_evals, *pol, settings.domainSize * 4);
 
-        zkeyFile.write(buffer_coefs, settings.domainSize * sizeof(FrElement));
+        zkeyFile.write(pol->coef, settings.domainSize * sizeof(FrElement));
         zkeyFile.write(buffer_evals, settings.domainSize * 4 * sizeof(FrElement));
+        delete pol;
     }
 
+    delete[] buffer_evals;
     zkeyFile.endWriteSection();
 }
 
@@ -504,8 +522,9 @@ void FflonkSetup::writePtau(BinFileWriter &zkeyFile, BinFile &fdPtau) {
     int nThreads = omp_get_max_threads() / 2;
     PTau = new G1PointAffine[settings.domainSize * 9];
 
-    ThreadUtils::parset(PTau, 0, sizeof(G1PointAffine), nThreads);
-    ThreadUtils::parcpy(PTau, fdPtau.getSectionData(2), (settings.domainSize * 9) * sizeof(G1PointAffine), nThreads);
+    // Read only the required (domainSize * 9) G1 affine points directly from disk
+    // without loading the entire PTau section into RAM.
+    fdPtau.readSectionToParallel(PTau, 2, 0, (settings.domainSize * 9) * sizeof(G1PointAffine), nThreads);
 
     zkeyFile.startWriteSection(Zkey::ZKEY_FF_PTAU_SECTION);
     zkeyFile.write(PTau, (settings.domainSize * 9) * sizeof(G1PointAffine));
@@ -571,7 +590,8 @@ void FflonkSetup::writeFflonkHeader(BinFileWriter &zkeyFile, BinFile &ptauFile) 
     zkeyFile.write(&wr, sizeof(FrElement));
 
     G2PointAffine bX_2;
-    memcpy(&bX_2, (G2PointAffine *)ptauFile.getSectionData(3) + 1, sizeof(G2PointAffine));
+    // Read the second G2 element (index 1) from section 3 directly from disk
+    ptauFile.readSectionTo(&bX_2, 3, sizeof(G2PointAffine), sizeof(G2PointAffine));
     zkeyFile.write(&bX_2, sizeof(G2PointAffine));
 
     u_int64_t lengths[8] = {polynomials["QL"]->getDegree() + 1,
@@ -609,6 +629,7 @@ G1Point FflonkSetup::multiExponentiation(Polynomial<AltBn128::Engine> *polynomia
     G1Point value;
     FrElement *pol = polynomialFromMontgomery(polynomial);
     E.g1.multiMulByScalar(value, PTau, (uint8_t *)pol, sizeof(pol[0]), polynomial->getDegree() + 1, nx, x);
+    delete[] pol;
     return value;
 }
 
