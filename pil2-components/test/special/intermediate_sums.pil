@@ -14,7 +14,7 @@ require "std_sum.pil"
     To audit and generate stats:
     node ../pil2-compiler/src/pil.js ./pil2-components/test/special/intermediate_sums.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/special/build/intermediate_sums.pilout
     node --max-old-space-size=131072 ../pil2-compiler/tools/audit.js pil2-components/test/special/build/intermediate_sums.pilout
-    node --max-old-space-size=131072 ../pil2-proofman-js/src/main_stats.js -a pil2-components/test/special/build/intermediate_sums.pilout -s pil2-components/test/special/intermediate_sums.config.json -o pil2-components/test/special/build/intermediate_sums.stats
+    cargo run --bin proofman-setup -- stats -a pil2-components/test/special/build/intermediate_sums.pilout -s pil2-components/test/special/intermediate_sums.config.json -o pil2-components/test/special/build/intermediate_sums.stats
 */
 airtemplate Im(const int N = 2**8, const int reductions, const int deg_num, const int deg_den, const int M) {
     assert(M > 0);
