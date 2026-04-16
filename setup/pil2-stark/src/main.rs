@@ -37,10 +37,6 @@ struct SetupArgs {
     #[arg(short = 'b', long)]
     build_dir: String,
 
-    /// Standard PIL library path
-    #[arg(short = 't', long)]
-    std_path: Option<String>,
-
     /// Directory containing fixed column files
     #[arg(short = 'u', long)]
     fixed_dir: Option<String>,
@@ -103,10 +99,6 @@ struct SetupSnarkArgs {
     #[arg(short = 'b', long)]
     build_dir: String,
 
-    /// Standard PIL library path
-    #[arg(short = 't', long)]
-    std_path: Option<String>,
-
     /// Powers-of-tau (.ptau) file for snarkjs setup
     #[arg(long)]
     powers_of_tau: Option<String>,
@@ -138,10 +130,6 @@ struct SetupRecursiveTestArgs {
     #[arg(short = 'n', long = "name")]
     circom_name: String,
 
-    /// Standard PIL library path
-    #[arg(short = 'p', long, default_value = "pil2-components/lib/std/pil")]
-    std_path: String,
-
     /// Setup type: compressor, aggregation, final_vadcop, or light
     #[arg(short = 't', long, default_value = "aggregation")]
     r#type: String,
@@ -168,7 +156,6 @@ fn main() -> anyhow::Result<()> {
                 fixed_dir: args.fixed_dir,
                 stark_structs_path: args.stark_structs,
                 recursive: args.recursive,
-                std_pil_path: args.std_path,
                 recursive_jobs: args.recursive_jobs,
                 setup_jobs: args.setup_jobs,
                 stats_output_path: args.output,
@@ -213,7 +200,6 @@ fn main() -> anyhow::Result<()> {
             tracing::info!("proofman-setup setup-snark: starting");
             let opts = SetupSnarkOptions {
                 build_dir: args.build_dir,
-                std_pil_path: args.std_path,
                 powers_of_tau: args.powers_of_tau,
                 final_snark: args.final_snark,
                 publics_info: args.publics_info,
@@ -232,7 +218,6 @@ fn main() -> anyhow::Result<()> {
                 build_dir: args.build_dir,
                 circom_path: args.circom_path,
                 circom_name: args.circom_name,
-                std_pil_path: args.std_path,
                 setup_type: args.r#type,
             };
             recursive_test_cmd::run_setup_recursive_test(&opts)

@@ -300,23 +300,52 @@ pub fn gen_snark_setup(
     let final_dir = snark_dir.join("final");
     fs::create_dir_all(&final_dir)?;
 
-    let rf_const_root_json: Value = serde_json::from_str(&fs::read_to_string(&verkey_rf_path)?)?;
+    let rf_const_root_json: Value = serde_json::from_str(
+        &fs::read_to_string(&verkey_rf_path)
+            .with_context(|| format!("Failed to read recursivef.verkey.json: {}", verkey_rf_path.display()))?,
+    )?;
+    // The verkey.json format depends on the hash type:
+    //   GL      → [u64, u64, u64, u64]  (4-element JSON array)
+    //   BN128   → "<decimal_string>"    (single BN128 field element as JSON string)
+    // Either way we store as [String; 4], putting the scalar in [0] for BN128.
     let rf_const_root_str: [String; 4] = {
-        let arr = rf_const_root_json.as_array().ok_or_else(|| anyhow::anyhow!("recursivef verkey is not an array"))?;
-        if arr.len() < 4 {
-            bail!("recursivef verkey has fewer than 4 elements");
+        if let Some(arr) = rf_const_root_json.as_array() {
+            // GL case
+            if arr.len() < 4 {
+                bail!("recursivef verkey has fewer than 4 elements");
+            }
+            [
+                arr[0]
+                    .as_u64()
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| arr[0].to_string().trim_matches('"').to_string()),
+                arr[1]
+                    .as_u64()
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| arr[1].to_string().trim_matches('"').to_string()),
+                arr[2]
+                    .as_u64()
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| arr[2].to_string().trim_matches('"').to_string()),
+                arr[3]
+                    .as_u64()
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| arr[3].to_string().trim_matches('"').to_string()),
+            ]
+        } else if let Some(s) = rf_const_root_json.as_str() {
+            // BN128 case: single scalar; store in slot 0, zeros in the rest
+            [s.to_string(), "0".into(), "0".into(), "0".into()]
+        } else {
+            bail!("recursivef verkey.json has unexpected format: {}", rf_const_root_json);
         }
-        [
-            arr[0].to_string().trim_matches('"').to_string(),
-            arr[1].to_string().trim_matches('"').to_string(),
-            arr[2].to_string().trim_matches('"').to_string(),
-            arr[3].to_string().trim_matches('"').to_string(),
-        ]
     };
 
     let starkinfo_rf_val: Value = serde_json::from_str(&starkinfo_rf_json)?;
+    let verifierinfo_json_path = recursivef_dir.join("recursivef.verifierinfo.json");
     let verifierinfo_rf_val: Value =
-        serde_json::from_str(&fs::read_to_string(recursivef_dir.join("recursivef.verifierinfo.json"))?)?;
+        serde_json::from_str(&fs::read_to_string(&verifierinfo_json_path).with_context(|| {
+            format!("Failed to read recursivef.verifierinfo.json: {}", verifierinfo_json_path.display())
+        })?)?;
 
     // pil2circom: generate recursivef.verifier.circom (verkeyInput=false for final).
     let verifier_name_final = "recursivef.verifier.circom";
@@ -378,7 +407,21 @@ pub fn gen_snark_setup(
         fs::copy(&dat_src_final, final_dir.join("final.dat"))?;
     }
 
-    // Run witness library generation and wait for it (final step must complete fully).
+    // Validate inputs for the zkey setup before launching parallel work.
+    let powers_of_tau =
+        config.powers_of_tau.ok_or_else(|| anyhow::anyhow!("--powers-of-tau is required for final SNARK setup"))?;
+    if !std::path::Path::new(powers_of_tau).exists() {
+        bail!("powers-of-tau file not found: {}", powers_of_tau);
+    }
+    let r1cs_final = build_path.join("final.r1cs");
+    if !r1cs_final.exists() {
+        bail!("final.r1cs not found at {}: circom compilation may have failed", r1cs_final.display());
+    }
+    let zkey_final = final_dir.join("final.zkey");
+
+    // Launch witness library generation (make) in background, then run the
+    // zkey FFI setup concurrently on this thread — both only need the circom
+    // output and produce independent artifacts.
     witness_tracker.run_witness_library_generation(
         config.build_dir,
         final_dir.to_str().unwrap_or(""),
@@ -386,15 +429,8 @@ pub fn gen_snark_setup(
         "final",
         config.circom_helpers_dir,
     );
-    witness_tracker.await_all()?;
 
-    // Run snarkjs fflonk/plonk setup.
-    let powers_of_tau =
-        config.powers_of_tau.ok_or_else(|| anyhow::anyhow!("--powers-of-tau is required for final SNARK setup"))?;
-
-    let r1cs_final = build_path.join("final.r1cs");
-    let zkey_final = final_dir.join("final.zkey");
-    tracing::info!("Running {} setup via FFI...", config.final_snark);
+    tracing::info!("Running {} setup via FFI (parallel with make)...", config.final_snark);
     let ret = if config.final_snark == "fflonk" {
         generate_fflonk_zkey_c(r1cs_final.to_str().unwrap(), powers_of_tau, zkey_final.to_str().unwrap())
     } else {
@@ -403,6 +439,9 @@ pub fn gen_snark_setup(
     if ret != 0 {
         bail!("{} setup FFI call failed with return code {}", config.final_snark, ret);
     }
+
+    // Now wait for make to finish before proceeding.
+    witness_tracker.await_all()?;
 
     // Export verification key (snarkjs.zKey.exportVerificationKey) via Node.js.
     tracing::info!("Exporting verification key...");
