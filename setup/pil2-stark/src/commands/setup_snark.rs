@@ -79,6 +79,7 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
     let std_pil_path = resolve_path_env("STD_PIL_PATH", "pil2-components/lib/std/pil");
     let recurser_pil_path = resolve_path_env("RECURSER_PIL_PATH", "setup/stark-recurser/plonk2pil/pil");
     let circom_helpers_dir = resolve_path_env("CIRCOM_HELPERS_DIR", "setup/circom");
+    let final_snark_circom_helpers_dir = resolve_path_env("FINAL_SNARK_CIRCOM_HELPERS_DIR", "setup/final_snark_circom");
     let goldilocks_src_dir = resolve_path_env("GOLDILOCKS_SRC_DIR", "pil2-stark/src/goldilocks/src");
     let circom_exec = resolve_circom_exec(&circom_helpers_dir);
 
@@ -107,6 +108,7 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
         std_pil_path: &std_pil_path,
         recurser_pil_path: &recurser_pil_path,
         circom_helpers_dir: &circom_helpers_dir,
+        final_snark_circom_helpers_dir: &final_snark_circom_helpers_dir,
         powers_of_tau: opts.powers_of_tau.as_deref(),
         final_snark: &opts.final_snark,
         publics_info,

@@ -34,6 +34,9 @@ pub struct SnarkSetupConfig<'a> {
     pub std_pil_path: &'a str,
     pub recurser_pil_path: &'a str,
     pub circom_helpers_dir: &'a str,
+    /// Directory containing BN128 fr.cpp/fr.asm and Makefile for the `final` SNARK witness library.
+    /// Corresponds to `final_snark_circom/` in pil2-proofman-js.
+    pub final_snark_circom_helpers_dir: &'a str,
     /// Powers-of-tau (.ptau) file for snarkjs final setup (required if !only_recursive_final).
     pub powers_of_tau: Option<&'a str>,
     /// "fflonk" or "plonk".
@@ -422,12 +425,14 @@ pub fn gen_snark_setup(
     // Launch witness library generation (make) in background, then run the
     // zkey FFI setup concurrently on this thread — both only need the circom
     // output and produce independent artifacts.
+    // The `final` circuit is BN128-based and requires fr.cpp/fr.asm — use the
+    // dedicated final_snark_circom helpers dir, not the goldilocks circom one.
     witness_tracker.run_witness_library_generation(
         config.build_dir,
         final_dir.to_str().unwrap_or(""),
         "final",
         "final",
-        config.circom_helpers_dir,
+        config.final_snark_circom_helpers_dir,
     );
 
     tracing::info!("Running {} setup via FFI (parallel with make)...", config.final_snark);
@@ -502,7 +507,12 @@ const snarkjs = require('snarkjs');
 const fs = require('fs');
 const path = require('path');
 (async () => {{
-    const tmplPath = require.resolve(`snarkjs/templates/verifier_{snark_type}.sol.ejs`);
+    // require.resolve('snarkjs') → .../snarkjs/build/main.cjs; go up one level
+    // past 'build/' to reach the package root where templates/ lives.
+    // Neither './templates/...' nor './package.json' are in the exports map so
+    // require.resolve shortcuts are unavailable.
+    const snarkjsRoot = path.resolve(path.dirname(require.resolve('snarkjs')), '..');
+    const tmplPath = path.join(snarkjsRoot, 'templates', 'verifier_{snark_type}.sol.ejs');
     const tmpl = {{ {template_key}: fs.readFileSync(tmplPath, 'utf8') }};
     const sol = await snarkjs.zKey.exportSolidityVerifier({zkey:?}, tmpl);
     fs.writeFileSync({out:?}, sol);
@@ -557,9 +567,36 @@ const path = require('path');
 
 /// Run a Node.js inline script (`node -e "..."`), inheriting stdio.
 fn run_node_inline(script: &str, context: &str) -> Result<()> {
+    // Resolve the node_modules directory containing snarkjs and stark-recurser.
+    // Precedence: NODE_MODULES_DIR env var → sibling pil2-proofman-js/node_modules.
+    let node_modules_dir = std::env::var("NODE_MODULES_DIR").unwrap_or_else(|_| {
+        // Derive from the location of this binary: walk up until we find a
+        // directory that contains pil2-proofman-js, then use its node_modules.
+        // Fallback: assume current-working-directory/../pil2-proofman-js/node_modules.
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| {
+                // binary is typically <workspace>/target/release/proofman-setup
+                p.ancestors()
+                    .find(|a| a.join("pil2-proofman-js").join("node_modules").exists())
+                    .map(|a| a.join("pil2-proofman-js").join("node_modules").to_string_lossy().into_owned())
+            })
+            .or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .and_then(|cwd| {
+                        cwd.ancestors()
+                            .find(|a| a.join("pil2-proofman-js").join("node_modules").exists())
+                            .map(|a| a.join("pil2-proofman-js").join("node_modules").to_string_lossy().into_owned())
+                    })
+            })
+            .unwrap_or_else(|| "node_modules".to_string())
+    });
+
     let out = std::process::Command::new("node")
         .arg("-e")
         .arg(script)
+        .env("NODE_PATH", &node_modules_dir)
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .output()
