@@ -14,8 +14,6 @@ use crate::commands::recursive_setup::{resolve_circom_exec, resolve_path_env};
 pub struct SetupSnarkOptions {
     /// Build directory (must contain provingKey/).
     pub build_dir: String,
-    /// Standard PIL library path.
-    pub std_pil_path: Option<String>,
     /// Powers-of-tau (.ptau) file path.
     pub powers_of_tau: Option<String>,
     /// SNARK type: "fflonk" (default) or "plonk".
@@ -78,8 +76,7 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
         "RECURSER_CIRCUITS_PATH",
         "src/recursion/helpers/circuits",
     );
-    let std_pil_path =
-        opts.std_pil_path.clone().unwrap_or_else(|| resolve_path_env("STD_PIL_PATH", "pil2-components/lib/std/pil"));
+    let std_pil_path = resolve_path_env("STD_PIL_PATH", "pil2-components/lib/std/pil");
     let recurser_pil_path = resolve_path_env("RECURSER_PIL_PATH", "setup/stark-recurser/plonk2pil/pil");
     let circom_helpers_dir = resolve_path_env("CIRCOM_HELPERS_DIR", "setup/circom");
     let goldilocks_src_dir = resolve_path_env("GOLDILOCKS_SRC_DIR", "pil2-stark/src/goldilocks/src");

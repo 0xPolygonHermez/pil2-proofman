@@ -47,8 +47,8 @@ pub struct StarkStructOutput {
     pub merkle_tree_arity: usize,
     pub transcript_arity: usize,
     pub merkle_tree_custom: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_level_verification: Option<usize>,
+    #[serde(default)]
+    pub last_level_verification: usize,
     pub pow_bits: usize,
     pub hash_commits: bool,
     pub n_bits_ext: usize,

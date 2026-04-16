@@ -9,7 +9,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
 
 use anyhow::{bail, Context, Result};
 
@@ -17,6 +20,8 @@ use anyhow::{bail, Context, Result};
 #[derive(Clone, Default)]
 pub struct WitnessTracker {
     pending: Arc<Mutex<Vec<std::thread::JoinHandle<Result<()>>>>>,
+    /// Number of threads that have been spawned but not yet finished.
+    running: Arc<AtomicUsize>,
     /// Directory containing goldilocks source files (e.g. pil2-stark/src/goldilocks/src).
     /// These are copied into the temp build dir before the circom helpers so they are
     /// available for compilation (goldilocks_base_field.hpp, poseidon2_goldilocks_constants.hpp, etc.)
@@ -25,11 +30,24 @@ pub struct WitnessTracker {
 
 impl WitnessTracker {
     pub fn new() -> Self {
-        Self { pending: Arc::new(Mutex::new(Vec::new())), goldilocks_src_dir: None }
+        Self {
+            pending: Arc::new(Mutex::new(Vec::new())),
+            running: Arc::new(AtomicUsize::new(0)),
+            goldilocks_src_dir: None,
+        }
     }
 
     pub fn with_goldilocks_src(goldilocks_src_dir: impl Into<String>) -> Self {
-        Self { pending: Arc::new(Mutex::new(Vec::new())), goldilocks_src_dir: Some(goldilocks_src_dir.into()) }
+        Self {
+            pending: Arc::new(Mutex::new(Vec::new())),
+            running: Arc::new(AtomicUsize::new(0)),
+            goldilocks_src_dir: Some(goldilocks_src_dir.into()),
+        }
+    }
+
+    /// Returns the number of witness library builds still running.
+    pub fn running_count(&self) -> usize {
+        self.running.load(Ordering::Relaxed)
     }
 
     /// Kick off a witness library generation in a background thread.
@@ -56,16 +74,20 @@ impl WitnessTracker {
         let template = template.to_string();
         let circom_helpers_dir = circom_helpers_dir.to_string();
         let goldilocks_src_dir = self.goldilocks_src_dir.clone();
+        let running = Arc::clone(&self.running);
+        running.fetch_add(1, Ordering::Relaxed);
 
         let handle = std::thread::spawn(move || {
-            generate_witness_library(
+            let result = generate_witness_library(
                 &build_dir,
                 &files_dir,
                 &name_filename,
                 &template,
                 &circom_helpers_dir,
                 goldilocks_src_dir.as_deref(),
-            )
+            );
+            running.fetch_sub(1, Ordering::Relaxed);
+            result
         });
 
         let mut pending = self.pending.lock().unwrap();
@@ -84,7 +106,7 @@ impl WitnessTracker {
 
         let count = handles.len();
         if count > 0 {
-            tracing::info!("Waiting for {} witness libraries...", count);
+            tracing::info!("Collecting results for {} witness libraries (some may already be done)...", count);
         }
 
         let mut errors = Vec::new();

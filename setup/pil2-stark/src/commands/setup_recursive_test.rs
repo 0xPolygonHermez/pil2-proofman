@@ -9,7 +9,6 @@ pub struct SetupRecursiveTestOptions {
     pub build_dir: String,
     pub circom_path: String,
     pub circom_name: String,
-    pub std_pil_path: String,
     pub setup_type: String,
 }
 
@@ -34,7 +33,6 @@ pub fn run_setup_recursive_test(opts: &SetupRecursiveTestOptions) -> Result<()> 
         &opts.build_dir,
         &opts.circom_path,
         &opts.circom_name,
-        &opts.std_pil_path,
         &opts.setup_type,
         &circom_exec,
         &circuits_gl_path,

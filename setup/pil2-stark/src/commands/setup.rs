@@ -24,7 +24,6 @@ pub struct SetupOptions {
     pub fixed_dir: Option<String>,
     pub stark_structs_path: Option<String>,
     pub recursive: bool,
-    pub std_pil_path: Option<String>,
     /// Maximum number of recursive1 air pipelines to run in parallel (default 1 = serial).
     /// Each concurrent pipeline runs one circom compile + pil2com at a time.
     /// Rule of thumb: set to available_RAM_GB / per_air_peak_RAM_GB.

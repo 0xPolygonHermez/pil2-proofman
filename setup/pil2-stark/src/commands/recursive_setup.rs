@@ -50,8 +50,7 @@ pub(crate) fn run_recursive_setup(
         "RECURSER_CIRCUITS_COMPRESSED_FINAL_PATH",
         "src/recursion/helpers/circuits",
     );
-    let std_pil_path =
-        opts.std_pil_path.clone().unwrap_or_else(|| resolve_path_env("STD_PIL_PATH", "pil2-components/lib/std/pil"));
+    let std_pil_path = resolve_path_env("STD_PIL_PATH", "pil2-components/lib/std/pil");
     let recurser_pil_path = resolve_path_env("RECURSER_PIL_PATH", "setup/stark-recurser/plonk2pil/pil");
     let circom_helpers_dir = resolve_path_env("CIRCOM_HELPERS_DIR", "setup/circom");
     let goldilocks_src_dir = resolve_path_env("GOLDILOCKS_SRC_DIR", "pil2-stark/src/goldilocks/src");

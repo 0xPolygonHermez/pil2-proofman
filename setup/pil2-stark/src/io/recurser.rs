@@ -52,12 +52,22 @@ pub fn pil2circom(
     // verkey file is needed (it comes in as a public signal).
     let vk_path_buf;
     let verkey_path: Option<&Path> = if !opts.verkey_input {
-        let vk_json = serde_json::json!({
-            "constRoot": const_root
-                .iter()
-                .map(|s| s.parse::<u64>().unwrap_or(0))
-                .collect::<Vec<_>>()
-        });
+        let hash_type = stark_info["starkStruct"]["verificationHashType"].as_str().unwrap_or("GL");
+        let vk_json = if hash_type == "BN128" {
+            // BN128: constRoot is a single scalar in const_root[0] (big decimal string).
+            // The pil2circom EJS template renders it as: signal rootC <== <%- constRoot %>;
+            // JSONbig in the JS will parse a JSON string as a JS string; EJS <%- x %> calls
+            // x.toString() which renders the digits correctly as a circom literal.
+            serde_json::json!({ "constRoot": const_root[0] })
+        } else {
+            // GL: constRoot is a 4-element array of u64 values.
+            serde_json::json!({
+                "constRoot": const_root
+                    .iter()
+                    .map(|s| s.parse::<u64>().unwrap_or(0))
+                    .collect::<Vec<_>>()
+            })
+        };
         vk_path_buf = tmp.join("verkey.json");
         fs::write(&vk_path_buf, serde_json::to_string(&vk_json)?)?;
         Some(vk_path_buf.as_path())
