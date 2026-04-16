@@ -30,6 +30,12 @@ void FflonkSetup::reset() {
     delete[] PTau;
     PTau = nullptr;
 
+    delete[] bufferC0;
+    bufferC0 = nullptr;
+
+    delete C0Poly;
+    C0Poly = nullptr;
+
     plonkConstraints.clear();
     plonkAdditions.clear();
 }
@@ -74,8 +80,8 @@ void FflonkSetup::generateZkey(string r1csFilename, string pTauFilename, string 
     if (fdPtau->getSectionSize(2) < settings.domainSize * 9 * sG1) {
         throw new runtime_error("Powers of Tau is not big enough for this circuit size. Section 2 too small.");
     }
-    if (fdPtau->getSectionSize(3) < sG2) {
-        throw new runtime_error("Powers of Tau is not well prepared. Section 3 too small.");
+    if (fdPtau->getSectionSize(3) < 2 * sG2) {
+        throw new runtime_error("Powers of Tau is not well prepared. Section 3 too small (requires at least 2 G2 points).");
     }
 
     ostringstream ss;
@@ -423,9 +429,8 @@ void FflonkSetup::writeSigma(BinFileWriter &zkeyFile) {
     memset(sigma, 0, settings.domainSize * 3 * sizeof(FrElement));
     FrElement w = E.fr.one();
     for (uint64_t i = 0; i < settings.domainSize; i++) {
-        auto constraint = plonkConstraints[i];
-
         if (i < plonkConstraints.size()) {
+            auto constraint = plonkConstraints[i];
             buildSigma(sigma, w, lastSeen, firstPos, constraint.signal_a, i);
             buildSigma(sigma, w, lastSeen, firstPos, constraint.signal_b, i + settings.domainSize);
             buildSigma(sigma, w, lastSeen, firstPos, constraint.signal_c, i + settings.domainSize * 2);
@@ -519,12 +524,11 @@ void FflonkSetup::writeLagrangePolynomials(BinFileWriter &zkeyFile) {
 }
 
 void FflonkSetup::writePtau(BinFileWriter &zkeyFile, BinFile &fdPtau) {
-    int nThreads = omp_get_max_threads() / 2;
     PTau = new G1PointAffine[settings.domainSize * 9];
 
     // Read only the required (domainSize * 9) G1 affine points directly from disk
     // without loading the entire PTau section into RAM.
-    fdPtau.readSectionToParallel(PTau, 2, 0, (settings.domainSize * 9) * sizeof(G1PointAffine), nThreads);
+    fdPtau.readSectionTo(PTau, 2, 0, (settings.domainSize * 9) * sizeof(G1PointAffine));
 
     zkeyFile.startWriteSection(Zkey::ZKEY_FF_PTAU_SECTION);
     zkeyFile.write(PTau, (settings.domainSize * 9) * sizeof(G1PointAffine));
@@ -532,21 +536,21 @@ void FflonkSetup::writePtau(BinFileWriter &zkeyFile, BinFile &fdPtau) {
 }
 
 void FflonkSetup::writeC0(BinFileWriter &zkeyFile) {
-    CPolynomial<AltBn128::Engine> *C0 = new CPolynomial(E, 8);
+    C0Poly = new CPolynomial<AltBn128::Engine>(E, 8);
 
-    C0->addPolynomial(0, polynomials["QL"]);
-    C0->addPolynomial(1, polynomials["QR"]);
-    C0->addPolynomial(2, polynomials["QO"]);
-    C0->addPolynomial(3, polynomials["QM"]);
-    C0->addPolynomial(4, polynomials["QC"]);
-    C0->addPolynomial(5, polynomials["S1"]);
-    C0->addPolynomial(6, polynomials["S2"]);
-    C0->addPolynomial(7, polynomials["S3"]);
+    C0Poly->addPolynomial(0, polynomials["QL"]);
+    C0Poly->addPolynomial(1, polynomials["QR"]);
+    C0Poly->addPolynomial(2, polynomials["QO"]);
+    C0Poly->addPolynomial(3, polynomials["QM"]);
+    C0Poly->addPolynomial(4, polynomials["QC"]);
+    C0Poly->addPolynomial(5, polynomials["S1"]);
+    C0Poly->addPolynomial(6, polynomials["S2"]);
+    C0Poly->addPolynomial(7, polynomials["S3"]);
 
-    FrElement *bufferC0 = new FrElement[settings.domainSize * 8];
+    bufferC0 = new FrElement[settings.domainSize * 8];
     memset(bufferC0, 0, settings.domainSize * 8 * sizeof(FrElement));
 
-    polynomials["C0"] = C0->getPolynomial(bufferC0);
+    polynomials["C0"] = C0Poly->getPolynomial(bufferC0);
 
     // Check degree
     if (polynomials["C0"]->getDegree() >= 8 * settings.domainSize) {

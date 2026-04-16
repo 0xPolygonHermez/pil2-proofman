@@ -81,9 +81,9 @@ namespace Plonk
         { // TODO! CHECK
             throw new runtime_error("Powers of Tau is not big enough for this circuit size. Section 2 too small.");
         }
-        if (fdPtau->getSectionSize(3) < sG2)
+        if (fdPtau->getSectionSize(3) < 2 * sG2)
         {
-            throw new runtime_error("Powers of Tau is not well prepared. Section 3 too small.");
+            throw new runtime_error("Powers of Tau is not well prepared. Section 3 too small (requires at least 2 G2 points).");
         }
 
         ostringstream ss;
@@ -386,10 +386,9 @@ namespace Plonk
         FrElement w = E.fr.one();
         for (uint64_t i = 0; i < settings.domainSize; i++)
         {
-            auto constraint = plonkConstraints[i];
-
             if (i < plonkConstraints.size())
             {
+                auto constraint = plonkConstraints[i];
                 buildSigma(sigma, w, lastSeen, firstPos, constraint.signal_a, i);
                 buildSigma(sigma, w, lastSeen, firstPos, constraint.signal_b, i + settings.domainSize);
                 buildSigma(sigma, w, lastSeen, firstPos, constraint.signal_c, i + settings.domainSize * 2);
@@ -496,12 +495,11 @@ namespace Plonk
 
     void PlonkSetup::writePtau(BinFileWriter &zkeyFile, BinFile &fdPtau)
     {
-        int nThreads = omp_get_max_threads() / 2;
         PTau = new G1PointAffine[settings.domainSize + 6];
 
         // Read only the required (domainSize + 6) G1 affine points directly from disk
         // without loading the entire PTau section into RAM.
-        fdPtau.readSectionToParallel(PTau, 2, 0, (settings.domainSize + 6) * sizeof(G1PointAffine), nThreads);
+        fdPtau.readSectionTo(PTau, 2, 0, (settings.domainSize + 6) * sizeof(G1PointAffine));
 
         zkeyFile.startWriteSection(Zkey::ZKEY_PL_PTAU_SECTION);
         zkeyFile.write(PTau, (settings.domainSize + 6) * sizeof(G1PointAffine));
