@@ -18,7 +18,7 @@
 #include "../src/goldilocks_base_field.hpp"
 #include "../src/ntt_goldilocks.hpp"
 #include "../src/ntt_goldilocks.cuh"
-#include "../src/gl64_tooling.cuh"
+#include "../src/goldilocks_tooling.cuh"
 #include "../utils/cuda_utils.hpp"
 
 // ---------------------------------------------------------------------------

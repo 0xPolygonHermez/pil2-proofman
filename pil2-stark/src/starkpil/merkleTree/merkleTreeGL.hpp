@@ -3,6 +3,7 @@
 
 #include "goldilocks_base_field.hpp"
 #include "poseidon2_goldilocks.hpp"
+#include "goldilocks_tooling.hpp"
 #include "zklog.hpp"
 #include <math.h>
 
@@ -46,6 +47,11 @@ public:
     inline uint64_t getMerkleTreeHeight()
     {
         return height;
+    }
+
+    static inline uint64_t getTreeNumElements(uint64_t degree, uint32_t arity = 2)
+    {
+        return ::getTreeNumElements(degree, arity);
     }
 
     uint64_t getNumNodes(uint64_t height);

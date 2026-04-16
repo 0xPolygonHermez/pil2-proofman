@@ -1,11 +1,10 @@
 #include "poseidon2_goldilocks.hpp"
 #include <math.h> /* floor */
-#include "merklehash_goldilocks.hpp"
 
 
     
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_seq(Goldilocks::Element *state, const Goldilocks::Element *input)
+void Poseidon2Goldilocks<SPONGE_WIDTH_T>::permute_seq(Goldilocks::Element *state, const Goldilocks::Element *input)
 {
     const int length = SPONGE_WIDTH * sizeof(Goldilocks::Element);
     std::memcpy(state, input, length);
@@ -59,7 +58,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::linear_hash_seq(Goldilocks::Element *o
         uint64_t n = (remaining < RATE) ? remaining : RATE;
         memset(&state[n], 0, (RATE - n) * sizeof(Goldilocks::Element));
         std::memcpy(state, input + (size - remaining), n * sizeof(Goldilocks::Element));
-        hash_full_result_seq(state, state);
+        permute_seq(state, state);
         remaining -= n;
     }
     if (size > 0)
@@ -110,7 +109,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletreeReduce(Goldilocks::Element *
 
             std::memcpy(pol_input, &cursor[nextIndex + i * SPONGE_WIDTH], SPONGE_WIDTH * sizeof(Goldilocks::Element));
 
-            hash_seq((Goldilocks::Element(&)[CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
+            compress_seq((Goldilocks::Element(&)[CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
         }
 
         nextIndex += (pending + extraZeros) * CAPACITY;
@@ -162,7 +161,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_seq(Goldilocks::Element *tr
 
             std::memcpy(pol_input, &cursor[nextIndex + i * SPONGE_WIDTH], SPONGE_WIDTH * sizeof(Goldilocks::Element));
 
-            hash_seq((Goldilocks::Element(&)[CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
+            compress_seq((Goldilocks::Element(&)[CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
         }
 
         nextIndex += (pending + extraZeros) * CAPACITY;
@@ -196,7 +195,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::grinding(uint64_t &nonce, const uint64
             Goldilocks::Element state[SPONGE_WIDTH];
             std::memcpy(state, in, (SPONGE_WIDTH - 1) * sizeof(Goldilocks::Element));
             state[SPONGE_WIDTH - 1] = Goldilocks::fromU64(offset + i);
-            hash_full_result_seq(state, state);
+            permute_seq(state, state);
             if (state[0].fe < level) {
                 chunkIdxs[omp_get_thread_num()] = offset + i;
             }
@@ -226,7 +225,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::grinding(uint64_t &nonce, const uint64
 #ifdef __AVX2__
 
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_batch_avx(Goldilocks::Element *state, const Goldilocks::Element *input) {
+void Poseidon2Goldilocks<SPONGE_WIDTH_T>::permute_batch_avx(Goldilocks::Element *state, const Goldilocks::Element *input) {
 
      const Goldilocks::Element* C = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::C4 : SPONGE_WIDTH == 8 ? Poseidon2GoldilocksConstants::C8 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::C12 : Poseidon2GoldilocksConstants::C16;
     const Goldilocks::Element* D = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::D4 : SPONGE_WIDTH == 8 ? Poseidon2GoldilocksConstants::D8 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::D12 : Poseidon2GoldilocksConstants::D16;
@@ -280,7 +279,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_batch_avx(Goldilocks:
 }
 
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_avx(Goldilocks::Element *state, const Goldilocks::Element *input)
+void Poseidon2Goldilocks<SPONGE_WIDTH_T>::permute_avx(Goldilocks::Element *state, const Goldilocks::Element *input)
 {
 
      const Goldilocks::Element* C = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::C4 : SPONGE_WIDTH == 8 ? Poseidon2GoldilocksConstants::C8 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::C12 : Poseidon2GoldilocksConstants::C16;
@@ -380,7 +379,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::linear_hash_avx(Goldilocks::Element *o
         uint64_t n = (remaining < RATE) ? remaining : RATE;
         memset(&state[n], 0, (RATE - n) * sizeof(Goldilocks::Element));
         std::memcpy(state, input + (size - remaining), n * sizeof(Goldilocks::Element));
-        hash_full_result_avx(state, state);
+        permute_avx(state, state);
         remaining -= n;
     }
     if (size > 0)
@@ -419,7 +418,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::linear_hash_batch_avx(Goldilocks::Elem
             memset(&state[i*SPONGE_WIDTH + n], 0, (RATE - n) * sizeof(Goldilocks::Element));
             std::memcpy(&state[i * SPONGE_WIDTH], &input[i*size + (size - remaining)], n * sizeof(Goldilocks::Element));
         }
-        hash_full_result_batch_avx(state, state);
+        permute_batch_avx(state, state);
         remaining -= n;
     }
     if (size > 0)
@@ -473,7 +472,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_avx(Goldilocks::Element *tr
 
             std::memcpy(pol_input, &cursor[nextIndex + i * SPONGE_WIDTH], SPONGE_WIDTH * sizeof(Goldilocks::Element));
 
-            hash_avx((Goldilocks::Element(&)[CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
+            compress_avx((Goldilocks::Element(&)[CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
         }
 
         nextIndex += (pending + extraZeros) * CAPACITY;
@@ -522,7 +521,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx(Goldilocks::Eleme
                 memset(pol_input, 0, SPONGE_WIDTH * sizeof(Goldilocks::Element));
                 for(int j = 0; j < int(nextN - i); j++) {
                     std::memcpy(pol_input, &cursor[nextIndex + (i+j) * SPONGE_WIDTH], SPONGE_WIDTH * sizeof(Goldilocks::Element));
-                    hash_avx((Goldilocks::Element(&)[CAPACITY])cursor[nextIndex + (pending + extraZeros + (i + j)) * CAPACITY], pol_input);
+                    compress_avx((Goldilocks::Element(&)[CAPACITY])cursor[nextIndex + (pending + extraZeros + (i + j)) * CAPACITY], pol_input);
                 }
             } else {
                 Goldilocks::Element pol_input[4*SPONGE_WIDTH];
@@ -531,7 +530,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx(Goldilocks::Eleme
                 {
                     std::memcpy(pol_input + j*SPONGE_WIDTH, &cursor[nextIndex + (i+j) * SPONGE_WIDTH], SPONGE_WIDTH * sizeof(Goldilocks::Element));
                 }
-                hash_batch_avx((Goldilocks::Element(&)[4 * CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
+                compress_batch_avx((Goldilocks::Element(&)[4 * CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
             }
         }
 
@@ -546,7 +545,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx(Goldilocks::Eleme
 
 
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_full_result_batch_avx512(Goldilocks::Element *state, const Goldilocks::Element *input) {
+void Poseidon2Goldilocks<SPONGE_WIDTH_T>::permute_batch_avx512(Goldilocks::Element *state, const Goldilocks::Element *input) {
     const Goldilocks::Element* C = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::C4 : SPONGE_WIDTH == 8 ? Poseidon2GoldilocksConstants::C8 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::C12 : Poseidon2GoldilocksConstants::C16;
     const Goldilocks::Element* D = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::D4 : SPONGE_WIDTH == 8 ? Poseidon2GoldilocksConstants::D8 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::D12 : Poseidon2GoldilocksConstants::D16;
 
@@ -625,7 +624,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::linear_hash_batch_avx512(Goldilocks::E
             memset(&state[i*SPONGE_WIDTH + n], 0, (RATE - n) * sizeof(Goldilocks::Element));
             std::memcpy(&state[i * SPONGE_WIDTH], &input[i*size + (size - remaining)], n * sizeof(Goldilocks::Element));
         }
-        hash_full_result_batch_avx512(state, state);
+        permute_batch_avx512(state, state);
         remaining -= n;
     }
     if (size > 0)
@@ -680,7 +679,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx512(Goldilocks::El
                 memset(pol_input, 0, SPONGE_WIDTH * sizeof(Goldilocks::Element));
                 for( uint32_t j = 0; j < uint32_t(nextN - i); j++) {
                     std::memcpy(pol_input, &cursor[nextIndex + (i+j) * SPONGE_WIDTH], SPONGE_WIDTH * sizeof(Goldilocks::Element));
-                    hash_avx((Goldilocks::Element(&)[CAPACITY])cursor[nextIndex + (pending + extraZeros + (i + j)) * CAPACITY], pol_input);
+                    compress_avx((Goldilocks::Element(&)[CAPACITY])cursor[nextIndex + (pending + extraZeros + (i + j)) * CAPACITY], pol_input);
                 }
             } else {
                 Goldilocks::Element pol_input[8*SPONGE_WIDTH];
@@ -689,7 +688,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx512(Goldilocks::El
                 {
                     std::memcpy(pol_input + j*SPONGE_WIDTH, &cursor[nextIndex + (i+j) * SPONGE_WIDTH], SPONGE_WIDTH * sizeof(Goldilocks::Element));
                 }
-                hash_batch_avx512((Goldilocks::Element(&)[8 * CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
+                compress_batch_avx512((Goldilocks::Element(&)[8 * CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
             }
         }
 

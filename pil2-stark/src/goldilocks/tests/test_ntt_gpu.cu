@@ -1,10 +1,10 @@
 #include <gtest/gtest.h>
 #include "../src/poseidon2_goldilocks.cuh"
 #include "../src/poseidon2_goldilocks.hpp"
+#include "../src/goldilocks_tooling.hpp"
 #include "../src/ntt_goldilocks.hpp"
 #include "../src/ntt_goldilocks.cuh"
-#include "../src/gl64_tooling.cuh"
-#include "../src/merklehash_goldilocks.hpp"
+#include "../src/goldilocks_tooling.cuh"
 
 TEST(GOLDILOCKS_TEST, ntt_gpu_intt_roundtrip)
 {
@@ -228,7 +228,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree)
     CHECKCUDAERR(cudaStreamCreate(&stream));
     TimerGPU timer(stream);
 
-    uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(nRows_ext, arity);
+    uint64_t tree_size = getTreeNumElements(nRows_ext, arity);
 
     gl64_t *d_src, *d_lde_mt;
     Goldilocks::Element *d_tree_gpu;
@@ -292,7 +292,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree_multicol)
     CHECKCUDAERR(cudaStreamCreate(&stream));
     TimerGPU timer(stream);
 
-    uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(nRows_ext, arity);
+    uint64_t tree_size = getTreeNumElements(nRows_ext, arity);
 
     gl64_t *d_flat, *d_tiled, *d_lde;
     Goldilocks::Element *d_tree_gpu;

@@ -1,10 +1,9 @@
-#include "gl64_tooling.cuh"
+#include "goldilocks_tooling.cuh"
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 #include <omp.h>
 
 #include "poseidon2_goldilocks.hpp"
-#include "merklehash_goldilocks.hpp"
 #include "poseidon2_goldilocks.cuh"
 
 #ifdef GPU_TIMING
@@ -81,9 +80,60 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::initConstants(uint32_t* gpu_ids, ui
 }
 
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::hash(uint64_t * output, const uint64_t * input, cudaStream_t stream){
-    hashKernel<RATE,CAPACITY,SPONGE_WIDTH,N_FULL_ROUNDS_TOTAL,N_PARTIAL_ROUNDS ><<<1, 1, SPONGE_WIDTH*sizeof(gl64_t), stream>>>(output, input);
+void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::permute(uint64_t * output, const uint64_t * input, cudaStream_t stream){
+    permuteKernel<RATE,CAPACITY,SPONGE_WIDTH,N_FULL_ROUNDS_TOTAL,N_PARTIAL_ROUNDS ><<<1, 1, SPONGE_WIDTH*sizeof(gl64_t), stream>>>(output, input);
     CHECKCUDAERR(cudaGetLastError());
+}
+
+template<uint32_t SPONGE_WIDTH_T>
+void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::compress(uint64_t * output, const uint64_t * input, cudaStream_t stream){
+    compressKernel<RATE,CAPACITY,SPONGE_WIDTH,N_FULL_ROUNDS_TOTAL,N_PARTIAL_ROUNDS ><<<1, 1, SPONGE_WIDTH*sizeof(gl64_t), stream>>>(output, input);
+    CHECKCUDAERR(cudaGetLastError());
+}
+
+template<uint32_t SPONGE_WIDTH_T>
+void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletreeReduce(uint64_t * d_root, uint64_t * d_input, uint64_t num_elements, uint64_t arity, cudaStream_t stream){
+    // Compute total tree buffer size (same logic as CPU merkletreeReduce).
+    uint64_t numNodes = num_elements;
+    uint64_t nodesLevel = num_elements;
+    while (nodesLevel > 1) {
+        uint64_t extraZeros = (arity - (nodesLevel % arity)) % arity;
+        numNodes += extraZeros;
+        numNodes += (nodesLevel + (arity - 1)) / arity;
+        nodesLevel = (nodesLevel + (arity - 1)) / arity;
+    }
+
+    // Allocate tree buffer on device and copy input digests.
+    uint64_t *d_tree;
+    CHECKCUDAERR(cudaMalloc((void **)&d_tree, numNodes * CAPACITY * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMemcpyAsync(d_tree, d_input, num_elements * CAPACITY * sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
+
+    // Tree reduction: hash groups of `arity` digests using merkleNodeKernel.
+    uint64_t pending = num_elements;
+    uint64_t nextN = (pending + (arity - 1)) / arity;
+    uint64_t nextIndex = 0;
+
+    while (pending > 1) {
+        uint64_t extraZeros = (arity - (pending % arity)) % arity;
+        if (extraZeros > 0)
+            CHECKCUDAERR(cudaMemsetAsync(d_tree + nextIndex + pending * CAPACITY, 0, extraZeros * CAPACITY * sizeof(uint64_t), stream));
+
+        u32 actual_tpb = (nextN < TPB) ? nextN : TPB;
+        u32 actual_blks = (nextN < TPB) ? 1 : (nextN / TPB + 1);
+
+        merkleNodeKernel<RATE, CAPACITY, SPONGE_WIDTH, N_FULL_ROUNDS_TOTAL, N_PARTIAL_ROUNDS>
+            <<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);
+
+        nextIndex += (pending + extraZeros) * CAPACITY;
+        pending = (pending + (arity - 1)) / arity;
+        nextN = (pending + (arity - 1)) / arity;
+    }
+    CHECKCUDAERR(cudaGetLastError());
+
+    // Copy root (last CAPACITY elements) to output.
+    CHECKCUDAERR(cudaMemcpyAsync(d_root, d_tree + nextIndex, CAPACITY * sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream));
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+    CHECKCUDAERR(cudaFree(d_tree));
 }
 
 template<uint32_t SPONGE_WIDTH_T>
@@ -318,18 +368,25 @@ template void Poseidon2GoldilocksGPUGrinding::initConstants(uint32_t* gpu_ids, u
 template void Poseidon2GoldilocksGPUGrinding::grinding(uint64_t * d_nonce, uint64_t *d_nonceBlock, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream);
 
 template void Poseidon2GoldilocksGPU<8>::initConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
-template void Poseidon2GoldilocksGPU<8>::hash(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<8>::permute(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<8>::compress(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<8>::merkletreeReduce(uint64_t*, uint64_t*, uint64_t, uint64_t, cudaStream_t);
 template void Poseidon2GoldilocksGPU<12>::initConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
-template void Poseidon2GoldilocksGPU<12>::hash(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<12>::permute(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<12>::compress(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<12>::merkletreeReduce(uint64_t*, uint64_t*, uint64_t, uint64_t, cudaStream_t);
 template void Poseidon2GoldilocksGPU<16>::initConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
-template void Poseidon2GoldilocksGPU<16>::hash(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<16>::permute(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<16>::compress(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<16>::merkletreeReduce(uint64_t*, uint64_t*, uint64_t, uint64_t, cudaStream_t);
 
 template void Poseidon2GoldilocksGPU<8>::merkletree(uint32_t, uint64_t*, uint64_t*, uint64_t, uint64_t, Layout, cudaStream_t);
 template void Poseidon2GoldilocksGPU<12>::merkletree(uint32_t, uint64_t*, uint64_t*, uint64_t, uint64_t, Layout, cudaStream_t);
 template void Poseidon2GoldilocksGPU<16>::merkletree(uint32_t, uint64_t*, uint64_t*, uint64_t, uint64_t, Layout, cudaStream_t);
 
 #if __GOLDILOCKS_ENV__
-template void Poseidon2GoldilocksGPU<4>::hash(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<4>::permute(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<4>::compress(uint64_t * output, const uint64_t * input, cudaStream_t stream);
 template void Poseidon2GoldilocksGPU<16>::grinding(uint64_t * d_nonce, uint64_t *d_nonceBlock, const uint64_t * d_in, uint32_t n_bits, cudaStream_t stream);
 template void Poseidon2GoldilocksGPU<16>::linearHash(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, Layout layout, cudaStream_t stream);
 template void Poseidon2GoldilocksGPU<12>::linearHash(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, Layout layout, cudaStream_t stream);

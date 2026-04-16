@@ -8,8 +8,8 @@
 
 #include "../src/goldilocks_base_field.hpp"
 #include "../src/poseidon2_goldilocks.hpp"
+#include "../src/goldilocks_tooling.hpp"
 #include "../src/ntt_goldilocks.hpp"
-#include "../src/merklehash_goldilocks.hpp"
 
 #ifdef __AVX2__
 #include <immintrin.h>
@@ -19,29 +19,29 @@
 namespace GoldilocksTestData {
 
 // hash() golden: first CAPACITY elements of full permutation output
-constexpr uint64_t HASH_W4_GOLDEN[4]  = { 0x758085b0af0a16aa, 0x85141acc29c479de,
+constexpr uint64_t COMPRESS_W4_GOLDEN[4]  = { 0x758085b0af0a16aa, 0x85141acc29c479de,
                                            0x50127371e2b77ae5, 0xefee3a8033630029 };
-constexpr uint64_t HASH_W8_GOLDEN[4]  = { 0xc5fb1cfe0b4697bb, 0x4a4a32ff849af473,
+constexpr uint64_t COMPRESS_W8_GOLDEN[4]  = { 0xc5fb1cfe0b4697bb, 0x4a4a32ff849af473,
                                            0xd2fd266077f8efba, 0xf4ad9b74e833916d };
-constexpr uint64_t HASH_W12_GOLDEN[4] = { 0x01eaef96bdf1c0c1, 0x1f0d2cc525b2540c,
+constexpr uint64_t COMPRESS_W12_GOLDEN[4] = { 0x01eaef96bdf1c0c1, 0x1f0d2cc525b2540c,
                                            0x6282c1dfe1e0358d, 0xe780d721f698e1e6 };
-constexpr uint64_t HASH_W16_GOLDEN[4] = { 0x85c54702470d9756, 0xaa53c7a7d52d9898,
+constexpr uint64_t COMPRESS_W16_GOLDEN[4] = { 0x85c54702470d9756, 0xaa53c7a7d52d9898,
                                            0x285128096efb0dd7, 0xf3fde5edd3050ac8 };
 
-// hashFullResult() golden: full SPONGE_WIDTH output (input=[0,1,...,W-1])
-constexpr uint64_t HASH_FULL_W4_GOLDEN[4]  = { 0x758085b0af0a16aa, 0x85141acc29c479de,
+// permute() golden: full SPONGE_WIDTH output (input=[0,1,...,W-1])
+constexpr uint64_t PERMUTE_W4_GOLDEN[4]  = { 0x758085b0af0a16aa, 0x85141acc29c479de,
                                                 0x50127371e2b77ae5, 0xefee3a8033630029 };
-constexpr uint64_t HASH_FULL_W8_GOLDEN[8]  = { 0xc5fb1cfe0b4697bb, 0x4a4a32ff849af473,
+constexpr uint64_t PERMUTE_W8_GOLDEN[8]  = { 0xc5fb1cfe0b4697bb, 0x4a4a32ff849af473,
                                                 0xd2fd266077f8efba, 0xf4ad9b74e833916d,
                                                 0xe6648eb0acc11463, 0x8d5529a930d75194,
                                                 0xe8c993aa10da6c90, 0xa73104a95b68031c };
-constexpr uint64_t HASH_FULL_W12_GOLDEN[12] = { 0x01eaef96bdf1c0c1, 0x1f0d2cc525b2540c,
+constexpr uint64_t PERMUTE_W12_GOLDEN[12] = { 0x01eaef96bdf1c0c1, 0x1f0d2cc525b2540c,
                                                  0x6282c1dfe1e0358d, 0xe780d721f698e1e6,
                                                  0x280c0b6f753d833b, 0x1b942dd5023156ab,
                                                  0x43f0df3fcccb8398, 0xe8e8190585489025,
                                                  0x56bdbf72f77ada22, 0x7911c32bf9dcd705,
                                                  0xec467926508fbe67, 0x6a50450ddf85a6ed };
-constexpr uint64_t HASH_FULL_W16_GOLDEN[16] = { 0x85c54702470d9756, 0xaa53c7a7d52d9898,
+constexpr uint64_t PERMUTE_W16_GOLDEN[16] = { 0x85c54702470d9756, 0xaa53c7a7d52d9898,
                                                  0x285128096efb0dd7, 0xf3fde5edd3050ac8,
                                                  0xc7b65efd040df908, 0x4be3f6c467f57ae9,
                                                  0x274e9a67b41754fb, 0x0f7d39cd5de94dac,

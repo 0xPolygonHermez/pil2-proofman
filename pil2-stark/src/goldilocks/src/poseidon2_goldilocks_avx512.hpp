@@ -7,10 +7,10 @@
 
 
 template<uint32_t SPONGE_WIDTH_T>
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_batch_avx512(Goldilocks::Element (&state)[8 * CAPACITY], Goldilocks::Element const (&input)[8 * SPONGE_WIDTH])
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::compress_batch_avx512(Goldilocks::Element (&state)[8 * CAPACITY], Goldilocks::Element const (&input)[8 * SPONGE_WIDTH])
 {
     Goldilocks::Element aux[8 * SPONGE_WIDTH];
-    hash_full_result_batch_avx512(aux, input);
+    permute_batch_avx512(aux, input);
     for(uint64_t i = 0; i < 8; ++i) {
         std::memcpy(&state[4*i], &aux[i * SPONGE_WIDTH], CAPACITY * sizeof(Goldilocks::Element));
     }

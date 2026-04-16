@@ -19,13 +19,13 @@ void TranscriptGL::_updateState()
     std::memcpy(&inputs[transcriptPendingSize], state, transcriptStateSize * sizeof(Goldilocks::Element));
     switch(arity) {
         case 2:
-            Poseidon2Goldilocks<8>::hashFullResult(out, inputs, Poseidon2Mode::Scalar);
+            Poseidon2Goldilocks<8>::permute(out, inputs, Poseidon2Mode::Scalar);
             break;
         case 3:
-            Poseidon2Goldilocks<12>::hashFullResult(out, inputs, Poseidon2Mode::Scalar);
+            Poseidon2Goldilocks<12>::permute(out, inputs, Poseidon2Mode::Scalar);
             break;
         case 4:
-            Poseidon2Goldilocks<16>::hashFullResult(out, inputs, Poseidon2Mode::Scalar);
+            Poseidon2Goldilocks<16>::permute(out, inputs, Poseidon2Mode::Scalar);
             break;
         default:
             zklog.error("TranscriptGL::_updateState: Unsupported arity");

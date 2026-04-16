@@ -3,7 +3,7 @@
 
 #include "starks.hpp"
 #include "cuda_utils.cuh"
-#include "gl64_tooling.cuh"
+#include "goldilocks_tooling.cuh"
 #include "starks_gpu.cuh"
 
 
@@ -16,7 +16,7 @@ void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint6
         gl64_t *src = d_aux_trace;
         gl64_t *dst = d_aux_trace;
 
-        uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(NExtended, arity);
+        uint64_t tree_size = MerkleTreeGL::getTreeNumElements(NExtended, arity);
 
         uint64_t offset_src = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
         uint64_t offset_dst = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];

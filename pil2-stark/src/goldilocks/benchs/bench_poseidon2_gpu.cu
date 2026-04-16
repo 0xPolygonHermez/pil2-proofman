@@ -14,9 +14,9 @@
 
 #include "../src/goldilocks_base_field.hpp"
 #include "../src/poseidon2_goldilocks.hpp"
+#include "../src/goldilocks_tooling.hpp"
 #include "../src/poseidon2_goldilocks.cuh"
-#include "../src/gl64_tooling.cuh"
-#include "../src/merklehash_goldilocks.hpp"
+#include "../src/goldilocks_tooling.cuh"
 #include "../utils/cuda_utils.hpp"
 
 // ---------------------------------------------------------------------------
@@ -112,7 +112,7 @@ static void MERKLETREE_W_AR_TILES_GPU_BENCH(benchmark::State &state)
     CHECKCUDAERR(cudaStreamCreate(&stream));
 
     uint64_t nCols = state.range(0);
-    uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(BENCH_NROWS, ARITY);
+    uint64_t tree_size = getTreeNumElements(BENCH_NROWS, ARITY);
 
     gl64_t *d_trace;
     Goldilocks::Element *d_tree;
@@ -148,7 +148,7 @@ static void MERKLETREE_W_AR_ROWMAJOR_GPU_BENCH(benchmark::State &state)
     CHECKCUDAERR(cudaStreamCreate(&stream));
 
     uint64_t nCols = state.range(0);
-    uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(BENCH_NROWS, ARITY);
+    uint64_t tree_size = getTreeNumElements(BENCH_NROWS, ARITY);
 
     gl64_t *d_trace;
     Goldilocks::Element *d_tree;

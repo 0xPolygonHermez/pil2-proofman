@@ -2,11 +2,11 @@
 #define POSEIDON2_GOLDILOCKS_CUH
 
 #include "gl64_t.cuh"
-#include "gl64_tooling.cuh"
+#include "goldilocks_tooling.cuh"
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 #include "poseidon2_goldilocks.hpp"
-#include "data_layout.cuh"
+#include "goldilocks_trace_layout.cuh"
 
 extern __shared__ gl64_t scratchpad[];
 
@@ -33,11 +33,14 @@ public:
 
     void static initConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
 
-    void static hash(uint64_t * output, const uint64_t * input, cudaStream_t stream = 0);
+    void static permute(uint64_t * output, const uint64_t * input, cudaStream_t stream = 0);
+    void static compress(uint64_t * output, const uint64_t * input, cudaStream_t stream = 0);
 
     void static linearHash(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, Layout layout, cudaStream_t stream);
 
     void static merkletree(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, Layout layout, cudaStream_t stream);
+
+    void static merkletreeReduce(uint64_t * d_root, uint64_t * d_input, uint64_t num_elements, uint64_t arity, cudaStream_t stream);
 
     void static grinding(uint64_t * d_nonce, uint64_t *d_nonceBlock, const uint64_t * d_in, const uint32_t n_bits, cudaStream_t stream);
 
@@ -439,16 +442,32 @@ __device__ __forceinline__ void spongeAbsorbTiled(const uint64_t *__restrict__ i
 
 // --- Kernel definitions ---
 
+// permuteKernel / compressKernel: single-element permutation on contiguous state.
+// MUST be launched with <<<1, 1>>> — the shared-memory indexing
+// (i * blockDim.x + threadIdx.x) only produces correct contiguous access
+// when blockDim.x == 1. With multiple threads the kernel would read/write
+// in interleaved (SoA) strides, corrupting a contiguous input buffer.
+// For bulk work, use linearHash / merkletree which handle layout conversion
+// internally before calling poseidon2PermuteSmem.
+
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__global__ void hashKernel(uint64_t * output, const uint64_t * input){
-    for (uint32_t i = 0; i < SPONGE_WIDTH_T; i++){
-        scratchpad[i * blockDim.x + threadIdx.x] = input[i * blockDim.x + threadIdx.x];
-    }
-    __syncwarp();
+__global__ void permuteKernel(uint64_t * output, const uint64_t * input){
+    assert(blockDim.x == 1 && gridDim.x == 1);
+    for (uint32_t i = 0; i < SPONGE_WIDTH_T; i++)
+        scratchpad[i] = input[i];
     poseidon2PermuteSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
-    for (uint32_t i = 0; i < SPONGE_WIDTH_T; i++){
-        output[i * blockDim.x + threadIdx.x] = scratchpad[i * blockDim.x + threadIdx.x];
-    }
+    for (uint32_t i = 0; i < SPONGE_WIDTH_T; i++)
+        output[i] = scratchpad[i];
+}
+
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
+__global__ void compressKernel(uint64_t * output, const uint64_t * input){
+    assert(blockDim.x == 1 && gridDim.x == 1);
+    for (uint32_t i = 0; i < SPONGE_WIDTH_T; i++)
+        scratchpad[i] = input[i];
+    poseidon2PermuteSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
+    for (uint32_t i = 0; i < CAPACITY_T; i++)
+        output[i] = scratchpad[i];
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
