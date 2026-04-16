@@ -9,6 +9,7 @@ use serde_json::Value;
 use proofman_starks_lib_c::{generate_fflonk_zkey_c, generate_plonk_zkey_c};
 
 use crate::io::recurser::{gen_circom, pil2circom, GenCircomInput, GenCircomOptions, Pil2CircomOptions};
+use stark_recurser::stark2circom::templates::{gen_solidity, gen_iverifier};
 use crate::proving_key::{bctree, recursive::compile_pil};
 use crate::io::fixed_cols;
 use crate::output::witness_gen::WitnessTracker;
@@ -461,16 +462,22 @@ pub fn gen_snark_setup(
         config.final_snark,
     )?;
 
-    // Generate project-specific Solidity verifier via genSolidity.
+    // Generate project-specific Solidity verifier (pure Rust — no Node.js required).
     tracing::info!("Generating {} Solidity verifier...", config.name);
-    let publics_hash_for_solidity = config.publics_info.clone();
-    run_gen_solidity(
-        config.name,
-        const_root,
-        publics_hash_for_solidity.as_ref(),
-        config.final_snark == "fflonk",
-        final_dir.to_str().unwrap(),
-    )?;
+    {
+        let publics_ref = config.publics_info.as_ref();
+        let camel = {
+            let mut c = config.name.chars();
+            match c.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().to_string() + c.as_str(),
+            }
+        };
+        let sol = gen_solidity(config.name, const_root, publics_ref, config.final_snark == "fflonk");
+        let isol = gen_iverifier(config.name, publics_ref);
+        fs::write(final_dir.join(format!("{camel}Verifier.sol")), sol)?;
+        fs::write(final_dir.join(format!("I{camel}Verifier.sol")), isol)?;
+    }
 
     // Write publics_info.json if provided.
     if let Some(ref pi) = config.publics_info {
@@ -481,8 +488,40 @@ pub fn gen_snark_setup(
     Ok(())
 }
 
+/// Find the snarkjs package root, checking (in order):
+///   1. `SNARKJS_PATH` environment variable
+///   2. `node_modules/snarkjs` relative to cwd
+///   3. Walk up from the executable's location to find `node_modules/snarkjs`
+///
+/// Install via: `npm install`  (reads package.json in the repo root)
+fn resolve_snarkjs_root() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("SNARKJS_PATH") {
+        let pb = PathBuf::from(&p);
+        if pb.is_dir() {
+            return Some(pb);
+        }
+    }
+    let local = PathBuf::from("node_modules/snarkjs");
+    if local.is_dir() {
+        return local.canonicalize().ok();
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent();
+        while let Some(d) = dir {
+            let candidate = d.join("node_modules/snarkjs");
+            if candidate.is_dir() {
+                return candidate.canonicalize().ok();
+            }
+            dir = d.parent();
+        }
+    }
+    None
+}
+
 /// Export snarkjs verification key by spawning a small Node.js inline script.
 fn run_snarkjs_export_vk(zkey_path: &str, output_path: &str) -> Result<()> {
+    let snarkjs_root = resolve_snarkjs_root().context("Cannot find snarkjs. Run: npm install")?;
+    let cwd = snarkjs_root.parent().unwrap_or(&snarkjs_root).to_path_buf();
     let script = format!(
         r#"
 const snarkjs = require('snarkjs');
@@ -495,11 +534,13 @@ const fs = require('fs');
         zkey = zkey_path,
         out = output_path,
     );
-    run_node_inline(&script, "snarkjs exportVerificationKey")
+    run_node_inline(&script, "snarkjs exportVerificationKey", &cwd)
 }
 
 /// Export snarkjs Solidity verifier by spawning a small Node.js inline script.
 fn run_snarkjs_export_solidity(zkey_path: &str, output_path: &str, snark_type: &str) -> Result<()> {
+    let snarkjs_root = resolve_snarkjs_root().context("Cannot find snarkjs. Run: npm install")?;
+    let cwd = snarkjs_root.parent().unwrap_or(&snarkjs_root).to_path_buf();
     let template_key = snark_type;
     let script = format!(
         r#"
@@ -523,80 +564,18 @@ const path = require('path');
         zkey = zkey_path,
         out = output_path,
     );
-    run_node_inline(&script, "snarkjs exportSolidityVerifier")
-}
-
-/// Call `genSolidity` from stark-recurser to produce the project-specific Solidity verifier.
-fn run_gen_solidity(
-    name: &str,
-    const_root: &[u64; 4],
-    publics_hash: Option<&Value>,
-    is_fflonk: bool,
-    output_dir: &str,
-) -> Result<()> {
-    let publics_hash_json = match publics_hash {
-        Some(v) => serde_json::to_string(v)?,
-        None => "undefined".to_string(),
-    };
-    let const_root_json = serde_json::to_string(const_root)?;
-    let script = format!(
-        r#"
-const {{ genSolidity }} = require('stark-recurser/src/gensolidity.js');
-const fs = require('fs');
-const path = require('path');
-(async () => {{
-    const name = {name:?};
-    const constRoot = {const_root_json};
-    const publicsHash = {publics_hash_json};
-    const isFflonk = {is_fflonk};
-    const {{ solidityVerifier, solidityVerifierInterface }} = await genSolidity(name, constRoot, publicsHash, isFflonk);
-    const outDir = {output_dir:?};
-    const camelName = name.charAt(0).toUpperCase() + name.slice(1);
-    fs.writeFileSync(path.join(outDir, camelName + 'Verifier.sol'), solidityVerifier);
-    fs.writeFileSync(path.join(outDir, 'I' + camelName + 'Verifier.sol'), solidityVerifierInterface);
-}})().then(() => process.exit(0)).catch(e => {{ console.error(e); process.exit(1); }});
-"#,
-        name = name,
-        const_root_json = const_root_json,
-        publics_hash_json = publics_hash_json,
-        is_fflonk = is_fflonk,
-        output_dir = output_dir,
-    );
-    run_node_inline(&script, "genSolidity")
+    run_node_inline(&script, "snarkjs exportSolidityVerifier", &cwd)
 }
 
 /// Run a Node.js inline script (`node -e "..."`), inheriting stdio.
-fn run_node_inline(script: &str, context: &str) -> Result<()> {
-    // Resolve the node_modules directory containing snarkjs and stark-recurser.
-    // Precedence: NODE_MODULES_DIR env var → sibling pil2-proofman-js/node_modules.
-    let node_modules_dir = std::env::var("NODE_MODULES_DIR").unwrap_or_else(|_| {
-        // Derive from the location of this binary: walk up until we find a
-        // directory that contains pil2-proofman-js, then use its node_modules.
-        // Fallback: assume current-working-directory/../pil2-proofman-js/node_modules.
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| {
-                // binary is typically <workspace>/target/release/proofman-setup
-                p.ancestors()
-                    .find(|a| a.join("pil2-proofman-js").join("node_modules").exists())
-                    .map(|a| a.join("pil2-proofman-js").join("node_modules").to_string_lossy().into_owned())
-            })
-            .or_else(|| {
-                std::env::current_dir()
-                    .ok()
-                    .and_then(|cwd| {
-                        cwd.ancestors()
-                            .find(|a| a.join("pil2-proofman-js").join("node_modules").exists())
-                            .map(|a| a.join("pil2-proofman-js").join("node_modules").to_string_lossy().into_owned())
-                    })
-            })
-            .unwrap_or_else(|| "node_modules".to_string())
-    });
-
+/// `cwd` is the working directory for the node process — must be a directory
+/// that contains a `node_modules/snarkjs` (or its parent) so that
+/// `require('snarkjs')` resolves correctly.
+fn run_node_inline(script: &str, context: &str, cwd: &std::path::Path) -> Result<()> {
     let out = std::process::Command::new("node")
         .arg("-e")
         .arg(script)
-        .env("NODE_PATH", &node_modules_dir)
+        .current_dir(cwd)
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .output()

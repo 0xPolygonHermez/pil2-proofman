@@ -10,6 +10,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde_json::Value;
 
+use stark_recurser::stark2circom::{gen_circom_circuit, CircomGenOptions, GenCircomCircuitInput};
 use crate::proving_key::recursive::{run_gencircom_js, run_pil2circom_js};
 
 // ── pil2circom ───────────────────────────────────────────────────────────────
@@ -124,11 +125,38 @@ pub struct GenCircomInput<'a> {
     pub options: &'a GenCircomOptions,
 }
 
-/// Generate a circom circuit by calling `node src/main_gencircom.js`.
+/// Generate a circom circuit, preferring the in-process Rust generator and
+/// falling back to `node src/main_gencircom.js` for unsupported templates.
 ///
 /// Writes all inputs to temporary JSON files, invokes the script, and returns
 /// the output circom source as a `String`.
 pub fn gen_circom(input: &GenCircomInput<'_>) -> Result<String> {
+    // Try the Rust code generator first for supported templates.
+    let rust_opts = CircomGenOptions {
+        airgroup_id: input.options.airgroup_id.map(|x| x as usize),
+        has_compressor: input.options.has_compressor,
+        has_recursion: input.options.has_recursion,
+        is_final: input.options.is_final,
+    };
+    let rust_input = GenCircomCircuitInput {
+        template_name: input.template_name,
+        stark_infos: input.stark_infos,
+        vadcop_info: input.vadcop_info,
+        verifier_filenames: input.verifier_filenames,
+        basic_vk: input.basic_verification_keys,
+        agg_vk: input.agg_verification_keys,
+        publics: input.publics,
+        options: &rust_opts,
+    };
+    match gen_circom_circuit(&rust_input) {
+        Ok(circom) => return Ok(circom),
+        Err(e) if e.to_string().contains("not yet implemented in Rust") => {
+            tracing::debug!("gen_circom Rust path not available for '{}', falling back to JS", input.template_name);
+        }
+        Err(e) => return Err(e),
+    }
+
+    // JS fallback path (writes temp files + spawns node subprocess).
     let tmp_dir = tempfile::tempdir().context("Failed to create temp dir for gen_circom")?;
     let tmp = tmp_dir.path();
 

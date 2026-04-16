@@ -69,7 +69,7 @@ After compiling the PIL files, generate the setup:
 ```bash
 cargo run --bin proofman-setup -- setup \
      -a ./examples/fibonacci-square/pil/build.pilout \
-     -b ./examples/fibonacci-square/build -r -u ./examples/fibonacci-square/build/fixed
+     -b ./examples/fibonacci-square/build2 -r -u ./examples/fibonacci-square/build/fixed
 ```
 
 Additionally, to run the snark setup:
