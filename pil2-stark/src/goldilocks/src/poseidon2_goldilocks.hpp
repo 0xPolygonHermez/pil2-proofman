@@ -305,7 +305,7 @@ inline void Poseidon2Goldilocks<W>::compress(
 #endif
         default: break;
     }
-    abortMode("hash", mode);
+    abortMode("compress", mode);
 }
 
 template<uint32_t W>
