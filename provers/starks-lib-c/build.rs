@@ -59,9 +59,21 @@ fn main() {
     }
     println!("cargo:rerun-if-changed={}", lib_file.display());
 
-    // Clean build only when CUDA architecture flags change
+    // Detect if Makefile changed since last build. Compiler flag edits (e.g.
+    // toggling -D__AVX512__) aren't tracked by make's .d files, so a flag flip
+    // would otherwise leave stale objects linked against the new library.
+    let makefile_path = pil2_stark_path.join("Makefile");
+    let makefile_stamp_path = library_folder.join(".makefile_stamp");
+    let current_makefile = fs::read(&makefile_path).ok();
+    let stored_makefile = fs::read(&makefile_stamp_path).ok();
+    let makefile_changed = current_makefile.is_some() && current_makefile != stored_makefile;
+
+    // Clean build when CUDA architecture flags change or the Makefile itself changes
     if archs_changed {
         eprintln!("CUDA_ARCHS changed — running clean rebuild...");
+        run_command("make", &["clean"], &pil2_stark_path);
+    } else if makefile_changed {
+        eprintln!("Makefile changed — running clean rebuild...");
         run_command("make", &["clean"], &pil2_stark_path);
     }
 
@@ -80,12 +92,21 @@ fn main() {
         run_command("make", &["-j", target], &pil2_stark_path);
     }
 
-    // Write arch stamp after make succeeds (make creates the output directory)
-    if archs_changed {
+    // Write stamps after make succeeds (make creates the output directory).
+    // Always write so stamps stay current even when content hasn't changed.
+    if cfg!(feature = "gpu") {
         if let Err(e) = fs::write(&archs_stamp_path, stamp_content) {
             eprintln!(
                 "Warning: failed to write CUDA arch stamp {:?}: {e} — next build will recompile",
                 archs_stamp_path
+            );
+        }
+    }
+    if let Some(content) = &current_makefile {
+        if let Err(e) = fs::write(&makefile_stamp_path, content) {
+            eprintln!(
+                "Warning: failed to write Makefile stamp {:?}: {e} — next build will recompile",
+                makefile_stamp_path
             );
         }
     }
@@ -312,3 +333,4 @@ fn is_submodule_initialized(path: &Path) -> bool {
     }
     false
 }
+

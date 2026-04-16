@@ -77,7 +77,7 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::pow7add_avx512(__m512i *x, cons
     __m512i x2[SPONGE_WIDTH], x3[SPONGE_WIDTH], x4[SPONGE_WIDTH];
 
     __m512i c[SPONGE_WIDTH];
-    for (int i = 0; i < SPONGE_WIDTH; ++i)
+    for (uint32_t i = 0; i < SPONGE_WIDTH; ++i)
     {
         c[i] = _mm512_set1_epi64(C_[i].fe);
         Goldilocks::add_avx512(x[i], x[i], c[i]);

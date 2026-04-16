@@ -410,10 +410,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::linear_hash_batch_avx(Goldilocks::Elem
         else
         {
             for(uint64_t i = 0; i < 4; ++i) {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wrestrict"
-                memcpy(&state[i*SPONGE_WIDTH + RATE], &state[i*SPONGE_WIDTH], CAPACITY * sizeof(Goldilocks::Element));
-#pragma GCC diagnostic pop
+                memmove(&state[i*SPONGE_WIDTH + RATE], &state[i*SPONGE_WIDTH], CAPACITY * sizeof(Goldilocks::Element));
             }
         }
 
@@ -619,7 +616,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::linear_hash_batch_avx512(Goldilocks::E
         else
         {
             for(uint64_t i = 0; i < 8; ++i) {
-                memcpy(&state[i*SPONGE_WIDTH + RATE], &state[i*SPONGE_WIDTH], CAPACITY * sizeof(Goldilocks::Element));
+                memmove(&state[i*SPONGE_WIDTH + RATE], &state[i*SPONGE_WIDTH], CAPACITY * sizeof(Goldilocks::Element));
             }
         }
 
@@ -681,7 +678,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx512(Goldilocks::El
             if (nextN - i < 8) {
                 Goldilocks::Element pol_input[SPONGE_WIDTH];
                 memset(pol_input, 0, SPONGE_WIDTH * sizeof(Goldilocks::Element));
-                for( uint32_t j = 0; j < int(nextN - i); j++) {
+                for( uint32_t j = 0; j < uint32_t(nextN - i); j++) {
                     std::memcpy(pol_input, &cursor[nextIndex + (i+j) * SPONGE_WIDTH], SPONGE_WIDTH * sizeof(Goldilocks::Element));
                     hash_avx((Goldilocks::Element(&)[CAPACITY])cursor[nextIndex + (pending + extraZeros + (i + j)) * CAPACITY], pol_input);
                 }
