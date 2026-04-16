@@ -18,9 +18,11 @@ pub struct SetupRecursiveTestOptions {
 /// Ports `main_setup_recursive.js` behaviour for the test-recursive CI job.
 pub fn run_setup_recursive_test(opts: &SetupRecursiveTestOptions) -> Result<()> {
     let circuits_gl_path =
-        resolve_path_env("CIRCUITS_GL_PATH", "node_modules/stark-recurser/src/pil2circom/circuits.gl");
-    let recurser_circuits_path =
-        resolve_path_env("RECURSER_CIRCUITS_PATH", "node_modules/stark-recurser/src/vadcop/helpers/circuits");
+        crate::proving_key::recursive::resolve_stark_recurser_subpath("CIRCUITS_GL_PATH", "src/pil2circom/circuits.gl");
+    let recurser_circuits_path = crate::proving_key::recursive::resolve_stark_recurser_subpath(
+        "RECURSER_CIRCUITS_PATH",
+        "src/vadcop/helpers/circuits",
+    );
     let recurser_pil_path = resolve_path_env("RECURSER_PIL_PATH", "setup/stark-recurser/plonk2pil/pil");
     let circom_helpers_dir = resolve_path_env("CIRCOM_HELPERS_DIR", "setup/circom");
     let goldilocks_src_dir = resolve_path_env("GOLDILOCKS_SRC_DIR", "pil2-stark/src/goldilocks/src");

@@ -38,21 +38,20 @@ pub(crate) fn run_recursive_setup(
     let build_dir = &opts.build_dir;
 
     let circuits_gl_path =
-        resolve_path_env("CIRCUITS_GL_PATH", "node_modules/stark-recurser/src/pil2circom/circuits.gl");
-    let recurser_circuits_path =
-        resolve_path_env("RECURSER_CIRCUITS_PATH", "node_modules/stark-recurser/src/vadcop/helpers/circuits");
+        crate::proving_key::recursive::resolve_stark_recurser_subpath("CIRCUITS_GL_PATH", "src/pil2circom/circuits.gl");
+    let recurser_circuits_path = crate::proving_key::recursive::resolve_stark_recurser_subpath(
+        "RECURSER_CIRCUITS_PATH",
+        "src/vadcop/helpers/circuits",
+    );
     // Compressed final uses a different circuit library subdirectory than regular recursive.
     // JS generateCompressedFinalSetup.js: stark-recurser/src/recursion/helpers/circuits
     // JS generateRecursiveSetup.js:        stark-recurser/src/vadcop/helpers/circuits
-    let recurser_circuits_compressed_final_path = resolve_path_env(
+    let recurser_circuits_compressed_final_path = crate::proving_key::recursive::resolve_stark_recurser_subpath(
         "RECURSER_CIRCUITS_COMPRESSED_FINAL_PATH",
-        "node_modules/stark-recurser/src/recursion/helpers/circuits",
+        "src/recursion/helpers/circuits",
     );
-    let std_pil_path = opts
-        .std_pil_path
-        .clone()
-        .or_else(|| std::env::var("STD_PIL_PATH").ok())
-        .unwrap_or_else(|| "pil2-components/lib/std/pil".to_string());
+    let std_pil_path =
+        opts.std_pil_path.clone().unwrap_or_else(|| resolve_path_env("STD_PIL_PATH", "pil2-components/lib/std/pil"));
     let recurser_pil_path = resolve_path_env("RECURSER_PIL_PATH", "setup/stark-recurser/plonk2pil/pil");
     let circom_helpers_dir = resolve_path_env("CIRCOM_HELPERS_DIR", "setup/circom");
     let goldilocks_src_dir = resolve_path_env("GOLDILOCKS_SRC_DIR", "pil2-stark/src/goldilocks/src");
@@ -576,9 +575,37 @@ pub(crate) fn resolve_circom_exec(circom_helpers_dir: &str) -> String {
     bin_name.to_string()
 }
 
-/// Resolve a path from an environment variable or use the fallback value.
+/// Resolve a path from an environment variable; if not set, search for `fallback` by
+/// checking (in order):
+///   1. `fallback` relative to the current working directory
+///   2. `fallback` relative to each ancestor directory of the running executable
+///      (handles running `target/release/proofman-setup` from a different repo)
+///   3. `fallback` as a literal string (last resort / relative-path pass-through)
 pub(crate) fn resolve_path_env(env_var: &str, fallback: &str) -> String {
-    std::env::var(env_var).unwrap_or_else(|_| fallback.to_string())
+    if let Ok(v) = std::env::var(env_var) {
+        return v;
+    }
+    // CWD-relative
+    let cwd_rel = std::path::Path::new(fallback);
+    if cwd_rel.exists() {
+        if let Ok(abs) = cwd_rel.canonicalize() {
+            return abs.to_string_lossy().into_owned();
+        }
+    }
+    // Walk up from the executable
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent();
+        while let Some(d) = dir {
+            let candidate = d.join(fallback);
+            if candidate.exists() {
+                if let Ok(abs) = candidate.canonicalize() {
+                    return abs.to_string_lossy().into_owned();
+                }
+            }
+            dir = d.parent();
+        }
+    }
+    fallback.to_string()
 }
 
 #[cfg(test)]
