@@ -42,7 +42,9 @@ class FflonkSetup {
     map<string, Polynomial<AltBn128::Engine> *> polynomials;
     FrElement k1, k2;
     FrElement w3, w4, w8, wr;
-    G1PointAffine *PTau;
+    G1PointAffine *PTau = nullptr;
+    FrElement *bufferC0 = nullptr;
+    CPolynomial<AltBn128::Engine> *C0Poly = nullptr;
 
     vector<ConstraintCoefficients> plonkConstraints;
     vector<AdditionCoefficients> plonkAdditions;
