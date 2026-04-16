@@ -33,10 +33,10 @@ test_pipeline() {
             --option fixed-to-file --outputdir "$FIXED" \
             --output "$PILOUT_FILE"
 
-        node --max-old-space-size=65536 --stack-size=1500 ../pil2-proofman-js/src/main_setup.js \
-            --airout "$PILOUT_FILE" \
-            --fixed "$FIXED" \
-            --builddir "$BUILD"
+        cargo run --bin proofman-setup -- setup \
+            -a "$PILOUT_FILE" \
+            -u "$FIXED" \
+            -b "$BUILD"
 
         if [ "$SETUP_ONLY" != "true" ]; then
             cargo run --bin proofman-cli pil-helpers \
