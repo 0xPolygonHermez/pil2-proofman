@@ -53,8 +53,8 @@ static void PERMUTE_W_SCALAR_CPU_BENCH(benchmark::State &state)
 #pragma omp parallel for num_threads(nT) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
             Poseidon2Goldilocks<W>::permute(
-                &r[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
-                &x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
+                (Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])r[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
+                (const Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
                 Poseidon2Mode::Scalar);
     }
     delete[] x; delete[] r;
@@ -74,8 +74,8 @@ static void PERMUTE_W_AVX_CPU_BENCH(benchmark::State &state)
 #pragma omp parallel for num_threads(nT) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
             Poseidon2Goldilocks<W>::permute(
-                &r[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
-                &x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
+                (Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])r[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
+                (const Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
                 Poseidon2Mode::Avx);
     }
     delete[] x; delete[] r;

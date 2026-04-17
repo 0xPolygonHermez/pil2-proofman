@@ -47,8 +47,9 @@ public:
 
     // Mode-dispatched public API.
 
-    static void permute(Goldilocks::Element *output, const Goldilocks::Element *input,
-                               Poseidon2Mode mode);
+    static void permute(Goldilocks::Element (&output)[SPONGE_WIDTH],
+                        const Goldilocks::Element (&input)[SPONGE_WIDTH],
+                        Poseidon2Mode mode);
     
     static void compress(Goldilocks::Element (&state)[CAPACITY],
                      const Goldilocks::Element (&input)[SPONGE_WIDTH],
@@ -98,7 +99,8 @@ private:
     // These back the Mode API above. Reach them via Mode parameter, never directly.
 
     // Scalar:
-    static void permute_seq(Goldilocks::Element *, const Goldilocks::Element *);
+    static void permute_seq(Goldilocks::Element (&state)[SPONGE_WIDTH],
+                            const Goldilocks::Element (&input)[SPONGE_WIDTH]);
     static void compress_seq(Goldilocks::Element (&state)[CAPACITY],
                          const Goldilocks::Element (&input)[SPONGE_WIDTH]);
     static void linear_hash_seq(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
@@ -108,7 +110,8 @@ private:
 
 #ifdef __AVX2__
     // AVX2 single-sponge:
-    static void permute_avx(Goldilocks::Element *, const Goldilocks::Element *);
+    static void permute_avx(Goldilocks::Element (&state)[SPONGE_WIDTH],
+                            const Goldilocks::Element (&input)[SPONGE_WIDTH]);
     static void compress_avx(Goldilocks::Element (&state)[CAPACITY],
                          const Goldilocks::Element (&input)[SPONGE_WIDTH]);
     static void linear_hash_avx(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
@@ -260,7 +263,9 @@ template<uint32_t W>
 
 template<uint32_t W>
 inline void Poseidon2Goldilocks<W>::permute(
-    Goldilocks::Element *output, const Goldilocks::Element *input, Poseidon2Mode mode)
+    Goldilocks::Element (&output)[SPONGE_WIDTH],
+    const Goldilocks::Element (&input)[SPONGE_WIDTH],
+    Poseidon2Mode mode)
 {
     if (mode == Poseidon2Mode::Auto) {
 #ifdef __AVX2__

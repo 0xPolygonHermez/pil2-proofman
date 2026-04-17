@@ -327,7 +327,7 @@ TEST(Poseidon2, grinding_cpu)
     uint64_t level = (1ULL << (64 - n_bits));
     Goldilocks::Element x[4] = {in[0], in[1], in[2], result_index};
     Goldilocks::Element result[4];
-    Poseidon2GoldilocksGrinding::permute(result, &x[0], Poseidon2Mode::Scalar);
+    Poseidon2GoldilocksGrinding::permute(result, x, Poseidon2Mode::Scalar);
     ASSERT_LT(Goldilocks::toU64(result[0]), level);
 }
 
@@ -448,6 +448,6 @@ TEST(Poseidon2, grinding_nbits1)
     uint64_t level = (1ULL << 63);
     Goldilocks::Element x[4] = {in[0], in[1], in[2], nonce};
     Goldilocks::Element result[4];
-    Poseidon2GoldilocksGrinding::permute(result, &x[0], Poseidon2Mode::Scalar);
+    Poseidon2GoldilocksGrinding::permute(result, x, Poseidon2Mode::Scalar);
     ASSERT_LT(Goldilocks::toU64(result[0]), level);
 }

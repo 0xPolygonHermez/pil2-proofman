@@ -4,7 +4,7 @@
 
     
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2Goldilocks<SPONGE_WIDTH_T>::permute_seq(Goldilocks::Element *state, const Goldilocks::Element *input)
+void Poseidon2Goldilocks<SPONGE_WIDTH_T>::permute_seq(Goldilocks::Element (&state)[SPONGE_WIDTH], const Goldilocks::Element (&input)[SPONGE_WIDTH])
 {
     const int length = SPONGE_WIDTH * sizeof(Goldilocks::Element);
     std::memcpy(state, input, length);
@@ -278,7 +278,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::permute_batch_avx(Goldilocks::Element 
 }
 
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2Goldilocks<SPONGE_WIDTH_T>::permute_avx(Goldilocks::Element *state, const Goldilocks::Element *input)
+void Poseidon2Goldilocks<SPONGE_WIDTH_T>::permute_avx(Goldilocks::Element (&state)[SPONGE_WIDTH], const Goldilocks::Element (&input)[SPONGE_WIDTH])
 {
 
      const Goldilocks::Element* C = SPONGE_WIDTH == 4 ? Poseidon2GoldilocksConstants::C4 : SPONGE_WIDTH == 8 ? Poseidon2GoldilocksConstants::C8 : SPONGE_WIDTH == 12 ? Poseidon2GoldilocksConstants::C12 : Poseidon2GoldilocksConstants::C16;
