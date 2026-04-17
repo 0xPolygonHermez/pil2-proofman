@@ -213,6 +213,149 @@ __device__ void poseidon1PermuteReg(gl64_t *state,
 }
 
 // ---------------------------------------------------------------------------
+// Shared-memory variant of the permutation.
+//
+// State layout: scratchpad[i * blockDim.x + threadIdx.x] = state element i of
+// this thread. Matches the layout used by poseidon2_goldilocks.cuh and 0.14.0's
+// linear_hash_gpu_coalesced.
+//
+// Win over the register path (poseidon1PermuteReg):
+//   - No stack spill (the register path spills the state[12] array to local
+//     memory — 96 bytes/thread visible in ptxas output).
+//   - Partial rounds fuse dot+prod+add into a single inner loop (half the
+//     shared-mem traffic of the split version).
+// ---------------------------------------------------------------------------
+
+template<uint32_t W>
+__device__ __forceinline__ void pos1_pow7_smem_()
+{
+#pragma unroll
+    for (uint32_t i = 0; i < W; ++i)
+    {
+        gl64_t x  = scratchpad[i * blockDim.x + threadIdx.x];
+        gl64_t x2 = x * x;
+        gl64_t x3 = x * x2;
+        gl64_t x4 = x2 * x2;
+        scratchpad[i * blockDim.x + threadIdx.x] = x3 * x4;
+    }
+}
+
+template<uint32_t W>
+__device__ __forceinline__ void pos1_add_smem_(const gl64_t *C)
+{
+#pragma unroll
+    for (uint32_t i = 0; i < W; ++i)
+        scratchpad[i * blockDim.x + threadIdx.x] =
+            scratchpad[i * blockDim.x + threadIdx.x] + C[i];
+}
+
+// Fused pow7 + ARK: state[i] = pow7(state[i]) + C[i], single read / single
+// write per element (vs. pow7_smem_ + add_smem_ doing two passes).
+template<uint32_t W>
+__device__ __forceinline__ void pos1_pow7add_smem_(const gl64_t *C)
+{
+#pragma unroll
+    for (uint32_t i = 0; i < W; ++i)
+    {
+        gl64_t x  = scratchpad[i * blockDim.x + threadIdx.x];
+        gl64_t x2 = x * x;
+        gl64_t x3 = x * x2;
+        gl64_t x4 = x2 * x2;
+        scratchpad[i * blockDim.x + threadIdx.x] = (x3 * x4) + C[i];
+    }
+}
+
+// MDS * state_in_smem. Reads state once into registers, writes products back.
+// Indexing matches register-path mvp_ (mat[W*j + i] = M[j][i], transposed-style).
+// Outer loop is NOT fully unrolled: unrolling it (12 live accumulators +
+// full expansion of inner × outer = 132 mul-adds) pushed register use to 255/
+// thread and crashed occupancy. Keeping outer as unroll-1 but inner as full-
+// unroll keeps the kernel at 48 regs/thread.
+template<uint32_t W>
+__device__ __forceinline__ void pos1_mvp_smem_(const gl64_t *mat)
+{
+    gl64_t s[W];
+#pragma unroll
+    for (uint32_t i = 0; i < W; ++i)
+        s[i] = scratchpad[i * blockDim.x + threadIdx.x];
+
+#pragma unroll 1
+    for (uint32_t i = 0; i < W; ++i)
+    {
+        gl64_t acc = mat[i] * s[0];
+#pragma unroll
+        for (uint32_t j = 1; j < W; ++j)
+            acc = acc + (mat[W * j + i] * s[j]);
+        scratchpad[i * blockDim.x + threadIdx.x] = acc;
+    }
+}
+
+template<uint32_t W, uint32_t HALF_F, uint32_t N_PART>
+__device__ void poseidon1PermuteSmem(const gl64_t *GPU_C_GL,
+                                     const gl64_t *GPU_S_GL,
+                                     const gl64_t *GPU_M_GL,
+                                     const gl64_t *GPU_P_GL)
+{
+    // First half: initial ARK, then (HALF_F - 1) × (pow7+ARK fused + MVP(M)).
+    pos1_add_smem_<W>(GPU_C_GL);
+#pragma unroll 1
+    for (uint32_t r = 0; r < HALF_F - 1; ++r)
+    {
+        pos1_pow7add_smem_<W>(&GPU_C_GL[(r + 1) * W]);
+        pos1_mvp_smem_<W>(GPU_M_GL);
+    }
+
+    // Transition full round → MVP(P).
+    pos1_pow7add_smem_<W>(&GPU_C_GL[HALF_F * W]);
+    pos1_mvp_smem_<W>(GPU_P_GL);
+
+    // Partial rounds — fused dot + prod+add loop.
+    //
+    // Optimisation: state[0] is rewritten on every iteration anyway, so keep
+    // it in a register across all N_PART rounds. Read from scratchpad once at
+    // the start, write back once at the end. Saves (N_PART*2 - 1) = 43 smem
+    // ops per permutation vs. the pure-smem version.
+    //
+    // Holding the *full* W-element state in registers blew up register count
+    // to 255/thread and dropped occupancy by ~40% — see earlier note. Keeping
+    // only state[0] in a register (1 extra register) is safe: compiler stays
+    // at 48 regs/thread.
+    {
+        gl64_t s0_reg = scratchpad[threadIdx.x];
+#pragma unroll 1
+        for (uint32_t r = 0; r < N_PART; ++r)
+        {
+            gl64_t x2 = s0_reg * s0_reg;
+            gl64_t x3 = s0_reg * x2;
+            gl64_t x4 = x2 * x2;
+            s0_reg = (x3 * x4) + GPU_C_GL[(HALF_F + 1) * W + r];
+
+            const gl64_t *S_row = &GPU_S_GL[(W * 2 - 1) * r];
+            gl64_t acc = s0_reg * S_row[0];
+#pragma unroll
+            for (uint32_t j = 1; j < W; ++j)
+            {
+                gl64_t sj = scratchpad[j * blockDim.x + threadIdx.x];
+                acc = acc + sj * S_row[j];
+                scratchpad[j * blockDim.x + threadIdx.x] = sj + s0_reg * S_row[W - 1 + j];
+            }
+            s0_reg = acc;
+        }
+        scratchpad[threadIdx.x] = s0_reg;
+    }
+
+    // Second half: (HALF_F - 1) × (pow7+ARK fused + MVP(M)), then pow7 + MVP(M).
+#pragma unroll 1
+    for (uint32_t r = 0; r < HALF_F - 1; ++r)
+    {
+        pos1_pow7add_smem_<W>(&GPU_C_GL[(HALF_F + 1) * W + N_PART + r * W]);
+        pos1_mvp_smem_<W>(GPU_M_GL);
+    }
+    pos1_pow7_smem_<W>();
+    pos1_mvp_smem_<W>(GPU_M_GL);
+}
+
+// ---------------------------------------------------------------------------
 // Kernels — all declared here, defined in poseidon_goldilocks.cu.
 // ---------------------------------------------------------------------------
 
