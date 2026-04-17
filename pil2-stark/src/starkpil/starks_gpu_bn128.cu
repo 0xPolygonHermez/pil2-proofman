@@ -3,7 +3,7 @@
 #include "setup_ctx.hpp"
 #include "ntt_goldilocks.cuh"
 #include "starks_gpu.cuh"
-#include "data_layout.cuh"
+#include "goldilocks_trace_layout.cuh"
 #include "fri/fri.hpp"
 
 class gl64_t;
@@ -20,7 +20,7 @@ __global__ void getTracePolsTilesBN128(gl64_t *d_treeTrace, uint64_t nCols, uint
     {
         uint64_t row = d_friQueries[idx_y];
         uint64_t idx_buffer = idx_y * querySize + idx_x;
-        // Use the proper tiled format from data_layout.cuh
+        // Use the proper tiled format from goldilocks_trace_layout.cuh
         uint64_t idx_trace = getBufferOffset(row, idx_x, nRows, nCols);
         uint64_t val = d_treeTrace[idx_trace][0];
         // Reduce the Goldilocks value

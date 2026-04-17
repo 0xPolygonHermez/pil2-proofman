@@ -1,7 +1,7 @@
 #include "transcriptBN128.cuh"
 #include "goldilocks_base_field.hpp"
 #include "poseidon/poseidon_bn128_constants.hpp"
-#include "gl64_tooling.cuh"
+#include "goldilocks_tooling.cuh"
 
 #include <math.h>
 

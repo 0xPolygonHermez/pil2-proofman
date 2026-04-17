@@ -1,7 +1,7 @@
 #include "expressions_gpu.cuh"
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
-#include "gl64_tooling.cuh"
+#include "goldilocks_tooling.cuh"
 #include "goldilocks_cubic_extension.cuh"
 
 extern __shared__ Goldilocks::Element scratchpad[];

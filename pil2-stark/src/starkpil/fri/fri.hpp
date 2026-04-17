@@ -5,7 +5,6 @@
 #include <cassert>
 #include <vector>
 #include "ntt_goldilocks.hpp"
-#include "merklehash_goldilocks.hpp"
 #include "merkleTreeGL.hpp"
 #include "merkleTreeBN128.hpp"
 

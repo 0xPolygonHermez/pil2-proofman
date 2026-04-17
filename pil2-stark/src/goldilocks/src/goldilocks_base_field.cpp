@@ -100,11 +100,11 @@ void Goldilocks::inv(Element &result, const Element &in1)
     {
         throw std::runtime_error("Error: Goldilocks::inv called with zero");
     }
-    u_int64_t t = 0;
-    u_int64_t r = GOLDILOCKS_PRIME;
-    u_int64_t newt = 1;
+    uint64_t t = 0;
+    uint64_t r = GOLDILOCKS_PRIME;
+    uint64_t newt = 1;
 
-    u_int64_t newr = Goldilocks::toU64(in1);
+    uint64_t newr = Goldilocks::toU64(in1);
     Element q;
     Element aux1;
     Element aux2;

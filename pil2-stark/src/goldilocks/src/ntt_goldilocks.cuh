@@ -1,11 +1,11 @@
 #ifndef NTT_GOLDILOCKS_GPU
 #define NTT_GOLDILOCKS_GPU
 
-#include "gl64_tooling.cuh"
+#include "goldilocks_tooling.cuh"
 #include "cuda_utils.cuh"
 #include <cuda_runtime.h>
 #include <sys/time.h>
-#include "data_layout.cuh"
+#include "goldilocks_trace_layout.cuh"
 #include "gpu_timer.cuh"
 
 // Primitive roots of unity: omegas[k] is a generator of the multiplicative subgroup of order 2^k
