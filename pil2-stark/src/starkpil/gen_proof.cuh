@@ -3,7 +3,7 @@
 
 #include "starks.hpp"
 #include "cuda_utils.cuh"
-#include "gl64_tooling.cuh"
+#include "goldilocks_tooling.cuh"
 #include "expressions_gpu.cuh"
 #include "starks_gpu.cuh"
 #include "hints.cuh"

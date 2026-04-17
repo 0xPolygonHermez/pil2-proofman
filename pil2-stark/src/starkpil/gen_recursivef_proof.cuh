@@ -3,7 +3,7 @@
 #include "transcriptBN128.cuh"
 #include "starks_gpu_bn128.cuh"
 #include "cuda_utils.cuh"
-#include "gl64_tooling.cuh"
+#include "goldilocks_tooling.cuh"
 #include "expressions_gpu.cuh"
 #include "starks_gpu.cuh"
 #include "hints.cuh"

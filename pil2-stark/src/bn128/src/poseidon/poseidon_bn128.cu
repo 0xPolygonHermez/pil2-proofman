@@ -2,7 +2,7 @@
 #include "poseidon_bn128.cuh"
 #include "poseidon_bn128_constants.hpp"  // Shared CPU/GPU constants (binary compatible)
 #include <cuda_runtime.h>
-#include "data_layout.cuh"
+#include "goldilocks_trace_layout.cuh"
 
 // Goldilocks prime constant
 #ifndef GOLDILOCKS_PRIME

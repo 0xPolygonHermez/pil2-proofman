@@ -259,7 +259,7 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
             if (graphCache->beginCapture(key, stream)) {
                 NTTGoldilocksGPU ntt;
                 ntt.LDE(dst, offset_dst, src, offset_src, nBits, nBitsExt, nCols, timer, stream);
-                buildMerkleTreeTilesGPU(arity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, stream);
+                buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, Layout::Tiles, stream);
                 if (graphCache->endCaptureAndLaunch(stream)) {
                     if (d_transcript != nullptr) {
                         uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
@@ -279,7 +279,7 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
         {
             ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream);
             TimerStartCategoryGPU(timer, MERKLE_TREE);
-            buildMerkleTreeTilesGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, stream);
+            buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, Layout::Tiles, stream);
             TimerStopCategoryGPU(timer, MERKLE_TREE);
         }
     }
@@ -303,7 +303,7 @@ void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPol
     Goldilocks::Element *pNodes = dst + nCols * NExtended;
     ntt.LDE((gl64_t *)dst, 0, (gl64_t *)src, 0, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream);
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    buildMerkleTreeTilesGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)dst, nCols, NExtended, stream);
+    buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)dst, nCols, NExtended, Layout::Tiles, stream);
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 
@@ -351,7 +351,7 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
                 if (graphCache->shouldCapture(key)) {
                     if (graphCache->beginCapture(key, stream)) {
                         nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
-                        buildMerkleTreeTilesGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, stream);
+                        buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, Layout::Tiles, stream);
                         if (graphCache->endCaptureAndLaunch(stream)) {
                             uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
                             if (d_transcript != nullptr) {
@@ -367,7 +367,7 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
 
         nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
         TimerStartCategoryGPU(timer, MERKLE_TREE);
-        buildMerkleTreeTilesGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, stream);
+        buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, Layout::Tiles, stream);
         TimerStopCategoryGPU(timer, MERKLE_TREE);
         uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
         if(d_transcript != nullptr) {
@@ -820,7 +820,7 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &h_params, uint64_t st
     transposeFRI<<<nBlocks, nThreads, 0, stream>>>((gl64_t *)treeFRI->source, (gl64_t *)pol, pol2N, width);
     
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)treeFRI->nodes, (uint64_t *)treeFRI->source, treeFRI->width, treeFRI->height, stream);
+    buildMerkleTreeGPU(setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)treeFRI->nodes, (uint64_t *)treeFRI->source, treeFRI->width, treeFRI->height, Layout::RowMajor, stream);
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 
     uint64_t tree_size = treeFRI->numNodes;
