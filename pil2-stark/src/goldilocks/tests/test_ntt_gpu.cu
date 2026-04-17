@@ -248,7 +248,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree)
     cpu_ntt.LDE(h_cpu_lde.data(), h_input.data(), nRows_ext, nRows, nCols);
 
     std::vector<Goldilocks::Element> h_cpu_tree(tree_size);
-    Poseidon2Goldilocks<12>::merkletree(h_cpu_tree.data(), h_cpu_lde.data(), nCols, nRows_ext, arity, /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<12>::merkletree(h_cpu_tree.data(), h_cpu_lde.data(), nCols, nRows_ext, arity, Poseidon2Mode::Scalar);
 
     // Download GPU root and compare with CPU root element by element
     std::vector<Goldilocks::Element> h_gpu_root(HASH_SIZE);
@@ -315,7 +315,7 @@ TEST(GOLDILOCKS_TEST, ntt_gpu_lde_merkletree_multicol)
     cpu_ntt.LDE(h_cpu_lde.data(), h_input.data(), nRows_ext, nRows, nCols);
 
     std::vector<Goldilocks::Element> h_cpu_tree(tree_size);
-    Poseidon2Goldilocks<12>::merkletree(h_cpu_tree.data(), h_cpu_lde.data(), nCols, nRows_ext, arity, /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<12>::merkletree(h_cpu_tree.data(), h_cpu_lde.data(), nCols, nRows_ext, arity, Poseidon2Mode::Scalar);
 
     // Download GPU root and compare with CPU root
     std::vector<Goldilocks::Element> h_gpu_root(HASH_SIZE);

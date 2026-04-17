@@ -278,16 +278,13 @@ void MerkleTreeGL::merkelize()
 {
     switch(arity) {
         case 2:
-            Poseidon2Goldilocks<8>::merkletree(nodes, source, width, height, arity,
-                                               /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::Auto);
+            Poseidon2Goldilocks<8>::merkletree(nodes, source, width, height, arity);
             break;
         case 3:
-            Poseidon2Goldilocks<12>::merkletree(nodes, source, width, height, arity,
-                                                /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::Auto);
+            Poseidon2Goldilocks<12>::merkletree(nodes, source, width, height, arity);
             break;
         case 4:
-            Poseidon2Goldilocks<16>::merkletree(nodes, source, width, height, arity,
-                                                /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::Auto);
+            Poseidon2Goldilocks<16>::merkletree(nodes, source, width, height, arity);
             break;
         default:
             zklog.error("MerkleTreeGL::merkelize: Unsupported arity");

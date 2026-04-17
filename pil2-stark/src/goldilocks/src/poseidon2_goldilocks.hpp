@@ -34,6 +34,7 @@ template<uint32_t SPONGE_WIDTH_T>
 class Poseidon2Goldilocks
 {
 public:
+
     static_assert(SPONGE_WIDTH_T == 4 || SPONGE_WIDTH_T == 8 || SPONGE_WIDTH_T == 12 || SPONGE_WIDTH_T == 16, "SPONGE_WIDTH_T must be 4, 8, 12, or 16");
     static constexpr uint32_t RATE = SPONGE_WIDTH_T-4;
     static constexpr uint32_t CAPACITY = 4;
@@ -42,6 +43,29 @@ public:
     static constexpr uint32_t HALF_N_FULL_ROUNDS = N_FULL_ROUNDS_TOTAL / 2;
     static constexpr uint32_t N_PARTIAL_ROUNDS = SPONGE_WIDTH_T == 4 ? 21 : 22;
     static constexpr uint32_t N_ROUNDS = N_FULL_ROUNDS_TOTAL + N_PARTIAL_ROUNDS;
+
+
+    // Mode-dispatched public API.
+
+    static void permute(Goldilocks::Element *output, const Goldilocks::Element *input,
+                               Poseidon2Mode mode);
+    
+    static void compress(Goldilocks::Element (&state)[CAPACITY],
+                     const Goldilocks::Element (&input)[SPONGE_WIDTH],
+                     Poseidon2Mode mode);
+    
+    static void linearHash(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size, Poseidon2Mode mode);
+
+    static void merkletree(Goldilocks::Element *tree, Goldilocks::Element *input,
+                           uint64_t num_cols, uint64_t num_rows, uint64_t arity,
+                           Poseidon2Mode mode = Poseidon2Mode::Auto,
+                           int num_threads = 0, uint64_t dim = 1);
+
+    static void merkletreeReduce(Goldilocks::Element *root, Goldilocks::Element *input,
+                                    uint64_t num_elements, uint64_t arity);
+
+    static void grinding(uint64_t &out_idx, const uint64_t *in, const uint32_t n_bits);
+   
 
 private:
     inline void static pow7(Goldilocks::Element &x);
@@ -68,28 +92,6 @@ private:
     inline void static element_pow7_avx512(__m512i &x);
 #endif
 
-public:
-    // Mode-dispatched public API.
-    // See §2 of PLAN_CPU_GOLDILOCKS.md for the valid-modes table per operation.
-    static void permute(Goldilocks::Element *output, const Goldilocks::Element *input,
-                               Poseidon2Mode mode);
-    static void compress(Goldilocks::Element (&state)[CAPACITY],
-                     const Goldilocks::Element (&input)[SPONGE_WIDTH],
-                     Poseidon2Mode mode);
-    
-    static void linearHash(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size, Poseidon2Mode mode);
-
-    static void merkletree(Goldilocks::Element *tree, Goldilocks::Element *input,
-                           uint64_t num_cols, uint64_t num_rows, uint64_t arity,
-                           int nThreads, uint64_t dim, Poseidon2Mode mode);
-
-    // Other public ops (no mode dispatch — single implementation each).
-    static void grinding(uint64_t &out_idx, const uint64_t *in, const uint32_t n_bits);
-   
-    static void merkletreeReduce(Goldilocks::Element *root, Goldilocks::Element *input,
-                                    uint64_t num_elements, uint64_t arity);
-
-private:
     [[noreturn]] static void abortMode(const char *op, Poseidon2Mode m);
 
     // ---- Implementation primitives (private — reach via Mode parameter).
@@ -102,7 +104,7 @@ private:
     static void linear_hash_seq(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
     static void merkletree_seq(Goldilocks::Element *tree, Goldilocks::Element *input,
                                uint64_t num_cols, uint64_t num_rows, uint64_t arity,
-                               int nThreads = 0, uint64_t dim = 1);
+                               int num_threads = 0, uint64_t dim = 1);
 
 #ifdef __AVX2__
     // AVX2 single-sponge:
@@ -112,7 +114,7 @@ private:
     static void linear_hash_avx(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
     static void merkletree_avx(Goldilocks::Element *tree, Goldilocks::Element *input,
                                uint64_t num_cols, uint64_t num_rows, uint64_t arity,
-                               int nThreads = 0, uint64_t dim = 1);
+                               int num_threads = 0, uint64_t dim = 1);
     // AVX2 4-lane batch (internal building blocks of merkletree_batch_avx):
     static void permute_batch_avx(Goldilocks::Element *, const Goldilocks::Element *);
     static void compress_batch_avx(Goldilocks::Element (&state)[4 * CAPACITY],
@@ -120,7 +122,7 @@ private:
     static void linear_hash_batch_avx(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
     static void merkletree_batch_avx(Goldilocks::Element *tree, Goldilocks::Element *input,
                                      uint64_t num_cols, uint64_t num_rows, uint64_t arity,
-                                     int nThreads = 0, uint64_t dim = 1);
+                                     int num_threads = 0, uint64_t dim = 1);
 #endif
 #ifdef __AVX512__
     // AVX512 8-lane batch (single-sponge AVX512 is intentionally not
@@ -131,7 +133,7 @@ private:
     static void linear_hash_batch_avx512(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
     static void merkletree_batch_avx512(Goldilocks::Element *tree, Goldilocks::Element *input,
                                         uint64_t num_cols, uint64_t num_rows, uint64_t arity,
-                                        int nThreads = 0, uint64_t dim = 1);
+                                        int num_threads = 0, uint64_t dim = 1);
 #endif
 
 };
@@ -318,7 +320,7 @@ inline void Poseidon2Goldilocks<W>::linearHash(
 #endif
         // AvxBatch / Avx512Batch have a 4/8-row contract and are not callable
         // as single-row linearHash — they remain private, reachable only via
-        // merkletree(). See §2 of PLAN_CPU_GOLDILOCKS.md.
+        // merkletree().
         default: break;
     }
     abortMode("linearHash", mode);
@@ -328,7 +330,7 @@ template<uint32_t W>
 inline void Poseidon2Goldilocks<W>::merkletree(
     Goldilocks::Element *tree, Goldilocks::Element *input,
     uint64_t num_cols, uint64_t num_rows, uint64_t arity,
-    int nThreads, uint64_t dim, Poseidon2Mode mode)
+    Poseidon2Mode mode, int num_threads, uint64_t dim)
 {
     if (mode == Poseidon2Mode::Auto) {
 #ifdef __AVX512__
@@ -341,16 +343,16 @@ inline void Poseidon2Goldilocks<W>::merkletree(
     }
     switch (mode) {
         case Poseidon2Mode::Scalar:
-            merkletree_seq(tree, input, num_cols, num_rows, arity, nThreads, dim); return;
+            merkletree_seq(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
 #ifdef __AVX2__
         case Poseidon2Mode::Avx:
-            merkletree_avx(tree, input, num_cols, num_rows, arity, nThreads, dim); return;
+            merkletree_avx(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
         case Poseidon2Mode::AvxBatch:
-            merkletree_batch_avx(tree, input, num_cols, num_rows, arity, nThreads, dim); return;
+            merkletree_batch_avx(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
 #endif
 #ifdef __AVX512__
         case Poseidon2Mode::Avx512Batch:
-            merkletree_batch_avx512(tree, input, num_cols, num_rows, arity, nThreads, dim); return;
+            merkletree_batch_avx512(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
 #endif
         // Avx512 single-sponge is intentionally unimplemented (see enum comment).
         default: break;

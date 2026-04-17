@@ -122,7 +122,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletreeReduce(Goldilocks::Element *
 }
 
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_seq(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads, uint64_t dim)
+void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_seq(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int num_threads, uint64_t dim)
 {
     if (num_rows == 0)
     {
@@ -130,11 +130,10 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_seq(Goldilocks::Element *tr
     }
 
     Goldilocks::Element *cursor = tree;
-    // memset(cursor, 0, num_rows * CAPACITY * sizeof(Goldilocks::Element));
-    if (nThreads == 0)
-        nThreads = omp_get_max_threads();
+    if (num_threads == 0)
+        num_threads = omp_get_max_threads();
 
-#pragma omp parallel for num_threads(nThreads)
+#pragma omp parallel for num_threads(num_threads)
     for (uint64_t i = 0; i < num_rows; i++)
     {
         linear_hash_seq(&cursor[i * CAPACITY], &input[i * num_cols * dim], num_cols * dim);
@@ -153,7 +152,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_seq(Goldilocks::Element *tr
             std::memset(&cursor[nextIndex + pending * CAPACITY], 0, extraZeros * CAPACITY * sizeof(Goldilocks::Element));
         }
 
-    #pragma omp parallel for num_threads(nThreads)
+    #pragma omp parallel for num_threads(num_threads)
         for (uint64_t i = 0; i < nextN; i++)
         {
             Goldilocks::Element pol_input[SPONGE_WIDTH];
@@ -434,18 +433,17 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::linear_hash_batch_avx(Goldilocks::Elem
 }
 
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_avx(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads, uint64_t dim)
+void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_avx(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int num_threads, uint64_t dim)
 {
     if (num_rows == 0)
     {
         return;
     }
     Goldilocks::Element *cursor = tree;
-    // memset(cursor, 0, num_rows * CAPACITY * sizeof(Goldilocks::Element));
-    if (nThreads == 0)
-        nThreads = omp_get_max_threads();
+    if (num_threads == 0)
+        num_threads = omp_get_max_threads();
 
-#pragma omp parallel for num_threads(nThreads)
+#pragma omp parallel for num_threads(num_threads)
     for (uint64_t i = 0; i < num_rows; i++)
     {
         linear_hash_avx(&cursor[i * CAPACITY], &input[i * num_cols * dim], num_cols * dim);
@@ -464,7 +462,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_avx(Goldilocks::Element *tr
             std::memset(&cursor[nextIndex + pending * CAPACITY], 0, extraZeros * CAPACITY * sizeof(Goldilocks::Element));
         }
 
-    #pragma omp parallel for num_threads(nThreads)
+    #pragma omp parallel for num_threads(num_threads)
         for (uint64_t i = 0; i < nextN; i++)
         {
             Goldilocks::Element pol_input[SPONGE_WIDTH];
@@ -482,18 +480,17 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_avx(Goldilocks::Element *tr
 }
 
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads, uint64_t dim)
+void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int num_threads, uint64_t dim)
 {
     if (num_rows == 0)
     {
         return;
     }
     Goldilocks::Element *cursor = tree;
-    // memset(cursor, 0, num_rows * CAPACITY * sizeof(Goldilocks::Element));
-    if (nThreads == 0)
-        nThreads = omp_get_max_threads();
+    if (num_threads == 0)
+        num_threads = omp_get_max_threads();
 
-#pragma omp parallel for num_threads(nThreads)
+#pragma omp parallel for num_threads(num_threads)
     for (uint64_t i = 0; i < num_rows; i+=4)
     {
         linear_hash_batch_avx(&cursor[i * CAPACITY], &input[i * num_cols * dim], num_cols * dim);
@@ -512,7 +509,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx(Goldilocks::Eleme
             std::memset(&cursor[nextIndex + pending * CAPACITY], 0, extraZeros * CAPACITY * sizeof(Goldilocks::Element));
         }
 
-    #pragma omp parallel for num_threads(nThreads)
+    #pragma omp parallel for num_threads(num_threads)
         for (uint64_t i = 0; i < nextN; i += 4)
         {
 
@@ -640,18 +637,17 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::linear_hash_batch_avx512(Goldilocks::E
 }
 
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx512(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads, uint64_t dim)
+void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx512(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int num_threads, uint64_t dim)
 {
     if (num_rows == 0)
     {
         return;
     }
     Goldilocks::Element *cursor = tree;
-    // memset(cursor, 0, num_rows * CAPACITY * sizeof(Goldilocks::Element));
-    if (nThreads == 0)
-        nThreads = omp_get_max_threads();
+    if (num_threads == 0)
+        num_threads = omp_get_max_threads();
 
-#pragma omp parallel for num_threads(nThreads)
+#pragma omp parallel for num_threads(num_threads)
     for (uint64_t i = 0; i < num_rows; i+=8)
     {
         linear_hash_batch_avx512(&cursor[i * CAPACITY], &input[i * num_cols * dim], num_cols * dim);
@@ -670,7 +666,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx512(Goldilocks::El
             std::memset(&cursor[nextIndex + pending * CAPACITY], 0, extraZeros * CAPACITY * sizeof(Goldilocks::Element));
         }
 
-    #pragma omp parallel for num_threads(nThreads)
+    #pragma omp parallel for num_threads(num_threads)
         for (uint64_t i = 0; i < nextN; i += 8)
         {
 

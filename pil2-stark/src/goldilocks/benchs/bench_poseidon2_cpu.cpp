@@ -181,7 +181,7 @@ static void MERKLETREE_W_AR_SCALAR_CPU_BENCH(benchmark::State &state)
     Goldilocks::Element *tree = new Goldilocks::Element[numElems];
 
     for (auto _ : state)
-        Poseidon2Goldilocks<W>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::Scalar);
+        Poseidon2Goldilocks<W>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, Poseidon2Mode::Scalar);
 
     delete[] cols; delete[] tree;
 }
@@ -198,7 +198,7 @@ static void MERKLETREE_W_AR_AVX_CPU_BENCH(benchmark::State &state)
     Goldilocks::Element *tree = new Goldilocks::Element[numElems];
 
     for (auto _ : state)
-        Poseidon2Goldilocks<W>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::Avx);
+        Poseidon2Goldilocks<W>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, Poseidon2Mode::Avx);
 
     delete[] cols; delete[] tree;
 }
@@ -214,7 +214,7 @@ static void MERKLETREE_W_AR_AVXBATCH_CPU_BENCH(benchmark::State &state)
     Goldilocks::Element *tree = new Goldilocks::Element[numElems];
 
     for (auto _ : state)
-        Poseidon2Goldilocks<W>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::AvxBatch);
+        Poseidon2Goldilocks<W>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, Poseidon2Mode::AvxBatch);
 
     delete[] cols; delete[] tree;
 }
@@ -232,7 +232,7 @@ static void MERKLETREE_W_AR_AVX512BATCH_CPU_BENCH(benchmark::State &state)
     Goldilocks::Element *tree = new Goldilocks::Element[numElems];
 
     for (auto _ : state)
-        Poseidon2Goldilocks<W>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, /*nThreads=*/0, /*dim=*/1, Poseidon2Mode::Avx512Batch);
+        Poseidon2Goldilocks<W>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, Poseidon2Mode::Avx512Batch);
 
     delete[] cols; delete[] tree;
 }

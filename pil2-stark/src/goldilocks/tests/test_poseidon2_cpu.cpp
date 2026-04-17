@@ -234,8 +234,7 @@ static void merkletreeModeEquivalence(uint64_t arity, uint64_t nrows, uint64_t n
 
     auto rootOf = [&](Poseidon2Mode m, Goldilocks::Element out[4]) {
         std::vector<Goldilocks::Element> tree(numElems);
-        Poseidon2Goldilocks<W>::merkletree(tree.data(), input.data(), ncols, nrows, arity,
-                                           0, 1, m);
+        Poseidon2Goldilocks<W>::merkletree(tree.data(), input.data(), ncols, nrows, arity, m);
         std::memcpy(out, &tree[numElems - HASH_SIZE], HASH_SIZE * sizeof(Goldilocks::Element));
     };
 
@@ -420,8 +419,7 @@ static void merkletreeNrows1(uint64_t arity, uint64_t ncols)
 
     uint64_t numElems = getTreeNumElements(1, arity);
     std::vector<Goldilocks::Element> tree(numElems);
-    Poseidon2Goldilocks<W>::merkletree(tree.data(), input.data(), ncols, 1, arity,
-                                       0, 1, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<W>::merkletree(tree.data(), input.data(), ncols, 1, arity, Poseidon2Mode::Scalar);
 
     Goldilocks::Element root[HASH_SIZE];
     std::memcpy(root, &tree[numElems - HASH_SIZE], HASH_SIZE * sizeof(Goldilocks::Element));
