@@ -289,7 +289,6 @@ __device__ __forceinline__ void load__(
     gl64_t*& out2
 
 ) {
-
     const uint32_t r = row + threadIdx.x;
     const uint64_t base = dArgs->bufferCommitSize;
     const uint64_t domainSize = dExpsArgs->domainSize;
@@ -532,83 +531,138 @@ __device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArg
 
 __device__ __forceinline__ void op_gpu_p2(uint64_t op, gl64_t *C, const gl64_t *a, const gl64_t *b)
 {
-    switch (op)
+    const gl64_t A = *a;
+    const gl64_t B = *b;
+
+    switch(op)
     {
-        case 0: C[threadIdx.x] = *a + *b; break;
-        case 1: C[threadIdx.x] = *a - *b; break;
-        case 2: C[threadIdx.x] = *a * (*b); break;
-        case 3: C[threadIdx.x] = *b - *a; break;
+        case 0: C[threadIdx.x] = A + B; return;
+        case 1: C[threadIdx.x] = A - B; return;
+        case 2: C[threadIdx.x] = A * B; return;
+        case 3: C[threadIdx.x] = B - A; return;
     }
 }
 
-__device__ __forceinline__ void op_31_gpu_p2(uint64_t op, gl64_t *C, const gl64_t *a0, const gl64_t *a1, const gl64_t *a2, const gl64_t *b ){
+__device__ __forceinline__
+void op_31_gpu_p2(
+    uint64_t op,
+    gl64_t * __restrict__ C,
+    const gl64_t * __restrict__ a0,
+    const gl64_t * __restrict__ a1,
+    const gl64_t * __restrict__ a2,
+    const gl64_t * __restrict__ b)
+{
+    // -----------------------------
+    // LOAD ONCE (critical improvement)
+    // -----------------------------
+    const gl64_t A0 = *a0;
+    const gl64_t A1 = *a1;
+    const gl64_t A2 = *a2;
+    const gl64_t B  = *b;
+
+    const int lane = threadIdx.x;
+    const int stride = blockDim.x;
 
     switch (op)
     {
-    case 0: {
-        C[threadIdx.x] = *a0 + *b;
-        C[blockDim.x + threadIdx.x] = *a1;
-        C[2 * blockDim.x + threadIdx.x] = *a2;
-        break;
+    case 0:
+        C[lane] = A0 + B;
+        C[stride + lane] = A1;
+        C[2 * stride + lane] = A2;
+        return;
+
+    case 1:
+        C[lane] = A0 - B;
+        C[stride + lane] = A1;
+        C[2 * stride + lane] = A2;
+        return;
+    case 2:
+    {
+        // compute once per thread
+        const gl64_t t0 = A0 * B;
+        const gl64_t t1 = A1 * B;
+        const gl64_t t2 = A2 * B;
+
+        C[lane] = t0;
+        C[stride + lane] = t1;
+        C[2 * stride + lane] = t2;
+        return;
     }
-    case 1: {
-        C[threadIdx.x] = *a0 - *b;
-        C[blockDim.x + threadIdx.x] = *a1;
-        C[2 * blockDim.x + threadIdx.x] = *a2;
-        break;
-    }
-    case 2: {
-        C[threadIdx.x] = *a0 * (*b);
-        C[blockDim.x + threadIdx.x] = *a1 * (*b);
-        C[2 * blockDim.x + threadIdx.x] = *a2 * (*b);
-        break;
-    }
-    case 3: {
-        C[threadIdx.x] = *b - *a0;
-        C[blockDim.x + threadIdx.x] = -(*a1);
-        C[2 * blockDim.x + threadIdx.x] = -(*a2);
-        break;
-    }
+    case 3:
+        C[lane] = B - A0;
+        C[stride + lane] = -A1;
+        C[2 * stride + lane] = -A2;
+        return;
     }
 }
 
-__device__ __forceinline__ void op_33_gpu_p2(uint64_t op, gl64_t *C, const gl64_t *a0, const gl64_t *a1, const gl64_t *a2, const gl64_t *b0, const gl64_t *b1, const gl64_t *b2){
+__device__ __forceinline__
+void op_33_gpu_p2(
+    uint64_t op,
+    gl64_t * __restrict__ C,
+    const gl64_t * __restrict__ a0,
+    const gl64_t * __restrict__ a1,
+    const gl64_t * __restrict__ a2,
+    const gl64_t * __restrict__ b0,
+    const gl64_t * __restrict__ b1,
+    const gl64_t * __restrict__ b2)
+{
+    // ----------------------------
+    // LOAD ONCE (register reuse)
+    // ----------------------------
+    const gl64_t A0 = *a0;
+    const gl64_t A1 = *a1;
+    const gl64_t A2 = *a2;
+
+    const gl64_t B0 = *b0;
+    const gl64_t B1 = *b1;
+    const gl64_t B2 = *b2;
+
     switch (op)
     {
-    case 0: {
-            C[threadIdx.x] = (*a0) + (*b0);
-            C[blockDim.x + threadIdx.x] = (*a1) + (*b1);
-            C[2 * blockDim.x + threadIdx.x] = (*a2) + (*b2);
+    case 0:
+        C[threadIdx.x] = A0 + B0;
+        C[blockDim.x + threadIdx.x] = A1 + B1;
+        C[2 * blockDim.x + threadIdx.x] = A2 + B2;
+        return;
 
-        break;
-    }
-    case 1: {
+    case 1:
+        C[threadIdx.x] = A0 - B0;
+        C[blockDim.x + threadIdx.x] = A1 - B1;
+        C[2 * blockDim.x + threadIdx.x] = A2 - B2;
+        return;
 
-            C[threadIdx.x] = (*a0) - (*b0);
-            C[blockDim.x + threadIdx.x] = (*a1) - (*b1);
-            C[2 * blockDim.x + threadIdx.x] = (*a2) - (*b2);
+    case 2:
+    {
+        const gl64_t A01 = A0 + A1;
+        const gl64_t A02 = A0 + A2;
+        const gl64_t A12 = A1 + A2;
 
-        break;
+        const gl64_t B01 = B0 + B1;
+        const gl64_t B02 = B0 + B2;
+        const gl64_t B12 = B1 + B2;
+
+        const gl64_t D = A0 * B0;
+        const gl64_t E = A1 * B1;
+        const gl64_t F = A2 * B2;
+
+        const gl64_t G = D - E;
+
+        const gl64_t R0 = A12 * B12;
+        const gl64_t R1 = A01 * B01;
+        const gl64_t R2 = A02 * B02;
+
+        C[threadIdx.x] = (R0 + G) - F;
+        C[blockDim.x + threadIdx.x] = ((R1 + R0) - E - E) - D;
+        C[2 * blockDim.x + threadIdx.x] = R2 - G;
+        return;
     }
-    case 2: {
-            gl64_t A_ = ((*a0) + (*a1)) * ((*b0) + (*b1));
-            gl64_t B_ = ((*a0) + (*a2)) * ((*b0) + (*b2));
-            gl64_t C_ = ((*a1) + (*a2)) * ((*b1) + (*b2));
-            gl64_t D_ = (*a0) * (*b0 );
-            gl64_t E_ = (*a1) * (*b1);
-            gl64_t F_ = (*a2) * (*b2);
-            gl64_t G_ = D_ - E_;
-            C[threadIdx.x] = (C_ + G_) - F_;
-            C[blockDim.x + threadIdx.x] = ((((A_ + C_) - E_) - E_) - D_);
-            C[2 * blockDim.x + threadIdx.x] = B_ - G_;
-        break;
-    }
-    case 3: {
-            C[threadIdx.x] = (*b0) - (*a0);
-            C[blockDim.x + threadIdx.x] =  (*b1) -  (*a1);
-            C[2 * blockDim.x + threadIdx.x] = (*b2) -  (*a2);
-        break;
-    }
+
+    case 3:
+        C[threadIdx.x] = B0 - A0;
+        C[blockDim.x + threadIdx.x] = B1 - A1;
+        C[2 * blockDim.x + threadIdx.x] = B2 - A2;
+        return;
     }
 }
 
