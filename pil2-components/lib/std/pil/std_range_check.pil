@@ -157,132 +157,163 @@ private function generate_opid(const int min, const int max, const int predefine
 }
 
 airtemplate U8Air(const int N = 2**8) {
-    // Divide the range [0,MASK_8] into P2_8/N ranges [0,N-1], [N,2N-1], ..., [P2_8-N,MASK_8]
-    const int col_num = P2_8 / N;
-    col fixed RANGE[col_num];
-    col witness mul[col_num];
-    for (int i = 0; i < col_num; i++) {
-        const int min = i * N;
-        const int max = (i + 1) * N - 1;
+    // If the U8 table is not virtual, we optimize the generated area as requested by the user
+    // Otherwise, we just generate the full range since
 
-        RANGE[i] = [min..max-1,max...];
+    if (U8_TABLE_VIRTUAL == 1) {
+        col fixed RANGE = [0..MASK_8];
+        col witness mul;
+        lookup_proves(U8AIR_OPID, [RANGE], mul, PIOP_NAME_RANGE_CHECK);
+    } else {
+        // Divide the range [0,MASK_8] into P2_8/N ranges [0,N-1], [N,2N-1], ..., [P2_8-N,MASK_8]
+        const int col_num = P2_8 / N;
+        col fixed RANGE[col_num];
+        col witness mul[col_num];
+        for (int i = 0; i < col_num; i++) {
+            const int min = i * N;
+            const int max = (i + 1) * N - 1;
 
-        lookup_proves(U8AIR_OPID, [RANGE[i]], mul[i], PIOP_NAME_RANGE_CHECK);
-    }
+            RANGE[i] = [min..max-1,max...];
 
-    if (U8_TABLE_VIRTUAL == 0) {
+            lookup_proves(U8AIR_OPID, [RANGE[i]], mul[i], PIOP_NAME_RANGE_CHECK);
+        }
+
+        // Save the AIRGROUP_ID and AIR_ID
         proof.std.u8.airgroup_id = AIRGROUP_ID;
         proof.std.u8.air_id = AIR_ID;
     }
 }
 
 airtemplate U16Air(const int N = 2**16) {
-    // Divide the range [0,MASK_16] to P2_16/N ranges [0,N-1], [N,2N-1], ..., [P2_16-N,MASK_16]
-    const int col_num = P2_16 / N;
-    col fixed RANGE[col_num];
-    col witness mul[col_num];
-    for (int i = 0; i < col_num; i++) {
-        const int min = i * N;
-        const int max = (i + 1) * N - 1;
+    // If the U16 table is not virtual, we optimize the generated area as requested by the user
+    // Otherwise, we just generate the full range since
 
-        RANGE[i] = [min..max-1,max...];
+    if (U16_TABLE_VIRTUAL == 1) {
+        col fixed RANGE = [0..MASK_16];
+        col witness mul;
+        lookup_proves(U16AIR_OPID, [RANGE], mul, PIOP_NAME_RANGE_CHECK);
+    } else {
+        // Divide the range [0,MASK_16] to P2_16/N ranges [0,N-1], [N,2N-1], ..., [P2_16-N,MASK_16]
+        const int col_num = P2_16 / N;
+        col fixed RANGE[col_num];
+        col witness mul[col_num];
+        for (int i = 0; i < col_num; i++) {
+            const int min = i * N;
+            const int max = (i + 1) * N - 1;
 
-        lookup_proves(U16AIR_OPID, [RANGE[i]], mul[i], PIOP_NAME_RANGE_CHECK);
-    }
+            RANGE[i] = [min..max-1,max...];
 
-    if (U16_TABLE_VIRTUAL == 0) {
+            lookup_proves(U16AIR_OPID, [RANGE[i]], mul[i], PIOP_NAME_RANGE_CHECK);
+        }
+
+        // Save the AIRGROUP_ID and AIR_ID
         proof.std.u16.airgroup_id = AIRGROUP_ID;
         proof.std.u16.air_id = AIR_ID;
     }
 }
 
 airtemplate SpecifiedRanges(const int N, const int opids[], const int opids_count, const int init_mins[], const int init_maxs[]) {
-    // Pack ranges efficiently into groups of N rows each.
-    // Multiple opids can share the same column, distinguished by a OPID column
-    int total_rows = 0;
-    int acc_heights[opids_count];
-    int acc_heights_sum = 0;
-    int init_mins_neg[opids_count];
-    const expr tVALS[opids_count];
-    for (int i = 0; i < opids_count; i++) {
-        const int min = init_mins[i];
-        const int max = init_maxs[i];
-        const int range_size = max - min + 1;
-        total_rows += range_size;
-        
-        init_mins_neg[i] = (min < 0) ? 1 : 0;
+    // If the SpecifiedRanges table is not virtual, we optimize the generated area as requested by the user
+    // Otherwise, we just generate the full ranges
 
-        acc_heights[i] = acc_heights_sum;
-        acc_heights_sum += range_size;
+    if (SPECIFIED_TABLE_VIRTUAL == 1) {
+        col fixed RANGE[opids_count];
+        col witness mul[opids_count];
+        for (int i = 0; i < opids_count; i++) {
+            const int min = init_mins[i];
+            const int max = init_maxs[i];
 
-        col fixed virtual(range_size) tmp = [min..max-1,max];
-        tVALS[i] = tmp;
-    }
+            RANGE[i] = [min..max-1,max...];
 
-    // Number of groups (columns) needed
-    const int num_groups = (total_rows + N - 1) / N;
-
-    @specified_ranges_data{opids_count: opids_count, mins: init_mins, mins_neg: init_mins_neg, 
-                           acc_heights: acc_heights, num_muls: num_groups};
-
-    // Track which opids go into which group
-    int group_opids[num_groups][opids_count];
-    int group_lens[num_groups];
-
-    // Create the fixed and witness columns
-    col fixed OPID[num_groups];
-    col fixed VALS[num_groups];
-    col witness mul[num_groups];
-
-    int current_group = 0;
-    int row_offset = 0;    
-    for (int i = 0; i < opids_count; i++) {
-        const int opid = opids[i];
-        const int min = init_mins[i];
-        const int max = init_maxs[i];
-        int height = max - min + 1;
-        int value = min;
-        
-        while (height > 0) {
-            const int rows_available = N - row_offset;
-            const int h = (height <= rows_available) ? height : rows_available;
+            lookup_proves(opids[i], [RANGE[i]], mul[i], PIOP_NAME_RANGE_CHECK);
+        }
+    } else {
+        // Pack ranges efficiently into groups of N rows each.
+        // Multiple opids can share the same column, distinguished by a OPID column
+        int total_rows = 0;
+        int acc_heights[opids_count];
+        int acc_heights_sum = 0;
+        int init_mins_neg[opids_count];
+        const expr tVALS[opids_count];
+        for (int i = 0; i < opids_count; i++) {
+            const int min = init_mins[i];
+            const int max = init_maxs[i];
+            const int range_size = max - min + 1;
+            total_rows += range_size;
             
-            // Track this opid in the current group
-            group_opids[current_group][group_lens[current_group]] = opid;
-            group_lens[current_group]++;
+            init_mins_neg[i] = (min < 0) ? 1 : 0;
+
+            acc_heights[i] = acc_heights_sum;
+            acc_heights_sum += range_size;
+
+            col fixed virtual(range_size) tmp = [min..max-1,max];
+            tVALS[i] = tmp;
+        }
+
+        // Number of groups (columns) needed
+        const int num_groups = (total_rows + N - 1) / N;
+
+        @specified_ranges_data{opids_count: opids_count, mins: init_mins, mins_neg: init_mins_neg, 
+                            acc_heights: acc_heights, num_muls: num_groups};
+
+        // Track which opids go into which group
+        int group_opids[num_groups][opids_count];
+        int group_lens[num_groups];
+
+        // Create the fixed and witness columns
+        col fixed OPID[num_groups];
+        col fixed VALS[num_groups];
+        col witness mul[num_groups];
+
+        int current_group = 0;
+        int row_offset = 0;    
+        for (int i = 0; i < opids_count; i++) {
+            const int opid = opids[i];
+            const int min = init_mins[i];
+            const int max = init_maxs[i];
+            int height = max - min + 1;
+            int value = min;
             
-            // Fill OPID with opid for these rows
-            Tables.fill(opid, OPID[current_group], row_offset, h);
-            
-            // Fill VALS with values [value..value+h-1]
-            if (h == 1) {
-                VALS[current_group][row_offset] = value;
-            } else {
-                Tables.copy(tVALS[i], value - min, VALS[current_group], row_offset, h);
-            }
-            
-            value += h;
-            height -= h;
-            row_offset += h;
-            
-            if (row_offset >= N) {
-                current_group++;
-                row_offset = 0;
+            while (height > 0) {
+                const int rows_available = N - row_offset;
+                const int h = (height <= rows_available) ? height : rows_available;
+                
+                // Track this opid in the current group
+                group_opids[current_group][group_lens[current_group]] = opid;
+                group_lens[current_group]++;
+                
+                // Fill OPID with opid for these rows
+                Tables.fill(opid, OPID[current_group], row_offset, h);
+                
+                // Fill VALS with values [value..value+h-1]
+                if (h == 1) {
+                    VALS[current_group][row_offset] = value;
+                } else {
+                    Tables.copy(tVALS[i], value - min, VALS[current_group], row_offset, h);
+                }
+                
+                value += h;
+                height -= h;
+                row_offset += h;
+                
+                if (row_offset >= N) {
+                    current_group++;
+                    row_offset = 0;
+                }
             }
         }
-    }
-    
-    // Perform the proves using dynamic lookup (multiple opids per group)
-    for (int i = 0; i < num_groups; i++) {
-        int opids_in_group[group_lens[i]];
-        for (int j = 0; j < group_lens[i]; j++) {
-            opids_in_group[j] = group_opids[i][j];
-        }
         
-        lookup_proves_dynamic(opids: opids_in_group, busid: OPID[i], expressions: [VALS[i]], mul: mul[i]);
-    }
+        // Perform the proves
+        for (int i = 0; i < num_groups; i++) {
+            int opids_in_group[group_lens[i]];
+            for (int j = 0; j < group_lens[i]; j++) {
+                opids_in_group[j] = group_opids[i][j];
+            }
+            
+            lookup_proves_dynamic(opids: opids_in_group, busid: OPID[i], expressions: [VALS[i]], mul: mul[i]);
+        }
 
-    if (SPECIFIED_TABLE_VIRTUAL == 0) {
+        // Save the AIRGROUP_ID and AIR_ID
         proof.std.specified.airgroup_id = AIRGROUP_ID;
         proof.std.specified.air_id = AIR_ID;
     }
