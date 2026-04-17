@@ -18,7 +18,7 @@
 // Golden hash values — cryptographic ground truth. Input=[0,1,...,W-1].
 namespace GoldilocksTestData {
 
-// hash() golden: first CAPACITY elements of full permutation output
+// compress() golden: first CAPACITY elements of full permutation output
 constexpr uint64_t COMPRESS_W4_GOLDEN[4]  = { 0x758085b0af0a16aa, 0x85141acc29c479de,
                                            0x50127371e2b77ae5, 0xefee3a8033630029 };
 constexpr uint64_t COMPRESS_W8_GOLDEN[4]  = { 0xc5fb1cfe0b4697bb, 0x4a4a32ff849af473,

@@ -70,10 +70,10 @@ TEST(Poseidon2, permute_golden_W16)
 }
 
 // ---------------------------------------------------------------------------
-// 2. hash golden
+// 2. compress golden
 // ---------------------------------------------------------------------------
 
-TEST(Poseidon2, hash_golden_W4)
+TEST(Poseidon2, compress_golden_W4)
 {
     Goldilocks::Element in[4], out[4];
     fillSequential<4>(in, 0, 4);
@@ -81,7 +81,7 @@ TEST(Poseidon2, hash_golden_W4)
     assertCapacityEq(out, COMPRESS_W4_GOLDEN);
 }
 
-TEST(Poseidon2, hash_golden_W8)
+TEST(Poseidon2, compress_golden_W8)
 {
     Goldilocks::Element in[8], out[4];
     fillSequential<8>(in, 0, 8);
@@ -89,7 +89,7 @@ TEST(Poseidon2, hash_golden_W8)
     assertCapacityEq(out, COMPRESS_W8_GOLDEN);
 }
 
-TEST(Poseidon2, hash_golden_W12)
+TEST(Poseidon2, compress_golden_W12)
 {
     Goldilocks::Element in[12], out[4];
     fillSequential<12>(in, 0, 12);
@@ -97,7 +97,7 @@ TEST(Poseidon2, hash_golden_W12)
     assertCapacityEq(out, COMPRESS_W12_GOLDEN);
 }
 
-TEST(Poseidon2, hash_golden_W16)
+TEST(Poseidon2, compress_golden_W16)
 {
     Goldilocks::Element in[16], out[4];
     fillSequential<16>(in, 0, 16);
@@ -137,12 +137,12 @@ TEST(Poseidon2, permute_mode_equiv_W16) { permuteModeEquiv<16>(); }
 #endif
 
 // ---------------------------------------------------------------------------
-// 4. hash mode equivalence
+// 4. compress mode equivalence
 // ---------------------------------------------------------------------------
 
 #ifdef __AVX2__
 template<uint32_t W>
-static void hashModeEquiv()
+static void compressModeEquiv()
 {
     constexpr uint32_t C = Poseidon2Goldilocks<W>::CAPACITY;
     Goldilocks::Element in[W];
@@ -162,10 +162,10 @@ static void hashModeEquiv()
     }
 }
 
-TEST(Poseidon2, hash_mode_equiv_W4)  { hashModeEquiv<4>();  }
-TEST(Poseidon2, hash_mode_equiv_W8)  { hashModeEquiv<8>();  }
-TEST(Poseidon2, hash_mode_equiv_W12) { hashModeEquiv<12>(); }
-TEST(Poseidon2, hash_mode_equiv_W16) { hashModeEquiv<16>(); }
+TEST(Poseidon2, compress_mode_equiv_W4)  { compressModeEquiv<4>();  }
+TEST(Poseidon2, compress_mode_equiv_W8)  { compressModeEquiv<8>();  }
+TEST(Poseidon2, compress_mode_equiv_W12) { compressModeEquiv<12>(); }
+TEST(Poseidon2, compress_mode_equiv_W16) { compressModeEquiv<16>(); }
 #endif
 
 // ---------------------------------------------------------------------------
@@ -333,11 +333,11 @@ TEST(Poseidon2, grinding_cpu)
 }
 
 // ---------------------------------------------------------------------------
-// 11. Edge: hash all-zero input
+// 11. Edge: compress all-zero input
 // ---------------------------------------------------------------------------
 
 template<uint32_t W>
-static void hashAllZero()
+static void compressAllZero()
 {
     constexpr uint32_t C = Poseidon2Goldilocks<W>::CAPACITY;
     Goldilocks::Element in[W];
@@ -353,13 +353,13 @@ static void hashAllZero()
             break;
         }
     }
-    ASSERT_FALSE(allZero) << "hash(zeros) should not produce all-zero output (W=" << W << ")";
+    ASSERT_FALSE(allZero) << "compress(zeros) should not produce all-zero output (W=" << W << ")";
 }
 
-TEST(Poseidon2, hash_allzero_W4)  { hashAllZero<4>();  }
-TEST(Poseidon2, hash_allzero_W8)  { hashAllZero<8>();  }
-TEST(Poseidon2, hash_allzero_W12) { hashAllZero<12>(); }
-TEST(Poseidon2, hash_allzero_W16) { hashAllZero<16>(); }
+TEST(Poseidon2, compress_allzero_W4)  { compressAllZero<4>();  }
+TEST(Poseidon2, compress_allzero_W8)  { compressAllZero<8>();  }
+TEST(Poseidon2, compress_allzero_W12) { compressAllZero<12>(); }
+TEST(Poseidon2, compress_allzero_W16) { compressAllZero<16>(); }
 
 // ---------------------------------------------------------------------------
 // 12. Edge: linearHash size=0

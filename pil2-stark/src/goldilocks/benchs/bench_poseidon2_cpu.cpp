@@ -36,7 +36,7 @@ static void fillData(Goldilocks::Element *buf, uint64_t n)
 }
 
 // ===================================================================
-// hash / permute -- per-element throughput (thread-count sweep)
+// permute / compress -- per-element throughput (thread-count sweep)
 // No GPU counterpart; kept for micro-level CPU profiling.
 // ===================================================================
 
@@ -280,7 +280,7 @@ static void GRINDING_CPU_BENCH(benchmark::State &state)
         NCOLS_ARGS                                                           \
         ->UseRealTime();
 
-// Per-element throughput benchmarks (hash, permute)
+// Per-element throughput benchmarks (permute, compress)
 #define REG_ELEM(FUNC, W, LABEL)                                             \
     BENCHMARK_TEMPLATE(FUNC, W)                                              \
         ->Name(LABEL)                                                        \
@@ -288,7 +288,7 @@ static void GRINDING_CPU_BENCH(benchmark::State &state)
         ->UseRealTime();
 
 // ---------------------------------------------------------------------------
-// hash / permute registrations (per-element throughput, no nCols param)
+// permute / compress registrations (per-element throughput, no nCols param)
 // ---------------------------------------------------------------------------
 
 REG_ELEM(PERMUTE_W_SCALAR_CPU_BENCH, 8,  "PERMUTE_W8_SCALAR_CPU_BENCH")
