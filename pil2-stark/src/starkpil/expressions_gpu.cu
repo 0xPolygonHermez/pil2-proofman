@@ -546,11 +546,11 @@ __device__ __forceinline__ void op_gpu_p2(uint64_t op, gl64_t *C, const gl64_t *
 __device__ __forceinline__
 void op_31_gpu_p2(
     uint64_t op,
-    gl64_t * __restrict__ C,
-    const gl64_t * __restrict__ a0,
-    const gl64_t * __restrict__ a1,
-    const gl64_t * __restrict__ a2,
-    const gl64_t * __restrict__ b)
+    gl64_t * C,
+    const gl64_t * a0,
+    const gl64_t * a1,
+    const gl64_t * a2,
+    const gl64_t * b)
 {
     // -----------------------------
     // LOAD ONCE (critical improvement)
@@ -599,13 +599,13 @@ void op_31_gpu_p2(
 __device__ __forceinline__
 void op_33_gpu_p2(
     uint64_t op,
-    gl64_t * __restrict__ C,
-    const gl64_t * __restrict__ a0,
-    const gl64_t * __restrict__ a1,
-    const gl64_t * __restrict__ a2,
-    const gl64_t * __restrict__ b0,
-    const gl64_t * __restrict__ b1,
-    const gl64_t * __restrict__ b2)
+    gl64_t * C,
+    const gl64_t * a0,
+    const gl64_t * a1,
+    const gl64_t * a2,
+    const gl64_t * b0,
+    const gl64_t * b1,
+    const gl64_t * b2)
 {
     // ----------------------------
     // LOAD ONCE (register reuse)
