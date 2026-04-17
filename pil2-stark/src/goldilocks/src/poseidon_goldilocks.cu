@@ -91,6 +91,14 @@ __global__ void compressKernel_pos1(uint64_t *output, const uint64_t *input)
 //     carry the previous output's CAPACITY block into slots [RATE..SPONGE_WIDTH).
 //     Zero-pad the rate region when the tail is short.
 //   - Output = first CAPACITY of the final state.
+// Shared-memory path — state in scratchpad (eliminates 96-byte stack spill of
+// the register version) and fused partial rounds (see poseidon1PermuteSmem).
+// Launched with dynamic shared mem = blockDim.x * W * sizeof(uint64_t).
+//
+// Note: tried __launch_bounds__(TPB, {2..8}); all variants measured slightly
+// slower (nvcc gave itself more regs, dropping occupancy). The kernel at 48
+// regs/thread with no launch_bounds achieves 57.9% occupancy which ncu reports
+// is smem-limited at 7 resident blocks/SM — already the hardware ceiling.
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void linearHashKernel_pos1(uint64_t *__restrict__ output,
                                       uint64_t *__restrict__ input,
@@ -102,7 +110,7 @@ __global__ void linearHashKernel_pos1(uint64_t *__restrict__ output,
     gl64_t *row_in  = (gl64_t *)(input  + tid * (uint64_t)num_cols);
     gl64_t *row_out = (gl64_t *)(output + tid * (uint64_t)CAPACITY_T);
 
-    // Pass-through for short inputs (keeps byte-parity with CPU linear_hash_seq).
+    // Pass-through for short inputs (byte-parity with CPU linear_hash_seq).
     if (num_cols <= CAPACITY_T)
     {
 #pragma unroll
@@ -111,7 +119,6 @@ __global__ void linearHashKernel_pos1(uint64_t *__restrict__ output,
         return;
     }
 
-    gl64_t state[12];
     uint32_t remaining = num_cols;
     bool first = true;
 
@@ -121,28 +128,27 @@ __global__ void linearHashKernel_pos1(uint64_t *__restrict__ output,
         {
 #pragma unroll
             for (uint32_t i = 0; i < CAPACITY_T; ++i)
-                state[RATE_T + i] = gl64_t(uint64_t(0));
+                scratchpad[(RATE_T + i) * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
             first = false;
         }
         else
         {
-            // Carry previous output's capacity block up.
+            // Carry previous output's capacity block up (scratchpad-local).
 #pragma unroll
             for (uint32_t i = 0; i < CAPACITY_T; ++i)
-                state[RATE_T + i] = state[i];
+                scratchpad[(RATE_T + i) * blockDim.x + threadIdx.x] =
+                    scratchpad[i * blockDim.x + threadIdx.x];
         }
 
         uint32_t n = (remaining < RATE_T) ? remaining : RATE_T;
 
         // Fill rate region + zero-pad tail.
         for (uint32_t i = 0; i < n; ++i)
-            state[i] = row_in[(num_cols - remaining) + i];
+            scratchpad[i * blockDim.x + threadIdx.x] = row_in[(num_cols - remaining) + i];
         for (uint32_t i = n; i < RATE_T; ++i)
-            state[i] = gl64_t(uint64_t(0));
+            scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
 
-        // In-place permute (state <- permute(state)).
-        poseidon1PermuteReg<W, HALF_F, N_PART>(
-            state, state,
+        poseidon1PermuteSmem<W, HALF_F, N_PART>(
             (const gl64_t *)GPU_POS1_C,
             (const gl64_t *)GPU_POS1_S,
             (const gl64_t *)GPU_POS1_M,
@@ -153,10 +159,10 @@ __global__ void linearHashKernel_pos1(uint64_t *__restrict__ output,
 
 #pragma unroll
     for (uint32_t i = 0; i < CAPACITY_T; ++i)
-        row_out[i] = state[i];
+        row_out[i] = scratchpad[i * blockDim.x + threadIdx.x];
 }
 
-// linearHashTiledKernel_pos1: block-tiled input (goldilocks_trace_layout).
+// linearHashTiledKernel_pos1: block-tiled input layout + shared-memory state.
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
                                            uint64_t *__restrict__ input,
@@ -167,7 +173,6 @@ __global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
 
     gl64_t *row_out = (gl64_t *)(output + (uint64_t)row * (uint64_t)CAPACITY_T);
 
-    // Pass-through for short inputs.
     if (num_cols <= CAPACITY_T)
     {
 #pragma unroll
@@ -186,7 +191,6 @@ __global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
         return;
     }
 
-    gl64_t state[12];
     uint32_t remaining = num_cols;
     bool first = true;
 
@@ -196,29 +200,28 @@ __global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
         {
 #pragma unroll
             for (uint32_t i = 0; i < CAPACITY_T; ++i)
-                state[RATE_T + i] = gl64_t(uint64_t(0));
+                scratchpad[(RATE_T + i) * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
             first = false;
         }
         else
         {
 #pragma unroll
             for (uint32_t i = 0; i < CAPACITY_T; ++i)
-                state[RATE_T + i] = state[i];
+                scratchpad[(RATE_T + i) * blockDim.x + threadIdx.x] =
+                    scratchpad[i * blockDim.x + threadIdx.x];
         }
 
         uint32_t n = (remaining < RATE_T) ? remaining : RATE_T;
-
         uint32_t col0 = num_cols - remaining;
         for (uint32_t i = 0; i < n; ++i)
         {
             uint64_t idx = getBufferOffset(row, col0 + i, num_rows, num_cols);
-            state[i] = ((gl64_t *)input)[idx];
+            scratchpad[i * blockDim.x + threadIdx.x] = ((gl64_t *)input)[idx];
         }
         for (uint32_t i = n; i < RATE_T; ++i)
-            state[i] = gl64_t(uint64_t(0));
+            scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
 
-        poseidon1PermuteReg<W, HALF_F, N_PART>(
-            state, state,
+        poseidon1PermuteSmem<W, HALF_F, N_PART>(
             (const gl64_t *)GPU_POS1_C,
             (const gl64_t *)GPU_POS1_S,
             (const gl64_t *)GPU_POS1_M,
@@ -229,12 +232,14 @@ __global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
 
 #pragma unroll
     for (uint32_t i = 0; i < CAPACITY_T; ++i)
-        row_out[i] = state[i];
+        row_out[i] = scratchpad[i * blockDim.x + threadIdx.x];
 }
 
 // Internal merkle reduction kernel — reads arity*CAPACITY child digests per
 // parent (matches the CPU fix shipped in poseidon_goldilocks.cpp, differs from
 // Poseidon2 which assumes arity*CAPACITY == SPONGE_WIDTH).
+// Shared-memory merkle reduction kernel.
+// Launched with dynamic shared mem = blockDim.x * W * sizeof(uint64_t).
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void merkleNodeKernel_pos1(uint32_t nextN, uint32_t nextIndex,
                                       uint32_t pending, uint32_t arity,
@@ -243,23 +248,19 @@ __global__ void merkleNodeKernel_pos1(uint32_t nextN, uint32_t nextIndex,
     uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= nextN) return;
 
-    // Build the permute input: arity*CAPACITY child bytes then zero-pad.
-    gl64_t pol_input[12];
-#pragma unroll
-    for (uint32_t i = 0; i < W; ++i)
-        pol_input[i] = gl64_t(uint64_t(0));
-
-    const uint32_t copy_n = arity * CAPACITY_T;
+    // Load input: arity*CAPACITY child bytes into [0..copy_n), zero-pad [copy_n..W).
     const uint32_t stride = arity * CAPACITY_T;
     const uint64_t base = (uint64_t)nextIndex + (uint64_t)tid * (uint64_t)stride;
+    const uint32_t n = (stride < W) ? stride : W;
 
-    const uint32_t n = (copy_n < W) ? copy_n : W;
     for (uint32_t i = 0; i < n; ++i)
-        pol_input[i] = ((gl64_t *)cursor)[base + i];
+        scratchpad[i * blockDim.x + threadIdx.x] = ((gl64_t *)cursor)[base + i];
+#pragma unroll
+    for (uint32_t i = 0; i < W; ++i)
+        if (i >= n)
+            scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
 
-    gl64_t state[12];
-    poseidon1PermuteReg<W, HALF_F, N_PART>(
-        state, pol_input,
+    poseidon1PermuteSmem<W, HALF_F, N_PART>(
         (const gl64_t *)GPU_POS1_C,
         (const gl64_t *)GPU_POS1_S,
         (const gl64_t *)GPU_POS1_M,
@@ -268,7 +269,7 @@ __global__ void merkleNodeKernel_pos1(uint32_t nextN, uint32_t nextIndex,
     gl64_t *out = (gl64_t *)(&cursor[(uint64_t)nextIndex + ((uint64_t)pending + tid) * CAPACITY_T]);
 #pragma unroll
     for (uint32_t i = 0; i < CAPACITY_T; ++i)
-        out[i] = state[i];
+        out[i] = scratchpad[i * blockDim.x + threadIdx.x];
 }
 
 // Grinding kernel (mirrors Poseidon2 grindingKernel). Uses an in-register state
@@ -422,15 +423,17 @@ void PoseidonGoldilocksGPU<W>::linearHash(uint64_t *d_hash_output, uint64_t *d_t
         blks = 1;
     }
 
+    const size_t smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
+
     if (layout == Layout::Tiles)
     {
         linearHashTiledKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-            <<<blks, tpb, 0, stream>>>(d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows);
+            <<<blks, tpb, smem_bytes, stream>>>(d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows);
     }
     else
     {
         linearHashKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-            <<<blks, tpb, 0, stream>>>(d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows);
+            <<<blks, tpb, smem_bytes, stream>>>(d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows);
     }
     CHECKCUDAERR(cudaGetLastError());
 }
@@ -456,15 +459,17 @@ void PoseidonGoldilocksGPU<W>::merkletree(uint32_t arity, uint64_t *d_tree, uint
         blks = 1;
     }
 
+    size_t smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
+
     if (layout == Layout::Tiles)
     {
         linearHashTiledKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-            <<<blks, tpb, 0, stream>>>(d_tree, d_input, (uint32_t)num_cols, (uint32_t)num_rows);
+            <<<blks, tpb, smem_bytes, stream>>>(d_tree, d_input, (uint32_t)num_cols, (uint32_t)num_rows);
     }
     else
     {
         linearHashKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-            <<<blks, tpb, 0, stream>>>(d_tree, d_input, (uint32_t)num_cols, (uint32_t)num_rows);
+            <<<blks, tpb, smem_bytes, stream>>>(d_tree, d_input, (uint32_t)num_cols, (uint32_t)num_rows);
     }
     CHECKCUDAERR(cudaGetLastError());
 
@@ -482,10 +487,11 @@ void PoseidonGoldilocksGPU<W>::merkletree(uint32_t arity, uint64_t *d_tree, uint
 
         if (nextN < TPB_POS1) { tpb = (u32)nextN; blks = 1; }
         else                  { tpb = TPB_POS1;   blks = (u32)(nextN / TPB_POS1 + 1); }
+        smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
 
         merkleNodeKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-            <<<blks, tpb, 0, stream>>>((u32)nextN, (u32)nextIndex,
-                                       (u32)(pending + extraZeros), arity, d_tree);
+            <<<blks, tpb, smem_bytes, stream>>>((u32)nextN, (u32)nextIndex,
+                                                (u32)(pending + extraZeros), arity, d_tree);
 
         nextIndex += (pending + extraZeros) * CAPACITY;
         pending = (pending + (arity - 1)) / arity;
@@ -533,9 +539,10 @@ void PoseidonGoldilocksGPU<W>::merkletreeReduce(uint64_t *d_root, uint64_t *d_in
 
         u32 tpb = (nextN < TPB_POS1) ? (u32)nextN : TPB_POS1;
         u32 blks = (nextN < TPB_POS1) ? 1 : (u32)(nextN / TPB_POS1 + 1);
+        size_t smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
 
         merkleNodeKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-            <<<blks, tpb, 0, stream>>>(
+            <<<blks, tpb, smem_bytes, stream>>>(
                 (u32)nextN, (u32)nextIndex, (u32)(pending + extraZeros), (uint32_t)arity, d_tree);
 
         nextIndex += (pending + extraZeros) * CAPACITY;
