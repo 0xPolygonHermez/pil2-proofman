@@ -19,22 +19,14 @@
 
 // Mode selector for the Poseidon2 public API.
 // Auto resolves per-operation, inline, to the best backend compiled in.
-// Explicit modes whose backend isn't compiled in abort loudly — this is a
-// build-config bug, not a silent fallback.
-//
-// Avx512 (single-sponge) is intentionally unimplemented: at state sizes
-// 4..16 elements an 8-lane register offers no meaningful gain over the
-// 4-lane AVX2 path, and the real AVX512 win case (8 parallel sponges) is
-// already covered by Avx512Batch. Auto on AVX512 hosts therefore picks Avx
-// for single-sponge ops (permute, compress, linearHash) and Avx512Batch
-// for merkletree. Explicit Avx512 on a single-sponge op aborts.
+// Explicit modes whose backend isn't compiled in abort loudly
 enum class Poseidon2Mode : uint8_t {
     Auto = 0,
     Scalar,
     Avx,
-    AvxBatch,        // backs merkletree_batch_avx, linear_hash_batch_avx (internal 4-row contract)
-    Avx512,          // reserved; single-sponge AVX512 is intentionally not implemented (see above)
-    Avx512Batch,     // backs merkletree_batch_avx512 (internal 8-row contract)
+    AvxBatch,
+    Avx512,
+    Avx512Batch,
 };
 
 

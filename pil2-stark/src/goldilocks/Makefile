@@ -73,14 +73,6 @@ TEST_OBJS  := $(patsubst $(TEST_DIR)/%.cpp, $(BUILD_DIR)/tests/%.o, $(TEST_SRCS)
 BENCH_SRCS := $(wildcard benchs/*_cpu.cpp)
 BENCH_OBJS := $(patsubst benchs/%.cpp, $(BUILD_DIR)/benchs/%.o, $(BENCH_SRCS))
 
-# Fallback: if no *_cpu.cpp files exist yet, use the legacy single-file names
-ifeq ($(TEST_SRCS),)
-  TEST_OBJS := $(BUILD_DIR)/tests/tests.o
-endif
-ifeq ($(BENCH_SRCS),)
-  BENCH_OBJS := $(BUILD_DIR)/benchs/bench.o
-endif
-
 ifeq ($(UNAME_S),Linux)
 GPU_SRC_OBJS := $(BUILD_DIR_GPU)/src/goldilocks_base_field.cpp.o \
                 $(BUILD_DIR_GPU)/src/ntt_goldilocks.cu.o \
@@ -93,14 +85,6 @@ GPU_TEST_SRCS := $(wildcard $(TEST_DIR)/*_gpu.cu)
 GPU_TEST_OBJS := $(patsubst $(TEST_DIR)/%.cu, $(BUILD_DIR_GPU)/tests/%.cu.o, $(GPU_TEST_SRCS))
 GPU_BENCH_SRCS := $(wildcard benchs/*_gpu.cu)
 GPU_BENCH_OBJS := $(patsubst benchs/%.cu, $(BUILD_DIR_GPU)/benchs/%.cu.o, $(GPU_BENCH_SRCS))
-
-# Fallback for legacy single-file GPU layout
-ifeq ($(GPU_TEST_SRCS),)
-  GPU_TEST_OBJS := $(BUILD_DIR_GPU)/tests/tests.cu.o
-endif
-ifeq ($(GPU_BENCH_SRCS),)
-  GPU_BENCH_OBJS := $(BUILD_DIR_GPU)/benchs/bench.cu.o
-endif
 endif
 
 # ----------------------
@@ -109,7 +93,7 @@ endif
 .PHONY: all testscpu benchscpu testsgpu benchsgpu clean help
 
 ifeq ($(UNAME_S),Linux)
-all: testscpu benchscpu
+all: testscpu benchscpu testsgpu benchsgpu
 else
 all: testscpu benchscpu
 endif
@@ -149,7 +133,6 @@ $(BUILD_DIR_GPU)/%.cpp.o: %.cpp
 # ----------------------
 # Clean target
 # ----------------------
-.PHONY: clean
 clean:
 	rm -rf ./build testscpu benchscpu
 ifeq ($(UNAME_S),Linux)
@@ -159,18 +142,16 @@ endif
 # ----------------------
 # Help target
 # ----------------------
-.PHONY: help
 help:
 	@echo "make [target]"
-	@echo "  clean         - Remove build artifacts (CPU and, on Linux, GPU)"
-	@echo "  distclean     - Remove all build artifacts and backup files"
 	@echo "  all (default) - Build all CPU (and GPU on Linux) binaries"
-	@echo "  testscpu        - Build the CPU test binary (scalar + AVX2 + AVX512 auto-detected)"
-	@echo "  benchscpu       - Build the CPU benchmark binary (Google Benchmark)"
+	@echo "  testscpu      - Build the CPU test binary (scalar + AVX2 + AVX512 auto-detected)"
+	@echo "  benchscpu     - Build the CPU benchmark binary (Google Benchmark)"
 ifeq ($(UNAME_S),Linux)
-	@echo "  testsgpu        - Build the GPU test binary (CUDA, Linux only)"
-	@echo "  benchsgpu       - Build the GPU benchmark binary (CUDA, Linux only)"
+	@echo "  testsgpu      - Build the GPU test binary (CUDA, Linux only)"
+	@echo "  benchsgpu     - Build the GPU benchmark binary (CUDA, Linux only)"
 endif
+	@echo "  clean         - Remove build artifacts (CPU and, on Linux, GPU)"
 
 -include $(DEPS)
 
