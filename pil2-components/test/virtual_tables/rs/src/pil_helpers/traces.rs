@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "b8bb8fec7eb3e1f51b78b3a103531c1914ccd19128bdd7f3bca080c8717ecdd0";
+pub const PILOUT_HASH: &str = "f73b78c6ea062eb002982521b4559172b575f6baa9281d781279ba13b998d061";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
@@ -46,11 +46,11 @@ pub const COMPONENT_8_AIR_IDS: &[usize] = &[8];
 
 pub const SPECIFIED_RANGES_AIR_IDS: &[usize] = &[9];
 
-pub const VIRTUAL_TABLE_0_AIR_IDS: &[usize] = &[10];
+pub const VIRTUAL_TABLE_0_0_AIR_IDS: &[usize] = &[10];
 
-pub const VIRTUAL_TABLE_1_AIR_IDS: &[usize] = &[11];
+pub const VIRTUAL_TABLE_0_1_AIR_IDS: &[usize] = &[11];
 
-pub const VIRTUAL_TABLE_2_AIR_IDS: &[usize] = &[12];
+pub const VIRTUAL_TABLE_0_2_AIR_IDS: &[usize] = &[12];
 
   
 trace_row!(Component1FixedRow<F> {
@@ -163,37 +163,37 @@ trace_row!(SpecifiedRangesTraceRow<F> {
 pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 64, 0, 9>;
 
 
-trace_row!(VirtualTable0FixedRow<F> {
+trace_row!(VirtualTable_0_0FixedRow<F> {
  UID: [F; 1], column: [F; 6], __L1__: F,
 });
-pub type VirtualTable0Fixed<F> = GenericTrace<VirtualTable0FixedRow<F>, 65536, 0, 10>;
+pub type VirtualTable_0_0Fixed<F> = GenericTrace<VirtualTable_0_0FixedRow<F>, 2048, 0, 10>;
 
-trace_row!(VirtualTable0TraceRow<F> {
+trace_row!(VirtualTable_0_0TraceRow<F> {
  multiplicity:[F; 1],
 });
-pub type VirtualTable0Trace<F> = GenericTrace<VirtualTable0TraceRow<F>, 65536, 0, 10>;
+pub type VirtualTable_0_0Trace<F> = GenericTrace<VirtualTable_0_0TraceRow<F>, 2048, 0, 10>;
 
 
-trace_row!(VirtualTable1FixedRow<F> {
+trace_row!(VirtualTable_0_1FixedRow<F> {
  UID: [F; 1], column: [F; 5], __L1__: F,
 });
-pub type VirtualTable1Fixed<F> = GenericTrace<VirtualTable1FixedRow<F>, 65536, 0, 11>;
+pub type VirtualTable_0_1Fixed<F> = GenericTrace<VirtualTable_0_1FixedRow<F>, 65536, 0, 11>;
 
-trace_row!(VirtualTable1TraceRow<F> {
+trace_row!(VirtualTable_0_1TraceRow<F> {
  multiplicity:[F; 1],
 });
-pub type VirtualTable1Trace<F> = GenericTrace<VirtualTable1TraceRow<F>, 65536, 0, 11>;
+pub type VirtualTable_0_1Trace<F> = GenericTrace<VirtualTable_0_1TraceRow<F>, 65536, 0, 11>;
 
 
-trace_row!(VirtualTable2FixedRow<F> {
+trace_row!(VirtualTable_0_2FixedRow<F> {
  UID: [F; 2], column: [F; 4], __L1__: F,
 });
-pub type VirtualTable2Fixed<F> = GenericTrace<VirtualTable2FixedRow<F>, 65536, 0, 12>;
+pub type VirtualTable_0_2Fixed<F> = GenericTrace<VirtualTable_0_2FixedRow<F>, 65536, 0, 12>;
 
-trace_row!(VirtualTable2TraceRow<F> {
+trace_row!(VirtualTable_0_2TraceRow<F> {
  multiplicity:[F; 2],
 });
-pub type VirtualTable2Trace<F> = GenericTrace<VirtualTable2TraceRow<F>, 65536, 0, 12>;
+pub type VirtualTable_0_2Trace<F> = GenericTrace<VirtualTable_0_2TraceRow<F>, 65536, 0, 12>;
 
 
 values!(Component1AirGroupValues<F> {
@@ -236,15 +236,15 @@ values!(SpecifiedRangesAirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
-values!(VirtualTable0AirGroupValues<F> {
+values!(VirtualTable_0_0AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
-values!(VirtualTable1AirGroupValues<F> {
+values!(VirtualTable_0_1AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
-values!(VirtualTable2AirGroupValues<F> {
+values!(VirtualTable_0_2AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
