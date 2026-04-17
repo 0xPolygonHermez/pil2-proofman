@@ -122,9 +122,9 @@ void Starks<ElementType>::extendAndMerkelizeCustomCommit(uint64_t commitId, uint
     Goldilocks::Element *pBuffExtended = &buffer[setupCtx.starkInfo.mapOffsets[make_pair(section, true)]];
 
     if(pBuffHelper != nullptr) {
-        ntt.extendPol(pBuffExtended, pBuff, NExtended, N, nCols, pBuffHelper);
+        ntt.LDE(pBuffExtended, pBuff, NExtended, N, nCols, pBuffHelper);
     } else {
-        ntt.extendPol(pBuffExtended, pBuff, NExtended, N, nCols);
+        ntt.LDE(pBuffExtended, pBuff, NExtended, N, nCols);
     }
     
     uint64_t pos = setupCtx.starkInfo.nStages + 2 + commitId;
@@ -153,9 +153,9 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
  
 
     if(pBuffHelper != nullptr) {
-        ntt.extendPol(pBuffExtended, pBuff, NExtended, N, nCols, pBuffHelper);
+        ntt.LDE(pBuffExtended, pBuff, NExtended, N, nCols, pBuffHelper);
     } else {
-        ntt.extendPol(pBuffExtended, pBuff, NExtended, N, nCols);
+        ntt.LDE(pBuffExtended, pBuff, NExtended, N, nCols);
     }
     
     treesGL[step - 1]->setSource(pBuffExtended);

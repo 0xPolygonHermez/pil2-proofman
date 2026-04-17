@@ -297,7 +297,7 @@ uint64_t get_map_total_n(void *pStarkInfo)
 
 uint64_t get_tree_size(void *pStarkInfo)
 {
-    uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements((1 << ((StarkInfo *)pStarkInfo)->starkStruct.nBitsExt), 3);
+    uint64_t tree_size = MerkleTreeGL::getTreeNumElements((1 << ((StarkInfo *)pStarkInfo)->starkStruct.nBitsExt), 3);
     return tree_size;
 
 }
@@ -631,7 +631,7 @@ void write_custom_commit_cpu(void* root, uint64_t arity, uint64_t nBits, uint64_
     MerkleTreeGL mt(arity, 0, true, NExtended, nCols, true, true);
 
     NTT_Goldilocks ntt(N);
-    ntt.extendPol(mt.source, (Goldilocks::Element *)buffer, NExtended, N, nCols);
+    ntt.LDE(mt.source, (Goldilocks::Element *)buffer, NExtended, N, nCols);
     
     mt.merkelize();
     
@@ -679,7 +679,7 @@ uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     calculateWitnessExpr(*setupCtx, *params, expressionsCtx);
 
     NTT_Goldilocks ntt(N);
-    ntt.extendPol(&auxTraceGL[offset_dst], params->trace, NExtended, N, nCols, &auxTraceGL[offset_mt]);
+    ntt.LDE(&auxTraceGL[offset_dst], params->trace, NExtended, N, nCols, &auxTraceGL[offset_mt]);
     mt.setSource(&auxTraceGL[offset_dst]);
     mt.setNodes(&auxTraceGL[offset_mt]);
     mt.merkelize();

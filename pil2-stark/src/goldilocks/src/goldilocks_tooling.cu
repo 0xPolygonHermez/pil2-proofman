@@ -1,6 +1,6 @@
-#include "gl64_tooling.cuh"
+#include "goldilocks_tooling.cuh"
 #include "cuda_utils.cuh"
-#include "data_layout.cuh"
+#include "goldilocks_trace_layout.cuh"
 
 // Kernel to convert row-major layout to tiled layout
 // Uses blockIdx.x for rows (which can be very large) and blockIdx.y for cols

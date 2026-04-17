@@ -6,7 +6,7 @@
 #include "goldilocks_cubic_extension.hpp"
 #include <cassert>
 #include <vector>
-#include "gl64_tooling.cuh"
+#include "goldilocks_tooling.cuh"
 #include "cuda_utils.cuh"
 
 #ifdef __USE_CUDA__

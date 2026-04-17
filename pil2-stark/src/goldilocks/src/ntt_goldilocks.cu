@@ -7,7 +7,7 @@
  * === Data Layouts ===
  *
  * All data is organized in tiles of TILE_HEIGHT=256 rows x TILE_WIDTH=4 cols
- * (defined in data_layout.cuh). Three orderings within tiles are used:
+ * (defined in goldilocks_trace_layout.cuh). Three orderings within tiles are used:
  *
  * - Column-major tiles (getBufferOffset): Elements stored column-by-column
  *   within each tile. This is the prover's storage format — consecutive rows
@@ -44,7 +44,7 @@
 #include "ntt_goldilocks.hpp"
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
-#include "gl64_tooling.cuh"
+#include "goldilocks_tooling.cuh"
 #include "poseidon2_goldilocks.cuh"
 #include "ntt_goldilocks.cuh"
 #include "goldilocks_cubic_extension.cuh"

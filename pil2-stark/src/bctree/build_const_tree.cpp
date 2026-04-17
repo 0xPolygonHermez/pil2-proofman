@@ -41,7 +41,7 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
 
     TimerStart(EXTEND_CONST_POLS);
     NTT_Goldilocks ntt(N);
-    ntt.extendPol(pConstPolsExt, pConstPols, NExtended, N, nPols);
+    ntt.LDE(pConstPolsExt, pConstPols, NExtended, N, nPols);
     TimerStopAndLog(EXTEND_CONST_POLS);
 
     if (verificationHashType == "GL") {
