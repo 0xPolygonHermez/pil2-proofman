@@ -53,13 +53,16 @@ TARGET_BIN_FILE := binfile
 TARGET_STARKS_LIB := libstarks.a
 TARGET_SETUP := fflonkSetup
 TARGET_STARKS_LIB_GPU := libstarksgpu.a
+TARGET_STARKS_LIB_METAL := libstarksmetal.a
 TARGET_SETUP_PLONK := plonkSetup
 TARGET_PROVE_PLONK := plonkProve
 
 BUILD_DIR := ./build
 BUILD_DIR_GPU := ./build-gpu
+BUILD_DIR_METAL := ./build-metal
 LIB_DIR := ./lib
 LIB_DIR_GPU := ./lib-gpu
+LIB_DIR_METAL := ./lib-metal
 SRC_DIRS := ./src
 SETUP_DIRS := ./src/rapidsnark
 SETUP_DPNDS_DIR := src/bn128/src/ffiasm
@@ -90,7 +93,33 @@ INC_DIRS := $(shell find $(SRC_DIRS) -type d)
 INC_FLAGS := $(addprefix -I,$(INC_DIRS))
 
 ifeq ($(UNAME_S),Darwin)
-    HOMEBREW_PREFIX := $(shell brew --prefix)
+    # Resolve Homebrew prefix; fall back to architecture defaults if `brew` is not in PATH.
+    HOMEBREW_PREFIX := $(shell brew --prefix 2>/dev/null)
+    ifeq ($(HOMEBREW_PREFIX),)
+        ifeq ($(shell uname -m),arm64)
+            HOMEBREW_PREFIX := /opt/homebrew
+        else
+            HOMEBREW_PREFIX := /usr/local
+        endif
+    endif
+
+    # Preflight: required Homebrew packages must be installed. Probe the header
+    # file directly — `brew --prefix <pkg>` returns the would-be path even when
+    # the package is uninstalled, so it is not a reliable installed-check.
+    BREW_INSTALL_HINT := brew install libomp gmp libsodium nlohmann-json
+    ifeq ($(wildcard $(HOMEBREW_PREFIX)/opt/libomp/include/omp.h),)
+        $(error libomp header not found at $(HOMEBREW_PREFIX)/opt/libomp/include/omp.h. Install via: $(BREW_INSTALL_HINT))
+    endif
+    ifeq ($(wildcard $(HOMEBREW_PREFIX)/include/gmp.h),)
+        $(error gmp header not found at $(HOMEBREW_PREFIX)/include/gmp.h. Install via: $(BREW_INSTALL_HINT))
+    endif
+    ifeq ($(wildcard $(HOMEBREW_PREFIX)/opt/libsodium/include/sodium.h),)
+        $(error libsodium header not found at $(HOMEBREW_PREFIX)/opt/libsodium/include/sodium.h. Install via: $(BREW_INSTALL_HINT))
+    endif
+    ifeq ($(wildcard $(HOMEBREW_PREFIX)/include/nlohmann/json.hpp),)
+        $(error nlohmann-json header not found at $(HOMEBREW_PREFIX)/include/nlohmann/json.hpp. Install via: $(BREW_INSTALL_HINT))
+    endif
+
     CXX      = clang++
     SDKPATH  = /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
     CPPFLAGS = -isysroot $(SDKPATH) -I$(HOMEBREW_PREFIX)/include -I$(HOMEBREW_PREFIX)/opt/libomp/include \
@@ -144,7 +173,7 @@ endif
 
 # Define source files based on platform
 ifeq ($(UNAME_S),Darwin)
-    # macOS - exclude assembly files (.asm)
+    # macOS - exclude x86 NASM files (.asm); compile everything else from C++.
     SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/* ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.cc")
 else
     # Linux - include all files including assembly
@@ -155,8 +184,17 @@ SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/api/starks_back
 SPPARK_GPU_OBJ := $(BUILD_DIR_GPU)/external/sppark/util/all_gpus.o
 OBJS_STARKS_LIB := $(SRCS_STARKS_LIB:%=$(BUILD_DIR)/%.o)
 OBJS_STARKS_LIB_GPU := $(SRCS_STARKS_LIB_GPU:%=$(BUILD_DIR_GPU)/%.o) $(SPPARK_GPU_OBJ)
+# Metal build extends the Darwin CPU source list with Obj-C++ bridge files
+# (src/goldilocks/src/metal/*.mm). Every .cpp/.cc object in the metal tree is
+# compiled with -DPIL2_HAS_METAL=1 so downstream `#if PIL2_HAS_METAL` sites
+# light up; the .mm translation units are additionally compiled with
+# -fobjc-arc by their own rule below.
+SRCS_STARKS_LIB_METAL := $(SRCS_STARKS_LIB)
+SRCS_STARKS_LIB_METAL += $(shell find ./src/goldilocks/src/metal -name "*.mm" 2>/dev/null)
+OBJS_STARKS_LIB_METAL := $(SRCS_STARKS_LIB_METAL:%=$(BUILD_DIR_METAL)/%.o)
 DEPS_STARKS_LIB := $(OBJS_STARKS_LIB:.o=.d)
 DEPS_STARKS_LIB_GPU := $(OBJS_STARKS_LIB_GPU:.o=.d)
+DEPS_STARKS_LIB_METAL := $(OBJS_STARKS_LIB_METAL:.o=.d)
 
 # Define BCT source files based on platform
 ifeq ($(UNAME_S),Darwin)
@@ -211,6 +249,8 @@ starks_lib: $(LIB_DIR)/$(TARGET_STARKS_LIB)
 starks_lib_gpu: LDFLAGS := $(LDFLAGS_GPU)
 starks_lib_gpu: $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
 
+starks_lib_metal: $(LIB_DIR_METAL)/$(TARGET_STARKS_LIB_METAL)
+
 binfile: $(BUILD_DIR)/$(TARGET_BINFILE)
 
 bctree: $(BUILD_DIR)/$(TARGET_BCT)
@@ -232,6 +272,12 @@ $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU): $(OBJS_STARKS_LIB_GPU)
 	$(MKDIR_P) $(LIB_DIR_GPU)/include
 	$(AR) rcs $@ $^
 	cp src/api/starks_api.hpp $(LIB_DIR_GPU)/include/starks_lib_gpu.h
+
+$(LIB_DIR_METAL)/$(TARGET_STARKS_LIB_METAL): $(OBJS_STARKS_LIB_METAL)
+	$(MKDIR_P) $(LIB_DIR_METAL)
+	$(MKDIR_P) $(LIB_DIR_METAL)/include
+	$(AR) rcs $@ $^
+	cp src/api/starks_api.hpp $(LIB_DIR_METAL)/include/starks_lib_metal.h
 
 $(BUILD_DIR)/$(TARGET_BCT): $(OBJS_BCT)
 	$(CXX) $(OBJS_BCT) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS)
@@ -271,6 +317,18 @@ $(BUILD_DIR_GPU)/%.cc.o: %.cc
 	$(MKDIR_P) $(dir $@)
 	$(CXX) -D__USE_CUDA__ $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
+$(BUILD_DIR_METAL)/%.cpp.o: %.cpp
+	$(MKDIR_P) $(dir $@)
+	$(CXX) -DPIL2_HAS_METAL=1 $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR_METAL)/%.cc.o: %.cc
+	$(MKDIR_P) $(dir $@)
+	$(CXX) -DPIL2_HAS_METAL=1 $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR_METAL)/%.mm.o: %.mm
+	$(MKDIR_P) $(dir $@)
+	$(CXX) -DPIL2_HAS_METAL=1 -fobjc-arc -x objective-c++ $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+
 
 $(BUILD_DIR)/$(TARGET_BINFILE): $(OBJS_BINFILE)
 	$(CXX) $(OBJS_BINFILE) $(CXXFLAGS) -o $(BUILD_DIR)/$(TARGET_BIN_FILE) $(LDFLAGS) $(LDFLAGS_EXT) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) 
@@ -288,8 +346,8 @@ $(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
 .PHONY: clean
 
 clean:
-	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU)
-	$(RM) -r $(LIB_DIR) $(LIB_DIR_GPU)
+	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU) $(BUILD_DIR_METAL)
+	$(RM) -r $(LIB_DIR) $(LIB_DIR_GPU) $(LIB_DIR_METAL)
 
 -include $(DEPS_SETUP)
 -include $(DEPS_SETUP_PLONK)
@@ -297,5 +355,6 @@ clean:
 -include $(DEPS_BCT)
 -include $(DEPS_STARKS_LIB)
 -include $(DEPS_STARKS_LIB_GPU)
+-include $(DEPS_STARKS_LIB_METAL)
 
 MKDIR_P ?= mkdir -p
