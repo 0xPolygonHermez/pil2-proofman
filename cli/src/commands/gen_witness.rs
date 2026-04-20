@@ -5,8 +5,7 @@ use proofman_common::{initialize_logger, SetupsVadcop, MpiCtx, ProofCtx, Verbose
 use std::fs::File;
 use std::io::Read;
 use colored::Colorize;
-use fields::{Field, Goldilocks};
-use std::os::raw::c_void;
+use fields::Goldilocks;
 use std::path::PathBuf;
 use bytemuck::cast_slice_mut;
 use std::sync::Arc;
@@ -56,15 +55,11 @@ impl GenWitnessCmd {
 
         let setup = setups_vadcop.get_setup(airgroup_id, air_id, proof_type)?;
 
-        let witness_size = setup.get_circom_witness_size();
-
-        let mut witness: Vec<Goldilocks> = vec![Goldilocks::ZERO; witness_size];
-
         let state = setup.circom_state.read().unwrap();
-        let circom_circuit_ptr = match state.circuit {
-            Some(ptr) => ptr,
-            None => return Err(Box::new(ProofmanError::InvalidSetup("circom_circuit is not initialized".into()))),
-        };
+        let circom = state
+            .as_ref()
+            .ok_or_else(|| ProofmanError::InvalidSetup("circom_circuit is not initialized".into()))
+            .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
 
         // let publics_circom_size: usize =
         //     pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3 + 4;
@@ -76,13 +71,8 @@ impl GenWitnessCmd {
         // zkin[publics_circom_size + null_proof_size..publics_circom_size + 2*null_proof_size].fill(0);
         // zkin[publics_circom_size + 2*null_proof_size..].fill(0);
 
-        let get_witness_fn =
-            state.get_witness_fn.ok_or(ProofmanError::InvalidSetup("GetWitness function not loaded".to_string()))?;
-
         timer_start_info!(WITNESS_GENERATION);
-        let res = unsafe {
-            get_witness_fn(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_mut_ptr() as *mut c_void, 1)
-        };
+        let res = unsafe { (circom.get_witness_fn)(zkin.as_ptr() as *mut u64, circom.calc_wit) };
         drop(state);
         timer_stop_and_log_info!(WITNESS_GENERATION);
 

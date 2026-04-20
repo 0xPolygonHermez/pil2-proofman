@@ -48,7 +48,7 @@ use crate::{
 use crate::{verify_constraints_proof, verify_basic_proof, verify_global_constraints_proof};
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
 use crate::{
-    get_accumulated_challenge, gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof,
+    get_accumulated_challenge, build_recursive_zkin, build_aggregation_zkin, generate_recursive_proof,
     generate_vadcop_final_proof, generate_vadcop_final_compressed_proof,
 };
 use crate::total_recursive_proofs;
@@ -232,10 +232,6 @@ pub struct ProofMan<F: PrimeField64> {
     contributions_rx: Receiver<usize>,
     proofs_tx: Sender<usize>,
     proofs_rx: Receiver<usize>,
-    compressor_witness_tx: Sender<Proof<F>>,
-    compressor_witness_rx: Receiver<Proof<F>>,
-    rec1_witness_tx: Sender<Proof<F>>,
-    rec1_witness_rx: Receiver<Proof<F>>,
     rec2_witness_tx: Sender<Proof<F>>,
     rec2_witness_rx: Receiver<Proof<F>>,
     recursive_tx: Sender<(u64, String)>,
@@ -395,8 +391,6 @@ impl<F: PrimeField64> ProofMan<F> {
         while self.contributions_rx.try_recv().is_ok() {}
         while self.recursive_rx.try_recv().is_ok() {}
         while self.proofs_rx.try_recv().is_ok() {}
-        while self.compressor_witness_rx.try_recv().is_ok() {}
-        while self.rec1_witness_rx.try_recv().is_ok() {}
         while self.rec2_witness_rx.try_recv().is_ok() {}
 
         self.worker_contributions.write().unwrap().clear();
@@ -1535,8 +1529,6 @@ where
         let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new(
             max_witness_stored,
             max_witness_stored_compressor,
-            setups_vadcop.max_witness_size,
-            setups_vadcop.max_witness_size_compressor,
             setups_vadcop.max_trace_size,
             setups_vadcop.max_trace_size_compressor,
         ));
@@ -1623,8 +1615,6 @@ where
         let (contributions_tx, contributions_rx): (Sender<usize>, Receiver<usize>) = unbounded();
         let (recursive_tx, recursive_rx) = unbounded::<(u64, String)>();
         let (proofs_tx, proofs_rx): (Sender<usize>, Receiver<usize>) = unbounded();
-        let (compressor_witness_tx, compressor_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
-        let (rec1_witness_tx, rec1_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
         let (rec2_witness_tx, rec2_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
 
         let received_agg_proofs = Arc::new(RwLock::new((0..n_airgroups).map(|_| Vec::new()).collect::<Vec<Vec<_>>>()));
@@ -1664,10 +1654,6 @@ where
             recursive_rx,
             proofs_tx,
             proofs_rx,
-            compressor_witness_tx,
-            compressor_witness_rx,
-            rec1_witness_tx,
-            rec1_witness_rx,
             rec2_witness_tx,
             rec2_witness_rx,
             outer_aggregation_state: Mutex::new(OuterAggregationState::Idle),
@@ -1992,150 +1978,6 @@ where
 
         self.pctx.set_proof_tx(Some(self.proofs_tx.clone()));
 
-        for _ in 0..self.n_streams {
-            let pctx_clone = self.pctx.clone();
-            let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
-            let setups_clone = self.setups.clone();
-            let proofs_clone = self.proofs.clone();
-            let compressor_proofs_clone = self.compressor_proofs.clone();
-            let recursive1_proofs_clone = self.recursive1_proofs.clone();
-            let recursive2_proofs_clone = self.recursive2_proofs.clone();
-            let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
-            let proofs_pending_clone = proofs_pending.clone();
-            let rec1_witness_tx_clone = self.rec1_witness_tx.clone();
-            let rec2_witness_tx_clone = self.rec2_witness_tx.clone();
-            let compressor_witness_tx_clone = self.compressor_witness_tx.clone();
-            let recursive_rx_clone = self.recursive_rx.clone();
-            let cancellation_info_clone = self.cancellation_info.clone();
-            let handle_recursive = std::thread::spawn(move || {
-                while let Ok((id, proof_type)) = recursive_rx_clone.recv() {
-                    if id == u64::MAX - 1 {
-                        return;
-                    }
-                    if cancellation_info_clone.read().unwrap().token.is_cancelled() {
-                        break;
-                    }
-                    let p: ProofType = proof_type.parse().unwrap();
-                    if !options.aggregation {
-                        proofs_pending_clone.decrement();
-                        continue;
-                    }
-
-                    let new_proof_type = if p == ProofType::Basic {
-                        match pctx_clone.dctx_get_instance_info(id as usize) {
-                            Ok((airgroup_id, air_id)) => {
-                                if pctx_clone.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                                    ProofType::Compressor as usize
-                                } else {
-                                    ProofType::Recursive1 as usize
-                                }
-                            }
-                            Err(e) => {
-                                cancellation_info_clone.write().unwrap().cancel(Some(e));
-                                return;
-                            }
-                        }
-                    } else if p == ProofType::Compressor {
-                        ProofType::Recursive1 as usize
-                    } else {
-                        ProofType::Recursive2 as usize
-                    };
-
-                    let witness = if new_proof_type == ProofType::Recursive2 as usize {
-                        let proof = if p == ProofType::Recursive1 {
-                            recursive1_proofs_clone[id as usize].write().unwrap().take().unwrap()
-                        } else {
-                            recursive2_proofs_ongoing_clone.write().unwrap()[id as usize].take().unwrap()
-                        };
-
-                        let recursive2_proof = {
-                            let mut recursive2_airgroup_proofs =
-                                recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
-                            recursive2_airgroup_proofs.push(proof);
-
-                            if recursive2_airgroup_proofs.len() >= N_RECURSIVE_PROOFS_PER_AGGREGATION {
-                                let p1 = recursive2_airgroup_proofs.pop().unwrap();
-                                let p2 = recursive2_airgroup_proofs.pop().unwrap();
-                                let p3 = recursive2_airgroup_proofs.pop().unwrap();
-                                Some((p1, p2, p3))
-                            } else {
-                                None
-                            }
-                        };
-
-                        match recursive2_proof {
-                            Some((p1, p2, p3)) => {
-                                match gen_witness_aggregation(
-                                    &pctx_clone,
-                                    &memory_handler_recursive_witness,
-                                    &setups_clone,
-                                    &p1,
-                                    &p2,
-                                    &p3,
-                                ) {
-                                    Ok(witness) => Some(witness),
-                                    Err(e) => {
-                                        tracing::info!(
-                                            "Error generating recursive2 witness from recursive proofs: {}",
-                                            e
-                                        );
-                                        cancellation_info_clone.write().unwrap().cancel(Some(e));
-                                        break;
-                                    }
-                                }
-                            }
-                            None => None,
-                        }
-                    } else if new_proof_type == ProofType::Recursive1 as usize && p == ProofType::Compressor {
-                        let compressor_proof = compressor_proofs_clone[id as usize].write().unwrap().take().unwrap();
-                        let w = gen_witness_recursive(
-                            &pctx_clone,
-                            &memory_handler_recursive_witness,
-                            &setups_clone,
-                            &compressor_proof,
-                        );
-                        match w {
-                            Ok(witness) => Some(witness),
-                            Err(e) => {
-                                tracing::info!("Error generating recursive1 witness from compressor proof: {}", e);
-                                cancellation_info_clone.write().unwrap().cancel(Some(e));
-                                break;
-                            }
-                        }
-                    } else {
-                        let proof = proofs_clone[id as usize].write().unwrap().take().unwrap();
-                        let w = gen_witness_recursive(
-                            &pctx_clone,
-                            &memory_handler_recursive_witness,
-                            &setups_clone,
-                            &proof,
-                        );
-                        match w {
-                            Ok(witness) => Some(witness),
-                            Err(e) => {
-                                tracing::info!("Error generating recursive1 witness from basic proof: {}", e);
-                                cancellation_info_clone.write().unwrap().cancel(Some(e));
-                                break;
-                            }
-                        }
-                    };
-
-                    if let Some(witness) = witness {
-                        proofs_pending_clone.increment();
-                        if new_proof_type == ProofType::Compressor as usize {
-                            compressor_witness_tx_clone.send(witness).unwrap();
-                        } else if new_proof_type == ProofType::Recursive1 as usize {
-                            rec1_witness_tx_clone.send(witness).unwrap();
-                        } else {
-                            rec2_witness_tx_clone.send(witness).unwrap();
-                        }
-                    }
-                    proofs_pending_clone.decrement();
-                }
-            });
-            self.handle_recursives.lock().unwrap().push(handle_recursive);
-        }
-
         let instance_ids_in_streams: Vec<i64> = vec![-1; self.n_streams];
         get_instances_ready_c(self.pctx.get_device_buffers_ptr(), instance_ids_in_streams.as_ptr() as *mut i64);
 
@@ -2205,9 +2047,9 @@ where
             let recursive1_proofs_clone = self.recursive1_proofs.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
             let proofs_rx = self.proofs_rx.clone();
-            let compressor_rx = self.compressor_witness_rx.clone();
-            let rec2_rx = self.rec2_witness_rx.clone();
-            let rec1_rx = self.rec1_witness_rx.clone();
+            let proofs_pending_clone = proofs_pending.clone();
+            let recursive_rx_clone = self.recursive_rx.clone();
+            let recursive2_proofs_clone = self.recursive2_proofs.clone();
             let n_streams_non_recursive = self.n_streams_non_recursive;
             let memory_handler_clone = self.memory_handler.clone();
             let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
@@ -2256,29 +2098,103 @@ where
                     break;
                 }
 
-                let witness_opt = if force_recursive_stream {
-                    crossbeam_channel::select! {
-                        recv(rec2_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
-                        recv(rec1_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
-                        default(std::time::Duration::from_millis(1)) => None,
-                    }
-                } else {
-                    crossbeam_channel::select! {
-                        recv(rec2_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
-                        recv(compressor_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
-                        recv(rec1_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
-                        default(std::time::Duration::from_millis(1)) => None,
-                    }
-                };
-
-                let mut witness = match witness_opt {
-                    None => {
+                let (id, proof_type) = match recursive_rx_clone.recv_timeout(std::time::Duration::from_millis(1)) {
+                    Ok(msg) => msg,
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
                         if proofs_finished_clone.load(Ordering::Relaxed) {
                             return;
                         }
                         continue;
                     }
-                    Some(w) => w,
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return,
+                };
+
+                if id == u64::MAX - 1 {
+                    return;
+                }
+
+                let p: ProofType = proof_type.parse().unwrap();
+                if !options.aggregation {
+                    proofs_pending_clone.decrement();
+                    continue;
+                }
+
+                let new_proof_type = if p == ProofType::Basic {
+                    match pctx_clone.dctx_get_instance_info(id as usize) {
+                        Ok((airgroup_id, air_id)) => {
+                            if pctx_clone.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                                ProofType::Compressor as usize
+                            } else {
+                                ProofType::Recursive1 as usize
+                            }
+                        }
+                        Err(e) => {
+                            cancellation_info_clone.write().unwrap().cancel(Some(e));
+                            return;
+                        }
+                    }
+                } else if p == ProofType::Compressor {
+                    ProofType::Recursive1 as usize
+                } else {
+                    ProofType::Recursive2 as usize
+                };
+
+                let mut witness = if new_proof_type == ProofType::Recursive2 as usize {
+                    let proof = if p == ProofType::Recursive1 {
+                        recursive1_proofs_clone[id as usize].write().unwrap().take().unwrap()
+                    } else {
+                        recursive2_proofs_ongoing_clone.write().unwrap()[id as usize].take().unwrap()
+                    };
+
+                    let recursive2_proof = {
+                        let mut recursive2_airgroup_proofs =
+                            recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
+                        recursive2_airgroup_proofs.push(proof);
+
+                        if recursive2_airgroup_proofs.len() >= N_RECURSIVE_PROOFS_PER_AGGREGATION {
+                            let p1 = recursive2_airgroup_proofs.pop().unwrap();
+                            let p2 = recursive2_airgroup_proofs.pop().unwrap();
+                            let p3 = recursive2_airgroup_proofs.pop().unwrap();
+                            Some((p1, p2, p3))
+                        } else {
+                            None
+                        }
+                    };
+
+                    match recursive2_proof {
+                        Some((p1, p2, p3)) => match build_aggregation_zkin(&pctx_clone, &p1, &p2, &p3) {
+                            Ok(witness) => witness,
+                            Err(e) => {
+                                tracing::info!("Error generating recursive2 witness from recursive proofs: {}", e);
+                                cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                break;
+                            }
+                        },
+                        None => {
+                            proofs_pending_clone.decrement();
+                            continue;
+                        }
+                    }
+                } else if new_proof_type == ProofType::Recursive1 as usize && p == ProofType::Compressor {
+                    let compressor_proof = compressor_proofs_clone[id as usize].write().unwrap().take().unwrap();
+                    match build_recursive_zkin(&pctx_clone, &compressor_proof) {
+                        Ok(witness) => witness,
+                        Err(e) => {
+                            tracing::info!("Error generating recursive1 witness from compressor proof: {}", e);
+                            cancellation_info_clone.write().unwrap().cancel(Some(e));
+                            break;
+                        }
+                    }
+                } else {
+                    let proof = proofs_clone[id as usize].write().unwrap().take().unwrap();
+                    match build_recursive_zkin(&pctx_clone, &proof) {
+                        Ok(witness) => witness,
+                        Err(e) => {
+                            tracing::info!("Error generating recursive1 witness from basic proof: {}", e);
+                            cancellation_info_clone.write().unwrap().cancel(Some(e));
+                            break;
+                        }
+                    }
                 };
 
                 let force_recursive_stream = stream_id >= n_streams_non_recursive;
@@ -2313,6 +2229,7 @@ where
                     *recursive1_proofs_clone[id].write().unwrap() = Some(new_proof);
                 }
 
+                proofs_pending_clone.increment();
                 if *new_proof_type == ProofType::Recursive2 {
                     let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
                     let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
@@ -2373,6 +2290,7 @@ where
                 if !pctx_clone.gpu {
                     launch_callback_c(id as u64, new_proof_type_str);
                 }
+                proofs_pending_clone.decrement();
             });
             self.handle_recursives.lock().unwrap().push(handle_recursive);
         }
@@ -2929,8 +2847,6 @@ where
 
         for _ in 0..self.n_streams {
             let pctx_clone = self.pctx.clone();
-            let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
-            let setups_clone = self.setups.clone();
             let recursive2_proofs_clone = self.recursive2_proofs.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
             let rec2_witness_tx_clone = self.rec2_witness_tx.clone();
@@ -2956,14 +2872,7 @@ where
                         let p2 = recursive2_airgroup_proofs.pop().unwrap();
                         let p3 = recursive2_airgroup_proofs.pop().unwrap();
 
-                        let w = gen_witness_aggregation(
-                            &pctx_clone,
-                            &memory_handler_recursive_witness,
-                            &setups_clone,
-                            &p1,
-                            &p2,
-                            &p3,
-                        );
+                        let w = build_aggregation_zkin(&pctx_clone, &p1, &p2, &p3);
 
                         let witness = match w {
                             Ok(witness) => witness,
@@ -3261,8 +3170,6 @@ where
         let mut handle_recursives = Vec::new();
         for _ in 0..self.n_streams {
             let pctx_clone = self.pctx.clone();
-            let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
-            let setups_clone = self.setups.clone();
             let recursive2_proofs_clone = self.recursive2_proofs.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
             let rec2_witness_tx_clone = rec2_witness_tx.clone();
@@ -3289,14 +3196,7 @@ where
                         let p1 = recursive2_airgroup_proofs.pop().unwrap();
                         let p2 = recursive2_airgroup_proofs.pop().unwrap();
                         let p3 = recursive2_airgroup_proofs.pop().unwrap();
-                        let w = gen_witness_aggregation(
-                            &pctx_clone,
-                            &memory_handler_recursive_witness,
-                            &setups_clone,
-                            &p1,
-                            &p2,
-                            &p3,
-                        );
+                        let w = build_aggregation_zkin(&pctx_clone, &p1, &p2, &p3);
                         let witness = match w {
                             Ok(witness) => witness,
                             Err(e) => {

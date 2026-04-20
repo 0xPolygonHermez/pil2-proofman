@@ -419,7 +419,8 @@ extern "C" {
     pub fn read_exec_file(exec_data: *mut u64, exec_file: *mut ::std::os::raw::c_char, nCommitedPols: u64);
     
     pub fn get_committed_pols(
-        circomWitness: *mut ::std::os::raw::c_void,
+        signalValues: *mut u64,
+        witness2SignalList: *mut u64,
         execData: *mut u64,
         witness: *mut ::std::os::raw::c_void,
         pPublics: *mut ::std::os::raw::c_void,

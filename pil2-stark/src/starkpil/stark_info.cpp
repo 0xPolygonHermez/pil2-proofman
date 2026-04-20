@@ -464,7 +464,7 @@ void StarkInfo::setMapOffsets() {
         uint64_t constTreeSize = (NExtended * nConstants) + numNodes;
         mapTotalN += constTreeSize;
 
-        if (!recursive && (NExtended * nConstants * 8.0 / (1024 * 1024)) >= 512) {
+        if ((NExtended * nConstants * 8.0 / (1024 * 1024)) >= 512) {
             calculateFixedExtended = true;
         }
     }

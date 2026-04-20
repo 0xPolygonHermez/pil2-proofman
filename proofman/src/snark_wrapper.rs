@@ -228,13 +228,11 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             &verkey_str,
         ) as *mut c_void;
 
-        let witness_size = setup_recursivef.get_circom_witness_size();
         let trace_size = setup_recursivef.stark_info.map_sections_n["cm1"]
             * (1 << setup_recursivef.stark_info.stark_struct.n_bits)
             + setup_recursivef.stark_info.n_publics;
 
-        let memory_handler_recursive_witness =
-            Arc::new(MemoryHandlerRecursive::new(1, 0, witness_size, 0, trace_size as usize, 0));
+        let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new(1, 0, trace_size as usize, 0));
 
         Ok(Self {
             aux_trace,
@@ -466,13 +464,11 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         &verkey_str,
     ) as *mut c_void;
 
-    let witness_size = setup_recursivef.get_circom_witness_size();
     let trace_size = setup_recursivef.stark_info.map_sections_n["cm1"]
         * (1 << setup_recursivef.stark_info.stark_struct.n_bits)
         + setup_recursivef.stark_info.n_publics;
 
-    let memory_handler_recursive_witness =
-        Arc::new(MemoryHandlerRecursive::new(1, 0, witness_size, 0, trace_size as usize, 0));
+    let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new(1, 0, trace_size as usize, 0));
 
     timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
     let recursivef_proof = generate_recursivef_proof(

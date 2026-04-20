@@ -6282,7 +6282,7 @@ template VerifyQuery0(currStepBits, nextStepBits) {
     signal input queryVals[3];
     signal input s1_vals[1 << nextStep][3];
     signal input {binary} enable;
-    
+
     signal {binary} s0_keys_lowValues[nextStep];
     for(var i = 0; i < nextStep; i++) {
         s0_keys_lowValues[i] <== queriesFRI[i + nextStepBits];
@@ -6519,6 +6519,248 @@ template VerifyFinalPol0() {
     }
 }
 
+template VerifySingleQuery0() {
+    signal input {binary} queriesFRI[20];
+
+    signal input challengeXi[3];
+    signal input challengesFRI[2][3];
+    signal input challengesFRISteps[7][3];
+    signal input evals[198][3];
+    signal input {binary} enable;
+
+    signal input s0_vals1[52];
+    signal input s0_vals1_p[52][1];
+    signal input s0_siblings1[8][12];
+    signal input s0_last_mt_levels1[16][4];
+    signal input s0_vals2[55];
+    signal input s0_vals2_p[55][1];
+    signal input s0_siblings2[8][12];
+    signal input s0_last_mt_levels2[16][4];
+
+    signal input s0_vals3[12];
+    signal input s0_vals3_p[12][1];
+    signal input s0_siblings3[8][12];
+
+    signal input s0_valsC[58];
+    signal input s0_valsC_p[58][1];
+    signal input s0_siblingsC[8][12];
+
+    signal input s0_last_mt_levels3[16][4];
+    signal input s0_last_mt_levelsC[16][4];
+
+
+    signal input s1_vals_p[8][3];
+    signal input s1_siblings[7][12];
+    signal input s1_last_mt_levels[16][4];
+    signal input s2_vals_p[8][3];
+    signal input s2_siblings[5][12];
+    signal input s2_last_mt_levels[16][4];
+    signal input s3_vals_p[8][3];
+    signal input s3_siblings[4][12];
+    signal input s3_last_mt_levels[16][4];
+    signal input s4_vals_p[8][3];
+    signal input s4_siblings[2][12];
+    signal input s4_last_mt_levels[16][4];
+    signal input s5_vals_p[8][3];
+    signal input s5_siblings[1][12];
+    signal input s5_last_mt_levels[16][4];
+
+    signal input finalPol[32][3];
+
+    signal {binary} queriesFRIBits[10][2];
+    for(var j = 0; j < 10; j++) {
+        for(var k = 0; k < 2; k++) {
+            if (k + j * 2 >= 20) {
+                queriesFRIBits[j][k] <== 0;
+            } else {
+                queriesFRIBits[j][k] <== queriesFRI[j*2 + k];
+            }
+        }
+    }
+
+    VerifyMerkleHashUntilLevel(1, 52, 4, 8, 2, 1048576)(s0_vals1_p, s0_siblings1, queriesFRIBits, s0_last_mt_levels1, enable);
+    VerifyMerkleHashUntilLevel(1, 55, 4, 8, 2, 1048576)(s0_vals2_p, s0_siblings2, queriesFRIBits, s0_last_mt_levels2, enable);
+
+    VerifyMerkleHashUntilLevel(1, 12, 4, 8, 2, 1048576)(s0_vals3_p, s0_siblings3, queriesFRIBits, s0_last_mt_levels3, enable);
+    VerifyMerkleHashUntilLevel(1, 58, 4, 8, 2, 1048576)(s0_valsC_p, s0_siblingsC, queriesFRIBits, s0_last_mt_levelsC, enable);
+
+
+    signal {binary} s1_keys_merkle_bits[9][2];
+    for(var j = 0; j < 9; j++) {
+        for(var k = 0; k < 2; k++) {
+            if (k + j * 2 >= 17) {
+                s1_keys_merkle_bits[j][k] <== 0;
+            } else {
+                s1_keys_merkle_bits[j][k] <== queriesFRI[j*2 + k];
+            }
+        }
+    }
+
+    VerifyMerkleHashUntilLevel(3, 8, 4, 7, 2, 131072)(s1_vals_p, s1_siblings, s1_keys_merkle_bits, s1_last_mt_levels, enable);
+    signal {binary} s2_keys_merkle_bits[7][2];
+    for(var j = 0; j < 7; j++) {
+        for(var k = 0; k < 2; k++) {
+            if (k + j * 2 >= 14) {
+                s2_keys_merkle_bits[j][k] <== 0;
+            } else {
+                s2_keys_merkle_bits[j][k] <== queriesFRI[j*2 + k];
+            }
+        }
+    }
+
+    VerifyMerkleHashUntilLevel(3, 8, 4, 5, 2, 16384)(s2_vals_p, s2_siblings, s2_keys_merkle_bits, s2_last_mt_levels, enable);
+    signal {binary} s3_keys_merkle_bits[6][2];
+    for(var j = 0; j < 6; j++) {
+        for(var k = 0; k < 2; k++) {
+            if (k + j * 2 >= 11) {
+                s3_keys_merkle_bits[j][k] <== 0;
+            } else {
+                s3_keys_merkle_bits[j][k] <== queriesFRI[j*2 + k];
+            }
+        }
+    }
+
+    VerifyMerkleHashUntilLevel(3, 8, 4, 4, 2, 2048)(s3_vals_p, s3_siblings, s3_keys_merkle_bits, s3_last_mt_levels, enable);
+    signal {binary} s4_keys_merkle_bits[4][2];
+    for(var j = 0; j < 4; j++) {
+        for(var k = 0; k < 2; k++) {
+            if (k + j * 2 >= 8) {
+                s4_keys_merkle_bits[j][k] <== 0;
+            } else {
+                s4_keys_merkle_bits[j][k] <== queriesFRI[j*2 + k];
+            }
+        }
+    }
+
+    VerifyMerkleHashUntilLevel(3, 8, 4, 2, 2, 256)(s4_vals_p, s4_siblings, s4_keys_merkle_bits, s4_last_mt_levels, enable);
+    signal {binary} s5_keys_merkle_bits[3][2];
+    for(var j = 0; j < 3; j++) {
+        for(var k = 0; k < 2; k++) {
+            if (k + j * 2 >= 5) {
+                s5_keys_merkle_bits[j][k] <== 0;
+            } else {
+                s5_keys_merkle_bits[j][k] <== queriesFRI[j*2 + k];
+            }
+        }
+    }
+
+    VerifyMerkleHashUntilLevel(3, 8, 4, 1, 2, 32)(s5_vals_p, s5_siblings, s5_keys_merkle_bits, s5_last_mt_levels, enable);
+
+
+    signal queryVals[3] <== CalculateFRIPolValue0()(queriesFRI, challengeXi, challengesFRI, evals, s0_vals1, s0_vals2, s0_vals3, s0_valsC);
+    signal {binary} enabled <== 1;
+    VerifyQuery0(20, 17)(queriesFRI, queryVals, s1_vals_p, enabled);
+
+
+    signal {binary} s1_queriesFRI[17];
+    for(var i = 0; i < 17; i++) { s1_queriesFRI[i] <== queriesFRI[i]; }
+    VerifyFRI0(20, 20, 17, 14, 2635249152773512046)(s1_queriesFRI, challengesFRISteps[1], s1_vals_p, s2_vals_p, enable);
+    signal {binary} s2_queriesFRI[14];
+    for(var i = 0; i < 14; i++) { s2_queriesFRI[i] <== queriesFRI[i]; }
+    VerifyFRI0(20, 17, 14, 11, 12421013511830570338)(s2_queriesFRI, challengesFRISteps[2], s2_vals_p, s3_vals_p, enable);
+    signal {binary} s3_queriesFRI[11];
+    for(var i = 0; i < 11; i++) { s3_queriesFRI[i] <== queriesFRI[i]; }
+    VerifyFRI0(20, 14, 11, 8, 11143297345130450484)(s3_queriesFRI, challengesFRISteps[3], s3_vals_p, s4_vals_p, enable);
+    signal {binary} s4_queriesFRI[8];
+    for(var i = 0; i < 8; i++) { s4_queriesFRI[i] <== queriesFRI[i]; }
+    VerifyFRI0(20, 11, 8, 5, 1138102428757299658)(s4_queriesFRI, challengesFRISteps[4], s4_vals_p, s5_vals_p, enable);
+    signal {binary} s5_queriesFRI[5];
+    for(var i = 0; i < 5; i++) { s5_queriesFRI[i] <== queriesFRI[i]; }
+    VerifyFRI0(20, 8, 5, 0, 140704680260498080)(s5_queriesFRI, challengesFRISteps[5], s5_vals_p, finalPol, enable);
+}
+
+template parallel VerifyQueriesBatch0(nQueries) {
+    signal input {binary} queriesFRI[nQueries][20];
+
+    signal input challengeXi[3];
+    signal input challengesFRI[2][3];
+    signal input challengesFRISteps[7][3];
+    signal input evals[198][3];
+    signal input {binary} enable;
+
+    signal input s0_vals1[nQueries][52];
+    signal input s0_vals1_p[nQueries][52][1];
+    signal input s0_siblings1[nQueries][8][12];
+    signal input s0_last_mt_levels1[16][4];
+    signal input s0_vals2[nQueries][55];
+    signal input s0_vals2_p[nQueries][55][1];
+    signal input s0_siblings2[nQueries][8][12];
+    signal input s0_last_mt_levels2[16][4];
+
+    signal input s0_vals3[nQueries][12];
+    signal input s0_vals3_p[nQueries][12][1];
+    signal input s0_siblings3[nQueries][8][12];
+
+    signal input s0_valsC[nQueries][58];
+    signal input s0_valsC_p[nQueries][58][1];
+    signal input s0_siblingsC[nQueries][8][12];
+
+    signal input s0_last_mt_levels3[16][4];
+    signal input s0_last_mt_levelsC[16][4];
+
+
+    signal input s1_vals_p[nQueries][8][3];
+    signal input s1_siblings[nQueries][7][12];
+    signal input s1_last_mt_levels[16][4];
+    signal input s2_vals_p[nQueries][8][3];
+    signal input s2_siblings[nQueries][5][12];
+    signal input s2_last_mt_levels[16][4];
+    signal input s3_vals_p[nQueries][8][3];
+    signal input s3_siblings[nQueries][4][12];
+    signal input s3_last_mt_levels[16][4];
+    signal input s4_vals_p[nQueries][8][3];
+    signal input s4_siblings[nQueries][2][12];
+    signal input s4_last_mt_levels[16][4];
+    signal input s5_vals_p[nQueries][8][3];
+    signal input s5_siblings[nQueries][1][12];
+    signal input s5_last_mt_levels[16][4];
+
+    signal input finalPol[32][3];
+
+    for (var q = 0; q < nQueries; q++) {
+        VerifySingleQuery0()(
+            queriesFRI[q],
+            challengeXi,
+            challengesFRI,
+            challengesFRISteps,
+            evals,
+            enable,
+            s0_vals1[q],
+            s0_vals1_p[q],
+            s0_siblings1[q],
+            s0_last_mt_levels1,
+            s0_vals2[q],
+            s0_vals2_p[q],
+            s0_siblings2[q],
+            s0_last_mt_levels2,
+            s0_vals3[q],
+            s0_vals3_p[q],
+            s0_siblings3[q],
+            s0_valsC[q],
+            s0_valsC_p[q],
+            s0_siblingsC[q],
+            s0_last_mt_levels3,
+            s0_last_mt_levelsC,
+            s1_vals_p[q],
+            s1_siblings[q],
+            s1_last_mt_levels,
+            s2_vals_p[q],
+            s2_siblings[q],
+            s2_last_mt_levels,
+            s3_vals_p[q],
+            s3_siblings[q],
+            s3_last_mt_levels,
+            s4_vals_p[q],
+            s4_siblings[q],
+            s4_last_mt_levels,
+            s5_vals_p[q],
+            s5_siblings[q],
+            s5_last_mt_levels,
+            finalPol
+        );
+    }
+}
+
 template StarkVerifier0() {
     signal input publics[391]; // publics polynomials
     signal input root1[4]; // Merkle tree root of stage 1
@@ -6613,14 +6855,6 @@ template StarkVerifier0() {
     (challengesStage2,challengeQ,challengeXi,challengesFRI,challengesFRISteps,queriesFRI) <== Transcript0()(publics,rootC,root1,root2,root3,evals,s1_root,s2_root,s3_root,s4_root,s5_root,finalPol, nonce, enabled);
 
     ///////////
-    // Check constraints polynomial in the evaluation point
-    ///////////
-
- 
-
-    VerifyEvaluations0()(challengesStage2, challengeQ, challengeXi, evals, publics, enabled);
-
-    ///////////
     // Preprocess s_i vals
     ///////////
 
@@ -6679,119 +6913,390 @@ template StarkVerifier0() {
             }
         }
     }
+
     
     ///////////
-    // Verify Merkle Roots
+    // Verify Merkle roots and FRI constraints per query
     ///////////
 
-    signal {binary} queriesFRIBits[110][10][2];
-    for(var i = 0; i < 110; i++) {
-        for(var j = 0; j < 10; j++) {
-            for(var k = 0; k < 2; k++) {
-                if (k + j * 2 >= 20) {
-                    queriesFRIBits[i][j][k] <== 0;
-                } else {
-                    queriesFRIBits[i][j][k] <== queriesFRI[i][j*2 + k];
+    // Batch-size parameters — change QUERIES_BATCH_SIZE and recompile to test different batch sizes.
+    // N_FULL_BATCHES and LAST_BATCH_SIZE are derived automatically.
+    var N_QUERIES = 110;
+    var QUERIES_BATCH_SIZE = 14;
+    var N_FULL_BATCHES = N_QUERIES \ QUERIES_BATCH_SIZE;
+    var LAST_BATCH_SIZE = N_QUERIES - N_FULL_BATCHES * QUERIES_BATCH_SIZE;
+    // Used as signal dimension when LAST_BATCH_SIZE may be 0 (size-0 signals are invalid in Circom).
+    var LAST_BATCH_SIZE_SAFE = LAST_BATCH_SIZE > 0 ? LAST_BATCH_SIZE : 1;
+
+// Work buffers for full batches
+    signal {binary} batch_work_queriesFRI[N_FULL_BATCHES][QUERIES_BATCH_SIZE][20];
+
+    signal batch_work_s0_vals1[N_FULL_BATCHES][QUERIES_BATCH_SIZE][52];
+    signal batch_work_s0_vals1_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][52][1];
+    signal batch_work_s0_siblings1[N_FULL_BATCHES][QUERIES_BATCH_SIZE][8][12];
+    signal batch_work_s0_vals2[N_FULL_BATCHES][QUERIES_BATCH_SIZE][55];
+    signal batch_work_s0_vals2_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][55][1];
+    signal batch_work_s0_siblings2[N_FULL_BATCHES][QUERIES_BATCH_SIZE][8][12];
+
+    signal batch_work_s0_vals3[N_FULL_BATCHES][QUERIES_BATCH_SIZE][12];
+    signal batch_work_s0_vals3_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][12][1];
+    signal batch_work_s0_siblings3[N_FULL_BATCHES][QUERIES_BATCH_SIZE][8][12];
+    signal batch_work_s0_valsC[N_FULL_BATCHES][QUERIES_BATCH_SIZE][58];
+    signal batch_work_s0_valsC_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][58][1];
+    signal batch_work_s0_siblingsC[N_FULL_BATCHES][QUERIES_BATCH_SIZE][8][12];
+
+
+    signal batch_work_s1_vals_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][8][3];
+    signal batch_work_s1_siblings[N_FULL_BATCHES][QUERIES_BATCH_SIZE][7][12];
+    signal batch_work_s2_vals_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][8][3];
+    signal batch_work_s2_siblings[N_FULL_BATCHES][QUERIES_BATCH_SIZE][5][12];
+    signal batch_work_s3_vals_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][8][3];
+    signal batch_work_s3_siblings[N_FULL_BATCHES][QUERIES_BATCH_SIZE][4][12];
+    signal batch_work_s4_vals_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][8][3];
+    signal batch_work_s4_siblings[N_FULL_BATCHES][QUERIES_BATCH_SIZE][2][12];
+    signal batch_work_s5_vals_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][8][3];
+    signal batch_work_s5_siblings[N_FULL_BATCHES][QUERIES_BATCH_SIZE][1][12];
+
+    // Process full batches with Circom loop
+    for (var b = 0; b < N_FULL_BATCHES; b++) {
+        var batchStart = b * QUERIES_BATCH_SIZE;
+
+        // Fill work buffers for batch b
+        for (var q = 0; q < QUERIES_BATCH_SIZE; q++) {
+            for (var i = 0; i < 20; i++) {
+                batch_work_queriesFRI[b][q][i] <== queriesFRI[batchStart + q][i];
+            }
+        }
+
+        for (var q = 0; q < QUERIES_BATCH_SIZE; q++) {
+            for (var i = 0; i < 52; i++) {
+                batch_work_s0_vals1[b][q][i] <== s0_vals1[batchStart + q][i];
+                batch_work_s0_vals1_p[b][q][i][0] <== s0_vals1_p[batchStart + q][i][0];
+            }
+            for (var j = 0; j < 8; j++) {
+                for (var k = 0; k < 12; k++) {
+                    batch_work_s0_siblings1[b][q][j][k] <== s0_siblings1[batchStart + q][j][k];
                 }
+            }
+        }
+        for (var q = 0; q < QUERIES_BATCH_SIZE; q++) {
+            for (var i = 0; i < 55; i++) {
+                batch_work_s0_vals2[b][q][i] <== s0_vals2[batchStart + q][i];
+                batch_work_s0_vals2_p[b][q][i][0] <== s0_vals2_p[batchStart + q][i][0];
+            }
+            for (var j = 0; j < 8; j++) {
+                for (var k = 0; k < 12; k++) {
+                    batch_work_s0_siblings2[b][q][j][k] <== s0_siblings2[batchStart + q][j][k];
+                }
+            }
+        }
+
+        for (var q = 0; q < QUERIES_BATCH_SIZE; q++) {
+            for (var i = 0; i < 12; i++) {
+                batch_work_s0_vals3[b][q][i] <== s0_vals3[batchStart + q][i];
+                batch_work_s0_vals3_p[b][q][i][0] <== s0_vals3_p[batchStart + q][i][0];
+            }
+            for (var i = 0; i < 58; i++) {
+                batch_work_s0_valsC[b][q][i] <== s0_valsC[batchStart + q][i];
+                batch_work_s0_valsC_p[b][q][i][0] <== s0_valsC_p[batchStart + q][i][0];
+            }
+            for (var j = 0; j < 8; j++) {
+                for (var k = 0; k < 12; k++) {
+                    batch_work_s0_siblings3[b][q][j][k] <== s0_siblings3[batchStart + q][j][k];
+                    batch_work_s0_siblingsC[b][q][j][k] <== s0_siblingsC[batchStart + q][j][k];
+                }
+            }
+        }
+
+
+        for (var q = 0; q < QUERIES_BATCH_SIZE; q++) {
+            for (var c = 0; c < 8; c++) {
+                for (var e = 0; e < 3; e++) {
+                    batch_work_s1_vals_p[b][q][c][e] <== s1_vals_p[batchStart + q][c][e];
+                }
+            }
+            for (var j = 0; j < 7; j++) {
+                for (var k = 0; k < 12; k++) {
+                    batch_work_s1_siblings[b][q][j][k] <== s1_siblings[batchStart + q][j][k];
+                }
+            }
+        }
+        for (var q = 0; q < QUERIES_BATCH_SIZE; q++) {
+            for (var c = 0; c < 8; c++) {
+                for (var e = 0; e < 3; e++) {
+                    batch_work_s2_vals_p[b][q][c][e] <== s2_vals_p[batchStart + q][c][e];
+                }
+            }
+            for (var j = 0; j < 5; j++) {
+                for (var k = 0; k < 12; k++) {
+                    batch_work_s2_siblings[b][q][j][k] <== s2_siblings[batchStart + q][j][k];
+                }
+            }
+        }
+        for (var q = 0; q < QUERIES_BATCH_SIZE; q++) {
+            for (var c = 0; c < 8; c++) {
+                for (var e = 0; e < 3; e++) {
+                    batch_work_s3_vals_p[b][q][c][e] <== s3_vals_p[batchStart + q][c][e];
+                }
+            }
+            for (var j = 0; j < 4; j++) {
+                for (var k = 0; k < 12; k++) {
+                    batch_work_s3_siblings[b][q][j][k] <== s3_siblings[batchStart + q][j][k];
+                }
+            }
+        }
+        for (var q = 0; q < QUERIES_BATCH_SIZE; q++) {
+            for (var c = 0; c < 8; c++) {
+                for (var e = 0; e < 3; e++) {
+                    batch_work_s4_vals_p[b][q][c][e] <== s4_vals_p[batchStart + q][c][e];
+                }
+            }
+            for (var j = 0; j < 2; j++) {
+                for (var k = 0; k < 12; k++) {
+                    batch_work_s4_siblings[b][q][j][k] <== s4_siblings[batchStart + q][j][k];
+                }
+            }
+        }
+        for (var q = 0; q < QUERIES_BATCH_SIZE; q++) {
+            for (var c = 0; c < 8; c++) {
+                for (var e = 0; e < 3; e++) {
+                    batch_work_s5_vals_p[b][q][c][e] <== s5_vals_p[batchStart + q][c][e];
+                }
+            }
+            for (var j = 0; j < 1; j++) {
+                for (var k = 0; k < 12; k++) {
+                    batch_work_s5_siblings[b][q][j][k] <== s5_siblings[batchStart + q][j][k];
+                }
+            }
+        }
+
+        // Call batch verifier with slice [b] of work buffers
+        VerifyQueriesBatch0(QUERIES_BATCH_SIZE)(
+            batch_work_queriesFRI[b],
+            challengeXi,
+            challengesFRI,
+            challengesFRISteps,
+            evals,
+            enabled,
+            batch_work_s0_vals1[b],
+            batch_work_s0_vals1_p[b],
+            batch_work_s0_siblings1[b],
+            s0_last_mt_levels1,
+            batch_work_s0_vals2[b],
+            batch_work_s0_vals2_p[b],
+            batch_work_s0_siblings2[b],
+            s0_last_mt_levels2,
+            batch_work_s0_vals3[b],
+            batch_work_s0_vals3_p[b],
+            batch_work_s0_siblings3[b],
+            batch_work_s0_valsC[b],
+            batch_work_s0_valsC_p[b],
+            batch_work_s0_siblingsC[b],
+            s0_last_mt_levels3,
+            s0_last_mt_levelsC,
+            batch_work_s1_vals_p[b],
+            batch_work_s1_siblings[b],
+            s1_last_mt_levels,
+            batch_work_s2_vals_p[b],
+            batch_work_s2_siblings[b],
+            s2_last_mt_levels,
+            batch_work_s3_vals_p[b],
+            batch_work_s3_siblings[b],
+            s3_last_mt_levels,
+            batch_work_s4_vals_p[b],
+            batch_work_s4_siblings[b],
+            s4_last_mt_levels,
+            batch_work_s5_vals_p[b],
+            batch_work_s5_siblings[b],
+            s5_last_mt_levels,
+            finalPol
+        );
+    }
+
+// Remainder batch — signal declarations always emitted; call guarded by Circom if (LAST_BATCH_SIZE > 0)
+    signal {binary} remainder_queriesFRI[LAST_BATCH_SIZE_SAFE][20];
+    for (var q = 0; q < LAST_BATCH_SIZE; q++) {
+        for (var i = 0; i < 20; i++) {
+            remainder_queriesFRI[q][i] <== queriesFRI[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i];
+        }
+    }
+
+    signal remainder_s0_vals1[LAST_BATCH_SIZE_SAFE][52];
+    signal remainder_s0_vals1_p[LAST_BATCH_SIZE_SAFE][52][1];
+    signal remainder_s0_siblings1[LAST_BATCH_SIZE_SAFE][8][12];
+    for (var q = 0; q < LAST_BATCH_SIZE; q++) {
+        for (var i = 0; i < 52; i++) {
+            remainder_s0_vals1[q][i] <== s0_vals1[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i];
+            remainder_s0_vals1_p[q][i][0] <== s0_vals1_p[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i][0];
+        }
+        for (var j = 0; j < 8; j++) {
+            for (var k = 0; k < 12; k++) {
+                remainder_s0_siblings1[q][j][k] <== s0_siblings1[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
+            }
+        }
+    }
+    signal remainder_s0_vals2[LAST_BATCH_SIZE_SAFE][55];
+    signal remainder_s0_vals2_p[LAST_BATCH_SIZE_SAFE][55][1];
+    signal remainder_s0_siblings2[LAST_BATCH_SIZE_SAFE][8][12];
+    for (var q = 0; q < LAST_BATCH_SIZE; q++) {
+        for (var i = 0; i < 55; i++) {
+            remainder_s0_vals2[q][i] <== s0_vals2[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i];
+            remainder_s0_vals2_p[q][i][0] <== s0_vals2_p[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i][0];
+        }
+        for (var j = 0; j < 8; j++) {
+            for (var k = 0; k < 12; k++) {
+                remainder_s0_siblings2[q][j][k] <== s0_siblings2[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
             }
         }
     }
 
-    //Calculate merkle root for s0 vals
+    signal remainder_s0_vals3[LAST_BATCH_SIZE_SAFE][12];
+    signal remainder_s0_vals3_p[LAST_BATCH_SIZE_SAFE][12][1];
+    signal remainder_s0_siblings3[LAST_BATCH_SIZE_SAFE][8][12];
+    signal remainder_s0_valsC[LAST_BATCH_SIZE_SAFE][58];
+    signal remainder_s0_valsC_p[LAST_BATCH_SIZE_SAFE][58][1];
+    signal remainder_s0_siblingsC[LAST_BATCH_SIZE_SAFE][8][12];
+
+    for (var q = 0; q < LAST_BATCH_SIZE; q++) {
+        for (var i = 0; i < 12; i++) {
+            remainder_s0_vals3[q][i] <== s0_vals3[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i];
+            remainder_s0_vals3_p[q][i][0] <== s0_vals3_p[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i][0];
+        }
+        for (var i = 0; i < 58; i++) {
+            remainder_s0_valsC[q][i] <== s0_valsC[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i];
+            remainder_s0_valsC_p[q][i][0] <== s0_valsC_p[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i][0];
+        }
+        for (var j = 0; j < 8; j++) {
+            for (var k = 0; k < 12; k++) {
+                remainder_s0_siblings3[q][j][k] <== s0_siblings3[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
+                remainder_s0_siblingsC[q][j][k] <== s0_siblingsC[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
+            }
+        }
+    }
+
+
+    signal remainder_s1_vals_p[LAST_BATCH_SIZE_SAFE][8][3];
+    signal remainder_s1_siblings[LAST_BATCH_SIZE_SAFE][7][12];
+    for (var q = 0; q < LAST_BATCH_SIZE; q++) {
+        for (var c = 0; c < 8; c++) {
+            for (var e = 0; e < 3; e++) {
+                remainder_s1_vals_p[q][c][e] <== s1_vals_p[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][c][e];
+            }
+        }
+        for (var j = 0; j < 7; j++) {
+            for (var k = 0; k < 12; k++) {
+                remainder_s1_siblings[q][j][k] <== s1_siblings[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
+            }
+        }
+    }
+    signal remainder_s2_vals_p[LAST_BATCH_SIZE_SAFE][8][3];
+    signal remainder_s2_siblings[LAST_BATCH_SIZE_SAFE][5][12];
+    for (var q = 0; q < LAST_BATCH_SIZE; q++) {
+        for (var c = 0; c < 8; c++) {
+            for (var e = 0; e < 3; e++) {
+                remainder_s2_vals_p[q][c][e] <== s2_vals_p[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][c][e];
+            }
+        }
+        for (var j = 0; j < 5; j++) {
+            for (var k = 0; k < 12; k++) {
+                remainder_s2_siblings[q][j][k] <== s2_siblings[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
+            }
+        }
+    }
+    signal remainder_s3_vals_p[LAST_BATCH_SIZE_SAFE][8][3];
+    signal remainder_s3_siblings[LAST_BATCH_SIZE_SAFE][4][12];
+    for (var q = 0; q < LAST_BATCH_SIZE; q++) {
+        for (var c = 0; c < 8; c++) {
+            for (var e = 0; e < 3; e++) {
+                remainder_s3_vals_p[q][c][e] <== s3_vals_p[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][c][e];
+            }
+        }
+        for (var j = 0; j < 4; j++) {
+            for (var k = 0; k < 12; k++) {
+                remainder_s3_siblings[q][j][k] <== s3_siblings[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
+            }
+        }
+    }
+    signal remainder_s4_vals_p[LAST_BATCH_SIZE_SAFE][8][3];
+    signal remainder_s4_siblings[LAST_BATCH_SIZE_SAFE][2][12];
+    for (var q = 0; q < LAST_BATCH_SIZE; q++) {
+        for (var c = 0; c < 8; c++) {
+            for (var e = 0; e < 3; e++) {
+                remainder_s4_vals_p[q][c][e] <== s4_vals_p[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][c][e];
+            }
+        }
+        for (var j = 0; j < 2; j++) {
+            for (var k = 0; k < 12; k++) {
+                remainder_s4_siblings[q][j][k] <== s4_siblings[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
+            }
+        }
+    }
+    signal remainder_s5_vals_p[LAST_BATCH_SIZE_SAFE][8][3];
+    signal remainder_s5_siblings[LAST_BATCH_SIZE_SAFE][1][12];
+    for (var q = 0; q < LAST_BATCH_SIZE; q++) {
+        for (var c = 0; c < 8; c++) {
+            for (var e = 0; e < 3; e++) {
+                remainder_s5_vals_p[q][c][e] <== s5_vals_p[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][c][e];
+            }
+        }
+        for (var j = 0; j < 1; j++) {
+            for (var k = 0; k < 12; k++) {
+                remainder_s5_siblings[q][j][k] <== s5_siblings[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
+            }
+        }
+    }
+
+    if (LAST_BATCH_SIZE > 0) {
+    VerifyQueriesBatch0(LAST_BATCH_SIZE)(
+        remainder_queriesFRI,
+        challengeXi,
+        challengesFRI,
+        challengesFRISteps,
+        evals,
+        enabled,
+        remainder_s0_vals1,
+        remainder_s0_vals1_p,
+        remainder_s0_siblings1,
+        s0_last_mt_levels1,
+        remainder_s0_vals2,
+        remainder_s0_vals2_p,
+        remainder_s0_siblings2,
+        s0_last_mt_levels2,
+    remainder_s0_vals3,
+    remainder_s0_vals3_p,
+    remainder_s0_siblings3,
+    remainder_s0_valsC,
+    remainder_s0_valsC_p,
+    remainder_s0_siblingsC,
+        s0_last_mt_levels3,
+        s0_last_mt_levelsC,
+        remainder_s1_vals_p,
+        remainder_s1_siblings,
+        s1_last_mt_levels,
+        remainder_s2_vals_p,
+        remainder_s2_siblings,
+        s2_last_mt_levels,
+        remainder_s3_vals_p,
+        remainder_s3_siblings,
+        s3_last_mt_levels,
+        remainder_s4_vals_p,
+        remainder_s4_siblings,
+        s4_last_mt_levels,
+        remainder_s5_vals_p,
+        remainder_s5_siblings,
+        s5_last_mt_levels,
+        finalPol
+    );
+    }
+
+    ///////////
+    // Check constraints polynomial in the evaluation point
+    ///////////
+
  
-    for (var q=0; q<110; q++) {
-        VerifyMerkleHashUntilLevel(1, 52, 4, 8, 2, 1048576)(s0_vals1_p[q], s0_siblings1[q], queriesFRIBits[q], s0_last_mt_levels1, enabled);
-    }
- 
-    for (var q=0; q<110; q++) {
-        VerifyMerkleHashUntilLevel(1, 55, 4, 8, 2, 1048576)(s0_vals2_p[q], s0_siblings2[q], queriesFRIBits[q], s0_last_mt_levels2, enabled);
-    }
 
-    for (var q=0; q<110; q++) {
-        VerifyMerkleHashUntilLevel(1, 12, 4, 8, 2, 1048576)(s0_vals3_p[q], s0_siblings3[q], queriesFRIBits[q], s0_last_mt_levels3, enabled);
-    }
+    VerifyEvaluations0()(challengesStage2, challengeQ, challengeXi, evals, publics, enabled);
 
-    for (var q=0; q<110; q++) {
-        VerifyMerkleHashUntilLevel(1, 58, 4, 8, 2, 1048576)(s0_valsC_p[q], s0_siblingsC[q], queriesFRIBits[q], s0_last_mt_levelsC, enabled);
-                                    
-    }
-
-
-    signal {binary} s1_keys_merkle_bits[110][9][2];
-    for (var q=0; q<110; q++) {
-        // Calculate merkle root for s1 vals
-
-        for(var j = 0; j < 9; j++) {
-            for(var k = 0; k < 2; k++) {
-                if (k + j * 2 >= 17) {
-                    s1_keys_merkle_bits[q][j][k] <== 0;
-                } else {
-                    s1_keys_merkle_bits[q][j][k] <== queriesFRI[q][j*2 + k];
-                }
-            }
-        }
-        VerifyMerkleHashUntilLevel(3, 8, 4, 7, 2, 131072)(s1_vals_p[q], s1_siblings[q], s1_keys_merkle_bits[q], s1_last_mt_levels, enabled);
-    }
-    signal {binary} s2_keys_merkle_bits[110][7][2];
-    for (var q=0; q<110; q++) {
-        // Calculate merkle root for s2 vals
-
-        for(var j = 0; j < 7; j++) {
-            for(var k = 0; k < 2; k++) {
-                if (k + j * 2 >= 14) {
-                    s2_keys_merkle_bits[q][j][k] <== 0;
-                } else {
-                    s2_keys_merkle_bits[q][j][k] <== queriesFRI[q][j*2 + k];
-                }
-            }
-        }
-        VerifyMerkleHashUntilLevel(3, 8, 4, 5, 2, 16384)(s2_vals_p[q], s2_siblings[q], s2_keys_merkle_bits[q], s2_last_mt_levels, enabled);
-    }
-    signal {binary} s3_keys_merkle_bits[110][6][2];
-    for (var q=0; q<110; q++) {
-        // Calculate merkle root for s3 vals
-
-        for(var j = 0; j < 6; j++) {
-            for(var k = 0; k < 2; k++) {
-                if (k + j * 2 >= 11) {
-                    s3_keys_merkle_bits[q][j][k] <== 0;
-                } else {
-                    s3_keys_merkle_bits[q][j][k] <== queriesFRI[q][j*2 + k];
-                }
-            }
-        }
-        VerifyMerkleHashUntilLevel(3, 8, 4, 4, 2, 2048)(s3_vals_p[q], s3_siblings[q], s3_keys_merkle_bits[q], s3_last_mt_levels, enabled);
-    }
-    signal {binary} s4_keys_merkle_bits[110][4][2];
-    for (var q=0; q<110; q++) {
-        // Calculate merkle root for s4 vals
-
-        for(var j = 0; j < 4; j++) {
-            for(var k = 0; k < 2; k++) {
-                if (k + j * 2 >= 8) {
-                    s4_keys_merkle_bits[q][j][k] <== 0;
-                } else {
-                    s4_keys_merkle_bits[q][j][k] <== queriesFRI[q][j*2 + k];
-                }
-            }
-        }
-        VerifyMerkleHashUntilLevel(3, 8, 4, 2, 2, 256)(s4_vals_p[q], s4_siblings[q], s4_keys_merkle_bits[q], s4_last_mt_levels, enabled);
-    }
-    signal {binary} s5_keys_merkle_bits[110][3][2];
-    for (var q=0; q<110; q++) {
-        // Calculate merkle root for s5 vals
-
-        for(var j = 0; j < 3; j++) {
-            for(var k = 0; k < 2; k++) {
-                if (k + j * 2 >= 5) {
-                    s5_keys_merkle_bits[q][j][k] <== 0;
-                } else {
-                    s5_keys_merkle_bits[q][j][k] <== queriesFRI[q][j*2 + k];
-                }
-            }
-        }
-        VerifyMerkleHashUntilLevel(3, 8, 4, 1, 2, 32)(s5_vals_p[q], s5_siblings[q], s5_keys_merkle_bits[q], s5_last_mt_levels, enabled);
-    }
 
     VerifyMerkleRoot(2, 4, 1048576)(s0_last_mt_levels1, root1, enabled);
     VerifyMerkleRoot(2, 4, 1048576)(s0_last_mt_levels2, root2, enabled);
@@ -6806,59 +7311,9 @@ template StarkVerifier0() {
     VerifyMerkleRoot(2, 4, 2048)(s3_last_mt_levels, s3_root, enabled);
     VerifyMerkleRoot(2, 4, 256)(s4_last_mt_levels, s4_root, enabled);
     VerifyMerkleRoot(2, 4, 32)(s5_last_mt_levels, s5_root, enabled);
-        
-
     ///////////
-    // Calculate FRI Polinomial
+    // Verify Merkle roots for optimized last levels (shared by all queries)
     ///////////
-    
-    for (var q=0; q<110; q++) {
-        // Reconstruct FRI polinomial from evaluations
-        queryVals[q] <== CalculateFRIPolValue0()(queriesFRI[q], challengeXi, challengesFRI, evals, s0_vals1[q], s0_vals2[q], s0_vals3[q], s0_valsC[q]);
-    }
-
-    ///////////
-    // Verify FRI Polinomial
-    ///////////
-    signal {binary} s1_queriesFRI[110][17];
-    signal {binary} s2_queriesFRI[110][14];
-    signal {binary} s3_queriesFRI[110][11];
-    signal {binary} s4_queriesFRI[110][8];
-    signal {binary} s5_queriesFRI[110][5];
-
-    for (var q=0; q<110; q++) {
-      
-        // Verify that the query is properly constructed. This is done by checking that the linear combination of the set of 
-        // polynomials committed during the different rounds evaluated at z matches with the commitment of the FRI polynomial
-        VerifyQuery0(20, 17)(queriesFRI[q], queryVals[q], s1_vals_p[q], enabled);
-
-        ///////////
-        // Verify FRI construction
-        ///////////
-
-        // For each folding level we need to check that the polynomial is properly constructed
-        // Remember that if the step between polynomials is b = 2^l, the next polynomial p_(i+1) will have degree deg(p_i) / b
-
-        // Check S1
-        for(var i = 0; i < 17; i++) { s1_queriesFRI[q][i] <== queriesFRI[q][i]; }  
-        VerifyFRI0(20, 20, 17, 14, 2635249152773512046)(s1_queriesFRI[q], challengesFRISteps[1], s1_vals_p[q], s2_vals_p[q], enabled);
-
-        // Check S2
-        for(var i = 0; i < 14; i++) { s2_queriesFRI[q][i] <== queriesFRI[q][i]; }  
-        VerifyFRI0(20, 17, 14, 11, 12421013511830570338)(s2_queriesFRI[q], challengesFRISteps[2], s2_vals_p[q], s3_vals_p[q], enabled);
-
-        // Check S3
-        for(var i = 0; i < 11; i++) { s3_queriesFRI[q][i] <== queriesFRI[q][i]; }  
-        VerifyFRI0(20, 14, 11, 8, 11143297345130450484)(s3_queriesFRI[q], challengesFRISteps[3], s3_vals_p[q], s4_vals_p[q], enabled);
-
-        // Check S4
-        for(var i = 0; i < 8; i++) { s4_queriesFRI[q][i] <== queriesFRI[q][i]; }  
-        VerifyFRI0(20, 11, 8, 5, 1138102428757299658)(s4_queriesFRI[q], challengesFRISteps[4], s4_vals_p[q], s5_vals_p[q], enabled);
-
-        // Check S5
-        for(var i = 0; i < 5; i++) { s5_queriesFRI[q][i] <== queriesFRI[q][i]; }  
-        VerifyFRI0(20, 8, 5, 0, 140704680260498080)(s5_queriesFRI[q], challengesFRISteps[5], s5_vals_p[q], finalPol, enabled);
-    }
 
     VerifyFinalPol0()(finalPol, enabled);
 }

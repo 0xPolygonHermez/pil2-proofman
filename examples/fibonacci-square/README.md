@@ -163,16 +163,17 @@ cargo run --bin proofman-cli prove \
 In order to generate a proof in the GPU, the following commands needs to be executed after generating the setup and pil-helpers
 
 ```bash
-cargo build --features gpu --workspace \
-&& cargo run --features gpu --bin proofman-cli gen-custom-commits-fixed \
+cargo build --workspace \
+&& cargo run --bin proofman-cli gen-custom-commits-fixed \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
-     --custom-commits rom=examples/fibonacci-square/build/rom_gpu.bin \
-&& cargo run --features gpu --bin proofman-cli prove \
+     --custom-commits rom=examples/fibonacci-square/build/rom_gpu.bin --gpu \
+&& cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --output-dir examples/fibonacci-square/build/proofs \
+     --gpu \
      --custom-commits rom=examples/fibonacci-square/build/rom_gpu.bin -y -a -f
 ```
 ### 2.9 All at once

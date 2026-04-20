@@ -1024,7 +1024,8 @@ pub fn read_exec_file_c(exec_data: *mut u64, exec_file: &str, nCols: u64) {
 
 #[allow(clippy::too_many_arguments)]
 pub fn get_committed_pols_c(
-    circomWitness: *mut u8,
+    signal_values: *mut u64,
+    witness2_signal_list: *mut u64,
     exec_data: *mut u64,
     witness: *mut u8,
     pPublics: *mut u8,
@@ -1035,7 +1036,8 @@ pub fn get_committed_pols_c(
 ) {
     unsafe {
         get_committed_pols(
-            circomWitness as *mut std::os::raw::c_void,
+            signal_values,
+            witness2_signal_list,
             exec_data,
             witness as *mut std::os::raw::c_void,
             pPublics as *mut std::os::raw::c_void,
