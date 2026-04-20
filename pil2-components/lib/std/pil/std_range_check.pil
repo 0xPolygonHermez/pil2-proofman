@@ -217,15 +217,15 @@ airtemplate SpecifiedRanges(const int N, const int opids[], const int opids_coun
     // Otherwise, we just generate the full ranges
 
     if (SPECIFIED_TABLE_VIRTUAL == 1) {
-        col fixed RANGE[opids_count];
-        col witness mul[opids_count];
         for (int i = 0; i < opids_count; i++) {
             const int min = init_mins[i];
             const int max = init_maxs[i];
+            const int size = max - min + 1;
 
-            RANGE[i] = [min..max-1,max...];
+            col fixed virtual(size) RANGE = [min..max];
 
-            lookup_proves(opids[i], [RANGE[i]], mul[i], PIOP_NAME_RANGE_CHECK);
+            col witness mul;
+            lookup_proves(opids[i], [RANGE], mul, PIOP_NAME_RANGE_CHECK);
         }
     } else {
         // Pack ranges efficiently into groups of N rows each.
