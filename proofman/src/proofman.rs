@@ -1334,7 +1334,7 @@ where
 
         #[cfg(feature = "diagnostic")]
         {
-            let invalid_initialization = Self::diagnostic_instance(&pctx, &sctx, instance_id)?;
+            let invalid_initialization = Self::diagnostic_instance(pctx, sctx, instance_id)?;
             if invalid_initialization {
                 return Err(ProofmanError::InvalidProof("Invalid initialization".into()));
             }
