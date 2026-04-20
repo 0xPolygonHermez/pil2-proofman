@@ -896,8 +896,8 @@ void read_exec_file(uint64_t *exec_data, char *exec_file, uint64_t nCommitedPols
     readExecFile(exec_data, string(exec_file), nCommitedPols);
 }
 
-void get_committed_pols(void *circomWitness, uint64_t* execData, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCommitedPols) {
-    getCommitedPols((Goldilocks::Element *)circomWitness, execData, (Goldilocks::Element *)witness, (Goldilocks::Element *)pPublics, sizeWitness, N, nPublics, nCommitedPols);
+void get_committed_pols(uint64_t *signalValues, uint64_t *witness2SignalList, uint64_t* execData, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCommitedPols) {
+    getCommitedPols(signalValues, witness2SignalList, execData, (Goldilocks::Element *)witness, (Goldilocks::Element *)pPublics, sizeWitness, N, nPublics, nCommitedPols);
 }
 
 void *load_zkey(char* zkeyFile) {

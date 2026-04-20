@@ -15,6 +15,7 @@ proofman-common.workspace = true
 proofman-macros.workspace = true
 proofman-starks-lib-c = { path = "../../provers/starks-lib-c" }
 proofman.workspace = true
+proofman-util.workspace = true
 witness.workspace = true
 pil-std-lib.workspace = true
 tracing.workspace = true

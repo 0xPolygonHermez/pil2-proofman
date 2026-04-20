@@ -11,14 +11,22 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
 use crate::RowInfo;
 
-pub type GetWitnessFunc =
-    unsafe extern "C" fn(zkin: *mut u64, circom_circuit: *mut c_void, witness: *mut c_void, n_mutexes: u64) -> i64;
+pub type GetWitnessFunc = unsafe extern "C" fn(zkin: *mut u64, circom_circuit: *mut c_void) -> i64;
+
+pub type GetSignalValuesFunc = unsafe extern "C" fn(ctx: *mut c_void) -> *mut u64;
+
+pub type GetWitness2SignalListFunc = unsafe extern "C" fn(ctx: *mut c_void) -> *mut u64;
 
 #[derive(Debug)]
 pub struct CircomState {
-    library: Option<Library>,
-    pub circuit: Option<*mut c_void>,
-    pub get_witness_fn: Option<GetWitnessFunc>,
+    library: Library,
+    pub circuit: *mut c_void,
+    pub calc_wit: *mut c_void,
+    pub get_witness_fn: GetWitnessFunc,
+    pub get_signal_values_fn: GetSignalValuesFunc,
+    pub get_witness2signal_list_fn: GetWitness2SignalListFunc,
+    pub size_witness: u64,
+    pub exec_data: Vec<u64>,
 }
 
 unsafe impl Send for CircomState {}
@@ -40,7 +48,11 @@ use crate::ProofmanResult;
 
 pub type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
+pub type GetCircomCircuitCalcWitFunc = unsafe extern "C" fn(circuit: *mut c_void, n_mutexes: u64) -> *mut c_void;
+
 pub type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
+
+pub type FreeCircomCircuitCalcWitFunc = unsafe extern "C" fn(calc_wit: *mut c_void);
 
 pub type FreeCircomCircuitFunc = unsafe extern "C" fn(circuit: *mut c_void);
 
@@ -89,9 +101,7 @@ pub struct Setup<F: PrimeField64> {
     pub pinned_proof_size: u64,
     pub setup_path: PathBuf,
     pub setup_type: ProofType,
-    pub size_witness: Option<u64>,
-    pub circom_state: RwLock<CircomState>,
-    pub exec_data: Option<Vec<u64>>,
+    pub circom_state: RwLock<Option<CircomState>>,
     pub air_name: String,
     pub verkey: Vec<F>,
     pub verkey_file: String,
@@ -105,13 +115,15 @@ pub struct Setup<F: PrimeField64> {
 impl<F: PrimeField64> Drop for Setup<F> {
     fn drop(&mut self) {
         let mut state = self.circom_state.write().unwrap();
-        if let Some(circom_circuit) = state.circuit.take() {
-            if let Some(circom_library) = &state.library {
-                unsafe {
-                    let free_circom_circuit: Symbol<FreeCircomCircuitFunc> =
-                        circom_library.get(b"freeCircuit\0").expect("Failed to get freeCircuit symbol");
-                    free_circom_circuit(circom_circuit);
-                }
+        if let Some(circom_state) = state.take() {
+            unsafe {
+                let free_circom_calc_wit: Symbol<FreeCircomCircuitCalcWitFunc> =
+                    circom_state.library.get(b"freeCalcWit\0").expect("Failed to get freeCalcWit symbol");
+                free_circom_calc_wit(circom_state.calc_wit);
+
+                let free_circom_circuit: Symbol<FreeCircomCircuitFunc> =
+                    circom_state.library.get(b"freeCircuit\0").expect("Failed to get freeCircuit symbol");
+                free_circom_circuit(circom_state.circuit);
             }
         }
     }
@@ -311,7 +323,7 @@ impl<F: PrimeField64> Setup<F> {
             _ => setup_type != &ProofType::Basic,
         };
 
-        let (circom_library, circom_circuit, get_witness_fn, size_witness, exec_data) = if needs_circom {
+        let circom_state = if needs_circom {
             let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
             let rust_lib_filename = setup_path.display().to_string() + lib_extension;
             let rust_lib_path = Path::new(rust_lib_filename.as_str());
@@ -333,6 +345,13 @@ impl<F: PrimeField64> Setup<F> {
                 init_circom_circuit(dat_filename_ptr)
             };
 
+            let nmutex = std::cmp::min(8, rayon::current_num_threads());
+
+            let circom_calc_wit_ptr = unsafe {
+                let init_circom_calc_wit: Symbol<GetCircomCircuitCalcWitFunc> = library.get(b"initCalcWit\0")?;
+                init_circom_calc_wit(circom_circuit_ptr, nmutex as u64)
+            };
+
             let witness_size = unsafe {
                 let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
                 get_size_witness()
@@ -341,7 +360,17 @@ impl<F: PrimeField64> Setup<F> {
             // Load the getWitness function pointer for later use
             let get_witness_fn = unsafe {
                 let get_witness_symbol: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-                Some(*get_witness_symbol)
+                *get_witness_symbol
+            };
+
+            let get_signal_values_fn = unsafe {
+                let sym: Symbol<GetSignalValuesFunc> = library.get(b"getSignalValues\0")?;
+                *sym
+            };
+
+            let get_witness2signal_list_fn = unsafe {
+                let sym: Symbol<GetWitness2SignalListFunc> = library.get(b"getWitness2SignalList\0")?;
+                *sym
             };
 
             // Read exec file data
@@ -360,9 +389,18 @@ impl<F: PrimeField64> Setup<F> {
             let mut exec_file_data: Vec<u64> = vec![0; exec_data_size as usize];
             read_exec_file_c(exec_file_data.as_mut_ptr(), exec_filename.as_str(), n_cols);
 
-            (Some(library), Some(circom_circuit_ptr), get_witness_fn, Some(witness_size), Some(exec_file_data))
+            Some(CircomState {
+                library,
+                circuit: circom_circuit_ptr,
+                calc_wit: circom_calc_wit_ptr,
+                get_witness_fn,
+                get_signal_values_fn,
+                get_witness2signal_list_fn,
+                size_witness: witness_size,
+                exec_data: exec_file_data.clone(),
+            })
         } else {
-            (None, None, None, None, None)
+            None
         };
 
         Ok(Self {
@@ -382,9 +420,7 @@ impl<F: PrimeField64> Setup<F> {
             contributions_size,
             proof_size,
             pinned_proof_size,
-            size_witness,
-            circom_state: RwLock::new(CircomState { library: circom_library, circuit: circom_circuit, get_witness_fn }),
-            exec_data,
+            circom_state: RwLock::new(circom_state),
             setup_path: setup_path.to_path_buf().clone(),
             setup_type: setup_type.clone(),
             air_name: air_info.name.clone(),
@@ -452,8 +488,10 @@ impl<F: PrimeField64> Setup<F> {
     }
 
     pub fn get_circom_witness_size(&self) -> usize {
-        let base_size = self.size_witness.unwrap_or(0) as usize;
-        let exec_offset = self.exec_data.as_ref().and_then(|v| v.first()).copied().unwrap_or(0) as usize;
+        let base_size = self.circom_state.read().unwrap().as_ref().map_or(0, |state| state.size_witness) as usize;
+        let exec_offset =
+            self.circom_state.read().unwrap().as_ref().and_then(|state| state.exec_data.first()).copied().unwrap_or(0)
+                as usize;
         base_size + exec_offset
     }
 }

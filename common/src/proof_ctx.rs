@@ -941,7 +941,9 @@ impl<F: PrimeField64> ProofCtx<F> {
             }
         }
 
-        let max_size_buffer = (free_memory_gpu / 8.0).floor() as u64 - total_const_area - total_const_area_aggregation;
+        let max_size_buffer = ((free_memory_gpu / 8.0).floor() as u64)
+            .saturating_sub(total_const_area)
+            .saturating_sub(total_const_area_aggregation);
         let max_prover_buffer_size = sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size);
 
         let n_streams_per_gpu = match gpu {
