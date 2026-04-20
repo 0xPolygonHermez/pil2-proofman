@@ -3189,7 +3189,7 @@ where
                 let null_proof = Proof::new(ProofType::Recursive2, airgroup, 0, None, null_proof_buffer);
                 self.recursive2_proofs[airgroup].write().unwrap().push(null_proof);
             }
-            total_proofs += n_recursive2_proofs.n_proofs as usize;
+            total_proofs += n_recursive2_proofs.n_proofs;
         }
         total_proofs += n_proofs_to_be_received;
 
