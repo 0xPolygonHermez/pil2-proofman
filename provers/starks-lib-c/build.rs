@@ -12,12 +12,36 @@ fn main() {
         return;
     }
 
+    // The two GPU backends target different hardware and their toolchains
+    // (nvcc vs xcrun) don't share state. Enabling both produces obscure link
+    // errors; fail fast at build time instead.
+    if cfg!(feature = "gpu") && cfg!(feature = "metal") {
+        panic!("The `gpu` (CUDA) and `metal` features are mutually exclusive.");
+    }
+
+    // `metal` is Apple Silicon only — the kernels and Obj-C++ bridge have no
+    // meaning off Darwin/aarch64. Fail fast so CI sees a clear error.
+    if cfg!(feature = "metal") && !(cfg!(target_os = "macos") && cfg!(target_arch = "aarch64")) {
+        panic!("The `metal` feature requires macOS on Apple Silicon (aarch64).");
+    }
+
     // Canonicalize to avoid ".." in rerun-if-changed paths
     let pil2_stark_path_raw = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pil2-stark");
     let pil2_stark_path = pil2_stark_path_raw.canonicalize().unwrap_or_else(|_| pil2_stark_path_raw.clone());
-    let library_folder =
-        if cfg!(feature = "gpu") { pil2_stark_path.join("lib-gpu") } else { pil2_stark_path.join("lib") };
-    let library_name = if cfg!(feature = "gpu") { "starksgpu" } else { "starks" };
+    let library_folder = if cfg!(feature = "gpu") {
+        pil2_stark_path.join("lib-gpu")
+    } else if cfg!(feature = "metal") {
+        pil2_stark_path.join("lib-metal")
+    } else {
+        pil2_stark_path.join("lib")
+    };
+    let library_name = if cfg!(feature = "gpu") {
+        "starksgpu"
+    } else if cfg!(feature = "metal") {
+        "starksmetal"
+    } else {
+        "starks"
+    };
     let lib_file = library_folder.join(format!("lib{library_name}.a"));
 
     // For GPU builds, ensure submodules (blst, sppark) are initialized and blst is compiled
@@ -78,7 +102,13 @@ fn main() {
     }
 
     // Call make to build the library, passing gencode flags if set
-    let target = if cfg!(feature = "gpu") { "starks_lib_gpu" } else { "starks_lib" };
+    let target = if cfg!(feature = "gpu") {
+        "starks_lib_gpu"
+    } else if cfg!(feature = "metal") {
+        "starks_lib_metal"
+    } else {
+        "starks_lib"
+    };
     eprintln!("Running make -j {target}...");
     if cfg!(feature = "gpu") {
         match &gencode_flags {
@@ -114,11 +144,7 @@ fn main() {
     let abs_lib_path = library_folder.canonicalize().unwrap_or_else(|_| library_folder.clone());
 
     if !lib_file.exists() {
-        if cfg!(feature = "gpu") {
-            panic!("`libstarksgpu.a` was not found at {}", lib_file.display());
-        } else {
-            panic!("`libstarks.a` was not found at {}", lib_file.display());
-        }
+        panic!("`lib{library_name}.a` was not found at {}", lib_file.display());
     }
 
     // Add platform-specific library search paths
@@ -166,6 +192,11 @@ fn main() {
         // macOS library linking (matches Makefile LDFLAGS)
         for lib in &["sodium", "pthread", "gmp", "gmpxx", "c++", "omp"] {
             println!("cargo:rustc-link-lib={lib}");
+        }
+        // Metal backend: Obj-C++ bridge needs the Metal + Foundation frameworks.
+        if cfg!(feature = "metal") {
+            println!("cargo:rustc-link-lib=framework=Metal");
+            println!("cargo:rustc-link-lib=framework=Foundation");
         }
     } else {
         // Linux library linking
@@ -246,7 +277,7 @@ fn find_tracked_files(dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     if let Some(name) = dir.file_name().and_then(|n| n.to_str()) {
         // Skip build output directories
-        if matches!(name, "build" | "build-gpu" | "lib" | "lib-gpu") {
+        if matches!(name, "build" | "build-gpu" | "build-metal" | "lib" | "lib-gpu" | "lib-metal") {
             return files;
         }
     }

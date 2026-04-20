@@ -50,6 +50,7 @@ disable_distributed = []
 diagnostic = ["proofman-macros/diagnostic", "proofman-common/diagnostic"]
 packed = ["proofman-common/packed"]
 gpu = ["proofman-common/gpu", "proofman-starks-lib-c/gpu"]
+metal = ["proofman-util/metal", "proofman-starks-lib-c/metal", "proofman-common/metal"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(distributed)'] }

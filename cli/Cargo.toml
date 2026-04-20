@@ -43,6 +43,7 @@ mpi = { version = "0.8.0" }
 default = []
 disable_distributed = ["proofman-common/disable_distributed"]
 dev = []
+metal = ["proofman/metal"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(distributed)'] }

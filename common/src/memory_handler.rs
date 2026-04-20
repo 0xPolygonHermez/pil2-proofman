@@ -1,5 +1,8 @@
 use crossbeam_channel::{bounded, Sender, Receiver};
+#[cfg(not(feature = "metal"))]
 use proofman_util::create_buffer_fast;
+#[cfg(feature = "metal")]
+use proofman_util::metal_alloc_unified;
 use std::sync::Arc;
 use crossbeam_queue::SegQueue;
 use crate::ProofCtx;
@@ -20,7 +23,10 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
         let (tx_buffer_pool, rx_buffer_pool) = bounded(n_buffers);
         let instance_ids_to_be_released = Arc::new(SegQueue::new());
         for _ in 0..n_buffers {
+            #[cfg(not(feature = "metal"))]
             tx_buffer_pool.send(create_buffer_fast(buffer_size)).unwrap();
+            #[cfg(feature = "metal")]
+            tx_buffer_pool.send(metal_alloc_unified(buffer_size)).unwrap();
         }
 
         let total_memory = n_buffers * buffer_size * std::mem::size_of::<F>();
@@ -62,7 +68,10 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
                 "MemoryHandler::Not enough valid buffers (found {}), creating a new one.",
                 valid_buffers.len()
             );
+            #[cfg(not(feature = "metal"))]
             valid_buffers.push(create_buffer_fast(self.buffer_size));
+            #[cfg(feature = "metal")]
+            valid_buffers.push(metal_alloc_unified(self.buffer_size));
         }
 
         for buf in valid_buffers.into_iter() {
@@ -175,13 +184,29 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
         );
 
         for _ in 0..n_buffers {
-            tx_witness.send(create_buffer_fast(buffer_size_witness)).unwrap();
-            tx_trace.send(create_buffer_fast(buffer_size_trace)).unwrap();
+            #[cfg(not(feature = "metal"))]
+            {
+                tx_witness.send(create_buffer_fast(buffer_size_witness)).unwrap();
+                tx_trace.send(create_buffer_fast(buffer_size_trace)).unwrap();
+            }
+            #[cfg(feature = "metal")]
+            {
+                tx_witness.send(metal_alloc_unified(buffer_size_witness)).unwrap();
+                tx_trace.send(metal_alloc_unified(buffer_size_trace)).unwrap();
+            }
         }
 
         for _ in 0..n_buffers_compressor {
-            tx_witness_compressor.send(create_buffer_fast(buffer_size_witness_compressor)).unwrap();
-            tx_trace_compressor.send(create_buffer_fast(buffer_size_trace_compressor)).unwrap();
+            #[cfg(not(feature = "metal"))]
+            {
+                tx_witness_compressor.send(create_buffer_fast(buffer_size_witness_compressor)).unwrap();
+                tx_trace_compressor.send(create_buffer_fast(buffer_size_trace_compressor)).unwrap();
+            }
+            #[cfg(feature = "metal")]
+            {
+                tx_witness_compressor.send(metal_alloc_unified(buffer_size_witness_compressor)).unwrap();
+                tx_trace_compressor.send(metal_alloc_unified(buffer_size_trace_compressor)).unwrap();
+            }
         }
 
         Self {
@@ -227,7 +252,10 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
                 "MemoryHandlerRecursive::Not enough valid witness buffers (found {}), creating a new one.",
                 valid_buffers.len()
             );
+            #[cfg(not(feature = "metal"))]
             valid_buffers.push(create_buffer_fast(self.buffer_size_witness));
+            #[cfg(feature = "metal")]
+            valid_buffers.push(metal_alloc_unified(self.buffer_size_witness));
         }
 
         for buf in valid_buffers.into_iter() {
@@ -258,7 +286,10 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
                 "MemoryHandlerRecursive::Not enough valid witness_compressor buffers (found {}), creating a new one.",
                 valid_buffers.len()
             );
+            #[cfg(not(feature = "metal"))]
             valid_buffers.push(create_buffer_fast(self.buffer_size_witness_compressor));
+            #[cfg(feature = "metal")]
+            valid_buffers.push(metal_alloc_unified(self.buffer_size_witness_compressor));
         }
 
         for buf in valid_buffers.into_iter() {
@@ -289,7 +320,10 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
                 "MemoryHandlerRecursive::Not enough valid trace buffers (found {}), creating a new one.",
                 valid_buffers.len()
             );
+            #[cfg(not(feature = "metal"))]
             valid_buffers.push(create_buffer_fast(self.buffer_size_trace));
+            #[cfg(feature = "metal")]
+            valid_buffers.push(metal_alloc_unified(self.buffer_size_trace));
         }
 
         for buf in valid_buffers.into_iter() {
@@ -320,7 +354,10 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
                 "MemoryHandlerRecursive::Not enough valid trace_compressor buffers (found {}), creating a new one.",
                 valid_buffers.len()
             );
+            #[cfg(not(feature = "metal"))]
             valid_buffers.push(create_buffer_fast(self.buffer_size_trace_compressor));
+            #[cfg(feature = "metal")]
+            valid_buffers.push(metal_alloc_unified(self.buffer_size_trace_compressor));
         }
 
         for buf in valid_buffers.into_iter() {

@@ -69,6 +69,8 @@ use std::ffi::c_void;
 use proofman_util::{
     create_buffer_fast, timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug,
 };
+#[cfg(feature = "metal")]
+use proofman_util::metal_alloc_unified;
 
 use serde::Serialize;
 
@@ -230,6 +232,15 @@ pub struct ProofMan<F: PrimeField64> {
     aux_trace: Arc<Vec<F>>,
     const_pols: Arc<Vec<F>>,
     const_tree: Arc<Vec<F>>,
+    // Metal-only: additional per-stream scratch for streams 1..N.
+    // Streams[0] use the `aux_trace` / `const_pols` / `const_tree`
+    // fields above, matching the upstream layout.
+    #[cfg(feature = "metal")]
+    aux_trace_extras: Vec<Arc<Vec<F>>>,
+    #[cfg(feature = "metal")]
+    const_pols_extras: Vec<Arc<Vec<F>>>,
+    #[cfg(feature = "metal")]
+    const_tree_extras: Vec<Arc<Vec<F>>>,
     prover_buffer_recursive: Arc<Vec<F>>,
     max_num_threads: usize,
     num_threads_per_witness: usize,
@@ -450,6 +461,60 @@ where
 
     pub fn get_preallocated_buffers(&self) -> (Arc<Vec<F>>, *mut c_void, Arc<AtomicBool>) {
         (self.aux_trace.clone(), self.pctx.get_device_buffers_ptr(), self.reload_fixed_pols_gpu.clone())
+    }
+
+    #[cfg(feature = "metal")]
+    #[inline]
+    fn aux_trace_for(&self, stream_id: usize) -> &Arc<Vec<F>> {
+        let n = self.aux_trace_extras.len() + 1;
+        let idx = stream_id % n;
+        if idx == 0 {
+            &self.aux_trace
+        } else {
+            &self.aux_trace_extras[idx - 1]
+        }
+    }
+
+    #[cfg(not(feature = "metal"))]
+    #[inline]
+    fn aux_trace_for(&self, _stream_id: usize) -> &Arc<Vec<F>> {
+        &self.aux_trace
+    }
+
+    #[cfg(feature = "metal")]
+    #[inline]
+    fn const_pols_for(&self, stream_id: usize) -> &Arc<Vec<F>> {
+        let n = self.const_pols_extras.len() + 1;
+        let idx = stream_id % n;
+        if idx == 0 {
+            &self.const_pols
+        } else {
+            &self.const_pols_extras[idx - 1]
+        }
+    }
+
+    #[cfg(not(feature = "metal"))]
+    #[inline]
+    fn const_pols_for(&self, _stream_id: usize) -> &Arc<Vec<F>> {
+        &self.const_pols
+    }
+
+    #[cfg(feature = "metal")]
+    #[inline]
+    fn const_tree_for(&self, stream_id: usize) -> &Arc<Vec<F>> {
+        let n = self.const_tree_extras.len() + 1;
+        let idx = stream_id % n;
+        if idx == 0 {
+            &self.const_tree
+        } else {
+            &self.const_tree_extras[idx - 1]
+        }
+    }
+
+    #[cfg(not(feature = "metal"))]
+    #[inline]
+    fn const_tree_for(&self, _stream_id: usize) -> &Arc<Vec<F>> {
+        &self.const_tree
     }
 
     pub fn set_barrier(&self) {
@@ -1581,6 +1646,15 @@ where
             setups_vadcop.max_trace_size_compressor,
         ));
 
+        // Under `metal` the pool buffers are Metal-allocated; Rust's
+        // Global::dealloc on drop would clash with Metal's allocator
+        // at process exit. Leak a clone to keep the Arcs alive.
+        #[cfg(feature = "metal")]
+        {
+            std::mem::forget(memory_handler.clone());
+            std::mem::forget(memory_handler_recursive_witness.clone());
+        }
+
         let n_airgroups = pctx.global_info.air_groups.len();
         let proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
             Arc::new((0..MAX_INSTANCES).map(|_| RwLock::new(None)).collect());
@@ -1600,14 +1674,49 @@ where
         let n_streams = ((n_streams_per_gpu + n_recursive_streams_per_gpu) * n_proof_threads) as usize;
         let n_streams_non_recursive = (n_streams_per_gpu * n_proof_threads) as usize;
 
+        #[cfg(not(feature = "metal"))]
         let (aux_trace, const_pols, const_tree) = if cfg!(feature = "gpu") {
             (Arc::new(Vec::new()), Arc::new(Vec::new()), Arc::new(Vec::new()))
         } else {
+            let aux_size = sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size);
+            let cp_size = sctx.max_const_size.max(setups_vadcop.max_const_size);
+            let ct_size = sctx.max_const_tree_size.max(setups_vadcop.max_const_tree_size);
             (
-                Arc::new(create_buffer_fast(sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size))),
-                Arc::new(create_buffer_fast(sctx.max_const_size.max(setups_vadcop.max_const_size))),
-                Arc::new(create_buffer_fast(sctx.max_const_tree_size.max(setups_vadcop.max_const_tree_size))),
+                Arc::new(create_buffer_fast(aux_size)),
+                Arc::new(create_buffer_fast(cp_size)),
+                Arc::new(create_buffer_fast(ct_size)),
             )
+        };
+
+        // Metal path: one (aux_trace, const_pols, const_tree) per stream.
+        // gen_proof_cpu uses const_pols / const_tree as a reload-on-miss
+        // cache keyed by (airgroupId, airId), so two concurrent streams
+        // on different airs would otherwise race on the same buffer.
+        // Stream 0 uses the main `aux_trace` / `const_pols` / `const_tree`
+        // fields; streams 1..N use the `_extras` vectors.
+        #[cfg(feature = "metal")]
+        let (aux_trace, const_pols, const_tree, aux_trace_extras, const_pols_extras, const_tree_extras) = {
+            let n_stream = n_streams_per_gpu as usize;
+            let aux_size = sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size);
+            let cp_size = sctx.max_const_size.max(setups_vadcop.max_const_size);
+            let ct_size = sctx.max_const_tree_size.max(setups_vadcop.max_const_tree_size);
+            let alloc = |sz: usize| {
+                let a = Arc::new(metal_alloc_unified(sz));
+                std::mem::forget(a.clone());
+                a
+            };
+            let aux_trace = alloc(aux_size);
+            let const_pols = alloc(cp_size);
+            let const_tree = alloc(ct_size);
+            let mut aux_trace_extras = Vec::with_capacity(n_stream.saturating_sub(1));
+            let mut const_pols_extras = Vec::with_capacity(n_stream.saturating_sub(1));
+            let mut const_tree_extras = Vec::with_capacity(n_stream.saturating_sub(1));
+            for _ in 1..n_stream {
+                aux_trace_extras.push(alloc(aux_size));
+                const_pols_extras.push(alloc(cp_size));
+                const_tree_extras.push(alloc(ct_size));
+            }
+            (aux_trace, const_pols, const_tree, aux_trace_extras, const_pols_extras, const_tree_extras)
         };
 
         let max_num_threads = configured_num_threads(mpi_ctx.node_n_processes as usize);
@@ -1641,7 +1750,20 @@ where
 
         let prover_buffer_recursive = if aggregation {
             let prover_buffer_size = get_recursive_buffer_sizes(&pctx, &setups_vadcop)?;
-            Arc::new(create_buffer_fast(prover_buffer_size))
+            #[cfg(not(feature = "metal"))]
+            {
+                Arc::new(create_buffer_fast::<F>(prover_buffer_size))
+            }
+            #[cfg(feature = "metal")]
+            {
+                // Unified-memory allocator so Metal's VADCOP_FINAL /
+                // recursive LDE can bind this buffer zero-copy. Leak a
+                // clone so Rust's Global::dealloc never runs on these
+                // Metal-owned pages.
+                let arc = Arc::new(metal_alloc_unified::<F>(prover_buffer_size));
+                std::mem::forget(arc.clone());
+                arc
+            }
         } else {
             Arc::new(Vec::new())
         };
@@ -1693,6 +1815,12 @@ where
             aux_trace,
             const_pols,
             const_tree,
+            #[cfg(feature = "metal")]
+            aux_trace_extras,
+            #[cfg(feature = "metal")]
+            const_pols_extras,
+            #[cfg(feature = "metal")]
+            const_tree_extras,
             roots_contributions,
             values_contributions,
             tx_threads,
@@ -1782,49 +1910,53 @@ where
 
             self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
 
-            for _ in 0..self.n_streams {
+            for stream_id in 0..self.n_streams {
                 let pctx_clone = self.pctx.clone();
                 let sctx_clone = self.sctx.clone();
                 let values_contributions_clone = self.values_contributions.clone();
                 let roots_contributions_clone = self.roots_contributions.clone();
-                let aux_trace_clone = self.aux_trace.clone();
-                let const_pols_clone = self.const_pols.clone();
+                let aux_trace_clone = self.aux_trace_for(stream_id).clone();
+                let const_pols_clone = self.const_pols_for(stream_id).clone();
                 let memory_handler_clone = self.memory_handler.clone();
                 let contributions_rx_clone = self.contributions_rx.clone();
                 let cancellation_info_clone = self.cancellation_info.clone();
-                let contribution_handle = std::thread::spawn(move || loop {
-                    match contributions_rx_clone.recv_timeout(std::time::Duration::from_millis(1)) {
-                        Ok(instance_id) => {
-                            if instance_id == usize::MAX {
-                                break;
-                            }
-                            if cancellation_info_clone.read().unwrap().token.is_cancelled() {
-                                break;
-                            }
-                            if let Err(e) = Self::get_contribution_air(
-                                &pctx_clone,
-                                &sctx_clone,
-                                &roots_contributions_clone,
-                                &values_contributions_clone,
-                                instance_id,
-                                &aux_trace_clone,
-                                &const_pols_clone,
-                            ) {
-                                cancellation_info_clone.write().unwrap().cancel(Some(e));
-                                break;
-                            }
+                let contribution_handle = std::thread::spawn(move || {
+                    #[cfg(feature = "metal")]
+                    proofman_util::metal_set_stream_id(stream_id as i32);
+                    loop {
+                        match contributions_rx_clone.recv_timeout(std::time::Duration::from_millis(1)) {
+                            Ok(instance_id) => {
+                                if instance_id == usize::MAX {
+                                    break;
+                                }
+                                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                                    break;
+                                }
+                                if let Err(e) = Self::get_contribution_air(
+                                    &pctx_clone,
+                                    &sctx_clone,
+                                    &roots_contributions_clone,
+                                    &values_contributions_clone,
+                                    instance_id,
+                                    &aux_trace_clone,
+                                    &const_pols_clone,
+                                ) {
+                                    cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                    break;
+                                }
 
-                            let is_shared_buffer = pctx_clone.is_shared_buffer(instance_id);
-                            if is_shared_buffer {
-                                memory_handler_clone.to_be_released_buffer(instance_id, false);
+                                let is_shared_buffer = pctx_clone.is_shared_buffer(instance_id);
+                                if is_shared_buffer {
+                                    memory_handler_clone.to_be_released_buffer(instance_id, false);
+                                }
                             }
-                        }
-                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                            if cancellation_info_clone.read().unwrap().token.is_cancelled() {
-                                break;
+                            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                                    break;
+                                }
                             }
+                            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
                         }
-                        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
                     }
                 });
                 self.handle_contributions.lock().unwrap().push(contribution_handle);
@@ -2207,6 +2339,8 @@ where
             if self.cancellation_info.read().unwrap().token.is_cancelled() {
                 return;
             }
+            #[cfg(feature = "metal")]
+            proofman_util::metal_set_stream_id(stream_id as i32);
             proofs_pending.increment();
             if let Err(e) = Self::gen_proof(
                 &self.proofs,
@@ -2214,9 +2348,9 @@ where
                 &self.sctx,
                 *instance_id as usize,
                 &output_dir_path,
-                &self.aux_trace,
-                &self.const_pols,
-                &self.const_tree,
+                self.aux_trace_for(stream_id),
+                self.const_pols_for(stream_id),
+                self.const_tree_for(stream_id),
                 Some(stream_id),
                 options.save_proofs,
             ) {
@@ -2260,9 +2394,9 @@ where
             let sctx_clone = self.sctx.clone();
             let setups_clone = self.setups.clone();
             let output_dir_path_clone = output_dir_path.clone();
-            let aux_trace_clone = self.aux_trace.clone();
-            let const_pols_clone = self.const_pols.clone();
-            let const_tree_clone = self.const_tree.clone();
+            let aux_trace_clone = self.aux_trace_for(stream_id).clone();
+            let const_pols_clone = self.const_pols_for(stream_id).clone();
+            let const_tree_clone = self.const_tree_for(stream_id).clone();
             let prover_buffer_recursive = self.prover_buffer_recursive.clone();
             let proofs_clone = self.proofs.clone();
             let compressor_proofs_clone = self.compressor_proofs.clone();
@@ -2277,174 +2411,178 @@ where
             let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
             let proofs_finished_clone = proofs_finished.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
-            let handle_recursive = std::thread::spawn(move || loop {
-                let force_recursive_stream = stream_id >= n_streams_non_recursive;
-                if !force_recursive_stream {
-                    if let Ok(instance_id) = proofs_rx.try_recv() {
-                        if cancellation_info_clone.read().unwrap().token.is_cancelled() {
-                            let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
-                            if is_shared_buffer {
-                                if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
-                                    cancellation_info_clone.write().unwrap().cancel(Some(e));
-                                    return;
+            let handle_recursive = std::thread::spawn(move || {
+                #[cfg(feature = "metal")]
+                proofman_util::metal_set_stream_id(stream_id as i32);
+                loop {
+                    let force_recursive_stream = stream_id >= n_streams_non_recursive;
+                    if !force_recursive_stream {
+                        if let Ok(instance_id) = proofs_rx.try_recv() {
+                            if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                                let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
+                                if is_shared_buffer {
+                                    if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
+                                        cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                        return;
+                                    }
                                 }
-                            }
-                            continue;
-                        } else {
-                            if let Err(e) = Self::gen_proof(
-                                &proofs_clone,
-                                &pctx_clone,
-                                &sctx_clone,
-                                instance_id,
-                                &output_dir_path_clone,
-                                &aux_trace_clone,
-                                &const_pols_clone,
-                                &const_tree_clone,
-                                None,
-                                options.save_proofs,
-                            ) {
-                                cancellation_info_clone.write().unwrap().cancel(Some(e));
-                                break;
-                            }
-                            let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
-                            if is_shared_buffer {
-                                if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
+                                continue;
+                            } else {
+                                if let Err(e) = Self::gen_proof(
+                                    &proofs_clone,
+                                    &pctx_clone,
+                                    &sctx_clone,
+                                    instance_id,
+                                    &output_dir_path_clone,
+                                    &aux_trace_clone,
+                                    &const_pols_clone,
+                                    &const_tree_clone,
+                                    None,
+                                    options.save_proofs,
+                                ) {
                                     cancellation_info_clone.write().unwrap().cancel(Some(e));
-                                    return;
+                                    break;
                                 }
+                                let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
+                                if is_shared_buffer {
+                                    if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
+                                        cancellation_info_clone.write().unwrap().cancel(Some(e));
+                                        return;
+                                    }
+                                }
+                                continue;
                             }
-                            continue;
                         }
                     }
-                }
 
-                if cancellation_info_clone.read().unwrap().token.is_cancelled() {
-                    break;
-                }
-
-                let witness_opt = if force_recursive_stream {
-                    crossbeam_channel::select! {
-                        recv(rec2_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
-                        recv(rec1_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
-                        default(std::time::Duration::from_millis(1)) => None,
+                    if cancellation_info_clone.read().unwrap().token.is_cancelled() {
+                        break;
                     }
-                } else {
-                    crossbeam_channel::select! {
-                        recv(rec2_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
-                        recv(compressor_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
-                        recv(rec1_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
-                        default(std::time::Duration::from_millis(1)) => None,
-                    }
-                };
 
-                let mut witness = match witness_opt {
-                    None => {
-                        if proofs_finished_clone.load(Ordering::Relaxed) {
-                            return;
+                    let witness_opt = if force_recursive_stream {
+                        crossbeam_channel::select! {
+                            recv(rec2_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
+                            recv(rec1_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
+                            default(std::time::Duration::from_millis(1)) => None,
                         }
-                        continue;
-                    }
-                    Some(w) => w,
-                };
-
-                let force_recursive_stream = stream_id >= n_streams_non_recursive;
-                if witness.proof_type == ProofType::Recursive2 {
-                    let id = {
-                        let mut rec2_proofs = recursive2_proofs_ongoing_clone.write().unwrap();
-                        let id = rec2_proofs.len();
-                        rec2_proofs.push(None);
-                        id
+                    } else {
+                        crossbeam_channel::select! {
+                            recv(rec2_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
+                            recv(compressor_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
+                            recv(rec1_rx) -> msg => match msg { Ok(w) => Some(w), Err(_) => return },
+                            default(std::time::Duration::from_millis(1)) => None,
+                        }
                     };
 
-                    witness.global_idx = Some(id);
-                }
+                    let mut witness = match witness_opt {
+                        None => {
+                            if proofs_finished_clone.load(Ordering::Relaxed) {
+                                return;
+                            }
+                            continue;
+                        }
+                        Some(w) => w,
+                    };
 
-                let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        cancellation_info_clone.write().unwrap().cancel(Some(e));
-                        break;
+                    let force_recursive_stream = stream_id >= n_streams_non_recursive;
+                    if witness.proof_type == ProofType::Recursive2 {
+                        let id = {
+                            let mut rec2_proofs = recursive2_proofs_ongoing_clone.write().unwrap();
+                            let id = rec2_proofs.len();
+                            rec2_proofs.push(None);
+                            id
+                        };
+
+                        witness.global_idx = Some(id);
                     }
-                };
-                let new_proof_type_str: &str = new_proof.proof_type.clone().into();
 
-                let new_proof_type = &new_proof.proof_type.clone();
+                    let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            cancellation_info_clone.write().unwrap().cancel(Some(e));
+                            break;
+                        }
+                    };
+                    let new_proof_type_str: &str = new_proof.proof_type.clone().into();
 
-                let id = new_proof.global_idx.unwrap();
-                if *new_proof_type == ProofType::Recursive2 {
-                    recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
-                } else if *new_proof_type == ProofType::Compressor {
-                    *compressor_proofs_clone[id].write().unwrap() = Some(new_proof);
-                } else if *new_proof_type == ProofType::Recursive1 {
-                    *recursive1_proofs_clone[id].write().unwrap() = Some(new_proof);
-                }
+                    let new_proof_type = &new_proof.proof_type.clone();
 
-                if *new_proof_type == ProofType::Recursive2 {
-                    let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
-                    let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
-
-                    if let Err(e) = generate_recursive_proof(
-                        &pctx_clone,
-                        &memory_handler_recursive_witness,
-                        &setups_clone,
-                        &mut witness,
-                        new_proof_ref,
-                        &prover_buffer_recursive,
-                        &output_dir_path_clone,
-                        &const_tree_clone,
-                        &const_pols_clone,
-                        options.save_proofs,
-                        force_recursive_stream,
-                        None,
-                    ) {
-                        cancellation_info_clone.write().unwrap().cancel(Some(e));
-                        break;
+                    let id = new_proof.global_idx.unwrap();
+                    if *new_proof_type == ProofType::Recursive2 {
+                        recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
+                    } else if *new_proof_type == ProofType::Compressor {
+                        *compressor_proofs_clone[id].write().unwrap() = Some(new_proof);
+                    } else if *new_proof_type == ProofType::Recursive1 {
+                        *recursive1_proofs_clone[id].write().unwrap() = Some(new_proof);
                     }
-                } else if *new_proof_type == ProofType::Compressor {
-                    let compressor_lock = compressor_proofs_clone[id].read().unwrap();
-                    let new_proof_ref = compressor_lock.as_ref().unwrap();
-                    if let Err(e) = generate_recursive_proof(
-                        &pctx_clone,
-                        &memory_handler_recursive_witness,
-                        &setups_clone,
-                        &mut witness,
-                        new_proof_ref,
-                        &prover_buffer_recursive,
-                        &output_dir_path_clone,
-                        &const_tree_clone,
-                        &const_pols_clone,
-                        options.save_proofs,
-                        force_recursive_stream,
-                        None,
-                    ) {
-                        cancellation_info_clone.write().unwrap().cancel(Some(e));
-                        break;
-                    }
-                } else {
-                    let recursive1_lock = recursive1_proofs_clone[id].read().unwrap();
-                    let new_proof_ref = recursive1_lock.as_ref().unwrap();
-                    if let Err(e) = generate_recursive_proof(
-                        &pctx_clone,
-                        &memory_handler_recursive_witness,
-                        &setups_clone,
-                        &mut witness,
-                        new_proof_ref,
-                        &prover_buffer_recursive,
-                        &output_dir_path_clone,
-                        &const_tree_clone,
-                        &const_pols_clone,
-                        options.save_proofs,
-                        force_recursive_stream,
-                        None,
-                    ) {
-                        cancellation_info_clone.write().unwrap().cancel(Some(e));
-                        break;
-                    }
-                }
 
-                if cfg!(not(feature = "gpu")) {
-                    launch_callback_c(id as u64, new_proof_type_str);
-                }
+                    if *new_proof_type == ProofType::Recursive2 {
+                        let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
+                        let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
+
+                        if let Err(e) = generate_recursive_proof(
+                            &pctx_clone,
+                            &memory_handler_recursive_witness,
+                            &setups_clone,
+                            &mut witness,
+                            new_proof_ref,
+                            &prover_buffer_recursive,
+                            &output_dir_path_clone,
+                            &const_tree_clone,
+                            &const_pols_clone,
+                            options.save_proofs,
+                            force_recursive_stream,
+                            None,
+                        ) {
+                            cancellation_info_clone.write().unwrap().cancel(Some(e));
+                            break;
+                        }
+                    } else if *new_proof_type == ProofType::Compressor {
+                        let compressor_lock = compressor_proofs_clone[id].read().unwrap();
+                        let new_proof_ref = compressor_lock.as_ref().unwrap();
+                        if let Err(e) = generate_recursive_proof(
+                            &pctx_clone,
+                            &memory_handler_recursive_witness,
+                            &setups_clone,
+                            &mut witness,
+                            new_proof_ref,
+                            &prover_buffer_recursive,
+                            &output_dir_path_clone,
+                            &const_tree_clone,
+                            &const_pols_clone,
+                            options.save_proofs,
+                            force_recursive_stream,
+                            None,
+                        ) {
+                            cancellation_info_clone.write().unwrap().cancel(Some(e));
+                            break;
+                        }
+                    } else {
+                        let recursive1_lock = recursive1_proofs_clone[id].read().unwrap();
+                        let new_proof_ref = recursive1_lock.as_ref().unwrap();
+                        if let Err(e) = generate_recursive_proof(
+                            &pctx_clone,
+                            &memory_handler_recursive_witness,
+                            &setups_clone,
+                            &mut witness,
+                            new_proof_ref,
+                            &prover_buffer_recursive,
+                            &output_dir_path_clone,
+                            &const_tree_clone,
+                            &const_pols_clone,
+                            options.save_proofs,
+                            force_recursive_stream,
+                            None,
+                        ) {
+                            cancellation_info_clone.write().unwrap().cancel(Some(e));
+                            break;
+                        }
+                    }
+
+                    if cfg!(not(feature = "gpu")) {
+                        launch_callback_c(id as u64, new_proof_type_str);
+                    }
+                } // end inner loop {} around per-stream thread body
             });
             self.handle_recursives.lock().unwrap().push(handle_recursive);
         }
@@ -3069,11 +3207,11 @@ where
             self.handle_recursives.lock().unwrap().push(handle_recursive);
         }
 
-        for _ in 0..self.n_streams {
+        for stream_id in 0..self.n_streams {
             let pctx_clone = self.pctx.clone();
             let setups_clone = self.setups.clone();
-            let const_pols_clone = self.const_pols.clone();
-            let const_tree_clone = self.const_tree.clone();
+            let const_pols_clone = self.const_pols_for(stream_id).clone();
+            let const_tree_clone = self.const_tree_for(stream_id).clone();
             let prover_buffer_recursive = self.prover_buffer_recursive.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
             let outer_agg_proofs_finished = self.outer_agg_proofs_finished.clone();
@@ -3288,11 +3426,11 @@ where
         let recursive2_done = Arc::new(Counter::new_with_threshold(total_proofs));
 
         let mut recursive2_handles = Vec::new();
-        for _ in 0..self.n_streams {
+        for stream_id in 0..self.n_streams {
             let pctx_clone = self.pctx.clone();
             let setups_clone = self.setups.clone();
-            let const_pols_clone = self.const_pols.clone();
-            let const_tree_clone = self.const_tree.clone();
+            let const_pols_clone = self.const_pols_for(stream_id).clone();
+            let const_tree_clone = self.const_tree_for(stream_id).clone();
             let prover_buffer_recursive = self.prover_buffer_recursive.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
             let cancellation_info_clone = self.cancellation_info.clone();

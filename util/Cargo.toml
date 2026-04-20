@@ -13,3 +13,11 @@ sysinfo.workspace = true
 bytemuck.workspace = true
 serde.workspace = true
 bincode.workspace = true
+
+[features]
+default = []
+# Expose `metal_alloc_unified` (Apple Silicon unified-memory
+# allocator) and `metal_set_stream_id`. The crate must link
+# libstarksmetal.a, handled by proofman-starks-lib-c when its own
+# `metal` feature is enabled.
+metal = []
