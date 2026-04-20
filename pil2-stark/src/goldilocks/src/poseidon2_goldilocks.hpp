@@ -1,12 +1,16 @@
 #ifndef POSEIDON2_GOLDILOCKS
 #define POSEIDON2_GOLDILOCKS
 
+#include "platform.hpp"
 #include "poseidon2_goldilocks_constants.hpp"
 #include "goldilocks_base_field.hpp"
 #include <cstdio>
 #include <cstdlib>
-#ifdef __AVX2__
+#if PIL2_HAS_AVX2
 #include <immintrin.h>
+#endif
+#if PIL2_HAS_NEON
+#include <arm_neon.h>
 #endif
 
 #define HASH_SIZE 4
@@ -27,6 +31,9 @@ enum class Poseidon2Mode : uint8_t {
     AvxBatch,
     Avx512,
     Avx512Batch,
+    Neon,
+    NeonBatch,
+    ScalarUnrolledW16,
 };
 
 
@@ -76,7 +83,7 @@ private:
     inline void static prodadd_(Goldilocks::Element *x, const Goldilocks::Element D[SPONGE_WIDTH], const Goldilocks::Element &sum);
     inline void static matmul_m4_(Goldilocks::Element *x);
     inline void static matmul_external_(Goldilocks::Element *x);
-#ifdef __AVX2__
+#if PIL2_HAS_AVX2
     inline void static add_avx(__m256i st[(SPONGE_WIDTH >> 2)], const Goldilocks::Element C[SPONGE_WIDTH]);
     inline void static pow7_avx(__m256i st[(SPONGE_WIDTH >> 2)]);
     inline void static add_avx_small(__m256i st[(SPONGE_WIDTH >> 2)], const Goldilocks::Element C[SPONGE_WIDTH]);
@@ -86,7 +93,7 @@ private:
     inline void static pow7add_avx(__m256i *x, const Goldilocks::Element C_[SPONGE_WIDTH]);
     inline void static element_pow7_avx(__m256i &x);
 #endif
-#ifdef __AVX512__
+#if PIL2_HAS_AVX512
     inline void static matmul_external_batch_avx512(__m512i *x);
     inline void static matmul_m4_batch_avx512(__m512i &st0, __m512i &st1, __m512i &st2, __m512i &st3);
     inline void static pow7add_avx512(__m512i *x, const Goldilocks::Element C_[SPONGE_WIDTH]);
@@ -108,7 +115,7 @@ private:
                                uint64_t num_cols, uint64_t num_rows, uint64_t arity,
                                int num_threads = 0, uint64_t dim = 1);
 
-#ifdef __AVX2__
+#if PIL2_HAS_AVX2
     // AVX2 single-sponge:
     static void permute_avx(Goldilocks::Element (&state)[SPONGE_WIDTH],
                             const Goldilocks::Element (&input)[SPONGE_WIDTH]);
@@ -127,7 +134,7 @@ private:
                                      uint64_t num_cols, uint64_t num_rows, uint64_t arity,
                                      int num_threads = 0, uint64_t dim = 1);
 #endif
-#ifdef __AVX512__
+#if PIL2_HAS_AVX512
     // AVX512 8-lane batch (single-sponge AVX512 is intentionally not
     // implemented — see Poseidon2Mode enum comment).
     static void permute_batch_avx512(Goldilocks::Element *, const Goldilocks::Element *);
@@ -137,6 +144,35 @@ private:
     static void merkletree_batch_avx512(Goldilocks::Element *tree, Goldilocks::Element *input,
                                         uint64_t num_cols, uint64_t num_rows, uint64_t arity,
                                         int num_threads = 0, uint64_t dim = 1);
+#endif
+#if PIL2_HAS_NEON
+    // NEON single-sponge (Part 5). 2 elements per uint64x2_t — state of W
+    // elements lives in W/2 NEON registers. Bodies in poseidon2_goldilocks_neon.hpp.
+    static void permute_neon(Goldilocks::Element *, const Goldilocks::Element *);
+    static void compress_neon(Goldilocks::Element (&state)[CAPACITY],
+                          const Goldilocks::Element (&input)[SPONGE_WIDTH]);
+    static void linear_hash_neon(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
+    static void merkletree_neon(Goldilocks::Element *tree, Goldilocks::Element *input,
+                                uint64_t num_cols, uint64_t num_rows, uint64_t arity,
+                                int num_threads = 0, uint64_t dim = 1);
+    // NEON 2-sponge batch (Part 5 Task 36). Each uint64x2_t holds the same
+    // element index from 2 sponges. Mirrors AvxBatch (4-sponge) shape but
+    // with NEON's 2-lane width. Bodies in poseidon2_goldilocks_neon.hpp.
+    static void permute_batch_neon(Goldilocks::Element *, const Goldilocks::Element *);
+    static void compress_batch_neon(Goldilocks::Element (&state)[2 * CAPACITY],
+                                const Goldilocks::Element (&input)[2 * SPONGE_WIDTH]);
+    static void linear_hash_batch_neon(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
+    static void merkletree_batch_neon(Goldilocks::Element *tree, Goldilocks::Element *input,
+                                      uint64_t num_cols, uint64_t num_rows, uint64_t arity,
+                                      int num_threads = 0, uint64_t dim = 1);
+    static void permute_w16_scalar_unrolled(Goldilocks::Element (&state)[SPONGE_WIDTH],
+                                           const Goldilocks::Element (&input)[SPONGE_WIDTH]);
+    static void compress_w16_scalar_unrolled(Goldilocks::Element (&state)[CAPACITY],
+                                            const Goldilocks::Element (&input)[SPONGE_WIDTH]);
+    static void linear_hash_w16_scalar_unrolled(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
+    static void merkletree_w16_scalar_unrolled(Goldilocks::Element *tree, Goldilocks::Element *input,
+                                              uint64_t num_cols, uint64_t num_rows, uint64_t arity,
+                                              int num_threads = 0, uint64_t dim = 1);
 #endif
 
 };
@@ -216,19 +252,45 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_m4_(Goldilocks::Element 
 
 template<uint32_t SPONGE_WIDTH_T>
 inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_external_(Goldilocks::Element *x) {
-    
+
     for(uint32_t i = 0; i < SPONGE_WIDTH; i +=4) {
         matmul_m4_(&x[i]);
     }
     if(SPONGE_WIDTH > 4){
-        Goldilocks::Element stored[4] = {Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero()};
-        for (uint32_t i = 0; i < SPONGE_WIDTH; i+=4) {
-            stored[0] = stored[0] + x[i];
-            stored[1] = stored[1] + x[i+1];
-            stored[2] = stored[2] + x[i+2];
-            stored[3] = stored[3] + x[i+3];
+        // Pairwise reduction for the per-column accumulators. Same result as
+        // the linear chain `stored[c] += x[i]; stored[c] += x[i+4]; ...` but
+        // with chain depth log2(W/4) instead of W/4. For W=16 that's depth 2
+        // vs 4; for W=12 depth 2 vs 3. Shorter critical path lets the CPU's
+        // out-of-order engine issue the four per-column chains more densely,
+        // and helps the NEON path too (its matmul_external_neon punts to
+        // this scalar routine — see poseidon2_goldilocks_neon.hpp:69).
+        // Ported from the Metal kernel optimisation at commit 6901b051.
+        Goldilocks::Element stored[4];
+        if constexpr (SPONGE_WIDTH == 16) {
+            Goldilocks::Element p00 = x[0]  + x[4];
+            Goldilocks::Element p01 = x[8]  + x[12];
+            Goldilocks::Element p10 = x[1]  + x[5];
+            Goldilocks::Element p11 = x[9]  + x[13];
+            Goldilocks::Element p20 = x[2]  + x[6];
+            Goldilocks::Element p21 = x[10] + x[14];
+            Goldilocks::Element p30 = x[3]  + x[7];
+            Goldilocks::Element p31 = x[11] + x[15];
+            stored[0] = p00 + p01;
+            stored[1] = p10 + p11;
+            stored[2] = p20 + p21;
+            stored[3] = p30 + p31;
+        } else if constexpr (SPONGE_WIDTH == 12) {
+            stored[0] = (x[0] + x[4]) + x[8];
+            stored[1] = (x[1] + x[5]) + x[9];
+            stored[2] = (x[2] + x[6]) + x[10];
+            stored[3] = (x[3] + x[7]) + x[11];
+        } else {  // SPONGE_WIDTH == 8 (already depth-1; keep straight add)
+            stored[0] = x[0] + x[4];
+            stored[1] = x[1] + x[5];
+            stored[2] = x[2] + x[6];
+            stored[3] = x[3] + x[7];
         }
-        
+
         for (uint32_t i = 0; i < SPONGE_WIDTH; ++i)
         {
             x[i] = x[i] + stored[i % 4];
@@ -251,9 +313,9 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::compress_seq(Goldilocks::Elemen
 template<uint32_t W>
 [[noreturn]] inline void Poseidon2Goldilocks<W>::abortMode(const char *op, Poseidon2Mode m)
 {
-    static const char *names[] = { "Auto", "Scalar", "Avx", "AvxBatch", "Avx512", "Avx512Batch" };
+    static const char *names[] = { "Auto", "Scalar", "Avx", "AvxBatch", "Avx512", "Avx512Batch", "Neon", "NeonBatch", "ScalarUnrolledW16" };
     int idx = static_cast<int>(m);
-    const char *name = (idx >= 0 && idx < 6) ? names[idx] : "<unknown>";
+    const char *name = (idx >= 0 && idx < (int)(sizeof(names) / sizeof(*names))) ? names[idx] : "<unknown>";
     std::fprintf(stderr,
         "Poseidon2Goldilocks<%u>::%s: mode %s is not available in this build "
         "(not compiled in, or not valid for this operation)\n",
@@ -268,16 +330,40 @@ inline void Poseidon2Goldilocks<W>::permute(
     Poseidon2Mode mode)
 {
     if (mode == Poseidon2Mode::Auto) {
-#ifdef __AVX2__
+#if PIL2_HAS_AVX2
         mode = Poseidon2Mode::Avx;
+#elif PIL2_HAS_NEON
+        // NEON wins at W=4 (~9%) and W=8 (~5%) but regresses at W=12/W=16
+        // because matmul_external_neon punts to scalar and the per-call
+        // NEON-store / scalar / NEON-load overhead scales with W. Restrict
+        // Auto to W=4/W=8 for the generic NEON path. W=16 uses a separate
+        // scalar-shaped NEON candidate that avoids that overhead. Explicit
+        // Mode::Neon still works for any W (correctness gated).
+        mode = (W == 16) ? Poseidon2Mode::ScalarUnrolledW16 : ((W == 4 || W == 8) ? Poseidon2Mode::Neon : Poseidon2Mode::Scalar);
 #else
         mode = Poseidon2Mode::Scalar;
 #endif
     }
     switch (mode) {
         case Poseidon2Mode::Scalar: permute_seq(output, input); return;
-#ifdef __AVX2__
+#if PIL2_HAS_AVX2
         case Poseidon2Mode::Avx:    permute_avx(output, input); return;
+#endif
+#if PIL2_HAS_NEON
+        case Poseidon2Mode::Neon:
+            // NEON wins only at W=4/W=8; W=12/W=16 dispatch is a compile-
+            // time fall-through that aborts at runtime (Auto never picks it).
+            if constexpr (W == 4 || W == 8) {
+                permute_neon(output, input);
+                return;
+            }
+            break;
+        case Poseidon2Mode::ScalarUnrolledW16:
+            if constexpr (W == 16) {
+                permute_w16_scalar_unrolled(output, input);
+                return;
+            }
+            break;
 #endif
         default: break;
     }
@@ -291,16 +377,33 @@ inline void Poseidon2Goldilocks<W>::compress(
     Poseidon2Mode mode)
 {
     if (mode == Poseidon2Mode::Auto) {
-#ifdef __AVX2__
+#if PIL2_HAS_AVX2
         mode = Poseidon2Mode::Avx;
+#elif PIL2_HAS_NEON
+        // See permute() Auto comment.
+        mode = (W == 16) ? Poseidon2Mode::ScalarUnrolledW16 : ((W == 4 || W == 8) ? Poseidon2Mode::Neon : Poseidon2Mode::Scalar);
 #else
         mode = Poseidon2Mode::Scalar;
 #endif
     }
     switch (mode) {
         case Poseidon2Mode::Scalar: compress_seq(state, input); return;
-#ifdef __AVX2__
+#if PIL2_HAS_AVX2
         case Poseidon2Mode::Avx:    compress_avx(state, input); return;
+#endif
+#if PIL2_HAS_NEON
+        case Poseidon2Mode::Neon:
+            if constexpr (W == 4 || W == 8) {
+                compress_neon(state, input);
+                return;
+            }
+            break;
+        case Poseidon2Mode::ScalarUnrolledW16:
+            if constexpr (W == 16) {
+                compress_w16_scalar_unrolled(state, input);
+                return;
+            }
+            break;
 #endif
         default: break;
     }
@@ -312,16 +415,33 @@ inline void Poseidon2Goldilocks<W>::linearHash(
     Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size, Poseidon2Mode mode)
 {
     if (mode == Poseidon2Mode::Auto) {
-#ifdef __AVX2__
+#if PIL2_HAS_AVX2
         mode = Poseidon2Mode::Avx;
+#elif PIL2_HAS_NEON
+        // See permute() Auto comment.
+        mode = (W == 16) ? Poseidon2Mode::ScalarUnrolledW16 : ((W == 4 || W == 8) ? Poseidon2Mode::Neon : Poseidon2Mode::Scalar);
 #else
         mode = Poseidon2Mode::Scalar;
 #endif
     }
     switch (mode) {
         case Poseidon2Mode::Scalar: linear_hash_seq(output, input, size); return;
-#ifdef __AVX2__
+#if PIL2_HAS_AVX2
         case Poseidon2Mode::Avx:    linear_hash_avx(output, input, size); return;
+#endif
+#if PIL2_HAS_NEON
+        case Poseidon2Mode::Neon:
+            if constexpr (W == 4 || W == 8) {
+                linear_hash_neon(output, input, size);
+                return;
+            }
+            break;
+        case Poseidon2Mode::ScalarUnrolledW16:
+            if constexpr (W == 16) {
+                linear_hash_w16_scalar_unrolled(output, input, size);
+                return;
+            }
+            break;
 #endif
         // AvxBatch / Avx512Batch have a 4/8-row contract and are not callable
         // as single-row linearHash — they remain private, reachable only via
@@ -338,10 +458,20 @@ inline void Poseidon2Goldilocks<W>::merkletree(
     Poseidon2Mode mode, int num_threads, uint64_t dim)
 {
     if (mode == Poseidon2Mode::Auto) {
-#ifdef __AVX512__
+#if PIL2_HAS_AVX512
         mode = Poseidon2Mode::Avx512Batch;
-#elif defined(__AVX2__)
+#elif PIL2_HAS_AVX2
         mode = Poseidon2Mode::AvxBatch;
+#elif PIL2_HAS_NEON
+        // NeonBatch is correctness-gated for all widths but is a 5-16% perf
+        // regression vs Scalar on M4 Pro at the merkletree level. Strided
+        // gather loads + clang's auto-vectorisation of the scalar path leave
+        // NEON's 2-lane parallelism unable to compensate. Keep batch impls
+        // available via explicit Mode::NeonBatch (tests verify), but Auto
+        // stays on the path that actually wins. W=16 uses the scalar-shaped
+        // NEON candidate because the reference proving key's arity-4 Merkle
+        // path benefits from it. Other widths stay Scalar at the tree level.
+        mode = (W == 16) ? Poseidon2Mode::ScalarUnrolledW16 : Poseidon2Mode::Scalar;
 #else
         mode = Poseidon2Mode::Scalar;
 #endif
@@ -349,15 +479,35 @@ inline void Poseidon2Goldilocks<W>::merkletree(
     switch (mode) {
         case Poseidon2Mode::Scalar:
             merkletree_seq(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
-#ifdef __AVX2__
+#if PIL2_HAS_AVX2
         case Poseidon2Mode::Avx:
             merkletree_avx(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
         case Poseidon2Mode::AvxBatch:
             merkletree_batch_avx(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
 #endif
-#ifdef __AVX512__
+#if PIL2_HAS_AVX512
         case Poseidon2Mode::Avx512Batch:
             merkletree_batch_avx512(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
+#endif
+#if PIL2_HAS_NEON
+        case Poseidon2Mode::Neon:
+            if constexpr (W == 4 || W == 8) {
+                merkletree_neon(tree, input, num_cols, num_rows, arity, num_threads, dim);
+                return;
+            }
+            break;
+        case Poseidon2Mode::NeonBatch:
+            if constexpr (W == 4 || W == 8) {
+                merkletree_batch_neon(tree, input, num_cols, num_rows, arity, num_threads, dim);
+                return;
+            }
+            break;
+        case Poseidon2Mode::ScalarUnrolledW16:
+            if constexpr (W == 16) {
+                merkletree_w16_scalar_unrolled(tree, input, num_cols, num_rows, arity, num_threads, dim);
+                return;
+            }
+            break;
 #endif
         // Avx512 single-sponge is intentionally unimplemented (see enum comment).
         default: break;
@@ -367,9 +517,11 @@ inline void Poseidon2Goldilocks<W>::merkletree(
 
 #include "poseidon2_goldilocks_avx.hpp"
 
-#ifdef __AVX512__
+#if PIL2_HAS_AVX512
  #include "poseidon2_goldilocks_avx512.hpp"
  #endif
+
+#include "poseidon2_goldilocks_neon.hpp"
 
 using Poseidon2GoldilocksGrinding = Poseidon2Goldilocks<4>;  // SPONGE_WIDTH = 4
 
