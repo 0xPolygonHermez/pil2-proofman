@@ -29,7 +29,7 @@ pub fn trait_impl(
     let packed_fwd = forwarding_methods(packed_name, fields);
 
     quote! {
-        pub trait #trait_name #generics_with_bounds: proofman_common::trace::TraceRow + Default + Copy + Send + Sync + 'static {
+        pub trait #trait_name #generics_with_bounds: proofman_common::trace::TraceRow + Default + Copy + Send + Sync + std::fmt::Debug + 'static {
             #(#trait_methods)*
         }
 
