@@ -18,6 +18,11 @@
 #include "expressions_pack.hpp"
 #include "hints.hpp"
 
+#include "../goldilocks/src/platform.hpp"
+#if PIL2_HAS_METAL
+#include "../goldilocks/src/metal/ntt_metal_bridge.hpp"
+#endif
+
 class gl64_t;
 struct DeviceCommitBuffers;
 
@@ -33,11 +38,22 @@ public:
     MerkleTreeType **treesFRI;
 
 public:
-    Starks(SetupCtx& setupCtx_,Goldilocks::Element *pConstPolsExtendedTreeAddress, Goldilocks::Element *pConstPolsCustomCommitsTree, bool allocateTrees, bool allocateNodes) : setupCtx(setupCtx_)                    
+    Starks(SetupCtx& setupCtx_,Goldilocks::Element *pConstPolsExtendedTreeAddress, Goldilocks::Element *pConstPolsCustomCommitsTree, bool allocateTrees, bool allocateNodes) : setupCtx(setupCtx_)
     {
 
         uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
         uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+
+#if PIL2_HAS_METAL
+        // Metal-only: use .find() on shared starkInfo maps — operator[]
+        // is non-const (may rebalance / insert) and is not safe when
+        // the Metal backend runs concurrent same-air recursive proofs.
+        // Upstream CPU / CUDA paths stay on operator[], byte-identical.
+        auto readSec = [&](const std::string& k) -> uint64_t {
+            auto it = setupCtx.starkInfo.mapSectionsN.find(k);
+            return (it != setupCtx.starkInfo.mapSectionsN.end()) ? it->second : 0;
+        };
+#endif
 
         treesGL = new MerkleTreeType*[setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2];
         if (pConstPolsExtendedTreeAddress != nullptr) {
@@ -48,12 +64,20 @@ public:
         for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; i++)
         {
             std::string section = "cm" + to_string(i + 1);
+#if PIL2_HAS_METAL
+            uint64_t nCols = readSec(section);
+#else
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
+#endif
             treesGL[i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.lastLevelVerification, setupCtx.starkInfo.starkStruct.merkleTreeCustom, NExtended, nCols, allocateTrees, allocateNodes);
         }
 
         for(uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {
+#if PIL2_HAS_METAL
+            uint64_t nCols = readSec(setupCtx.starkInfo.customCommits[i].name + "0");
+#else
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[i].name + "0"];
+#endif
             treesGL[setupCtx.starkInfo.nStages + 2 + i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.lastLevelVerification, setupCtx.starkInfo.starkStruct.merkleTreeCustom, NExtended, nCols, allocateTrees, allocateNodes);
             if (pConstPolsCustomCommitsTree != nullptr) {        
                 treesGL[setupCtx.starkInfo.nStages + 2 + i]->setSource(&pConstPolsCustomCommitsTree[N * nCols]);
@@ -150,13 +174,19 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
     
     Goldilocks::Element *pBuff = step == 1 ? trace : &aux_trace[setupCtx.starkInfo.mapOffsets[make_pair(section, false)]];
     Goldilocks::Element *pBuffExtended = &aux_trace[setupCtx.starkInfo.mapOffsets[make_pair(section, true)]];
- 
 
+
+#if PIL2_HAS_METAL
+    (void)pBuffHelper; // Metal path computes its own scratch internally.
+    (void)ntt;
+    pil2::metal::lde_via_metal(pBuffExtended, pBuff, NExtended, N, nCols);
+#else
     if(pBuffHelper != nullptr) {
         ntt.LDE(pBuffExtended, pBuff, NExtended, N, nCols, pBuffHelper);
     } else {
         ntt.LDE(pBuffExtended, pBuff, NExtended, N, nCols);
     }
+#endif
     
     treesGL[step - 1]->setSource(pBuffExtended);
     if(setupCtx.starkInfo.starkStruct.verificationHashType == "GL") {
@@ -193,11 +223,18 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm" + to_string(setupCtx.starkInfo.nStages + 1)];
     Goldilocks::Element *cmQ = &buffer[setupCtx.starkInfo.mapOffsets[make_pair(section, true)]];
     
+#if PIL2_HAS_METAL
+    (void)pBuffHelper;
+    (void)nttExtended;
+    pil2::metal::intt_via_metal(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]],
+                                NExtended, setupCtx.starkInfo.qDim);
+#else
     if(pBuffHelper != nullptr) {
         nttExtended.INTT(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], &buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], NExtended, setupCtx.starkInfo.qDim, pBuffHelper);
     } else {
         nttExtended.INTT(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], &buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], NExtended, setupCtx.starkInfo.qDim);
     }
+#endif
 
     Goldilocks::Element S[setupCtx.starkInfo.qDeg];
     Goldilocks::Element shiftIn = Goldilocks::exp(Goldilocks::inv(Goldilocks::shift()), N);
@@ -215,15 +252,28 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
         }
     }
 
-#pragma omp parallel for
+#if PIL2_HAS_METAL
+    // Metal-only: memset for the cmQ extended-portion zero-pad
+    // (the OMP loop's barrier is visible in Metal-side profiles).
+    std::memset(&cmQ[N * setupCtx.starkInfo.qDeg * setupCtx.starkInfo.qDim],
+                0,
+                (NExtended - N) * setupCtx.starkInfo.qDeg *
+                    setupCtx.starkInfo.qDim * sizeof(Goldilocks::Element));
+#else
+    #pragma omp parallel for
     for(uint64_t i = 0; i < (NExtended - N) * setupCtx.starkInfo.qDeg * setupCtx.starkInfo.qDim; ++i) {
         cmQ[N * setupCtx.starkInfo.qDeg * setupCtx.starkInfo.qDim + i] = Goldilocks::zero();
     }
+#endif
+#if PIL2_HAS_METAL
+    pil2::metal::ntt_via_metal(cmQ, NExtended, nCols);
+#else
     if(pBuffHelper != nullptr) {
         nttExtended.NTT(cmQ, cmQ, NExtended, nCols, pBuffHelper);
     } else {
         nttExtended.NTT(cmQ, cmQ, NExtended, nCols);
     }
+#endif
 
     treesGL[step - 1]->setSource(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), true)]]);
     if(setupCtx.starkInfo.starkStruct.verificationHashType == "GL") {
@@ -275,7 +325,12 @@ void Starks<ElementType>::computeLEv(Goldilocks::Element *xiChallenge, Goldilock
         }
     }
 
+#if PIL2_HAS_METAL
+    (void)ntt;
+    pil2::metal::intt_via_metal(&LEv[0], N, FIELD_EXTENSION * openingPoints.size());
+#else
     ntt.INTT(&LEv[0], &LEv[0], N, FIELD_EXTENSION * openingPoints.size());
+#endif
 }
 
 
@@ -292,7 +347,7 @@ void Starks<ElementType>::evmap(StepsParams& params, Goldilocks::Element *LEv, s
     u_int64_t size_eval = setupCtx.starkInfo.evMap.size();
 
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    
+
     uint64_t dims[size_eval];
     uint64_t strides[size_eval];
     uint64_t openingPos[size_eval];

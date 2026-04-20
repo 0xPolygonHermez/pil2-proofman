@@ -1,5 +1,9 @@
 #include "starks.hpp"
 
+#if PIL2_HAS_METAL
+#include <mutex>
+#endif
+
 void calculateWitnessExpr(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx &expressionsCtx) {
     uint64_t nWitnessHints = setupCtx.expressionsBin.getNumberHintIdsByName("witness_calc");
     if(nWitnessHints > 0) {
@@ -107,6 +111,19 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     }
 
     TimerStopAndLog(STARK_STEP_0);
+
+#if PIL2_HAS_METAL
+    // Metal-only: concurrent recursive proofs on Apple Silicon
+    // contend on a shared scratch pool AND spawn overlapping OMP
+    // regions that starve each other on the 10 P-cores. Serialize
+    // recursive genProof so one proof gets the full pool and CPU
+    // pipeline (measured on M4 Pro: no mutex = 24–33s INNER_PROOFS
+    // vs 11.3s with mutex). No effect on default / CUDA builds,
+    // which upstream runs without this change.
+    static std::mutex g_recursive_gen_proof_mutex;
+    std::unique_lock<std::mutex> recursive_lock(g_recursive_gen_proof_mutex, std::defer_lock);
+    if (recursive) recursive_lock.lock();
+#endif
 
     TimerStart(STARK_STEP_1);
     calculateWitnessExpr(setupCtx, params, expressionsCtx);
@@ -282,6 +299,9 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     TimerStopAndLog(STARK_FRI_QUERIES);
 
     TimerStopAndLog(STARK_STEP_FRI);
+#if PIL2_HAS_METAL
+    if (recursive) recursive_lock.unlock();
+#endif
 
     proof.proof.setEvals(params.evals);
     proof.proof.setAirgroupValues(params.airgroupValues);

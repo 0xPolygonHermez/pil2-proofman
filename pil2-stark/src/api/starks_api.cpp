@@ -783,16 +783,25 @@ uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uin
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
     uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
+#if PIL2_HAS_METAL
+    // Metal-only: always reload. Under multi-stream the const_pols /
+    // const_tree buffers are per-stream, so the shared cache tag
+    // can't correctly describe who has what loaded.
+    {
+#else
     if (d_buffers->airgroupId != airgroupId || d_buffers->airId != airId || d_buffers->proofType != "basic") {
+#endif
         uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
         uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
         loadFileParallel(params->pConstPolsAddress, constPolsPath, sizeConstPols);
         loadFileParallel(params->pConstPolsExtendedTreeAddress, constTreePath, sizeConstTree);
     }
 
+#if !PIL2_HAS_METAL
     d_buffers->airgroupId = airgroupId;
     d_buffers->airId = airId;
     d_buffers->proofType = "basic";
+#endif
 
     PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
     if (packed_info != nullptr && packed_info->is_packed) {
@@ -830,7 +839,12 @@ uint64_t gen_recursive_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t 
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx;
 
+#if PIL2_HAS_METAL
+    // Metal-only: always reload — see matching comment in gen_proof_cpu.
+    {
+#else
     if (d_buffers->airgroupId != airgroupId || d_buffers->airId != airId || d_buffers->proofType != string(proofType)) {
+#endif
         uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
         uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
         uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
@@ -838,9 +852,11 @@ uint64_t gen_recursive_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t 
         loadFileParallel(pConstTree, constTreePath, sizeConstTree);
     }
 
+#if !PIL2_HAS_METAL
     d_buffers->airgroupId = airgroupId;
     d_buffers->airId = airId;
     d_buffers->proofType = string(proofType);
+#endif
 
 
     Goldilocks::Element evals[setupCtx->starkInfo.evMap.size() * FIELD_EXTENSION];
@@ -862,7 +878,7 @@ uint64_t gen_recursive_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t 
     };
 
     genProof(*setupCtx, airgroupId, airId, instanceId, params, nullptr, proofBuffer, string(proof_file), true);
-    
+
     return 0;
 }
 

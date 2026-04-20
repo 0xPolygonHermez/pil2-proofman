@@ -2,6 +2,11 @@
 #include <cassert>
 #include <algorithm> // std::max
 
+#include "../../goldilocks/src/platform.hpp"
+#if PIL2_HAS_METAL
+#include "../../goldilocks/src/metal/merkle_metal_bridge.hpp"
+#endif
+
 
 
 MerkleTreeGL::MerkleTreeGL(uint64_t _arity, uint64_t _last_level_verification, bool _custom, uint64_t _height, uint64_t _width, bool allocateSource, bool allocateNodes) : height(_height), width(_width)
@@ -278,13 +283,25 @@ void MerkleTreeGL::merkelize()
 {
     switch(arity) {
         case 2:
+#if PIL2_HAS_METAL
+            pil2::metal::merkletree_w8_via_metal(nodes, source, width, height);
+#else
             Poseidon2Goldilocks<8>::merkletree(nodes, source, width, height, arity);
+#endif
             break;
         case 3:
+#if PIL2_HAS_METAL
+            pil2::metal::merkletree_w12_via_metal(nodes, source, width, height);
+#else
             Poseidon2Goldilocks<12>::merkletree(nodes, source, width, height, arity);
+#endif
             break;
         case 4:
+#if PIL2_HAS_METAL
+            pil2::metal::merkletree_w16_via_metal(nodes, source, width, height);
+#else
             Poseidon2Goldilocks<16>::merkletree(nodes, source, width, height, arity);
+#endif
             break;
         default:
             zklog.error("MerkleTreeGL::merkelize: Unsupported arity");

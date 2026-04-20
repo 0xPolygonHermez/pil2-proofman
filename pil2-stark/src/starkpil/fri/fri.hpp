@@ -8,6 +8,11 @@
 #include "merkleTreeGL.hpp"
 #include "merkleTreeBN128.hpp"
 
+#include "../../goldilocks/src/platform.hpp"
+#if PIL2_HAS_METAL
+#include "../../goldilocks/src/metal/fri_fold_metal_bridge.hpp"
+#endif
+
 template <typename ElementType>
 class FRI
 {
@@ -46,6 +51,17 @@ void FRI<ElementType>::fold(uint64_t step, Goldilocks::Element* pol, Goldilocks:
     uint64_t nX = (1 << polBits) / pol2N;
 
     Goldilocks::Element wi = Goldilocks::inv(Goldilocks::w(polBits));
+
+#if PIL2_HAS_METAL
+    // Fast path for the production common case: step != 0 and nX == 8.
+    // Dispatches the whole per-group loop to Metal as one kernel call.
+    // The CPU path below still handles step == 0 (no-op branch on inner
+    // work) and any future non-8 nX that an air config might choose.
+    if (step != 0 && nX == 8) {
+        pil2::metal::fri_fold_w8_via_metal(pol, challenge, nBitsExt, prevBits, currentBits);
+        return;
+    }
+#endif
 
     uint64_t nn = ((1 << polBits) / nX);
     u_int64_t maxth = omp_get_max_threads();
