@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use super::transcript::Transcript;
+use crate::stark2circom::transcript::Transcript;
 
 /// Port of `verify_global_challenge.circom.ejs`.
 ///

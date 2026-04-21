@@ -43,15 +43,15 @@ fn parse_num_proof_values(v: &Value) -> usize {
 
 // ── Embedded Tera templates ───────────────────────────────────────────────────
 
-const RECURSIVEF_TMPL: &str = include_str!("recursivef.circom.tera");
-const FINAL_TMPL: &str = include_str!("recursion_final.circom.tera");
-const VERIFIER_SOL_TMPL: &str = include_str!("verifier.sol.tera");
-const IVERIFIER_SOL_TMPL: &str = include_str!("iverifier.sol.tera");
-const FINAL_COMPRESSED_TMPL: &str = include_str!("final_compressed.circom.tera");
-const COMPRESSOR_TMPL: &str = include_str!("compressor.circom.tera");
-const RECURSIVE1_TMPL: &str = include_str!("recursive1.circom.tera");
-const RECURSIVE2_TMPL: &str = include_str!("recursive2.circom.tera");
-const VADCOP_FINAL_TMPL: &str = include_str!("vadcop_final.circom.tera");
+const RECURSIVEF_TMPL: &str = include_str!("tera/recursivef.circom.tera");
+const FINAL_TMPL: &str = include_str!("tera/recursion_final.circom.tera");
+const VERIFIER_SOL_TMPL: &str = include_str!("tera/verifier.sol.tera");
+const IVERIFIER_SOL_TMPL: &str = include_str!("tera/iverifier.sol.tera");
+const FINAL_COMPRESSED_TMPL: &str = include_str!("tera/final_compressed.circom.tera");
+const COMPRESSOR_TMPL: &str = include_str!("tera/compressor.circom.tera");
+const RECURSIVE1_TMPL: &str = include_str!("tera/recursive1.circom.tera");
+const RECURSIVE2_TMPL: &str = include_str!("tera/recursive2.circom.tera");
+const VADCOP_FINAL_TMPL: &str = include_str!("tera/vadcop_final.circom.tera");
 
 /// Render a single one-shot Tera template string (no inheritance / include).
 fn render(template_src: &str, ctx: &TeraCtx) -> Result<String> {
