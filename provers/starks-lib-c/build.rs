@@ -119,15 +119,13 @@ fn main() {
     }
 
     // Write stamps after make succeeds (make creates the output directory).
-    if cfg!(feature = "gpu") {
+    if use_gpu {
         if let Err(e) = fs::write(&archs_stamp_path, stamp_content) {
             eprintln!(
                 "Warning: failed to write CUDA arch stamp {:?}: {e} — next build will recompile",
                 archs_stamp_path
             );
         }
-    } else {
-        println!("C++ library already compiled, skipping rebuild.");
     }
     if let Some(content) = &current_makefile {
         if let Err(e) = fs::write(&makefile_stamp_path, content) {
