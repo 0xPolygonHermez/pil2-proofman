@@ -35,6 +35,15 @@ pub struct Transcript {
     /// Early-rounds scheme: rounds < `early_rounds_threshold` use `early_used_vals`,
     /// remaining rounds use `late_used_vals`. None means use output_width (no drains).
     early_rounds_scheme: Option<(usize, usize, usize)>,
+    /// Counter for `transcriptN2b_N` signal names emitted by `get_permutations`.
+    n2b_cnt: usize,
+    /// When true, drain unused outputs of the PREVIOUS hash round BEFORE emitting
+    /// the next Poseidon2 signal — matching the GL `stark_verifier.circom.ejs`
+    /// `Transcript.updateState()` behaviour.  The drain is emitted from
+    /// `max(hi_cnt, 4)` (the first 4 outputs are always consumed as the new state).
+    ///
+    /// Default: false (matches `verify_global_challenge.circom.ejs` behaviour).
+    drain_in_update_state: bool,
 }
 
 impl Transcript {
@@ -52,7 +61,15 @@ impl Transcript {
             arity: merkle_tree_arity,
             used_vals_per_round_override: None,
             early_rounds_scheme: None,
+            n2b_cnt: 0,
+            drain_in_update_state: false,
         }
+    }
+
+    /// Enable draining unused outputs of the previous hash BEFORE emitting the
+    /// next one (matches GL `stark_verifier.circom.ejs` Transcript behaviour).
+    pub fn set_drain_in_update_state(&mut self, value: bool) {
+        self.drain_in_update_state = value;
     }
 
     /// Set a per-round override for how many output fields are "used" (all others
@@ -90,6 +107,20 @@ impl Transcript {
     fn update_state(&mut self, used_vals: Option<usize>) {
         let sig = self.signal_name(self.h_cnt);
         let out_w = self.output_width();
+
+        // ── Drain outputs of PREVIOUS round (stark_verifier mode) ────────────
+        // Mirrors EJS: if(hCnt > 0) { firstUnused = max(hiCnt,4); drain ... }
+        // The first 4 outputs are always consumed as the new state, so we
+        // drain from max(hi_cnt, 4) rather than hi_cnt.
+        if self.drain_in_update_state && self.h_cnt > 0 {
+            let first_unused = self.hi_cnt.max(4);
+            if first_unused < out_w {
+                let prev_sig = self.signal_name(self.h_cnt - 1);
+                self.code.push(format!(
+                    "for(var i = {first_unused}; i < {out_w}; i++){{\n        _ <== {prev_sig}[i]; // Unused transcript values \n    }}"
+                ));
+            }
+        }
 
         // Determine how many output fields are "used" (rest get `_ <== ...`).
         let used = used_vals
@@ -185,7 +216,7 @@ impl Transcript {
         let f0 = self.get_fields1();
         let f1 = self.get_fields1();
         let f2 = self.get_fields1();
-        self.code.push(format!("    {v} <== [{f0}, {f1}, {f2}];"));
+        self.code.push(format!("{v} <== [{f0}, {f1}, {f2}];"));
     }
 
     /// Emit `v <== [f0, f1, f2, f3];` consuming four output fields.
@@ -194,7 +225,68 @@ impl Transcript {
         let f1 = self.get_fields1();
         let f2 = self.get_fields1();
         let f3 = self.get_fields1();
-        self.code.push(format!("    {v} <== [{f0}, {f1}, {f2}, {f3}];"));
+        self.code.push(format!("{v} <== [{f0}, {f1}, {f2}, {f3}];"));
+    }
+
+    /// Consume `n_fields` output fields from the transcript, emit a
+    /// `Num2Bits_strict()` signal for each, drain any remaining outputs from
+    /// the last hash round, then emit the bit-assignment loops that fill `v`.
+    ///
+    /// Mirrors `getPermutations(v, n, nBits)` from the GL EJS `Transcript` class.
+    ///
+    /// - `v`          — circom signal name of the 2-D output array (e.g. `"queriesFRI"`)
+    /// - `n_queries`  — first dimension count (e.g. `starkStruct.nQueries`)
+    /// - `query_bits` — second dimension / bits per query (e.g. `starkStruct.steps[0].nBits`)
+    pub fn get_permutations(&mut self, v: &str, n_queries: usize, query_bits: usize) {
+        let total_bits = n_queries * query_bits;
+        // NFields = floor((totalBits - 1) / 63) + 1
+        let n_fields = (total_bits - 1) / 63 + 1;
+        let out_w = self.output_width();
+
+        // ── Emit one Num2Bits_strict per required field ───────────────────────
+        let mut n2b_names: Vec<String> = Vec::with_capacity(n_fields);
+        for _ in 0..n_fields {
+            let f = self.get_fields1();
+            let name = format!("transcriptN2b_{}", self.n2b_cnt);
+            self.n2b_cnt += 1;
+            self.code.push(format!("signal {{binary}} {name}[64] <== Num2Bits_strict()({f});"));
+            n2b_names.push(name);
+        }
+
+        // ── Drain remaining unused outputs of the last hash round ─────────────
+        // JS: if(this.hiCnt < 4*arity) { code.push(`for(var i = ${hiCnt}; ...`) }
+        if self.hi_cnt < out_w {
+            let prev_sig = self.signal_name(self.h_cnt - 1);
+            self.code.push(format!(
+                "for(var i = {}; i < {out_w}; i++){{\n        _ <== {prev_sig}[i]; // Unused transcript values        \n    }}\n",
+                self.hi_cnt
+            ));
+        }
+
+        // ── Bit-assignment loops ──────────────────────────────────────────────
+        self.code.push(
+            "// From each transcript hash converted to bits, we assign those bits to queriesFRI[q] to define the query positions"
+                .into(),
+        );
+        self.code.push("var q = 0; // Query number ".into());
+        self.code.push("var b = 0; // Bit number ".into());
+
+        for (i, name) in n2b_names.iter().enumerate() {
+            // Bits consumed from this field: 63 for all but the last, remainder for last.
+            let bits_this_field = if i + 1 == n_fields { total_bits - 63 * i } else { 63 };
+
+            self.code.push(format!(
+                "for(var j = 0; j < {bits_this_field}; j++) {{\n        {v}[q][b] <== {name}[j];\n        b++;\n        if(b == {query_bits}) {{\n            b = 0; \n            q++;\n        }}\n    }}"
+            ));
+
+            if bits_this_field == 63 {
+                self.code.push(format!("_ <== {name}[63]; // Unused last bit\n"));
+            } else {
+                self.code.push(format!(
+                    "for(var j = {bits_this_field}; j < 64; j++) {{\n        _ <== {name}[j]; // Unused bits        \n    }}"
+                ));
+            }
+        }
     }
 
     /// Return all code lines produced since the last `get_code()` call,
@@ -206,5 +298,126 @@ impl Transcript {
             .collect();
         self.last_code_printed = self.code.len();
         lines.join("\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── get_permutations: single small round ─────────────────────────────────
+
+    #[test]
+    fn get_permutations_small_single_round() {
+        // arity=4 → output_width=16, input_width=12
+        // n_queries=1, query_bits=3 → total_bits=3, n_fields=1
+        let mut t = Transcript::new(4, Some("friQueries".into()));
+        // Prime with 3 items (doesn't fill input_width=12, so no Poseidon2 yet).
+        t.put("challengeFRIQueries", 3);
+        // Call get_permutations — triggers round 0 with pending padded to 12.
+        t.get_permutations("queriesFRI", 1, 3);
+        let code = t.get_code();
+
+        // Round 0 Poseidon2 must appear (pending was 3, padded to 12).
+        assert!(code.contains("Poseidon2(4, 16)([challengeFRIQueries[0],challengeFRIQueries[1],challengeFRIQueries[2],0,0,0,0,0,0,0,0,0], [0,0,0,0])"),
+            "code:\n{code}");
+        // N2b signal for field 0.
+        assert!(code.contains("signal {binary} transcriptN2b_0[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[0]);"),
+            "code:\n{code}");
+        // Drain: hi_cnt=1, 1 < 16 → drain from 1 to 16.
+        assert!(code.contains("for(var i = 1; i < 16; i++)"), "drain missing:\n{code}");
+        // Last field partial: total_bits=3, n_fields=1, bits_this_field = 3-63*0 = 3.
+        assert!(code.contains("for(var j = 0; j < 3; j++)"), "bit-loop missing:\n{code}");
+        // Partial-bits drain: 3 < 63, so "Unused bits" drain.
+        assert!(code.contains("for(var j = 3; j < 64; j++)"), "unused bits drain missing:\n{code}");
+        assert!(!code.contains("Unused last bit"), "should be partial not last-bit:\n{code}");
+    }
+
+    // ── get_permutations: last field exactly 63 bits → "Unused last bit" ─────
+
+    #[test]
+    fn get_permutations_last_field_is_63_bits() {
+        // total_bits must = 63 * n_fields exactly → last field bits = 63.
+        // n_queries=1, query_bits=63 → total_bits=63, n_fields=1.
+        let mut t = Transcript::new(4, Some("friQueries".into()));
+        t.get_permutations("queriesFRI", 1, 63);
+        let code = t.get_code();
+        // bits_this_field=63 → _ <== transcriptN2b_0[63]; // Unused last bit
+        assert!(code.contains("_ <== transcriptN2b_0[63]; // Unused last bit"), "code:\n{code}");
+        assert!(!code.contains("for(var j = 63; j < 64; j++)"), "should NOT have partial drain:\n{code}");
+    }
+
+    // ── get_permutations: integration against FibonacciSquare ground truth ───
+
+    #[test]
+    fn get_permutations_fibonacci_square_ground_truth() {
+        // Reproduces the calculateFRIQueries0 template for FibonacciSquare:
+        //   nQueries=229, steps[0].nBits=23, powBits=16 (nonce present), arity=4
+        //
+        // JS: transcriptQueries.put("challengeFRIQueries", 3);
+        //     transcriptQueries.put("nonce");
+        //     transcriptQueries.getPermutations("queriesFRI", 229, 23);
+        let mut t = Transcript::new(4, Some("friQueries".into()));
+        t.put("challengeFRIQueries", 3);
+        t.put_single("nonce");
+        t.get_permutations("queriesFRI", 229, 23);
+        let code = t.get_code();
+
+        // NFields = floor((229*23 - 1)/63) + 1 = floor(5266/63) + 1 = 83+1 = 84
+        // 84 fields / 16 per round = 6 rounds (5 full + 4 remaining)
+        // → signals transcriptHash_friQueries_0 .. _5
+
+        // Round 0: pending was [c[0],c[1],c[2],nonce] padded to 12.
+        assert!(
+            code.contains("Poseidon2(4, 16)([challengeFRIQueries[0],challengeFRIQueries[1],challengeFRIQueries[2],nonce,0,0,0,0,0,0,0,0], [0,0,0,0])"),
+            "round-0 Poseidon2 mismatch:\n{}", &code[..code.len().min(2000)]
+        );
+        // transcriptN2b_0 through transcriptN2b_83 should all be present (84 total).
+        assert!(code.contains("transcriptN2b_0[64]"), "N2b_0 missing");
+        assert!(code.contains("transcriptN2b_83[64]"), "N2b_83 missing");
+        assert!(!code.contains("transcriptN2b_84"), "N2b_84 should not exist");
+
+        // Round 5 is the last (fields 80–83 from it).
+        assert!(
+            code.contains("transcriptHash_friQueries_5"),
+            "round-5 signal missing"
+        );
+        assert!(!code.contains("transcriptHash_friQueries_6"), "no round-6");
+
+        // Drain after last field: hi_cnt=4 (consumed 4 from round 5), 4 < 16.
+        assert!(
+            code.contains("for(var i = 4; i < 16; i++)"),
+            "drain for round-5 partial missing:\n{}", &code[code.len().saturating_sub(3000)..]
+        );
+
+        // Last N2b_83 comes from round 5, field index 3.
+        assert!(
+            code.contains("Num2Bits_strict()(transcriptHash_friQueries_5[3])"),
+            "N2b_83 source missing"
+        );
+
+        // Last field has 38 bits (5267 - 63*83 = 38).
+        assert!(
+            code.contains("for(var j = 0; j < 38; j++)"),
+            "last-field 38-bit loop missing"
+        );
+        assert!(
+            code.contains("for(var j = 38; j < 64; j++)"),
+            "unused-bits drain for last field missing"
+        );
+        // All full fields (0..82) end with Unused last bit.
+        assert!(
+            code.contains("_ <== transcriptN2b_0[63]; // Unused last bit"),
+            "unused-last-bit for N2b_0 missing"
+        );
+
+        // Bit-assignment loop uses query_bits=23.
+        assert!(code.contains("if(b == 23)"), "query_bits=23 check missing");
+
+        // Comment line present.
+        assert!(
+            code.contains("From each transcript hash converted to bits"),
+            "comment missing"
+        );
     }
 }

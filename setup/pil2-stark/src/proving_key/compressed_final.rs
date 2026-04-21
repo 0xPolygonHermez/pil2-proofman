@@ -23,7 +23,8 @@ use stark_recurser::plonk2pil::{self, PlonkResult};
 
 use crate::proving_key::bctree;
 use crate::io::fixed_cols;
-use crate::proving_key::recursive::{compile_pil, run_gencircom_js, run_pil2circom_js};
+use stark_recurser::stark2circom::{gen_circom_circuit, CircomGenOptions, GenCircomCircuitInput};
+use crate::proving_key::recursive::{compile_pil, run_pil2circom_js};
 use crate::output::witness_gen::WitnessTracker;
 
 /// Configuration for the compressed final setup.
@@ -93,50 +94,36 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         let _ = fs::remove_file(&tmp_vk);
     }
 
-    // Generate compressed final circom via JS gencircom
+    // Generate compressed final circom via Rust gen_circom_circuit
     let verifier_filenames = [verifier_name.to_string()];
     let circom_out = circom_dir.join(format!("{}.circom", template));
     {
-        let tmp_si = build_path.join("_tmp_gencircom_si.json");
-        fs::write(&tmp_si, serde_json::to_string(config.stark_info)?)?;
+        // Build per-airgroup, per-air VKs as String vecs matching GenCircomCircuitInput format.
+        let basic_vk: Vec<Vec<Vec<String>>> = config.verification_keys
+            .iter()
+            .map(|ag| ag.clone())
+            .collect();
 
-        // Write each basic verkey to a temp file
-        let mut tmp_vk_paths: Vec<PathBuf> = Vec::new();
-        for (ag_idx, ag_vkeys) in config.verification_keys.iter().enumerate() {
-            for (air_idx, vk) in ag_vkeys.iter().enumerate() {
-                let tmp_vk = build_path.join(format!("_tmp_gencircom_vk_{}_{}.json", ag_idx, air_idx));
-                let verkey_json = serde_json::json!({
-                    "constRoot": vk.iter()
-                        .map(|s| s.parse::<u64>().unwrap_or(0))
-                        .collect::<Vec<_>>()
-                });
-                fs::write(&tmp_vk, serde_json::to_string(&verkey_json)?)?;
-                tmp_vk_paths.push(tmp_vk);
-            }
-        }
-
-        let tmp_vk_refs: Vec<&Path> = tmp_vk_paths.iter().map(|p| p.as_path()).collect();
-        let vf_refs: Vec<&str> = verifier_filenames.iter().map(|s| s.as_str()).collect();
-
-        run_gencircom_js(
-            "src/vadcop/templates/final_compressed.circom.ejs",
-            &[tmp_si.as_path()],
-            None, // no vadcop_info for final_compressed
-            &vf_refs,
-            &tmp_vk_refs,
-            &[],
-            &[], // no publics
-            &circom_out,
-            None,  // no airgroupId
-            false, // has_compressor
-            false, // has_recursion
-        )
-        .context("gencircom JS failed in compressed final setup")?;
-
-        let _ = fs::remove_file(&tmp_si);
-        for p in &tmp_vk_paths {
-            let _ = fs::remove_file(p);
-        }
+        let rust_opts = CircomGenOptions {
+            airgroup_id: None,
+            has_compressor: false,
+            has_recursion: false,
+            is_final: false,
+        };
+        let rust_input = GenCircomCircuitInput {
+            template_name: "src/vadcop/templates/final_compressed.circom.ejs",
+            stark_infos: std::slice::from_ref(config.stark_info),
+            vadcop_info: &serde_json::Value::Null,
+            verifier_filenames: &verifier_filenames,
+            basic_vk: &basic_vk,
+            agg_vk: &[],
+            publics: &[],
+            options: &rust_opts,
+        };
+        let circom_src = gen_circom_circuit(&rust_input)
+            .context("gen_circom_circuit failed for final_compressed")?;
+        fs::write(&circom_out, &circom_src)
+            .context("Failed to write final_compressed circom")?;
     }
 
     // Compile circom

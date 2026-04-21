@@ -1,8 +1,9 @@
-//! High-level wrappers for the JS-based circom generation tools.
+//! High-level wrappers for circom generation tools.
 //!
-//! `pil2circom` and `gen_circom` mirror the APIs that `recursive_setup` expects, but are implemented by writing temp files and invoking
-//! the Node.js scripts from `stark-recurser` — exactly the same subprocess
-//! pattern used throughout `recursive_setup`.
+//! `pil2circom` runs both the Node.js and Rust implementations in parallel so
+//! their outputs can be compared during the transition period.  The JS result
+//! is always returned; any difference is logged as a warning.
+//! `gen_circom` uses the in-process Rust generator exclusively — no JS fallback.
 
 use std::fs;
 use std::path::Path;
@@ -10,12 +11,75 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde_json::Value;
 
-use stark_recurser::stark2circom::{gen_circom_circuit, CircomGenOptions, GenCircomCircuitInput};
-use crate::proving_key::recursive::{run_gencircom_js, run_pil2circom_js};
+use stark_recurser::stark2circom::{gen_circom_circuit, gen_stark_verifier, CircomGenOptions, GenCircomCircuitInput, StarkVerifierOptions};
+use crate::proving_key::recursive::run_pil2circom_js;
 
 // ── pil2circom ───────────────────────────────────────────────────────────────
 
-/// Options controlling verifier circom generation (mirrors the JS API).
+/// Normalise a circom line for comparison: trim trailing whitespace.
+/// Empty lines are kept so line numbers stay meaningful.
+fn normalise_lines(s: &str) -> Vec<&str> {
+    s.lines().map(|l| l.trim_end()).collect()
+}
+
+/// Compare JS and Rust pil2circom outputs for a given air (identified by
+/// `name`).  Both outputs are written to:
+///   /tmp/pil2circom_<name>_js.circom
+///   /tmp/pil2circom_<name>_rust.circom
+/// Logs at INFO if semantically identical (after trailing-whitespace
+/// normalisation), WARN with the first differing line otherwise.
+fn compare_pil2circom_outputs(name: &str, js: &str, rust: &str) {
+    // Sanitise name for use as a filename.
+    let safe = name.replace(['/', '\\', ' ', ':'], "_");
+    let js_path   = std::path::PathBuf::from(format!("/tmp/pil2circom_{safe}_js.circom"));
+    let rust_path = std::path::PathBuf::from(format!("/tmp/pil2circom_{safe}_rust.circom"));
+
+    if let Err(e) = fs::write(&js_path, js) {
+        tracing::warn!("pil2circom[{name}]: could not write JS output: {e}");
+    }
+    if let Err(e) = fs::write(&rust_path, rust) {
+        tracing::warn!("pil2circom[{name}]: could not write Rust output: {e}");
+    }
+
+    if js == rust {
+        tracing::info!("pil2circom[{name}]: Rust and JS outputs are identical");
+        return;
+    }
+
+    let js_lines   = normalise_lines(js);
+    let rust_lines = normalise_lines(rust);
+
+    if js_lines == rust_lines {
+        tracing::info!("pil2circom[{name}]: Rust and JS outputs match (after whitespace normalisation)");
+        return;
+    }
+
+    let first_diff = js_lines.iter().zip(rust_lines.iter()).enumerate()
+        .find(|(_, (a, b))| a != b);
+
+    match first_diff {
+        Some((n, (js_line, rust_line))) => {
+            tracing::warn!(
+                "pil2circom[{name}]: outputs differ ({} vs {} lines). \
+                 First difference at line {}:\n  JS  : {:?}\n  Rust: {:?}\n  \
+                 diff {} {}",
+                js_lines.len(), rust_lines.len(),
+                n + 1, js_line, rust_line,
+                js_path.display(), rust_path.display(),
+            );
+        }
+        None => {
+            tracing::warn!(
+                "pil2circom[{name}]: outputs differ only in line count ({} vs {} lines)\n  \
+                 diff {} {}",
+                js_lines.len(), rust_lines.len(),
+                js_path.display(), rust_path.display(),
+            );
+        }
+    }
+}
+
+
 #[derive(Debug, Default)]
 pub struct Pil2CircomOptions {
     /// Omit the `component main` line so the file can be `include`d.
@@ -88,7 +152,29 @@ pub fn pil2circom(
     )
     .context("pil2circom JS failed")?;
 
-    fs::read_to_string(&out_path).context("Failed to read pil2circom output")
+    let js_output = fs::read_to_string(&out_path).context("Failed to read pil2circom output")?;
+
+    // ── Rust comparison ───────────────────────────────────────────────────────
+    let rust_opts = StarkVerifierOptions {
+        skip_main:              opts.skip_main,
+        verkey_input:           opts.verkey_input,
+        enable_input:           opts.enable_input,
+        input_challenges:       opts.input_challenges,
+        fri_queries_batch_size: None,
+        multi_fri:              false,
+    };
+    let rust_root: Option<&[String; 4]> = if opts.verkey_input { None } else { Some(const_root) };
+    match gen_stark_verifier(rust_root, stark_info, verifier_info, &rust_opts) {
+        Ok(rust_output) => {
+            let air_name = stark_info["name"].as_str().unwrap_or("unknown");
+            compare_pil2circom_outputs(air_name, &js_output, &rust_output);
+        }
+        Err(e) => {
+            tracing::warn!("pil2circom: Rust implementation failed: {e:#}");
+        }
+    }
+
+    Ok(js_output)
 }
 
 // ── gen_circom ───────────────────────────────────────────────────────────────
@@ -125,13 +211,10 @@ pub struct GenCircomInput<'a> {
     pub options: &'a GenCircomOptions,
 }
 
-/// Generate a circom circuit, preferring the in-process Rust generator and
-/// falling back to `node src/main_gencircom.js` for unsupported templates.
+/// Generate a circom circuit using the in-process Rust generator.
 ///
-/// Writes all inputs to temporary JSON files, invokes the script, and returns
-/// the output circom source as a `String`.
+/// Returns an error if the template is not implemented.
 pub fn gen_circom(input: &GenCircomInput<'_>) -> Result<String> {
-    // Try the Rust code generator first for supported templates.
     let rust_opts = CircomGenOptions {
         airgroup_id: input.options.airgroup_id.map(|x| x as usize),
         has_compressor: input.options.has_compressor,
@@ -148,107 +231,5 @@ pub fn gen_circom(input: &GenCircomInput<'_>) -> Result<String> {
         publics: input.publics,
         options: &rust_opts,
     };
-    match gen_circom_circuit(&rust_input) {
-        Ok(circom) => return Ok(circom),
-        Err(e) if e.to_string().contains("not yet implemented in Rust") => {
-            tracing::debug!("gen_circom Rust path not available for '{}', falling back to JS", input.template_name);
-        }
-        Err(e) => return Err(e),
-    }
-
-    // JS fallback path (writes temp files + spawns node subprocess).
-    let tmp_dir = tempfile::tempdir().context("Failed to create temp dir for gen_circom")?;
-    let tmp = tmp_dir.path();
-
-    // StarkInfo files (one per AIR)
-    let mut si_paths: Vec<std::path::PathBuf> = Vec::new();
-    for (i, si) in input.stark_infos.iter().enumerate() {
-        let p = tmp.join(format!("starkinfo_{i}.json"));
-        fs::write(&p, serde_json::to_string(si)?)?;
-        si_paths.push(p);
-    }
-    let si_refs: Vec<&Path> = si_paths.iter().map(|p| p.as_path()).collect();
-
-    // VadcopInfo / global info
-    let vadcop_path = tmp.join("vadcop.json");
-    fs::write(&vadcop_path, serde_json::to_string(input.vadcop_info)?)?;
-
-    // Basic (recursive1) verification keys.
-    // - final setup (is_final=true): one file PER AIRGROUP where constRoot is an array-of-arrays
-    //   [[air0_roots], [air1_roots], ...] so that main_gencircom.js produces
-    //   basicVK[airgroup][air][values] as expected by final.circom.ejs (`basicVK[i][j].join(",")`).
-    // - other templates (e.g. recursive2.circom.ejs): one file PER AIR, flat, so that
-    //   basicVK[air][values] is produced (`basicVK[i].join(",")`).
-    let mut basic_vk_paths: Vec<std::path::PathBuf> = Vec::new();
-    if input.options.is_final {
-        for (ag_idx, ag_vkeys) in input.basic_verification_keys.iter().enumerate() {
-            let p = tmp.join(format!("basic_vk_{ag_idx}.json"));
-            let vk_json = serde_json::json!({
-                "constRoot": ag_vkeys.iter()
-                    .map(|vk| vk.iter()
-                        .map(|s| s.parse::<u64>().unwrap_or(0))
-                        .collect::<Vec<_>>())
-                    .collect::<Vec<_>>()
-            });
-            fs::write(&p, serde_json::to_string(&vk_json)?)?;
-            basic_vk_paths.push(p);
-        }
-    } else {
-        for (ag_idx, ag_vkeys) in input.basic_verification_keys.iter().enumerate() {
-            for (air_idx, vk) in ag_vkeys.iter().enumerate() {
-                let p = tmp.join(format!("basic_vk_{ag_idx}_{air_idx}.json"));
-                let vk_json = serde_json::json!({
-                    "constRoot": vk.iter()
-                        .map(|s| s.parse::<u64>().unwrap_or(0))
-                        .collect::<Vec<_>>()
-                });
-                fs::write(&p, serde_json::to_string(&vk_json)?)?;
-                basic_vk_paths.push(p);
-            }
-        }
-    }
-    let basic_vk_refs: Vec<&Path> = basic_vk_paths.iter().map(|p| p.as_path()).collect();
-
-    // Aggregation (recursive2) verification keys — one file per airgroup
-    let mut agg_vk_paths: Vec<std::path::PathBuf> = Vec::new();
-    for (i, vk) in input.agg_verification_keys.iter().enumerate() {
-        let p = tmp.join(format!("agg_vk_{i}.json"));
-        let vk_json = serde_json::json!({
-            "constRoot": vk.iter()
-                .map(|s| s.parse::<u64>().unwrap_or(0))
-                .collect::<Vec<_>>()
-        });
-        fs::write(&p, serde_json::to_string(&vk_json)?)?;
-        agg_vk_paths.push(p);
-    }
-    let agg_vk_refs: Vec<&Path> = agg_vk_paths.iter().map(|p| p.as_path()).collect();
-
-    // Publics — one file per public input value
-    let mut publics_paths: Vec<std::path::PathBuf> = Vec::new();
-    for (i, pub_val) in input.publics.iter().enumerate() {
-        let p = tmp.join(format!("publics_{i}.json"));
-        fs::write(&p, serde_json::to_string(pub_val)?)?;
-        publics_paths.push(p);
-    }
-    let publics_refs: Vec<&Path> = publics_paths.iter().map(|p| p.as_path()).collect();
-
-    let out_path = tmp.join("output.circom");
-    let vf_refs: Vec<&str> = input.verifier_filenames.iter().map(|s| s.as_str()).collect();
-
-    run_gencircom_js(
-        input.template_name,
-        &si_refs,
-        Some(vadcop_path.as_path()),
-        &vf_refs,
-        &basic_vk_refs,
-        &agg_vk_refs,
-        &publics_refs,
-        &out_path,
-        input.options.airgroup_id,
-        input.options.has_compressor,
-        input.options.has_recursion,
-    )
-    .context("gencircom JS failed")?;
-
-    fs::read_to_string(&out_path).context("Failed to read gen_circom output")
+    gen_circom_circuit(&rust_input)
 }

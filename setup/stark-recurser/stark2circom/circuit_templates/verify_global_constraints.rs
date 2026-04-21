@@ -7,7 +7,7 @@
 
 use serde_json::Value;
 
-use super::transcript::Transcript;
+use crate::stark2circom::transcript::Transcript;
 
 fn parse_num_proof_values(v: &Value) -> usize {
     if let Some(arr) = v.as_array() {
