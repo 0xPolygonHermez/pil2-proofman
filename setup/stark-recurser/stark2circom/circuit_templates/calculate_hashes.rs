@@ -6,7 +6,7 @@
 
 use serde_json::Value;
 
-use super::transcript::Transcript;
+use crate::stark2circom::transcript::Transcript;
 
 /// Port of `calculate_hashes.circom.ejs`.
 ///
