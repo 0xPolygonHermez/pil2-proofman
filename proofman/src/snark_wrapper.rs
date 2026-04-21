@@ -16,7 +16,7 @@ use std::io::Read;
 use std::ffi::c_void;
 use crate::check_const_tree;
 use proofman_starks_lib_c::{
-    init_final_snark_prover_c, free_final_snark_prover_c, get_snark_protocol_id_c, snark_proof_bytes_to_json_c,
+    init_final_snark_prover_c, free_final_snark_prover_c, snark_proof_bytes_to_json_c,
     get_unified_buffer_gpu_for_recursivef_c, free_fixed_pols_buffer_gpu_c, pre_allocate_final_snark_prover_c,
     alloc_fixed_pols_buffer_gpu_c, free_device_buffers_recursivef_c, gen_device_buffers_recursivef_c,
 };
@@ -214,16 +214,20 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         timer_start_info!(INITIALIZING_FINAL_SNARK_PROVER);
         let zkey_filename = setup_snark_path.display().to_string() + ".zkey";
-        let snark_prover = init_final_snark_prover_c(zkey_filename.as_str(), d_buffers_recursivef);
-        if snark_prover.is_null() {
-            return Err(std::io::Error::other(format!(
-                "Failed to initialize final snark prover from zkey file '{}'",
-                zkey_filename
-            ))
-            .into());
-        }
-        let protocol_id = get_snark_protocol_id_c(snark_prover);
-        let protocol = SnarkProtocol::from_protocol_id(protocol_id)?;
+        let snark_prover = if preload {
+            let snark_prover = init_final_snark_prover_c(zkey_filename.as_str(), d_buffers_recursivef);
+            if snark_prover.is_null() {
+                return Err(std::io::Error::other(format!(
+                    "Failed to initialize final snark prover from zkey file '{}'",
+                    zkey_filename
+                ))
+                .into());
+            }
+            Some(snark_prover)
+        } else {
+            None
+        };
+
         timer_stop_and_log_info!(INITIALIZING_FINAL_SNARK_PROVER);
 
         let witness_size = setup_recursivef.get_circom_witness_size();
@@ -280,7 +284,10 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         let snark_prover = match self.snark_prover {
             Some(prover) => prover,
             None => {
-                let prover = init_final_snark_prover_c(&(self.setup_snark_path.display().to_string() + ".zkey"));
+                let prover = init_final_snark_prover_c(
+                    &(self.setup_snark_path.display().to_string() + ".zkey"),
+                    self.d_buffers_recursivef,
+                );
                 if prover.is_null() {
                     return Err(std::io::Error::other(format!(
                         "Failed to initialize final snark prover from zkey file '{}'",
@@ -312,7 +319,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         };
 
         let (snark_proof_bytes, snark_publics_bytes) = generate_snark_proof(
-            self.snark_prover,
+            snark_prover,
             &self.setup_snark_path,
             recursivef_proof,
             prealloc_handle,
