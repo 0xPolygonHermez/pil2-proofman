@@ -1,33 +1,35 @@
 require "std_constants.pil"
 require "std_lookup.pil"
 
-int MAX_VIRTUAL_ROWS = 0; // Maximum number of rows. 
+int MAX_VIRTUAL_BITS = 0; // Maximum number of bits per column length in the virtual table
                           // 0 indicates that the number of rows is dynamically computed.
 
-int MAX_NUM_VIRTUAL_TABLES = 1; // Maximum number of virtual tables
+int NUM_VIRTUAL_TABLES = 1; // Number of virtual tables
+
+// Per-column proof overhead expressed as a percentage of max_N for this virtual table.
+// Captures the fixed cost of adding a polynomial to the proof
+const int COLUMN_PROOF_OVERHEAD_PCT = 5;
 
 const int MAX_VIRTUAL_TABLE_WIDTH = 64;
 const int MAX_VIRTUAL_TABLE_IDS = 16;
 const int MAX_VIRTUAL_TABLE_GROUPS = 16;
 
-function set_max_num_rows_virtual(const int rows) {
-    if (rows <= 0) {
-        error(`The input rows should be greater than 0, got ${rows} instead`);
-    } else if ((rows & (rows - 1)) != 0) {
-        error(`The input rows should be a power of two, got ${rows} instead`);
+function set_max_bits_virtual_tables(const int bits) {
+    if (bits <= 1) {
+        error(`The input bits should be greater than 1, got ${bits} instead`);
+    } else if (bits > log2(PRIME)) {
+        error(`The input bits should be less than or equal to ${log2(PRIME)}, got ${bits} instead`);
     }
 
-    MAX_VIRTUAL_ROWS = rows;
+    MAX_VIRTUAL_BITS = bits;
 }
 
-function set_max_num_virtual_tables(const int num) {
-    if (num <= 0) {
-        error(`The input number of virtual tables should be greater than 0, got ${num} instead`);
-    } else if (num == 1) {
-        println("[Warning] The number of virtual tables is 1 by default. set_num_virtual_tables(1) has no effect.");
+function set_num_virtual_tables(const int num) {
+    if (num <= 1) {
+        error(`The input number of virtual tables should be greater than 1, got ${num} instead`);
     }
 
-    MAX_NUM_VIRTUAL_TABLES = num;
+    NUM_VIRTUAL_TABLES = num;
 }
 
 function set_group_virtual_tables(const int table_ids[]) {
@@ -147,6 +149,10 @@ function collect_virtual_table(const int opid, int table_id = -1, const expr tab
         vt.total_tables++;
     }
 
+    if (DEBUG_MODE_PRINT) {
+        println(`[Debug] Collected Table #${table_id} on (AIRGROUP, AIR) = (${AIRGROUP}, ${AIR_NAME}) with width=${w} and height=${h}`);
+    }
+
     // At the end, pack the tables
     on final(1) airgroup pack_tables();
 }
@@ -197,15 +203,6 @@ function open_container_virtual_table() {
                                                                       Total: |   17   |      3      |
         =============================================================================================
     (NOTE: This is represented in vertical for space limitations, but the actual packing is horizontal)
-
-    The size of the packing is chosen by trying to minimize the area of the resulting packing.
-    Given the height of the resulting table T is H, the area of the packing is:
-                        fixed_area   = H·∑ⱼ (1 + wⱼ) // UID + width
-                        witness_area = H·((∑ⱼ 1) + 3 + 3*((∑ⱼ 1)//2)) // multiplicity + grand_sum + lookups_1
-                        area         = fixed_area + witness_area
-    where wⱼ is the width of the j-th group in the packing and ∑ⱼ 1 is the number of groups in the packing.
-
-    NOTE: A table is never placed into two or more AIRs
 */
 function pack_tables() {
     use airgroup.std.vt alias vt;
@@ -290,158 +287,82 @@ function pack_tables() {
     }
 
     // ========================================================================
-    // 4. Determine the minimum number of virtual tables needed
+    // 4. Distribute tables across virtual tables and compute optimal row counts
     // ========================================================================
-    const int min_num_virtual_tables = (vt.num_groups > 0) ? vt.num_groups : 1;
-    if (min_num_virtual_tables > MAX_NUM_VIRTUAL_TABLES) {
-        error(`The specified number of groups (${vt.num_groups}) exceeds the maximum number of virtual tables (${MAX_NUM_VIRTUAL_TABLES}). Consider increasing the maximum number of virtual tables via set_max_num_virtual_tables()`);
+    const int num_virtual_tables = (vt.num_groups > NUM_VIRTUAL_TABLES) ? vt.num_groups : NUM_VIRTUAL_TABLES;
+
+    // Assignment
+    int assignment[vt.total_tables];
+    int vt_height[num_virtual_tables];
+    int vt_len[num_virtual_tables];
+
+    // Initialize data structures for this candidate
+    for (int i = 0; i < vt.total_tables; i++) {
+        assignment[i] = -1;
     }
-
-    // ========================================================================
-    // 5. Distribute tables across virtual tables and compute optimal row counts
-    //    We try each candidate num_vts ∈ [min_num_virtual_tables, MAX_NUM_VIRTUAL_TABLES]
-    //    and pick the configuration with the smallest total area.
-    // ========================================================================
-
-    int best_total_area = -1;
-    int best_num_rows = 0;
-    int best_num_vts = min_num_virtual_tables;
-
-    // Final assignment arrays
-    int best_assignment[vt.total_tables]; // table i → virtual table index
-    int best_vt_num_rows[MAX_NUM_VIRTUAL_TABLES];
-    int best_vt_num_cols[MAX_NUM_VIRTUAL_TABLES];
-
-    for (int candidate_vts = min_num_virtual_tables; candidate_vts <= MAX_NUM_VIRTUAL_TABLES; candidate_vts++) {
-        // --- Distribute tables for this candidate ---
-        int cand_assignment[vt.total_tables];
-        int cand_vt_height[candidate_vts];
-        int cand_vt_width[candidate_vts];
-        int cand_vt_len[candidate_vts];
-
-        // Initialize heights for pre-grouped tables
-        for (int v = 0; v < candidate_vts; v++) {
-            cand_vt_height[v] = 0;
-            cand_vt_width[v] = 0;
-            cand_vt_len[v] = 0;
-        }
-        for (int i = 0; i < vt.total_tables; i++) {
-            cand_assignment[i] = -1;
-        }
-
-        // Place grouped tables first
-        for (int i = 0; i < vt.total_tables; i++) {
-            if (table_group[i] != -1) {
-                const int idx = ordered_tables[i];
-                const int group = table_group[i];
-                cand_assignment[i] = group;
-                cand_vt_height[group] += flat_height[idx];
-                cand_vt_width[group] = (flat_width[idx] > cand_vt_width[group]) ? flat_width[idx] : cand_vt_width[group];
-                cand_vt_len[group]++;
-            }
-        }
-
-        // Distribute ungrouped tables using best-fit decreasing:
-        //  - Keep user‑grouped tables already placed (preserve their relative order).
-        //  - Append remaining tables in sorted order after the explicit group tables of that virtual table.
-        //  - Respect the max height per virtual table except for the last one, which absorbs leftovers.
-        const int cand_max_height = (vt.total_height + candidate_vts - 1) / candidate_vts;
-        for (int i = 0; i < vt.total_tables; i++) {
-            if (cand_assignment[i] != -1) continue; // already grouped
-
-            const int idx = ordered_tables[i];
-            const int height = flat_height[idx];
-            const int width = flat_width[idx];
-
-            int best_vt = -1;
-            int best_remaining = -1;
-            for (int j = 0; j < candidate_vts; j++) {
-                const int is_last = (j == candidate_vts - 1);
-                int capacity = cand_max_height - cand_vt_height[j];
-                if (is_last) {
-                    capacity = 1 << 30; // last VT absorbs overflow
-                }
-                if (height <= capacity) {
-                    const int remaining_after = capacity - height;
-                    if (best_vt == -1 || remaining_after < best_remaining) {
-                        best_vt = j;
-                        best_remaining = remaining_after;
-                        if (best_remaining == 0) break;
-                    }
-                }
-            }
-            if (best_vt == -1) {
-                best_vt = candidate_vts - 1;
-            }
-
-            cand_assignment[i] = best_vt;
-            cand_vt_height[best_vt] += height;
-            cand_vt_width[best_vt] = (width > cand_vt_width[best_vt]) ? width : cand_vt_width[best_vt];
-            cand_vt_len[best_vt]++;
-        }
-
-        // --- Compute per-VT row counts and total area ---
-        int cand_total_rows = 0;
-        int cand_total_area = 0;
-        int cand_vt_num_rows[candidate_vts];
-        int cand_vt_num_cols[candidate_vts];
-        int candidate_valid = 1;
-
-        for (int v = 0; v < candidate_vts; v++) {
-            if (cand_vt_height[v] == 0) {
-                // Empty VT: zero area, minimal rows
-                cand_vt_num_rows[v] = 0;
-                continue;
-            }
-
-            // Determine row count for this VT
-            int vt_rows = 1;
-            while (vt_rows < cand_vt_height[v]) {
-                vt_rows *= 2;
-            }
-            // If the height exceeds the maximum allowed rows, this candidate is invalid
-            if ((MAX_VIRTUAL_ROWS != 0) && (vt_rows > MAX_VIRTUAL_ROWS)) {
-                vt_rows = MAX_VIRTUAL_ROWS;
-            }
-            cand_total_rows += vt_rows;
-            cand_vt_num_rows[v] = vt_rows;
-            cand_vt_num_cols[v] = cand_vt_width[v];
-
-            // Compute area
-            const int vt_area = cand_vt_num_rows[v] * cand_vt_num_cols[v];
-            cand_total_area += vt_area;
-        }
-
-        // --- Check if this candidate is better ---
-        if (candidate_valid && (best_total_area == -1 || cand_total_area < best_total_area)) {
-            best_num_rows = cand_total_rows;
-            best_total_area = cand_total_area;
-            best_num_vts = candidate_vts;
-            for (int i = 0; i < vt.total_tables; i++) {
-                best_assignment[i] = cand_assignment[i];
-            }
-            for (int v = 0; v < candidate_vts; v++) {
-                best_vt_num_rows[v] = cand_vt_num_rows[v];
-                best_vt_num_cols[v] = cand_vt_num_cols[v];
-            }
-        }
-    }
-
-    const int num_virtual_tables = best_num_vts;
-    println(`[Debug] Generating ${num_virtual_tables} Virtual Tables with total Height=${best_num_rows} and total Area=${best_total_area}`);
     for (int v = 0; v < num_virtual_tables; v++) {
-        println(`[Debug]  - VirtualTable #${v}: Height=2^${log2(best_vt_num_rows[v])}, Width=${best_vt_num_cols[v]}, Area=${best_vt_num_rows[v] * best_vt_num_cols[v]}`);
+        vt_height[v] = 0;
+        vt_len[v] = 0;
+    }
+
+    // Place grouped tables first
+    for (int i = 0; i < vt.total_tables; i++) {
+        if (table_group[i] != -1) {
+            const int idx = ordered_tables[i];
+            const int group = table_group[i];
+            assignment[i] = group;
+            vt_height[group] += flat_height[idx];
+            vt_len[group]++;
+        }
+    }
+
+    // Distribute ungrouped tables using best-fit decreasing:
+    //  - Keep user‑grouped tables already placed (preserve their relative order).
+    //  - Append remaining tables in sorted order after the explicit group tables of that virtual table.
+    //  - Respect the max height per virtual table except for the last one, which absorbs leftovers.
+    const int max_height_per_vt = (vt.total_height + num_virtual_tables - 1) / num_virtual_tables;
+    for (int i = 0; i < vt.total_tables; i++) {
+        if (assignment[i] != -1) continue; // already grouped
+
+        const int idx = ordered_tables[i];
+        const int height = flat_height[idx];
+        const int width = flat_width[idx];
+
+        int best_pos = -1;
+        int best_remaining = -1;
+        for (int j = 0; j < num_virtual_tables; j++) {
+            const int is_last = (j == num_virtual_tables - 1);
+            int capacity = max_height_per_vt - vt_height[j];
+            if (is_last) {
+                capacity = 1 << 30; // last VT absorbs overflow
+            }
+            if (height <= capacity) {
+                const int remaining_after = capacity - height;
+                if (best_pos == -1 || remaining_after < best_remaining) {
+                    best_pos = j;
+                    best_remaining = remaining_after;
+                    if (best_remaining == 0) break;
+                }
+            }
+        }
+        if (best_pos == -1) {
+            best_pos = num_virtual_tables - 1;
+        }
+
+        assignment[i] = best_pos;
+        vt_height[best_pos] += height;
+        vt_len[best_pos]++;
     }
 
     // ========================================================================
-    // 6. Build the final ordered lists per virtual table
+    // 5. Build the final ordered lists per virtual table
     // ========================================================================
     const int ordered_tables_air[num_virtual_tables][vt.total_tables];
     int ordered_tables_air_height[num_virtual_tables];
     int ordered_tables_air_len[num_virtual_tables];
     for (int i = 0; i < vt.total_tables; i++) {
         const int idx = ordered_tables[i];
-        const int tgt = best_assignment[i];
+        const int tgt = assignment[i];
         const int pos = ordered_tables_air_len[tgt];
 
         ordered_tables_air[tgt][pos] = idx;
@@ -450,7 +371,7 @@ function pack_tables() {
     }
 
     // ========================================================================
-    // 7. Instantiate the virtual tables
+    // 6. Instantiate the virtual tables
     // ========================================================================
 
     // Store the airgroup_ids and air_ids
@@ -459,21 +380,147 @@ function pack_tables() {
         int air_ids[num_virtual_tables];
     }
 
+    if (DEBUG_MODE_PRINT) {
+        println(`[Debug] Generating ${num_virtual_tables} Virtual Tables...`);
+    }
+
     // Instantiate
     for (int i = 0; i < num_virtual_tables; i++) {
         const int total_height_air = ordered_tables_air_height[i];
         const int num_tables_air = ordered_tables_air_len[i];
-        const int total_num_rows = best_vt_num_rows[i];
 
         if (total_height_air == 0) {
-            println(`[Warning] VirtualTable_${AIRGROUP_ID}_${i} is empty, skipping`);
+            println(`[Warning] VirtualTable #${i} is empty, skipping`);
             continue;
+        } else {
+            if (DEBUG_MODE_PRINT) {
+                println(`[Debug] Choosing N for VirtualTable #${i} with TotalHeight=${total_height_air}, NumTables=${num_tables_air}:`);
+            }
         }
+
+        // We now need to choose the number of rows N for this virtual table. 
+        // This is a critical parameter that affects the proof cost, as it determines how
+        // the tables are packed and how many columns are needed. We choose N as the one
+        // that minimises the cost of the resulting packing among all powers of 2.
+        // The cost is estimated as:
+        //      total_columns * (candidate_N + column_overhead)
+        // where column_overhead  is a fixed per-column penalty that accounts for the
+        // proof cost of adding a polynomial independently of N.
+        // Without this term, minimising by area alone would always favour N=1.
+        //
+        // Given the height of the resulting table T is H, the area is computed as:
+        //                     fixed_area   = H·∑ⱼ (1 + wⱼ) // UID + width
+        //                     witness_area = H·((∑ⱼ 1) + 3 + 3*((∑ⱼ 1)//2)) // multiplicity + grand_sum + lookups_1
+        //                     area         = fixed_area + witness_area
+        // where wⱼ is the width of the j-th group in the packing and ∑ⱼ 1 is the number of groups in the packing.
+
+        // Compute the smallest power of 2 >= total_height_air as the upper bound for N
+        int max_N = 1;
+        while (max_N < total_height_air) {
+            max_N *= 2;
+        }
+        if (MAX_VIRTUAL_BITS != 0 && max_N > (1 << MAX_VIRTUAL_BITS)) {
+            max_N = 1 << MAX_VIRTUAL_BITS;
+        }
+
+        // Find the minimum table height in this VT to use as lower bound
+        int min_table_height = flat_height[ordered_tables_air[i][0]];
+        for (int j = 1; j < num_tables_air; j++) {
+            const int idx = ordered_tables_air[i][j];
+            if (flat_height[idx] < min_table_height) {
+                min_table_height = flat_height[idx];
+            }
+        }
+
+        // Start from smallest power-of-two >= min_table_height
+        // (going below the smallest table never helps — it just splits it unnecessarily)
+        int min_N = 1;
+        while (min_N < min_table_height) {
+            min_N *= 2;
+        }
+
+        // Column overhead
+        const int column_overhead  = max_N * COLUMN_PROOF_OVERHEAD_PCT / 100;
+
+        int best_total_num_rows = max_N;
+        int best_cost = -1; // -1 = uninitialised
+
+        int candidate_N = min_N;
+        while (candidate_N <= max_N) {
+            // Simulate packing
+            int sim_num_groups    = 0;
+            int sim_fixed_per_row = 0;
+            int sim_available     = candidate_N;
+
+            for (int j = 0; j < num_tables_air; j++) {
+                const int idx   = ordered_tables_air[i][j];
+                const int width = flat_width[idx];
+                int height      = flat_height[idx];
+
+                // Place what fits in the current partial group
+                if (sim_available > 0 && height > 0) {
+                    const int placed = (height <= sim_available) ? height : sim_available;
+                    height -= placed;
+                    sim_available -= placed;
+
+                    if (sim_available == 0) {
+                        sim_fixed_per_row += (1 + width);
+                        sim_num_groups++;
+                        sim_available = candidate_N;
+                    }
+                }
+
+                // Remaining height: compute full groups and leftover via division
+                if (height > 0) {
+                    const int full_groups = height / candidate_N;
+                    const int leftover    = height - full_groups * candidate_N;
+
+                    sim_fixed_per_row += full_groups * (1 + width);
+                    sim_num_groups    += full_groups;
+
+                    if (leftover > 0) {
+                        sim_available = candidate_N - leftover;
+                    }
+                    // if leftover == 0, sim_available remains candidate_N
+                }
+            }
+
+            // Close the last (possibly partial) group
+            if (sim_available < candidate_N) {
+                const int last_idx = ordered_tables_air[i][num_tables_air - 1];
+                sim_fixed_per_row += (1 + flat_width[last_idx]);
+                sim_num_groups++;
+            }
+
+            // Compute the cost
+            const int sim_witness_cols = sim_num_groups + 3 + 3*((sim_num_groups + 1)/2);
+            const int sim_total_cols   = sim_fixed_per_row + sim_witness_cols;
+            const int sim_cost         = sim_total_cols * (candidate_N + column_overhead);
+
+            if (best_cost == -1 || sim_cost < best_cost) {
+                best_cost           = sim_cost;
+                best_total_num_rows = candidate_N;
+            }
+
+            if (DEBUG_MODE_PRINT) {
+                const int sim_area = sim_total_cols * candidate_N;
+                println(`[Debug]    - Candidate N=2^${log2(candidate_N)}: Groups=${sim_num_groups}, Cols=${sim_total_cols}, Area=${sim_area}, Cost=${sim_cost}`);
+            }
+
+            candidate_N *= 2;
+        }
+
+        if (DEBUG_MODE_PRINT) {
+            println(`[Debug] Chosen N=2^${log2(best_total_num_rows)} for VirtualTable #${i} with Cost=${best_cost} and TotalArea=${best_total_num_rows * best_cost / (candidate_N + column_overhead)}`);
+        }
+
+        // Use the cost-optimal N for the actual packing below.
+        const int total_num_rows = best_total_num_rows;
 
         // Compute packing groups
         const int num_packing_groups = (total_height_air + total_num_rows - 1) / total_num_rows;
         if (num_packing_groups > ARRAY_SIZE) {
-            error(`VirtualTable_${AIRGROUP_ID}_${i}: rows=${total_num_rows} generates too many groups=${num_packing_groups} > max=${ARRAY_SIZE}. Consider setting more rows via set_max_num_rows_virtual()`);
+            error(`VirtualTable #${i}: rows=${total_num_rows} generates too many groups=${num_packing_groups} > max=${ARRAY_SIZE}. Consider setting more bits via set_max_bits_virtual_tables()`);
         }
 
         // Compute the packing
@@ -481,7 +528,6 @@ function pack_tables() {
         int tables_pack[num_packing_groups][num_tables_air];
         int widths_pack[num_packing_groups];
         int lens_pack[num_packing_groups];
-        int used_area[num_packing_groups];
         int available_height = total_num_rows;
         int offset = 0;
         for (int j = 0; j < num_tables_air; j++) {
@@ -494,12 +540,10 @@ function pack_tables() {
                 if (height <= available_height) {
                     // It fits entirely
                     available_height -= height;
-                    used_area[offset] += width * height;
                     height = 0;
                 } else {
                     // Only part fits, so cut and place what we can
                     height -= available_height;
-                    used_area[offset] += width * available_height;
                     available_height = 0;
                 }
 
@@ -525,21 +569,9 @@ function pack_tables() {
             widths_pack[offset] = flat_width[ordered_tables_air[i][num_tables_air - 1]];
         }
 
-        // Debug: compute and print area breakdown
-        int wasted_area = 0;
-        int fixed_area = 0;
-        for (int j = 0; j < num_packing_groups; j++) {
-            wasted_area += total_num_rows*widths_pack[j] - used_area[j];
-            fixed_area += (1 + widths_pack[j]);
-        }
-        const int witness_area = (num_packing_groups + 3 + 3 * (num_packing_groups / 2));
-        const int area = total_num_rows * (fixed_area + witness_area);
-
-        println(`[Debug] VirtualTable_${AIRGROUP_ID}_${i}: N=2^${log2(total_num_rows)}, groups=${num_packing_groups}, area=${area}, wasted=${wasted_area}`);
-
         VirtualTable(total_num_rows, ordered_tables_air[i], num_tables_air, total_height_air,
                      uids_pack, tables_pack, widths_pack, lens_pack, num_packing_groups, i,
-                     flat_opid_idx, flat_table_idx, flat_table_id, flat_height, flat_width) alias `VirtualTable_${AIRGROUP_ID}_${i}`;
+                     flat_opid_idx, flat_table_idx, flat_table_id, flat_height, flat_width) alias `VirtualTable${AIRGROUP}${i}`;
     }
 }
 
@@ -562,8 +594,10 @@ airtemplate VirtualTable(const int N, const int tables[], const int num_tables, 
     int acc_heights[num_tables];
     int acc_total_height = 0;
 
-    println(`[Debug] ${AIR_NAME} instantiated with: N=2^${log2(N)}, #Fixed=${num_groups + sum_widths}, #Witness=${num_groups}`);
-    println(`[Debug] Table composition (total height of ${total_height}):`);
+    if (DEBUG_MODE_PRINT) {
+        println(`[Debug] VirtualTable #${vt_idx} instantiated with: N=2^${log2(N)}, Tables=${num_tables}, Height=${total_height}, MaxWidth=${widths[num_groups-1]}, Groups=${num_groups}, #Fixed=${num_groups + sum_widths}, #Witness=${num_groups}`);
+        println(`[Debug] Table composition:`);
+    }
     for (int i = 0; i < num_tables; i++) {
         const int idx = tables[i];
         const int table_id = flat_table_id[idx];
@@ -573,7 +607,10 @@ airtemplate VirtualTable(const int N, const int tables[], const int num_tables, 
         flatten_table_ids[i] = table_id;
         acc_heights[i] = acc_total_height;
         acc_total_height += height;
-        println(`[Debug]    - Table ${table_id} with height=${height} and width=${width}`);
+
+        if (DEBUG_MODE_PRINT) {
+            println(`[Debug]    - Table ${table_id} with height=${height} and width=${width}`);
+        }
     }
     @virtual_table_data{table_ids: flatten_table_ids, acc_heights: acc_heights, num_muls: num_groups};
 
