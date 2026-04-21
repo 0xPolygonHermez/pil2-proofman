@@ -6,6 +6,11 @@
 
 extern __shared__ Goldilocks::Element scratchpad[];
 
+// Phase 2 forward declaration — definition lives later in this TU.
+template<int NP, bool Constraints>
+__global__ void computeExpressionsT_(StepsParams *d_params, DeviceArguments *d_deviceArgs,
+    ExpsArguments expsArgsV, DestParamsGPU dp0V, DestParamsGPU dp1V);
+
 ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t nBlocks) : ExpressionsCtx(setupCtx), nRowsPack(nRowsPack), nBlocks(nBlocks)
 {
     
@@ -67,6 +72,22 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
 
     CHECKCUDAERR(cudaMalloc(&d_deviceArgs, sizeof(DeviceArguments)));
     CHECKCUDAERR(cudaMemcpy(d_deviceArgs, &h_deviceArgs, sizeof(DeviceArguments), cudaMemcpyHostToDevice));
+
+    // Phase 0.1: cache map offsets to avoid per-call std::map<pair<string,bool>> lookups
+    cachedOffsetTmp1 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp1", false)];
+    cachedOffsetTmp3 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp3", false)];
+    cachedOffsetDestVals = setupCtx.starkInfo.mapOffsets[std::make_pair("destVals", false)];
+
+    // Phase 5.1: opt in to large dynamic shared memory (>48KB default cap). Allows the
+    // ptr table + temp buffers to live in shared mem more often instead of falling back to
+    // global aux_trace. Cap at 96KB which is safe across compute capabilities >= 7.0.
+    constexpr int kMaxDynSmem = 96 * 1024;
+    cudaFuncSetAttribute(computeExpressions_,                              cudaFuncAttributeMaxDynamicSharedMemorySize, kMaxDynSmem);
+    cudaFuncSetAttribute(computeExpression_,                               cudaFuncAttributeMaxDynamicSharedMemorySize, kMaxDynSmem);
+    cudaFuncSetAttribute(computeExpressionsT_<1, false>,                   cudaFuncAttributeMaxDynamicSharedMemorySize, kMaxDynSmem);
+    cudaFuncSetAttribute(computeExpressionsT_<2, false>,                   cudaFuncAttributeMaxDynamicSharedMemorySize, kMaxDynSmem);
+    cudaFuncSetAttribute(computeExpressionsT_<1, true>,                    cudaFuncAttributeMaxDynamicSharedMemorySize, kMaxDynSmem);
+    cudaFuncSetAttribute(computeExpressionsT_<2, true>,                    cudaFuncAttributeMaxDynamicSharedMemorySize, kMaxDynSmem);
 };
 
 ExpressionsGPU::~ExpressionsGPU()
@@ -110,13 +131,13 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     h_expsArgs.maxTemp1Size = 0;
     h_expsArgs.maxTemp3Size = 0;
 
-    h_expsArgs.offsetTmp1 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp1", false)];
-    h_expsArgs.offsetTmp3 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp3", false)];
-    h_expsArgs.offsetDestVals = setupCtx.starkInfo.mapOffsets[std::make_pair("destVals", false)];
+    h_expsArgs.offsetTmp1 = cachedOffsetTmp1;
+    h_expsArgs.offsetTmp3 = cachedOffsetTmp3;
+    h_expsArgs.offsetDestVals = cachedOffsetDestVals;
 
     for (uint64_t k = 0; k < dest.params.size(); ++k)
     {
-        ParserParams &parserParams = constraints 
+        ParserParams &parserParams = constraints
             ? setupCtx.expressionsBin.constraintsInfoDebug[dest.params[k].expId]
             : setupCtx.expressionsBin.expressionsInfo[dest.params[k].expId];
         if (parserParams.nTemp1*h_expsArgs.nRowsPack > h_expsArgs.maxTemp1Size) {
@@ -140,10 +161,11 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
 
     assert(dest.params.size() == 1 || dest.params.size() == 2);
 
-    DestParamsGPU* h_dest_params = new DestParamsGPU[h_expsArgs.dest_nParams];
+    // Phase 0.2: reuse member scratch instead of new[]/delete[] per call
+    DestParamsGPU* h_dest_params = h_dest_params_scratch;
     for (uint64_t j = 0; j < h_expsArgs.dest_nParams; ++j){
 
-        ParserParams &parserParams = constraints 
+        ParserParams &parserParams = constraints
             ? setupCtx.expressionsBin.constraintsInfoDebug[dest.params[j].expId]
             : setupCtx.expressionsBin.expressionsInfo[dest.params[j].expId];
         h_dest_params[j].dim = dest.params[j].dim;
@@ -160,26 +182,37 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
         h_dest_params[j].argsOffset =parserParams.argsOffset;
     }
 
-    memcpy(pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU));
-    CHECKCUDAERR(cudaMemcpyAsync(d_destParams, pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
-    delete[] h_dest_params;
-
-    memcpy(pinned_exps_args + countId * sizeof(ExpsArguments), &h_expsArgs, sizeof(ExpsArguments));
-    CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, pinned_exps_args + countId * sizeof(ExpsArguments), sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
+    // Phase 1: structs ride in kernel-param area (constant memory) instead of per-call cudaMemcpyAsync.
+    // d_expsArgs/d_destParams/pinned_exps_* are now unused on this path; signature kept to avoid caller ripples.
+    (void)d_expsArgs; (void)d_destParams; (void)pinned_exps_params; (void)pinned_exps_args; (void)countId;
+    DestParamsGPU dp1_for_kernel = h_expsArgs.dest_nParams >= 2 ? h_dest_params[1] : DestParamsGPU{};
 
     uint32_t nblocks_ = static_cast<uint32_t>(std::min<uint64_t>(static_cast<uint64_t>(nBlocks),(domainSize + nrowsPack - 1) / nrowsPack));
     uint32_t nthreads_ = nblocks_ == 1 ? domainSize : nrowsPack;
     dim3 nBlocks_ =  nblocks_;
     dim3 nThreads_ = nthreads_;
-    
+
     assert(bufferCommitSize  + 9  < 32);
     size_t ptrMem = 32 * sizeof(Goldilocks::Element);
     size_t tmpMem = (h_expsArgs.maxTemp1Size + h_expsArgs.maxTemp3Size) * sizeof(Goldilocks::Element);
-    bool useTmpInShared = tmpMem <= 40960 && tmpMem > 0;
+    bool useTmpInShared = tmpMem <= 65536 && tmpMem > 0;
     size_t sharedMem = useTmpInShared ? (ptrMem + tmpMem) : ptrMem;
 
     TimerStartCategoryGPU(timer, EXPRESSIONS);
-    computeExpressions_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams, constraints);
+    // Phase 2: dispatch to templated kernel. NP and Constraints become compile-time constants.
+    if (constraints) {
+        if (h_expsArgs.dest_nParams == 1) {
+            computeExpressionsT_<1, true><<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, h_expsArgs, h_dest_params[0], DestParamsGPU{});
+        } else {
+            computeExpressionsT_<2, true><<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, h_expsArgs, h_dest_params[0], dp1_for_kernel);
+        }
+    } else {
+        if (h_expsArgs.dest_nParams == 1) {
+            computeExpressionsT_<1, false><<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, h_expsArgs, h_dest_params[0], DestParamsGPU{});
+        } else {
+            computeExpressionsT_<2, false><<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, h_expsArgs, h_dest_params[0], dp1_for_kernel);
+        }
+    }
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 }
 
@@ -204,9 +237,9 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     h_expsArgs.maxTemp1Size = 0;
     h_expsArgs.maxTemp3Size = 0;
 
-    h_expsArgs.offsetTmp1 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp1", false)];
-    h_expsArgs.offsetTmp3 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp3", false)];
-    h_expsArgs.offsetDestVals = setupCtx.starkInfo.mapOffsets[std::make_pair("destVals", false)];
+    h_expsArgs.offsetTmp1 = cachedOffsetTmp1;
+    h_expsArgs.offsetTmp3 = cachedOffsetTmp3;
+    h_expsArgs.offsetDestVals = cachedOffsetDestVals;
 
     for (uint64_t k = 0; k < dest.params.size(); ++k)
     {
@@ -230,7 +263,8 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     h_expsArgs.dest_expr = dest.expr;
     h_expsArgs.dest_nParams = dest.params.size();
 
-    DestParamsGPU* h_dest_params = new DestParamsGPU[h_expsArgs.dest_nParams];
+    // Phase 0.2: reuse member scratch instead of new[]/delete[] per call
+    DestParamsGPU* h_dest_params = h_dest_params_scratch;
     for (uint64_t j = 0; j < h_expsArgs.dest_nParams; ++j){
 
         ParserParams &parserParams = setupCtx.expressionsBin.expressionsInfo[dest.params[j].expId];
@@ -248,27 +282,22 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
         h_dest_params[j].argsOffset =parserParams.argsOffset;
     }
 
-    memcpy(pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU));
-    CHECKCUDAERR(cudaMemcpyAsync(d_destParams, pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
-    delete[] h_dest_params;
-
-    memcpy(pinned_exps_args + countId * sizeof(ExpsArguments), &h_expsArgs, sizeof(ExpsArguments));
-    CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, pinned_exps_args + countId * sizeof(ExpsArguments), sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
+    // Phase 1: structs ride in kernel-param area instead of per-call cudaMemcpyAsync.
+    (void)d_expsArgs; (void)d_destParams; (void)pinned_exps_params; (void)pinned_exps_args; (void)countId;
 
     uint32_t nblocks_ = static_cast<uint32_t>(std::min<uint64_t>(static_cast<uint64_t>(nBlocks),(domainSize + nrowsPack - 1) / nrowsPack));
     uint32_t nthreads_ = nblocks_ == 1 ? domainSize : nrowsPack;
     dim3 nBlocks_ =  nblocks_;
     dim3 nThreads_ = nthreads_;
-    
+
     assert(bufferCommitSize  + 9  < 32);
-    // Include temp buffers in dynamic shared memory if they fit in 40KB budget
     size_t ptrMem = 32 * sizeof(Goldilocks::Element);
     size_t tmpMem = (h_expsArgs.maxTemp1Size + h_expsArgs.maxTemp3Size) * sizeof(Goldilocks::Element);
-    bool useTmpInShared = tmpMem <= 40960 && tmpMem > 0;
+    bool useTmpInShared = tmpMem <= 65536 && tmpMem > 0;
     size_t sharedMem = useTmpInShared ? (ptrMem + tmpMem) : ptrMem;
 
     TimerStartCategoryGPU(timer, EXPRESSIONS);
-    computeExpression_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams);
+    computeExpression_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, h_expsArgs, h_dest_params[0]);
     CHECKCUDAERR(cudaGetLastError());
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 }
@@ -405,7 +434,7 @@ __device__ __forceinline__ void load__(
     return;
 }
 
-__device__ __noinline__ void storePolynomial__(ExpsArguments *d_expsArgs, Goldilocks::Element *destVals, uint64_t row)
+__device__ __forceinline__ void storePolynomial__(ExpsArguments *d_expsArgs, Goldilocks::Element *destVals, uint64_t row)
 {
     #pragma unroll
     for (uint32_t i = 0; i < d_expsArgs->dest_dim; i++) {
@@ -421,7 +450,7 @@ __device__ __noinline__ void storePolynomial__(ExpsArguments *d_expsArgs, Goldil
     }
 }
 
-__device__ __noinline__ void multiplyPolynomials__(ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row)
+__device__ __forceinline__ void multiplyPolynomials__(ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row)
 {
     if (d_expsArgs->dest_dim == 1)
     {
@@ -448,7 +477,7 @@ __device__ __noinline__ void multiplyPolynomials__(ExpsArguments *d_expsArgs, De
     storePolynomial__(d_expsArgs, (Goldilocks::Element *)destVals, row);
 }
 
-__device__ __noinline__ void getInversePolinomial__(gl64_t *polynomial, uint64_t dim)
+__device__ __forceinline__ void getInversePolinomial__(gl64_t *polynomial, uint64_t dim)
 {
     int idx = threadIdx.x;
     if (dim == 1)
@@ -468,7 +497,7 @@ __device__ __noinline__ void getInversePolinomial__(gl64_t *polynomial, uint64_t
     }
 }
 
-__device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *destVals, uint32_t k, uint64_t row)
+__device__ __forceinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *destVals, uint32_t k, uint64_t row)
 {
 
     uint32_t r = row + threadIdx.x;
@@ -666,8 +695,163 @@ void op_33_gpu_p2(
     }
 }
 
-__global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, bool constraints)
+// Phase 2.1+2.3: chunk worker templated on (NP=dest_nParams, IsCyclic, Constraints).
+// All three become compile-time constants → branch elision in load__ + nParams unrolled.
+template<int NP, bool IsCyclic, bool Constraints>
+__device__ __forceinline__ void computeExpressions_chunk_(
+    StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs,
+    DestParamsGPU *d_destParams, Goldilocks::Element **expressions_params,
+    uint32_t bufferCommitsSize, Goldilocks::Element *destVals, uint64_t i,
+    const uint8_t * const * __restrict__ ops_arr, const uint16_t * const * __restrict__ args_arr)
 {
+    #pragma unroll
+    for (int k = 0; k < NP; ++k) {
+        if (caseNoOperations__(d_params, d_deviceArgs, d_expsArgs, d_destParams, destVals, k, i)) {
+            continue;
+        }
+        const uint8_t *ops = ops_arr[k];
+        const uint16_t *args = args_arr[k];
+        gl64_t *a0,*a1,*a2,*b0,*b1,*b2;
+        uint64_t i_args = 0;
+        uint64_t nOps = d_destParams[k].nOps;
+        for (uint64_t kk = 0; kk < nOps; ++kk) {
+            switch (ops[kk]) {
+            case 0: {
+                load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args+2], args[i_args+3], args[i_args+4], i, 1, IsCyclic, a0,a1,a2);
+                load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args+5], args[i_args+6], args[i_args+7], i, 1, IsCyclic, b0,b1,b2);
+                gl64_t *res = (gl64_t*)(kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize][args[i_args+1] * blockDim.x]);
+                op_gpu_p2(args[i_args], res, a0, b0);
+                i_args += 8;
+                break;
+            }
+            case 1: {
+                load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args+2], args[i_args+3], args[i_args+4], i, 3, IsCyclic, a0,a1,a2);
+                load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args+5], args[i_args+6], args[i_args+7], i, 1, IsCyclic, b0,b1,b2);
+                gl64_t *res = (gl64_t*)(kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize+1][args[i_args+1] * blockDim.x]);
+                op_31_gpu_p2(args[i_args], res, a0, a1, a2, b0);
+                i_args += 8;
+                break;
+            }
+            case 2: {
+                load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args+2], args[i_args+3], args[i_args+4], i, 3, IsCyclic, a0,a1,a2);
+                load__(d_deviceArgs, d_expsArgs, d_params, expressions_params, args[i_args+5], args[i_args+6], args[i_args+7], i, 3, IsCyclic, b0,b1,b2);
+                gl64_t *res = (gl64_t*)(kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize+1][args[i_args+1] * blockDim.x]);
+                op_33_gpu_p2(args[i_args], res, a0, a1, a2, b0, b1, b2);
+                i_args += 8;
+                break;
+            }
+            default:
+                printf(" Wrong operation! %d \n", ops[kk]);
+            }
+        }
+        if (d_destParams[k].inverse) {
+            getInversePolinomial__((gl64_t*) &destVals[k * FIELD_EXTENSION * blockDim.x], d_destParams[k].dim);
+        }
+    }
+    if constexpr (NP == 2) {
+        multiplyPolynomials__(d_expsArgs, d_destParams, d_deviceArgs, (gl64_t*) destVals, i);
+    } else {
+        storePolynomial__(d_expsArgs, destVals, i);
+    }
+}
+
+// Phase 2: templated multi-param kernel — IsCyclic eliminated for ~99% of chunks,
+// ops/args staged in shared memory, dest_nParams + constraints fully unrolled.
+template<int NP, bool Constraints>
+__global__ void computeExpressionsT_(StepsParams *d_params, DeviceArguments *d_deviceArgs,
+    ExpsArguments expsArgsV, DestParamsGPU dp0V, DestParamsGPU dp1V)
+{
+    ExpsArguments * d_expsArgs = &expsArgsV;
+    DestParamsGPU dp_local[2] = {dp0V, dp1V};
+    DestParamsGPU * d_destParams = dp_local;
+
+    int chunk_idx = blockIdx.x;
+    uint64_t nchunks = d_expsArgs->domainSize / blockDim.x;
+
+    uint32_t bufferCommitsSize = d_deviceArgs->bufferCommitSize;
+    Goldilocks::Element **expressions_params = (Goldilocks::Element **)scratchpad;
+
+    Goldilocks::Element *smem_after_ptrs_s = scratchpad + 32;
+    uint64_t tmpTotal_s = d_expsArgs->maxTemp1Size + d_expsArgs->maxTemp3Size;
+    bool useTmpSmem_s = tmpTotal_s > 0 && tmpTotal_s <= 8192;
+
+    if (threadIdx.x == 0) {
+        if (useTmpSmem_s) {
+            expressions_params[bufferCommitsSize + 0] = smem_after_ptrs_s;
+            expressions_params[bufferCommitsSize + 1] = smem_after_ptrs_s + d_expsArgs->maxTemp1Size;
+        } else {
+            expressions_params[bufferCommitsSize + 0] = (&d_params->aux_trace[d_expsArgs->offsetTmp1 + blockIdx.x * d_expsArgs->maxTemp1Size]);
+            expressions_params[bufferCommitsSize + 1] = (&d_params->aux_trace[d_expsArgs->offsetTmp3 + blockIdx.x * d_expsArgs->maxTemp3Size]);
+        }
+        expressions_params[bufferCommitsSize + 2] = d_params->publicInputs;
+        expressions_params[bufferCommitsSize + 3] = Constraints ? d_deviceArgs->numbersConstraints : d_deviceArgs->numbers;
+        expressions_params[bufferCommitsSize + 4] = d_params->airValues;
+        expressions_params[bufferCommitsSize + 5] = d_params->proofValues;
+        expressions_params[bufferCommitsSize + 6] = d_params->airgroupValues;
+        expressions_params[bufferCommitsSize + 7] = d_params->challenges;
+        expressions_params[bufferCommitsSize + 8] = d_params->evals;
+    }
+
+    // Phase 2.2: stage ops and args cooperatively in shared memory
+    __shared__ uint8_t ops_staged[NP][256];
+    __shared__ uint16_t args_staged[NP][2048];
+
+    const uint8_t *g_ops[NP];
+    const uint16_t *g_args[NP];
+    uint64_t nOpsArr[NP];
+    uint64_t nArgsArr[NP];
+    #pragma unroll
+    for (int k = 0; k < NP; ++k) {
+        g_ops[k] = Constraints ? &d_deviceArgs->opsConstraints[d_destParams[k].opsOffset]
+                                : &d_deviceArgs->ops[d_destParams[k].opsOffset];
+        g_args[k] = Constraints ? &d_deviceArgs->argsConstraints[d_destParams[k].argsOffset]
+                                  : &d_deviceArgs->args[d_destParams[k].argsOffset];
+        nOpsArr[k] = d_destParams[k].nOps;
+        nArgsArr[k] = d_destParams[k].nArgs;
+    }
+    #pragma unroll
+    for (int k = 0; k < NP; ++k) {
+        if (nOpsArr[k] <= 256) {
+            for (uint32_t t = threadIdx.x; t < nOpsArr[k]; t += blockDim.x) ops_staged[k][t] = g_ops[k][t];
+        }
+        if (nArgsArr[k] <= 2048) {
+            for (uint32_t t = threadIdx.x; t < nArgsArr[k]; t += blockDim.x) args_staged[k][t] = g_args[k][t];
+        }
+    }
+    __syncthreads();
+
+    const uint8_t *active_ops[NP];
+    const uint16_t *active_args[NP];
+    #pragma unroll
+    for (int k = 0; k < NP; ++k) {
+        active_ops[k] = (nOpsArr[k] <= 256) ? ops_staged[k] : g_ops[k];
+        active_args[k] = (nArgsArr[k] <= 2048) ? args_staged[k] : g_args[k];
+    }
+
+    Goldilocks::Element *destVals = &(d_params->aux_trace[d_expsArgs->offsetDestVals + blockIdx.x * NP * blockDim.x * FIELD_EXTENSION]);
+
+    // Phase 2.1: chunk-level IsCyclic dispatch — interior chunks compile-time elide cyclic branch
+    uint64_t k_min_chunk = d_expsArgs->k_min / blockDim.x;
+    uint64_t k_max_chunk = d_expsArgs->k_max / blockDim.x;
+
+    while (chunk_idx < nchunks) {
+        uint64_t i = chunk_idx * blockDim.x;
+        if (nchunks == 1 || chunk_idx < k_min_chunk || chunk_idx >= k_max_chunk) {
+            computeExpressions_chunk_<NP, true, Constraints>(d_params, d_deviceArgs, d_expsArgs, d_destParams, expressions_params, bufferCommitsSize, destVals, i, active_ops, active_args);
+        } else {
+            computeExpressions_chunk_<NP, false, Constraints>(d_params, d_deviceArgs, d_expsArgs, d_destParams, expressions_params, bufferCommitsSize, destVals, i, active_ops, active_args);
+        }
+        chunk_idx += gridDim.x;
+    }
+}
+
+__global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments expsArgsV, DestParamsGPU dp0V, DestParamsGPU dp1V, bool constraints)
+{
+    // Legacy non-templated kernel — kept for safety/fallback. Phase 2 host launches the
+    // templated computeExpressionsT_<NP, Constraints> directly.
+    ExpsArguments * d_expsArgs = &expsArgsV;
+    DestParamsGPU dp_local[2] = {dp0V, dp1V};
+    DestParamsGPU * d_destParams = dp_local;
 
     int chunk_idx = blockIdx.x;
     uint64_t nchunks = d_expsArgs->domainSize / blockDim.x;
@@ -678,7 +862,7 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
     // Use temp buffers in dynamic shared memory if launch allocated space for them
     Goldilocks::Element *smem_after_ptrs_s = scratchpad + 32;
     uint64_t tmpTotal_s = d_expsArgs->maxTemp1Size + d_expsArgs->maxTemp3Size;
-    bool useTmpSmem_s = tmpTotal_s > 0 && tmpTotal_s <= 5120;
+    bool useTmpSmem_s = tmpTotal_s > 0 && tmpTotal_s <= 8192;
 
     if (threadIdx.x == 0)
     {
@@ -840,8 +1024,12 @@ __device__ __forceinline__ void computeExpression_chunk_(
     }
 }
 
-__global__  void computeExpression_(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams)
+__global__  void computeExpression_(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments expsArgsV, DestParamsGPU dp0V)
 {
+    // Phase 1: structs arrive by value via kernel param area
+    ExpsArguments * d_expsArgs = &expsArgsV;
+    DestParamsGPU dp_local[1] = {dp0V};
+    DestParamsGPU * d_destParams = dp_local;
 
     int chunk_idx = blockIdx.x;
     uint64_t nchunks = d_expsArgs->domainSize / blockDim.x;
@@ -859,7 +1047,7 @@ __global__  void computeExpression_(StepsParams *d_params, DeviceArguments *d_de
     // Use temp buffers in dynamic shared memory if launch allocated space for them
     Goldilocks::Element *smem_after_ptrs = scratchpad + 32;
     uint64_t tmpTotal = d_expsArgs->maxTemp1Size + d_expsArgs->maxTemp3Size;
-    bool useTmpSmem = tmpTotal > 0 && tmpTotal <= 5120;
+    bool useTmpSmem = tmpTotal > 0 && tmpTotal <= 8192;
 
     if (threadIdx.x == 0)
     {

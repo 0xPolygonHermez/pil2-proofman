@@ -37,8 +37,9 @@ struct DeviceArguments
     Goldilocks::Element *numbersConstraints;
 };
 
-__global__  void computeExpressions_(StepsParams *h_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, bool constraints);
-__global__  void computeExpression_(StepsParams *h_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams);
+// Phase 1: kernel takes ExpsArguments + DestParamsGPU[2] by value (no per-call H2D copy).
+__global__  void computeExpressions_(StepsParams *h_params, DeviceArguments *d_deviceArgs, ExpsArguments expsArgsV, DestParamsGPU dp0V, DestParamsGPU dp1V, bool constraints);
+__global__  void computeExpression_(StepsParams *h_params, DeviceArguments *d_deviceArgs, ExpsArguments expsArgsV, DestParamsGPU dp0V);
 
 class ExpressionsGPU : public ExpressionsCtx
 {
@@ -49,6 +50,14 @@ public:
    
     DeviceArguments *d_deviceArgs;
     DeviceArguments h_deviceArgs;
+
+    // Cached map offsets (Phase 0.1) — avoid std::map<pair<string,bool>> lookup per call
+    uint64_t cachedOffsetTmp1;
+    uint64_t cachedOffsetTmp3;
+    uint64_t cachedOffsetDestVals;
+
+    // Pre-allocated host scratch for DestParamsGPU (Phase 0.2) — assert says size <= 2
+    DestParamsGPU h_dest_params_scratch[2];
 
     ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack = 128, uint32_t nBlocks = 4096);
     ~ExpressionsGPU();

@@ -970,6 +970,42 @@ void proveFRIQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_
 void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, StepsParams &h_params, StepsParams *d_params, int64_t step, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream){
 
     uint64_t domainSize = (1 << setupCtx.starkInfo.starkStruct.nBits);
+
+#ifdef USE_CUDA_GRAPH
+    // Phase 3: capture the imPol kernel sequence per stage as a single CUDA graph.
+    // After Phase 1 (kernel args by value) and Phase 2 (no per-call cudaMemcpyAsync), the
+    // captured region contains only kernel launches — safe to replay across proofs in the
+    // same prover instance because (a) d_params backing pointers are stable per instance and
+    // (b) ExpsArguments/DestParamsGPU values are derived from setup state, not per-proof data.
+    CudaGraphCache *graphCache = cudagraph::current();
+    if (graphCache) {
+        uint64_t ctxId = (uint64_t)(uintptr_t)&setupCtx;
+        uint64_t key = CudaGraphCache::makeKey(0x494D504FULL ^ ctxId, (uint64_t)step, domainSize); // 'IMPO'
+        if (graphCache->tryLaunch(key, stream)) {
+            return;
+        }
+        if (graphCache->shouldCapture(key)) {
+            if (graphCache->beginCapture(key, stream)) {
+                for(uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++) {
+                    if(setupCtx.starkInfo.cmPolsMap[i].imPol && setupCtx.starkInfo.cmPolsMap[i].stage == step) {
+                        Goldilocks::Element* pAddress = step == 1 ? h_params.trace : h_params.aux_trace;
+                        Dest destStruct(NULL, domainSize, setupCtx.starkInfo.cmPolsMap[i].stagePos, setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)], false);
+                        destStruct.addParams(setupCtx.starkInfo.cmPolsMap[i].expId, setupCtx.starkInfo.cmPolsMap[i].dim, false);
+                        uint64_t offset_aux_trace = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), false)];
+                        destStruct.dest_gpu = (Goldilocks::Element *)(pAddress + offset_aux_trace);
+                        countId++;
+                        expressionsCtx->calculateExpressions_gpu(d_params, destStruct, domainSize, false, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+                    }
+                }
+                if (graphCache->endCaptureAndLaunch(stream)) {
+                    return;
+                }
+                // capture failed — fall through to normal launch path
+            }
+        }
+    }
+#endif
+
     std::vector<Dest> dests;
     for(uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++) {
         if(setupCtx.starkInfo.cmPolsMap[i].imPol && setupCtx.starkInfo.cmPolsMap[i].stage == step) {
@@ -982,7 +1018,7 @@ void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU* expressionsC
             expressionsCtx->calculateExpressions_gpu(d_params, destStruct, domainSize, false, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
         }
     }
-        
+
 }
 
 void calculateExpressionQ(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, StepsParams *d_params, Goldilocks::Element* dest_gpu, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU& timer, cudaStream_t stream){
