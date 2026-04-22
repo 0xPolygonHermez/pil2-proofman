@@ -14,10 +14,10 @@
 //   * merkletree now takes an `arity` parameter (mirrors Poseidon2's shape).
 //   * Scalar batch paths and single-sponge AVX512 are intentionally omitted
 //     (Poseidon2 doesn't expose them either — keeping the public API aligned).
-//   * Batch AVX / batch AVX512 variants in Poseidon v1 didn't exist in 0.14.0.
-//     They're provided here as per-lane loops over the single-sponge routine,
-//     which keeps results byte-exact with the committed goldens while
-//     matching the Poseidon2 batch API contract.
+//   * AvxBatch is a true 4-sponge AVX2 permutation (12 __m256i state regs,
+//     one state element × 4 sponges per register). Avx512Batch is a true
+//     8-sponge AVX512 permutation (12 __m512i regs). Both mirror Poseidon2's
+//     batched layout and produce byte-exact output vs the scalar golden.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -457,23 +457,157 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_avx(
     }
 }
 
-// --- AVX2 4-lane batch -----------------------------------------------------
+// --- AVX2 4-sponge batch ---------------------------------------------------
 //
-// Poseidon v1 in 0.14.0 didn't ship a batched AVX2 permute. To match the
-// Poseidon2 batch API contract without introducing new algebra, each batch
-// permutation is implemented as 4 independent single-sponge permute_avx calls.
-// The result is bit-identical to the (already vectorized) single-sponge path
-// and drops straight into the same merkletree_batch loop shape Poseidon2 uses.
+// True 4-sponge parallel permutation: each of the 12 __m256i registers holds
+// one state element across 4 sponges (strided layout). Algorithm is a direct
+// SIMD lift of scalar permute_seq — full-round matmul uses M12[j][i] indexing
+// (== scalar mvp_), transition uses P12, partial round applies the S-matrix
+// rank-1 update. Byte-exact with scalar across all 4 sponges.
+
+namespace {
+#ifdef __AVX2__
+inline void element_pow7_avx(__m256i &x) {
+    __m256i x2, x3, x4;
+    Goldilocks::square_avx(x2, x);
+    Goldilocks::mult_avx(x3, x, x2);
+    Goldilocks::square_avx(x4, x2);
+    Goldilocks::mult_avx(x, x3, x4);
+}
+#endif
+#ifdef __AVX512__
+inline void element_pow7_avx512(__m512i &x) {
+    __m512i x2, x3, x4;
+    Goldilocks::square_avx512(x2, x);
+    Goldilocks::mult_avx512(x3, x, x2);
+    Goldilocks::square_avx512(x4, x2);
+    Goldilocks::mult_avx512(x, x3, x4);
+}
+#endif
+} // namespace
 
 template<uint32_t SPONGE_WIDTH_T>
 void PoseidonGoldilocks<SPONGE_WIDTH_T>::permute_batch_avx(
     Goldilocks::Element *state, const Goldilocks::Element *input)
 {
-    for (uint32_t lane = 0; lane < 4; ++lane)
-    {
-        Goldilocks::Element (&s)[SPONGE_WIDTH] = (Goldilocks::Element(&)[SPONGE_WIDTH])state[lane * SPONGE_WIDTH];
-        const Goldilocks::Element (&in)[SPONGE_WIDTH] = (const Goldilocks::Element(&)[SPONGE_WIDTH])input[lane * SPONGE_WIDTH];
-        permute_avx(s, in);
+    std::memcpy(state, input, 4 * SPONGE_WIDTH * sizeof(Goldilocks::Element));
+
+    __m256i st[SPONGE_WIDTH];
+    for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
+        Goldilocks::load_avx(st[i], &state[i], SPONGE_WIDTH);
+    }
+
+    // Initial constant add.
+    for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
+        __m256i c_bc = _mm256_set1_epi64x(PoseidonGoldilocksConstants::C12[i].fe);
+        Goldilocks::add_avx(st[i], st[i], c_bc);
+    }
+
+    auto matmul_M = [&]() {
+        // M12 entries fit in 8 bits → use 72-bit multiplier and accumulate
+        // products pre-reduction (12× fewer reductions vs per-mult reduce).
+        __m256i new_st[SPONGE_WIDTH];
+        for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
+            __m256i acc_h, acc_l;
+            __m256i m_bc = _mm256_set1_epi64x(PoseidonGoldilocksConstants::M12[0][i].fe);
+            Goldilocks::mult_avx_72(acc_h, acc_l, st[0], m_bc);
+            for (uint32_t j = 1; j < SPONGE_WIDTH; ++j) {
+                m_bc = _mm256_set1_epi64x(PoseidonGoldilocksConstants::M12[j][i].fe);
+                __m256i t_h, t_l;
+                Goldilocks::mult_avx_72(t_h, t_l, st[j], m_bc);
+                Goldilocks::add_avx(acc_l, acc_l, t_l);
+                acc_h = _mm256_add_epi64(acc_h, t_h);
+            }
+            Goldilocks::reduce_avx_96_64(new_st[i], acc_h, acc_l);
+        }
+        for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) st[i] = new_st[i];
+    };
+    auto matmul_P = [&]() {
+        __m256i new_st[SPONGE_WIDTH];
+        for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
+            __m256i p_bc = _mm256_set1_epi64x(PoseidonGoldilocksConstants::P12[0][i].fe);
+            Goldilocks::mult_avx(new_st[i], st[0], p_bc);
+            for (uint32_t j = 1; j < SPONGE_WIDTH; ++j) {
+                p_bc = _mm256_set1_epi64x(PoseidonGoldilocksConstants::P12[j][i].fe);
+                __m256i term;
+                Goldilocks::mult_avx(term, st[j], p_bc);
+                Goldilocks::add_avx(new_st[i], new_st[i], term);
+            }
+        }
+        for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) st[i] = new_st[i];
+    };
+    auto pow7_all = [&]() {
+        for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) element_pow7_avx(st[i]);
+    };
+    auto add_C = [&](uint32_t base) {
+        for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
+            __m256i c_bc = _mm256_set1_epi64x(PoseidonGoldilocksConstants::C12[base + i].fe);
+            Goldilocks::add_avx(st[i], st[i], c_bc);
+        }
+    };
+
+    // First half of full rounds, minus the transition round.
+    for (uint32_t r = 0; r < HALF_N_FULL_ROUNDS - 1; ++r) {
+        pow7_all();
+        add_C((r + 1) * SPONGE_WIDTH);
+        matmul_M();
+    }
+
+    // Transition: pow7 + add(C) + matmul(P).
+    pow7_all();
+    add_C(HALF_N_FULL_ROUNDS * SPONGE_WIDTH);
+    matmul_P();
+
+    // Partial rounds.
+    for (uint32_t r = 0; r < N_PARTIAL_ROUNDS; ++r) {
+        // s0_bc = pow7(old st[0]) + C[partial_r]
+        __m256i s0_bc = st[0];
+        element_pow7_avx(s0_bc);
+        __m256i c_bc = _mm256_set1_epi64x(
+            PoseidonGoldilocksConstants::C12[(HALF_N_FULL_ROUNDS + 1) * SPONGE_WIDTH + r].fe);
+        Goldilocks::add_avx(s0_bc, s0_bc, c_bc);
+        st[0] = s0_bc;
+
+        // new_st0 = Σ_j S_col[j] * st[j]   (dot with column)
+        const Goldilocks::Element *S_col =
+            &PoseidonGoldilocksConstants::S12[(SPONGE_WIDTH * 2 - 1) * r];
+        __m256i new_st0;
+        __m256i col_bc = _mm256_set1_epi64x(S_col[0].fe);
+        Goldilocks::mult_avx(new_st0, st[0], col_bc);
+        for (uint32_t j = 1; j < SPONGE_WIDTH; ++j) {
+            col_bc = _mm256_set1_epi64x(S_col[j].fe);
+            __m256i term;
+            Goldilocks::mult_avx(term, st[j], col_bc);
+            Goldilocks::add_avx(new_st0, new_st0, term);
+        }
+
+        // Rank-1 update: st[i] += s0_bc * S_row_base[i]  for i=1..W-1.
+        const Goldilocks::Element *S_row_base =
+            &PoseidonGoldilocksConstants::S12[(SPONGE_WIDTH * 2 - 1) * r + SPONGE_WIDTH - 1];
+        for (uint32_t i = 1; i < SPONGE_WIDTH; ++i) {
+            __m256i row_bc = _mm256_set1_epi64x(S_row_base[i].fe);
+            __m256i term;
+            Goldilocks::mult_avx(term, s0_bc, row_bc);
+            Goldilocks::add_avx(st[i], st[i], term);
+        }
+
+        st[0] = new_st0;
+    }
+
+    // Second half of full rounds, minus the final one.
+    for (uint32_t r = 0; r < HALF_N_FULL_ROUNDS - 1; ++r) {
+        pow7_all();
+        add_C((HALF_N_FULL_ROUNDS + 1) * SPONGE_WIDTH + N_PARTIAL_ROUNDS + r * SPONGE_WIDTH);
+        matmul_M();
+    }
+
+    // Final: pow7 + matmul(M), no constant add.
+    pow7_all();
+    matmul_M();
+
+    // Strided store.
+    for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
+        Goldilocks::store_avx(&state[i], SPONGE_WIDTH, st[i]);
     }
 }
 
@@ -604,19 +738,122 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx(
 
 #ifdef __AVX512__
 
-// Poseidon v1 didn't ship a batched AVX512 permute in 0.14.0. As for AVX2
-// above, per-lane dispatch to the single-sponge (AVX2) permute keeps the
-// results byte-exact with 0.14.0 while honoring the 8-lane batch contract.
-
+// True 8-sponge AVX512 batch permute. 12 __m512i state registers, each
+// holding one state element across 8 sponges (strided layout, mirrors
+// Poseidon2's batched AVX512). Byte-exact with scalar on all 8 sponges.
 template<uint32_t SPONGE_WIDTH_T>
 void PoseidonGoldilocks<SPONGE_WIDTH_T>::permute_batch_avx512(
     Goldilocks::Element *state, const Goldilocks::Element *input)
 {
-    for (uint32_t lane = 0; lane < 8; ++lane)
-    {
-        Goldilocks::Element (&s)[SPONGE_WIDTH] = (Goldilocks::Element(&)[SPONGE_WIDTH])state[lane * SPONGE_WIDTH];
-        const Goldilocks::Element (&in)[SPONGE_WIDTH] = (const Goldilocks::Element(&)[SPONGE_WIDTH])input[lane * SPONGE_WIDTH];
-        permute_avx(s, in);
+    std::memcpy(state, input, 8 * SPONGE_WIDTH * sizeof(Goldilocks::Element));
+
+    __m512i st[SPONGE_WIDTH];
+    for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
+        Goldilocks::load_avx512(st[i], &state[i], SPONGE_WIDTH);
+    }
+
+    // Initial constant add.
+    for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
+        __m512i c_bc = _mm512_set1_epi64(PoseidonGoldilocksConstants::C12[i].fe);
+        Goldilocks::add_avx512(st[i], st[i], c_bc);
+    }
+
+    auto matmul_M = [&]() {
+        // M12 entries fit in 8 bits → use 72-bit multiplier and accumulate
+        // products pre-reduction (12× fewer reductions vs per-mult reduce).
+        __m512i new_st[SPONGE_WIDTH];
+        for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
+            __m512i acc_h, acc_l;
+            __m512i m_bc = _mm512_set1_epi64(PoseidonGoldilocksConstants::M12[0][i].fe);
+            Goldilocks::mult_avx512_72(acc_h, acc_l, st[0], m_bc);
+            for (uint32_t j = 1; j < SPONGE_WIDTH; ++j) {
+                m_bc = _mm512_set1_epi64(PoseidonGoldilocksConstants::M12[j][i].fe);
+                __m512i t_h, t_l;
+                Goldilocks::mult_avx512_72(t_h, t_l, st[j], m_bc);
+                Goldilocks::add_avx512(acc_l, acc_l, t_l);
+                acc_h = _mm512_add_epi64(acc_h, t_h);
+            }
+            Goldilocks::reduce_avx512_96_64(new_st[i], acc_h, acc_l);
+        }
+        for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) st[i] = new_st[i];
+    };
+    auto matmul_P = [&]() {
+        __m512i new_st[SPONGE_WIDTH];
+        for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
+            __m512i p_bc = _mm512_set1_epi64(PoseidonGoldilocksConstants::P12[0][i].fe);
+            Goldilocks::mult_avx512(new_st[i], st[0], p_bc);
+            for (uint32_t j = 1; j < SPONGE_WIDTH; ++j) {
+                p_bc = _mm512_set1_epi64(PoseidonGoldilocksConstants::P12[j][i].fe);
+                __m512i term;
+                Goldilocks::mult_avx512(term, st[j], p_bc);
+                Goldilocks::add_avx512(new_st[i], new_st[i], term);
+            }
+        }
+        for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) st[i] = new_st[i];
+    };
+    auto pow7_all = [&]() {
+        for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) element_pow7_avx512(st[i]);
+    };
+    auto add_C = [&](uint32_t base) {
+        for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
+            __m512i c_bc = _mm512_set1_epi64(PoseidonGoldilocksConstants::C12[base + i].fe);
+            Goldilocks::add_avx512(st[i], st[i], c_bc);
+        }
+    };
+
+    for (uint32_t r = 0; r < HALF_N_FULL_ROUNDS - 1; ++r) {
+        pow7_all();
+        add_C((r + 1) * SPONGE_WIDTH);
+        matmul_M();
+    }
+
+    pow7_all();
+    add_C(HALF_N_FULL_ROUNDS * SPONGE_WIDTH);
+    matmul_P();
+
+    for (uint32_t r = 0; r < N_PARTIAL_ROUNDS; ++r) {
+        __m512i s0_bc = st[0];
+        element_pow7_avx512(s0_bc);
+        __m512i c_bc = _mm512_set1_epi64(
+            PoseidonGoldilocksConstants::C12[(HALF_N_FULL_ROUNDS + 1) * SPONGE_WIDTH + r].fe);
+        Goldilocks::add_avx512(s0_bc, s0_bc, c_bc);
+        st[0] = s0_bc;
+
+        const Goldilocks::Element *S_col =
+            &PoseidonGoldilocksConstants::S12[(SPONGE_WIDTH * 2 - 1) * r];
+        __m512i new_st0;
+        __m512i col_bc = _mm512_set1_epi64(S_col[0].fe);
+        Goldilocks::mult_avx512(new_st0, st[0], col_bc);
+        for (uint32_t j = 1; j < SPONGE_WIDTH; ++j) {
+            col_bc = _mm512_set1_epi64(S_col[j].fe);
+            __m512i term;
+            Goldilocks::mult_avx512(term, st[j], col_bc);
+            Goldilocks::add_avx512(new_st0, new_st0, term);
+        }
+
+        const Goldilocks::Element *S_row_base =
+            &PoseidonGoldilocksConstants::S12[(SPONGE_WIDTH * 2 - 1) * r + SPONGE_WIDTH - 1];
+        for (uint32_t i = 1; i < SPONGE_WIDTH; ++i) {
+            __m512i row_bc = _mm512_set1_epi64(S_row_base[i].fe);
+            __m512i term;
+            Goldilocks::mult_avx512(term, s0_bc, row_bc);
+            Goldilocks::add_avx512(st[i], st[i], term);
+        }
+
+        st[0] = new_st0;
+    }
+
+    for (uint32_t r = 0; r < HALF_N_FULL_ROUNDS - 1; ++r) {
+        pow7_all();
+        add_C((HALF_N_FULL_ROUNDS + 1) * SPONGE_WIDTH + N_PARTIAL_ROUNDS + r * SPONGE_WIDTH);
+        matmul_M();
+    }
+
+    pow7_all();
+    matmul_M();
+
+    for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
+        Goldilocks::store_avx512(&state[i], SPONGE_WIDTH, st[i]);
     }
 }
 
