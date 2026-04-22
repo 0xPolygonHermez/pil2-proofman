@@ -23,6 +23,22 @@ jobs:
 
       - name: cargo test
         run: cargo test --workspace
+  goldilocks-cpp-tests-macos:
+    # Apple Silicon build + test of the goldilocks C++ suite.
+    name: goldilocks C++ tests (macOS arm64)
+    runs-on: macos-14
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Homebrew dependencies
+        run: brew install libomp gmp libsodium googletest
+      - name: Build testscpu
+        working-directory: pil2-stark/src/goldilocks
+        run: make testscpu
+      - name: Run testscpu
+        working-directory: pil2-stark/src/goldilocks
+        run: ./testscpu
   cargo-check:
     name: cargo check
     runs-on: ubuntu-latest

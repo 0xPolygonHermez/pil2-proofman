@@ -989,6 +989,12 @@ impl<F: PrimeField64> ProofCtx<F> {
                 }
                 max_number_proofs_per_gpu
             }
+            // Metal: run basic proofs across up to 2 concurrent
+            // streams. Recursive proofs are serialised on the C++
+            // side (see gen_proof.hpp, PIL2_HAS_METAL block).
+            #[cfg(feature = "metal")]
+            false => gpu_params.max_number_streams.min(2).max(1),
+            #[cfg(not(feature = "metal"))]
             false => 1,
         };
 

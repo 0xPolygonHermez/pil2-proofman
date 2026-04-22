@@ -181,12 +181,45 @@ public:
             }
         }
 
+#if PIL2_HAS_METAL
+        // Metal-only: .find() on the shared starkInfo maps — operator[]
+        // is non-const (can insert-on-miss), which under the Metal
+        // multi-stream recursive prover races same-air ctx inits.
+        // Default / CUDA builds stay on operator[], byte-identical.
+        auto readOff = [&](const std::pair<std::string, bool>& k) -> uint64_t {
+            auto it = setupCtx.starkInfo.mapOffsets.find(k);
+            return (it != setupCtx.starkInfo.mapOffsets.end()) ? it->second : 0;
+        };
+        auto readSec = [&](const std::string& k) -> uint64_t {
+            auto it = setupCtx.starkInfo.mapSectionsN.find(k);
+            return (it != setupCtx.starkInfo.mapSectionsN.end()) ? it->second : 0;
+        };
+        mapOffsets[0] = readOff({"const", false});
+        mapOffsetsExtended[0] = readOff({"const", true});
+        mapSectionsN[0] = readSec("const");
+
+        mapOffsetFriPol = readOff({"f", true});
+
+        for(uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; ++i) {
+            const std::string section = "cm" + std::to_string(i + 1);
+            mapSectionsN[i + 1] = readSec(section);
+            mapOffsets[i + 1] = readOff({section, false});
+            mapOffsetsExtended[i + 1] = readOff({section, true});
+        }
+
+        for(uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); ++i) {
+            const std::string name0 = setupCtx.starkInfo.customCommits[i].name + "0";
+            mapSectionsNCustomFixed[i] = readSec(name0);
+            mapOffsetsCustomFixed[i] = readOff({name0, false});
+            mapOffsetsCustomFixedExtended[i] = readOff({name0, true});
+        }
+#else
         mapOffsets[0] = setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)];
         mapOffsetsExtended[0] = setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)];
         mapSectionsN[0] = setupCtx.starkInfo.mapSectionsN["const"];
 
         mapOffsetFriPol = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
-        
+
         for(uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; ++i) {
             mapSectionsN[i + 1] = setupCtx.starkInfo.mapSectionsN["cm" + std::to_string(i + 1)];
             mapOffsets[i + 1] = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + std::to_string(i + 1), false)];
@@ -198,6 +231,7 @@ public:
             mapOffsetsCustomFixed[i] = setupCtx.starkInfo.mapOffsets[std::make_pair(setupCtx.starkInfo.customCommits[i].name + "0", false)];
             mapOffsetsCustomFixedExtended[i] = setupCtx.starkInfo.mapOffsets[std::make_pair(setupCtx.starkInfo.customCommits[i].name + "0", true)];
         }
+#endif
 
         bufferCommitsSize = 1 + setupCtx.starkInfo.nStages + 3 + setupCtx.starkInfo.customCommits.size();
         nStages = setupCtx.starkInfo.nStages;
@@ -222,6 +256,35 @@ public:
     void calculateExpression(StepsParams& params, Goldilocks::Element* dest, uint64_t expressionId, bool inverse = false, bool compilation_time = false) {
         uint64_t domainSize;
         bool domainExtended;
+#if PIL2_HAS_METAL
+        // Metal-only: compute destDim locally instead of writing back
+        // into the shared expressionsInfo map. Two concurrent
+        // gen_proof calls under the multi-stream Metal prover race on
+        // the std::map rebalance even for same-value writes, which
+        // aggregation's recursion verify catches as a Merkle-hash
+        // mismatch.
+        uint64_t destDim;
+        auto lookup_destDim = [&]() -> uint64_t {
+            const auto& m = setupCtx.expressionsBin.expressionsInfo;
+            auto it = m.find(expressionId);
+            return (it != m.end()) ? it->second.destDim : 0;
+        };
+        if (compilation_time) {
+            domainSize = 1;
+            domainExtended = false;
+            destDim = lookup_destDim();
+        } else if(expressionId == setupCtx.starkInfo.cExpId || expressionId == setupCtx.starkInfo.friExpId) {
+            domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+            domainExtended = true;
+            destDim = 3;
+        } else {
+            domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
+            domainExtended = false;
+            destDim = lookup_destDim();
+        }
+        Dest destStruct(dest, domainSize, 0, expressionId);
+        destStruct.addParams(expressionId, destDim, inverse);
+#else
         if (compilation_time) {
             domainSize = 1;
             domainExtended = false;
@@ -235,6 +298,7 @@ public:
         }
         Dest destStruct(dest, domainSize, 0, expressionId);
         destStruct.addParams(expressionId, setupCtx.expressionsBin.expressionsInfo[expressionId].destDim, inverse);
+#endif
         calculateExpressions(params, destStruct, domainSize, domainExtended, compilation_time);
     }
 

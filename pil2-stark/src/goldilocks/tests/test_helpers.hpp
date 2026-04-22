@@ -2,9 +2,13 @@
 #define TEST_HELPERS_HPP
 
 #include <gtest/gtest.h>
-#include <iostream>
-#include <vector>
+#include <cstdint>
 #include <cstring>
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <type_traits>
+#include <vector>
 
 #include "../src/goldilocks_base_field.hpp"
 #include "../src/poseidon2_goldilocks.hpp"
@@ -63,5 +67,64 @@ constexpr uint64_t MERKLETREE_REDUCE_W12_AR3_GOLDEN[4] = { 0x22bef4680f2270e2, 0
                                                             0x5ae1a12c645b38db, 0x6e2acfa658c210e3 };
 
 } // namespace GoldilocksTestData
+
+// ---------------------------------------------------------------------------
+// Fixture binary format
+// ---------------------------------------------------------------------------
+//
+// Fixtures live under `tests/fixtures/` and are stored as raw little-endian
+// arrays of fixed-width unsigned integers — no header, no length prefix, no
+// endianness marker. Element count is inferred from the file size:
+//
+//     count = file_size / sizeof(T)
+//
+// Element type is communicated by the test's choice of `T`. If `file_size`
+// is not an exact multiple of `sizeof(T)`, `load_fixture<T>()` reports
+// `ADD_FAILURE()` (the test is marked failed) and returns an empty vector.
+//
+// Apple Silicon (arm64) and x86_64 are both little-endian, so values are
+// loaded via direct `memcpy`/`read` with no byte-swap. Big-endian hosts are
+// unsupported.
+//
+// Example:
+//
+//     auto golden = load_fixture<uint64_t>("tests/fixtures/permute_w8.bin");
+//     ASSERT_EQ(golden.size(), 8u);
+//
+// ---------------------------------------------------------------------------
+template <typename T>
+inline std::vector<T> load_fixture(const std::string& path) {
+    static_assert(std::is_trivially_copyable<T>::value,
+                  "load_fixture<T>: T must be trivially copyable");
+
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f.is_open()) {
+        ADD_FAILURE() << "load_fixture: cannot open '" << path << "'";
+        return {};
+    }
+    const std::streamsize bytes = f.tellg();
+    if (bytes < 0) {
+        ADD_FAILURE() << "load_fixture: failed to size '" << path << "'";
+        return {};
+    }
+    if (static_cast<size_t>(bytes) % sizeof(T) != 0) {
+        ADD_FAILURE() << "load_fixture: '" << path << "' size " << bytes
+                      << " is not a multiple of sizeof(T)=" << sizeof(T);
+        return {};
+    }
+
+    const size_t count = static_cast<size_t>(bytes) / sizeof(T);
+    std::vector<T> out(count);
+    if (count == 0) {
+        return out;
+    }
+    f.seekg(0, std::ios::beg);
+    if (!f.read(reinterpret_cast<char*>(out.data()),
+                static_cast<std::streamsize>(count * sizeof(T)))) {
+        ADD_FAILURE() << "load_fixture: short read from '" << path << "'";
+        return {};
+    }
+    return out;
+}
 
 #endif // TEST_HELPERS_HPP

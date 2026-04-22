@@ -1,4 +1,8 @@
 #include "ntt_goldilocks.hpp"
+#include "platform.hpp"
+#if PIL2_HAS_NEON
+#include "ntt_goldilocks_neon.hpp"
+#endif
 
 //Explicar extend parameter
 //Explicar inverse parameter
@@ -6,11 +10,20 @@
 
 static inline uint64_t BR(uint64_t x, uint64_t domainPow)
 {
+#if defined(__aarch64__)
+    // aarch64 has a single-instruction bit reversal (RBIT). clang's
+    // __builtin_bitreverse32 lowers to `rbit w_reg, w_reg` (1-2 cycles)
+    // — replaces the 10+ ops of the portable shift-mask sequence below.
+    // Bit-identical semantics: reverse low 32 bits, then shift down to
+    // keep the top `domainPow` bits of the reversed value.
+    return (uint64_t)(__builtin_bitreverse32((uint32_t)x)) >> (32 - domainPow);
+#else
     x = (x >> 16) | (x << 16);                              //swaps 32bit halves of x
     x = ((x & 0xFF00FF00) >> 8) | ((x & 0x00FF00FF) << 8);  //swaps 16bit halves of 32bit halves
     x = ((x & 0xF0F0F0F0) >> 4) | ((x & 0x0F0F0F0F) << 4);  //swaps 8bit halves of 16bit halves
     x = ((x & 0xCCCCCCCC) >> 2) | ((x & 0x33333333) << 2);  //swaps 4bit halves of 8bit halves
     return (((x & 0xAAAAAAAA) >> 1) | ((x & 0x55555555) << 1)) >> (32 - domainPow); //swaps 2bit halves of 4bit halves
+#endif
 }
 
 /**
@@ -135,6 +148,9 @@ void NTT_Goldilocks::NTT_iters(Goldilocks::Element *dst, Goldilocks::Element *sr
                     j = j % mdiv2;
 
                     Goldilocks::Element w = root(s + si, j);
+#if PIL2_HAS_NEON
+                    ntt_neon_butterfly(a, offset1, offset2, w, ncols);
+#else
                     for (uint64_t k = 0; k < ncols; ++k)
                     {
                         Goldilocks::Element t = w * a[offset1 + k];
@@ -143,6 +159,7 @@ void NTT_Goldilocks::NTT_iters(Goldilocks::Element *dst, Goldilocks::Element *sr
                         Goldilocks::add(a[offset2 + k], t, u);
                         Goldilocks::sub(a[offset1 + k], u, t);
                     }
+#endif
                 }
             }
             if (s + maxBatchPow <= domainPow || !inverse)
@@ -165,13 +182,17 @@ void NTT_Goldilocks::NTT_iters(Goldilocks::Element *dst, Goldilocks::Element *sr
                         uint64_t dsty = intt_idx((x * nBatches + b), nrows);
                         uint64_t offset_a2 = dsty * strideA2 + offsetA2;
                         uint64_t offset_a = (b * batchSize + x) * strideA + offsetA;
+#if PIL2_HAS_NEON
+                        ntt_neon_scale(a2, offset_a2, a, offset_a, r_[dsty], ncols);
+#else
                         for (uint64_t k = 0; k < ncols; k++)
                         {
                             Goldilocks::mul(a2[offset_a2 + k], a[offset_a + k], r_[dsty]);
                         }
+#endif
                     }
                 }
-                else 
+                else
                 {
                     //case: last phase and inverse
                     assert(inverse);
@@ -180,10 +201,14 @@ void NTT_Goldilocks::NTT_iters(Goldilocks::Element *dst, Goldilocks::Element *sr
                         uint64_t dsty = intt_idx((x * nBatches + b), nrows);
                         uint64_t offset_a2 = dsty * strideA2 + offsetA2;
                         uint64_t offset_a = (b * batchSize + x) * strideA + offsetA;
+#if PIL2_HAS_NEON
+                        ntt_neon_scale(a2, offset_a2, a, offset_a, powTwoInv[domainPow], ncols);
+#else
                         for (uint64_t k = 0; k < ncols; k++)
                         {
                             Goldilocks::mul(a2[offset_a2 + k], a[offset_a + k], powTwoInv[domainPow]);
                         }
+#endif
                     }
                 }
             }

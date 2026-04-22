@@ -1,5 +1,6 @@
 #include "test_helpers.hpp"
 #include "../src/goldilocks_cubic_extension.hpp"
+#include "../src/goldilocks_cubic_extension_pack.hpp"
 
 TEST(GOLDILOCKS_CUBIC_TEST, one)
 {
@@ -53,3 +54,41 @@ TEST(GOLDILOCKS_CUBIC_TEST, one)
     ASSERT_EQ(inc1_res[2], a[2]);
 }
 
+TEST(GOLDILOCKS_CUBIC_TEST, mul_pack_const_variants_match_row_mul)
+{
+    constexpr uint64_t nrows = 17;
+    std::vector<Goldilocks::Element> a(3 * nrows);
+    std::vector<Goldilocks::Element> b(3 * nrows);
+    std::vector<Goldilocks::Element> c(3 * nrows);
+
+    for (uint64_t i = 0; i < 3 * nrows; ++i) {
+        a[i].fe = (i + 1) * 17;
+        b[i].fe = (i + 3) * 29;
+    }
+
+    auto check = [&](bool const_a, bool const_b) {
+        Goldilocks3::op_pack(nrows, 2, c.data(), a.data(), const_a, b.data(), const_b);
+        for (uint64_t i = 0; i < nrows; ++i) {
+            Goldilocks3::Element ai = {
+                const_a ? a[0] : a[i],
+                const_a ? a[1] : a[nrows + i],
+                const_a ? a[2] : a[2 * nrows + i],
+            };
+            Goldilocks3::Element bi = {
+                const_b ? b[0] : b[i],
+                const_b ? b[1] : b[nrows + i],
+                const_b ? b[2] : b[2 * nrows + i],
+            };
+            Goldilocks3::Element expected;
+            Goldilocks3::mul(expected, ai, bi);
+
+            EXPECT_EQ(c[i].fe, expected[0].fe) << "const_a=" << const_a << " const_b=" << const_b << " row=" << i << " limb=0";
+            EXPECT_EQ(c[nrows + i].fe, expected[1].fe) << "const_a=" << const_a << " const_b=" << const_b << " row=" << i << " limb=1";
+            EXPECT_EQ(c[2 * nrows + i].fe, expected[2].fe) << "const_a=" << const_a << " const_b=" << const_b << " row=" << i << " limb=2";
+        }
+    };
+
+    check(true, false);
+    check(false, true);
+    check(true, true);
+}

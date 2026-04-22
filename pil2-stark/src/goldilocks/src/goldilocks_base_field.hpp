@@ -1,13 +1,14 @@
 #ifndef GOLDILOCKS_BASE
 #define GOLDILOCKS_BASE
 
+#include "platform.hpp"
 #include <stdint.h> // uint64_t
 #include <string>   // string
 #include <gmpxx.h>
 #include <iostream> // string
 #include <omp.h>
 
-#ifdef __AVX2__ 
+#if PIL2_HAS_AVX2
 #include <immintrin.h>
 #endif
 #include <cassert>
@@ -159,7 +160,7 @@ public:
     /*
         AVX operations
     */
-#ifdef __AVX2__
+#if PIL2_HAS_AVX2
     static void set_avx(__m256i &a, const Goldilocks::Element &a3, const Goldilocks::Element &a2, const Goldilocks::Element &a1, const Goldilocks::Element &a0);
 
     static void load_avx(__m256i &a_, const Goldilocks::Element *a4);
@@ -214,7 +215,7 @@ public:
     /*
         AVX512 operations
     */
-#ifdef __AVX512__ 
+#if PIL2_HAS_AVX512 
 
     static void load_avx512(__m512i &a_, const Goldilocks::Element *a8);
     static void load_avx512(__m512i &a, const Goldilocks::Element *a8_a, uint64_t stride);
@@ -284,7 +285,7 @@ inline Goldilocks::Element operator+(const Goldilocks::Element &in1) { return in
 #include "goldilocks_base_field_scalar.hpp"
 #include "goldilocks_base_field_avx.hpp"
 #include "goldilocks_base_field_pack.hpp"
-#ifdef __AVX512__
+#if PIL2_HAS_AVX512
 #include "goldilocks_base_field_avx512.hpp"
 #endif
 

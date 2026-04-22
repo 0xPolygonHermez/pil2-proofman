@@ -1,6 +1,10 @@
 #ifndef EXPRESSIONS_PACK_HPP
 #define EXPRESSIONS_PACK_HPP
 #include "expressions_ctx.hpp"
+#include "../goldilocks/src/platform.hpp"
+#if PIL2_HAS_METAL
+#include "metal_expr_vm_bridge.hpp"
+#endif
 
 #define DEBUG 0
 #define DEBUG_ROW 0
@@ -310,6 +314,29 @@ public:
 
 
     void calculateExpressions(StepsParams& params, Dest &dest, uint64_t domainSize, bool domainExtended, bool compilation_time, bool verify_constraints = false, bool debug = false) override {
+#if PIL2_HAS_METAL
+        namespace evm_bridge = pil2::metal::expr_vm_bridge;
+        std::vector<uint64_t> metal_scratch;
+        bool metal_verify_active = false;
+        if (evm_bridge::metal_expr_vm_mode() == evm_bridge::Mode::Run) {
+            if (evm_bridge::try_run_expression_metal(
+                    setupCtx, *this, params, dest,
+                    domainSize, domainExtended,
+                    compilation_time, verify_constraints)) {
+                return;
+            }
+        } else if (evm_bridge::metal_expr_vm_mode() == evm_bridge::Mode::Verify) {
+            // Metal → scratch. CPU below → dest.dest. Diff at end.
+            metal_scratch.assign(dest.dim * domainSize, 0ULL);
+            if (evm_bridge::try_run_expression_metal(
+                    setupCtx, *this, params, dest,
+                    domainSize, domainExtended,
+                    compilation_time, verify_constraints,
+                    metal_scratch.data())) {
+                metal_verify_active = true;
+            }
+        }
+#endif
         uint64_t nrowsPack = std::min(nrowsPack_, domainSize);
 
         uint64_t *mapOffsetsExps = domainExtended ? mapOffsetsExtended : mapOffsets;
@@ -334,9 +361,22 @@ public:
 
         for (uint64_t k = 0; k < dest.params.size(); ++k) {
             if(dest.params[k].op != opType::tmp) continue;
-            parserParams[k] = verify_constraints 
-                ? setupCtx.expressionsBin.constraintsInfoDebug[dest.params[k].expId]
-                : setupCtx.expressionsBin.expressionsInfo[dest.params[k].expId];
+            if (verify_constraints) {
+                parserParams[k] = setupCtx.expressionsBin.constraintsInfoDebug[dest.params[k].expId];
+            } else {
+#if PIL2_HAS_METAL
+                // Metal-only: .find() on the shared expressionsInfo map
+                // — operator[] is non-const and inserts on miss, which
+                // races under the multi-stream Metal recursive prover.
+                // Default / CUDA builds stay on operator[], upstream-
+                // byte-identical.
+                const auto& m = setupCtx.expressionsBin.expressionsInfo;
+                auto it = m.find(dest.params[k].expId);
+                parserParams[k] = (it != m.end()) ? it->second : ParserParams{};
+#else
+                parserParams[k] = setupCtx.expressionsBin.expressionsInfo[dest.params[k].expId];
+#endif
+            }
             if (parserParams[k].nTemp1*nrowsPack > maxTemp1Size) {
                 maxTemp1Size = parserParams[k].nTemp1*nrowsPack;
             }
@@ -507,6 +547,46 @@ public:
         //     cout << "result[" << k << "] = " << dest.dest[k].fe << endl;
         // }
         // cout << "----------------------------------------" << endl;
+#if PIL2_HAS_METAL
+        if (metal_verify_active) {
+            const uint64_t* cpu_out  = reinterpret_cast<const uint64_t*>(dest.dest);
+            const uint64_t* metal_out = metal_scratch.data();
+            const uint64_t write_stride = dest.offset != 0 ? dest.offset : dest.dim;
+            size_t mismatches = 0;
+            size_t first_row = SIZE_MAX, first_c = 0;
+            uint64_t first_cpu = 0, first_metal = 0;
+            for (size_t row = 0; row < domainSize; ++row) {
+                for (uint64_t c = 0; c < dest.dim; ++c) {
+                    uint64_t cpu_v   = cpu_out[row * write_stride + c];
+                    uint64_t metal_v = metal_out[row * dest.dim + c];
+                    if (cpu_v != metal_v) {
+                        if (mismatches == 0) {
+                            first_row = row; first_c = c;
+                            first_cpu = cpu_v; first_metal = metal_v;
+                        }
+                        ++mismatches;
+                    }
+                }
+            }
+            const long long expId_ll = dest.params.empty() ? -1 : (long long)dest.params[0].expId;
+            if (mismatches > 0) {
+                std::fprintf(stderr,
+                    "METAL VM VERIFY expId=%lld domainSize=%zu domainExt=%d dim=%lu: %zu/%zu mismatches. First at row=%zu c=%lu cpu=0x%llx metal=0x%llx\n",
+                    expId_ll, (size_t)domainSize, domainExtended ? 1 : 0,
+                    (unsigned long)dest.dim, mismatches,
+                    (size_t)(dest.dim * domainSize),
+                    first_row, (unsigned long)first_c,
+                    (unsigned long long)first_cpu,
+                    (unsigned long long)first_metal);
+            } else {
+                std::fprintf(stderr,
+                    "METAL VM VERIFY expId=%lld domainSize=%zu domainExt=%d dim=%lu: OK (%zu entries match)\n",
+                    expId_ll, (size_t)domainSize, domainExtended ? 1 : 0,
+                    (unsigned long)dest.dim,
+                    (size_t)(dest.dim * domainSize));
+            }
+        }
+#endif
     }
 };
 

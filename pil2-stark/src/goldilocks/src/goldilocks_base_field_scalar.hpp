@@ -228,7 +228,6 @@ inline void Goldilocks::add_no_double_carry(uint64_t &result, const uint64_t &in
 
 inline void Goldilocks::mul(Element &result, const Element &in1, const Element &in2){
 
-   
     uint64_t rh;
     uint64_t rl;    
    
