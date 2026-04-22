@@ -67,11 +67,7 @@ pub fn get_expressions_chunks(code: &[Value]) -> ChunkedCode {
 
     for (i, inst) in code.iter().enumerate() {
         let dest = &inst["dest"];
-        assert_eq!(
-            dest["type"].as_str(),
-            Some("tmp"),
-            "instruction {i}: dest.type must be 'tmp'"
-        );
+        assert_eq!(dest["type"].as_str(), Some("tmp"), "instruction {i}: dest.type must be 'tmp'");
         let dim = dest["dim"].as_u64().expect("dest.dim must be integer");
         assert!(dim == 1 || dim == 3, "instruction {i}: dest.dim must be 1 or 3, got {dim}");
         let dest_id = dest["id"].as_u64().expect("dest.id must be integer");
@@ -141,11 +137,7 @@ pub fn get_expressions_chunks(code: &[Value]) -> ChunkedCode {
             sorted_inputs.sort_unstable();
             sorted_outputs.sort_unstable();
 
-            chunks.push(Chunk {
-                code: current_chunk,
-                inputs: sorted_inputs,
-                outputs: sorted_outputs,
-            });
+            chunks.push(Chunk { code: current_chunk, inputs: sorted_inputs, outputs: sorted_outputs });
 
             current_chunk = Vec::new();
 
@@ -164,11 +156,7 @@ pub fn get_expressions_chunks(code: &[Value]) -> ChunkedCode {
         sorted_inputs.sort_unstable();
         sorted_outputs.sort_unstable();
 
-        chunks.push(Chunk {
-            code: current_chunk,
-            inputs: sorted_inputs,
-            outputs: sorted_outputs,
-        });
+        chunks.push(Chunk { code: current_chunk, inputs: sorted_inputs, outputs: sorted_outputs });
     }
 
     ChunkedCode { chunks, tmps }
@@ -225,10 +213,7 @@ mod tests {
     fn tmp_consumed_within_chunk_not_in_outputs() {
         // tmp[0] = eval + eval;  tmp[1] = tmp[0] + tmp[0];
         // tmp[0] is last-used at instruction 1, so it should NOT be in outputs.
-        let code = vec![
-            add_evals(0),
-            add_tmps(1, 3, 0, 3, 0, 3),
-        ];
+        let code = vec![add_evals(0), add_tmps(1, 3, 0, 3, 0, 3)];
         let result = get_expressions_chunks(&code);
         assert_eq!(result.chunks.len(), 1);
         let c = &result.chunks[0];

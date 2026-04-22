@@ -23,96 +23,6 @@ use super::gl::Pil2CircomOptions;
 use super::transcript_bn128::TranscriptBn128;
 use super::unroll_code::{unroll_code_bn128, UnrollCtx};
 
-// ── Derived context ───────────────────────────────────────────────────────────
-
-/// All values derived from `starkInfo` that the BN128 template generators need.
-pub struct StarkVerifierBn128Ctx<'a> {
-    pub stark_info: &'a Value,
-    pub verifier_info: &'a Value,
-    pub stark_struct: &'a Value,
-    pub opts: &'a Pil2CircomOptions,
-    /// Embedded constant root (present when `!opts.verkey_input`).
-    pub const_root: Option<&'a [String; 4]>,
-
-    /// Merkle-tree arity for Merkle-proof signals (`starkStruct.merkleTreeArity`, default 16).
-    pub arity: usize,
-    /// `log2(arity)` — bits per Merkle branch level.
-    pub n_bits_arity: usize,
-    /// Arity used for the Poseidon hash: 16 unless `custom=true`, in which case = `arity`.
-    pub transcript_arity: usize,
-    /// Whether the circuit uses the `custom` Poseidon variant.
-    pub custom: bool,
-
-    /// `nStages + 1` — quotient-polynomial stage.
-    pub q_stage: u64,
-    /// `nStages + 2` — evals/xi challenge stage.
-    pub evals_stage: u64,
-    /// `nStages + 3` — FRI challenge stage.
-    pub fri_stage: u64,
-
-    /// `NFields = floor((nQueries * steps[0].nBits - 1) / 253) + 1`
-    /// — number of 253-bit Poseidon outputs consumed by `getPermutations`.
-    pub n_fields: usize,
-}
-
-impl<'a> StarkVerifierBn128Ctx<'a> {
-    pub fn new(
-        stark_info: &'a Value,
-        verifier_info: &'a Value,
-        opts: &'a Pil2CircomOptions,
-        const_root: Option<&'a [String; 4]>,
-    ) -> Result<Self> {
-        let stark_struct = &stark_info["starkStruct"];
-
-        let n_stages = stark_info["nStages"].as_u64().unwrap_or(0);
-        let q_stage = n_stages + 1;
-        let evals_stage = n_stages + 2;
-        let fri_stage = n_stages + 3;
-
-        let arity = stark_struct["merkleTreeArity"].as_u64().unwrap_or(16) as usize;
-        let custom = stark_struct["merkleTreeCustom"].as_bool().unwrap_or(false);
-        let transcript_arity = if custom { arity } else { 16 };
-        let n_bits_arity = arity.trailing_zeros() as usize; // log2 for power-of-2 arity
-
-        let n_queries = stark_struct["nQueries"].as_u64().unwrap_or(0) as usize;
-        let step0_bits = stark_struct["steps"]
-            .get(0)
-            .and_then(|s| s["nBits"].as_u64())
-            .unwrap_or(0) as usize;
-        let total_bits = n_queries * step0_bits;
-        let n_fields = if total_bits == 0 { 0 } else { (total_bits - 1) / 253 + 1 };
-
-        Ok(Self {
-            stark_info,
-            verifier_info,
-            stark_struct,
-            opts,
-            const_root,
-            arity,
-            n_bits_arity,
-            transcript_arity,
-            custom,
-            q_stage,
-            evals_stage,
-            fri_stage,
-            n_fields,
-        })
-    }
-
-    /// `floor((bits - 1) / log2(arity)) + 1` — Merkle-tree depth for a domain of
-    /// `2^bits` leaves with `arity`-way branching.
-    pub fn merkle_levels(&self, bits: u64) -> u64 {
-        (bits - 1) / self.n_bits_arity as u64 + 1
-    }
-
-    /// `1 << (step[s-1].nBits - step[s].nBits)` — fold factor between two FRI steps.
-    pub fn fri_fold_factor(&self, s: usize) -> u64 {
-        let prev = self.stark_struct["steps"][s - 1]["nBits"].as_u64().unwrap_or(0);
-        let curr = self.stark_struct["steps"][s]["nBits"].as_u64().unwrap_or(0);
-        1u64 << (prev - curr)
-    }
-}
-
 // ── Top-level entry-point ─────────────────────────────────────────────────────
 
 /// Embedded Tera template (BN128 stark verifier).
@@ -125,89 +35,13 @@ pub fn gen_stark_verifier_bn128(
     verifier_info: &Value,
     opts: &Pil2CircomOptions,
 ) -> Result<String> {
-    let hash_type = stark_info["starkStruct"]["verificationHashType"]
-        .as_str()
-        .unwrap_or("GL");
+    let hash_type = stark_info["starkStruct"]["verificationHashType"].as_str().unwrap_or("GL");
     if hash_type != "BN128" {
         bail!("gen_stark_verifier_bn128: expected BN128 hash type, got '{hash_type}'");
     }
 
     let ctx = build_tera_context_bn128(stark_info, verifier_info, opts, const_root)?;
-    Tera::one_off(TEMPLATE_BN128, &ctx, false)
-        .map_err(|e| anyhow::anyhow!("Tera render error (BN128): {e}"))
-}
-
-// ── Kept for direct tests ─────────────────────────────────────────────────────
-
-/// Circom pragma + include directives.
-fn gen_header(ctx: &StarkVerifierBn128Ctx<'_>) -> Result<String> {
-    let custom = ctx.custom;
-    let skip_main = ctx.opts.skip_main;
-
-    let includes = if custom {
-        let mut s = String::new();
-        s.push_str("include \"custom/evalpol.circom\";\n");
-        s.push_str("include \"custom/fft.circom\";\n");
-        s.push_str("include \"custom/gl.circom\";\n");
-        s.push_str("include \"custom/lessthangl.circom\";\n");
-        s.push_str("include \"custom/merklehash.circom\";\n");
-        s.push_str("include \"custom/poseidon.circom\";\n");
-        s
-    } else {
-        let mut s = String::new();
-        s.push_str("include \"evalpol.circom\";\n");
-        s.push_str("include \"fft.circom\";\n");
-        s.push_str("include \"gl.circom\";\n");
-        s.push_str("include \"lessthangl.circom\";\n");
-        s.push_str("include \"merklehash.circom\";\n");
-        s.push_str("include \"poseidon.circom\";\n");
-        s
-    };
-
-    let mut header = format!(
-        "pragma circom 2.1.0;\n{custom_pragma}\n{includes}include \"bitifyT.circom\";\ninclude \"bn1togl3.circom\";\ninclude \"treeselector.circom\";\ninclude \"pow.circom\";\n",
-        custom_pragma = if custom { "pragma custom_templates;" } else { "" },
-    );
-
-    if !skip_main {
-        header.push_str("include \"compconstant64.circom\";\n");
-        header.push_str("include \"bitify.circom\";\n");
-        header.push_str("include \"sha256/sha256.circom\";\n");
-    }
-
-    Ok(header)
-}
-
-/// The three inline GL helper templates (`GLConst`, `GLConst3`, `GLC3`).
-fn gen_gl_const_templates(_ctx: &StarkVerifierBn128Ctx<'_>) -> Result<String> {
-    Ok(r#"template GLConst(num) {
-    signal output {maxNum} out;
-
-    out.maxNum = num;
-    out <== num;
-}
-
-template GLConst3(num) {
-    signal output {maxNum} out[3];
-
-    out.maxNum = num;
-    out <== [num, 0, 0];
-}
-
-template GLC3() {
-    signal input {maxNum} in;
-    signal output {maxNum} out[3];
-
-    out.maxNum = in.maxNum;
-    out <== [in, 0, 0];
-}
-"#
-    .into())
-}
-
-/// `component main = Main();`
-fn gen_component_main() -> String {
-    "component main = Main();\n".into()
+    Tera::one_off(TEMPLATE_BN128, &ctx, false).map_err(|e| anyhow::anyhow!("Tera render error (BN128): {e}"))
 }
 
 // ── Tera context builder ──────────────────────────────────────────────────────
@@ -262,9 +96,7 @@ fn build_tera_context_bn128(
     let n_fields = if total_bits == 0 { 0 } else { (total_bits - 1) / 253 + 1 };
 
     // Merkle dimensions
-    let merkle_levels_s0 = if step0_bits == 0 { 0usize } else {
-        ((step0_bits - 1) / n_bits_arity) + 1
-    };
+    let merkle_levels_s0 = if step0_bits == 0 { 0usize } else { ((step0_bits - 1) / n_bits_arity) + 1 };
 
     // ── Boundary flags ─────────────────────────────────────────────────────
     let has_first_row = boundaries_json.iter().any(|b| b["name"].as_str() == Some("firstRow"));
@@ -276,10 +108,13 @@ fn build_tera_context_bn128(
             root = gl_mul(root, GL_W[n_bits]);
         }
         root.to_string()
-    } else { "0".to_string() };
+    } else {
+        "0".to_string()
+    };
 
     // ── everyFrame boundaries ───────────────────────────────────────────────
-    let every_frames: Vec<serde_json::Value> = boundaries_json.iter()
+    let every_frames: Vec<serde_json::Value> = boundaries_json
+        .iter()
         .filter(|b| b["name"].as_str() == Some("everyFrame"))
         .enumerate()
         .map(|(i, frame)| {
@@ -290,7 +125,9 @@ fn build_tera_context_bn128(
             let mut c = 0usize;
             for j in 0..offset_min {
                 let mut root: u64 = 1;
-                for _ in 0..j { root = gl_mul(root, GL_W[n_bits]); }
+                for _ in 0..j {
+                    root = gl_mul(root, GL_W[n_bits]);
+                }
                 ops.push(serde_json::json!({
                     "c": c, "is_first": c == 0, "root": root.to_string()
                 }));
@@ -298,7 +135,9 @@ fn build_tera_context_bn128(
             }
             let back_exp = (1u64 << n_bits).saturating_sub((i + 1) as u64);
             let mut back_root: u64 = 1;
-            for _ in 0..back_exp { back_root = gl_mul(back_root, GL_W[n_bits]); }
+            for _ in 0..back_exp {
+                back_root = gl_mul(back_root, GL_W[n_bits]);
+            }
             for _ in 0..offset_max {
                 ops.push(serde_json::json!({
                     "c": c, "is_first": c == 0, "root": back_root.to_string()
@@ -315,11 +154,12 @@ fn build_tera_context_bn128(
     // ── Per-stage challenge counts ──────────────────────────────────────────
     let challenges_per_stage: Vec<serde_json::Value> = (1..=n_stages)
         .filter_map(|stage| {
-            let cnt = challenges_map.iter()
-                .filter(|c| c["stage"].as_u64() == Some(stage as u64))
-                .count();
-            if cnt > 0 { Some(serde_json::json!({ "stage": stage, "count": cnt })) }
-            else { None }
+            let cnt = challenges_map.iter().filter(|c| c["stage"].as_u64() == Some(stage as u64)).count();
+            if cnt > 0 {
+                Some(serde_json::json!({ "stage": stage, "count": cnt }))
+            } else {
+                None
+            }
         })
         .collect();
 
@@ -338,41 +178,53 @@ fn build_tera_context_bn128(
     // ── cm_pols_by_stage (for MapValues) ───────────────────────────────────
     let cm_pols_by_stage: Vec<serde_json::Value> = (1..=q_stage)
         .map(|stage| {
-            let pols: Vec<serde_json::Value> = cm_pols_map.iter()
+            let pols: Vec<serde_json::Value> = cm_pols_map
+                .iter()
                 .filter(|p| p["stage"].as_u64() == Some(stage as u64))
-                .map(|p| serde_json::json!({
-                    "stage_id": p["stageId"].as_u64().unwrap_or(0),
-                    "dim": p["dim"].as_u64().unwrap_or(1),
-                    "stage_pos": p["stagePos"].as_u64().unwrap_or(0),
-                }))
+                .map(|p| {
+                    serde_json::json!({
+                        "stage_id": p["stageId"].as_u64().unwrap_or(0),
+                        "dim": p["dim"].as_u64().unwrap_or(1),
+                        "stage_pos": p["stagePos"].as_u64().unwrap_or(0),
+                    })
+                })
                 .collect();
             serde_json::json!({ "stage": stage, "pols": pols })
         })
         .collect();
 
     // ── custom_commits ──────────────────────────────────────────────────────
-    let custom_commits: Vec<serde_json::Value> = custom_commits_json.iter().enumerate()
+    let custom_commits: Vec<serde_json::Value> = custom_commits_json
+        .iter()
+        .enumerate()
         .map(|(t, cc)| {
             let name = cc["name"].as_str().unwrap_or("").to_string();
             let stage_widths_count = cc["stageWidths"].as_array().map_or(0, |a| a.len());
             let section_len_0 = sec_len(&format!("{name}0"));
-            let public_values: Vec<u64> = cc["publicValues"].as_array().map_or(vec![], |a| a.clone())
-                .iter().map(|pv| pv["idx"].as_u64().unwrap_or(0))
+            let public_values: Vec<u64> = cc["publicValues"]
+                .as_array()
+                .map_or(vec![], |a| a.clone())
+                .iter()
+                .map(|pv| pv["idx"].as_u64().unwrap_or(0))
                 .collect();
-            let commit_map_arr = custom_commits_map_json.get(t)
-                .and_then(|v| v.as_array())
-                .map_or(vec![], |a| a.clone());
-            let pols_per_stage: Vec<serde_json::Value> = (0..stage_widths_count).map(|l| {
-                let pols: Vec<serde_json::Value> = commit_map_arr.iter()
-                    .filter(|p| p["stage"].as_u64() == Some(l as u64))
-                    .map(|p| serde_json::json!({
-                        "stage_id": p["stageId"].as_u64().unwrap_or(0),
-                        "dim": p["dim"].as_u64().unwrap_or(1),
-                        "stage_pos": p["stagePos"].as_u64().unwrap_or(0),
-                    }))
-                    .collect();
-                serde_json::json!({ "stage_idx": l, "pols": pols })
-            }).collect();
+            let commit_map_arr =
+                custom_commits_map_json.get(t).and_then(|v| v.as_array()).map_or(vec![], |a| a.clone());
+            let pols_per_stage: Vec<serde_json::Value> = (0..stage_widths_count)
+                .map(|l| {
+                    let pols: Vec<serde_json::Value> = commit_map_arr
+                        .iter()
+                        .filter(|p| p["stage"].as_u64() == Some(l as u64))
+                        .map(|p| {
+                            serde_json::json!({
+                                "stage_id": p["stageId"].as_u64().unwrap_or(0),
+                                "dim": p["dim"].as_u64().unwrap_or(1),
+                                "stage_pos": p["stagePos"].as_u64().unwrap_or(0),
+                            })
+                        })
+                        .collect();
+                    serde_json::json!({ "stage_idx": l, "pols": pols })
+                })
+                .collect();
             serde_json::json!({
                 "name": name,
                 "section_len_0": section_len_0,
@@ -387,11 +239,8 @@ fn build_tera_context_bn128(
     let fri_steps_info: Vec<serde_json::Value> = (0..n_steps)
         .map(|s| {
             let n_bits_s = steps[s]["nBits"].as_u64().unwrap_or(0) as usize;
-            let prev_bits = if s == 0 { n_bits_s }
-                else { steps[s-1]["nBits"].as_u64().unwrap_or(0) as usize };
-            let next_bits = if s < n_steps - 1 {
-                steps[s+1]["nBits"].as_u64().unwrap_or(0) as usize
-            } else { 0 };
+            let prev_bits = if s == 0 { n_bits_s } else { steps[s - 1]["nBits"].as_u64().unwrap_or(0) as usize };
+            let next_bits = if s < n_steps - 1 { steps[s + 1]["nBits"].as_u64().unwrap_or(0) as usize } else { 0 };
             let exponent = if s == 0 { 1usize } else { 1 << (prev_bits - n_bits_s) };
             let ml = if n_bits_s == 0 { 0usize } else { ((n_bits_s - 1) / n_bits_arity) + 1 };
 
@@ -425,7 +274,9 @@ fn build_tera_context_bn128(
         .collect();
 
     // ── Opening points (VerifyQuery xDivXSubXi) ─────────────────────────────
-    let opening_points: Vec<serde_json::Value> = opening_points_json.iter().enumerate()
+    let opening_points: Vec<serde_json::Value> = opening_points_json
+        .iter()
+        .enumerate()
         .map(|(i, op)| {
             let opening = op.as_i64().unwrap_or(0);
             let abs_opening = opening.unsigned_abs() as usize;
@@ -452,36 +303,37 @@ fn build_tera_context_bn128(
     };
 
     // ── Eval P code (VerifyEvaluations inline) ──────────────────────────────
-    let q_verifier_code: Vec<Value> = vi["qVerifier"]["code"]
-        .as_array().map_or(vec![], |a| a.clone());
+    let q_verifier_code: Vec<Value> = vi["qVerifier"]["code"].as_array().map_or(vec![], |a| a.clone());
     let mut eval_p_lines: Vec<String> = Vec::new();
     let eval_p_last = unroll_code_bn128(&q_verifier_code, &[], &unroll_ctx, &mut eval_p_lines)?;
     let eval_p_code = eval_p_lines.join("\n");
 
     // ── Eval Q code (VerifyQuery inline) ────────────────────────────────────
-    let query_verifier_code: Vec<Value> = vi["queryVerifier"]["code"]
-        .as_array().map_or(vec![], |a| a.clone());
+    let query_verifier_code: Vec<Value> = vi["queryVerifier"]["code"].as_array().map_or(vec![], |a| a.clone());
     let mut eval_q_lines: Vec<String> = Vec::new();
     let eval_q_last = unroll_code_bn128(&query_verifier_code, &[], &unroll_ctx, &mut eval_q_lines)?;
     let eval_q_code = eval_q_lines.join("\n");
 
     // ── Q polynomial ev_id ──────────────────────────────────────────────────
     let ev_map: Vec<Value> = si["evMap"].as_array().map_or(vec![], |a| a.clone());
-    let q_index = cm_pols_map.iter().position(|p| {
-        p["stage"].as_u64() == Some(q_stage as u64) && p["stageId"].as_u64() == Some(0)
-    }).unwrap_or(0);
-    let q_pol_ev_id = ev_map.iter().position(|e| {
-        e["type"].as_str() == Some("cm") && e["id"].as_u64() == Some(q_index as u64)
-    }).unwrap_or(0);
+    let q_index = cm_pols_map
+        .iter()
+        .position(|p| p["stage"].as_u64() == Some(q_stage as u64) && p["stageId"].as_u64() == Some(0))
+        .unwrap_or(0);
+    let q_pol_ev_id = ev_map
+        .iter()
+        .position(|e| e["type"].as_str() == Some("cm") && e["id"].as_u64() == Some(q_index as u64))
+        .unwrap_or(0);
 
     // ── constRoot string ────────────────────────────────────────────────────
-    let const_root_str = const_root.map(|r| r.join(","))
-        .unwrap_or_else(|| "0,0,0,0".to_string());
+    let const_root_str = const_root.map(|r| r.join(",")).unwrap_or_else(|| "0,0,0,0".to_string());
 
     // ── Transcript code strings ─────────────────────────────────────────────
     let mut t_fri = TranscriptBn128::new(transcript_arity, custom, Some("friQueries".into()));
     t_fri.put("challengeFRIQueries", 3);
-    if pow_bits > 0 { t_fri.put_single("nonce"); }
+    if pow_bits > 0 {
+        t_fri.put_single("nonce");
+    }
     t_fri.get_permutations("queriesFRI", n_queries, step0_bits, n_fields);
     let calculate_fri_queries_code = t_fri.get_code();
 
@@ -503,9 +355,10 @@ fn build_tera_context_bn128(
         }
     }
     for stage in 1..=n_stages {
-        let cnt = challenges_map.iter()
-            .filter(|c| c["stage"].as_u64() == Some(stage as u64)).count();
-        for j in 0..cnt { t.get_field(&format!("challengesStage{stage}[{j}]")); }
+        let cnt = challenges_map.iter().filter(|c| c["stage"].as_u64() == Some(stage as u64)).count();
+        for j in 0..cnt {
+            t.get_field(&format!("challengesStage{stage}[{j}]"));
+        }
         t.put_single(&format!("root{stage}"));
     }
     t.get_field("challengeQ");
@@ -513,10 +366,14 @@ fn build_tera_context_bn128(
     t.get_field("challengeXi");
 
     if !hash_commits {
-        for i in 0..ev_map_len { t.put(&format!("evals[{i}]"), 3); }
+        for i in 0..ev_map_len {
+            t.put(&format!("evals[{i}]"), 3);
+        }
     } else {
         let mut t_evals = TranscriptBn128::new(transcript_arity, custom, Some("evals".into()));
-        for i in 0..ev_map_len { t_evals.put(&format!("evals[{i}]"), 3); }
+        for i in 0..ev_map_len {
+            t_evals.put(&format!("evals[{i}]"), 3);
+        }
         t_evals.get_field_hash("evalsHash");
         transcript_evals_code = t_evals.get_code();
         t.put_single("evalsHash");
@@ -528,10 +385,14 @@ fn build_tera_context_bn128(
         if si_idx < n_steps - 1 {
             t.put_single(&format!("s{}_root", si_idx + 1));
         } else if !hash_commits {
-            for j in 0..final_pol_size { t.put(&format!("finalPol[{j}]"), 3); }
+            for j in 0..final_pol_size {
+                t.put(&format!("finalPol[{j}]"), 3);
+            }
         } else {
             let mut t_fp = TranscriptBn128::new(transcript_arity, custom, Some("lastPolFRI".into()));
-            for j in 0..final_pol_size { t_fp.put(&format!("finalPol[{j}]"), 3); }
+            for j in 0..final_pol_size {
+                t_fp.put(&format!("finalPol[{j}]"), 3);
+            }
             t_fp.get_field_hash("lastPolFRIHash");
             transcript_last_pol_fri_code = t_fp.get_code();
             t.put_single("lastPolFRIHash");
@@ -570,9 +431,13 @@ fn build_tera_context_bn128(
 
     // ── transcript_call_inputs ───────────────────────────────────────────────
     let mut transcript_call_inputs: Vec<String> = Vec::new();
-    if n_publics > 0 { transcript_call_inputs.push("publicsGL".into()); }
+    if n_publics > 0 {
+        transcript_call_inputs.push("publicsGL".into());
+    }
     transcript_call_inputs.push("rootC".into());
-    for stage in 1..=n_stages { transcript_call_inputs.push(format!("root{stage}")); }
+    for stage in 1..=n_stages {
+        transcript_call_inputs.push(format!("root{stage}"));
+    }
     transcript_call_inputs.push(format!("root{q_stage}"));
     transcript_call_inputs.push("evalsGL".into());
 
@@ -588,8 +453,12 @@ fn build_tera_context_bn128(
         }
     }
     verify_evals_inputs.extend(["challengeQGL", "challengeXiGL", "evalsGL"].iter().map(|s| s.to_string()));
-    if n_publics > 0 { verify_evals_inputs.push("publicsGL".into()); }
-    if n_air_group_values > 0 { verify_evals_inputs.push("airgroupValuesGL".into()); }
+    if n_publics > 0 {
+        verify_evals_inputs.push("publicsGL".into());
+    }
+    if n_air_group_values > 0 {
+        verify_evals_inputs.push("airgroupValuesGL".into());
+    }
     verify_evals_inputs.push("enabled".into());
     let verify_evals_inputs_joined = verify_evals_inputs.join(", ");
 
@@ -662,7 +531,6 @@ fn build_tera_context_bn128(
 
     Ok(ctx)
 }
-
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 

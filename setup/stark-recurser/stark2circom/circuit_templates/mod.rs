@@ -19,8 +19,8 @@ use anyhow::{bail, Result};
 use serde_json::Value;
 
 pub use templates::{
-    gen_recursivef, gen_recursion_final, gen_solidity, gen_iverifier, gen_final_compressed,
-    gen_compressor, gen_recursive1, gen_recursive2, gen_vadcop_final,
+    gen_recursivef, gen_recursion_final, gen_solidity, gen_iverifier, gen_final_compressed, gen_compressor,
+    gen_recursive1, gen_recursive2, gen_vadcop_final,
 };
 
 // ── Public types ──────────────────────────────────────────────────────────────
