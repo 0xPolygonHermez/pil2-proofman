@@ -111,7 +111,7 @@ pub fn get_expressions_chunks(code: &[Value]) -> ChunkedCode {
             if let Some(src) = inst["src"].get(s) {
                 if src["type"].as_str() == Some("tmp") {
                     let src_id = src["id"].as_u64().unwrap();
-                    let is_last_use = tmps.get(&src_id).map_or(false, |t| t.last_pos == i);
+                    let is_last_use = tmps.get(&src_id).is_some_and(|t| t.last_pos == i);
 
                     if is_last_use {
                         // This tmp is fully consumed — remove from live tracking.

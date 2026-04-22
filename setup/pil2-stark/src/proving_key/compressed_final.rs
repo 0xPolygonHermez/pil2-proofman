@@ -23,8 +23,8 @@ use stark_recurser::plonk2pil::{self, PlonkResult};
 
 use crate::proving_key::bctree;
 use crate::io::fixed_cols;
-use stark_recurser::stark2circom::{gen_circom_circuit, CircomGenOptions, GenCircomCircuitInput};
-use crate::proving_key::recursive::{compile_pil, run_pil2circom_js};
+use stark_recurser::stark2circom::{gen_circom_circuit, gen_stark_verifier, CircomGenOptions, GenCircomCircuitInput, StarkVerifierOptions};
+use crate::proving_key::recursive::compile_pil;
 use crate::output::witness_gen::WitnessTracker;
 
 /// Configuration for the compressed final setup.
@@ -63,35 +63,20 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
     fs::create_dir_all(&build_path)?;
     fs::create_dir_all(&pil_dir)?;
 
-    // Generate verifier circom for vadcop_final via JS pil2circom
+    // Generate verifier circom via Rust gen_stark_verifier
     {
-        let tmp_si = build_path.join("_tmp_pil2circom_si.json");
-        let tmp_vi = build_path.join("_tmp_pil2circom_vi.json");
-        let tmp_vk = build_path.join("_tmp_pil2circom_vk.json");
-        fs::write(&tmp_si, serde_json::to_string(config.stark_info)?)?;
-        fs::write(&tmp_vi, serde_json::to_string(config.verifier_info)?)?;
-        let verkey_json = serde_json::json!({
-            "constRoot": config.const_root.iter()
-                .map(|s| s.parse::<u64>().unwrap_or(0))
-                .collect::<Vec<_>>()
-        });
-        fs::write(&tmp_vk, serde_json::to_string(&verkey_json)?)?;
-
-        run_pil2circom_js(
-            &tmp_si,
-            &tmp_vi,
-            Some(tmp_vk.as_path()),
-            &circom_dir.join(verifier_name),
-            true,  // skip_main
-            false, // verkey_input
-            false, // enable_input
-            false, // input_challenges
-        )
-        .context("pil2circom JS failed in compressed final setup")?;
-
-        let _ = fs::remove_file(&tmp_si);
-        let _ = fs::remove_file(&tmp_vi);
-        let _ = fs::remove_file(&tmp_vk);
+        let rust_opts = StarkVerifierOptions {
+            skip_main: true,
+            verkey_input: false,
+            enable_input: false,
+            input_challenges: false,
+            fri_queries_batch_size: None,
+            multi_fri: false,
+        };
+        let circom_src = gen_stark_verifier(Some(config.const_root), config.stark_info, config.verifier_info, &rust_opts)
+            .context("gen_stark_verifier failed in compressed final setup")?;
+        fs::write(circom_dir.join(verifier_name), &circom_src)
+            .context("Failed to write verifier circom")?;
     }
 
     // Generate compressed final circom via Rust gen_circom_circuit
@@ -99,7 +84,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
     let circom_out = circom_dir.join(format!("{}.circom", template));
     {
         // Build per-airgroup, per-air VKs as String vecs matching GenCircomCircuitInput format.
-        let basic_vk: Vec<Vec<Vec<String>>> = config.verification_keys.iter().map(|ag| ag.clone()).collect();
+        let basic_vk: Vec<Vec<Vec<String>>> = config.verification_keys.to_vec();
 
         let rust_opts =
             CircomGenOptions { airgroup_id: None, has_compressor: false, has_recursion: false, is_final: false };

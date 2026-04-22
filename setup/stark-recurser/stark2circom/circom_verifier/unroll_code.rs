@@ -309,7 +309,7 @@ const GL_PRIME: u128 = 18_446_744_069_414_584_321;
 fn normalise_gl_number(raw: &str) -> u128 {
     if let Ok(v) = raw.parse::<i128>() {
         if v < 0 {
-            ((v as i128).rem_euclid(GL_PRIME as i128)) as u128
+            (v.rem_euclid(GL_PRIME as i128)) as u128
         } else {
             v as u128
         }

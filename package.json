@@ -4,7 +4,6 @@
   "description": "Node tooling dependencies for venus proving-key generation",
   "dependencies": {
     "pil2-compiler": "https://github.com/0xPolygonHermez/pil2-compiler.git#develop",
-    "snarkjs": "0.7.6",
-    "stark-recurser": "https://github.com/0xPolygonHermez/stark-recurser.git#pre-develop-0.17.0"
+    "snarkjs": "0.7.6"
   }
 }

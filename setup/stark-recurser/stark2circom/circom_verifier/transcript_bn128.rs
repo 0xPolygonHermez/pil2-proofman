@@ -208,7 +208,7 @@ impl TranscriptBn128 {
     /// - `n_queries`  — first dimension
     /// - `query_bits` — bits per query (`starkStruct.steps[0].nBits`)
     /// - `n_fields`   — pre-computed `NFields` (passed in because the JS compute it
-    ///                  outside the class, at the top of the template)
+    ///   outside the class, at the top of the template)
     pub fn get_permutations(&mut self, v: &str, n_queries: usize, query_bits: usize, n_fields: usize) {
         let total_bits = n_queries * query_bits;
         let out_w = self.output_width();

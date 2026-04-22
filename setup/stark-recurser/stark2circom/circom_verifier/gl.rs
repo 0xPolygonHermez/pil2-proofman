@@ -132,7 +132,7 @@ fn build_tera_context(
     let n_bits_ext_size: u64 = 1 << n_bits_ext;
 
     // ── Batch sizing ──────────────────────────────────────────────────────────
-    let batch_size = opts.fri_queries_batch_size.unwrap_or_else(|| ((n_queries + 7) / 8).max(1));
+    let batch_size = opts.fri_queries_batch_size.unwrap_or_else(|| n_queries.div_ceil(8).max(1));
     let batch_size = batch_size.min(n_queries).max(1);
     let full_batch_count = n_queries / batch_size;
     let last_batch_size = n_queries % batch_size;
