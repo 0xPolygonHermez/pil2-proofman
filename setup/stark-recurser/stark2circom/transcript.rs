@@ -322,8 +322,10 @@ mod tests {
         assert!(code.contains("Poseidon2(4, 16)([challengeFRIQueries[0],challengeFRIQueries[1],challengeFRIQueries[2],0,0,0,0,0,0,0,0,0], [0,0,0,0])"),
             "code:\n{code}");
         // N2b signal for field 0.
-        assert!(code.contains("signal {binary} transcriptN2b_0[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[0]);"),
-            "code:\n{code}");
+        assert!(
+            code.contains("signal {binary} transcriptN2b_0[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[0]);"),
+            "code:\n{code}"
+        );
         // Drain: hi_cnt=1, 1 < 16 → drain from 1 to 16.
         assert!(code.contains("for(var i = 1; i < 16; i++)"), "drain missing:\n{code}");
         // Last field partial: total_bits=3, n_fields=1, bits_this_field = 3-63*0 = 3.
@@ -378,46 +380,29 @@ mod tests {
         assert!(!code.contains("transcriptN2b_84"), "N2b_84 should not exist");
 
         // Round 5 is the last (fields 80–83 from it).
-        assert!(
-            code.contains("transcriptHash_friQueries_5"),
-            "round-5 signal missing"
-        );
+        assert!(code.contains("transcriptHash_friQueries_5"), "round-5 signal missing");
         assert!(!code.contains("transcriptHash_friQueries_6"), "no round-6");
 
         // Drain after last field: hi_cnt=4 (consumed 4 from round 5), 4 < 16.
         assert!(
             code.contains("for(var i = 4; i < 16; i++)"),
-            "drain for round-5 partial missing:\n{}", &code[code.len().saturating_sub(3000)..]
+            "drain for round-5 partial missing:\n{}",
+            &code[code.len().saturating_sub(3000)..]
         );
 
         // Last N2b_83 comes from round 5, field index 3.
-        assert!(
-            code.contains("Num2Bits_strict()(transcriptHash_friQueries_5[3])"),
-            "N2b_83 source missing"
-        );
+        assert!(code.contains("Num2Bits_strict()(transcriptHash_friQueries_5[3])"), "N2b_83 source missing");
 
         // Last field has 38 bits (5267 - 63*83 = 38).
-        assert!(
-            code.contains("for(var j = 0; j < 38; j++)"),
-            "last-field 38-bit loop missing"
-        );
-        assert!(
-            code.contains("for(var j = 38; j < 64; j++)"),
-            "unused-bits drain for last field missing"
-        );
+        assert!(code.contains("for(var j = 0; j < 38; j++)"), "last-field 38-bit loop missing");
+        assert!(code.contains("for(var j = 38; j < 64; j++)"), "unused-bits drain for last field missing");
         // All full fields (0..82) end with Unused last bit.
-        assert!(
-            code.contains("_ <== transcriptN2b_0[63]; // Unused last bit"),
-            "unused-last-bit for N2b_0 missing"
-        );
+        assert!(code.contains("_ <== transcriptN2b_0[63]; // Unused last bit"), "unused-last-bit for N2b_0 missing");
 
         // Bit-assignment loop uses query_bits=23.
         assert!(code.contains("if(b == 23)"), "query_bits=23 check missing");
 
         // Comment line present.
-        assert!(
-            code.contains("From each transcript hash converted to bits"),
-            "comment missing"
-        );
+        assert!(code.contains("From each transcript hash converted to bits"), "comment missing");
     }
 }

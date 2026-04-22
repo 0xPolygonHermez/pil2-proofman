@@ -99,17 +99,10 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
     let circom_out = circom_dir.join(format!("{}.circom", template));
     {
         // Build per-airgroup, per-air VKs as String vecs matching GenCircomCircuitInput format.
-        let basic_vk: Vec<Vec<Vec<String>>> = config.verification_keys
-            .iter()
-            .map(|ag| ag.clone())
-            .collect();
+        let basic_vk: Vec<Vec<Vec<String>>> = config.verification_keys.iter().map(|ag| ag.clone()).collect();
 
-        let rust_opts = CircomGenOptions {
-            airgroup_id: None,
-            has_compressor: false,
-            has_recursion: false,
-            is_final: false,
-        };
+        let rust_opts =
+            CircomGenOptions { airgroup_id: None, has_compressor: false, has_recursion: false, is_final: false };
         let rust_input = GenCircomCircuitInput {
             template_name: "src/vadcop/templates/final_compressed.circom.ejs",
             stark_infos: std::slice::from_ref(config.stark_info),
@@ -120,10 +113,8 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
             publics: &[],
             options: &rust_opts,
         };
-        let circom_src = gen_circom_circuit(&rust_input)
-            .context("gen_circom_circuit failed for final_compressed")?;
-        fs::write(&circom_out, &circom_src)
-            .context("Failed to write final_compressed circom")?;
+        let circom_src = gen_circom_circuit(&rust_input).context("gen_circom_circuit failed for final_compressed")?;
+        fs::write(&circom_out, &circom_src).context("Failed to write final_compressed circom")?;
     }
 
     // Compile circom

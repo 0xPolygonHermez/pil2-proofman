@@ -63,12 +63,7 @@ pub struct UnrollCtx<'a> {
 /// `is_dest` — set when this is the destination of the instruction so that a
 /// first-use `tmp` gains a `signal` declaration prefix.
 /// `initialized` — set of `tmp` ids already declared in this scope.
-pub fn ref_operand(
-    r: &Value,
-    is_dest: bool,
-    initialized: &[u64],
-    ctx: &UnrollCtx<'_>,
-) -> Result<String> {
+pub fn ref_operand(r: &Value, is_dest: bool, initialized: &[u64], ctx: &UnrollCtx<'_>) -> Result<String> {
     let typ = r["type"].as_str().unwrap_or("");
     match typ {
         "eval" => {
@@ -114,12 +109,9 @@ pub fn ref_operand(
                         .iter()
                         .filter(|b| b["name"].as_str() == Some("everyFrame"))
                         .position(|b| {
-                            b["offsetMin"].as_u64() == Some(offset_min)
-                                && b["offsetMax"].as_u64() == Some(offset_max)
+                            b["offsetMin"].as_u64() == Some(offset_min) && b["offsetMax"].as_u64() == Some(offset_max)
                         })
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("Zi everyFrame: no matching boundary")
-                        })?;
+                        .ok_or_else(|| anyhow::anyhow!("Zi everyFrame: no matching boundary"))?;
                     let idx = offset_min + offset_max - 1;
                     Ok(format!("Zframe{frame_id}[{idx}]"))
                 }
@@ -145,10 +137,7 @@ pub fn ref_operand(
         }
         "cm" => {
             let id = r["id"].as_u64().unwrap_or(0) as usize;
-            let pol = ctx
-                .cm_pols_map
-                .get(id)
-                .ok_or_else(|| anyhow::anyhow!("cm: id {id} out of cmPolsMap"))?;
+            let pol = ctx.cm_pols_map.get(id).ok_or_else(|| anyhow::anyhow!("cm: id {id} out of cmPolsMap"))?;
             let stage = pol["stage"].as_u64().unwrap_or(0);
             let stage_id = pol["stageId"].as_u64().unwrap_or(0);
             Ok(format!("mapValues.cm{stage}_{stage_id}"))
@@ -160,19 +149,13 @@ pub fn ref_operand(
                 .custom_commits_map
                 .get(commit_id)
                 .and_then(|v| v.as_array())
-                .ok_or_else(|| {
-                    anyhow::anyhow!("custom: commitId {commit_id} out of customCommitsMap")
-                })?;
+                .ok_or_else(|| anyhow::anyhow!("custom: commitId {commit_id} out of customCommitsMap"))?;
             let pol = commit_map_row
                 .get(id)
                 .ok_or_else(|| anyhow::anyhow!("custom: id {id} out of customCommitsMap[{commit_id}]"))?;
             let pol_stage = pol["stage"].as_u64().unwrap_or(0);
             let pol_stage_id = pol["stageId"].as_u64().unwrap_or(0);
-            let name = ctx
-                .custom_commits
-                .get(commit_id)
-                .and_then(|c| c["name"].as_str())
-                .unwrap_or("unknown");
+            let name = ctx.custom_commits.get(commit_id).and_then(|c| c["name"].as_str()).unwrap_or("unknown");
             Ok(format!("mapValues.custom_{name}_{pol_stage}_{pol_stage_id}"))
         }
         "const" => {
@@ -222,12 +205,7 @@ pub fn ref_operand(
 /// All produced lines are `push`ed into `out` (4-space indented, matching the
 /// EJS output), but without a trailing newline on each line — callers join
 /// with `\n`.
-pub fn unroll_code(
-    code: &[Value],
-    initialized: &[u64],
-    ctx: &UnrollCtx<'_>,
-    out: &mut Vec<String>,
-) -> Result<String> {
+pub fn unroll_code(code: &[Value], initialized: &[u64], ctx: &UnrollCtx<'_>, out: &mut Vec<String>) -> Result<String> {
     // Track which tmps have been declared in this call so we don't double-declare.
     let mut declared: Vec<u64> = initialized.to_vec();
 
@@ -406,7 +384,18 @@ pub fn unroll_code_bn128(
                 let d0 = s0["dim"].as_u64().unwrap_or(1);
                 let d1 = s1["dim"].as_u64().unwrap_or(1);
                 let dest_sig = dest_sig!(dest);
-                let (a, b) = resolve_add_sub_pair(&s0, d0, &s1, d1, dest_dim, ctx, out, &mut const_signals, &mut const_cnt, &mut value_cnt)?;
+                let (a, b) = resolve_add_sub_pair(
+                    &s0,
+                    d0,
+                    &s1,
+                    d1,
+                    dest_dim,
+                    ctx,
+                    out,
+                    &mut const_signals,
+                    &mut const_cnt,
+                    &mut value_cnt,
+                )?;
                 if d0 == 1 && d1 == 1 {
                     out.push(format!("    {dest_sig} <== GLAdd()({a}, {b});"));
                 } else {
@@ -426,7 +415,18 @@ pub fn unroll_code_bn128(
                         continue;
                     }
                 }
-                let (a, b) = resolve_add_sub_pair(&s0, d0, &s1, d1, dest_dim, ctx, out, &mut const_signals, &mut const_cnt, &mut value_cnt)?;
+                let (a, b) = resolve_add_sub_pair(
+                    &s0,
+                    d0,
+                    &s1,
+                    d1,
+                    dest_dim,
+                    ctx,
+                    out,
+                    &mut const_signals,
+                    &mut const_cnt,
+                    &mut value_cnt,
+                )?;
                 if d0 == 1 && d1 == 1 {
                     out.push(format!("    {dest_sig} <== GLSub()({a}, {b});"));
                 } else {
@@ -437,7 +437,18 @@ pub fn unroll_code_bn128(
                 let d0 = s0["dim"].as_u64().unwrap_or(1);
                 let d1 = s1["dim"].as_u64().unwrap_or(1);
                 let dest_sig = dest_sig!(dest);
-                let (a, b) = resolve_mul_pair(&s0, d0, &s1, d1, dest_dim, ctx, out, &mut const_signals, &mut const_cnt, &mut value_cnt)?;
+                let (a, b) = resolve_mul_pair(
+                    &s0,
+                    d0,
+                    &s1,
+                    d1,
+                    dest_dim,
+                    ctx,
+                    out,
+                    &mut const_signals,
+                    &mut const_cnt,
+                    &mut value_cnt,
+                )?;
                 if d0 == 1 && d1 == 1 {
                     out.push(format!("    {dest_sig} <== GLMul()({a}, {b});"));
                 } else {
@@ -474,16 +485,23 @@ fn ref_operand_bn128(r: &Value, ctx: &UnrollCtx<'_>) -> Result<String> {
         "challenge" => {
             let stage = r["stage"].as_u64().unwrap_or(0);
             let stage_id = r["stageId"].as_u64().unwrap_or(0);
-            if stage == ctx.q_stage { Ok("challengeQ".into()) }
-            else if stage == ctx.evals_stage { Ok("challengeXi".into()) }
-            else if stage == ctx.fri_stage { Ok(format!("challengesFRI[{stage_id}]")) }
-            else { Ok(format!("challengesStage{stage}[{stage_id}]")) }
+            if stage == ctx.q_stage {
+                Ok("challengeQ".into())
+            } else if stage == ctx.evals_stage {
+                Ok("challengeXi".into())
+            } else if stage == ctx.fri_stage {
+                Ok(format!("challengesFRI[{stage_id}]"))
+            } else {
+                Ok(format!("challengesStage{stage}[{stage_id}]"))
+            }
         }
         "public" => Ok(format!("publics[{}]", r["id"].as_u64().unwrap_or(0))),
         "x" => Ok("challengeXi".into()),
         "Zi" => {
             let boundary_id = r["boundaryId"].as_u64().unwrap_or(0) as usize;
-            let boundary = ctx.boundaries.get(boundary_id)
+            let boundary = ctx
+                .boundaries
+                .get(boundary_id)
                 .ok_or_else(|| anyhow::anyhow!("Zi: invalid boundaryId {boundary_id}"))?;
             let name = boundary["name"].as_str().unwrap_or("");
             match name {
@@ -493,11 +511,12 @@ fn ref_operand_bn128(r: &Value, ctx: &UnrollCtx<'_>) -> Result<String> {
                 "everyFrame" => {
                     let offset_min = boundary["offsetMin"].as_u64().unwrap_or(0);
                     let offset_max = boundary["offsetMax"].as_u64().unwrap_or(0);
-                    let frame_id = ctx.boundaries.iter()
+                    let frame_id = ctx
+                        .boundaries
+                        .iter()
                         .filter(|b| b["name"].as_str() == Some("everyFrame"))
                         .position(|b| {
-                            b["offsetMin"].as_u64() == Some(offset_min)
-                                && b["offsetMax"].as_u64() == Some(offset_max)
+                            b["offsetMin"].as_u64() == Some(offset_min) && b["offsetMax"].as_u64() == Some(offset_max)
                         })
                         .ok_or_else(|| anyhow::anyhow!("Zi everyFrame: no matching boundary"))?;
                     let idx = offset_min + offset_max - 1;
@@ -513,8 +532,7 @@ fn ref_operand_bn128(r: &Value, ctx: &UnrollCtx<'_>) -> Result<String> {
         }
         "cm" => {
             let id = r["id"].as_u64().unwrap_or(0) as usize;
-            let pol = ctx.cm_pols_map.get(id)
-                .ok_or_else(|| anyhow::anyhow!("cm: id {id} out of cmPolsMap"))?;
+            let pol = ctx.cm_pols_map.get(id).ok_or_else(|| anyhow::anyhow!("cm: id {id} out of cmPolsMap"))?;
             let stage = pol["stage"].as_u64().unwrap_or(0);
             let stage_id = pol["stageId"].as_u64().unwrap_or(0);
             Ok(format!("mapValues.cm{stage}_{stage_id}"))
@@ -522,16 +540,15 @@ fn ref_operand_bn128(r: &Value, ctx: &UnrollCtx<'_>) -> Result<String> {
         "custom" => {
             let commit_id = r["commitId"].as_u64().unwrap_or(0) as usize;
             let id = r["id"].as_u64().unwrap_or(0) as usize;
-            let commit_map_row = ctx.custom_commits_map.get(commit_id)
+            let commit_map_row = ctx
+                .custom_commits_map
+                .get(commit_id)
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| anyhow::anyhow!("custom: commitId {commit_id} out of range"))?;
-            let pol = commit_map_row.get(id)
-                .ok_or_else(|| anyhow::anyhow!("custom: id {id} out of range"))?;
+            let pol = commit_map_row.get(id).ok_or_else(|| anyhow::anyhow!("custom: id {id} out of range"))?;
             let pol_stage = pol["stage"].as_u64().unwrap_or(0);
             let pol_stage_id = pol["stageId"].as_u64().unwrap_or(0);
-            let name = ctx.custom_commits.get(commit_id)
-                .and_then(|c| c["name"].as_str())
-                .unwrap_or("unknown");
+            let name = ctx.custom_commits.get(commit_id).and_then(|c| c["name"].as_str()).unwrap_or("unknown");
             Ok(format!("mapValues.custom_{name}_{pol_stage}_{pol_stage_id}"))
         }
         "const" => Ok(format!("consts[{}]", r["id"].as_u64().unwrap_or(0))),
@@ -558,8 +575,10 @@ fn ref_operand_bn128(r: &Value, ctx: &UnrollCtx<'_>) -> Result<String> {
 /// Resolve a pair of operands for add/sub, inserting a GLC3 wrapper when dimensions mismatch.
 #[allow(clippy::too_many_arguments)]
 fn resolve_add_sub_pair(
-    s0: &Value, d0: u64,
-    s1: &Value, d1: u64,
+    s0: &Value,
+    d0: u64,
+    s1: &Value,
+    d1: u64,
     dest_dim: u64,
     ctx: &UnrollCtx<'_>,
     out: &mut Vec<String>,
@@ -579,25 +598,33 @@ fn resolve_add_sub_pair(
     };
 
     // Wrap if dimension mismatch (non-zero, non-const)
-    let a = if d0 == 1 && d1 == 3 && (s0["type"].as_str() != Some("number") || {
-        let n = normalise_gl_number(s0["value"].as_str().unwrap_or("0"));
-        n != 0 && !const_signals.contains_key(&(n, dest_dim))
-    }) {
+    let a = if d0 == 1
+        && d1 == 3
+        && (s0["type"].as_str() != Some("number") || {
+            let n = normalise_gl_number(s0["value"].as_str().unwrap_or("0"));
+            n != 0 && !const_signals.contains_key(&(n, dest_dim))
+        }) {
         let sig = format!("value_{}", *value_cnt);
         *value_cnt += 1;
         out.push(format!("    signal {{maxNum}} {sig}[3] <== GLC3()({raw0});"));
         sig
-    } else { raw0 };
+    } else {
+        raw0
+    };
 
-    let b = if d1 == 1 && d0 == 3 && (s1["type"].as_str() != Some("number") || {
-        let n = normalise_gl_number(s1["value"].as_str().unwrap_or("0"));
-        n != 0 && !const_signals.contains_key(&(n, dest_dim))
-    }) {
+    let b = if d1 == 1
+        && d0 == 3
+        && (s1["type"].as_str() != Some("number") || {
+            let n = normalise_gl_number(s1["value"].as_str().unwrap_or("0"));
+            n != 0 && !const_signals.contains_key(&(n, dest_dim))
+        }) {
         let sig = format!("value_{}", *value_cnt);
         *value_cnt += 1;
         out.push(format!("    signal {{maxNum}} {sig}[3] <== GLC3()({raw1});"));
         sig
-    } else { raw1 };
+    } else {
+        raw1
+    };
 
     Ok((a, b))
 }
@@ -605,8 +632,10 @@ fn resolve_add_sub_pair(
 /// Resolve a pair for mul — same wrapping logic as add/sub.
 #[allow(clippy::too_many_arguments)]
 fn resolve_mul_pair(
-    s0: &Value, d0: u64,
-    s1: &Value, d1: u64,
+    s0: &Value,
+    d0: u64,
+    s1: &Value,
+    d1: u64,
     dest_dim: u64,
     ctx: &UnrollCtx<'_>,
     out: &mut Vec<String>,

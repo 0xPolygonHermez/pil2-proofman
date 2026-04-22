@@ -35,12 +35,10 @@ pub fn gen_stark_verifier(
     verifier_info: &Value,
     opts: &Pil2CircomOptions,
 ) -> Result<String> {
-    let hash_type = stark_info["starkStruct"]["verificationHashType"]
-        .as_str()
-        .unwrap_or("GL");
+    let hash_type = stark_info["starkStruct"]["verificationHashType"].as_str().unwrap_or("GL");
     match hash_type {
-        "GL"    => gen_stark_verifier_gl(const_root, stark_info, verifier_info, opts),
+        "GL" => gen_stark_verifier_gl(const_root, stark_info, verifier_info, opts),
         "BN128" => gen_stark_verifier_bn128(const_root, stark_info, verifier_info, opts),
-        other   => bail!("gen_stark_verifier: unsupported hash type '{other}'"),
+        other => bail!("gen_stark_verifier: unsupported hash type '{other}'"),
     }
 }

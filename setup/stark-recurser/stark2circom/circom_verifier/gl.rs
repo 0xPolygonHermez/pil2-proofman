@@ -13,7 +13,7 @@ use anyhow::{bail, Result};
 use serde_json::Value;
 use tera::Tera;
 
-use super::expressions_chunks::{get_expressions_chunks, ChunkedCode};
+use super::expressions_chunks::get_expressions_chunks;
 use super::gl_field::{gl_exp, gl_inv, GL_INV_W, GL_SHIFT, GL_W};
 use crate::stark2circom::transcript::Transcript;
 use super::unroll_code::{unroll_code, UnrollCtx};
@@ -36,139 +36,6 @@ pub struct Pil2CircomOptions {
     pub multi_fri: bool,
 }
 
-// ── Derived context ───────────────────────────────────────────────────────────
-
-/// All values derived from `starkInfo` that multiple template generators need.
-pub struct StarkVerifierCtx<'a> {
-    pub stark_info: &'a Value,
-    pub verifier_info: &'a Value,
-    pub stark_struct: &'a Value,
-    pub opts: &'a Pil2CircomOptions,
-    /// Embedded constant root (present when `!opts.verkey_input`).
-    pub const_root: Option<&'a [String; 4]>,
-
-    /// Optional template-name suffix (value of `starkInfo.airgroupId`).
-    pub id: String,
-
-    /// Merkle-tree arity for Poseidon2 transcript rounds.
-    pub arity: usize,
-    /// `nStages + 1` — quotient-polynomial stage index.
-    pub q_stage: u64,
-    /// `nStages + 2` — evals/xi challenge stage.
-    pub evals_stage: u64,
-    /// `nStages + 3` — FRI challenge stage.
-    pub fri_stage: u64,
-
-    /// Template names (optionally suffixed with `airgroupId`).
-    pub calculate_fri_queries_name: String,
-    pub transcript_name: String,
-    pub verify_fri_name: String,
-    pub verify_evaluations_name: String,
-    pub map_values_name: String,
-    pub verify_query_name: String,
-    pub verify_final_pol_name: String,
-    pub verify_single_query_name: String,
-    pub verify_queries_batch_name: String,
-    pub verifier_name: String,
-
-    /// Pre-computed chunks for the Q-verifier (VerifyEvaluationsChunks).
-    pub eval_p_chunks: ChunkedCode,
-    /// Pre-computed chunks for the query-verifier (CalculateFRIPolChunks).
-    pub eval_q_chunks: ChunkedCode,
-
-    /// Number of Poseidon2 output fields needed by `getPermutations`.
-    /// `floor((nQueries * steps[0].nBits - 1) / 63) + 1`
-    pub n_fields: usize,
-}
-
-impl<'a> StarkVerifierCtx<'a> {
-    pub fn new(
-        stark_info: &'a Value,
-        verifier_info: &'a Value,
-        opts: &'a Pil2CircomOptions,
-        const_root: Option<&'a [String; 4]>,
-    ) -> Result<Self> {
-        let stark_struct = &stark_info["starkStruct"];
-
-        let n_stages = stark_info["nStages"].as_u64().unwrap_or(0);
-        let q_stage = n_stages + 1;
-        let evals_stage = n_stages + 2;
-        let fri_stage = n_stages + 3;
-
-        let arity = stark_struct["merkleTreeArity"].as_u64().unwrap_or(16) as usize;
-
-        let id = match stark_info.get("airgroupId").and_then(|v| v.as_u64()) {
-            Some(aid) => aid.to_string(),
-            None => String::new(),
-        };
-
-        let mk = |base: &str| -> String {
-            if id.is_empty() { base.to_string() } else { format!("{base}{id}") }
-        };
-
-        let n_queries = stark_struct["nQueries"].as_u64().unwrap_or(0) as usize;
-        let step0_bits = stark_struct["steps"]
-            .get(0)
-            .and_then(|s| s["nBits"].as_u64())
-            .unwrap_or(0) as usize;
-        let total_bits = n_queries * step0_bits;
-        let n_fields = if total_bits == 0 { 0 } else { (total_bits - 1) / 63 + 1 };
-
-        let q_verifier_code = verifier_info["qVerifier"]["code"]
-            .as_array()
-            .map(|a| a.as_slice())
-            .unwrap_or(&[]);
-        let query_verifier_code = verifier_info["queryVerifier"]["code"]
-            .as_array()
-            .map(|a| a.as_slice())
-            .unwrap_or(&[]);
-
-        let eval_p_chunks = get_expressions_chunks(q_verifier_code);
-        let eval_q_chunks = get_expressions_chunks(query_verifier_code);
-
-        Ok(Self {
-            stark_info,
-            verifier_info,
-            stark_struct,
-            opts,
-            const_root,
-            id: id.clone(),
-            arity,
-            q_stage,
-            evals_stage,
-            fri_stage,
-            calculate_fri_queries_name: mk("calculateFRIQueries"),
-            transcript_name: mk("Transcript"),
-            verify_fri_name: mk("VerifyFRI"),
-            verify_evaluations_name: mk("VerifyEvaluations"),
-            map_values_name: mk("MapValues"),
-            verify_query_name: mk("VerifyQuery"),
-            verify_final_pol_name: mk("VerifyFinalPol"),
-            verify_single_query_name: mk("VerifySingleQuery"),
-            verify_queries_batch_name: mk("VerifyQueriesBatch"),
-            verifier_name: mk("StarkVerifier"),
-            eval_p_chunks,
-            eval_q_chunks,
-            n_fields,
-        })
-    }
-
-    /// `Math.log2(arity)` — bits needed to index one arity-way branch.
-    pub fn log2_arity(&self) -> f64 {
-        (self.arity as f64).log2()
-    }
-
-    /// `ceil(bits / log2(arity))` — Merkle tree depth in arity-way nodes.
-    pub fn merkle_levels(&self, bits: u64) -> u64 {
-        f64::ceil(bits as f64 / self.log2_arity()) as u64
-    }
-
-    /// W[n] — primitive 2^n-th root of unity.
-    pub fn roots(&self, n: usize) -> u64 {
-        GL_W[n]
-    }
-}
-
 // ── Top-level entry-point ─────────────────────────────────────────────────────
 
 /// Embedded Tera template (GL stark verifier).
@@ -185,51 +52,13 @@ pub fn gen_stark_verifier_gl(
     verifier_info: &Value,
     opts: &Pil2CircomOptions,
 ) -> Result<String> {
-    let hash_type = stark_info["starkStruct"]["verificationHashType"]
-        .as_str()
-        .unwrap_or("GL");
+    let hash_type = stark_info["starkStruct"]["verificationHashType"].as_str().unwrap_or("GL");
     if hash_type != "GL" {
         bail!("gen_stark_verifier_gl: expected GL hash type, got '{hash_type}'");
     }
 
     let tera_ctx = build_tera_context(stark_info, verifier_info, opts, const_root)?;
-    Tera::one_off(TEMPLATE_GL, &tera_ctx, false)
-        .map_err(|e| anyhow::anyhow!("Tera render error: {e}"))
-}
-
-// ── Header (kept for direct test) ────────────────────────────────────────────
-
-fn gen_header(ctx: &StarkVerifierCtx<'_>) -> String {
-    let split_linear_hash = ctx.stark_struct["splitLinearHash"].as_bool().unwrap_or(false);
-    let merkle_include = if split_linear_hash {
-        "include \"merklehash_gpu.circom\";"
-    } else {
-        "include \"merklehash.circom\";"
-    };
-
-    format!(
-        r#"pragma circom 2.1.0;
-pragma custom_templates;
-
-include "cmul.circom";
-include "cinv.circom";
-include "poseidon2.circom";
-include "bitify.circom";
-include "fft.circom";
-include "evalpol.circom";
-include "treeselector4.circom";
-include "pow.circom";
-{merkle_include}
-"#
-    )
-}
-
-// ── component main (kept for direct test) ────────────────────────────────────
-
-fn gen_component_main(ctx: &StarkVerifierCtx<'_>) -> String {
-    let n_publics = ctx.stark_info["nPublics"].as_u64().unwrap_or(0);
-    let public_attr = if n_publics > 0 { "{public [publics]}" } else { "" };
-    format!("component main {public_attr}= {}();\n", ctx.verifier_name)
+    Tera::one_off(TEMPLATE_GL, &tera_ctx, false).map_err(|e| anyhow::anyhow!("Tera render error: {e}"))
 }
 
 // ── Tera context builder ──────────────────────────────────────────────────────
@@ -288,7 +117,11 @@ fn build_tera_context(
         None => String::new(),
     };
     let mk = |base: &str| -> String {
-        if id_suffix.is_empty() { base.to_string() } else { format!("{base}{id_suffix}") }
+        if id_suffix.is_empty() {
+            base.to_string()
+        } else {
+            format!("{base}{id_suffix}")
+        }
     };
 
     // ── Merkle-tree dimensions ────────────────────────────────────────────────
@@ -299,8 +132,7 @@ fn build_tera_context(
     let n_bits_ext_size: u64 = 1 << n_bits_ext;
 
     // ── Batch sizing ──────────────────────────────────────────────────────────
-    let batch_size = opts.fri_queries_batch_size
-        .unwrap_or_else(|| ((n_queries + 7) / 8).max(1));
+    let batch_size = opts.fri_queries_batch_size.unwrap_or_else(|| ((n_queries + 7) / 8).max(1));
     let batch_size = batch_size.min(n_queries).max(1);
     let full_batch_count = n_queries / batch_size;
     let last_batch_size = n_queries % batch_size;
@@ -313,22 +145,23 @@ fn build_tera_context(
     // ── Per-stage challenge counts ────────────────────────────────────────────
     let challenges_per_stage: Vec<serde_json::Value> = (1..=n_stages)
         .filter_map(|stage| {
-            let cnt = challenges_map.iter()
-                .filter(|c| c["stage"].as_u64() == Some(stage as u64))
-                .count();
-            if cnt > 0 { Some(serde_json::json!({ "stage": stage, "count": cnt })) }
-            else { None }
+            let cnt = challenges_map.iter().filter(|c| c["stage"].as_u64() == Some(stage as u64)).count();
+            if cnt > 0 {
+                Some(serde_json::json!({ "stage": stage, "count": cnt }))
+            } else {
+                None
+            }
         })
         .collect();
 
     // ── Stages info ───────────────────────────────────────────────────────────
     let stages_info: Vec<serde_json::Value> = (1..=q_stage)
         .map(|stage| {
-            let challenges_count = challenges_map.iter()
-                .filter(|c| c["stage"].as_u64() == Some(stage as u64))
-                .count();
+            let challenges_count = challenges_map.iter().filter(|c| c["stage"].as_u64() == Some(stage as u64)).count();
             let cm_section_len = sec_len(&format!("cm{stage}"));
-            let air_values_in_stage: Vec<usize> = air_values_map.iter().enumerate()
+            let air_values_in_stage: Vec<usize> = air_values_map
+                .iter()
+                .enumerate()
                 .filter(|(_, av)| av["stage"].as_u64() == Some(stage as u64))
                 .map(|(j, _)| j)
                 .collect();
@@ -345,43 +178,55 @@ fn build_tera_context(
     // ── cm_pols_by_stage — for MapValues ─────────────────────────────────────
     let cm_pols_by_stage: Vec<serde_json::Value> = (1..=q_stage)
         .map(|stage| {
-            let pols: Vec<serde_json::Value> = cm_pols_map.iter()
+            let pols: Vec<serde_json::Value> = cm_pols_map
+                .iter()
                 .filter(|p| p["stage"].as_u64() == Some(stage as u64))
                 .enumerate()
-                .map(|(i, p)| serde_json::json!({
-                    "idx": i,
-                    "dim": p["dim"].as_u64().unwrap_or(1),
-                    "stage_pos": p["stagePos"].as_u64().unwrap_or(0),
-                }))
+                .map(|(i, p)| {
+                    serde_json::json!({
+                        "idx": i,
+                        "dim": p["dim"].as_u64().unwrap_or(1),
+                        "stage_pos": p["stagePos"].as_u64().unwrap_or(0),
+                    })
+                })
                 .collect();
             serde_json::json!({ "stage": stage, "pols": pols })
         })
         .collect();
 
     // ── custom_commits ────────────────────────────────────────────────────────
-    let custom_commits: Vec<serde_json::Value> = custom_commits_json.iter().enumerate()
+    let custom_commits: Vec<serde_json::Value> = custom_commits_json
+        .iter()
+        .enumerate()
         .map(|(t, cc)| {
             let name = cc["name"].as_str().unwrap_or("").to_string();
             let stage_widths_count = cc["stageWidths"].as_array().map_or(0, |a| a.len());
             let section_len_0 = sec_len(&format!("{name}0"));
-            let public_values: Vec<u64> = cc["publicValues"].as_array().map_or(vec![], |a| a.clone())
-                .iter().map(|pv| pv["idx"].as_u64().unwrap_or(0))
+            let public_values: Vec<u64> = cc["publicValues"]
+                .as_array()
+                .map_or(vec![], |a| a.clone())
+                .iter()
+                .map(|pv| pv["idx"].as_u64().unwrap_or(0))
                 .collect();
-            let commit_map_arr = custom_commits_map_json.get(t)
-                .and_then(|v| v.as_array())
-                .map_or(vec![], |a| a.clone());
-            let pols_per_stage: Vec<serde_json::Value> = (0..stage_widths_count).map(|l| {
-                let pols: Vec<serde_json::Value> = commit_map_arr.iter()
-                    .filter(|p| p["stage"].as_u64() == Some(l as u64))
-                    .enumerate()
-                    .map(|(i, p)| serde_json::json!({
-                        "idx": i,
-                        "dim": p["dim"].as_u64().unwrap_or(1),
-                        "stage_pos": p["stagePos"].as_u64().unwrap_or(0),
-                    }))
-                    .collect();
-                serde_json::json!({ "stage_idx": l, "pols": pols })
-            }).collect();
+            let commit_map_arr =
+                custom_commits_map_json.get(t).and_then(|v| v.as_array()).map_or(vec![], |a| a.clone());
+            let pols_per_stage: Vec<serde_json::Value> = (0..stage_widths_count)
+                .map(|l| {
+                    let pols: Vec<serde_json::Value> = commit_map_arr
+                        .iter()
+                        .filter(|p| p["stage"].as_u64() == Some(l as u64))
+                        .enumerate()
+                        .map(|(i, p)| {
+                            serde_json::json!({
+                                "idx": i,
+                                "dim": p["dim"].as_u64().unwrap_or(1),
+                                "stage_pos": p["stagePos"].as_u64().unwrap_or(0),
+                            })
+                        })
+                        .collect();
+                    serde_json::json!({ "stage_idx": l, "pols": pols })
+                })
+                .collect();
             serde_json::json!({
                 "name": name,
                 "section_len_0": section_len_0,
@@ -396,18 +241,16 @@ fn build_tera_context(
     let fri_steps_info: Vec<serde_json::Value> = (0..n_steps)
         .map(|s| {
             let n_bits_s = steps[s]["nBits"].as_u64().unwrap_or(0);
-            let prev_bits = if s == 0 { n_bits_s }
-                else { steps[s-1]["nBits"].as_u64().unwrap_or(0) };
-            let next_bits = if s < n_steps - 1 {
-                steps[s+1]["nBits"].as_u64().unwrap_or(0)
-            } else { 0 };
+            let prev_bits = if s == 0 { n_bits_s } else { steps[s - 1]["nBits"].as_u64().unwrap_or(0) };
+            let next_bits = if s < n_steps - 1 { steps[s + 1]["nBits"].as_u64().unwrap_or(0) } else { 0 };
             let exponent = if s == 0 { 1u64 } else { 1u64 << (prev_bits - n_bits_s) };
             let full_ml = (n_bits_s as f64 / log2_arity).ceil() as u64;
             let ml = full_ml.saturating_sub(last_level_verification);
-            let last_mt_size = if last_level_verification > 0 {
-                (arity as u64).pow(last_level_verification as u32)
-            } else { 0 };
-            let e0 = if s == 0 { "0".to_string() } else {
+            let last_mt_size =
+                if last_level_verification > 0 { (arity as u64).pow(last_level_verification as u32) } else { 0 };
+            let e0 = if s == 0 {
+                "0".to_string()
+            } else {
                 let exp = 1u64 << (n_bits_ext as u64 - prev_bits);
                 gl_inv(gl_exp(GL_SHIFT, exp)).to_string()
             };
@@ -431,20 +274,21 @@ fn build_tera_context(
         .collect();
 
     // ── Boundary flags ────────────────────────────────────────────────────────
-    let has_first_row = boundaries_json.iter()
-        .any(|b| b["name"].as_str() == Some("firstRow"));
-    let has_last_row = boundaries_json.iter()
-        .any(|b| b["name"].as_str() == Some("lastRow"));
+    let has_first_row = boundaries_json.iter().any(|b| b["name"].as_str() == Some("firstRow"));
+    let has_last_row = boundaries_json.iter().any(|b| b["name"].as_str() == Some("lastRow"));
     let zlast_root: String = if has_last_row {
         let mut root: u64 = 1;
         for _ in 0..((1u64 << n_bits) - 1) {
             root = gl_mul(root, GL_W[n_bits]);
         }
         root.to_string()
-    } else { "0".to_string() };
+    } else {
+        "0".to_string()
+    };
 
     // ── everyFrame boundaries ─────────────────────────────────────────────────
-    let every_frames: Vec<serde_json::Value> = boundaries_json.iter()
+    let every_frames: Vec<serde_json::Value> = boundaries_json
+        .iter()
         .filter(|b| b["name"].as_str() == Some("everyFrame"))
         .enumerate()
         .map(|(i, frame)| {
@@ -455,7 +299,9 @@ fn build_tera_context(
             let mut c = 0u64;
             for j in 0..offset_min {
                 let mut root: u64 = 1;
-                for _ in 0..j { root = gl_mul(root, GL_W[n_bits]); }
+                for _ in 0..j {
+                    root = gl_mul(root, GL_W[n_bits]);
+                }
                 ops.push(serde_json::json!({
                     "c": c, "is_first": c == 0, "root": root.to_string()
                 }));
@@ -463,7 +309,9 @@ fn build_tera_context(
             }
             let back_exp = (1u64 << n_bits).saturating_sub(i as u64 + 1);
             let mut back_root: u64 = 1;
-            for _ in 0..back_exp { back_root = gl_mul(back_root, GL_W[n_bits]); }
+            for _ in 0..back_exp {
+                back_root = gl_mul(back_root, GL_W[n_bits]);
+            }
             for _ in 0..offset_max {
                 ops.push(serde_json::json!({
                     "c": c, "is_first": c == 0, "root": back_root.to_string()
@@ -478,7 +326,9 @@ fn build_tera_context(
         .collect();
 
     // ── Opening points ────────────────────────────────────────────────────────
-    let opening_points: Vec<serde_json::Value> = opening_points_json.iter().enumerate()
+    let opening_points: Vec<serde_json::Value> = opening_points_json
+        .iter()
+        .enumerate()
         .map(|(i, op)| {
             let opening = op.as_i64().unwrap_or(0);
             let abs_opening = opening.unsigned_abs();
@@ -502,57 +352,66 @@ fn build_tera_context(
     };
 
     // Helper: build chunk JSON list from ChunkedCode
-    let build_chunk_list = |cc: &super::expressions_chunks::ChunkedCode|
-        -> Vec<serde_json::Value>
-    {
-        cc.chunks.iter().enumerate().map(|(i, chunk)| {
-            let mut lines: Vec<String> = Vec::new();
-            let initialized: Vec<u64> = chunk.inputs.iter()
-                .chain(chunk.outputs.iter()).copied().collect();
-            let _ = unroll_code(&chunk.code, &initialized, &unroll_ctx, &mut lines);
-            let code = lines.join("\n");
-            let inputs: Vec<serde_json::Value> = chunk.inputs.iter().map(|&id| {
-                serde_json::json!({ "id": id, "dim": cc.tmps[&id].dim })
-            }).collect();
-            let outputs: Vec<serde_json::Value> = chunk.outputs.iter().map(|&id| {
-                serde_json::json!({ "id": id, "dim": cc.tmps[&id].dim })
-            }).collect();
-            serde_json::json!({ "idx": i, "inputs": inputs, "outputs": outputs, "code": code })
-        }).collect()
+    let build_chunk_list = |cc: &super::expressions_chunks::ChunkedCode| -> Vec<serde_json::Value> {
+        cc.chunks
+            .iter()
+            .enumerate()
+            .map(|(i, chunk)| {
+                let mut lines: Vec<String> = Vec::new();
+                let initialized: Vec<u64> = chunk.inputs.iter().chain(chunk.outputs.iter()).copied().collect();
+                let _ = unroll_code(&chunk.code, &initialized, &unroll_ctx, &mut lines);
+                let code = lines.join("\n");
+                let inputs: Vec<serde_json::Value> =
+                    chunk.inputs.iter().map(|&id| serde_json::json!({ "id": id, "dim": cc.tmps[&id].dim })).collect();
+                let outputs: Vec<serde_json::Value> =
+                    chunk.outputs.iter().map(|&id| serde_json::json!({ "id": id, "dim": cc.tmps[&id].dim })).collect();
+                serde_json::json!({ "idx": i, "inputs": inputs, "outputs": outputs, "code": code })
+            })
+            .collect()
     };
 
     // ── Eval P chunks ─────────────────────────────────────────────────────────
-    let q_verifier_code: Vec<Value> = vi["qVerifier"]["code"]
-        .as_array().map_or(vec![], |a| a.clone());
+    let q_verifier_code: Vec<Value> = vi["qVerifier"]["code"].as_array().map_or(vec![], |a| a.clone());
     let eval_p_raw = get_expressions_chunks(&q_verifier_code);
     let mut eval_p_chunks = build_chunk_list(&eval_p_raw);
 
     // ── Eval Q chunks ─────────────────────────────────────────────────────────
-    let query_verifier_code: Vec<Value> = vi["queryVerifier"]["code"]
-        .as_array().map_or(vec![], |a| a.clone());
+    let query_verifier_code: Vec<Value> = vi["queryVerifier"]["code"].as_array().map_or(vec![], |a| a.clone());
     let eval_q_raw = get_expressions_chunks(&query_verifier_code);
     let mut eval_q_chunks = build_chunk_list(&eval_q_raw);
 
     // ── inputsP — for VerifyEvaluations chunk calls ───────────────────────────
     let mut inputs_p: Vec<String> = Vec::new();
     for stage in 1..=n_stages {
-        if challenges_map.iter()
-            .any(|c| c["stage"].as_u64() == Some(stage as u64))
-        {
+        if challenges_map.iter().any(|c| c["stage"].as_u64() == Some(stage as u64)) {
             inputs_p.push(format!("challengesStage{stage}"));
         }
     }
     inputs_p.push("challengeQ".into());
     inputs_p.push("challengeXi".into());
     inputs_p.push("evals".into());
-    if n_publics > 0 { inputs_p.push("publics".into()); }
-    if n_air_group_values > 0 { inputs_p.push("airgroupvalues".into()); }
-    if n_air_values > 0 { inputs_p.push("airvalues".into()); }
-    if n_proof_values > 0 { inputs_p.push("proofvalues".into()); }
+    if n_publics > 0 {
+        inputs_p.push("publics".into());
+    }
+    if n_air_group_values > 0 {
+        inputs_p.push("airgroupvalues".into());
+    }
+    if n_air_values > 0 {
+        inputs_p.push("airvalues".into());
+    }
+    if n_proof_values > 0 {
+        inputs_p.push("proofvalues".into());
+    }
     inputs_p.push("Zh".into());
-    if has_first_row { inputs_p.push("Zfirst".into()); }
-    if has_last_row  { inputs_p.push("Zlast".into()); }
-    for fi in 0..every_frames.len() { inputs_p.push(format!("Zframe{fi}")); }
+    if has_first_row {
+        inputs_p.push("Zfirst".into());
+    }
+    if has_last_row {
+        inputs_p.push("Zlast".into());
+    }
+    for fi in 0..every_frames.len() {
+        inputs_p.push(format!("Zframe{fi}"));
+    }
 
     // ── inputsQ — for CalculateFRIPolChunks calls ─────────────────────────────
     let mut inputs_q: Vec<String> = vec!["challengesFRI".into(), "evals".into()];
@@ -589,26 +448,32 @@ fn build_tera_context(
 
     // ── Q polynomial ev_id ────────────────────────────────────────────────────
     let ev_map: Vec<Value> = si["evMap"].as_array().map_or(vec![], |a| a.clone());
-    let q_index = cm_pols_map.iter().position(|p| {
-        p["stage"].as_u64() == Some(q_stage as u64) && p["stageId"].as_u64() == Some(0)
-    }).unwrap_or(0);
-    let q_pol_ev_id = ev_map.iter().position(|e| {
-        e["type"].as_str() == Some("cm") && e["id"].as_u64() == Some(q_index as u64)
-    }).unwrap_or(0);
-    let last_dest_id_p = vi["qVerifier"]["code"].as_array()
-        .and_then(|a| a.last()).and_then(|i| i["dest"]["id"].as_u64()).unwrap_or(0);
-    let last_dest_id_q = vi["queryVerifier"]["code"].as_array()
-        .and_then(|a| a.last()).and_then(|i| i["dest"]["id"].as_u64()).unwrap_or(0);
+    let q_index = cm_pols_map
+        .iter()
+        .position(|p| p["stage"].as_u64() == Some(q_stage as u64) && p["stageId"].as_u64() == Some(0))
+        .unwrap_or(0);
+    let q_pol_ev_id = ev_map
+        .iter()
+        .position(|e| e["type"].as_str() == Some("cm") && e["id"].as_u64() == Some(q_index as u64))
+        .unwrap_or(0);
+    let last_dest_id_p =
+        vi["qVerifier"]["code"].as_array().and_then(|a| a.last()).and_then(|i| i["dest"]["id"].as_u64()).unwrap_or(0);
+    let last_dest_id_q = vi["queryVerifier"]["code"]
+        .as_array()
+        .and_then(|a| a.last())
+        .and_then(|i| i["dest"]["id"].as_u64())
+        .unwrap_or(0);
 
     // ── constRoot string ──────────────────────────────────────────────────────
-    let const_root_str = const_root.map(|r| r.join(","))
-        .unwrap_or_else(|| "0,0,0,0".to_string());
+    let const_root_str = const_root.map(|r| r.join(",")).unwrap_or_else(|| "0,0,0,0".to_string());
 
     // ── Transcript code strings ───────────────────────────────────────────────
     let mut t_fri = Transcript::new(arity, Some("friQueries".into()));
     t_fri.set_drain_in_update_state(true);
     t_fri.put("challengeFRIQueries", 3);
-    if pow_bits > 0 { t_fri.put_single("nonce"); }
+    if pow_bits > 0 {
+        t_fri.put_single("nonce");
+    }
     t_fri.get_permutations("queriesFRI", n_queries, step0_bits);
     let calculate_fri_queries_code = t_fri.get_code();
 
@@ -639,9 +504,10 @@ fn build_tera_context(
 
     for i in 1..n_stages {
         let stage = (i + 1) as u64;
-        let cnt = challenges_map.iter()
-            .filter(|c| c["stage"].as_u64() == Some(stage)).count();
-        for j in 0..cnt { t.get_field(&format!("challengesStage{stage}[{j}]")); }
+        let cnt = challenges_map.iter().filter(|c| c["stage"].as_u64() == Some(stage)).count();
+        for j in 0..cnt {
+            t.get_field(&format!("challengesStage{stage}[{j}]"));
+        }
         t.put(&format!("root{stage}"), 4);
         for (j, av) in air_values_map.iter().enumerate() {
             if av["stage"].as_u64() == Some(stage) {
@@ -663,13 +529,17 @@ fn build_tera_context(
         transcript_code_stage = t.get_code();
         let mut t_evals = Transcript::new(arity, Some("evals".into()));
         t_evals.set_drain_in_update_state(true);
-        for i in 0..ev_map_len { t_evals.put(&format!("evals[{i}]"), 3); }
+        for i in 0..ev_map_len {
+            t_evals.put(&format!("evals[{i}]"), 3);
+        }
         t_evals.get_state("evalsHash");
         transcript_evals_code = t_evals.get_code();
         t.put("evalsHash", 4);
     } else {
         // !hash_commits: evals go straight into the main transcript (no side transcript).
-        for i in 0..ev_map_len { t.put(&format!("evals[{i}]"), 3); }
+        for i in 0..ev_map_len {
+            t.put(&format!("evals[{i}]"), 3);
+        }
         transcript_code_stage = String::new(); // all code collected at the end
     }
 
@@ -685,13 +555,17 @@ fn build_tera_context(
         if si_idx < n_steps - 1 {
             t.put(&format!("s{}_root", si_idx + 1), 4);
         } else if !hash_commits {
-            for j in 0..final_pol_size { t.put(&format!("finalPol[{j}]"), 3); }
+            for j in 0..final_pol_size {
+                t.put(&format!("finalPol[{j}]"), 3);
+            }
         } else {
             // Split 2: capture FRI code up to challengesFRISteps[n_steps-1].
             transcript_code_fri_mid = t.get_code();
             let mut t_fp = Transcript::new(arity, Some("lastPolFRI".into()));
             t_fp.set_drain_in_update_state(true);
-            for j in 0..final_pol_size { t_fp.put(&format!("finalPol[{j}]"), 3); }
+            for j in 0..final_pol_size {
+                t_fp.put(&format!("finalPol[{j}]"), 3);
+            }
             t_fp.get_state("lastPolFRIHash");
             transcript_last_pol_fri_code = t_fp.get_code();
             t.put("lastPolFRIHash", 4);
@@ -742,13 +616,17 @@ fn build_tera_context(
     // ── transcript_call_inputs ────────────────────────────────────────────────
     let mut transcript_call_inputs: Vec<String> = Vec::new();
     if !opts.input_challenges {
-        if n_publics > 0 { transcript_call_inputs.push("publics".into()); }
+        if n_publics > 0 {
+            transcript_call_inputs.push("publics".into());
+        }
         transcript_call_inputs.push("rootC".into());
         transcript_call_inputs.push("root1".into());
     } else {
         transcript_call_inputs.push("globalChallenge".into());
     }
-    if n_air_values > 0 { transcript_call_inputs.push("airvalues".into()); }
+    if n_air_values > 0 {
+        transcript_call_inputs.push("airvalues".into());
+    }
     for stage in 2..=n_stages {
         transcript_call_inputs.push(format!("root{stage}"));
     }
@@ -760,18 +638,24 @@ fn build_tera_context(
             verify_evals_inputs.push(format!("challengesStage{stage}"));
         }
     }
-    verify_evals_inputs.extend(["challengeQ","challengeXi","evals"].iter().map(|s| s.to_string()));
-    if n_publics > 0 { verify_evals_inputs.push("publics".into()); }
-    if n_air_group_values > 0 { verify_evals_inputs.push("airgroupvalues".into()); }
-    if n_air_values > 0 { verify_evals_inputs.push("airvalues".into()); }
-    if n_proof_values > 0 { verify_evals_inputs.push("proofvalues".into()); }
+    verify_evals_inputs.extend(["challengeQ", "challengeXi", "evals"].iter().map(|s| s.to_string()));
+    if n_publics > 0 {
+        verify_evals_inputs.push("publics".into());
+    }
+    if n_air_group_values > 0 {
+        verify_evals_inputs.push("airgroupvalues".into());
+    }
+    if n_air_values > 0 {
+        verify_evals_inputs.push("airvalues".into());
+    }
+    if n_proof_values > 0 {
+        verify_evals_inputs.push("proofvalues".into());
+    }
     verify_evals_inputs.push("enabled".into());
     let verify_evals_inputs_joined = verify_evals_inputs.join(", ");
 
     // ── next step bits (VerifyQuery call) ─────────────────────────────────────
-    let next_step0_bits = if n_steps > 1 {
-        steps[1]["nBits"].as_u64().unwrap_or(0)
-    } else { 0 };
+    let next_step0_bits = if n_steps > 1 { steps[1]["nBits"].as_u64().unwrap_or(0) } else { 0 };
     let next_vals_pol_0 = if n_steps > 1 { "s1_vals_p" } else { "finalPol" };
 
     // ── Insert all context values ─────────────────────────────────────────────
@@ -826,9 +710,7 @@ fn build_tera_context(
     ctx.insert("next_vals_pol_0", &next_vals_pol_0);
     let q_stage_cm_section_len: u64 = sec_len(&format!("cm{q_stage}"));
     ctx.insert("q_stage_cm_section_len", &q_stage_cm_section_len);
-    let s0_last_mt_size: u64 = fri_steps_info.first()
-        .and_then(|s| s["last_mt_size"].as_u64())
-        .unwrap_or(0);
+    let s0_last_mt_size: u64 = fri_steps_info.first().and_then(|s| s["last_mt_size"].as_u64()).unwrap_or(0);
     ctx.insert("s0_last_mt_size", &s0_last_mt_size);
     ctx.insert("query_vals_joined", &query_vals_joined);
     ctx.insert("challenge_names_joined", &challenge_names_joined);
@@ -867,7 +749,6 @@ fn build_tera_context(
 
     Ok(ctx)
 }
-
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 

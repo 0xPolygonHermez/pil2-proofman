@@ -134,7 +134,7 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
         // Chain subsequent rounds: n = ceil(lattice_size / out_w), emit n-1 extra hashes.
         let n_rounds = lattice_size.div_ceil(out_w);
         for i in 0..(n_rounds - 1) {
-            let sig = format!("transcriptHash_{}", i + 1);
+            let sig = format!("transcriptHash_{}", early_rounds + i);
             let base = i * out_w;
             let inputs: Vec<String> = (0..input_w).map(|j| format!("values[{}]", base + j)).collect();
             let state: Vec<String> = (0..4).map(|j| format!("values[{}]", base + input_w + j)).collect();

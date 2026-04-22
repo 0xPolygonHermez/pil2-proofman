@@ -209,13 +209,7 @@ impl TranscriptBn128 {
     /// - `query_bits` — bits per query (`starkStruct.steps[0].nBits`)
     /// - `n_fields`   — pre-computed `NFields` (passed in because the JS compute it
     ///                  outside the class, at the top of the template)
-    pub fn get_permutations(
-        &mut self,
-        v: &str,
-        n_queries: usize,
-        query_bits: usize,
-        n_fields: usize,
-    ) {
+    pub fn get_permutations(&mut self, v: &str, n_queries: usize, query_bits: usize, n_fields: usize) {
         let total_bits = n_queries * query_bits;
         let out_w = self.output_width();
 
@@ -225,8 +219,7 @@ impl TranscriptBn128 {
             let f = self.get_fields253();
             let name = format!("transcriptN2b_{}", self.n2b_cnt);
             self.n2b_cnt += 1;
-            self.code
-                .push(format!("signal {{binary}} {name}[254] <== Num2Bits_strictT()({f});"));
+            self.code.push(format!("signal {{binary}} {name}[254] <== Num2Bits_strictT()({f});"));
             n2b_names.push(name);
         }
 
@@ -272,13 +265,7 @@ impl TranscriptBn128 {
     pub fn get_code(&mut self) -> String {
         let lines: Vec<String> = self.code[self.last_code_printed..]
             .iter()
-            .map(|l| {
-                if l.starts_with('\n') || l.is_empty() {
-                    l.clone()
-                } else {
-                    format!("    {l}")
-                }
-            })
+            .map(|l| if l.starts_with('\n') || l.is_empty() { l.clone() } else { format!("    {l}") })
             .collect();
         self.last_code_printed = self.code.len();
         lines.join("\n")
@@ -306,10 +293,7 @@ mod tests {
             t._add1(format!("in[{i}]"));
         }
         let code = t.get_code();
-        assert!(
-            code.contains("PoseidonEx(16, 17)([in[0],in[1],"),
-            "code:\n{code}"
-        );
+        assert!(code.contains("PoseidonEx(16, 17)([in[0],in[1],"), "code:\n{code}");
         assert!(code.contains(", 0);"), "state must be 0: {code}");
         assert_eq!(t.h_cnt, 1);
     }
@@ -345,10 +329,7 @@ mod tests {
             t._add1(format!("y[{i}]"));
         }
         let code = t.get_code();
-        assert!(
-            code.contains(", transcriptHash_0[0]);"),
-            "state from prev round: {code}"
-        );
+        assert!(code.contains(", transcriptHash_0[0]);"), "state from prev round: {code}");
     }
 
     // ── Drain in updateState ──────────────────────────────────────────────────
@@ -368,10 +349,7 @@ mod tests {
         }
         let code = t.get_code();
         // drain from 1 (not 0) because max(0,1)=1
-        assert!(
-            code.contains("for(var i = 1; i < 17; i++)"),
-            "expected drain from 1:\n{code}"
-        );
+        assert!(code.contains("for(var i = 1; i < 17; i++)"), "expected drain from 1:\n{code}");
     }
 
     #[test]
@@ -381,7 +359,7 @@ mod tests {
         for i in 0..16 {
             t._add1(format!("a[{i}]"));
         }
-        // consume all 17 outputs  
+        // consume all 17 outputs
         for _ in 0..17 {
             t.get_fields1();
         }
@@ -404,10 +382,7 @@ mod tests {
         t.put_single("rootC");
         t.get_field("challengeQ[0]");
         let code = t.get_code();
-        assert!(
-            code.contains("challengeQ[0] <== BN1toGL3()(transcriptHash_0["),
-            "expected BN1toGL3: {code}"
-        );
+        assert!(code.contains("challengeQ[0] <== BN1toGL3()(transcriptHash_0["), "expected BN1toGL3: {code}");
     }
 
     // ── get_field_hash ────────────────────────────────────────────────────────
@@ -418,10 +393,7 @@ mod tests {
         t.put_single("rootC");
         t.get_field_hash("publicsHash");
         let code = t.get_code();
-        assert!(
-            code.contains("publicsHash <== transcriptHash_publics_0["),
-            "expected direct assignment: {code}"
-        );
+        assert!(code.contains("publicsHash <== transcriptHash_publics_0["), "expected direct assignment: {code}");
         // must NOT contain BN1toGL3
         assert!(!code.contains("BN1toGL3"), "unexpected conversion: {code}");
     }
@@ -435,14 +407,8 @@ mod tests {
         t.put("challengeFRIQueries", 3);
         t.get_permutations("queriesFRI", 10, 8, 1);
         let code = t.get_code();
-        assert!(
-            code.contains("Num2Bits_strictT()"),
-            "expected Num2Bits_strictT: {code}"
-        );
-        assert!(
-            code.contains("signal {binary} transcriptN2b_0[254]"),
-            "expected 254-bit N2b: {code}"
-        );
+        assert!(code.contains("Num2Bits_strictT()"), "expected Num2Bits_strictT: {code}");
+        assert!(code.contains("signal {binary} transcriptN2b_0[254]"), "expected 254-bit N2b: {code}");
     }
 
     #[test]
@@ -454,23 +420,11 @@ mod tests {
         t.get_permutations("queriesFRI", 1, 300, 2);
         let code = t.get_code();
         // First field: 253 bits, unused last bit
-        assert!(
-            code.contains("for(var j = 0; j < 253; j++)"),
-            "first field 253 bits: {code}"
-        );
-        assert!(
-            code.contains("_ <== transcriptN2b_0[253]; // Unused last bit"),
-            "unused last bit: {code}"
-        );
+        assert!(code.contains("for(var j = 0; j < 253; j++)"), "first field 253 bits: {code}");
+        assert!(code.contains("_ <== transcriptN2b_0[253]; // Unused last bit"), "unused last bit: {code}");
         // Second field: 300 - 253 = 47 bits, unused j in 47..254
-        assert!(
-            code.contains("for(var j = 0; j < 47; j++)"),
-            "remainder 47 bits: {code}"
-        );
-        assert!(
-            code.contains("for(var j = 47; j < 254; j++)"),
-            "unused remainder: {code}"
-        );
+        assert!(code.contains("for(var j = 0; j < 47; j++)"), "remainder 47 bits: {code}");
+        assert!(code.contains("for(var j = 47; j < 254; j++)"), "unused remainder: {code}");
     }
 
     #[test]
@@ -482,10 +436,7 @@ mod tests {
         t.put_single("rootC");
         t.get_permutations("queriesFRI", 1, 63, 1);
         let code = t.get_code();
-        assert!(
-            code.contains("for(var i = 1; i < 17; i++)"),
-            "drain: {code}"
-        );
+        assert!(code.contains("for(var i = 1; i < 17; i++)"), "drain: {code}");
     }
 
     // ── n2b_cnt increments across calls ──────────────────────────────────────
@@ -503,10 +454,7 @@ mod tests {
         t.put_single("b");
         t.get_permutations("q2", 1, 63, 1);
         let code = t.get_code();
-        assert!(
-            code.contains("transcriptN2b_1"),
-            "second call should use n2b_cnt=1: {code}"
-        );
+        assert!(code.contains("transcriptN2b_1"), "second call should use n2b_cnt=1: {code}");
     }
 
     // ── Integration: small FRI query scenario ────────────────────────────────
