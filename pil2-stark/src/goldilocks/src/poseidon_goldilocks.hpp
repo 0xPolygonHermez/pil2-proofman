@@ -74,16 +74,11 @@ private:
     inline static void prod_(Goldilocks::Element *x, const Goldilocks::Element alpha, const Goldilocks::Element C[SPONGE_WIDTH]);
 
 #ifdef __AVX2__
+    // 3-register single-sponge primitives (used by permute_avx).
     inline static void add_avx(__m256i &st0, __m256i &st1, __m256i &st2, const Goldilocks::Element C[SPONGE_WIDTH]);
     inline static void pow7_avx(__m256i &st0, __m256i &st1, __m256i &st2);
     inline static void add_avx_a(__m256i &st0, __m256i &st1, __m256i &st2, const Goldilocks::Element C[SPONGE_WIDTH]);
     inline static void add_avx_small(__m256i &st0, __m256i &st1, __m256i &st2, const Goldilocks::Element C_small[SPONGE_WIDTH]);
-#endif
-#ifdef __AVX512__
-    inline static void pow7_avx512(__m512i &st0, __m512i &st1, __m512i &st2);
-    inline static void add_avx512(__m512i &st0, __m512i &st1, __m512i &st2, const Goldilocks::Element C[SPONGE_WIDTH]);
-    inline static void add_avx512_a(__m512i &st0, __m512i &st1, __m512i &st2, const Goldilocks::Element C[SPONGE_WIDTH]);
-    inline static void add_avx512_small(__m512i &st0, __m512i &st1, __m512i &st2, const Goldilocks::Element C_small[SPONGE_WIDTH]);
 #endif
 
     [[noreturn]] static void abortMode(const char *op, PoseidonMode m);
@@ -120,7 +115,8 @@ private:
                                      int num_threads = 0, uint64_t dim = 1);
 #endif
 #ifdef __AVX512__
-    // AVX512 8-lane batch (single-sponge AVX512 intentionally unimplemented).
+    // AVX512 8-sponge batch: 12 __m512i registers, each holding one state
+    // element across 8 sponges (strided layout, mirrors Poseidon2).
     static void permute_batch_avx512(Goldilocks::Element *, const Goldilocks::Element *);
     static void compress_batch_avx512(Goldilocks::Element (&state)[8 * CAPACITY],
                                       const Goldilocks::Element (&input)[8 * SPONGE_WIDTH]);
@@ -350,8 +346,5 @@ inline void PoseidonGoldilocks<W>::merkletree(
 
 #include "poseidon_goldilocks_avx.hpp"
 
-#ifdef __AVX512__
-#include "poseidon_goldilocks_avx512.hpp"
-#endif
-
 #endif // POSEIDON_GOLDILOCKS
+
