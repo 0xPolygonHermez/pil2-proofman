@@ -2509,43 +2509,38 @@ where
             }
 
             if self.mpi_ctx.rank == 0 {
-                if options.rma && self.mpi_ctx.get_outer_agg_rank()? != 0 {
-                    let mut airgroup_instances_to_receive = vec![0; n_airgroups];
-                    for global_id in self.pctx.dctx_get_worker_instances().iter() {
-                        let airgroup_id = instances[*global_id].airgroup_id;
-                        airgroup_instances_to_receive[airgroup_id] = 1;
-                    }
-
-                    for (airgroup, instances) in airgroup_instances_to_receive.iter_mut().take(n_airgroups).enumerate()
-                    {
-                        if *instances > 0 {
-                            if phase != ProvePhase::Internal {
-                                *instances = 1;
+                let worker_index = self.pctx.get_worker_index()?;
+                if options.rma {
+                    let outer_rank = self.mpi_ctx.get_outer_agg_rank()?;
+                    if outer_rank != 0 {
+                        let mut airgroups_with_instances = vec![false; n_airgroups];
+                        for global_id in self.pctx.dctx_get_worker_instances().iter() {
+                            airgroups_with_instances[instances[*global_id].airgroup_id] = true;
+                        }
+                        for (airgroup, has_instance) in airgroups_with_instances.iter().enumerate() {
+                            if *has_instance {
+                                let proof = self.pctx.mpi_ctx.recv_proof_from_rank(airgroup, outer_rank);
+                                agg_proofs.push(AggProofs::new(airgroup as u64, proof.clone(), vec![worker_index]));
                             }
-
-                            for _ in 0..*instances {
-                                let proof = self
-                                    .pctx
-                                    .mpi_ctx
-                                    .recv_proof_from_rank(airgroup, self.mpi_ctx.get_outer_agg_rank()?);
-                                agg_proofs.push(AggProofs::new(
-                                    airgroup as u64,
-                                    proof,
-                                    vec![self.pctx.get_worker_index()?],
-                                ));
+                        }
+                    } else {
+                        for airgroup in 0..n_airgroups {
+                            let mut write_lock = self.recursive2_proofs[airgroup].write().unwrap();
+                            if let Some(proof) = write_lock.pop() {
+                                agg_proofs.push(AggProofs::new(airgroup as u64, proof.proof, vec![worker_index]));
                             }
                         }
                     }
                 }
+
                 for proof in &agg_proofs {
                     let agg_proof =
                         Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, None, proof.proof.clone());
 
-                    let worker_index = self.pctx.get_worker_index()? as u32;
                     let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
                     let mut worker_contributions = self.worker_contributions.write().unwrap();
                     if let Some(contrib) = worker_contributions.iter_mut().find(|contrib| {
-                        contrib.worker_index == worker_index && contrib.airgroup_id == proof.airgroup_id as usize
+                        contrib.worker_index == worker_index as u32 && contrib.airgroup_id == proof.airgroup_id as usize
                     }) {
                         if contrib.aggregated {
                             self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(
@@ -2570,7 +2565,7 @@ where
                     }
 
                     self.recursive2_proofs[proof.airgroup_id as usize].write().unwrap().push(agg_proof);
-                    self.received_agg_proofs.write().unwrap()[proof.airgroup_id as usize].push(worker_index as usize);
+                    self.received_agg_proofs.write().unwrap()[proof.airgroup_id as usize].push(worker_index);
                 }
                 if phase == ProvePhase::Internal {
                     timer_stop_and_log_info!(GENERATING_PROOFS);
@@ -2810,10 +2805,20 @@ where
             let agg_proofs_data: Vec<AggProofs> = (0..self.pctx.global_info.air_groups.len())
                 .map(|airgroup_id| {
                     let mut lock = self.recursive2_proofs[airgroup_id].write().unwrap();
-                    let proof = std::mem::take(&mut lock.first_mut().expect("Expected at least one proof").proof);
-                    AggProofs::new(airgroup_id as u64, proof, vec![])
+                    let proof = std::mem::take(
+                        &mut lock
+                            .first_mut()
+                            .ok_or_else(|| {
+                                ProofmanError::InvalidProof(format!(
+                                    "Expected at least one proof for airgroup {}",
+                                    airgroup_id
+                                ))
+                            })?
+                            .proof,
+                    );
+                    Ok(AggProofs::new(airgroup_id as u64, proof, vec![]))
                 })
-                .collect();
+                .collect::<ProofmanResult<Vec<_>>>()?;
 
             if !final_proof {
                 return Ok(Some(agg_proofs_data));
@@ -3046,10 +3051,10 @@ where
                     break;
                 }
 
-                total_outer_agg_proofs.increment();
                 if !pctx_clone.gpu {
                     launch_callback_c(id as u64, ProofType::Recursive2.into());
                 }
+                total_outer_agg_proofs.increment();
             });
             self.handle_recursives.lock().unwrap().push(handle);
         }
