@@ -11,7 +11,9 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde_json::Value;
 
-use stark_recurser::stark2circom::{gen_circom_circuit, gen_stark_verifier, CircomGenOptions, GenCircomCircuitInput, StarkVerifierOptions};
+use stark_recurser::stark2circom::{
+    gen_circom_circuit, gen_stark_verifier, CircomGenOptions, GenCircomCircuitInput, StarkVerifierOptions,
+};
 use crate::proving_key::recursive::run_pil2circom_js;
 
 // ── pil2circom ───────────────────────────────────────────────────────────────
@@ -31,7 +33,7 @@ fn normalise_lines(s: &str) -> Vec<&str> {
 fn compare_pil2circom_outputs(name: &str, js: &str, rust: &str) {
     // Sanitise name for use as a filename.
     let safe = name.replace(['/', '\\', ' ', ':'], "_");
-    let js_path   = std::path::PathBuf::from(format!("/tmp/pil2circom_{safe}_js.circom"));
+    let js_path = std::path::PathBuf::from(format!("/tmp/pil2circom_{safe}_js.circom"));
     let rust_path = std::path::PathBuf::from(format!("/tmp/pil2circom_{safe}_rust.circom"));
 
     if let Err(e) = fs::write(&js_path, js) {
@@ -46,7 +48,7 @@ fn compare_pil2circom_outputs(name: &str, js: &str, rust: &str) {
         return;
     }
 
-    let js_lines   = normalise_lines(js);
+    let js_lines = normalise_lines(js);
     let rust_lines = normalise_lines(rust);
 
     if js_lines == rust_lines {
@@ -54,8 +56,7 @@ fn compare_pil2circom_outputs(name: &str, js: &str, rust: &str) {
         return;
     }
 
-    let first_diff = js_lines.iter().zip(rust_lines.iter()).enumerate()
-        .find(|(_, (a, b))| a != b);
+    let first_diff = js_lines.iter().zip(rust_lines.iter()).enumerate().find(|(_, (a, b))| a != b);
 
     match first_diff {
         Some((n, (js_line, rust_line))) => {
@@ -63,22 +64,27 @@ fn compare_pil2circom_outputs(name: &str, js: &str, rust: &str) {
                 "pil2circom[{name}]: outputs differ ({} vs {} lines). \
                  First difference at line {}:\n  JS  : {:?}\n  Rust: {:?}\n  \
                  diff {} {}",
-                js_lines.len(), rust_lines.len(),
-                n + 1, js_line, rust_line,
-                js_path.display(), rust_path.display(),
+                js_lines.len(),
+                rust_lines.len(),
+                n + 1,
+                js_line,
+                rust_line,
+                js_path.display(),
+                rust_path.display(),
             );
         }
         None => {
             tracing::warn!(
                 "pil2circom[{name}]: outputs differ only in line count ({} vs {} lines)\n  \
                  diff {} {}",
-                js_lines.len(), rust_lines.len(),
-                js_path.display(), rust_path.display(),
+                js_lines.len(),
+                rust_lines.len(),
+                js_path.display(),
+                rust_path.display(),
             );
         }
     }
 }
-
 
 #[derive(Debug, Default)]
 pub struct Pil2CircomOptions {
@@ -156,12 +162,12 @@ pub fn pil2circom(
 
     // ── Rust comparison ───────────────────────────────────────────────────────
     let rust_opts = StarkVerifierOptions {
-        skip_main:              opts.skip_main,
-        verkey_input:           opts.verkey_input,
-        enable_input:           opts.enable_input,
-        input_challenges:       opts.input_challenges,
+        skip_main: opts.skip_main,
+        verkey_input: opts.verkey_input,
+        enable_input: opts.enable_input,
+        input_challenges: opts.input_challenges,
         fri_queries_batch_size: None,
-        multi_fri:              false,
+        multi_fri: false,
     };
     let rust_root: Option<&[String; 4]> = if opts.verkey_input { None } else { Some(const_root) };
     match gen_stark_verifier(rust_root, stark_info, verifier_info, &rust_opts) {
