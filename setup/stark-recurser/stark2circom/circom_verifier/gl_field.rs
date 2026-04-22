@@ -77,9 +77,9 @@ pub fn gl_exp(a: u64, e: u64) -> u64 {
     let mut exp = e;
     while exp > 0 {
         if exp & 1 == 1 {
-            result = result * base;
+            result *= base;
         }
-        base = base * base;
+        base *= base;
         exp >>= 1;
     }
     result.as_canonical_u64()
