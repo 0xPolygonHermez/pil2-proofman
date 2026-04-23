@@ -36,6 +36,47 @@ static __global__ void initTraceKernel(gl64_t *d_trace, uint64_t nRows, uint64_t
 }
 
 // ===================================================================
+// permute — single-sponge public API (<<<1,1>>> kernel). Mirrors the
+// CPU PERMUTE_W_*_CPU_BENCH pattern: one permute per iteration, with
+// per-iteration stream sync.
+// ===================================================================
+
+template<uint32_t W>
+static void PERMUTE_W_GPU_BENCH(benchmark::State &state)
+{
+    uint32_t gpu_id = 0;
+    cudaGetDevice((int *)&gpu_id);
+    Poseidon2GoldilocksGPU<W>::initConstants(&gpu_id, 1);
+
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+
+    gl64_t *d_in, *d_out;
+    CHECKCUDAERR(cudaMalloc((void **)&d_in,  Poseidon2GoldilocksGPU<W>::SPONGE_WIDTH * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_out, Poseidon2GoldilocksGPU<W>::SPONGE_WIDTH * sizeof(gl64_t)));
+
+    Goldilocks::Element h_in[Poseidon2GoldilocksGPU<W>::SPONGE_WIDTH];
+    for (uint32_t i = 0; i < Poseidon2GoldilocksGPU<W>::SPONGE_WIDTH; i++)
+        h_in[i] = Goldilocks::fromU64(i + 1);
+    CHECKCUDAERR(cudaMemcpy(d_in, h_in,
+                            Poseidon2GoldilocksGPU<W>::SPONGE_WIDTH * sizeof(gl64_t),
+                            cudaMemcpyHostToDevice));
+
+    // Warm up
+    Poseidon2GoldilocksGPU<W>::permute((uint64_t *)d_out, (uint64_t *)d_in, stream);
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    for (auto _ : state) {
+        Poseidon2GoldilocksGPU<W>::permute((uint64_t *)d_out, (uint64_t *)d_in, stream);
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
+    }
+
+    CHECKCUDAERR(cudaFree(d_in));
+    CHECKCUDAERR(cudaFree(d_out));
+    CHECKCUDAERR(cudaStreamDestroy(stream));
+}
+
+// ===================================================================
 // linearHash -- parameterized by nCols, one bench per (W, layout)
 // ===================================================================
 
@@ -236,6 +277,23 @@ static void GRINDING_GPU_BENCH(benchmark::State &state)
         ->Unit(benchmark::kMillisecond)                                      \
         NCOLS_ARGS                                                           \
         ->UseRealTime();
+
+// ---------------------------------------------------------------------------
+// permute -- W in {8,12,16} (matches CPU PERMUTE_W*_*_CPU_BENCH coverage).
+// ---------------------------------------------------------------------------
+
+BENCHMARK_TEMPLATE(PERMUTE_W_GPU_BENCH, 8)
+    ->Name("PERMUTE_W8_GPU_BENCH")
+    ->Unit(benchmark::kMicrosecond)
+    ->UseRealTime();
+BENCHMARK_TEMPLATE(PERMUTE_W_GPU_BENCH, 12)
+    ->Name("PERMUTE_W12_GPU_BENCH")
+    ->Unit(benchmark::kMicrosecond)
+    ->UseRealTime();
+BENCHMARK_TEMPLATE(PERMUTE_W_GPU_BENCH, 16)
+    ->Name("PERMUTE_W16_GPU_BENCH")
+    ->Unit(benchmark::kMicrosecond)
+    ->UseRealTime();
 
 // ---------------------------------------------------------------------------
 // linearHash -- W in {12,16}, layouts: Tiles, RowMajor

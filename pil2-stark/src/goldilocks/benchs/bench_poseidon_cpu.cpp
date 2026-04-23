@@ -34,41 +34,57 @@ static void fillData(Goldilocks::Element *buf, uint64_t n)
 // permute / compress — per-element throughput
 // ===========================================================================
 
-static void PERMUTE_W12_SCALAR_CPU_BENCH(benchmark::State &state)
+static void PERMUTE_W12_SCALAR_CPU_POS1_BENCH(benchmark::State &state)
 {
-    Goldilocks::Element in[W], out[W];
-    fillData(in, W);
+    const uint64_t total = (uint64_t)NUM_HASHES * W;
+    Goldilocks::Element *x = new Goldilocks::Element[total];
+    Goldilocks::Element *r = new Goldilocks::Element[total];
+    fillData(x, total);
+
+    int nT = omp_get_max_threads();
     for (auto _ : state) {
-        for (uint64_t i = 0; i < NUM_HASHES; i++) {
-            PoseidonGoldilocks<12>::permute(out, in, PoseidonMode::Scalar);
-            benchmark::DoNotOptimize(out);
-        }
+#pragma omp parallel for num_threads(nT) schedule(static)
+        for (uint64_t i = 0; i < NUM_HASHES; i++)
+            PoseidonGoldilocks<12>::permute(
+                (Goldilocks::Element(&)[W])r[i * W],
+                (const Goldilocks::Element(&)[W])x[i * W],
+                PoseidonMode::Scalar);
     }
     state.SetItemsProcessed(state.iterations() * NUM_HASHES);
+    state.counters["hashes"] = NUM_HASHES;
+    delete[] x; delete[] r;
 }
-BENCHMARK(PERMUTE_W12_SCALAR_CPU_BENCH)->UseRealTime();
+BENCHMARK(PERMUTE_W12_SCALAR_CPU_POS1_BENCH)->Unit(benchmark::kMillisecond)->UseRealTime();
 
 #ifdef __AVX2__
-static void PERMUTE_W12_AVX_CPU_BENCH(benchmark::State &state)
+static void PERMUTE_W12_AVX_CPU_POS1_BENCH(benchmark::State &state)
 {
-    Goldilocks::Element in[W], out[W];
-    fillData(in, W);
+    const uint64_t total = (uint64_t)NUM_HASHES * W;
+    Goldilocks::Element *x = new Goldilocks::Element[total];
+    Goldilocks::Element *r = new Goldilocks::Element[total];
+    fillData(x, total);
+
+    int nT = omp_get_max_threads();
     for (auto _ : state) {
-        for (uint64_t i = 0; i < NUM_HASHES; i++) {
-            PoseidonGoldilocks<12>::permute(out, in, PoseidonMode::Avx);
-            benchmark::DoNotOptimize(out);
-        }
+#pragma omp parallel for num_threads(nT) schedule(static)
+        for (uint64_t i = 0; i < NUM_HASHES; i++)
+            PoseidonGoldilocks<12>::permute(
+                (Goldilocks::Element(&)[W])r[i * W],
+                (const Goldilocks::Element(&)[W])x[i * W],
+                PoseidonMode::Avx);
     }
     state.SetItemsProcessed(state.iterations() * NUM_HASHES);
+    state.counters["hashes"] = NUM_HASHES;
+    delete[] x; delete[] r;
 }
-BENCHMARK(PERMUTE_W12_AVX_CPU_BENCH)->UseRealTime();
+BENCHMARK(PERMUTE_W12_AVX_CPU_POS1_BENCH)->Unit(benchmark::kMillisecond)->UseRealTime();
 #endif
 
 // ===========================================================================
 // linearHash — size sweep over BENCH_NCOLS
 // ===========================================================================
 
-static void LINEAR_HASH_W12_SCALAR_CPU_BENCH(benchmark::State &state)
+static void LINEAR_HASH_W12_SCALAR_CPU_POS1_BENCH(benchmark::State &state)
 {
     const uint64_t nCols = state.range(0);
     Goldilocks::Element *cols = new Goldilocks::Element[nCols * BENCH_NROWS];
@@ -82,10 +98,10 @@ static void LINEAR_HASH_W12_SCALAR_CPU_BENCH(benchmark::State &state)
     state.SetItemsProcessed(state.iterations() * BENCH_NROWS);
     delete[] cols; delete[] res;
 }
-BENCHMARK(LINEAR_HASH_W12_SCALAR_CPU_BENCH)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
+BENCHMARK(LINEAR_HASH_W12_SCALAR_CPU_POS1_BENCH)->Unit(benchmark::kMillisecond)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
 
 #ifdef __AVX2__
-static void LINEAR_HASH_W12_AVX_CPU_BENCH(benchmark::State &state)
+static void LINEAR_HASH_W12_AVX_CPU_POS1_BENCH(benchmark::State &state)
 {
     const uint64_t nCols = state.range(0);
     Goldilocks::Element *cols = new Goldilocks::Element[nCols * BENCH_NROWS];
@@ -99,14 +115,14 @@ static void LINEAR_HASH_W12_AVX_CPU_BENCH(benchmark::State &state)
     state.SetItemsProcessed(state.iterations() * BENCH_NROWS);
     delete[] cols; delete[] res;
 }
-BENCHMARK(LINEAR_HASH_W12_AVX_CPU_BENCH)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
+BENCHMARK(LINEAR_HASH_W12_AVX_CPU_POS1_BENCH)->Unit(benchmark::kMillisecond)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
 #endif
 
 // ===========================================================================
 // merkletree — binary (arity=2), full tree over BENCH_NROWS leaves.
 // ===========================================================================
 
-static void MERKLETREE_W12_SCALAR_CPU_BENCH(benchmark::State &state)
+static void MERKLETREE_W12_SCALAR_CPU_POS1_BENCH(benchmark::State &state)
 {
     const uint64_t nCols = state.range(0);
     Goldilocks::Element *cols = new Goldilocks::Element[nCols * BENCH_NROWS];
@@ -119,10 +135,10 @@ static void MERKLETREE_W12_SCALAR_CPU_BENCH(benchmark::State &state)
     state.SetItemsProcessed(state.iterations() * BENCH_NROWS);
     delete[] cols; delete[] tree;
 }
-BENCHMARK(MERKLETREE_W12_SCALAR_CPU_BENCH)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
+BENCHMARK(MERKLETREE_W12_SCALAR_CPU_POS1_BENCH)->Unit(benchmark::kMillisecond)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
 
 #ifdef __AVX2__
-static void MERKLETREE_W12_AVX_CPU_BENCH(benchmark::State &state)
+static void MERKLETREE_W12_AVX_CPU_POS1_BENCH(benchmark::State &state)
 {
     const uint64_t nCols = state.range(0);
     Goldilocks::Element *cols = new Goldilocks::Element[nCols * BENCH_NROWS];
@@ -135,9 +151,9 @@ static void MERKLETREE_W12_AVX_CPU_BENCH(benchmark::State &state)
     state.SetItemsProcessed(state.iterations() * BENCH_NROWS);
     delete[] cols; delete[] tree;
 }
-BENCHMARK(MERKLETREE_W12_AVX_CPU_BENCH)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
+BENCHMARK(MERKLETREE_W12_AVX_CPU_POS1_BENCH)->Unit(benchmark::kMillisecond)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
 
-static void MERKLETREE_W12_AVXBATCH_CPU_BENCH(benchmark::State &state)
+static void MERKLETREE_W12_AVXBATCH_CPU_POS1_BENCH(benchmark::State &state)
 {
     const uint64_t nCols = state.range(0);
     Goldilocks::Element *cols = new Goldilocks::Element[nCols * BENCH_NROWS];
@@ -150,11 +166,11 @@ static void MERKLETREE_W12_AVXBATCH_CPU_BENCH(benchmark::State &state)
     state.SetItemsProcessed(state.iterations() * BENCH_NROWS);
     delete[] cols; delete[] tree;
 }
-BENCHMARK(MERKLETREE_W12_AVXBATCH_CPU_BENCH)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
+BENCHMARK(MERKLETREE_W12_AVXBATCH_CPU_POS1_BENCH)->Unit(benchmark::kMillisecond)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
 #endif
 
 #ifdef __AVX512__
-static void MERKLETREE_W12_AVX512BATCH_CPU_BENCH(benchmark::State &state)
+static void MERKLETREE_W12_AVX512BATCH_CPU_POS1_BENCH(benchmark::State &state)
 {
     const uint64_t nCols = state.range(0);
     Goldilocks::Element *cols = new Goldilocks::Element[nCols * BENCH_NROWS];
@@ -167,5 +183,5 @@ static void MERKLETREE_W12_AVX512BATCH_CPU_BENCH(benchmark::State &state)
     state.SetItemsProcessed(state.iterations() * BENCH_NROWS);
     delete[] cols; delete[] tree;
 }
-BENCHMARK(MERKLETREE_W12_AVX512BATCH_CPU_BENCH)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
+BENCHMARK(MERKLETREE_W12_AVX512BATCH_CPU_POS1_BENCH)->Unit(benchmark::kMillisecond)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
 #endif

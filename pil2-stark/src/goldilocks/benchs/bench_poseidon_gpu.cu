@@ -35,6 +35,47 @@ static __global__ void initTraceKernel_pos1(gl64_t *d_trace, uint64_t nRows, uin
 }
 
 // ===================================================================
+// permute — single-sponge public API (<<<1,1>>> kernel). Mirrors the
+// CPU PERMUTE_W12_*_CPU_BENCH pattern: one permute per iteration, with
+// per-iteration stream sync.
+// ===================================================================
+
+template<uint32_t W>
+static void PERMUTE_W_GPU_POS1_BENCH(benchmark::State &state)
+{
+    uint32_t gpu_id = 0;
+    cudaGetDevice((int *)&gpu_id);
+    PoseidonGoldilocksGPU<W>::initConstants(&gpu_id, 1);
+
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+
+    gl64_t *d_in, *d_out;
+    CHECKCUDAERR(cudaMalloc((void **)&d_in,  PoseidonGoldilocksGPU<W>::SPONGE_WIDTH * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_out, PoseidonGoldilocksGPU<W>::SPONGE_WIDTH * sizeof(gl64_t)));
+
+    Goldilocks::Element h_in[PoseidonGoldilocksGPU<W>::SPONGE_WIDTH];
+    for (uint32_t i = 0; i < PoseidonGoldilocksGPU<W>::SPONGE_WIDTH; ++i)
+        h_in[i] = Goldilocks::fromU64(i + 1);
+    CHECKCUDAERR(cudaMemcpy(d_in, h_in,
+                            PoseidonGoldilocksGPU<W>::SPONGE_WIDTH * sizeof(gl64_t),
+                            cudaMemcpyHostToDevice));
+
+    // Warm up
+    PoseidonGoldilocksGPU<W>::permute((uint64_t *)d_out, (uint64_t *)d_in, stream);
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    for (auto _ : state) {
+        PoseidonGoldilocksGPU<W>::permute((uint64_t *)d_out, (uint64_t *)d_in, stream);
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
+    }
+
+    CHECKCUDAERR(cudaFree(d_in));
+    CHECKCUDAERR(cudaFree(d_out));
+    CHECKCUDAERR(cudaStreamDestroy(stream));
+}
+
+// ===================================================================
 // linearHash — parameterised by nCols, two layouts.
 // ===================================================================
 
@@ -244,6 +285,12 @@ static void GRINDING_GPU_POS1_BENCH(benchmark::State &state)
         ->Unit(benchmark::kMillisecond)                                          \
         NCOLS_ARGS                                                               \
         ->UseRealTime();
+
+// permute — W=12 (Poseidon v1 only supports W=12).
+BENCHMARK_TEMPLATE(PERMUTE_W_GPU_POS1_BENCH, 12)
+    ->Name("PERMUTE_W12_GPU_POS1_BENCH")
+    ->Unit(benchmark::kMicrosecond)
+    ->UseRealTime();
 
 // linearHash — W=12, both layouts.
 REG_NCOLS(LINEAR_HASH_W_TILES_GPU_POS1_BENCH,    12, "LINEAR_HASH_W12_TILES_GPU_POS1_BENCH")

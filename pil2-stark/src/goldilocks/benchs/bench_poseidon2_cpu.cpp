@@ -57,6 +57,8 @@ static void PERMUTE_W_SCALAR_CPU_BENCH(benchmark::State &state)
                 (const Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
                 Poseidon2Mode::Scalar);
     }
+    state.SetItemsProcessed(state.iterations() * NUM_HASHES);
+    state.counters["hashes"] = NUM_HASHES;
     delete[] x; delete[] r;
 }
 
@@ -78,8 +80,11 @@ static void PERMUTE_W_AVX_CPU_BENCH(benchmark::State &state)
                 (const Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
                 Poseidon2Mode::Avx);
     }
+    state.SetItemsProcessed(state.iterations() * NUM_HASHES);
+    state.counters["hashes"] = NUM_HASHES;
     delete[] x; delete[] r;
 }
+
 #endif
 
 template<uint32_t W>
