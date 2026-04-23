@@ -74,6 +74,9 @@ pub struct MpiCtx {
 }
 
 const _MPI_TAG_CANCEL_JOB: i32 = 999999;
+const _MPI_TAG_BROADCAST: i32 = 999998;
+const _MPI_TAG_DISTRIBUTE_MULTIPLICITY: i32 = 999997;
+const _MPI_TAG_DISTRIBUTE_MULTIPLICITIES: i32 = 999996;
 
 impl Default for MpiCtx {
     fn default() -> Self {
@@ -216,6 +219,26 @@ impl MpiCtx {
         }
     }
 
+    /// Barrier that also checks all ranks succeeded.
+    /// Every rank must call this — pass `false` on failure so others detect it.
+    /// Returns `true` only if all ranks passed `true`.
+    pub fn all_finished_ok(&self, success: bool) -> bool {
+        #[cfg(feature = "mpi")]
+        {
+            if self.n_processes <= 1 {
+                return success;
+            }
+            let send: [u8; 1] = [if success { 1 } else { 0 }];
+            let mut all: Vec<u8> = vec![0u8; self.n_processes as usize];
+            self.world.all_gather_into(&send[..], &mut all[..]);
+            all.iter().all(|&v| v != 0)
+        }
+        #[cfg(not(feature = "mpi"))]
+        {
+            success
+        }
+    }
+
     pub fn distribute_roots(&self, values: Vec<u64>) -> Vec<u64> {
         #[cfg(feature = "mpi")]
         {
@@ -346,12 +369,13 @@ impl MpiCtx {
                 if self.rank == 0 {
                     // Root sends to all other processes
                     for dest in 1..self.n_processes {
-                        self.world.process_at_rank(dest).send(&_buf[..]);
+                        self.world.process_at_rank(dest).send_with_tag(&_buf[..], _MPI_TAG_BROADCAST);
                     }
                 } else {
-                    // Non-root: matched_probe + matched_receive_into for thread-safe receive
+                    // Non-root: matched_probe_with_tag + matched_receive_into for thread-safe receive
                     // This atomically binds to a specific message, preventing interleaving
-                    let (msg, status) = self.world.process_at_rank(0).matched_probe();
+                    // Using a dedicated tag prevents capturing unrelated internal messages
+                    let (msg, status) = self.world.process_at_rank(0).matched_probe_with_tag(_MPI_TAG_BROADCAST);
                     let count = status.count(u8::equivalent_datatype()) as usize;
                     _buf.resize(count, 0u8);
                     msg.matched_receive_into(&mut _buf[..]);
@@ -499,12 +523,16 @@ impl MpiCtx {
                         packed_multiplicity[0] += 2;
                     }
                 }
-                self.world.process_at_rank(_owner).send(&packed_multiplicity[..]);
+                self.world
+                    .process_at_rank(_owner)
+                    .send_with_tag(&packed_multiplicity[..], _MPI_TAG_DISTRIBUTE_MULTIPLICITY);
             } else {
                 let mut packed_multiplicity: Vec<u32> = vec![0; _multiplicity.len() * 2 + 1];
                 for i in 0..self.n_processes {
                     if i != _owner {
-                        self.world.process_at_rank(i).receive_into(&mut packed_multiplicity);
+                        let (msg, _) =
+                            self.world.process_at_rank(i).matched_probe_with_tag(_MPI_TAG_DISTRIBUTE_MULTIPLICITY);
+                        msg.matched_receive_into(&mut packed_multiplicity);
                         for j in (1..packed_multiplicity[0]).step_by(2) {
                             let idx = packed_multiplicity[j as usize] as usize;
                             let m = packed_multiplicity[j as usize + 1] as u64;
@@ -519,6 +547,7 @@ impl MpiCtx {
     pub fn distribute_multiplicities(&self, _multiplicities: &[Vec<AtomicU64>], _owner: i32) {
         #[cfg(feature = "mpi")]
         {
+            println!("Process {} distributing multiplicities for owner {}", self.rank, _owner);
             // Ensure that each multiplicity vector can be operated with u32
             let mut buff_size = 0;
             for multiplicity in _multiplicities.iter() {
@@ -542,12 +571,16 @@ impl MpiCtx {
                     }
                 }
 
-                self.world.process_at_rank(_owner).send(&packed_multiplicities[..]);
+                self.world
+                    .process_at_rank(_owner)
+                    .send_with_tag(&packed_multiplicities[..], _MPI_TAG_DISTRIBUTE_MULTIPLICITIES);
             } else {
                 let mut packed_multiplicities: Vec<u32> = vec![0; buff_size * 2];
                 for i in 0..self.n_processes {
                     if i != _owner {
-                        self.world.process_at_rank(i).receive_into(&mut packed_multiplicities);
+                        let (msg, _) =
+                            self.world.process_at_rank(i).matched_probe_with_tag(_MPI_TAG_DISTRIBUTE_MULTIPLICITIES);
+                        msg.matched_receive_into(&mut packed_multiplicities);
 
                         // Read counters
                         let mut counters = vec![0usize; n_columns];
@@ -569,6 +602,7 @@ impl MpiCtx {
                 }
             }
         }
+        println!("Process {} finished distributing multiplicities for owner {}", self.rank, _owner);
     }
 
     /// Notify all other MPI processes to cancel their current job
