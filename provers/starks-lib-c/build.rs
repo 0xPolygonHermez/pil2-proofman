@@ -271,10 +271,7 @@ fn run_command(cmd: &str, args: &[&str], dir: &Path) {
 fn find_tracked_files(dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     if let Some(name) = dir.file_name().and_then(|n| n.to_str()) {
-        // Skip build output directories, external submodules (blst/sppark are tracked
-        // explicitly in ensure_blst_compiled; including them here causes false rebuilds
-        // because libblst.a is created by the build script itself), and IDE config.
-        if matches!(name, "build" | "build-gpu" | "build_gpu" | "lib" | "lib-gpu" | "external" | ".vscode" | ".git") {
+        if matches!(name, "build" | "build-gpu" | "build_gpu" | "lib" | "lib-gpu" | ".vscode" | ".git") {
             return files;
         }
     }
