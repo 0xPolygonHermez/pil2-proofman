@@ -547,7 +547,6 @@ impl MpiCtx {
     pub fn distribute_multiplicities(&self, _multiplicities: &[Vec<AtomicU64>], _owner: i32) {
         #[cfg(feature = "mpi")]
         {
-            println!("Process {} distributing multiplicities for owner {}", self.rank, _owner);
             // Ensure that each multiplicity vector can be operated with u32
             let mut buff_size = 0;
             for multiplicity in _multiplicities.iter() {
@@ -602,7 +601,6 @@ impl MpiCtx {
                 }
             }
         }
-        println!("Process {} finished distributing multiplicities for owner {}", self.rank, _owner);
     }
 
     /// Notify all other MPI processes to cancel their current job
