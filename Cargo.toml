@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.16.1"
+version = "0.17.0"
 edition = "2021"
 license = "Apache-2.0 or MIT"
 keywords = ["pil2-proofman", "prover", "zero-knowledge"]
