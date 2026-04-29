@@ -42,8 +42,7 @@ pub fn pil2circom(
         multi_fri: false,
     };
     let root: Option<&[String; 4]> = if opts.verkey_input { None } else { Some(const_root) };
-    gen_stark_verifier(root, stark_info, verifier_info, &rust_opts)
-        .context("gen_stark_verifier failed")
+    gen_stark_verifier(root, stark_info, verifier_info, &rust_opts).context("gen_stark_verifier failed")
 }
 
 // ── gen_circom ───────────────────────────────────────────────────────────────
