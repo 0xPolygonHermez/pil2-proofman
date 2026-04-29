@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use pil2_stark_setup::commands::rebuild_witness::{self as rebuild_witness_cmd, RebuildWitnessOptions};
 use pil2_stark_setup::commands::setup::{self, SetupOptions};
 use pil2_stark_setup::commands::stats::{self as stats_cmd, StatsOptions};
 use pil2_stark_setup::commands::setup_snark::{self as snark_cmd, SetupSnarkOptions};
@@ -25,6 +26,9 @@ enum Commands {
     SetupSnark(SetupSnarkArgs),
     /// Set up a test recursive circuit from a user-provided circom file.
     SetupRecursiveTest(SetupRecursiveTestArgs),
+    /// Rebuild every witness library (.so/.dylib) in an existing provingKey
+    /// without re-running the full setup pipeline.
+    RebuildWitnessLibs(RebuildWitnessArgs),
 }
 
 #[derive(Parser)]
@@ -117,6 +121,24 @@ struct SetupSnarkArgs {
 }
 
 #[derive(Parser)]
+struct RebuildWitnessArgs {
+    /// Path to the `provingKey/` directory.
+    #[arg(short = 'p', long = "proving-key")]
+    proving_key: String,
+
+    /// Optional build directory for intermediate `.circom`/`.cpp` files.
+    /// Defaults to a tempdir that is removed when the command finishes.
+    #[arg(short = 'b', long = "build-dir")]
+    build_dir: Option<String>,
+
+    /// Number of circom compiles to run in parallel (default 1 = serial).
+    /// Each circom invocation is single-threaded but RAM-hungry; size by
+    /// available memory rather than CPU count.
+    #[arg(short = 'j', long = "jobs", default_value_t = 1, env = "REBUILD_JOBS")]
+    jobs: usize,
+}
+
+#[derive(Parser)]
 struct SetupRecursiveTestArgs {
     /// Build output directory
     #[arg(short = 'b', long)]
@@ -206,6 +228,18 @@ fn main() -> anyhow::Result<()> {
                 only_recursive_final: args.only_recursive_final,
             };
             snark_cmd::run_setup_snark(&opts)
+        }
+
+        Commands::RebuildWitnessLibs(args) => {
+            tracing::info!("proofman-setup rebuild-witness-libs: starting");
+            tracing::info!("  proving_key: {}", args.proving_key);
+            if let Some(ref s) = args.build_dir {
+                tracing::info!("  build_dir: {}", s);
+            }
+            tracing::info!("  jobs: {}", args.jobs);
+            let opts =
+                RebuildWitnessOptions { proving_key: args.proving_key, build_dir: args.build_dir, jobs: args.jobs };
+            rebuild_witness_cmd::run_rebuild_witness(&opts)
         }
 
         Commands::SetupRecursiveTest(args) => {

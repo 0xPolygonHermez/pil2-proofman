@@ -23,7 +23,9 @@ use stark_recurser::plonk2pil::{self, PlonkResult};
 
 use crate::proving_key::bctree;
 use crate::io::fixed_cols;
-use stark_recurser::stark2circom::{gen_circom_circuit, gen_stark_verifier, CircomGenOptions, GenCircomCircuitInput, StarkVerifierOptions};
+use stark_recurser::stark2circom::{
+    gen_circom_circuit, gen_stark_verifier, CircomGenOptions, GenCircomCircuitInput, StarkVerifierOptions,
+};
 use crate::proving_key::recursive::compile_pil;
 use crate::output::witness_gen::WitnessTracker;
 
@@ -73,10 +75,10 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
             fri_queries_batch_size: None,
             multi_fri: false,
         };
-        let circom_src = gen_stark_verifier(Some(config.const_root), config.stark_info, config.verifier_info, &rust_opts)
-            .context("gen_stark_verifier failed in compressed final setup")?;
-        fs::write(circom_dir.join(verifier_name), &circom_src)
-            .context("Failed to write verifier circom")?;
+        let circom_src =
+            gen_stark_verifier(Some(config.const_root), config.stark_info, config.verifier_info, &rust_opts)
+                .context("gen_stark_verifier failed in compressed final setup")?;
+        fs::write(circom_dir.join(verifier_name), &circom_src).context("Failed to write verifier circom")?;
     }
 
     // Generate compressed final circom via Rust gen_circom_circuit

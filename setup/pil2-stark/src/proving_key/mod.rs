@@ -4,3 +4,4 @@ pub mod final_setup;
 pub mod recursive;
 pub mod recursive_test;
 pub mod snark_setup;
+pub mod witness_rebuild;
