@@ -1,7 +1,7 @@
 // extern crate env_logger;
 use clap::Parser;
 use regex::Regex;
-use proofman_common::{initialize_logger, ParamsGPU, SetupsVadcop, MpiCtx, ProofCtx, VerboseMode, ProofmanError, ProofType};
+use proofman_common::{initialize_logger, SetupsVadcop, MpiCtx, ProofCtx, VerboseMode, ProofmanError, ProofType};
 use std::fs::File;
 use std::io::Read;
 use colored::Colorize;
@@ -37,12 +37,10 @@ impl GenWitnessCmd {
         initialize_logger(VerboseMode::Info, None);
 
         let pctx: ProofCtx<Goldilocks> =
-            ProofCtx::create_ctx(self.proving_key.clone(), true, self.verbose.into(), Arc::new(MpiCtx::new()))?;
-
-        let gpu_params = ParamsGPU::new(false);
+            ProofCtx::create_ctx(self.proving_key.clone(), true, self.verbose.into(), Arc::new(MpiCtx::new()), false)?;
 
         let setups_vadcop: Arc<SetupsVadcop<Goldilocks>> =
-            Arc::new(SetupsVadcop::new(&pctx.global_info, false, true, &gpu_params, &[])?);
+            Arc::new(SetupsVadcop::new(&pctx.global_info, false, true, &[], false)?);
 
         let mut zkin_file = File::open(&self.proof)?;
         let mut zkin_u8 = Vec::new();

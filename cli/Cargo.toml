@@ -9,8 +9,6 @@ categories = { workspace = true }
 
 readme = "README.md"
 
-build = "build.rs"
-
 [dependencies]
 pilout = { workspace = true }
 proofman-util = { workspace = true }
@@ -35,14 +33,6 @@ convert_case = "0.8"
 regex = "1.12.2"
 toml = "0.9.8"
 
-# Distributed mode (mpi) is only supported on Linux x86_64
-[target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
-mpi = { version = "0.8.0" }
-
 [features]
-default = []
-disable_distributed = ["proofman-common/disable_distributed"]
-dev = []
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(distributed)'] }
+default = ["mpi"]
+mpi = ["proofman/mpi", "proofman-common/mpi"]

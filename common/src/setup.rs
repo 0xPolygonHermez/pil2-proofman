@@ -98,6 +98,7 @@ pub struct Setup<F: PrimeField64> {
     pub n_cols: u64,
     pub n_operations_quotient: u64,
     pub preallocate: bool,
+    pub gpu: bool,
     pub const_pols_loaded: AtomicBool,
 }
 
@@ -126,6 +127,7 @@ impl<F: PrimeField64> Setup<F> {
         setup_type: &ProofType,
         verify_constraints: bool,
         preallocate: bool,
+        gpu: bool,
         recursive2_path: Option<&PathBuf>,
     ) -> ProofmanResult<Self> {
         let stark_info_path = match setup_type {
@@ -146,12 +148,12 @@ impl<F: PrimeField64> Setup<F> {
             _ => setup_path.display().to_string() + ".bin",
         };
 
-        let const_pols_path = match !cfg!(feature = "gpu") {
+        let const_pols_path = match !gpu {
             true => setup_path.display().to_string() + ".const",
             false => setup_path.display().to_string() + ".const_gpu",
         };
 
-        let const_pols_tree_path = match !cfg!(feature = "gpu") {
+        let const_pols_tree_path = match !gpu {
             true => setup_path.display().to_string() + ".consttree",
             false => setup_path.display().to_string() + ".consttree_gpu",
         };
@@ -202,14 +204,14 @@ impl<F: PrimeField64> Setup<F> {
             let stark_info = StarkInfo::from_json(&stark_info_json);
             let recursive = setup_type != &ProofType::Basic;
             let recursive_final = setup_type == &ProofType::RecursiveF;
-            let preallocate_const = preallocate && cfg!(feature = "gpu");
+            let preallocate_const = preallocate && gpu;
             let p_stark_info = stark_info_new_c(
                 stark_info_path.as_str(),
                 recursive_final,
                 recursive,
                 verify_constraints,
                 false,
-                cfg!(feature = "gpu"),
+                gpu,
                 preallocate_const,
             );
             let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
@@ -241,7 +243,7 @@ impl<F: PrimeField64> Setup<F> {
 
             let n_cols = stark_info.map_sections_n["cm1"];
 
-            if verify_constraints && !cfg!(feature = "gpu") {
+            if verify_constraints && !gpu {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
                 (
                     stark_info,
@@ -266,7 +268,7 @@ impl<F: PrimeField64> Setup<F> {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
                 let const_pols_tree: Vec<F> = create_buffer_fast(const_tree_size);
                 let mut const_pols_size_packed = 0;
-                if cfg!(feature = "gpu") && setup_type != &ProofType::RecursiveF {
+                if gpu && setup_type != &ProofType::RecursiveF {
                     let words_per_row: u64 = if Path::new(&const_pols_path).exists() {
                         let bytes = fs::read(&const_pols_path).expect("Failed to read const_pols file");
                         if bytes.len() >= 8 {
@@ -344,8 +346,6 @@ impl<F: PrimeField64> Setup<F> {
 
             // Read exec file data
             let exec_filename = setup_path.display().to_string() + ".exec";
-            let exec_filename_str = CString::new(exec_filename.as_str()).unwrap();
-            let exec_filename_ptr = exec_filename_str.as_ptr() as *mut std::os::raw::c_char;
 
             let mut file = File::open(&exec_filename)?;
             let mut bytes = [0u8; 8];
@@ -358,7 +358,7 @@ impl<F: PrimeField64> Setup<F> {
 
             let exec_data_size = 2 + n_adds * 4 + n_smap * n_cols;
             let mut exec_file_data: Vec<u64> = vec![0; exec_data_size as usize];
-            read_exec_file_c(exec_file_data.as_mut_ptr(), exec_filename_ptr, n_cols);
+            read_exec_file_c(exec_file_data.as_mut_ptr(), exec_filename.as_str(), n_cols);
 
             (Some(library), Some(circom_circuit_ptr), get_witness_fn, Some(witness_size), Some(exec_file_data))
         } else {
@@ -393,6 +393,7 @@ impl<F: PrimeField64> Setup<F> {
             n_cols,
             n_operations_quotient,
             preallocate,
+            gpu,
             const_pols_loaded: AtomicBool::new(false),
         })
     }

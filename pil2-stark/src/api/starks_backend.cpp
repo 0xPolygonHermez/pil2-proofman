@@ -15,6 +15,7 @@ uint64_t commit_witness_cpu(void *pSetupCtx, void *params, uint64_t instanceId, 
 void verify_constraints_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *constraintsInfo, void *d_buffers, uint64_t streamId);
 uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool skipRecalculation, uint64_t streamId, char *constPolsPath, char *constTreePath);
 void *gen_device_buffers_cpu(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext);
+void use_packed_trace_cpu(void *d_buffers_, bool packed);
 void free_device_buffers_cpu(void *d_buffers);
 void load_device_setup_cpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo);
 uint64_t gen_recursive_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream);
@@ -45,6 +46,7 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t 
 void *gen_recursive_proof_final_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers);
 void calculate_const_tree_fixed_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, char *proofType, void *d_buffers_);
 void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext);
+void use_packed_trace_gpu(void *d_buffers_, bool packed);
 void free_device_buffers_gpu(void *d_buffers);
 void *gen_device_buffers_recursivef_gpu(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffers, char* verkey);
 void free_device_buffers_recursivef_gpu(void *d_buffers);
@@ -91,6 +93,7 @@ StarksBackend cpu_backend = []() {
     backend.gen_recursive_proof_final = gen_recursive_proof_final_cpu;
     backend.calculate_const_tree_fixed = nullptr;
     backend.gen_device_buffers = gen_device_buffers_cpu;
+    backend.use_packed_trace = use_packed_trace_cpu;
     backend.free_device_buffers = free_device_buffers_cpu;
     backend.gen_device_buffers_recursivef = nullptr;      // default: nullptr
     backend.free_device_buffers_recursivef = nullptr;
@@ -134,6 +137,7 @@ StarksBackend gpu_backend = []() {
     backend.gen_recursive_proof_final = gen_recursive_proof_final_gpu;
     backend.calculate_const_tree_fixed = calculate_const_tree_fixed_gpu;
     backend.gen_device_buffers = gen_device_buffers_gpu;
+    backend.use_packed_trace = use_packed_trace_gpu;
     backend.free_device_buffers = free_device_buffers_gpu;
     backend.gen_device_buffers_recursivef = gen_device_buffers_recursivef_gpu;
     backend.free_device_buffers_recursivef = free_device_buffers_recursivef_gpu;
@@ -165,13 +169,15 @@ std::atomic<StarksBackend*> active_backend(&cpu_backend);
 // Runtime backend switch
 // ============================================================================
 
-void set_gpu_mode(bool use_gpu) {
+bool set_gpu_mode(bool use_gpu) {
 #ifdef __USE_CUDA__
     active_backend.store(use_gpu ? &gpu_backend : &cpu_backend, std::memory_order_release);
+    return true;
 #else
     if (use_gpu) {
-        fprintf(stderr, "Warning: GPU mode requested but library was built without CUDA support. Using CPU backend.\n");
+        return false;
     }
+    return true;
 #endif
 }
 
@@ -268,6 +274,11 @@ void calculate_const_tree_fixed(void *pSetupCtx_, uint64_t airgroupId, uint64_t 
 void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext) {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->gen_device_buffers(node_rank, node_size, numa_nodes, arity, max_n_bits_ext);
+}
+
+void use_packed_trace(void *d_buffers, bool packed) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->use_packed_trace) backend->use_packed_trace(d_buffers, packed);
 }
 
 void free_device_buffers(void *d_buffers) {
