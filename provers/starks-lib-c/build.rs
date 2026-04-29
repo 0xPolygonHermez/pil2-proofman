@@ -3,31 +3,57 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Detects whether GPU (CUDA) support is available.
+/// Returns false if the cpu-only feature is set or if no CUDA toolkit is found.
+fn detect_gpu() -> bool {
+    if cfg!(feature = "cpu-only") {
+        return false;
+    }
+    // Check for nvcc in standard CUDA location or PATH
+    let nvcc_in_cuda = Path::new("/usr/local/cuda/bin/nvcc").exists();
+    let nvcc_in_path = Command::new("nvcc").arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
+    nvcc_in_cuda || nvcc_in_path
+}
+
 fn main() {
     println!("cargo:rerun-if-env-changed=CUDA_ARCHS");
 
-    // **Check if the `no_lib_link` feature is enabled**
-    if cfg!(feature = "no_lib_link") {
-        println!("Skipping linking because `no_lib_link` feature is enabled.");
-        return;
+    // Determine if GPU support should be used:
+    // - If cpu-only feature is set, always use CPU
+    // - Otherwise, auto-detect CUDA availability
+    let use_gpu = if cfg!(feature = "cpu-only") {
+        println!("cargo:warning=[BUILD INFO] STARKS compiled with CPU-only support (feature enabled)");
+        false
+    } else if detect_gpu() {
+        println!("cargo:warning=[BUILD INFO] STARKS compiled with GPU support");
+        true
+    } else {
+        println!("cargo:warning=[BUILD INFO] STARKS compiled with CPU-only support (CUDA not detected)");
+        false
+    };
+
+    // Set build mode as environment variable for runtime access
+    if use_gpu {
+        println!("cargo:rustc-env=STARKS_BUILD_MODE=GPU");
+    } else {
+        println!("cargo:rustc-env=STARKS_BUILD_MODE=CPU");
     }
 
     // Canonicalize to avoid ".." in rerun-if-changed paths
     let pil2_stark_path_raw = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pil2-stark");
     let pil2_stark_path = pil2_stark_path_raw.canonicalize().unwrap_or_else(|_| pil2_stark_path_raw.clone());
-    let library_folder =
-        if cfg!(feature = "gpu") { pil2_stark_path.join("lib-gpu") } else { pil2_stark_path.join("lib") };
-    let library_name = if cfg!(feature = "gpu") { "starksgpu" } else { "starks" };
+    let library_folder = if use_gpu { pil2_stark_path.join("lib-gpu") } else { pil2_stark_path.join("lib") };
+    let library_name = if use_gpu { "starksgpu" } else { "starks" };
     let lib_file = library_folder.join(format!("lib{library_name}.a"));
 
     // For GPU builds, ensure submodules (blst, sppark) are initialized and blst is compiled
-    if cfg!(feature = "gpu") {
+    if use_gpu {
         ensure_gpu_submodules_initialized(&pil2_stark_path);
         ensure_blst_compiled(&pil2_stark_path);
     }
 
     // gencode_flags: None = auto-detect (delegate to Makefile configure.sh), Some = explicit archs
-    let gencode_flags: Option<String> = if cfg!(feature = "gpu") {
+    let gencode_flags: Option<String> = if use_gpu {
         match parse_cuda_archs() {
             None => {
                 eprintln!("CUDA_ARCHS not set — auto-detecting GPU arch from host");
@@ -47,7 +73,7 @@ fn main() {
     // Stamp stores "auto" for host-detected builds, or the gencode flags string for explicit builds.
     let archs_stamp_path = library_folder.join(".cuda_archs_stamp");
     let stamp_content = gencode_flags.as_deref().unwrap_or("auto");
-    let archs_changed = if cfg!(feature = "gpu") {
+    let archs_changed = if use_gpu {
         fs::read_to_string(&archs_stamp_path).map(|s| s.trim() != stamp_content).unwrap_or(true)
     } else {
         false
@@ -78,9 +104,9 @@ fn main() {
     }
 
     // Call make to build the library, passing gencode flags if set
-    let target = if cfg!(feature = "gpu") { "starks_lib_gpu" } else { "starks_lib" };
+    let target = if use_gpu { "starks_lib_gpu" } else { "starks_lib" };
     eprintln!("Running make -j {target}...");
-    if cfg!(feature = "gpu") {
+    if use_gpu {
         match &gencode_flags {
             Some(flags) => {
                 let gencode_arg = format!("CUDA_GENCODE_FLAGS={}", flags);
@@ -93,7 +119,7 @@ fn main() {
     }
 
     // Write stamps after make succeeds (make creates the output directory).
-    if cfg!(feature = "gpu") {
+    if use_gpu {
         if let Err(e) = fs::write(&archs_stamp_path, stamp_content) {
             eprintln!(
                 "Warning: failed to write CUDA arch stamp {:?}: {e} — next build will recompile",
@@ -114,7 +140,7 @@ fn main() {
     let abs_lib_path = library_folder.canonicalize().unwrap_or_else(|_| library_folder.clone());
 
     if !lib_file.exists() {
-        if cfg!(feature = "gpu") {
+        if use_gpu {
             panic!("`libstarksgpu.a` was not found at {}", lib_file.display());
         } else {
             panic!("`libstarks.a` was not found at {}", lib_file.display());
@@ -148,7 +174,7 @@ fn main() {
     // Link the static library
     println!("cargo:rustc-link-search=native={}", abs_lib_path.display());
     println!("cargo:rustc-link-lib=static={library_name}");
-    if cfg!(feature = "gpu") {
+    if use_gpu {
         // Add the CUDA library path
         let cuda_path = "/usr/local/cuda/lib64"; // Adjust this path if necessary
         println!("cargo:rustc-link-search=native={cuda_path}");
@@ -180,7 +206,7 @@ fn parse_cuda_archs() -> Option<Vec<u32>> {
         Err(_) => None, // Not set → auto-detect via Makefile configure.sh
         Ok(val) if val.trim().eq_ignore_ascii_case("major") => {
             // All major architectures since Ampere: Ampere/Ada/Hopper/Blackwell-DC/Blackwell-consumer
-            // sm_100 = B100/B200/GB200 (datacenter Blackwell); sm_120 = RTX 5090/5080/5070/5060 (consumer Blackwell)
+            // Note: sm_100 = B100/B200/GB200 (datacenter Blackwell); sm_120 = RTX 5090/5080/5070/5060 (consumer Blackwell)
             // Note: sm_100 and sm_120 are NOT cross-compatible (sm_100 has TMEM hardware sm_120 lacks)
             Some(vec![80, 86, 89, 90, 100, 120])
         }
@@ -245,8 +271,7 @@ fn run_command(cmd: &str, args: &[&str], dir: &Path) {
 fn find_tracked_files(dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     if let Some(name) = dir.file_name().and_then(|n| n.to_str()) {
-        // Skip build output directories
-        if matches!(name, "build" | "build-gpu" | "lib" | "lib-gpu") {
+        if matches!(name, "build" | "build-gpu" | "build_gpu" | "lib" | "lib-gpu" | ".vscode" | ".git") {
             return files;
         }
     }
@@ -255,8 +280,12 @@ fn find_tracked_files(dir: &Path) -> Vec<PathBuf> {
             let path = entry.path();
             if path.is_dir() {
                 files.extend(find_tracked_files(&path));
-            } else if path.extension().and_then(|e| e.to_str()) != Some("mk") {
-                // .mk files may be regenerated by the build (e.g. CudaArch.mk)
+            } else {
+                // Skip build-generated files: .mk (make includes), .d (dependency files)
+                let ext = path.extension().and_then(|e| e.to_str());
+                if matches!(ext, Some("mk" | "d")) {
+                    continue;
+                }
                 files.push(path);
             }
         }

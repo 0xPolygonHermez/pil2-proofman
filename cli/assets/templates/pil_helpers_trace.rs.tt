@@ -71,11 +71,10 @@ pub type { air.name }Fixed<F> = GenericTrace<{ air.name }FixedRow<F>, { air.num_
 trace_row!({ air.name }TraceRow<F> \{
 {{ for column in air.columns }} { column.name }:{{ if air.has_packed }}{ column.type_packed }{{ else }}{ column.type }{{ endif }},{{ endfor }}
 });
-pub type { air.name }Trace<F> = GenericTrace<{ air.name }TraceRow<F>, { air.num_rows }, { air_group.airgroup_id }, { air.id }>;
-
 {{ if air.has_packed }}
-pub type { air.name }TracePacked<F> = GenericTrace<{ air.name }TraceRowPacked<F>, { air.num_rows }, { air_group.airgroup_id }, { air.id }>;
-
+pub type { air.name }Trace<R> = GenericTrace<R, { air.num_rows }, { air_group.airgroup_id }, { air.id }>;
+{{ else }}
+pub type { air.name }Trace<F> = GenericTrace<{ air.name }TraceRow<F>, { air.num_rows }, { air_group.airgroup_id }, { air.id }>;
 {{ endif }}{{ endfor }}{{ endfor }}{{ for air_group in air_groups }}{{ for air in air_group.airs }}{{ for custom_commit in air.custom_columns  }}
 trace_row!({ air.name }{custom_commit.name}TraceRow<F> \{
 {{ for column in custom_commit.custom_columns }} { column.name }: { column.type },{{ endfor }}

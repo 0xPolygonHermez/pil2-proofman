@@ -25,4 +25,3 @@ serde_json.workspace = true
 [features]
 default = []
 verify-rc-values = []
-gpu = ["proofman-common/gpu"]
