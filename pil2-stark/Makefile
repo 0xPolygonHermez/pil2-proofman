@@ -69,9 +69,13 @@ WITNESS_LIB := ./witness_lib
 CXX := g++
 AS := nasm
 ASFLAGS := -f elf64
+CUDA_GRAPH ?= 1
 NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 $(CUDA_GENCODE_FLAGS) -DGL64_PARTIALLY_REDUCED -D__AVX2__ -D__USE_ASSEMBLY__ -D__ADX__ \
              -I./external/sppark/ff -I./external/sppark -I./external/sppark/util -I./external/sppark/ec -I./external/blst/src \
              -DFEATURE_BN254 --diag-suppress 114
+ifeq ($(CUDA_GRAPH), 1)
+    NVCCFLAGS += -DUSE_CUDA_GRAPH
+endif
 
 # Use the following flag to solve amxtileintrin.h incompatibility or use PROOFMAN_HOST_COMPILER_BIN variable to set the host compiler
 # NVCCFLAGS += --compiler-bindir=/usr/bin/g++-10
@@ -117,9 +121,8 @@ else ifeq ($(UNAME_S),Linux)
     # AVX512/AVX2 detection
     AVX512_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx512' -m 1)
     ifneq ($(AVX512_SUPPORTED),)
-        #CXXFLAGS += -mavx2 -D__AVX2__ -mavx512f -D__AVX512__ -D__USE_ASSEMBLY__
-        #$(info AVX-512 is supported by the CPU)
-        $(info AVX-512 is temporarily disabled in the build)
+        CXXFLAGS += -mavx2 -D__AVX2__ -mavx512f -D__AVX512__ -D__USE_ASSEMBLY__
+        $(info AVX-512 is supported by the CPU)
     endif
     AVX2_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx2' -m 1)
     ifneq ($(AVX2_SUPPORTED),)
@@ -142,12 +145,13 @@ endif
 # Define source files based on platform
 ifeq ($(UNAME_S),Darwin)
     # macOS - exclude assembly files (.asm)
-    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/* ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.cc")
+    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/* ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.cc")
 else
     # Linux - include all files including assembly
-    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
+    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
 endif
-SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/bn128/src/msm ./src/bn128/src/ntt ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc" -or -name "*.cu")
+SRCS_STARKS_LIB := $(filter-out %_gpu.cpp %_gpu.cc,$(SRCS_STARKS_LIB))
+SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/bn128/src/msm ./src/bn128/src/ntt ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc" -or -name "*.cu")
 # Sppark utility for GPU (provides gpu_props function)
 SPPARK_GPU_OBJ := $(BUILD_DIR_GPU)/external/sppark/util/all_gpus.o
 OBJS_STARKS_LIB := $(SRCS_STARKS_LIB:%=$(BUILD_DIR)/%.o)
@@ -166,7 +170,7 @@ endif
 OBJS_BCT := $(SRCS_BCT:%=$(BUILD_DIR)/%.o)
 DEPS_BCT := $(OBJS_BCT:.o=.d)
 
-SRCS_BINFILE := $(shell find ./src/binfile/main.cpp ./src/goldilocks/src ./src/starkpil ./src/rapidsnark/logger.* ./src/rapidsnark/binfile_utils.* ./src/rapidsnark/binfile_writer.* ./src/bn128/src/poseidon/poseidon_bn128.cpp ./src/bn128/src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
+SRCS_BINFILE := $(shell find ./src/binfile/main.cpp ./src/goldilocks/src ./src/starkpil/expressions_bin.cpp ./src/starkpil/expressions_info.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/starkpil/stark_info.cpp ./src/rapidsnark/logger.* ./src/rapidsnark/binfile_utils.* ./src/rapidsnark/binfile_writer.* ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
 OBJS_BINFILE := $(SRCS_BINFILE:%=$(BUILD_DIR)/%.o)
 DEPS_BINFILE := $(OBJS_BINFILE:.o=.d)
 

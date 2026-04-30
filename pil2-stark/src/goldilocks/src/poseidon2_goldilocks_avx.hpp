@@ -9,18 +9,18 @@
 const __m256i zero = _mm256_setzero_si256();
 
 template<uint32_t SPONGE_WIDTH_T>
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_avx(Goldilocks::Element (&state)[CAPACITY], Goldilocks::Element const (&input)[SPONGE_WIDTH])
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::compress_avx(Goldilocks::Element (&state)[CAPACITY], Goldilocks::Element const (&input)[SPONGE_WIDTH])
 {
     Goldilocks::Element aux[SPONGE_WIDTH];
-    hash_full_result_avx(aux, input);
+    permute_avx(aux, input);
     std::memcpy(state, aux, CAPACITY * sizeof(Goldilocks::Element));
 }
 
 template<uint32_t SPONGE_WIDTH_T>
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::hash_batch_avx(Goldilocks::Element (&state)[4 * CAPACITY], Goldilocks::Element const (&input)[4 * SPONGE_WIDTH])
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::compress_batch_avx(Goldilocks::Element (&state)[4 * CAPACITY], Goldilocks::Element const (&input)[4 * SPONGE_WIDTH])
 {
     Goldilocks::Element aux[4 * SPONGE_WIDTH];
-    hash_full_result_batch_avx(aux, input);
+    permute_batch_avx(aux, input);
     std::memcpy(state, aux, CAPACITY * sizeof(Goldilocks::Element));
     std::memcpy(&state[4], &aux[SPONGE_WIDTH], CAPACITY * sizeof(Goldilocks::Element));
     std::memcpy(&state[8], &aux[2*SPONGE_WIDTH], CAPACITY * sizeof(Goldilocks::Element));

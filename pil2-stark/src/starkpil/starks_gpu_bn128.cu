@@ -3,7 +3,7 @@
 #include "setup_ctx.hpp"
 #include "ntt_goldilocks.cuh"
 #include "starks_gpu.cuh"
-#include "data_layout.cuh"
+#include "goldilocks_trace_layout.cuh"
 #include "fri/fri.hpp"
 
 class gl64_t;
@@ -20,7 +20,7 @@ __global__ void getTracePolsTilesBN128(gl64_t *d_treeTrace, uint64_t nCols, uint
     {
         uint64_t row = d_friQueries[idx_y];
         uint64_t idx_buffer = idx_y * querySize + idx_x;
-        // Use the proper tiled format from data_layout.cuh
+        // Use the proper tiled format from goldilocks_trace_layout.cuh
         uint64_t idx_trace = getBufferOffset(row, idx_x, nRows, nCols);
         uint64_t val = d_treeTrace[idx_trace][0];
         // Reduce the Goldilocks value
@@ -286,8 +286,8 @@ void extendAndMerkelize_bn128_gpu(uint64_t step, SetupCtx& setupCtx, MerkleTreeB
 
     if (nCols > 0)
     {
-        NTT_Goldilocks_GPU ntt;
-        ntt.LDE_GPU(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream);
+        NTTGoldilocksGPU ntt;
+        ntt.LDE(dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, timer, stream);
         TimerStartCategoryGPU(timer, MERKLE_TREE);
         PoseidonBN128GPU::merkletreeTiles(pNodes, (uint64_t*)pSource, nCols, NExtended, setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, stream);
         TimerStopCategoryGPU(timer, MERKLE_TREE);
@@ -322,8 +322,8 @@ void computeQ_bn128_gpu(uint64_t step, SetupCtx &setupCtx, MerkleTreeBN128 **tre
     if (nCols > 0)
     {
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft", false)];
-        NTT_Goldilocks_GPU nttExtended;
-        nttExtended.computeQ_inplace(offset_cmQ, offset_q, qDeg, qDim, shiftIn, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, (gl64_t*)d_aux_trace, offset_helper, timer, stream);
+        NTTGoldilocksGPU nttExtended;
+        nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, (gl64_t*)d_aux_trace, offset_helper, timer, stream);
         TimerStartCategoryGPU(timer, MERKLE_TREE);
         PoseidonBN128GPU::merkletreeTiles(pNodes, (uint64_t*)pSource, nCols, NExtended, setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, stream);
         TimerStopCategoryGPU(timer, MERKLE_TREE);

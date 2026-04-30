@@ -25,18 +25,17 @@ ifeq ($(UNAME_S),Linux)
     CXXFLAGS = -std=c++17 -Wall -pthread -O3 -I./src -I/usr/include -I/usr/local/include -fopenmp -mavx2 -I/../utils
     CPPFLAGS =
     LDFLAGS  = -L/usr/lib -L/usr/local/lib
-    LDLIBS   = -fopenmp -lbenchmark -lbenchmark_main -lgtest -lgtest_main -lgmpxx -lgmp -lpthread -lstdc++
+    LDLIBS_COMMON = -fopenmp -lgmpxx -lgmp -lpthread -lstdc++
+    LDLIBS_TEST   = $(LDLIBS_COMMON) -lgtest -lgtest_main
+    LDLIBS_BENCH  = $(LDLIBS_COMMON) -lbenchmark -lbenchmark_main
 
 	  CXXFLAGS += -D__AVX2__
   	CXXFLAGS += -D__USE_ASSEMBLY__
-    # Auto-enable AVX512 if supported, or allow override
-    #ifndef USE_AVX512
-    #  AVX512_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx512' -m 1)
-    #  USE_AVX512 := $(if $(AVX512_SUPPORTED),1,0)
-    #endif
-    #ifeq ($(USE_AVX512),1)
-    #  CXXFLAGS += -mavx512f
-    #endif
+    # Auto-enable AVX512 if the host CPU supports it
+    AVX512_SUPPORTED := $(shell grep -m1 avx512f /proc/cpuinfo)
+    ifneq ($(AVX512_SUPPORTED),)
+      CXXFLAGS += -mavx512f -D__AVX512__
+    endif
 
     # CUDA/GPU build options (Linux only)
     NVCC := /usr/local/cuda/bin/nvcc
@@ -67,26 +66,48 @@ INC_FLAGS := $(addprefix -I,$(INC_DIRS))
 CPPFLAGS := $(INC_FLAGS) -MMD -MP
 
 # ----------------------
+# Test and benchmark source collection (multi-file support)
+# ----------------------
+TEST_SRCS  := $(wildcard $(TEST_DIR)/*_cpu.cpp)
+TEST_OBJS  := $(patsubst $(TEST_DIR)/%.cpp, $(BUILD_DIR)/tests/%.o, $(TEST_SRCS))
+BENCH_SRCS := $(wildcard benchs/*_cpu.cpp)
+BENCH_OBJS := $(patsubst benchs/%.cpp, $(BUILD_DIR)/benchs/%.o, $(BENCH_SRCS))
+
+ifeq ($(UNAME_S),Linux)
+GPU_SRC_OBJS := $(BUILD_DIR_GPU)/src/goldilocks_base_field.cpp.o \
+                $(BUILD_DIR_GPU)/src/ntt_goldilocks.cu.o \
+                $(BUILD_DIR_GPU)/src/ntt_goldilocks.cpp.o \
+                $(BUILD_DIR_GPU)/src/poseidon2_goldilocks.cu.o \
+                $(BUILD_DIR_GPU)/src/poseidon2_goldilocks.cpp.o \
+                $(BUILD_DIR_GPU)/src/goldilocks_tooling.cu.o
+
+GPU_TEST_SRCS := $(wildcard $(TEST_DIR)/*_gpu.cu)
+GPU_TEST_OBJS := $(patsubst $(TEST_DIR)/%.cu, $(BUILD_DIR_GPU)/tests/%.cu.o, $(GPU_TEST_SRCS))
+GPU_BENCH_SRCS := $(wildcard benchs/*_gpu.cu)
+GPU_BENCH_OBJS := $(patsubst benchs/%.cu, $(BUILD_DIR_GPU)/benchs/%.cu.o, $(GPU_BENCH_SRCS))
+endif
+
+# ----------------------
 # Default target
 # ----------------------
 .PHONY: all testscpu benchscpu testsgpu benchsgpu clean help
 
 ifeq ($(UNAME_S),Linux)
-all: testscpu benchscpu
+all: testscpu benchscpu testsgpu benchsgpu
 else
 all: testscpu benchscpu
 endif
 
-testscpu: $(OBJS) $(BUILD_DIR)/tests/tests.o
-	$(CXX) $(OBJS) $(BUILD_DIR)/tests/tests.o $(LDFLAGS) $(LDLIBS) -o $@
+testscpu: $(OBJS) $(TEST_OBJS)
+	$(CXX) $(OBJS) $(TEST_OBJS) $(LDFLAGS) $(LDLIBS_TEST) -o $@
 
-benchscpu: $(BUILD_DIR)/benchs/bench.o $(OBJS)
-	$(CXX) $(BUILD_DIR)/benchs/bench.o $(OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+benchscpu: $(BENCH_OBJS) $(OBJS)
+	$(CXX) $(BENCH_OBJS) $(OBJS) $(LDFLAGS) $(LDLIBS_BENCH) -o $@
 
-testsgpu: $(BUILD_DIR_GPU)/tests/tests.cu.o $(BUILD_DIR_GPU)/src/goldilocks_base_field.cpp.o $(BUILD_DIR_GPU)/src/ntt_goldilocks.cu.o $(BUILD_DIR_GPU)/src/poseidon2_goldilocks.cu.o
-	$(NVCC) $(NVCCFLAGS) -o $@ $^ -lgtest -lgmp
+testsgpu: $(GPU_TEST_OBJS) $(GPU_SRC_OBJS)
+	$(NVCC) $(NVCCFLAGS) -o $@ $^ -lgtest -lgtest_main -lgmp
 
-benchsgpu: $(BUILD_DIR_GPU)/benchs/bench.cu.o $(BUILD_DIR_GPU)/src/goldilocks_base_field.cpp.o $(BUILD_DIR_GPU)/src/ntt_goldilocks.cu.o $(BUILD_DIR_GPU)/src/poseidon2_goldilocks.cu.o
+benchsgpu: $(GPU_BENCH_OBJS) $(GPU_SRC_OBJS)
 	$(NVCC) $(NVCCFLAGS) -o $@ $^ -lgtest -lgmp -lbenchmark
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
@@ -112,7 +133,6 @@ $(BUILD_DIR_GPU)/%.cpp.o: %.cpp
 # ----------------------
 # Clean target
 # ----------------------
-.PHONY: clean
 clean:
 	rm -rf ./build testscpu benchscpu
 ifeq ($(UNAME_S),Linux)
@@ -122,19 +142,16 @@ endif
 # ----------------------
 # Help target
 # ----------------------
-.PHONY: help
 help:
-	@echo "make [target] [USE_AVX512=1|0]"
-	@echo "  clean         - Remove build artifacts (CPU and, on Linux, GPU)"
-	@echo "  distclean     - Remove all build artifacts and backup files"
+	@echo "make [target]"
 	@echo "  all (default) - Build all CPU (and GPU on Linux) binaries"
-	@echo "  testscpu      - Build the CPU test binary (unit and integration tests)"
+	@echo "  testscpu      - Build the CPU test binary (scalar + AVX2 + AVX512 auto-detected)"
 	@echo "  benchscpu     - Build the CPU benchmark binary (Google Benchmark)"
-ifeq ($(UNAME_S),Linux) 
+ifeq ($(UNAME_S),Linux)
 	@echo "  testsgpu      - Build the GPU test binary (CUDA, Linux only)"
-	@echo "  benchsgpu      - Build the GPU benchmark binary (CUDA, Linux only)"
+	@echo "  benchsgpu     - Build the GPU benchmark binary (CUDA, Linux only)"
 endif
-	@echo "  USE_AVX512   - Force AVX512 on/off (default: auto-detect on Linux)"
+	@echo "  clean         - Remove build artifacts (CPU and, on Linux, GPU)"
 
 -include $(DEPS)
 

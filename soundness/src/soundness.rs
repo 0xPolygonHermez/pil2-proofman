@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tabled::{Tabled, Table};
 use proofman_common::{
-    Setup, SetupsVadcop, ProofType, ParamsGPU, ProofmanError, ProofmanResult, MpiCtx, ProofCtx, SetupCtx, VerboseMode,
+    Setup, SetupsVadcop, ProofType, ProofmanError, ProofmanResult, MpiCtx, ProofCtx, SetupCtx, VerboseMode,
     format_bytes,
 };
 use proofman_hints::{get_hint_ids_by_name, get_hint_field_constant_a, HintFieldOptions};
@@ -61,8 +61,8 @@ pub struct Lookup {
     #[serde(rename = "num_columns_S")]
     pub num_columns_s: u32,
 
-    #[serde(rename = "num_columns_M")]
-    pub num_columns_m: u32,
+    #[serde(rename = "num_lookups_M")]
+    pub num_lookups_m: u32,
 
     pub grinding_bits_lookup: u32,
 }
@@ -288,18 +288,17 @@ pub fn get_bus_air_info<F: PrimeField64>(pctx: &ProofCtx<F>, setup: &Setup<F>) -
             }
         }
 
-        println!("BUS INFO for {}:{} {:?} {:?}", setup.airgroup_id, setup.air_id, setup.setup_type, bus_info);
         let lookups_air_info: Vec<Lookup> = bus_info
             .into_iter()
             .map(|(name, info)| {
-                let num_columns_m = if info.num_assumes > 0 { info.num_assumes } else { (info.num_proves > 0) as u32 };
+                let num_lookups_m = if info.num_assumes > 0 { info.num_assumes } else { (info.num_proves > 0) as u32 };
                 Lookup {
                     name,
                     logup_type: "univariate".to_string(),
                     rows_l: if info.num_assumes > 0 { info.rows } else { 0 },
                     rows_t: if info.num_proves > 0 { info.rows } else { 0 },
                     num_columns_s: info.num_expressions,
-                    num_columns_m,
+                    num_lookups_m,
                     grinding_bits_lookup: 0,
                 }
             })
@@ -323,12 +322,11 @@ pub fn soundness_info<F: PrimeField64>(
 
     let mpi_ctx = Arc::new(MpiCtx::new());
 
-    let pctx = ProofCtx::<F>::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx)?;
+    let pctx = ProofCtx::<F>::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx, false)?;
 
-    let setups_aggregation =
-        Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, &ParamsGPU::new(false), &[]));
+    let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, &[], false)?);
 
-    let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &ParamsGPU::new(false), &[]);
+    let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], false)?;
 
     let mut circuits = Vec::new();
 

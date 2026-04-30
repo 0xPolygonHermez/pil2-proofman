@@ -3,7 +3,7 @@ use crate::{
     AirGroupMap, AirIdMap, DebugInfo, GlobalInfo, InstanceMap, ModeName, ProofCtx, StdMode, VerboseMode,
     DEFAULT_PRINT_VALS,
 };
-use proofman_starks_lib_c::{set_log_level_c, init_gpu_setup_c, get_num_gpus_c};
+use proofman_starks_lib_c::{set_log_level_c, init_gpu_setup_c, get_num_gpus_c, set_gpu_mode_c};
 use tracing::dispatcher;
 use tracing_subscriber::filter::LevelFilter;
 use std::path::PathBuf;
@@ -501,8 +501,13 @@ pub fn join_thread(handle: std::thread::JoinHandle<ProofmanResult<()>>) -> Proof
     }
 }
 
-pub fn init_gpu_setup(max_n_bits_ext: u64) -> ProofmanResult<()> {
-    if cfg!(feature = "gpu") {
+pub fn init_gpu_setup(max_n_bits_ext: u64, gpu: bool) -> ProofmanResult<()> {
+    if !set_gpu_mode_c(gpu) {
+        return Err(ProofmanError::InvalidConfiguration(
+            "GPU mode requested but library was built without CUDA support".into(),
+        ));
+    }
+    if gpu {
         let n_gpus = get_num_gpus_c();
         if n_gpus == 0 {
             return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));

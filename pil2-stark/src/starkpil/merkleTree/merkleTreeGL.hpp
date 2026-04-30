@@ -3,6 +3,7 @@
 
 #include "goldilocks_base_field.hpp"
 #include "poseidon2_goldilocks.hpp"
+#include "goldilocks_tooling.hpp"
 #include "zklog.hpp"
 #include <math.h>
 
@@ -48,6 +49,11 @@ public:
         return height;
     }
 
+    static inline uint64_t getTreeNumElements(uint64_t degree, uint32_t arity = 2)
+    {
+        return ::getTreeNumElements(degree, arity);
+    }
+
     uint64_t getNumNodes(uint64_t height);
     void getLevel(Goldilocks::Element *level);
     void getRoot(Goldilocks::Element *root);
@@ -75,13 +81,13 @@ public:
         Goldilocks::Element computedRoot[nFieldElements];
         switch(arity) {
             case 2:
-                Poseidon2Goldilocks<8>::partial_merkle_tree(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+                Poseidon2Goldilocks<8>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
                 break;
             case 3:
-                Poseidon2Goldilocks<12>::partial_merkle_tree(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+                Poseidon2Goldilocks<12>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
                 break;
             case 4:
-                Poseidon2Goldilocks<16>::partial_merkle_tree(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+                Poseidon2Goldilocks<16>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
                 break;
             default:
                 zklog.error("MerkleTreeGL::verifyMerkleRoot: Unsupported arity");

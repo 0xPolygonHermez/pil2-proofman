@@ -32,6 +32,9 @@ pub struct ProveSnarkCmd {
 
     #[clap(short = 'j', long, default_value_t = false)]
     pub save_json: bool,
+
+    #[clap(short = 'g', long, default_value_t = false)]
+    pub gpu: bool,
 }
 
 impl ProveSnarkCmd {
@@ -46,8 +49,8 @@ impl ProveSnarkCmd {
             let valid = generate_and_verify_recursivef::<Goldilocks>(
                 &self.proving_key_snark,
                 &proof,
-                &self.output_dir,
                 self.verbose.into(),
+                self.gpu,
             )?;
             if !valid {
                 tracing::info!("··· {}", "\u{2717} Stark RecursiveF proof was not verified".bright_red().bold());
@@ -58,8 +61,8 @@ impl ProveSnarkCmd {
             }
         } else {
             let snark_wrapper: SnarkWrapper<Goldilocks> =
-                SnarkWrapper::new(&self.proving_key_snark, self.verbose.into())?;
-            let snark_proof = snark_wrapper.generate_final_snark_proof(&proof, Some(self.output_dir.clone()))?;
+                SnarkWrapper::new(&self.proving_key_snark, self.verbose.into(), true, self.gpu)?;
+            let snark_proof = snark_wrapper.generate_final_snark_proof(&proof)?;
             snark_proof.save(self.output_dir.join("snark_proof.bin"))?;
             Ok(())
         }

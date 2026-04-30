@@ -23,6 +23,9 @@ pub struct CheckSetupSnarkCmd {
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
     pub verbose: u8, // Using u8 to hold the number of `-v`
+
+    #[arg(short = 'g', long, default_value_t = false)]
+    pub gpu: bool,
 }
 
 impl CheckSetupSnarkCmd {
@@ -33,7 +36,9 @@ impl CheckSetupSnarkCmd {
         initialize_logger(self.verbose.into(), None);
 
         match self.field {
-            Field::Goldilocks => check_setup_snark::<Goldilocks>(&self.proving_key_snark.clone(), self.verbose.into())?,
+            Field::Goldilocks => {
+                check_setup_snark::<Goldilocks>(&self.proving_key_snark.clone(), self.verbose.into(), self.gpu)?
+            }
         };
 
         Ok(())

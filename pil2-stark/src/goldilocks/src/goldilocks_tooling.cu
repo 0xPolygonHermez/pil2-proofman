@@ -1,5 +1,6 @@
-#include "gl64_tooling.cuh"
-#include "data_layout.cuh"
+#include "goldilocks_tooling.cuh"
+#include "cuda_utils.cuh"
+#include "goldilocks_trace_layout.cuh"
 
 // Kernel to convert row-major layout to tiled layout
 // Uses blockIdx.x for rows (which can be very large) and blockIdx.y for cols
@@ -19,6 +20,22 @@ __global__ void fromRowMajorToTiled(
     }
 }
 
+void fromRowMajorToTiled(
+    uint64_t nRows,
+    uint64_t nCols,
+    gl64_t* src,
+    gl64_t* dst,
+    cudaStream_t stream
+) {
+    if (nCols == 0 || nRows == 0) return;
+    dim3 block(TILE_HEIGHT, TILE_WIDTH);
+    dim3 grid((nRows + block.x - 1) / block.x,
+              (nCols + block.y - 1) / block.y);
+    fromRowMajorToTiled<<<grid, block, 0, stream>>>(nRows, nCols, (uint64_t*)src, (uint64_t*)dst);
+    CHECKCUDAERR(cudaGetLastError());
+}
+
+#ifndef __GOLDILOCKS_ENV__
 void copy_to_device_in_chunks(
     DeviceCommitBuffers* d_buffers,
     const void* src,
@@ -197,3 +214,4 @@ void load_and_copy_to_device_in_chunks(
 
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 }
+#endif // __GOLDILOCKS_ENV__

@@ -115,14 +115,15 @@ extern "C" {
     void get_stream_proofs_non_blocking(void *d_buffers_);
     void get_stream_id_proof(void *d_buffers_, uint64_t streamId);
     void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint64_t nPublicsAggregation);
+    void calculate_const_tree_fixed(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, char *proofType, void *d_buffers_);
     // Final proof
     // =================================================================================
 
     uint64_t get_snark_protocol_id(void* snark_prover);
-    void *init_final_snark_prover(char* zkeyFile);
+    void *init_final_snark_prover(char* zkeyFile, void* d_buffers_recursivef);
     void free_final_snark_prover(void *snark_prover);
-    void gen_final_snark_proof(void *snark_prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark);
-    void pre_allocate_final_snark_prover(void *snark_prover, void* unified_buffer_gpu);
+    void gen_final_snark_proof(void *snark_prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark, void* d_buffers_recursivef);
+    void pre_allocate_final_snark_prover(void *snark_prover, void* unified_buffer_gpu, void* d_buffers_recursivef);
     void free_json_string(char* json_str);
     void snark_proof_bytes_to_json(uint8_t* proof_bytes,uint64_t proof_size,uint8_t* public_bytes,uint64_t public_size,int protocol_id,char** proof_json_out,char** publics_json_out);
 
@@ -166,6 +167,7 @@ extern "C" {
     // GPU calls
     // =================================================================================
     void *gen_device_buffers(uint32_t node_rank, uint32_t node_size, const int32_t* numa_nodes, uint32_t arity, uint32_t max_n_bits_ext);
+    void use_packed_trace(void *d_buffers, bool packed);
     void free_device_buffers(void *d_buffers);
     void *gen_device_buffers_recursivef(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffers, char* verkey);
     void free_device_buffers_recursivef(void *d_buffers);
@@ -178,6 +180,7 @@ extern "C" {
     uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size);
     uint64_t get_num_gpus();
     void *get_unified_buffer_gpu(void *d_buffers_);
+    void *get_unified_buffer_gpu_for_recursivef(void *d_buffers_, void *d_buffers_recursivef_);
     void alloc_fixed_pols_buffer_gpu(void *d_buffers_);
     void free_fixed_pols_buffer_gpu(void *d_buffers_);
     void load_fixed_pols_recursivef(void *pSetupCtx_, void *pConstTree, void *d_buffers_);
@@ -186,6 +189,10 @@ extern "C" {
     
     void register_proof_done_callback(ProofDoneCallback cb);
     void launch_callback(uint64_t instanceId, char *proofType);
+
+    // Backend selection
+    // =================================================================================
+    bool set_gpu_mode(bool use_gpu);
 
     // MPI calls
     // =================================================================================

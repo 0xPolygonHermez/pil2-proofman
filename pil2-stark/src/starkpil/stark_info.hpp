@@ -6,7 +6,6 @@
 #include <vector>
 #include "zkassert.hpp"
 #include "goldilocks_base_field.hpp"
-#include "merklehash_goldilocks.hpp"
 #include "zklog.hpp"
 #include "exit_process.hpp"
 

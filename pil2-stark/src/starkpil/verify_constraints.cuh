@@ -1,6 +1,6 @@
 #include "verify_constraints.hpp"
 #include "gpu_timer.cuh"
-#include "gl64_tooling.cuh"
+#include "goldilocks_tooling.cuh"
 #include "starks_gpu.cuh"
 #include "gen_proof.cuh"
 #include <algorithm>

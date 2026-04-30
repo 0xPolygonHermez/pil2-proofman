@@ -10,9 +10,7 @@ use fields::Goldilocks;
 use proofman::SnarkWrapper;
 use proofman::ProofMan;
 use proofman::ProvePhaseResult;
-use proofman_common::{ModeName, ProofOptions, ParamsGPU};
-use std::fs;
-use std::path::Path;
+use proofman_common::{ModeName, ProofOptions, ProofmanOptions};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -66,11 +64,8 @@ pub struct ProveCmd {
     #[clap(short = 'c', long, value_name="KEY=VALUE", num_args(1..))]
     pub custom_commits: Vec<String>,
 
-    #[clap(short = 'z', long, default_value_t = false)]
-    pub preallocate: bool,
-
     #[clap(short = 'r', long, default_value_t = false)]
-    pub rma: bool,
+    pub no_rma: bool,
 
     #[clap(short = 'm', long, default_value_t = false)]
     pub minimal_memory: bool,
@@ -84,30 +79,14 @@ pub struct ProveCmd {
     #[clap(short = 'x', long)]
     pub max_witness_stored: Option<usize>,
 
-    #[clap(short = 'b', long, default_value_t = false)]
-    pub save_proofs: bool,
+    #[clap(short = 'g', long, default_value_t = false)]
+    pub gpu: bool,
 }
 
 impl ProveCmd {
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("{} Prove", format!("{: >12}", "Command").bright_green().bold());
         println!();
-
-        if Path::new(&self.output_dir.join("proofs")).exists() {
-            // In distributed mode two different processes may enter here at the same time and try to remove the same directory
-            if let Err(e) = fs::remove_dir_all(self.output_dir.join("proofs")) {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    return Err(format!("Failed to remove the proofs directory: {e:?}").into());
-                }
-            }
-        }
-
-        if let Err(e) = fs::create_dir_all(self.output_dir.join("proofs")) {
-            if e.kind() != std::io::ErrorKind::AlreadyExists {
-                // prevent collision in distributed mode
-                return Err(format!("Failed to create the proofs directory: {e:?}").into());
-            }
-        }
 
         let debug_info = match &self.debug {
             None => DebugInfo::default(),
@@ -117,26 +96,28 @@ impl ProveCmd {
 
         let verify_constraints = debug_info.std_mode.name == ModeName::Debug;
 
-        let mut gpu_params = ParamsGPU::new(self.preallocate);
+        let mut options = ProofmanOptions::new();
 
         if let Some(max_streams) = self.max_streams {
-            gpu_params.with_max_number_streams(max_streams);
+            options.with_max_number_streams(max_streams);
         }
         if let Some(number_threads_witness) = self.number_threads_witness {
-            gpu_params.with_number_threads_pools_witness(number_threads_witness);
+            options.with_number_threads_pools_witness(number_threads_witness);
         }
         if let Some(max_witness_stored) = self.max_witness_stored {
-            gpu_params.with_max_witness_stored(max_witness_stored);
+            options.with_max_witness_stored(max_witness_stored);
         }
+        if verify_constraints {
+            options.verify_constraints();
+        } else if !self.aggregation {
+            options.no_aggregation();
+        }
+        if self.gpu {
+            options.gpu();
+        }
+        options.verbose_mode(self.verbose.into());
 
-        let proofman = ProofMan::<Goldilocks>::new(
-            self.proving_key.clone(),
-            verify_constraints,
-            self.aggregation,
-            gpu_params,
-            self.verbose.into(),
-            HashMap::new(),
-        )?;
+        let proofman = ProofMan::<Goldilocks>::new(self.proving_key.clone(), options)?;
 
         let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
         for commit in &self.custom_commits {
@@ -151,12 +132,10 @@ impl ProveCmd {
         let proof_options = ProofOptions::new(
             false,
             self.aggregation,
-            self.rma,
+            !self.no_rma,
             self.compressed,
             self.verify_proofs,
             self.minimal_memory,
-            self.save_proofs,
-            Some(self.output_dir.clone()),
         );
         if debug_info.std_mode.name == ModeName::Debug {
             match self.field {
@@ -166,7 +145,6 @@ impl ProveCmd {
                     None,
                     &debug_info.clone(),
                     self.verbose.into(),
-                    false,
                 )?,
             };
         } else {
@@ -187,8 +165,8 @@ impl ProveCmd {
 
                 if let Some(proving_key_snark) = &self.proving_key_snark {
                     let snark_wrapper: SnarkWrapper<Goldilocks> =
-                        SnarkWrapper::new(proving_key_snark, self.verbose.into())?;
-                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, Some(self.output_dir.clone()))?;
+                        SnarkWrapper::new(proving_key_snark, self.verbose.into(), true, self.gpu)?;
+                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof)?;
                 }
             }
         }

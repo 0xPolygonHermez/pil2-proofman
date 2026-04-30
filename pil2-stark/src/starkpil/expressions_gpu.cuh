@@ -4,7 +4,7 @@
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 #include "gpu_timer.cuh"
-#include "data_layout.cuh"
+#include "goldilocks_trace_layout.cuh"
 #include <omp.h>
 
 struct DeviceArguments
