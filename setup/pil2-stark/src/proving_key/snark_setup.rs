@@ -36,7 +36,7 @@ pub struct SnarkSetupConfig<'a> {
     pub recurser_pil_path: &'a str,
     pub circom_helpers_dir: &'a str,
     /// Directory containing BN128 fr.cpp/fr.asm and Makefile for the `final` SNARK witness library.
-    /// Corresponds to `final_snark_circom/` in pil2-proofman-js.
+    /// Corresponds to `final_snark_circom/`
     pub final_snark_circom_helpers_dir: &'a str,
     /// Powers-of-tau (.ptau) file for snarkjs final setup (required if !only_recursive_final).
     pub powers_of_tau: Option<&'a str>,

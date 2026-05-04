@@ -162,15 +162,7 @@ jobs:
           cargo build --release --workspace
           cargo install --path circom
 
-      - name: Check out pil2-compiler
-        uses: actions/checkout@v4
-        with:
-          repository: 0xPolygonHermez/pil2-compiler
-          ref: develop-0.9.0
-          path: pil2-compiler
-
-      - name: Install pil2-compiler dependencies
-        working-directory: pil2-compiler
+      - name: Install Node dependencies (pil2-compiler, snarkjs)
         run: npm install
 
       - name: Install dependencies
@@ -182,7 +174,7 @@ jobs:
 
       - name: Compile PIL Fibonacci Square
         run: |
-          node --max-old-space-size=65536 pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil -I ./pil2-components/lib/std/pil -o ./examples/fibonacci-square/pil/build.pilout -u ./examples/fibonacci-square/build/fixed -O fixed-to-file
+          cargo run --bin proofman-setup -- compile-pil --pil ./examples/fibonacci-square/pil/build.pil -I ./pil2-components/lib/std/pil -o ./examples/fibonacci-square/pil/build.pilout -u ./examples/fibonacci-square/build/fixed --fixed-to-file
 
       - name: Generate setup Fibonacci Square
         run: |
@@ -361,15 +353,7 @@ jobs:
         run: |
           python -m pip install z3-solver
 
-      - name: Check out pil2-compiler
-        uses: actions/checkout@v4
-        with:
-          repository: 0xPolygonHermez/pil2-compiler
-          ref: develop-0.9.0
-          path: pil2-compiler
-
-      - name: Install pil2-compiler dependencies
-        working-directory: pil2-compiler
+      - name: Install Node dependencies (pil2-compiler, snarkjs)
         run: npm install
 
       - name: Install dependencies
@@ -385,7 +369,7 @@ jobs:
 
       - name: Compile PIL Lookup
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/lookup/lookup.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/lookup/build/build.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/lookup/lookup.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/lookup/build/build.pilout
 
       - name: Generate setup Lookup
         run: |
@@ -401,7 +385,7 @@ jobs:
 
       - name: Compile PIL permutation
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/permutation/permutation.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/permutation/build/build.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/permutation/permutation.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/permutation/build/build.pilout
 
       - name: Generate setup permutation
         run: |
@@ -417,7 +401,7 @@ jobs:
 
       - name: Compile PIL connection
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/connection/connection.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/connection/build/build.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/connection/connection.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/connection/build/build.pilout
 
       - name: Generate setup connection
         run: |
@@ -433,7 +417,7 @@ jobs:
 
       - name: Compile PIL diff_buses
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/diff_buses/diff_buses.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/diff_buses/build/build.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/diff_buses/diff_buses.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/diff_buses/build/build.pilout
 
       - name: Generate setup diff_buses
         run: |
@@ -449,7 +433,7 @@ jobs:
 
       - name: Compile PIL direct_update
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/direct_update/direct_update.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/direct_update/build/direct_update.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/direct_update/direct_update.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/direct_update/build/direct_update.pilout
 
       - name: Generate setup direct_update
         run: |
@@ -465,7 +449,7 @@ jobs:
 
       - name: Compile PIL range-check
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/range_check/build.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/range_check/build/build.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/range_check/build.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/range_check/build/build.pilout
 
       - name: Generate setup range-check
         run: |
@@ -481,7 +465,7 @@ jobs:
 
       - name: Compile PIL one-instance
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/one_instance/one_instance.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/one_instance/build/one_instance.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/one_instance/one_instance.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/one_instance/build/one_instance.pilout
 
       - name: Generate setup one-instance
         run: |
@@ -497,7 +481,7 @@ jobs:
 
       - name: Compile PIL virtual-tables
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/virtual_tables/virtual_tables.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/virtual_tables/build/build.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/virtual_tables/virtual_tables.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/virtual_tables/build/build.pilout
 
       - name: Generate setup virtual-tables
         run: |
@@ -513,7 +497,7 @@ jobs:
 
       - name: Compile PIL simple
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/simple/simple.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/simple/build/build.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/simple/simple.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/simple/build/build.pilout
 
       - name: Generate setup simple
         run: |

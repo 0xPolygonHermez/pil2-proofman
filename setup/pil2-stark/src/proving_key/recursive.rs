@@ -773,35 +773,20 @@ fn get_global_name(global_info: &Value) -> String {
 
 /// Compile PIL source by spawning `pil2com` (JS compiler) as a subprocess.
 /// Install pil2com: `npm install` (reads package.json in the repo root).
+///
+/// Thin wrapper around [`crate::commands::compile_pil::run_compile_pil`] so
+/// that the recursive setup pipeline and the public CLI command share a
+/// single implementation.
 pub fn compile_pil(pil_path: &str, output_path: &str, std_pil_path: &str, recurser_pil_path: &str) -> Result<()> {
-    tracing::info!("Compiling PIL: {}", pil_path);
-
-    let pil2com_exec = resolve_pil2com_exec().context("Cannot find pil2com. Run: npm install")?;
-
-    tracing::info!("Using pil2com: {}", pil2com_exec);
-
-    let include_arg = format!("{},{}", std_pil_path, recurser_pil_path);
-
-    let status = std::process::Command::new(&pil2com_exec)
-        .arg(pil_path)
-        .arg("-I")
-        .arg(&include_arg)
-        .arg("-o")
-        .arg(output_path)
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status()
-        .with_context(|| format!("Failed to execute pil2com: {}", pil2com_exec))?;
-
-    if !status.success() {
-        bail!("pil2com exited with status {} for {}", status.code().unwrap_or(-1), pil_path);
-    }
-
-    if !Path::new(output_path).exists() {
-        bail!("pil2com did not produce output file: {}", output_path);
-    }
-
-    Ok(())
+    use crate::commands::compile_pil::{run_compile_pil, CompilePilOptions};
+    let opts = CompilePilOptions {
+        pil_path: pil_path.to_string(),
+        output_path: output_path.to_string(),
+        include_paths: vec![std_pil_path.to_string(), recurser_pil_path.to_string()],
+        fixed_dir: None,
+        fixed_to_file: false,
+    };
+    run_compile_pil(&opts)
 }
 
 /// Find the `pil2com` JS binary, checking (in order):
@@ -811,7 +796,7 @@ pub fn compile_pil(pil_path: &str, output_path: &str, std_pil_path: &str, recurs
 ///   4. Global install: `pil2com` on PATH
 ///
 /// Install via: `npm install`  (reads package.json in the repo root)
-fn resolve_pil2com_exec() -> Option<String> {
+pub(crate) fn resolve_pil2com_exec() -> Option<String> {
     if let Ok(path) = std::env::var("PIL2C_EXEC") {
         if Path::new(&path).is_file() {
             return Some(path);
