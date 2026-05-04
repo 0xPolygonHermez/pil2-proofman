@@ -576,13 +576,26 @@ pub(crate) fn resolve_circom_exec(circom_helpers_dir: &str) -> String {
 
 /// Resolve a path from an environment variable; if not set, search for `fallback` by
 /// checking (in order):
-///   1. `fallback` relative to the current working directory
-///   2. `fallback` relative to each ancestor directory of the running executable
-///      (handles running `target/release/proofman-setup` from a different repo)
-///   3. `fallback` as a literal string (last resort / relative-path pass-through)
+///   1. `<proofman-repo-root>/fallback`, where the root is captured at compile time
+///      from `CARGO_MANIFEST_DIR` (this crate sits at `<root>/setup/pil2-stark`).
+///      Works regardless of where the binary is invoked from, including when
+///      proofman is consumed as a git dep from another workspace.
+///   2. `fallback` relative to the current working directory
+///   3. `fallback` relative to each ancestor directory of the running executable
+///   4. `fallback` as a literal string (last resort / relative-path pass-through)
 pub(crate) fn resolve_path_env(env_var: &str, fallback: &str) -> String {
     if let Ok(v) = std::env::var(env_var) {
-        return v;
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    // Compile-time path to the proofman repo root.
+    const PROOFMAN_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let baked = std::path::Path::new(PROOFMAN_ROOT).join(fallback);
+    if baked.exists() {
+        if let Ok(abs) = baked.canonicalize() {
+            return abs.to_string_lossy().into_owned();
+        }
     }
     // CWD-relative
     let cwd_rel = std::path::Path::new(fallback);
