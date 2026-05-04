@@ -72,10 +72,8 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
     // Resolve tool paths (same logic as recursive_setup).
     let circuits_gl_path =
         resolve_path_env("CIRCUITS_GL_PATH", "setup/stark-recurser/stark2circom/circom_verifier/circuits.gl");
-    let recurser_circuits_path = resolve_path_env(
-        "RECURSER_CIRCUITS_PATH",
-        "setup/stark-recurser/stark2circom/circom_verifier/helper_circuits",
-    );
+    let recurser_circuits_path =
+        resolve_path_env("RECURSER_CIRCUITS_PATH", "setup/stark-recurser/stark2circom/circom_verifier/helper_circuits");
     let std_pil_path = resolve_path_env("STD_PIL_PATH", "pil2-components/lib/std/pil");
     let recurser_pil_path = resolve_path_env("RECURSER_PIL_PATH", "setup/stark-recurser/plonk2pil/pil");
     let circom_helpers_dir = resolve_path_env("CIRCOM_HELPERS_DIR", "setup/circom");

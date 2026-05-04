@@ -797,91 +797,66 @@ mod tests {
     }
 
     #[test]
-    fn ctx_derives_stages_correctly() {
+    fn names_without_airgroup_id() {
         let si = minimal_stark_info(2, 10, 8);
         let vi = minimal_verifier_info();
         let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierCtx::new(&si, &vi, &opts, None).unwrap();
-        assert_eq!(ctx.q_stage, 3);
-        assert_eq!(ctx.evals_stage, 4);
-        assert_eq!(ctx.fri_stage, 5);
+        let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
+        assert!(out.contains("template StarkVerifier("), "got:\n{out}");
+        assert!(out.contains("template Transcript("), "got:\n{out}");
+        assert!(out.contains("template calculateFRIQueries("), "got:\n{out}");
     }
 
     #[test]
-    fn ctx_names_without_airgroup_id() {
-        let si = minimal_stark_info(2, 10, 8);
-        let vi = minimal_verifier_info();
-        let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierCtx::new(&si, &vi, &opts, None).unwrap();
-        assert_eq!(ctx.verifier_name, "StarkVerifier");
-        assert_eq!(ctx.transcript_name, "Transcript");
-        assert_eq!(ctx.calculate_fri_queries_name, "calculateFRIQueries");
-    }
-
-    #[test]
-    fn ctx_names_with_airgroup_id() {
+    fn names_with_airgroup_id() {
         let mut si = minimal_stark_info(2, 10, 8);
         si["airgroupId"] = json!(42u64);
         let vi = minimal_verifier_info();
         let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierCtx::new(&si, &vi, &opts, None).unwrap();
-        assert_eq!(ctx.verifier_name, "StarkVerifier42");
-        assert_eq!(ctx.transcript_name, "Transcript42");
+        let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
+        assert!(out.contains("template StarkVerifier42("), "got:\n{out}");
+        assert!(out.contains("template Transcript42("), "got:\n{out}");
     }
 
     #[test]
-    fn ctx_n_fields_calculation() {
-        // nQueries=229, steps[0].nBits=23 → total=5267 → n_fields=84
-        let si = minimal_stark_info(2, 229, 23);
-        let vi = minimal_verifier_info();
-        let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierCtx::new(&si, &vi, &opts, None).unwrap();
-        assert_eq!(ctx.n_fields, 84);
-    }
-
-    #[test]
-    fn gen_header_includes_merklehash() {
+    fn header_includes_merklehash() {
         let si = minimal_stark_info(2, 10, 8);
         let vi = minimal_verifier_info();
         let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierCtx::new(&si, &vi, &opts, None).unwrap();
-        let header = gen_header(&ctx);
-        assert!(header.contains("pragma circom 2.1.0;"));
-        assert!(header.contains("include \"merklehash.circom\";"));
-        assert!(!header.contains("merklehash_gpu"));
+        let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
+        assert!(out.contains("pragma circom 2.1.0;"));
+        assert!(out.contains("include \"merklehash.circom\";"));
+        assert!(!out.contains("merklehash_gpu"));
     }
 
     #[test]
-    fn gen_header_gpu_when_split_linear_hash() {
+    fn header_gpu_when_split_linear_hash() {
         let mut si = minimal_stark_info(2, 10, 8);
         si["starkStruct"]["splitLinearHash"] = json!(true);
         let vi = minimal_verifier_info();
         let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierCtx::new(&si, &vi, &opts, None).unwrap();
-        let header = gen_header(&ctx);
-        assert!(header.contains("include \"merklehash_gpu.circom\";"));
+        let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
+        assert!(out.contains("include \"merklehash_gpu.circom\";"));
     }
 
     #[test]
-    fn gen_component_main_with_publics() {
+    fn component_main_with_publics() {
         let mut si = minimal_stark_info(2, 10, 8);
         si["nPublics"] = json!(3u64);
         let vi = minimal_verifier_info();
         let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierCtx::new(&si, &vi, &opts, None).unwrap();
-        let main = gen_component_main(&ctx);
-        assert!(main.contains("{public [publics]}"), "got: {main}");
-        assert!(main.contains("StarkVerifier()"), "got: {main}");
+        let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
+        assert!(out.contains("{public [publics]}"), "got:\n{out}");
+        assert!(out.contains("StarkVerifier()"), "got:\n{out}");
     }
 
     #[test]
-    fn gen_component_main_no_publics() {
+    fn component_main_no_publics() {
         let si = minimal_stark_info(2, 10, 8);
         let vi = minimal_verifier_info();
         let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierCtx::new(&si, &vi, &opts, None).unwrap();
-        let main = gen_component_main(&ctx);
-        assert!(!main.contains("{public"), "got: {main}");
+        let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
+        assert!(!out.contains("{public"), "got:\n{out}");
     }
 
     #[test]

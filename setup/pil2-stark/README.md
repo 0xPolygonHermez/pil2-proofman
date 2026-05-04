@@ -221,7 +221,7 @@ that resolve relative to the repo or the executable's parent directories.
 |---|---|---|
 | `CIRCUITS_GL_PATH` | `setup/stark-recurser/stark2circom/circom_verifier/circuits.gl` | Goldilocks circom helpers |
 | `RECURSER_CIRCUITS_PATH` | `setup/stark-recurser/stark2circom/circom_verifier/helper_circuits` | vadcop circom templates |
-| `RECURSER_CIRCUITS_COMPRESSED_FINAL_PATH` | `setup/stark-recurser/stark2circom/circom_verifier/circuits.bn128` | `vadcop_final_compressed` circom templates |
+| `RECURSER_CIRCUITS_COMPRESSED_FINAL_PATH` | `setup/stark-recurser/stark2circom/circom_verifier/helper_circuits` | `vadcop_final_compressed` circom helpers (goldilocks-side) |
 | `CIRCUITS_BN128_PATH` | `setup/stark-recurser/stark2circom/circom_verifier/circuits.bn128` | BN128 circom helpers (snark setup) |
 | `STD_PIL_PATH` | `pil2-components/lib/std/pil` | PIL standard library |
 | `RECURSER_PIL_PATH` | `setup/stark-recurser/plonk2pil/pil` | `plonk2pil` PIL templates |
