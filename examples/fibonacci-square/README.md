@@ -12,23 +12,20 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
 
 ## 1. Download and Set Up Required Repositories
 
-### 1.2 Install `pil2-compiler`
+### 1.2 Install Node dependencies
 
-Next, clone the `pil2-compiler` repository and install its dependencies:
+`pil2-compiler` is declared as an npm dependency in the repo root. Install it (and the rest of the Node deps) once with:
 
 ```bash
-git clone https://github.com/0xPolygonHermez/pil2-compiler.git
-cd pil2-compiler
 npm install
-cd ..
 ```
 
-npm install
-cd ..
-```
-# Update package lists and install required system packages
+### 1.3 Install system packages
+
+```bash
 sudo apt update
 sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev nasm libsodium-dev cmake
+```
 
 ### 1.4 Compile the PIL2 Stark C++ Library
 
@@ -57,9 +54,9 @@ cd pil2-proofman
 To begin, compile the PIL files:
 
 ```bash
-node ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
+cargo run --bin proofman-setup -- compile-pil --pil ./examples/fibonacci-square/pil/build.pil \
      -I ./pil2-components/lib/std/pil \
-     -o ./examples/fibonacci-square/pil/build.pilout -u ./examples/fibonacci-square/build/fixed -O fixed-to-file
+     -o ./examples/fibonacci-square/pil/build.pilout -u ./examples/fibonacci-square/build/fixed --fixed-to-file
 ```
 
 ### 2.2 Generate Setup
@@ -170,7 +167,7 @@ cargo build --features gpu --workspace \
 
 ```bash
 export PIL2_PROOFMAN_EXT=$(if [[  "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi) \
-&& node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
+&& cargo run --bin proofman-setup -- compile-pil --pil ./examples/fibonacci-square/pil/build.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./examples/fibonacci-square/pil/build.pilout \
 && cargo run --bin proofman-setup -- setup \
@@ -201,7 +198,7 @@ export PIL2_PROOFMAN_EXT=$(if [[  "$(uname -s)" == "Darwin" ]]; then echo ".dyli
 
 ```bash
 export PIL2_PROOFMAN_EXT=$(if [[  "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi) \
-&& node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
+&& cargo run --bin proofman-setup -- compile-pil --pil ./examples/fibonacci-square/pil/build.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./examples/fibonacci-square/pil/build.pilout \
 && cargo run --bin proofman-setup -- setup \

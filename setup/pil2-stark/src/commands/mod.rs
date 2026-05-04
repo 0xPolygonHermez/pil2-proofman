@@ -1,3 +1,4 @@
+pub mod compile_pil;
 pub mod rebuild_witness;
 pub mod recursive_setup;
 pub mod setup;

@@ -28,9 +28,10 @@ test_pipeline() {
     mkdir -p "$BUILD"
 
     {
-        node --max-old-space-size=65536 ../pil2-compiler/src/pil.js "$PIL_FILE" \
-            --include ./pil2-components/lib/std/pil \
-            --option fixed-to-file --outputdir "$FIXED" \
+        cargo run --bin proofman-setup -- compile-pil \
+            --pil "$PIL_FILE" \
+            -I ./pil2-components/lib/std/pil \
+            --fixed-to-file --fixed-dir "$FIXED" \
             --output "$PILOUT_FILE"
 
         cargo run --bin proofman-setup -- setup \
