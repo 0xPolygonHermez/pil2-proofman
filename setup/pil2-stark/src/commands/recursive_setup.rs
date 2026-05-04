@@ -38,17 +38,17 @@ pub(crate) fn run_recursive_setup(
     let build_dir = &opts.build_dir;
 
     let circuits_gl_path =
-        crate::proving_key::recursive::resolve_stark_recurser_subpath("CIRCUITS_GL_PATH", "src/pil2circom/circuits.gl");
-    let recurser_circuits_path = crate::proving_key::recursive::resolve_stark_recurser_subpath(
+        resolve_path_env("CIRCUITS_GL_PATH", "setup/stark-recurser/stark2circom/circom_verifier/circuits.gl");
+    let recurser_circuits_path = resolve_path_env(
         "RECURSER_CIRCUITS_PATH",
-        "src/vadcop/helpers/circuits",
+        "setup/stark-recurser/stark2circom/circom_verifier/helper_circuits",
     );
-    // Compressed final uses a different circuit library subdirectory than regular recursive.
-    // JS generateCompressedFinalSetup.js: stark-recurser/src/recursion/helpers/circuits
-    // JS generateRecursiveSetup.js:        stark-recurser/src/vadcop/helpers/circuits
-    let recurser_circuits_compressed_final_path = crate::proving_key::recursive::resolve_stark_recurser_subpath(
+    // Regular recursive (recursive1/recursive2/vadcop_final) uses the goldilocks-side
+    // helper circuits; the compressed_final stage transitions to BN128 and pulls from
+    // circuits.bn128 instead. (Matches the layout used by rebuild_witness.)
+    let recurser_circuits_compressed_final_path = resolve_path_env(
         "RECURSER_CIRCUITS_COMPRESSED_FINAL_PATH",
-        "src/recursion/helpers/circuits",
+        "setup/stark-recurser/stark2circom/circom_verifier/circuits.bn128",
     );
     let std_pil_path = resolve_path_env("STD_PIL_PATH", "pil2-components/lib/std/pil");
     let recurser_pil_path = resolve_path_env("RECURSER_PIL_PATH", "setup/stark-recurser/plonk2pil/pil");

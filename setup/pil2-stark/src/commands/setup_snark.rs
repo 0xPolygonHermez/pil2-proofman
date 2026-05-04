@@ -71,10 +71,10 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
 
     // Resolve tool paths (same logic as recursive_setup).
     let circuits_gl_path =
-        crate::proving_key::recursive::resolve_stark_recurser_subpath("CIRCUITS_GL_PATH", "src/pil2circom/circuits.gl");
-    let recurser_circuits_path = crate::proving_key::recursive::resolve_stark_recurser_subpath(
+        resolve_path_env("CIRCUITS_GL_PATH", "setup/stark-recurser/stark2circom/circom_verifier/circuits.gl");
+    let recurser_circuits_path = resolve_path_env(
         "RECURSER_CIRCUITS_PATH",
-        "src/recursion/helpers/circuits",
+        "setup/stark-recurser/stark2circom/circom_verifier/helper_circuits",
     );
     let std_pil_path = resolve_path_env("STD_PIL_PATH", "pil2-components/lib/std/pil");
     let recurser_pil_path = resolve_path_env("RECURSER_PIL_PATH", "setup/stark-recurser/plonk2pil/pil");
@@ -84,10 +84,8 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
     let circom_exec = resolve_circom_exec(&circom_helpers_dir);
 
     // BN128 and circomlib paths.
-    let circuits_bn128_path = crate::proving_key::recursive::resolve_stark_recurser_subpath(
-        "CIRCUITS_BN128_PATH",
-        "src/pil2circom/circuits.bn128",
-    );
+    let circuits_bn128_path =
+        resolve_path_env("CIRCUITS_BN128_PATH", "setup/stark-recurser/stark2circom/circom_verifier/circuits.bn128");
     let circomlib_path =
         crate::proving_key::recursive::resolve_node_module_subpath("CIRCOMLIB_PATH", "circomlib", "circuits");
 
