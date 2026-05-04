@@ -826,56 +826,6 @@ pub(crate) fn resolve_pil2com_exec() -> Option<String> {
     which::which("pil2com").ok().map(|p| p.to_string_lossy().into_owned())
 }
 
-/// Find the stark-recurser package root, checking (in order):
-///   1. `STARK_RECURSER_PATH` environment variable
-///   2. Local npm install: `node_modules/stark-recurser` (relative to cwd)
-///
-/// Install via: `npm install`  (reads package.json in the repo root)
-pub(crate) fn resolve_stark_recurser_root() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("STARK_RECURSER_PATH") {
-        let pb = PathBuf::from(&p);
-        if pb.is_dir() {
-            return Some(pb);
-        }
-    }
-    let local = PathBuf::from("node_modules/stark-recurser");
-    if local.is_dir() {
-        return local.canonicalize().ok();
-    }
-    // Walk up from the executable's location to find node_modules/stark-recurser.
-    // This handles running the binary from a different working directory (e.g. ~/zisk)
-    // while node_modules live next to where the binary was built/installed.
-    if let Ok(exe) = std::env::current_exe() {
-        let mut dir = exe.parent();
-        while let Some(d) = dir {
-            let candidate = d.join("node_modules/stark-recurser");
-            if candidate.is_dir() {
-                return candidate.canonicalize().ok();
-            }
-            dir = d.parent();
-        }
-    }
-    None
-}
-
-/// Resolve a sub-path within the stark-recurser package, with an env-var override.
-///
-/// Checks (in order):
-///   1. The env var `env_var` (if set and non-empty)
-///   2. `<stark_recurser_root>/<sub_path>` (derived from `resolve_stark_recurser_root`)
-///   3. The literal `node_modules/stark-recurser/<sub_path>` (relative to cwd, as last resort)
-pub(crate) fn resolve_stark_recurser_subpath(env_var: &str, sub_path: &str) -> String {
-    if let Ok(v) = std::env::var(env_var) {
-        if !v.is_empty() {
-            return v;
-        }
-    }
-    if let Some(root) = resolve_stark_recurser_root() {
-        return root.join(sub_path).to_string_lossy().into_owned();
-    }
-    format!("node_modules/stark-recurser/{sub_path}")
-}
-
 /// Resolve a path inside `node_modules/<package>/<sub_path>`, with an env-var override.
 /// Searches CWD first, then walks up from the executable (same logic as stark-recurser).
 pub(crate) fn resolve_node_module_subpath(env_var: &str, package: &str, sub_path: &str) -> String {

@@ -219,10 +219,10 @@ that resolve relative to the repo or the executable's parent directories.
 
 | Variable | Default | What it points to |
 |---|---|---|
-| `STARK_RECURSER_PATH` | `node_modules/stark-recurser` | Stark-recurser package root |
-| `CIRCUITS_GL_PATH` | `<recurser>/src/pil2circom/circuits.gl` | Goldilocks circom helpers |
-| `RECURSER_CIRCUITS_PATH` | `<recurser>/src/vadcop/helpers/circuits` | vadcop circom templates |
-| `RECURSER_CIRCUITS_COMPRESSED_FINAL_PATH` | `<recurser>/src/recursion/helpers/circuits` | `vadcop_final_compressed` circom templates |
+| `CIRCUITS_GL_PATH` | `setup/stark-recurser/stark2circom/circom_verifier/circuits.gl` | Goldilocks circom helpers |
+| `RECURSER_CIRCUITS_PATH` | `setup/stark-recurser/stark2circom/circom_verifier/helper_circuits` | vadcop circom templates |
+| `RECURSER_CIRCUITS_COMPRESSED_FINAL_PATH` | `setup/stark-recurser/stark2circom/circom_verifier/circuits.bn128` | `vadcop_final_compressed` circom templates |
+| `CIRCUITS_BN128_PATH` | `setup/stark-recurser/stark2circom/circom_verifier/circuits.bn128` | BN128 circom helpers (snark setup) |
 | `STD_PIL_PATH` | `pil2-components/lib/std/pil` | PIL standard library |
 | `RECURSER_PIL_PATH` | `setup/stark-recurser/plonk2pil/pil` | `plonk2pil` PIL templates |
 | `CIRCOM_HELPERS_DIR` | `setup/circom` | C++ witness helpers + Makefile |
