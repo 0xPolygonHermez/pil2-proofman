@@ -87,8 +87,8 @@ pub type FibonacciSquareFixed<F> = GenericTrace<FibonacciSquareFixedRow<F>, 4194
 trace_row!(FibonacciSquareTraceRow<F> {
  a:F, b:F, test:F, test2:F, test3:F,
 });
-pub type FibonacciSquareTrace<F> = GenericTrace<FibonacciSquareTraceRow<F>, 4194304, 0, 0>;
 
+pub type FibonacciSquareTrace<F> = GenericTrace<FibonacciSquareTraceRow<F>, 4194304, 0, 0>;
 
 trace_row!(ModuleFixedRow<F> {
  SEGMENT_LN: F, __L1__: F,
@@ -98,8 +98,8 @@ pub type ModuleFixed<F> = GenericTrace<ModuleFixedRow<F>, 1048576, 0, 1>;
 trace_row!(ModuleTraceRow<F> {
  x:F, q:F, x_mod:F,
 });
-pub type ModuleTrace<F> = GenericTrace<ModuleTraceRow<F>, 1048576, 0, 1>;
 
+pub type ModuleTrace<F> = GenericTrace<ModuleTraceRow<F>, 1048576, 0, 1>;
 
 trace_row!(SpecifiedRangesFixedRow<F> {
  OPID: [F; 1], VALS: [F; 1], __L1__: F,
@@ -109,8 +109,8 @@ pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 256,
 trace_row!(SpecifiedRangesTraceRow<F> {
  mul:[F; 1],
 });
-pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 256, 0, 2>;
 
+pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 256, 0, 2>;
 
 trace_row!(FibonacciSquareRomTraceRow<F> {
  line: F, flags: F,

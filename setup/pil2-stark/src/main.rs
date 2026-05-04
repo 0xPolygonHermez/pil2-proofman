@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use pil2_stark_setup::commands::compile_pil::{self as compile_pil_cmd, CompilePilOptions};
 use pil2_stark_setup::commands::rebuild_witness::{self as rebuild_witness_cmd, RebuildWitnessOptions};
 use pil2_stark_setup::commands::setup::{self, SetupOptions};
 use pil2_stark_setup::commands::stats::{self as stats_cmd, StatsOptions};
@@ -29,6 +30,8 @@ enum Commands {
     /// Rebuild every witness library (.so/.dylib) in an existing provingKey
     /// without re-running the full setup pipeline.
     RebuildWitnessLibs(RebuildWitnessArgs),
+    /// Compile a `.pil` source into a `.pilout` via the JS pil2-compiler.
+    CompilePil(CompilePilArgs),
 }
 
 #[derive(Parser)]
@@ -157,6 +160,29 @@ struct SetupRecursiveTestArgs {
     r#type: String,
 }
 
+#[derive(Parser)]
+struct CompilePilArgs {
+    /// Path to the entry `.pil` file
+    #[arg(short = 'p', long = "pil")]
+    pil_path: String,
+
+    /// Output `.pilout` path
+    #[arg(short = 'o', long = "output")]
+    output_path: String,
+
+    /// `-I` include search paths (repeat for multiple, or pass a comma-separated value)
+    #[arg(short = 'I', long = "include", num_args = 1.., value_delimiter = ',')]
+    include_paths: Vec<String>,
+
+    /// `-u` directory for fixed columns
+    #[arg(short = 'u', long = "fixed-dir")]
+    fixed_dir: Option<String>,
+
+    /// Pass `-O fixed-to-file` to write fixed columns to disk
+    #[arg(long = "fixed-to-file")]
+    fixed_to_file: bool,
+}
+
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
@@ -255,6 +281,20 @@ fn main() -> anyhow::Result<()> {
                 setup_type: args.r#type,
             };
             recursive_test_cmd::run_setup_recursive_test(&opts)
+        }
+
+        Commands::CompilePil(args) => {
+            tracing::info!("proofman-setup compile-pil: starting");
+            tracing::info!("  pil: {}", args.pil_path);
+            tracing::info!("  output: {}", args.output_path);
+            let opts = CompilePilOptions {
+                pil_path: args.pil_path,
+                output_path: args.output_path,
+                include_paths: args.include_paths,
+                fixed_dir: args.fixed_dir,
+                fixed_to_file: args.fixed_to_file,
+            };
+            compile_pil_cmd::run_compile_pil(&opts)
         }
     }
 }
