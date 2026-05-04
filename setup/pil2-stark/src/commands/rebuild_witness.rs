@@ -60,7 +60,7 @@ pub fn run_rebuild_witness(opts: &RebuildWitnessOptions) -> Result<()> {
         resolve_path_env("RECURSER_CIRCUITS_PATH", "setup/stark-recurser/stark2circom/circom_verifier/helper_circuits");
     let recurser_circuits_compressed_final_path = resolve_path_env(
         "RECURSER_CIRCUITS_COMPRESSED_FINAL_PATH",
-        "setup/stark-recurser/stark2circom/circom_verifier/circuits.bn128",
+        "setup/stark-recurser/stark2circom/circom_verifier/helper_circuits",
     );
     let circom_helpers_dir = resolve_path_env("CIRCOM_HELPERS_DIR", "setup/circom");
     let goldilocks_src_dir = resolve_path_env("GOLDILOCKS_SRC_DIR", "pil2-stark/src/goldilocks/src");

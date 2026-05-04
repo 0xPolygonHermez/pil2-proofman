@@ -39,16 +39,16 @@ pub(crate) fn run_recursive_setup(
 
     let circuits_gl_path =
         resolve_path_env("CIRCUITS_GL_PATH", "setup/stark-recurser/stark2circom/circom_verifier/circuits.gl");
-    let recurser_circuits_path = resolve_path_env(
-        "RECURSER_CIRCUITS_PATH",
-        "setup/stark-recurser/stark2circom/circom_verifier/helper_circuits",
-    );
-    // Regular recursive (recursive1/recursive2/vadcop_final) uses the goldilocks-side
-    // helper circuits; the compressed_final stage transitions to BN128 and pulls from
-    // circuits.bn128 instead. (Matches the layout used by rebuild_witness.)
+    let recurser_circuits_path =
+        resolve_path_env("RECURSER_CIRCUITS_PATH", "setup/stark-recurser/stark2circom/circom_verifier/helper_circuits");
+    // compressed_final still compiles with --prime goldilocks; the BN128 transition
+    // happens later in the SNARK setup. Pointing this at circuits.bn128 would shadow
+    // circuits.gl/merkle.circom and pull in comparators.circom (circomlib), which
+    // isn't on the include path — see JS generateCompressedFinalSetup.js, which uses
+    // recursion/helpers/circuits (the goldilocks-side helpers).
     let recurser_circuits_compressed_final_path = resolve_path_env(
         "RECURSER_CIRCUITS_COMPRESSED_FINAL_PATH",
-        "setup/stark-recurser/stark2circom/circom_verifier/circuits.bn128",
+        "setup/stark-recurser/stark2circom/circom_verifier/helper_circuits",
     );
     let std_pil_path = resolve_path_env("STD_PIL_PATH", "pil2-components/lib/std/pil");
     let recurser_pil_path = resolve_path_env("RECURSER_PIL_PATH", "setup/stark-recurser/plonk2pil/pil");
@@ -649,12 +649,11 @@ mod tests {
             fixed_dir: None,
             stark_structs_path: None,
             recursive: true,
-            std_pil_path: None,
             recursive_jobs: 1,
             setup_jobs: 1,
             stats_output_path: None,
         };
-        let result = run_recursive_setup(&pilout, "zisk", &opts, &IndexMap::new());
+        let result = run_recursive_setup(&pilout, "zisk", &opts, &IndexMap::new(), serde_json::json!({}));
         assert!(result.is_err());
         assert!(format!("{:#}", result.unwrap_err()).contains("globalConstraints.json not found"));
         let _ = std::fs::remove_dir_all(&tmp);
@@ -689,12 +688,11 @@ mod tests {
             fixed_dir: None,
             stark_structs_path: None,
             recursive: true,
-            std_pil_path: None,
             recursive_jobs: 1,
             setup_jobs: 1,
             stats_output_path: None,
         };
-        let result = run_recursive_setup(&pilout, "zisk", &opts, &IndexMap::new());
+        let result = run_recursive_setup(&pilout, "zisk", &opts, &IndexMap::new(), serde_json::json!({}));
         assert!(result.is_err());
         let msg = format!("{:#}", result.unwrap_err());
         assert!(msg.contains("verkey") || msg.contains("not found"));
@@ -731,12 +729,11 @@ mod tests {
             fixed_dir: None,
             stark_structs_path: None,
             recursive: true,
-            std_pil_path: None,
             recursive_jobs: 1,
             setup_jobs: 1,
             stats_output_path: None,
         };
-        let result = run_recursive_setup(&pilout, "test", &opts, &IndexMap::new());
+        let result = run_recursive_setup(&pilout, "test", &opts, &IndexMap::new(), serde_json::json!({}));
         assert!(result.is_err());
         let msg = format!("{:#}", result.unwrap_err());
         assert!(msg.contains("starkinfo/verifierinfo not found"), "unexpected error: {}", msg);
