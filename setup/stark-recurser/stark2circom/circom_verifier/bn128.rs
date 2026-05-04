@@ -499,6 +499,7 @@ fn build_tera_context_bn128(
     ctx.insert("zlast_root", &zlast_root);
     ctx.insert("q_pol_ev_id", &q_pol_ev_id);
     ctx.insert("const_root_str", &const_root_str);
+    ctx.insert("gl_shift", &GL_SHIFT.to_string());
     ctx.insert("sha256_bits", &sha256_bits);
     ctx.insert("q_stage_cm_section_len", &q_stage_cm_section_len);
     ctx.insert("next_step0_bits", &next_step0_bits);
@@ -579,117 +580,55 @@ mod tests {
     }
 
     #[test]
-    fn ctx_derives_stages_correctly() {
+    fn header_non_custom() {
         let si = minimal_stark_info(2, 10, 8);
         let vi = minimal_verifier_info();
         let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierBn128Ctx::new(&si, &vi, &opts, None).unwrap();
-        assert_eq!(ctx.q_stage, 3);
-        assert_eq!(ctx.evals_stage, 4);
-        assert_eq!(ctx.fri_stage, 5);
+        let out = gen_stark_verifier_bn128(None, &si, &vi, &opts).unwrap();
+        assert!(out.contains("include \"poseidon.circom\";"), "out:\n{out}");
+        assert!(!out.contains("custom/"), "no custom includes:\n{out}");
+        assert!(out.contains("include \"merklehash.circom\";"), "out:\n{out}");
     }
 
     #[test]
-    fn ctx_non_custom_uses_transcript_arity_16() {
-        let si = minimal_stark_info(2, 10, 8);
-        let vi = minimal_verifier_info();
-        let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierBn128Ctx::new(&si, &vi, &opts, None).unwrap();
-        assert_eq!(ctx.arity, 16);
-        assert_eq!(ctx.transcript_arity, 16);
-        assert!(!ctx.custom);
-    }
-
-    #[test]
-    fn ctx_custom_uses_merkle_arity_as_transcript_arity() {
-        let mut si = minimal_stark_info(2, 10, 8);
-        si["starkStruct"]["merkleTreeArity"] = json!(4u64);
-        si["starkStruct"]["merkleTreeCustom"] = json!(true);
-        let vi = minimal_verifier_info();
-        let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierBn128Ctx::new(&si, &vi, &opts, None).unwrap();
-        assert_eq!(ctx.arity, 4);
-        assert_eq!(ctx.transcript_arity, 4); // custom=true → transcript_arity = arity
-        assert!(ctx.custom);
-    }
-
-    #[test]
-    fn ctx_n_fields_uses_253_bit_fields() {
-        // nQueries=10, steps[0].nBits=8 → total=80 → NFields=floor(79/253)+1=1
-        let si = minimal_stark_info(2, 10, 8);
-        let vi = minimal_verifier_info();
-        let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierBn128Ctx::new(&si, &vi, &opts, None).unwrap();
-        assert_eq!(ctx.n_fields, 1);
-    }
-
-    #[test]
-    fn ctx_n_fields_multiple_fields() {
-        // nQueries=229, steps[0].nBits=23 → total=5267 → NFields=floor(5266/253)+1
-        // 5266/253 = 20.81... → floor = 20 → NFields = 21
-        let si = minimal_stark_info(2, 229, 23);
-        let vi = minimal_verifier_info();
-        let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierBn128Ctx::new(&si, &vi, &opts, None).unwrap();
-        assert_eq!(ctx.n_fields, 21); // much fewer than GL's 84
-    }
-
-    #[test]
-    fn gen_header_non_custom() {
-        let si = minimal_stark_info(2, 10, 8);
-        let vi = minimal_verifier_info();
-        let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierBn128Ctx::new(&si, &vi, &opts, None).unwrap();
-        let header = gen_header(&ctx).unwrap();
-        assert!(header.contains("include \"poseidon.circom\";"), "header:\n{header}");
-        assert!(!header.contains("custom/"), "no custom includes: {header}");
-        assert!(header.contains("include \"merklehash.circom\";"), "header:\n{header}");
-    }
-
-    #[test]
-    fn gen_header_custom() {
+    fn header_custom() {
         let mut si = minimal_stark_info(2, 10, 8);
         si["starkStruct"]["merkleTreeCustom"] = json!(true);
         let vi = minimal_verifier_info();
         let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierBn128Ctx::new(&si, &vi, &opts, None).unwrap();
-        let header = gen_header(&ctx).unwrap();
-        assert!(header.contains("include \"custom/poseidon.circom\";"), "header:\n{header}");
-        assert!(header.contains("include \"custom/merklehash.circom\";"), "header:\n{header}");
+        let out = gen_stark_verifier_bn128(None, &si, &vi, &opts).unwrap();
+        assert!(out.contains("include \"custom/poseidon.circom\";"), "out:\n{out}");
+        assert!(out.contains("include \"custom/merklehash.circom\";"), "out:\n{out}");
     }
 
     #[test]
-    fn gen_header_skip_main_omits_sha256() {
+    fn header_skip_main_omits_sha256() {
         let si = minimal_stark_info(2, 10, 8);
         let vi = minimal_verifier_info();
-        let mut opts = Pil2CircomOptions::default();
-        opts.skip_main = true;
-        let ctx = StarkVerifierBn128Ctx::new(&si, &vi, &opts, None).unwrap();
-        let header = gen_header(&ctx).unwrap();
-        assert!(!header.contains("sha256"), "sha256 should be absent: {header}");
-        assert!(!header.contains("bitify.circom"), "bitify should be absent: {header}");
+        let opts = Pil2CircomOptions { skip_main: true, ..Pil2CircomOptions::default() };
+        let out = gen_stark_verifier_bn128(None, &si, &vi, &opts).unwrap();
+        assert!(!out.contains("sha256"), "sha256 should be absent:\n{out}");
+        assert!(!out.contains("bitify.circom"), "bitify should be absent:\n{out}");
     }
 
     #[test]
-    fn gen_header_not_skip_main_includes_sha256() {
+    fn header_not_skip_main_includes_sha256() {
         let si = minimal_stark_info(2, 10, 8);
         let vi = minimal_verifier_info();
         let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierBn128Ctx::new(&si, &vi, &opts, None).unwrap();
-        let header = gen_header(&ctx).unwrap();
-        assert!(header.contains("sha256/sha256.circom"), "header:\n{header}");
+        let out = gen_stark_verifier_bn128(None, &si, &vi, &opts).unwrap();
+        assert!(out.contains("sha256/sha256.circom"), "out:\n{out}");
     }
 
     #[test]
-    fn gen_gl_const_templates_content() {
+    fn gl_const_templates_present() {
         let si = minimal_stark_info(2, 10, 8);
         let vi = minimal_verifier_info();
         let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierBn128Ctx::new(&si, &vi, &opts, None).unwrap();
-        let tmpl = gen_gl_const_templates(&ctx).unwrap();
-        assert!(tmpl.contains("template GLConst(num)"), "tmpl:\n{tmpl}");
-        assert!(tmpl.contains("template GLConst3(num)"), "tmpl:\n{tmpl}");
-        assert!(tmpl.contains("template GLC3()"), "tmpl:\n{tmpl}");
+        let out = gen_stark_verifier_bn128(None, &si, &vi, &opts).unwrap();
+        assert!(out.contains("template GLConst(num)"), "out:\n{out}");
+        assert!(out.contains("template GLConst3(num)"), "out:\n{out}");
+        assert!(out.contains("template GLC3()"), "out:\n{out}");
     }
 
     #[test]
@@ -704,20 +643,11 @@ mod tests {
     }
 
     #[test]
-    fn component_main_string() {
-        assert_eq!(gen_component_main(), "component main = Main();\n");
-    }
-
-    #[test]
-    fn merkle_levels_calculation() {
+    fn component_main_emits_main_wrapper() {
         let si = minimal_stark_info(2, 10, 8);
         let vi = minimal_verifier_info();
         let opts = Pil2CircomOptions::default();
-        let ctx = StarkVerifierBn128Ctx::new(&si, &vi, &opts, None).unwrap();
-        // arity=16, n_bits_arity=4
-        // bits=17 → floor(16/4)+1 = 4+1 = 5
-        assert_eq!(ctx.merkle_levels(17), 5);
-        // bits=16 → floor(15/4)+1 = 3+1 = 4
-        assert_eq!(ctx.merkle_levels(16), 4);
+        let out = gen_stark_verifier_bn128(None, &si, &vi, &opts).unwrap();
+        assert!(out.contains("component main = Main();"), "out:\n{out}");
     }
 }

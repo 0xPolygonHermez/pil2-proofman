@@ -3,8 +3,9 @@ use pil2_stark_setup::commands::compile_pil::{self as compile_pil_cmd, CompilePi
 use pil2_stark_setup::commands::rebuild_witness::{self as rebuild_witness_cmd, RebuildWitnessOptions};
 use pil2_stark_setup::commands::setup::{self, SetupOptions};
 use pil2_stark_setup::commands::stats::{self as stats_cmd, StatsOptions};
-use pil2_stark_setup::commands::setup_snark::{self as snark_cmd, SetupSnarkOptions};
+use pil2_stark_setup::commands::setup_compressed_final::{self as compressed_final_cmd, SetupCompressedFinalOptions};
 use pil2_stark_setup::commands::setup_recursive_test::{self as recursive_test_cmd, SetupRecursiveTestOptions};
+use pil2_stark_setup::commands::setup_snark::{self as snark_cmd, SetupSnarkOptions};
 
 // Uses the default system allocator (glibc malloc). After each AIR,
 // setup_cmd calls malloc_trim(0) to return freed pages to the OS and
@@ -25,6 +26,9 @@ enum Commands {
     Stats(StatsArgs),
     /// Generate final SNARK setup (recursivef + fflonk/plonk final).
     SetupSnark(SetupSnarkArgs),
+    /// Run only the `vadcop_final_compressed` stage on top of an existing
+    /// provingKey/<name>/vadcop_final/. Useful for iterating on this stage.
+    SetupCompressedFinal(SetupCompressedFinalArgs),
     /// Set up a test recursive circuit from a user-provided circom file.
     SetupRecursiveTest(SetupRecursiveTestArgs),
     /// Rebuild every witness library (.so/.dylib) in an existing provingKey
@@ -121,6 +125,13 @@ struct SetupSnarkArgs {
     /// Only generate the recursivef step; skip the final SNARK
     #[arg(long)]
     only_recursive_final: bool,
+}
+
+#[derive(Parser)]
+struct SetupCompressedFinalArgs {
+    /// Build directory containing `provingKey/<name>/vadcop_final/`.
+    #[arg(short = 'b', long)]
+    build_dir: String,
 }
 
 #[derive(Parser)]
@@ -254,6 +265,13 @@ fn main() -> anyhow::Result<()> {
                 only_recursive_final: args.only_recursive_final,
             };
             snark_cmd::run_setup_snark(&opts)
+        }
+
+        Commands::SetupCompressedFinal(args) => {
+            tracing::info!("proofman-setup setup-compressed-final: starting");
+            tracing::info!("  build_dir: {}", args.build_dir);
+            let opts = SetupCompressedFinalOptions { build_dir: args.build_dir };
+            compressed_final_cmd::run_setup_compressed_final(&opts)
         }
 
         Commands::RebuildWitnessLibs(args) => {

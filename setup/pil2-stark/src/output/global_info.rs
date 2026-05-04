@@ -580,6 +580,7 @@ pub(crate) fn write_bin_files_native(
     bin_output: &Path,
     verifier_bin_output: &Path,
 ) -> Result<()> {
+    use anyhow::Context;
     use crate::types::stark_info::{ExpressionsInfo, StarkInfo, VerifierInfo};
 
     let si_data =
@@ -649,7 +650,7 @@ mod tests {
             let name = air.get("name").unwrap().as_str().unwrap();
             if name == "Keccakf" || name == "Sha256f" || name == "ArithEq" || name == "ArithEq384" {
                 assert!(air.get("hasCompressor").is_some());
-                assert_eq!(air.get("hasCompressor").unwrap().as_bool().unwrap(), true);
+                assert!(air.get("hasCompressor").unwrap().as_bool().unwrap());
                 found_has_compressor = true;
             }
             if name == "Main" || name == "Mem" {

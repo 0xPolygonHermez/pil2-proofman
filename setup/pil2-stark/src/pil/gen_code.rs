@@ -901,7 +901,7 @@ mod tests {
     fn test_generate_expressions_code_basic() {
         // Build a minimal expression set:
         // [0] = number("1"), [1] = cm(0), [2] = add(0,1) with keep=true
-        let mut expressions = vec![make_number("1"), make_cm(0, 1), {
+        let expressions = vec![make_number("1"), make_cm(0, 1), {
             let mut e = make_add(0, 1);
             e.keep = Some(true);
             e.stage = 1;
@@ -939,12 +939,12 @@ mod tests {
             name: "test_hint".to_string(),
             fields: vec![HintFieldEntry {
                 name: "field1".to_string(),
-                values: vec![HintFieldValue::Single(Expression {
+                values: vec![HintFieldValue::Single(Box::new(Expression {
                     op: "number".to_string(),
                     value: Some("42".to_string()),
                     dim: 1,
                     ..Default::default()
-                })],
+                }))],
                 lengths: None,
             }],
         }];
@@ -960,7 +960,7 @@ mod tests {
 
     #[test]
     fn test_constraints_debug_code() {
-        let mut expressions = vec![make_number("1"), make_cm(0, 1), make_add(0, 1)];
+        let expressions = vec![make_number("1"), make_cm(0, 1), make_add(0, 1)];
         let symbols: Vec<SymbolInfo> = Vec::new();
         let constraints = vec![ConstraintInfo {
             boundary: "everyRow".to_string(),
@@ -997,20 +997,20 @@ mod tests {
         let mut expressions = vec![make_number("1")];
         let params = make_params();
 
-        let values = vec![HintFieldValue::Array(vec![
-            HintFieldValue::Single(Expression {
+        let values = vec![HintFieldValue::Array(Box::new(vec![
+            HintFieldValue::Single(Box::new(Expression {
                 op: "number".to_string(),
                 value: Some("1".to_string()),
                 dim: 1,
                 ..Default::default()
-            }),
-            HintFieldValue::Single(Expression {
+            })),
+            HintFieldValue::Single(Box::new(Expression {
                 op: "number".to_string(),
                 value: Some("2".to_string()),
                 dim: 1,
                 ..Default::default()
-            }),
-        ])];
+            })),
+        ]))];
 
         let result = process_hint_field_values(&values, &params, &mut expressions, &[], None);
         // Should flatten to 2 entries
