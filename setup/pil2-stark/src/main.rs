@@ -192,6 +192,12 @@ struct CompilePilArgs {
     /// Pass `-O fixed-to-file` to write fixed columns to disk
     #[arg(long = "fixed-to-file")]
     fixed_to_file: bool,
+
+    /// Pass `-O no-proto-fixed-data` to omit fixed-column values from the pilout
+    /// protobuf. Use with `--fixed-dir` + `--fixed-to-file` to avoid the V8 heap
+    /// blowup on huge PILs (e.g. zisk.pil at ~9 M Keccakf constraints).
+    #[arg(long = "no-proto-fixed-data")]
+    no_proto_fixed_data: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -311,6 +317,7 @@ fn main() -> anyhow::Result<()> {
                 include_paths: args.include_paths,
                 fixed_dir: args.fixed_dir,
                 fixed_to_file: args.fixed_to_file,
+                no_proto_fixed_data: args.no_proto_fixed_data,
             };
             compile_pil_cmd::run_compile_pil(&opts)
         }

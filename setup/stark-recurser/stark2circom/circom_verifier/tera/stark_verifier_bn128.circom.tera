@@ -68,7 +68,7 @@ template Transcript() {
 {% for stage_info in stages_info %}{% if stage_info.stage <= n_stages %}    signal input root{{ stage_info.stage }};
 {% endif %}{% endfor %}    signal input root{{ q_stage }};
     signal input {maxNum} evals[{{ ev_map_len }}][3];
-{% for step in fri_steps_info %}{% if step.s > 0 and not step.is_last %}    signal input s{{ step.s }}_root;
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_root;
 {% endif %}{% endfor %}    signal input {maxNum} finalPol[{{ final_pol_size }}][3];
 {% if pow_bits > 0 %}    signal input nonce;
 {% endif %}    signal input {binary} enable;
@@ -84,11 +84,11 @@ template Transcript() {
 {% endif %}    signal evalsHash;
     signal lastPolFRIHash;
 {% endif %}
+    signal challengeFRIQueries[3];
 
 {% if n_publics > 0 and hash_commits %}{{ transcript_publics_code }}
 {% endif %}{{ transcript_code }}
 
-    signal challengeFRIQueries[3];
 {% if pow_bits > 0 %}    queriesFRI <== calculateFRIQueries()(challengeFRIQueries, nonce, enable);
 {% else %}    queriesFRI <== calculateFRIQueries()(challengeFRIQueries, enable);
 {% endif %}}
