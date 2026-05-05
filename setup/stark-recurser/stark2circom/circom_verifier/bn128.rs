@@ -326,7 +326,10 @@ fn build_tera_context_bn128(
         .unwrap_or(0);
 
     // ── constRoot string ────────────────────────────────────────────────────
-    let const_root_str = const_root.map(|r| r.join(",")).unwrap_or_else(|| "0,0,0,0".to_string());
+    // For BN128 the verkey is a single scalar — the caller passes it in slot 0
+    // (with slots 1-3 as "0"), so we only emit the first limb. The template uses
+    // `signal rootC <== {{ const_root_str }};` which expects a single value.
+    let const_root_str = const_root.map(|r| r[0].clone()).unwrap_or_else(|| "0".to_string());
 
     // ── Transcript code strings ─────────────────────────────────────────────
     let mut t_fri = TranscriptBn128::new(transcript_arity, custom, Some("friQueries".into()));
@@ -430,6 +433,8 @@ fn build_tera_context_bn128(
     let challenge_names_joined = challenge_names.join(",");
 
     // ── transcript_call_inputs ───────────────────────────────────────────────
+    // The template appends `root{q_stage}` and `evalsGL` after this list, so
+    // do NOT include them here (otherwise the call args duplicate).
     let mut transcript_call_inputs: Vec<String> = Vec::new();
     if n_publics > 0 {
         transcript_call_inputs.push("publicsGL".into());
@@ -438,8 +443,6 @@ fn build_tera_context_bn128(
     for stage in 1..=n_stages {
         transcript_call_inputs.push(format!("root{stage}"));
     }
-    transcript_call_inputs.push(format!("root{q_stage}"));
-    transcript_call_inputs.push("evalsGL".into());
 
     // ── si_roots ────────────────────────────────────────────────────────────
     let si_roots: Vec<String> = (1..n_steps).map(|s| format!("s{s}_root")).collect();

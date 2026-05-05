@@ -138,7 +138,7 @@ pub fn gen_solidity(name: &str, root_c: &[u64; 4], publics: Option<&Value>, use_
     ctx.insert("first_is_vk", &first_is_vk);
     ctx.insert("proof_decode", proof_decode);
 
-    render(VERIFIER_SOL_TMPL, &ctx).unwrap_or_else(|e| panic!("verifier.sol template error: {e}"))
+    render(VERIFIER_SOL_TMPL, &ctx).unwrap_or_else(|e| panic!("verifier.sol template error: {e:#}"))
 }
 
 /// Port of `src/recursion/contracts/iverifier.sol.ejs`.
@@ -158,7 +158,7 @@ pub fn gen_iverifier(name: &str, publics: Option<&Value>) -> String {
     ctx.insert("name", &camel);
     ctx.insert("has_program_vk", &has_program_vk);
 
-    render(IVERIFIER_SOL_TMPL, &ctx).unwrap_or_else(|e| panic!("iverifier.sol template error: {e}"))
+    render(IVERIFIER_SOL_TMPL, &ctx).unwrap_or_else(|e| panic!("iverifier.sol template error: {e:#}"))
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

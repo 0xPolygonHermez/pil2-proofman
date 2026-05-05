@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {I{{ name }}Verifier} from "./I{{ name }}Verifier.sol";
-import {{{ snark }}Verifier} from "./{{ snark }}Verifier.sol";
+import {{ "{" }}{{ snark }}Verifier} from "./{{ snark }}Verifier.sol";
 
 /// @title {{ name }} Verifier
 /// @author SilentSig
