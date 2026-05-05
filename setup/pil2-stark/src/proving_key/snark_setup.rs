@@ -518,10 +518,23 @@ fn resolve_snarkjs_root() -> Option<PathBuf> {
     None
 }
 
+/// Make a path absolute against the current working directory. Required before
+/// passing paths into the inline node scripts below — those run with cwd set to
+/// the snarkjs package's parent dir (so `require('snarkjs')` resolves), which
+/// is generally NOT the cwd from which cargo-zisk was invoked, so any relative
+/// build_dir like `build2/...` would be looked up in the wrong place.
+fn absolutize(p: &str) -> Result<String> {
+    let pb = std::path::PathBuf::from(p);
+    let abs = if pb.is_absolute() { pb } else { std::env::current_dir()?.join(pb) };
+    Ok(abs.to_string_lossy().into_owned())
+}
+
 /// Export snarkjs verification key by spawning a small Node.js inline script.
 fn run_snarkjs_export_vk(zkey_path: &str, output_path: &str) -> Result<()> {
     let snarkjs_root = resolve_snarkjs_root().context("Cannot find snarkjs. Run: npm install")?;
     let cwd = snarkjs_root.parent().unwrap_or(&snarkjs_root).to_path_buf();
+    let zkey_abs = absolutize(zkey_path)?;
+    let out_abs = absolutize(output_path)?;
     let script = format!(
         r#"
 const snarkjs = require('snarkjs');
@@ -531,8 +544,8 @@ const fs = require('fs');
     fs.writeFileSync({out:?}, JSON.stringify(vk));
 }})().then(() => process.exit(0)).catch(e => {{ console.error(e); process.exit(1); }});
 "#,
-        zkey = zkey_path,
-        out = output_path,
+        zkey = zkey_abs,
+        out = out_abs,
     );
     run_node_inline(&script, "snarkjs exportVerificationKey", &cwd)
 }
@@ -541,6 +554,8 @@ const fs = require('fs');
 fn run_snarkjs_export_solidity(zkey_path: &str, output_path: &str, snark_type: &str) -> Result<()> {
     let snarkjs_root = resolve_snarkjs_root().context("Cannot find snarkjs. Run: npm install")?;
     let cwd = snarkjs_root.parent().unwrap_or(&snarkjs_root).to_path_buf();
+    let zkey_abs = absolutize(zkey_path)?;
+    let out_abs = absolutize(output_path)?;
     let template_key = snark_type;
     let script = format!(
         r#"
@@ -561,8 +576,8 @@ const path = require('path');
 "#,
         snark_type = snark_type,
         template_key = template_key,
-        zkey = zkey_path,
-        out = output_path,
+        zkey = zkey_abs,
+        out = out_abs,
     );
     run_node_inline(&script, "snarkjs exportSolidityVerifier", &cwd)
 }

@@ -22,6 +22,11 @@ pub struct CompilePilOptions {
     pub fixed_dir: Option<String>,
     /// Pass `-O fixed-to-file` to write fixed columns to disk.
     pub fixed_to_file: bool,
+    /// Pass `-O no-proto-fixed-data` to omit fixed-column values from the
+    /// protobuf-encoded pilout. Combined with `fixed_to_file` this keeps
+    /// fixed data off the V8 heap during proto encoding — a major memory
+    /// win on PILs the size of zisk.pil.
+    pub no_proto_fixed_data: bool,
 }
 
 pub fn run_compile_pil(opts: &CompilePilOptions) -> Result<()> {
@@ -43,6 +48,9 @@ pub fn run_compile_pil(opts: &CompilePilOptions) -> Result<()> {
     }
     if opts.fixed_to_file {
         cmd.arg("-O").arg("fixed-to-file");
+    }
+    if opts.no_proto_fixed_data {
+        cmd.arg("-O").arg("no-proto-fixed-data");
     }
 
     // pil2com is a wrapper script, so Node CLI flags can't be passed directly.

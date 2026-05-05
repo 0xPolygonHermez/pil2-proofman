@@ -83,7 +83,7 @@ pub fn gen_get_sha256_inputs(publics: &Value) -> String {
             } else {
                 // Standard: byte-swapped within each byte
                 out.push_str(&format!(
-                    "            publicsHasher.in[{name}BitsOffset + i*{bits_per_chunk} + (j/8)*8 + (7 - j%8)] <== {name}Bits[i].out[j];\n"
+                    "            publicsHasher.in[{name}BitsOffset + i*{bits_per_chunk} + (j\\8)*8 + (7 - j%8)] <== {name}Bits[i].out[j];\n"
                 ));
             }
             out.push_str("        }\n");
@@ -100,7 +100,7 @@ pub fn gen_get_sha256_inputs(publics: &Value) -> String {
             out.push_str(&format!("            {name}Bits[k][i].in <== publics[{name}Pos + k * {n_chunks} + i];\n"));
             out.push_str(&format!("            for(var j = 0; j < {bits_per_chunk}; j++) {{\n"));
             out.push_str(&format!(
-                "                publicsHasher.in[{name}BitsOffset + (k*{n_chunks} + i)*{bits_per_chunk} + (j/8)*8 + (7 - j%8)] <== {name}Bits[k][i].out[j];\n"
+                "                publicsHasher.in[{name}BitsOffset + (k*{n_chunks} + i)*{bits_per_chunk} + (j\\8)*8 + (7 - j%8)] <== {name}Bits[k][i].out[j];\n"
             ));
             out.push_str("            }\n");
             out.push_str("        }\n");

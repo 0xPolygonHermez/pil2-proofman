@@ -785,6 +785,7 @@ pub fn compile_pil(pil_path: &str, output_path: &str, std_pil_path: &str, recurs
         include_paths: vec![std_pil_path.to_string(), recurser_pil_path.to_string()],
         fixed_dir: None,
         fixed_to_file: false,
+        no_proto_fixed_data: false,
     };
     run_compile_pil(&opts)
 }
@@ -827,11 +828,24 @@ pub(crate) fn resolve_pil2com_exec() -> Option<String> {
 }
 
 /// Resolve a path inside `node_modules/<package>/<sub_path>`, with an env-var override.
-/// Searches CWD first, then walks up from the executable (same logic as stark-recurser).
+/// Search order:
+///   1. Env var override
+///   2. `<proofman-repo-root>/node_modules/<package>/<sub_path>` (compile-time baked)
+///   3. CWD-relative `node_modules/<package>/<sub_path>`
+///   4. Walk up from the running executable
+///   5. Literal `node_modules/<package>/<sub_path>` (last-resort fallback)
 pub(crate) fn resolve_node_module_subpath(env_var: &str, package: &str, sub_path: &str) -> String {
     if let Ok(v) = std::env::var(env_var) {
         if !v.is_empty() {
             return v;
+        }
+    }
+    // Compile-time path to the proofman repo root.
+    const PROOFMAN_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let baked = std::path::Path::new(PROOFMAN_ROOT).join("node_modules").join(package).join(sub_path);
+    if baked.is_dir() {
+        if let Ok(abs) = baked.canonicalize() {
+            return abs.to_string_lossy().into_owned();
         }
     }
     let rel = PathBuf::from("node_modules").join(package).join(sub_path);
