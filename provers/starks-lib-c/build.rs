@@ -179,7 +179,7 @@ fn main() {
         let cuda_path = "/usr/local/cuda/lib64"; // Adjust this path if necessary
         println!("cargo:rustc-link-search=native={cuda_path}");
         println!("cargo:rustc-link-lib=static=cudart_static"); // Link the CUDA runtime library statically
-        // cudart_static requires additional system libraries
+                                                               // cudart_static requires additional system libraries
         println!("cargo:rustc-link-lib=dylib=dl");
         println!("cargo:rustc-link-lib=dylib=rt");
 
