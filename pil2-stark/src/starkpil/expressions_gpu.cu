@@ -371,16 +371,27 @@ __device__ __forceinline__ void load__(
             out1 = (gl64_t*)&dParams->aux_trace[offset + pos0 + TILE_HEIGHT];
             out2 = (gl64_t*)&dParams->aux_trace[offset + pos0 + 2 * TILE_HEIGHT];
             return;
+        } else if (dim == 1) {
+            const uint64_t pos0 = usePack256
+                ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols)
+                : getBufferOffset(logicalRow, argIdx, domainSize, nCols);
+            out0 = (gl64_t*)&dParams->aux_trace[offset + pos0];
+            out1 = nullptr;
+            out2 = nullptr;
+            return;
         } else {
-            #pragma unroll
-            for (uint64_t d = 0; d < dim; d++) {
-                const uint64_t pos_ = usePack256
-                    ? getBufferOffset_pack256(chunkBase, argIdx+d, domainSize, nCols)
-                    : getBufferOffset(logicalRow, argIdx+d, domainSize, nCols);
-                if(d == 0) out0 = (gl64_t*)&dParams->aux_trace[offset + pos_];
-                if(d == 1) out1 = (gl64_t*)&dParams->aux_trace[offset + pos_];
-                if(d == 2) out2 = (gl64_t*)&dParams->aux_trace[offset + pos_];
-            }
+            const uint64_t pos0 = usePack256
+                    ? getBufferOffset_pack256(chunkBase, argIdx, domainSize, nCols)
+                    : getBufferOffset(logicalRow, argIdx, domainSize, nCols);
+            out0 = (gl64_t*)&dParams->aux_trace[offset + pos0];
+            const uint64_t pos1 = usePack256
+                    ? getBufferOffset_pack256(chunkBase, argIdx+1, domainSize, nCols)
+                    : getBufferOffset(logicalRow, argIdx+1, domainSize, nCols);
+            out1 = (gl64_t*)&dParams->aux_trace[offset + pos1];
+            const uint64_t pos2 = usePack256
+                    ? getBufferOffset_pack256(chunkBase, argIdx+2, domainSize, nCols)
+                    : getBufferOffset(logicalRow, argIdx+2, domainSize, nCols);
+            out2 = (gl64_t*)&dParams->aux_trace[offset + pos2];
             return;
         }
     }
