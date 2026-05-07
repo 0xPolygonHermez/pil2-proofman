@@ -513,6 +513,10 @@ where
         cancellation_info.cancel(None);
     }
 
+    pub fn notify_cancellation(&self) {
+        self.mpi_ctx.notify_cancellation();
+    }
+
     pub fn check_setup(
         proving_key_path: PathBuf,
         aggregation: bool,
