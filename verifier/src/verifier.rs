@@ -35,6 +35,64 @@ pub struct VerifierInfo {
     pub pow_bits: u64,
 }
 
+pub fn expected_proof_size_bytes(info: &VerifierInfo) -> usize {
+    let log_arity = (info.arity as f64).log2();
+    let n_siblings = ((info.n_bits_ext as f64 / log_arity).ceil()) as u64 - info.last_level_verification;
+    let n_siblings_per_level = (info.arity - 1) * 4;
+    let n_queries = info.n_fri_queries;
+    let num_nodes_level = info.arity.pow(info.last_level_verification as u32) * 4;
+    let last_level_extra = if info.last_level_verification > 0 { num_nodes_level } else { 0 };
+
+    let mut p: u64 = 0;
+
+    // roots: (n_stages + 1) groups of 4
+    p += 4 * (info.n_stages as u64 + 1);
+
+    // evals: n_evals cubic extension elements (3 each)
+    p += 3 * info.n_evals;
+
+    // s0 vals: n_queries * n_constants
+    p += n_queries * info.n_constants;
+
+    // s0 siblings: n_queries * n_siblings * n_siblings_per_level
+    p += n_queries * n_siblings * n_siblings_per_level;
+
+    // s0 last level
+    p += last_level_extra;
+
+    // stage queries: n_stages + 1 iterations
+    for i in 0..(info.n_stages as u64 + 1) {
+        let num_vals_i = info.num_vals[i as usize];
+        p += n_queries * num_vals_i;
+        p += n_queries * n_siblings * n_siblings_per_level;
+        p += last_level_extra;
+    }
+
+    // fri roots: (n_fri_steps - 1) groups of 4
+    p += 4 * (info.n_fri_steps - 1);
+
+    // fri data: (n_fri_steps - 1) iterations
+    for i in 1..info.n_fri_steps {
+        let vals_size = (1u64 << (info.fri_steps[(i - 1) as usize] - info.fri_steps[i as usize])) * 3;
+        p += n_queries * vals_size;
+
+        let n_siblings_fri =
+            ((info.fri_steps[i as usize] as f64 / log_arity).ceil()) as u64 - info.last_level_verification;
+        p += n_queries * n_siblings_fri * n_siblings_per_level;
+
+        p += last_level_extra;
+    }
+
+    // final polynomial
+    let final_pol_capacity = 1u64 << info.fri_steps[(info.n_fri_steps - 1) as usize];
+    p += 3 * final_pol_capacity;
+
+    // nonce
+    p += 1;
+
+    (p as usize) * 8
+}
+
 #[allow(clippy::type_complexity)]
 pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
     proof: &[u8],
@@ -53,6 +111,9 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         &[CubicExtensionField<Goldilocks>],
     ) -> CubicExtensionField<Goldilocks>,
 ) -> bool {
+    if proof.len() < 8 || vk.len() < 32 {
+        return false;
+    }
     let proof = cast_slice::<u8, u64>(proof);
     let vk = cast_slice::<u8, u64>(vk);
 
@@ -66,6 +127,11 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
 
     let n_publics = proof[p as usize];
     p += 1;
+
+    let expected_total = 1 + n_publics as usize + expected_proof_size_bytes(verifier_info) / 8;
+    if proof.len() != expected_total {
+        return false;
+    }
 
     let mut publics = Vec::with_capacity(n_publics as usize);
     for _ in 0..n_publics {
@@ -252,9 +318,6 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
     }
 
     let nonce = Goldilocks::new(proof[p as usize]);
-    p += 1;
-
-    debug_assert!(p == proof.len() as u64, "Proof length mismatch: expected {}, got {}", p, proof.len());
 
     let mut challenges = vec![
         CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };

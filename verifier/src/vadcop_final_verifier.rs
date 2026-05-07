@@ -4495,3 +4495,7 @@ pub fn verify(proof: &VadcopFinalProof, vk: &[u8]) -> bool {
 pub fn verify_bytes(proof: &[u8], vk: &[u8]) -> bool {
     stark_verify::<Poseidon16, 16>(proof, vk, &verifier_info(), q_verify, query_verify)
 }
+
+pub fn expected_proof_bytes() -> usize {
+    crate::expected_proof_size_bytes(&verifier_info())
+}
