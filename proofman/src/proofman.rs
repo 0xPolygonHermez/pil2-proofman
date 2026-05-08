@@ -1712,9 +1712,7 @@ where
         options: ProofOptions,
         phase: ProvePhase,
     ) -> ProofmanResult<ProvePhaseResult> {
-        let _cancellation_thread = CancellationThread::new(self.cancellation_info.clone(), self.mpi_ctx.clone());
-
-        let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
+        if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
             if !self.pctx.is_setup_partition_init() {
                 return Err(ProofmanError::InvalidParameters(
                     "Setup partition must be initialized before generating contributions".into(),
@@ -1724,7 +1722,11 @@ where
             self.cancellation_info.write().unwrap().reset();
             self.reset()?;
             self.pctx.dctx_reset();
+        }
 
+        let _cancellation_thread = CancellationThread::new(self.cancellation_info.clone(), self.mpi_ctx.clone());
+
+        let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
             if !options.minimal_memory && self.pctx.gpu {
                 self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
                 self.pctx.set_witness_tx_priority(Some(self.witness_tx_priority.clone()));
