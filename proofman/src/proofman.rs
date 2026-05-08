@@ -1284,6 +1284,10 @@ where
         }
 
         timer_stop_and_log_info!(VERIFYING_PROOF_CONSTRAINTS);
+        
+        if !valid_constraints.load(Ordering::Relaxed) {
+            return Err(ProofmanError::InvalidProof("Constraints were not verified".into()));
+        }
 
         Ok(())
     }
