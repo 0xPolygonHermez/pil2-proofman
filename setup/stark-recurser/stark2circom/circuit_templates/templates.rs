@@ -1,14 +1,17 @@
 //! Circom / Solidity template generators.
 //!
-//! Templates with a clear static skeleton use **Tera** (embedded at compile
-//! time via `include_str!`).  Templates dominated by data-driven loops are
-//! implemented as pure Rust in the sibling modules.
+//! All non-trivial templates use **Tera** (embedded at compile time via
+//! `include_str!`).  Sibling modules build the Tera context — including, when
+//! relevant, pre-rendered code fragments emitted by the `Transcript` state
+//! machine — and delegate the final Circom shape to a `.tera` file.
 //!
 //! Tera templates:
-//! - `recursivef.circom.tera`       → [`gen_recursivef`]
-//! - `recursion_final.circom.tera`  → [`gen_recursion_final`]
-//! - `verifier.sol.tera`            → [`gen_solidity`]
-//! - `iverifier.sol.tera`           → [`gen_iverifier`]
+//! - `recursivef.circom.tera`        → [`gen_recursivef`]
+//! - `recursion_final.circom.tera`   → [`gen_recursion_final`]
+//! - `verifier.sol.tera`             → [`gen_solidity`]
+//! - `iverifier.sol.tera`            → [`gen_iverifier`]
+//! - `calculate_hashes.circom.tera`  → [`super::calculate_hashes::gen_calculate_hashes`]
+//! - `get_sha256_inputs.circom.tera` → [`super::get_sha256_inputs::gen_get_sha256_inputs`]
 
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -54,7 +57,7 @@ const RECURSIVE2_TMPL: &str = include_str!("tera/recursive2.circom.tera");
 const VADCOP_FINAL_TMPL: &str = include_str!("tera/vadcop_final.circom.tera");
 
 /// Render a single one-shot Tera template string (no inheritance / include).
-fn render(template_src: &str, ctx: &TeraCtx) -> Result<String> {
+pub(super) fn render(template_src: &str, ctx: &TeraCtx) -> Result<String> {
     let mut tera = Tera::default();
     tera.add_raw_template("t", template_src).context("Failed to parse Tera template")?;
     tera.render("t", ctx).context("Failed to render Tera template")
