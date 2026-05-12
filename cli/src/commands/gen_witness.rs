@@ -50,7 +50,7 @@ impl GenWitnessCmd {
                 zkin_u8.len()
             ))));
         }
-        let zkin: Vec<u64> = zkin_u8.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+        let mut zkin: Vec<u64> = zkin_u8.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
 
         let re = Regex::new(r"ag(\d+)_air(\d+)_t([A-Za-z0-9]+)").unwrap();
 
@@ -85,9 +85,8 @@ impl GenWitnessCmd {
             state.get_witness_fn.ok_or(ProofmanError::InvalidSetup("GetWitness function not loaded".to_string()))?;
 
         timer_start_info!(WITNESS_GENERATION);
-        let res = unsafe {
-            get_witness_fn(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_mut_ptr() as *mut c_void, 1)
-        };
+        let res =
+            unsafe { get_witness_fn(zkin.as_mut_ptr(), circom_circuit_ptr, witness.as_mut_ptr() as *mut c_void, 1) };
         drop(state);
         timer_stop_and_log_info!(WITNESS_GENERATION);
 
