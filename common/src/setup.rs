@@ -6,7 +6,6 @@ use std::fs;
 use std::io::Read;
 use libloading::{Library, Symbol};
 use std::ffi::CString;
-use bytemuck::cast_slice;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
 use crate::RowInfo;
@@ -446,9 +445,8 @@ impl<F: PrimeField64> Setup<F> {
         self.const_pols_tree.as_ptr() as *mut u8
     }
 
-    pub fn get_vk(&self) -> Vec<u8> {
-        let verkey_u64: Vec<u64> = self.verkey.iter().map(|x| x.as_canonical_u64()).collect();
-        cast_slice(&verkey_u64).to_vec()
+    pub fn get_vk(&self) -> Vec<u64> {
+        self.verkey.iter().map(|x| x.as_canonical_u64()).collect()
     }
 
     pub fn get_circom_witness_size(&self) -> usize {

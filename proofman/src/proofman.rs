@@ -1516,7 +1516,7 @@ where
             &self.pctx,
             &self.memory_handler_recursive_witness,
             &self.setups,
-            &vadcop_final_proof.proof_with_publics_u64(),
+            &vadcop_final_proof.proof_with_publics(),
             &self.prover_buffer_recursive,
             &self.const_pols,
             &self.const_tree,
@@ -4066,11 +4066,9 @@ where
 
         let mut values_hash = vec![F::ZERO; size];
 
-        let vk_bytes = setup.get_vk();
+        let vk = setup.get_vk();
         for (i, value) in values_hash.iter_mut().enumerate().take(n_field_elements) {
-            let start = i * 8;
-            let bytes: [u8; 8] = vk_bytes[start..start + 8].try_into().unwrap();
-            *value = F::from_u64(u64::from_le_bytes(bytes));
+            *value = F::from_u64(vk[i]);
         }
 
         let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();

@@ -2,7 +2,6 @@ use fields::{
     intt_tiny, verify_fold, verify_mt, partial_merkle_tree, CubicExtensionField, Field, Goldilocks, Transcript,
     Poseidon2Constants, Poseidon4, Poseidon16, poseidon2_hash, PrimeField64,
 };
-use bytemuck::cast_slice;
 use rayon::prelude::*;
 
 #[allow(dead_code)]
@@ -95,8 +94,8 @@ pub fn expected_proof_size_bytes(info: &VerifierInfo) -> usize {
 
 #[allow(clippy::type_complexity)]
 pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
-    proof: &[u8],
-    vk: &[u8],
+    proof: &[u64],
+    vk: &[u64],
     verifier_info: &VerifierInfo,
     q_verify: fn(
         &[CubicExtensionField<Goldilocks>],
@@ -111,11 +110,9 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         &[CubicExtensionField<Goldilocks>],
     ) -> CubicExtensionField<Goldilocks>,
 ) -> bool {
-    if proof.len() < 8 || vk.len() < 32 {
+    if proof.is_empty() || vk.len() < 4 {
         return false;
     }
-    let proof = cast_slice::<u8, u64>(proof);
-    let vk = cast_slice::<u8, u64>(vk);
 
     let n_siblings: u64 = ((verifier_info.n_bits_ext as f64 / (verifier_info.arity as f64).log2()).ceil()) as u64
         - verifier_info.last_level_verification;
@@ -128,7 +125,12 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
     let n_publics = proof[p as usize];
     p += 1;
 
-    let expected_total = 1 + n_publics as usize + expected_proof_size_bytes(verifier_info) / 8;
+    let Some(expected_total) = 1usize
+        .checked_add(n_publics as usize)
+        .and_then(|s| s.checked_add(expected_proof_size_bytes(verifier_info) / 8))
+    else {
+        return false;
+    };
     if proof.len() != expected_total {
         return false;
     }
