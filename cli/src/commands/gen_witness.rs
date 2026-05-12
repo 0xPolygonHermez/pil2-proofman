@@ -8,7 +8,6 @@ use colored::Colorize;
 use fields::{Field, Goldilocks};
 use std::os::raw::c_void;
 use std::path::PathBuf;
-use bytemuck::cast_slice_mut;
 use std::sync::Arc;
 use std::error::Error;
 use std::str::FromStr;
@@ -45,7 +44,13 @@ impl GenWitnessCmd {
         let mut zkin_file = File::open(&self.proof)?;
         let mut zkin_u8 = Vec::new();
         zkin_file.read_to_end(&mut zkin_u8)?;
-        let zkin: &mut [u64] = cast_slice_mut::<u8, u64>(&mut zkin_u8);
+        if !zkin_u8.len().is_multiple_of(8) {
+            return Err(Box::new(ProofmanError::InvalidProof(format!(
+                "Proof file size ({} bytes) is not a multiple of 8",
+                zkin_u8.len()
+            ))));
+        }
+        let zkin: Vec<u64> = zkin_u8.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
 
         let re = Regex::new(r"ag(\d+)_air(\d+)_t([A-Za-z0-9]+)").unwrap();
 

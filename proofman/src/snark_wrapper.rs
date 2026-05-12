@@ -267,7 +267,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
                 "Compressed vadcop proofs are not supported for snark proof generation".to_string(),
             ));
         }
-        let proof = vadcop_proof.proof_with_publics_u64();
+        let proof = vadcop_proof.proof_with_publics();
 
         let recursivef_proof = generate_recursivef_proof(
             &self.setup_recursivef,
@@ -422,7 +422,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
             "Compressed vadcop proofs are not supported for snark proof generation".to_string(),
         ));
     }
-    let proof = vadcop_proof.proof_with_publics_u64();
+    let proof = vadcop_proof.proof_with_publics();
 
     timer_start_info!(LOADING_RECURSIVE_F_SETUP);
 
