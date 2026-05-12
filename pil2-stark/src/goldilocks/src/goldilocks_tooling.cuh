@@ -454,6 +454,7 @@ struct DeviceCommitBuffers
     uint64_t max_size_proof;
 
     uint64_t constPolsSize;
+    uint64_t unifiedBufferSize = 0;
     uint64_t pinned_size = 128 * 1024 * 1024; //256MB
 
     uint32_t  n_gpus;

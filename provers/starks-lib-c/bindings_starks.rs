@@ -628,6 +628,7 @@ extern "C" {
     pub fn set_gpu_mode(use_gpu: bool) -> bool;
 
     pub fn get_unified_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
+    pub fn get_unified_buffer_gpu_size(d_buffers: *mut ::std::os::raw::c_void) -> u64;
     pub fn get_unified_buffer_gpu_for_recursivef(d_buffers: *mut ::std::os::raw::c_void, d_buffers_recursivef: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 
     pub fn alloc_fixed_pols_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void);

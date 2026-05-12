@@ -285,6 +285,7 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceArea, uin
     zklog.info("  - Pinned host memory per GPU: " + std::to_string(totalPinnedMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) + " GB");
 
     d_buffers->constPolsSize = constPolsSize;
+    d_buffers->unifiedBufferSize = totalGpuMemoryPerGpu;
 
     // Allocate large GPU buffers with a single malloc per GPU
     for (int i = 0; i < d_buffers->n_gpus; i++) {
@@ -1590,6 +1591,12 @@ void *get_unified_buffer_gpu_gpu(void *d_buffers_) {
 
     gl64_t *d_unifiedBuffer = d_buffers->gpuMemoryBuffer[d_buffers->gpus_g2l[deviceId]];
     return (void *)d_unifiedBuffer;
+}
+
+uint64_t get_unified_buffer_gpu_size_gpu(void *d_buffers_) {
+    if (d_buffers_ == nullptr) return 0;
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    return d_buffers->unifiedBufferSize;
 }
 
 void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffers_recursivef_) {
