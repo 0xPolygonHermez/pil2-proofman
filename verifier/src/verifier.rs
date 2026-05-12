@@ -125,7 +125,12 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
     let n_publics = proof[p as usize];
     p += 1;
 
-    let expected_total = 1 + n_publics as usize + expected_proof_size_bytes(verifier_info) / 8;
+    let Some(expected_total) = 1usize
+        .checked_add(n_publics as usize)
+        .and_then(|s| s.checked_add(expected_proof_size_bytes(verifier_info) / 8))
+    else {
+        return false;
+    };
     if proof.len() != expected_total {
         return false;
     }
