@@ -1,11 +1,11 @@
 // extern crate env_logger;
 use clap::Parser;
-use proofman_verifier::{verify_vadcop_final_compressed, verify_vadcop_final};
+use proofman_verifier::{verify_vadcop_final_compressed, verify_vadcop_final, VadcopFinalProof};
 use proofman_common::initialize_logger;
 use std::fs::File;
 use std::io::Read;
 use colored::Colorize;
-use proofman_util::{timer_start_info, timer_stop_and_log_info, VadcopFinalProof};
+use proofman_util::{timer_start_info, timer_stop_and_log_info};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]

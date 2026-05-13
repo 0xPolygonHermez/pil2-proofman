@@ -1,6 +1,10 @@
+use alloc::vec;
+use alloc::vec::Vec;
+use alloc::string::ToString;
+
 use fields::{Goldilocks, CubicExtensionField, Field, Poseidon16};
 use crate::{Boundary, VerifierInfo, stark_verify};
-use proofman_util::VadcopFinalProof;
+use crate::VadcopFinalProof;
 
 #[rustfmt::skip]
 #[allow(clippy::all)]
