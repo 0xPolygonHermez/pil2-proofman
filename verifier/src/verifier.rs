@@ -2,6 +2,9 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+#[allow(unused)]
+use num_traits::Float;
+
 use fields::{
     intt_tiny, verify_fold, verify_mt, partial_merkle_tree, CubicExtensionField, Field, Goldilocks, Transcript,
     Poseidon2Constants, Poseidon4, Poseidon16, poseidon2_hash, PrimeField64,

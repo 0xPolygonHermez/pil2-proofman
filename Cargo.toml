@@ -78,12 +78,12 @@ log = { version = "0.4", default-features = false }
 env_logger = "0.11"
 bytes = "1.11.1"
 prost = "0.13"
-num-bigint = { version = "0.4", default-features = false }
+num-bigint = "0.4"
 prost-build = "0.13"
 num-traits = "0.2"
 crossbeam-channel = "0.5.15"
 rayon = "1"
-serde = { version = "1.0.130", default-features = false, features = ["derive"] }
+serde = { version = "1.0.130", features = ["derive"] }
 serde_json = "1.0.68"
 serde_arrays = "0.2"
 colored = "3"
