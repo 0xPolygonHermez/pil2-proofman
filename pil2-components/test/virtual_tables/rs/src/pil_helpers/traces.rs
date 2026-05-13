@@ -61,8 +61,8 @@ pub type Component1Fixed<F> = GenericTrace<Component1FixedRow<F>, 32, 0, 0>;
 trace_row!(Component1TraceRow<F> {
  a:[F; 5],
 });
-pub type Component1Trace<F> = GenericTrace<Component1TraceRow<F>, 32, 0, 0>;
 
+pub type Component1Trace<F> = GenericTrace<Component1TraceRow<F>, 32, 0, 0>;
 
 trace_row!(Component2FixedRow<F> {
  __L1__: F,
@@ -72,8 +72,8 @@ pub type Component2Fixed<F> = GenericTrace<Component2FixedRow<F>, 16, 0, 1>;
 trace_row!(Component2TraceRow<F> {
  a:[F; 3],
 });
-pub type Component2Trace<F> = GenericTrace<Component2TraceRow<F>, 16, 0, 1>;
 
+pub type Component2Trace<F> = GenericTrace<Component2TraceRow<F>, 16, 0, 1>;
 
 trace_row!(Component3FixedRow<F> {
  __L1__: F,
@@ -83,8 +83,8 @@ pub type Component3Fixed<F> = GenericTrace<Component3FixedRow<F>, 4, 0, 2>;
 trace_row!(Component3TraceRow<F> {
  a:[F; 3],
 });
-pub type Component3Trace<F> = GenericTrace<Component3TraceRow<F>, 4, 0, 2>;
 
+pub type Component3Trace<F> = GenericTrace<Component3TraceRow<F>, 4, 0, 2>;
 
 trace_row!(Component4FixedRow<F> {
  __L1__: F,
@@ -94,8 +94,8 @@ pub type Component4Fixed<F> = GenericTrace<Component4FixedRow<F>, 128, 0, 3>;
 trace_row!(Component4TraceRow<F> {
  a:[F; 2], b:[F; 3],
 });
-pub type Component4Trace<F> = GenericTrace<Component4TraceRow<F>, 128, 0, 3>;
 
+pub type Component4Trace<F> = GenericTrace<Component4TraceRow<F>, 128, 0, 3>;
 
 trace_row!(Component5FixedRow<F> {
  __L1__: F,
@@ -105,8 +105,8 @@ pub type Component5Fixed<F> = GenericTrace<Component5FixedRow<F>, 64, 0, 4>;
 trace_row!(Component5TraceRow<F> {
  a:[F; 6],
 });
-pub type Component5Trace<F> = GenericTrace<Component5TraceRow<F>, 64, 0, 4>;
 
+pub type Component5Trace<F> = GenericTrace<Component5TraceRow<F>, 64, 0, 4>;
 
 trace_row!(Component6FixedRow<F> {
  __L1__: F,
@@ -116,8 +116,8 @@ pub type Component6Fixed<F> = GenericTrace<Component6FixedRow<F>, 1024, 0, 5>;
 trace_row!(Component6TraceRow<F> {
  a:[F; 2],
 });
-pub type Component6Trace<F> = GenericTrace<Component6TraceRow<F>, 1024, 0, 5>;
 
+pub type Component6Trace<F> = GenericTrace<Component6TraceRow<F>, 1024, 0, 5>;
 
 trace_row!(Component7FixedRow<F> {
  __L1__: F,
@@ -127,8 +127,8 @@ pub type Component7Fixed<F> = GenericTrace<Component7FixedRow<F>, 512, 0, 6>;
 trace_row!(Component7TraceRow<F> {
  a:[F; 9],
 });
-pub type Component7Trace<F> = GenericTrace<Component7TraceRow<F>, 512, 0, 6>;
 
+pub type Component7Trace<F> = GenericTrace<Component7TraceRow<F>, 512, 0, 6>;
 
 trace_row!(Table7FixedRow<F> {
  A: [F; 9], __L1__: F,
@@ -138,8 +138,8 @@ pub type Table7Fixed<F> = GenericTrace<Table7FixedRow<F>, 512, 0, 7>;
 trace_row!(Table7TraceRow<F> {
  multiplicity:F,
 });
-pub type Table7Trace<F> = GenericTrace<Table7TraceRow<F>, 512, 0, 7>;
 
+pub type Table7Trace<F> = GenericTrace<Table7TraceRow<F>, 512, 0, 7>;
 
 trace_row!(Component8FixedRow<F> {
  __L1__: F,
@@ -149,8 +149,8 @@ pub type Component8Fixed<F> = GenericTrace<Component8FixedRow<F>, 1024, 0, 8>;
 trace_row!(Component8TraceRow<F> {
  a:[F; 3],
 });
-pub type Component8Trace<F> = GenericTrace<Component8TraceRow<F>, 1024, 0, 8>;
 
+pub type Component8Trace<F> = GenericTrace<Component8TraceRow<F>, 1024, 0, 8>;
 
 trace_row!(SpecifiedRangesFixedRow<F> {
  OPID: [F; 1], VALS: [F; 1], __L1__: F,
@@ -160,8 +160,8 @@ pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 64, 
 trace_row!(SpecifiedRangesTraceRow<F> {
  mul:[F; 1],
 });
-pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 64, 0, 9>;
 
+pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 64, 0, 9>;
 
 trace_row!(VirtualTableVirtualTables0FixedRow<F> {
  UID: [F; 5], column: [F; 14], __L1__: F,
@@ -171,8 +171,8 @@ pub type VirtualTableVirtualTables0Fixed<F> = GenericTrace<VirtualTableVirtualTa
 trace_row!(VirtualTableVirtualTables0TraceRow<F> {
  multiplicity:[F; 5],
 });
-pub type VirtualTableVirtualTables0Trace<F> = GenericTrace<VirtualTableVirtualTables0TraceRow<F>, 256, 0, 10>;
 
+pub type VirtualTableVirtualTables0Trace<F> = GenericTrace<VirtualTableVirtualTables0TraceRow<F>, 256, 0, 10>;
 
 trace_row!(VirtualTableVirtualTables1FixedRow<F> {
  UID: [F; 5], column: [F; 17], __L1__: F,
@@ -182,8 +182,8 @@ pub type VirtualTableVirtualTables1Fixed<F> = GenericTrace<VirtualTableVirtualTa
 trace_row!(VirtualTableVirtualTables1TraceRow<F> {
  multiplicity:[F; 5],
 });
-pub type VirtualTableVirtualTables1Trace<F> = GenericTrace<VirtualTableVirtualTables1TraceRow<F>, 8192, 0, 11>;
 
+pub type VirtualTableVirtualTables1Trace<F> = GenericTrace<VirtualTableVirtualTables1TraceRow<F>, 8192, 0, 11>;
 
 trace_row!(VirtualTableVirtualTables2FixedRow<F> {
  UID: [F; 9], column: [F; 11], __L1__: F,
@@ -193,8 +193,8 @@ pub type VirtualTableVirtualTables2Fixed<F> = GenericTrace<VirtualTableVirtualTa
 trace_row!(VirtualTableVirtualTables2TraceRow<F> {
  multiplicity:[F; 9],
 });
-pub type VirtualTableVirtualTables2Trace<F> = GenericTrace<VirtualTableVirtualTables2TraceRow<F>, 8192, 0, 12>;
 
+pub type VirtualTableVirtualTables2Trace<F> = GenericTrace<VirtualTableVirtualTables2TraceRow<F>, 8192, 0, 12>;
 
 values!(Component1AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
