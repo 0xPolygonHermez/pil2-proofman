@@ -1,7 +1,13 @@
-use std::fs::File;
-use std::path::Path;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
+
+#[cfg(feature = "std")]
+use std::fs::File;
+#[cfg(feature = "std")]
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VadcopFinalProof {
@@ -37,6 +43,7 @@ impl VadcopFinalProof {
         Ok(Self { public_values: publics.to_vec(), proof: proof_u64.to_vec(), compressed })
     }
 
+    #[cfg(feature = "std")]
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let path = path.as_ref();
 
@@ -44,25 +51,26 @@ impl VadcopFinalProof {
             std::fs::create_dir_all(parent)?;
         }
 
-        let file = File::create(path).map_err(|e| {
+        let mut file = File::create(path).map_err(|e| {
             std::io::Error::new(
                 e.kind(),
                 format!("Failed to create file for saving Vadcop Final proof: {}: {}", path.display(), e),
             )
         })?;
 
-        bincode::serialize_into(file, self)?;
+        bincode::serde::encode_into_std_write(self, &mut file, bincode::config::standard())?;
         Ok(())
     }
 
+    #[cfg(feature = "std")]
     pub fn load(path: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let file = File::open(path.as_ref()).map_err(|e| {
+        let mut file = File::open(path.as_ref()).map_err(|e| {
             std::io::Error::new(
                 e.kind(),
                 format!("Failed to open file for loading proof: {}: {}", path.as_ref().display(), e),
             )
         })?;
-        let proof: VadcopFinalProof = bincode::deserialize_from(file)?;
+        let proof: VadcopFinalProof = bincode::serde::decode_from_std_read(&mut file, bincode::config::standard())?;
         Ok(proof)
     }
 

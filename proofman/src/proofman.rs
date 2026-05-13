@@ -28,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::deterministic_shuffle;
 use proofman_common::{ProofmanResult, ProofmanError, Setup};
-use proofman_util::VadcopFinalProof;
+use proofman_verifier::VadcopFinalProof;
 use crate::{check_const_paths, check_const_paths_vadcop, needs_regeneration_fixed, needs_regeneration_vadcop_fixed};
 
 use proofman_starks_lib_c::{

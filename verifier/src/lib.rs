@@ -1,8 +1,17 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
+#[macro_use]
+mod log;
+
+mod proof;
 mod verifier;
 mod vadcop_final_verifier;
 mod vadcop_final_verifier_compressed;
 mod recursive2_verifier;
 
+pub use proof::*;
 pub use verifier::*;
 
 pub use vadcop_final_verifier::{

@@ -1,3 +1,7 @@
+#![no_std]
+
+extern crate alloc;
+
 mod goldilocks;
 mod integers;
 mod goldilocks_quintic_extension;

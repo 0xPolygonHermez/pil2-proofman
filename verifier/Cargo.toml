@@ -9,10 +9,11 @@ categories = { workspace = true }
 
 [dependencies]
 fields.workspace = true
-proofman-util.workspace = true
-tracing.workspace = true
-rayon.workspace = true
+serde = { version = "1.0.130", default-features = false, features = ["alloc", "derive"] }
+bincode = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
 
 [features]
-default = ["verify"]
+default = ["std", "verify"]
+std = ["dep:tracing", "dep:bincode", "serde/std"]
 verify = ["fields/verify"]

@@ -1,3 +1,6 @@
+use alloc::vec;
+use alloc::vec::Vec;
+
 use crate::PrimeField64;
 use crate::Poseidon2Constants;
 
