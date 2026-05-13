@@ -557,7 +557,7 @@ pub(crate) fn persist_has_compressor(path: &str, air_name: &str) -> anyhow::Resu
 }
 
 /// Resolve the circom executable path from env, well-known locations, or PATH.
-pub(crate) fn resolve_circom_exec(circom_helpers_dir: &str) -> String {
+pub fn resolve_circom_exec(circom_helpers_dir: &str) -> String {
     // Preferred binary name depends on the OS (mirrors JS logic)
     let bin_name = if cfg!(target_os = "macos") { "circom_mac" } else { "circom" };
 
@@ -583,7 +583,7 @@ pub(crate) fn resolve_circom_exec(circom_helpers_dir: &str) -> String {
 ///   2. `fallback` relative to the current working directory
 ///   3. `fallback` relative to each ancestor directory of the running executable
 ///   4. `fallback` as a literal string (last resort / relative-path pass-through)
-pub(crate) fn resolve_path_env(env_var: &str, fallback: &str) -> String {
+pub fn resolve_path_env(env_var: &str, fallback: &str) -> String {
     if let Ok(v) = std::env::var(env_var) {
         if !v.is_empty() {
             return v;

@@ -45,8 +45,7 @@ pub fn gen_get_sha256_inputs(publics: &Value) -> String {
         let name = d["name"].as_str().unwrap_or("unknown");
         let initial_pos = d["initialPos"].as_u64().unwrap_or(0) as usize;
         let n_values = d["nValues"].as_u64().unwrap_or(0) as usize;
-        let n_chunks =
-            d["chunks"].as_array().and_then(|a| a.first()).and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+        let n_chunks = d["chunks"].as_array().and_then(|a| a.first()).and_then(|v| v.as_u64()).unwrap_or(1) as usize;
         let bits_per_chunk =
             d["chunks"].as_array().and_then(|a| a.get(1)).and_then(|v| v.as_u64()).unwrap_or(64) as usize;
         let avoid_alias = d["avoidAlias"].as_bool().unwrap_or(false);
