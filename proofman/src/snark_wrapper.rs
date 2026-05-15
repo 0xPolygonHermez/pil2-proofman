@@ -4,8 +4,8 @@ use proofman_common::{
 };
 use proofman_util::{
     timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug, create_buffer_fast,
-    VadcopFinalProof,
 };
+use proofman_verifier::VadcopFinalProof;
 use fields::PrimeField64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -88,25 +88,25 @@ impl SnarkProof {
             std::fs::create_dir_all(parent)?;
         }
 
-        let file = File::create(path).map_err(|e| {
+        let mut file = File::create(path).map_err(|e| {
             std::io::Error::new(
                 e.kind(),
                 format!("Failed to create file for saving SNARK proof: {}: {}", path.display(), e),
             )
         })?;
 
-        bincode::serialize_into(file, self)?;
+        bincode::serde::encode_into_std_write(self, &mut file, bincode::config::standard())?;
         Ok(())
     }
 
     pub fn load(path: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let file = File::open(path.as_ref()).map_err(|e| {
+        let mut file = File::open(path.as_ref()).map_err(|e| {
             std::io::Error::new(
                 e.kind(),
                 format!("Failed to open file for loading SNARK proof: {}: {}", path.as_ref().display(), e),
             )
         })?;
-        let proof: SnarkProof = bincode::deserialize_from(file)?;
+        let proof: SnarkProof = bincode::serde::decode_from_std_read(&mut file, bincode::config::standard())?;
         Ok(proof)
     }
 
@@ -267,7 +267,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
                 "Compressed vadcop proofs are not supported for snark proof generation".to_string(),
             ));
         }
-        let proof = vadcop_proof.proof_with_publics_u64();
+        let proof = vadcop_proof.proof_with_publics();
 
         let recursivef_proof = generate_recursivef_proof(
             &self.setup_recursivef,
@@ -422,7 +422,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
             "Compressed vadcop proofs are not supported for snark proof generation".to_string(),
         ));
     }
-    let proof = vadcop_proof.proof_with_publics_u64();
+    let proof = vadcop_proof.proof_with_publics();
 
     timer_start_info!(LOADING_RECURSIVE_F_SETUP);
 

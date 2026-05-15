@@ -1275,7 +1275,7 @@ pub fn print_roots<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[[
     }
 }
 
-pub fn get_vadcop_final_proof_vkey(proving_key_path: &Path, compressed: bool) -> ProofmanResult<Vec<u8>> {
+pub fn get_vadcop_final_proof_vkey(proving_key_path: &Path, compressed: bool) -> ProofmanResult<Vec<u64>> {
     let global_info = GlobalInfo::new(proving_key_path)?;
     let setup_path = match compressed {
         true => global_info.get_setup_path("vadcop_final_compressed"),
@@ -1291,7 +1291,15 @@ pub fn get_vadcop_final_proof_vkey(proving_key_path: &Path, compressed: bool) ->
     file.read_to_end(&mut contents)
         .map_err(|e| ProofmanError::InvalidSetup(format!("Failed to read verkey file '{}': {}", verkey_file, e)))?;
 
-    Ok(contents)
+    if !contents.len().is_multiple_of(8) {
+        return Err(ProofmanError::InvalidSetup(format!(
+            "Verkey file '{}' has length {} which is not a multiple of 8",
+            verkey_file,
+            contents.len()
+        )));
+    }
+
+    Ok(contents.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect())
 }
 
 pub fn deterministic_shuffle<T>(slice: &mut [T], seed: u64) {

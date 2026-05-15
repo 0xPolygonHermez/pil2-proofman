@@ -1,9 +1,14 @@
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+
+#[allow(unused)]
+use num_traits::Float;
+
 use fields::{
     intt_tiny, verify_fold, verify_mt, partial_merkle_tree, CubicExtensionField, Field, Goldilocks, Transcript,
     Poseidon2Constants, Poseidon4, Poseidon16, poseidon2_hash, PrimeField64,
 };
-use bytemuck::cast_slice;
-use rayon::prelude::*;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -35,10 +40,68 @@ pub struct VerifierInfo {
     pub pow_bits: u64,
 }
 
+pub fn expected_proof_size_bytes(info: &VerifierInfo) -> usize {
+    let log_arity = (info.arity as f64).log2();
+    let n_siblings = ((info.n_bits_ext as f64 / log_arity).ceil()) as u64 - info.last_level_verification;
+    let n_siblings_per_level = (info.arity - 1) * 4;
+    let n_queries = info.n_fri_queries;
+    let num_nodes_level = info.arity.pow(info.last_level_verification as u32) * 4;
+    let last_level_extra = if info.last_level_verification > 0 { num_nodes_level } else { 0 };
+
+    let mut p: u64 = 0;
+
+    // roots: (n_stages + 1) groups of 4
+    p += 4 * (info.n_stages as u64 + 1);
+
+    // evals: n_evals cubic extension elements (3 each)
+    p += 3 * info.n_evals;
+
+    // s0 vals: n_queries * n_constants
+    p += n_queries * info.n_constants;
+
+    // s0 siblings: n_queries * n_siblings * n_siblings_per_level
+    p += n_queries * n_siblings * n_siblings_per_level;
+
+    // s0 last level
+    p += last_level_extra;
+
+    // stage queries: n_stages + 1 iterations
+    for i in 0..(info.n_stages as u64 + 1) {
+        let num_vals_i = info.num_vals[i as usize];
+        p += n_queries * num_vals_i;
+        p += n_queries * n_siblings * n_siblings_per_level;
+        p += last_level_extra;
+    }
+
+    // fri roots: (n_fri_steps - 1) groups of 4
+    p += 4 * (info.n_fri_steps - 1);
+
+    // fri data: (n_fri_steps - 1) iterations
+    for i in 1..info.n_fri_steps {
+        let vals_size = (1u64 << (info.fri_steps[(i - 1) as usize] - info.fri_steps[i as usize])) * 3;
+        p += n_queries * vals_size;
+
+        let n_siblings_fri =
+            ((info.fri_steps[i as usize] as f64 / log_arity).ceil()) as u64 - info.last_level_verification;
+        p += n_queries * n_siblings_fri * n_siblings_per_level;
+
+        p += last_level_extra;
+    }
+
+    // final polynomial
+    let final_pol_capacity = 1u64 << info.fri_steps[(info.n_fri_steps - 1) as usize];
+    p += 3 * final_pol_capacity;
+
+    // nonce
+    p += 1;
+
+    (p as usize) * 8
+}
+
 #[allow(clippy::type_complexity)]
 pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
-    proof: &[u8],
-    vk: &[u8],
+    proof: &[u64],
+    vk: &[u64],
     verifier_info: &VerifierInfo,
     q_verify: fn(
         &[CubicExtensionField<Goldilocks>],
@@ -53,8 +116,9 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         &[CubicExtensionField<Goldilocks>],
     ) -> CubicExtensionField<Goldilocks>,
 ) -> bool {
-    let proof = cast_slice::<u8, u64>(proof);
-    let vk = cast_slice::<u8, u64>(vk);
+    if proof.is_empty() || vk.len() < 4 {
+        return false;
+    }
 
     let n_siblings: u64 = ((verifier_info.n_bits_ext as f64 / (verifier_info.arity as f64).log2()).ceil()) as u64
         - verifier_info.last_level_verification;
@@ -66,6 +130,16 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
 
     let n_publics = proof[p as usize];
     p += 1;
+
+    let Some(expected_total) = 1usize
+        .checked_add(n_publics as usize)
+        .and_then(|s| s.checked_add(expected_proof_size_bytes(verifier_info) / 8))
+    else {
+        return false;
+    };
+    if proof.len() != expected_total {
+        return false;
+    }
 
     let mut publics = Vec::with_capacity(n_publics as usize);
     for _ in 0..n_publics {
@@ -252,9 +326,6 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
     }
 
     let nonce = Goldilocks::new(proof[p as usize]);
-    p += 1;
-
-    debug_assert!(p == proof.len() as u64, "Proof length mismatch: expected {}, got {}", p, proof.len());
 
     let mut challenges = vec![
         CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };
@@ -336,7 +407,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         nonce,
     ]);
     if pow_hash[0].as_canonical_u64() >= 1 << (64 - verifier_info.pow_bits) {
-        tracing::error!("Proof of work verification failed");
+        v_error!("Proof of work verification failed");
         return false;
     }
     let mut transcript_permutation: Transcript<Goldilocks, Poseidon16, 16> = Transcript::new();
@@ -390,9 +461,9 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         final_pol_vals.extend_from_slice(&pol.value);
     }
 
-    tracing::debug!("Verifying proof");
+    v_debug!("Verifying proof");
 
-    let all_valid = (0..n_queries).into_par_iter().all(|q| {
+    let all_valid = (0..n_queries).into_iter().all(|q| {
         // 1) Fixed MT
         if !verify_mt::<Goldilocks, C, W>(
             &root_c,
@@ -403,7 +474,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
             verifier_info.arity,
             verifier_info.last_level_verification,
         ) {
-            tracing::error!("Fixed MT verification failed for query {}", q);
+            v_error!("Fixed MT verification failed for query {}", q);
             return false;
         }
 
@@ -418,7 +489,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
                 verifier_info.arity,
                 verifier_info.last_level_verification,
             ) {
-                tracing::error!("Stage MT verification failed for query {}", q);
+                v_error!("Stage MT verification failed for query {}", q);
                 return false;
             }
         }
@@ -436,7 +507,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
             query_fri == final_pol[idx as usize]
         };
         if !valid_query {
-            tracing::error!("FRI query verification failed for query {}", q);
+            v_error!("FRI query verification failed for query {}", q);
             return false;
         }
 
@@ -452,7 +523,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
                 verifier_info.arity,
                 verifier_info.last_level_verification,
             ) {
-                tracing::error!("FRI step MT verification failed for query {}", q);
+                v_error!("FRI step MT verification failed for query {}", q);
                 return false;
             }
 
@@ -469,14 +540,14 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
                 let group_idx = (idx / (1 << verifier_info.fri_steps[s as usize + 2])) as usize;
                 for (i, val) in value.iter().enumerate().take(3usize) {
                     if vals_fri[q][s as usize + 1][group_idx * 3 + i] != *val {
-                        tracing::error!("FRI foldings verification failed at step {} for query {}", s as usize + 1, q,);
+                        v_error!("FRI foldings verification failed at step {} for query {}", s as usize + 1, q,);
                         return false;
                     }
                 }
             } else {
                 for (i, val) in value.iter().enumerate().take(3usize) {
                     if final_pol[idx as usize][i] != *val {
-                        tracing::error!("Final polynomial verification failed at index {} for query {}", idx, q,);
+                        v_error!("Final polynomial verification failed at index {} for query {}", idx, q,);
                         return false;
                     }
                 }
@@ -504,7 +575,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
             );
             for i in 0..4 {
                 if computed_root[i] != roots[s as usize][i] {
-                    tracing::error!("Stage {} Merkle tree root recomputation failed", s + 1);
+                    v_error!("Stage {} Merkle tree root recomputation failed", s + 1);
                     return false;
                 }
             }
@@ -515,7 +586,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
 
         for i in 0..4 {
             if computed_root_c[i] != root_c[i] {
-                tracing::error!("Stage fixed Merkle tree root recomputation failed");
+                v_error!("Stage fixed Merkle tree root recomputation failed");
                 return false;
             }
         }
@@ -532,14 +603,14 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
             );
             for i in 0..4 {
                 if computed_root[i] != roots_fri[s as usize][i] {
-                    tracing::error!("Stage {} FRI Merkle tree root recomputation failed", s + 1);
+                    v_error!("Stage {} FRI Merkle tree root recomputation failed", s + 1);
                     return false;
                 }
             }
         }
     }
 
-    tracing::debug!("Verifying Quotient polynomial");
+    v_debug!("Verifying Quotient polynomial");
     let mut x_acc = CubicExtensionField { value: [Goldilocks::ONE, Goldilocks::ZERO, Goldilocks::ZERO] };
     let mut q = CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };
     for i in 0..verifier_info.q_deg {
@@ -549,12 +620,12 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
 
     let q_val = q_verify(&challenges, &evals, &publics, &zi);
     if q_val != q {
-        tracing::error!("Quotient polynomial verification failed");
+        v_error!("Quotient polynomial verification failed");
         return false;
     }
-    tracing::debug!("Quotient polynomial verification passed");
+    v_debug!("Quotient polynomial verification passed");
 
-    tracing::debug!("Verifying final polynomial");
+    v_debug!("Verifying final polynomial");
     let final_pol_size = 1 << verifier_info.fri_steps[(verifier_info.n_fri_steps - 1) as usize];
     intt_tiny(&mut final_pol_vals, verifier_info.fri_steps[(verifier_info.n_fri_steps - 1) as usize] as usize, 3);
     let init = 1
@@ -563,13 +634,13 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
     for i in init..final_pol_size as usize {
         for j in 0..3usize {
             if final_pol_vals[i * 3 + j] != Goldilocks::ZERO {
-                tracing::error!("Final polynomial has non-zero value at index {}: {:?}", i, final_pol_vals[i * 3 + j]);
+                v_error!("Final polynomial has non-zero value at index {}: {:?}", i, final_pol_vals[i * 3 + j]);
                 return false;
             }
         }
     }
-    tracing::debug!("Final polynomial verification passed");
-    tracing::debug!("Proof verification succeeded");
+    v_debug!("Final polynomial verification passed");
+    v_debug!("Proof verification succeeded");
 
     true
 }

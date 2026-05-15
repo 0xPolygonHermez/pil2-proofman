@@ -1,6 +1,10 @@
+use alloc::vec;
+use alloc::vec::Vec;
+use alloc::string::ToString;
+
 use fields::{Goldilocks, CubicExtensionField, Field, Poseidon8};
 use crate::{Boundary, VerifierInfo, stark_verify};
-use proofman_util::VadcopFinalProof;
+use crate::VadcopFinalProof;
 
 #[rustfmt::skip]
 #[allow(clippy::all)]
@@ -4613,10 +4617,14 @@ fn verifier_info() -> VerifierInfo {
     }
 }
 
-pub fn verify(proof: &VadcopFinalProof, vk: &[u8]) -> bool {
+pub fn verify(proof: &VadcopFinalProof, vk: &[u64]) -> bool {
     stark_verify::<Poseidon8, 8>(&proof.proof_with_publics(), vk, &verifier_info(), q_verify, query_verify)
 }
 
-pub fn verify_bytes(proof: &[u8], vk: &[u8]) -> bool {
+pub fn verify_u64(proof: &[u64], vk: &[u64]) -> bool {
     stark_verify::<Poseidon8, 8>(proof, vk, &verifier_info(), q_verify, query_verify)
+}
+
+pub fn expected_proof_bytes() -> usize {
+    crate::expected_proof_size_bytes(&verifier_info())
 }

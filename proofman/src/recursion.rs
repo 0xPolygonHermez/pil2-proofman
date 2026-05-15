@@ -1,5 +1,4 @@
 use borsh::{BorshSerialize, BorshDeserialize};
-use bytemuck::cast_slice;
 use libloading::{Library, Symbol};
 use fields::PrimeField64;
 use std::ffi::CString;
@@ -925,8 +924,9 @@ fn generate_witness<F: PrimeField64>(
             setup.airgroup_id, setup.air_id, setup.setup_type, ts
         ));
         let mut file = File::create(&debug_file_path)?;
-        let proof_data = cast_slice(zkin);
-        file.write_all(proof_data)?;
+        for word in zkin {
+            file.write_all(&word.to_le_bytes())?;
+        }
         file.flush()?;
         tracing::warn!("Debug proof data written to: {}", debug_file_path.display());
 
