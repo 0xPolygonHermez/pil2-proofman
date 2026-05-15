@@ -1,3 +1,6 @@
+use alloc::vec;
+use alloc::vec::Vec;
+
 use crate::{CubicExtensionField, Field, Goldilocks};
 
 const OMEGAS_INV: [u64; 33] = [

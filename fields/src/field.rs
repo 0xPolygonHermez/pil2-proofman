@@ -1,7 +1,6 @@
 use core::fmt::{Debug, Display};
 use core::hash::Hash;
-use core::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
-use std::ops::DivAssign;
+use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use num_bigint::BigUint;
 use serde::Serialize;

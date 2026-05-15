@@ -164,6 +164,12 @@ impl MpiCtx {
     pub fn reset(&self) {
         self.reset_outer_agg_tracker();
         self.cancelled.store(0, Ordering::SeqCst);
+        #[cfg(feature = "mpi")]
+        {
+            while self.world.any_process().immediate_probe_with_tag(_MPI_TAG_CANCEL_JOB).is_some() {
+                let (_msg, _status) = self.world.any_process().receive_vec_with_tag::<i32>(_MPI_TAG_CANCEL_JOB);
+            }
+        }
     }
 
     #[cfg(feature = "mpi")]
@@ -634,6 +640,7 @@ impl MpiCtx {
                     let (msg, _) = self.world.any_process().receive_vec_with_tag::<i32>(_MPI_TAG_CANCEL_JOB);
 
                     if let Some(&failed_rank) = msg.first() {
+                        self.cancelled.store(1, Ordering::SeqCst);
                         return Some(ProofmanError::MpiCancellation(format!(
                             "Process {} received cancellation message from failed rank {}.",
                             self.rank, failed_rank

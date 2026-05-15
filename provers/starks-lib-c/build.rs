@@ -178,7 +178,10 @@ fn main() {
         // Add the CUDA library path
         let cuda_path = "/usr/local/cuda/lib64"; // Adjust this path if necessary
         println!("cargo:rustc-link-search=native={cuda_path}");
-        println!("cargo:rustc-link-lib=dylib=cudart"); // Link the CUDA runtime library
+        println!("cargo:rustc-link-lib=static=cudart_static"); // Link the CUDA runtime library statically
+                                                               // cudart_static requires additional system libraries
+        println!("cargo:rustc-link-lib=dylib=dl");
+        println!("cargo:rustc-link-lib=dylib=rt");
 
         // Add the blst library for GPU MSM
         let blst_path = pil2_stark_path.join("external/blst");

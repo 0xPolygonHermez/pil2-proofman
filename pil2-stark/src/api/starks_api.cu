@@ -190,15 +190,17 @@ void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32
         my_gpu_ids[i] = assigned_gpus[i];
     }
 
-    // Force CUDA context initialization
-    int device_id;
-    cudaGetDevice(&device_id);
+    // Force CUDA primary context creation only on this rank's assigned GPUs.
+    // Why: never touch the default device (GPU 0) implicitly — non-owning ranks
+    // would each create a ~300 MB primary context there and starve the rank that
+    // actually owns GPU 0. cudaDeviceSynchronize/cudaSetDevice back to GPU 0
+    // would do exactly that, so we end on an assigned GPU instead.
     for (uint32_t i = 0; i < n_gpus; i++) {
         cudaSetDevice(my_gpu_ids[i]);
         cudaFree(0);
+        cudaDeviceSynchronize();
     }
-    cudaSetDevice(device_id);
-    cudaDeviceSynchronize();
+    cudaSetDevice(my_gpu_ids[0]);
 
     // Initialize small GPU constants (Poseidon2 and Transcript)
     switch(arity){

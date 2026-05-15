@@ -11,7 +11,6 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use std::ffi::CString;
-use bytemuck::cast_slice;
 use libloading::{Library, Symbol};
 
 pub struct Compressor {}
@@ -60,8 +59,8 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
             let mut buffer = Vec::new();
             file.read_to_end(&mut buffer).unwrap();
 
-            let proof_slice: &[u64] = cast_slice(&buffer);
-            let proof: Vec<u64> = proof_slice.to_vec();
+            assert!(buffer.len().is_multiple_of(8), "proof.bin length is not a multiple of 8");
+            let proof: Vec<u64> = buffer.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
 
             let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
             let rust_lib_filename = setup.setup_path.display().to_string() + lib_extension;

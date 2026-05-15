@@ -1,20 +1,23 @@
-use std::fs::File;
-use std::path::Path;
-use std::ops::Div;
-
-use bytemuck::cast_slice;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "std")]
+use std::fs::File;
+#[cfg(feature = "std")]
+use std::path::Path;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VadcopFinalProof {
-    pub proof: Vec<u8>,
-    pub public_values: Vec<u8>,
+    pub proof: Vec<u64>,
+    pub public_values: Vec<u64>,
     pub compressed: bool,
 }
 
 impl VadcopFinalProof {
-    pub fn new(proof: Vec<u8>, public_values: Vec<u8>, compressed: bool) -> Self {
+    pub fn new(proof: Vec<u64>, public_values: Vec<u64>, compressed: bool) -> Self {
         Self { proof, public_values, compressed }
     }
 
@@ -37,9 +40,10 @@ impl VadcopFinalProof {
         let rest = &proof[1..];
         let (publics, proof_u64) = rest.split_at(n_publics);
 
-        Ok(Self { public_values: cast_slice(publics).to_vec(), proof: cast_slice(proof_u64).to_vec(), compressed })
+        Ok(Self { public_values: publics.to_vec(), proof: proof_u64.to_vec(), compressed })
     }
 
+    #[cfg(feature = "std")]
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let path = path.as_ref();
 
@@ -47,61 +51,35 @@ impl VadcopFinalProof {
             std::fs::create_dir_all(parent)?;
         }
 
-        let file = File::create(path).map_err(|e| {
+        let mut file = File::create(path).map_err(|e| {
             std::io::Error::new(
                 e.kind(),
                 format!("Failed to create file for saving Vadcop Final proof: {}: {}", path.display(), e),
             )
         })?;
 
-        bincode::serialize_into(file, self)?;
+        bincode::serde::encode_into_std_write(self, &mut file, bincode::config::standard())?;
         Ok(())
     }
 
+    #[cfg(feature = "std")]
     pub fn load(path: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let file = File::open(path.as_ref()).map_err(|e| {
+        let mut file = File::open(path.as_ref()).map_err(|e| {
             std::io::Error::new(
                 e.kind(),
                 format!("Failed to open file for loading proof: {}: {}", path.as_ref().display(), e),
             )
         })?;
-        let proof: VadcopFinalProof = bincode::deserialize_from(file)?;
+        let proof: VadcopFinalProof = bincode::serde::decode_from_std_read(&mut file, bincode::config::standard())?;
         Ok(proof)
     }
 
-    pub fn proof_with_publics(&self) -> Vec<u8> {
-        let mut result = Vec::with_capacity(8 + self.public_values.len() + self.proof.len());
-        result.extend_from_slice(&(self.public_values.len().div(8) as u64).to_le_bytes());
+    pub fn proof_with_publics(&self) -> Vec<u64> {
+        let mut result = Vec::with_capacity(1 + self.public_values.len() + self.proof.len());
+        result.push(self.public_values.len() as u64);
         result.extend_from_slice(&self.public_values);
         result.extend_from_slice(&self.proof);
-        result
-    }
-
-    pub fn proof_with_publics_u64(&self) -> Vec<u64> {
-        let public_values_u64 = self.get_publics();
-        let proof_u64 = self.get_proof();
-
-        let mut result = Vec::with_capacity(1 + public_values_u64.len() + proof_u64.len());
-        result.push(public_values_u64.len() as u64);
-        result.extend_from_slice(public_values_u64);
-        result.extend_from_slice(proof_u64);
 
         result
-    }
-
-    pub fn get_publics(&self) -> &[u64] {
-        cast_slice(&self.public_values)
-    }
-
-    pub fn get_proof(&self) -> &[u64] {
-        cast_slice(&self.proof)
-    }
-
-    pub fn get_public_bytes(&self) -> &[u8] {
-        &self.public_values
-    }
-
-    pub fn get_proof_bytes(&self) -> &[u8] {
-        &self.proof
     }
 }
