@@ -894,7 +894,7 @@ private function issue_rc_users_global() {
 private function print_range_stats_air() {
     use air.std.rc_stats;
 
-    println(`Range check stats:`);
+    println(`Range check stats for (AIRGROUP, AIR) = (${AIRGROUP}, ${AIR_NAME}):`);
     for (int i = 0; i < opids_count; i++) {
         const int num_reps = reps[i];
         const string num_reps_str = (num_reps == 1) ? "time" : "times";
