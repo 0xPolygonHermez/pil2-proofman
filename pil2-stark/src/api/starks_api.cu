@@ -286,6 +286,7 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceArea, uin
 
     d_buffers->constPolsSize = constPolsSize;
     d_buffers->unifiedBufferSize = totalGpuMemoryPerGpu;
+    d_buffers->unifiedBufferBorrowed.store(0, std::memory_order_relaxed);
 
     // Allocate large GPU buffers with a single malloc per GPU
     for (int i = 0; i < d_buffers->n_gpus; i++) {
@@ -1599,6 +1600,25 @@ uint64_t get_unified_buffer_gpu_size_gpu(void *d_buffers_) {
     return d_buffers->unifiedBufferSize;
 }
 
+void unified_buffer_acquire_gpu(void *d_buffers_) {
+    if (d_buffers_ == nullptr) return;
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    d_buffers->unifiedBufferBorrowed.store(1, std::memory_order_release);
+}
+
+void unified_buffer_release_gpu(void *d_buffers_) {
+    if (d_buffers_ == nullptr) return;
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    d_buffers->unifiedBufferBorrowed.store(0, std::memory_order_release);
+}
+
+uint32_t unified_buffer_is_borrowed_gpu(void *d_buffers_) {
+    if (d_buffers_ == nullptr) return 0;
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    return d_buffers->unifiedBufferBorrowed.load(std::memory_order_acquire);
+}
+
 void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffers_recursivef_) {
     if (d_buffers_ == nullptr) return nullptr;
     if (d_buffers_recursivef_ == nullptr) return get_unified_buffer_gpu_gpu(d_buffers_);
@@ -1622,8 +1642,12 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint6
     uint32_t selectedStreamId = 0;
 
     std::vector<bool> streams_locked(d_buffers->n_total_streams, false);
-    
+
     while (!someFree){
+        if (d_buffers->unifiedBufferBorrowed.load(std::memory_order_acquire)) {
+            std::this_thread::sleep_for(std::chrono::microseconds(300));
+            continue;
+        }
         if (recursive) {
             for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
                 if (d_buffers->streamsData[i].recursive && d_buffers->streamsData[i].mutex_stream_selection.try_lock()) {
