@@ -573,6 +573,28 @@ private function range_validator(const int min, const int max) {
     }
 }
 
+private function track_air_opid(const int opid, const int min, const int max) {
+    container air.std.rc_stats alias rcair {
+        int opids[ARRAY_SIZE];
+        int mins[ARRAY_SIZE];
+        int maxs[ARRAY_SIZE];
+        int reps[ARRAY_SIZE];
+        int opids_count = 0;
+    }
+
+    for (int i = 0; i < rcair.opids_count; i++) {
+        if (rcair.opids[i] == opid) {
+            rcair.reps[i]++;
+            return;
+        }
+    }
+    rcair.opids[rcair.opids_count] = opid;
+    rcair.mins[rcair.opids_count] = min;
+    rcair.maxs[rcair.opids_count] = max;
+    rcair.reps[rcair.opids_count] = 1;
+    rcair.opids_count++;
+}
+
 private function opid_process(const int min, const int max, const int predefined, const int absorb): int {
     container proof.std.rc alias rcproof {
         // Number of times U8, U16 and specified ranges air are used
@@ -630,6 +652,7 @@ private function opid_process(const int min, const int max, const int predefined
 
     // Print range stats
     if (PRINT_RANGE_STATS == 1) {
+        on final air print_range_stats_air();
         on final proof print_range_stats();
     }
 
@@ -642,6 +665,9 @@ private function opid_process(const int min, const int max, const int predefined
                 // If the range has already been introduced, increment the repetitions
                 // and return the same opid
                 rcproof.reps[i]++;
+                if (PRINT_RANGE_STATS == 1) {
+                    track_air_opid(rcproof.opids[i], min, max);
+                }
                 return rcproof.opids[i];
             }
         }
@@ -658,6 +684,10 @@ private function opid_process(const int min, const int max, const int predefined
     rcproof.maxs[rcproof.opids_count] = max;
     rcproof.reps[rcproof.opids_count] = 1;
     rcproof.opids_count++;
+
+    if (PRINT_RANGE_STATS == 1) {
+        track_air_opid(opid, min, max);
+    }
 
     // Exit if the range does not belong to the specified ranges air
     if (opid == U8AIR_OPID || opid == U16AIR_OPID) {
@@ -861,6 +891,17 @@ private function issue_rc_users_global() {
     @std_rc_users{num_users: air_count, airgroup_ids: airgroup_ids, air_ids: air_ids, opids_count: opids_count, spec_opids_count: spec_opids_count};
 }
 
+private function print_range_stats_air() {
+    use air.std.rc_stats;
+
+    println(`Range check stats:`);
+    for (int i = 0; i < opids_count; i++) {
+        const int num_reps = reps[i];
+        const string num_reps_str = (num_reps == 1) ? "time" : "times";
+        println(` - Range #${opids[i]} [${mins[i]}, ${maxs[i]}]: ${num_reps} ${num_reps_str}`);
+    }
+}
+
 private function print_range_stats() {
     use proof.std.rc;
 
@@ -868,6 +909,6 @@ private function print_range_stats() {
     for (int i = 0; i < opids_count; i++) {
         const int num_reps = reps[i];
         const string num_reps_str = (num_reps == 1) ? "time" : "times";
-        println(` - [${mins[i]}, ${maxs[i]}]: ${num_reps} ${num_reps_str}`);
+        println(` - Range #${opids[i]} [${mins[i]}, ${maxs[i]}]: ${num_reps} ${num_reps_str}`);
     }
 }
