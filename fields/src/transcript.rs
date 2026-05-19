@@ -1,3 +1,6 @@
+use alloc::vec;
+use alloc::vec::Vec;
+
 use crate::{poseidon2_hash, PrimeField64, Poseidon2Constants};
 
 pub struct Transcript<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize> {
@@ -6,7 +9,7 @@ pub struct Transcript<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize>
     out: [F; W],
     pending_cursor: usize,
     out_cursor: usize,
-    _marker: std::marker::PhantomData<C>,
+    _marker: core::marker::PhantomData<C>,
 }
 
 impl<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize> Default for Transcript<F, C, W> {
@@ -23,7 +26,7 @@ impl<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize> Transcript<F, C,
             out: [F::ZERO; W],
             pending_cursor: 0,
             out_cursor: 0,
-            _marker: std::marker::PhantomData,
+            _marker: core::marker::PhantomData,
         }
     }
 

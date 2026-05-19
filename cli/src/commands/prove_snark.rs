@@ -6,7 +6,7 @@ use fields::Goldilocks;
 
 use proofman::SnarkWrapper;
 use proofman::generate_and_verify_recursivef;
-use proofman_util::VadcopFinalProof;
+use proofman_verifier::VadcopFinalProof;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]

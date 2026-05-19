@@ -8,7 +8,6 @@ use colored::Colorize;
 use fields::{Field, Goldilocks};
 use std::os::raw::c_void;
 use std::path::PathBuf;
-use bytemuck::cast_slice_mut;
 use std::sync::Arc;
 use std::error::Error;
 use std::str::FromStr;
@@ -45,7 +44,13 @@ impl GenWitnessCmd {
         let mut zkin_file = File::open(&self.proof)?;
         let mut zkin_u8 = Vec::new();
         zkin_file.read_to_end(&mut zkin_u8)?;
-        let zkin: &mut [u64] = cast_slice_mut::<u8, u64>(&mut zkin_u8);
+        if !zkin_u8.len().is_multiple_of(8) {
+            return Err(Box::new(ProofmanError::InvalidProof(format!(
+                "Proof file size ({} bytes) is not a multiple of 8",
+                zkin_u8.len()
+            ))));
+        }
+        let mut zkin: Vec<u64> = zkin_u8.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
 
         let re = Regex::new(r"ag(\d+)_air(\d+)_t([A-Za-z0-9]+)").unwrap();
 
@@ -80,9 +85,8 @@ impl GenWitnessCmd {
             state.get_witness_fn.ok_or(ProofmanError::InvalidSetup("GetWitness function not loaded".to_string()))?;
 
         timer_start_info!(WITNESS_GENERATION);
-        let res = unsafe {
-            get_witness_fn(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_mut_ptr() as *mut c_void, 1)
-        };
+        let res =
+            unsafe { get_witness_fn(zkin.as_mut_ptr(), circom_circuit_ptr, witness.as_mut_ptr() as *mut c_void, 1) };
         drop(state);
         timer_stop_and_log_info!(WITNESS_GENERATION);
 

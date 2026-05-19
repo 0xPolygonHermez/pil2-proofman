@@ -28,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::deterministic_shuffle;
 use proofman_common::{ProofmanResult, ProofmanError, Setup};
-use proofman_util::VadcopFinalProof;
+use proofman_verifier::VadcopFinalProof;
 use crate::{check_const_paths, check_const_paths_vadcop, needs_regeneration_fixed, needs_regeneration_vadcop_fixed};
 
 use proofman_starks_lib_c::{
@@ -251,6 +251,9 @@ pub struct ProofMan<F: PrimeField64> {
     witness_info: RwLock<WitnessInfo>,
     reload_fixed_pols_gpu: Arc<AtomicBool>,
     options: ProofmanOptions,
+
+    /// Serializes proof-generation entry points. Use `acquire_computing()`.
+    computing: Mutex<()>,
 }
 
 #[derive(Debug, PartialEq, Clone, BorshSerialize, BorshDeserialize)]
@@ -484,12 +487,21 @@ where
     }
 
     fn check_cancel(&self, notify_mpi: bool) -> ProofmanResult<()> {
+        let local_cancelled = self.cancellation_info.read().unwrap().token.is_cancelled();
+
+        let cluster_cancelled =
+            if notify_mpi { !self.mpi_ctx.all_finished_ok(!local_cancelled) } else { local_cancelled };
+
+        if !cluster_cancelled {
+            return Ok(());
+        }
+
         let error = {
-            let mut cancellation_info = self.cancellation_info.write().unwrap();
-            if !cancellation_info.token.is_cancelled() {
-                return Ok(());
+            let mut info = self.cancellation_info.write().unwrap();
+            if !info.token.is_cancelled() {
+                info.cancel(Some(ProofmanError::MpiCancellation("peer rank reported cancellation".into())));
             }
-            cancellation_info.error.take()
+            info.error.take()
         };
 
         let error = if let Some(e) = error {
@@ -502,15 +514,29 @@ where
             Err(ProofmanError::Cancelled)
         };
         self.reset()?;
-        if notify_mpi {
-            self.set_barrier();
-        }
         error
     }
 
     pub fn cancel(&self) {
         let mut cancellation_info = self.cancellation_info.write().unwrap();
         cancellation_info.cancel(None);
+    }
+
+    /// Acquire `computing`. Warns if the wait exceeded 50ms.
+    fn acquire_computing(&self, caller: &'static str) -> std::sync::MutexGuard<'_, ()> {
+        let t0 = std::time::Instant::now();
+        let g = self.computing.lock().unwrap_or_else(|e| e.into_inner());
+        let waited = t0.elapsed();
+        if waited.as_millis() > 50 {
+            tracing::warn!("[ProofMan::{caller}] blocked {}ms acquiring `computing`", waited.as_millis());
+        }
+        g
+    }
+
+    /// Block until any in-flight proof-generation call has returned. Call
+    /// from the worker's recovery path before advertising `Ready`.
+    pub fn wait_until_proofman_ready(&self) {
+        let _computing = self.acquire_computing("wait_until_proofman_ready");
     }
 
     pub fn notify_cancellation(&self) {
@@ -624,6 +650,8 @@ where
     }
 
     pub fn execute_(&self, output_path: Option<PathBuf>) -> ProofmanResult<PlanningInfo> {
+        let _computing = self.acquire_computing("execute_");
+
         self.set_partition(1, vec![0], 0)?;
 
         self.cancellation_info.write().unwrap().reset();
@@ -885,6 +913,8 @@ where
     }
 
     pub fn compute_witness_(&self, options: ProofOptions) -> ProofmanResult<()> {
+        let _computing = self.acquire_computing("compute_witness_");
+
         self.set_partition(1, vec![0], 0)?;
 
         self.cancellation_info.write().unwrap().reset();
@@ -997,6 +1027,8 @@ where
     }
 
     fn _get_debug_info(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
+        let _computing = self.acquire_computing("_get_debug_info");
+
         self.set_partition(1, vec![0], 0)?;
 
         self.pctx.set_debug_info(debug_info);
@@ -1122,6 +1154,8 @@ where
 
     fn _verify_proof_constraints(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
         timer_start_info!(VERIFYING_PROOF_CONSTRAINTS);
+
+        let _computing = self.acquire_computing("_verify_proof_constraints");
 
         self.set_partition(1, vec![0], 0)?;
 
@@ -1482,7 +1516,7 @@ where
             &self.pctx,
             &self.memory_handler_recursive_witness,
             &self.setups,
-            &vadcop_final_proof.proof_with_publics_u64(),
+            &vadcop_final_proof.proof_with_publics(),
             &self.prover_buffer_recursive,
             &self.const_pols,
             &self.const_tree,
@@ -1689,6 +1723,7 @@ where
             options,
             witness_info: RwLock::new(WitnessInfo::default()),
             reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
+            computing: Mutex::new(()),
         })
     }
 
@@ -1712,6 +1747,8 @@ where
         options: ProofOptions,
         phase: ProvePhase,
     ) -> ProofmanResult<ProvePhaseResult> {
+        let _computing = self.acquire_computing("_generate_proof");
+
         if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
             if !self.pctx.is_setup_partition_init() {
                 return Err(ProofmanError::InvalidParameters(
@@ -4029,11 +4066,9 @@ where
 
         let mut values_hash = vec![F::ZERO; size];
 
-        let vk_bytes = setup.get_vk();
+        let vk = setup.get_vk();
         for (i, value) in values_hash.iter_mut().enumerate().take(n_field_elements) {
-            let start = i * 8;
-            let bytes: [u8; 8] = vk_bytes[start..start + 8].try_into().unwrap();
-            *value = F::from_u64(u64::from_le_bytes(bytes));
+            *value = F::from_u64(vk[i]);
         }
 
         let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();

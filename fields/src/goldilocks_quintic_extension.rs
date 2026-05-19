@@ -1,4 +1,4 @@
-use std::{
+use core::{
     array,
     fmt::{Display, Formatter, Result},
     ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign},
