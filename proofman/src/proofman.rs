@@ -1295,8 +1295,7 @@ where
 
         self.wcm.end(debug_info)?;
 
-        let check_global_constraints = !debug_info.skip_prover_instances
-            && debug_info.std_mode.debug_values.is_empty()
+        let check_global_constraints = debug_info.instances_mode == proofman_common::InstancesMode::All
             && (debug_info.debug_instances.is_empty() || !debug_info.debug_global_instances.is_empty());
 
         if check_global_constraints {

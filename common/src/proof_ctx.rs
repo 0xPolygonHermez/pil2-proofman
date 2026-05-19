@@ -12,8 +12,8 @@ use std::io::Read;
 use std::fs;
 use fields::{PrimeField64, Transcript, Poseidon16};
 use crate::{
-    initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PolMap, SetupCtx, StdMode,
-    PackedInfo, RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
+    initialize_logger, format_bytes, AirInstance, DebugInfo, DistributionCtx, GlobalInfo, InstanceInfo, PolMap,
+    SetupCtx, PackedInfo, RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
 };
 
 use std::ffi::c_void;
@@ -39,20 +39,6 @@ impl<F> Default for Values<F> {
         Self { values: RwLock::new(Vec::new()) }
     }
 }
-
-#[derive(Debug, Clone)]
-pub struct InstancesInfo {
-    pub constraints: Vec<usize>,
-    pub hint_ids: Vec<usize>,
-    pub rows: Vec<usize>,
-    pub store_row_info: bool,
-}
-
-pub type AirGroupMap = HashMap<usize, AirIdMap>;
-pub type AirIdMap = HashMap<usize, (bool, InstanceMap)>;
-pub type InstanceMap = HashMap<usize, InstancesInfo>;
-
-pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
 
 #[derive(Clone)]
 pub struct ProofOptions {
@@ -89,41 +75,6 @@ impl BorshDeserialize for ProofOptions {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct DebugInfo {
-    pub debug_instances: AirGroupMap,
-    pub debug_global_instances: Vec<usize>,
-    pub std_mode: StdMode,
-    pub n_print_constraints: usize,
-    pub skip_prover_instances: bool,
-    pub store_row_info: bool,
-}
-
-impl Default for DebugInfo {
-    fn default() -> Self {
-        Self {
-            debug_instances: Default::default(),
-            debug_global_instances: Default::default(),
-            std_mode: Default::default(),
-            n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,
-            skip_prover_instances: false,
-            store_row_info: false,
-        }
-    }
-}
-
-impl DebugInfo {
-    pub fn new_debug() -> Self {
-        Self {
-            debug_instances: HashMap::new(),
-            debug_global_instances: Vec::new(),
-            std_mode: StdMode::new_debug(),
-            n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,
-            skip_prover_instances: false,
-            store_row_info: false,
-        }
-    }
-}
 impl Default for ProofOptions {
     fn default() -> Self {
         Self {

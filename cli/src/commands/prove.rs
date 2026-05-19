@@ -10,7 +10,7 @@ use fields::Goldilocks;
 use proofman::SnarkWrapper;
 use proofman::ProofMan;
 use proofman::ProvePhaseResult;
-use proofman_common::{ModeName, ProofOptions, ProofmanOptions};
+use proofman_common::{ProofOptions, ProofmanOptions};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -94,7 +94,7 @@ impl ProveCmd {
             Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone())?,
         };
 
-        let verify_constraints = debug_info.std_mode.name == ModeName::Debug;
+        let verify_constraints = debug_info.verify_constraints;
 
         let mut options = ProofmanOptions::new();
 
@@ -137,7 +137,7 @@ impl ProveCmd {
             self.verify_proofs,
             self.minimal_memory,
         );
-        if debug_info.std_mode.name == ModeName::Debug {
+        if debug_info.verify_constraints {
             match self.field {
                 Field::Goldilocks => proofman.verify_proof_constraints(
                     self.witness_lib.clone(),

@@ -11,7 +11,7 @@ use proofman_common::SetupCtx;
 
 use colored::Colorize;
 use fields::PrimeField64;
-use proofman_common::{ProofCtx, ProofmanError, ProofmanResult};
+use proofman_common::{find_bucket_rule, BucketRule, Classifier, ProofCtx, ProofmanError, ProofmanResult};
 use proofman_hints::{
     get_hint_ids_by_name, format_hint_field_output_vec, HintFieldOutput, HintFieldValue, HintFieldValuesVec,
     HintFieldOptions,
@@ -37,8 +37,8 @@ pub struct HintMetadata<F: PrimeField64> {
     pub deg_mul: F,
 }
 
-pub type DebugData = FxHashMap<u64, FxHashMap<u64, BusValue>>; // opid -> val -> SharedData
-pub type DebugDataInfo = FxHashMap<u64, FxHashMap<u64, BusValueInfo>>;
+pub type DebugData = FxHashMap<u64, FxHashMap<u64, FxHashMap<u64, BusValue>>>; // opid -> bucket_key -> val -> SharedData
+pub type DebugDataInfo = FxHashMap<u64, FxHashMap<u64, FxHashMap<u64, BusValueInfo>>>;
 
 #[derive(Debug)]
 pub struct BusValue {
@@ -115,6 +115,7 @@ pub fn update_global_debug_data<F: PrimeField64>(
     debug_data_info: &mut DebugDataInfo,
     hint_id: usize,
     opid: u64,
+    bucket_key: u64,
     norm_vals: &[HintFieldOutput<F>],
     hash: u64,
     airgroup_id: usize,
@@ -123,7 +124,8 @@ pub fn update_global_debug_data<F: PrimeField64>(
     is_prod: bool,
 ) -> ProofmanResult<()> {
     let bus_opid = debug_data.entry(opid).or_default();
-    let bus_val = bus_opid.entry(hash).or_insert_with(|| BusValue {
+    let bus_bucket = bus_opid.entry(bucket_key).or_default();
+    let bus_val = bus_bucket.entry(hash).or_insert_with(|| BusValue {
         shared_data: SharedData {
             vals: format_hint_field_output_vec(norm_vals).to_string(),
             num_proves: 0,
@@ -132,7 +134,8 @@ pub fn update_global_debug_data<F: PrimeField64>(
     });
 
     let bus_info_opid = debug_data_info.entry(opid).or_default();
-    let bus_info_val = bus_info_opid
+    let bus_info_bucket = bus_info_opid.entry(bucket_key).or_default();
+    let bus_info_val = bus_info_bucket
         .entry(hash)
         .or_insert_with(|| BusValueInfo { local_data: FxHashMap::default(), global_data: None });
 
@@ -165,6 +168,7 @@ pub fn update_local_debug_data<F: PrimeField64>(
     debug_data_info: &mut DebugDataInfo,
     hint_id: usize,
     opid: u64,
+    bucket_key: u64,
     norm_vals: &[HintFieldOutput<F>],
     hash: u64,
     airgroup_id: usize,
@@ -176,13 +180,14 @@ pub fn update_local_debug_data<F: PrimeField64>(
     is_prod: bool,
     store_row_info: bool,
 ) -> ProofmanResult<()> {
-    let bus_val = debug_data.entry(opid).or_default().entry(hash).or_insert_with(|| BusValue {
-        shared_data: SharedData {
-            vals: format_hint_field_output_vec(norm_vals).to_string(),
-            num_proves: 0,
-            num_assumes: 0,
-        },
-    });
+    let bus_val =
+        debug_data.entry(opid).or_default().entry(bucket_key).or_default().entry(hash).or_insert_with(|| BusValue {
+            shared_data: SharedData {
+                vals: format_hint_field_output_vec(norm_vals).to_string(),
+                num_proves: 0,
+                num_assumes: 0,
+            },
+        });
 
     if is_proves {
         bus_val.shared_data.num_proves += times;
@@ -194,7 +199,8 @@ pub fn update_local_debug_data<F: PrimeField64>(
         let key = LocalKey::new(airgroup_id as u8, air_id as u8, instance_id as u16, hint_id as u16, is_prod);
 
         let bus_info_opid = debug_data_info.entry(opid).or_default();
-        let bus_info_val = bus_info_opid
+        let bus_info_bucket = bus_info_opid.entry(bucket_key).or_default();
+        let bus_info_val = bus_info_bucket
             .entry(hash)
             .or_insert_with(|| BusValueInfo { local_data: FxHashMap::default(), global_data: None });
 
@@ -219,6 +225,7 @@ pub fn update_debug_data<F: PrimeField64>(
     debug_data_info: &mut DebugDataInfo,
     hint_id: usize,
     opid: u64,
+    bucket_key: u64,
     norm_vals: &[HintFieldOutput<F>],
     hash: u64,
     airgroup_id: usize,
@@ -244,6 +251,7 @@ pub fn update_debug_data<F: PrimeField64>(
             debug_data_info,
             hint_id,
             opid,
+            bucket_key,
             norm_vals,
             hash,
             airgroup_id,
@@ -257,6 +265,7 @@ pub fn update_debug_data<F: PrimeField64>(
             debug_data_info,
             hint_id,
             opid,
+            bucket_key,
             norm_vals,
             hash,
             airgroup_id,
@@ -276,6 +285,7 @@ pub fn print_debug_info<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     max_values_to_print: usize,
     print_to_file: bool,
+    output_file_path: &Path,
     debug_data: &mut DebugData,
     debug_data_info: &mut DebugDataInfo,
 ) -> ProofmanResult<()> {
@@ -284,11 +294,15 @@ pub fn print_debug_info<F: PrimeField64>(
     let mut output: Box<dyn Write> = Box::new(io::stdout());
     let mut there_are_errors = false;
 
+    let group_by = pctx.debug_info.read().unwrap().bus_mode.group_by.clone();
+
     // Parallel pre-filtering: collect only mismatched opids
     let mismatched_opids: Vec<_> = debug_data
         .par_iter()
-        .filter_map(|(opid, bus)| {
-            let has_mismatch = bus.iter().any(|(_, v)| v.shared_data.num_proves != v.shared_data.num_assumes);
+        .filter_map(|(opid, buckets)| {
+            let has_mismatch = buckets
+                .iter()
+                .any(|(_, bus)| bus.iter().any(|(_, v)| v.shared_data.num_proves != v.shared_data.num_assumes));
             if has_mismatch {
                 Some(*opid)
             } else {
@@ -306,24 +320,26 @@ pub fn print_debug_info<F: PrimeField64>(
 
     // Process mismatched opids serially for ordered output, consuming entries as we go
     for opid in mismatched_opids {
-        let bus = debug_data.remove(&opid).unwrap();
-        let bus_info = debug_data_info.remove(&opid);
+        let opid_buckets = debug_data.remove(&opid).unwrap();
+        let opid_info_buckets = debug_data_info.remove(&opid);
+        let opid_rule = find_bucket_rule(&group_by, opid);
 
         if !there_are_errors {
             // Print to a file if requested
             if print_to_file {
-                let tmp_dir = Path::new("tmp");
-                if !tmp_dir.exists() {
-                    match fs::create_dir_all(tmp_dir) {
-                        Ok(_) => tracing::info!("Debug   : Created directory: {:?}", tmp_dir),
-                        Err(e) => {
-                            eprintln!("Failed to create directory {tmp_dir:?}: {e}");
-                            std::process::exit(1);
+                if let Some(parent) = output_file_path.parent() {
+                    if !parent.as_os_str().is_empty() && !parent.exists() {
+                        match fs::create_dir_all(parent) {
+                            Ok(_) => tracing::info!("Debug   : Created directory: {:?}", parent),
+                            Err(e) => {
+                                eprintln!("Failed to create directory {parent:?}: {e}");
+                                std::process::exit(1);
+                            }
                         }
                     }
                 }
 
-                file_path = tmp_dir.join("debug.log");
+                file_path = output_file_path.to_path_buf();
 
                 match File::create(&file_path) {
                     Ok(file) => {
@@ -345,51 +361,106 @@ pub fn print_debug_info<F: PrimeField64>(
         }
         writeln!(output, "\t► Mismatched bus values for opid {opid}:").expect("Write error");
 
-        let (overassumed_values, overproven_values): (Vec<_>, Vec<_>) = bus
-            .into_par_iter()
-            .filter(|(_, v)| v.shared_data.num_proves != v.shared_data.num_assumes)
-            .partition(|(_, v)| v.shared_data.num_proves < v.shared_data.num_assumes);
+        // Iterate over buckets within the opid. For unbucketed opids, only key 0 is present.
+        let mut bucket_keys: Vec<u64> = opid_buckets.keys().copied().collect();
+        bucket_keys.sort_unstable();
 
-        let len_overassumed = overassumed_values.len();
-        let len_overproven = overproven_values.len();
+        let mut opid_buckets = opid_buckets;
+        let mut opid_info_buckets = opid_info_buckets;
 
-        if len_overassumed > 0 {
-            writeln!(output, "\t  ⁃ There are {len_overassumed} unmatching values thrown as 'assume':")
-                .expect("Write error");
-        }
+        for bucket_key in bucket_keys {
+            let bus = opid_buckets.remove(&bucket_key).unwrap();
+            let bus_info = opid_info_buckets.as_mut().and_then(|m| m.remove(&bucket_key));
 
-        for (i, (val, data)) in overassumed_values.iter().enumerate() {
-            if i == max_values_to_print {
-                writeln!(output, "\t      ...").expect("Write error");
-                break;
-            }
-            let shared_data = &data.shared_data;
-            let bus_data = bus_info.as_ref().and_then(|info| info.get(val));
-            print_diffs(pctx, sctx, max_values_to_print, shared_data, bus_data, false, *val, &mut output)?;
-        }
-
-        if len_overassumed > 0 {
-            writeln!(output).expect("Write error");
-        }
-
-        if len_overproven > 0 {
-            writeln!(output, "\t  ⁃ There are {len_overproven} unmatching values thrown as 'prove':")
-                .expect("Write error");
-        }
-
-        for (i, (val, data)) in overproven_values.iter().enumerate() {
-            if i == max_values_to_print {
-                writeln!(output, "\t      ...").expect("Write error");
-                break;
+            // Skip buckets with no mismatch.
+            let has_mismatch = bus.values().any(|v| v.shared_data.num_proves != v.shared_data.num_assumes);
+            if !has_mismatch {
+                continue;
             }
 
-            let shared_data = &data.shared_data;
-            let bus_data = bus_info.as_ref().and_then(|info| info.get(val));
-            print_diffs(pctx, sctx, max_values_to_print, shared_data, bus_data, true, *val, &mut output)?;
-        }
+            // If the opid has a bucketing rule, label the bucket.
+            if let Some(rule) = opid_rule {
+                writeln!(output, "\t  ◆ Bucket: {}", format_bucket_desc(rule, bucket_key)).expect("Write error");
+            }
 
-        if len_overproven > 0 {
-            writeln!(output).expect("Write error");
+            let (overassumed_values, overproven_values): (Vec<_>, Vec<_>) = bus
+                .into_par_iter()
+                .filter(|(_, v)| v.shared_data.num_proves != v.shared_data.num_assumes)
+                .partition(|(_, v)| v.shared_data.num_proves < v.shared_data.num_assumes);
+
+            let len_overassumed = overassumed_values.len();
+            let len_overproven = overproven_values.len();
+
+            if len_overassumed > 0 {
+                writeln!(output, "\t  ⁃ There are {len_overassumed} unmatching values thrown as 'assume':")
+                    .expect("Write error");
+            }
+
+            for (i, (val, data)) in overassumed_values.iter().enumerate() {
+                if i == max_values_to_print {
+                    writeln!(output, "\t      ...").expect("Write error");
+                    break;
+                }
+                let shared_data = &data.shared_data;
+                let bus_data = bus_info.as_ref().and_then(|info| info.get(val));
+                print_diffs(pctx, sctx, max_values_to_print, shared_data, bus_data, false, *val, &mut output)?;
+            }
+
+            if len_overassumed > 0 {
+                writeln!(output).expect("Write error");
+            }
+
+            if len_overproven > 0 {
+                writeln!(output, "\t  ⁃ There are {len_overproven} unmatching values thrown as 'prove':")
+                    .expect("Write error");
+            }
+
+            for (i, (val, data)) in overproven_values.iter().enumerate() {
+                if i == max_values_to_print {
+                    writeln!(output, "\t      ...").expect("Write error");
+                    break;
+                }
+
+                let shared_data = &data.shared_data;
+                let bus_data = bus_info.as_ref().and_then(|info| info.get(val));
+                print_diffs(pctx, sctx, max_values_to_print, shared_data, bus_data, true, *val, &mut output)?;
+            }
+
+            if len_overproven > 0 {
+                writeln!(output).expect("Write error");
+            }
+        }
+    }
+
+    fn format_bucket_desc(rule: &BucketRule, bucket_key: u64) -> String {
+        match &rule.classifier {
+            Classifier::Value { .. } => format!("col[{}] = 0x{bucket_key:x}", rule.column),
+            Classifier::Range { ranges, .. } => {
+                let idx = bucket_key as usize;
+                let r = &ranges[idx];
+                let lo = r.min.map(|v| format!("0x{v:x}")).unwrap_or_else(|| "-∞".to_string());
+                let hi = r.max.map(|v| format!("0x{v:x}")).unwrap_or_else(|| "+∞".to_string());
+                format!("col[{}] in [{lo}, {hi})", rule.column)
+            }
+            Classifier::Prefix { prefixes, .. } => {
+                let idx = bucket_key as usize;
+                if idx < prefixes.len() {
+                    let p = &prefixes[idx];
+                    format!("col[{}] starts with 0x{:x} ({} bits)", rule.column, p.value, p.bits)
+                } else {
+                    format!("col[{}] matches no prefix", rule.column)
+                }
+            }
+            Classifier::Step { start, stop, step, .. } => {
+                let oor = crate::step_oor_index(*start, *stop, *step);
+                if bucket_key == oor {
+                    format!("col[{}] outside [0x{start:x}, 0x{stop:x})", rule.column)
+                } else {
+                    let lo = start + bucket_key * step;
+                    let hi = lo.saturating_add(*step).min(*stop);
+                    format!("col[{}] in [0x{lo:x}, 0x{hi:x})", rule.column)
+                }
+            }
         }
     }
 

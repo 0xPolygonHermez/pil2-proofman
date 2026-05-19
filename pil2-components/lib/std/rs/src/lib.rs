@@ -1,3 +1,4 @@
+mod bucket;
 mod common;
 mod debug_common;
 mod debug;
@@ -9,6 +10,7 @@ mod std_prod;
 mod std_sum;
 mod std_virtual_table;
 
+pub use bucket::*;
 pub use common::*;
 pub use debug_common::*;
 pub use debug::*;
