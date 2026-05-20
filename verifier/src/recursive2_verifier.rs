@@ -1,9 +1,8 @@
 use alloc::vec;
 use alloc::vec::Vec;
 use alloc::string::ToString;
-
 use fields::{Goldilocks, CubicExtensionField, Field, Poseidon16};
-use crate::{Boundary, VerifierInfo, stark_verify};
+use crate::{stark_verify, Boundary, VerifierInfo};
 use crate::VadcopFinalProof;
 
 #[inline(never)]
@@ -4623,4 +4622,8 @@ pub fn verify(proof: &VadcopFinalProof, vk: &[u64]) -> bool {
 
 pub fn verify_u64(proof: &[u64], vk: &[u64]) -> bool {
     stark_verify::<Poseidon16, 16>(proof, vk, &verifier_info(), q_verify, query_verify)
+}
+
+pub fn expected_proof_bytes() -> usize {
+    crate::expected_proof_size_bytes(&verifier_info())
 }

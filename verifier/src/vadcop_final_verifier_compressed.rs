@@ -1,9 +1,8 @@
 use alloc::vec;
 use alloc::vec::Vec;
 use alloc::string::ToString;
-
 use fields::{Goldilocks, CubicExtensionField, Field, Poseidon8};
-use crate::{Boundary, VerifierInfo, stark_verify};
+use crate::{stark_verify, Boundary, VerifierInfo};
 use crate::VadcopFinalProof;
 
 #[inline(never)]
