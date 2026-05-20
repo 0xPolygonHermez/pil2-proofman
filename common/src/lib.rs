@@ -1,6 +1,7 @@
 mod air_instance;
 mod debug_config;
 mod debug_json;
+mod debug_report;
 mod distribution_ctx;
 mod logger;
 mod mpi_ctx;
@@ -27,6 +28,7 @@ pub use constraints::*;
 pub use custom_commits::*;
 pub use debug_config::*;
 pub use debug_json::*;
+pub use debug_report::*;
 pub use distribution_ctx::*;
 pub use error_manager::*;
 pub use fixed_cols::*;

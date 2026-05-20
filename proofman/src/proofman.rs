@@ -7,7 +7,8 @@ use proofman_common::{
     ProofOptions, ProofType, RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
 };
 use colored::Colorize;
-use proofman_hints::aggregate_airgroupvals;
+use proofman_hints::{aggregate_airgroupvals, get_hint_ids_by_name, HintFieldOptions};
+use pil_std_lib::{get_hint_field_constant_a_as, get_hint_field_constant_as, get_hint_field_constant_as_string};
 use proofman_starks_lib_c::{get_num_gpus_c, init_gpu_setup_c, set_gpu_mode_c};
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c, reset_device_streams_c,
@@ -17,7 +18,7 @@ use crate::add_publics_circom;
 use proofman_verifier::{verify_recursive2, verify_vadcop_final, verify_vadcop_final_compressed};
 use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as FmtWrite;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -27,7 +28,7 @@ use csv::Writer;
 use tokio_util::sync::CancellationToken;
 
 use crate::deterministic_shuffle;
-use proofman_common::{ProofmanResult, ProofmanError, Setup};
+use proofman_common::{DebugReport, ProofmanResult, ProofmanError, Setup};
 use proofman_verifier::VadcopFinalProof;
 use crate::{check_const_paths, check_const_paths_vadcop, needs_regeneration_fixed, needs_regeneration_vadcop_fixed};
 
@@ -117,6 +118,13 @@ impl ColumnName {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct OpidInfo {
+    pub opid: u64,
+    pub name_piop: String,
+    pub num_elements: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct AirInfo {
     pub name: String,
     pub airgroup_id: u64,
@@ -130,12 +138,67 @@ pub struct AirInfo {
     pub name_airvalues: Vec<ColumnName>,
     pub num_airvalues: u64,
     pub num_rows: usize,
+    pub opids: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PlanningInfo {
     pub planning_info: Vec<AirInfo>,
+    pub opids_info: Vec<OpidInfo>,
     pub num_instances: usize,
+}
+
+fn collect_air_opids<F: PrimeField64>(pctx: &ProofCtx<F>, setup: &Setup<F>) -> ProofmanResult<Vec<OpidInfo>> {
+    let p_expressions_bin = setup.p_setup.p_expressions_bin;
+    let airgroup_id = setup.airgroup_id;
+    let air_id = setup.air_id;
+
+    let mut by_opid: BTreeMap<u64, OpidInfo> = BTreeMap::new();
+    for piop_type in ["gprod", "gsum"] {
+        let debug_data_name = format!("{}_debug_data", piop_type);
+        let debug_data_hints = get_hint_ids_by_name(p_expressions_bin, &debug_data_name);
+
+        for hint in debug_data_hints {
+            let hint = hint as usize;
+            let opids = get_hint_field_constant_a_as::<u64, F>(
+                pctx,
+                setup,
+                airgroup_id,
+                air_id,
+                hint,
+                "opids",
+                HintFieldOptions::default(),
+            )?;
+            let name_piop = get_hint_field_constant_as_string(
+                pctx,
+                setup,
+                airgroup_id,
+                air_id,
+                hint,
+                "name_piop",
+                HintFieldOptions::default(),
+            )?;
+            let len_expressions = get_hint_field_constant_as::<u64, F>(
+                pctx,
+                setup,
+                airgroup_id,
+                air_id,
+                hint,
+                "len_expressions",
+                HintFieldOptions::default(),
+            )?;
+
+            for opid in opids {
+                by_opid.entry(opid).or_insert_with(|| OpidInfo {
+                    opid,
+                    name_piop: name_piop.clone(),
+                    num_elements: len_expressions as usize,
+                });
+            }
+        }
+    }
+
+    Ok(by_opid.into_values().collect())
 }
 
 struct CancellationThread {
@@ -756,6 +819,7 @@ where
         }
 
         let mut planning_info = Vec::new();
+        let mut opids_by_id: BTreeMap<u64, OpidInfo> = BTreeMap::new();
         for (airgroup_id, _) in self.pctx.global_info.air_groups.iter().enumerate() {
             for (air_id, air) in self.pctx.global_info.airs[airgroup_id].iter().enumerate() {
                 let setup = self.sctx.get_setup(airgroup_id, air_id)?;
@@ -783,6 +847,12 @@ where
                         .map(|pols| pols.iter().filter(|pol| pol.stage == 1).map(ColumnName::new).collect())
                         .unwrap();
 
+                    let air_opids_info = collect_air_opids(&self.pctx, setup)?;
+                    let opids: Vec<u64> = air_opids_info.iter().map(|o| o.opid).collect();
+                    for info in air_opids_info {
+                        opids_by_id.entry(info.opid).or_insert(info);
+                    }
+
                     planning_info.push(AirInfo {
                         name: air.name.clone(),
                         airgroup_id: airgroup_id as u64,
@@ -800,6 +870,7 @@ where
                             .map_or(0, |pols| pols.iter().filter(|pol| pol.stage == 1).count() as u64),
                         name_airvalues,
                         num_rows: air.num_rows,
+                        opids,
                     });
                 } else {
                     println!("  No execution result found for Air ID: {}", air_id);
@@ -807,7 +878,8 @@ where
             }
         }
 
-        let result = PlanningInfo { planning_info, num_instances: total_instances };
+        let opids_info: Vec<OpidInfo> = opids_by_id.into_values().collect();
+        let result = PlanningInfo { planning_info, opids_info, num_instances: total_instances };
 
         Ok(result)
     }
@@ -983,7 +1055,7 @@ where
         input_data_path: Option<PathBuf>,
         debug_info: &DebugInfo,
         verbose_mode: VerboseMode,
-    ) -> ProofmanResult<()> {
+    ) -> ProofmanResult<DebugReport> {
         // Check witness_lib path exists
         if !witness_lib_path.exists() {
             return Err(ProofmanError::InvalidParameters(format!(
@@ -1022,16 +1094,17 @@ where
         self._get_debug_info(debug_info)
     }
 
-    pub fn get_debug_info_from_lib(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
+    pub fn get_debug_info_from_lib(&self, debug_info: &DebugInfo) -> ProofmanResult<DebugReport> {
         self._get_debug_info(debug_info)
     }
 
-    fn _get_debug_info(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
+    fn _get_debug_info(&self, debug_info: &DebugInfo) -> ProofmanResult<DebugReport> {
         let _computing = self.acquire_computing("_get_debug_info");
 
         self.set_partition(1, vec![0], 0)?;
 
         self.pctx.set_debug_info(debug_info);
+        self.pctx.debug_report.write().unwrap().reset();
         self.cancellation_info.write().unwrap().reset();
         self.reset()?;
         self.pctx.dctx_reset();
@@ -1098,7 +1171,7 @@ where
 
         self.wcm.end(debug_info)?;
 
-        Ok(())
+        Ok(std::mem::take(&mut *self.pctx.debug_report.write().unwrap()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1339,10 +1412,6 @@ where
                 return Err(ProofmanError::InvalidProof("Invalid initialization".into()));
             }
         }
-
-        self.wcm.calculate_witness(2, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
-
-        calculate_impols_expressions_c((&setup.p_setup).into(), 2, (&steps_params).into());
 
         Ok(())
     }

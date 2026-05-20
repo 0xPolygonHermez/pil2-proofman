@@ -12,8 +12,8 @@ use std::io::Read;
 use std::fs;
 use fields::{PrimeField64, Transcript, Poseidon16};
 use crate::{
-    initialize_logger, format_bytes, AirInstance, DebugInfo, DistributionCtx, GlobalInfo, InstanceInfo, PolMap,
-    SetupCtx, PackedInfo, RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
+    initialize_logger, format_bytes, AirInstance, DebugInfo, DebugReport, DistributionCtx, GlobalInfo, InstanceInfo,
+    PolMap, SetupCtx, PackedInfo, RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
 };
 
 use std::ffi::c_void;
@@ -198,6 +198,7 @@ pub struct ProofCtx<F: PrimeField64> {
     pub custom_commits_values: Mutex<HashMap<String, (PathBuf, Vec<u8>)>>,
     pub dctx: RwLock<DistributionCtx>,
     pub debug_info: RwLock<DebugInfo>,
+    pub debug_report: RwLock<DebugReport>,
     pub aggregation: bool,
     pub proof_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
@@ -247,6 +248,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             air_instances,
             dctx: RwLock::new(dctx),
             debug_info: RwLock::new(DebugInfo::default()),
+            debug_report: RwLock::new(DebugReport::new()),
             custom_commits_values: Mutex::new(HashMap::new()),
             weights,
             aggregation,

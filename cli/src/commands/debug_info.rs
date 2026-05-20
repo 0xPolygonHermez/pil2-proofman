@@ -76,7 +76,7 @@ impl DebugInfoCmd {
         }
         proofman.register_custom_commits(custom_commits_map)?;
 
-        match self.field {
+        let report = match self.field {
             Field::Goldilocks => proofman.get_debug_info(
                 self.witness_lib.clone(),
                 self.public_inputs.clone(),
@@ -85,6 +85,21 @@ impl DebugInfoCmd {
                 self.verbose.into(),
             )?,
         };
+
+        if report.all_ok {
+            println!("{}", "All bus values match.".bright_green().bold());
+        } else {
+            let total_overassumed: usize = report.bus_sections.iter().map(|s| s.num_overassumed).sum();
+            let total_overproven: usize = report.bus_sections.iter().map(|s| s.num_overproven).sum();
+            println!(
+                "{} {} opid(s) mismatched ({} overassumed, {} overproven). See {:?} for full detail.",
+                "Bus mismatch:".bright_red().bold(),
+                report.bus_sections.len(),
+                total_overassumed,
+                total_overproven,
+                debug_info.output.file_path,
+            );
+        }
 
         Ok(())
     }
