@@ -448,8 +448,8 @@ impl<F: PrimeField64> SetupCtx<F> {
     pub fn get_fixed(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<Vec<F>> {
         match self.setup_repository.setups.get(&(airgroup_id, air_id)) {
             Some(setup) => {
-                let const_pols: Vec<F> = vec![F::ZERO; setup.const_pols_size];
-                load_const_pols(setup, &const_pols);
+                let mut const_pols: Vec<F> = vec![F::ZERO; setup.const_pols_size];
+                load_const_pols(setup, &mut const_pols);
                 Ok(const_pols)
             }
             None => Err(ProofmanError::InvalidSetup(format!(

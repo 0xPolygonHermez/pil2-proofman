@@ -1,4 +1,5 @@
 use std::ptr;
+use std::sync::Arc;
 use fields::PrimeField64;
 use proofman_util::create_buffer_fast;
 
@@ -154,13 +155,13 @@ pub struct AirInstance<F> {
     pub num_rows: usize,
     pub n_cols_trace: usize,
     pub trace: Vec<F>,
-    pub aux_trace: Vec<F>,
+    pub aux_trace: Arc<Vec<F>>,
     pub custom_commits_fixed: Vec<F>,
     pub airgroup_values: Vec<F>,
     pub airvalues: Vec<F>,
     pub challenges: Vec<F>,
     pub evals: Vec<F>,
-    pub fixed: Vec<F>,
+    pub fixed: Arc<Vec<F>>,
     pub shared_buffer: bool,
     pub is_packed: bool,
     pub stream_id: u64,
@@ -182,14 +183,14 @@ impl<F: PrimeField64> AirInstance<F> {
             num_rows,
             n_cols_trace: trace_info.n_cols,
             trace: trace_info.trace,
-            aux_trace: Vec::new(),
+            aux_trace: Arc::new(Vec::new()),
             custom_commits_fixed: Vec::new(),
             airgroup_values,
             airvalues,
             evals: Vec::new(),
             challenges: Vec::new(),
             shared_buffer: trace_info.shared_buffer,
-            fixed: Vec::new(),
+            fixed: Arc::new(Vec::new()),
             is_packed: trace_info.is_packed,
             stream_id: 0,
         }
@@ -290,15 +291,15 @@ impl<F: PrimeField64> AirInstance<F> {
         self.challenges = vec![F::ZERO; size];
     }
 
-    pub fn init_aux_trace(&mut self, size: usize) {
-        self.aux_trace = create_buffer_fast(size);
+    pub fn init_aux_trace(&mut self, buf: Arc<Vec<F>>) {
+        self.aux_trace = buf;
     }
 
     pub fn init_airvalues(&mut self, size: usize) {
         self.airvalues = vec![F::ZERO; size];
     }
 
-    pub fn init_fixed(&mut self, fixed: Vec<F>) {
+    pub fn init_fixed(&mut self, fixed: Arc<Vec<F>>) {
         self.fixed = fixed;
     }
 
@@ -329,8 +330,8 @@ impl<F: PrimeField64> AirInstance<F> {
         let trace = std::mem::take(&mut self.trace);
         let shared_buffer = self.shared_buffer && !trace.is_empty();
         self.custom_commits_fixed = Vec::new();
-        self.aux_trace = Vec::new();
-        self.fixed = Vec::new();
+        self.aux_trace = Arc::new(Vec::new());
+        self.fixed = Arc::new(Vec::new());
         (shared_buffer, trace)
     }
 
