@@ -176,6 +176,90 @@ impl Drop for CancellationThread {
     }
 }
 
+struct WorkerPoolGuard<T: Send + Clone + 'static> {
+    sentinel: T,
+    n_streams: usize,
+    tx: Sender<T>,
+    handles: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
+}
+
+impl<T: Send + Clone + 'static> Drop for WorkerPoolGuard<T> {
+    fn drop(&mut self) {
+        let handles: Vec<std::thread::JoinHandle<()>> = {
+            let mut guard = match self.handles.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            if guard.is_empty() {
+                return;
+            }
+            std::mem::take(&mut *guard)
+        };
+        for _ in 0..self.n_streams {
+            let _ = self.tx.send(self.sentinel.clone());
+        }
+        for h in handles {
+            let _ = h.join();
+        }
+    }
+}
+
+struct JoinAllGuard {
+    handles: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
+}
+
+impl Drop for JoinAllGuard {
+    fn drop(&mut self) {
+        let handles: Vec<std::thread::JoinHandle<()>> = {
+            let mut guard = match self.handles.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            std::mem::take(&mut *guard)
+        };
+        for h in handles {
+            let _ = h.join();
+        }
+    }
+}
+
+struct WitnessGuard {
+    witness_tx: Sender<usize>,
+    handler: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+    handles: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
+}
+
+impl Drop for WitnessGuard {
+    fn drop(&mut self) {
+        let handler = {
+            let mut guard = match self.handler.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            guard.take()
+        };
+        let handles: Vec<std::thread::JoinHandle<()>> = {
+            let mut guard = match self.handles.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            std::mem::take(&mut *guard)
+        };
+        if handler.is_none() && handles.is_empty() {
+            return;
+        }
+        // Sentinel wakes the dispatcher; the per-instance threads break on cancellation
+        // or natural end-of-work.
+        let _ = self.witness_tx.send(usize::MAX);
+        if let Some(h) = handler {
+            let _ = h.join();
+        }
+        for h in handles {
+            let _ = h.join();
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct CancellationInfo {
     pub token: CancellationToken,
@@ -969,6 +1053,12 @@ where
             true,
         );
 
+        let _witness_guard = WitnessGuard {
+            witness_tx: self.witness_tx.clone(),
+            handler: witness_handler.clone(),
+            handles: witness_handles.clone(),
+        };
+
         let _ = self.exec()?;
 
         let mut my_instances_sorted = self.pctx.dctx_get_process_instances();
@@ -994,7 +1084,7 @@ where
 
         self.witness_tx.send(usize::MAX).ok();
 
-        if let Some(h) = witness_handler {
+        if let Some(h) = witness_handler.lock().unwrap().take() {
             h.join().unwrap();
         }
 
@@ -1240,6 +1330,14 @@ where
             if self.pctx.gpu { 0 } else { self.sctx.max_prover_buffer_size.max(self.setups.max_prover_buffer_size) };
         let verify_const_pols_size =
             if self.pctx.gpu { 0 } else { self.sctx.max_const_size.max(self.setups.max_const_size) };
+
+        let _contributions_guard = WorkerPoolGuard {
+            sentinel: usize::MAX,
+            n_streams: self.n_streams,
+            tx: self.contributions_tx.clone(),
+            handles: self.handle_contributions.clone(),
+        };
+
         for _ in 0..self.n_streams {
             let pctx_clone = self.pctx.clone();
             let sctx_clone = self.sctx.clone();
@@ -1292,6 +1390,12 @@ where
         let (witness_handler, witness_handles) =
             self.calc_witness_handler(witness_done.clone(), self.memory_handler.clone(), minimal_memory, None, false);
 
+        let _witness_guard = WitnessGuard {
+            witness_tx: self.witness_tx.clone(),
+            handler: witness_handler.clone(),
+            handles: witness_handles.clone(),
+        };
+
         let my_instances_no_tables = my_instances
             .iter()
             .filter(|idx| {
@@ -1311,7 +1415,7 @@ where
         )?;
         timer_stop_and_log_debug!(CALCULATING_WITNESS);
 
-        if let Some(h) = witness_handler {
+        if let Some(h) = witness_handler.lock().unwrap().take() {
             h.join().unwrap();
         }
         if self.pctx.gpu {
@@ -1835,6 +1939,19 @@ where
 
         let _cancellation_thread = CancellationThread::new(self.cancellation_info.clone(), self.mpi_ctx.clone());
 
+        let _contributions_guard = WorkerPoolGuard {
+            sentinel: usize::MAX,
+            n_streams: self.n_streams,
+            tx: self.contributions_tx.clone(),
+            handles: self.handle_contributions.clone(),
+        };
+        let _recursives_guard = WorkerPoolGuard {
+            sentinel: (u64::MAX - 1, String::from("Basic")),
+            n_streams: self.n_streams,
+            tx: self.recursive_tx.clone(),
+            handles: self.handle_recursives.clone(),
+        };
+
         let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
             if !options.minimal_memory && self.pctx.gpu {
                 self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
@@ -1911,6 +2028,12 @@ where
                 false,
             );
 
+            let _witness_guard = WitnessGuard {
+                witness_tx: self.witness_tx.clone(),
+                handler: witness_handler.clone(),
+                handles: witness_handles.clone(),
+            };
+
             let summary_info = self.exec()?;
 
             Self::set_publics_custom_commits(&self.sctx, &self.pctx)?;
@@ -1947,7 +2070,7 @@ where
             }
             self.witness_tx.send(usize::MAX).ok();
 
-            if let Some(h) = witness_handler {
+            if let Some(h) = witness_handler.lock().unwrap().take() {
                 h.join().unwrap();
             }
             if self.pctx.gpu {
@@ -2533,6 +2656,13 @@ where
             None,
             false,
         );
+
+        let _witness_guard = WitnessGuard {
+            witness_tx: self.witness_tx.clone(),
+            handler: witness_handler.clone(),
+            handles: witness_handles.clone(),
+        };
+
         timer_start_debug!(CALCULATING_WITNESS);
         self.calculate_witness(
             &instances_to_be_calculated,
@@ -2548,7 +2678,7 @@ where
             self.pctx.set_witness_tx_priority(None);
         }
         self.witness_tx.send(usize::MAX).ok();
-        if let Some(h) = witness_handler {
+        if let Some(h) = witness_handler.lock().unwrap().take() {
             h.join().unwrap();
         }
         if self.pctx.gpu {
@@ -3528,7 +3658,7 @@ where
         minimal_memory: bool,
         witness_start_time: Option<Arc<RwLock<Option<std::time::Instant>>>>,
         stats: bool,
-    ) -> (Option<std::thread::JoinHandle<()>>, Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>) {
+    ) -> (Arc<Mutex<Option<std::thread::JoinHandle<()>>>>, Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>) {
         let witness_done_clone = witness_done.clone();
         let tx_threads_clone = self.tx_threads.clone();
         let rx_threads_clone = self.rx_threads.clone();
@@ -3638,7 +3768,7 @@ where
         } else {
             None
         };
-        (witness_handler, witness_handles)
+        (Arc::new(Mutex::new(witness_handler)), witness_handles)
     }
 
     fn calculate_witness(
@@ -3649,7 +3779,9 @@ where
         minimal_memory: bool,
         stats: bool,
     ) -> ProofmanResult<()> {
-        let mut witness_minimal_memory_handles = Vec::new();
+        let witness_minimal_memory_handles: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>> =
+            Arc::new(Mutex::new(Vec::new()));
+        let _join_guard = JoinAllGuard { handles: witness_minimal_memory_handles.clone() };
         if !minimal_memory && (self.pctx.gpu || stats) {
             timer_start_debug!(PRE_CALCULATE_WC);
             self.wcm.pre_calculate_witness(1, instances, self.max_num_threads, memory_handler.as_ref())?;
@@ -3759,7 +3891,7 @@ where
                 if !stats && !self.pctx.gpu {
                     handle.join().unwrap();
                 } else {
-                    witness_minimal_memory_handles.push(handle);
+                    witness_minimal_memory_handles.lock().unwrap().push(handle);
                 }
             }
         }
@@ -3770,7 +3902,8 @@ where
             &self.cancellation_info,
         );
 
-        for handle in witness_minimal_memory_handles {
+        let handles_to_join: Vec<_> = witness_minimal_memory_handles.lock().unwrap().drain(..).collect();
+        for handle in handles_to_join {
             handle.join().unwrap();
         }
 
