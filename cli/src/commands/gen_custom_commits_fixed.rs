@@ -2,7 +2,7 @@
 use clap::Parser;
 use libloading::{Library, Symbol};
 use std::sync::Arc;
-use proofman_common::{MpiCtx, ProofCtx, ProofType, SetupCtx, SetupsVadcop};
+use proofman_common::{init_gpu_setup, MpiCtx, ProofCtx, ProofType, SetupCtx, SetupsVadcop};
 use std::{collections::HashMap, path::PathBuf};
 use colored::Colorize;
 use crate::commands::field::Field;
@@ -60,6 +60,8 @@ impl GenCustomCommitsFixedCmd {
         tracing::info!("");
 
         let sctx = Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, &[], self.gpu)?);
+
+        init_gpu_setup(sctx.max_n_bits_ext as u64, self.gpu)?;
 
         let setups_vadcop = Arc::new(SetupsVadcop::new(&pctx.global_info, false, false, &[], self.gpu)?);
         pctx.set_device_buffers(&sctx, &setups_vadcop, false, self.gpu, 1)?;

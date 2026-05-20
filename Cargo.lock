@@ -1380,7 +1380,7 @@ dependencies = [
 
 [[package]]
 name = "pil2-stark-setup"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "anyhow",
  "clap",

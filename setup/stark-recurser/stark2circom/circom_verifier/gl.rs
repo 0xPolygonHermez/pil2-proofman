@@ -576,13 +576,7 @@ fn build_tera_context(
     // In hash_commits mode: transcript_code is now only the final drain +
     // transcriptHash_N + challengesFRISteps[n_steps] (captured after split 2).
     // In !hash_commits mode: transcript_code holds everything (stage_code is empty).
-    let transcript_code = if hash_commits {
-        t.get_code()
-    } else {
-        let all = t.get_code();
-        // transcript_code_stage is empty; return via transcript_code
-        all
-    };
+    let transcript_code = t.get_code();
 
     // ── queryVals_joined ──────────────────────────────────────────────────────
     let mut query_vals_list: Vec<String> = Vec::new();
