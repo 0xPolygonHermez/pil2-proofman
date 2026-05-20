@@ -60,7 +60,7 @@ use crate::aggregate_worker_proofs;
 use std::ffi::c_void;
 
 use proofman_util::{
-    create_buffer_fast, timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug,
+    timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug, create_buffer_fast,
 };
 
 use serde::Serialize;
@@ -415,12 +415,17 @@ impl<F: PrimeField64> ProofMan<F> {
 
         self.total_outer_agg_proofs.reset();
 
+        // free_instance returns (is_shared, buf) — shared buffers must be put back into
+        // the pool, otherwise the pool capacity shrinks and memory_handler.reset() fails
+        // its `free.len() == n_buffers` invariant.
         for instance_id in 0..MAX_INSTANCES as usize {
-            self.pctx.free_instance(instance_id);
+            let (is_shared, buf) = self.pctx.free_instance(instance_id);
+            if is_shared {
+                self.memory_handler.release_buffer(buf)?;
+            }
         }
 
         self.memory_handler.reset()?;
-        self.memory_handler_recursive_witness.reset()?;
 
         Ok(())
     }
@@ -822,11 +827,23 @@ where
         let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
         let setup = self.sctx.get_setup(airgroup_id, air_id)?;
 
-        if !setup.const_pols_loaded.load(Ordering::Acquire) {
-            setup.load_const_pols();
-        }
+        let mut const_pols: Vec<F> = create_buffer_fast(setup.const_pols_size);
+        load_const_pols(setup, &mut const_pols);
 
-        Ok(setup.get_const_pols(first_row, num_rows, offset))
+        let offset = offset.unwrap_or(1);
+        let n_constants = setup.stark_info.n_constants as usize;
+        let num_rows_available = const_pols.len() / n_constants;
+
+        Ok((0..num_rows)
+            .map(|i| first_row + i * offset)
+            .take_while(|&row| row < num_rows_available)
+            .map(|row| {
+                let start = row * n_constants;
+                let end = start + n_constants;
+                let values = const_pols[start..end].iter().map(|v| F::as_canonical_u64(v)).collect();
+                RowInfo { row, values }
+            })
+            .collect())
     }
 
     pub fn get_instance_trace(
@@ -844,7 +861,15 @@ where
         self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
 
         let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
-        Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true)?;
+        Self::initialize_air_instance(
+            &self.pctx,
+            &self.sctx,
+            instance_id,
+            true,
+            true,
+            Some(&self.const_pols),
+            Some(&self.aux_trace),
+        )?;
         let setup = self.sctx.get_setup(airgroup_id, air_id)?;
         let steps_params = self.pctx.get_air_instance_params(instance_id, false);
 
@@ -870,7 +895,15 @@ where
         self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
         self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
 
-        Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true)?;
+        Self::initialize_air_instance(
+            &self.pctx,
+            &self.sctx,
+            instance_id,
+            true,
+            true,
+            Some(&self.const_pols),
+            Some(&self.aux_trace),
+        )?;
         let steps_params = self.pctx.get_air_instance_params(instance_id, false);
 
         calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
@@ -1066,7 +1099,15 @@ where
                 handle.join().unwrap();
             }
 
-            Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true)?;
+            Self::initialize_air_instance(
+                &self.pctx,
+                &self.sctx,
+                instance_id,
+                true,
+                true,
+                Some(&self.const_pols),
+                Some(&self.aux_trace),
+            )?;
             self.calculate_instance_witness(instance_id)?;
             self.wcm.debug(&[instance_id], debug_info)?;
         }
@@ -1091,7 +1132,15 @@ where
                 handle.join().unwrap();
             }
 
-            Self::initialize_air_instance(&self.pctx, &self.sctx, *instance_id, true, true)?;
+            Self::initialize_air_instance(
+                &self.pctx,
+                &self.sctx,
+                *instance_id,
+                true,
+                true,
+                Some(&self.const_pols),
+                Some(&self.aux_trace),
+            )?;
             self.calculate_instance_witness(*instance_id)?;
             self.wcm.debug(&[*instance_id], debug_info)?;
         }
@@ -1185,6 +1234,12 @@ where
         let airgroup_values_air_instances = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
         let valid_constraints = Arc::new(AtomicBool::new(true));
 
+        // Per-thread scratch — verify path writes into aux_trace/const_pols via FFI.
+        // Sharing across workers would alias the writes (UB).
+        let verify_aux_trace_size =
+            if self.pctx.gpu { 0 } else { self.sctx.max_prover_buffer_size.max(self.setups.max_prover_buffer_size) };
+        let verify_const_pols_size =
+            if self.pctx.gpu { 0 } else { self.sctx.max_const_size.max(self.setups.max_const_size) };
         for _ in 0..self.n_streams {
             let pctx_clone = self.pctx.clone();
             let sctx_clone = self.sctx.clone();
@@ -1195,6 +1250,8 @@ where
             let airgroup_values_air_instances = airgroup_values_air_instances.clone();
             let wcm_clone = self.wcm.clone();
             let debug_info_clone = debug_info.clone();
+            let const_pols_local: Arc<Vec<F>> = Arc::new(create_buffer_fast(verify_const_pols_size));
+            let aux_trace_local: Arc<Vec<F>> = Arc::new(create_buffer_fast(verify_aux_trace_size));
             let contribution_handle = std::thread::spawn(move || loop {
                 match contributions_rx_clone.recv_timeout(std::time::Duration::from_millis(1)) {
                     Ok(instance_id) => {
@@ -1213,6 +1270,8 @@ where
                             &debug_info_clone,
                             valid_constraints.clone(),
                             airgroup_values_air_instances.clone(),
+                            &const_pols_local,
+                            &aux_trace_local,
                         ) {
                             cancellation_info_clone.write().unwrap().cancel(Some(e));
                             break;
@@ -1358,9 +1417,19 @@ where
         debug_info: &DebugInfo,
         valid_constraints: Arc<AtomicBool>,
         airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
+        const_pols_scratch: &Arc<Vec<F>>,
+        aux_trace_scratch: &Arc<Vec<F>>,
     ) -> ProofmanResult<()> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
-        Self::initialize_air_instance(pctx, sctx, instance_id, true, true)?;
+        Self::initialize_air_instance(
+            pctx,
+            sctx,
+            instance_id,
+            true,
+            true,
+            Some(const_pols_scratch),
+            Some(aux_trace_scratch),
+        )?;
 
         let setup = sctx.get_setup(airgroup_id, air_id)?;
         let steps_params = pctx.get_air_instance_params(instance_id, false);
@@ -1557,14 +1626,19 @@ where
 
         timer_stop_and_log_info!(INIT_PROOFMAN);
 
-        let max_witness_stored = match options.packed {
-            true => n_gpus as usize * options.max_witness_stored,
-            false => 1,
-        };
+        // Basic pool: trace buffers for witness computation. One slot per concurrent
+        // witness — only > 1 when --packed enables parallel witness generation.
+        let max_witness_stored = if options.packed { n_gpus as usize * options.max_witness_stored } else { 1 };
 
-        let max_witness_stored_compressor = match options.gpu {
-            true => n_gpus as usize * 4,
-            false => 1,
+        // Recursive pool: (witness, trace) pairs for in-flight recursive proofs.
+        // Recursive work is lighter than basic, so the pool is provisioned smaller:
+        // half the basic depth per GPU for regular recursive, one slot per GPU for
+        // compressor. CPU keeps a small fixed pipeline (2/1).
+        let (max_witness_stored_recursive, max_witness_stored_recursive_compressor) = if options.gpu {
+            let n_gpus = n_gpus as usize;
+            (((n_gpus * options.max_witness_stored) / 2).max(1), n_gpus * 2)
+        } else {
+            (1, 1)
         };
 
         let (max_witness_trace_size, max_witness_trace_size_packed) =
@@ -1572,17 +1646,23 @@ where
 
         let max_buffer_size = if options.packed { max_witness_trace_size_packed } else { max_witness_trace_size };
 
-        let memory_handler = Arc::new(MemoryHandler::new(pctx.clone(), max_witness_stored, max_buffer_size));
+        let n_proof_threads = match options.gpu {
+            true => n_gpus,
+            false => 1,
+        };
 
+        let n_streams = ((n_streams_per_gpu + n_recursive_streams_per_gpu) * n_proof_threads) as usize;
+        let n_streams_non_recursive = (n_streams_per_gpu * n_proof_threads) as usize;
+
+        let memory_handler = Arc::new(MemoryHandler::new(pctx.clone(), max_witness_stored, max_buffer_size));
         let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new(
-            max_witness_stored,
-            max_witness_stored_compressor,
+            max_witness_stored_recursive,
+            max_witness_stored_recursive_compressor,
             setups_vadcop.max_witness_size,
             setups_vadcop.max_witness_size_compressor,
             setups_vadcop.max_trace_size,
             setups_vadcop.max_trace_size_compressor,
         ));
-
         let n_airgroups = pctx.global_info.air_groups.len();
         let proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
             Arc::new((0..MAX_INSTANCES).map(|_| RwLock::new(None)).collect());
@@ -1593,14 +1673,6 @@ where
         let recursive2_proofs: Arc<Vec<RwLock<Vec<Proof<F>>>>> =
             Arc::new((0..n_airgroups).map(|_| RwLock::new(Vec::new())).collect());
         let recursive2_proofs_ongoing: Arc<RwLock<Vec<Option<Proof<F>>>>> = Arc::new(RwLock::new(Vec::new()));
-
-        let n_proof_threads = match options.gpu {
-            true => n_gpus,
-            false => 1,
-        };
-
-        let n_streams = ((n_streams_per_gpu + n_recursive_streams_per_gpu) * n_proof_threads) as usize;
-        let n_streams_non_recursive = (n_streams_per_gpu * n_proof_threads) as usize;
 
         let (aux_trace, const_pols, const_tree) = if options.gpu {
             (Arc::new(Vec::new()), Arc::new(Vec::new()), Arc::new(Vec::new()))
@@ -1774,16 +1846,25 @@ where
 
             self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
 
+            // Per-thread scratch — get_contribution_air's FFI writes into both buffers.
+            // Sharing across workers would alias the writes (UB).
+            let scratch_aux_trace_size = if self.pctx.gpu {
+                0
+            } else {
+                self.sctx.max_prover_buffer_size.max(self.setups.max_prover_buffer_size)
+            };
+            let scratch_const_pols_size =
+                if self.pctx.gpu { 0 } else { self.sctx.max_const_size.max(self.setups.max_const_size) };
             for _ in 0..self.n_streams {
                 let pctx_clone = self.pctx.clone();
                 let sctx_clone = self.sctx.clone();
                 let values_contributions_clone = self.values_contributions.clone();
                 let roots_contributions_clone = self.roots_contributions.clone();
-                let aux_trace_clone = self.aux_trace.clone();
-                let const_pols_clone = self.const_pols.clone();
                 let memory_handler_clone = self.memory_handler.clone();
                 let contributions_rx_clone = self.contributions_rx.clone();
                 let cancellation_info_clone = self.cancellation_info.clone();
+                let mut aux_trace_local: Vec<F> = create_buffer_fast(scratch_aux_trace_size);
+                let mut const_pols_local: Vec<F> = create_buffer_fast(scratch_const_pols_size);
                 let contribution_handle = std::thread::spawn(move || loop {
                     match contributions_rx_clone.recv_timeout(std::time::Duration::from_millis(1)) {
                         Ok(instance_id) => {
@@ -1799,8 +1880,8 @@ where
                                 &roots_contributions_clone,
                                 &values_contributions_clone,
                                 instance_id,
-                                &aux_trace_clone,
-                                &const_pols_clone,
+                                &mut aux_trace_local,
+                                &mut const_pols_local,
                             ) {
                                 cancellation_info_clone.write().unwrap().cancel(Some(e));
                                 break;
@@ -3727,7 +3808,7 @@ where
     ) -> ProofmanResult<()> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         timer_start_debug!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
-        Self::initialize_air_instance(pctx, sctx, instance_id, false, false)?;
+        Self::initialize_air_instance(pctx, sctx, instance_id, false, false, None, None)?;
 
         let setup = sctx.get_setup(airgroup_id, air_id)?;
         let p_setup: *mut c_void = (&setup.p_setup).into();
@@ -3938,6 +4019,8 @@ where
         instance_id: usize,
         init_aux_trace: bool,
         verify_constraints: bool,
+        shared_const_pols: Option<&Arc<Vec<F>>>,
+        shared_aux_trace: Option<&Arc<Vec<F>>>,
     ) -> ProofmanResult<()> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         let setup = sctx.get_setup(airgroup_id, air_id)?;
@@ -3954,8 +4037,13 @@ where
             )));
         }
 
-        if init_aux_trace {
-            air_instance.init_aux_trace(setup.prover_buffer_size as usize);
+        // Host aux_trace / const_pols are only consumed by the CPU verify path
+        // (and CPU debug-mode hints). On GPU verify the C side reads device
+        // buffers (d_aux_trace / d_constPols pre-loaded at setup), so skip both
+        // the allocation and the file load — see verify_constraints_gpu /
+        // initialize_instance_gpu in pil2-stark/src/api/starks_api.cu.
+        if init_aux_trace && !pctx.gpu {
+            air_instance.init_aux_trace(shared_aux_trace.expect("CPU verify requires shared aux_trace").clone());
         }
         air_instance.init_evals(setup.stark_info.ev_map.len() * 3);
         air_instance.init_challenges(
@@ -3963,10 +4051,11 @@ where
                 * 3,
         );
 
-        if verify_constraints {
-            let const_pols: Vec<F> = create_buffer_fast(setup.const_pols_size);
-            load_const_pols(setup, &const_pols);
-            air_instance.init_fixed(const_pols);
+        if verify_constraints && !pctx.gpu {
+            let _ = shared_const_pols;
+            let mut const_pols_buf: Vec<F> = create_buffer_fast(setup.const_pols_size);
+            load_const_pols(setup, &mut const_pols_buf);
+            air_instance.init_fixed(Arc::new(const_pols_buf));
         }
         air_instance.init_custom_commit_fixed_trace(setup.custom_commits_fixed_buffer_size as usize);
 
@@ -4041,8 +4130,8 @@ where
         roots_contributions: &[[F; 4]],
         values_contributions: &[Mutex<Vec<F>>],
         instance_id: usize,
-        aux_trace: &[F],
-        const_pols: &[F],
+        aux_trace: &mut [F],
+        const_pols: &mut [F],
     ) -> ProofmanResult<()> {
         let n_field_elements = 4;
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
@@ -4055,14 +4144,14 @@ where
 
         let air_values = &pctx.get_air_instance_air_values(airgroup_id, air_id, air_instance_id)?;
 
-        Self::initialize_air_instance(pctx, sctx, instance_id, false, false)?;
+        Self::initialize_air_instance(pctx, sctx, instance_id, false, false, None, None)?;
 
         let mut steps_params = pctx.get_air_instance_params(instance_id, true);
 
         if !pctx.gpu {
-            steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
+            steps_params.aux_trace = aux_trace.as_mut_ptr() as *mut u8;
             load_const_pols(setup, const_pols);
-            steps_params.p_const_pols = const_pols.as_ptr() as *mut u8;
+            steps_params.p_const_pols = const_pols.as_mut_ptr() as *mut u8;
         }
 
         let p_steps_params: *mut u8 = (&steps_params).into();

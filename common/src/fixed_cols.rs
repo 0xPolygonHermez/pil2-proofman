@@ -223,13 +223,13 @@ pub fn calculate_fixed_tree_snark<F: PrimeField64>(setup: &Setup<F>) {
     }
 }
 
-pub fn load_const_pols<F: PrimeField64>(setup: &Setup<F>, const_pols: &[F]) {
+pub fn load_const_pols<F: PrimeField64>(setup: &Setup<F>, const_pols: &mut [F]) {
     let const_pols_path = setup.setup_path.display().to_string() + ".const";
     let const_pols_size = setup.const_pols_size;
-    load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_pols_size as u64 * 8);
+    load_const_pols_c(const_pols.as_mut_ptr() as *mut u8, const_pols_path.as_str(), const_pols_size as u64 * 8);
 }
 
-pub fn load_const_pols_tree<F: PrimeField64>(setup: &Setup<F>, const_tree: &[F]) {
+pub fn load_const_pols_tree<F: PrimeField64>(setup: &Setup<F>, const_tree: &mut [F]) {
     let const_pols_tree_path = &setup.const_pols_tree_path;
     let const_pols_tree_size = setup.const_tree_size;
 
@@ -237,7 +237,7 @@ pub fn load_const_pols_tree<F: PrimeField64>(setup: &Setup<F>, const_tree: &[F])
 
     load_const_tree_c(
         setup.p_setup.p_stark_info,
-        const_tree.as_ptr() as *mut u8,
+        const_tree.as_mut_ptr() as *mut u8,
         const_pols_tree_path.as_str(),
         (const_pols_tree_size * 8) as u64,
         &setup.verkey_file,
