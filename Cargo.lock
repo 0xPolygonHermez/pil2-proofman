@@ -1303,6 +1303,7 @@ dependencies = [
  "bincode",
  "fields",
  "num-traits",
+ "rayon",
  "serde",
  "tracing",
 ]
