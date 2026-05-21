@@ -841,6 +841,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.air_instances[instance_id].write().unwrap().set_stream_id(stream_id);
     }
 
+    pub fn get_instance_stream_id(&self, instance_id: usize) -> u64 {
+        self.air_instances[instance_id].read().unwrap().get_stream_id()
+    }
+
     #[allow(clippy::type_complexity)]
     #[allow(clippy::too_many_arguments)]
     pub fn set_device_buffers(
@@ -895,7 +899,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
 
         let max_size_buffer = (free_memory_gpu / 8.0).floor() as u64 - total_const_area - total_const_area_aggregation;
-        let max_prover_buffer_size = sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size);
+        let max_prover_buffer_size = sctx.max_prover_buffer_size_gpu.max(setups_vadcop.max_prover_buffer_size_gpu);
 
         let n_streams_per_gpu = match gpu {
             true => {
@@ -910,18 +914,18 @@ impl<F: PrimeField64> ProofCtx<F> {
         };
 
         let max_prover_buffer_size =
-            sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_recursive_buffer_size) as u64;
+            sctx.max_prover_buffer_size_gpu.max(setups_vadcop.max_prover_recursive_buffer_size_gpu) as u64;
 
-        let max_prover_recursive2_buffer_size = setups_vadcop.max_prover_recursive2_buffer_size as u64;
+        let max_prover_recursive2_buffer_size = setups_vadcop.max_prover_recursive2_buffer_size_gpu as u64;
 
         tracing::info!("Max prover buffer size: {}", format_bytes(max_prover_buffer_size as f64 * 8.0));
         tracing::info!(
             "Max prover recursive buffer size: {}",
-            format_bytes(setups_vadcop.max_prover_recursive_buffer_size as f64 * 8.0)
+            format_bytes(setups_vadcop.max_prover_recursive_buffer_size_gpu as f64 * 8.0)
         );
         tracing::info!(
             "Max prover recursive1/recursive2 buffer size: {}",
-            format_bytes(setups_vadcop.max_prover_recursive2_buffer_size as f64 * 8.0)
+            format_bytes(setups_vadcop.max_prover_recursive2_buffer_size_gpu as f64 * 8.0)
         );
 
         let mut gpu_available_memory = match gpu {

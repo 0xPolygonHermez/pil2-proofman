@@ -32,7 +32,7 @@ void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *aux_trace, Goldil
     uint64_t dim = polInfo.dim;
     std::string stage = "cm" + to_string(polInfo.stage);
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[stage];
-    uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair(stage, false)];
+    uint64_t offset = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair(stage, false)];
     
     dim3 threads(512);
     dim3 blocks((nRows + threads.x - 1) / threads.x);
@@ -163,7 +163,7 @@ void calculateExprGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams *d_
         if(hintFieldDestVal.operand == opType::cm) {
             stageCols = setupCtx.starkInfo.mapSectionsN["cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage)];
             stagePos = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos;  
-            uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)];           
+            uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)];           
             buff = NULL;
             buff_gpu = h_params.aux_trace + offsetAuxTrace;
             nRows = 1 << setupCtx.starkInfo.starkStruct.nBits;
@@ -218,7 +218,7 @@ void multiplyHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParam
         if(hintFieldDestVal.operand == opType::cm) {
             stageCols = setupCtx.starkInfo.mapSectionsN["cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage)];
             stagePos = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos;  
-            uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)];           
+            uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)];           
             buff = NULL;
             buff_gpu = h_params.aux_trace + offsetAuxTrace;
             nRows = 1 << setupCtx.starkInfo.starkStruct.nBits;
@@ -258,7 +258,7 @@ void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams 
 
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
     
-    uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
+    uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("q", true)];
     Goldilocks::Element* vals_gpu = h_params.aux_trace + offsetAuxTrace;
     
     Dest destStruct(nullptr, 1 << setupCtx.starkInfo.starkStruct.nBits, 0, 0, true);
@@ -291,7 +291,7 @@ uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, Steps
     Goldilocks::Element vals[3];
     
     Dest destStruct(vals, 1, 0, 0, true);
-    uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
+    uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("q", true)];
     destStruct.dest_gpu = h_params.aux_trace + offsetAuxTrace;
     destStruct.dest = nullptr;
     addHintField(setupCtx, h_params, hintId, destStruct, hintFieldName1, hintOptions1);

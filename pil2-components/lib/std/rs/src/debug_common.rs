@@ -560,7 +560,7 @@ pub fn print_std_debug_info<F: PrimeField64>(
             debug_hashes,
         )?;
 
-        check_invalid_opids(pctx, std::mem::take(&mut *debug_data_fast));
+        check_invalid_opids(pctx, std::mem::take(&mut *debug_data_fast), is_prod);
     } else {
         let mut debug_data_t = debug_data.write().unwrap();
         let mut debug_data_info_t = debug_data_info.write().unwrap();
@@ -587,6 +587,7 @@ pub fn print_std_debug_info<F: PrimeField64>(
             &file_path,
             &mut debug_data_t,
             &mut debug_data_info_t,
+            is_prod,
         )?;
     }
 

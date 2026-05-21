@@ -28,7 +28,10 @@ extern "C" {
     uint64_t get_proof_size(void *pStarkInfo);
     uint64_t get_proof_pinned_size(void *pStarkInfo);
     void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3);
-    uint64_t get_map_total_n(void *pStarkInfo);
+    // Two parallel layouts: CPU consumers (host expression eval, host
+    // verify-constraints) read `mapTotalNCPU`; GPU consumers read `mapTotalNGPU`.
+    uint64_t get_map_total_n_cpu(void *pStarkInfo);
+    uint64_t get_map_total_n_gpu(void *pStarkInfo);
     uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
     uint64_t get_map_total_n_contributions(void *pStarkInfo);
     uint64_t get_tree_size(void *pStarkInfo);

@@ -23,7 +23,7 @@ void setPolynomial(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilocks::
     uint64_t dim = polInfo.dim;
     std::string stage = "cm" + to_string(polInfo.stage);
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[stage];
-    uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair(stage, false)];
+    uint64_t offset = setupCtx.starkInfo.mapOffsetsCPU[std::make_pair(stage, false)];
     offset += polInfo.stagePos;
     Goldilocks::Element *buff = &buffer[offset];
 #pragma omp parallel for
@@ -33,7 +33,7 @@ void setPolynomial(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilocks::
 }
 
 void printRow(SetupCtx& setupCtx, Goldilocks::Element* buffer, uint64_t stage, uint64_t row) {
-    Goldilocks::Element *pol = &buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(stage), false)] + setupCtx.starkInfo.mapSectionsN["cm" + to_string(stage)] * row];
+    Goldilocks::Element *pol = &buffer[setupCtx.starkInfo.mapOffsetsCPU[std::make_pair("cm" + to_string(stage), false)] + setupCtx.starkInfo.mapSectionsN["cm" + to_string(stage)] * row];
     cout << "Values at row " << row << " = {" << endl;
     bool first = true;
     for(uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); ++i) {
@@ -292,7 +292,7 @@ void getHintField(
         if(hintFieldVal.operand == opType::cm) {
             if(!hintOptions.dest) {
                 std::string stage = "cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldVal.id].stage);
-                uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair(stage, false)];
+                uint64_t offset = setupCtx.starkInfo.mapOffsetsCPU[std::make_pair(stage, false)];
                 Goldilocks::Element *pAddress = setupCtx.starkInfo.cmPolsMap[hintFieldVal.id].stage == 1 ? params.trace : &params.aux_trace[offset];
                 getPolynomial(setupCtx, pAddress, hintFieldInfo.values, setupCtx.starkInfo.cmPolsMap[hintFieldVal.id], hintFieldVal.rowOffsetIndex, "cm");
                 if(hintOptions.inverse) {
@@ -303,7 +303,7 @@ void getHintField(
                 memset((uint8_t *)hintFieldInfo.values, 0, hintFieldInfo.size * sizeof(Goldilocks::Element));
             }
         } else if(hintFieldVal.operand == opType::custom) {
-            getPolynomial(setupCtx, &params.pCustomCommitsFixed[setupCtx.starkInfo.mapOffsets[std::make_pair(setupCtx.starkInfo.customCommits[hintFieldVal.commitId].name + "0", false)]], hintFieldInfo.values, setupCtx.starkInfo.customCommitsMap[hintFieldVal.commitId][hintFieldVal.id], hintFieldVal.rowOffsetIndex, "custom");
+            getPolynomial(setupCtx, &params.pCustomCommitsFixed[setupCtx.starkInfo.mapOffsetsCPU[std::make_pair(setupCtx.starkInfo.customCommits[hintFieldVal.commitId].name + "0", false)]], hintFieldInfo.values, setupCtx.starkInfo.customCommitsMap[hintFieldVal.commitId][hintFieldVal.id], hintFieldVal.rowOffsetIndex, "custom");
             if(hintOptions.inverse) {
                 zklog.error("Inverse not supported still for polynomials");
                 exitProcess();
@@ -542,7 +542,7 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx&
         uint64_t nRows;
         if(hintFieldDestVal.operand == opType::cm) {
             offset = setupCtx.starkInfo.mapSectionsN["cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage)];
-            uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)] + setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos;           
+            uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsetsCPU[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)] + setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos;           
             buff = &params.aux_trace[offsetAuxTrace];           
             nRows = 1 << setupCtx.starkInfo.starkStruct.nBits;
         } else if (hintFieldDestVal.operand == opType::airvalue) {
@@ -582,7 +582,7 @@ void accHintField(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &expre
     
     Goldilocks::Element *vals = setupCtx.starkInfo.verify_constraints
         ? new Goldilocks::Element[dim*N]
-        : &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]];
+        : &params.aux_trace[setupCtx.starkInfo.mapOffsetsCPU[std::make_pair("q", true)]];
     
     Dest destStruct(vals, N, 0);
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName, hintOptions);
@@ -634,7 +634,7 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &e
 
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
     
-    uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
+    uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsetsCPU[std::make_pair("q", true)];
     Goldilocks::Element *vals = setupCtx.starkInfo.verify_constraints
     ? new Goldilocks::Element[dim*N]
     : &params.aux_trace[offsetAuxTrace];

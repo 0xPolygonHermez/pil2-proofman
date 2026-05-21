@@ -149,7 +149,7 @@ public:
     uint64_t nChallenges;
     uint64_t nEvals;
 
-    ExpressionsCtx(SetupCtx& _setupCtx, ProverHelpers* proverHelpers_ = nullptr) : setupCtx(_setupCtx), proverHelpers(proverHelpers_) {
+    ExpressionsCtx(SetupCtx& _setupCtx, bool gpu = false, ProverHelpers* proverHelpers_ = nullptr) : setupCtx(_setupCtx), proverHelpers(proverHelpers_) {
         nextStrides = new int64_t[setupCtx.starkInfo.openingPoints.size()];
         nextStridesExtended = new int64_t[setupCtx.starkInfo.openingPoints.size()];
         mapOffsets = new uint64_t[1 + setupCtx.starkInfo.nStages + 1];
@@ -181,22 +181,28 @@ public:
             }
         }
 
-        mapOffsets[0] = setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)];
-        mapOffsetsExtended[0] = setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)];
+        // `gpu` picks which of the two parallel offset maps in StarkInfo we
+        // populate this instance from. CPU expression eval reads the row-major
+        // layout; GPU eval reads the unified-device-buffer layout. Both maps
+        // share keys/shape — only the numeric offsets differ.
+        auto& srcMapOffsets = gpu ? setupCtx.starkInfo.mapOffsetsGPU : setupCtx.starkInfo.mapOffsetsCPU;
+
+        mapOffsets[0] = srcMapOffsets[std::make_pair("const", false)];
+        mapOffsetsExtended[0] = srcMapOffsets[std::make_pair("const", true)];
         mapSectionsN[0] = setupCtx.starkInfo.mapSectionsN["const"];
 
-        mapOffsetFriPol = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
-        
+        mapOffsetFriPol = srcMapOffsets[std::make_pair("f", true)];
+
         for(uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; ++i) {
             mapSectionsN[i + 1] = setupCtx.starkInfo.mapSectionsN["cm" + std::to_string(i + 1)];
-            mapOffsets[i + 1] = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + std::to_string(i + 1), false)];
-            mapOffsetsExtended[i + 1] = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + std::to_string(i + 1), true)];
+            mapOffsets[i + 1] = srcMapOffsets[std::make_pair("cm" + std::to_string(i + 1), false)];
+            mapOffsetsExtended[i + 1] = srcMapOffsets[std::make_pair("cm" + std::to_string(i + 1), true)];
         }
 
         for(uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); ++i) {
             mapSectionsNCustomFixed[i] = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[i].name + "0"];
-            mapOffsetsCustomFixed[i] = setupCtx.starkInfo.mapOffsets[std::make_pair(setupCtx.starkInfo.customCommits[i].name + "0", false)];
-            mapOffsetsCustomFixedExtended[i] = setupCtx.starkInfo.mapOffsets[std::make_pair(setupCtx.starkInfo.customCommits[i].name + "0", true)];
+            mapOffsetsCustomFixed[i] = srcMapOffsets[std::make_pair(setupCtx.starkInfo.customCommits[i].name + "0", false)];
+            mapOffsetsCustomFixedExtended[i] = srcMapOffsets[std::make_pair(setupCtx.starkInfo.customCommits[i].name + "0", true)];
         }
 
         bufferCommitsSize = 1 + setupCtx.starkInfo.nStages + 3 + setupCtx.starkInfo.customCommits.size();

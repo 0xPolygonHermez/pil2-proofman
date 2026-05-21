@@ -114,7 +114,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
         starks.commitStage(1, params.trace, params.aux_trace, proof, ntt);
         starks.addTranscript(transcript, &proof.proof.roots[0][0], HASH_SIZE);
     } else {
-        starks.commitStage(1, params.trace, params.aux_trace, proof, ntt, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_1", false)]]);
+        starks.commitStage(1, params.trace, params.aux_trace, proof, ntt, &params.aux_trace[setupCtx.starkInfo.mapOffsetsCPU[std::make_pair("buff_helper_fft_1", false)]]);
     }
     TimerStopAndLog(STARK_STEP_1);
 
@@ -138,7 +138,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     if (recursive) {
         starks.commitStage(2, nullptr, params.aux_trace, proof, ntt);
     } else {
-        starks.commitStage(2, nullptr, params.aux_trace, proof, ntt, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_2", false)]]);
+        starks.commitStage(2, nullptr, params.aux_trace, proof, ntt, &params.aux_trace[setupCtx.starkInfo.mapOffsetsCPU[std::make_pair("buff_helper_fft_2", false)]]);
     }
     TimerStopAndLog(STARK_COMMIT_STAGE_2);
     starks.addTranscript(transcript, &proof.proof.roots[1][0], HASH_SIZE);
@@ -171,7 +171,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     if (recursive) {
         starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof, nttExtended);
     } else {
-        starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof, nttExtended, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_3", false)]]);
+        starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof, nttExtended, &params.aux_trace[setupCtx.starkInfo.mapOffsetsCPU[std::make_pair("buff_helper_fft_3", false)]]);
     }
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], HASH_SIZE);
@@ -189,7 +189,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     }
 
     Goldilocks::Element *xiChallenge = &params.challenges[xiChallengeIndex * FIELD_EXTENSION];
-    Goldilocks::Element* LEv = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("lev", false)]];
+    Goldilocks::Element* LEv = &params.aux_trace[setupCtx.starkInfo.mapOffsetsCPU[make_pair("lev", false)]];
 
     for(uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); i += 4) {
         std::vector<int64_t> openingPoints;
@@ -230,7 +230,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     TimerStopAndLog(COMPUTE_FRI_POLYNOMIAL);
 
     Goldilocks::Element challenge[FIELD_EXTENSION];
-    Goldilocks::Element *friPol = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]];
+    Goldilocks::Element *friPol = &params.aux_trace[setupCtx.starkInfo.mapOffsetsCPU[std::make_pair("f", true)]];
     
     TimerStart(STARK_FRI_FOLDING);
     uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.steps[0].nBits;

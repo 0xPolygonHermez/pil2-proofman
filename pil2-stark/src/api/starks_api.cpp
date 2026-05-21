@@ -290,9 +290,14 @@ void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3) {
     ((StarkInfo *)pStarkInfo)->setMemoryExpressions(nTmp1, nTmp3);
 }
 
-uint64_t get_map_total_n(void *pStarkInfo)
+uint64_t get_map_total_n_cpu(void *pStarkInfo)
 {
-    return ((StarkInfo *)pStarkInfo)->mapTotalN;
+    return ((StarkInfo *)pStarkInfo)->mapTotalNCPU;
+}
+
+uint64_t get_map_total_n_gpu(void *pStarkInfo)
+{
+    return ((StarkInfo *)pStarkInfo)->mapTotalNGPU;
 }
 
 uint64_t get_tree_size(void *pStarkInfo)
@@ -590,7 +595,7 @@ void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsPar
     for(uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++) {
         if(setupCtx.starkInfo.cmPolsMap[i].imPol && setupCtx.starkInfo.cmPolsMap[i].stage == step) {
             Goldilocks::Element* pAddress = setupCtx.starkInfo.cmPolsMap[i].stage == 1 ? params.trace : params.aux_trace;
-            Dest destStruct(&pAddress[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), false)] + setupCtx.starkInfo.cmPolsMap[i].stagePos], (1<< setupCtx.starkInfo.starkStruct.nBits), setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)]);
+            Dest destStruct(&pAddress[setupCtx.starkInfo.mapOffsetsCPU[std::make_pair("cm" + to_string(step), false)] + setupCtx.starkInfo.cmPolsMap[i].stagePos], (1<< setupCtx.starkInfo.starkStruct.nBits), setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)]);
             destStruct.addParams(setupCtx.starkInfo.cmPolsMap[i].expId, setupCtx.starkInfo.cmPolsMap[i].dim, false);
             expressionsCtx.calculateExpressions(params, destStruct, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false, false);
         }
@@ -620,7 +625,7 @@ void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *buf
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
     
     Goldilocks::Element *bufferGL = (Goldilocks::Element *)buffer;
-    loadFileParallel(&bufferGL[setupCtx.starkInfo.mapOffsets[std::make_pair(section, false)]], bufferFile, ((N + NExtended) * nCols + setupCtx.starkInfo.getNumNodesMT(NExtended)) * sizeof(Goldilocks::Element), true, 32);
+    loadFileParallel(&bufferGL[setupCtx.starkInfo.mapOffsetsCPU[std::make_pair(section, false)]], bufferFile, ((N + NExtended) * nCols + setupCtx.starkInfo.getNumNodesMT(NExtended)) * sizeof(Goldilocks::Element), true, 32);
 }
 
 void write_custom_commit_cpu(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile)
@@ -663,9 +668,9 @@ uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId
 
     MerkleTreeGL mt(setupCtx->starkInfo.starkStruct.merkleTreeArity, setupCtx->starkInfo.starkStruct.lastLevelVerification, true, NExtended, nCols);
 
-    uint64_t offset_src = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
-    uint64_t offset_dst = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
-    uint64_t offset_mt = setupCtx->starkInfo.mapOffsets[std::make_pair("mt1", true)];
+    uint64_t offset_src = setupCtx->starkInfo.mapOffsetsCPU[std::make_pair("cm1", false)];
+    uint64_t offset_dst = setupCtx->starkInfo.mapOffsetsCPU[std::make_pair("cm1", true)];
+    uint64_t offset_mt = setupCtx->starkInfo.mapOffsetsCPU[std::make_pair("mt1", true)];
 
     PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
     if (packed_info != nullptr && packed_info->is_packed) {
@@ -782,7 +787,7 @@ uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uin
     StepsParams *params = (StepsParams *)params_;
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
-    uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
+    uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsetsCPU[std::make_pair("cm1", false)];
     if (d_buffers->airgroupId != airgroupId || d_buffers->airId != airId || d_buffers->proofType != "basic") {
         uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
         uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);

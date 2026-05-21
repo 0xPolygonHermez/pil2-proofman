@@ -133,7 +133,7 @@ struct AirInstanceInfo {
                                                                         : 2;
                 std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? setupCtx->starkInfo.customCommits[polInfo.commitId].name + "0" : "const";
                 evalsInfoHost[nEvals].stagePos = polInfo.stagePos;
-                evalsInfoHost[nEvals].offset = setupCtx->starkInfo.mapOffsets[std::make_pair(stage, true)];
+                evalsInfoHost[nEvals].offset = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair(stage, true)];
                 evalsInfoHost[nEvals].stageCols = setupCtx->starkInfo.mapSectionsN[stage];
                 evalsInfoHost[nEvals].dim = polInfo.dim;
                 evalsInfoHost[nEvals].openingPos = std::distance(openingPoints.begin(), it);
@@ -182,7 +182,7 @@ struct AirInstanceInfo {
             evInfo->type = (type == "cm") ? 0 : (type == "custom") ? 1 : 2;
             std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? setupCtx->starkInfo.customCommits[polInfo.commitId].name + "0" : "const";
             evInfo->stagePos = polInfo.stagePos;
-            evInfo->offset = setupCtx->starkInfo.mapOffsets[std::make_pair(stage, true)];
+            evInfo->offset = setupCtx->starkInfo.mapOffsetsGPU[std::make_pair(stage, true)];
             evInfo->stageCols = setupCtx->starkInfo.mapSectionsN[stage];
             evInfo->dim = polInfo.dim;
             evInfo->evalPos = i;

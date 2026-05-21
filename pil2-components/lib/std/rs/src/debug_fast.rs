@@ -168,11 +168,16 @@ fn format_bucket(rule: &BucketRule, bucket_key: u64) -> String {
     }
 }
 
-pub fn check_invalid_opids<F: PrimeField64>(pctx: &ProofCtx<F>, debug_data_fast: DebugDataFast) -> Vec<u64> {
+pub fn check_invalid_opids<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    debug_data_fast: DebugDataFast,
+    is_prod: bool,
+) -> Vec<u64> {
     let mut invalid_opids = Vec::new();
     let mut report_lines: Vec<String> = Vec::new();
 
     let group_by = pctx.debug_info.read().unwrap().bus_mode.group_by.clone();
+    let label = if is_prod { "std_prod" } else { "std_sum" };
 
     for (opid, store) in debug_data_fast.into_iter() {
         match store {
@@ -188,7 +193,8 @@ pub fn check_invalid_opids<F: PrimeField64>(pctx: &ProofCtx<F>, debug_data_fast:
                     if *b != 0 {
                         opid_is_invalid = true;
                         if let Some(r) = rule {
-                            report_lines.push(format!("opid {opid}, {}: balance = {b}", format_bucket(r, *bk)));
+                            report_lines
+                                .push(format!("[{label}] opid {opid}, {}: balance = {b}", format_bucket(r, *bk)));
                         }
                     }
                 }
@@ -202,13 +208,13 @@ pub fn check_invalid_opids<F: PrimeField64>(pctx: &ProofCtx<F>, debug_data_fast:
     if !invalid_opids.is_empty() {
         tracing::error!(
             "··· {}",
-            format!("\u{2717} The following opids do not match {invalid_opids:?}").bright_red().bold()
+            format!("\u{2717} [{label}] The following opids do not match {invalid_opids:?}").bright_red().bold()
         );
         for line in &report_lines {
             tracing::error!("··· {}", line.bright_red());
         }
     } else {
-        tracing::info!("··· {}", "\u{2713} All bus values match.".bright_green().bold());
+        tracing::info!("··· {}", format!("\u{2713} [{label}] All bus values match.").bright_green().bold());
     }
 
     invalid_opids

@@ -4,7 +4,6 @@ pub mod pil_helpers;
 pub mod prove;
 pub mod prove_snark;
 pub mod verify_constraints;
-pub mod debug_info;
 pub mod setup;
 pub mod setup_snark;
 pub mod soundness;

@@ -6,7 +6,7 @@
 
 extern __shared__ Goldilocks::Element scratchpad[];
 
-ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t nBlocks) : ExpressionsCtx(setupCtx), nRowsPack(nRowsPack), nBlocks(nBlocks)
+ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t nBlocks) : ExpressionsCtx(setupCtx, true), nRowsPack(nRowsPack), nBlocks(nBlocks)
 {
     
     uint32_t ns = 1 + setupCtx.starkInfo.nStages + 1;
@@ -25,7 +25,7 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
     h_deviceArgs.nCustomCommits = nCustoms;
     h_deviceArgs.bufferCommitSize = bufferCommitSize;
     
-    h_deviceArgs.zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
+    h_deviceArgs.zi_offset = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("zi", true)];
 
     CHECKCUDAERR(cudaMalloc(&h_deviceArgs.mapOffsets, ns * sizeof(uint64_t)));
     CHECKCUDAERR(cudaMalloc(&h_deviceArgs.mapOffsetsExtended, ns * sizeof(uint64_t)));
@@ -110,9 +110,9 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     h_expsArgs.maxTemp1Size = 0;
     h_expsArgs.maxTemp3Size = 0;
 
-    h_expsArgs.offsetTmp1 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp1", false)];
-    h_expsArgs.offsetTmp3 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp3", false)];
-    h_expsArgs.offsetDestVals = setupCtx.starkInfo.mapOffsets[std::make_pair("destVals", false)];
+    h_expsArgs.offsetTmp1 = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("tmp1", false)];
+    h_expsArgs.offsetTmp3 = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("tmp3", false)];
+    h_expsArgs.offsetDestVals = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("destVals", false)];
 
     for (uint64_t k = 0; k < dest.params.size(); ++k)
     {
@@ -204,9 +204,9 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     h_expsArgs.maxTemp1Size = 0;
     h_expsArgs.maxTemp3Size = 0;
 
-    h_expsArgs.offsetTmp1 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp1", false)];
-    h_expsArgs.offsetTmp3 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp3", false)];
-    h_expsArgs.offsetDestVals = setupCtx.starkInfo.mapOffsets[std::make_pair("destVals", false)];
+    h_expsArgs.offsetTmp1 = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("tmp1", false)];
+    h_expsArgs.offsetTmp3 = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("tmp3", false)];
+    h_expsArgs.offsetDestVals = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("destVals", false)];
 
     for (uint64_t k = 0; k < dest.params.size(); ++k)
     {

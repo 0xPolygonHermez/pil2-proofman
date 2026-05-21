@@ -33,6 +33,13 @@ pub struct DebugInfo {
     /// `debug_instances`; `All` processes everything (with `debug_instances` only used
     /// for per-instance debug config).
     pub instances_mode: InstancesMode,
+    /// When `instances_mode == OnlyListed`, controls whether table instances
+    /// are subject to the filter too. Default is `false` — tables are always
+    /// included regardless of the `list`, because skipping a lookup table
+    /// would cause spurious bus mismatches across every air that consumes it.
+    /// Set to `true` to make tables follow the same filter as everything else
+    /// (e.g. to skip large tables you don't care about).
+    pub skip_tables: bool,
     /// Hierarchical per-instance debug config: airgroup → air → (air_store_row_info, instances).
     pub debug_instances: AirGroupMap,
     /// Global constraint indices to verify. Empty means all globals.
@@ -50,6 +57,7 @@ impl Default for DebugInfo {
         Self {
             verify_constraints: false,
             instances_mode: InstancesMode::All,
+            skip_tables: false,
             debug_instances: Default::default(),
             debug_global_instances: Default::default(),
             n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,
@@ -65,6 +73,7 @@ impl DebugInfo {
         Self {
             verify_constraints: true,
             instances_mode: InstancesMode::All,
+            skip_tables: false,
             debug_instances: HashMap::new(),
             debug_global_instances: Vec::new(),
             n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,

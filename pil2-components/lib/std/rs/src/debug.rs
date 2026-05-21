@@ -283,6 +283,7 @@ pub fn update_debug_data<F: PrimeField64>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn print_debug_info<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
@@ -291,7 +292,9 @@ pub fn print_debug_info<F: PrimeField64>(
     output_file_path: &Path,
     debug_data: &mut DebugData,
     debug_data_info: &mut DebugDataInfo,
+    is_prod: bool,
 ) -> ProofmanResult<()> {
+    let label = if is_prod { "std_prod" } else { "std_sum" };
     timer_start_info!(PRINT_DEBUG_INFO);
     let mut file_path = PathBuf::new();
     let mut output: Box<dyn Write> = Box::new(io::stdout());
@@ -316,7 +319,7 @@ pub fn print_debug_info<F: PrimeField64>(
 
     // Early exit if no errors
     if mismatched_opids.is_empty() {
-        tracing::info!("··· {}", "\u{2713} All bus values match.".bright_green().bold());
+        tracing::info!("··· {}", format!("\u{2713} [{label}] All bus values match.").bright_green().bold());
         timer_stop_and_log_info!(PRINT_DEBUG_INFO);
         return Ok(());
     }
@@ -355,9 +358,12 @@ pub fn print_debug_info<F: PrimeField64>(
                 }
             }
 
-            let file_msg =
-                if print_to_file { format!(" Check the {file_path:?} file for more details.") } else { "".to_string() };
-            tracing::error!("Some bus values do not match.{}", file_msg);
+            // Two-line format: header in bold red so it stands out at a glance,
+            // detail (file pointer) on its own line below.
+            tracing::error!("··· {}", format!("\u{2717} [{label}] Some bus values do not match.").bright_red().bold());
+            if print_to_file {
+                tracing::error!("··· {}", format!("Check the {file_path:?} file for more details.").bright_red());
+            }
 
             // Set the flag to avoid printing the error message multiple times
             there_are_errors = true;

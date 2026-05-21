@@ -174,7 +174,6 @@ pub fn verify_constraints_proof<F: PrimeField64>(
     let mut valid_constraints_instance = true;
     let skipping = "is skipped".bright_yellow();
 
-    tracing::info!("    ► Instance #{} of {} [{}:{}]", air_instance_id, air_name, airgroup_id, air_id,);
     for constraint in &constraints {
         if constraint.skip {
             tracing::debug!(

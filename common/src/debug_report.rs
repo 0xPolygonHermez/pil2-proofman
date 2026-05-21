@@ -1,7 +1,7 @@
 //! In-memory debug report accumulated by the std-lib bus checker.
 //!
 //! Populated alongside the file/stdout output that [`crate::OutputConfig`] already
-//! drives, so callers of `get_debug_info` can consume the same information
+//! drives, so callers of `verify-constraints` can consume the same information
 //! programmatically and render it however they like.
 //!
 //! See `DEBUG_REPORT.md` at the repo root for the full JSON shape, field-by-field

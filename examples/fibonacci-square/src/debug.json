@@ -18,6 +18,7 @@
         ]
     },
     "constraints": {
+        "enabled": true,
         "max_print": 50
     }
 }

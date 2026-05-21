@@ -29,6 +29,14 @@ pub fn skip_prover_instance<F: PrimeField64>(
         return Ok((false, None));
     }
 
+    // Tables are included by default in only-listed mode. Opt into filtering
+    // them via `"instances": { "skip_tables": true }` — useful when you don't
+    // want to pay the cost of processing every lookup table and accept that
+    // bus debug for lookup-heavy opids will be meaningless without targets.
+    if pctx.dctx_is_table(global_idx) && !pctx.debug_info.read().unwrap().skip_tables {
+        return Ok((false, None));
+    }
+
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(global_idx)?;
     let air_instance_id = pctx.dctx_find_air_instance_id(global_idx)?;
 
@@ -104,6 +112,8 @@ struct InstancesJson {
     mode: Option<InstancesModeJson>,
     #[serde(default)]
     list: Option<Vec<AirGroupJson>>,
+    #[serde(default)]
+    skip_tables: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -114,8 +124,14 @@ enum InstancesModeJson {
     OnlyListed,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize)]
 struct ConstraintsJson {
+    #[serde(default = "default_true")]
+    enabled: bool,
     #[serde(default)]
     global_ids: Option<Vec<usize>>,
     #[serde(default)]
@@ -419,12 +435,14 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
     // ---- Instances section ----
     let mut airgroup_map: AirGroupMap = HashMap::new();
     let mut instances_mode = InstancesMode::All;
+    let mut skip_tables = false;
 
     if let Some(instances_section) = json.instances {
         instances_mode = match instances_section.mode.unwrap_or_default() {
             InstancesModeJson::All => InstancesMode::All,
             InstancesModeJson::OnlyListed => InstancesMode::OnlyListed,
         };
+        skip_tables = instances_section.skip_tables;
 
         if let Some(list) = instances_section.list {
             for airgroup in list {
@@ -503,12 +521,19 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
     }
 
     // ---- Constraints section ----
+    // Enable/disable is now driven by the required `enabled` field on the section
+    // rather than the section's mere presence. This makes intent explicit and lets
+    // users keep `global_ids` / `max_print` in the file across debug runs.
     let (verify_constraints, global_constraints, n_print_constraints) = match json.constraints {
-        Some(c) => (true, c.global_ids.unwrap_or_default(), c.max_print.unwrap_or(DEFAULT_N_PRINT_CONSTRAINTS)),
-        None => (false, Vec::new(), DEFAULT_N_PRINT_CONSTRAINTS),
+        Some(c) if c.enabled => {
+            (true, c.global_ids.unwrap_or_default(), c.max_print.unwrap_or(DEFAULT_N_PRINT_CONSTRAINTS))
+        }
+        _ => (false, Vec::new(), DEFAULT_N_PRINT_CONSTRAINTS),
     };
 
     // ---- Bus section ----
+    // Bus debug is enabled by the mere presence of the section. Omit the section
+    // entirely to disable it.
     let bus_mode = match json.bus {
         Some(b) => {
             let mut group_by: Vec<BucketRule> = Vec::new();
@@ -549,6 +574,7 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
     Ok(DebugInfo {
         verify_constraints,
         instances_mode,
+        skip_tables,
         debug_instances: airgroup_map,
         debug_global_instances: global_constraints,
         n_print_constraints,

@@ -34,8 +34,8 @@ use crate::{check_const_paths, check_const_paths_vadcop, needs_regeneration_fixe
 
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c,
-    calculate_witness_expressions_c, clear_proof_done_callback_c, launch_callback_c, initialize_instance_c,
-    calculate_trace_instance_c,
+    calculate_witness_expressions_c, calculate_trace_instance_c, clear_proof_done_callback_c, initialize_instance_c,
+    launch_callback_c,
 };
 
 use std::{path::PathBuf, sync::Arc};
@@ -916,7 +916,8 @@ where
         self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
 
         let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
-        Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true)?;
+        // CPU expression eval ahead — use CPU layout.
+        Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true, false)?;
         let setup = self.sctx.get_setup(airgroup_id, air_id)?;
         let steps_params = self.pctx.get_air_instance_params(instance_id, false);
 
@@ -942,7 +943,8 @@ where
         self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
         self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
 
-        Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true)?;
+        // CPU expression eval ahead — use CPU layout.
+        Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true, false)?;
         let steps_params = self.pctx.get_air_instance_params(instance_id, false);
 
         calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
@@ -1048,12 +1050,12 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn get_debug_info(
+    pub fn verify_proof_constraints(
         &self,
         witness_lib_path: PathBuf,
         public_inputs_path: Option<PathBuf>,
         input_data_path: Option<PathBuf>,
-        debug_info: &DebugInfo,
+        debug_info: Option<&DebugInfo>,
         verbose_mode: VerboseMode,
     ) -> ProofmanResult<DebugReport> {
         // Check witness_lib path exists
@@ -1091,148 +1093,33 @@ where
 
         self.register_witness(&mut *witness_lib, library)?;
 
-        self._get_debug_info(debug_info)
-    }
-
-    pub fn get_debug_info_from_lib(&self, debug_info: &DebugInfo) -> ProofmanResult<DebugReport> {
-        self._get_debug_info(debug_info)
-    }
-
-    fn _get_debug_info(&self, debug_info: &DebugInfo) -> ProofmanResult<DebugReport> {
-        let _computing = self.acquire_computing("_get_debug_info");
-
-        self.set_partition(1, vec![0], 0)?;
-
-        self.pctx.set_debug_info(debug_info);
-        self.pctx.debug_report.write().unwrap().reset();
-        self.cancellation_info.write().unwrap().reset();
-        self.reset()?;
-        self.pctx.dctx_reset();
-
-        self.exec()?;
-
-        let mut transcript: Transcript<F, Poseidon16, 16> = Transcript::new();
-        let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
-        transcript.put(&dummy_element);
-
-        let mut global_challenge = [F::ZERO; 3];
-        transcript.get_field(&mut global_challenge);
-        self.pctx.set_global_challenge(2, &mut global_challenge);
-        transcript.put(&dummy_element);
-
-        let instances = self.pctx.dctx_get_instances();
-        let my_instances = self.pctx.dctx_get_process_instances();
-        let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
-
-        for &instance_id in my_instances.iter() {
-            let instance_info = instances[instance_id];
-            let (skip, _) = skip_prover_instance(&self.pctx, instance_id)?;
-            if instance_info.table || skip {
-                continue;
-            }
-
-            self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
-            self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
-
-            // Join the previous thread (if any) before starting a new one
-            if let Some(handle) = thread_handle.take() {
-                handle.join().unwrap();
-            }
-
-            Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true)?;
-            self.calculate_instance_witness(instance_id)?;
-            self.wcm.debug(&[instance_id], debug_info)?;
-        }
-
-        let my_instances_tables = self.pctx.dctx_get_my_tables();
-
-        timer_start_info!(CALCULATING_TABLES);
-        for instance_id in my_instances_tables.iter() {
-            self.wcm.calculate_witness(1, &[*instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
-        }
-        timer_stop_and_log_info!(CALCULATING_TABLES);
-
-        for instance_id in my_instances_tables.iter() {
-            let (skip, _) = skip_prover_instance(&self.pctx, *instance_id)?;
-
-            if skip || !self.pctx.dctx_is_my_process_instance(*instance_id)? {
-                continue;
-            };
-
-            // Join the previous thread (if any) before starting a new one
-            if let Some(handle) = thread_handle.take() {
-                handle.join().unwrap();
-            }
-
-            Self::initialize_air_instance(&self.pctx, &self.sctx, *instance_id, true, true)?;
-            self.calculate_instance_witness(*instance_id)?;
-            self.wcm.debug(&[*instance_id], debug_info)?;
-        }
-
-        self.wcm.end(debug_info)?;
-
-        Ok(std::mem::take(&mut *self.pctx.debug_report.write().unwrap()))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn verify_proof_constraints(
-        &self,
-        witness_lib_path: PathBuf,
-        public_inputs_path: Option<PathBuf>,
-        input_data_path: Option<PathBuf>,
-        debug_info: &DebugInfo,
-        verbose_mode: VerboseMode,
-    ) -> ProofmanResult<()> {
-        // Check witness_lib path exists
-        if !witness_lib_path.exists() {
-            return Err(ProofmanError::InvalidParameters(format!(
-                "Witness computation dynamic library not found at path: {witness_lib_path:?}"
-            )));
-        }
-
-        // Check input data path
-        if let Some(ref input_data_path) = input_data_path {
-            if !input_data_path.exists() {
-                return Err(ProofmanError::InvalidParameters(format!(
-                    "Input data file not found at path: {input_data_path:?}"
-                )));
-            }
-        }
-
-        // Check public_inputs_path is a folder
-        if let Some(ref publics_path) = public_inputs_path {
-            if !publics_path.exists() {
-                return Err(ProofmanError::InvalidParameters(format!(
-                    "Public inputs file not found at path: {publics_path:?}"
-                )));
-            }
-        }
-
-        timer_start_info!(CREATE_WITNESS_LIB);
-        let library = unsafe { Library::new(&witness_lib_path)? };
-        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, Some(self.get_rank_info()))?;
-        timer_stop_and_log_info!(CREATE_WITNESS_LIB);
-
-        self.wcm.set_public_inputs_path(public_inputs_path);
-
-        self.register_witness(&mut *witness_lib, library)?;
-
         self._verify_proof_constraints(debug_info)
     }
 
-    pub fn verify_proof_constraints_from_lib(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
+    pub fn verify_proof_constraints_from_lib(&self, debug_info: Option<&DebugInfo>) -> ProofmanResult<DebugReport> {
         self._verify_proof_constraints(debug_info)
     }
 
-    fn _verify_proof_constraints(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
+    fn _verify_proof_constraints(&self, debug_info: Option<&DebugInfo>) -> ProofmanResult<DebugReport> {
         timer_start_info!(VERIFYING_PROOF_CONSTRAINTS);
 
         let _computing = self.acquire_computing("_verify_proof_constraints");
 
         self.set_partition(1, vec![0], 0)?;
 
+        // None == "just verify constraints, no other debug knobs". Callers that
+        // want bus-only or custom debug config pass `Some(&DebugInfo)`.
+        let default_debug;
+        let debug_info: &DebugInfo = match debug_info {
+            Some(di) => di,
+            None => {
+                default_debug = DebugInfo { verify_constraints: true, ..DebugInfo::default() };
+                &default_debug
+            }
+        };
+
         self.pctx.set_debug_info(debug_info);
+        self.pctx.debug_report.write().unwrap().reset();
         self.cancellation_info.write().unwrap().reset();
         self.reset()?;
         self.pctx.dctx_reset();
@@ -1381,39 +1268,25 @@ where
                     verify_global_constraints_proof(&self.pctx, &self.sctx, debug_info, airgroupvalues);
 
                 timer_stop_and_log_info!(VERIFYING_PROOF_CONSTRAINTS);
-                if valid_constraints.load(Ordering::Relaxed) && valid_global_constraints.is_ok() {
-                    return Ok(());
-                } else {
-                    return Err(ProofmanError::InvalidProof("Constraints were not verified".into()));
+                // Reflect any constraint-level failure in the report so the
+                // caller doesn't have to consult two sources of truth. The
+                // report is always returned; callers inspect `all_ok` to know
+                // whether to exit non-zero / surface an error.
+                let mut report = std::mem::take(&mut *self.pctx.debug_report.write().unwrap());
+                if !valid_constraints.load(Ordering::Relaxed) || valid_global_constraints.is_err() {
+                    report.all_ok = false;
                 }
+                return Ok(report);
             }
         }
 
         timer_stop_and_log_info!(VERIFYING_PROOF_CONSTRAINTS);
 
+        let mut report = std::mem::take(&mut *self.pctx.debug_report.write().unwrap());
         if !valid_constraints.load(Ordering::Relaxed) {
-            return Err(ProofmanError::InvalidProof("Constraints were not verified".into()));
+            report.all_ok = false;
         }
-
-        Ok(())
-    }
-
-    fn calculate_instance_witness(&self, instance_id: usize) -> ProofmanResult<()> {
-        let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
-        let setup = self.sctx.get_setup(airgroup_id, air_id)?;
-        let steps_params = self.pctx.get_air_instance_params(instance_id, false);
-
-        calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
-
-        #[cfg(feature = "diagnostic")]
-        {
-            let invalid_initialization = Self::diagnostic_instance(&self.pctx, &self.sctx, instance_id)?;
-            if invalid_initialization {
-                return Err(ProofmanError::InvalidProof("Invalid initialization".into()));
-            }
-        }
-
-        Ok(())
+        Ok(report)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1428,19 +1301,57 @@ where
         airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
     ) -> ProofmanResult<()> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
-        Self::initialize_air_instance(pctx, sctx, instance_id, true, true)?;
+        let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
+        let air_name = pctx.global_info.airs[airgroup_id][air_id].name.clone();
+        tracing::info!("    ► Instance #{} of {} [{}:{}]", air_instance_id, air_name, airgroup_id, air_id);
 
         let setup = sctx.get_setup(airgroup_id, air_id)?;
+
+        let use_gpu_layout = debug_info.verify_constraints && pctx.gpu;
+        Self::initialize_air_instance(pctx, sctx, instance_id, true, true, use_gpu_layout)?;
+
         let steps_params = pctx.get_air_instance_params(instance_id, false);
 
-        let stream_id = initialize_instance_c(
-            (&setup.p_setup).into(),
-            airgroup_id as u64,
-            air_id as u64,
-            instance_id as u64,
-            (&steps_params).into(),
-            pctx.get_device_buffers_ptr(),
-        );
+        // Three cases for trace calculation:
+        //
+        // 1. Bus-debug only (`verify_constraints == false`): only stage-1
+        //    expressions are needed because `wcm.debug` uses `get_hint_field`
+        //    which evaluates expressions lazily. Run on CPU regardless of
+        //    `pctx.gpu` — splitting the GPU entrypoint into stage-1-only
+        //    isn't worth it; we save the heavy stage-2/im_pols work which is
+        //    the dominant cost anyway.
+        //
+        // 2. Full verify on GPU: use the fused `calculate_trace_instance_c`
+        //    which computes stage 1 + stage 2 + im_pols in one device call.
+        //
+        // 3. Full verify on CPU: explicit per-step sequence.
+        if !debug_info.verify_constraints {
+            calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
+        } else if pctx.gpu {
+            let stream_id = initialize_instance_c(
+                (&setup.p_setup).into(),
+                airgroup_id as u64,
+                air_id as u64,
+                instance_id as u64,
+                (&steps_params).into(),
+                pctx.get_device_buffers_ptr(),
+            );
+
+            pctx.set_instance_stream_id(instance_id, stream_id);
+
+            calculate_trace_instance_c(
+                (&setup.p_setup).into(),
+                airgroup_id as u64,
+                air_id as u64,
+                (&steps_params).into(),
+                pctx.get_device_buffers_ptr(),
+                stream_id,
+            );
+        } else {
+            calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
+            wcm.calculate_witness(2, &[instance_id], 1, memory_handler.as_ref())?;
+            calculate_impols_expressions_c((&setup.p_setup).into(), 2, (&steps_params).into());
+        }
 
         #[cfg(feature = "diagnostic")]
         {
@@ -1450,35 +1361,33 @@ where
             }
         }
 
-        pctx.set_instance_stream_id(instance_id, stream_id);
-
-        if !pctx.gpu {
-            calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
-            wcm.calculate_witness(2, &[instance_id], 1, memory_handler.as_ref())?;
-            calculate_impols_expressions_c((&setup.p_setup).into(), 2, (&steps_params).into());
-        } else {
-            calculate_trace_instance_c(
-                (&setup.p_setup).into(),
-                airgroup_id as u64,
-                air_id as u64,
-                (&steps_params).into(),
-                pctx.get_device_buffers_ptr(),
-                stream_id,
-            );
-        }
-
-        let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
         let airgroup_values = pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id)?;
         airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_local_idx(instance_id)?] =
             airgroup_values.clone();
 
         wcm.debug(&[instance_id], debug_info)?;
 
-        let valid =
-            verify_constraints_proof(pctx, sctx, instance_id, debug_info.n_print_constraints as u64, stream_id)?;
+        if debug_info.verify_constraints {
+            let valid = verify_constraints_proof(
+                pctx,
+                sctx,
+                instance_id,
+                debug_info.n_print_constraints as u64,
+                pctx.get_instance_stream_id(instance_id),
+            )?;
 
-        if !valid {
-            valid_constraints.fetch_and(valid, Ordering::Relaxed);
+            if !valid {
+                valid_constraints.fetch_and(valid, Ordering::Relaxed);
+            }
+        } else {
+            // Header was already printed at the top of this function — only the
+            // closing line differs: bold yellow skip instead of green success.
+            tracing::info!(
+                "    {}",
+                format!("\u{21B7} Constraint verification skipped for Instance #{} of {}", air_instance_id, air_name)
+                    .bright_yellow()
+                    .bold()
+            );
         }
 
         let (is_shared_buffer, witness_buffer) = pctx.free_instance(instance_id);
@@ -1674,7 +1583,9 @@ where
             (Arc::new(Vec::new()), Arc::new(Vec::new()), Arc::new(Vec::new()))
         } else {
             (
-                Arc::new(create_buffer_fast(sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size))),
+                Arc::new(create_buffer_fast(
+                    sctx.max_prover_buffer_size_cpu.max(setups_vadcop.max_prover_buffer_size_cpu),
+                )),
                 Arc::new(create_buffer_fast(sctx.max_const_size.max(setups_vadcop.max_const_size))),
                 Arc::new(create_buffer_fast(sctx.max_const_tree_size.max(setups_vadcop.max_const_tree_size))),
             )
@@ -1710,7 +1621,7 @@ where
         tracing::info!("Using {num_threads_per_witness} threads per witness computation");
 
         let prover_buffer_recursive = if options.aggregation {
-            let prover_buffer_size = get_recursive_buffer_sizes(&pctx, &setups_vadcop)?;
+            let prover_buffer_size = get_recursive_buffer_sizes(&pctx, &setups_vadcop, options.gpu)?;
             Arc::new(create_buffer_fast(prover_buffer_size))
         } else {
             Arc::new(Vec::new())
@@ -3773,7 +3684,7 @@ where
     ) -> ProofmanResult<()> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         timer_start_debug!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
-        Self::initialize_air_instance(pctx, sctx, instance_id, false, false)?;
+        Self::initialize_air_instance(pctx, sctx, instance_id, false, false, pctx.gpu)?;
 
         let setup = sctx.get_setup(airgroup_id, air_id)?;
         let p_setup: *mut c_void = (&setup.p_setup).into();
@@ -3984,6 +3895,7 @@ where
         instance_id: usize,
         init_aux_trace: bool,
         verify_constraints: bool,
+        use_gpu_layout: bool,
     ) -> ProofmanResult<()> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         let setup = sctx.get_setup(airgroup_id, air_id)?;
@@ -4001,7 +3913,9 @@ where
         }
 
         if init_aux_trace {
-            air_instance.init_aux_trace(setup.prover_buffer_size as usize);
+            let aux_trace_size =
+                if use_gpu_layout { setup.prover_buffer_size_gpu } else { setup.prover_buffer_size_cpu };
+            air_instance.init_aux_trace(aux_trace_size as usize);
         }
         air_instance.init_evals(setup.stark_info.ev_map.len() * 3);
         air_instance.init_challenges(
@@ -4101,7 +4015,7 @@ where
 
         let air_values = &pctx.get_air_instance_air_values(airgroup_id, air_id, air_instance_id)?;
 
-        Self::initialize_air_instance(pctx, sctx, instance_id, false, false)?;
+        Self::initialize_air_instance(pctx, sctx, instance_id, false, false, pctx.gpu)?;
 
         let mut steps_params = pctx.get_air_instance_params(instance_id, true);
 

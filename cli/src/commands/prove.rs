@@ -138,15 +138,22 @@ impl ProveCmd {
             self.minimal_memory,
         );
         if debug_info.verify_constraints {
-            match self.field {
+            let report = match self.field {
                 Field::Goldilocks => proofman.verify_proof_constraints(
                     self.witness_lib.clone(),
                     self.public_inputs.clone(),
                     None,
-                    &debug_info.clone(),
+                    Some(&debug_info),
                     self.verbose.into(),
                 )?,
             };
+            if !report.all_ok {
+                return Err(format!(
+                    "Constraints were not verified: {} bus section(s) with mismatches",
+                    report.bus_sections.iter().filter(|s| s.mismatched).count()
+                )
+                .into());
+            }
         } else {
             proofman.set_barrier();
             let result = match self.field {

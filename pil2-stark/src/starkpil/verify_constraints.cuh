@@ -184,16 +184,16 @@ void calculateTraceInstance(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t st
     ExpsArguments *d_expsArgs = d_buffers->streamsData[stream_id].d_expsArgs;
     DestParamsGPU *d_destParams = d_buffers->streamsData[stream_id].d_destParams;
 
-    Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
+    Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("custom_fixed", false)];
     
-    uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", false)];
-    uint64_t offsetConstraints = setupCtx.starkInfo.mapOffsets[std::make_pair("constraints", false)];
-    uint64_t offsetPublicInputs = setupCtx.starkInfo.mapOffsets[std::make_pair("publics", false)];
-    uint64_t offsetAirgroupValues = setupCtx.starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
-    uint64_t offsetAirValues = setupCtx.starkInfo.mapOffsets[std::make_pair("airvalues", false)];
-    uint64_t offsetProofValues = setupCtx.starkInfo.mapOffsets[std::make_pair("proofvalues", false)];
-    uint64_t offsetChallenges = setupCtx.starkInfo.mapOffsets[std::make_pair("challenge", false)];
-    uint64_t offsetConstPols = setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)];
+    uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("cm1", false)];
+    uint64_t offsetConstraints = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("constraints", false)];
+    uint64_t offsetPublicInputs = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("publics", false)];
+    uint64_t offsetAirgroupValues = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("airgroupvalues", false)];
+    uint64_t offsetAirValues = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("airvalues", false)];
+    uint64_t offsetProofValues = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("proofvalues", false)];
+    uint64_t offsetChallenges = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("challenge", false)];
+    uint64_t offsetConstPols = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("const", false)];
 
     Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
 
@@ -243,7 +243,7 @@ void verifyConstraintsGPU(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t stre
 
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     
-    uint64_t offsetConstraints = setupCtx.starkInfo.mapOffsets[std::make_pair("constraints", false)];
+    uint64_t offsetConstraints = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("constraints", false)];
     
     Goldilocks::Element *pBufferGPU = (Goldilocks::Element *)(d_aux_trace + offsetConstraints);
     

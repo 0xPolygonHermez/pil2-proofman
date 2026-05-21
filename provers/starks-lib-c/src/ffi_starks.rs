@@ -92,8 +92,12 @@ pub fn stark_info_new_c(
     }
 }
 
-pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
-    unsafe { get_map_total_n(p_stark_info) }
+pub fn get_map_totaln_cpu_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_map_total_n_cpu(p_stark_info) }
+}
+
+pub fn get_map_totaln_gpu_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_map_total_n_gpu(p_stark_info) }
 }
 
 pub fn get_map_totaln_contributions_c(p_stark_info: *mut c_void) -> u64 {
