@@ -44,7 +44,7 @@ void copy_to_device_in_chunks(
     uint64_t streamId,
     TimerGPU &timer
     ){
-    uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
+    /*uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
 
     cudaSetDevice(gpuId);
 
@@ -98,7 +98,7 @@ void copy_to_device_in_chunks(
     ));
 
     CHECKCUDAERR(cudaStreamSynchronize(stream));
-    TimerStopCategoryGPU(timer, H2D_COPY);
+    TimerStopCategoryGPU(timer, H2D_COPY);*/
 }
 
 void copy_to_device_in_chunks(
@@ -109,7 +109,7 @@ void copy_to_device_in_chunks(
     uint64_t pinnedBufferSize,
     cudaStream_t stream
 ){
-
+    /*
      uint64_t block_size = pinnedBufferSize/2;
     
     uint8_t *pinned_buffer = pinnedBuffer;
@@ -154,7 +154,7 @@ void copy_to_device_in_chunks(
     ));
 
     CHECKCUDAERR(cudaStreamSynchronize(stream));
-
+    */
 }
 
 void load_and_copy_to_device_in_chunks(
@@ -164,7 +164,7 @@ void load_and_copy_to_device_in_chunks(
     uint64_t total_size,
     uint64_t streamId
     ){
-
+/*
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
     
     cudaSetDevice(gpuId);
@@ -214,6 +214,6 @@ void load_and_copy_to_device_in_chunks(
         stream
     ));
 
-    CHECKCUDAERR(cudaStreamSynchronize(stream));
+    CHECKCUDAERR(cudaStreamSynchronize(stream));*/
 }
 #endif // __GOLDILOCKS_ENV__
