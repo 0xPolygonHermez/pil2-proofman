@@ -60,16 +60,17 @@ struct SetupArgs {
     #[arg(short = 's', long)]
     stark_structs: Option<String>,
 
-    /// Max concurrent recursive1 air pipelines (default 1 = serial).
-    /// Each slot runs one circom compile + pil2com. Size by available RAM:
-    /// set to floor(available_GB / per_air_peak_GB).
-    #[arg(long, default_value_t = 1, env = "RECURSIVE_JOBS")]
-    recursive_jobs: usize,
+    /// Max concurrent recursive1 air pipelines (default: min(2, num_cpus)).
+    /// Each slot runs one circom compile + pil2com and uses ~1-4 GB peak RAM.
+    /// Size by available RAM: set to floor(available_GB / per_air_peak_GB).
+    #[arg(long, env = "RECURSIVE_JOBS")]
+    recursive_jobs: Option<usize>,
 
-    /// Max concurrent AIRs during non-recursive setup (default 1 = serial).
-    /// Each slot runs pil_info + file I/O. Size by available RAM.
-    #[arg(long, default_value_t = 1, env = "SETUP_JOBS")]
-    setup_jobs: usize,
+    /// Max concurrent AIRs during non-recursive setup (default: min(4, num_cpus)).
+    /// Each slot runs pil_info + file I/O and uses ~64 MB stack + working set.
+    /// Size by available RAM.
+    #[arg(long, env = "SETUP_JOBS")]
+    setup_jobs: Option<usize>,
 
     /// Output file for per-AIR stats (same format as `stats` subcommand).
     /// If omitted, no stats file is written.
@@ -210,10 +211,23 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Setup(args) => {
+            let available = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+            // Conservative defaults: setup_jobs caps at 4 because pil_info uses
+            // 64 MB stack × N slots and large airs hold working sets in memory;
+            // recursive_jobs caps at 2 because each slot can use multiple GB
+            // during plonk2pil. Both are overridable via env or --flag.
+            let setup_jobs = args.setup_jobs.unwrap_or(available.min(4));
+            let recursive_jobs = args.recursive_jobs.unwrap_or(available.min(2));
+
             tracing::info!("proofman-setup setup: starting");
             tracing::info!("  airout: {}", args.airout);
             tracing::info!("  build_dir: {}", args.build_dir);
             tracing::info!("  recursive: {}", args.recursive);
+            tracing::info!("  setup_jobs: {} (override with --setup-jobs or SETUP_JOBS env)", setup_jobs);
+            tracing::info!(
+                "  recursive_jobs: {} (override with --recursive-jobs or RECURSIVE_JOBS env)",
+                recursive_jobs
+            );
 
             let opts = SetupOptions {
                 airout_path: args.airout,
@@ -221,8 +235,8 @@ fn main() -> anyhow::Result<()> {
                 fixed_dir: args.fixed_dir,
                 stark_structs_path: args.stark_structs,
                 recursive: args.recursive,
-                recursive_jobs: args.recursive_jobs,
-                setup_jobs: args.setup_jobs,
+                recursive_jobs,
+                setup_jobs,
                 stats_output_path: args.output,
             };
 
