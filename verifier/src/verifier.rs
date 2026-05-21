@@ -10,6 +10,9 @@ use fields::{
     Poseidon2Constants, Poseidon4, Poseidon16, poseidon2_hash, PrimeField64,
 };
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Boundary {
@@ -463,7 +466,7 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
 
     v_debug!("Verifying proof");
 
-    let all_valid = (0..n_queries).into_iter().all(|q| {
+    let check_query = |q: usize| -> bool {
         // 1) Fixed MT
         if !verify_mt::<Goldilocks, C, W>(
             &root_c,
@@ -555,7 +558,12 @@ pub fn stark_verify<C: Poseidon2Constants<W>, const W: usize>(
         }
 
         true
-    });
+    };
+
+    #[cfg(feature = "parallel")]
+    let all_valid = (0..n_queries).into_par_iter().all(check_query);
+    #[cfg(not(feature = "parallel"))]
+    let all_valid = (0..n_queries).all(check_query);
 
     if !all_valid {
         return false;

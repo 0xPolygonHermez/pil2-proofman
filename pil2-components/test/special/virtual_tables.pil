@@ -1,0 +1,135 @@
+require "std_lookup.pil"
+require "std_range_check.pil"
+
+enable_debug_mode_prints();
+
+airtemplate Component(const int N, const int t, const int opid) {
+    col witness a[t];
+    lookup_assumes(opid, a);
+}
+
+airtemplate ComponentRC(const int N, const int t, const int opid) {
+    col witness a[t];
+    lookup_assumes(opid, a);
+    
+    col witness b[4];
+    range_check(expression: b[0], min: 0, max: 2**8 - 1, predefined: 1);
+    range_check(expression: b[1], min: 0, max: 2**16 - 1, predefined: 1);
+    range_check(expression: b[2], min: 0, max: 2**5 - 1, predefined: 0);
+    range_check(expression: b[2], min: 0, max: 2**18 - 1, predefined: 0);
+}
+
+airtemplate Table(const int N, const int t, const int opid, const int table_id = -1) {
+    col fixed A[t];
+    for (int i = 0; i < t; i++) {
+        A[i] = [0..(N-1)...];
+    }
+
+    col witness multiplicity;
+    lookup_proves(opid, A, mul: multiplicity, table_id: table_id);
+}
+
+// ============================================================================
+// Test 1: Single virtual table with default settings (no groups, no explicit
+//         max rows — dynamic sizing)
+// ============================================================================
+airgroup Test1_SingleVirtualTableDefaults {
+    Component(N: 2**8, t: 4, opid: 100) alias T1_Comp1;
+    virtual Table(N: 2**8, t: 4, opid: 100) alias T1_Table1;
+
+    Component(N: 2**6, t: 4, opid: 101) alias T1_Comp2;
+    virtual Table(N: 2**6, t: 4, opid: 101) alias T1_Table2;
+}
+
+// ============================================================================
+// Test 2: Multiple virtual tables without groups (best-fit distribution)
+// ============================================================================
+airgroup Test2_MultipleVTNoGroups {
+    set_max_bits_virtual_tables(10);
+
+    // Several tables of varying sizes — let the best-fit allocator distribute them
+    Component(N: 2**9, t: 2, opid: 200) alias T2_Comp1;
+    virtual Table(N: 2**9, t: 2, opid: 200) alias T2_Table1;
+
+    Component(N: 2**8, t: 2, opid: 201) alias T2_Comp2;
+    virtual Table(N: 2**8, t: 2, opid: 201) alias T2_Table2;
+
+    Component(N: 2**7, t: 3, opid: 202) alias T2_Comp3;
+    virtual Table(N: 2**7, t: 3, opid: 202) alias T2_Table3;
+
+    Component(N: 2**6, t: 5, opid: 203) alias T2_Comp4;
+    virtual Table(N: 2**6, t: 5, opid: 203) alias T2_Table4;
+
+    Component(N: 2**5, t: 1, opid: 204) alias T2_Comp5;
+    virtual Table(N: 2**5, t: 1, opid: 204) alias T2_Table5;
+
+    Component(N: 2**4, t: 1, opid: 205) alias T2_Comp6;
+    virtual Table(N: 2**4, t: 1, opid: 205) alias T2_Table6;
+}
+
+// ============================================================================
+// Test 3: Width=1 tables (minimum width edge case)
+// ============================================================================
+airgroup Test3_MinimalWidth {
+    set_max_bits_virtual_tables(8);
+
+    Component(N: 2**7, t: 1, opid: 300) alias T3_Comp1;
+    virtual Table(N: 2**7, t: 1, opid: 300) alias T3_Table1;
+
+    Component(N: 2**6, t: 1, opid: 301) alias T3_Comp2;
+    virtual Table(N: 2**6, t: 1, opid: 301) alias T3_Table2;
+
+    Component(N: 2**5, t: 1, opid: 302) alias T3_Comp3;
+    virtual Table(N: 2**5, t: 1, opid: 302) alias T3_Table3;
+}
+
+// ============================================================================
+// Test 4: Large width tables (stress MAX_VIRTUAL_TABLE_WIDTH boundary)
+// ============================================================================
+airgroup Test4_LargeWidth {
+    set_max_bits_virtual_tables(6);
+
+    Component(N: 2**4, t: 32, opid: 400) alias T4_Comp1;
+    virtual Table(N: 2**4, t: 32, opid: 400) alias T4_Table1;
+
+    Component(N: 2**3, t: 16, opid: 401) alias T4_Comp2;
+    virtual Table(N: 2**3, t: 16, opid: 401) alias T4_Table2;
+}
+
+// ============================================================================
+// Test 5: Same opid with many table slices (stress MAX_VIRTUAL_TABLE_IDS)
+// ============================================================================
+airgroup Test5_ManySlicesSameOpid {
+    set_max_bits_virtual_tables(12);
+
+    Component(N: 2**10, t: 2, opid: 500) alias T5_Comp;
+
+    // 8 slices all sharing opid 500
+    virtual Table(N: 2**4, t: 2, opid: 500, table_id: 500) alias T5_Slice1;
+    virtual Table(N: 2**4, t: 2, opid: 500, table_id: 501) alias T5_Slice2;
+    virtual Table(N: 2**4, t: 2, opid: 500, table_id: 502) alias T5_Slice3;
+    virtual Table(N: 2**4, t: 2, opid: 500, table_id: 503) alias T5_Slice4;
+    virtual Table(N: 2**4, t: 2, opid: 500, table_id: 504) alias T5_Slice5;
+    virtual Table(N: 2**4, t: 2, opid: 500, table_id: 505) alias T5_Slice6;
+    virtual Table(N: 2**4, t: 2, opid: 500, table_id: 506) alias T5_Slice7;
+    virtual Table(N: 2**4, t: 2, opid: 500, table_id: 507) alias T5_Slice8;
+}
+
+// ============================================================================
+// Test 6: Groups with a single table each (one table per group)
+// ============================================================================
+airgroup Test6_SingleTablePerGroup {
+    set_max_bits_virtual_tables(10);
+    set_num_virtual_tables(3);
+    set_group_virtual_tables(table_ids: [600, 601]);
+    set_group_virtual_tables(table_ids: [602]);
+
+    Component(N: 2**8, t: 3, opid: 600) alias T6_Comp1;
+    virtual Table(N: 250, t: 3, opid: 600, table_id: 600) alias T6_Table1;
+
+    Component(N: 2**7, t: 4, opid: 601) alias T6_Comp2;
+    virtual Table(N: 2**7, t: 4, opid: 601, table_id: 601) alias T6_Table2;
+
+    Component(N: 2**6, t: 2, opid: 602) alias T6_Comp3;
+    virtual Table(N: 150, t: 2, opid: 602, table_id: 602) alias T6_Table3;
+}

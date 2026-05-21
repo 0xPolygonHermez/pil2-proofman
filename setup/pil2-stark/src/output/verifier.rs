@@ -52,10 +52,13 @@ fn prepare_verifier_rust(
     let mut lines: Vec<String> = Vec::new();
 
     // Imports
+    lines.push("use alloc::vec;".to_string());
+    lines.push("use alloc::vec::Vec;".to_string());
+    lines.push("use alloc::string::ToString;".to_string());
     lines.push(format!("use fields::{{Goldilocks, CubicExtensionField, Field, Poseidon{}}};", poseidon_width));
-    lines.push("use crate::{Boundary, VerifierInfo, stark_verify};".to_string());
+    lines.push("use crate::{stark_verify, Boundary, VerifierInfo};".to_string());
     if vadcop_final_proof {
-        lines.push("use proofman_util::VadcopFinalProof;".to_string());
+        lines.push("use crate::VadcopFinalProof;".to_string());
     }
     lines.push(String::new());
 
@@ -158,26 +161,30 @@ fn prepare_verifier_rust(
 
     // verify function
     if vadcop_final_proof {
-        lines.push("pub fn verify(proof: &VadcopFinalProof, vk: &[u8]) -> bool {".to_string());
+        lines.push("pub fn verify(proof: &VadcopFinalProof, vk: &[u64]) -> bool {".to_string());
         lines.push(format!(
             "    stark_verify::<Poseidon{}, {}>(&proof.proof_with_publics(), vk, &verifier_info(), q_verify, query_verify)",
             poseidon_width, poseidon_width
         ));
         lines.push("}\n".to_string());
-        lines.push("pub fn verify_bytes(proof: &[u8], vk: &[u8]) -> bool {".to_string());
+        lines.push("pub fn verify_u64(proof: &[u64], vk: &[u64]) -> bool {".to_string());
         lines.push(format!(
             "    stark_verify::<Poseidon{}, {}>(proof, vk, &verifier_info(), q_verify, query_verify)",
             poseidon_width, poseidon_width
         ));
         lines.push("}\n".to_string());
     } else {
-        lines.push("pub fn verify(proof: &[u8], vk: &[u8]) -> bool {".to_string());
+        lines.push("pub fn verify(proof: &[u64], vk: &[u64]) -> bool {".to_string());
         lines.push(format!(
             "    stark_verify::<Poseidon{}, {}>(proof, vk, &verifier_info(), q_verify, query_verify)",
             poseidon_width, poseidon_width
         ));
         lines.push("}\n".to_string());
     }
+
+    lines.push("pub fn expected_proof_bytes() -> usize {".to_string());
+    lines.push("    crate::expected_proof_size_bytes(&verifier_info())".to_string());
+    lines.push("}\n".to_string());
 
     Ok(lines.join("\n"))
 }

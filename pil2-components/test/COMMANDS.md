@@ -294,6 +294,10 @@ rm -rf ./pil2-components/test/special/build/ \
      -I ./pil2-components/lib/std/pil \
      -u ./pil2-components/test/special/build/fixed_table --fixed-to-file \
      -o ./pil2-components/test/special/build/table.pilout \
+&& cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/special/virtual_tables.pil \
+     -I ./pil2-components/lib/std/pil \
+     -u ./pil2-components/test/special/build/fixed_virtual_tables --fixed-to-file \
+     -o ./pil2-components/test/special/build/virtual_tables.pilout \
 && cargo run --bin proofman-setup -- setup \
      -a ./pil2-components/test/special/build/array_size.pilout \
      -u ./pil2-components/test/special/build/fixed_array_size \
@@ -321,5 +325,9 @@ rm -rf ./pil2-components/test/special/build/ \
 && cargo run --bin proofman-setup -- setup \
      -a ./pil2-components/test/special/build/table.pilout \
      -u ./pil2-components/test/special/build/fixed_table \
+     -b ./pil2-components/test/special/build \
+&& cargo run --bin proofman-setup -- setup \
+     -a ./pil2-components/test/special/build/virtual_tables.pilout \
+     -u ./pil2-components/test/special/build/fixed_virtual_tables \
      -b ./pil2-components/test/special/build
 ```

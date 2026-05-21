@@ -30,6 +30,8 @@ ProofMan is a collaborative effort made possible by the contributions of researc
 
 We extend our gratitude to the [Polygon zkEVM](https://github.com/0xpolygonhermez) and [Plonky3](https://github.com/Plonky3/Plonky3) teams for their foundational work in zero-knowledge proving systems.
 
+We also thank the Venus team — the Rust setup pipeline under [setup/](setup/) was heavily inspired by their `pk-setup-rs` work (Venus v0.2.0), particularly the stark info migration and overall pipeline structure. See [setup/README.md](setup/README.md) for details.
+
 Additionally, we acknowledge the efforts of the open-source cryptography and ZK research communities, whose insights and contributions continue to shape the evolution of efficient and scalable zero-knowledge technologies.
 
 🚀 Special thanks to all contributors who have helped develop, refine, and improve ProofMan!

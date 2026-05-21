@@ -62,7 +62,6 @@ test_pipeline() {
 }
 
 # Run tests
-test_pipeline "simple" "./pil2-components/test/simple" "simple"
 test_pipeline "connection" "./pil2-components/test/connection" "connection"
 # test_pipeline "diff_buses" "./pil2-components/test/diff_buses" "diff_buses" # It cannot work in the current state of the project
 test_pipeline "direct_update" "./pil2-components/test/direct_update" "direct_update"
@@ -70,6 +69,7 @@ test_pipeline "lookup" "./pil2-components/test/lookup" "lookup"
 test_pipeline "one_instance" "./pil2-components/test/one_instance" "one_instance"
 test_pipeline "permutation" "./pil2-components/test/permutation" "permutation"
 test_pipeline "build" "./pil2-components/test/range_check" "range_check"
+test_pipeline "simple" "./pil2-components/test/simple" "simple"
 test_pipeline "virtual_tables" "./pil2-components/test/virtual_tables" "virtual_tables"
 
 test_pipeline "array_size" "./pil2-components/test/special" "array_size" "true"
@@ -79,5 +79,6 @@ test_pipeline "intermediate_prods" "./pil2-components/test/special" "intermediat
 test_pipeline "intermediate_sums" "./pil2-components/test/special" "intermediate_sums" "true"
 test_pipeline "openings" "./pil2-components/test/special" "openings" "true"
 test_pipeline "table" "./pil2-components/test/special" "table" "true"
+test_pipeline "virtual_tables" "./pil2-components/test/special" "virtual_tables" "true"
 
 echo "✅ All tests completed."

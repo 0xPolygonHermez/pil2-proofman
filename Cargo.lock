@@ -360,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "connection"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "fields",
  "num-bigint",
@@ -499,7 +499,7 @@ dependencies = [
 
 [[package]]
 name = "curves"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "fields",
  "num-bigint",
@@ -521,7 +521,7 @@ checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 
 [[package]]
 name = "diff-buses"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "fields",
  "num-bigint",
@@ -549,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "direct-update"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "fields",
  "num-bigint",
@@ -607,7 +607,7 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
 name = "fibonacci-square"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "fields",
  "num-bigint",
@@ -625,7 +625,7 @@ dependencies = [
 
 [[package]]
 name = "fields"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "cfg-if",
  "num-bigint",
@@ -991,7 +991,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "lookup"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "fields",
  "num-bigint",
@@ -1008,7 +1008,7 @@ dependencies = [
 
 [[package]]
 name = "macros-test"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "fields",
  "proofman",
@@ -1183,7 +1183,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "one-instance"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "fields",
  "num-bigint",
@@ -1253,7 +1253,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "permutation"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "fields",
  "num-bigint",
@@ -1361,7 +1361,7 @@ dependencies = [
 
 [[package]]
 name = "pil-std-lib"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "colored",
  "fields",
@@ -1380,7 +1380,7 @@ dependencies = [
 
 [[package]]
 name = "pil2-stark-setup"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "anyhow",
  "clap",
@@ -1404,7 +1404,7 @@ dependencies = [
 
 [[package]]
 name = "pilout"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "bytes",
  "prost",
@@ -1463,7 +1463,7 @@ dependencies = [
 
 [[package]]
 name = "proofman"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "bincode",
  "blake3",
@@ -1496,7 +1496,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-cli"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "blake3",
  "clap",
@@ -1521,7 +1521,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-common"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "bincode",
  "borsh",
@@ -1551,7 +1551,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-hints"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "fields",
  "itoa",
@@ -1563,7 +1563,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-macros"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1572,7 +1572,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-soundness"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "fields",
  "itoa",
@@ -1586,7 +1586,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-starks-lib-c"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "crossbeam-channel",
  "tracing",
@@ -1594,7 +1594,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-util"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "bincode",
  "colored",
@@ -1604,11 +1604,12 @@ dependencies = [
 
 [[package]]
 name = "proofman-verifier"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "bincode",
  "fields",
  "num-traits",
+ "rayon",
  "serde",
  "tracing",
 ]
@@ -1729,7 +1730,7 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "range-check"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "fields",
  "num-bigint",
@@ -1992,7 +1993,7 @@ dependencies = [
 
 [[package]]
 name = "simple"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "fields",
  "num-bigint",
@@ -2162,7 +2163,7 @@ dependencies = [
 
 [[package]]
 name = "test-recursive"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "fields",
  "libloading",
@@ -2439,7 +2440,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "virtual-tables"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "fields",
  "num-bigint",
@@ -2957,7 +2958,7 @@ dependencies = [
 
 [[package]]
 name = "witness"
-version = "0.18.0"
+version = "1.0.0-beta"
 dependencies = [
  "colored",
  "fields",

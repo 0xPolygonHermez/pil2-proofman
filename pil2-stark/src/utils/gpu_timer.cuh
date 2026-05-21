@@ -132,6 +132,21 @@ public:
             if (entry.timeMs < 0.0f) syncAndCompute(name);
             zklog.trace("<-- " + name + " : " + std::to_string(entry.timeMs / 1000.0f) + " s");
         }
+        if (order.empty()) {
+            for (auto& [category, entries] : multiTimers) {
+                double total_sec = 0.0;
+                for (auto& entry : entries) {
+                    if (entry.timeMs < 0.0f) {
+                        cudaEventSynchronize(entry.stop);
+                        cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop);
+                    }
+                    total_sec += entry.timeMs / 1000.0;
+                }
+                std::ostringstream oss;
+                oss << std::fixed << std::setprecision(6) << total_sec;
+                zklog.trace("<-- " + category + " (category) : " + oss.str() + " s");
+            }
+        }
 #endif
     }
 

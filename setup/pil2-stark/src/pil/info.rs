@@ -120,7 +120,6 @@ pub fn pil_info(
             }
         }
     }
-    // Sort numerically — mirrors JS `.sort((a, b) => a - b)` in preparePil.js.
     opening_points.sort();
 
     // Build code-gen params

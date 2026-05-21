@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::{bail, Result};
 
 use crate::types::stark_info::{CodeOperation, CodeType, OpType, StarkInfo};
@@ -328,6 +330,9 @@ pub fn get_parser_args(
     global_info: Option<&GlobalInfo>,
     function_name: &str,
 ) -> Result<ParserArgsResult> {
+    let mut numbers_index: HashMap<String, u32> =
+        numbers.iter().enumerate().map(|(i, s)| (s.clone(), i as u32)).collect();
+
     let mut ops: Vec<u64> = Vec::new();
     let mut args: Vec<u64> = Vec::new();
 
@@ -358,6 +363,7 @@ pub fn get_parser_args(
             &id1d,
             &id3d,
             numbers,
+            &mut numbers_index,
             global,
             global_info,
         )?;
@@ -372,6 +378,7 @@ pub fn get_parser_args(
                 &id1d,
                 &id3d,
                 numbers,
+                &mut numbers_index,
                 global,
                 global_info,
             )?;
@@ -732,6 +739,7 @@ fn push_args(
     id1d: &[i64],
     id3d: &[i64],
     numbers: &mut Vec<String>,
+    numbers_index: &mut HashMap<String, u32>,
     global: bool,
     global_info: Option<&GlobalInfo>,
 ) -> Result<()> {
@@ -814,15 +822,21 @@ fn push_args(
             // Values are already in Goldilocks field representation (e.g. p-1 = 0xFFFFFFFF00000000).
             // Do NOT apply modular reduction - the JSON stores the final u64 value directly.
             let num_string = format!("{}", r.value);
-            if !numbers.contains(&num_string) {
-                numbers.push(num_string.clone());
-            }
+            let idx = match numbers_index.get(&num_string) {
+                Some(&i) => i,
+                None => {
+                    let i = numbers.len() as u32;
+                    numbers.push(num_string.clone());
+                    numbers_index.insert(num_string, i);
+                    i
+                }
+            };
             if !global {
                 args.push(buffer_size + 3);
             } else {
                 args.push(2);
             }
-            args.push(numbers.iter().position(|n| *n == num_string).unwrap() as u64);
+            args.push(idx as u64);
             if !global {
                 args.push(0);
             }

@@ -41,8 +41,8 @@ pub type AirProdFixed<F> = GenericTrace<AirProdFixedRow<F>, 256, 0, 0>;
 trace_row!(AirProdTraceRow<F> {
  a:F, b:F, c:F,
 });
-pub type AirProdTrace<F> = GenericTrace<AirProdTraceRow<F>, 256, 0, 0>;
 
+pub type AirProdTrace<F> = GenericTrace<AirProdTraceRow<F>, 256, 0, 0>;
 
 trace_row!(AirSumFixedRow<F> {
  __L1__: F,
@@ -52,8 +52,8 @@ pub type AirSumFixed<F> = GenericTrace<AirSumFixedRow<F>, 256, 1, 0>;
 trace_row!(AirSumTraceRow<F> {
  a:F, b:F, c:F,
 });
-pub type AirSumTrace<F> = GenericTrace<AirSumTraceRow<F>, 256, 1, 0>;
 
+pub type AirSumTrace<F> = GenericTrace<AirSumTraceRow<F>, 256, 1, 0>;
 
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
 ];
