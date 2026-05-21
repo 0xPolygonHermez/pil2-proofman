@@ -571,15 +571,30 @@ uint64_t set_hint_field(void *pSetupCtx, void* params, void *values, uint64_t hi
 // Starks
 // ========================================================================================
 
-void calculate_witness_expr(void *pSetupCtx, void * stepsParams)
+void calculate_witness_expr(void *pSetupCtx, void *stepsParams, void *d_buffers_, uint64_t airgroupId, uint64_t airId)
 {
     SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
     StepsParams &params = *(StepsParams *)stepsParams;
 
+    if (d_buffers_ != nullptr) {
+        DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
+        PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
+        if (packed_info != nullptr && packed_info->is_packed) {
+            uint64_t N = (1 << setupCtx.starkInfo.starkStruct.nBits);
+            uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm1"];
+            uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsetsCPU[std::make_pair("cm1", false)];
+            d_buffers->unpack_cpu(
+                (uint64_t *)params.trace,
+                (uint64_t *)&params.aux_trace[offsetCm1],
+                N, nCols,
+                packed_info->num_packed_words,
+                packed_info->unpack_info);
+            memcpy(params.trace, &params.aux_trace[offsetCm1], N * nCols * sizeof(Goldilocks::Element));
+        }
+    }
+
     ProverHelpers proverHelpers;
-
     ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);
-
     calculateWitnessExpr(setupCtx, params, expressionsCtx);
 }
 

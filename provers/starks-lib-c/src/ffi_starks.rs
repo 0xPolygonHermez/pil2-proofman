@@ -558,9 +558,15 @@ pub fn calculate_impols_expressions_c(p_setup: *mut c_void, step: u64, p_steps_p
     }
 }
 
-pub fn calculate_witness_expressions_c(p_setup: *mut c_void, p_steps_params: *mut u8) {
+pub fn calculate_witness_expressions_c(
+    p_setup: *mut c_void,
+    p_steps_params: *mut u8,
+    d_buffers: *mut c_void,
+    airgroup_id: u64,
+    air_id: u64,
+) {
     unsafe {
-        calculate_witness_expr(p_setup, p_steps_params as *mut std::os::raw::c_void);
+        calculate_witness_expr(p_setup, p_steps_params as *mut std::os::raw::c_void, d_buffers, airgroup_id, air_id);
     }
 }
 

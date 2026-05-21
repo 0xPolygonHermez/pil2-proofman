@@ -242,6 +242,9 @@ extern "C" {
     pub fn calculate_witness_expr(
         pSetupCtx: *mut ::std::os::raw::c_void,
         stepsParams: *mut ::std::os::raw::c_void,
+        d_buffers_: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
     );
 
     // Custom Commits

@@ -17,6 +17,7 @@
 #include "expressions_gpu.cuh"
 #include <limits.h>
 #include "fr.hpp"
+#include "starks_api_internal.hpp"
 #endif
 #include "gl64_t.cuh"
 
@@ -441,7 +442,7 @@ struct DeviceRecursiveFBuffers
         if (d_verkey) cudaFree(d_verkey);
     }
 };
-struct DeviceCommitBuffers
+struct DeviceCommitBuffers : public DeviceCommitBuffersCPU
 {
     gl64_t **d_constPols;
     gl64_t **d_constPolsAggregation;
@@ -458,14 +459,12 @@ struct DeviceCommitBuffers
 
     uint32_t  n_gpus;
     uint32_t* my_gpu_ids;
-    uint32_t* gpus_g2l; 
+    uint32_t* gpus_g2l;
     uint32_t n_total_streams;
     uint32_t n_streams;
     uint32_t n_recursive_streams;
     std::mutex *mutex_pinned;
     StreamData *streamsData;
-
-    bool packedTrace = false;
 
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;
 };

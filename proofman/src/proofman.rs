@@ -921,7 +921,13 @@ where
         let setup = self.sctx.get_setup(airgroup_id, air_id)?;
         let steps_params = self.pctx.get_air_instance_params(instance_id, false);
 
-        calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
+        calculate_witness_expressions_c(
+            (&setup.p_setup).into(),
+            (&steps_params).into(),
+            self.pctx.get_device_buffers_ptr(),
+            airgroup_id as u64,
+            air_id as u64,
+        );
 
         let is_shared_buffer = self.pctx.is_shared_buffer(instance_id);
         if is_shared_buffer {
@@ -943,11 +949,16 @@ where
         self.wcm.pre_calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
         self.wcm.calculate_witness(1, &[instance_id], self.max_num_threads, self.memory_handler.as_ref())?;
 
-        // CPU expression eval ahead — use CPU layout.
         Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true, false)?;
         let steps_params = self.pctx.get_air_instance_params(instance_id, false);
 
-        calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
+        calculate_witness_expressions_c(
+            (&setup.p_setup).into(),
+            (&steps_params).into(),
+            self.pctx.get_device_buffers_ptr(),
+            airgroup_id as u64,
+            air_id as u64,
+        );
 
         let is_shared_buffer = self.pctx.is_shared_buffer(instance_id);
         if is_shared_buffer {
@@ -1326,7 +1337,13 @@ where
         //
         // 3. Full verify on CPU: explicit per-step sequence.
         if !debug_info.verify_constraints {
-            calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
+            calculate_witness_expressions_c(
+                (&setup.p_setup).into(),
+                (&steps_params).into(),
+                pctx.get_device_buffers_ptr(),
+                airgroup_id as u64,
+                air_id as u64,
+            );
         } else if pctx.gpu {
             let stream_id = initialize_instance_c(
                 (&setup.p_setup).into(),
@@ -1348,7 +1365,13 @@ where
                 stream_id,
             );
         } else {
-            calculate_witness_expressions_c((&setup.p_setup).into(), (&steps_params).into());
+            calculate_witness_expressions_c(
+                (&setup.p_setup).into(),
+                (&steps_params).into(),
+                pctx.get_device_buffers_ptr(),
+                airgroup_id as u64,
+                air_id as u64,
+            );
             wcm.calculate_witness(2, &[instance_id], 1, memory_handler.as_ref())?;
             calculate_impols_expressions_c((&setup.p_setup).into(), 2, (&steps_params).into());
         }

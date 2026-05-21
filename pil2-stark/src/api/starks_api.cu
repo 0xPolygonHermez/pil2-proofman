@@ -474,7 +474,7 @@ void free_device_buffers_gpu(void *d_buffers_)
 
 
 void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packed_info) {
-    
+
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     Goldilocks::Element *verkeyRoot = (Goldilocks::Element *)verkeyRoot_;
@@ -490,6 +490,11 @@ void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType,
     for(int i=0; i<d_buffers->n_gpus; ++i){
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
         d_buffers->air_instances[key][proofType][i] = new AirInstanceInfo(airgroupId, airId, setupCtx, verkeyRoot, packedInfo);
+    }
+.
+    if (packedInfo != nullptr) {
+        uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
+        d_buffers->addPackedInfoCPU(airgroupId, airId, nCols, packedInfo->is_packed, packedInfo->num_packed_words, packedInfo->unpack_info);
     }
 }
 
