@@ -247,6 +247,14 @@ extern "C" {
         airId: u64,
     );
 
+    pub fn unpack_trace(
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        stepsParams: *mut ::std::os::raw::c_void,
+        d_buffers_: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
+    );
+
     // Custom Commits
     // ========================================================================================
     pub fn custom_commit_size(pSetup: *mut ::std::os::raw::c_void, commitId: u64) -> u64;

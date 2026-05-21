@@ -35,7 +35,7 @@ use crate::{check_const_paths, check_const_paths_vadcop, needs_regeneration_fixe
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c,
     calculate_witness_expressions_c, calculate_trace_instance_c, clear_proof_done_callback_c, initialize_instance_c,
-    launch_callback_c,
+    unpack_trace_c, launch_callback_c,
 };
 
 use std::{path::PathBuf, sync::Arc};
@@ -921,6 +921,13 @@ where
         let setup = self.sctx.get_setup(airgroup_id, air_id)?;
         let steps_params = self.pctx.get_air_instance_params(instance_id, false);
 
+        unpack_trace_c(
+            (&setup.p_setup).into(),
+            (&steps_params).into(),
+            self.pctx.get_device_buffers_ptr(),
+            airgroup_id as u64,
+            air_id as u64,
+        );
         calculate_witness_expressions_c(
             (&setup.p_setup).into(),
             (&steps_params).into(),
@@ -952,6 +959,13 @@ where
         Self::initialize_air_instance(&self.pctx, &self.sctx, instance_id, true, true, false)?;
         let steps_params = self.pctx.get_air_instance_params(instance_id, false);
 
+        unpack_trace_c(
+            (&setup.p_setup).into(),
+            (&steps_params).into(),
+            self.pctx.get_device_buffers_ptr(),
+            airgroup_id as u64,
+            air_id as u64,
+        );
         calculate_witness_expressions_c(
             (&setup.p_setup).into(),
             (&steps_params).into(),
@@ -1337,6 +1351,13 @@ where
         //
         // 3. Full verify on CPU: explicit per-step sequence.
         if !debug_info.verify_constraints {
+            unpack_trace_c(
+                (&setup.p_setup).into(),
+                (&steps_params).into(),
+                pctx.get_device_buffers_ptr(),
+                airgroup_id as u64,
+                air_id as u64,
+            );
             calculate_witness_expressions_c(
                 (&setup.p_setup).into(),
                 (&steps_params).into(),
@@ -1365,6 +1386,13 @@ where
                 stream_id,
             );
         } else {
+            unpack_trace_c(
+                (&setup.p_setup).into(),
+                (&steps_params).into(),
+                pctx.get_device_buffers_ptr(),
+                airgroup_id as u64,
+                air_id as u64,
+            );
             calculate_witness_expressions_c(
                 (&setup.p_setup).into(),
                 (&steps_params).into(),
@@ -3737,6 +3765,7 @@ where
         *proofs[instance_id].write().unwrap() =
             Some(Proof::new(ProofType::Basic, airgroup_id, air_id, Some(instance_id), proof));
 
+        unpack_trace_c(p_setup, p_steps_params, pctx.get_device_buffers_ptr(), airgroup_id as u64, air_id as u64);
         gen_proof_c(
             p_setup,
             p_steps_params,
@@ -4050,6 +4079,7 @@ where
 
         let p_steps_params: *mut u8 = (&steps_params).into();
 
+        unpack_trace_c(p_setup, p_steps_params, pctx.get_device_buffers_ptr(), airgroup_id as u64, air_id as u64);
         commit_witness_c(
             p_setup,
             p_steps_params,

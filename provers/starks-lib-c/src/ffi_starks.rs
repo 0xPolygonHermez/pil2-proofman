@@ -570,6 +570,18 @@ pub fn calculate_witness_expressions_c(
     }
 }
 
+pub fn unpack_trace_c(
+    p_setup: *mut c_void,
+    p_steps_params: *mut u8,
+    d_buffers: *mut c_void,
+    airgroup_id: u64,
+    air_id: u64,
+) {
+    unsafe {
+        unpack_trace(p_setup, p_steps_params as *mut std::os::raw::c_void, d_buffers, airgroup_id, air_id);
+    }
+}
+
 pub fn custom_commit_size_c(p_setup: *mut c_void, commit_id: u64) -> u64 {
     unsafe { custom_commit_size(p_setup, commit_id) }
 }

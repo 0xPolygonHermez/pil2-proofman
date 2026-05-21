@@ -571,27 +571,32 @@ uint64_t set_hint_field(void *pSetupCtx, void* params, void *values, uint64_t hi
 // Starks
 // ========================================================================================
 
+void unpack_trace_cpu(void *pSetupCtx, void *stepsParams, void *d_buffers_, uint64_t airgroupId, uint64_t airId)
+{
+    if (d_buffers_ == nullptr) return;
+
+    SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
+    StepsParams &params = *(StepsParams *)stepsParams;
+    DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
+    PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
+    if (packed_info == nullptr || !packed_info->is_packed) return;
+
+    uint64_t N = (1 << setupCtx.starkInfo.starkStruct.nBits);
+    uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm1"];
+    uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsetsCPU[std::make_pair("cm1", false)];
+    d_buffers->unpack_cpu(
+        (uint64_t *)params.trace,
+        (uint64_t *)&params.aux_trace[offsetCm1],
+        N, nCols,
+        packed_info->num_packed_words,
+        packed_info->unpack_info);
+    memcpy(params.trace, &params.aux_trace[offsetCm1], N * nCols * sizeof(Goldilocks::Element));
+}
+
 void calculate_witness_expr(void *pSetupCtx, void *stepsParams, void *d_buffers_, uint64_t airgroupId, uint64_t airId)
 {
     SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
     StepsParams &params = *(StepsParams *)stepsParams;
-
-    if (d_buffers_ != nullptr) {
-        DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
-        PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
-        if (packed_info != nullptr && packed_info->is_packed) {
-            uint64_t N = (1 << setupCtx.starkInfo.starkStruct.nBits);
-            uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm1"];
-            uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsetsCPU[std::make_pair("cm1", false)];
-            d_buffers->unpack_cpu(
-                (uint64_t *)params.trace,
-                (uint64_t *)&params.aux_trace[offsetCm1],
-                N, nCols,
-                packed_info->num_packed_words,
-                packed_info->unpack_info);
-            memcpy(params.trace, &params.aux_trace[offsetCm1], N * nCols * sizeof(Goldilocks::Element));
-        }
-    }
 
     ProverHelpers proverHelpers;
     ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);
@@ -683,15 +688,8 @@ uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId
 
     MerkleTreeGL mt(setupCtx->starkInfo.starkStruct.merkleTreeArity, setupCtx->starkInfo.starkStruct.lastLevelVerification, true, NExtended, nCols);
 
-    uint64_t offset_src = setupCtx->starkInfo.mapOffsetsCPU[std::make_pair("cm1", false)];
     uint64_t offset_dst = setupCtx->starkInfo.mapOffsetsCPU[std::make_pair("cm1", true)];
     uint64_t offset_mt = setupCtx->starkInfo.mapOffsetsCPU[std::make_pair("mt1", true)];
-
-    PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
-    if (packed_info != nullptr && packed_info->is_packed) {
-        d_buffers->unpack_cpu((uint64_t *)params->trace, (uint64_t*)&auxTraceGL[offset_src], N, nCols, packed_info->num_packed_words, packed_info->unpack_info);
-        memcpy(params->trace, &params->aux_trace[offset_src], N * nCols * sizeof(Goldilocks::Element));
-    }
 
     ProverHelpers proverHelpers;
     ExpressionsPack expressionsCtx(*setupCtx, &proverHelpers);
@@ -800,10 +798,8 @@ uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uin
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx;
     StepsParams *params = (StepsParams *)params_;
-    uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
-    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
-    uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsetsCPU[std::make_pair("cm1", false)];
     if (d_buffers->airgroupId != airgroupId || d_buffers->airId != airId || d_buffers->proofType != "basic") {
+        uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
         uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
         uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
         loadFileParallel(params->pConstPolsAddress, constPolsPath, sizeConstPols);
@@ -814,11 +810,6 @@ uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uin
     d_buffers->airId = airId;
     d_buffers->proofType = "basic";
 
-    PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
-    if (packed_info != nullptr && packed_info->is_packed) {
-        d_buffers->unpack_cpu((uint64_t *)params->trace, (uint64_t*)&params->aux_trace[offsetCm1], N, nCols, packed_info->num_packed_words, packed_info->unpack_info);
-        memcpy(params->trace, &params->aux_trace[offsetCm1], N * nCols * sizeof(Goldilocks::Element));
-    }
     genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile));
     
     return 0;
