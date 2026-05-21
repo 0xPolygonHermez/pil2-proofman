@@ -110,7 +110,7 @@ pub fn prepare_pil(
         }
     }
     // Sort lexicographically (as strings) to match JS `.sort()` with no comparator.
-    opening_points_set.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+    opening_points_set.sort_by_key(|a| a.to_string());
 
     // Initialize boundaries
     let mut boundaries = vec![Boundary { name: "everyRow".to_string(), offset_min: None, offset_max: None }];

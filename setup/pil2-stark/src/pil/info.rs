@@ -125,7 +125,7 @@ pub fn pil_info(
     // different order than numeric sort: e.g. [-1, -2, 0, 1] stays [-1, -2, 0, 1]
     // (because "-1" < "-2" lexicographically), whereas numeric sort would give
     // [-2, -1, 0, 1] and break every `openingPos` index in the generated verifier.
-    opening_points.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+    opening_points.sort_by_key(|a| a.to_string());
 
     // Build code-gen params
     let n_stages = setup.n_stages;
