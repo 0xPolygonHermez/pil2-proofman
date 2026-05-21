@@ -52,8 +52,9 @@ void copy_to_device_in_chunks(
     std::lock_guard<std::mutex> lock(d_buffers->mutex_pinned[gpuLocalId]);
 
     uint64_t block_size = d_buffers->pinned_size;
-    
+
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
+    TimerStartCategoryGPU(timer, H2D_COPY);
     Goldilocks::Element *pinned_buffer = d_buffers->pinned_buffer[gpuLocalId];
     Goldilocks::Element *pinned_buffer_extra = d_buffers->pinned_buffer_extra[gpuLocalId];
 
@@ -97,6 +98,7 @@ void copy_to_device_in_chunks(
     ));
 
     CHECKCUDAERR(cudaStreamSynchronize(stream));
+    TimerStopCategoryGPU(timer, H2D_COPY);
 }
 
 void copy_to_device_in_chunks(
