@@ -552,8 +552,7 @@ pub fn gen_recursive_setup(
 
             // JS: verifierinfo/expressionsinfo JSON and bin files are only written
             // for compressor and recursive2, not for recursive1.
-            let si_val: serde_json::Value = serde_json::from_str(&fs::read_to_string(&starkinfo_path)?)?;
-            let stark_info_loaded = crate::types::stark_info::StarkInfo::from_json(&si_val)?;
+            let stark_info_loaded = crate::types::stark_info::StarkInfo::from_json(&si_json)?;
 
             if template != RecursiveTemplate::Recursive1 {
                 fs::write(
