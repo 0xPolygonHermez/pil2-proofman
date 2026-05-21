@@ -1,0 +1,48 @@
+pragma circom 2.1.0;
+pragma custom_templates;
+
+include "select_vk.circom";
+include "agg_values.circom";
+include "acc_points.circom";
+
+{% for vf in verifier_filenames %}include "{{ vf }}";
+{% endfor %}
+template Recursive2() {
+    var rootCBasics[{{ airs_in_group }}][4];
+
+{{ rootc_basics }}
+{{ vadcop_define_sv }}
+{% if has_publics %}    signal input publics[{{ n_publics }}];
+{% endif %}
+{% if has_proof_values %}    signal input proofValues[{{ num_proof_values }}][3];
+{% endif %}
+    signal input globalChallenge[3];
+    signal input rootCAgg[4];
+
+{{ vadcop_define_a }}
+{{ stark_signals_a }}
+{{ vadcop_define_b }}
+{{ stark_signals_b }}
+{{ vadcop_define_c }}
+{{ stark_signals_c }}
+{{ agg_types_consistency }}
+{{ stark_assign_a }}
+{{ stark_assign_b }}
+{{ stark_assign_c }}
+{{ vadcop_assign_a }}
+{{ vadcop_assign_b }}
+{{ vadcop_assign_c }}
+    vA.rootC <== {{ sel_fn }}({{ airs_in_group }})(a_sv_circuitType, rootCBasics, rootCAgg);
+    vB.rootC <== {{ sel_fn }}({{ airs_in_group }})(b_sv_circuitType, rootCBasics, rootCAgg);
+    vC.rootC <== {{ sel_fn }}({{ airs_in_group }})(c_sv_circuitType, rootCBasics, rootCAgg);
+
+{{ agg_vadcop }}
+
+    for (var i=0; i<4; i++) {
+        vA.publics[{{ n_publics_minus_4 }} + i] <== rootCAgg[i];
+        vB.publics[{{ n_publics_minus_4 }} + i] <== rootCAgg[i];
+        vC.publics[{{ n_publics_minus_4 }} + i] <== rootCAgg[i];
+    }
+}
+
+component main {public [{{ pub_names }}]} = Recursive2();

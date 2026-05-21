@@ -1,0 +1,68 @@
+include "lessthangl.circom";
+include "sha256/sha256.circom";
+include "bitify.circom";
+
+template getSha256Inputs() {
+    signal input publics[{{ n_publics }}];
+
+    signal input rootCVadcopFinal[4];
+
+    signal output publicsHash;
+
+    for (var i = 0; i < {{ n_publics }}; i++) {
+        _<== LessThanGoldilocks()(publics[i]);
+    }
+
+    var totalBits = {{ total_bits }};
+
+    component publicsHasher = Sha256(totalBits);
+
+{% for d in defs %}
+    var {{ d.name }}Pos = {{ d.initial_pos }};
+    var {{ d.name }}BitsOffset = {{ d.bits_offset }};
+{%- if d.single_chunk %}
+    component {{ d.name }}Bits[{{ d.n_values }}];
+    for(var i=0; i< {{ d.n_values }}; i++) {
+        {{ d.name }}Bits[i] = Num2Bits({{ d.eff_bits }});
+        {{ d.name }}Bits[i].in <== publics[{{ d.name }}Pos + i];
+        for (var j=0; j< {{ d.eff_bits }}; j++) {
+{%- if d.is_vk %}
+            publicsHasher.in[{{ d.name }}BitsOffset + i*{{ d.bits_per_chunk }} + {{ d.bits_per_chunk }} - 1 - j] <== {{ d.name }}Bits[i].out[j];
+{%- else %}
+            publicsHasher.in[{{ d.name }}BitsOffset + i*{{ d.bits_per_chunk }} + (j\8)*8 + (7 - j%8)] <== {{ d.name }}Bits[i].out[j];
+{%- endif %}
+        }
+{%- if d.avoid_alias %}
+        publicsHasher.in[{{ d.name }}BitsOffset] <== 0;
+{%- endif %}
+    }
+{%- else %}
+    component {{ d.name }}Bits[{{ d.n_values }}][{{ d.n_chunks }}];
+    for (var k = 0; k < {{ d.n_values }}; k++) {
+        for(var i=0; i< {{ d.n_chunks }}; i++) {
+            {{ d.name }}Bits[k][i] = Num2Bits({{ d.bits_per_chunk }});
+            {{ d.name }}Bits[k][i].in <== publics[{{ d.name }}Pos + k * {{ d.n_chunks }} + i];
+            for(var j = 0; j < {{ d.bits_per_chunk }}; j++) {
+                publicsHasher.in[{{ d.name }}BitsOffset + (k*{{ d.n_chunks }} + i)*{{ d.bits_per_chunk }} + (j\8)*8 + (7 - j%8)] <== {{ d.name }}Bits[k][i].out[j];
+            }
+        }
+    }
+{%- endif %}
+{% endfor %}
+    var rootCVadcopFinalBitsOffset = {{ final_offset }};
+    component rootCVadcopFinalBits[4];
+    for (var i = 0; i < 4; i++) {
+        rootCVadcopFinalBits[i] = Num2Bits(64);
+        rootCVadcopFinalBits[i].in <== rootCVadcopFinal[i];
+        for (var j = 0; j < 64; j++) {
+            publicsHasher.in[rootCVadcopFinalBitsOffset + i*64 + 63 - j] <== rootCVadcopFinalBits[i].out[j];
+        }
+    }
+
+    component b2nPublicsHash = Bits2Num(256);
+    for (var i = 0; i < 256; i++) {
+        b2nPublicsHash.in[i] <== publicsHasher.out[255-i];
+    }
+
+    publicsHash <== b2nPublicsHash.out;
+}

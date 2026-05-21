@@ -145,13 +145,13 @@ endif
 # Define source files based on platform
 ifeq ($(UNAME_S),Darwin)
     # macOS - exclude assembly files (.asm)
-    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/* ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.cc")
+    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/* ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.cc")
 else
     # Linux - include all files including assembly
-    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
+    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
 endif
 SRCS_STARKS_LIB := $(filter-out %_gpu.cpp %_gpu.cc,$(SRCS_STARKS_LIB))
-SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/bn128/src/msm ./src/bn128/src/ntt ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc" -or -name "*.cu")
+SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/bn128/src/msm ./src/bn128/src/ntt ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc" -or -name "*.cu")
 # Sppark utility for GPU (provides gpu_props function)
 SPPARK_GPU_OBJ := $(BUILD_DIR_GPU)/external/sppark/util/all_gpus.o
 OBJS_STARKS_LIB := $(SRCS_STARKS_LIB:%=$(BUILD_DIR)/%.o)

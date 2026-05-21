@@ -12,7 +12,7 @@ If you encounter any errors or unexpected behavior, please report them. Your fee
 
 # Proofs Manager
 
-The Proof Manager is an adaptable Proof Manager designed to assist in the creation of proofs from a PIL2 pilout-formatted file. It is designed to be used in conjunction with the [PIL2](https://github.com/0xPolygonHermez/pilcom) compiler and proofman-js [pil2-proofman-js](https://github.com/0xPolygonHermez/pil2-proofman-js) to generate the setup.
+The Proof Manager is an adaptable Proof Manager designed to assist in the creation of proofs from a PIL2 pilout-formatted file. It is designed to be used in conjunction with the [PIL2](https://github.com/0xPolygonHermez/pilcom) compiler.
 
 ## License
 
@@ -29,6 +29,8 @@ You may choose either license at your discretion.
 ProofMan is a collaborative effort made possible by the contributions of researchers, engineers, and developers dedicated to advancing zero-knowledge technology.
 
 We extend our gratitude to the [Polygon zkEVM](https://github.com/0xpolygonhermez) and [Plonky3](https://github.com/Plonky3/Plonky3) teams for their foundational work in zero-knowledge proving systems.
+
+We also thank the Venus team — the Rust setup pipeline under [setup/](setup/) was heavily inspired by their `pk-setup-rs` work (Venus v0.2.0), particularly the stark info migration and overall pipeline structure. See [setup/README.md](setup/README.md) for details.
 
 Additionally, we acknowledge the efforts of the open-source cryptography and ZK research communities, whose insights and contributions continue to shape the evolution of efficient and scalable zero-knowledge technologies.
 
