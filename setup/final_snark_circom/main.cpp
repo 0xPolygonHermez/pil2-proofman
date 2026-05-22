@@ -5,20 +5,21 @@
            do { perror(msg); exit(EXIT_FAILURE); } while (0)
 
 Circom_Circuit* loadCircuit(std::string const &datFileName) {
-    Circom_Circuit *circuit = new Circom_Circuit;
-
-    int fd;
-    struct stat sb;
-
-    fd = open(datFileName.c_str(), O_RDONLY);
+    int fd = open(datFileName.c_str(), O_RDONLY);
     if (fd == -1) {
-        std::cout << ".dat file not found: " << datFileName << "\n";
-        throw std::system_error(errno, std::generic_category(), "open");
+        std::cerr << "loadCircuit: open(\"" << datFileName << "\") failed: "
+                  << std::strerror(errno) << std::endl;
+        return nullptr;
     }
-    
+
+    struct stat sb;
     if (fstat(fd, &sb) == -1) {          /* To obtain file size */
-        throw std::system_error(errno, std::generic_category(), "fstat");
+        std::cerr << "loadCircuit: fstat failed: " << std::strerror(errno) << std::endl;
+        close(fd);
+        return nullptr;
     }
+
+    Circom_Circuit *circuit = new Circom_Circuit;
 
     u8* bdata = (u8*)mmap(NULL, sb.st_size, PROT_READ , MAP_PRIVATE, fd, 0);
     close(fd);
@@ -126,7 +127,7 @@ bool check_valid_number(std::string & s, uint base){
   return is_valid;
 }
 
-void json2FrElements (json val, std::vector<FrElement> & vval){
+bool json2FrElements (json val, std::vector<FrElement> & vval){
   if (!val.is_array()) {
     FrElement v;
     std::string s_aux, s;
@@ -136,10 +137,10 @@ void json2FrElements (json val, std::vector<FrElement> & vval){
       std::string possible_prefix = s_aux.substr(0, 2);
       if (possible_prefix == "0b" || possible_prefix == "0B"){
         s = s_aux.substr(2, s_aux.size() - 2);
-        base = 2; 
+        base = 2;
       } else if (possible_prefix == "0o" || possible_prefix == "0O"){
         s = s_aux.substr(2, s_aux.size() - 2);
-        base = 8; 
+        base = 8;
       } else if (possible_prefix == "0x" || possible_prefix == "0X"){
         s = s_aux.substr(2, s_aux.size() - 2);
         base = 16;
@@ -148,9 +149,8 @@ void json2FrElements (json val, std::vector<FrElement> & vval){
         base = 10;
       }
       if (!check_valid_number(s, base)){
-        std::ostringstream errStrStream;
-        errStrStream << "Invalid number in JSON input: " << s_aux << "\n";
-	      throw std::runtime_error(errStrStream.str() );
+        std::cerr << "json2FrElements: invalid number in JSON input: " << s_aux << std::endl;
+        return false;
       }
     } else if (val.is_number()) {
         double vd = val.get<double>();
@@ -159,17 +159,19 @@ void json2FrElements (json val, std::vector<FrElement> & vval){
         s = stream.str();
         base = 10;
     } else {
-        std::ostringstream errStrStream;
-        errStrStream << "Invalid JSON type\n";
-	      throw std::runtime_error(errStrStream.str() );
+        std::cerr << "json2FrElements: invalid JSON type" << std::endl;
+        return false;
     }
     Fr_str2element (&v, s.c_str(), base);
     vval.push_back(v);
   } else {
     for (uint i = 0; i < val.size(); i++) {
-      json2FrElements (val[i], vval);
+      if (!json2FrElements (val[i], vval)) {
+        return false;
+      }
     }
   }
+  return true;
 }
 
 json::value_t check_type(std::string prefix, json in){
@@ -222,51 +224,59 @@ void qualify_input(std::string prefix, json &in, json &in1) {
     in1[prefix] = in;
   }
 }
-void loadJsonImpl(Circom_CalcWit *ctx, json &j) {
+bool loadJsonImpl(Circom_CalcWit *ctx, json &j) {
   u64 nItems = j.size();
-  // printf("Items : %llu\n",nItems);
   if (nItems == 0){
     ctx->tryRunCircuit();
   }
   for (json::iterator it = j.begin(); it != j.end(); ++it) {
-    // std::cout << it.key() << " => " << it.value() << '\n';
     u64 h = fnv1a(it.key());
     std::vector<FrElement> v;
-    json2FrElements(it.value(),v);
+    if (!json2FrElements(it.value(), v)) {
+      std::cerr << "loadJsonImpl: failed to parse values for signal " << it.key() << std::endl;
+      return false;
+    }
     uint signalSize = ctx->getInputSignalSize(h);
     if (v.size() < signalSize) {
-	std::ostringstream errStrStream;
-	errStrStream << "Error loading signal " << it.key() << ": Not enough values\n";
-	throw std::runtime_error(errStrStream.str() );
+      std::cerr << "loadJsonImpl: signal " << it.key()
+                << ": not enough values (got " << v.size()
+                << ", expected " << signalSize << ")" << std::endl;
+      return false;
     }
     if (v.size() > signalSize) {
-	std::ostringstream errStrStream;
-	errStrStream << "Error loading signal " << it.key() << ": Too many values\n";
-	throw std::runtime_error(errStrStream.str() );
+      std::cerr << "loadJsonImpl: signal " << it.key()
+                << ": too many values (got " << v.size()
+                << ", expected " << signalSize << ")" << std::endl;
+      return false;
     }
     for (uint i = 0; i<v.size(); i++){
-      try {
-	// std::cout << it.key() << "," << i << " => " << Fr_element2str(&(v[i])) << '\n';
-	ctx->setInputSignal(h,i,v[i]);
-      } catch (const std::runtime_error &e) {
-	std::ostringstream errStrStream;
-	errStrStream << "Error setting signal: " << it.key() << "\n" << e.what();
-	throw std::runtime_error(errStrStream.str() );
-      }
+      // setInputSignal is noexcept (asserts on internal errors); no try/catch needed.
+      ctx->setInputSignal(h, i, v[i]);
     }
   }
+  return true;
 }
 
-void loadJson(Circom_CalcWit *ctx, std::string filename)
+bool loadJson(Circom_CalcWit *ctx, std::string filename)
 {
   std::ifstream inStream(filename);
-  json jin;
-  inStream >> jin;
+  if (!inStream) {
+    std::cerr << "loadJson: failed to open \"" << filename << "\": "
+              << std::strerror(errno) << std::endl;
+    return false;
+  }
+  // nlohmann::json::parse with allow_exceptions=false returns json::value_t::discarded
+  // on parse failure instead of throwing.
+  json jin = json::parse(inStream, /*cb=*/nullptr, /*allow_exceptions=*/false);
+  inStream.close();
+  if (jin.is_discarded()) {
+    std::cerr << "loadJson: failed to parse JSON from \"" << filename << "\"" << std::endl;
+    return false;
+  }
   json j;
   std::string prefix = "";
   qualify_input(prefix, jin, j);
-  inStream.close();
-  loadJsonImpl(ctx, j);
+  return loadJsonImpl(ctx, j);
 }
 
 void freeCircuit(Circom_Circuit *circuit)
@@ -283,44 +293,47 @@ extern "C" __attribute__((visibility("default"))) uint64_t getSizeWitness()  {
 }
 
 extern "C" __attribute__((visibility("default"))) int getWitness(void *zkin, char* datFile, void* pWitness, uint64_t nMutexes)  {
-    try {
-      //-------------------------------------------
-      // Verifier stark proof
-      //-------------------------------------------
-      Circom_Circuit *circuit = loadCircuit(string(datFile));
+    //-------------------------------------------
+    // Verifier stark proof
+    //-------------------------------------------
+    Circom_Circuit *circuit = loadCircuit(string(datFile));
+    if (!circuit) {
+      return -1;
+    }
 
-      Circom_CalcWit *ctx = new Circom_CalcWit(circuit, nMutexes);
+    Circom_CalcWit *ctx = new Circom_CalcWit(circuit, nMutexes);
 
-      loadJsonImpl(ctx, *(json*) zkin);
-
-      if (ctx->getRemaingInputsToBeSet() != 0)
-      {
-        cout << "Not all inputs have been set. Only " << to_string(get_main_input_signal_no() - ctx->getRemaingInputsToBeSet()) << " out of " << to_string(get_main_input_signal_no()) << endl;
-        exit(-1);
-      }
-
-      //-------------------------------------------
-      // Compute witness
-      //------------------------------------------- 
-      uint64_t sizeWitness = get_size_of_witness();
-      uint8_t* witness = (uint8_t *)pWitness;
-      FrElement v;
-      for (uint64_t i = 0; i < sizeWitness; i++)
-      {
-        FrElement aux;
-        ctx->getWitness(i, &v);
-        Fr_toLongNormal(&v, &v);
-        memcpy(witness + i * 32, &v.longVal, sizeof(v.longVal));
-      }
-      
+    if (!loadJsonImpl(ctx, *(json*) zkin)) {
       delete ctx;
       freeCircuit(circuit);
-    } catch (const std::exception &e) {
-        std::cerr << "Runtime error: " << e.what() << std::endl;
-        exit(-1);
-    } catch (...) {
-        std::cerr << "Unknown runtime error" << std::endl;
-        exit(-2);
+      return -1;
     }
+
+    if (ctx->getRemaingInputsToBeSet() != 0)
+    {
+      std::cerr << "getWitness: not all inputs have been set: only "
+                << (get_main_input_signal_no() - ctx->getRemaingInputsToBeSet())
+                << " out of " << get_main_input_signal_no() << std::endl;
+      delete ctx;
+      freeCircuit(circuit);
+      return -1;
+    }
+
+    //-------------------------------------------
+    // Compute witness
+    //-------------------------------------------
+    uint64_t sizeWitness = get_size_of_witness();
+    uint8_t* witness = (uint8_t *)pWitness;
+    FrElement v;
+    for (uint64_t i = 0; i < sizeWitness; i++)
+    {
+      ctx->getWitness(i, &v);
+      Fr_toLongNormal(&v, &v);
+      memcpy(witness + i * 32, &v.longVal, sizeof(v.longVal));
+    }
+
+    delete ctx;
+    freeCircuit(circuit);
+    return 0;
 }
 

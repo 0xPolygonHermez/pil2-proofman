@@ -5,6 +5,8 @@
 #include <fstream>
 #include <sstream>
 #include <iomanip>
+#include <cerrno>
+#include <cstring>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <fcntl.h>
@@ -22,8 +24,8 @@ using namespace std;
 
 Circom_Circuit *loadCircuit(std::string const &datFileName);
 void freeCircuit(Circom_Circuit *circuit);
-void loadJson(Circom_CalcWit *ctx, std::string filename);
-void loadJsonImpl(Circom_CalcWit *ctx, json &j);
+bool loadJson(Circom_CalcWit *ctx, std::string filename);
+bool loadJsonImpl(Circom_CalcWit *ctx, json &j);
 bool check_valid_number(std::string &s, uint base);
 
 extern "C" __attribute__((visibility("default"))) uint64_t getSizeWitness();

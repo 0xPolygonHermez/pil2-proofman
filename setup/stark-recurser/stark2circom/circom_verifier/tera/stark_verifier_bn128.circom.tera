@@ -87,6 +87,8 @@ template Transcript() {
     signal challengeFRIQueries[3];
 
 {% if n_publics > 0 and hash_commits %}{{ transcript_publics_code }}
+{% endif %}{% if hash_commits %}{{ transcript_evals_code }}
+{{ transcript_last_pol_fri_code }}
 {% endif %}{{ transcript_code }}
 
 {% if pow_bits > 0 %}    queriesFRI <== calculateFRIQueries()(challengeFRIQueries, nonce, enable);
@@ -280,7 +282,7 @@ template parallel VerifyQuery(currStepBits, nextStepBits) {
 
     for (var i=1; i<{{ step0_bits }}; i++ ) {
         if(i==1) {
-        ina <== queriesFRI[0]*roots({{ step0_bits }}) - queriesFRI[0]*{{ gl_shift }} + {{ gl_shift }};
+        ina <== queriesFRI[0]*({{ gl_shift }}*roots({{ step0_bits }}) - {{ gl_shift }}) + {{ gl_shift }};
         inb <==  queriesFRI[1]*(roots({{ step0_bits }} - 1) - 1) +1;
         xacc[i-1] <== GLMul()(ina,inb);
         } else {
@@ -291,7 +293,7 @@ template parallel VerifyQuery(currStepBits, nextStepBits) {
 
     signal {maxNum} X[3] <== GLC3()(xacc[{{ step0_bits - 2 }}]);
 {% else %}    signal {maxNum} X[3];
-    X <== GLC3()(queriesFRI[0]*(roots({{ step0_bits }}) - {{ gl_shift }}) + {{ gl_shift }});
+    X <== GLC3()(queriesFRI[0]*({{ gl_shift }}*roots({{ step0_bits }}) - {{ gl_shift }}) + {{ gl_shift }});
 {% endif %}
 
     signal {maxNum} xDivXSubXi[{{ opening_points | length }}][3];
@@ -622,7 +624,7 @@ template Main() {
 {% endif %}{% endfor %}    signal input s0_siblings{{ q_stage }}[{{ n_queries }}][{{ merkle_levels_s0 }}][{{ arity }}];
     signal input s0_siblingsC[{{ n_queries }}][{{ merkle_levels_s0 }}][{{ arity }}];
 
-{% for step in fri_steps_info %}{% if step.s > 0 and not step.is_last %}    signal input s{{ step.s }}_root;
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_root;
 {% endif %}{% endfor %}
 {% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_vals[{{ n_queries }}][{{ step.exponent * 3 }}];
     signal input s{{ step.s }}_siblings[{{ n_queries }}][{{ step.merkle_levels }}][{{ arity }}];
@@ -645,7 +647,7 @@ template Main() {
 {% endif %}{% endfor %}    sv.s0_siblings{{ q_stage }} <== s0_siblings{{ q_stage }};
     sv.s0_siblingsC <== s0_siblingsC;
 
-{% for step in fri_steps_info %}{% if step.s > 0 and not step.is_last %}    sv.s{{ step.s }}_root <== s{{ step.s }}_root;
+{% for step in fri_steps_info %}{% if step.s > 0 %}    sv.s{{ step.s }}_root <== s{{ step.s }}_root;
 {% endif %}{% endfor %}
 {% for step in fri_steps_info %}{% if step.s > 0 %}    sv.s{{ step.s }}_vals <== s{{ step.s }}_vals;
     sv.s{{ step.s }}_siblings <== s{{ step.s }}_siblings;
