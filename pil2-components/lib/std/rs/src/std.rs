@@ -157,16 +157,19 @@ impl<F: PrimeField64> Std<F> {
         Ok(id)
     }
 
+    /// Increments the multiplicity `mul` of a given row `row` in the virtual table with id `id`
     pub fn inc_virtual_row<M: RCMultiplicity>(&self, id: usize, row: M, mul: M) {
         let id = self.unwrap_virtual_table_id(id);
         self.virtual_table.inc_virtual_row(id, row.to_u64(), mul.to_u64());
     }
 
+    /// Increments the multiplicity of a given row `row` by 1
     pub fn inc_virtual_row_one<M: RCMultiplicity>(&self, id: usize, row: M) {
         let id = self.unwrap_virtual_table_id(id);
         self.virtual_table.inc_virtual_row(id, row.to_u64(), 1);
     }
 
+    /// Increments the multiplicities for multiple row/multiplicity pairs in the virtual table with id `id`
     pub fn inc_virtual_row_batch<M: RCMultiplicity>(&self, id: usize, rows: &[M], muls: &[M]) {
         let id = self.unwrap_virtual_table_id(id);
         let rows: Vec<u64> = rows.iter().map(|&r| r.to_u64()).collect();
@@ -174,18 +177,22 @@ impl<F: PrimeField64> Std<F> {
         self.virtual_table.inc_virtual_rows(id, &rows, &muls);
     }
 
+    /// Increments the multiplicity by 1 for each row in `rows`
     pub fn inc_virtual_row_batch_one<M: RCMultiplicity>(&self, id: usize, rows: &[M]) {
         let id = self.unwrap_virtual_table_id(id);
         let rows: Vec<u64> = rows.iter().map(|&r| r.to_u64()).collect();
         self.virtual_table.inc_virtual_rows_same_mul(id, &rows, 1);
     }
 
+    /// Increments the multiplicities for multiple rows with the same multiplicity in the virtual table with id `id`
     pub fn inc_virtual_rows_same_mul<M: RCMultiplicity>(&self, id: usize, rows: &[M], mul: M) {
         let id = self.unwrap_virtual_table_id(id);
         let rows: Vec<u64> = rows.iter().map(|&r| r.to_u64()).collect();
         self.virtual_table.inc_virtual_rows_same_mul(id, &rows, mul.to_u64());
     }
 
+    /// Increments the multiplicities of a list of rows `[start, start + N]` in the virtual table with id `id`.
+    /// If `start` is `None`, then it is set to be 0
     pub fn inc_virtual_rows_ranged<M: RCMultiplicity>(&self, id: usize, start: Option<u64>, muls: &[M]) {
         let id = self.unwrap_virtual_table_id(id);
         let start = start.map(|s| s.to_u64());
