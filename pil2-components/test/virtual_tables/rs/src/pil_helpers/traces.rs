@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "67dd1981d5c9700396d72e676c98f3ccdfbe2687709c8bdc055fdaa5afbf8c77";
+pub const PILOUT_HASH: &str = "1596b54cb3f8fe66bb3af0058600b8f0b7b83a06448a95949a07db2f4a668e80";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
@@ -164,15 +164,15 @@ trace_row!(SpecifiedRangesTraceRow<F> {
 pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 64, 0, 9>;
 
 trace_row!(VirtualTableVirtualTables0FixedRow<F> {
- UID: [F; 5], column: [F; 14], __L1__: F,
+ UID: [F; 3], column: [F; 10], __L1__: F,
 });
-pub type VirtualTableVirtualTables0Fixed<F> = GenericTrace<VirtualTableVirtualTables0FixedRow<F>, 256, 0, 10>;
+pub type VirtualTableVirtualTables0Fixed<F> = GenericTrace<VirtualTableVirtualTables0FixedRow<F>, 512, 0, 10>;
 
 trace_row!(VirtualTableVirtualTables0TraceRow<F> {
- multiplicity:[F; 5],
+ multiplicity:[F; 3],
 });
 
-pub type VirtualTableVirtualTables0Trace<F> = GenericTrace<VirtualTableVirtualTables0TraceRow<F>, 256, 0, 10>;
+pub type VirtualTableVirtualTables0Trace<F> = GenericTrace<VirtualTableVirtualTables0TraceRow<F>, 512, 0, 10>;
 
 trace_row!(VirtualTableVirtualTables1FixedRow<F> {
  UID: [F; 5], column: [F; 17], __L1__: F,
@@ -186,15 +186,15 @@ trace_row!(VirtualTableVirtualTables1TraceRow<F> {
 pub type VirtualTableVirtualTables1Trace<F> = GenericTrace<VirtualTableVirtualTables1TraceRow<F>, 8192, 0, 11>;
 
 trace_row!(VirtualTableVirtualTables2FixedRow<F> {
- UID: [F; 9], column: [F; 11], __L1__: F,
+ UID: [F; 5], column: [F; 7], __L1__: F,
 });
-pub type VirtualTableVirtualTables2Fixed<F> = GenericTrace<VirtualTableVirtualTables2FixedRow<F>, 8192, 0, 12>;
+pub type VirtualTableVirtualTables2Fixed<F> = GenericTrace<VirtualTableVirtualTables2FixedRow<F>, 16384, 0, 12>;
 
 trace_row!(VirtualTableVirtualTables2TraceRow<F> {
- multiplicity:[F; 9],
+ multiplicity:[F; 5],
 });
 
-pub type VirtualTableVirtualTables2Trace<F> = GenericTrace<VirtualTableVirtualTables2TraceRow<F>, 8192, 0, 12>;
+pub type VirtualTableVirtualTables2Trace<F> = GenericTrace<VirtualTableVirtualTables2TraceRow<F>, 16384, 0, 12>;
 
 values!(Component1AirGroupValues<F> {
  gsum_result: FieldExtension<F>,

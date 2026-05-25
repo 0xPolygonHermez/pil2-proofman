@@ -50,7 +50,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic2<F> {
                         let val = rng.random_range(5225..=29023);
                         trace[i].colu = F::from_u16(val);
 
-                        self.std_lib.range_check(range1, val as i64, 1);
+                        self.std_lib.range_check_one(range1, val);
                     }
                     1 => {
                         trace[i].sel_1 = F::ZERO;
@@ -61,7 +61,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic2<F> {
                         let colu_val = rng.random_range(-8719..=-7269);
                         trace[i].colu = F::from_u64((colu_val as i128 + F::ORDER_U64 as i128) as u64);
 
-                        self.std_lib.range_check(range2, colu_val as i64, 1);
+                        self.std_lib.range_check_one(range2, colu_val);
                     }
                     2 => {
                         trace[i].sel_1 = F::ZERO;
@@ -76,7 +76,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic2<F> {
                             F::from_u8(colu_val as u8)
                         };
 
-                        self.std_lib.range_check(range3, colu_val as i64, 1);
+                        self.std_lib.range_check_one(range3, colu_val);
                     }
                     3 => {
                         trace[i].sel_1 = F::ZERO;
@@ -87,7 +87,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic2<F> {
                         let val = rng.random_range(0..=(1 << 8) - 1);
                         trace[i].colu = F::from_u32(val);
 
-                        self.std_lib.range_check(range4, val as i64, 1);
+                        self.std_lib.range_check_one(range4, val);
                     }
                     4 => {
                         trace[i].sel_1 = F::ZERO;
@@ -98,7 +98,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic2<F> {
                         let val = rng.random_range(0..=(1 << 7) - 1);
                         trace[i].colu = F::from_u32(val);
 
-                        self.std_lib.range_check(range5, val as i64, 1);
+                        self.std_lib.range_check_one(range5, val);
                     }
                     _ => return Err(ProofmanError::StdError("Invalid range".to_string())),
                 }

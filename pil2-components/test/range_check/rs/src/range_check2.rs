@@ -43,9 +43,9 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheck2<F> {
                 trace[i].b2 = F::from_u16(val2);
                 trace[i].b3 = F::from_u16(val3);
 
-                self.std_lib.range_check(range1, val1 as i64, 1);
-                self.std_lib.range_check(range2, val2 as i64, 1);
-                self.std_lib.range_check(range3, val3 as i64, 1);
+                self.std_lib.range_check_one(range1, val1);
+                self.std_lib.range_check_one(range2, val2);
+                self.std_lib.range_check_one(range3, val3);
             }
 
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
