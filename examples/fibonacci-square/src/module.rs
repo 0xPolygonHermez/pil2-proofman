@@ -87,12 +87,12 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
                 air_values.last_segment = F::from_bool(j == num_instances - 1);
 
                 x_mods.par_iter().for_each(|x_mod| {
-                    self.std_lib.range_check(range, (module - x_mod) as i64, 1);
+                    self.std_lib.range_check_one(range, module - x_mod);
                 });
 
                 // Trivial range check for the remaining rows
                 for _ in modules_slice.len()..trace.num_rows() {
-                    self.std_lib.range_check(range, module as i64, 1);
+                    self.std_lib.range_check_one(range, module);
                 }
 
                 let air_instance =
