@@ -72,31 +72,20 @@ impl U16Air {
         values.iter().map(|&v| Self::get_global_row(v)).collect()
     }
 
-    #[inline(always)]
-    pub fn update_input(&self, value: u16, multiplicity: u64) {
+    /// Core update function: Updates multiplicities for value/multiplicity pairs
+    #[inline]
+    fn update(&self, iter: impl Iterator<Item = (u16, u64)>) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
 
-        // Identify to which sub-range the value belongs
-        let range_idx = (value as usize) >> self.shift;
-
-        // Get the row index
-        let row_idx = (value as usize) & self.mask;
-
-        // Update the multiplicity
-        self.multiplicities[range_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
-    }
-
-    pub fn update_inputs(&self, values: Vec<u32>) {
-        if self.calculated.load(Ordering::Relaxed) {
-            return;
-        }
-
-        for (value, multiplicity) in values.iter().enumerate() {
-            if *multiplicity == 0 {
+        for (value, multiplicity) in iter {
+            if multiplicity == 0 {
                 continue;
             }
+
+            // Convert the value to usize for bitwise operations
+            let value = value as usize;
 
             // Identify to which sub-range the value belongs
             let range_idx = value >> self.shift;
@@ -105,8 +94,24 @@ impl U16Air {
             let row_idx = value & self.mask;
 
             // Update the multiplicity
-            self.multiplicities[range_idx][row_idx].fetch_add(*multiplicity as u64, Ordering::Relaxed);
+            self.multiplicities[range_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
         }
+    }
+
+    /// Update a single value with a multiplicity
+    pub fn update_value(&self, value: u16, multiplicity: u64) {
+        self.update(std::iter::once((value, multiplicity)));
+    }
+
+    /// Update multiple values with corresponding multiplicities
+    pub fn update_values(&self, values: &[u16], multiplicities: &[u64]) {
+        debug_assert_eq!(values.len(), multiplicities.len());
+        self.update(values.iter().copied().zip(multiplicities.iter().copied()));
+    }
+
+    /// Update multiple values with the same multiplicity
+    pub fn update_values_same_mul(&self, values: &[u16], multiplicity: u64) {
+        self.update(values.iter().copied().map(|v| (v, multiplicity)));
     }
 
     pub fn airgroup_id(&self) -> usize {

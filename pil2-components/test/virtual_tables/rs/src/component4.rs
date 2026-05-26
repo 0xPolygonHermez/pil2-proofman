@@ -48,7 +48,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Component4<F> {
 
                 // Update the virtual table rows
                 let row = Table4::calculate_table_row(val);
-                self.std_lib.inc_virtual_row(id, row, 1);
+                self.std_lib.inc_virtual_row_one(id, row);
 
                 let val1 = rng.random_range(5..=(1 << 8) - 1);
                 let val2 = rng.random_range(0..=(1 << 16) - 1);
@@ -58,9 +58,9 @@ impl<F: PrimeField64> WitnessComponent<F> for Component4<F> {
                 trace[i].b[2] = F::from_u64(val3);
 
                 // Perform the range checks
-                self.std_lib.range_check(range1, val1 as i64, 1);
-                self.std_lib.range_check(range2, val2 as i64, 1);
-                self.std_lib.range_check(range3, val3 as i64, 1);
+                self.std_lib.range_check_one(range1, val1);
+                self.std_lib.range_check_one(range2, val2);
+                self.std_lib.range_check_one(range3, val3);
             }
 
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
