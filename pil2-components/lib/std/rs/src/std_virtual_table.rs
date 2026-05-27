@@ -343,6 +343,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> WitnessComponent<F> for VirtualTab
                         self.air_id
                     );
                     pctx.dctx_skip_process_instance(instance_id);
+                    *self.trace_buffer.lock().unwrap() = Some(buffer);
                     return Ok(());
                 }
                 let setup = sctx.get_setup(self.airgroup_id, self.air_id)?;
