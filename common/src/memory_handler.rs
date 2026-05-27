@@ -1,5 +1,4 @@
 use crossbeam_channel::{bounded, Sender, Receiver};
-use proofman_util::create_buffer_fast;
 use std::sync::Arc;
 use crossbeam_queue::SegQueue;
 use crate::ProofCtx;
@@ -20,7 +19,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
     fn new(n_buffers: usize, buffer_size: usize) -> Self {
         let (sender, receiver) = bounded(n_buffers);
         for _ in 0..n_buffers {
-            sender.send(create_buffer_fast(buffer_size)).unwrap();
+            sender.send(vec![F::ZERO; buffer_size]).unwrap();
         }
         Self { sender, receiver, n_buffers, buffer_size }
     }
@@ -55,7 +54,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
         }
         while valid_buffers.len() < self.n_buffers {
             tracing::warn!("Pool::reset: only {} valid buffers; allocating a replacement", valid_buffers.len());
-            valid_buffers.push(create_buffer_fast(self.buffer_size));
+            valid_buffers.push(vec![F::ZERO; self.buffer_size]);
         }
         for buf in valid_buffers {
             self.sender.send(buf).expect("Pool channel closed");
@@ -82,7 +81,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
         let (tx_buffer_pool, rx_buffer_pool) = bounded(n_buffers);
         let instance_ids_to_be_released = Arc::new(SegQueue::new());
         for _ in 0..n_buffers {
-            tx_buffer_pool.send(create_buffer_fast(buffer_size)).unwrap();
+            tx_buffer_pool.send(vec![F::ZERO; buffer_size]).unwrap();
         }
 
         let total_memory = n_buffers * buffer_size * std::mem::size_of::<F>();
@@ -124,7 +123,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandler<F> {
                 "MemoryHandler::Not enough valid buffers (found {}), creating a new one.",
                 valid_buffers.len()
             );
-            valid_buffers.push(create_buffer_fast(self.buffer_size));
+            valid_buffers.push(vec![F::ZERO; self.buffer_size]);
         }
 
         for buf in valid_buffers.into_iter() {

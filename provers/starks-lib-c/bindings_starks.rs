@@ -272,7 +272,7 @@ extern "C" {
         buffer: *mut ::std::os::raw::c_void,
         customCommitFile: *mut ::std::os::raw::c_char,
     );
-    
+
     pub fn write_custom_commit(
         root: *mut ::std::os::raw::c_void,
         arity: u64,
@@ -294,6 +294,7 @@ extern "C" {
         airId: u64,
         root: *mut ::std::os::raw::c_void,
         d_buffers: *mut ::std::os::raw::c_void,
+        customCommitsFixedPath: *mut ::std::os::raw::c_char,
     ) -> u64;
 
     // Constraints Verification
@@ -311,6 +312,7 @@ extern "C" {
         instanceId: u64,
         stepsParams: *mut ::std::os::raw::c_void,
         d_buffers: *mut ::std::os::raw::c_void,
+        customCommitsFixedPath: *mut ::std::os::raw::c_char,
     ) -> u64;
 
     pub fn calculate_trace_instance(
@@ -406,6 +408,7 @@ extern "C" {
         streamId: u64,
         constPolsPath: *mut ::std::os::raw::c_char,
         constTreePath: *mut ::std::os::raw::c_char,
+        customCommitsFixedPath: *mut ::std::os::raw::c_char,
     ) -> u64;
     
     pub fn gen_recursive_proof(

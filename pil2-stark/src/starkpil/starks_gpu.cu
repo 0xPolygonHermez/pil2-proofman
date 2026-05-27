@@ -1188,6 +1188,14 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, ui
     uint64_t numSiblings = (uint64_t)ceil(setupCtx.starkInfo.starkStruct.nBitsExt / std::log2(arity)) - lastLevelVerification;
     uint64_t numSiblingsLevel = (arity - 1) * HASH_SIZE;
 
+    uint64_t pushes_per_polQuery = setupCtx.starkInfo.nStages + 2;
+    if (nTrees > setupCtx.starkInfo.nStages + 2) {
+        pushes_per_polQuery += 1;
+    }
+    for (uint64_t i = 0; i < setupCtx.starkInfo.starkStruct.nQueries; i++) {
+        proof.proof.fri.trees.polQueries[i].reserve(pushes_per_polQuery);
+    }
+
     int count = 0;
     for (uint k = 0; k < setupCtx.starkInfo.nStages + 1; k++)
     {
