@@ -649,7 +649,10 @@ pub fn commit_witness_c(
     air_id: u64,
     root: *mut u8,
     d_buffers: *mut c_void,
+    custom_commits_fixed_path: &str,
 ) -> u64 {
+    let custom_commits_path_name = CString::new(custom_commits_fixed_path).unwrap();
+    let custom_commits_path_ptr = custom_commits_path_name.as_ptr() as *mut std::os::raw::c_char;
     unsafe {
         commit_witness(
             p_setup,
@@ -659,6 +662,7 @@ pub fn commit_witness_c(
             air_id,
             root as *mut std::os::raw::c_void,
             d_buffers,
+            custom_commits_path_ptr,
         )
     }
 }
@@ -686,7 +690,10 @@ pub fn initialize_instance_c(
     instance_id: u64,
     p_steps_params: *mut u8,
     d_buffers: *mut c_void,
+    custom_commits_fixed_path: &str,
 ) -> u64 {
+    let custom_commits_path_name = CString::new(custom_commits_fixed_path).unwrap();
+    let custom_commits_path_ptr = custom_commits_path_name.as_ptr() as *mut std::os::raw::c_char;
     unsafe {
         initialize_instance(
             p_setup,
@@ -695,6 +702,7 @@ pub fn initialize_instance_c(
             instance_id,
             p_steps_params as *mut std::os::raw::c_void,
             d_buffers,
+            custom_commits_path_ptr,
         )
     }
 }
@@ -896,6 +904,7 @@ pub fn gen_proof_c(
     stream_id: u64,
     const_pols_path: &str,
     const_tree_path: &str,
+    custom_commits_fixed_path: &str,
 ) -> u64 {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -905,6 +914,9 @@ pub fn gen_proof_c(
 
     let const_tree_filename_name = CString::new(const_tree_path).unwrap();
     let const_tree_filename_ptr = const_tree_filename_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let custom_commits_path_name = CString::new(custom_commits_fixed_path).unwrap();
+    let custom_commits_path_ptr = custom_commits_path_name.as_ptr() as *mut std::os::raw::c_char;
 
     unsafe {
         gen_proof(
@@ -921,6 +933,7 @@ pub fn gen_proof_c(
             stream_id,
             const_filename_ptr,
             const_tree_filename_ptr,
+            custom_commits_path_ptr,
         )
     }
 }

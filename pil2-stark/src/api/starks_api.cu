@@ -541,7 +541,7 @@ void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t in
     }
 }
 
-uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool skipRecalculation, uint64_t streamId_, char *constPolsPath,  char *constTreePath) {
+uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool skipRecalculation, uint64_t streamId_, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath) {
 
     auto key = std::make_pair(airgroupId, airId);
     std::string proofType = "basic";
@@ -582,7 +582,9 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
 
     if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0) {
         Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
-        copy_to_device_in_chunks(d_buffers, params->pCustomCommitsFixed, pCustomCommitsFixed, setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element), streamId, timer);
+        uint64_t customCommitsSize = setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element);
+        // Skip the 32-byte Merkle-root header at the start of the file (assumes 1 custom commit per AIR).
+        load_and_copy_to_device_in_chunks(d_buffers, customCommitsFixedPath, (uint8_t*)pCustomCommitsFixed, customCommitsSize, streamId, 32);
     }
 
     if (!skipRecalculation) {
@@ -638,7 +640,7 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     return streamId;
 }
 
-uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* params_, void *d_buffers_) {
+uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* params_, void *d_buffers_, char *customCommitsFixedPath) {
     auto key = std::make_pair(airgroupId, airId);
     std::string proofType = "basic";
 
@@ -674,12 +676,13 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
 
     if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0) {
         Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
-        copy_to_device_in_chunks(d_buffers, params->pCustomCommitsFixed, pCustomCommitsFixed, setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element), streamId, timer);
+        uint64_t customCommitsSize = setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element);
+        load_and_copy_to_device_in_chunks(d_buffers, customCommitsFixedPath, (uint8_t*)pCustomCommitsFixed, customCommitsSize, streamId, 32);
     }
 
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : N * nCols * sizeof(Goldilocks::Element);
     uint64_t *dst = (uint64_t *)(d_aux_trace + offsetStage1 + N * nCols);
-    copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);    
+    copy_to_device_in_chunks(d_buffers, params->trace, dst, total_size, streamId, timer);
     
     size_t totalCopySize = 0;
     totalCopySize += setupCtx->starkInfo.nPublics;
@@ -1180,8 +1183,7 @@ void *gen_recursive_proof_final_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
     return result;
 }
 
-uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers_) {
-
+uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers_, char *customCommitsFixedPath) {
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     StepsParams *params = (StepsParams *)params_;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
@@ -1250,10 +1252,10 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
         unpack_fixed(d_num_packed_words, (uint64_t*)(packed_const_pols + 1), (uint64_t*)(packed_const_pols + 1 + setupCtx->starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx->starkInfo.nConstants, N, stream, timer);
         CHECKCUDAERR(cudaGetLastError());
 
-        Goldilocks::Element *pCustomCommitsFixed = nullptr;
         if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0) {
-            pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
-            copy_to_device_in_chunks(d_buffers, params->pCustomCommitsFixed, pCustomCommitsFixed, setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element), streamId, timer);
+            Goldilocks::Element *pCustomCommitsFixedDst = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
+            uint64_t customCommitsSize = setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element);
+            load_and_copy_to_device_in_chunks(d_buffers, customCommitsFixedPath, (uint8_t*)pCustomCommitsFixedDst, customCommitsSize, streamId, 32);
         }
 
         size_t totalCopySize = 0;
@@ -1293,7 +1295,9 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
             xDivXSub : nullptr,
             pConstPolsAddress: d_const_pols_unpacked,
             pConstPolsExtendedTreeAddress: nullptr,
-            pCustomCommitsFixed,
+            pCustomCommitsFixed: setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0
+                ? (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)]
+                : nullptr,
         };
 
         StepsParams *params_pinned = d_buffers->streamsData[streamId].pinned_params;

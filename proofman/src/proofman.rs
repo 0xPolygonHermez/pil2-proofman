@@ -303,7 +303,6 @@ pub struct ProofMan<F: PrimeField64> {
     aux_trace: Arc<Vec<F>>,
     const_pols: Arc<Vec<F>>,
     const_tree: Arc<Vec<F>>,
-    prover_buffer_recursive: Arc<Vec<F>>,
     max_num_threads: usize,
     num_threads_per_witness: usize,
     tx_threads: Sender<()>,
@@ -1324,13 +1323,6 @@ where
         let airgroup_values_air_instances = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
         let valid_constraints = Arc::new(AtomicBool::new(true));
 
-        // Per-thread scratch — verify path writes into aux_trace/const_pols via FFI.
-        // Sharing across workers would alias the writes (UB).
-        let verify_aux_trace_size =
-            if self.pctx.gpu { 0 } else { self.sctx.max_prover_buffer_size.max(self.setups.max_prover_buffer_size) };
-        let verify_const_pols_size =
-            if self.pctx.gpu { 0 } else { self.sctx.max_const_size.max(self.setups.max_const_size) };
-
         let _contributions_guard = WorkerPoolGuard {
             sentinel: usize::MAX,
             n_streams: self.n_streams,
@@ -1348,8 +1340,11 @@ where
             let airgroup_values_air_instances = airgroup_values_air_instances.clone();
             let wcm_clone = self.wcm.clone();
             let debug_info_clone = debug_info.clone();
-            let const_pols_local: Arc<Vec<F>> = Arc::new(create_buffer_fast(verify_const_pols_size));
-            let aux_trace_local: Arc<Vec<F>> = Arc::new(create_buffer_fast(verify_aux_trace_size));
+            // Reuse the process-wide aux_trace / const_pols buffers. In CPU mode the
+            // verify path runs one instance at a time; in GPU mode these are empty
+            // Vecs and initialize_air_instance skips the host-side init.
+            let aux_trace_arc = self.aux_trace.clone();
+            let const_pols_arc = self.const_pols.clone();
             let contribution_handle = std::thread::spawn(move || loop {
                 match contributions_rx_clone.recv_timeout(std::time::Duration::from_millis(1)) {
                     Ok(instance_id) => {
@@ -1368,8 +1363,8 @@ where
                             &debug_info_clone,
                             valid_constraints.clone(),
                             airgroup_values_air_instances.clone(),
-                            &const_pols_local,
-                            &aux_trace_local,
+                            &const_pols_arc,
+                            &aux_trace_arc,
                         ) {
                             cancellation_info_clone.write().unwrap().cancel(Some(e));
                             break;
@@ -1521,22 +1516,23 @@ where
         debug_info: &DebugInfo,
         valid_constraints: Arc<AtomicBool>,
         airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
-        const_pols_scratch: &Arc<Vec<F>>,
-        aux_trace_scratch: &Arc<Vec<F>>,
+        const_pols: &Arc<Vec<F>>,
+        aux_trace: &Arc<Vec<F>>,
     ) -> ProofmanResult<()> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
-        Self::initialize_air_instance(
-            pctx,
-            sctx,
-            instance_id,
-            true,
-            true,
-            Some(const_pols_scratch),
-            Some(aux_trace_scratch),
-        )?;
+        Self::initialize_air_instance(pctx, sctx, instance_id, true, true, Some(const_pols), Some(aux_trace))?;
 
         let setup = sctx.get_setup(airgroup_id, air_id)?;
         let steps_params = pctx.get_air_instance_params(instance_id, false);
+
+        let custom_commits_fixed_path = setup
+            .stark_info
+            .custom_commits
+            .iter()
+            .find(|c| c.stage_widths[0] > 0)
+            .and_then(|c| pctx.get_custom_commits_fixed_buffer(&c.name, false).ok())
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
 
         let stream_id = initialize_instance_c(
             (&setup.p_setup).into(),
@@ -1545,6 +1541,7 @@ where
             instance_id as u64,
             (&steps_params).into(),
             pctx.get_device_buffers_ptr(),
+            &custom_commits_fixed_path,
         );
 
         #[cfg(feature = "diagnostic")]
@@ -1690,7 +1687,7 @@ where
             &self.memory_handler_recursive_witness,
             &self.setups,
             &vadcop_final_proof.proof_with_publics(),
-            &self.prover_buffer_recursive,
+            &self.aux_trace,
             &self.const_pols,
             &self.const_tree,
         )?;
@@ -1781,10 +1778,14 @@ where
         let (aux_trace, const_pols, const_tree) = if options.gpu {
             (Arc::new(Vec::new()), Arc::new(Vec::new()), Arc::new(Vec::new()))
         } else {
+            let mut aux_trace_size = sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size);
+            if options.aggregation {
+                aux_trace_size = aux_trace_size.max(get_recursive_buffer_sizes(&pctx, &setups_vadcop)?);
+            }
             (
-                Arc::new(create_buffer_fast(sctx.max_prover_buffer_size.max(setups_vadcop.max_prover_buffer_size))),
-                Arc::new(create_buffer_fast(sctx.max_const_size.max(setups_vadcop.max_const_size))),
-                Arc::new(create_buffer_fast(sctx.max_const_tree_size.max(setups_vadcop.max_const_tree_size))),
+                Arc::new(vec![F::ZERO; aux_trace_size]),
+                Arc::new(vec![F::ZERO; sctx.max_const_size.max(setups_vadcop.max_const_size)]),
+                Arc::new(vec![F::ZERO; sctx.max_const_tree_size.max(setups_vadcop.max_const_tree_size)]),
             )
         };
 
@@ -1817,13 +1818,6 @@ where
         };
         tracing::info!("Using {num_threads_per_witness} threads per witness computation");
 
-        let prover_buffer_recursive = if options.aggregation {
-            let prover_buffer_size = get_recursive_buffer_sizes(&pctx, &setups_vadcop)?;
-            Arc::new(create_buffer_fast(prover_buffer_size))
-        } else {
-            Arc::new(Vec::new())
-        };
-
         let values_contributions: Arc<Vec<Mutex<Vec<F>>>> =
             Arc::new((0..MAX_INSTANCES).map(|_| Mutex::new(Vec::<F>::new())).collect());
 
@@ -1853,7 +1847,6 @@ where
             mpi_ctx,
             wcm,
             setups: setups_vadcop,
-            prover_buffer_recursive,
             n_streams,
             n_streams_non_recursive,
             max_num_threads,
@@ -1963,15 +1956,6 @@ where
 
             self.pctx.set_proof_tx(Some(self.contributions_tx.clone()));
 
-            // Per-thread scratch — get_contribution_air's FFI writes into both buffers.
-            // Sharing across workers would alias the writes (UB).
-            let scratch_aux_trace_size = if self.pctx.gpu {
-                0
-            } else {
-                self.sctx.max_prover_buffer_size.max(self.setups.max_prover_buffer_size)
-            };
-            let scratch_const_pols_size =
-                if self.pctx.gpu { 0 } else { self.sctx.max_const_size.max(self.setups.max_const_size) };
             for _ in 0..self.n_streams {
                 let pctx_clone = self.pctx.clone();
                 let sctx_clone = self.sctx.clone();
@@ -1980,8 +1964,13 @@ where
                 let memory_handler_clone = self.memory_handler.clone();
                 let contributions_rx_clone = self.contributions_rx.clone();
                 let cancellation_info_clone = self.cancellation_info.clone();
-                let mut aux_trace_local: Vec<F> = create_buffer_fast(scratch_aux_trace_size);
-                let mut const_pols_local: Vec<F> = create_buffer_fast(scratch_const_pols_size);
+                // Reuse the process-wide aux_trace / const_pols buffers (allocated in
+                // initialize_proofman). In CPU mode the prover runs one proof at a time,
+                // so contribution workers and proof generation never touch these
+                // concurrently. In GPU mode these are empty Vecs and get_contribution_air
+                // never reads from them.
+                let aux_trace_arc = self.aux_trace.clone();
+                let const_pols_arc = self.const_pols.clone();
                 let contribution_handle = std::thread::spawn(move || loop {
                     match contributions_rx_clone.recv_timeout(std::time::Duration::from_millis(1)) {
                         Ok(instance_id) => {
@@ -1991,14 +1980,21 @@ where
                             if cancellation_info_clone.read().unwrap().token.is_cancelled() {
                                 break;
                             }
+                            // SAFETY: see comment above where aux_trace_arc/const_pols_arc are cloned.
+                            let aux_trace_local: &mut [F] = unsafe {
+                                std::slice::from_raw_parts_mut(aux_trace_arc.as_ptr() as *mut F, aux_trace_arc.len())
+                            };
+                            let const_pols_local: &mut [F] = unsafe {
+                                std::slice::from_raw_parts_mut(const_pols_arc.as_ptr() as *mut F, const_pols_arc.len())
+                            };
                             if let Err(e) = Self::get_contribution_air(
                                 &pctx_clone,
                                 &sctx_clone,
                                 &roots_contributions_clone,
                                 &values_contributions_clone,
                                 instance_id,
-                                &mut aux_trace_local,
-                                &mut const_pols_local,
+                                aux_trace_local,
+                                const_pols_local,
                             ) {
                                 cancellation_info_clone.write().unwrap().cancel(Some(e));
                                 break;
@@ -2450,7 +2446,6 @@ where
             let aux_trace_clone = self.aux_trace.clone();
             let const_pols_clone = self.const_pols.clone();
             let const_tree_clone = self.const_tree.clone();
-            let prover_buffer_recursive = self.prover_buffer_recursive.clone();
             let proofs_clone = self.proofs.clone();
             let compressor_proofs_clone = self.compressor_proofs.clone();
             let recursive1_proofs_clone = self.recursive1_proofs.clone();
@@ -2574,7 +2569,7 @@ where
                         &setups_clone,
                         &mut witness,
                         new_proof_ref,
-                        &prover_buffer_recursive,
+                        &aux_trace_clone,
                         &const_tree_clone,
                         &const_pols_clone,
                         force_recursive_stream,
@@ -2592,7 +2587,7 @@ where
                         &setups_clone,
                         &mut witness,
                         new_proof_ref,
-                        &prover_buffer_recursive,
+                        &aux_trace_clone,
                         &const_tree_clone,
                         &const_pols_clone,
                         force_recursive_stream,
@@ -2610,7 +2605,7 @@ where
                         &setups_clone,
                         &mut witness,
                         new_proof_ref,
-                        &prover_buffer_recursive,
+                        &aux_trace_clone,
                         &const_tree_clone,
                         &const_pols_clone,
                         force_recursive_stream,
@@ -2739,7 +2734,7 @@ where
                     &self.mpi_ctx,
                     &self.setups,
                     recursive2_proofs_data,
-                    &self.prover_buffer_recursive,
+                    &self.aux_trace,
                     &self.const_pols,
                     &self.const_tree,
                     &mut agg_proofs,
@@ -3144,7 +3139,7 @@ where
                     &self.memory_handler_recursive_witness,
                     &self.setups,
                     &agg_proofs_data,
-                    &self.prover_buffer_recursive,
+                    &self.aux_trace,
                     &self.const_pols,
                     &self.const_tree,
                 )?;
@@ -3155,7 +3150,7 @@ where
                         &self.memory_handler_recursive_witness,
                         &self.setups,
                         &vadcop_proof_final.proof,
-                        &self.prover_buffer_recursive,
+                        &self.aux_trace,
                         &self.const_pols,
                         &self.const_tree,
                     )?;
@@ -3248,7 +3243,7 @@ where
             let setups_clone = self.setups.clone();
             let const_pols_clone = self.const_pols.clone();
             let const_tree_clone = self.const_tree.clone();
-            let prover_buffer_recursive = self.prover_buffer_recursive.clone();
+            let aux_trace_clone = self.aux_trace.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
             let outer_agg_proofs_finished = self.outer_agg_proofs_finished.clone();
             let rec2_witness_rx = self.rec2_witness_rx.clone();
@@ -3299,7 +3294,7 @@ where
                     &setups_clone,
                     &mut witness,
                     new_proof_ref,
-                    &prover_buffer_recursive,
+                    &aux_trace_clone,
                     &const_tree_clone,
                     &const_pols_clone,
                     false,
@@ -3464,7 +3459,7 @@ where
             let setups_clone = self.setups.clone();
             let const_pols_clone = self.const_pols.clone();
             let const_tree_clone = self.const_tree.clone();
-            let prover_buffer_recursive = self.prover_buffer_recursive.clone();
+            let aux_trace_clone = self.aux_trace.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
             let memory_handler_recursive_witness = self.memory_handler_recursive_witness.clone();
@@ -3503,7 +3498,7 @@ where
                         &setups_clone,
                         &mut witness,
                         new_proof_ref,
-                        &prover_buffer_recursive,
+                        &aux_trace_clone,
                         &const_tree_clone,
                         &const_pols_clone,
                         false,
@@ -3940,6 +3935,17 @@ where
         let const_pols_path = &setup.const_pols_path;
         let const_pols_tree_path = &setup.const_pols_tree_path;
 
+        // Resolve the custom-commits-fixed file path for this instance, if any.
+        // Empty string means no custom commits — C++ side reads only when non-empty.
+        let custom_commits_fixed_path = setup
+            .stark_info
+            .custom_commits
+            .iter()
+            .find(|c| c.stage_widths[0] > 0)
+            .and_then(|c| pctx.get_custom_commits_fixed_buffer(&c.name, false).ok())
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+
         let (skip_recalculation, stream_id) = match stream_id_ {
             Some(stream_id) => (true, stream_id),
             None => (false, 0),
@@ -3963,6 +3969,7 @@ where
             stream_id as u64,
             const_pols_path,
             const_pols_tree_path,
+            &custom_commits_fixed_path,
         );
 
         if !pctx.gpu {
@@ -4163,27 +4170,39 @@ where
         );
 
         if verify_constraints && !pctx.gpu {
-            let _ = shared_const_pols;
-            let mut const_pols_buf: Vec<F> = create_buffer_fast(setup.const_pols_size);
-            load_const_pols(setup, &mut const_pols_buf);
-            air_instance.init_fixed(Arc::new(const_pols_buf));
+            // Reuse the process-wide const_pols buffer passed by the verify worker.
+            // We load the per-air const data into it each call; in CPU verify mode
+            // workers run sequentially, so no concurrent access.
+            let shared = shared_const_pols.expect("CPU verify requires shared const_pols");
+            // SAFETY: see comment above. We're the only writer for the duration of
+            // load_const_pols; no other thread holds a mutable reference into this Vec.
+            let const_pols_view: &mut [F] =
+                unsafe { std::slice::from_raw_parts_mut(shared.as_ptr() as *mut F, shared.len()) };
+            load_const_pols(setup, const_pols_view);
+            air_instance.init_fixed(shared.clone());
         }
-        air_instance.init_custom_commit_fixed_trace(setup.custom_commits_fixed_buffer_size as usize);
 
-        let n_custom_commits = setup.stark_info.custom_commits.len();
+        // CPU only: allocate the host buffer and load each custom-commit file into it.
+        // In GPU mode, custom commits are streamed disk → device by initialize_instance_gpu
+        // / gen_proof_gpu via the customCommitsFixedPath threaded through FFI, so the
+        // host buffer would just be dead weight.
+        if !pctx.gpu {
+            air_instance.init_custom_commit_fixed_trace(setup.custom_commits_fixed_buffer_size as usize);
 
-        for commit_id in 0..n_custom_commits {
-            if setup.stark_info.custom_commits[commit_id].stage_widths[0] > 0 {
-                let custom_commit_file_path = pctx
-                    .get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name, true)
-                    .unwrap();
+            let n_custom_commits = setup.stark_info.custom_commits.len();
+            for commit_id in 0..n_custom_commits {
+                if setup.stark_info.custom_commits[commit_id].stage_widths[0] > 0 {
+                    let custom_commit_file_path = pctx
+                        .get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name, true)
+                        .unwrap();
 
-                load_custom_commit_c(
-                    (&setup.p_setup).into(),
-                    commit_id as u64,
-                    air_instance.get_custom_commits_fixed_ptr(),
-                    custom_commit_file_path.to_str().expect("Invalid path"),
-                );
+                    load_custom_commit_c(
+                        (&setup.p_setup).into(),
+                        commit_id as u64,
+                        air_instance.get_custom_commits_fixed_ptr(),
+                        custom_commit_file_path.to_str().expect("Invalid path"),
+                    );
+                }
             }
         }
 
@@ -4267,6 +4286,15 @@ where
 
         let p_steps_params: *mut u8 = (&steps_params).into();
 
+        let custom_commits_fixed_path = setup
+            .stark_info
+            .custom_commits
+            .iter()
+            .find(|c| c.stage_widths[0] > 0)
+            .and_then(|c| pctx.get_custom_commits_fixed_buffer(&c.name, false).ok())
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+
         commit_witness_c(
             p_setup,
             p_steps_params,
@@ -4275,6 +4303,7 @@ where
             air_id as u64,
             roots_contributions[instance_id].as_ptr() as *mut u8,
             pctx.get_device_buffers_ptr(),
+            &custom_commits_fixed_path,
         );
 
         let n_airvalues = setup

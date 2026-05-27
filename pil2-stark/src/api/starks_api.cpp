@@ -652,7 +652,7 @@ void write_custom_commit_cpu(void* root, uint64_t arity, uint64_t nBits, uint64_
     }
 }
 
-uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers_) {
+uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers_, char *customCommitsFixedPath) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     StepsParams *params = (StepsParams *)params_;
@@ -779,7 +779,7 @@ uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globali
 
 // Gen proof
 // =================================================================================
-uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool skipRecalculation, uint64_t streamId, char *constPolsPath,  char *constTreePath)  {
+uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool skipRecalculation, uint64_t streamId, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath)  {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx;
     StepsParams *params = (StepsParams *)params_;

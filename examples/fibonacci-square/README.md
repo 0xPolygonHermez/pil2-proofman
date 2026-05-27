@@ -151,18 +151,18 @@ In order to generate a proof in the GPU, the following commands needs to be exec
 Note that `gen-custom-commits-fixed` must be invoked with `--gpu` so the resulting `rom_gpu.bin` is laid out for the GPU Merkle hasher; the file produced without `--gpu` is the CPU layout and is not interchangeable.
 
 ```bash
-cargo build --features gpu --workspace \
-&& cargo run --features gpu --bin proofman-cli gen-custom-commits-fixed \
+cargo build --workspace \
+&& cargo run --bin proofman-cli gen-custom-commits-fixed \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --custom-commits rom=examples/fibonacci-square/build/rom_gpu.bin \
      --gpu \
-&& cargo run --features gpu --bin proofman-cli prove \
+&& cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --output-dir examples/fibonacci-square/build/proofs \
-     --custom-commits rom=examples/fibonacci-square/build/rom_gpu.bin -y -a -f --gpu
+     --custom-commits rom=examples/fibonacci-square/build/rom_gpu.bin -y -a -f --gpu -vv
 ```
 ### 2.9 All at once
 
@@ -206,7 +206,7 @@ export PIL2_PROOFMAN_EXT=$(if [[  "$(uname -s)" == "Darwin" ]]; then echo ".dyli
      -o ./examples/fibonacci-square/pil/build.pilout \
 && cargo run --bin proofman-setup -- setup \
      -a ./examples/fibonacci-square/pil/build.pilout \
-     -b ./examples/fibonacci-square/build_js -r \
+     -b ./examples/fibonacci-square/build -r \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \

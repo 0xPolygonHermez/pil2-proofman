@@ -149,6 +149,7 @@ template <typename ElementType>
 vector<MerkleProof<ElementType>> FRI<ElementType>::queryPol(MerkleTreeType *trees[], uint64_t nTrees, uint64_t idx, ElementType* buff)
 {
     vector<MerkleProof<ElementType>> vMkProof;
+    vMkProof.reserve(nTrees);
     for (uint i = 0; i < nTrees; i++)
     {
         trees[i]->getGroupProof(&buff[0], idx);

@@ -417,7 +417,7 @@ void setProof_bn128_gpu(
     // Process main trees
     for (uint64_t i = 0; i < nQueries; ++i) {
         std::vector<MerkleProof<RawFr::Element>> vMkProof;
-        
+        vMkProof.reserve(nTrees);
         for (uint64_t k = 0; k < nTrees; ++k) {
             uint64_t treeWidth = trees[k]->getMerkleTreeWidth();
             uint64_t proofLength = trees[k]->getMerkleProofLength();
