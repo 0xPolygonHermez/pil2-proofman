@@ -5,7 +5,7 @@ use proofman_starks_lib_c::{
     calculate_const_tree_c, calculate_const_tree_bn128_c, load_const_pols_c, load_const_tree_c, write_const_tree_c,
     write_const_tree_bn128_c, write_fixed_cols_bin_c, prepare_blocks_c, pack_const_pols_c, tile_const_pols_c,
 };
-use proofman_util::{create_buffer_fast, timer_start_info, timer_stop_and_log_info};
+use proofman_util::{timer_start_info, timer_stop_and_log_info};
 
 use crate::Setup;
 
@@ -63,8 +63,8 @@ pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
     let const_pols_size = (setup.stark_info.n_constants * (1 << setup.stark_info.stark_struct.n_bits)) as usize;
     let const_pols_tree_size = setup.const_tree_size;
 
-    let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
-    let const_tree: Vec<F> = create_buffer_fast(const_pols_tree_size);
+    let const_pols: Vec<F> = vec![F::ZERO; const_pols_size];
+    let const_tree: Vec<F> = vec![F::ZERO; const_pols_tree_size];
 
     let const_pols_path = setup.setup_path.display().to_string() + ".const";
     let const_pols_tree_path = &setup.const_pols_tree_path.clone();
@@ -144,8 +144,8 @@ pub fn calculate_fixed_tree_snark<F: PrimeField64>(setup: &Setup<F>) {
     let const_pols_size = (setup.stark_info.n_constants * (1 << setup.stark_info.stark_struct.n_bits)) as usize;
     let const_pols_tree_size = setup.const_tree_size;
 
-    let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
-    let const_tree: Vec<F> = create_buffer_fast(const_pols_tree_size);
+    let const_pols: Vec<F> = vec![F::ZERO; const_pols_size];
+    let const_tree: Vec<F> = vec![F::ZERO; const_pols_tree_size];
 
     let const_pols_path = setup.setup_path.display().to_string() + ".const";
     let const_pols_tree_path_cpu = setup.setup_path.display().to_string() + ".consttree";

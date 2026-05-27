@@ -2,9 +2,7 @@ use proofman_common::{
     GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree_snark,
     load_const_pols, load_const_pols_tree, MemoryHandlerRecursive, VerboseMode, initialize_logger,
 };
-use proofman_util::{
-    timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug, create_buffer_fast,
-};
+use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug};
 use proofman_verifier::VadcopFinalProof;
 use fields::PrimeField64;
 use std::path::{Path, PathBuf};
@@ -182,10 +180,10 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         check_const_tree(&setup_recursivef, &d_buffers)?;
 
-        let mut recursivef_const_pols_buf: Vec<F> = create_buffer_fast(setup_recursivef.const_pols_size);
+        let mut recursivef_const_pols_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_pols_size];
         load_const_pols(&setup_recursivef, &mut recursivef_const_pols_buf);
         let recursivef_const_pols: Arc<Vec<F>> = Arc::new(recursivef_const_pols_buf);
-        let mut recursivef_const_tree_buf: Vec<F> = create_buffer_fast(setup_recursivef.const_tree_size);
+        let mut recursivef_const_tree_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_tree_size];
         load_const_pols_tree(&setup_recursivef, &mut recursivef_const_tree_buf);
         let recursivef_const_tree: Arc<Vec<F>> = Arc::new(recursivef_const_tree_buf);
 
@@ -196,7 +194,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         } else if gpu {
             Arc::new(Vec::new())
         } else {
-            Arc::new(create_buffer_fast(setup_recursivef.prover_buffer_size as usize))
+            Arc::new(vec![F::ZERO; setup_recursivef.prover_buffer_size as usize])
         };
 
         let d_buffers_vadcop = if let Some(d_buffers) = d_buffers { d_buffers } else { std::ptr::null_mut() };
@@ -453,18 +451,15 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
 
     check_const_tree(&setup_recursivef, &None)?;
 
-    let mut recursivef_const_pols_buf: Vec<F> = create_buffer_fast(setup_recursivef.const_pols_size);
+    let mut recursivef_const_pols_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_pols_size];
     load_const_pols(&setup_recursivef, &mut recursivef_const_pols_buf);
     let recursivef_const_pols: Arc<Vec<F>> = Arc::new(recursivef_const_pols_buf);
-    let mut recursivef_const_tree_buf: Vec<F> = create_buffer_fast(setup_recursivef.const_tree_size);
+    let mut recursivef_const_tree_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_tree_size];
     load_const_pols_tree(&setup_recursivef, &mut recursivef_const_tree_buf);
     let recursivef_const_tree: Arc<Vec<F>> = Arc::new(recursivef_const_tree_buf);
 
-    let aux_trace = if gpu {
-        Arc::new(Vec::new())
-    } else {
-        Arc::new(create_buffer_fast(setup_recursivef.prover_buffer_size as usize))
-    };
+    let aux_trace =
+        if gpu { Arc::new(Vec::new()) } else { Arc::new(vec![F::ZERO; setup_recursivef.prover_buffer_size as usize]) };
 
     timer_stop_and_log_info!(LOADING_RECURSIVE_F_SETUP);
 
