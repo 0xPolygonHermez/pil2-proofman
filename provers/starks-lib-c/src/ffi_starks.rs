@@ -32,6 +32,44 @@ pub fn register_proof_done_callback_c(tx: crossbeam_channel::Sender<(u64, String
     }
 }
 
+pub fn compute_const_tree_c(
+    const_path: &str,
+    stark_info_path: &str,
+    const_tree_path: &str,
+    verkey_path: &str,
+) -> [u64; 4] {
+    let c_const = CString::new(const_path).unwrap();
+    let c_stark_info = CString::new(stark_info_path).unwrap();
+    let c_tree = CString::new(const_tree_path).unwrap();
+    let c_verkey = CString::new(verkey_path).unwrap();
+
+    let mut root = [0u64; 4];
+    unsafe {
+        build_const_tree_c(
+            c_const.as_ptr(),
+            c_stark_info.as_ptr(),
+            c_tree.as_ptr(),
+            c_verkey.as_ptr(),
+            root.as_mut_ptr(),
+        );
+    }
+    root
+}
+
+pub fn generate_fflonk_zkey_c(r1cs_file: &str, ptau_file: &str, zkey_file: &str) -> i32 {
+    let c_r1cs = CString::new(r1cs_file).unwrap();
+    let c_ptau = CString::new(ptau_file).unwrap();
+    let c_zkey = CString::new(zkey_file).unwrap();
+    unsafe { fflonk_setup_c(c_r1cs.as_ptr(), c_ptau.as_ptr(), c_zkey.as_ptr()) }
+}
+
+pub fn generate_plonk_zkey_c(r1cs_file: &str, ptau_file: &str, zkey_file: &str) -> i32 {
+    let c_r1cs = CString::new(r1cs_file).unwrap();
+    let c_ptau = CString::new(ptau_file).unwrap();
+    let c_zkey = CString::new(zkey_file).unwrap();
+    unsafe { plonk_setup_c(c_r1cs.as_ptr(), c_ptau.as_ptr(), c_zkey.as_ptr()) }
+}
+
 pub fn initialize_agg_readiness_tracker_c() {
     unsafe {
         initialize_agg_readiness_tracker();

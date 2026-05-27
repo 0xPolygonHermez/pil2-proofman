@@ -162,26 +162,7 @@ jobs:
           cargo build --release --workspace
           cargo install --path circom
 
-      - name: Check out pil2-proofman-js
-        uses: actions/checkout@v4
-        with:
-          repository: 0xPolygonHermez/pil2-proofman-js
-          ref: pre-develop-0.17.0
-          path: pil2-proofman-js
-
-      - name: Install pil2-proofman-js dependencies
-        working-directory: pil2-proofman-js
-        run: npm install
-
-      - name: Check out pil2-compiler
-        uses: actions/checkout@v4
-        with:
-          repository: 0xPolygonHermez/pil2-compiler
-          ref: develop-0.9.0
-          path: pil2-compiler
-
-      - name: Install pil2-compiler dependencies
-        working-directory: pil2-compiler
+      - name: Install Node dependencies (pil2-compiler, snarkjs)
         run: npm install
 
       - name: Install dependencies
@@ -193,11 +174,11 @@ jobs:
 
       - name: Compile PIL Fibonacci Square
         run: |
-          node --max-old-space-size=65536 pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil -I ./pil2-components/lib/std/pil -o ./examples/fibonacci-square/pil/build.pilout -u ./examples/fibonacci-square/build/fixed -O fixed-to-file
+          cargo run --bin proofman-setup -- compile-pil --pil ./examples/fibonacci-square/pil/build.pil -I ./pil2-components/lib/std/pil -o ./examples/fibonacci-square/pil/build.pilout -u ./examples/fibonacci-square/build/fixed --fixed-to-file
 
       - name: Generate setup Fibonacci Square
         run: |
-          node --max-old-space-size=65536 pil2-proofman-js/src/main_setup.js -a ./examples/fibonacci-square/pil/build.pilout -b ./examples/fibonacci-square/build -r -t ./pil2-components/lib/std/pil -u ./examples/fibonacci-square/build/fixed
+          cargo run --bin proofman-setup -- setup -a ./examples/fibonacci-square/pil/build.pilout -b ./examples/fibonacci-square/build -r -u ./examples/fibonacci-square/build/fixed
 
       - name: Generate PIL Helpers Fibonacci Square
         run: |
@@ -280,26 +261,7 @@ jobs:
           cargo build --release --workspace
           cargo install --path circom
 
-      - name: Check out pil2-proofman-js
-        uses: actions/checkout@v4
-        with:
-          repository: 0xPolygonHermez/pil2-proofman-js
-          ref: pre-develop-0.17.0
-          path: pil2-proofman-js
-
-      - name: Install pil2-proofman-js dependencies
-        working-directory: pil2-proofman-js
-        run: npm install
-
-      - name: Check out pil2-compiler
-        uses: actions/checkout@v4
-        with:
-          repository: 0xPolygonHermez/pil2-compiler
-          ref: develop-0.9.0
-          path: pil2-compiler
-
-      - name: Install pil2-compiler dependencies
-        working-directory: pil2-compiler
+      - name: Install npm packages
         run: npm install
 
       - name: Install dependencies
@@ -309,9 +271,9 @@ jobs:
           sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev nasm libsodium-dev cmake
           sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
 
-      - name: Compile PIL Recursive (Compressor)
+      - name: Setup Recursive (Compressor)
         run: |
-          node pil2-proofman-js/src/main_setup_recursive.js -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -p ./pil2-components/lib/std/pil -t compressor
+          cargo run --bin proofman-setup -- setup-recursive-test -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t compressor
 
       - name: Cargo build (Compressor)
         run: RUST_BACKTRACE=1 cargo build -v --workspace
@@ -324,9 +286,9 @@ jobs:
         run: |
           cargo run --bin proofman-cli prove --witness-lib ./target/debug/libtest_recursive.so --proving-key examples/test-recursive/build/provingKey/ --output-dir examples/test-recursive/build/proofs -y
 
-      - name: Compile PIL Recursive (Aggregation)
+      - name: Setup Recursive (Aggregation)
         run: |
-          node pil2-proofman-js/src/main_setup_recursive.js -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -p ./pil2-components/lib/std/pil -t aggregation
+          cargo run --bin proofman-setup -- setup-recursive-test -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t aggregation
 
       - name: Cargo build (Aggregation)
         run: RUST_BACKTRACE=1 cargo build -v --workspace
@@ -339,9 +301,9 @@ jobs:
         run: |
           cargo run --bin proofman-cli prove --witness-lib ./target/debug/libtest_recursive.so --proving-key examples/test-recursive/build/provingKey/ --output-dir examples/test-recursive/build/proofs -y 
 
-      - name: Compile PIL Recursive (Final)
+      - name: Setup Recursive (Final)
         run: |
-          node pil2-proofman-js/src/main_setup_recursive.js -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -p ./pil2-components/lib/std/pil -t final_vadcop
+          cargo run --bin proofman-setup -- setup-recursive-test -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t final_vadcop
 
       - name: Cargo build (Final)
         run: RUST_BACKTRACE=1 cargo build -v --workspace
@@ -391,26 +353,7 @@ jobs:
         run: |
           python -m pip install z3-solver
 
-      - name: Check out pil2-proofman-js
-        uses: actions/checkout@v4
-        with:
-          repository: 0xPolygonHermez/pil2-proofman-js
-          ref: pre-develop-0.17.0
-          path: pil2-proofman-js
-
-      - name: Install pil2-proofman-js dependencies
-        working-directory: pil2-proofman-js
-        run: npm install
-
-      - name: Check out pil2-compiler
-        uses: actions/checkout@v4
-        with:
-          repository: 0xPolygonHermez/pil2-compiler
-          ref: develop-0.9.0
-          path: pil2-compiler
-
-      - name: Install pil2-compiler dependencies
-        working-directory: pil2-compiler
+      - name: Install Node dependencies (pil2-compiler, snarkjs)
         run: npm install
 
       - name: Install dependencies
@@ -426,11 +369,11 @@ jobs:
 
       - name: Compile PIL Lookup
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/lookup/lookup.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/lookup/build/build.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/lookup/lookup.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/lookup/build/build.pilout
 
       - name: Generate setup Lookup
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/lookup/build/build.pilout -b ./pil2-components/test/lookup/build
+          cargo run --bin proofman-setup -- setup -a ./pil2-components/test/lookup/build/build.pilout -b ./pil2-components/test/lookup/build
 
       - name: Generate PIL Helpers Lookup
         run: |
@@ -442,11 +385,11 @@ jobs:
 
       - name: Compile PIL permutation
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/permutation/permutation.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/permutation/build/build.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/permutation/permutation.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/permutation/build/build.pilout
 
       - name: Generate setup permutation
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/permutation/build/build.pilout -b ./pil2-components/test/permutation/build
+          cargo run --bin proofman-setup -- setup -a ./pil2-components/test/permutation/build/build.pilout -b ./pil2-components/test/permutation/build
 
       - name: Generate PIL Helpers permutation
         run: |
@@ -458,11 +401,11 @@ jobs:
 
       - name: Compile PIL connection
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/connection/connection.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/connection/build/build.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/connection/connection.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/connection/build/build.pilout
 
       - name: Generate setup connection
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/connection/build/build.pilout -b ./pil2-components/test/connection/build
+          cargo run --bin proofman-setup -- setup -a ./pil2-components/test/connection/build/build.pilout -b ./pil2-components/test/connection/build
 
       - name: Generate PIL Helpers connection
         run: |
@@ -474,11 +417,11 @@ jobs:
 
       - name: Compile PIL diff_buses
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/diff_buses/diff_buses.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/diff_buses/build/build.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/diff_buses/diff_buses.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/diff_buses/build/build.pilout
 
       - name: Generate setup diff_buses
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/diff_buses/build/build.pilout -b ./pil2-components/test/diff_buses/build
+          cargo run --bin proofman-setup -- setup -a ./pil2-components/test/diff_buses/build/build.pilout -b ./pil2-components/test/diff_buses/build
 
       - name: Generate PIL Helpers diff_buses
         run: |
@@ -490,11 +433,11 @@ jobs:
 
       - name: Compile PIL direct_update
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/direct_update/direct_update.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/direct_update/build/direct_update.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/direct_update/direct_update.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/direct_update/build/direct_update.pilout
 
       - name: Generate setup direct_update
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/direct_update/build/direct_update.pilout -b ./pil2-components/test/direct_update/build
+          cargo run --bin proofman-setup -- setup -a ./pil2-components/test/direct_update/build/direct_update.pilout -b ./pil2-components/test/direct_update/build
 
       - name: Generate PIL Helpers direct_update
         run: |
@@ -506,11 +449,11 @@ jobs:
 
       - name: Compile PIL range-check
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/range_check/build.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/range_check/build/build.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/range_check/build.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/range_check/build/build.pilout
 
       - name: Generate setup range-check
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/range_check/build/build.pilout -b ./pil2-components/test/range_check/build
+          cargo run --bin proofman-setup -- setup -a ./pil2-components/test/range_check/build/build.pilout -b ./pil2-components/test/range_check/build
 
       - name: Generate PIL Helpers range-check
         run: |
@@ -522,11 +465,11 @@ jobs:
 
       - name: Compile PIL one-instance
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/one_instance/one_instance.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/one_instance/build/one_instance.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/one_instance/one_instance.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/one_instance/build/one_instance.pilout
 
       - name: Generate setup one-instance
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/one_instance/build/one_instance.pilout -b ./pil2-components/test/one_instance/build
+          cargo run --bin proofman-setup -- setup -a ./pil2-components/test/one_instance/build/one_instance.pilout -b ./pil2-components/test/one_instance/build
 
       - name: Generate PIL Helpers one-instance
         run: |
@@ -538,11 +481,11 @@ jobs:
 
       - name: Compile PIL virtual-tables
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/virtual_tables/virtual_tables.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/virtual_tables/build/build.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/virtual_tables/virtual_tables.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/virtual_tables/build/build.pilout
 
       - name: Generate setup virtual-tables
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/virtual_tables/build/build.pilout -b ./pil2-components/test/virtual_tables/build
+          cargo run --bin proofman-setup -- setup -a ./pil2-components/test/virtual_tables/build/build.pilout -b ./pil2-components/test/virtual_tables/build
 
       - name: Generate PIL Helpers virtual-tables
         run: |
@@ -554,11 +497,11 @@ jobs:
 
       - name: Compile PIL simple
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/simple/simple.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/simple/build/build.pilout
+          cargo run --bin proofman-setup -- compile-pil --pil ./pil2-components/test/simple/simple.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/simple/build/build.pilout
 
       - name: Generate setup simple
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/simple/build/build.pilout -b ./pil2-components/test/simple/build
+          cargo run --bin proofman-setup -- setup -a ./pil2-components/test/simple/build/build.pilout -b ./pil2-components/test/simple/build
 
       - name: Generate PIL Helpers simple
         run: |

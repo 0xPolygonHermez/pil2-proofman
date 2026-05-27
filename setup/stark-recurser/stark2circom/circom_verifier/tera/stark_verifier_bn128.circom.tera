@@ -1,0 +1,695 @@
+pragma circom 2.1.0;
+{% if custom %}pragma custom_templates;
+{% endif %}
+{% if custom %}include "custom/evalpol.circom";
+include "custom/fft.circom";
+include "custom/gl.circom";
+include "custom/lessthangl.circom";
+include "custom/merklehash.circom";
+include "custom/poseidon.circom";
+{% else %}include "evalpol.circom";
+include "fft.circom";
+include "gl.circom";
+include "lessthangl.circom";
+include "merklehash.circom";
+include "poseidon.circom";
+{% endif %}include "bitifyT.circom";
+include "bn1togl3.circom";
+include "treeselector.circom";
+include "pow.circom";
+{% if not skip_main %}include "compconstant64.circom";
+include "bitify.circom";
+include "sha256/sha256.circom";
+{% endif %}
+
+template GLConst(num) {
+    signal output {maxNum} out;
+
+    out.maxNum = num;
+    out <== num;
+}
+
+template GLConst3(num) {
+    signal output {maxNum} out[3];
+
+    out.maxNum = num;
+    out <== [num, 0, 0];
+}
+
+template GLC3() {
+    signal input {maxNum} in;
+    signal output {maxNum} out[3];
+
+    out.maxNum = in.maxNum;
+    out <== [in, 0, 0];
+}
+
+/* 
+    Calculate FRI Queries
+*/
+template calculateFRIQueries() {
+
+    signal input challengeFRIQueries[3];
+{% if pow_bits > 0 %}    signal input nonce;
+{% endif %}    signal input {binary} enable;
+    signal output {binary} queriesFRI[{{ n_queries }}][{{ step0_bits }}];
+
+{% if pow_bits > 0 %}    VerifyPoW({{ pow_bits }})(challengeFRIQueries, nonce, enable);
+{% endif %}
+{{ calculate_fri_queries_code }}
+}
+
+/* 
+    Calculate the transcript
+*/
+template Transcript() {
+{% if n_publics > 0 %}    signal input {maxNum} publics[{{ n_publics }}];
+{% endif %}    signal input rootC;
+{% for stage_info in stages_info %}{% if stage_info.stage <= n_stages %}    signal input root{{ stage_info.stage }};
+{% endif %}{% endfor %}    signal input root{{ q_stage }};
+    signal input {maxNum} evals[{{ ev_map_len }}][3];
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_root;
+{% endif %}{% endfor %}    signal input {maxNum} finalPol[{{ final_pol_size }}][3];
+{% if pow_bits > 0 %}    signal input nonce;
+{% endif %}    signal input {binary} enable;
+
+{% for cp in challenges_per_stage %}    signal output {maxNum} challengesStage{{ cp.stage }}[{{ cp.count }}][3];
+{% endfor %}    signal output {maxNum} challengeQ[3];
+    signal output {maxNum} challengeXi[3];
+    signal output {maxNum} challengesFRI[2][3];
+    signal output {maxNum} challengesFRISteps[{{ n_steps }}][3];
+    signal output {binary} queriesFRI[{{ n_queries }}][{{ step0_bits }}];
+
+{% if hash_commits %}{% if n_publics > 0 %}    signal publicsHash;
+{% endif %}    signal evalsHash;
+    signal lastPolFRIHash;
+{% endif %}
+    signal challengeFRIQueries[3];
+
+{% if n_publics > 0 and hash_commits %}{{ transcript_publics_code }}
+{% endif %}{% if hash_commits %}{{ transcript_evals_code }}
+{{ transcript_last_pol_fri_code }}
+{% endif %}{{ transcript_code }}
+
+{% if pow_bits > 0 %}    queriesFRI <== calculateFRIQueries()(challengeFRIQueries, nonce, enable);
+{% else %}    queriesFRI <== calculateFRIQueries()(challengeFRIQueries, enable);
+{% endif %}}
+
+/*
+    Verify that FRI polynomials are built properly
+*/
+template VerifyFRI(prevStepBits, currStepBits, nextStepBits, e0, e1) {
+    var nextStep = currStepBits - nextStepBits;
+    var step = prevStepBits - currStepBits;
+
+    signal input {binary} queriesFRI[currStepBits];
+    signal input {maxNum} challengeFRIStep[3];
+    signal input {maxNum} s_vals_curr[1 << step][3];
+    signal input {maxNum} s_vals_next[1 << nextStep][3];
+    signal input {binary} enable;
+
+    var q = 0xFFFFFFFFFFFFFFFF;
+
+    signal {maxNum} s_sx[currStepBits - 1];
+    s_sx.maxNum = q;
+
+    signal {maxNum} inp[currStepBits - 2];
+    inp.maxNum = q;
+
+    signal {maxNum} ina;
+    signal {maxNum} inb;
+    ina.maxNum = q;
+    inb.maxNum = q;
+
+    ina <== queriesFRI[0] * (e1 - e0) + e0;
+    inb <== queriesFRI[1] * (invroots(prevStepBits - 1) -1) + 1;
+    s_sx[0] <== GLMul()(ina, inb);
+    for (var i=1; i< currStepBits - 1; i++) {
+        inp[i - 1] <== queriesFRI[i + 1] * (invroots(prevStepBits - (i + 1)) -1) + 1;
+        s_sx[i] <== GLMul()(s_sx[i-1], inp[i - 1]);
+    }
+
+    signal {maxNum} s_X[3];
+    if(currStepBits > 1) {
+        s_X.maxNum = s_sx.maxNum;
+        s_X <== [s_sx[currStepBits - 2], 0, 0];
+    } else {
+        signal {maxNum} inp1 <== GLConst(e0)();
+        signal {maxNum} inp2;
+        inp2.maxNum = q;
+        inp2 <== queriesFRI[0] * (invroots(prevStepBits) -1) + 1;
+
+        signal {maxNum} mul <== GLMul()(inp1, inp2);
+        s_X.maxNum = mul.maxNum;
+        s_X <== [mul, 0, 0];
+    }
+
+    signal {maxNum} coefs[1 << step][3] <== FFT(step, 1)(s_vals_curr);
+    signal {maxNum} evalXprime[3] <== GLCMul()(challengeFRIStep, s_X);
+    signal {maxNum} evalPol[3] <== EvalPol(1 << step)(coefs, evalXprime);
+
+    signal {binary} s_keys_lowValues[nextStep];
+    for(var i = 0; i < nextStep; i++) { s_keys_lowValues[i] <== queriesFRI[i + nextStepBits]; }
+    signal {maxNum} lowValues[3] <== TreeSelector(nextStep, 3)(s_vals_next, s_keys_lowValues);
+
+    signal {maxNum} vals[3] <== GLCSub()(evalPol, lowValues);
+    signal {maxNum} normC[3] <== GLCNorm()(vals);
+
+    enable * normC[0] === 0;
+    enable * normC[1] === 0;
+    enable * normC[2] === 0;
+}
+
+/* 
+    Verify that all committed polynomials are calculated correctly
+*/
+template parallel VerifyEvaluations() {
+{% for cp in challenges_per_stage %}    signal input {maxNum} challengesStage{{ cp.stage }}[{{ cp.count }}][3];
+{% endfor %}    signal input {maxNum} challengeQ[3];
+    signal input {maxNum} challengeXi[3];
+    signal input {maxNum} evals[{{ ev_map_len }}][3];
+{% if n_publics > 0 %}    signal input {maxNum} publics[{{ n_publics }}];
+{% endif %}{% if n_air_group_values > 0 %}    signal input airgroupvalues[{{ n_air_group_values }}][3];
+{% endif %}    signal input {binary} enable;
+
+    var q = 0xFFFFFFFFFFFFFFFF;
+
+    // zMul stores all the powers of z (which is stored in challengeXi) up to nBits, i.e, [z, z^2, ..., z^nBits]
+    signal {maxNum} zMul[{{ n_bits }}][3];
+    zMul.maxNum = q;
+    for (var i=0; i< {{ n_bits }} ; i++) {
+        if(i==0){
+            zMul[i] <== GLCMul()(challengeXi, challengeXi);
+        } else {
+            zMul[i] <== GLCMul()(zMul[i-1], zMul[i-1]);
+        }
+    }
+
+    signal {maxNum} oneGL[3];
+    oneGL.maxNum = 1;
+    oneGL <== [1,0,0];
+
+    // Store the vanishing polynomial Zh = x^nBits - 1 evaluated at z
+    signal {maxNum} Z[3] <== GLCSub()(zMul[{{ n_bits - 1 }}], oneGL);
+    signal {maxNum} Zh[3] <== GLCInv()(Z);
+
+{% if has_first_row %}    signal {maxNum} Zf[3] <== GLCSub()(challengeXi, oneGL);
+    signal {maxNum} Zfirst[3] <== GLCInv()(Zf);
+{% endif %}
+{% if has_last_row %}    signal {maxNum} rootGL[3];
+    rootGL.maxNum = {{ zlast_root }};
+    rootGL <== [{{ zlast_root }},0,0];
+
+    signal {maxNum} Zl[3] <== GLCSub()(challengeXi, rootGL);
+    signal {maxNum} Zlast[3] <== GLCInv()(Zl);
+{% endif %}
+{% for frame in every_frames %}    signal {maxNum} Zframe{{ frame.idx }}[{{ frame.size }}][3];
+    signal {maxNum} Zf{{ frame.idx }}[{{ frame.size }}][3];
+    signal {maxNum} root{{ frame.idx }}GL[{{ frame.size }}][3];
+    root{{ frame.idx }}GL.maxNum = q;
+{% for op in frame.ops %}    root{{ frame.idx }}GL[{{ op.c }}] <== [{{ op.root }},0,0];
+    Zf{{ frame.idx }}[{{ op.c }}] <== GLCSub()(challengeXi, root{{ frame.idx }}GL[{{ op.c }}]);
+{% if op.is_first %}    Zframe{{ frame.idx }}[{{ op.c }}] <== GLCMul()(Zh, Zf{{ frame.idx }}[{{ op.c }}]);
+{% else %}    Zframe{{ frame.idx }}[{{ op.c }}] <== GLCMul()(Zframe{{ frame.idx }}[{{ op.c - 1 }}], Zf{{ frame.idx }}[{{ op.c }}]);
+{% endif %}{% endfor %}{% endfor %}
+    // Using the evaluations committed and the challenges,
+    // calculate the sum of q_i evaluated at z
+{{ eval_p_code }}
+
+    signal {maxNum} xAcc[{{ q_deg }}][3];
+    signal {maxNum} qStep[{{ q_deg - 1 }}][3];
+    signal {maxNum} qAcc[{{ q_deg }}][3];
+
+    qStep.maxNum = q;
+    qAcc.maxNum = {{ q_deg }}*q;
+    xAcc.maxNum = q;
+
+    for (var i=0; i< {{ q_deg }}; i++) {
+        if (i==0) {
+            xAcc[0] <== [1, 0, 0];
+            qAcc[0] <== evals[{{ q_pol_ev_id }}+i];
+        } else {
+            xAcc[i] <== GLCMul()(xAcc[i-1], zMul[{{ n_bits - 1 }}]);
+            qStep[i-1] <== GLCMul()(xAcc[i], evals[{{ q_pol_ev_id }}+i]);
+            qAcc[i] <== GLCAdd()(qAcc[i-1], qStep[i-1]);
+        }
+    }
+
+    // Final normalization
+    signal {maxNum} vals[3] <== GLCSub()({{ eval_p_last }}, qAcc[{{ q_deg - 1 }}]);
+    signal {maxNum} normC[3] <== GLCNorm()(vals);
+
+    // Final Verification
+    enable * normC[0] === 0;
+    enable * normC[1] === 0;
+    enable * normC[2] === 0;
+}
+
+/* 
+    Verify that the initial FRI polynomial is built properly
+*/
+template parallel VerifyQuery(currStepBits, nextStepBits) {
+    var nextStep = currStepBits - nextStepBits;
+    signal input {binary} queriesFRI[{{ step0_bits }}];
+    signal input {maxNum} challengeXi[3];
+    signal input {maxNum} challengesFRI[2][3];
+    signal input {maxNum} evals[{{ ev_map_len }}][3];
+{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    signal input {maxNum} cm{{ stage_info.stage }}[{{ stage_info.cm_section_len }}];
+{% endif %}{% endfor %}    signal input {maxNum} cm{{ q_stage }}[{{ q_stage_cm_section_len }}];
+    signal input {maxNum} consts[{{ n_constants }}];
+{% for cc in custom_commits %}    signal input custom_{{ cc.name }}_0[{{ cc.section_len_0 }}];
+{% endfor %}    signal input {maxNum} s1_vals[1 << nextStep][3];
+    signal input {binary} enable;
+
+    // Map the s0_vals so that they are converted either into single vars or arrays of 3 elements.
+    component mapValues = MapValues();
+{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    mapValues.vals{{ stage_info.stage }} <== cm{{ stage_info.stage }};
+{% endif %}{% endfor %}    mapValues.vals{{ q_stage }} <== cm{{ q_stage }};
+{% for cc in custom_commits %}    mapValues.vals_{{ cc.name }}_0 <== custom_{{ cc.name }}_0;
+{% endfor %}
+    var q = 0xFFFFFFFFFFFFFFFF;
+
+{% if step0_bits > 1 %}    signal {maxNum} xacc[{{ step0_bits - 1 }}];
+    xacc.maxNum = q;
+
+    signal {maxNum} ina;
+    signal {maxNum} inb;
+    ina.maxNum = q;
+    inb.maxNum = q;
+
+    signal {maxNum} inp[{{ step0_bits - 1 }}];
+    inp.maxNum = q;
+
+    for (var i=1; i<{{ step0_bits }}; i++ ) {
+        if(i==1) {
+        ina <== queriesFRI[0]*({{ gl_shift }}*roots({{ step0_bits }}) - {{ gl_shift }}) + {{ gl_shift }};
+        inb <==  queriesFRI[1]*(roots({{ step0_bits }} - 1) - 1) +1;
+        xacc[i-1] <== GLMul()(ina,inb);
+        } else {
+        inp[i - 2] <== queriesFRI[i]*(roots({{ step0_bits }} - i) - 1) +1;
+        xacc[i-1] <== GLMul()(xacc[i-2], inp[i-2]);
+        }
+    }
+
+    signal {maxNum} X[3] <== GLC3()(xacc[{{ step0_bits - 2 }}]);
+{% else %}    signal {maxNum} X[3];
+    X <== GLC3()(queriesFRI[0]*({{ gl_shift }}*roots({{ step0_bits }}) - {{ gl_shift }}) + {{ gl_shift }});
+{% endif %}
+
+    signal {maxNum} xDivXSubXi[{{ opening_points | length }}][3];
+    xDivXSubXi.maxNum = q;
+
+    signal {maxNum} root <== GLConst(roots({{ n_bits }}))();
+    signal {maxNum} invroot <== GLConst(invroots({{ n_bits }}))();
+
+{% for op in opening_points %}{% if op.is_nonzero %}    signal {maxNum} w{{ op.idx }}[{{ op.abs_opening + 1 }}];
+    w{{ op.idx }}.maxNum = q;
+    w{{ op.idx }}[0] <== 1;
+{% for j in range(end=op.abs_opening) %}{% if op.is_positive %}    w{{ op.idx }}[{{ j + 1 }}] <== GLMul()(root, w{{ op.idx }}[{{ j }}]);
+{% else %}    w{{ op.idx }}[{{ j + 1 }}] <== GLMul()(invroot, w{{ op.idx }}[{{ j }}]);
+{% endif %}{% endfor %}    signal {maxNum} W{{ op.idx }}[3] <== GLC3()(w{{ op.idx }}[{{ op.abs_opening }}]);
+    signal {maxNum} mul{{ op.idx }}[3] <== GLCMul()(challengeXi, W{{ op.idx }});
+    signal {maxNum} sub{{ op.idx }}[3] <== GLCSub()(X, mul{{ op.idx }});
+    xDivXSubXi[{{ op.idx }}] <== GLCInv()(sub{{ op.idx }});
+{% else %}    signal {maxNum} sub{{ op.idx }}[3] <== GLCSub()(X, challengeXi);
+    xDivXSubXi[{{ op.idx }}] <== GLCInv()(sub{{ op.idx }});
+{% endif %}{% endfor %}
+
+{{ eval_q_code }}
+
+    // Final Normalization
+    signal queryVals[3] <== GLCNorm()({{ eval_q_last }});
+
+    signal {binary} s0_keys_lowValues[nextStep];
+    for(var i = 0; i < nextStep; i++) {
+        s0_keys_lowValues[i] <== queriesFRI[i + nextStepBits];
+    }
+
+    signal {maxNum} lowValues[3] <== TreeSelector(nextStep, 3)(s1_vals, s0_keys_lowValues);
+
+    signal {maxNum} valsDiff[3] <== GLCSub()({{ eval_q_last }}, lowValues);
+    signal {maxNum} normDiff[3] <== GLCNorm()(valsDiff);
+
+    enable * normDiff[0] === 0;
+    enable * normDiff[1] === 0;
+    enable * normDiff[2] === 0;
+}
+
+// MapValues: split flat array into per-polynomial named signals.
+template MapValues() {
+{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    signal input {maxNum} vals{{ stage_info.stage }}[{{ stage_info.cm_section_len }}];
+{% endif %}{% endfor %}    signal input {maxNum} vals{{ q_stage }}[{{ q_stage_cm_section_len }}];
+{% for cc in custom_commits %}    signal input {maxNum} vals_{{ cc.name }}_0[{{ cc.section_len_0 }}];
+{% endfor %}
+{% for stage_pols in cm_pols_by_stage %}{% for pol in stage_pols.pols %}{% if pol.dim == 1 %}    signal output {maxNum} cm{{ stage_pols.stage }}_{{ pol.stage_id }};
+{% else %}    signal output {maxNum} cm{{ stage_pols.stage }}_{{ pol.stage_id }}[3];
+{% endif %}{% endfor %}{% endfor %}
+{% for cc in custom_commits %}{% for sp in cc.pols_per_stage %}{% for pol in sp.pols %}{% if pol.dim == 1 %}    signal output {maxNum} custom_{{ cc.name }}_{{ sp.stage_idx }}_{{ pol.stage_id }};
+{% else %}    signal output {maxNum} custom_{{ cc.name }}_{{ sp.stage_idx }}_{{ pol.stage_id }}[3];
+{% endif %}{% endfor %}{% endfor %}{% endfor %}
+
+{% for cc in custom_commits %}{% for sp in cc.pols_per_stage %}{% for pol in sp.pols %}    custom_{{ cc.name }}_{{ sp.stage_idx }}_{{ pol.stage_id }}.maxNum = 0xFFFFFFFFFFFFFFFF;
+{% if pol.dim == 1 %}    custom_{{ cc.name }}_{{ sp.stage_idx }}_{{ pol.stage_id }} <== vals_{{ cc.name }}_0[{{ pol.stage_pos }}];
+{% else %}    custom_{{ cc.name }}_{{ sp.stage_idx }}_{{ pol.stage_id }} <== [vals_{{ cc.name }}_0[{{ pol.stage_pos }}],vals_{{ cc.name }}_0[{{ pol.stage_pos + 1 }}] , vals_{{ cc.name }}_0[{{ pol.stage_pos + 2 }}]];
+{% endif %}{% endfor %}{% endfor %}{% endfor %}
+{% for stage_pols in cm_pols_by_stage %}{% for pol in stage_pols.pols %}    cm{{ stage_pols.stage }}_{{ pol.stage_id }}.maxNum = 0xFFFFFFFFFFFFFFFF;
+{% if pol.dim == 1 %}    cm{{ stage_pols.stage }}_{{ pol.stage_id }} <== GLCopy()(vals{{ stage_pols.stage }}[{{ pol.stage_pos }}]);
+{% else %}    cm{{ stage_pols.stage }}_{{ pol.stage_id }} <== [vals{{ stage_pols.stage }}[{{ pol.stage_pos }}],vals{{ stage_pols.stage }}[{{ pol.stage_pos + 1 }}] , vals{{ stage_pols.stage }}[{{ pol.stage_pos + 2 }}]];
+{% endif %}{% endfor %}{% endfor %}}
+
+template VerifyFinalPol() {
+    signal input {maxNum} finalPol[{{ final_pol_size }}][3];
+    signal input {binary} enable;
+
+    // Calculate the IFFT to get the coefficients of finalPol
+    signal lastIFFT[{{ final_pol_size }}][3] <== FFT({{ n_last_bits }}, 1)(finalPol);
+
+    // Check that the degree of the final polynomial is bounded
+    for (var k= {{ max_deg_size }}; k< {{ final_pol_size }}; k++) {
+        for (var e=0; e<3; e++) {
+            enable * lastIFFT[k][e] === 0;
+        }
+    }
+
+    // The coefficients of lower degree can have any value
+    for (var k= 0; k < {{ max_deg_size }}; k++) {
+        _ <== lastIFFT[k];
+    }
+}
+
+template parallel VerifySingleQuery() {
+    signal input {binary} queriesFRI[{{ step0_bits }}];
+    signal input {maxNum} challengeXi[3];
+    signal input {maxNum} challengesFRI[2][3];
+    signal input {maxNum} challengesFRISteps[{{ n_steps }}][3];
+    signal input {maxNum} evals[{{ ev_map_len }}][3];
+    signal input {binary} enable;
+
+{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    signal input s0_vals{{ stage_info.stage }}[{{ stage_info.cm_section_len }}];
+    signal input s0_siblings{{ stage_info.stage }}[{{ merkle_levels_s0 }}][{{ arity }}];
+    signal input root{{ stage_info.stage }};
+{% endif %}{% endfor %}
+    signal input s0_vals{{ q_stage }}[{{ q_stage_cm_section_len }}];
+    signal input s0_siblings{{ q_stage }}[{{ merkle_levels_s0 }}][{{ arity }}];
+    signal input root{{ q_stage }};
+    signal input s0_valsC[{{ n_constants }}];
+    signal input s0_siblingsC[{{ merkle_levels_s0 }}][{{ arity }}];
+    signal input rootC;
+
+{% for cc in custom_commits %}    signal input s0_vals_{{ cc.name }}_0[{{ cc.section_len_0 }}];
+    signal input s0_siblings_{{ cc.name }}_0[{{ merkle_levels_s0 }}][{{ arity }}];
+    signal input root_{{ cc.name }}_0;
+{% endfor %}
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_vals[{{ step.exponent * 3 }}];
+    signal input s{{ step.s }}_siblings[{{ step.merkle_levels }}][{{ arity }}];
+    signal input s{{ step.s }}_root;
+{% endif %}{% endfor %}
+    signal input {maxNum} finalPol[{{ final_pol_size }}][3];
+
+    // GL conversion and _p preprocessing for s0 vals
+{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    signal {maxNum} s0_vals{{ stage_info.stage }}GL[{{ stage_info.cm_section_len }}];
+    s0_vals{{ stage_info.stage }}GL.maxNum = 0xFFFFFFFFFFFFFFFF;
+    signal {maxNum} s0_vals{{ stage_info.stage }}_p[{{ stage_info.cm_section_len }}][1];
+    for(var j = 0; j < {{ stage_info.cm_section_len }}; j++) {
+        s0_vals{{ stage_info.stage }}GL[j] <== LessThan64Bits()(s0_vals{{ stage_info.stage }}[j]);
+        s0_vals{{ stage_info.stage }}_p[j][0] <== GLCopy()(s0_vals{{ stage_info.stage }}GL[j]);
+    }
+{% endif %}{% endfor %}
+    signal {maxNum} s0_vals{{ q_stage }}GL[{{ q_stage_cm_section_len }}];
+    s0_vals{{ q_stage }}GL.maxNum = 0xFFFFFFFFFFFFFFFF;
+    signal {maxNum} s0_vals{{ q_stage }}_p[{{ q_stage_cm_section_len }}][1];
+    for(var j = 0; j < {{ q_stage_cm_section_len }}; j++) {
+        s0_vals{{ q_stage }}GL[j] <== LessThan64Bits()(s0_vals{{ q_stage }}[j]);
+        s0_vals{{ q_stage }}_p[j][0] <== GLCopy()(s0_vals{{ q_stage }}GL[j]);
+    }
+
+    signal {maxNum} s0_valsCGL[{{ n_constants }}];
+    s0_valsCGL.maxNum = 0xFFFFFFFFFFFFFFFF;
+    signal {maxNum} s0_valsC_p[{{ n_constants }}][1];
+    for(var j = 0; j < {{ n_constants }}; j++) {
+        s0_valsCGL[j] <== LessThan64Bits()(s0_valsC[j]);
+        s0_valsC_p[j][0] <== GLCopy()(s0_valsCGL[j]);
+    }
+
+{% for cc in custom_commits %}    signal {maxNum} s0_vals_{{ cc.name }}_0GL[{{ cc.section_len_0 }}];
+    s0_vals_{{ cc.name }}_0GL.maxNum = 0xFFFFFFFFFFFFFFFF;
+    signal {maxNum} s0_vals_{{ cc.name }}_0_p[{{ cc.section_len_0 }}][1];
+    for(var j = 0; j < {{ cc.section_len_0 }}; j++) {
+        s0_vals_{{ cc.name }}_0GL[j] <== LessThan64Bits()(s0_vals_{{ cc.name }}_0[j]);
+        s0_vals_{{ cc.name }}_0_p[j][0] <== GLCopy()(s0_vals_{{ cc.name }}_0GL[j]);
+    }
+{% endfor %}
+
+    // Merkle verification for s0 vals
+{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    VerifyMerkleHash(1, {{ stage_info.cm_section_len }}, {{ step0_bits_size }}, {{ arity }})(s0_vals{{ stage_info.stage }}_p, s0_siblings{{ stage_info.stage }}, queriesFRI, root{{ stage_info.stage }}, enable);
+{% endif %}{% endfor %}    VerifyMerkleHash(1, {{ q_stage_cm_section_len }}, {{ step0_bits_size }}, {{ arity }})(s0_vals{{ q_stage }}_p, s0_siblings{{ q_stage }}, queriesFRI, root{{ q_stage }}, enable);
+    VerifyMerkleHash(1, {{ n_constants }}, {{ step0_bits_size }}, {{ arity }})(s0_valsC_p, s0_siblingsC, queriesFRI, rootC, enable);
+{% for cc in custom_commits %}    VerifyMerkleHash(1, {{ cc.section_len_0 }}, {{ step0_bits_size }}, {{ arity }})(s0_vals_{{ cc.name }}_0_p, s0_siblings_{{ cc.name }}_0, queriesFRI, root_{{ cc.name }}_0, enable);
+{% endfor %}
+
+    // FRI step GL conversion, reshaping, and Merkle verification
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal {maxNum} s{{ step.s }}_valsGL[{{ step.exponent * 3 }}];
+    s{{ step.s }}_valsGL.maxNum = 0xFFFFFFFFFFFFFFFF;
+    signal {maxNum} s{{ step.s }}_vals_p[{{ step.exponent }}][3];
+    for(var c = 0; c < {{ step.exponent }}; c++) {
+        for(var e = 0; e < 3; e++) {
+            s{{ step.s }}_valsGL[c*3+e] <== LessThan64Bits()(s{{ step.s }}_vals[c*3+e]);
+            s{{ step.s }}_vals_p[c][e] <== GLCopy()(s{{ step.s }}_valsGL[c*3+e]);
+        }
+    }
+    signal {binary} s{{ step.s }}_keys_merkle[{{ step.n_bits }}];
+    for(var i = 0; i < {{ step.n_bits }}; i++) { s{{ step.s }}_keys_merkle[i] <== queriesFRI[i]; }
+    VerifyMerkleHash(3, {{ step.exponent }}, {{ step.val_size }}, {{ arity }})(s{{ step.s }}_vals_p, s{{ step.s }}_siblings, s{{ step.s }}_keys_merkle, s{{ step.s }}_root, enable);
+{% endif %}{% endfor %}
+
+    // Verify the initial FRI polynomial query
+    VerifyQuery({{ step0_bits }}, {{ next_step0_bits }})(queriesFRI, challengeXi, challengesFRI, evals, {{ query_vals_gl_joined }}, {{ next_vals_pol_0 }}, enable);
+
+    // Verify FRI construction for each folding step
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal {binary} s{{ step.s }}_queriesFRI[{{ step.n_bits }}];
+    for(var i = 0; i < {{ step.n_bits }}; i++) { s{{ step.s }}_queriesFRI[i] <== queriesFRI[i]; }
+    VerifyFRI({{ step.prev_bits }}, {{ step.n_bits }}, {{ step.next_bits }}, {{ step.e0 }}, {{ step.e1 }})(s{{ step.s }}_queriesFRI, challengesFRISteps[{{ step.s }}], s{{ step.s }}_vals_p, {{ step.next_pol }}, enable);
+{% endif %}{% endfor %}}
+
+template StarkVerifier() {
+{% if n_publics > 0 %}    signal input publics[{{ n_publics }}];
+{% endif %}{% if n_air_group_values > 0 %}    signal input airgroupvalues[{{ n_air_group_values }}][3];
+{% endif %}{% for stage_info in stages_info %}{% if stage_info.stage <= n_stages %}    signal input root{{ stage_info.stage }};
+{% endif %}{% endfor %}    signal input root{{ q_stage }};
+
+{% if verkey_input %}    signal input rootC;
+{% else %}    signal rootC <== {{ const_root_str }};
+{% endif %}
+
+    signal input evals[{{ ev_map_len }}][3];
+
+    // Leaves values of the merkle tree
+{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    signal input s0_vals{{ stage_info.stage }}[{{ n_queries }}][{{ stage_info.cm_section_len }}];
+{% endif %}{% endfor %}    signal input s0_vals{{ q_stage }}[{{ n_queries }}][{{ q_stage_cm_section_len }}];
+    signal input s0_valsC[{{ n_queries }}][{{ n_constants }}];
+{% for cc in custom_commits %}    signal input s0_vals_{{ cc.name }}_0[{{ n_queries }}][{{ cc.section_len_0 }}];
+{% endfor %}
+    // Merkle proofs
+{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    signal input s0_siblings{{ stage_info.stage }}[{{ n_queries }}][{{ merkle_levels_s0 }}][{{ arity }}];
+{% endif %}{% endfor %}    signal input s0_siblings{{ q_stage }}[{{ n_queries }}][{{ merkle_levels_s0 }}][{{ arity }}];
+    signal input s0_siblingsC[{{ n_queries }}][{{ merkle_levels_s0 }}][{{ arity }}];
+{% for cc in custom_commits %}    signal input s0_siblings_{{ cc.name }}_0[{{ n_queries }}][{{ merkle_levels_s0 }}][{{ arity }}];
+{% endfor %}
+    // Intermediate FRI roots and vals
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_root;
+{% endif %}{% endfor %}
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_vals[{{ n_queries }}][{{ step.exponent * 3 }}];
+    signal input s{{ step.s }}_siblings[{{ n_queries }}][{{ step.merkle_levels }}][{{ arity }}];
+{% endif %}{% endfor %}
+
+    signal input finalPol[{{ final_pol_size }}][3];
+{% if pow_bits > 0 %}    signal input nonce;
+{% endif %}
+
+    signal {binary} enabled;
+{% if enable_input %}    signal input enable;
+    enable * (enable -1) === 0;
+    enabled <== enable;
+{% else %}    enabled <== 1;
+{% endif %}
+
+{% if n_publics > 0 %}    signal {maxNum} publicsGL[{{ n_publics }}];
+    publicsGL.maxNum = 0xFFFFFFFFFFFFFFFF;
+    for(var i = 0; i < {{ n_publics }}; i++){
+        publicsGL[i] <== LessThan64Bits()(publics[i]);
+    }
+{% endif %}
+
+    signal {maxNum} evalsGL[{{ ev_map_len }}][3];
+    evalsGL.maxNum = 0xFFFFFFFFFFFFFFFF;
+    for(var i = 0; i < {{ ev_map_len }}; i++){
+        for(var j = 0; j < 3; j++) {
+            evalsGL[i][j] <== LessThan64Bits()(evals[i][j]);
+        }
+    }
+
+{% if n_air_group_values > 0 %}    signal {maxNum} airgroupValuesGL[{{ n_air_group_values }}][3];
+    airgroupValuesGL.maxNum = 0xFFFFFFFFFFFFFFFF;
+    for(var i = 0; i < {{ n_air_group_values }}; i++){
+        for(var j = 0; j < 3; j++) {
+            airgroupValuesGL[i][j] <== LessThan64Bits()(airgroupvalues[i][j]);
+        }
+    }
+{% endif %}
+
+    signal {maxNum} finalPolGL[{{ final_pol_size }}][3];
+    finalPolGL.maxNum = 0xFFFFFFFFFFFFFFFF;
+    for(var i = 0; i < {{ final_pol_size }}; i++){
+        for(var j = 0; j < 3; j++) {
+            finalPolGL[i][j] <== LessThan64Bits()(finalPol[i][j]);
+        }
+    }
+
+{% for cp in challenges_per_stage %}    signal {maxNum} challengesStage{{ cp.stage }}GL[{{ cp.count }}][3];
+{% endfor %}
+    signal {maxNum} challengeQGL[3];
+    signal {maxNum} challengeXiGL[3];
+    signal {maxNum} challengesFRIGL[2][3];
+
+    signal {maxNum} challengesFRIStepsGL[{{ n_steps }}][3];
+
+    signal {binary} queriesFRIGL[{{ n_queries }}][{{ step0_bits }}];
+
+    ///////////
+    // Calculate challenges, challengesFRISteps and queriesFRI
+    ///////////
+
+{% if pow_bits > 0 %}    ({{ challenge_names_joined }},challengesFRIStepsGL,queriesFRIGL) <== Transcript()({% for inp in transcript_call_inputs %}{{ inp }},{% endfor %}root{{ q_stage }},evalsGL{% if si_roots_joined != "" %},{{ si_roots_joined }}{% endif %},finalPolGL, nonce, enabled);
+{% else %}    ({{ challenge_names_joined }},challengesFRIStepsGL,queriesFRIGL) <== Transcript()({% for inp in transcript_call_inputs %}{{ inp }},{% endfor %}root{{ q_stage }},evalsGL{% if si_roots_joined != "" %},{{ si_roots_joined }}{% endif %},finalPolGL, enabled);
+{% endif %}
+    ///////////
+    // Check constraints polynomial in the evaluation point
+    ///////////
+
+    VerifyEvaluations()({{ verify_evals_inputs_joined }});
+
+    ///////////
+    // Verify queries
+    ///////////
+
+{% for cc in custom_commits %}    signal root_{{ cc.name }}_0 <== publics[{{ cc.public_values[0] }}];
+{% endfor %}
+
+    for (var q = 0; q < {{ n_queries }}; q++) {
+        VerifySingleQuery()(
+            queriesFRIGL[q],
+            challengeXiGL,
+            challengesFRIGL,
+            challengesFRIStepsGL,
+            evalsGL,
+            enabled,
+{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}            s0_vals{{ stage_info.stage }}[q],
+            s0_siblings{{ stage_info.stage }}[q],
+            root{{ stage_info.stage }},
+{% endif %}{% endfor %}            s0_vals{{ q_stage }}[q],
+            s0_siblings{{ q_stage }}[q],
+            root{{ q_stage }},
+            s0_valsC[q],
+            s0_siblingsC[q],
+            rootC,
+{% for cc in custom_commits %}            s0_vals_{{ cc.name }}_0[q],
+            s0_siblings_{{ cc.name }}_0[q],
+            root_{{ cc.name }}_0,
+{% endfor %}{% for step in fri_steps_info %}{% if step.s > 0 %}            s{{ step.s }}_vals[q],
+            s{{ step.s }}_siblings[q],
+            s{{ step.s }}_root,
+{% endif %}{% endfor %}            finalPolGL
+        );
+    }
+
+    VerifyFinalPol()(finalPolGL, enabled);
+}
+
+{% if not skip_main %}
+template Main() {
+    signal input proverAddr;
+{% if n_publics > 0 %}    signal output publicsHash;
+
+    signal input publics[{{ n_publics }}];
+{% endif %}{% if n_air_group_values > 0 %}    signal input airgroups[{{ n_air_group_values }}];
+{% endif %}{% for stage_info in stages_info %}{% if stage_info.stage <= n_stages %}    signal input root{{ stage_info.stage }};
+{% endif %}{% endfor %}    signal input root{{ q_stage }};
+    signal input evals[{{ ev_map_len }}][3];
+
+    // Leaves values of the merkle tree
+{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    signal input s0_vals{{ stage_info.stage }}[{{ n_queries }}][{{ stage_info.cm_section_len }}];
+{% endif %}{% endfor %}    signal input s0_vals{{ q_stage }}[{{ n_queries }}][{{ q_stage_cm_section_len }}];
+    signal input s0_valsC[{{ n_queries }}][{{ n_constants }}];
+{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    signal input s0_siblings{{ stage_info.stage }}[{{ n_queries }}][{{ merkle_levels_s0 }}][{{ arity }}];
+{% endif %}{% endfor %}    signal input s0_siblings{{ q_stage }}[{{ n_queries }}][{{ merkle_levels_s0 }}][{{ arity }}];
+    signal input s0_siblingsC[{{ n_queries }}][{{ merkle_levels_s0 }}][{{ arity }}];
+
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_root;
+{% endif %}{% endfor %}
+{% for step in fri_steps_info %}{% if step.s > 0 %}    signal input s{{ step.s }}_vals[{{ n_queries }}][{{ step.exponent * 3 }}];
+    signal input s{{ step.s }}_siblings[{{ n_queries }}][{{ step.merkle_levels }}][{{ arity }}];
+{% endif %}{% endfor %}
+    signal input finalPol[{{ final_pol_size }}][3];
+{% if pow_bits > 0 %}    signal input nonce;
+{% endif %}
+
+    component sv = StarkVerifier();
+
+{% if n_publics > 0 %}    sv.publics <== publics;
+{% endif %}{% for stage_info in stages_info %}{% if stage_info.stage <= n_stages %}    sv.root{{ stage_info.stage }} <== root{{ stage_info.stage }};
+{% endif %}{% endfor %}    sv.root{{ q_stage }} <== root{{ q_stage }};
+    sv.evals <== evals;
+
+{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    sv.s0_vals{{ stage_info.stage }} <== s0_vals{{ stage_info.stage }};
+{% endif %}{% endfor %}    sv.s0_vals{{ q_stage }} <== s0_vals{{ q_stage }};
+    sv.s0_valsC <== s0_valsC;
+{% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    sv.s0_siblings{{ stage_info.stage }} <== s0_siblings{{ stage_info.stage }};
+{% endif %}{% endfor %}    sv.s0_siblings{{ q_stage }} <== s0_siblings{{ q_stage }};
+    sv.s0_siblingsC <== s0_siblingsC;
+
+{% for step in fri_steps_info %}{% if step.s > 0 %}    sv.s{{ step.s }}_root <== s{{ step.s }}_root;
+{% endif %}{% endfor %}
+{% for step in fri_steps_info %}{% if step.s > 0 %}    sv.s{{ step.s }}_vals <== s{{ step.s }}_vals;
+    sv.s{{ step.s }}_siblings <== s{{ step.s }}_siblings;
+{% endif %}{% endfor %}    sv.finalPol <== finalPol;
+{% if pow_bits > 0 %}    sv.nonce <== nonce;
+{% endif %}
+
+    //////
+    // Calculate Publics Hash
+    //////
+
+{% if n_publics > 0 %}    component publicsHasher = Sha256({{ sha256_bits }});
+    component n2bProverAddr = Num2Bits(160);
+    component n2bPublics[{{ n_publics }}];
+    component cmpPublics[{{ n_publics }}];
+
+    n2bProverAddr.in <== proverAddr;
+    for (var i=0; i<160; i++) {
+        publicsHasher.in[160 - 1 -i] <== n2bProverAddr.out[i];
+    }
+
+    var offset = 160;
+
+    for (var i=0; i<{{ n_publics }}; i++) {
+        n2bPublics[i] = Num2Bits(64);
+        cmpPublics[i] = CompConstant64(0xFFFFFFFF00000000);
+        n2bPublics[i].in <== publics[i];
+        for (var j=0; j<64; j++) {
+            publicsHasher.in[offset + 64 - 1 -j] <== n2bPublics[i].out[j];
+            cmpPublics[i].in[j] <== n2bPublics[i].out[j];
+        }
+        cmpPublics[i].out === 0;
+        offset += 64;
+    }
+
+    component n2bPublicsHash = Bits2Num(256);
+    for (var i = 0; i < 256; i++) {
+        n2bPublicsHash.in[i] <== publicsHasher.out[255-i];
+    }
+
+    publicsHash <== n2bPublicsHash.out;
+{% endif %}}
+
+component main = Main();
+{% endif %}

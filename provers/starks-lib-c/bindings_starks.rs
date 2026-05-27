@@ -3,6 +3,26 @@
 
 #[allow(dead_code)]
 extern "C" {
+    pub fn build_const_tree_c(
+        const_file: *const ::std::os::raw::c_char,
+        stark_info_file: *const ::std::os::raw::c_char,
+        const_tree_file: *const ::std::os::raw::c_char,
+        ver_key_file: *const ::std::os::raw::c_char,
+        out_root: *mut u64,
+    ) -> ::std::os::raw::c_int;
+
+    pub fn fflonk_setup_c(
+        r1cs_file: *const ::std::os::raw::c_char,
+        ptau_file: *const ::std::os::raw::c_char,
+        zkey_file: *const ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+
+    pub fn plonk_setup_c(
+        r1cs_file: *const ::std::os::raw::c_char,
+        ptau_file: *const ::std::os::raw::c_char,
+        zkey_file: *const ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+
     // SetupCtx
     // ========================================================================================
     pub fn n_hints_by_name(
@@ -415,7 +435,7 @@ extern "C" {
         proofType: *mut ::std::os::raw::c_char,
         d_buffers_: *mut ::std::os::raw::c_void
     );
-
+    
     pub fn read_exec_file(exec_data: *mut u64, exec_file: *mut ::std::os::raw::c_char, nCommitedPols: u64);
     
     pub fn get_committed_pols(

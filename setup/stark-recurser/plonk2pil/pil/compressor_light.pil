@@ -1,0 +1,152 @@
+require "std_constants.pil";
+require "std_connection.pil";
+
+require "circuits/cmul.pil";
+require "circuits/fft.pil";
+require "circuits/evpol.pil";
+require "circuits/treeselector.pil";
+require "circuits/selectval.pil";
+require "circuits/poseidon2.pil";
+require "circuits/plonk.pil";
+
+airtemplate CompressorLight (const int N, const int nPlonkRows, const int nPoseidonCompressor, const int nPoseidonSponge, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector4, const int nSelectVal1) {
+    col witness a[22];
+
+    #pragma fixed_external
+    col fixed S[22];
+    
+    #pragma fixed_external
+    col fixed C[5];
+    
+    const int nPoseidon = nPoseidonCompressor + nPoseidonSponge;
+
+    col fixed POSEIDONSPONGE = [[1,0:13]:nPoseidonSponge,0...];
+    col fixed POSEIDONCOMPRESSION = [[0:14]:nPoseidonSponge,[1,0:13]:nPoseidonCompressor,0...];
+    col fixed POSEIDON_SECOND_ROUND = [[0:3,1,0:10]:nPoseidon,0...];
+    col fixed POSEIDON_PARTIAL_ROUND1 = [[0:6,1,0:7]:nPoseidon,0...];
+    col fixed POSEIDON_PARTIAL_ROUND2 = [[0:8,1,0:5]:nPoseidon,0...];
+    col fixed POSEIDON_PREVIOUS_FINAL = [[0:11,1,0,0]:nPoseidon,0...];
+
+    col fixed CMUL = [0:(14*nPoseidon),1:nCMulRows, 0...];
+    col fixed EVPOL4 = [0:(14*nPoseidon + nCMulRows), 1:nEvPol4, 0...];
+    col fixed FFT4 = [0:(14*nPoseidon + nCMulRows + nEvPol4), [1,0]:nFFT4, 0...];
+    col fixed TREESELECTOR4 = [0:(14*nPoseidon + nCMulRows + nEvPol4 + 2*nFFT4), [1:0]:nTreeSelector4, 0...];
+    col fixed SELECTVAL1 = [0:(14*nPoseidon + nCMulRows + nEvPol4 + 2*nFFT4 + nTreeSelector4), 1:nSelectVal1, 0...];
+
+    col fixed PLONK = [0:(14*nPoseidon + nCMulRows + nEvPol4 + 2*nFFT4 + nTreeSelector4 + nSelectVal1),1:nPlonkRows, 0...];
+
+    const expr q0[5] = [C[0], C[1], C[2], C[3], C[4]];
+
+    const expr POSEIDON_FIRST_ROUND = POSEIDONSPONGE + POSEIDONCOMPRESSION;
+
+    const expr POSEIDON_R0 = ('POSEIDONSPONGE + 'POSEIDONCOMPRESSION);
+    const expr POSEIDON_R1 = POSEIDON_SECOND_ROUND';
+    const expr POSEIDON_R2 = POSEIDON_SECOND_ROUND;
+    const expr POSEIDON_R3 = 'POSEIDON_SECOND_ROUND;
+    const expr POSEIDON_R4 = POSEIDON_PARTIAL_ROUND1';
+    const expr POSEIDON_R26 = 'POSEIDON_PARTIAL_ROUND2;
+    const expr POSEIDON_R27 = POSEIDON_PREVIOUS_FINAL';
+    const expr POSEIDON_R28 = POSEIDON_PREVIOUS_FINAL;
+    const expr POSEIDON_R29 = 'POSEIDON_PREVIOUS_FINAL;
+
+    const expr POSEIDON_FULL_ROUND = POSEIDON_R0 + POSEIDON_R1 + POSEIDON_R2 + POSEIDON_R3 + POSEIDON_R26 + POSEIDON_R27 + POSEIDON_R28 + POSEIDON_R29;
+
+    const expr POSEIDON_PARTIAL_ROUNDS = POSEIDON_R4 + 'POSEIDON_PARTIAL_ROUND1 + POSEIDON_PARTIAL_ROUND1 + POSEIDON_PARTIAL_ROUND2;
+
+    plonk([a[0], a[1], a[2]], q0, PLONK);
+    plonk([a[3], a[4], a[5]], q0, PLONK);
+    plonk([a[6], a[7], a[8]], q0, PLONK);
+    plonk([a[9], a[10], a[11]], q0, PLONK);
+    plonk([a[12], a[13], a[14]], q0, PLONK);
+    plonk([a[15], a[16], a[17]], q0, PLONK);
+    plonk([a[18], a[19], a[20]], q0, PLONK);
+
+    plonk([a[16], a[17], a[18]], q0, POSEIDON_FULL_ROUND + POSEIDON_PARTIAL_ROUNDS);
+    plonk([a[19], a[20], a[21]], q0, POSEIDON_FULL_ROUND + POSEIDON_PARTIAL_ROUNDS);
+  
+    const expr b0 = a[16];
+    const expr b1 = a[17];
+
+    const expr inputO[POSEIDON_WIDTH];
+    const expr outputO[POSEIDON_WIDTH];
+    for (int i = 0; i < POSEIDON_WIDTH; i++) {
+        inputO[i] = a[i];
+        outputO[i] = a[i]';
+    }
+    poseidonInputOrder(inputO, [b0, b1], outputO, POSEIDONSPONGE, POSEIDONCOMPRESSION);
+    
+    const expr inputF_7[POSEIDON_WIDTH];
+    const expr constantsF[POSEIDON_WIDTH];
+    const expr outputF[POSEIDON_WIDTH];
+    const expr intermediateValues[11];
+
+    for (int i = 0; i < POSEIDON_WIDTH; i++) {
+        constantsF[i] = POSEIDON_R0 * POSEIDON_RC[i] + POSEIDON_R1 * POSEIDON_RC[i + 16] + POSEIDON_R2 * POSEIDON_RC[i + 32] + POSEIDON_R3 * POSEIDON_RC[i + 48] + POSEIDON_PARTIAL_ROUND1 * POSEIDON_RC[i + 64] + POSEIDON_PARTIAL_ROUND2 * POSEIDON_RC[i + 75] + POSEIDON_R26 * POSEIDON_RC[i + 86] + POSEIDON_R27 * POSEIDON_RC[i + 102] + POSEIDON_R28 * POSEIDON_RC[i + 118] + POSEIDON_R29 * POSEIDON_RC[i + 134];
+        inputF_7[i] = pow7(a[i] + constantsF[i]);
+        if (i < 11) {
+            intermediateValues[i] = inputF_7[i];
+        }
+        outputF[i] = a[i]';
+    }
+    
+    poseidonFullRound(inputF_7, outputF, POSEIDON_FULL_ROUND);
+
+    const expr inputP[POSEIDON_WIDTH];
+    const expr outputP[POSEIDON_WIDTH];
+    for (int i = 0; i < POSEIDON_WIDTH; i++) {
+        inputP[i] = 'a[i];
+        outputP[i] = a[i]';
+    }
+ 
+    const expr st0[11];
+    for (int i = 0; i < 11; i++) {
+        st0[i] = a[i];
+    }
+
+    poseidonPartialRound(11, inputP, outputP, st0, intermediateValues, POSEIDON_PARTIAL_ROUND1 + POSEIDON_PARTIAL_ROUND2);
+
+    const expr inA1[3] = [a[0], a[1], a[2]];
+    const expr inB1[3] = [a[3], a[4], a[5]];
+    const expr res1[3] = [a[6], a[7], a[8]];
+    cmul(inA1, inB1, res1, CMUL);
+
+    const expr inA2[3] = [a[9], a[10], a[11]];
+    const expr inB2[3] = [a[12], a[13], a[14]];
+    const expr res2[3] = [a[15], a[16], a[17]];
+    cmul(inA2, inB2, res2, CMUL);
+
+    const expr inpFFT[12] = [a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11]];
+    const expr outFFT[12] = [a[0]', a[1]', a[2]', a[3]', a[4]', a[5]', a[6]', a[7]', a[8]', a[9]', a[10]', a[11]'];
+    const expr constFFT[9] = [C[0], C[1], C[2], C[3], C[4], C[0]', C[1]', C[2]', C[3]'];
+    fft4(inpFFT, constFFT, outFFT, FFT4);
+
+    const expr coefs[5][3];
+    coefs[0] = [a[12], a[13], a[14]];
+    coefs[1] = [a[9], a[10], a[11]];
+    coefs[2] = [a[6], a[7], a[8]];
+    coefs[3] = [a[3], a[4], a[5]];
+    coefs[4] = [a[0], a[1], a[2]];
+    const expr x[3] = [a[15], a[16], a[17]];
+    const expr resEVPOL[3] = [a[18], a[19], a[20]];
+    evpol4(coefs, x, resEVPOL, EVPOL4);
+   
+    const expr treevals[4][3];
+    treevals[0] = [a[0], a[1], a[2]];
+    treevals[1] = [a[3], a[4], a[5]];
+    treevals[2] = [a[6], a[7], a[8]];
+    treevals[3] = [a[9], a[10], a[11]];
+    const expr key[2] = [a[12], a[13]];
+    const expr resTREE[3] = [a[14], a[15], a[16]];
+    treeselector4(treevals, key, resTREE, TREESELECTOR4);
+    
+    const expr selectvals[4][4];
+    selectvals[0] = [a[0], a[1], a[2], a[3]];
+    selectvals[1] = [a[4], a[5], a[6], a[7]];
+    selectvals[2] = [a[8], a[9], a[10], a[11]];
+    selectvals[3] = [a[12], a[13], a[14], a[15]];
+    const expr selectvals_key[2] = [a[16], a[17]];
+    const expr selected[4] = [a[18], a[19], a[20], a[21]];
+    selectval1(selectvals, selectvals_key, selected, SELECTVAL1);
+
+    connection(1, a, S, PIOP_BUS_PROD);
+}

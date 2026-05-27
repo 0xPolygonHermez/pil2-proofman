@@ -1,0 +1,29 @@
+pragma circom 2.1.0;
+pragma custom_templates;
+
+{% for vf in verifier_filenames %}include "{{ vf }}";
+{% endfor %}include "elliptic_curve.circom";
+
+{{ calculate_hashes }}
+template Compressor() {
+{% if has_publics %}    // --> AIR public inputs
+    signal input publics[{{ n_publics }}];
+
+{% endif %}    // --> VADCOP inputs
+{% if has_proof_values %}    signal input proofValues[{{ num_proof_values }}][3];
+{% endif %}    signal input globalChallenge[3];
+
+    // --> AIR STARK proof data
+{{ stark_signals }}
+    // --> VADCOP outputs
+{{ vadcop_define }}
+    // --> Verify the STARK proof
+{{ stark_assign }}
+{% if has_publics %}    for (var i=0; i< {{ n_publics }}; i++) {
+        sV.publics[i] <== publics[i];
+    }
+
+{% endif %}{{ vadcop_init }}
+}
+
+component main {public [{{ pub_names }}]} = Compressor();

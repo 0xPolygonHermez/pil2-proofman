@@ -13,7 +13,7 @@ proofman-macros = { path = "../macros" }
 proofman-hints = { path = "../hints" }
 proofman-util = { path = "../util" }
 proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
-proofman-verifier = { path = "../verifier" }
+proofman-verifier = { path = "../verifier", features = ["parallel"] }
 curves = { path = "../curves" }
 witness = { path = "../witness" }
 pil-std-lib = { workspace = true }

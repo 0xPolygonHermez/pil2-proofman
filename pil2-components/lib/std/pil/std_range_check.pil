@@ -411,7 +411,7 @@ function range_check_group(const expr expressions[], const int min, const int ma
 
     int opid;
     for (int i = 0; i < len; i++) {
-        opid =range_check(expressions[i], min, max, sels[i], predefined);
+        opid = range_check(expressions[i], min, max, sels[i], predefined);
     }
 
     return opid;
@@ -764,7 +764,6 @@ private function declare_u8_air() {
             U8Air(N: u8_air_n);
         }
     } else {
-        // TODO: Discuss if this makes sense
         // If the U8Air is needed more than once, we instantiate it in its own airgroup
         airgroup U8Air {
             if (U8_TABLE_VIRTUAL == 1) {
@@ -781,7 +780,7 @@ private function declare_u8_air() {
 private function declare_u16_air() {
     use proof.std.rc;
 
-    // Uupdate the number of U16 airgroups
+    // Update the number of U16 airgroups
     num_u16_airgroup++;
 
     // The U16 air is only needed once, so we wait for the last airgroup that uses it
@@ -789,7 +788,7 @@ private function declare_u16_air() {
         return;
     }
 
-    // save the airgroup id and air id of the table for latter use
+    // Save the airgroup id and air id of the table for latter use
     container proof.std.u16 {
         int airgroup_id = -1;
         int air_id = -1;

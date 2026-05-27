@@ -48,11 +48,11 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckMix<F> {
                 // First interface
                 let val0 = rng.random_range(0..=(1 << 8) - 1);
                 trace[i].a[0] = F::from_u16(val0);
-                self.std_lib.range_check(range1, val0 as i64, 1);
+                self.std_lib.range_check_one(range1, val0);
 
                 let val1 = rng.random_range(50..=(1 << 7) - 1);
                 trace[i].a[1] = F::from_u8(val1);
-                self.std_lib.range_check(range2, val1 as i64, 1);
+                self.std_lib.range_check_one(range2, val1);
 
                 let val2: i8 = rng.random_range(-1..=(1 << 3));
                 trace[i].a[2] = if val2 < 0 {
@@ -60,11 +60,11 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckMix<F> {
                 } else {
                     F::from_u8(val2 as u8)
                 };
-                self.std_lib.range_check(range3, val2 as i64, 1);
+                self.std_lib.range_check_one(range3, val2);
 
                 let val3: i16 = rng.random_range(-(1 << 7) + 1..=-50);
                 trace[i].a[3] = F::from_u64((val3 as i128 + F::ORDER_U64 as i128) as u64);
-                self.std_lib.range_check(range4, val3 as i64, 1);
+                self.std_lib.range_check_one(range4, val3);
 
                 // Second interface
                 let range_selector1 = rng.random_bool(0.5);
@@ -77,24 +77,24 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckMix<F> {
                     let val = rng.random_range(0..=(1 << 7) - 1);
                     trace[i].b[0] = F::from_u16(val);
 
-                    self.std_lib.range_check(range5, val as i64, 1);
+                    self.std_lib.range_check_one(range5, val);
                 } else {
                     let val = rng.random_range(0..=(1 << 4) - 1);
                     trace[i].b[0] = F::from_u16(val);
 
-                    self.std_lib.range_check(range6, val as i64, 1);
+                    self.std_lib.range_check_one(range6, val);
                 }
 
                 if range_selector2 {
                     let val = rng.random_range((1 << 5)..=(1 << 8) - 1);
                     trace[i].b[1] = F::from_u16(val);
 
-                    self.std_lib.range_check(range7, val as i64, 1);
+                    self.std_lib.range_check_one(range7, val);
                 } else {
                     let val = rng.random_range((1 << 8)..=(1 << 9) - 1);
                     trace[i].b[1] = F::from_u16(val);
 
-                    self.std_lib.range_check(range8, val as i64, 1);
+                    self.std_lib.range_check_one(range8, val);
                 }
 
                 // Third interface
@@ -108,7 +108,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckMix<F> {
                         let val = rng.random_range(5225..=29023);
                         trace[i].c[0] = F::from_u32(val);
 
-                        self.std_lib.range_check(range9, val as i64, 1);
+                        self.std_lib.range_check_one(range9, val);
                     }
                     1 => {
                         trace[i].range_sel[2] = F::ZERO;
@@ -121,7 +121,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckMix<F> {
                             F::from_u8(colu_val as u8)
                         };
 
-                        self.std_lib.range_check(range11, colu_val as i64, 1);
+                        self.std_lib.range_check_one(range11, colu_val);
                     }
                     2 => {
                         trace[i].range_sel[2] = F::ZERO;
@@ -130,7 +130,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckMix<F> {
                         let val = rng.random_range(0..=(1 << 7) - 1);
                         trace[i].c[0] = F::from_u32(val);
 
-                        self.std_lib.range_check(range5, val as i64, 1);
+                        self.std_lib.range_check_one(range5, val);
                     }
                     _ => return Err(ProofmanError::StdError("Invalid range".to_string())),
                 }

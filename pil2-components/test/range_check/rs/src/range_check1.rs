@@ -58,8 +58,8 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheck1<F> {
                     trace[i].a1 = F::from_u16(val1);
                     trace[i].a3 = F::from_u32(val2);
 
-                    self.std_lib.range_check(range1, val1 as i64, 1);
-                    self.std_lib.range_check(range3, val2 as i64, 1);
+                    self.std_lib.range_check_one(range1, val1);
+                    self.std_lib.range_check_one(range3, val2);
                 }
 
                 if selected2 {
@@ -68,15 +68,15 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheck1<F> {
                     trace[i].a2 = F::from_u8(val1);
                     trace[i].a4 = F::from_u16(val2);
 
-                    self.std_lib.range_check(range2, val1 as i64, 1);
-                    self.std_lib.range_check(range4, val2 as i64, 1);
+                    self.std_lib.range_check_one(range2, val1);
+                    self.std_lib.range_check_one(range4, val2);
                 }
 
                 if selected3 {
                     let val = rng.random_range(0..=(1 << 8) - 1);
                     trace[i].a5 = F::from_u16(val);
 
-                    self.std_lib.range_check(range1, val as i64, 1);
+                    self.std_lib.range_check_one(range1, val);
                 }
             }
 

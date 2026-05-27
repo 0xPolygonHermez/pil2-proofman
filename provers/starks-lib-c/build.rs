@@ -201,6 +201,9 @@ fn main() {
         for lib in &["sodium", "pthread", "gmp", "stdc++", "gmpxx", "crypto", "iomp5"] {
             println!("cargo:rustc-link-lib={lib}");
         }
+        // libstarks.a is always compiled with -D__USE_MPI_RMA__ on Linux, so link MPI
+        println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu/openmpi/lib");
+        println!("cargo:rustc-link-lib=mpi");
     }
 }
 
