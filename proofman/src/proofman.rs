@@ -1525,14 +1525,10 @@ where
         let setup = sctx.get_setup(airgroup_id, air_id)?;
         let steps_params = pctx.get_air_instance_params(instance_id, false);
 
-        let custom_commits_fixed_path = setup
-            .stark_info
-            .custom_commits
-            .iter()
-            .find(|c| c.stage_widths[0] > 0)
-            .and_then(|c| pctx.get_custom_commits_fixed_buffer(&c.name, false).ok())
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let custom_commits_fixed_path = match setup.stark_info.custom_commits.iter().find(|c| c.stage_widths[0] > 0) {
+            Some(c) => pctx.get_custom_commits_fixed_buffer(&c.name, true)?.to_string_lossy().into_owned(),
+            None => String::new(),
+        };
 
         let stream_id = initialize_instance_c(
             (&setup.p_setup).into(),
@@ -3959,14 +3955,10 @@ where
 
         // Resolve the custom-commits-fixed file path for this instance, if any.
         // Empty string means no custom commits — C++ side reads only when non-empty.
-        let custom_commits_fixed_path = setup
-            .stark_info
-            .custom_commits
-            .iter()
-            .find(|c| c.stage_widths[0] > 0)
-            .and_then(|c| pctx.get_custom_commits_fixed_buffer(&c.name, false).ok())
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let custom_commits_fixed_path = match setup.stark_info.custom_commits.iter().find(|c| c.stage_widths[0] > 0) {
+            Some(c) => pctx.get_custom_commits_fixed_buffer(&c.name, true)?.to_string_lossy().into_owned(),
+            None => String::new(),
+        };
 
         let (skip_recalculation, stream_id) = match stream_id_ {
             Some(stream_id) => (true, stream_id),
@@ -4308,14 +4300,10 @@ where
 
         let p_steps_params: *mut u8 = (&steps_params).into();
 
-        let custom_commits_fixed_path = setup
-            .stark_info
-            .custom_commits
-            .iter()
-            .find(|c| c.stage_widths[0] > 0)
-            .and_then(|c| pctx.get_custom_commits_fixed_buffer(&c.name, false).ok())
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let custom_commits_fixed_path = match setup.stark_info.custom_commits.iter().find(|c| c.stage_widths[0] > 0) {
+            Some(c) => pctx.get_custom_commits_fixed_buffer(&c.name, true)?.to_string_lossy().into_owned(),
+            None => String::new(),
+        };
 
         commit_witness_c(
             p_setup,
