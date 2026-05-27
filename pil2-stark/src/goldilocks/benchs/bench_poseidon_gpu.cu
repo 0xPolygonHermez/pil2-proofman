@@ -219,6 +219,57 @@ static void MERKLETREE_W_AR_ROWMAJOR_GPU_POS1_BENCH(benchmark::State &state)
     CHECKCUDAERR(cudaStreamDestroy(stream));
 }
 
+
+static void MERKLETREE_HYBRID_W12POS1_W16POS2_AR4_TILES_GPU_BENCH(benchmark::State &state)
+{
+    constexpr uint32_t W_LEAF = 12;   // Poseidon v1 sponge width
+    constexpr uint32_t W_NODE = 16;   // Poseidon2 sponge width (arity 4 * CAPACITY 4)
+    constexpr uint32_t ARITY  = 4;
+    constexpr uint32_t CAP    = PoseidonGoldilocksGPU<W_LEAF>::CAPACITY;  // 4
+
+    uint32_t gpu_id = 0;
+    cudaGetDevice((int *)&gpu_id);
+    PoseidonGoldilocksGPU<W_LEAF>::initConstants(&gpu_id, 1);
+    Poseidon2GoldilocksGPU<W_NODE>::initConstants(&gpu_id, 1);
+
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+
+    uint64_t nCols = state.range(0);
+
+    gl64_t *d_trace, *d_leaves, *d_root;
+    CHECKCUDAERR(cudaMalloc((void **)&d_trace,  BENCH_NROWS * nCols * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_leaves, BENCH_NROWS * CAP  * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_root,   CAP * sizeof(gl64_t)));
+
+    dim3 thr(128), blk((BENCH_NROWS + 127) / 128);
+    initTraceKernel_pos1<<<blk, thr, 0, stream>>>(d_trace, BENCH_NROWS, nCols);
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    auto build = [&]() {
+        // Leaf layer: Poseidon v1 linear hash over the trace rows.
+        PoseidonGoldilocksGPU<W_LEAF>::linearHash(
+            (uint64_t *)d_leaves, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::Tiles, stream);
+        // Internal nodes: Poseidon2 arity-4 reduction over the leaf digests.
+        Poseidon2GoldilocksGPU<W_NODE>::merkletreeReduce(
+            (uint64_t *)d_root, (uint64_t *)d_leaves, BENCH_NROWS, ARITY, stream);
+    };
+
+    // Warm up
+    build();
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    for (auto _ : state) {
+        build();
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
+    }
+
+    CHECKCUDAERR(cudaFree(d_trace));
+    CHECKCUDAERR(cudaFree(d_leaves));
+    CHECKCUDAERR(cudaFree(d_root));
+    CHECKCUDAERR(cudaStreamDestroy(stream));
+}
+
 // ===================================================================
 // grinding — GPU (not parameterised by nCols; parameterised by n_bits).
 // ===================================================================
@@ -270,7 +321,7 @@ static void GRINDING_GPU_POS1_BENCH(benchmark::State &state)
 // Registration
 // ===================================================================
 
-#define NCOLS_ARGS ->Arg(24)->Arg(36)->Arg(56)
+#define NCOLS_ARGS ->Arg(9)->Arg(18)->Arg(24)->Arg(36)->Arg(56)
 
 #define REG_NCOLS(FUNC, W, LABEL)                                                \
     BENCHMARK_TEMPLATE(FUNC, W)                                                  \
@@ -299,6 +350,14 @@ REG_NCOLS(LINEAR_HASH_W_ROWMAJOR_GPU_POS1_BENCH, 12, "LINEAR_HASH_W12_ROWMAJOR_G
 // merkletree — Poseidon v1 restricted to arity=2 (Plonky2 / 0.14.0 binary config).
 REG_NCOLS_AR(MERKLETREE_W_AR_TILES_GPU_POS1_BENCH,    12, 2, "MERKLETREE_W12_AR2_TILES_GPU_POS1_BENCH")
 REG_NCOLS_AR(MERKLETREE_W_AR_ROWMAJOR_GPU_POS1_BENCH, 12, 2, "MERKLETREE_W12_AR2_ROWMAJOR_GPU_POS1_BENCH")
+
+// HYBRID merkletree — v1 (W=12) leaves + Poseidon2 (W=16, arity 4) tree.
+// Same nCols sweep as the v1 baseline above for side-by-side comparison.
+BENCHMARK(MERKLETREE_HYBRID_W12POS1_W16POS2_AR4_TILES_GPU_BENCH)
+    ->Name("MERKLETREE_HYBRID_W12POS1_W16POS2_AR4_TILES_GPU_BENCH")
+    ->Unit(benchmark::kMillisecond)
+    ->Arg(9)->Arg(18)->Arg(24)->Arg(36)->Arg(56)
+    ->UseRealTime();
 
 // grinding
 BENCHMARK(GRINDING_GPU_POS1_BENCH)

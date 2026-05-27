@@ -262,7 +262,7 @@ static void GRINDING_GPU_BENCH(benchmark::State &state)
 // Registration
 // ===================================================================
 
-#define NCOLS_ARGS ->Arg(24)->Arg(36)->Arg(56)
+#define NCOLS_ARGS ->Arg(9)->Arg(18)->Arg(24)->Arg(36)->Arg(56)
 
 #define REG_NCOLS(FUNC, W, LABEL)                                            \
     BENCHMARK_TEMPLATE(FUNC, W)                                              \
