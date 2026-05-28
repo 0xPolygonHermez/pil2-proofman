@@ -72,6 +72,16 @@ impl<F: PrimeField64> Std<F> {
         Ok(Arc::new(Self { mode, prod_bus, sum_bus, range_check, virtual_table }))
     }
 
+    pub fn new_standalone() -> Arc<Self> {
+        let mode = RwLock::new(StdMode::default());
+        let prod_bus = StdProd::new_standalone();
+        let sum_bus = StdSum::new_standalone();
+        let virtual_table = StdVirtualTable::new_standalone();
+        let range_check = StdRangeCheck::new_standalone(virtual_table.clone());
+
+        Arc::new(Self { mode, prod_bus, sum_bus, range_check, virtual_table })
+    }
+
     // ==================== Range Check API ====================
 
     /// Gets the range id for a given range subject to the range check

@@ -20,6 +20,7 @@ pub struct StdVirtualTable<F: PrimeField64> {
     pub global_id_by_uid: HashMap<usize, usize>,   // uid -> global_id
     pub indices_by_global_id: Vec<(usize, usize)>, // global_id -> (air_idx, uid_idx)
     pub virtual_table_airs: Option<Vec<Arc<VirtualTableAir<F>>>>,
+    standalone_ids: Option<RwLock<HashMap<usize, usize>>>,
 }
 pub struct VirtualTableAir<F: PrimeField64> {
     airgroup_id: usize,
@@ -49,6 +50,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
                 global_id_by_uid: HashMap::new(),
                 indices_by_global_id: Vec::new(),
                 virtual_table_airs: None,
+                standalone_ids: None,
             }));
         }
 
@@ -138,10 +140,26 @@ impl<F: PrimeField64> StdVirtualTable<F> {
             global_id_by_uid,
             indices_by_global_id,
             virtual_table_airs: Some(virtual_tables),
+            standalone_ids: None,
         }))
     }
 
+    pub fn new_standalone() -> Arc<Self> {
+        Arc::new(Self {
+            _phantom: std::marker::PhantomData,
+            global_id_by_uid: HashMap::new(),
+            indices_by_global_id: Vec::new(),
+            virtual_table_airs: None,
+            standalone_ids: Some(RwLock::new(HashMap::new())),
+        })
+    }
+
     pub fn get_global_id(&self, id: usize) -> ProofmanResult<usize> {
+        if let Some(standalone) = &self.standalone_ids {
+            let mut map = standalone.write().expect("standalone_ids poisoned");
+            let next = map.len();
+            return Ok(*map.entry(id).or_insert(next));
+        }
         self.global_id_by_uid
             .get(&id)
             .copied()
@@ -149,19 +167,22 @@ impl<F: PrimeField64> StdVirtualTable<F> {
     }
 
     pub fn inc_virtual_row(&self, global_id: usize, row: u64, multiplicity: u64) {
+        let Some(airs) = self.virtual_table_airs.as_ref() else { return };
         let (air_idx, uid_idx) = self.indices_by_global_id[global_id];
-        self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_row(uid_idx, row, multiplicity);
+        airs[air_idx].inc_virtual_row(uid_idx, row, multiplicity);
     }
 
     pub fn inc_virtual_rows(&self, global_id: usize, rows: &[u64], multiplicities: &[u64]) {
         debug_assert!(!rows.is_empty() && rows.len() == multiplicities.len());
+        let Some(airs) = self.virtual_table_airs.as_ref() else { return };
         let (air_idx, uid_idx) = self.indices_by_global_id[global_id];
-        self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_rows(uid_idx, rows, multiplicities);
+        airs[air_idx].inc_virtual_rows(uid_idx, rows, multiplicities);
     }
 
     pub fn inc_virtual_rows_same_mul(&self, global_id: usize, rows: &[u64], multiplicity: u64) {
+        let Some(airs) = self.virtual_table_airs.as_ref() else { return };
         let (air_idx, uid_idx) = self.indices_by_global_id[global_id];
-        self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_rows_same_mul(uid_idx, rows, multiplicity);
+        airs[air_idx].inc_virtual_rows_same_mul(uid_idx, rows, multiplicity);
     }
 
     pub fn inc_virtual_rows_ranged(&self, global_id: usize, start: Option<u64>, multiplicities: &[u64]) {
@@ -174,8 +195,9 @@ impl<F: PrimeField64> StdVirtualTable<F> {
     /// Increment multiplicities directly from an iterator of (row, multiplicity) pairs.
     /// Lets callers avoid materializing an intermediate Vec<u64> of rows.
     pub fn inc_virtual_pairs(&self, global_id: usize, pairs: impl Iterator<Item = (u64, u64)>) {
+        let Some(airs) = self.virtual_table_airs.as_ref() else { return };
         let (air_idx, uid_idx) = self.indices_by_global_id[global_id];
-        self.virtual_table_airs.as_ref().unwrap()[air_idx].inc_virtual_pairs(uid_idx, pairs);
+        airs[air_idx].inc_virtual_pairs(uid_idx, pairs);
     }
 }
 

@@ -1,4 +1,7 @@
-use std::{fmt::Debug, sync::Arc};
+use std::{
+    fmt::Debug,
+    sync::{Arc, RwLock},
+};
 
 use fields::PrimeField64;
 
@@ -21,6 +24,7 @@ pub struct StdRangeCheck<F: PrimeField64> {
     pub u16air: Option<Arc<U16Air<F>>>,
     pub specified_ranges_air: Option<Arc<SpecifiedRanges<F>>>,
     virtual_table: Arc<StdVirtualTable<F>>,
+    standalone_ranges: Option<RwLock<Vec<RangeData>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +88,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 u16air,
                 specified_ranges_air,
                 virtual_table,
+                standalone_ranges: None,
             }));
         };
 
@@ -128,7 +133,19 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             u16air,
             specified_ranges_air,
             virtual_table,
+            standalone_ranges: None,
         }))
+    }
+    pub fn new_standalone(virtual_table: Arc<StdVirtualTable<F>>) -> Arc<Self> {
+        Arc::new(Self {
+            _phantom: std::marker::PhantomData,
+            ranges: Vec::new(),
+            u8air: None,
+            u16air: None,
+            specified_ranges_air: None,
+            virtual_table,
+            standalone_ranges: Some(RwLock::new(Vec::new())),
+        })
     }
 
     // Helper function to instantiate AIRs
@@ -329,9 +346,18 @@ impl<F: PrimeField64> StdRangeCheck<F> {
     pub fn get_range_id(&self, min: i64, max: i64, predefined: Option<bool>) -> ProofmanResult<usize> {
         // Default predefined value in STD is false
         let predefined = predefined.unwrap_or(false);
+        let received_range_data = RangeData { min, max, predefined };
+
+        if let Some(standalone) = &self.standalone_ranges {
+            let mut ranges = standalone.write().expect("standalone_ranges poisoned");
+            if let Some(i) = ranges.iter().position(|r| *r == received_range_data) {
+                return Ok(i);
+            }
+            ranges.push(received_range_data);
+            return Ok(ranges.len() - 1);
+        }
 
         // Find the range with the given [min,max] values, return its id
-        let received_range_data = RangeData { min, max, predefined };
         if let Some(i) = self.ranges.iter().position(|r| r.data == received_range_data) {
             Ok(i)
         } else {

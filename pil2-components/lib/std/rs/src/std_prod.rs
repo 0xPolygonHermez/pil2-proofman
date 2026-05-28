@@ -35,17 +35,7 @@ impl<F: PrimeField64> StdProd<F> {
         let std_prod_users = get_hint_ids_by_name(sctx.get_global_bin(), "std_prod_users");
 
         let Some(&std_prod_users) = std_prod_users.first() else {
-            return Ok(Arc::new(Self {
-                num_users: 0,
-                std_mode: Vec::new(),
-                airgroup_ids: Vec::new(),
-                air_ids: Vec::new(),
-                debug_data: RwLock::new(FxHashMap::default()),
-                debug_data_info: RwLock::new(FxHashMap::default()),
-                debug_data_fast: RwLock::new(DebugDataFast::new()),
-                debug_data_fast_global: RwLock::new(DebugDataFastGlobal::new()),
-                _phantom: std::marker::PhantomData,
-            }));
+            return Ok(Self::empty());
         };
 
         let num_users = get_global_hint_field_constant_as::<usize, F>(sctx, std_prod_users, "num_users")?;
@@ -64,6 +54,24 @@ impl<F: PrimeField64> StdProd<F> {
             debug_data_fast_global: RwLock::new(DebugDataFastGlobal::new()),
             _phantom: std::marker::PhantomData,
         }))
+    }
+
+    pub fn new_standalone() -> Arc<Self> {
+        Self::empty()
+    }
+
+    fn empty() -> Arc<Self> {
+        Arc::new(Self {
+            num_users: 0,
+            std_mode: Vec::new(),
+            airgroup_ids: Vec::new(),
+            air_ids: Vec::new(),
+            debug_data: RwLock::new(FxHashMap::default()),
+            debug_data_info: RwLock::new(FxHashMap::default()),
+            debug_data_fast: RwLock::new(DebugDataFast::new()),
+            debug_data_fast_global: RwLock::new(DebugDataFastGlobal::new()),
+            _phantom: std::marker::PhantomData,
+        })
     }
 }
 
