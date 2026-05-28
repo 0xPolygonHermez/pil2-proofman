@@ -48,7 +48,7 @@ DEPS_WITNESS_LIB := $(OBJS_WITNESS_LIB:.o=.d)
 
 $(WITNESS_DIR)/$(WITNESS_FILE): $(OBJS_WITNESS_LIB)
 	$(MKDIR_P) $(WITNESS_DIR)
-	$(CXX) -shared -o $@ $^ $(CFLAGS) 
+	$(CXX) -shared -o $@ $^ $(CFLAGS) -lgmp -lgmpxx
 
 
 # C++ source compilation rule
