@@ -4,20 +4,8 @@
 #include <cassert>
 
 // ---------------------------------------------------------------------------
-// Poseidon v1 over Goldilocks — port of pil2-stark 0.14.0.
-//
-// Math is byte-identical to pil2-stark 0.14.0 poseidon_goldilocks.cpp.
-// Structural changes from 0.14.0:
-//   * Class is templated over SPONGE_WIDTH_T (only W=12 instantiated).
-//   * Constants live in namespace PoseidonGoldilocksConstants with width-
-//     suffixed names (C12/M12/M_12/P12/P_12/S12).
-//   * merkletree now takes an `arity` parameter (mirrors Poseidon2's shape).
-//   * Scalar batch paths and single-sponge AVX512 are intentionally omitted
-//     (Poseidon2 doesn't expose them either — keeping the public API aligned).
-//   * AvxBatch is a true 4-sponge AVX2 permutation (12 __m256i state regs,
-//     one state element × 4 sponges per register). Avx512Batch is a true
-//     8-sponge AVX512 permutation (12 __m512i regs). Both mirror Poseidon2's
-//     batched layout and produce byte-exact output vs the scalar golden.
+// Poseidon v1 over Goldilocks (W=12): scalar, AVX2 (single + 4-sponge batch),
+// and AVX512 (8-sponge batch) implementations.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -120,7 +108,7 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_seq(
         linear_hash_seq(&cursor[i * CAPACITY], &input[i * num_cols * dim], num_cols * dim);
     }
 
-    // Build the merkle tree (arity-generic reduction — mirrors Poseidon2).
+    // Build the merkle tree (arity-generic reduction).
     uint64_t pending = num_rows;
     uint64_t nextN = (pending + (arity - 1)) / arity;
     uint64_t nextIndex = 0;
@@ -139,11 +127,8 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_seq(
             Goldilocks::Element pol_input[SPONGE_WIDTH];
             memset(pol_input, 0, SPONGE_WIDTH * sizeof(Goldilocks::Element));
 
-            // Arity-correct stride: read arity*CAPACITY child hashes (each of
-            // CAPACITY elements) and zero-pad the remaining SPONGE_WIDTH slots.
-            // This differs from Poseidon2's pattern (which assumes arity*CAP ==
-            // SPONGE_WIDTH), so that arity=2 at W=12 reproduces 0.14.0's
-            // binary-merkle root bit-for-bit.
+            // Read arity*CAPACITY child hashes (CAPACITY elements each) and
+            // zero-pad the remaining SPONGE_WIDTH slots.
             std::memcpy(pol_input, &cursor[nextIndex + i * (arity * CAPACITY)], (arity * CAPACITY) * sizeof(Goldilocks::Element));
 
             compress_seq((Goldilocks::Element(&)[CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
@@ -160,7 +145,7 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletreeReduce(
     Goldilocks::Element *root, Goldilocks::Element *input,
     uint64_t num_elements, uint64_t arity)
 {
-    // Only arity=2 is validated; see comment in merkletree() in the header.
+    // Only arity == 2 (binary merkle) is supported.
     assert(arity == 2 && "PoseidonGoldilocks::merkletreeReduce: only arity == 2 is supported");
     uint64_t numNodes = num_elements;
     uint64_t nodesLevel = num_elements;
@@ -194,11 +179,8 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletreeReduce(
             Goldilocks::Element pol_input[SPONGE_WIDTH];
             memset(pol_input, 0, SPONGE_WIDTH * sizeof(Goldilocks::Element));
 
-            // Arity-correct stride: read arity*CAPACITY child hashes (each of
-            // CAPACITY elements) and zero-pad the remaining SPONGE_WIDTH slots.
-            // This differs from Poseidon2's pattern (which assumes arity*CAP ==
-            // SPONGE_WIDTH), so that arity=2 at W=12 reproduces 0.14.0's
-            // binary-merkle root bit-for-bit.
+            // Read arity*CAPACITY child hashes (CAPACITY elements each) and
+            // zero-pad the remaining SPONGE_WIDTH slots.
             std::memcpy(pol_input, &cursor[nextIndex + i * (arity * CAPACITY)], (arity * CAPACITY) * sizeof(Goldilocks::Element));
 
             compress_seq((Goldilocks::Element(&)[CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
@@ -426,11 +408,8 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_avx(
             Goldilocks::Element pol_input[SPONGE_WIDTH];
             memset(pol_input, 0, SPONGE_WIDTH * sizeof(Goldilocks::Element));
 
-            // Arity-correct stride: read arity*CAPACITY child hashes (each of
-            // CAPACITY elements) and zero-pad the remaining SPONGE_WIDTH slots.
-            // This differs from Poseidon2's pattern (which assumes arity*CAP ==
-            // SPONGE_WIDTH), so that arity=2 at W=12 reproduces 0.14.0's
-            // binary-merkle root bit-for-bit.
+            // Read arity*CAPACITY child hashes (CAPACITY elements each) and
+            // zero-pad the remaining SPONGE_WIDTH slots.
             std::memcpy(pol_input, &cursor[nextIndex + i * (arity * CAPACITY)], (arity * CAPACITY) * sizeof(Goldilocks::Element));
 
             compress_avx((Goldilocks::Element(&)[CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
@@ -443,12 +422,9 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_avx(
 }
 
 // --- AVX2 4-sponge batch ---------------------------------------------------
-//
-// True 4-sponge parallel permutation: each of the 12 __m256i registers holds
-// one state element across 4 sponges (strided layout). Algorithm is a direct
-// SIMD lift of scalar permute_seq — full-round matmul uses M12[j][i] indexing
-// (== scalar mvp_), transition uses P12, partial round applies the S-matrix
-// rank-1 update. Byte-exact with scalar across all 4 sponges.
+// Each of the 12 __m256i registers holds one state element across 4 sponges
+// (strided layout). Full-round matmul uses M12[j][i] indexing, the transition
+// uses P12, and the partial round applies the S-matrix rank-1 update.
 
 namespace {
 #ifdef __AVX2__
@@ -687,8 +663,7 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx(
     #pragma omp parallel for num_threads(num_threads)
         for (uint64_t i = 0; i < nextN; i += 4)
         {
-            // Arity-correct stride matches the scalar and single-AVX paths:
-            // read arity*CAPACITY child hashes per parent, zero-pad the tail.
+            // Read arity*CAPACITY child hashes per parent, zero-pad the tail.
             const uint64_t STRIDE = arity * CAPACITY;
             if (nextN - i < 4) {
                 Goldilocks::Element pol_input[SPONGE_WIDTH];
@@ -717,15 +692,13 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx(
 #endif // __AVX2__
 
 // ---------------------------------------------------------------------------
-// AVX512 (8-lane batch only — single-sponge AVX512 intentionally unimplemented
-// to match Poseidon2's public surface).
+// AVX512 (8-sponge batch only).
 // ---------------------------------------------------------------------------
 
 #ifdef __AVX512__
 
-// True 8-sponge AVX512 batch permute. 12 __m512i state registers, each
-// holding one state element across 8 sponges (strided layout, mirrors
-// Poseidon2's batched AVX512). Byte-exact with scalar on all 8 sponges.
+// 8-sponge AVX512 batch permute. 12 __m512i state registers, each holding one
+// state element across 8 sponges (strided layout).
 template<uint32_t SPONGE_WIDTH_T>
 void PoseidonGoldilocks<SPONGE_WIDTH_T>::permute_batch_avx512(
     Goldilocks::Element *state, const Goldilocks::Element *input)
@@ -961,7 +934,6 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx512(
 #endif // __AVX512__
 
 // ---------------------------------------------------------------------------
-// Explicit template instantiations.
-// Only W=12 is shipped this iteration (matches pil2-stark 0.14.0 / Plonky2).
+// Explicit template instantiation (W=12).
 // ---------------------------------------------------------------------------
 template class PoseidonGoldilocks<12>;

@@ -2,22 +2,11 @@
 #define POSEIDON_GOLDILOCKS_CUH
 
 // ---------------------------------------------------------------------------
-// Poseidon v1 (Goldilocks, W=12) — GPU port.
+// Poseidon v1 (Goldilocks, W=12) — GPU implementation.
 //
-// Shape mirrors poseidon2_goldilocks.cuh so both hash families share the same
-// public surface (initConstants / permute / compress / linearHash / merkletree
-// / merkletreeReduce / grinding).
-//
-// Algorithm source: pil2-stark 0.14.0 poseidon_goldilocks.cu (hash_full_result_seq)
-// and the CPU reference in poseidon_goldilocks.cpp (permute_seq) — this file
-// preserves that math byte-for-byte.
-//
-// We intentionally include poseidon2_goldilocks.cuh to reuse:
-//   - the Layout enum (RowMajor / Tiles),
-//   - the pow7(gl64_t&) device leaf,
-//   - the extern __shared__ scratchpad declaration.
-// No Poseidon2 kernel is called from here, but sharing the header avoids
-// duplicate symbols and keeps the two paths co-installable.
+// Includes poseidon2_goldilocks.cuh to reuse the Layout enum (RowMajor/Tiles),
+// the pow7(gl64_t&) device leaf, and the extern __shared__ scratchpad
+// declaration (no Poseidon2 kernel is called from here).
 // ---------------------------------------------------------------------------
 
 #include "gl64_t.cuh"
@@ -29,7 +18,7 @@
 #include "poseidon2_goldilocks.cuh"  // brings: Layout, pow7(gl64_t&), scratchpad
 
 // ---------------------------------------------------------------------------
-// Public class — parameterised only at W=12 this iteration (matches CPU).
+// Public class (W=12).
 // ---------------------------------------------------------------------------
 
 template<uint32_t SPONGE_WIDTH_T>
@@ -37,7 +26,7 @@ class PoseidonGoldilocksGPU
 {
 public:
     static_assert(SPONGE_WIDTH_T == 12,
-                  "PoseidonGoldilocksGPU: only W=12 instantiated in this iteration");
+                  "PoseidonGoldilocksGPU: only W=12 is instantiated");
 
     static constexpr uint32_t RATE                = SPONGE_WIDTH_T - 4;  // 8
     static constexpr uint32_t CAPACITY            = 4;
@@ -72,12 +61,11 @@ public:
 using PoseidonGoldilocksGPUGrinding = PoseidonGoldilocksGPU<12>;
 
 // ---------------------------------------------------------------------------
-// Constant memory arrays GPU_POS1_{C,S,M,P} are defined in poseidon_goldilocks.cu.
-// They are NOT forward-declared in this header: nvcc treats any declaration of a
-// __constant__ symbol (even `extern`) as a definition, so a forward decl would
-// cause a "redefinition" error at link time. Device helpers in this header take
-// the constants through pointer parameters (see poseidon1PermuteReg), mirroring
-// how poseidon2_goldilocks.cuh passes its GPU_C_GL / GPU_D_GL.
+// Constant-memory arrays GPU_POS1_{C,S,M,P} are defined in poseidon_goldilocks.cu
+// and NOT forward-declared here: nvcc treats any declaration of a __constant__
+// symbol (even `extern`) as a definition, so a forward decl would cause a
+// "redefinition" error at link time. Device helpers take the constants through
+// pointer parameters (see poseidon1PermuteReg).
 
 // ---------------------------------------------------------------------------
 // Device leaf primitives — register-path Poseidon v1.
@@ -141,10 +129,9 @@ __device__ __forceinline__ gl64_t pos1_dot_(const gl64_t *x, const gl64_t *C)
     return s0;
 }
 
-// Matrix-vector product on W=12. 0.14.0 indexes the flat matrix as
-// mat[12*j + i] (i.e. transposed layout), so M_12/P_12 can be applied in
-// this linearised form. DO NOT change this indexing — it's the load-bearing
-// piece that reproduces the committed goldens.
+// Matrix-vector product (W=12). The flat matrix is indexed mat[12*j + i]
+// (transposed layout). DO NOT change this indexing — the constant tables
+// (M_12/P_12) assume it.
 template<uint32_t W>
 __device__ __forceinline__ void pos1_mvp_(gl64_t *state, const gl64_t *mat)
 {
@@ -163,7 +150,7 @@ __device__ __forceinline__ void pos1_mvp_(gl64_t *state, const gl64_t *mat)
 }
 
 // ---------------------------------------------------------------------------
-// Full register-path permutation (matches 0.14.0 hash_full_result_seq).
+// Full register-path permutation.
 // ---------------------------------------------------------------------------
 
 template<uint32_t W, uint32_t HALF_F, uint32_t N_PART>
@@ -214,16 +201,9 @@ __device__ void poseidon1PermuteReg(gl64_t *state,
 
 // ---------------------------------------------------------------------------
 // Shared-memory variant of the permutation.
-//
 // State layout: scratchpad[i * blockDim.x + threadIdx.x] = state element i of
-// this thread. Matches the layout used by poseidon2_goldilocks.cuh and 0.14.0's
-// linear_hash_gpu_coalesced.
-//
-// Win over the register path (poseidon1PermuteReg):
-//   - No stack spill (the register path spills the state[12] array to local
-//     memory — 96 bytes/thread visible in ptxas output).
-//   - Partial rounds fuse dot+prod+add into a single inner loop (half the
-//     shared-mem traffic of the split version).
+// this thread (one thread per sponge). Avoids the register path's stack spill,
+// and fuses dot + rank-1 in the partial rounds.
 // ---------------------------------------------------------------------------
 
 template<uint32_t W>
@@ -265,12 +245,9 @@ __device__ __forceinline__ void pos1_pow7add_smem_(const gl64_t *C)
     }
 }
 
-// MDS * state_in_smem. Reads state once into registers, writes products back.
-// Indexing matches register-path mvp_ (mat[W*j + i] = M[j][i], transposed-style).
-// Outer loop is NOT fully unrolled: unrolling it (12 live accumulators +
-// full expansion of inner × outer = 132 mul-adds) pushed register use to 255/
-// thread and crashed occupancy. Keeping outer as unroll-1 but inner as full-
-// unroll keeps the kernel at 48 regs/thread.
+// MDS × state in shared memory. Indexing matches pos1_mvp_ (mat[W*j + i],
+// transposed). Outer loop kept at unroll-1 on purpose: fully unrolling it
+// spikes register use and drops occupancy.
 template<uint32_t W>
 __device__ __forceinline__ void pos1_mvp_smem_(const gl64_t *mat)
 {
@@ -309,17 +286,10 @@ __device__ void poseidon1PermuteSmem(const gl64_t *GPU_C_GL,
     pos1_pow7add_smem_<W>(&GPU_C_GL[HALF_F * W]);
     pos1_mvp_smem_<W>(GPU_P_GL);
 
-    // Partial rounds — fused dot + prod+add loop.
-    //
-    // Optimisation: state[0] is rewritten on every iteration anyway, so keep
-    // it in a register across all N_PART rounds. Read from scratchpad once at
-    // the start, write back once at the end. Saves (N_PART*2 - 1) = 43 smem
-    // ops per permutation vs. the pure-smem version.
-    //
-    // Holding the *full* W-element state in registers blew up register count
-    // to 255/thread and dropped occupancy by ~40% — see earlier note. Keeping
-    // only state[0] in a register (1 extra register) is safe: compiler stays
-    // at 48 regs/thread.
+    // Partial rounds — fused dot + rank-1 loop. state[0] is rewritten every
+    // round, so keep it in a register across all rounds (read/write scratchpad
+    // once). Caching the full state in registers instead spikes register use
+    // and drops occupancy.
     {
         gl64_t s0_reg = scratchpad[threadIdx.x];
 #pragma unroll 1

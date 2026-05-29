@@ -5,15 +5,14 @@
 
 // Poseidon v1 constants for Goldilocks (SPONGE_WIDTH = 12).
 //
-// These are the original constants shipped in pil2-stark 0.14.0 and
-// matching the Plonky2 / Polygon-zkEVM Poseidon-Goldilocks parameters:
+// Plonky2 / Polygon-zkEVM Poseidon-Goldilocks parameters:
 //   field:        Goldilocks (p = 2^64 - 2^32 + 1)
 //   sponge width: 12  (RATE = 8, CAPACITY = 4)
 //   S-box:        x^7
 //   full rounds:  8
 //   partial:      22
 //
-// The tables below are the *optimized-form* layout used by pil2-stark:
+// Optimized-form (compressed) layout:
 //   C12[118] ........ round constants (pre-transformed for the compressed layout)
 //   M12[12][12] ..... external MDS (used in full rounds)
 //   M_12[144] ....... transposed-flat M (AVX-friendly)
@@ -21,8 +20,7 @@
 //   P_12[144] ....... transposed-flat P
 //   S12[507] ........ per-partial-round (dot, prod) weights; 23 entries/round × 22 rounds + 1 pad
 //
-// Round count / structure constants are namespaced by width for future
-// multi-width extensions (currently only W=12 is provided).
+// Round-count / structure constants are namespaced by width (only W=12 provided).
 
 namespace PoseidonGoldilocksConstants
 {

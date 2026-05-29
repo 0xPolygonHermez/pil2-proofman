@@ -27,11 +27,7 @@ class PoseidonGoldilocks
 {
 public:
 
-    // Phase-1 iteration ships only W=12 (matches Plonky2 / pil2-stark 0.14.0).
-    // The class is parameterized so W=4/8/16 specializations can be added
-    // later without touching the public API or call sites.
-    static_assert(SPONGE_WIDTH_T == 12,
-                  "SPONGE_WIDTH_T must be 12 (only width shipped for Poseidon v1 this iteration)");
+    static_assert(SPONGE_WIDTH_T == 12, "SPONGE_WIDTH_T must be 12");
     static constexpr uint32_t RATE = SPONGE_WIDTH_T - 4;
     static constexpr uint32_t CAPACITY = 4;
     static constexpr uint32_t SPONGE_WIDTH = SPONGE_WIDTH_T;
@@ -67,7 +63,6 @@ public:
     static void grinding(uint64_t &out_idx, const uint64_t *in, const uint32_t n_bits);
 
 private:
-    // Scalar primitives — identical math to pil2-stark 0.14.0.
     inline static void pow7(Goldilocks::Element &x);
     inline static void pow7_(Goldilocks::Element *x);
     inline static void add_(Goldilocks::Element *x, const Goldilocks::Element C[SPONGE_WIDTH]);
@@ -119,7 +114,7 @@ private:
 #endif
 #ifdef __AVX512__
     // AVX512 8-sponge batch: 12 __m512i registers, each holding one state
-    // element across 8 sponges (strided layout, mirrors Poseidon2).
+    // element across 8 sponges (strided layout).
     static void permute_batch_avx512(Goldilocks::Element *, const Goldilocks::Element *);
     static void compress_batch_avx512(Goldilocks::Element (&state)[8 * CAPACITY],
                                       const Goldilocks::Element (&input)[8 * SPONGE_WIDTH]);
@@ -132,7 +127,6 @@ private:
 
 // ---------------------------------------------------------------------------
 // Inline scalar primitives.
-// Math identical to pil2-stark 0.14.0 poseidon_goldilocks.hpp.
 // ---------------------------------------------------------------------------
 
 template<uint32_t W>
@@ -198,9 +192,8 @@ inline Goldilocks::Element PoseidonGoldilocks<W>::dot_(Goldilocks::Element *x, c
 template<uint32_t W>
 inline void PoseidonGoldilocks<W>::mvp_(Goldilocks::Element *state, const Goldilocks::Element mat[SPONGE_WIDTH][SPONGE_WIDTH])
 {
-    // NOTE (from 0.14.0): mat is indexed [j][i] in the multiplication
-    // — i.e. the matrix is applied in transposed form. We preserve the
-    // exact indexing to match the committed output vectors.
+    // mat is applied transposed: indexed [j][i], not [i][j]. The constant
+    // tables (M12/P12) assume this layout — do not change it.
     Goldilocks::Element old_state[SPONGE_WIDTH];
     std::memcpy(old_state, state, sizeof(Goldilocks::Element) * SPONGE_WIDTH);
     for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
@@ -316,9 +309,7 @@ inline void PoseidonGoldilocks<W>::merkletree(
     uint64_t num_cols, uint64_t num_rows, uint64_t arity,
     PoseidonMode mode, int num_threads, uint64_t dim)
 {
-    // Only arity=2 (binary merkle) is validated against 0.14.0 / Plonky2 goldens
-    // in this iteration. Other arities would produce cryptographically valid but
-    // differently-valued roots with no reference to cross-check.
+    // Only arity == 2 (binary merkle) is supported.
     assert(arity == 2 && "PoseidonGoldilocks::merkletree: only arity == 2 is supported");
     if (mode == PoseidonMode::Auto) {
 #ifdef __AVX512__

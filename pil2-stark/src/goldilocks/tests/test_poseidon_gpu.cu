@@ -1,5 +1,5 @@
-// Poseidon v1 GPU tests — byte-exact parity with pil2-stark 0.14.0 goldens
-// (same vectors used in tests/test_poseidon_cpu.cpp) plus a CPU-vs-GPU fuzz.
+// Poseidon v1 GPU tests: golden vectors (shared with test_poseidon_cpu.cpp)
+// plus a CPU-vs-GPU fuzz.
 //
 // Each test calls PoseidonGoldilocksGPU<12>::initConstants at the top; the
 // __constant__ upload is a one-shot guarded by a static flag in the .cu, so
@@ -58,7 +58,7 @@ static void buildMerkleInput(GL *cols, uint64_t ncols, uint64_t nrows)
 }
 
 // ---------------------------------------------------------------------------
-// Golden vectors — verbatim from pil2-stark 0.14.0 (also used in test_poseidon_cpu.cpp).
+// Golden vectors (shared with test_poseidon_cpu.cpp).
 // ---------------------------------------------------------------------------
 
 static constexpr uint64_t PERMUTE_FIB_W12_GOLDEN[12] = {
@@ -82,7 +82,7 @@ static constexpr uint64_t MERKLE_BINARY_FIB128x64_ROOT[4] = {
 };
 
 // ---------------------------------------------------------------------------
-// 1. permute(Fibonacci) — byte-exact golden.
+// 1. permute(Fibonacci) — golden.
 // ---------------------------------------------------------------------------
 
 TEST(PoseidonV1Gpu, permute_fibonacci_w12_golden)
@@ -112,7 +112,7 @@ TEST(PoseidonV1Gpu, permute_fibonacci_w12_golden)
 }
 
 // ---------------------------------------------------------------------------
-// 2. permute(zero input) — byte-exact golden.
+// 2. permute(zero input) — golden.
 // ---------------------------------------------------------------------------
 
 TEST(PoseidonV1Gpu, permute_zero_w12_golden)
@@ -172,7 +172,7 @@ TEST(PoseidonV1Gpu, compress_fibonacci_w12_golden)
 }
 
 // ---------------------------------------------------------------------------
-// 4. linearHash(128 Fibonacci elements) — byte-exact golden.
+// 4. linearHash(128 Fibonacci elements) — golden.
 // ---------------------------------------------------------------------------
 
 TEST(PoseidonV1Gpu, linear_hash_fib128_w12_golden)
@@ -210,7 +210,7 @@ TEST(PoseidonV1Gpu, linear_hash_fib128_w12_golden)
 }
 
 // ---------------------------------------------------------------------------
-// 5. merkletree(arity=2) on 128x64 Fibonacci — byte-exact root golden.
+// 5. merkletree(arity=2) on 128x64 Fibonacci — root golden.
 // ---------------------------------------------------------------------------
 
 TEST(PoseidonV1Gpu, merkletree_binary_fib128x64_golden)
@@ -311,9 +311,8 @@ TEST(PoseidonV1Gpu, linear_hash_tiled_parity)
 
 TEST(PoseidonV1Gpu, merkletree_reduce_parity)
 {
-    // Poseidon v1 is restricted to arity=2 (the Plonky2 / 0.14.0 binary-merkle
-    // configuration the constants were validated against). An `assert(arity==2)`
-    // lives in both merkletree and merkletreeReduce entry points; tests use 2.
+    // Only arity == 2 (binary merkle) is supported; both merkletree and
+    // merkletreeReduce assert it. Tests use 2.
     constexpr uint32_t arity = 2;
     constexpr uint64_t nElems = 10;
 

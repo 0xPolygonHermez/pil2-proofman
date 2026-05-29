@@ -1,8 +1,5 @@
 // ---------------------------------------------------------------------------
-// Poseidon v1 (Goldilocks, W=12) — GPU implementation.
-// Mirrors poseidon2_goldilocks.cu for initConstants, public-API wrappers,
-// merkletree / merkletreeReduce / grinding, and explicit instantiations.
-// Math (hash_full_result_seq) is byte-identical to pil2-stark 0.14.0.
+// Poseidon v1 (Goldilocks, W=12) — GPU kernels and public-API wrappers.
 // ---------------------------------------------------------------------------
 
 #include "goldilocks_tooling.cuh"
@@ -19,7 +16,7 @@
 typedef uint32_t u32;
 typedef uint64_t u64;
 
-// CUDA threads per block (matches Poseidon2).
+// CUDA threads per block.
 #define TPB_POS1 128
 
 // ---------------------------------------------------------------------------
@@ -82,24 +79,16 @@ __global__ void compressKernel_pos1(uint64_t *output, const uint64_t *input)
         output[i] = state[i];
 }
 
-// --- linear-hash helpers (register path) ---
+// --- linear-hash helpers (shared-memory path) ---
 //
 // linearHashKernel_pos1:  row-major input, one thread per row.
-// Algorithm (matches the CPU linear_hash_seq):
 //   - Always hash (no size <= CAPACITY pass-through), so every backend yields
 //     the same digest; degenerate num_cols == 0 yields a zero digest.
 //   - Absorb RATE elements per iteration; on iterations after the first,
 //     carry the previous output's CAPACITY block into slots [RATE..SPONGE_WIDTH).
 //     Zero-pad the rate region when the tail is short.
 //   - Output = first CAPACITY of the final state.
-// Shared-memory path — state in scratchpad (eliminates 96-byte stack spill of
-// the register version) and fused partial rounds (see poseidon1PermuteSmem).
 // Launched with dynamic shared mem = blockDim.x * W * sizeof(uint64_t).
-//
-// Note: tried __launch_bounds__(TPB, {2..8}); all variants measured slightly
-// slower (nvcc gave itself more regs, dropping occupancy). The kernel at 48
-// regs/thread with no launch_bounds achieves 57.9% occupancy which ncu reports
-// is smem-limited at 7 resident blocks/SM — already the hardware ceiling.
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void linearHashKernel_pos1(uint64_t *__restrict__ output,
                                       uint64_t *__restrict__ input,
@@ -225,10 +214,8 @@ __global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
         row_out[i] = scratchpad[i * blockDim.x + threadIdx.x];
 }
 
-// Internal merkle reduction kernel — reads arity*CAPACITY child digests per
-// parent (matches the CPU fix shipped in poseidon_goldilocks.cpp, differs from
-// Poseidon2 which assumes arity*CAPACITY == SPONGE_WIDTH).
-// Shared-memory merkle reduction kernel.
+// Shared-memory merkle reduction kernel: reads arity*CAPACITY child digests
+// per parent, zero-pads to SPONGE_WIDTH, compresses.
 // Launched with dynamic shared mem = blockDim.x * W * sizeof(uint64_t).
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void merkleNodeKernel_pos1(uint64_t nextN, uint64_t nextIndex,
@@ -262,8 +249,7 @@ __global__ void merkleNodeKernel_pos1(uint64_t nextN, uint64_t nextIndex,
         out[i] = scratchpad[i * blockDim.x + threadIdx.x];
 }
 
-// Grinding kernel (mirrors Poseidon2 grindingKernel). Uses an in-register state
-// and register-path permute — no shared-mem staging of the full state.
+// Grinding kernel. Uses an in-register state and the register-path permute.
 template<uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void grindingKernel_pos1(uint64_t *nonce,
                                     uint64_t *__restrict__ nonceBlock,
@@ -362,10 +348,9 @@ void PoseidonGoldilocksGPU<W>::initConstants(uint32_t *gpu_ids, uint32_t num_gpu
         for (uint32_t i = 0; i < num_gpu_ids; ++i)
         {
             CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
-            // Use the 2D M12/P12 (row-major flat bytes) — GPU mvp_ reads them
-            // as mat[W*j + i] which maps to M[j][i] (transposed access),
-            // matching the CPU's mat[j][i]. M_12/P_12 are AVX-transposed layouts
-            // meant for different access patterns — do NOT use them here.
+            // Upload the 2D M12/P12 (row-major) — GPU mvp_ reads them as
+            // mat[W*j + i] (transposed access). M_12/P_12 are the AVX-only
+            // transposed layouts; do NOT use them here.
             CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_C, PoseidonGoldilocksConstants::C12, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
             CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_M, PoseidonGoldilocksConstants::M12, 144 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
             CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_P, PoseidonGoldilocksConstants::P12, 144 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
@@ -437,7 +422,7 @@ void PoseidonGoldilocksGPU<W>::merkletree(uint32_t arity, uint64_t *d_tree, uint
                                           uint64_t num_cols, uint64_t num_rows,
                                           Layout layout, cudaStream_t stream)
 {
-    // Only arity=2 is validated against 0.14.0 / Plonky2 goldens in this iteration.
+    // Only arity == 2 (binary merkle) is supported.
     assert(arity == 2 && "PoseidonGoldilocksGPU::merkletree: only arity == 2 is supported");
     if (num_rows == 0) return;
 
@@ -498,7 +483,7 @@ void PoseidonGoldilocksGPU<W>::merkletreeReduce(uint64_t *d_root, uint64_t *d_in
                                                 uint64_t num_elements, uint64_t arity,
                                                 cudaStream_t stream)
 {
-    // Only arity=2 is validated; see comment in merkletree() above.
+    // Only arity == 2 (binary merkle) is supported.
     assert(arity == 2 && "PoseidonGoldilocksGPU::merkletreeReduce: only arity == 2 is supported");
     // Compute total tree buffer size (matches the CPU merkletreeReduce layout).
     uint64_t numNodes = num_elements;
@@ -591,6 +576,6 @@ void PoseidonGoldilocksGPU<W>::grinding(uint64_t *d_nonce, uint64_t *d_nonceBloc
 }
 
 // ---------------------------------------------------------------------------
-// Explicit instantiations (W=12 only this iteration).
+// Explicit instantiations (W=12).
 // ---------------------------------------------------------------------------
 template class PoseidonGoldilocksGPU<12>;

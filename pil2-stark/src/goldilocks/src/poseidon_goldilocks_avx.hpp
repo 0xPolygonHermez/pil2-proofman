@@ -6,10 +6,7 @@
 #include "goldilocks_base_field.hpp"
 #include <immintrin.h>
 
-// AVX2 primitives for Poseidon v1 over Goldilocks.
-// Math is bit-identical to pil2-stark 0.14.0 poseidon_goldilocks_avx.hpp;
-// only the templated header form is new (the class is templated over W for
-// future multi-width extension — currently only W=12 is instantiated).
+// AVX2 single-sponge primitives for Poseidon v1 over Goldilocks (W=12).
 
 template<uint32_t W>
 inline void PoseidonGoldilocks<W>::pow7_avx(__m256i &st0, __m256i &st1, __m256i &st2)

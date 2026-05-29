@@ -1,9 +1,4 @@
 // Poseidon v1 CPU tests.
-//
-// Golden vectors are the exact values committed in pil2-stark 0.14.0's
-// tests.cpp (which tested the since-deleted PoseidonGoldilocks class directly).
-// Any byte-mismatch here means our port diverged from the 0.14.0 / Plonky2
-// Poseidon-Goldilocks instance and external verifiers will break.
 
 #include <gtest/gtest.h>
 #include <cstring>
@@ -58,11 +53,6 @@ static void assertStateEqEl(const GL *a, const GL *b)
         ASSERT_EQ(Goldilocks::toU64(a[i]), Goldilocks::toU64(b[i]));
 }
 
-// ---------------------------------------------------------------------------
-// Golden vectors (verbatim from pil2-stark 0.14.0 tests.cpp at
-// pre-develop-0.14.0, tested against the then-current PoseidonGoldilocks).
-// ---------------------------------------------------------------------------
-
 static constexpr uint64_t PERMUTE_FIB_W12_GOLDEN[12] = {
     0x3095570037F4605D, 0x3D561B5EF1BC8B58, 0x8129DB5EC75C3226, 0x8EC2B67AFB6B87ED,
     0xFC591F17D0FAB161, 0x1D2B045CC2FEA1AD, 0x8A4E3B0CB12D4527, 0x0FF217A756AE2211,
@@ -95,7 +85,7 @@ static constexpr uint64_t MERKLE_BINARY_EMPTY_POT17_ROOT[4] = {
 };
 
 // ---------------------------------------------------------------------------
-// 1. permute golden — Fibonacci input (matches 0.14.0 poseidon_full_seq).
+// 1. permute golden — Fibonacci input 
 // ---------------------------------------------------------------------------
 
 TEST(PoseidonV1, permute_golden_fibonacci_scalar)
@@ -179,12 +169,12 @@ TEST(PoseidonV1, linear_hash_fib128_avx)
 #endif
 
 // ---------------------------------------------------------------------------
-// 4. merkletree golden — arity=2 (binary), matches 0.14.0's merkletree_seq.
+// 4. merkletree golden — arity=2 (binary).
 // ---------------------------------------------------------------------------
 
-// 0.14.0's merkletree_seq input: cols[128 * 64] filled Fibonacci-row-wise;
-// each row is 128 elements; first two rows are cols[i] = i+1; subsequent
-// rows are row_{j} = row_{j-2} + row_{j-1}.
+// Input: cols[ncols * nrows] filled Fibonacci-row-wise; each row is `ncols`
+// elements; first two rows are cols[i] = i+1; subsequent rows are
+// row_j = row_{j-2} + row_{j-1}.
 static void buildMerkleInput(GL *cols, uint64_t ncols, uint64_t nrows)
 {
     for (uint64_t i = 0; i < ncols; ++i) {
@@ -329,7 +319,7 @@ TEST(PoseidonV1, merkletreeReduce_binary_smoke)
     for (uint64_t i = 0; i < N * CAP; ++i) input[i] = Goldilocks::fromU64(i);
     GL root_bin[4];
     Poseidon::merkletreeReduce(root_bin, input.data(), N, /*arity*/ 2);
-    // No committed golden for merkletreeReduce in 0.14.0; this is a determinism check:
+    // No reference vector for merkletreeReduce; this is a determinism check:
     // two identical calls produce identical roots.
     GL root2[4];
     Poseidon::merkletreeReduce(root2, input.data(), N, /*arity*/ 2);
