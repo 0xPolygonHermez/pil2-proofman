@@ -40,6 +40,9 @@ public:
     static constexpr uint32_t N_PARTIAL_ROUNDS    = PoseidonGoldilocksConstants::ROUNDS_P_12;
     static constexpr uint32_t N_ROUNDS = N_FULL_ROUNDS_TOTAL + N_PARTIAL_ROUNDS;
 
+    static_assert(2 * CAPACITY <= SPONGE_WIDTH,
+                  "binary-merkle compress input (2*CAPACITY) must fit pol_input[SPONGE_WIDTH]");
+
     // Mode-dispatched public API (same shape as Poseidon2Goldilocks).
 
     static void permute(Goldilocks::Element (&output)[SPONGE_WIDTH],

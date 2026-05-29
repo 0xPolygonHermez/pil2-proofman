@@ -68,14 +68,6 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::linear_hash_seq(
     uint64_t remaining = size;
     Goldilocks::Element state[SPONGE_WIDTH];
 
-    // pil2-stark 0.14.0 treats small inputs (size <= CAPACITY) as pass-through,
-    // not hashed. Preserved verbatim for interop with committed goldens.
-    if (size <= CAPACITY)
-    {
-        std::memcpy(output, input, size * sizeof(Goldilocks::Element));
-        std::memset(&output[size], 0, (CAPACITY - size) * sizeof(Goldilocks::Element));
-        return; // no need to hash
-    }
     while (remaining)
     {
         if (remaining == size)
@@ -237,7 +229,7 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::grinding(
     }
 
     // we are trying (1 << n_bits) * 512 * num_threads possibilities maximum
-    for (int k = 0; k < (1 << n_bits); ++k)
+    for (uint64_t k = 0; k < (uint64_t(1) << n_bits); ++k)
     {
 
         #pragma omp parallel for
@@ -365,13 +357,6 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::linear_hash_avx(
     uint64_t remaining = size;
     Goldilocks::Element state[SPONGE_WIDTH];
 
-    // Matches linear_hash_seq's pass-through branch (byte-identical goldens).
-    if (size <= CAPACITY)
-    {
-        std::memcpy(output, input, size * sizeof(Goldilocks::Element));
-        std::memset(&output[size], 0, (CAPACITY - size) * sizeof(Goldilocks::Element));
-        return; // no need to hash
-    }
     while (remaining)
     {
         if (remaining == size)

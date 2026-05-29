@@ -376,8 +376,8 @@ __global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
                                            uint32_t num_cols, uint32_t num_rows);
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
-__global__ void merkleNodeKernel_pos1(uint32_t nextN, uint32_t nextIndex,
-                                      uint32_t pending, uint32_t arity,
+__global__ void merkleNodeKernel_pos1(uint64_t nextN, uint64_t nextIndex,
+                                      uint64_t pending, uint32_t arity,
                                       uint64_t *cursor);
 
 template<uint32_t W, uint32_t HALF_F, uint32_t N_PART>

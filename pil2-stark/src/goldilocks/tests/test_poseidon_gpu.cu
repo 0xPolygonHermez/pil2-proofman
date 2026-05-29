@@ -23,7 +23,6 @@ using PosGPU = PoseidonGoldilocksGPU<12>;
 
 static constexpr uint32_t W        = PosGPU::SPONGE_WIDTH;   // 12
 static constexpr uint32_t CAP      = PosGPU::CAPACITY;        // 4
-static constexpr uint32_t RATE     = PosGPU::RATE;            // 8
 static constexpr uint64_t NCOLS_HASH = 128;
 static constexpr uint64_t NROWS_HASH = 1u << 6;              // 64
 

@@ -466,6 +466,16 @@ __global__ void compressKernel(uint64_t * output, const uint64_t * input){
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __global__ void linearHashKernel(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows)
 {
+    if (num_cols == 0)
+    {
+        const size_t tid = threadIdx.x + blockDim.x * (size_t)blockIdx.x;
+        uint64_t *out = output + tid * CAPACITY_T;
+#pragma unroll
+        for (uint32_t i = 0; i < CAPACITY_T; i++)
+            out[i] = 0;
+        return;
+    }
+
 #pragma unroll
     for (uint32_t i = 0; i < CAPACITY_T; i++)
         scratchpad[(i + RATE_T) * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
@@ -477,6 +487,16 @@ __global__ void linearHashKernel(uint64_t *__restrict__ output, uint64_t *__rest
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __global__ void linearHashTiledKernel(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows)
 {
+    if (num_cols == 0)
+    {
+        const size_t tid = threadIdx.x + blockDim.x * (size_t)blockIdx.x;
+        uint64_t *out = output + tid * CAPACITY_T;
+#pragma unroll
+        for (uint32_t i = 0; i < CAPACITY_T; i++)
+            out[i] = 0;
+        return;
+    }
+
 #pragma unroll
     for (uint32_t i = 0; i < CAPACITY_T; i++)
         scratchpad[(i + RATE_T) * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));

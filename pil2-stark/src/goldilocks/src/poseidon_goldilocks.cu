@@ -85,9 +85,10 @@ __global__ void compressKernel_pos1(uint64_t *output, const uint64_t *input)
 // --- linear-hash helpers (register path) ---
 //
 // linearHashKernel_pos1:  row-major input, one thread per row.
-// Algorithm (matches 0.14.0 linear_hash_one and the CPU linear_hash_seq):
-//   - If size <= CAPACITY: pass-through (no permute).
-//   - Else: absorb RATE elements per iteration; on iterations after the first,
+// Algorithm (matches the CPU linear_hash_seq):
+//   - Always hash (no size <= CAPACITY pass-through), so every backend yields
+//     the same digest; degenerate num_cols == 0 yields a zero digest.
+//   - Absorb RATE elements per iteration; on iterations after the first,
 //     carry the previous output's CAPACITY block into slots [RATE..SPONGE_WIDTH).
 //     Zero-pad the rate region when the tail is short.
 //   - Output = first CAPACITY of the final state.
@@ -110,12 +111,11 @@ __global__ void linearHashKernel_pos1(uint64_t *__restrict__ output,
     gl64_t *row_in  = (gl64_t *)(input  + tid * (uint64_t)num_cols);
     gl64_t *row_out = (gl64_t *)(output + tid * (uint64_t)CAPACITY_T);
 
-    // Pass-through for short inputs (byte-parity with CPU linear_hash_seq).
-    if (num_cols <= CAPACITY_T)
+    if (num_cols == 0)
     {
 #pragma unroll
         for (uint32_t i = 0; i < CAPACITY_T; ++i)
-            row_out[i] = (i < num_cols) ? row_in[i] : gl64_t(uint64_t(0));
+            row_out[i] = gl64_t(uint64_t(0));
         return;
     }
 
@@ -173,21 +173,11 @@ __global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
 
     gl64_t *row_out = (gl64_t *)(output + (uint64_t)row * (uint64_t)CAPACITY_T);
 
-    if (num_cols <= CAPACITY_T)
+    if (num_cols == 0)
     {
 #pragma unroll
         for (uint32_t i = 0; i < CAPACITY_T; ++i)
-        {
-            if (i < num_cols)
-            {
-                uint64_t idx = getBufferOffset(row, i, num_rows, num_cols);
-                row_out[i] = ((gl64_t *)input)[idx];
-            }
-            else
-            {
-                row_out[i] = gl64_t(uint64_t(0));
-            }
-        }
+            row_out[i] = gl64_t(uint64_t(0));
         return;
     }
 
@@ -241,11 +231,11 @@ __global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
 // Shared-memory merkle reduction kernel.
 // Launched with dynamic shared mem = blockDim.x * W * sizeof(uint64_t).
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
-__global__ void merkleNodeKernel_pos1(uint32_t nextN, uint32_t nextIndex,
-                                      uint32_t pending, uint32_t arity,
+__global__ void merkleNodeKernel_pos1(uint64_t nextN, uint64_t nextIndex,
+                                      uint64_t pending, uint32_t arity,
                                       uint64_t *cursor)
 {
-    uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    uint64_t tid = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= nextN) return;
 
     // Load input: arity*CAPACITY child bytes into [0..copy_n), zero-pad [copy_n..W).
@@ -490,8 +480,8 @@ void PoseidonGoldilocksGPU<W>::merkletree(uint32_t arity, uint64_t *d_tree, uint
         smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
 
         merkleNodeKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-            <<<blks, tpb, smem_bytes, stream>>>((u32)nextN, (u32)nextIndex,
-                                                (u32)(pending + extraZeros), arity, d_tree);
+            <<<blks, tpb, smem_bytes, stream>>>(nextN, nextIndex,
+                                                pending + extraZeros, arity, d_tree);
 
         nextIndex += (pending + extraZeros) * CAPACITY;
         pending = (pending + (arity - 1)) / arity;
@@ -543,7 +533,7 @@ void PoseidonGoldilocksGPU<W>::merkletreeReduce(uint64_t *d_root, uint64_t *d_in
 
         merkleNodeKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
             <<<blks, tpb, smem_bytes, stream>>>(
-                (u32)nextN, (u32)nextIndex, (u32)(pending + extraZeros), (uint32_t)arity, d_tree);
+                nextN, nextIndex, pending + extraZeros, (uint32_t)arity, d_tree);
 
         nextIndex += (pending + extraZeros) * CAPACITY;
         pending = (pending + (arity - 1)) / arity;
