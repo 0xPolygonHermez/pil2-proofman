@@ -1,6 +1,22 @@
 #ifndef LIB_API_INTERNAL_H
 #define LIB_API_INTERNAL_H
 #include "starks_api.hpp"
+#include <cstdint>
+#include <vector>
+#include <map>
+#include <string>
+#include <utility>
+
+// Uncomment the line below to switch to Poseidon1 (W=12, arity=2)
+// #define STARK_POSEIDON1
+
+#ifdef STARK_POSEIDON1
+#include "poseidon_goldilocks.hpp"
+using GoldilocksGrinding = PoseidonGoldilocks<12>;
+#else
+#include "poseidon2_goldilocks.hpp"
+using GoldilocksGrinding = Poseidon2GoldilocksGrinding;
+#endif
 
 extern ProofDoneCallback proof_done_callback;
 

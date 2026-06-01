@@ -3,7 +3,12 @@
 
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_cubic_extension.hpp"
+#include "starks_api_internal.hpp"
+#ifdef STARK_POSEIDON1
+#include "poseidon_goldilocks.hpp"
+#else
 #include "poseidon2_goldilocks.hpp"
+#endif
 #include "zklog.hpp"
 
 
@@ -37,8 +42,14 @@ public:
     {
         this->arity = arity;
         transcriptStateSize = HASH_SIZE;
+#ifdef STARK_POSEIDON1
+        assert(arity == 2 && "Poseidon1 only supports arity == 2");
+        transcriptPendingSize = PoseidonGoldilocks<12>::RATE;          // 8
+        transcriptOutSize     = PoseidonGoldilocks<12>::SPONGE_WIDTH;  // 12
+#else
         transcriptPendingSize = 4*(arity - 1);
         transcriptOutSize = 4*arity;
+#endif
 
         state = new Goldilocks::Element[transcriptOutSize];
         pending = new Goldilocks::Element[transcriptPendingSize];

@@ -12,6 +12,11 @@
 #include "poseidon_goldilocks.hpp"
 #include "poseidon_goldilocks.cuh"
 #include "poseidon_goldilocks_constants.hpp"
+// Pull in the STARK_POSEIDON1 toggle from the API-internal header when reachable
+// (full pil2-stark build). 
+#if __has_include("starks_api_internal.hpp")
+#include "starks_api_internal.hpp"
+#endif
 
 typedef uint32_t u32;
 typedef uint64_t u64;
@@ -579,3 +584,18 @@ void PoseidonGoldilocksGPU<W>::grinding(uint64_t *d_nonce, uint64_t *d_nonceBloc
 // Explicit instantiations (W=12).
 // ---------------------------------------------------------------------------
 template class PoseidonGoldilocksGPU<12>;
+
+#ifdef STARK_POSEIDON1
+void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
+                         uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream)
+{
+    assert(arity == 2 && "STARK_POSEIDON1 requires merkleTreeArity == 2");
+    PoseidonGoldilocksGPU<12>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
+}
+
+void runGrindingGPU(uint64_t *d_nonce, uint64_t *d_nonceBlock, const uint64_t *d_in,
+                    uint32_t n_bits, cudaStream_t stream)
+{
+    PoseidonGoldilocksGPU<12>::grinding(d_nonce, d_nonceBlock, d_in, n_bits, stream);
+}
+#endif // STARK_POSEIDON1

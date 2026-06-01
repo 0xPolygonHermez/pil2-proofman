@@ -19,7 +19,11 @@ extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 #ifdef __USE_CUDA__
 #include "verify_constraints.cuh"
 #include "gen_proof.cuh"
+#ifdef STARK_POSEIDON1
+#include "poseidon_goldilocks.cuh"
+#else
 #include "poseidon2_goldilocks.cuh"
+#endif
 #include "hints.cuh"
 #include "gen_recursivef_proof.cuh"
 #include "poseidon_bn128.cuh"
@@ -202,7 +206,14 @@ void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32
     }
     cudaSetDevice(my_gpu_ids[0]);
 
-    // Initialize small GPU constants (Poseidon2 and Transcript)
+    // Initialize small GPU constants (Poseidon and Transcript)
+#ifdef STARK_POSEIDON1
+    if (arity != 2) {
+        zklog.error("STARK_POSEIDON1 requires merkleTreeArity == 2.");
+        exit(1);
+    }
+    PoseidonGoldilocksGPU<12>::initConstants(my_gpu_ids, n_gpus);
+#else
     switch(arity){
         case 2:
             Poseidon2GoldilocksGPU<8>::initConstants(my_gpu_ids, n_gpus);
@@ -219,6 +230,7 @@ void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32
     }
 
     Poseidon2GoldilocksGPUGrinding::initConstants(my_gpu_ids, n_gpus);
+#endif
     TranscriptGL_GPU::init_const(my_gpu_ids, n_gpus, arity);
 
     //Generate static twiddles for the NTT
@@ -1346,7 +1358,11 @@ void init_gpu_setup_gpu(uint64_t maxBitsExt) {
     uint32_t my_gpu_ids[1] = {(uint32_t)deviceId};
 
     // Uploads constants for all possible arities
+#ifdef STARK_POSEIDON1
+    PoseidonGoldilocksGPU<12>::initConstants(my_gpu_ids, 1);
+#else
     Poseidon2GoldilocksGPU<16>::initConstants(my_gpu_ids, 1);
+#endif
     NTTGoldilocksGPU::initConstants(maxBitsExt, 1, my_gpu_ids);
 }
 

@@ -9,7 +9,9 @@
 #include <immintrin.h>
 #endif
 
+#ifndef HASH_SIZE
 #define HASH_SIZE 4
+#endif
 
 // GPU PARAMS
 #define NONCES_LAUNCH_BITS 19

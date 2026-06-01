@@ -177,6 +177,10 @@ void MerkleTreeGL::genMerkleProof(Goldilocks::Element *proof, uint64_t idx, uint
 bool MerkleTreeGL::verifyGroupProof(Goldilocks::Element* root, Goldilocks::Element* level, std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v) {
     Goldilocks::Element value[4] = { Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero() };
 
+#ifdef STARK_POSEIDON1
+    assert(arity == 2 && "STARK_POSEIDON1 requires merkleTreeArity == 2");
+    PoseidonGoldilocks<12>::linearHash(value, v.data(), v.size(), PoseidonMode::Scalar);
+#else
     switch(arity) {
         case 2:
             Poseidon2Goldilocks<8>::linearHash(value, v.data(), v.size(), Poseidon2Mode::Scalar);
@@ -192,6 +196,7 @@ bool MerkleTreeGL::verifyGroupProof(Goldilocks::Element* root, Goldilocks::Eleme
             exitProcess();
             exit(-1);
     }
+#endif
     
 
     uint64_t queryIdx = idx;
@@ -221,6 +226,22 @@ void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::
     idx = idx / arity;
 
     
+#ifdef STARK_POSEIDON1
+    {
+        assert(arity == 2);
+        Goldilocks::Element inputs[PoseidonGoldilocks<12>::SPONGE_WIDTH];
+        for(uint64_t i = 0; i < PoseidonGoldilocks<12>::SPONGE_WIDTH; ++i) {
+            inputs[i] = Goldilocks::zero();
+        }
+        uint64_t p = 0;
+        for(uint64_t i = 0; i < arity; ++i) {
+            if (i == currIdx) continue;
+            std::memcpy(&inputs[i*nFieldElements], &mp[offset][nFieldElements * (p++)], nFieldElements * sizeof(Goldilocks::Element));
+        }
+        std::memcpy(&inputs[currIdx*nFieldElements], value, nFieldElements * sizeof(Goldilocks::Element));
+        PoseidonGoldilocks<12>::compress(value, inputs, PoseidonMode::Scalar);
+    }
+#else
     switch(arity) {
         case 2: {
             Goldilocks::Element inputs[Poseidon2Goldilocks<8>::SPONGE_WIDTH];
@@ -269,6 +290,7 @@ void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::
             exitProcess();
             exit(-1);
     }
+#endif
 
     calculateRootFromProof(value, mp, idx, offset + 1);
 }
@@ -276,6 +298,10 @@ void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::
 
 void MerkleTreeGL::merkelize()
 {
+#ifdef STARK_POSEIDON1
+    assert(arity == 2 && "STARK_POSEIDON1 requires merkleTreeArity == 2");
+    PoseidonGoldilocks<12>::merkletree(nodes, source, width, height, arity);
+#else
     switch(arity) {
         case 2:
             Poseidon2Goldilocks<8>::merkletree(nodes, source, width, height, arity);
@@ -291,6 +317,7 @@ void MerkleTreeGL::merkelize()
             exitProcess();
             exit(-1);
     }
+#endif
 }
 
 void MerkleTreeGL::writeFile(std::string constTreeFile)

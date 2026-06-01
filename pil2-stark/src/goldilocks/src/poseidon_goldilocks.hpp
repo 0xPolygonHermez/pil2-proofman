@@ -1,6 +1,10 @@
 #ifndef POSEIDON_GOLDILOCKS
 #define POSEIDON_GOLDILOCKS
 
+#ifndef HASH_SIZE
+#define HASH_SIZE 4
+#endif
+
 #include "poseidon_goldilocks_constants.hpp"
 #include "goldilocks_base_field.hpp"
 #include <cstdio>

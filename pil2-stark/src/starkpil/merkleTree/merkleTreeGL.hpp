@@ -2,7 +2,12 @@
 #define MERKLETREEGL
 
 #include "goldilocks_base_field.hpp"
+#include "starks_api_internal.hpp"
+#ifdef STARK_POSEIDON1
+#include "poseidon_goldilocks.hpp"
+#else
 #include "poseidon2_goldilocks.hpp"
+#endif
 #include "goldilocks_tooling.hpp"
 #include "zklog.hpp"
 #include <math.h>
@@ -79,6 +84,10 @@ public:
             numNodesLevel = (numNodesLevel + (arity - 1)) / arity;
         }
         Goldilocks::Element computedRoot[nFieldElements];
+#ifdef STARK_POSEIDON1
+        assert(arity == 2 && "STARK_POSEIDON1 requires merkleTreeArity == 2");
+        PoseidonGoldilocks<12>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+#else
         switch(arity) {
             case 2:
                 Poseidon2Goldilocks<8>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
@@ -94,6 +103,7 @@ public:
                 exitProcess();
                 exit(-1);
         }
+#endif
 
         for (uint64_t i = 0; i < nFieldElements; ++i) {
             if (Goldilocks::toU64(computedRoot[i]) != Goldilocks::toU64(root[i])) {

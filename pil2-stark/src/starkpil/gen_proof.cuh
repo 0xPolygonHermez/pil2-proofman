@@ -418,7 +418,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
                 graphHandled = true;
             } else if (graphCache->shouldCapture(key)) {
                 if (graphCache->beginCapture(key, stream)) {
-                    Poseidon2GoldilocksGPUGrinding::grinding((uint64_t *)d_nonce, (uint64_t *)d_nonceBlocks, (uint64_t *)d_input_hash_nonce, setupCtx.starkInfo.starkStruct.powBits, stream);
+                    runGrindingGPU((uint64_t *)d_nonce, (uint64_t *)d_nonceBlocks, (uint64_t *)d_input_hash_nonce, setupCtx.starkInfo.starkStruct.powBits, stream);
                     if (graphCache->endCaptureAndLaunch(stream)) {
                         graphHandled = true;
                     }
@@ -428,7 +428,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     }
 #endif
     if (!graphHandled) {
-        Poseidon2GoldilocksGPUGrinding::grinding((uint64_t *)d_nonce, (uint64_t *)d_nonceBlocks, (uint64_t *)d_input_hash_nonce, setupCtx.starkInfo.starkStruct.powBits, stream);
+        runGrindingGPU((uint64_t *)d_nonce, (uint64_t *)d_nonceBlocks, (uint64_t *)d_input_hash_nonce, setupCtx.starkInfo.starkStruct.powBits, stream);
     }
 }
     CHECKCUDAERR(cudaGetLastError());

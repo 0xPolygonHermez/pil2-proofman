@@ -53,6 +53,10 @@ using Poseidon2GoldilocksGPUGrinding = Poseidon2GoldilocksGPU<4>;  // SPONGE_WID
 void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
                          uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream);
 
+// GPU grinding wrapper
+void runGrindingGPU(uint64_t *d_nonce, uint64_t *d_nonceBlock, const uint64_t *d_in,
+                    uint32_t n_bits, cudaStream_t stream);
+
 // --- Forward declarations (defined in .cu) ---
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
@@ -280,20 +284,6 @@ __device__ __forceinline__ void poseidon2PermuteSmem(const gl64_t *GPU_C_GL, con
     {
         sboxFullSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(&(GPU_C_GL[(N_FULL_ROUNDS_TOTAL_T>>1) * SPONGE_WIDTH_T + N_PARTIAL_ROUNDS_T + r * SPONGE_WIDTH_T]));
         mdsExternalSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
-    }
-}
-
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__device__ __forceinline__ void poseidon2PermuteSmem(gl64_t *out, const gl64_t *in, const gl64_t *GPU_C_GL, const gl64_t *GPU_D_GL)
-{
-    for (int i = 0; i < SPONGE_WIDTH_T; i++) {
-        scratchpad[i * blockDim.x + threadIdx.x] = in[i];
-    }
-
-    poseidon2PermuteSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(GPU_C_GL, GPU_D_GL);
-
-    for (int i = 0; i < SPONGE_WIDTH_T; i++) {
-        out[i] = scratchpad[i * blockDim.x + threadIdx.x];
     }
 }
 

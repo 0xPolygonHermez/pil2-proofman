@@ -17,6 +17,12 @@ void TranscriptGL::_updateState()
     }
     std::memcpy(inputs, pending, transcriptPendingSize * sizeof(Goldilocks::Element));
     std::memcpy(&inputs[transcriptPendingSize], state, transcriptStateSize * sizeof(Goldilocks::Element));
+#ifdef STARK_POSEIDON1
+    PoseidonGoldilocks<12>::permute(
+        (Goldilocks::Element(&)[12])*out,
+        (const Goldilocks::Element(&)[12])*inputs,
+        PoseidonMode::Scalar);
+#else
     switch(arity) {
         case 2:
             Poseidon2Goldilocks<8>::permute(
@@ -41,6 +47,7 @@ void TranscriptGL::_updateState()
             exitProcess();
             exit(-1);
     }
+#endif
     out_cursor = transcriptOutSize;
     std::memset(pending, 0, transcriptPendingSize * sizeof(Goldilocks::Element));
     pending_cursor = 0;

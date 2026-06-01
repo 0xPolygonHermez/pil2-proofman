@@ -1,20 +1,45 @@
 #include "transcriptGL.cuh"
+#include "starks_api_internal.hpp"
+#ifdef STARK_POSEIDON1
+#include "poseidon_goldilocks.cuh"
+#else
 #include "poseidon2_goldilocks.cuh"
+#endif
 #include "goldilocks_tooling.cuh"
 
 #include "math.h"
 
 static int initialized = 0;
 
+#ifdef STARK_POSEIDON1
+__device__ __constant__ uint64_t POSEIDON1_GPU_C[118];
+__device__ __constant__ uint64_t POSEIDON1_GPU_S[507];
+__device__ __constant__ uint64_t POSEIDON1_GPU_M[144];
+__device__ __constant__ uint64_t POSEIDON1_GPU_P[144];
+#else
 __device__ __constant__ gl64_t POSEIDON2_GPU_C[150]; // we allocate the masimum possible size
 __device__ __constant__ gl64_t POSEIDON2_GPU_D[16];  // we allocate the masimum possible size
+#endif
 
-__device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity) 
+#ifdef STARK_POSEIDON1
+#define TRX_PENDING_SIZE(a) ((uint32_t)PoseidonGoldilocks<12>::RATE)
+#define TRX_OUT_SIZE(a)     ((uint32_t)PoseidonGoldilocks<12>::SPONGE_WIDTH)
+#else
+#define TRX_PENDING_SIZE(a) ((uint32_t)(4 * ((a) - 1)))
+#define TRX_OUT_SIZE(a)     ((uint32_t)(4 * (a)))
+#endif
+
+__device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity)
 {
     uint32_t transcriptStateSize = HASH_SIZE;
+#ifdef STARK_POSEIDON1
+    uint32_t transcriptPendingSize = PoseidonGoldilocks<12>::RATE;          // 8
+    uint32_t transcriptOutSize     = PoseidonGoldilocks<12>::SPONGE_WIDTH;  // 12
+#else
     uint32_t transcriptPendingSize = 4 * (arity - 1);
-    uint32_t transcriptOutSize = 4 * arity;    
-    
+    uint32_t transcriptOutSize = 4 * arity;
+#endif
+
     while(*pending_cursor < transcriptPendingSize) {
         pending[*pending_cursor].fe = 0;
         (*pending_cursor) += 1;
@@ -28,20 +53,29 @@ __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pe
     {
         inputs[i + transcriptPendingSize] = state[i];
     }
+#ifdef STARK_POSEIDON1
+    poseidon1PermuteReg<PoseidonGoldilocks<12>::SPONGE_WIDTH,
+                        PoseidonGoldilocks<12>::HALF_N_FULL_ROUNDS,
+                        PoseidonGoldilocks<12>::N_PARTIAL_ROUNDS>(
+        (gl64_t*)out, (gl64_t*)inputs,
+        (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
+        (const gl64_t*)POSEIDON1_GPU_M, (const gl64_t*)POSEIDON1_GPU_P);
+#else
     switch(arity){
         case 2:
-            poseidon2PermuteSmem<Poseidon2Goldilocks<8>::RATE, Poseidon2Goldilocks<8>::CAPACITY, Poseidon2Goldilocks<8>::SPONGE_WIDTH, Poseidon2Goldilocks<8>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<8>::N_PARTIAL_ROUNDS>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
+            poseidon2PermuteReg<Poseidon2Goldilocks<8>::RATE, Poseidon2Goldilocks<8>::CAPACITY, Poseidon2Goldilocks<8>::SPONGE_WIDTH, Poseidon2Goldilocks<8>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<8>::N_PARTIAL_ROUNDS>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
             break;
         case 3:
-            poseidon2PermuteSmem<Poseidon2Goldilocks<12>::RATE, Poseidon2Goldilocks<12>::CAPACITY, Poseidon2Goldilocks<12>::SPONGE_WIDTH, Poseidon2Goldilocks<12>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<12>::N_PARTIAL_ROUNDS>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
+            poseidon2PermuteReg<Poseidon2Goldilocks<12>::RATE, Poseidon2Goldilocks<12>::CAPACITY, Poseidon2Goldilocks<12>::SPONGE_WIDTH, Poseidon2Goldilocks<12>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<12>::N_PARTIAL_ROUNDS>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
             break;
         case 4:
-            poseidon2PermuteSmem<Poseidon2Goldilocks<16>::RATE, Poseidon2Goldilocks<16>::CAPACITY, Poseidon2Goldilocks<16>::SPONGE_WIDTH, Poseidon2Goldilocks<16>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<16>::N_PARTIAL_ROUNDS>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
+            poseidon2PermuteReg<Poseidon2Goldilocks<16>::RATE, Poseidon2Goldilocks<16>::CAPACITY, Poseidon2Goldilocks<16>::SPONGE_WIDTH, Poseidon2Goldilocks<16>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<16>::N_PARTIAL_ROUNDS>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
             break;
         default:
             assert(false && "Unsupported arity");
             return;
     }
+#endif
 
     *out_cursor = transcriptOutSize;
     for (int i = 0; i < transcriptPendingSize; i++)
@@ -57,7 +91,7 @@ __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pe
 
 __device__ Goldilocks::Element _getFields1(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity){
 
-    uint32_t transcriptOutSize = 4 * arity;
+    uint32_t transcriptOutSize = TRX_OUT_SIZE(arity);
 
     if (*out_cursor == 0)
     {
@@ -70,7 +104,7 @@ __device__ Goldilocks::Element _getFields1(Goldilocks::Element* state, Goldilock
 
 __global__ void _add(Goldilocks::Element* input, uint64_t size,  Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity)
 {
-    uint32_t transcriptPendingSize = 4 * (arity - 1);
+    uint32_t transcriptPendingSize = TRX_PENDING_SIZE(arity);
     for (uint64_t i = 0; i < size; i++)
     {
         pending[*pending_cursor] = input[i];
@@ -85,7 +119,7 @@ __global__ void _add(Goldilocks::Element* input, uint64_t size,  Goldilocks::Ele
 
 __global__ void _add2(Goldilocks::Element* input1, uint64_t size1, Goldilocks::Element* input2, uint64_t size2, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity)
 {
-    uint32_t transcriptPendingSize = 4 * (arity - 1);
+    uint32_t transcriptPendingSize = TRX_PENDING_SIZE(arity);
     for (uint64_t i = 0; i < size1; i++)
     {
         pending[*pending_cursor] = input1[i];
@@ -169,8 +203,8 @@ TranscriptGL_GPU::TranscriptGL_GPU(uint64_t arity, bool custom, cudaStream_t str
 
         this->arity = arity;
         transcriptStateSize = HASH_SIZE;
-        transcriptPendingSize = 4*(arity - 1);
-        transcriptOutSize = 4*arity;
+        transcriptPendingSize = TRX_PENDING_SIZE(arity);
+        transcriptOutSize = TRX_OUT_SIZE(arity);
 
         CHECKCUDAERR(cudaMalloc((void**)&state, transcriptOutSize * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMalloc((void**)&pending, transcriptPendingSize * sizeof(Goldilocks::Element)));
@@ -190,8 +224,19 @@ void TranscriptGL_GPU::init_const(uint32_t* gpu_ids, uint32_t num_gpu_ids, uint3
     if (initialized == 0)
     {
         for(int i = 0; i < num_gpu_ids; i++)
-        {     
+        {
             CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
+#ifdef STARK_POSEIDON1
+            if (arity_init != 2) {
+                zklog.error("TranscriptGL_GPU::init_const: STARK_POSEIDON1 requires arity == 2");
+                exitProcess();
+                exit(-1);
+            }
+            CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON1_GPU_C, PoseidonGoldilocksConstants::C12, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON1_GPU_M, PoseidonGoldilocksConstants::M12, 144 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON1_GPU_P, PoseidonGoldilocksConstants::P12, 144 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON1_GPU_S, PoseidonGoldilocksConstants::S12, 507 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+#else
             if(arity_init == 2) {
                 CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON2_GPU_C, Poseidon2GoldilocksConstants::C8,  (8 * Poseidon2GoldilocksConstants::ROUNDS_F + Poseidon2GoldilocksConstants::ROUNDS_P_8) * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
                 CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON2_GPU_D, Poseidon2GoldilocksConstants::D8, 8 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
@@ -206,45 +251,39 @@ void TranscriptGL_GPU::init_const(uint32_t* gpu_ids, uint32_t num_gpu_ids, uint3
                 exitProcess();
                 exit(-1);
             }
-        
-        }   
+#endif
+        }
         initialized = 1;
-       
+
     }
     cudaSetDevice(deviceId);
 }
 
 void TranscriptGL_GPU::put(Goldilocks::Element *input, uint64_t size, cudaStream_t stream)
 {
-    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2PermuteSmem
-    _add<<<1,1, sharedMem, stream>>>(input, size, state, pending, out, pending_cursor, out_cursor,arity);
+    _add<<<1,1, 0, stream>>>(input, size, state, pending, out, pending_cursor, out_cursor,arity);
 }
 
 void TranscriptGL_GPU::put2(Goldilocks::Element *input1, uint64_t size1, Goldilocks::Element *input2, uint64_t size2, cudaStream_t stream)
 {
-    size_t sharedMem = (arity*4) * sizeof(gl64_t);
-    _add2<<<1,1, sharedMem, stream>>>(input1, size1, input2, size2, state, pending, out, pending_cursor, out_cursor, arity);
+    _add2<<<1,1, 0, stream>>>(input1, size1, input2, size2, state, pending, out, pending_cursor, out_cursor, arity);
 }
 
 void TranscriptGL_GPU::getField(uint64_t* output, cudaStream_t stream)
 {
-    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2PermuteSmem  
-    _getField<<<1, 1, sharedMem, stream>>>(output, state, pending, out, pending_cursor, out_cursor, arity);
+    _getField<<<1, 1, 0, stream>>>(output, state, pending, out, pending_cursor, out_cursor, arity);
     
 } 
 
 void TranscriptGL_GPU::getState(Goldilocks::Element* output, cudaStream_t stream) {
-    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2PermuteSmem  
-    __getState<<<1, 1, sharedMem, stream>>>(output, transcriptStateSize, state, pending, out, pending_cursor, out_cursor,arity);
+    __getState<<<1, 1, 0, stream>>>(output, transcriptStateSize, state, pending, out, pending_cursor, out_cursor,arity);
 }
 
 void TranscriptGL_GPU::getState(Goldilocks::Element* output, uint64_t nOutputs, cudaStream_t stream) {
-    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2PermuteSmem 
-    __getState<<<1, 1, sharedMem, stream>>>(output, nOutputs, state, pending, out, pending_cursor, out_cursor,arity);
+    __getState<<<1, 1, 0, stream>>>(output, nOutputs, state, pending, out, pending_cursor, out_cursor,arity);
 }
 
 void TranscriptGL_GPU::getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, cudaStream_t stream)
 {
-    size_t sharedMem = (arity*4) * sizeof(gl64_t); //used by poseidon2PermuteSmem 
-    __getPermutations<<<1, 1, sharedMem, stream>>>(res, n, nBits, state, pending, out, pending_cursor, out_cursor, arity);
+    __getPermutations<<<1, 1, 0, stream>>>(res, n, nBits, state, pending, out, pending_cursor, out_cursor, arity);
 }
