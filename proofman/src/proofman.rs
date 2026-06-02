@@ -2773,7 +2773,29 @@ where
             let vadcop_proof = VadcopFinalProof::new_from_proof(&recursive2_proof, false).map_err(|e| {
                 ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e))
             })?;
-            let valid_recursive_proof = verify_recursive2(&vadcop_proof, &setup.get_vk());
+
+            // Select the verkey by the proof's circuit_type, mirroring the recursive2 circuit's
+            // SelectVerificationKeyNull (0 = null, 1 = aggregated/recursive2, k >= 2 = recursive1 of air k-2).
+            // A worker with a single alive instance (e.g. only Rom, circuit_type 15) sends an un-aggregated
+            // recursive1 proof, which must be verified with that air's recursive1 verkey — not the recursive2
+            // verkey, which would fail with a wrong root_c ("Proof of work" failure). A null/padding proof
+            // (circuit_type 0) carries no real proof and is a no-op in the aggregation, so skip its verify.
+            let circuit_type = publics[0];
+            let valid_recursive_proof = match circuit_type {
+                0 => true,
+                1 => verify_recursive2(&vadcop_proof, &setup.get_vk()),
+                _ => {
+                    let air_id = circuit_type as usize - 2;
+                    let vk = self
+                        .setups
+                        .sctx_recursive1
+                        .as_ref()
+                        .unwrap()
+                        .get_setup(proof.airgroup_id as usize, air_id)?
+                        .get_vk();
+                    verify_recursive2(&vadcop_proof, &vk)
+                }
+            };
 
             if !valid_recursive_proof {
                 self.cancellation_info
