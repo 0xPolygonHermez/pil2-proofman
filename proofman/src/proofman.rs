@@ -2111,9 +2111,11 @@ where
                             // from the EMIT_RECURSIVE2 fp for the same airgroup, the buffered bytes were mutated
                             // between completion and send (a buffer-reuse race).
                             tracing::info!(
-                                "GEN_RECURSIVE2 airgroup={} proof_len={} proof_fp={}",
+                                "GEN_RECURSIVE2 airgroup={} proof_len={} circuit_type={} n_proofs_aggregated={} proof_fp={}",
                                 proof.airgroup_id,
                                 proof.proof.len(),
+                                proof.proof.first().copied().unwrap_or(0),
+                                proof.proof.get(1).copied().unwrap_or(0),
                                 proof_fingerprint(&proof.proof),
                             );
                             recursive2_airgroup_proofs.push(proof);
@@ -2656,10 +2658,12 @@ where
                         );
                         for proof in &agg_proofs {
                             tracing::info!(
-                                "EMIT_RECURSIVE2 worker_index={} airgroup={} proof_len={} proof_fp={}",
+                                "EMIT_RECURSIVE2 worker_index={} airgroup={} proof_len={} circuit_type={} n_proofs_aggregated={} proof_fp={}",
                                 worker_index,
                                 proof.airgroup_id,
                                 proof.proof.len(),
+                                proof.proof.first().copied().unwrap_or(0),
+                                proof.proof.get(1).copied().unwrap_or(0),
                                 proof_fingerprint(&proof.proof),
                             );
                         }
@@ -2764,10 +2768,12 @@ where
             // can be matched end-to-end: RECV_PROOF.proof_fp here should equal the producer's EMIT_RECURSIVE2
             // proof_fp and the GEN_RECURSIVE2 fp. A mismatch localizes where the bytes diverged.
             tracing::info!(
-                "RECV_PROOF airgroup={} worker_indexes={:?} proof_len={} proof_fp={}",
+                "RECV_PROOF airgroup={} worker_indexes={:?} proof_len={} circuit_type={} n_proofs_aggregated={} proof_fp={}",
                 proof.airgroup_id,
                 proof.worker_indexes,
                 proof.proof.len(),
+                proof.proof.first().copied().unwrap_or(0),
+                proof.proof.get(1).copied().unwrap_or(0),
                 proof_fingerprint(&proof.proof),
             );
             {
