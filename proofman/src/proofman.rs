@@ -2023,7 +2023,7 @@ where
         if options.aggregation {
             for (airgroup, &n_proofs) in n_airgroup_proofs.iter().enumerate().take(n_airgroups) {
                 let n_recursive2_proofs = total_recursive_proofs(n_proofs);
-                if n_recursive2_proofs.has_remaining {
+                if n_recursive2_proofs.has_remaining || n_proofs == 0 {
                     let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2)?;
                     let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup);
                     let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
