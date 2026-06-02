@@ -219,8 +219,8 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::grinding(
             if (chunkIdxs[omp_get_thread_num()] != UINT64_MAX)
                 continue;
 
-            Goldilocks::Element state[SPONGE_WIDTH];
-            std::memcpy(state, in, (SPONGE_WIDTH - 1) * sizeof(Goldilocks::Element));
+            Goldilocks::Element state[SPONGE_WIDTH] = {};
+            std::memcpy(state, in, 3 * sizeof(Goldilocks::Element));
             state[SPONGE_WIDTH - 1] = Goldilocks::fromU64(offset + i);
             permute_seq(state, state);
             if (state[0].fe < level) {

@@ -11,6 +11,9 @@ categories = { workspace = true }
 name = "proofman-setup"
 path = "src/main.rs"
 
+[features]
+default = []
+stark-poseidon1 = ["proofman-starks-lib-c/stark-poseidon1"]
 
 [dependencies]
 proofman-starks-lib-c = { path = "../../provers/starks-lib-c" }

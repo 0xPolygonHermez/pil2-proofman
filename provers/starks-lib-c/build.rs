@@ -18,6 +18,16 @@ fn detect_gpu() -> bool {
 fn main() {
     println!("cargo:rerun-if-env-changed=CUDA_ARCHS");
 
+    // Propagate the stark-poseidon1 feature to (a) downstream Rust crates via
+    // a rustc-cfg they can branch on, and (b) the C++ build via -DSTARK_POSEIDON1
+    // appended to STARK_HASH_FLAGS when invoking make.
+    println!("cargo:rustc-check-cfg=cfg(stark_poseidon1)");
+    let stark_poseidon1 = cfg!(feature = "stark-poseidon1");
+    if stark_poseidon1 {
+        println!("cargo:rustc-cfg=stark_poseidon1");
+        println!("cargo:warning=[BUILD INFO] STARKS hash family: Poseidon1 (W=12, arity=2)");
+    }
+
     // Determine if GPU support should be used:
     // - If cpu-only feature is set, always use CPU
     // - Otherwise, auto-detect CUDA availability
@@ -94,29 +104,41 @@ fn main() {
     let stored_makefile = fs::read(&makefile_stamp_path).ok();
     let makefile_changed = current_makefile.is_some() && current_makefile != stored_makefile;
 
-    // Clean build when CUDA architecture flags change or the Makefile itself changes
+    // Toggling the stark-poseidon1 feature flips -DSTARK_POSEIDON1 in CXXFLAGS/
+    // NVCCFLAGS. make's .d files don't track that, so the .o files would be
+    // silently linked against the wrong hash family. Force clean on toggle.
+    let hash_stamp_path = library_folder.join(".stark_hash_stamp");
+    let hash_stamp_content = if stark_poseidon1 { "poseidon1" } else { "poseidon2" };
+    let hash_changed =
+        fs::read_to_string(&hash_stamp_path).map(|s| s.trim() != hash_stamp_content).unwrap_or(true);
+
+    // Clean build when CUDA architecture flags change, the Makefile changes,
+    // or the hash family toggles.
     if archs_changed {
         eprintln!("CUDA_ARCHS changed — running clean rebuild...");
         run_command("make", &["clean"], &pil2_stark_path);
     } else if makefile_changed {
         eprintln!("Makefile changed — running clean rebuild...");
         run_command("make", &["clean"], &pil2_stark_path);
+    } else if hash_changed {
+        eprintln!("Hash family toggled (now {hash_stamp_content}) — running clean rebuild...");
+        run_command("make", &["clean"], &pil2_stark_path);
     }
 
-    // Call make to build the library, passing gencode flags if set
+    // Call make to build the library, passing per-flag options (gencode + hash
+    // family) as KEY=value overrides. Order between vars doesn't matter to make.
     let target = if use_gpu { "starks_lib_gpu" } else { "starks_lib" };
     eprintln!("Running make -j {target}...");
-    if use_gpu {
-        match &gencode_flags {
-            Some(flags) => {
-                let gencode_arg = format!("CUDA_GENCODE_FLAGS={}", flags);
-                run_command("make", &["-j", &gencode_arg, target], &pil2_stark_path);
-            }
-            None => run_command("make", &["-j", target], &pil2_stark_path),
-        }
-    } else {
-        run_command("make", &["-j", target], &pil2_stark_path);
+    let mut make_args: Vec<String> = vec!["-j".into()];
+    if let Some(flags) = &gencode_flags {
+        make_args.push(format!("CUDA_GENCODE_FLAGS={}", flags));
     }
+    if stark_poseidon1 {
+        make_args.push("STARK_HASH_FLAGS=-DSTARK_POSEIDON1".into());
+    }
+    make_args.push(target.into());
+    let make_args_ref: Vec<&str> = make_args.iter().map(String::as_str).collect();
+    run_command("make", &make_args_ref, &pil2_stark_path);
 
     // Write stamps after make succeeds (make creates the output directory).
     if use_gpu {
@@ -134,6 +156,12 @@ fn main() {
                 makefile_stamp_path
             );
         }
+    }
+    if let Err(e) = fs::write(&hash_stamp_path, hash_stamp_content) {
+        eprintln!(
+            "Warning: failed to write hash family stamp {:?}: {e} — next build will recompile",
+            hash_stamp_path
+        );
     }
 
     // Absolute path to the library

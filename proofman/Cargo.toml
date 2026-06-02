@@ -41,3 +41,4 @@ mpi = { version = "0.8.0", optional = true }
 default = ["mpi"]
 mpi = ["dep:mpi", "proofman-common/mpi"]
 diagnostic = ["proofman-macros/diagnostic", "proofman-common/diagnostic"]
+stark-poseidon1 = ["proofman-starks-lib-c/stark-poseidon1", "proofman-common/stark-poseidon1"]

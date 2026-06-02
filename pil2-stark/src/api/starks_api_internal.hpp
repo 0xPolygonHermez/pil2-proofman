@@ -7,8 +7,6 @@
 #include <string>
 #include <utility>
 
-// Uncomment the line below to switch to Poseidon1 (W=12, arity=2)
-// #define STARK_POSEIDON1
 
 #ifdef STARK_POSEIDON1
 #include "poseidon_goldilocks.hpp"

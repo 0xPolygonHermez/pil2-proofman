@@ -191,22 +191,33 @@ __global__ void grindingKernel(uint64_t* nonce, uint64_t *__restrict__ nonceBloc
     if(shared_nonces[0] != UINT64_MAX){
         return;
     }
-    // scratchpad is declared globally, shared_nonces is allocated right after it
 
     nonceBlock[blockIdx.x] = UINT64_MAX;
     uint64_t idx = nonces_offset + (blockIdx.x * blockDim.x + threadIdx.x) * hashes_per_thread;
     uint64_t level = 1ULL << (64 - n_bits);
     uint64_t locId = UINT64_MAX;
 
+    // STARK grinding contract: 3 challenge field elements + nonce, zero-padded
+    // to SPONGE_WIDTH. Middle slots must be zero so prover and verifier match.
+    const gl64_t *GPU_C_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_C_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_C_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_C_12 : (gl64_t *)GPU_C_16));
+    const gl64_t *GPU_D_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_D_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_D_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_D_12 : (gl64_t *)GPU_D_16));
+
+    gl64_t state[SPONGE_WIDTH_T];
+    gl64_t in_reg[SPONGE_WIDTH_T];
+#pragma unroll
+    for (uint32_t i = 0; i < SPONGE_WIDTH_T; ++i)
+        in_reg[i] = (gl64_t)(uint64_t)0;
+
     for(uint32_t k=0; k<hashes_per_thread; k++){
         uint64_t idx_k = idx + k;
-        #pragma unroll
-        for (uint32_t i = 0; i < SPONGE_WIDTH_T-1; i++)
-            scratchpad[i * blockDim.x + threadIdx.x] = input[i];
-        scratchpad[(SPONGE_WIDTH_T-1) * blockDim.x + threadIdx.x] = idx_k;
-        poseidon2PermuteSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
-        // Compare the raw uint64 value, not the field element
-        uint64_t hash_val = (uint64_t)scratchpad[threadIdx.x];
+#pragma unroll
+        for (uint32_t i = 0; i < 3 && i < SPONGE_WIDTH_T - 1; ++i)
+            in_reg[i] = input[i];
+        in_reg[SPONGE_WIDTH_T - 1] = idx_k;
+
+        poseidon2PermuteReg<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(state, in_reg, GPU_C_GL, GPU_D_GL);
+
+        uint64_t hash_val = (uint64_t)state[0];
         if(hash_val < level){
             locId = idx_k;
             break;

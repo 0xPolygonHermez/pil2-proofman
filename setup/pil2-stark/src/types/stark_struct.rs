@@ -1,7 +1,7 @@
+use proofman_starks_lib_c::GOLDILOCKS_MERKLE_TREE_ARITY;
 use serde::{Deserialize, Serialize};
 
-/// Default Merkle tree arity for GL hash type.
-const MERKLE_TREE_ARITY: usize = 4;
+const MERKLE_TREE_ARITY: usize = GOLDILOCKS_MERKLE_TREE_ARITY as usize;
 
 /// Configuration settings provided by the user to generate a StarkStruct.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -301,11 +301,15 @@ __global__ void grindingKernel_pos1(uint64_t *nonce,
     gl64_t state[12];
     gl64_t in_reg[12];
 
+#pragma unroll
+    for (uint32_t i = 0; i < W; ++i)
+        in_reg[i] = (gl64_t)(uint64_t)0;
+
     for (uint64_t k = 0; k < hashes_per_thread; ++k)
     {
         uint64_t idx_k = idx + k;
 #pragma unroll
-        for (uint32_t i = 0; i < W - 1; ++i)
+        for (uint32_t i = 0; i < 3; ++i)
             in_reg[i] = input[i];
         in_reg[W - 1] = idx_k;
 

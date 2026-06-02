@@ -14,6 +14,7 @@ pilout = { workspace = true }
 proofman-util = { workspace = true }
 proofman = { workspace = true }
 proofman-common = { workspace = true }
+proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
 proofman-verifier = { workspace = true }
 proofman-soundness = { workspace = true }
 witness = { workspace = true }
@@ -35,3 +36,4 @@ toml = "0.9.8"
 [features]
 default = ["mpi"]
 mpi = ["proofman/mpi", "proofman-common/mpi"]
+stark-poseidon1 = ["proofman/stark-poseidon1", "proofman-common/stark-poseidon1", "proofman-starks-lib-c/stark-poseidon1"]
