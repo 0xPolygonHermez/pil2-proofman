@@ -2634,6 +2634,36 @@ where
                 }
                 if phase == ProvePhase::Internal {
                     timer_stop_and_log_info!(GENERATING_PROOFS);
+                    // Producer-side emit: this is the per-worker phase-2 proof each worker sends to the
+                    // coordinator. EMIT_STATE fingerprints the pctx state this worker baked into its proof;
+                    // compare against the aggregator's AGG_VERIFY_FAIL state_fps. EMIT_RECURSIVE2 fingerprints
+                    // each emitted proof; compare against the aggregator's RECV_PROOF / received_proof_fp.
+                    {
+                        let gc: Vec<u64> =
+                            self.pctx.get_global_challenge().iter().map(|x| x.as_canonical_u64()).collect();
+                        let pubs: Vec<u64> = self.pctx.get_publics().iter().map(|x| x.as_canonical_u64()).collect();
+                        let pv: Vec<u64> = self.pctx.get_proof_values().iter().map(|x| x.as_canonical_u64()).collect();
+                        tracing::info!(
+                            "EMIT_STATE worker_index={} global_challenge_fp={} global_publics_fp={} \
+                             proof_values_fp={} n_publics={} n_proof_values={} global_challenge={:?}",
+                            worker_index,
+                            proof_fingerprint(&gc),
+                            proof_fingerprint(&pubs),
+                            proof_fingerprint(&pv),
+                            pubs.len(),
+                            pv.len(),
+                            gc,
+                        );
+                        for proof in &agg_proofs {
+                            tracing::info!(
+                                "EMIT_RECURSIVE2 worker_index={} airgroup={} proof_len={} proof_fp={}",
+                                worker_index,
+                                proof.airgroup_id,
+                                proof.proof.len(),
+                                proof_fingerprint(&proof.proof),
+                            );
+                        }
+                    }
                     return Ok(ProvePhaseResult::Internal(agg_proofs));
                 }
             }
@@ -2958,27 +2988,6 @@ where
             // end-to-end via `proof_fingerprint`: if the aggregator's received_proof_fp equals the producer's
             // EMIT_RECURSIVE2 proof_fp here, the proof was routed intact and the divergence is verify-side;
             // if not, a wrong/stale proof was routed.
-            let emit_worker_index = self.pctx.get_worker_index().map(|w| w as i64).unwrap_or(-1);
-            // Fingerprint the producer's full pctx state so it can be compared against the aggregator's
-            // AGG_VERIFY_FAIL state_fps. The 3-value global challenge matching by eye does NOT prove the full
-            // publics/proof_values agree; if these fps differ between producer and aggregator, the pctx state
-            // diverged (a state race) — the most likely remaining cause given the publics are otherwise equal.
-            {
-                let gc: Vec<u64> = self.pctx.get_global_challenge().iter().map(|x| x.as_canonical_u64()).collect();
-                let pubs: Vec<u64> = self.pctx.get_publics().iter().map(|x| x.as_canonical_u64()).collect();
-                let pv: Vec<u64> = self.pctx.get_proof_values().iter().map(|x| x.as_canonical_u64()).collect();
-                tracing::info!(
-                    "EMIT_STATE worker_index={} global_challenge_fp={} global_publics_fp={} proof_values_fp={} \
-                     n_publics={} n_proof_values={} global_challenge={:?}",
-                    emit_worker_index,
-                    proof_fingerprint(&gc),
-                    proof_fingerprint(&pubs),
-                    proof_fingerprint(&pv),
-                    pubs.len(),
-                    pv.len(),
-                    gc,
-                );
-            }
             let agg_proofs_data: Vec<AggProofs> = (0..self.pctx.global_info.air_groups.len())
                 .map(|airgroup_id| {
                     let mut lock = self.recursive2_proofs[airgroup_id].write().unwrap();
@@ -2994,8 +3003,7 @@ where
                             .proof,
                     );
                     tracing::info!(
-                        "EMIT_RECURSIVE2 worker_index={} airgroup={} proof_len={} proof_fp={}",
-                        emit_worker_index,
+                        "EMIT_FINAL_AGG airgroup={} proof_len={} proof_fp={}",
                         airgroup_id,
                         proof.len(),
                         proof_fingerprint(&proof),
