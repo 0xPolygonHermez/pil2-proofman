@@ -65,6 +65,14 @@ use proofman_util::{
 
 use serde::Serialize;
 
+/// Cheap, deterministic, order-sensitive fingerprint (FNV-1a-style) of a proof vector.
+/// Used only for diagnostics: the producer logs it for each emitted recursive2 proof and the
+/// aggregator logs it on a verify failure, so the same proof can be matched end-to-end by
+/// comparing a single `u64` instead of diffing the full vector. Not cryptographic.
+fn proof_fingerprint(values: &[u64]) -> u64 {
+    values.iter().fold(1469598103934665603u64, |h, &x| (h ^ x).wrapping_mul(1099511628211))
+}
+
 #[derive(Default, Debug, Clone)]
 pub struct WitnessInfo {
     pub witness_time: f32,
@@ -2098,6 +2106,16 @@ where
                         let recursive2_proof = {
                             let mut recursive2_airgroup_proofs =
                                 recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
+                            // Fingerprint each completed recursive2 proof as it enters the buffer (generate
+                            // stage of the generate -> send -> receive chain). If GEN_RECURSIVE2 fp here differs
+                            // from the EMIT_RECURSIVE2 fp for the same airgroup, the buffered bytes were mutated
+                            // between completion and send (a buffer-reuse race).
+                            tracing::info!(
+                                "GEN_RECURSIVE2 airgroup={} proof_len={} proof_fp={}",
+                                proof.airgroup_id,
+                                proof.proof.len(),
+                                proof_fingerprint(&proof.proof),
+                            );
                             recursive2_airgroup_proofs.push(proof);
 
                             if recursive2_airgroup_proofs.len() >= N_RECURSIVE_PROOFS_PER_AGGREGATION {
@@ -2712,6 +2730,16 @@ where
         }
 
         for proof in agg_proofs {
+            // Fingerprint every received proof (not just failures) so the generate -> send -> receive chain
+            // can be matched end-to-end: RECV_PROOF.proof_fp here should equal the producer's EMIT_RECURSIVE2
+            // proof_fp and the GEN_RECURSIVE2 fp. A mismatch localizes where the bytes diverged.
+            tracing::info!(
+                "RECV_PROOF airgroup={} worker_indexes={:?} proof_len={} proof_fp={}",
+                proof.airgroup_id,
+                proof.worker_indexes,
+                proof.proof.len(),
+                proof_fingerprint(&proof.proof),
+            );
             {
                 let received = self.received_agg_proofs.read().unwrap();
                 let airgroup_vec = &received[proof.airgroup_id as usize];
@@ -2754,10 +2782,33 @@ where
                 }
             }
 
+            if self.cancellation_info.read().unwrap().token.is_cancelled() {
+                break;
+            }
+
             timer_start_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
             let setup = self.setups.sctx_recursive2.as_ref().unwrap().get_setup(proof.airgroup_id as usize, 0)?;
             let publics_aggregation = n_publics_aggregation(&self.pctx, proof.airgroup_id as usize);
             let (publics, rec_proof) = proof.proof.split_at(publics_aggregation);
+
+            let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
+            if let Some((c, value)) = workers_acc_challenge
+                .iter()
+                .enumerate()
+                .find(|(c, value)| value.as_canonical_u64() != proof_acc_challenge[*c])
+            {
+                self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(format!(
+                    "Aggregated proof challenge does not match the expected challenge for airgroup {} (workers {:?}): \
+                     component {} is {} in the proof but {} when aggregated from the registered contributions. \
+                     The worker aggregated a different set of contributions than the coordinator registered.",
+                    proof.airgroup_id,
+                    proof.worker_indexes,
+                    c,
+                    proof_acc_challenge[c],
+                    value.as_canonical_u64(),
+                ))));
+                break;
+            }
 
             let mut publics_extended = vec![0; setup.stark_info.n_publics as usize];
             publics_extended[0..publics.len()].copy_from_slice(publics);
@@ -2776,23 +2827,77 @@ where
             let valid_recursive_proof = verify_recursive2(&vadcop_proof, &setup.get_vk());
 
             if !valid_recursive_proof {
-                self.cancellation_info
-                    .write()
-                    .unwrap()
-                    .cancel(Some(ProofmanError::InvalidProof("Received aggregated proof is invalid!".into())));
+                // Intermittent (race) failure with a single capture window — dump everything needed to
+                // diagnose offline. "Global challenge equal everywhere" already exonerates the injected
+                // publics, so the truth is in the proof body, the setup/verkey, or the routing.
+                // `proof_fingerprint` lets us match the received bytes against what the producing worker
+                // emitted (see the producer-side EMIT_RECURSIVE2 log of the same fingerprint).
+                let global_challenge: Vec<u64> =
+                    self.pctx.get_global_challenge().iter().map(|x| x.as_canonical_u64()).collect();
+                let global_publics: Vec<u64> =
+                    self.pctx.get_publics().iter().map(|x| x.as_canonical_u64()).collect();
+                let proof_values: Vec<u64> =
+                    self.pctx.get_proof_values().iter().map(|x| x.as_canonical_u64()).collect();
+                let vk = setup.get_vk();
+                let aggregator_worker_index = self.pctx.get_worker_index().map(|w| w as i64).unwrap_or(-1);
+                let rec_proof_all_zero = rec_proof.iter().all(|&x| x == 0);
+
+                tracing::error!(
+                    "AGG_VERIFY_FAIL airgroup={} worker_indexes={:?} aggregator_worker_index={} \
+                     proof_len={} publics_aggregation={} rec_proof_len={} rec_proof_all_zero={} \
+                     setup_n_publics={} verkey_path={} setup_path={}",
+                    proof.airgroup_id,
+                    proof.worker_indexes,
+                    aggregator_worker_index,
+                    proof.proof.len(),
+                    publics_aggregation,
+                    rec_proof.len(),
+                    rec_proof_all_zero,
+                    setup.stark_info.n_publics,
+                    verkey_path,
+                    setup.setup_path.display(),
+                );
+                tracing::error!(
+                    "AGG_VERIFY_FAIL fingerprints: received_proof_fp={} rec_proof_fp={} publics_extended_fp={} vk_fp={}",
+                    proof_fingerprint(&proof.proof),
+                    proof_fingerprint(rec_proof),
+                    proof_fingerprint(&publics_extended),
+                    proof_fingerprint(&vk),
+                );
+                tracing::error!(
+                    "AGG_VERIFY_FAIL header(circuit_type={}, n_proofs_aggregated={}) full_header={:?}",
+                    publics[0],
+                    publics[1],
+                    publics,
+                );
+                tracing::error!(
+                    "AGG_VERIFY_FAIL publics_extended={:?}",
+                    publics_extended,
+                );
+                tracing::error!(
+                    "AGG_VERIFY_FAIL state_fps: global_challenge_fp={} global_publics_fp={} proof_values_fp={} \
+                     n_publics={} n_proof_values={} (compare against the producer's EMIT_STATE fps)",
+                    proof_fingerprint(&global_challenge),
+                    proof_fingerprint(&global_publics),
+                    proof_fingerprint(&proof_values),
+                    global_publics.len(),
+                    proof_values.len(),
+                );
+                tracing::error!(
+                    "AGG_VERIFY_FAIL pctx global_challenge={:?} global_publics={:?} proof_values={:?} recursive2_vk={:?}",
+                    global_challenge,
+                    global_publics,
+                    proof_values,
+                    vk,
+                );
+                self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(format!(
+                    "Received aggregated proof is invalid for airgroup {} (workers {:?}).",
+                    proof.airgroup_id, proof.worker_indexes,
+                ))));
                 break;
             }
             timer_stop_and_log_debug!(VERIFYING_OUTER_AGGREGATED_PROOF);
 
-            let workers_acc_challenge = aggregate_contributions(&self.pctx, &stored_contributions);
-            for (c, value) in workers_acc_challenge.iter().enumerate() {
-                if value.as_canonical_u64() != proof_acc_challenge[c] {
-                    self.cancellation_info.write().unwrap().cancel(Some(ProofmanError::InvalidProof(
-                        "Aggregated proof challenge does not match the expected challenge".into(),
-                    )));
-                    break;
-                }
-            }
             let id = {
                 let mut rec2_proofs = self.recursive2_proofs_ongoing.write().unwrap();
                 let id = rec2_proofs.len();
@@ -2849,6 +2954,31 @@ where
 
             self.check_cancel(false)?;
 
+            // Logs the bytes each worker emits per airgroup so an intermittent verify failure can be matched
+            // end-to-end via `proof_fingerprint`: if the aggregator's received_proof_fp equals the producer's
+            // EMIT_RECURSIVE2 proof_fp here, the proof was routed intact and the divergence is verify-side;
+            // if not, a wrong/stale proof was routed.
+            let emit_worker_index = self.pctx.get_worker_index().map(|w| w as i64).unwrap_or(-1);
+            // Fingerprint the producer's full pctx state so it can be compared against the aggregator's
+            // AGG_VERIFY_FAIL state_fps. The 3-value global challenge matching by eye does NOT prove the full
+            // publics/proof_values agree; if these fps differ between producer and aggregator, the pctx state
+            // diverged (a state race) — the most likely remaining cause given the publics are otherwise equal.
+            {
+                let gc: Vec<u64> = self.pctx.get_global_challenge().iter().map(|x| x.as_canonical_u64()).collect();
+                let pubs: Vec<u64> = self.pctx.get_publics().iter().map(|x| x.as_canonical_u64()).collect();
+                let pv: Vec<u64> = self.pctx.get_proof_values().iter().map(|x| x.as_canonical_u64()).collect();
+                tracing::info!(
+                    "EMIT_STATE worker_index={} global_challenge_fp={} global_publics_fp={} proof_values_fp={} \
+                     n_publics={} n_proof_values={} global_challenge={:?}",
+                    emit_worker_index,
+                    proof_fingerprint(&gc),
+                    proof_fingerprint(&pubs),
+                    proof_fingerprint(&pv),
+                    pubs.len(),
+                    pv.len(),
+                    gc,
+                );
+            }
             let agg_proofs_data: Vec<AggProofs> = (0..self.pctx.global_info.air_groups.len())
                 .map(|airgroup_id| {
                     let mut lock = self.recursive2_proofs[airgroup_id].write().unwrap();
@@ -2862,6 +2992,13 @@ where
                                 ))
                             })?
                             .proof,
+                    );
+                    tracing::info!(
+                        "EMIT_RECURSIVE2 worker_index={} airgroup={} proof_len={} proof_fp={}",
+                        emit_worker_index,
+                        airgroup_id,
+                        proof.len(),
+                        proof_fingerprint(&proof),
                     );
                     Ok(AggProofs::new(airgroup_id as u64, proof, vec![]))
                 })
