@@ -8,7 +8,7 @@ use proofman_common::{
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{get_num_gpus_c, init_gpu_setup_c, set_gpu_mode_c};
+use proofman_starks_lib_c::{get_num_gpus_c, init_gpu_setup_c, set_gpu_mode_c, GOLDILOCKS_MERKLE_TREE_ARITY};
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c, reset_device_streams_c,
     get_instances_ready_c, free_device_buffers_c, use_packed_trace_c,
@@ -663,7 +663,7 @@ where
                 return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
             }
 
-            init_gpu_setup_c(sctx.max_n_bits_ext as u64);
+            init_gpu_setup_c(sctx.max_n_bits_ext as u64, GOLDILOCKS_MERKLE_TREE_ARITY);
         }
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {

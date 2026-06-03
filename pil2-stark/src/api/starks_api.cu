@@ -1360,17 +1360,39 @@ void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
 
 }
 
-void init_gpu_setup_gpu(uint64_t maxBitsExt) {
+void init_gpu_setup_gpu(uint64_t maxBitsExt, uint64_t arity) {
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
     cudaSetDevice(deviceId);
     uint32_t my_gpu_ids[1] = {(uint32_t)deviceId};
 
-    // Uploads constants for setup
 #ifdef STARK_POSEIDON1
-    PoseidonGoldilocksGPU<16>::initConstants(my_gpu_ids, 1);
+    switch (arity) {
+        case 2:
+            PoseidonGoldilocksGPU<12>::initConstants(my_gpu_ids, 1);
+            break;
+        case 3:
+            PoseidonGoldilocksGPU<16>::initConstants(my_gpu_ids, 1);
+            break;
+        default:
+            zklog.error("init_gpu_setup_gpu: STARK_POSEIDON1 supports merkle tree arity 2 or 3 only");
+            exit(1);
+    }
 #else
-    Poseidon2GoldilocksGPU<16>::initConstants(my_gpu_ids, 1);
+    switch (arity) {
+        case 2:
+            Poseidon2GoldilocksGPU<8>::initConstants(my_gpu_ids, 1);
+            break;
+        case 3:
+            Poseidon2GoldilocksGPU<12>::initConstants(my_gpu_ids, 1);
+            break;
+        case 4:
+            Poseidon2GoldilocksGPU<16>::initConstants(my_gpu_ids, 1);
+            break;
+        default:
+            zklog.error("init_gpu_setup_gpu: Poseidon2 supports merkle tree arity 2, 3 or 4");
+            exit(1);
+    }
 #endif
     NTTGoldilocksGPU::initConstants(maxBitsExt, 1, my_gpu_ids);
 }

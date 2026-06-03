@@ -89,7 +89,7 @@ extern "C" {
         constPolsPath: *mut ::std::os::raw::c_char,
     ) -> u64;
 
-    pub fn init_gpu_setup(maxBitsExt: u64);
+    pub fn init_gpu_setup(maxBitsExt: u64, arity: u64);
 
     pub fn pack_const_pols(
         pStarkinfo: *mut ::std::os::raw::c_void,

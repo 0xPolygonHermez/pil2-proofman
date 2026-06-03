@@ -3,7 +3,9 @@ use crate::{
     AirGroupMap, AirIdMap, DebugInfo, GlobalInfo, InstanceMap, ModeName, ProofCtx, StdMode, VerboseMode,
     DEFAULT_PRINT_VALS,
 };
-use proofman_starks_lib_c::{set_log_level_c, init_gpu_setup_c, get_num_gpus_c, set_gpu_mode_c};
+use proofman_starks_lib_c::{
+    set_log_level_c, init_gpu_setup_c, get_num_gpus_c, set_gpu_mode_c, GOLDILOCKS_MERKLE_TREE_ARITY,
+};
 use tracing::dispatcher;
 use tracing_subscriber::filter::LevelFilter;
 use std::path::PathBuf;
@@ -513,7 +515,7 @@ pub fn init_gpu_setup(max_n_bits_ext: u64, gpu: bool) -> ProofmanResult<()> {
             return Err(ProofmanError::InvalidConfiguration("No GPUs found".into()));
         }
 
-        init_gpu_setup_c(max_n_bits_ext);
+        init_gpu_setup_c(max_n_bits_ext, GOLDILOCKS_MERKLE_TREE_ARITY);
     }
     Ok(())
 }

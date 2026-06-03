@@ -214,9 +214,9 @@ pub fn load_const_tree_c(
     }
 }
 
-pub fn init_gpu_setup_c(maxBitsExt: u64) {
+pub fn init_gpu_setup_c(maxBitsExt: u64, arity: u64) {
     unsafe {
-        init_gpu_setup(maxBitsExt);
+        init_gpu_setup(maxBitsExt, arity);
     }
 }
 
