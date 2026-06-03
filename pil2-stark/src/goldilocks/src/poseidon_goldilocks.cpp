@@ -17,36 +17,37 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::permute_seq(
     Goldilocks::Element (&state)[SPONGE_WIDTH],
     const Goldilocks::Element (&input)[SPONGE_WIDTH])
 {
+    using Tbl = PoseidonGoldilocksConstants::Poseidon1Tables<SPONGE_WIDTH_T>;
     const int length = SPONGE_WIDTH * sizeof(Goldilocks::Element);
     std::memcpy(state, input, length);
 
-    add_(state, &(PoseidonGoldilocksConstants::C12[0]));
+    add_(state, &(Tbl::C[0]));
     for (uint32_t r = 0; r < HALF_N_FULL_ROUNDS - 1; r++)
     {
-        pow7add_(state, &(PoseidonGoldilocksConstants::C12[(r + 1) * SPONGE_WIDTH]));
-        mvp_(state, PoseidonGoldilocksConstants::M12);
+        pow7add_(state, &(Tbl::C[(r + 1) * SPONGE_WIDTH]));
+        mvp_(state, Tbl::M);
     }
-    pow7add_(state, &(PoseidonGoldilocksConstants::C12[(HALF_N_FULL_ROUNDS * SPONGE_WIDTH)]));
-    mvp_(state, PoseidonGoldilocksConstants::P12);
+    pow7add_(state, &(Tbl::C[(HALF_N_FULL_ROUNDS * SPONGE_WIDTH)]));
+    mvp_(state, Tbl::P);
 
     for (uint32_t r = 0; r < N_PARTIAL_ROUNDS; r++)
     {
         pow7(state[0]);
-        state[0] = state[0] + PoseidonGoldilocksConstants::C12[(HALF_N_FULL_ROUNDS + 1) * SPONGE_WIDTH + r];
-        Goldilocks::Element s0 = dot_(state, &(PoseidonGoldilocksConstants::S12[(SPONGE_WIDTH * 2 - 1) * r]));
+        state[0] = state[0] + Tbl::C[(HALF_N_FULL_ROUNDS + 1) * SPONGE_WIDTH + r];
+        Goldilocks::Element s0 = dot_(state, &(Tbl::S[(SPONGE_WIDTH * 2 - 1) * r]));
         Goldilocks::Element W_[SPONGE_WIDTH];
-        prod_(W_, state[0], &(PoseidonGoldilocksConstants::S12[(SPONGE_WIDTH * 2 - 1) * r + SPONGE_WIDTH - 1]));
+        prod_(W_, state[0], &(Tbl::S[(SPONGE_WIDTH * 2 - 1) * r + SPONGE_WIDTH - 1]));
         add_(state, W_);
         state[0] = s0;
     }
 
     for (uint32_t r = 0; r < HALF_N_FULL_ROUNDS - 1; r++)
     {
-        pow7add_(state, &(PoseidonGoldilocksConstants::C12[(HALF_N_FULL_ROUNDS + 1) * SPONGE_WIDTH + N_PARTIAL_ROUNDS + r * SPONGE_WIDTH]));
-        mvp_(state, PoseidonGoldilocksConstants::M12);
+        pow7add_(state, &(Tbl::C[(HALF_N_FULL_ROUNDS + 1) * SPONGE_WIDTH + N_PARTIAL_ROUNDS + r * SPONGE_WIDTH]));
+        mvp_(state, Tbl::M);
     }
     pow7_(&(state[0]));
-    mvp_(state, PoseidonGoldilocksConstants::M12);
+    mvp_(state, Tbl::M);
 }
 
 template<uint32_t SPONGE_WIDTH_T>
@@ -146,7 +147,9 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletreeReduce(
     uint64_t num_elements, uint64_t arity)
 {
     // Only arity == 2 (binary merkle) is supported.
-    assert(arity == 2 && "PoseidonGoldilocks::merkletreeReduce: only arity == 2 is supported");
+    // arity*CAPACITY children must fit in SPONGE_WIDTH (the compress input).
+    assert(arity * CAPACITY <= SPONGE_WIDTH &&
+           "PoseidonGoldilocks::merkletreeReduce: arity*CAPACITY exceeds SPONGE_WIDTH");
     uint64_t numNodes = num_elements;
     uint64_t nodesLevel = num_elements;
 
@@ -934,6 +937,34 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx512(
 #endif // __AVX512__
 
 // ---------------------------------------------------------------------------
-// Explicit template instantiation (W=12).
+// Explicit template instantiation.
+// W=12: full set (scalar + AVX + AVXBatch + AVX512Batch).
+// W=4, W=16: scalar-only — instantiate selected members directly.
+//   AVX bodies hardcode 12-element layout; would mis-compile for other widths.
+//   The dispatch in poseidon_goldilocks.hpp uses `if constexpr (W == 12)` to
+//   confine AVX paths to W=12, so callers can never reach an AVX entry point
+//   for W ∈ {4, 16}.
 // ---------------------------------------------------------------------------
 template class PoseidonGoldilocks<12>;
+
+// W=4 — grinding-only. Merkle paths skipped (W=4 can't fit arity*CAPACITY=8
+// children in SPONGE_WIDTH=4, by design).
+template void PoseidonGoldilocks<4>::permute_seq(
+    Goldilocks::Element (&)[4], const Goldilocks::Element (&)[4]);
+template void PoseidonGoldilocks<4>::grinding(
+    uint64_t &, const uint64_t *, const uint32_t);
+template void PoseidonGoldilocks<4>::abortMode(const char *, PoseidonMode);
+
+// W=16 — merkle + transcript at arity 3 (scalar path only; AVX is W=12 only).
+template void PoseidonGoldilocks<16>::permute_seq(
+    Goldilocks::Element (&)[16], const Goldilocks::Element (&)[16]);
+template void PoseidonGoldilocks<16>::linear_hash_seq(
+    Goldilocks::Element *, Goldilocks::Element *, uint64_t);
+template void PoseidonGoldilocks<16>::merkletree_seq(
+    Goldilocks::Element *, Goldilocks::Element *,
+    uint64_t, uint64_t, uint64_t, int, uint64_t);
+template void PoseidonGoldilocks<16>::merkletreeReduce(
+    Goldilocks::Element *, Goldilocks::Element *, uint64_t, uint64_t);
+template void PoseidonGoldilocks<16>::grinding(
+    uint64_t &, const uint64_t *, const uint32_t);
+template void PoseidonGoldilocks<16>::abortMode(const char *, PoseidonMode);

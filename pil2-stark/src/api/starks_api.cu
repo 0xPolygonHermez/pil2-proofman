@@ -208,12 +208,21 @@ void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32
 
     // Initialize small GPU constants (Poseidon and Transcript)
 #ifdef STARK_POSEIDON1
-    if (arity != 2) {
-        zklog.error("STARK_POSEIDON1 requires merkleTreeArity == 2.");
-        exit(1);
+    switch(arity){
+        case 2:
+            PoseidonGoldilocksGPU<12>::initConstants(my_gpu_ids, n_gpus);
+            break;
+        case 3:
+            PoseidonGoldilocksGPU<16>::initConstants(my_gpu_ids, n_gpus);
+            break;
+        default:
+            zklog.error("Unsupported merkle tree arity. Supported arities for Poseidon are 2 and 3.");
+            exit(1);
     }
-    PoseidonGoldilocksGPU<12>::initConstants(my_gpu_ids, n_gpus);
-#else
+
+    PoseidonGoldilocksGPUGrinding::initConstants(my_gpu_ids, n_gpus);
+
+    #else
     switch(arity){
         case 2:
             Poseidon2GoldilocksGPU<8>::initConstants(my_gpu_ids, n_gpus);
@@ -1357,9 +1366,9 @@ void init_gpu_setup_gpu(uint64_t maxBitsExt) {
     cudaSetDevice(deviceId);
     uint32_t my_gpu_ids[1] = {(uint32_t)deviceId};
 
-    // Uploads constants for all possible arities
+    // Uploads constants for setup
 #ifdef STARK_POSEIDON1
-    PoseidonGoldilocksGPU<12>::initConstants(my_gpu_ids, 1);
+    PoseidonGoldilocksGPU<16>::initConstants(my_gpu_ids, 1);
 #else
     Poseidon2GoldilocksGPU<16>::initConstants(my_gpu_ids, 1);
 #endif

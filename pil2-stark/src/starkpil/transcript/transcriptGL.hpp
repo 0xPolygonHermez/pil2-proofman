@@ -43,12 +43,11 @@ public:
         this->arity = arity;
         transcriptStateSize = HASH_SIZE;
 #ifdef STARK_POSEIDON1
-        assert(arity == 2 && "Poseidon1 only supports arity == 2");
-        transcriptPendingSize = PoseidonGoldilocks<12>::RATE;          // 8
-        transcriptOutSize     = PoseidonGoldilocks<12>::SPONGE_WIDTH;  // 12
+        transcriptPendingSize = 4 * arity;
+        transcriptOutSize     = 4 * (arity + 1);
 #else
-        transcriptPendingSize = 4*(arity - 1);
-        transcriptOutSize = 4*arity;
+        transcriptPendingSize = 4 * (arity - 1);
+        transcriptOutSize     = 4 * arity;
 #endif
 
         state = new Goldilocks::Element[transcriptOutSize];

@@ -10,7 +10,7 @@
 
 #ifdef STARK_POSEIDON1
 #include "poseidon_goldilocks.hpp"
-using GoldilocksGrinding = PoseidonGoldilocks<12>;
+using GoldilocksGrinding = PoseidonGoldilocks<4>;
 #else
 #include "poseidon2_goldilocks.hpp"
 using GoldilocksGrinding = Poseidon2GoldilocksGrinding;

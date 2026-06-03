@@ -25,7 +25,7 @@ fn main() {
     let stark_poseidon1 = cfg!(feature = "stark-poseidon1");
     if stark_poseidon1 {
         println!("cargo:rustc-cfg=stark_poseidon1");
-        println!("cargo:warning=[BUILD INFO] STARKS hash family: Poseidon1 (W=12, arity=2)");
+        println!("cargo:warning=[BUILD INFO] STARKS hash family: Poseidon1");
     }
 
     // Determine if GPU support should be used:

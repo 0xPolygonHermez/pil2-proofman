@@ -85,8 +85,18 @@ public:
         }
         Goldilocks::Element computedRoot[nFieldElements];
 #ifdef STARK_POSEIDON1
-        assert(arity == 2 && "STARK_POSEIDON1 requires merkleTreeArity == 2");
-        PoseidonGoldilocks<12>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+        switch(arity) {
+            case 2:
+                PoseidonGoldilocks<12>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+                break;
+            case 3:
+                PoseidonGoldilocks<16>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+                break;
+            default:
+                zklog.error("MerkleTreeGL::verifyMerkleRoot: Unsupported arity (STARK_POSEIDON1 supports 2, 3)");
+                exitProcess();
+                exit(-1);
+        }
 #else
         switch(arity) {
             case 2:

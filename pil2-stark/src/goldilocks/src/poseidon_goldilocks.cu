@@ -32,6 +32,37 @@ __device__ __constant__ uint64_t GPU_POS1_S[507];
 __device__ __constant__ uint64_t GPU_POS1_M[144];
 __device__ __constant__ uint64_t GPU_POS1_P[144];
 
+__device__ __constant__ uint64_t GPU_POS1_C4[54];
+__device__ __constant__ uint64_t GPU_POS1_S4[155];
+__device__ __constant__ uint64_t GPU_POS1_M4[16];
+__device__ __constant__ uint64_t GPU_POS1_P4[16];
+
+__device__ __constant__ uint64_t GPU_POS1_C16[150];
+__device__ __constant__ uint64_t GPU_POS1_S16[683];
+__device__ __constant__ uint64_t GPU_POS1_M16[256];
+__device__ __constant__ uint64_t GPU_POS1_P16[256];
+
+// Per-W constant accessor. Specialized below.
+template<uint32_t W> struct Pos1ConstGPU;
+template<> struct Pos1ConstGPU<4> {
+    static __device__ __forceinline__ const gl64_t* C() { return (const gl64_t*)GPU_POS1_C4; }
+    static __device__ __forceinline__ const gl64_t* S() { return (const gl64_t*)GPU_POS1_S4; }
+    static __device__ __forceinline__ const gl64_t* M() { return (const gl64_t*)GPU_POS1_M4; }
+    static __device__ __forceinline__ const gl64_t* P() { return (const gl64_t*)GPU_POS1_P4; }
+};
+template<> struct Pos1ConstGPU<12> {
+    static __device__ __forceinline__ const gl64_t* C() { return (const gl64_t*)GPU_POS1_C; }
+    static __device__ __forceinline__ const gl64_t* S() { return (const gl64_t*)GPU_POS1_S; }
+    static __device__ __forceinline__ const gl64_t* M() { return (const gl64_t*)GPU_POS1_M; }
+    static __device__ __forceinline__ const gl64_t* P() { return (const gl64_t*)GPU_POS1_P; }
+};
+template<> struct Pos1ConstGPU<16> {
+    static __device__ __forceinline__ const gl64_t* C() { return (const gl64_t*)GPU_POS1_C16; }
+    static __device__ __forceinline__ const gl64_t* S() { return (const gl64_t*)GPU_POS1_S16; }
+    static __device__ __forceinline__ const gl64_t* M() { return (const gl64_t*)GPU_POS1_M16; }
+    static __device__ __forceinline__ const gl64_t* P() { return (const gl64_t*)GPU_POS1_P16; }
+};
+
 // ---------------------------------------------------------------------------
 // Kernel definitions.
 // ---------------------------------------------------------------------------
@@ -42,18 +73,18 @@ __global__ void permuteKernel_pos1(uint64_t *output, const uint64_t *input)
 {
     assert(blockDim.x == 1 && gridDim.x == 1);
 
-    gl64_t state[12];
-    gl64_t in_reg[12];
+    gl64_t state[W];
+    gl64_t in_reg[W];
 #pragma unroll
     for (uint32_t i = 0; i < W; ++i)
         in_reg[i] = input[i];
 
     poseidon1PermuteReg<W, HALF_F, N_PART>(
         state, in_reg,
-        (const gl64_t *)GPU_POS1_C,
-        (const gl64_t *)GPU_POS1_S,
-        (const gl64_t *)GPU_POS1_M,
-        (const gl64_t *)GPU_POS1_P);
+        Pos1ConstGPU<W>::C(),
+        Pos1ConstGPU<W>::S(),
+        Pos1ConstGPU<W>::M(),
+        Pos1ConstGPU<W>::P());
 
 #pragma unroll
     for (uint32_t i = 0; i < W; ++i)
@@ -66,18 +97,18 @@ __global__ void compressKernel_pos1(uint64_t *output, const uint64_t *input)
 {
     assert(blockDim.x == 1 && gridDim.x == 1);
 
-    gl64_t state[12];
-    gl64_t in_reg[12];
+    gl64_t state[W];
+    gl64_t in_reg[W];
 #pragma unroll
     for (uint32_t i = 0; i < W; ++i)
         in_reg[i] = input[i];
 
     poseidon1PermuteReg<W, HALF_F, N_PART>(
         state, in_reg,
-        (const gl64_t *)GPU_POS1_C,
-        (const gl64_t *)GPU_POS1_S,
-        (const gl64_t *)GPU_POS1_M,
-        (const gl64_t *)GPU_POS1_P);
+        Pos1ConstGPU<W>::C(),
+        Pos1ConstGPU<W>::S(),
+        Pos1ConstGPU<W>::M(),
+        Pos1ConstGPU<W>::P());
 
 #pragma unroll
     for (uint32_t i = 0; i < CAPACITY_T; ++i)
@@ -143,10 +174,10 @@ __global__ void linearHashKernel_pos1(uint64_t *__restrict__ output,
             scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
 
         poseidon1PermuteSmem<W, HALF_F, N_PART>(
-            (const gl64_t *)GPU_POS1_C,
-            (const gl64_t *)GPU_POS1_S,
-            (const gl64_t *)GPU_POS1_M,
-            (const gl64_t *)GPU_POS1_P);
+            Pos1ConstGPU<W>::C(),
+            Pos1ConstGPU<W>::S(),
+            Pos1ConstGPU<W>::M(),
+            Pos1ConstGPU<W>::P());
 
         remaining -= n;
     }
@@ -206,10 +237,10 @@ __global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
             scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
 
         poseidon1PermuteSmem<W, HALF_F, N_PART>(
-            (const gl64_t *)GPU_POS1_C,
-            (const gl64_t *)GPU_POS1_S,
-            (const gl64_t *)GPU_POS1_M,
-            (const gl64_t *)GPU_POS1_P);
+            Pos1ConstGPU<W>::C(),
+            Pos1ConstGPU<W>::S(),
+            Pos1ConstGPU<W>::M(),
+            Pos1ConstGPU<W>::P());
 
         remaining -= n;
     }
@@ -243,10 +274,10 @@ __global__ void merkleNodeKernel_pos1(uint64_t nextN, uint64_t nextIndex,
             scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
 
     poseidon1PermuteSmem<W, HALF_F, N_PART>(
-        (const gl64_t *)GPU_POS1_C,
-        (const gl64_t *)GPU_POS1_S,
-        (const gl64_t *)GPU_POS1_M,
-        (const gl64_t *)GPU_POS1_P);
+        Pos1ConstGPU<W>::C(),
+        Pos1ConstGPU<W>::S(),
+        Pos1ConstGPU<W>::M(),
+        Pos1ConstGPU<W>::P());
 
     gl64_t *out = (gl64_t *)(&cursor[(uint64_t)nextIndex + ((uint64_t)pending + tid) * CAPACITY_T]);
 #pragma unroll
@@ -298,8 +329,8 @@ __global__ void grindingKernel_pos1(uint64_t *nonce,
     const uint64_t level = 1ULL << (64 - n_bits);
     uint64_t locId = UINT64_MAX;
 
-    gl64_t state[12];
-    gl64_t in_reg[12];
+    gl64_t state[W];
+    gl64_t in_reg[W];
 
 #pragma unroll
     for (uint32_t i = 0; i < W; ++i)
@@ -315,10 +346,10 @@ __global__ void grindingKernel_pos1(uint64_t *nonce,
 
         poseidon1PermuteReg<W, HALF_F, N_PART>(
             state, in_reg,
-            (const gl64_t *)GPU_POS1_C,
-            (const gl64_t *)GPU_POS1_S,
-            (const gl64_t *)GPU_POS1_M,
-            (const gl64_t *)GPU_POS1_P);
+            Pos1ConstGPU<W>::C(),
+            Pos1ConstGPU<W>::S(),
+            Pos1ConstGPU<W>::M(),
+            Pos1ConstGPU<W>::P());
 
         uint64_t hash_val = (uint64_t)state[0];
         if (hash_val < level)
@@ -351,21 +382,36 @@ void PoseidonGoldilocksGPU<W>::initConstants(uint32_t *gpu_ids, uint32_t num_gpu
 {
     int saved;
     CHECKCUDAERR(cudaGetDevice(&saved));
-    static int initialized = 0;
-    if (initialized == 0)
+    // Per-W initialization (independent of other widths so multiple
+    // initConstants<W> calls all set up their own tables).
+    static int initialized[17] = {0}; // indexed by SPONGE_WIDTH
+    static_assert(W < 17, "initialized[] needs to cover W");
+    if (initialized[W] == 0)
     {
         for (uint32_t i = 0; i < num_gpu_ids; ++i)
         {
             CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
-            // Upload the 2D M12/P12 (row-major) — GPU mvp_ reads them as
-            // mat[W*j + i] (transposed access). M_12/P_12 are the AVX-only
+            // Upload the 2D M/P (row-major) — GPU mvp_ reads them as
+            // mat[W*j + i] (transposed access). M_/P_ are the AVX-only
             // transposed layouts; do NOT use them here.
-            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_C, PoseidonGoldilocksConstants::C12, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_M, PoseidonGoldilocksConstants::M12, 144 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_P, PoseidonGoldilocksConstants::P12, 144 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_S, PoseidonGoldilocksConstants::S12, 507 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            if constexpr (W == 12) {
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_C, PoseidonGoldilocksConstants::C12, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_M, PoseidonGoldilocksConstants::M12, 144 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_P, PoseidonGoldilocksConstants::P12, 144 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_S, PoseidonGoldilocksConstants::S12, 507 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            } else if constexpr (W == 4) {
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_C4, PoseidonGoldilocksConstants::C4, 54 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_M4, PoseidonGoldilocksConstants::M4, 16 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_P4, PoseidonGoldilocksConstants::P4, 16 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_S4, PoseidonGoldilocksConstants::S4, 155 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            } else if constexpr (W == 16) {
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_C16, PoseidonGoldilocksConstants::C16, 150 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_M16, PoseidonGoldilocksConstants::M16, 256 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_P16, PoseidonGoldilocksConstants::P16, 256 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_S16, PoseidonGoldilocksConstants::S16, 683 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            }
         }
-        initialized = 1;
+        initialized[W] = 1;
     }
     cudaSetDevice(saved);
 }
@@ -431,8 +477,9 @@ void PoseidonGoldilocksGPU<W>::merkletree(uint32_t arity, uint64_t *d_tree, uint
                                           uint64_t num_cols, uint64_t num_rows,
                                           Layout layout, cudaStream_t stream)
 {
-    // Only arity == 2 (binary merkle) is supported.
-    assert(arity == 2 && "PoseidonGoldilocksGPU::merkletree: only arity == 2 is supported");
+    // arity*CAPACITY children must fit in SPONGE_WIDTH (the compress input).
+    assert(arity * 4 <= W &&
+           "PoseidonGoldilocksGPU::merkletree: arity*CAPACITY exceeds SPONGE_WIDTH");
     if (num_rows == 0) return;
 
     u32 tpb = TPB_POS1;
@@ -492,8 +539,8 @@ void PoseidonGoldilocksGPU<W>::merkletreeReduce(uint64_t *d_root, uint64_t *d_in
                                                 uint64_t num_elements, uint64_t arity,
                                                 cudaStream_t stream)
 {
-    // Only arity == 2 (binary merkle) is supported.
-    assert(arity == 2 && "PoseidonGoldilocksGPU::merkletreeReduce: only arity == 2 is supported");
+    assert(arity * 4 <= W &&
+           "PoseidonGoldilocksGPU::merkletreeReduce: arity*CAPACITY exceeds SPONGE_WIDTH");
     // Compute total tree buffer size (matches the CPU merkletreeReduce layout).
     uint64_t numNodes = num_elements;
     uint64_t nodesLevel = num_elements;
@@ -585,21 +632,43 @@ void PoseidonGoldilocksGPU<W>::grinding(uint64_t *d_nonce, uint64_t *d_nonceBloc
 }
 
 // ---------------------------------------------------------------------------
-// Explicit instantiations (W=12).
+// Explicit instantiations.
+// W=12: full (compatibility with existing default Poseidon1 path).
+// W=4 / W=16: only the methods used by the new STARK_POSEIDON1 layout
+//   (W=4 = grinding only; W=16 = merkle + transcript + permute).
 // ---------------------------------------------------------------------------
 template class PoseidonGoldilocksGPU<12>;
+
+template void PoseidonGoldilocksGPU<4>::initConstants(uint32_t*, uint32_t);
+template void PoseidonGoldilocksGPU<4>::grinding(uint64_t*, uint64_t*, const uint64_t*, uint32_t, cudaStream_t);
+template void PoseidonGoldilocksGPU<4>::permute(uint64_t*, const uint64_t*, cudaStream_t);
+
+template void PoseidonGoldilocksGPU<16>::initConstants(uint32_t*, uint32_t);
+template void PoseidonGoldilocksGPU<16>::permute(uint64_t*, const uint64_t*, cudaStream_t);
+template void PoseidonGoldilocksGPU<16>::merkletree(uint32_t, uint64_t*, uint64_t*, uint64_t, uint64_t, Layout, cudaStream_t);
+template void PoseidonGoldilocksGPU<16>::compress(uint64_t*, const uint64_t*, cudaStream_t);
+template void PoseidonGoldilocksGPU<16>::merkletreeReduce(uint64_t*, uint64_t*, uint64_t, uint64_t, cudaStream_t);
+template void PoseidonGoldilocksGPU<16>::grinding(uint64_t*, uint64_t*, const uint64_t*, uint32_t, cudaStream_t);
 
 #ifdef STARK_POSEIDON1
 void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
                          uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream)
 {
-    assert(arity == 2 && "STARK_POSEIDON1 requires merkleTreeArity == 2");
-    PoseidonGoldilocksGPU<12>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
+    switch (arity) {
+        case 2:
+            PoseidonGoldilocksGPU<12>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
+            break;
+        case 3:
+            PoseidonGoldilocksGPU<16>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
+            break;
+        default:
+            assert(false && "STARK_POSEIDON1 supports merkleTreeArity 2 or 3 only");
+    }
 }
 
 void runGrindingGPU(uint64_t *d_nonce, uint64_t *d_nonceBlock, const uint64_t *d_in,
                     uint32_t n_bits, cudaStream_t stream)
 {
-    PoseidonGoldilocksGPU<12>::grinding(d_nonce, d_nonceBlock, d_in, n_bits, stream);
+    PoseidonGoldilocksGPU<4>::grinding(d_nonce, d_nonceBlock, d_in, n_bits, stream);
 }
 #endif // STARK_POSEIDON1

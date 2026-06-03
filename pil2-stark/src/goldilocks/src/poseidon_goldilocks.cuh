@@ -25,15 +25,15 @@ template<uint32_t SPONGE_WIDTH_T>
 class PoseidonGoldilocksGPU
 {
 public:
-    static_assert(SPONGE_WIDTH_T == 12,
-                  "PoseidonGoldilocksGPU: only W=12 is instantiated");
+    static_assert(SPONGE_WIDTH_T == 4 || SPONGE_WIDTH_T == 12 || SPONGE_WIDTH_T == 16,
+                  "PoseidonGoldilocksGPU: SPONGE_WIDTH_T must be 4, 12, or 16");
 
-    static constexpr uint32_t RATE                = SPONGE_WIDTH_T - 4;  // 8
     static constexpr uint32_t CAPACITY            = 4;
-    static constexpr uint32_t SPONGE_WIDTH        = SPONGE_WIDTH_T;      // 12
+    static constexpr uint32_t RATE                = SPONGE_WIDTH_T - CAPACITY;
+    static constexpr uint32_t SPONGE_WIDTH        = SPONGE_WIDTH_T;
     static constexpr uint32_t N_FULL_ROUNDS_TOTAL = 8;
     static constexpr uint32_t HALF_N_FULL_ROUNDS  = 4;
-    static constexpr uint32_t N_PARTIAL_ROUNDS    = 22;
+    static constexpr uint32_t N_PARTIAL_ROUNDS    = PoseidonGoldilocksConstants::Poseidon1Tables<SPONGE_WIDTH_T>::N_PARTIAL_ROUNDS;
     static constexpr uint32_t N_ROUNDS            = N_FULL_ROUNDS_TOTAL + N_PARTIAL_ROUNDS;
 
     static void initConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
@@ -58,7 +58,7 @@ public:
                          cudaStream_t stream);
 };
 
-using PoseidonGoldilocksGPUGrinding = PoseidonGoldilocksGPU<12>;
+using PoseidonGoldilocksGPUGrinding = PoseidonGoldilocksGPU<4>;
 
 // ---------------------------------------------------------------------------
 // Constant-memory arrays GPU_POS1_{C,S,M,P} are defined in poseidon_goldilocks.cu

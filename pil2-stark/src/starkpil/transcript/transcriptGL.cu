@@ -11,19 +11,21 @@
 
 static int initialized = 0;
 
+// Transcript constants — sized for max supported width
 #ifdef STARK_POSEIDON1
-__device__ __constant__ uint64_t POSEIDON1_GPU_C[118];
-__device__ __constant__ uint64_t POSEIDON1_GPU_S[507];
-__device__ __constant__ uint64_t POSEIDON1_GPU_M[144];
-__device__ __constant__ uint64_t POSEIDON1_GPU_P[144];
+
+__device__ __constant__ uint64_t POSEIDON1_GPU_C[150];
+__device__ __constant__ uint64_t POSEIDON1_GPU_S[683];
+__device__ __constant__ uint64_t POSEIDON1_GPU_M[256];
+__device__ __constant__ uint64_t POSEIDON1_GPU_P[256];
 #else
-__device__ __constant__ gl64_t POSEIDON2_GPU_C[150]; // we allocate the masimum possible size
-__device__ __constant__ gl64_t POSEIDON2_GPU_D[16];  // we allocate the masimum possible size
+__device__ __constant__ gl64_t POSEIDON2_GPU_C[150];
+__device__ __constant__ gl64_t POSEIDON2_GPU_D[16]; 
 #endif
 
 #ifdef STARK_POSEIDON1
-#define TRX_PENDING_SIZE(a) ((uint32_t)PoseidonGoldilocks<12>::RATE)
-#define TRX_OUT_SIZE(a)     ((uint32_t)PoseidonGoldilocks<12>::SPONGE_WIDTH)
+#define TRX_PENDING_SIZE(a) ((uint32_t)(4 * (a)))
+#define TRX_OUT_SIZE(a)     ((uint32_t)(4 * ((a) + 1)))
 #else
 #define TRX_PENDING_SIZE(a) ((uint32_t)(4 * ((a) - 1)))
 #define TRX_OUT_SIZE(a)     ((uint32_t)(4 * (a)))
@@ -32,13 +34,8 @@ __device__ __constant__ gl64_t POSEIDON2_GPU_D[16];  // we allocate the masimum 
 __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity)
 {
     uint32_t transcriptStateSize = HASH_SIZE;
-#ifdef STARK_POSEIDON1
-    uint32_t transcriptPendingSize = PoseidonGoldilocks<12>::RATE;          // 8
-    uint32_t transcriptOutSize     = PoseidonGoldilocks<12>::SPONGE_WIDTH;  // 12
-#else
-    uint32_t transcriptPendingSize = 4 * (arity - 1);
-    uint32_t transcriptOutSize = 4 * arity;
-#endif
+    uint32_t transcriptPendingSize = TRX_PENDING_SIZE(arity);
+    uint32_t transcriptOutSize     = TRX_OUT_SIZE(arity);
 
     while(*pending_cursor < transcriptPendingSize) {
         pending[*pending_cursor].fe = 0;
@@ -54,12 +51,27 @@ __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pe
         inputs[i + transcriptPendingSize] = state[i];
     }
 #ifdef STARK_POSEIDON1
-    poseidon1PermuteReg<PoseidonGoldilocks<12>::SPONGE_WIDTH,
-                        PoseidonGoldilocks<12>::HALF_N_FULL_ROUNDS,
-                        PoseidonGoldilocks<12>::N_PARTIAL_ROUNDS>(
-        (gl64_t*)out, (gl64_t*)inputs,
-        (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
-        (const gl64_t*)POSEIDON1_GPU_M, (const gl64_t*)POSEIDON1_GPU_P);
+    switch(arity) {
+        case 2:
+            poseidon1PermuteReg<PoseidonGoldilocks<12>::SPONGE_WIDTH,
+                                PoseidonGoldilocks<12>::HALF_N_FULL_ROUNDS,
+                                PoseidonGoldilocks<12>::N_PARTIAL_ROUNDS>(
+                (gl64_t*)out, (gl64_t*)inputs,
+                (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
+                (const gl64_t*)POSEIDON1_GPU_M, (const gl64_t*)POSEIDON1_GPU_P);
+            break;
+        case 3:
+            poseidon1PermuteReg<PoseidonGoldilocks<16>::SPONGE_WIDTH,
+                                PoseidonGoldilocks<16>::HALF_N_FULL_ROUNDS,
+                                PoseidonGoldilocks<16>::N_PARTIAL_ROUNDS>(
+                (gl64_t*)out, (gl64_t*)inputs,
+                (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
+                (const gl64_t*)POSEIDON1_GPU_M, (const gl64_t*)POSEIDON1_GPU_P);
+            break;
+        default:
+            assert(false && "STARK_POSEIDON1 supports arity 2 or 3 only");
+            return;
+    }
 #else
     switch(arity){
         case 2:
@@ -227,15 +239,21 @@ void TranscriptGL_GPU::init_const(uint32_t* gpu_ids, uint32_t num_gpu_ids, uint3
         {
             CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
 #ifdef STARK_POSEIDON1
-            if (arity_init != 2) {
-                zklog.error("TranscriptGL_GPU::init_const: STARK_POSEIDON1 requires arity == 2");
+            if (arity_init == 2) {
+                CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON1_GPU_C, PoseidonGoldilocksConstants::C12, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON1_GPU_M, PoseidonGoldilocksConstants::M12, 144 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON1_GPU_P, PoseidonGoldilocksConstants::P12, 144 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON1_GPU_S, PoseidonGoldilocksConstants::S12, 507 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            } else if (arity_init == 3) {
+                CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON1_GPU_C, PoseidonGoldilocksConstants::C16, 150 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON1_GPU_M, PoseidonGoldilocksConstants::M16, 256 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON1_GPU_P, PoseidonGoldilocksConstants::P16, 256 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON1_GPU_S, PoseidonGoldilocksConstants::S16, 683 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            } else {
+                zklog.error("TranscriptGL_GPU::init_const: STARK_POSEIDON1 supports arity 2 or 3 only");
                 exitProcess();
                 exit(-1);
             }
-            CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON1_GPU_C, PoseidonGoldilocksConstants::C12, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON1_GPU_M, PoseidonGoldilocksConstants::M12, 144 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON1_GPU_P, PoseidonGoldilocksConstants::P12, 144 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON1_GPU_S, PoseidonGoldilocksConstants::S12, 507 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
 #else
             if(arity_init == 2) {
                 CHECKCUDAERR(cudaMemcpyToSymbol(POSEIDON2_GPU_C, Poseidon2GoldilocksConstants::C8,  (8 * Poseidon2GoldilocksConstants::ROUNDS_F + Poseidon2GoldilocksConstants::ROUNDS_P_8) * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));

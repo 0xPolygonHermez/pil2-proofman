@@ -31,17 +31,16 @@ class PoseidonGoldilocks
 {
 public:
 
-    static_assert(SPONGE_WIDTH_T == 12, "SPONGE_WIDTH_T must be 12");
-    static constexpr uint32_t RATE = SPONGE_WIDTH_T - 4;
+    static_assert(SPONGE_WIDTH_T == 4 || SPONGE_WIDTH_T == 12 || SPONGE_WIDTH_T == 16,
+                  "SPONGE_WIDTH_T must be 4, 12, or 16");
     static constexpr uint32_t CAPACITY = 4;
+    static constexpr uint32_t RATE = SPONGE_WIDTH_T - CAPACITY;
     static constexpr uint32_t SPONGE_WIDTH = SPONGE_WIDTH_T;
     static constexpr uint32_t N_FULL_ROUNDS_TOTAL = PoseidonGoldilocksConstants::ROUNDS_F;
     static constexpr uint32_t HALF_N_FULL_ROUNDS  = PoseidonGoldilocksConstants::ROUNDS_F_HALF;
-    static constexpr uint32_t N_PARTIAL_ROUNDS    = PoseidonGoldilocksConstants::ROUNDS_P_12;
+    static constexpr uint32_t N_PARTIAL_ROUNDS    = PoseidonGoldilocksConstants::Poseidon1Tables<SPONGE_WIDTH_T>::N_PARTIAL_ROUNDS;
     static constexpr uint32_t N_ROUNDS = N_FULL_ROUNDS_TOTAL + N_PARTIAL_ROUNDS;
 
-    static_assert(2 * CAPACITY <= SPONGE_WIDTH,
-                  "binary-merkle compress input (2*CAPACITY) must fit pol_input[SPONGE_WIDTH]");
 
     // Mode-dispatched public API (same shape as Poseidon2Goldilocks).
 
@@ -247,18 +246,18 @@ inline void PoseidonGoldilocks<W>::permute(
 {
     if (mode == PoseidonMode::Auto) {
 #ifdef __AVX2__
-        mode = PoseidonMode::Avx;
+        if constexpr (W == 12) mode = PoseidonMode::Avx;
+        else                   mode = PoseidonMode::Scalar;
 #else
         mode = PoseidonMode::Scalar;
 #endif
     }
-    switch (mode) {
-        case PoseidonMode::Scalar: permute_seq(output, input); return;
+    if (mode == PoseidonMode::Scalar) { permute_seq(output, input); return; }
 #ifdef __AVX2__
-        case PoseidonMode::Avx:    permute_avx(output, input); return;
-#endif
-        default: break;
+    if constexpr (W == 12) {
+        if (mode == PoseidonMode::Avx) { permute_avx(output, input); return; }
     }
+#endif
     abortMode("permute", mode);
 }
 
@@ -270,18 +269,18 @@ inline void PoseidonGoldilocks<W>::compress(
 {
     if (mode == PoseidonMode::Auto) {
 #ifdef __AVX2__
-        mode = PoseidonMode::Avx;
+        if constexpr (W == 12) mode = PoseidonMode::Avx;
+        else                   mode = PoseidonMode::Scalar;
 #else
         mode = PoseidonMode::Scalar;
 #endif
     }
-    switch (mode) {
-        case PoseidonMode::Scalar: compress_seq(state, input); return;
+    if (mode == PoseidonMode::Scalar) { compress_seq(state, input); return; }
 #ifdef __AVX2__
-        case PoseidonMode::Avx:    compress_avx(state, input); return;
-#endif
-        default: break;
+    if constexpr (W == 12) {
+        if (mode == PoseidonMode::Avx) { compress_avx(state, input); return; }
     }
+#endif
     abortMode("compress", mode);
 }
 
@@ -291,19 +290,19 @@ inline void PoseidonGoldilocks<W>::linearHash(
 {
     if (mode == PoseidonMode::Auto) {
 #ifdef __AVX2__
-        mode = PoseidonMode::Avx;
+        if constexpr (W == 12) mode = PoseidonMode::Avx;
+        else                   mode = PoseidonMode::Scalar;
 #else
         mode = PoseidonMode::Scalar;
 #endif
     }
-    switch (mode) {
-        case PoseidonMode::Scalar: linear_hash_seq(output, input, size); return;
+    if (mode == PoseidonMode::Scalar) { linear_hash_seq(output, input, size); return; }
 #ifdef __AVX2__
-        case PoseidonMode::Avx:    linear_hash_avx(output, input, size); return;
-#endif
-        // AvxBatch / Avx512Batch have a 4/8-row contract — reachable only via merkletree().
-        default: break;
+    if constexpr (W == 12) {
+        if (mode == PoseidonMode::Avx) { linear_hash_avx(output, input, size); return; }
     }
+#endif
+    // AvxBatch / Avx512Batch have a 4/8-row contract — reachable only via merkletree().
     abortMode("linearHash", mode);
 }
 
@@ -313,36 +312,43 @@ inline void PoseidonGoldilocks<W>::merkletree(
     uint64_t num_cols, uint64_t num_rows, uint64_t arity,
     PoseidonMode mode, int num_threads, uint64_t dim)
 {
-    // Only arity == 2 (binary merkle) is supported.
-    assert(arity == 2 && "PoseidonGoldilocks::merkletree: only arity == 2 is supported");
     if (mode == PoseidonMode::Auto) {
 #ifdef __AVX512__
-        mode = PoseidonMode::Avx512Batch;
+        if constexpr (W == 12) mode = PoseidonMode::Avx512Batch;
+        else                   mode = PoseidonMode::Scalar;
 #elif defined(__AVX2__)
-        mode = PoseidonMode::AvxBatch;
+        if constexpr (W == 12) mode = PoseidonMode::AvxBatch;
+        else                   mode = PoseidonMode::Scalar;
 #else
         mode = PoseidonMode::Scalar;
 #endif
     }
-    switch (mode) {
-        case PoseidonMode::Scalar:
-            merkletree_seq(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
+    if (mode == PoseidonMode::Scalar) {
+        merkletree_seq(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
+    }
 #ifdef __AVX2__
-        case PoseidonMode::Avx:
+    if constexpr (W == 12) {
+        if (mode == PoseidonMode::Avx) {
             merkletree_avx(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
-        case PoseidonMode::AvxBatch:
+        }
+        if (mode == PoseidonMode::AvxBatch) {
             merkletree_batch_avx(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
+        }
+    }
 #endif
 #ifdef __AVX512__
-        case PoseidonMode::Avx512Batch:
+    if constexpr (W == 12) {
+        if (mode == PoseidonMode::Avx512Batch) {
             merkletree_batch_avx512(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
-#endif
-        default: break;
+        }
     }
+#endif
     abortMode("merkletree", mode);
 }
 
 #include "poseidon_goldilocks_avx.hpp"
+
+using PoseidonGoldilocksGrinding = PoseidonGoldilocks<4>;  // SPONGE_WIDTH = 4
 
 #endif // POSEIDON_GOLDILOCKS
 

@@ -195,15 +195,18 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     Goldilocks::Element nonce = Goldilocks::fromString(jproof["nonce"]);
     if constexpr (std::is_same<ElementType, Goldilocks::Element>::value) {
 #ifdef STARK_POSEIDON1
-        constexpr uint32_t W = PoseidonGoldilocks<12>::SPONGE_WIDTH;
+        constexpr uint32_t W = PoseidonGoldilocksGrinding::SPONGE_WIDTH;
         Goldilocks::Element result[W];
         Goldilocks::Element x[W] = {};
         x[0] = challenge[0]; x[1] = challenge[1]; x[2] = challenge[2];
         x[W - 1] = nonce;
-        PoseidonGoldilocks<12>::permute(result, x, PoseidonMode::Scalar);
+        PoseidonGoldilocksGrinding::permute(result, x, PoseidonMode::Scalar);
 #else
-        Goldilocks::Element result[4];
-        Goldilocks::Element x[4] = {challenge[0], challenge[1], challenge[2], nonce};
+        constexpr uint32_t W = Poseidon2GoldilocksGrinding::SPONGE_WIDTH;
+        Goldilocks::Element result[W];
+        Goldilocks::Element x[W] = {};
+        x[0] = challenge[0]; x[1] = challenge[1]; x[2] = challenge[2];
+        x[W - 1] = nonce;
         Poseidon2GoldilocksGrinding::permute(result, x, Poseidon2Mode::Scalar);
 #endif
         if (Goldilocks::toU64(result[0]) >= (1ULL << (64 - starkInfo.starkStruct.powBits))) {
