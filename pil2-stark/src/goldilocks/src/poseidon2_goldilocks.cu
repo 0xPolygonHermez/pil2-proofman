@@ -20,6 +20,7 @@ typedef uint64_t u64;
 
 // CUDA Threads per Block
 #define TPB 128
+#ifndef STARK_POSEIDON1
 
 __device__ __constant__ uint64_t GPU_C_4[53];
 __device__ __constant__ uint64_t GPU_D_4[4];
@@ -29,6 +30,27 @@ __device__ __constant__ uint64_t GPU_C_12[118];
 __device__ __constant__ uint64_t GPU_D_12[12];
 __device__ __constant__ uint64_t GPU_C_16[150];
 __device__ __constant__ uint64_t GPU_D_16[16];
+template<uint32_t W> struct Pos2ConstGPU;
+template<> struct Pos2ConstGPU<4> {
+    static __device__ __forceinline__ const gl64_t* C() { return (const gl64_t*)GPU_C_4; }
+    static __device__ __forceinline__ const gl64_t* D() { return (const gl64_t*)GPU_D_4; }
+    static constexpr uint64_t N_VALS_C = 53;
+};
+template<> struct Pos2ConstGPU<8> {
+    static __device__ __forceinline__ const gl64_t* C() { return (const gl64_t*)GPU_C_8; }
+    static __device__ __forceinline__ const gl64_t* D() { return (const gl64_t*)GPU_D_8; }
+    static constexpr uint64_t N_VALS_C = 86;
+};
+template<> struct Pos2ConstGPU<12> {
+    static __device__ __forceinline__ const gl64_t* C() { return (const gl64_t*)GPU_C_12; }
+    static __device__ __forceinline__ const gl64_t* D() { return (const gl64_t*)GPU_D_12; }
+    static constexpr uint64_t N_VALS_C = 118;
+};
+template<> struct Pos2ConstGPU<16> {
+    static __device__ __forceinline__ const gl64_t* C() { return (const gl64_t*)GPU_C_16; }
+    static __device__ __forceinline__ const gl64_t* D() { return (const gl64_t*)GPU_D_16; }
+    static constexpr uint64_t N_VALS_C = 150;
+};
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __global__ void merkleNodeKernel(uint32_t nextN, uint32_t nextIndex, uint32_t pending, uint64_t *cursor)
@@ -40,9 +62,9 @@ __global__ void merkleNodeKernel(uint32_t nextN, uint32_t nextIndex, uint32_t pe
     gl64_t* pol_input = (gl64_t *)(&cursor[nextIndex + tid * SPONGE_WIDTH_T]);
     gl64_t* pol_output = (gl64_t *)(&cursor[nextIndex + (pending + tid) * CAPACITY_T]);
 
-    const gl64_t *GPU_C_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_C_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_C_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_C_12 : (gl64_t *)GPU_C_16));
-    const uint64_t N_VALS_C = SPONGE_WIDTH_T==4 ? 53 : (SPONGE_WIDTH_T==8 ? 86 : (SPONGE_WIDTH_T==12 ? 118 : 150));
-    const gl64_t *GPU_D_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_D_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_D_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_D_12 : (gl64_t *)GPU_D_16));
+    const gl64_t *GPU_C_GL  = Pos2ConstGPU<SPONGE_WIDTH_T>::C();
+    const gl64_t *GPU_D_GL  = Pos2ConstGPU<SPONGE_WIDTH_T>::D();
+    const uint64_t N_VALS_C = Pos2ConstGPU<SPONGE_WIDTH_T>::N_VALS_C;
 
     __shared__ gl64_t GPU_C_SM[150];
     __shared__ gl64_t GPU_D_SM[16];
@@ -199,8 +221,8 @@ __global__ void grindingKernel(uint64_t* nonce, uint64_t *__restrict__ nonceBloc
 
     // STARK grinding contract: 3 challenge field elements + nonce, zero-padded
     // to SPONGE_WIDTH. Middle slots must be zero so prover and verifier match.
-    const gl64_t *GPU_C_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_C_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_C_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_C_12 : (gl64_t *)GPU_C_16));
-    const gl64_t *GPU_D_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_D_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_D_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_D_12 : (gl64_t *)GPU_D_16));
+    const gl64_t *GPU_C_GL = Pos2ConstGPU<SPONGE_WIDTH_T>::C();
+    const gl64_t *GPU_D_GL = Pos2ConstGPU<SPONGE_WIDTH_T>::D();
 
     gl64_t state[SPONGE_WIDTH_T];
     gl64_t in_reg[SPONGE_WIDTH_T];
@@ -277,8 +299,8 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::grinding(uint64_t * d_nonce, uint64
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__  void poseidon2PermuteSmem()
 {
-    const gl64_t *GPU_C_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_C_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_C_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_C_12 : (gl64_t *)GPU_C_16));
-    const gl64_t *GPU_D_GL = SPONGE_WIDTH_T==4 ? (gl64_t *)GPU_D_4 : (SPONGE_WIDTH_T==8 ? (gl64_t *)GPU_D_8 : (SPONGE_WIDTH_T==12 ? (gl64_t *)GPU_D_12 : (gl64_t *)GPU_D_16));
+    const gl64_t *GPU_C_GL = Pos2ConstGPU<SPONGE_WIDTH_T>::C();
+    const gl64_t *GPU_D_GL = Pos2ConstGPU<SPONGE_WIDTH_T>::D();
 
     mdsExternalSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
     for (int r = 0; r < (N_FULL_ROUNDS_TOTAL_T>>1); r++)
@@ -415,3 +437,5 @@ template void Poseidon2GoldilocksGPU<16>::linearHash(uint64_t * d_hash_output, u
 template void Poseidon2GoldilocksGPU<12>::linearHash(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, Layout layout, cudaStream_t stream);
 template void Poseidon2GoldilocksGPU<12>::grinding(uint64_t * d_nonce, uint64_t *d_nonceBlock, const uint64_t * d_in, const uint32_t n_bits, cudaStream_t stream);
 #endif
+
+#endif // !STARK_POSEIDON1

@@ -4,11 +4,6 @@
 #include <cassert>
 
 // ---------------------------------------------------------------------------
-// Poseidon v1 over Goldilocks (W=12): scalar, AVX2 (single + 4-sponge batch),
-// and AVX512 (8-sponge batch) implementations.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // Scalar
 // ---------------------------------------------------------------------------
 
@@ -146,8 +141,6 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletreeReduce(
     Goldilocks::Element *root, Goldilocks::Element *input,
     uint64_t num_elements, uint64_t arity)
 {
-    // Only arity == 2 (binary merkle) is supported.
-    // arity*CAPACITY children must fit in SPONGE_WIDTH (the compress input).
     assert(arity * CAPACITY <= SPONGE_WIDTH &&
            "PoseidonGoldilocks::merkletreeReduce: arity*CAPACITY exceeds SPONGE_WIDTH");
     uint64_t numNodes = num_elements;
@@ -938,17 +931,10 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx512(
 
 // ---------------------------------------------------------------------------
 // Explicit template instantiation.
-// W=12: full set (scalar + AVX + AVXBatch + AVX512Batch).
-// W=4, W=16: scalar-only — instantiate selected members directly.
-//   AVX bodies hardcode 12-element layout; would mis-compile for other widths.
-//   The dispatch in poseidon_goldilocks.hpp uses `if constexpr (W == 12)` to
-//   confine AVX paths to W=12, so callers can never reach an AVX entry point
-//   for W ∈ {4, 16}.
 // ---------------------------------------------------------------------------
 template class PoseidonGoldilocks<12>;
 
-// W=4 — grinding-only. Merkle paths skipped (W=4 can't fit arity*CAPACITY=8
-// children in SPONGE_WIDTH=4, by design).
+// W=4 — grinding-only. 
 template void PoseidonGoldilocks<4>::permute_seq(
     Goldilocks::Element (&)[4], const Goldilocks::Element (&)[4]);
 template void PoseidonGoldilocks<4>::grinding(

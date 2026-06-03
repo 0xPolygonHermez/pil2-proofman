@@ -2,11 +2,7 @@
 #define POSEIDON_GOLDILOCKS_CUH
 
 // ---------------------------------------------------------------------------
-// Poseidon v1 (Goldilocks, W=12) — GPU implementation.
-//
-// Includes poseidon2_goldilocks.cuh to reuse the Layout enum (RowMajor/Tiles),
-// the pow7(gl64_t&) device leaf, and the extern __shared__ scratchpad
-// declaration (no Poseidon2 kernel is called from here).
+// Poseidon v1 — GPU implementation.
 // ---------------------------------------------------------------------------
 
 #include "gl64_t.cuh"
@@ -59,20 +55,6 @@ public:
 };
 
 using PoseidonGoldilocksGPUGrinding = PoseidonGoldilocksGPU<4>;
-
-// ---------------------------------------------------------------------------
-// Constant-memory arrays GPU_POS1_{C,S,M,P} are defined in poseidon_goldilocks.cu
-// and NOT forward-declared here: nvcc treats any declaration of a __constant__
-// symbol (even `extern`) as a definition, so a forward decl would cause a
-// "redefinition" error at link time. Device helpers take the constants through
-// pointer parameters (see poseidon1PermuteReg).
-
-// ---------------------------------------------------------------------------
-// Device leaf primitives — register-path Poseidon v1.
-// Array-wide variants (over SPONGE_WIDTH_T = 12) used by the permutation.
-// ---------------------------------------------------------------------------
-
-// Note: pow7(gl64_t&) is already defined by poseidon2_goldilocks.cuh (same sig).
 
 template<uint32_t W>
 __device__ __forceinline__ void pos1_pow7_(gl64_t *x)
@@ -129,9 +111,6 @@ __device__ __forceinline__ gl64_t pos1_dot_(const gl64_t *x, const gl64_t *C)
     return s0;
 }
 
-// Matrix-vector product (W=12). The flat matrix is indexed mat[12*j + i]
-// (transposed layout). DO NOT change this indexing — the constant tables
-// (M_12/P_12) assume it.
 template<uint32_t W>
 __device__ __forceinline__ void pos1_mvp_(gl64_t *state, const gl64_t *mat)
 {
@@ -326,7 +305,7 @@ __device__ void poseidon1PermuteSmem(const gl64_t *GPU_C_GL,
 }
 
 // ---------------------------------------------------------------------------
-// Kernels — all declared here, defined in poseidon_goldilocks.cu.
+// Kernels
 // ---------------------------------------------------------------------------
 
 template<uint32_t W, uint32_t HALF_F, uint32_t N_PART>

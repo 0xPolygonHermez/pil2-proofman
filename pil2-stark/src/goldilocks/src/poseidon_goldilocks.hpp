@@ -195,13 +195,14 @@ inline Goldilocks::Element PoseidonGoldilocks<W>::dot_(Goldilocks::Element *x, c
 template<uint32_t W>
 inline void PoseidonGoldilocks<W>::mvp_(Goldilocks::Element *state, const Goldilocks::Element mat[SPONGE_WIDTH][SPONGE_WIDTH])
 {
-    // mat is applied transposed: indexed [j][i], not [i][j]. The constant
-    // tables (M12/P12) assume this layout — do not change it.
+    // mat is applied transposed: indexed [j][i], not [i][j]
     Goldilocks::Element old_state[SPONGE_WIDTH];
     std::memcpy(old_state, state, sizeof(Goldilocks::Element) * SPONGE_WIDTH);
     for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
         state[i] = mat[0][i] * old_state[0];
-        for (uint32_t j = 1; j < SPONGE_WIDTH; ++j) {
+    }
+    for (uint32_t j = 1; j < SPONGE_WIDTH; ++j) {
+        for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
             state[i] = state[i] + (mat[j][i] * old_state[j]);
         }
     }

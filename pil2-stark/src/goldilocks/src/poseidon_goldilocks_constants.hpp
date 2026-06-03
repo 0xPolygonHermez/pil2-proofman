@@ -3,25 +3,12 @@
 
 #include "goldilocks_base_field.hpp"
 
-// Poseidon v1 constants for Goldilocks (SPONGE_WIDTH = 12).
+// Poseidon1 constants for Goldilocks field.
 //
-// Plonky2 / Polygon-zkEVM Poseidon-Goldilocks parameters:
-//   field:        Goldilocks (p = 2^64 - 2^32 + 1)
-//   sponge width: 12  (RATE = 8, CAPACITY = 4)
-//   S-box:        x^7
-//   full rounds:  8
-//   partial:      22
-//
-// Optimized-form (compressed) layout:
-//   C12[118] ........ round constants (pre-transformed for the compressed layout)
-//   M12[12][12] ..... external MDS (used in full rounds)
-//   M_12[144] ....... transposed-flat M (AVX-friendly)
-//   P12[12][12] ..... partial-round transition MDS (applied once)
-//   P_12[144] ....... transposed-flat P
-//   S12[507] ........ per-partial-round (dot, prod) weights; 23 entries/round × 22 rounds + 1 pad
-//
-// Round-count / structure constants are namespaced by width (only W=12 provided).
-
+// M and P are stored in two layouts:
+//   M_W [W][W]   — row-major 2-D — used by scalar (CPU + GPU) mvp_.
+//   M_W_[W*W]    — column-major flat (= transpose of M_W) — used by AVX                 
+// Same convention for P_W / P_W_. 
 namespace PoseidonGoldilocksConstants
 {
     // Round counts.
@@ -3401,7 +3388,6 @@ namespace PoseidonGoldilocksConstants
 
 // -------------------------------------------------------------------------
 // Per-W trait: gives template code a uniform handle to the right C/M/P/S
-// tables and partial-round count. Specialized for the supported widths.
 // -------------------------------------------------------------------------
 
 template<uint32_t W> struct Poseidon1Tables;

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Poseidon v1 (Goldilocks, W=12) — GPU kernels and public-API wrappers.
+// Poseidon v1
 // ---------------------------------------------------------------------------
 
 #include "goldilocks_tooling.cuh"
@@ -12,6 +12,7 @@
 #include "poseidon_goldilocks.hpp"
 #include "poseidon_goldilocks.cuh"
 #include "poseidon_goldilocks_constants.hpp"
+
 // Pull in the STARK_POSEIDON1 toggle from the API-internal header when reachable
 // (full pil2-stark build). 
 #if __has_include("starks_api_internal.hpp")
@@ -116,14 +117,6 @@ __global__ void compressKernel_pos1(uint64_t *output, const uint64_t *input)
 }
 
 // --- linear-hash helpers (shared-memory path) ---
-//
-// linearHashKernel_pos1:  row-major input, one thread per row.
-//   - Always hash (no size <= CAPACITY pass-through), so every backend yields
-//     the same digest; degenerate num_cols == 0 yields a zero digest.
-//   - Absorb RATE elements per iteration; on iterations after the first,
-//     carry the previous output's CAPACITY block into slots [RATE..SPONGE_WIDTH).
-//     Zero-pad the rate region when the tail is short.
-//   - Output = first CAPACITY of the final state.
 // Launched with dynamic shared mem = blockDim.x * W * sizeof(uint64_t).
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void linearHashKernel_pos1(uint64_t *__restrict__ output,
@@ -382,8 +375,6 @@ void PoseidonGoldilocksGPU<W>::initConstants(uint32_t *gpu_ids, uint32_t num_gpu
 {
     int saved;
     CHECKCUDAERR(cudaGetDevice(&saved));
-    // Per-W initialization (independent of other widths so multiple
-    // initConstants<W> calls all set up their own tables).
     static int initialized[17] = {0}; // indexed by SPONGE_WIDTH
     static_assert(W < 17, "initialized[] needs to cover W");
     if (initialized[W] == 0)
@@ -391,9 +382,6 @@ void PoseidonGoldilocksGPU<W>::initConstants(uint32_t *gpu_ids, uint32_t num_gpu
         for (uint32_t i = 0; i < num_gpu_ids; ++i)
         {
             CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
-            // Upload the 2D M/P (row-major) — GPU mvp_ reads them as
-            // mat[W*j + i] (transposed access). M_/P_ are the AVX-only
-            // transposed layouts; do NOT use them here.
             if constexpr (W == 12) {
                 CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_C, PoseidonGoldilocksConstants::C12, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
                 CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_M, PoseidonGoldilocksConstants::M12, 144 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
