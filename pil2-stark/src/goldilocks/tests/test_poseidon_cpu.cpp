@@ -375,3 +375,24 @@ TEST(PoseidonV1, permute_W8_plonky3_golden)
         ASSERT_EQ(Goldilocks::toU64(out[i]), PERMUTE_W8_POSEIDON1_PLONKY3_GOLDEN[i])
             << "lane " << i;
 }
+
+// ---------------------------------------------------------------------------
+// 9. W=16 Poseidon-1 self-consistency — internally-derived golden.
+// ---------------------------------------------------------------------------
+
+TEST(PoseidonV1, permute_W16_self_consistency)
+{
+    static constexpr uint32_t W16 = 16;
+    static constexpr uint64_t PERMUTE_W16_POSEIDON1_GOLDEN[W16] = {
+        0x81c2ff551d3dd1a3ULL, 0xa6f3ddabab7998e2ULL, 0x4372186243233825ULL, 0xd2bd8442c6cc6df7ULL,
+        0x051a796f67578f23ULL, 0x3b597e26481062caULL, 0x19c3c48645baaabbULL, 0x7e142fc8bf48c2ceULL,
+        0x599ca659bfbf033fULL, 0x84e132ca4afd703dULL, 0xb758d5776f5185c3ULL, 0xaf58bfc9cb74204eULL,
+        0x7015309157ec7e9cULL, 0xe57e7f42acfff2e0ULL, 0x57043250e11a11bbULL, 0x656c21727540ab90ULL,
+    };
+    GL in[W16], out[W16];
+    for (uint32_t i = 0; i < W16; ++i) in[i] = Goldilocks::fromU64((uint64_t)i);
+    PoseidonGoldilocks<16>::permute(out, in, PoseidonMode::Scalar);
+    for (uint32_t i = 0; i < W16; ++i)
+        ASSERT_EQ(Goldilocks::toU64(out[i]), PERMUTE_W16_POSEIDON1_GOLDEN[i])
+            << "lane " << i;
+}

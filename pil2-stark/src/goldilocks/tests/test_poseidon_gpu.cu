@@ -465,3 +465,78 @@ TEST(PoseidonV1Gpu, permute_W8_parity_vs_cpu_scalar)
     cudaFree(d_in);
     cudaFree(d_out);
 }
+
+// ---------------------------------------------------------------------------
+// W=16 Poseidon-1 self-consistency on GPU — internally-derived golden.
+// ---------------------------------------------------------------------------
+
+TEST(PoseidonV1Gpu, permute_W16_self_consistency)
+{
+    static constexpr uint32_t W16 = 16;
+    static constexpr uint64_t PERMUTE_W16_POSEIDON1_GOLDEN[W16] = {
+        0x81c2ff551d3dd1a3ULL, 0xa6f3ddabab7998e2ULL, 0x4372186243233825ULL, 0xd2bd8442c6cc6df7ULL,
+        0x051a796f67578f23ULL, 0x3b597e26481062caULL, 0x19c3c48645baaabbULL, 0x7e142fc8bf48c2ceULL,
+        0x599ca659bfbf033fULL, 0x84e132ca4afd703dULL, 0xb758d5776f5185c3ULL, 0xaf58bfc9cb74204eULL,
+        0x7015309157ec7e9cULL, 0xe57e7f42acfff2e0ULL, 0x57043250e11a11bbULL, 0x656c21727540ab90ULL,
+    };
+
+    uint32_t gpu_id = 0;
+    cudaGetDevice((int *)&gpu_id);
+    PoseidonGoldilocksGPU<W16>::initConstants(&gpu_id, 1);
+
+    GL in[W16], out[W16];
+    for (uint32_t i = 0; i < W16; ++i) in[i] = Goldilocks::fromU64((uint64_t)i);
+
+    gl64_t *d_in, *d_out;
+    CHECKCUDAERR(cudaMalloc((void **)&d_in,  W16 * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_out, W16 * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMemcpy(d_in, in, W16 * sizeof(gl64_t), cudaMemcpyHostToDevice));
+
+    PoseidonGoldilocksGPU<W16>::permute((uint64_t *)d_out, (uint64_t *)d_in);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    CHECKCUDAERR(cudaMemcpy(out, d_out, W16 * sizeof(gl64_t), cudaMemcpyDeviceToHost));
+
+    for (uint32_t i = 0; i < W16; ++i)
+        ASSERT_EQ(Goldilocks::toU64(out[i]), PERMUTE_W16_POSEIDON1_GOLDEN[i])
+            << "lane " << i;
+
+    cudaFree(d_in);
+    cudaFree(d_out);
+}
+
+// W=16 GPU/CPU parity fuzz.
+TEST(PoseidonV1Gpu, permute_W16_parity_vs_cpu_scalar)
+{
+    static constexpr uint32_t W16 = 16;
+
+    uint32_t gpu_id = 0;
+    cudaGetDevice((int *)&gpu_id);
+    PoseidonGoldilocksGPU<W16>::initConstants(&gpu_id, 1);
+
+    gl64_t *d_in, *d_out;
+    CHECKCUDAERR(cudaMalloc((void **)&d_in,  W16 * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_out, W16 * sizeof(gl64_t)));
+    std::vector<GL> h_gpu(W16);
+
+    const uint32_t N_TRIALS = 32;
+    for (uint32_t t = 0; t < N_TRIALS; ++t)
+    {
+        GL inp[W16], cpu_out[W16];
+        for (uint32_t j = 0; j < W16; ++j)
+            inp[j] = rnd64(0xC34F6A1DE9B25718ULL ^ (t * 2654435761u), j);
+
+        PoseidonGoldilocks<W16>::permute(cpu_out, inp, PoseidonMode::Scalar);
+
+        CHECKCUDAERR(cudaMemcpy(d_in, inp, W16 * sizeof(gl64_t), cudaMemcpyHostToDevice));
+        PoseidonGoldilocksGPU<W16>::permute((uint64_t *)d_out, (uint64_t *)d_in);
+        CHECKCUDAERR(cudaDeviceSynchronize());
+        CHECKCUDAERR(cudaMemcpy(h_gpu.data(), d_out, W16 * sizeof(gl64_t), cudaMemcpyDeviceToHost));
+
+        for (uint32_t j = 0; j < W16; ++j)
+            ASSERT_EQ(Goldilocks::toU64(h_gpu[j]), Goldilocks::toU64(cpu_out[j]))
+                << "W=16 fuzz parity mismatch at trial=" << t << " j=" << j;
+    }
+
+    cudaFree(d_in);
+    cudaFree(d_out);
+}
