@@ -28,15 +28,15 @@ typedef uint64_t u64;
 // ---------------------------------------------------------------------------
 // __constant__ memory — distinct symbols from Poseidon2.
 // ---------------------------------------------------------------------------
-__device__ __constant__ uint64_t GPU_POS1_C[118];
-__device__ __constant__ uint64_t GPU_POS1_S[507];
-__device__ __constant__ uint64_t GPU_POS1_M[144];
-__device__ __constant__ uint64_t GPU_POS1_P[144];
+__device__ __constant__ uint64_t GPU_POS1_C12[118];
+__device__ __constant__ uint64_t GPU_POS1_S12[507];
+__device__ __constant__ uint64_t GPU_POS1_M12[144];
+__device__ __constant__ uint64_t GPU_POS1_P12[144];
 
-__device__ __constant__ uint64_t GPU_POS1_C4[54];
-__device__ __constant__ uint64_t GPU_POS1_S4[155];
-__device__ __constant__ uint64_t GPU_POS1_M4[16];
-__device__ __constant__ uint64_t GPU_POS1_P4[16];
+__device__ __constant__ uint64_t GPU_POS1_C8[86];
+__device__ __constant__ uint64_t GPU_POS1_S8[330];
+__device__ __constant__ uint64_t GPU_POS1_M8[64];
+__device__ __constant__ uint64_t GPU_POS1_P8[64];
 
 __device__ __constant__ uint64_t GPU_POS1_C16[150];
 __device__ __constant__ uint64_t GPU_POS1_S16[683];
@@ -45,17 +45,17 @@ __device__ __constant__ uint64_t GPU_POS1_P16[256];
 
 // Per-W constant accessor. Specialized below.
 template<uint32_t W> struct Pos1ConstGPU;
-template<> struct Pos1ConstGPU<4> {
-    static __device__ __forceinline__ const gl64_t* C() { return (const gl64_t*)GPU_POS1_C4; }
-    static __device__ __forceinline__ const gl64_t* S() { return (const gl64_t*)GPU_POS1_S4; }
-    static __device__ __forceinline__ const gl64_t* M() { return (const gl64_t*)GPU_POS1_M4; }
-    static __device__ __forceinline__ const gl64_t* P() { return (const gl64_t*)GPU_POS1_P4; }
+template<> struct Pos1ConstGPU<8> {
+    static __device__ __forceinline__ const gl64_t* C() { return (const gl64_t*)GPU_POS1_C8; }
+    static __device__ __forceinline__ const gl64_t* S() { return (const gl64_t*)GPU_POS1_S8; }
+    static __device__ __forceinline__ const gl64_t* M() { return (const gl64_t*)GPU_POS1_M8; }
+    static __device__ __forceinline__ const gl64_t* P() { return (const gl64_t*)GPU_POS1_P8; }
 };
 template<> struct Pos1ConstGPU<12> {
-    static __device__ __forceinline__ const gl64_t* C() { return (const gl64_t*)GPU_POS1_C; }
-    static __device__ __forceinline__ const gl64_t* S() { return (const gl64_t*)GPU_POS1_S; }
-    static __device__ __forceinline__ const gl64_t* M() { return (const gl64_t*)GPU_POS1_M; }
-    static __device__ __forceinline__ const gl64_t* P() { return (const gl64_t*)GPU_POS1_P; }
+    static __device__ __forceinline__ const gl64_t* C() { return (const gl64_t*)GPU_POS1_C12; }
+    static __device__ __forceinline__ const gl64_t* S() { return (const gl64_t*)GPU_POS1_S12; }
+    static __device__ __forceinline__ const gl64_t* M() { return (const gl64_t*)GPU_POS1_M12; }
+    static __device__ __forceinline__ const gl64_t* P() { return (const gl64_t*)GPU_POS1_P12; }
 };
 template<> struct Pos1ConstGPU<16> {
     static __device__ __forceinline__ const gl64_t* C() { return (const gl64_t*)GPU_POS1_C16; }
@@ -383,15 +383,15 @@ void PoseidonGoldilocksGPU<W>::initConstants(uint32_t *gpu_ids, uint32_t num_gpu
         {
             CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
             if constexpr (W == 12) {
-                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_C, PoseidonGoldilocksConstants::C12, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_M, PoseidonGoldilocksConstants::M12, 144 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_P, PoseidonGoldilocksConstants::P12, 144 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_S, PoseidonGoldilocksConstants::S12, 507 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            } else if constexpr (W == 4) {
-                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_C4, PoseidonGoldilocksConstants::C4, 54 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_M4, PoseidonGoldilocksConstants::M4, 16 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_P4, PoseidonGoldilocksConstants::P4, 16 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_S4, PoseidonGoldilocksConstants::S4, 155 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_C12, PoseidonGoldilocksConstants::C12, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_M12, PoseidonGoldilocksConstants::M12, 144 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_P12, PoseidonGoldilocksConstants::P12, 144 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_S12, PoseidonGoldilocksConstants::S12, 507 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            } else if constexpr (W == 8) {
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_C8, PoseidonGoldilocksConstants::C8, 86 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_M8, PoseidonGoldilocksConstants::M8, 64 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_P8, PoseidonGoldilocksConstants::P8, 64 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_S8, PoseidonGoldilocksConstants::S8, 330 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
             } else if constexpr (W == 16) {
                 CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_C16, PoseidonGoldilocksConstants::C16, 150 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
                 CHECKCUDAERR(cudaMemcpyToSymbol(GPU_POS1_M16, PoseidonGoldilocksConstants::M16, 256 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
@@ -622,14 +622,14 @@ void PoseidonGoldilocksGPU<W>::grinding(uint64_t *d_nonce, uint64_t *d_nonceBloc
 // ---------------------------------------------------------------------------
 // Explicit instantiations.
 // W=12: full (compatibility with existing default Poseidon1 path).
-// W=4 / W=16: only the methods used by the new STARK_POSEIDON1 layout
-//   (W=4 = grinding only; W=16 = merkle + transcript + permute).
+// W=8 / W=16: only the methods used by the new STARK_POSEIDON1 layout
+//   (W=8 = grinding only; W=16 = merkle + transcript + permute).
 // ---------------------------------------------------------------------------
 template class PoseidonGoldilocksGPU<12>;
 
-template void PoseidonGoldilocksGPU<4>::initConstants(uint32_t*, uint32_t);
-template void PoseidonGoldilocksGPU<4>::grinding(uint64_t*, uint64_t*, const uint64_t*, uint32_t, cudaStream_t);
-template void PoseidonGoldilocksGPU<4>::permute(uint64_t*, const uint64_t*, cudaStream_t);
+template void PoseidonGoldilocksGPU<8>::initConstants(uint32_t*, uint32_t);
+template void PoseidonGoldilocksGPU<8>::grinding(uint64_t*, uint64_t*, const uint64_t*, uint32_t, cudaStream_t);
+template void PoseidonGoldilocksGPU<8>::permute(uint64_t*, const uint64_t*, cudaStream_t);
 
 template void PoseidonGoldilocksGPU<16>::initConstants(uint32_t*, uint32_t);
 template void PoseidonGoldilocksGPU<16>::permute(uint64_t*, const uint64_t*, cudaStream_t);
@@ -657,6 +657,6 @@ void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
 void runGrindingGPU(uint64_t *d_nonce, uint64_t *d_nonceBlock, const uint64_t *d_in,
                     uint32_t n_bits, cudaStream_t stream)
 {
-    PoseidonGoldilocksGPU<4>::grinding(d_nonce, d_nonceBlock, d_in, n_bits, stream);
+    PoseidonGoldilocksGPU<8>::grinding(d_nonce, d_nonceBlock, d_in, n_bits, stream);
 }
 #endif // STARK_POSEIDON1

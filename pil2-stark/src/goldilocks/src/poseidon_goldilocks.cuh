@@ -21,8 +21,8 @@ template<uint32_t SPONGE_WIDTH_T>
 class PoseidonGoldilocksGPU
 {
 public:
-    static_assert(SPONGE_WIDTH_T == 4 || SPONGE_WIDTH_T == 12 || SPONGE_WIDTH_T == 16,
-                  "PoseidonGoldilocksGPU: SPONGE_WIDTH_T must be 4, 12, or 16");
+    static_assert(SPONGE_WIDTH_T == 8 || SPONGE_WIDTH_T == 12 || SPONGE_WIDTH_T == 16,
+                  "PoseidonGoldilocksGPU: SPONGE_WIDTH_T must be 8, 12, or 16");
 
     static constexpr uint32_t CAPACITY            = 4;
     static constexpr uint32_t RATE                = SPONGE_WIDTH_T - CAPACITY;
@@ -54,7 +54,7 @@ public:
                          cudaStream_t stream);
 };
 
-using PoseidonGoldilocksGPUGrinding = PoseidonGoldilocksGPU<4>;
+using PoseidonGoldilocksGPUGrinding = PoseidonGoldilocksGPU<8>;
 
 template<uint32_t W>
 __device__ __forceinline__ void pos1_pow7_(gl64_t *x)

@@ -934,12 +934,12 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx512(
 // ---------------------------------------------------------------------------
 template class PoseidonGoldilocks<12>;
 
-// W=4 — grinding-only. 
-template void PoseidonGoldilocks<4>::permute_seq(
-    Goldilocks::Element (&)[4], const Goldilocks::Element (&)[4]);
-template void PoseidonGoldilocks<4>::grinding(
+// W=8 — grinding
+template void PoseidonGoldilocks<8>::permute_seq(
+    Goldilocks::Element (&)[8], const Goldilocks::Element (&)[8]);
+template void PoseidonGoldilocks<8>::grinding(
     uint64_t &, const uint64_t *, const uint32_t);
-template void PoseidonGoldilocks<4>::abortMode(const char *, PoseidonMode);
+template void PoseidonGoldilocks<8>::abortMode(const char *, PoseidonMode);
 
 // W=16 — merkle + transcript at arity 3 (scalar path only; AVX is W=12 only).
 template void PoseidonGoldilocks<16>::permute_seq(

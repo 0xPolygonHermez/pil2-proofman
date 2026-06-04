@@ -31,8 +31,8 @@ class PoseidonGoldilocks
 {
 public:
 
-    static_assert(SPONGE_WIDTH_T == 4 || SPONGE_WIDTH_T == 12 || SPONGE_WIDTH_T == 16,
-                  "SPONGE_WIDTH_T must be 4, 12, or 16");
+    static_assert(SPONGE_WIDTH_T == 8 || SPONGE_WIDTH_T == 12 || SPONGE_WIDTH_T == 16,
+                  "SPONGE_WIDTH_T must be 8, 12, or 16");
     static constexpr uint32_t CAPACITY = 4;
     static constexpr uint32_t RATE = SPONGE_WIDTH_T - CAPACITY;
     static constexpr uint32_t SPONGE_WIDTH = SPONGE_WIDTH_T;
@@ -349,7 +349,7 @@ inline void PoseidonGoldilocks<W>::merkletree(
 
 #include "poseidon_goldilocks_avx.hpp"
 
-using PoseidonGoldilocksGrinding = PoseidonGoldilocks<4>;  // SPONGE_WIDTH = 4
+using PoseidonGoldilocksGrinding = PoseidonGoldilocks<8>;  // SPONGE_WIDTH = 8
 
 #endif // POSEIDON_GOLDILOCKS
 

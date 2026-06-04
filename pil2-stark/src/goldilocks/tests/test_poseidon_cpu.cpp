@@ -355,3 +355,23 @@ TEST(PoseidonV1, grinding_determinism_low_bits)
     uint64_t thresh = 1ULL << (64 - 8);
     ASSERT_LT(out[0].fe, thresh);
 }
+
+// ---------------------------------------------------------------------------
+// 8. W=8 Poseidon-1 golden — plonky3 cross-check.
+//    Input [0..7], expected output from plonky3:
+// ---------------------------------------------------------------------------
+
+TEST(PoseidonV1, permute_W8_plonky3_golden)
+{
+    static constexpr uint32_t W8 = 8;
+    static constexpr uint64_t PERMUTE_W8_POSEIDON1_PLONKY3_GOLDEN[W8] = {
+        2431226948502761687ULL, 9427563026145807618ULL, 6827549936272051660ULL, 16907684411084503785ULL,
+        10131745626715172913ULL, 17448305483431576765ULL, 9066501914269485014ULL, 12095238468458521303ULL,
+    };
+    GL in[W8], out[W8];
+    for (uint32_t i = 0; i < W8; ++i) in[i] = Goldilocks::fromU64((uint64_t)i);
+    PoseidonGoldilocks<8>::permute(out, in, PoseidonMode::Scalar);
+    for (uint32_t i = 0; i < W8; ++i)
+        ASSERT_EQ(Goldilocks::toU64(out[i]), PERMUTE_W8_POSEIDON1_PLONKY3_GOLDEN[i])
+            << "lane " << i;
+}
