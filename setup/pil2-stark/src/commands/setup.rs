@@ -35,6 +35,7 @@ pub struct SetupOptions {
     /// Optional path to write per-AIR stats (same format as `proofman-setup stats`).
     /// If None, no stats file is written.
     pub stats_output_path: Option<String>,
+    pub hash: String,
 }
 
 /// Run the non-recursive setup pipeline.
@@ -85,7 +86,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     // written once at the end after hasCompressor flags are known.
     write_global_constraints(&pilout, &pilout_name, &opts.build_dir, &settings_map)?;
     if !opts.recursive {
-        write_global_info_json(&pilout, &pilout_name, &opts.build_dir, &settings_map)?;
+        write_global_info_json(&pilout, &pilout_name, &opts.build_dir, &settings_map, &opts.hash)?;
     }
 
     // Thread pool for per-AIR processing.  setup_jobs > 1 enables parallel AIR
@@ -295,7 +296,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
 
     if opts.recursive {
         tracing::info!("Starting recursive setup...");
-        let global_info_base = build_global_info_json(&pilout, &pilout_name, &settings_map);
+        let global_info_base = build_global_info_json(&pilout, &pilout_name, &settings_map, &opts.hash);
         let airs_with_compressor = run_recursive_setup(&pilout, &pilout_name, opts, &settings_map, global_info_base)?;
 
         // Build final settings map: start from user-supplied settings and overlay any
@@ -305,7 +306,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
         for air_name in &airs_with_compressor {
             final_settings.entry(air_name.clone()).or_default().has_compressor = Some(true);
         }
-        write_global_info_json(&pilout, &pilout_name, &opts.build_dir, &final_settings)?;
+        write_global_info_json(&pilout, &pilout_name, &opts.build_dir, &final_settings, &opts.hash)?;
         tracing::info!("Wrote globalInfo.json with hasCompressor flags");
     }
 
@@ -380,6 +381,7 @@ mod tests {
             recursive_jobs: 1,
             setup_jobs: 1,
             stats_output_path: None,
+            hash: "Poseidon2".to_string(),
         };
         let result = run_setup(&opts);
         assert!(result.is_ok(), "run_setup should succeed: {:#}", result.unwrap_err());
@@ -419,6 +421,7 @@ mod tests {
             recursive_jobs: 1,
             setup_jobs: 1,
             stats_output_path: None,
+            hash: "Poseidon2".to_string(),
         };
         assert!(run_setup(&opts).is_err());
         let pk = build_dir.join("provingKey");

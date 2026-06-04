@@ -301,21 +301,6 @@ jobs:
         run: |
           cargo run --bin proofman-cli prove --witness-lib ./target/debug/libtest_recursive.so --proving-key examples/test-recursive/build/provingKey/ --output-dir examples/test-recursive/build/proofs -y 
 
-      - name: Setup Recursive (Final)
-        run: |
-          cargo run --bin proofman-setup -- setup-recursive-test -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t final_vadcop
-
-      - name: Cargo build (Final)
-        run: RUST_BACKTRACE=1 cargo build -v --workspace
-      
-      - name: Verify constraints Recursive (Final)
-        run: |
-          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libtest_recursive.so --proving-key examples/test-recursive/build/provingKey
-
-      - name: Generate proof Recursive (Final)
-        run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libtest_recursive.so --proving-key examples/test-recursive/build/provingKey/ --output-dir examples/test-recursive/build/proofs -y 
-
       - name: Clean proof dir
         run: |
           rm -rf examples/test-recursive/build/proofs

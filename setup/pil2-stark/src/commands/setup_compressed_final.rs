@@ -26,6 +26,7 @@ pub fn run_setup_compressed_final(opts: &SetupCompressedFinalOptions) -> Result<
     }
     let global_info: Value = serde_json::from_str(&fs::read_to_string(&global_info_path)?)?;
     let name = global_info.get("name").and_then(|v| v.as_str()).unwrap_or("pilout").to_string();
+    let hash = global_info.get("hash").and_then(|v| v.as_str()).unwrap_or("Poseidon2").to_string();
 
     let vadcop_dir = PathBuf::from(build_dir).join("provingKey").join(&name).join("vadcop_final");
     let const_root_path = vadcop_dir.join("vadcop_final.verkey.json");
@@ -64,6 +65,7 @@ pub fn run_setup_compressed_final(opts: &SetupCompressedFinalOptions) -> Result<
 
     let config = CompressedFinalConfig {
         build_dir,
+        hash: &hash,
         name: &name,
         const_root: &const_root,
         verification_keys: &[],

@@ -66,17 +66,17 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCo
 
     const int firstColP = 36;
 
-    const expr inputO[POSEIDON_WIDTH];
-    const expr outputO[POSEIDON_WIDTH];
-    for (int i = 0; i < POSEIDON_WIDTH; i++) {
+    const expr inputO[POSEIDON2_WIDTH];
+    const expr outputO[POSEIDON2_WIDTH];
+    for (int i = 0; i < POSEIDON2_WIDTH; i++) {
         inputO[i] = a[i];
         outputO[i] = a[firstColP + i];
     }
     poseidonInputOrder(inputO, [b0, b1], outputO, POSEIDONSPONGE, POSEIDONCOMPRESSION);
-    
-    const expr inputP[POSEIDON_WIDTH];
-    const expr outputP[POSEIDON_WIDTH];
-    for (int i = 0; i < POSEIDON_WIDTH; i++) {
+
+    const expr inputP[POSEIDON2_WIDTH];
+    const expr outputP[POSEIDON2_WIDTH];
+    for (int i = 0; i < POSEIDON2_WIDTH; i++) {
         inputP[i] = 'a[i + firstColP];
         outputP[i] = a[i + firstColP]';
     }
@@ -88,14 +88,14 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCo
     for (int i = 0; i < 6; i++) {
         st0[16 + i] = (5)'a[i + 18];
     }
-    
-    const expr inputF_7[POSEIDON_WIDTH];
-    const expr constantsPoseidonF[POSEIDON_WIDTH];
-    const expr outputF[POSEIDON_WIDTH];
+
+    const expr inputF_7[POSEIDON2_WIDTH];
+    const expr constantsPoseidonF[POSEIDON2_WIDTH];
+    const expr outputF[POSEIDON2_WIDTH];
     const expr intermediateValues[22];
 
-    for (int i = 0; i < POSEIDON_WIDTH; i++) {
-        constantsPoseidonF[i] = POSEIDON_R0 * POSEIDON_RC[i] + POSEIDON_R1 * POSEIDON_RC[i + 16] + POSEIDON_R2 * POSEIDON_RC[i + 32] + POSEIDON_R3 * POSEIDON_RC[i + 48] + POSEIDON_PARTIAL_ROUND * POSEIDON_RC[i + 64] + POSEIDON_R26 * POSEIDON_RC[i + 86] + POSEIDON_R27 * POSEIDON_RC[i + 102] + POSEIDON_R28 * POSEIDON_RC[i + 118] + POSEIDON_R29 * POSEIDON_RC[i + 134];
+    for (int i = 0; i < POSEIDON2_WIDTH; i++) {
+        constantsPoseidonF[i] = POSEIDON_R0 * POSEIDON2_RC[i] + POSEIDON_R1 * POSEIDON2_RC[i + 16] + POSEIDON_R2 * POSEIDON2_RC[i + 32] + POSEIDON_R3 * POSEIDON2_RC[i + 48] + POSEIDON_PARTIAL_ROUND * POSEIDON2_RC[i + 64] + POSEIDON_R26 * POSEIDON2_RC[i + 86] + POSEIDON_R27 * POSEIDON2_RC[i + 102] + POSEIDON_R28 * POSEIDON2_RC[i + 118] + POSEIDON_R29 * POSEIDON2_RC[i + 134];
  
         inputF_7[i] = pow7(a[i + firstColP] + constantsPoseidonF[i]);
         outputF[i] = POSEIDON_FINAL * a[i] + (1 - POSEIDON_FINAL) * a[i + firstColP]';
@@ -104,7 +104,7 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCo
     }
  
     for (int i = 0; i < 6; i++) {
-        intermediateValues[16 + i] = pow7(st0[16 + i] + POSEIDON_RC[80 + i]);
+        intermediateValues[16 + i] = pow7(st0[16 + i] + POSEIDON2_RC[80 + i]);
     }
      
     poseidonFullRound(inputF_7, outputF, POSEIDON_R0 + POSEIDON_R1 + POSEIDON_R2 + POSEIDON_R3 + POSEIDON_R26 + POSEIDON_R27 + POSEIDON_R28 + POSEIDON_R29);

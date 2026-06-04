@@ -1,101 +1,65 @@
 pragma circom 2.1.0;
 pragma custom_templates;
 
-include "poseidon2_constants.circom";
-
-// (5 7 1 3) (a)
-// (4 6 1 1) (b)
-// (1 3 5 7) (c)   
-// (1 1 4 6) (d)
-function matmul_m4(a, b, c, d) {
-    
-    var t0 = a + b;
-    var t1 = c + d;
-    var t2 = 2*b + t1;
-    var t3 = 2*d + t0;
-    var t4 = 4*t1 + t3;
-    var t5 = 4*t0 + t2;
-    var t6 = t3 + t5;
-    var t7 = t2 + t4;
-
-    return [t6, t5, t7, t4];
-}
-
-function matmul_external_16(in) {
-    
-    var mat[16][4];
-    for (var i = 0; i < 4; i++) {
-        mat[i] = matmul_m4(
-            in[4*i + 0],
-            in[4*i + 1],
-            in[4*i + 2],
-            in[4*i + 3]
-        );
-    }
-
-    var stored[4];
-    for(var i = 0; i < 4; i++) {
-        for(var j = 0; j < 4; j++) {
-            stored[i] += mat[j][i];
-        }
-    }
-
-    var out[16];
-
-    for(var i = 0; i < 4; i++) {
-        for(var j = 0; j < 4; j++) {
-            out[4*j + i] = mat[j][i] + stored[i];
-        }
-    }
-   
-    return out;
-}
+include "poseidon_constants.circom";
 
 // Custom gate that calculates Poseidon hash of three inputs using Neptune optimization
-template custom extern_c Poseidon16() {
-    var arity = 4;
-    signal input in[arity * 4];
-    signal output im[12][arity * 4];
-    signal output out[arity * 4];
+template custom extern_c Poseidon1_16() {
+    signal input in[16];
+    signal output im[11][16];
+    signal output out[16];
 
-    var st[arity * 4];
+    var st[16];
     st = in;
 
-    st = matmul_external_16(st);
+    for(var i=0; i < 16; i++) {
+        st[i] = st[i] + CNST(i);
+    }
 
     var row = 0;
     var index = 0;
-    im[row] <-- st;
-    row++;
 
+    var newSt[16];
     for(var r = 0; r < 4; r++) {
-        for(var t=0; t < arity * 4; t++) {
-            st[t] = st[t] + CONSTANTS(arity, arity*4*r + t);
+        for(var t=0; t < 16; t++) {
             st[t] = st[t] ** 7;
+            st[t] = st[t] + CNST((r + 1)*16 + t);
         }
-        st = matmul_external_16(st);
+
+        for(var t=0; t < 16; t++) {
+            var acc = 0;
+            for(var j = 0; j < 16; j++) {
+                if(r < 3) {
+                    acc += M(j,t) * st[j];
+                } else {
+                    acc += P(j,t) * st[j];
+                }
+            }
+            newSt[t] = acc;
+        }
+        st = newSt;
         im[row] <-- st;
         row++;
     }
 
-    
-    for(var i = 0; i < 22; i++) {
+    // S stride for width 16 = 2*16 - 1 = 31 entries per partial round.
+    // Second slice (column-1..15 updates) begins at offset WIDTH - 1 = 15.
+    for(var r = 0; r < 22; r++) {
         im[row][index] <-- st[0];
-        st[0] += CONSTANTS(arity, 4*(arity*4) + i);
         st[0] = st[0] ** 7;
+        st[0] += CNST(80 + r);
 
-        var sum = 0;
-        for(var j = 0; j < arity * 4; j++) {
-            sum += st[j];
+        var s0 = 0;
+        for(var j = 0; j < 16; j++) {
+            s0 += S(31*r + j) * st[j];
         }
-        
-        for(var j = 0; j < arity * 4; j++) {
-            st[j] = st[j] * MATRIX_DIAGONAL(arity, j);
-            st[j] += sum;
+        for(var t = 1; t < 16; t++) {
+            st[t] += st[0] * S(31*r + 15 + t);
         }
-        
+        st[0] = s0;
+
         index++;
-        if(i == 10 || i == 21) {
+        if(r == 10 || r == 21) {
             im[row][index] <-- 0;
             index = 0;
             row++;
@@ -105,13 +69,19 @@ template custom extern_c Poseidon16() {
     }
 
     for(var r = 0; r < 4; r++) {
-        for(var t=0; t < arity * 4; t++) {
-            st[t] = st[t] + CONSTANTS(arity, 4*arity*4 + 22 + arity*4*r + t);
+        for(var t=0; t < 16; t++) {
             st[t] = st[t] ** 7;
+            if(r < 3) st[t] += CNST(102 + 16*r + t);
         }
 
-        st = matmul_external_16(st);
-
+        for(var t=0; t < 16; t++) {
+            var acc = 0;
+            for(var j = 0; j < 16; j++) {
+                acc += M(j,t) * st[j];
+            }
+            newSt[t] = acc;
+        }
+        st = newSt;
         if(r < 3) {
             im[row] <-- st;
             row++;
@@ -121,19 +91,16 @@ template custom extern_c Poseidon16() {
     }
 }
 
-// Custom gate that calculates Poseidon hash of two inputs using Neptune optimization
-// The two inputs are sent unordered and the key that determines its position is also sent as an input
-template custom extern_c CustPoseidon16() {
-    var arity = 4;
-    signal input in[arity * 4];
+template custom extern_c CustPoseidon1_16() {
+    signal input in[16];
     signal input key[2];
-    signal output im[12][arity * 4];
-    signal output out[arity * 4];
+    signal output im[11][16];
+    signal output out[16];
 
     assert(key[0]*(key[0] - 1) == 0);
     assert(key[1]*(key[1] - 1) == 0);
 
-    var initialSt[arity * 4];
+    var initialSt[16];
     
     // Order the inputs of the Poseidon hash according to the key bit.
     if(key[0] == 0 && key[1] == 0) {
@@ -190,41 +157,55 @@ template custom extern_c CustPoseidon16() {
         initialSt[14] = in[2];
         initialSt[15] = in[3];
     }
-    
 
-    var st[arity * 4] = initialSt;
+    var st[16];
+    st = initialSt;
+
+    for(var i=0; i < 16; i++) {
+        st[i] = st[i] + CNST(i);
+    }
+
     var row = 0;
     var index = 0;
 
-    st = matmul_external_16(st);
-    im[row] <-- st;
-    row++;
+    var newSt[16];
     for(var r = 0; r < 4; r++) {
-        for(var t=0; t < arity * 4; t++) {
-            st[t] = st[t] + CONSTANTS(arity, arity*4*r + t);
+        for(var t=0; t < 16; t++) {
             st[t] = st[t] ** 7;
+            st[t] = st[t] + CNST((r + 1)*16 + t);
         }
-        st = matmul_external_16(st);
+
+        for(var t=0; t < 16; t++) {
+            var acc = 0;
+            for(var j = 0; j < 16; j++) {
+                if(r < 3) {
+                    acc += M(j,t) * st[j];
+                } else {
+                    acc += P(j,t) * st[j];
+                }
+            }
+            newSt[t] = acc;
+        }
+        st = newSt;
         im[row] <-- st;
         row++;
     }
 
-   
-
+    // S stride for width 16 = 2*16 - 1 = 31 entries per partial round.
+    // Second slice (column-1..15 updates) begins at offset WIDTH - 1 = 15.
     for(var r = 0; r < 22; r++) {
         im[row][index] <-- st[0];
-        st[0] += CONSTANTS(arity, 4*arity*4 + r);
         st[0] = st[0] ** 7;
+        st[0] += CNST(80 + r);
 
-        var sum = 0;
-        for(var j = 0; j < arity * 4; j++) {
-            sum += st[j];
+        var s0 = 0;
+        for(var j = 0; j < 16; j++) {
+            s0 += S(31*r + j) * st[j];
         }
-
-        for(var j = 0; j < arity * 4; j++) {
-            st[j] = st[j] * MATRIX_DIAGONAL(arity, j);
-            st[j] += sum;
+        for(var t = 1; t < 16; t++) {
+            st[t] += st[0] * S(31*r + 15 + t);
         }
+        st[0] = s0;
 
         index++;
         if(r == 10 || r == 21) {
@@ -237,65 +218,73 @@ template custom extern_c CustPoseidon16() {
     }
 
     for(var r = 0; r < 4; r++) {
-        for(var t=0; t < arity * 4; t++) {
-            st[t] = st[t] + CONSTANTS(arity, 4*arity*4 + 22 + arity*4*r + t);
+        for(var t=0; t < 16; t++) {
             st[t] = st[t] ** 7;
+            if(r < 3) st[t] += CNST(102 + 16*r + t);
         }
 
-        st = matmul_external_16(st);
+        for(var t=0; t < 16; t++) {
+            var acc = 0;
+            for(var j = 0; j < 16; j++) {
+                acc += M(j,t) * st[j];
+            }
+            newSt[t] = acc;
+        }
+        st = newSt;
         if(r < 3) {
             im[row] <-- st;
             row++;
         } else {
-            out <-- st;
+            for(var t=0; t < 16; t++) {
+                out[t] <-- st[t] + in[t];
+            }
         }
     }
 }
 
-// Calculate Poseidon2 Hash of 3 inputs (2 in + capacity) in GL field (each element has at most 63 bits)
+
+// Calculate Poseidon Hash of 4 inputs (3 in + capacity) in GL field (each element has at most 63 bits)
 // -nOuts: Number of GL field elements that are being returned as output
-template Poseidon2(arity, nOuts) {
-    assert(arity == 4);
-    var rate = (arity - 1) * 4;
-    signal input in[rate];
+template Poseidon(nOuts) {
+    signal input in[12];
     signal input capacity[4];
     signal output out[nOuts];
 
-    component p = Poseidon16();
+    component p = Poseidon1_16();
 
     // Pass the two inputs and the capacity as inputs for performing the poseidon Hash
-    for (var j=0; j<rate; j++) {
+    for (var j=0; j<12; j++) {
         p.in[j] <== in[j];
     }
     for (var j=0; j<4; j++) {
-        p.in[rate+j] <== capacity[j];
+        p.in[12+j] <== capacity[j];
     }
 
-    // Poseidon12 returns 12 outputs but we are only interested in returning nOuts
+    // Poseidon1_16 returns 16 outputs but we are only interested in returning nOuts
     for (var j=0; j<nOuts; j++) {
         out[j] <== p.out[j];
     }
 
     _ <== p.im;
 
-    for (var j=nOuts; j<arity*4; j++) {
+    for (var j=nOuts; j<16; j++) {
         _ <== p.out[j];
     }
 }
 
 // Calculate Poseidon Hash of 2 inputs in GL field (each element has at most 63 bits)
 // -nOuts: Number of GL field elements that are being returned as output
-template CustPoseidon2(arity, nOuts) {
+template CustPoseidon(arity, nOuts) {
     assert(arity == 4);
     signal input in[arity * 4];
     signal input key[2];
     signal output out[nOuts];
 
-    component p = CustPoseidon16();
+    component p = CustPoseidon1_16();
     p.in <== in;
     p.key <== key;
-    
-    // Poseidon12 returns 12 outputs but we are only interested in returning nOuts
+
+    // CustPoseidon1_16 returns 16 outputs but we are only interested in returning nOuts
     for (var j=0; j<nOuts; j++) {
         out[j] <== p.out[j];
     }

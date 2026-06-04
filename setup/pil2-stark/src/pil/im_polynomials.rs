@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use tracing::info;
 
@@ -129,14 +129,18 @@ pub fn calculate_intermediate_polynomials(
     info!("Considering degrees between 2 and {} (blowup factor: {:.0})", max_q_deg, blowup);
     info!("------------------------------------------------------------");
 
-    let c_exp = &expressions[c_exp_id];
-    let (mut im_exps, mut q_deg) = calculate_im_pols(expressions, c_exp_id, c_exp, d);
+    // Shared memo across degree iterations — the cache key includes `max_deg`,
+    // so results for different degrees don't collide, but sub-problems that
+    // happen to share `(idx, max_deg, im_pols)` are reused.
+    let mut memo: HashMap<MemoKey, MemoVal> = HashMap::new();
+
+    let (mut im_exps, mut q_deg) = calculate_im_pols(expressions, c_exp_id, d, &mut memo);
     let mut added_basefield_cols = calculate_added_cols(d, expressions, &im_exps, q_deg, q_dim);
     d += 1;
 
     while !im_exps.is_empty() && d <= max_q_deg {
         info!("------------------------------------------------------------");
-        let (im_exps_p, q_deg_p) = calculate_im_pols(expressions, c_exp_id, c_exp, d);
+        let (im_exps_p, q_deg_p) = calculate_im_pols(expressions, c_exp_id, d, &mut memo);
         let new_added = calculate_added_cols(d, expressions, &im_exps_p, q_deg_p, q_dim);
         d += 1;
 
@@ -182,30 +186,30 @@ fn calculate_added_cols(
 // Inner recursive search (mirrors JS `_calculateImPols`)
 // ---------------------------------------------------------------------------
 
-/// Memoization key: (expression_id, max_deg, sorted list of current im_pol IDs).
-/// Caches ALL arena-level expressions, matching JS `exp.res[absoluteMax][JSON.stringify(imPols)]`.
-type MemoKey = (usize, usize, Vec<usize>);
-/// Memoization value: (Option<im_pols_vec>, degree).
+/// Memoization key: (expression_id, max_deg, current im_pol IDs as an ordered set).
+/// `BTreeSet<usize>` keeps the key canonical without an explicit sort step, and
+/// turns the per-call `contains` check from O(N) (Vec) into O(log N).
+type MemoKey = (usize, usize, BTreeSet<usize>);
+/// Memoization value: (Option<im_pols>, degree).
 /// `None` means the search failed for this sub-tree.
-type MemoVal = (Option<Vec<usize>>, i64);
+type MemoVal = (Option<BTreeSet<usize>>, i64);
 
 fn calculate_im_pols(
     expressions: &[Expression],
-    _root_id: usize,
-    _c_exp: &Expression,
+    root_id: usize,
     max_deg: usize,
+    memo: &mut HashMap<MemoKey, MemoVal>,
 ) -> (Vec<usize>, i64) {
     let absolute_max = max_deg;
     let mut abs_max_d: i64 = 0;
-    let mut memo: HashMap<MemoKey, MemoVal> = HashMap::new();
 
     let (result_pols, rd) =
-        calc_im_pols_inner(expressions, _root_id, &Vec::new(), max_deg, absolute_max, &mut abs_max_d, &mut memo);
+        calc_im_pols_inner(expressions, root_id, &BTreeSet::new(), max_deg, absolute_max, &mut abs_max_d, memo);
 
     match result_pols {
         Some(pols) => {
             let final_deg = rd.max(abs_max_d) - 1;
-            (pols, final_deg)
+            (pols.into_iter().collect(), final_deg)
         }
         None => (Vec::new(), rd.max(abs_max_d).max(1) - 1),
     }
@@ -216,16 +220,13 @@ fn calculate_im_pols(
 fn calc_im_pols_inner(
     expressions: &[Expression],
     idx: usize,
-    im_pols: &[usize],
+    im_pols: &BTreeSet<usize>,
     max_deg: usize,
     absolute_max: usize,
     abs_max_d: &mut i64,
     memo: &mut HashMap<MemoKey, MemoVal>,
-) -> (Option<Vec<usize>>, i64) {
-    // Memoize ALL arena-level expressions
-    let mut sorted_pols = im_pols.to_vec();
-    sorted_pols.sort_unstable();
-    let memo_key = (idx, max_deg, sorted_pols);
+) -> (Option<BTreeSet<usize>>, i64) {
+    let memo_key = (idx, max_deg, im_pols.clone());
     if let Some(cached) = memo.get(&memo_key) {
         return cached.clone();
     }
@@ -237,24 +238,22 @@ fn calc_im_pols_inner(
 }
 
 /// Inner recursive search that works on any expression (arena or inline).
-/// `expr_id` is the arena index of the expression if it's in the arena,
-/// or the original arena entry that led here for inline children.
 #[allow(clippy::too_many_arguments)]
 fn calc_im_pols_expr(
     expressions: &[Expression],
     exp: &Expression,
-    im_pols: &[usize],
+    im_pols: &BTreeSet<usize>,
     max_deg: usize,
     absolute_max: usize,
     abs_max_d: &mut i64,
     memo: &mut HashMap<MemoKey, MemoVal>,
-) -> (Option<Vec<usize>>, i64) {
+) -> (Option<BTreeSet<usize>>, i64) {
     let op = exp.op.as_str();
 
     match op {
         "add" | "sub" => {
             let mut md: i64 = 0;
-            let mut current_pols = im_pols.to_vec();
+            let mut current_pols = im_pols.clone();
             for child in &exp.values {
                 let (child_pols, d) = match child {
                     ExprChild::Id(id) => {
@@ -303,10 +302,10 @@ fn calc_im_pols_expr(
 
             let max_deg_here = exp.exp_deg as usize;
             if max_deg_here <= max_deg {
-                return (Some(im_pols.to_vec()), max_deg_here as i64);
+                return (Some(im_pols.clone()), max_deg_here as i64);
             }
 
-            let mut eb: Option<Vec<usize>> = None;
+            let mut eb: Option<BTreeSet<usize>> = None;
             let mut ed: i64 = -1;
 
             for l in 0..=max_deg {
@@ -319,29 +318,29 @@ fn calc_im_pols_expr(
                         calc_im_pols_expr(expressions, e, im_pols, l, absolute_max, abs_max_d, memo)
                     }
                 };
-                if e1.is_none() {
+                let Some(e1_set) = e1 else {
                     continue;
-                }
-                let e1_vec = e1.unwrap();
+                };
                 let (e2, d2) = match &exp.values[1] {
                     ExprChild::Id(id) => {
-                        calc_im_pols_inner(expressions, *id, &e1_vec, r, absolute_max, abs_max_d, memo)
+                        calc_im_pols_inner(expressions, *id, &e1_set, r, absolute_max, abs_max_d, memo)
                     }
                     ExprChild::Inline(e) => {
-                        calc_im_pols_expr(expressions, e, &e1_vec, r, absolute_max, abs_max_d, memo)
+                        calc_im_pols_expr(expressions, e, &e1_set, r, absolute_max, abs_max_d, memo)
                     }
                 };
-                if let Some(ref e2_vec) = e2 {
+                if let Some(e2_set) = e2 {
+                    let e2_len = e2_set.len();
                     let should_replace = match &eb {
                         None => true,
-                        Some(prev) => e2_vec.len() < prev.len(),
+                        Some(prev) => e2_len < prev.len(),
                     };
                     if should_replace {
-                        eb = Some(e2_vec.clone());
+                        eb = Some(e2_set);
                         ed = d1 + d2;
                     }
                     // Cannot do better than the starting set
-                    if e2_vec.len() == im_pols.len() {
+                    if e2_len == im_pols.len() {
                         return (eb, ed);
                     }
                 }
@@ -354,38 +353,26 @@ fn calc_im_pols_expr(
             }
             let id = exp.id.unwrap_or(0);
             if im_pols.contains(&id) {
-                return (Some(im_pols.to_vec()), 1);
+                return (Some(im_pols.clone()), 1);
             }
 
-            // Check memo - key includes expression id (Bug 2 fix)
-            let mut sorted_pols = im_pols.to_vec();
-            sorted_pols.sort_unstable();
-            let memo_key = (id, absolute_max, sorted_pols);
-
-            let (e, d) = if let Some(cached) = memo.get(&memo_key) {
-                cached.clone()
-            } else {
-                calc_im_pols_inner(expressions, id, im_pols, absolute_max, absolute_max, abs_max_d, memo)
-            };
+            // calc_im_pols_inner handles memoization at its own entry; the
+            // outer memo lookup and the redundant post-recurse memo write that
+            // used to live here both reused the same key, so we drop them.
+            let (e, d) = calc_im_pols_inner(expressions, id, im_pols, absolute_max, absolute_max, abs_max_d, memo);
 
             match e {
                 None => (None, -1),
-                Some(ref e_vec) => {
+                Some(e_set) => {
                     if d > max_deg as i64 {
                         if d > *abs_max_d {
                             *abs_max_d = d;
                         }
-                        let mut new_pols = e_vec.clone();
-                        if !new_pols.contains(&id) {
-                            new_pols.push(id);
-                        }
+                        let mut new_pols = e_set;
+                        new_pols.insert(id);
                         (Some(new_pols), 1)
                     } else {
-                        // Store in memo with expression id in key
-                        let mut sorted_key = im_pols.to_vec();
-                        sorted_key.sort_unstable();
-                        memo.insert((id, absolute_max, sorted_key), (Some(e_vec.clone()), d));
-                        (Some(e_vec.clone()), d)
+                        (Some(e_set), d)
                     }
                 }
             }
@@ -393,11 +380,11 @@ fn calc_im_pols_expr(
         _ => {
             // Leaf nodes: number, cm, const, challenge, etc.
             if exp.exp_deg == 0 {
-                (Some(im_pols.to_vec()), 0)
+                (Some(im_pols.clone()), 0)
             } else if max_deg < 1 {
                 (None, -1)
             } else {
-                (Some(im_pols.to_vec()), 1)
+                (Some(im_pols.clone()), 1)
             }
         }
     }

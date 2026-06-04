@@ -1,11 +1,16 @@
 //! Rust port of the `Transcript` class used in `verify_global_challenge.circom.ejs`
 //! and `verify_global_constraints.circom.ejs`.
 //!
-//! The JS class builds Circom signal declarations and wiring for a Poseidon2
-//! transcript (merging public inputs / stage-1 hashes into a hash chain).
+//! Builds Circom signal declarations and wiring for a (GL, width 16) transcript
+//! hash chain. The hash family is selected via [`set_poseidon2`](Transcript::set_poseidon2):
+//! Poseidon1 (`Poseidon(nOuts)`, default) or Poseidon2 (`Poseidon2(4, nOuts)`).
+//! Each round absorbs 12 inputs into a 4-cell capacity, producing 16 output cells;
+//! the first 4 cells become the next state and the remaining 12 are the FIFO
+//! consumed by `get_field` / `get_state` callers.
+//!
 //! Each call to `put` (add one signal to the pending buffer) and `get_field`
 //! (consume three outputs) drives the state machine forward; when the buffer
-//! fills it emits a `Poseidon2(...)` signal declaration.
+//! fills it emits a `Poseidon(...)` signal declaration.
 
 #![allow(dead_code)]
 
@@ -17,18 +22,17 @@ pub struct Transcript {
     /// Number of output values consumed from the current hash output.
     hi_cnt: usize,
     /// Index of the next available output field consumed by `get_fields1`.
-    /// `out` acts as a FIFO; once exhausted a new Poseidon2 round is triggered.
+    /// `out` acts as a FIFO; once exhausted a new Poseidon1 round is triggered.
     out: Vec<String>,
-    /// Inputs pending for the next Poseidon2 call.
+    /// Inputs pending for the next Poseidon1 call.
     pending: Vec<String>,
-    /// The four Poseidon2 state elements.
+    /// The four Poseidon1 capacity (state) elements.
     state: [String; 4],
     /// Generated code lines (will be joined with newlines by `get_code`).
     code: Vec<String>,
     /// Index of first code line not yet returned by `get_code`.
     last_code_printed: usize,
-    /// Poseidon2 arity: how many input slots per round = `4 * (arity - 1)`.
-    /// Output width = `4 * arity`.
+    /// Merkle-tree arity (consumer-side parameter; Poseidon1 widths are fixed).
     arity: usize,
     /// Per-round "used outputs" for the global-challenge transcript (see JS logic).
     used_vals_per_round_override: Option<Vec<usize>>,
@@ -44,6 +48,10 @@ pub struct Transcript {
     ///
     /// Default: false (matches `verify_global_challenge.circom.ejs` behaviour).
     drain_in_update_state: bool,
+    /// Hash family of the emitted transcript chain. `false` → Poseidon1
+    /// (`Poseidon(nOuts)` template); `true` → Poseidon2 (`Poseidon2(4, nOuts)`).
+    /// Both are width-16 / rate-12 sponges, so only the emitted template name differs.
+    poseidon2: bool,
 }
 
 impl Transcript {
@@ -63,7 +71,15 @@ impl Transcript {
             early_rounds_scheme: None,
             n2b_cnt: 0,
             drain_in_update_state: false,
+            poseidon2: false,
         }
+    }
+
+    /// Select the hash family for the emitted transcript chain: `true` emits the
+    /// Poseidon2 sponge (`Poseidon2(4, nOuts)`), `false` (default) emits Poseidon1
+    /// (`Poseidon(nOuts)`). Must be set before any `put`/`get_*` call.
+    pub fn set_poseidon2(&mut self, value: bool) {
+        self.poseidon2 = value;
     }
 
     /// Enable draining unused outputs of the previous hash BEFORE emitting the
@@ -93,17 +109,17 @@ impl Transcript {
         }
     }
 
-    /// Total input slots per Poseidon2 call = 4*(arity-1).
+    /// Poseidon1 absorbs 12 inputs per round (in[12] + capacity[4] = state 16).
     fn input_width(&self) -> usize {
-        4 * (self.arity - 1)
+        12
     }
 
-    /// Total output width per Poseidon2 call = 4*arity.
+    /// Poseidon1 produces 16 output cells per round (full state).
     fn output_width(&self) -> usize {
-        4 * self.arity
+        16
     }
 
-    /// Flush pending inputs through Poseidon2 and fill `self.out`.
+    /// Flush pending inputs through Poseidon1 and fill `self.out`.
     fn update_state(&mut self, used_vals: Option<usize>) {
         let sig = self.signal_name(self.h_cnt);
         let out_w = self.output_width();
@@ -134,9 +150,12 @@ impl Transcript {
             })
             .unwrap_or(out_w);
 
+        // Poseidon1 uses `Poseidon(nOuts)`; Poseidon2 uses `Poseidon2(arity, nOuts)`
+        // with arity fixed to 4 (the width-16 / rate-12 sponge). Both take the same
+        // `[in[12]], [capacity[4]]` arguments, so only the template head differs.
+        let hash_call = if self.poseidon2 { format!("Poseidon2(4, {out_w})") } else { format!("Poseidon({out_w})") };
         self.code.push(format!(
-            "\n    signal {sig}[{out_w}] <== Poseidon2({arity}, {out_w})([{pending}], [{state}]);",
-            arity = self.arity,
+            "\n    signal {sig}[{out_w}] <== {hash_call}([{pending}], [{state}]);",
             pending = self.pending.join(","),
             state = self.state.join(","),
         ));
@@ -309,17 +328,17 @@ mod tests {
 
     #[test]
     fn get_permutations_small_single_round() {
-        // arity=4 → output_width=16, input_width=12
+        // Poseidon1: input_width=12, output_width=16
         // n_queries=1, query_bits=3 → total_bits=3, n_fields=1
         let mut t = Transcript::new(4, Some("friQueries".into()));
-        // Prime with 3 items (doesn't fill input_width=12, so no Poseidon2 yet).
+        // Prime with 3 items (doesn't fill input_width=12, so no Poseidon yet).
         t.put("challengeFRIQueries", 3);
         // Call get_permutations — triggers round 0 with pending padded to 12.
         t.get_permutations("queriesFRI", 1, 3);
         let code = t.get_code();
 
-        // Round 0 Poseidon2 must appear (pending was 3, padded to 12).
-        assert!(code.contains("Poseidon2(4, 16)([challengeFRIQueries[0],challengeFRIQueries[1],challengeFRIQueries[2],0,0,0,0,0,0,0,0,0], [0,0,0,0])"),
+        // Round 0 Poseidon must appear (pending was 3, padded to 12).
+        assert!(code.contains("Poseidon(16)([challengeFRIQueries[0],challengeFRIQueries[1],challengeFRIQueries[2],0,0,0,0,0,0,0,0,0], [0,0,0,0])"),
             "code:\n{code}");
         // N2b signal for field 0.
         assert!(
@@ -333,6 +352,23 @@ mod tests {
         // Partial-bits drain: 3 < 63, so "Unused bits" drain.
         assert!(code.contains("for(var j = 3; j < 64; j++)"), "unused bits drain missing:\n{code}");
         assert!(!code.contains("Unused last bit"), "should be partial not last-bit:\n{code}");
+    }
+
+    // ── Poseidon2 family emits the Poseidon2 template, not Poseidon1 ─────────
+
+    #[test]
+    fn poseidon2_emits_poseidon2_template() {
+        let mut t = Transcript::new(4, Some("friQueries".into()));
+        t.set_poseidon2(true);
+        t.put("challengeFRIQueries", 3);
+        t.get_permutations("queriesFRI", 1, 3);
+        let code = t.get_code();
+        // Same width-16/rate-12 geometry as Poseidon1, but the `Poseidon2(4, 16)` head.
+        assert!(
+            code.contains("Poseidon2(4, 16)([challengeFRIQueries[0],challengeFRIQueries[1],challengeFRIQueries[2],0,0,0,0,0,0,0,0,0], [0,0,0,0])"),
+            "code:\n{code}"
+        );
+        assert!(!code.contains("<== Poseidon(16)("), "must not emit the Poseidon1 template:\n{code}");
     }
 
     // ── get_permutations: last field exactly 63 bits → "Unused last bit" ─────
@@ -354,11 +390,8 @@ mod tests {
     #[test]
     fn get_permutations_fibonacci_square_ground_truth() {
         // Reproduces the calculateFRIQueries0 template for FibonacciSquare:
-        //   nQueries=229, steps[0].nBits=23, powBits=16 (nonce present), arity=4
-        //
-        // JS: transcriptQueries.put("challengeFRIQueries", 3);
-        //     transcriptQueries.put("nonce");
-        //     transcriptQueries.getPermutations("queriesFRI", 229, 23);
+        //   nQueries=229, steps[0].nBits=23, powBits=16 (nonce present)
+        // With Poseidon1: input_width=12, output_width=16.
         let mut t = Transcript::new(4, Some("friQueries".into()));
         t.put("challengeFRIQueries", 3);
         t.put_single("nonce");
@@ -366,32 +399,28 @@ mod tests {
         let code = t.get_code();
 
         // NFields = floor((229*23 - 1)/63) + 1 = floor(5266/63) + 1 = 83+1 = 84
-        // 84 fields / 16 per round = 6 rounds (5 full + 4 remaining)
+        // 84 fields / 16 per round = 5.25 → 6 rounds (5 full + 4 of round 5)
         // → signals transcriptHash_friQueries_0 .. _5
 
-        // Round 0: pending was [c[0],c[1],c[2],nonce] padded to 12.
+        // Round 0: pending was [c[0],c[1],c[2],nonce] padded to 12 (8 zeros added).
         assert!(
-            code.contains("Poseidon2(4, 16)([challengeFRIQueries[0],challengeFRIQueries[1],challengeFRIQueries[2],nonce,0,0,0,0,0,0,0,0], [0,0,0,0])"),
-            "round-0 Poseidon2 mismatch:\n{}", &code[..code.len().min(2000)]
+            code.contains("Poseidon(16)([challengeFRIQueries[0],challengeFRIQueries[1],challengeFRIQueries[2],nonce,0,0,0,0,0,0,0,0], [0,0,0,0])"),
+            "round-0 Poseidon mismatch:\n{}", &code[..code.len().min(2000)]
         );
         // transcriptN2b_0 through transcriptN2b_83 should all be present (84 total).
         assert!(code.contains("transcriptN2b_0[64]"), "N2b_0 missing");
         assert!(code.contains("transcriptN2b_83[64]"), "N2b_83 missing");
         assert!(!code.contains("transcriptN2b_84"), "N2b_84 should not exist");
 
-        // Round 5 is the last (fields 80–83 from it).
+        // Round 5 is the last (4 fields used: 80..83 of the 16 output cells).
         assert!(code.contains("transcriptHash_friQueries_5"), "round-5 signal missing");
         assert!(!code.contains("transcriptHash_friQueries_6"), "no round-6");
 
-        // Drain after last field: hi_cnt=4 (consumed 4 from round 5), 4 < 16.
-        assert!(
-            code.contains("for(var i = 4; i < 16; i++)"),
-            "drain for round-5 partial missing:\n{}",
-            &code[code.len().saturating_sub(3000)..]
-        );
-
-        // Last N2b_83 comes from round 5, field index 3.
+        // Last N2b_83 comes from round 5, field index 3 (84 mod 16 = 4 → indices 0..3).
         assert!(code.contains("Num2Bits_strict()(transcriptHash_friQueries_5[3])"), "N2b_83 source missing");
+
+        // 84 mod 16 = 4 → drain from hi_cnt=4 to 16 (12 unused fields).
+        assert!(code.contains("for(var i = 4; i < 16; i++)"), "end-of-round-5 drain missing");
 
         // Last field has 38 bits (5267 - 63*83 = 38).
         assert!(code.contains("for(var j = 0; j < 38; j++)"), "last-field 38-bit loop missing");

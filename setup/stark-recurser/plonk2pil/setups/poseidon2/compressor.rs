@@ -1,16 +1,19 @@
 //! Compressor setup — direct port of compressor_setup.js.
 //! 52 committed pols, 36 S cols, 10 rows/Poseidon, 4 CMul/row.
 
-use super::super::r1cs::to_plonk::{ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info, r1cs2plonk};
-use super::super::r1cs::types::{PlonkOptions, R1csFile, SetupResult};
-use super::super::utils::{build_fixed_pols, build_s_polynomials, log2, mulp};
+use super::super::super::r1cs::to_plonk::{
+    ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info, r1cs2plonk,
+};
+use super::super::super::r1cs::types::{PlonkOptions, R1csFile, SetupResult};
+use super::super::super::utils::{build_fixed_pols, build_s_polynomials, log2, mulp};
 use super::{gen_pil_str, PilTemplateParams};
+use proofman_common::hash_family::GateRole;
 use std::collections::HashMap;
 
 const COMMITTED_POLS: usize = 52;
-const N_COLS: usize = 36; // S connection columns
+const N_COLS: usize = 36;
 const POSEIDON_ROWS: usize = 10;
-const COL_P: usize = 36; // first Poseidon round column offset
+const COL_P: usize = 36;
 const CMUL_PER_ROW: usize = 4;
 
 fn rand_hex() -> String {
@@ -26,13 +29,15 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     tracing::info!("Number of plonk constraints: {}", plonk_constraints.len());
 
     let mut cgi = get_custom_gates_info(r1cs);
-    let n_poseidon = cgi.n_poseidon12 + cgi.n_cust_poseidon12;
-    let n_cmul_rows = cgi.n_cmul.div_ceil(CMUL_PER_ROW);
+    let n_poseidon_sponge = cgi.n(GateRole::PoseidonSponge);
+    let n_poseidon_compression = cgi.n(GateRole::PoseidonCompression);
+    let n_poseidon = n_poseidon_sponge + n_poseidon_compression;
+    let n_cmul_rows = cgi.n(GateRole::CMul).div_ceil(CMUL_PER_ROW);
     let n_poseidon_rows = n_poseidon * POSEIDON_ROWS;
-    let n_fft4_rows = cgi.n_fft4;
-    let n_ev_pol4_rows = cgi.n_ev_pol4;
-    let n_tree_sel4_rows = cgi.n_tree_selector4;
-    let n_sel_val1_rows = cgi.n_select_val1;
+    let n_fft4_rows = cgi.n(GateRole::Fft4);
+    let n_ev_pol4_rows = cgi.n(GateRole::EvPol4);
+    let n_tree_sel4_rows = cgi.n(GateRole::TreeSelector);
+    let n_sel_val1_rows = cgi.n(GateRole::SelectVal1);
 
     // Row-count tiers (used to pre-compute n_plonk_rows)
     let twelve_count = n_poseidon * 8;
@@ -92,20 +97,20 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     let airgroup_name = options.airgroup_name.clone().unwrap_or_else(|| format!("Compressor{}", rand_hex()));
 
     let pil_str = gen_pil_str(&PilTemplateParams {
-        template_file: "compressor",
+        template_file: "poseidon2/compressor",
         template_name: "Compressor",
         namespace_name: &airgroup_name,
         n_bits,
         n_publics,
         max_constraint_degree: 5,
         n_plonk_rows: cgi.n_plonk_rows,
-        n_poseidon_compressor: cgi.n_cust_poseidon12,
-        n_poseidon_sponge: cgi.n_poseidon12,
+        n_poseidon_compressor: n_poseidon_compression,
+        n_poseidon_sponge,
         n_cmul_rows,
-        n_ev_pol4: cgi.n_ev_pol4,
-        n_fft4: cgi.n_fft4,
-        n_tree_selector4: cgi.n_tree_selector4,
-        n_select_val1: cgi.n_select_val1,
+        n_ev_pol4: cgi.n(GateRole::EvPol4),
+        n_fft4: cgi.n(GateRole::Fft4),
+        n_tree_selector4: cgi.n(GateRole::TreeSelector),
+        n_select_val1: cgi.n(GateRole::SelectVal1),
     });
 
     tracing::info!("NUsed: {}, nBits: {}, N: {}", n_used, n_bits, n);
@@ -119,13 +124,13 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     let mut five_extra: Vec<usize> = Vec::new();
     let mut four_extra: Vec<usize> = Vec::new();
 
-    let poseidon_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.poseidon12_id);
-    let poseidon_cust_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.cust_poseidon12_id);
-    let cmul_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.cmul_id);
+    let poseidon_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::PoseidonSponge));
+    let poseidon_cust_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::PoseidonCompression));
+    let cmul_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::CMul));
     let fft4_uses = filter_fft4_gate_uses(&r1cs.custom_gates_uses, &cgi.fft4_parameters);
-    let ev_pol4_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.ev_pol4_id);
-    let tree_sel4_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.tree_selector4_id);
-    let sel_val1_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.select_val1_id);
+    let ev_pol4_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::EvPol4));
+    let tree_sel4_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::TreeSelector));
+    let sel_val1_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::SelectVal1));
 
     let mut r = 0usize;
 

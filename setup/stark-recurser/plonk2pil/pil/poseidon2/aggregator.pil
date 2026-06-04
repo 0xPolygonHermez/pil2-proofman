@@ -51,17 +51,17 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nPoseidonCo
     const expr b0 = a[16];
     const expr b1 = a[17];
 
-    const expr inputO[POSEIDON_WIDTH];
-    const expr outputO[POSEIDON_WIDTH];
-    for (int i = 0; i < POSEIDON_WIDTH; i++) {
+    const expr inputO[POSEIDON2_WIDTH];
+    const expr outputO[POSEIDON2_WIDTH];
+    for (int i = 0; i < POSEIDON2_WIDTH; i++) {
         inputO[i] = a[i];
         outputO[i] = a[27 + i];
     }
     poseidonInputOrder(inputO, [b0, b1], outputO, POSEIDONSPONGE, POSEIDONCOMPRESSION);
     
-    const expr inputP[POSEIDON_WIDTH];
-    const expr outputP[POSEIDON_WIDTH];
-    for (int i = 0; i < POSEIDON_WIDTH; i++) {
+    const expr inputP[POSEIDON2_WIDTH];
+    const expr outputP[POSEIDON2_WIDTH];
+    for (int i = 0; i < POSEIDON2_WIDTH; i++) {
         inputP[i] = a[i + 27];
         outputP[i] = a[i + 27]';
     }
@@ -74,18 +74,18 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nPoseidonCo
         st0[16 + i] = (2)'a[i + 18];
     }
     
-    const expr inputF_7[POSEIDON_WIDTH];
-    const expr constantsPoseidonF[POSEIDON_WIDTH];
-    const expr outputF[POSEIDON_WIDTH];
-    const expr inputF2_7[POSEIDON_WIDTH];
-    const expr constantsPoseidonF2[POSEIDON_WIDTH];
-    const expr outputF2[POSEIDON_WIDTH];
+    const expr inputF_7[POSEIDON2_WIDTH];
+    const expr constantsPoseidonF[POSEIDON2_WIDTH];
+    const expr outputF[POSEIDON2_WIDTH];
+    const expr inputF2_7[POSEIDON2_WIDTH];
+    const expr constantsPoseidonF2[POSEIDON2_WIDTH];
+    const expr outputF2[POSEIDON2_WIDTH];
     const expr intermediateValues[22];
 
-    for (int i = 0; i < POSEIDON_WIDTH; i++) {
-        constantsPoseidonF[i] = (POSEIDONSPONGE + POSEIDONCOMPRESSION) * POSEIDON_RC[i] + POSEIDON_PARTIAL_ROUND' * POSEIDON_RC[i + 32] + POSEIDON_FINAL' * POSEIDON_RC[i + 86] + POSEIDON_FINAL * POSEIDON_RC[i + 118];
+    for (int i = 0; i < POSEIDON2_WIDTH; i++) {
+        constantsPoseidonF[i] = (POSEIDONSPONGE + POSEIDONCOMPRESSION) * POSEIDON2_RC[i] + POSEIDON_PARTIAL_ROUND' * POSEIDON2_RC[i + 32] + POSEIDON_FINAL' * POSEIDON2_RC[i + 86] + POSEIDON_FINAL * POSEIDON2_RC[i + 118];
 
-        constantsPoseidonF2[i] = (POSEIDONSPONGE + POSEIDONCOMPRESSION) * POSEIDON_RC[i + 16] + POSEIDON_PARTIAL_ROUND' * POSEIDON_RC[i + 48] + POSEIDON_FINAL' * POSEIDON_RC[i + 102] + POSEIDON_FINAL * POSEIDON_RC[i + 134] + POSEIDON_PARTIAL_ROUND * POSEIDON_RC[i + 64];
+        constantsPoseidonF2[i] = (POSEIDONSPONGE + POSEIDONCOMPRESSION) * POSEIDON2_RC[i + 16] + POSEIDON_PARTIAL_ROUND' * POSEIDON2_RC[i + 48] + POSEIDON_FINAL' * POSEIDON2_RC[i + 102] + POSEIDON_FINAL * POSEIDON2_RC[i + 134] + POSEIDON_PARTIAL_ROUND * POSEIDON2_RC[i + 64];
 
         inputF_7[i] = pow7(a[i + 27] + constantsPoseidonF[i]);
         outputF[i] = a[i + 43];
@@ -96,7 +96,7 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nPoseidonCo
     }
 
     for (int i = 0; i < 6; i++) {
-        intermediateValues[16 + i] = pow7((2)'a[i + 18] + POSEIDON_RC[80 + i]);
+        intermediateValues[16 + i] = pow7((2)'a[i + 18] + POSEIDON2_RC[80 + i]);
     }
     
     poseidonFullRound(inputF_7, outputF, POSEIDONSPONGE + POSEIDONCOMPRESSION + POSEIDON_PARTIAL_ROUND' + POSEIDON_FINAL' + POSEIDON_FINAL);

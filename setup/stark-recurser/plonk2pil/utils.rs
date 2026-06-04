@@ -140,6 +140,41 @@ pub fn build_s_polynomials(n_cols: usize, n: usize, n_bits: usize, r: usize, s_m
     sv
 }
 
+/// Compute the permuted initialSt for a Poseidon1_16 gate, mirroring the
+/// `CustPoseidon1_16` input-ordering in circom:
+///   key=(0,0) → initialSt = in
+///   key=(1,0) → in[0..3]↔in[4..7] (swap halves of low 8 cells)
+///   key=(0,1) → in[0..3]→pos 8..11, in[4..7]→pos 0..3, in[8..11]→pos 4..7
+///   key=(1,1) → in[0..3]→pos 12..15, in[4..7]→0..3, in[8..11]→4..7, in[12..15]→8..11
+/// For sponge mode (no key) this is identity.
+pub fn cust_poseidon1_initial_state(input: &[u64], key: Option<&[u64]>) -> Vec<u64> {
+    let mut p = vec![0u64; 16];
+    match key {
+        None => p.copy_from_slice(input),
+        Some(k) => {
+            let (k0, k1) = (k[0], k[1]);
+            if k0 == 0 && k1 == 0 {
+                p.copy_from_slice(input);
+            } else if k0 == 1 && k1 == 0 {
+                p[0..4].copy_from_slice(&input[4..8]);
+                p[4..8].copy_from_slice(&input[0..4]);
+                p[8..16].copy_from_slice(&input[8..16]);
+            } else if k0 == 0 && k1 == 1 {
+                p[0..4].copy_from_slice(&input[4..8]);
+                p[4..8].copy_from_slice(&input[8..12]);
+                p[8..12].copy_from_slice(&input[0..4]);
+                p[12..16].copy_from_slice(&input[12..16]);
+            } else {
+                p[0..4].copy_from_slice(&input[4..8]);
+                p[4..8].copy_from_slice(&input[8..12]);
+                p[8..12].copy_from_slice(&input[12..16]);
+                p[12..16].copy_from_slice(&input[0..4]);
+            }
+        }
+    }
+    p
+}
+
 pub fn build_fixed_pols(airgroup_name: &str, cv: &[Vec<u64>], sv: &[Vec<u64>]) -> Vec<FixedPol> {
     let mut pols = Vec::with_capacity(cv.len() + sv.len());
     for (k, cv_values) in cv.iter().enumerate() {

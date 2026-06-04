@@ -5,7 +5,7 @@
 //! 1. Reads all recursive2 starkInfo/verifierInfo/vks for each airgroup
 //! 2. Generates the final circom via gencircom with the "final" template
 //! 3. Compiles circom to R1CS + C++
-//! 4. Converts R1CS to PIL (plonk2pil with "final_vadcop")
+//! 4. Converts R1CS to PIL
 //! 5. Compiles PIL
 //! 6. Runs starkSetup with specific final settings
 //! 7. Computes constant tree and writes all artifacts
@@ -30,6 +30,7 @@ use crate::output::witness_gen::WitnessTracker;
 /// Configuration for the final setup.
 pub struct FinalSetupConfig<'a> {
     pub build_dir: &'a str,
+    pub hash: &'a str,
     pub global_info: &'a Value,
     pub global_constraints: &'a Value,
 
@@ -156,8 +157,13 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
             ["0".into(), "0".into(), "0".into(), "0".into()]
         };
 
-        let pil2circom_opts =
-            Pil2CircomOptions { skip_main: true, verkey_input: true, enable_input: true, ..Default::default() };
+        let pil2circom_opts = Pil2CircomOptions {
+            skip_main: true,
+            verkey_input: true,
+            enable_input: true,
+            hash: config.hash.to_string(),
+            ..Default::default()
+        };
 
         let verifier_circom = pil2circom(&const_root, si, vi, &pil2circom_opts)
             .context("pil2circom failed generating recursive2 verifier for final setup")?;
@@ -238,9 +244,13 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
     let r1cs_path = build_path.join("vadcop_final.r1cs");
     let r1cs_data = fs::read(&r1cs_path).with_context(|| format!("Failed to read R1CS: {}", r1cs_path.display()))?;
 
-    let plonk_opts = PlonkOptions { airgroup_name: Some("FinalVadcop".to_string()), max_constraint_degree: None };
+    let plonk_opts = PlonkOptions {
+        airgroup_name: Some("FinalVadcop".to_string()),
+        max_constraint_degree: None,
+        hash_id: config.hash.to_string(),
+    };
     let plonk_result: PlonkResult =
-        plonk2pil::plonk2pil(&r1cs_data, "final_vadcop", &plonk_opts).context("plonk2pil failed in final setup")?;
+        plonk2pil::plonk2pil(&r1cs_data, "aggregation", &plonk_opts).context("plonk2pil failed in final setup")?;
 
     // Write fixed pols binary
     let fixed_bin_path = build_path.join("vadcop_final.fixed.bin");
@@ -375,6 +385,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
             &stark_info_loaded,
             &verifier_loaded,
             true,
+            config.hash,
         )?;
 
         // Write const file: pilout inline values are the selector polynomials;

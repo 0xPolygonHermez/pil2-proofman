@@ -3,15 +3,18 @@ pragma custom_templates;
 
 include "cmul.circom";
 include "cinv.circom";
-include "poseidon2.circom";
 include "bitify.circom";
 include "fft.circom";
 include "evalpol.circom";
-include "treeselector4.circom";
-include "pow.circom";
-{% if split_linear_hash %}include "merklehash_gpu.circom";
-{% else %}include "merklehash.circom";
-{% endif %}
+{% if hash == "Poseidon1" %}include "hash/poseidon1/pow.circom";
+include "tree/treeselector8.circom";
+{% if split_linear_hash %}include "hash/poseidon1/merklehash_gpu.circom";
+{% else %}include "hash/poseidon1/merklehash.circom";
+{% endif %}{% else %}include "hash/poseidon2/pow.circom";
+include "tree/treeselector4.circom";
+{% if split_linear_hash %}include "hash/poseidon2/merklehash_gpu.circom";
+{% else %}include "hash/poseidon2/merklehash.circom";
+{% endif %}{% endif %}
 /* 
     Calculate FRI Queries
 */

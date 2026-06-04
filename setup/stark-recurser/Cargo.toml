@@ -8,6 +8,7 @@ path = "lib.rs"
 
 [dependencies]
 fields = { workspace = true, features = ["verify"] }
+proofman-common = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
 indexmap = { version = "2", features = ["serde"] }

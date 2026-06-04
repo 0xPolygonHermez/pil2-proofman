@@ -1,6 +1,3 @@
-use alloc::vec;
-use alloc::vec::Vec;
-
 use crate::PrimeField64;
 use crate::Poseidon2Constants;
 
@@ -132,153 +129,9 @@ pub fn poseidon2_hash<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize>
     state
 }
 
-pub fn linear_hash_seq<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize>(input: &[F]) -> [F; W] {
-    assert!(W > 4);
-    let mut state: [F; W] = [F::ZERO; W];
-    let size = input.len();
-    let mut remaining = size;
-    while remaining > 0 {
-        if remaining != size {
-            for i in 0..4 {
-                state[C::RATE + i] = state[i];
-            }
-        }
-        let n = if remaining < C::RATE { remaining } else { C::RATE };
-        for i in 0..(C::RATE - n) {
-            state[n + i] = F::ZERO;
-        }
-        for i in 0..n {
-            state[i] = input[size - remaining + i];
-        }
-        state = poseidon2_hash::<F, C, W>(&state);
-        remaining -= n;
-    }
-    state
-}
-
-pub fn calculate_root_from_proof<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize>(
-    value: &mut [F; W],
-    mp: &[Vec<F>],
-    idx: &mut u64,
-    offset: u64,
-    arity: u64,
-) {
-    if offset == mp.len() as u64 {
-        return;
-    }
-
-    let curr_idx = *idx % arity;
-    *idx /= arity;
-
-    let mut inputs: [F; W] = [F::ZERO; W];
-    let mut p = 0;
-    for i in 0..arity {
-        if i == curr_idx {
-            continue;
-        }
-        for j in 0..4 {
-            inputs[(i * 4 + j) as usize] = mp[offset as usize][4 * p + j as usize];
-        }
-        p += 1;
-    }
-    for j in 0..4 {
-        inputs[(curr_idx * 4 + j) as usize] = value[j as usize];
-    }
-
-    let outputs = poseidon2_hash::<F, C, W>(&inputs);
-
-    value[..4].copy_from_slice(&outputs[..4]);
-    calculate_root_from_proof::<F, C, W>(value, mp, idx, offset + 1, arity);
-}
-
-pub fn partial_merkle_tree<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize>(
-    input: &[F],
-    num_elements: u64,
-    arity: u64,
-) -> [F; 4] {
-    let mut num_nodes = num_elements;
-    let mut nodes_level = num_elements;
-
-    while nodes_level > 1 {
-        let extra_zeros = (arity - (nodes_level % arity)) % arity;
-        num_nodes += extra_zeros;
-        let next_n = nodes_level.div_ceil(arity);
-        num_nodes += next_n;
-        nodes_level = next_n;
-    }
-
-    let mut cursor = vec![F::ZERO; (num_nodes * C::CAPACITY as u64) as usize];
-    cursor[..(num_elements * C::CAPACITY as u64) as usize]
-        .copy_from_slice(&input[..(num_elements * C::CAPACITY as u64) as usize]);
-
-    let mut pending = num_elements;
-    let mut next_n = pending.div_ceil(arity);
-    let mut next_index = 0;
-
-    while pending > 1 {
-        let extra_zeros = (arity - (pending % arity)) % arity;
-
-        if extra_zeros > 0 {
-            let start = (next_index + pending * C::CAPACITY as u64) as usize;
-            let end = start + (extra_zeros * C::CAPACITY as u64) as usize;
-            cursor[start..end].fill(F::ZERO);
-        }
-
-        for i in 0..next_n {
-            let mut pol_input: [F; W] = [F::ZERO; W];
-
-            let child_start = (next_index + i * C::SPONGE_WIDTH as u64) as usize;
-            pol_input[..C::SPONGE_WIDTH].copy_from_slice(&cursor[child_start..child_start + C::SPONGE_WIDTH]);
-
-            // Compute hash
-            let parent_start = (next_index + (pending + extra_zeros + i) * C::CAPACITY as u64) as usize;
-            let parent_hash = poseidon2_hash::<F, C, W>(&pol_input);
-            cursor[parent_start..parent_start + C::CAPACITY].copy_from_slice(&parent_hash[..C::CAPACITY]);
-        }
-
-        next_index += (pending + extra_zeros) * C::CAPACITY as u64;
-        pending = pending.div_ceil(arity);
-        next_n = pending.div_ceil(arity);
-    }
-
-    let mut root = [F::ZERO; 4];
-    root.copy_from_slice(&cursor[next_index as usize..next_index as usize + 4]);
-    root
-}
-
-pub fn verify_mt<F: PrimeField64, C: Poseidon2Constants<W>, const W: usize>(
-    root: &[F],
-    last_level: &[F],
-    mp: &[Vec<F>],
-    idx: u64,
-    v: &[F],
-    arity: u64,
-    last_level_verification: u64,
-) -> bool {
-    let mut value = linear_hash_seq::<F, C, W>(v);
-
-    let mut query_idx = idx;
-    calculate_root_from_proof::<F, C, W>(&mut value, mp, &mut query_idx, 0, arity);
-
-    if last_level_verification == 0 {
-        for i in 0..4 {
-            if value[i] != root[i] {
-                return false;
-            }
-        }
-    } else {
-        for i in 0..4 {
-            if value[i] != last_level[query_idx as usize * 4 + i] {
-                return false;
-            }
-        }
-    }
-    true
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::{Goldilocks, Poseidon16, Poseidon12, Poseidon4, Poseidon8};
+    use crate::{Goldilocks, Poseidon2_16, Poseidon2_12, Poseidon2_4, Poseidon2_8};
 
     #[allow(unused_imports)]
     use super::*;
@@ -303,7 +156,7 @@ mod tests {
             Goldilocks::new(14),
             Goldilocks::new(15),
         ];
-        let output = poseidon2_hash::<Goldilocks, Poseidon16, 16>(&input);
+        let output = poseidon2_hash::<Goldilocks, Poseidon2_16, 16>(&input);
 
         assert_eq!(output[0], Goldilocks::new(9639188652563994454));
         assert_eq!(output[1], Goldilocks::new(12273372933164734616));
@@ -326,7 +179,7 @@ mod tests {
     #[test]
     pub fn test_poseidon2_4() {
         let input = [Goldilocks::new(0), Goldilocks::new(1), Goldilocks::new(2), Goldilocks::new(3)];
-        let output = poseidon2_hash::<Goldilocks, Poseidon4, 4>(&input);
+        let output = poseidon2_hash::<Goldilocks, Poseidon2_4, 4>(&input);
 
         assert_eq!(output[0], Goldilocks::new(8466914293353944746));
         assert_eq!(output[1], Goldilocks::new(9589318970755021278));
@@ -346,7 +199,7 @@ mod tests {
             Goldilocks::new(6),
             Goldilocks::new(7),
         ];
-        let output = poseidon2_hash::<Goldilocks, Poseidon8, 8>(&input);
+        let output = poseidon2_hash::<Goldilocks, Poseidon2_8, 8>(&input);
 
         assert_eq!(output[0], Goldilocks::new(14266028122062624699));
         assert_eq!(output[1], Goldilocks::new(5353147180106052723));
@@ -374,7 +227,7 @@ mod tests {
             Goldilocks::new(10),
             Goldilocks::new(11),
         ];
-        let output = poseidon2_hash::<Goldilocks, Poseidon12, 12>(&input);
+        let output = poseidon2_hash::<Goldilocks, Poseidon2_12, 12>(&input);
 
         assert_eq!(output[0], Goldilocks::new(138186169299091649));
         assert_eq!(output[1], Goldilocks::new(2237493815125627916));

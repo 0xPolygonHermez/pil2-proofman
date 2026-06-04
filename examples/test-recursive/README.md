@@ -14,7 +14,7 @@ After compiling the PIL files, generate the setup:
 
 ```bash
 cargo run --bin proofman-setup -- setup-recursive-test \
-     -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test
+     -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t aggregation
 ```
 
 To run the aggregated proof, need to add `-t aggregation` to the previous command
@@ -53,7 +53,7 @@ Finally, generate the proof using the following command:
 ```bash
 export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi) \
 && cargo run --bin proofman-setup -- setup-recursive-test \
-     -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test \
+     -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t aggregation \
 && cargo build --workspace \
 && cargo run --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libtest_recursive${PIL2_PROOFMAN_EXT} \

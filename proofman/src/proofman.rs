@@ -1,6 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use libloading::{Library, Symbol};
-use fields::{ExtensionField, Transcript, PrimeField64, GoldilocksQuinticExtension, Poseidon16};
+use fields::{new_transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64};
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
     PolMap, RowInfo, DebugInfo, MemoryHandler, MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof, ProofCtx,
@@ -14,7 +14,7 @@ use proofman_starks_lib_c::{
     get_instances_ready_c, free_device_buffers_c, use_packed_trace_c,
 };
 use crate::add_publics_circom;
-use proofman_verifier::{verify_recursive2, verify_vadcop_final, verify_vadcop_final_compressed};
+use proofman_verifier::verifier;
 use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::collections::HashMap;
@@ -1160,7 +1160,7 @@ where
 
         self.exec()?;
 
-        let mut transcript: Transcript<F, Poseidon16, 16> = Transcript::new();
+        let mut transcript = new_transcript::<F>(&self.pctx.global_info.hash);
         let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
         transcript.put(&dummy_element);
 
@@ -1304,7 +1304,7 @@ where
 
         let _ = self.exec()?;
 
-        let mut transcript: Transcript<F, Poseidon16, 16> = Transcript::new();
+        let mut transcript = new_transcript::<F>(&self.pctx.global_info.hash);
         let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
         transcript.put(&dummy_element);
 
@@ -2850,9 +2850,11 @@ where
                         false => self.setups.setup_vadcop_final.as_ref().unwrap().get_vk(),
                     };
 
+                    let v = verifier(&self.pctx.global_info.hash);
+                    let proof = vadcop_final_proof.as_ref().unwrap();
                     let valid_proofs = match options.compressed {
-                        true => verify_vadcop_final_compressed(vadcop_final_proof.as_ref().unwrap(), &vk),
-                        false => verify_vadcop_final(vadcop_final_proof.as_ref().unwrap(), &vk),
+                        true => v.verify_vadcop_final_compressed(proof, &vk),
+                        false => v.verify_vadcop_final(proof, &vk),
                     };
                     timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
                     if !valid_proofs {
@@ -2976,6 +2978,8 @@ where
                 ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e))
             })?;
 
+            let v = verifier(&self.pctx.global_info.hash);
+
             // Select the verkey by the proof's circuit_type, mirroring the recursive2 circuit's
             // SelectVerificationKeyNull (0 = null, 1 = aggregated/recursive2, k >= 2 = recursive1 of air k-2).
             // A worker with a single alive instance (e.g. only Rom, circuit_type 15) sends an un-aggregated
@@ -2985,7 +2989,7 @@ where
             let circuit_type = publics[0];
             let valid_recursive_proof = match circuit_type {
                 0 => true,
-                1 => verify_recursive2(&vadcop_proof, &setup.get_vk()),
+                1 => v.verify_recursive2(&vadcop_proof, &setup.get_vk()),
                 _ => {
                     let air_id = circuit_type as usize - 2;
                     let vk = self
@@ -2995,7 +2999,7 @@ where
                         .unwrap()
                         .get_setup(proof.airgroup_id as usize, air_id)?
                         .get_vk();
-                    verify_recursive2(&vadcop_proof, &vk)
+                    v.verify_recursive2(&vadcop_proof, &vk)
                 }
             };
 
