@@ -141,16 +141,11 @@ struct RebuildWitnessArgs {
     #[arg(short = 'p', long = "proving-key")]
     proving_key: String,
 
-    /// Optional build directory for intermediate `.circom`/`.cpp` files.
-    /// Defaults to a tempdir that is removed when the command finishes.
-    #[arg(short = 'b', long = "build-dir")]
-    build_dir: Option<String>,
-
-    /// Number of circom compiles to run in parallel (default 1 = serial).
-    /// Each circom invocation is single-threaded but RAM-hungry; size by
-    /// available memory rather than CPU count.
-    #[arg(short = 'j', long = "jobs", default_value_t = 1, env = "REBUILD_JOBS")]
-    jobs: usize,
+    /// Max number of witness libraries to compile concurrently. Each `make`
+    /// build is g++-bound and uses ~1–2 GB RAM; defaults to the number of
+    /// available CPUs. Lower it on memory-constrained machines.
+    #[arg(short = 'j', long = "jobs", env = "REBUILD_JOBS")]
+    jobs: Option<usize>,
 }
 
 #[derive(Parser)]
@@ -297,12 +292,9 @@ fn main() -> anyhow::Result<()> {
         Commands::RebuildWitnessLibs(args) => {
             tracing::info!("proofman-setup rebuild-witness-libs: starting");
             tracing::info!("  proving_key: {}", args.proving_key);
-            if let Some(ref s) = args.build_dir {
-                tracing::info!("  build_dir: {}", s);
-            }
-            tracing::info!("  jobs: {}", args.jobs);
-            let opts =
-                RebuildWitnessOptions { proving_key: args.proving_key, build_dir: args.build_dir, jobs: args.jobs };
+            let jobs = args.jobs.unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
+            tracing::info!("  jobs: {} (override with --jobs or REBUILD_JOBS env)", jobs);
+            let opts = RebuildWitnessOptions { proving_key: args.proving_key, jobs };
             rebuild_witness_cmd::run_rebuild_witness(&opts)
         }
 

@@ -78,20 +78,48 @@ impl WitnessTracker {
         running.fetch_add(1, Ordering::Relaxed);
 
         let handle = std::thread::spawn(move || {
-            let result = generate_witness_library(
-                &build_dir,
-                &files_dir,
-                &name_filename,
-                &template,
-                &circom_helpers_dir,
-                goldilocks_src_dir.as_deref(),
-            );
+            let result = (|| -> Result<()> {
+                let cpp_source = persist_witness_source(&build_dir, &name_filename, &files_dir, &template)?;
+                generate_witness_library(
+                    &cpp_source,
+                    &files_dir,
+                    &template,
+                    &circom_helpers_dir,
+                    goldilocks_src_dir.as_deref(),
+                )
+            })();
             running.fetch_sub(1, Ordering::Relaxed);
             result
         });
 
         let mut pending = self.pending.lock().unwrap();
         pending.push(handle);
+    }
+
+    /// Synchronously build a witness library from a `.cpp` already stored in the
+    /// proving key (`{files_dir}/{template}.cpp`). Used by the rebuild command,
+    /// which never runs circom. Errors if the stored `.cpp` is missing.
+    pub fn build_witness_library_from_stored(
+        &self,
+        files_dir: &str,
+        template: &str,
+        circom_helpers_dir: &str,
+    ) -> Result<()> {
+        let cpp_source = stored_witness_source(files_dir, template);
+        if !cpp_source.exists() {
+            bail!(
+                "Stored witness source not found: {} — the rebuild command requires a proving key \
+                 whose setup persisted the .cpp. Re-run `proofman-setup setup`.",
+                cpp_source.display()
+            );
+        }
+        generate_witness_library(
+            &cpp_source,
+            files_dir,
+            template,
+            circom_helpers_dir,
+            self.goldilocks_src_dir.as_deref(),
+        )
     }
 
     /// Wait for all pending witness library builds to complete.
@@ -126,12 +154,35 @@ impl WitnessTracker {
     }
 }
 
+/// Path to the circom-generated C++ inside the build directory:
+/// `{build_dir}/build/{name_filename}_cpp/{name_filename}.cpp`.
+fn build_witness_source(build_dir: &str, name_filename: &str) -> PathBuf {
+    PathBuf::from(build_dir).join("build").join(format!("{name_filename}_cpp")).join(format!("{name_filename}.cpp"))
+}
+
+/// Path to the witness C++ persisted inside the proving key:
+/// `{files_dir}/{template}.cpp`.
+fn stored_witness_source(files_dir: &str, template: &str) -> PathBuf {
+    PathBuf::from(files_dir).join(format!("{template}.cpp"))
+}
+
+/// Copy the circom-generated C++ from the build dir into the proving key
+/// (`{files_dir}/{template}.cpp`) so the witness lib can be recompiled later
+/// without re-running circom. Returns the persisted path.
+fn persist_witness_source(build_dir: &str, name_filename: &str, files_dir: &str, template: &str) -> Result<PathBuf> {
+    let src = build_witness_source(build_dir, name_filename);
+    let dst = stored_witness_source(files_dir, template);
+    fs::create_dir_all(files_dir).with_context(|| format!("Failed to create proving key dir {files_dir}"))?;
+    fs::copy(&src, &dst)
+        .with_context(|| format!("Failed to persist witness source {} -> {}", src.display(), dst.display()))?;
+    Ok(dst)
+}
+
 /// Generate a witness shared library by copying helper files to a temp
-/// directory, overlaying the generated verifier.cpp, and running make.
+/// directory, overlaying the given C++ source as `verifier.cpp`, and running make.
 fn generate_witness_library(
-    build_dir: &str,
+    cpp_source: &Path,
     files_dir: &str,
-    name_filename: &str,
     template: &str,
     circom_helpers_dir: &str,
     goldilocks_src_dir: Option<&str>,
@@ -155,25 +206,20 @@ fn generate_witness_library(
         copy_dir_contents(Path::new(circom_helpers_dir), tmp_path)?;
     }
 
-    // Copy generated C++ file
-    let cpp_src = PathBuf::from(build_dir)
-        .join("build")
-        .join(format!("{}_cpp", name_filename))
-        .join(format!("{}.cpp", name_filename));
-    let cpp_dst = tmp_path.join("verifier.cpp");
-    if cpp_src.exists() {
-        fs::copy(&cpp_src, &cpp_dst)
-            .with_context(|| format!("Failed to copy {} to {}", cpp_src.display(), cpp_dst.display()))?;
-    } else {
-        tracing::warn!("C++ source file not found: {}, witness lib may fail", cpp_src.display());
+    // Copy the provided C++ source into the temp build dir as verifier.cpp.
+    if !cpp_source.exists() {
+        bail!("C++ witness source not found: {} — cannot build witness library", cpp_source.display());
     }
+    let cpp_dst = tmp_path.join("verifier.cpp");
+    fs::copy(cpp_source, &cpp_dst)
+        .with_context(|| format!("Failed to copy {} to {}", cpp_source.display(), cpp_dst.display()))?;
 
     // Ensure output directory exists
     fs::create_dir_all(files_dir)?;
 
     let file_extension = if cfg!(target_os = "macos") { "dylib" } else { "so" };
 
-    tracing::info!("Generating witness library for {}...", name_filename);
+    tracing::info!("Generating witness library for {} in {}...", template, files_dir);
 
     let output = Command::new("make")
         .args([
@@ -211,15 +257,16 @@ fn generate_witness_library(
             .collect::<Vec<_>>()
             .join("\n");
         bail!(
-            "make failed for witness library '{}' (logs: {}, {})\n{}",
-            name_filename,
+            "make failed for witness library '{}' in {} (logs: {}, {})\n{}",
+            template,
+            files_dir,
             log_path.display(),
             err_path.display(),
             combined
         );
     }
 
-    tracing::info!("Witness library for {} generated", name_filename);
+    tracing::info!("Witness library for {} in {} generated", template, files_dir);
     Ok(())
 }
 
@@ -255,5 +302,49 @@ mod tests {
         let tracker = WitnessTracker::new();
         // Awaiting with no pending tasks should succeed immediately
         assert!(tracker.await_all().is_ok());
+    }
+
+    #[test]
+    fn test_witness_source_paths() {
+        let b = build_witness_source("/tmp/out", "Air0_recursive1");
+        assert!(b.ends_with("build/Air0_recursive1_cpp/Air0_recursive1.cpp"));
+
+        let s = stored_witness_source("/pk/AgA/airs/Air0/recursive1", "recursive1");
+        assert_eq!(s, std::path::PathBuf::from("/pk/AgA/airs/Air0/recursive1/recursive1.cpp"));
+    }
+
+    #[test]
+    fn test_build_from_stored_errors_when_cpp_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tracker = WitnessTracker::new();
+        let err = tracker
+            .build_witness_library_from_stored(tmp.path().to_str().unwrap(), "recursive1", "setup/circom")
+            .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("recursive1.cpp"), "unexpected error: {msg}");
+        assert!(msg.contains("Re-run"), "error should tell the user to re-run setup: {msg}");
+    }
+
+    #[test]
+    fn test_persist_witness_source_copies_into_proving_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let build_dir = tmp.path().join("out");
+        let files_dir = tmp.path().join("pk").join("recursive1");
+
+        // Fake circom output at {build_dir}/build/Air0_recursive1_cpp/Air0_recursive1.cpp
+        let src = build_witness_source(build_dir.to_str().unwrap(), "Air0_recursive1");
+        fs::create_dir_all(src.parent().unwrap()).unwrap();
+        fs::write(&src, b"// generated witness\n").unwrap();
+
+        let stored = persist_witness_source(
+            build_dir.to_str().unwrap(),
+            "Air0_recursive1",
+            files_dir.to_str().unwrap(),
+            "recursive1",
+        )
+        .unwrap();
+
+        assert_eq!(stored, files_dir.join("recursive1.cpp"));
+        assert_eq!(fs::read_to_string(&stored).unwrap(), "// generated witness\n");
     }
 }
