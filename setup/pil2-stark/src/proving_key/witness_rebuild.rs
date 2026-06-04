@@ -164,6 +164,97 @@ pub fn rebuild_all_witness_libs(
     Ok(libs.len())
 }
 
+/// A snark witness library to rebuild: its directory, template name, and the
+/// circom helpers dir its `make` build needs (the two snark libs use *different*
+/// helpers — see [`rebuild_snark_witness_libs`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnarkWitnessLib {
+    pub files_dir: PathBuf,
+    pub template: String,
+    pub helpers_dir: String,
+}
+
+/// Discover the snark witness libraries under a `provingKeySnark/` tree.
+///
+/// The snark part (built by `setup-snark`) holds two witness libraries that the
+/// regular [`discover_witness_libs`] walk deliberately skips, because each needs
+/// a *different* circom helpers dir:
+/// - `recursivef/` — the GL→BN128 bridge, built with the goldilocks helpers
+///   (`gl_helpers_dir`, i.e. `setup/circom`).
+/// - `final/` — the BN128 fflonk/plonk circuit, built with the dedicated
+///   `final_snark_circom` helpers (`final_helpers_dir`) which also require
+///   `fr.cpp`/`fr.asm` (nasm).
+///
+/// Classification reuses [`classify_lib`]: a dir with a stored `{template}.cpp`
+/// is rebuildable; a `.so`/`.dylib` without its `.cpp` errors (predates `.cpp`
+/// persistence); neither present → skipped. So a `provingKeySnark/` built
+/// without the `final` step (recursivef-only) yields just `recursivef`.
+pub fn discover_snark_witness_libs(
+    proving_key_snark: &Path,
+    gl_helpers_dir: &str,
+    final_helpers_dir: &str,
+) -> Result<Vec<SnarkWitnessLib>> {
+    if !proving_key_snark.is_dir() {
+        bail!("provingKeySnark directory not found at {}", proving_key_snark.display());
+    }
+
+    let mut libs = Vec::new();
+    for (subdir, template, helpers_dir) in [
+        ("recursivef", "recursivef", gl_helpers_dir),
+        ("final", "final", final_helpers_dir),
+    ] {
+        if let Some(lib) = classify_lib(&proving_key_snark.join(subdir), template)? {
+            libs.push(SnarkWitnessLib {
+                files_dir: lib.files_dir,
+                template: lib.template,
+                helpers_dir: helpers_dir.to_string(),
+            });
+        }
+    }
+    Ok(libs)
+}
+
+/// Rebuild the snark witness libraries under `proving_key_snark` by recompiling
+/// each stored `.cpp` with `make`, using the per-lib helpers dir. `jobs` bounds
+/// concurrent `make` builds. Returns the number rebuilt.
+pub fn rebuild_snark_witness_libs(
+    proving_key_snark: &str,
+    gl_helpers_dir: &str,
+    final_helpers_dir: &str,
+    witness_tracker: &WitnessTracker,
+    jobs: usize,
+) -> Result<usize> {
+    let libs = discover_snark_witness_libs(Path::new(proving_key_snark), gl_helpers_dir, final_helpers_dir)?;
+    if libs.is_empty() {
+        tracing::warn!("No snark witness libraries with a stored .cpp found under {}", proving_key_snark);
+        return Ok(0);
+    }
+
+    tracing::info!("Discovered {} snark witness library(ies) to rebuild:", libs.len());
+    for (i, lib) in libs.iter().enumerate() {
+        tracing::info!("  [{}/{}] {} ({})", i + 1, libs.len(), lib.template, lib.files_dir.display());
+    }
+
+    let n_jobs = jobs.max(1);
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(n_jobs)
+        .build()
+        .context("Failed to build snark rebuild thread pool")?;
+
+    pool.install(|| {
+        libs.par_iter().try_for_each(|lib| -> Result<()> {
+            tracing::info!("Rebuilding {} in {}", lib.template, lib.files_dir.display());
+            witness_tracker.build_witness_library_from_stored(
+                lib.files_dir.to_str().unwrap_or(""),
+                &lib.template,
+                &lib.helpers_dir,
+            )
+        })
+    })?;
+
+    Ok(libs.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,5 +350,61 @@ mod tests {
         let err = discover_witness_libs(&pk).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("recursive1.cpp"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn snark_discovers_recursivef_and_final_with_their_helpers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pks = tmp.path().join("provingKeySnark");
+        for (sub, file) in [("recursivef", "recursivef.cpp"), ("final", "final.cpp")] {
+            let d = pks.join(sub);
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join(file), b"// witness\n").unwrap();
+        }
+
+        let libs = discover_snark_witness_libs(&pks, "setup/circom", "setup/final_snark_circom").unwrap();
+        // recursivef uses the goldilocks helpers; final uses the BN128 helpers.
+        assert_eq!(
+            libs,
+            vec![
+                SnarkWitnessLib {
+                    files_dir: pks.join("recursivef"),
+                    template: "recursivef".to_string(),
+                    helpers_dir: "setup/circom".to_string(),
+                },
+                SnarkWitnessLib {
+                    files_dir: pks.join("final"),
+                    template: "final".to_string(),
+                    helpers_dir: "setup/final_snark_circom".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn snark_recursivef_only_when_final_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pks = tmp.path().join("provingKeySnark");
+        let d = pks.join("recursivef");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("recursivef.cpp"), b"// witness\n").unwrap();
+
+        let libs = discover_snark_witness_libs(&pks, "setup/circom", "setup/final_snark_circom").unwrap();
+        let templates: Vec<&str> = libs.iter().map(|l| l.template.as_str()).collect();
+        assert_eq!(templates, vec!["recursivef"]);
+    }
+
+    #[test]
+    fn snark_orphan_so_without_cpp_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pks = tmp.path().join("provingKeySnark");
+        let d = pks.join("final");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("final.so"), b"\x7fELF").unwrap();
+
+        let err = discover_snark_witness_libs(&pks, "setup/circom", "setup/final_snark_circom").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("final.cpp"), "unexpected error: {msg}");
+        assert!(msg.contains("Re-run"), "error should ask to re-run setup: {msg}");
     }
 }
