@@ -35,7 +35,7 @@ public:
     static void initConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
 
     static void permute(uint64_t *output, const uint64_t *input, cudaStream_t stream = 0);
-    static void compress(uint64_t *output, const uint64_t *input, cudaStream_t stream = 0);
+    static void permuteTrunc(uint64_t *output, const uint64_t *input, cudaStream_t stream = 0);
 
     static void linearHash(uint64_t *d_hash_output, uint64_t *d_trace,
                            uint64_t num_cols, uint64_t num_rows,
@@ -312,7 +312,7 @@ template<uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void permuteKernel_pos1(uint64_t *output, const uint64_t *input);
 
 template<uint32_t W, uint32_t HALF_F, uint32_t N_PART, uint32_t CAPACITY_T>
-__global__ void compressKernel_pos1(uint64_t *output, const uint64_t *input);
+__global__ void permuteTruncKernel_pos1(uint64_t *output, const uint64_t *input);
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void linearHashKernel_pos1(uint64_t *__restrict__ output,

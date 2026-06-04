@@ -9,7 +9,7 @@
 const __m256i zero = _mm256_setzero_si256();
 
 template<uint32_t SPONGE_WIDTH_T>
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::compress_avx(Goldilocks::Element (&state)[CAPACITY], Goldilocks::Element const (&input)[SPONGE_WIDTH])
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::permuteTrunc_avx(Goldilocks::Element (&state)[CAPACITY], Goldilocks::Element const (&input)[SPONGE_WIDTH])
 {
     Goldilocks::Element aux[SPONGE_WIDTH];
     permute_avx(aux, input);
@@ -17,7 +17,7 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::compress_avx(Goldilocks::Elemen
 }
 
 template<uint32_t SPONGE_WIDTH_T>
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::compress_batch_avx(Goldilocks::Element (&state)[4 * CAPACITY], Goldilocks::Element const (&input)[4 * SPONGE_WIDTH])
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::permuteTrunc_batch_avx(Goldilocks::Element (&state)[4 * CAPACITY], Goldilocks::Element const (&input)[4 * SPONGE_WIDTH])
 {
     Goldilocks::Element aux[4 * SPONGE_WIDTH];
     permute_batch_avx(aux, input);

@@ -92,9 +92,9 @@ __global__ void permuteKernel_pos1(uint64_t *output, const uint64_t *input)
         output[i] = state[i];
 }
 
-// Single-element compress — first CAPACITY out of permute.
+// Single-element permuteTrunc — first CAPACITY out of permute.
 template<uint32_t W, uint32_t HALF_F, uint32_t N_PART, uint32_t CAPACITY_T>
-__global__ void compressKernel_pos1(uint64_t *output, const uint64_t *input)
+__global__ void permuteTruncKernel_pos1(uint64_t *output, const uint64_t *input)
 {
     assert(blockDim.x == 1 && gridDim.x == 1);
 
@@ -244,7 +244,7 @@ __global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
 }
 
 // Shared-memory merkle reduction kernel: reads arity*CAPACITY child digests
-// per parent, zero-pads to SPONGE_WIDTH, compresses.
+// per parent, zero-pads to SPONGE_WIDTH, permuteTrunces.
 // Launched with dynamic shared mem = blockDim.x * W * sizeof(uint64_t).
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void merkleNodeKernel_pos1(uint64_t nextN, uint64_t nextIndex,
@@ -405,7 +405,7 @@ void PoseidonGoldilocksGPU<W>::initConstants(uint32_t *gpu_ids, uint32_t num_gpu
 }
 
 // ---------------------------------------------------------------------------
-// Public API: permute / compress — <<<1, 1>>>, no shared mem.
+// Public API: permute / permuteTrunc — <<<1, 1>>>, no shared mem.
 // ---------------------------------------------------------------------------
 template<uint32_t W>
 void PoseidonGoldilocksGPU<W>::permute(uint64_t *output, const uint64_t *input, cudaStream_t stream)
@@ -416,9 +416,9 @@ void PoseidonGoldilocksGPU<W>::permute(uint64_t *output, const uint64_t *input, 
 }
 
 template<uint32_t W>
-void PoseidonGoldilocksGPU<W>::compress(uint64_t *output, const uint64_t *input, cudaStream_t stream)
+void PoseidonGoldilocksGPU<W>::permuteTrunc(uint64_t *output, const uint64_t *input, cudaStream_t stream)
 {
-    compressKernel_pos1<SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS, CAPACITY>
+    permuteTruncKernel_pos1<SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS, CAPACITY>
         <<<1, 1, 0, stream>>>(output, input);
     CHECKCUDAERR(cudaGetLastError());
 }
@@ -465,7 +465,7 @@ void PoseidonGoldilocksGPU<W>::merkletree(uint32_t arity, uint64_t *d_tree, uint
                                           uint64_t num_cols, uint64_t num_rows,
                                           Layout layout, cudaStream_t stream)
 {
-    // arity*CAPACITY children must fit in SPONGE_WIDTH (the compress input).
+    // arity*CAPACITY children must fit in SPONGE_WIDTH (the permuteTrunc input).
     assert(arity * 4 <= W &&
            "PoseidonGoldilocksGPU::merkletree: arity*CAPACITY exceeds SPONGE_WIDTH");
     if (num_rows == 0) return;
@@ -634,7 +634,7 @@ template void PoseidonGoldilocksGPU<8>::permute(uint64_t*, const uint64_t*, cuda
 template void PoseidonGoldilocksGPU<16>::initConstants(uint32_t*, uint32_t);
 template void PoseidonGoldilocksGPU<16>::permute(uint64_t*, const uint64_t*, cudaStream_t);
 template void PoseidonGoldilocksGPU<16>::merkletree(uint32_t, uint64_t*, uint64_t*, uint64_t, uint64_t, Layout, cudaStream_t);
-template void PoseidonGoldilocksGPU<16>::compress(uint64_t*, const uint64_t*, cudaStream_t);
+template void PoseidonGoldilocksGPU<16>::permuteTrunc(uint64_t*, const uint64_t*, cudaStream_t);
 template void PoseidonGoldilocksGPU<16>::merkletreeReduce(uint64_t*, uint64_t*, uint64_t, uint64_t, cudaStream_t);
 template void PoseidonGoldilocksGPU<16>::grinding(uint64_t*, uint64_t*, const uint64_t*, uint32_t, cudaStream_t);
 

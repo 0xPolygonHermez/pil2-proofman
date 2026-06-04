@@ -35,7 +35,7 @@ public:
 
     void static permute(uint64_t * output, const uint64_t * input, cudaStream_t stream = 0);
 
-    void static compress(uint64_t * output, const uint64_t * input, cudaStream_t stream = 0);
+    void static permuteTrunc(uint64_t * output, const uint64_t * input, cudaStream_t stream = 0);
 
     void static linearHash(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, Layout layout, cudaStream_t stream);
 
@@ -430,7 +430,7 @@ __device__ __forceinline__ void spongeAbsorbTiled(const uint64_t *__restrict__ i
 
 // --- Kernel definitions ---
 
-// permuteKernel / compressKernel: single-element permutation on contiguous state.
+// permuteKernel / permuteTruncKernel: single-element permutation on contiguous state.
 // MUST be launched with <<<1, 1>>> 
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
@@ -444,7 +444,7 @@ __global__ void permuteKernel(uint64_t * output, const uint64_t * input){
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__global__ void compressKernel(uint64_t * output, const uint64_t * input){
+__global__ void permuteTruncKernel(uint64_t * output, const uint64_t * input){
     assert(blockDim.x == 1 && gridDim.x == 1);
     for (uint32_t i = 0; i < SPONGE_WIDTH_T; i++)
         scratchpad[i] = input[i];

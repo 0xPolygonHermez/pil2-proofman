@@ -249,7 +249,7 @@ void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::
                 std::memcpy(&inputs[i*nFieldElements], &mp[offset][nFieldElements * (p++)], nFieldElements * sizeof(Goldilocks::Element));
             }
             std::memcpy(&inputs[currIdx*nFieldElements], value, nFieldElements * sizeof(Goldilocks::Element));
-            PoseidonGoldilocks<12>::compress(value, inputs, PoseidonMode::Scalar);
+            PoseidonGoldilocks<12>::permuteTrunc(value, inputs, PoseidonMode::Scalar);
             break;
         }
         case 3: {
@@ -263,7 +263,7 @@ void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::
                 std::memcpy(&inputs[i*nFieldElements], &mp[offset][nFieldElements * (p++)], nFieldElements * sizeof(Goldilocks::Element));
             }
             std::memcpy(&inputs[currIdx*nFieldElements], value, nFieldElements * sizeof(Goldilocks::Element));
-            PoseidonGoldilocks<16>::compress(value, inputs, PoseidonMode::Scalar);
+            PoseidonGoldilocks<16>::permuteTrunc(value, inputs, PoseidonMode::Scalar);
             break;
         }
         default:
@@ -284,7 +284,7 @@ void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::
                 std::memcpy(&inputs[i*nFieldElements], &mp[offset][nFieldElements * (p++)], nFieldElements * sizeof(Goldilocks::Element));
             }
             std::memcpy(&inputs[currIdx*nFieldElements], value, nFieldElements * sizeof(Goldilocks::Element));
-            Poseidon2Goldilocks<8>::compress(value, inputs, Poseidon2Mode::Scalar);
+            Poseidon2Goldilocks<8>::permuteTrunc(value, inputs, Poseidon2Mode::Scalar);
             break;
         }
         case 3: {
@@ -298,7 +298,7 @@ void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::
                 std::memcpy(&inputs[i*nFieldElements], &mp[offset][nFieldElements * (p++)], nFieldElements * sizeof(Goldilocks::Element));
             }
             std::memcpy(&inputs[currIdx*nFieldElements], value, nFieldElements * sizeof(Goldilocks::Element));
-            Poseidon2Goldilocks<12>::compress(value, inputs, Poseidon2Mode::Scalar);
+            Poseidon2Goldilocks<12>::permuteTrunc(value, inputs, Poseidon2Mode::Scalar);
             break;
         }
         case 4: {
@@ -312,7 +312,7 @@ void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::
                 std::memcpy(&inputs[i*nFieldElements], &mp[offset][nFieldElements * (p++)], nFieldElements * sizeof(Goldilocks::Element));
             }
             std::memcpy(&inputs[currIdx*nFieldElements], value, nFieldElements * sizeof(Goldilocks::Element));
-            Poseidon2Goldilocks<16>::compress(value, inputs, Poseidon2Mode::Scalar);
+            Poseidon2Goldilocks<16>::permuteTrunc(value, inputs, Poseidon2Mode::Scalar);
             break;
         }
         default:

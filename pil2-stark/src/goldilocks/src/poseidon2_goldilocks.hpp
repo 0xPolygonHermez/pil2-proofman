@@ -53,7 +53,7 @@ public:
                         const Goldilocks::Element (&input)[SPONGE_WIDTH],
                         Poseidon2Mode mode);
     
-    static void compress(Goldilocks::Element (&state)[CAPACITY],
+    static void permuteTrunc(Goldilocks::Element (&state)[CAPACITY],
                      const Goldilocks::Element (&input)[SPONGE_WIDTH],
                      Poseidon2Mode mode);
     
@@ -103,7 +103,7 @@ private:
     // Scalar:
     static void permute_seq(Goldilocks::Element (&state)[SPONGE_WIDTH],
                             const Goldilocks::Element (&input)[SPONGE_WIDTH]);
-    static void compress_seq(Goldilocks::Element (&state)[CAPACITY],
+    static void permuteTrunc_seq(Goldilocks::Element (&state)[CAPACITY],
                          const Goldilocks::Element (&input)[SPONGE_WIDTH]);
     static void linear_hash_seq(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
     static void merkletree_seq(Goldilocks::Element *tree, Goldilocks::Element *input,
@@ -114,7 +114,7 @@ private:
     // AVX2 single-sponge:
     static void permute_avx(Goldilocks::Element (&state)[SPONGE_WIDTH],
                             const Goldilocks::Element (&input)[SPONGE_WIDTH]);
-    static void compress_avx(Goldilocks::Element (&state)[CAPACITY],
+    static void permuteTrunc_avx(Goldilocks::Element (&state)[CAPACITY],
                          const Goldilocks::Element (&input)[SPONGE_WIDTH]);
     static void linear_hash_avx(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
     static void merkletree_avx(Goldilocks::Element *tree, Goldilocks::Element *input,
@@ -122,7 +122,7 @@ private:
                                int num_threads = 0, uint64_t dim = 1);
     // AVX2 4-lane batch (internal building blocks of merkletree_batch_avx):
     static void permute_batch_avx(Goldilocks::Element *, const Goldilocks::Element *);
-    static void compress_batch_avx(Goldilocks::Element (&state)[4 * CAPACITY],
+    static void permuteTrunc_batch_avx(Goldilocks::Element (&state)[4 * CAPACITY],
                                const Goldilocks::Element (&input)[4 * SPONGE_WIDTH]);
     static void linear_hash_batch_avx(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
     static void merkletree_batch_avx(Goldilocks::Element *tree, Goldilocks::Element *input,
@@ -133,7 +133,7 @@ private:
     // AVX512 8-lane batch (single-sponge AVX512 is intentionally not
     // implemented — see Poseidon2Mode enum comment).
     static void permute_batch_avx512(Goldilocks::Element *, const Goldilocks::Element *);
-    static void compress_batch_avx512(Goldilocks::Element (&state)[8 * CAPACITY],
+    static void permuteTrunc_batch_avx512(Goldilocks::Element (&state)[8 * CAPACITY],
                                   const Goldilocks::Element (&input)[8 * SPONGE_WIDTH]);
     static void linear_hash_batch_avx512(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
     static void merkletree_batch_avx512(Goldilocks::Element *tree, Goldilocks::Element *input,
@@ -239,7 +239,7 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_external_(Goldilocks::El
 }
 
 template<uint32_t SPONGE_WIDTH_T>
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::compress_seq(Goldilocks::Element (&state)[CAPACITY], Goldilocks::Element const (&input)[SPONGE_WIDTH])
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::permuteTrunc_seq(Goldilocks::Element (&state)[CAPACITY], Goldilocks::Element const (&input)[SPONGE_WIDTH])
 {
     Goldilocks::Element aux[SPONGE_WIDTH];
     permute_seq(aux, input);
@@ -287,7 +287,7 @@ inline void Poseidon2Goldilocks<W>::permute(
 }
 
 template<uint32_t W>
-inline void Poseidon2Goldilocks<W>::compress(
+inline void Poseidon2Goldilocks<W>::permuteTrunc(
     Goldilocks::Element (&state)[CAPACITY],
     const Goldilocks::Element (&input)[SPONGE_WIDTH],
     Poseidon2Mode mode)
@@ -300,13 +300,13 @@ inline void Poseidon2Goldilocks<W>::compress(
 #endif
     }
     switch (mode) {
-        case Poseidon2Mode::Scalar: compress_seq(state, input); return;
+        case Poseidon2Mode::Scalar: permuteTrunc_seq(state, input); return;
 #ifdef __AVX2__
-        case Poseidon2Mode::Avx:    compress_avx(state, input); return;
+        case Poseidon2Mode::Avx:    permuteTrunc_avx(state, input); return;
 #endif
         default: break;
     }
-    abortMode("compress", mode);
+    abortMode("permuteTrunc", mode);
 }
 
 template<uint32_t W>

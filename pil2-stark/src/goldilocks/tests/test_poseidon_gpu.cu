@@ -142,10 +142,10 @@ TEST(PoseidonV1Gpu, permute_zero_w12_golden)
 }
 
 // ---------------------------------------------------------------------------
-// 3. compress(Fibonacci) — first CAPACITY of permute(Fibonacci).
+// 3. permuteTrunc(Fibonacci) — first CAPACITY of permute(Fibonacci).
 // ---------------------------------------------------------------------------
 
-TEST(PoseidonV1Gpu, compress_fibonacci_w12_golden)
+TEST(PoseidonV1Gpu, permuteTrunc_fibonacci_w12_golden)
 {
     uint32_t gpu_id = 0;
     cudaGetDevice((int *)&gpu_id);
@@ -159,13 +159,13 @@ TEST(PoseidonV1Gpu, compress_fibonacci_w12_golden)
     CHECKCUDAERR(cudaMalloc((void **)&d_out, CAP * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMemcpy(d_in, in, W * sizeof(gl64_t), cudaMemcpyHostToDevice));
 
-    PosGPU::compress((uint64_t *)d_out, (uint64_t *)d_in);
+    PosGPU::permuteTrunc((uint64_t *)d_out, (uint64_t *)d_in);
     CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaMemcpy(out, d_out, CAP * sizeof(gl64_t), cudaMemcpyDeviceToHost));
 
     for (uint32_t i = 0; i < CAP; ++i)
         ASSERT_EQ(Goldilocks::toU64(out[i]), PERMUTE_FIB_W12_GOLDEN[i])
-            << "compress(Fibonacci) mismatch at i=" << i;
+            << "permuteTrunc(Fibonacci) mismatch at i=" << i;
 
     cudaFree(d_in);
     cudaFree(d_out);

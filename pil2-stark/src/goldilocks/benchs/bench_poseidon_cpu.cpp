@@ -31,7 +31,7 @@ static void fillData(Goldilocks::Element *buf, uint64_t n)
 }
 
 // ===========================================================================
-// permute / compress — per-element throughput
+// permute / permuteTrunc — per-element throughput
 // ===========================================================================
 
 static void PERMUTE_W12_SCALAR_CPU_POS1_BENCH(benchmark::State &state)

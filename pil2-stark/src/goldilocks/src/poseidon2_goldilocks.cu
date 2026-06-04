@@ -113,8 +113,8 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::permute(uint64_t * output, const ui
 }
 
 template<uint32_t SPONGE_WIDTH_T>
-void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::compress(uint64_t * output, const uint64_t * input, cudaStream_t stream){
-    compressKernel<RATE,CAPACITY,SPONGE_WIDTH,N_FULL_ROUNDS_TOTAL,N_PARTIAL_ROUNDS ><<<1, 1, SPONGE_WIDTH*sizeof(gl64_t), stream>>>(output, input);
+void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::permuteTrunc(uint64_t * output, const uint64_t * input, cudaStream_t stream){
+    permuteTruncKernel<RATE,CAPACITY,SPONGE_WIDTH,N_FULL_ROUNDS_TOTAL,N_PARTIAL_ROUNDS ><<<1, 1, SPONGE_WIDTH*sizeof(gl64_t), stream>>>(output, input);
     CHECKCUDAERR(cudaGetLastError());
 }
 
@@ -414,15 +414,15 @@ template void Poseidon2GoldilocksGPUGrinding::grinding(uint64_t * d_nonce, uint6
 
 template void Poseidon2GoldilocksGPU<8>::initConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
 template void Poseidon2GoldilocksGPU<8>::permute(uint64_t * output, const uint64_t * input, cudaStream_t stream);
-template void Poseidon2GoldilocksGPU<8>::compress(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<8>::permuteTrunc(uint64_t * output, const uint64_t * input, cudaStream_t stream);
 template void Poseidon2GoldilocksGPU<8>::merkletreeReduce(uint64_t*, uint64_t*, uint64_t, uint64_t, cudaStream_t);
 template void Poseidon2GoldilocksGPU<12>::initConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
 template void Poseidon2GoldilocksGPU<12>::permute(uint64_t * output, const uint64_t * input, cudaStream_t stream);
-template void Poseidon2GoldilocksGPU<12>::compress(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<12>::permuteTrunc(uint64_t * output, const uint64_t * input, cudaStream_t stream);
 template void Poseidon2GoldilocksGPU<12>::merkletreeReduce(uint64_t*, uint64_t*, uint64_t, uint64_t, cudaStream_t);
 template void Poseidon2GoldilocksGPU<16>::initConstants(uint32_t* gpu_ids, uint32_t num_gpu_ids);
 template void Poseidon2GoldilocksGPU<16>::permute(uint64_t * output, const uint64_t * input, cudaStream_t stream);
-template void Poseidon2GoldilocksGPU<16>::compress(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<16>::permuteTrunc(uint64_t * output, const uint64_t * input, cudaStream_t stream);
 template void Poseidon2GoldilocksGPU<16>::merkletreeReduce(uint64_t*, uint64_t*, uint64_t, uint64_t, cudaStream_t);
 
 template void Poseidon2GoldilocksGPU<8>::merkletree(uint32_t, uint64_t*, uint64_t*, uint64_t, uint64_t, Layout, cudaStream_t);
@@ -431,7 +431,7 @@ template void Poseidon2GoldilocksGPU<16>::merkletree(uint32_t, uint64_t*, uint64
 
 #if __GOLDILOCKS_ENV__
 template void Poseidon2GoldilocksGPU<4>::permute(uint64_t * output, const uint64_t * input, cudaStream_t stream);
-template void Poseidon2GoldilocksGPU<4>::compress(uint64_t * output, const uint64_t * input, cudaStream_t stream);
+template void Poseidon2GoldilocksGPU<4>::permuteTrunc(uint64_t * output, const uint64_t * input, cudaStream_t stream);
 template void Poseidon2GoldilocksGPU<16>::grinding(uint64_t * d_nonce, uint64_t *d_nonceBlock, const uint64_t * d_in, const uint32_t n_bits, cudaStream_t stream);
 template void Poseidon2GoldilocksGPU<16>::linearHash(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, Layout layout, cudaStream_t stream);
 template void Poseidon2GoldilocksGPU<12>::linearHash(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, Layout layout, cudaStream_t stream);

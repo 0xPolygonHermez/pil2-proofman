@@ -123,23 +123,23 @@ TEST(PoseidonV1, permute_golden_zero_avx)
 #endif
 
 // ---------------------------------------------------------------------------
-// 2. compress golden — first CAPACITY of permute output.
+// 2. permuteTrunc golden — first CAPACITY of permute output.
 // ---------------------------------------------------------------------------
 
-TEST(PoseidonV1, compress_golden_fibonacci_scalar)
+TEST(PoseidonV1, permuteTrunc_golden_fibonacci_scalar)
 {
     GL in[W], out[CAP];
     fillFibonacci(in, W);
-    Poseidon::compress(out, in, PoseidonMode::Scalar);
+    Poseidon::permuteTrunc(out, in, PoseidonMode::Scalar);
     assertCapEq(out, PERMUTE_FIB_W12_GOLDEN);
 }
 
 #ifdef __AVX2__
-TEST(PoseidonV1, compress_golden_fibonacci_avx)
+TEST(PoseidonV1, permuteTrunc_golden_fibonacci_avx)
 {
     GL in[W], out[CAP];
     fillFibonacci(in, W);
-    Poseidon::compress(out, in, PoseidonMode::Avx);
+    Poseidon::permuteTrunc(out, in, PoseidonMode::Avx);
     assertCapEq(out, PERMUTE_FIB_W12_GOLDEN);
 }
 #endif
