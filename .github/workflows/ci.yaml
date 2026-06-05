@@ -19,8 +19,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler
           sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev nasm libsodium-dev cmake
-          sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev          
-
+          sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: "18"
+      - name: Install Node dependencies (pil2-compiler)
+        run: npm install
       - name: cargo test
         run: cargo test --workspace
   cargo-check:
@@ -71,6 +76,12 @@ jobs:
           sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
       - name: Set up Rust Toolchain
         run: curl https://sh.rustup.rs -sSf | sh -s -- -y
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: "18"
+      - name: Install Node dependencies (pil2-compiler)
+        run: npm install
       - name: cargo fix --workspace
         run: |
           # Run cargo fix on the project
@@ -99,6 +110,12 @@ jobs:
           sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
       - name: Set up Rust Toolchain
         run: curl https://sh.rustup.rs -sSf | sh -s -- -y
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: "18"
+      - name: Install Node dependencies (pil2-compiler)
+        run: npm install
       - name: cargo clippy
         run: cargo clippy --workspace -- -D warnings
   cargo-audit:
