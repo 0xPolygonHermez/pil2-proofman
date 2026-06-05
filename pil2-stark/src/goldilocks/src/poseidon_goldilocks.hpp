@@ -26,7 +26,12 @@ enum class PoseidonMode : uint8_t {
     Avx512Batch,
 };
 
-template<uint32_t SPONGE_WIDTH_T>
+// See goldilocks_hash_config.hpp for the canonical default
+#ifndef USE_DM_HASH
+#define USE_DM_HASH true
+#endif
+
+template<uint32_t SPONGE_WIDTH_T, bool DM_T = USE_DM_HASH>
 class PoseidonGoldilocks
 {
 public:
@@ -36,6 +41,7 @@ public:
     static constexpr uint32_t CAPACITY = 4;
     static constexpr uint32_t RATE = SPONGE_WIDTH_T - CAPACITY;
     static constexpr uint32_t SPONGE_WIDTH = SPONGE_WIDTH_T;
+    static constexpr bool     DM           = DM_T;
     static constexpr uint32_t N_FULL_ROUNDS_TOTAL = PoseidonGoldilocksConstants::ROUNDS_F;
     static constexpr uint32_t HALF_N_FULL_ROUNDS  = PoseidonGoldilocksConstants::ROUNDS_F_HALF;
     static constexpr uint32_t N_PARTIAL_ROUNDS    = PoseidonGoldilocksConstants::Poseidon1Tables<SPONGE_WIDTH_T>::N_PARTIAL_ROUNDS;
@@ -132,8 +138,8 @@ private:
 // Inline scalar primitives.
 // ---------------------------------------------------------------------------
 
-template<uint32_t W>
-inline void PoseidonGoldilocks<W>::pow7(Goldilocks::Element &x)
+template<uint32_t W, bool DM_T>
+inline void PoseidonGoldilocks<W, DM_T>::pow7(Goldilocks::Element &x)
 {
     Goldilocks::Element x2 = x * x;
     Goldilocks::Element x3 = x * x2;
@@ -141,8 +147,8 @@ inline void PoseidonGoldilocks<W>::pow7(Goldilocks::Element &x)
     x = x3 * x4;
 }
 
-template<uint32_t W>
-inline void PoseidonGoldilocks<W>::pow7_(Goldilocks::Element *x)
+template<uint32_t W, bool DM_T>
+inline void PoseidonGoldilocks<W, DM_T>::pow7_(Goldilocks::Element *x)
 {
     Goldilocks::Element x2[SPONGE_WIDTH], x3[SPONGE_WIDTH], x4[SPONGE_WIDTH];
     for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
@@ -153,24 +159,24 @@ inline void PoseidonGoldilocks<W>::pow7_(Goldilocks::Element *x)
     }
 }
 
-template<uint32_t W>
-inline void PoseidonGoldilocks<W>::add_(Goldilocks::Element *x, const Goldilocks::Element C[SPONGE_WIDTH])
+template<uint32_t W, bool DM_T>
+inline void PoseidonGoldilocks<W, DM_T>::add_(Goldilocks::Element *x, const Goldilocks::Element C[SPONGE_WIDTH])
 {
     for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
         x[i] = x[i] + C[i];
     }
 }
 
-template<uint32_t W>
-inline void PoseidonGoldilocks<W>::prod_(Goldilocks::Element *x, const Goldilocks::Element alpha, const Goldilocks::Element C[SPONGE_WIDTH])
+template<uint32_t W, bool DM_T>
+inline void PoseidonGoldilocks<W, DM_T>::prod_(Goldilocks::Element *x, const Goldilocks::Element alpha, const Goldilocks::Element C[SPONGE_WIDTH])
 {
     for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
         x[i] = alpha * C[i];
     }
 }
 
-template<uint32_t W>
-inline void PoseidonGoldilocks<W>::pow7add_(Goldilocks::Element *x, const Goldilocks::Element C[SPONGE_WIDTH])
+template<uint32_t W, bool DM_T>
+inline void PoseidonGoldilocks<W, DM_T>::pow7add_(Goldilocks::Element *x, const Goldilocks::Element C[SPONGE_WIDTH])
 {
     Goldilocks::Element x2[SPONGE_WIDTH], x3[SPONGE_WIDTH], x4[SPONGE_WIDTH];
     for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
@@ -182,8 +188,8 @@ inline void PoseidonGoldilocks<W>::pow7add_(Goldilocks::Element *x, const Goldil
     }
 }
 
-template<uint32_t W>
-inline Goldilocks::Element PoseidonGoldilocks<W>::dot_(Goldilocks::Element *x, const Goldilocks::Element C[SPONGE_WIDTH])
+template<uint32_t W, bool DM_T>
+inline Goldilocks::Element PoseidonGoldilocks<W, DM_T>::dot_(Goldilocks::Element *x, const Goldilocks::Element C[SPONGE_WIDTH])
 {
     Goldilocks::Element s0 = x[0] * C[0];
     for (uint32_t i = 1; i < SPONGE_WIDTH; ++i) {
@@ -192,8 +198,8 @@ inline Goldilocks::Element PoseidonGoldilocks<W>::dot_(Goldilocks::Element *x, c
     return s0;
 }
 
-template<uint32_t W>
-inline void PoseidonGoldilocks<W>::mvp_(Goldilocks::Element *state, const Goldilocks::Element mat[SPONGE_WIDTH][SPONGE_WIDTH])
+template<uint32_t W, bool DM_T>
+inline void PoseidonGoldilocks<W, DM_T>::mvp_(Goldilocks::Element *state, const Goldilocks::Element mat[SPONGE_WIDTH][SPONGE_WIDTH])
 {
     // mat is applied transposed: indexed [j][i], not [i][j]
     Goldilocks::Element old_state[SPONGE_WIDTH];
@@ -212,8 +218,8 @@ inline void PoseidonGoldilocks<W>::mvp_(Goldilocks::Element *state, const Goldil
 // permuteTrunc_seq lives inline so merkletree can call it from the header path.
 // ---------------------------------------------------------------------------
 
-template<uint32_t W>
-inline void PoseidonGoldilocks<W>::permuteTrunc_seq(
+template<uint32_t W, bool DM_T>
+inline void PoseidonGoldilocks<W, DM_T>::permuteTrunc_seq(
     Goldilocks::Element (&state)[CAPACITY],
     const Goldilocks::Element (&input)[SPONGE_WIDTH])
 {
@@ -226,8 +232,8 @@ inline void PoseidonGoldilocks<W>::permuteTrunc_seq(
 // Mode-dispatched API — inline template definitions.
 // ---------------------------------------------------------------------------
 
-template<uint32_t W>
-[[noreturn]] inline void PoseidonGoldilocks<W>::abortMode(const char *op, PoseidonMode m)
+template<uint32_t W, bool DM_T>
+[[noreturn]] inline void PoseidonGoldilocks<W, DM_T>::abortMode(const char *op, PoseidonMode m)
 {
     static const char *names[] = { "Auto", "Scalar", "Avx", "AvxBatch", "Avx512", "Avx512Batch" };
     int idx = static_cast<int>(m);
@@ -239,8 +245,8 @@ template<uint32_t W>
     std::abort();
 }
 
-template<uint32_t W>
-inline void PoseidonGoldilocks<W>::permute(
+template<uint32_t W, bool DM_T>
+inline void PoseidonGoldilocks<W, DM_T>::permute(
     Goldilocks::Element (&output)[SPONGE_WIDTH],
     const Goldilocks::Element (&input)[SPONGE_WIDTH],
     PoseidonMode mode)
@@ -262,8 +268,8 @@ inline void PoseidonGoldilocks<W>::permute(
     abortMode("permute", mode);
 }
 
-template<uint32_t W>
-inline void PoseidonGoldilocks<W>::permuteTrunc(
+template<uint32_t W, bool DM_T>
+inline void PoseidonGoldilocks<W, DM_T>::permuteTrunc(
     Goldilocks::Element (&state)[CAPACITY],
     const Goldilocks::Element (&input)[SPONGE_WIDTH],
     PoseidonMode mode)
@@ -285,8 +291,8 @@ inline void PoseidonGoldilocks<W>::permuteTrunc(
     abortMode("permuteTrunc", mode);
 }
 
-template<uint32_t W>
-inline void PoseidonGoldilocks<W>::linearHash(
+template<uint32_t W, bool DM_T>
+inline void PoseidonGoldilocks<W, DM_T>::linearHash(
     Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size, PoseidonMode mode)
 {
     if (mode == PoseidonMode::Auto) {
@@ -307,8 +313,8 @@ inline void PoseidonGoldilocks<W>::linearHash(
     abortMode("linearHash", mode);
 }
 
-template<uint32_t W>
-inline void PoseidonGoldilocks<W>::merkletree(
+template<uint32_t W, bool DM_T>
+inline void PoseidonGoldilocks<W, DM_T>::merkletree(
     Goldilocks::Element *tree, Goldilocks::Element *input,
     uint64_t num_cols, uint64_t num_rows, uint64_t arity,
     PoseidonMode mode, int num_threads, uint64_t dim)

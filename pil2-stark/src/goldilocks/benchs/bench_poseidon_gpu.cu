@@ -40,33 +40,33 @@ static __global__ void initTraceKernel_pos1(gl64_t *d_trace, uint64_t nRows, uin
 // per-iteration stream sync.
 // ===================================================================
 
-template<uint32_t W>
+template<uint32_t W, bool DM>
 static void PERMUTE_W_GPU_POS1_BENCH(benchmark::State &state)
 {
     uint32_t gpu_id = 0;
     cudaGetDevice((int *)&gpu_id);
-    PoseidonGoldilocksGPU<W>::initConstants(&gpu_id, 1);
+    PoseidonGoldilocksGPU<W, DM>::initConstants(&gpu_id, 1);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
 
     gl64_t *d_in, *d_out;
-    CHECKCUDAERR(cudaMalloc((void **)&d_in,  PoseidonGoldilocksGPU<W>::SPONGE_WIDTH * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc((void **)&d_out, PoseidonGoldilocksGPU<W>::SPONGE_WIDTH * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_in,  PoseidonGoldilocksGPU<W, DM>::SPONGE_WIDTH * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_out, PoseidonGoldilocksGPU<W, DM>::SPONGE_WIDTH * sizeof(gl64_t)));
 
-    Goldilocks::Element h_in[PoseidonGoldilocksGPU<W>::SPONGE_WIDTH];
-    for (uint32_t i = 0; i < PoseidonGoldilocksGPU<W>::SPONGE_WIDTH; ++i)
+    Goldilocks::Element h_in[PoseidonGoldilocksGPU<W, DM>::SPONGE_WIDTH];
+    for (uint32_t i = 0; i < PoseidonGoldilocksGPU<W, DM>::SPONGE_WIDTH; ++i)
         h_in[i] = Goldilocks::fromU64(i + 1);
     CHECKCUDAERR(cudaMemcpy(d_in, h_in,
-                            PoseidonGoldilocksGPU<W>::SPONGE_WIDTH * sizeof(gl64_t),
+                            PoseidonGoldilocksGPU<W, DM>::SPONGE_WIDTH * sizeof(gl64_t),
                             cudaMemcpyHostToDevice));
 
     // Warm up
-    PoseidonGoldilocksGPU<W>::permute((uint64_t *)d_out, (uint64_t *)d_in, stream);
+    PoseidonGoldilocksGPU<W, DM>::permute((uint64_t *)d_out, (uint64_t *)d_in, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     for (auto _ : state) {
-        PoseidonGoldilocksGPU<W>::permute((uint64_t *)d_out, (uint64_t *)d_in, stream);
+        PoseidonGoldilocksGPU<W, DM>::permute((uint64_t *)d_out, (uint64_t *)d_in, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }
 
@@ -79,12 +79,12 @@ static void PERMUTE_W_GPU_POS1_BENCH(benchmark::State &state)
 // linearHash — parameterised by nCols, two layouts.
 // ===================================================================
 
-template<uint32_t W>
+template<uint32_t W, bool DM>
 static void LINEAR_HASH_W_TILES_GPU_POS1_BENCH(benchmark::State &state)
 {
     uint32_t gpu_id = 0;
     cudaGetDevice((int *)&gpu_id);
-    PoseidonGoldilocksGPU<W>::initConstants(&gpu_id, 1);
+    PoseidonGoldilocksGPU<W, DM>::initConstants(&gpu_id, 1);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -92,14 +92,14 @@ static void LINEAR_HASH_W_TILES_GPU_POS1_BENCH(benchmark::State &state)
     uint64_t nCols = state.range(0);
     gl64_t *d_trace, *d_hash;
     CHECKCUDAERR(cudaMalloc((void **)&d_trace, BENCH_NROWS * nCols * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc((void **)&d_hash,  BENCH_NROWS * PoseidonGoldilocksGPU<W>::CAPACITY * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_hash,  BENCH_NROWS * PoseidonGoldilocksGPU<W, DM>::CAPACITY * sizeof(gl64_t)));
 
     dim3 thr(128), blk((BENCH_NROWS + 127) / 128);
     initTraceKernel_pos1<<<blk, thr, 0, stream>>>(d_trace, BENCH_NROWS, nCols);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     for (auto _ : state) {
-        PoseidonGoldilocksGPU<W>::linearHash(
+        PoseidonGoldilocksGPU<W, DM>::linearHash(
             (uint64_t *)d_hash, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::Tiles, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }
@@ -109,12 +109,12 @@ static void LINEAR_HASH_W_TILES_GPU_POS1_BENCH(benchmark::State &state)
     CHECKCUDAERR(cudaStreamDestroy(stream));
 }
 
-template<uint32_t W>
+template<uint32_t W, bool DM>
 static void LINEAR_HASH_W_ROWMAJOR_GPU_POS1_BENCH(benchmark::State &state)
 {
     uint32_t gpu_id = 0;
     cudaGetDevice((int *)&gpu_id);
-    PoseidonGoldilocksGPU<W>::initConstants(&gpu_id, 1);
+    PoseidonGoldilocksGPU<W, DM>::initConstants(&gpu_id, 1);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -122,14 +122,14 @@ static void LINEAR_HASH_W_ROWMAJOR_GPU_POS1_BENCH(benchmark::State &state)
     uint64_t nCols = state.range(0);
     gl64_t *d_trace, *d_hash;
     CHECKCUDAERR(cudaMalloc((void **)&d_trace, BENCH_NROWS * nCols * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc((void **)&d_hash,  BENCH_NROWS * PoseidonGoldilocksGPU<W>::CAPACITY * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_hash,  BENCH_NROWS * PoseidonGoldilocksGPU<W, DM>::CAPACITY * sizeof(gl64_t)));
 
     dim3 thr(128), blk((BENCH_NROWS + 127) / 128);
     initTraceKernel_pos1<<<blk, thr, 0, stream>>>(d_trace, BENCH_NROWS, nCols);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     for (auto _ : state) {
-        PoseidonGoldilocksGPU<W>::linearHash(
+        PoseidonGoldilocksGPU<W, DM>::linearHash(
             (uint64_t *)d_hash, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::RowMajor, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }
@@ -143,12 +143,12 @@ static void LINEAR_HASH_W_ROWMAJOR_GPU_POS1_BENCH(benchmark::State &state)
 // merkletree — parameterised by nCols, two layouts.
 // ===================================================================
 
-template<uint32_t W, uint32_t ARITY>
+template<uint32_t W, uint32_t ARITY, bool DM>
 static void MERKLETREE_W_AR_TILES_GPU_POS1_BENCH(benchmark::State &state)
 {
     uint32_t gpu_id = 0;
     cudaGetDevice((int *)&gpu_id);
-    PoseidonGoldilocksGPU<W>::initConstants(&gpu_id, 1);
+    PoseidonGoldilocksGPU<W, DM>::initConstants(&gpu_id, 1);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -166,12 +166,12 @@ static void MERKLETREE_W_AR_TILES_GPU_POS1_BENCH(benchmark::State &state)
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // Warm up
-    PoseidonGoldilocksGPU<W>::merkletree(
+    PoseidonGoldilocksGPU<W, DM>::merkletree(
         ARITY, (uint64_t *)d_tree, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::Tiles, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     for (auto _ : state) {
-        PoseidonGoldilocksGPU<W>::merkletree(
+        PoseidonGoldilocksGPU<W, DM>::merkletree(
             ARITY, (uint64_t *)d_tree, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::Tiles, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }
@@ -181,12 +181,12 @@ static void MERKLETREE_W_AR_TILES_GPU_POS1_BENCH(benchmark::State &state)
     CHECKCUDAERR(cudaStreamDestroy(stream));
 }
 
-template<uint32_t W, uint32_t ARITY>
+template<uint32_t W, uint32_t ARITY, bool DM>
 static void MERKLETREE_W_AR_ROWMAJOR_GPU_POS1_BENCH(benchmark::State &state)
 {
     uint32_t gpu_id = 0;
     cudaGetDevice((int *)&gpu_id);
-    PoseidonGoldilocksGPU<W>::initConstants(&gpu_id, 1);
+    PoseidonGoldilocksGPU<W, DM>::initConstants(&gpu_id, 1);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -204,12 +204,12 @@ static void MERKLETREE_W_AR_ROWMAJOR_GPU_POS1_BENCH(benchmark::State &state)
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     // Warm up
-    PoseidonGoldilocksGPU<W>::merkletree(
+    PoseidonGoldilocksGPU<W, DM>::merkletree(
         ARITY, (uint64_t *)d_tree, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::RowMajor, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     for (auto _ : state) {
-        PoseidonGoldilocksGPU<W>::merkletree(
+        PoseidonGoldilocksGPU<W, DM>::merkletree(
             ARITY, (uint64_t *)d_tree, (uint64_t *)d_trace, nCols, BENCH_NROWS, Layout::RowMajor, stream);
         CHECKCUDAERR(cudaStreamSynchronize(stream));
     }
@@ -323,33 +323,45 @@ static void GRINDING_GPU_POS1_BENCH(benchmark::State &state)
 
 #define NCOLS_ARGS ->Arg(9)->Arg(18)->Arg(24)->Arg(36)->Arg(56)
 
-#define REG_NCOLS(FUNC, W, LABEL)                                                \
-    BENCHMARK_TEMPLATE(FUNC, W)                                                  \
+#define REG_NCOLS(FUNC, W, DMv, LABEL)                                           \
+    BENCHMARK_TEMPLATE(FUNC, W, DMv)                                             \
         ->Name(LABEL)                                                            \
         ->Unit(benchmark::kMillisecond)                                          \
         NCOLS_ARGS                                                               \
         ->UseRealTime();
 
-#define REG_NCOLS_AR(FUNC, W, AR, LABEL)                                         \
-    BENCHMARK_TEMPLATE(FUNC, W, AR)                                              \
+#define REG_NCOLS_AR(FUNC, W, AR, DMv, LABEL)                                    \
+    BENCHMARK_TEMPLATE(FUNC, W, AR, DMv)                                         \
         ->Name(LABEL)                                                            \
         ->Unit(benchmark::kMillisecond)                                          \
         NCOLS_ARGS                                                               \
         ->UseRealTime();
+
+// Each Poseidon1-GPU benchmark is registered at both DM=false (NODM) and
+// DM=true (DM) so the runtime cost of the post-permute input-add can be
+// compared.
 
 // permute — W=12 (Poseidon v1 only supports W=12).
-BENCHMARK_TEMPLATE(PERMUTE_W_GPU_POS1_BENCH, 12)
-    ->Name("PERMUTE_W12_GPU_POS1_BENCH")
+BENCHMARK_TEMPLATE(PERMUTE_W_GPU_POS1_BENCH, 12, false)
+    ->Name("PERMUTE_W12_NODM_GPU_POS1_BENCH")
+    ->Unit(benchmark::kMicrosecond)
+    ->UseRealTime();
+BENCHMARK_TEMPLATE(PERMUTE_W_GPU_POS1_BENCH, 12, true)
+    ->Name("PERMUTE_W12_DM_GPU_POS1_BENCH")
     ->Unit(benchmark::kMicrosecond)
     ->UseRealTime();
 
 // linearHash — W=12, both layouts.
-REG_NCOLS(LINEAR_HASH_W_TILES_GPU_POS1_BENCH,    12, "LINEAR_HASH_W12_TILES_GPU_POS1_BENCH")
-REG_NCOLS(LINEAR_HASH_W_ROWMAJOR_GPU_POS1_BENCH, 12, "LINEAR_HASH_W12_ROWMAJOR_GPU_POS1_BENCH")
+REG_NCOLS(LINEAR_HASH_W_TILES_GPU_POS1_BENCH,    12, false, "LINEAR_HASH_W12_NODM_TILES_GPU_POS1_BENCH")
+REG_NCOLS(LINEAR_HASH_W_ROWMAJOR_GPU_POS1_BENCH, 12, false, "LINEAR_HASH_W12_NODM_ROWMAJOR_GPU_POS1_BENCH")
+REG_NCOLS(LINEAR_HASH_W_TILES_GPU_POS1_BENCH,    12, true,  "LINEAR_HASH_W12_DM_TILES_GPU_POS1_BENCH")
+REG_NCOLS(LINEAR_HASH_W_ROWMAJOR_GPU_POS1_BENCH, 12, true,  "LINEAR_HASH_W12_DM_ROWMAJOR_GPU_POS1_BENCH")
 
 // merkletree — Poseidon v1 restricted to arity=2 (binary tree).
-REG_NCOLS_AR(MERKLETREE_W_AR_TILES_GPU_POS1_BENCH,    12, 2, "MERKLETREE_W12_AR2_TILES_GPU_POS1_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_ROWMAJOR_GPU_POS1_BENCH, 12, 2, "MERKLETREE_W12_AR2_ROWMAJOR_GPU_POS1_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_TILES_GPU_POS1_BENCH,    12, 2, false, "MERKLETREE_W12_AR2_NODM_TILES_GPU_POS1_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_ROWMAJOR_GPU_POS1_BENCH, 12, 2, false, "MERKLETREE_W12_AR2_NODM_ROWMAJOR_GPU_POS1_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_TILES_GPU_POS1_BENCH,    12, 2, true,  "MERKLETREE_W12_AR2_DM_TILES_GPU_POS1_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_ROWMAJOR_GPU_POS1_BENCH, 12, 2, true,  "MERKLETREE_W12_AR2_DM_ROWMAJOR_GPU_POS1_BENCH")
 
 // HYBRID merkletree — v1 (W=12) leaves + Poseidon2 (W=16, arity 4) tree.
 // Same nCols sweep as the v1 baseline above for side-by-side comparison.

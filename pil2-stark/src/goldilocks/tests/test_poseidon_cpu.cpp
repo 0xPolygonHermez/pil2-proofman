@@ -9,7 +9,7 @@
 #include "../src/goldilocks_tooling.hpp"
 
 using GL = Goldilocks::Element;
-using Poseidon = PoseidonGoldilocks<12>;
+using Poseidon = PoseidonGoldilocks<12, false>;
 static constexpr uint32_t W        = Poseidon::SPONGE_WIDTH;   // 12
 static constexpr uint32_t CAP      = Poseidon::CAPACITY;        // 4
 static constexpr uint32_t RATE     = Poseidon::RATE;            // 8
@@ -370,7 +370,7 @@ TEST(PoseidonV1, permute_W8_plonky3_golden)
     };
     GL in[W8], out[W8];
     for (uint32_t i = 0; i < W8; ++i) in[i] = Goldilocks::fromU64((uint64_t)i);
-    PoseidonGoldilocks<8>::permute(out, in, PoseidonMode::Scalar);
+    PoseidonGoldilocks<8, false>::permute(out, in, PoseidonMode::Scalar);
     for (uint32_t i = 0; i < W8; ++i)
         ASSERT_EQ(Goldilocks::toU64(out[i]), PERMUTE_W8_POSEIDON1_PLONKY3_GOLDEN[i])
             << "lane " << i;
@@ -391,7 +391,7 @@ TEST(PoseidonV1, permute_W16_self_consistency)
     };
     GL in[W16], out[W16];
     for (uint32_t i = 0; i < W16; ++i) in[i] = Goldilocks::fromU64((uint64_t)i);
-    PoseidonGoldilocks<16>::permute(out, in, PoseidonMode::Scalar);
+    PoseidonGoldilocks<16, false>::permute(out, in, PoseidonMode::Scalar);
     for (uint32_t i = 0; i < W16; ++i)
         ASSERT_EQ(Goldilocks::toU64(out[i]), PERMUTE_W16_POSEIDON1_GOLDEN[i])
             << "lane " << i;

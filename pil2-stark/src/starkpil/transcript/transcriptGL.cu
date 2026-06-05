@@ -55,7 +55,8 @@ __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pe
         case 2:
             poseidon1PermuteReg<PoseidonGoldilocks<12>::SPONGE_WIDTH,
                                 PoseidonGoldilocks<12>::HALF_N_FULL_ROUNDS,
-                                PoseidonGoldilocks<12>::N_PARTIAL_ROUNDS>(
+                                PoseidonGoldilocks<12>::N_PARTIAL_ROUNDS,
+                                PoseidonGoldilocks<12>::DM>(
                 (gl64_t*)out, (gl64_t*)inputs,
                 (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
                 (const gl64_t*)POSEIDON1_GPU_M, (const gl64_t*)POSEIDON1_GPU_P);
@@ -63,7 +64,8 @@ __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pe
         case 3:
             poseidon1PermuteReg<PoseidonGoldilocks<16>::SPONGE_WIDTH,
                                 PoseidonGoldilocks<16>::HALF_N_FULL_ROUNDS,
-                                PoseidonGoldilocks<16>::N_PARTIAL_ROUNDS>(
+                                PoseidonGoldilocks<16>::N_PARTIAL_ROUNDS,
+                                PoseidonGoldilocks<16>::DM>(
                 (gl64_t*)out, (gl64_t*)inputs,
                 (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
                 (const gl64_t*)POSEIDON1_GPU_M, (const gl64_t*)POSEIDON1_GPU_P);
@@ -75,13 +77,13 @@ __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pe
 #else
     switch(arity){
         case 2:
-            poseidon2PermuteReg<Poseidon2Goldilocks<8>::RATE, Poseidon2Goldilocks<8>::CAPACITY, Poseidon2Goldilocks<8>::SPONGE_WIDTH, Poseidon2Goldilocks<8>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<8>::N_PARTIAL_ROUNDS>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
+            poseidon2PermuteReg<Poseidon2Goldilocks<8>::RATE, Poseidon2Goldilocks<8>::CAPACITY, Poseidon2Goldilocks<8>::SPONGE_WIDTH, Poseidon2Goldilocks<8>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<8>::N_PARTIAL_ROUNDS, Poseidon2Goldilocks<8>::DM>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
             break;
         case 3:
-            poseidon2PermuteReg<Poseidon2Goldilocks<12>::RATE, Poseidon2Goldilocks<12>::CAPACITY, Poseidon2Goldilocks<12>::SPONGE_WIDTH, Poseidon2Goldilocks<12>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<12>::N_PARTIAL_ROUNDS>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
+            poseidon2PermuteReg<Poseidon2Goldilocks<12>::RATE, Poseidon2Goldilocks<12>::CAPACITY, Poseidon2Goldilocks<12>::SPONGE_WIDTH, Poseidon2Goldilocks<12>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<12>::N_PARTIAL_ROUNDS, Poseidon2Goldilocks<12>::DM>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
             break;
         case 4:
-            poseidon2PermuteReg<Poseidon2Goldilocks<16>::RATE, Poseidon2Goldilocks<16>::CAPACITY, Poseidon2Goldilocks<16>::SPONGE_WIDTH, Poseidon2Goldilocks<16>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<16>::N_PARTIAL_ROUNDS>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
+            poseidon2PermuteReg<Poseidon2Goldilocks<16>::RATE, Poseidon2Goldilocks<16>::CAPACITY, Poseidon2Goldilocks<16>::SPONGE_WIDTH, Poseidon2Goldilocks<16>::N_FULL_ROUNDS_TOTAL, Poseidon2Goldilocks<16>::N_PARTIAL_ROUNDS, Poseidon2Goldilocks<16>::DM>((gl64_t*)out, (gl64_t*)inputs, POSEIDON2_GPU_C, POSEIDON2_GPU_D);
             break;
         default:
             assert(false && "Unsupported arity");

@@ -7,13 +7,17 @@
 // Scalar
 // ---------------------------------------------------------------------------
 
-template<uint32_t SPONGE_WIDTH_T>
-void PoseidonGoldilocks<SPONGE_WIDTH_T>::permute_seq(
+template<uint32_t SPONGE_WIDTH_T, bool DM_T>
+void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::permute_seq(
     Goldilocks::Element (&state)[SPONGE_WIDTH],
     const Goldilocks::Element (&input)[SPONGE_WIDTH])
 {
     using Tbl = PoseidonGoldilocksConstants::Poseidon1Tables<SPONGE_WIDTH_T>;
     const int length = SPONGE_WIDTH * sizeof(Goldilocks::Element);
+    Goldilocks::Element input_save[SPONGE_WIDTH];
+    if constexpr (DM_T) {
+        std::memcpy(input_save, input, length);
+    }
     std::memcpy(state, input, length);
 
     add_(state, &(Tbl::C[0]));
@@ -43,10 +47,15 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::permute_seq(
     }
     pow7_(&(state[0]));
     mvp_(state, Tbl::M);
+
+    if constexpr (DM_T) {
+        for (uint32_t i = 0; i < SPONGE_WIDTH; ++i)
+            state[i] = state[i] + input_save[i];
+    }
 }
 
-template<uint32_t SPONGE_WIDTH_T>
-void PoseidonGoldilocks<SPONGE_WIDTH_T>::linear_hash_seq(
+template<uint32_t SPONGE_WIDTH_T, bool DM_T>
+void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::linear_hash_seq(
     Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size)
 {
     uint64_t remaining = size;
@@ -83,8 +92,8 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::linear_hash_seq(
     }
 }
 
-template<uint32_t SPONGE_WIDTH_T>
-void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_seq(
+template<uint32_t SPONGE_WIDTH_T, bool DM_T>
+void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::merkletree_seq(
     Goldilocks::Element *tree, Goldilocks::Element *input,
     uint64_t num_cols, uint64_t num_rows, uint64_t arity,
     int num_threads, uint64_t dim)
@@ -136,8 +145,8 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_seq(
     }
 }
 
-template<uint32_t SPONGE_WIDTH_T>
-void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletreeReduce(
+template<uint32_t SPONGE_WIDTH_T, bool DM_T>
+void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::merkletreeReduce(
     Goldilocks::Element *root, Goldilocks::Element *input,
     uint64_t num_elements, uint64_t arity)
 {
@@ -191,8 +200,8 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletreeReduce(
     delete[] cursor;
 }
 
-template<uint32_t SPONGE_WIDTH_T>
-void PoseidonGoldilocks<SPONGE_WIDTH_T>::grinding(
+template<uint32_t SPONGE_WIDTH_T, bool DM_T>
+void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::grinding(
     uint64_t &nonce, const uint64_t *in, const uint32_t n_bits)
 {
     uint64_t checkChunk = omp_get_max_threads() * 512;
@@ -251,12 +260,17 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::grinding(
 
 #ifdef __AVX2__
 
-template<uint32_t SPONGE_WIDTH_T>
-void PoseidonGoldilocks<SPONGE_WIDTH_T>::permute_avx(
+template<uint32_t SPONGE_WIDTH_T, bool DM_T>
+void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::permute_avx(
     Goldilocks::Element (&state)[SPONGE_WIDTH],
     const Goldilocks::Element (&input)[SPONGE_WIDTH])
 {
     const int length = SPONGE_WIDTH * sizeof(Goldilocks::Element);
+    // Davies-Meyer: save input upfront to handle state/input aliasing.
+    Goldilocks::Element input_save[SPONGE_WIDTH];
+    if constexpr (DM_T) {
+        std::memcpy(input_save, input, length);
+    }
     std::memcpy(state, input, length);
     __m256i st0, st1, st2;
     Goldilocks::load_avx(st0, &(state[0]));
@@ -316,10 +330,15 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::permute_avx(
     Goldilocks::store_avx(&(state[0]), st0);
     Goldilocks::store_avx(&(state[4]), st1);
     Goldilocks::store_avx(&(state[8]), st2);
+
+    if constexpr (DM_T) {
+        for (uint32_t i = 0; i < SPONGE_WIDTH; ++i)
+            state[i] = state[i] + input_save[i];
+    }
 }
 
-template<uint32_t SPONGE_WIDTH_T>
-void PoseidonGoldilocks<SPONGE_WIDTH_T>::permuteTrunc_avx(
+template<uint32_t SPONGE_WIDTH_T, bool DM_T>
+void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::permuteTrunc_avx(
     Goldilocks::Element (&state)[CAPACITY],
     const Goldilocks::Element (&input)[SPONGE_WIDTH])
 {
@@ -328,8 +347,8 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::permuteTrunc_avx(
     std::memcpy(state, aux, CAPACITY * sizeof(Goldilocks::Element));
 }
 
-template<uint32_t SPONGE_WIDTH_T>
-void PoseidonGoldilocks<SPONGE_WIDTH_T>::linear_hash_avx(
+template<uint32_t SPONGE_WIDTH_T, bool DM_T>
+void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::linear_hash_avx(
     Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size)
 {
     uint64_t remaining = size;
@@ -365,8 +384,8 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::linear_hash_avx(
     }
 }
 
-template<uint32_t SPONGE_WIDTH_T>
-void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_avx(
+template<uint32_t SPONGE_WIDTH_T, bool DM_T>
+void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::merkletree_avx(
     Goldilocks::Element *tree, Goldilocks::Element *input,
     uint64_t num_cols, uint64_t num_rows, uint64_t arity,
     int num_threads, uint64_t dim)
@@ -443,10 +462,15 @@ inline void element_pow7_avx512(__m512i &x) {
 #endif
 } // namespace
 
-template<uint32_t SPONGE_WIDTH_T>
-void PoseidonGoldilocks<SPONGE_WIDTH_T>::permute_batch_avx(
+template<uint32_t SPONGE_WIDTH_T, bool DM_T>
+void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::permute_batch_avx(
     Goldilocks::Element *state, const Goldilocks::Element *input)
 {
+    // Davies-Meyer: save the 4-sponge input upfront to handle aliasing.
+    Goldilocks::Element input_save[4 * SPONGE_WIDTH];
+    if constexpr (DM_T) {
+        std::memcpy(input_save, input, 4 * SPONGE_WIDTH * sizeof(Goldilocks::Element));
+    }
     std::memcpy(state, input, 4 * SPONGE_WIDTH * sizeof(Goldilocks::Element));
 
     __m256i st[SPONGE_WIDTH];
@@ -566,10 +590,15 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::permute_batch_avx(
     for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
         Goldilocks::store_avx(&state[i], SPONGE_WIDTH, st[i]);
     }
+
+    if constexpr (DM_T) {
+        for (uint32_t i = 0; i < 4 * SPONGE_WIDTH; ++i)
+            state[i] = state[i] + input_save[i];
+    }
 }
 
-template<uint32_t SPONGE_WIDTH_T>
-void PoseidonGoldilocks<SPONGE_WIDTH_T>::permuteTrunc_batch_avx(
+template<uint32_t SPONGE_WIDTH_T, bool DM_T>
+void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::permuteTrunc_batch_avx(
     Goldilocks::Element (&state)[4 * CAPACITY],
     const Goldilocks::Element (&input)[4 * SPONGE_WIDTH])
 {
@@ -581,8 +610,8 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::permuteTrunc_batch_avx(
     std::memcpy(&state[3*CAPACITY],  &aux[3 * SPONGE_WIDTH],  CAPACITY * sizeof(Goldilocks::Element));
 }
 
-template<uint32_t SPONGE_WIDTH_T>
-void PoseidonGoldilocks<SPONGE_WIDTH_T>::linear_hash_batch_avx(
+template<uint32_t SPONGE_WIDTH_T, bool DM_T>
+void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::linear_hash_batch_avx(
     Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size)
 {
     uint64_t remaining = size;
@@ -623,8 +652,8 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::linear_hash_batch_avx(
     }
 }
 
-template<uint32_t SPONGE_WIDTH_T>
-void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx(
+template<uint32_t SPONGE_WIDTH_T, bool DM_T>
+void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::merkletree_batch_avx(
     Goldilocks::Element *tree, Goldilocks::Element *input,
     uint64_t num_cols, uint64_t num_rows, uint64_t arity,
     int num_threads, uint64_t dim)
@@ -695,10 +724,15 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx(
 
 // 8-sponge AVX512 batch permute. 12 __m512i state registers, each holding one
 // state element across 8 sponges (strided layout).
-template<uint32_t SPONGE_WIDTH_T>
-void PoseidonGoldilocks<SPONGE_WIDTH_T>::permute_batch_avx512(
+template<uint32_t SPONGE_WIDTH_T, bool DM_T>
+void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::permute_batch_avx512(
     Goldilocks::Element *state, const Goldilocks::Element *input)
 {
+    // Davies-Meyer: save the 8-sponge input upfront to handle aliasing.
+    Goldilocks::Element input_save[8 * SPONGE_WIDTH];
+    if constexpr (DM_T) {
+        std::memcpy(input_save, input, 8 * SPONGE_WIDTH * sizeof(Goldilocks::Element));
+    }
     std::memcpy(state, input, 8 * SPONGE_WIDTH * sizeof(Goldilocks::Element));
 
     __m512i st[SPONGE_WIDTH];
@@ -809,10 +843,15 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::permute_batch_avx512(
     for (uint32_t i = 0; i < SPONGE_WIDTH; ++i) {
         Goldilocks::store_avx512(&state[i], SPONGE_WIDTH, st[i]);
     }
+
+    if constexpr (DM_T) {
+        for (uint32_t i = 0; i < 8 * SPONGE_WIDTH; ++i)
+            state[i] = state[i] + input_save[i];
+    }
 }
 
-template<uint32_t SPONGE_WIDTH_T>
-void PoseidonGoldilocks<SPONGE_WIDTH_T>::permuteTrunc_batch_avx512(
+template<uint32_t SPONGE_WIDTH_T, bool DM_T>
+void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::permuteTrunc_batch_avx512(
     Goldilocks::Element (&state)[8 * CAPACITY],
     const Goldilocks::Element (&input)[8 * SPONGE_WIDTH])
 {
@@ -824,8 +863,8 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::permuteTrunc_batch_avx512(
     }
 }
 
-template<uint32_t SPONGE_WIDTH_T>
-void PoseidonGoldilocks<SPONGE_WIDTH_T>::linear_hash_batch_avx512(
+template<uint32_t SPONGE_WIDTH_T, bool DM_T>
+void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::linear_hash_batch_avx512(
     Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size)
 {
     uint64_t remaining = size;
@@ -866,8 +905,8 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::linear_hash_batch_avx512(
     }
 }
 
-template<uint32_t SPONGE_WIDTH_T>
-void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx512(
+template<uint32_t SPONGE_WIDTH_T, bool DM_T>
+void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::merkletree_batch_avx512(
     Goldilocks::Element *tree, Goldilocks::Element *input,
     uint64_t num_cols, uint64_t num_rows, uint64_t arity,
     int num_threads, uint64_t dim)
@@ -932,25 +971,47 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx512(
 // ---------------------------------------------------------------------------
 // Explicit template instantiation.
 // ---------------------------------------------------------------------------
-template class PoseidonGoldilocks<12>;
+// Both DM=false (tests, benchmarks) and DM=true (production: default for
+// merkleTree, transcript, grinding) must be instantiated for every width
+// that's used in code.
+
+template class PoseidonGoldilocks<12, false>;
+template class PoseidonGoldilocks<12, true>;
 
 // W=8 — grinding
-template void PoseidonGoldilocks<8>::permute_seq(
+template void PoseidonGoldilocks<8, false>::permute_seq(
     Goldilocks::Element (&)[8], const Goldilocks::Element (&)[8]);
-template void PoseidonGoldilocks<8>::grinding(
+template void PoseidonGoldilocks<8, false>::grinding(
     uint64_t &, const uint64_t *, const uint32_t);
-template void PoseidonGoldilocks<8>::abortMode(const char *, PoseidonMode);
+template void PoseidonGoldilocks<8, false>::abortMode(const char *, PoseidonMode);
+template void PoseidonGoldilocks<8, true>::permute_seq(
+    Goldilocks::Element (&)[8], const Goldilocks::Element (&)[8]);
+template void PoseidonGoldilocks<8, true>::grinding(
+    uint64_t &, const uint64_t *, const uint32_t);
+template void PoseidonGoldilocks<8, true>::abortMode(const char *, PoseidonMode);
 
 // W=16 — merkle + transcript at arity 3 (scalar path only; AVX is W=12 only).
-template void PoseidonGoldilocks<16>::permute_seq(
+template void PoseidonGoldilocks<16, false>::permute_seq(
     Goldilocks::Element (&)[16], const Goldilocks::Element (&)[16]);
-template void PoseidonGoldilocks<16>::linear_hash_seq(
+template void PoseidonGoldilocks<16, false>::linear_hash_seq(
     Goldilocks::Element *, Goldilocks::Element *, uint64_t);
-template void PoseidonGoldilocks<16>::merkletree_seq(
+template void PoseidonGoldilocks<16, false>::merkletree_seq(
     Goldilocks::Element *, Goldilocks::Element *,
     uint64_t, uint64_t, uint64_t, int, uint64_t);
-template void PoseidonGoldilocks<16>::merkletreeReduce(
+template void PoseidonGoldilocks<16, false>::merkletreeReduce(
     Goldilocks::Element *, Goldilocks::Element *, uint64_t, uint64_t);
-template void PoseidonGoldilocks<16>::grinding(
+template void PoseidonGoldilocks<16, false>::grinding(
     uint64_t &, const uint64_t *, const uint32_t);
-template void PoseidonGoldilocks<16>::abortMode(const char *, PoseidonMode);
+template void PoseidonGoldilocks<16, false>::abortMode(const char *, PoseidonMode);
+template void PoseidonGoldilocks<16, true>::permute_seq(
+    Goldilocks::Element (&)[16], const Goldilocks::Element (&)[16]);
+template void PoseidonGoldilocks<16, true>::linear_hash_seq(
+    Goldilocks::Element *, Goldilocks::Element *, uint64_t);
+template void PoseidonGoldilocks<16, true>::merkletree_seq(
+    Goldilocks::Element *, Goldilocks::Element *,
+    uint64_t, uint64_t, uint64_t, int, uint64_t);
+template void PoseidonGoldilocks<16, true>::merkletreeReduce(
+    Goldilocks::Element *, Goldilocks::Element *, uint64_t, uint64_t);
+template void PoseidonGoldilocks<16, true>::grinding(
+    uint64_t &, const uint64_t *, const uint32_t);
+template void PoseidonGoldilocks<16, true>::abortMode(const char *, PoseidonMode);

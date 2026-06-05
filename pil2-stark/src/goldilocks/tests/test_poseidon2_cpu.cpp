@@ -41,7 +41,7 @@ TEST(Poseidon2, permute_golden_W4)
 {
     Goldilocks::Element in[4], out[4];
     fillSequential<4>(in, 0, 4);
-    Poseidon2Goldilocks<4>::permute(out, in, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<4, false>::permute(out, in, Poseidon2Mode::Scalar);
     assertArrayEq<4>(out, PERMUTE_W4_GOLDEN);
 }
 
@@ -49,7 +49,7 @@ TEST(Poseidon2, permute_golden_W8)
 {
     Goldilocks::Element in[8], out[8];
     fillSequential<8>(in, 0, 8);
-    Poseidon2Goldilocks<8>::permute(out, in, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<8, false>::permute(out, in, Poseidon2Mode::Scalar);
     assertArrayEq<8>(out, PERMUTE_W8_GOLDEN);
 }
 
@@ -57,7 +57,7 @@ TEST(Poseidon2, permute_golden_W12)
 {
     Goldilocks::Element in[12], out[12];
     fillSequential<12>(in, 0, 12);
-    Poseidon2Goldilocks<12>::permute(out, in, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<12, false>::permute(out, in, Poseidon2Mode::Scalar);
     assertArrayEq<12>(out, PERMUTE_W12_GOLDEN);
 }
 
@@ -65,7 +65,7 @@ TEST(Poseidon2, permute_golden_W16)
 {
     Goldilocks::Element in[16], out[16];
     fillSequential<16>(in, 0, 16);
-    Poseidon2Goldilocks<16>::permute(out, in, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<16, false>::permute(out, in, Poseidon2Mode::Scalar);
     assertArrayEq<16>(out, PERMUTE_W16_GOLDEN);
 }
 
@@ -77,7 +77,7 @@ TEST(Poseidon2, permuteTrunc_golden_W4)
 {
     Goldilocks::Element in[4], out[4];
     fillSequential<4>(in, 0, 4);
-    Poseidon2Goldilocks<4>::permuteTrunc(out, in, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<4, false>::permuteTrunc(out, in, Poseidon2Mode::Scalar);
     assertCapacityEq(out, PERMUTE_TRUNC_W4_GOLDEN);
 }
 
@@ -85,7 +85,7 @@ TEST(Poseidon2, permuteTrunc_golden_W8)
 {
     Goldilocks::Element in[8], out[4];
     fillSequential<8>(in, 0, 8);
-    Poseidon2Goldilocks<8>::permuteTrunc(out, in, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<8, false>::permuteTrunc(out, in, Poseidon2Mode::Scalar);
     assertCapacityEq(out, PERMUTE_TRUNC_W8_GOLDEN);
 }
 
@@ -93,7 +93,7 @@ TEST(Poseidon2, permuteTrunc_golden_W12)
 {
     Goldilocks::Element in[12], out[4];
     fillSequential<12>(in, 0, 12);
-    Poseidon2Goldilocks<12>::permuteTrunc(out, in, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<12, false>::permuteTrunc(out, in, Poseidon2Mode::Scalar);
     assertCapacityEq(out, PERMUTE_TRUNC_W12_GOLDEN);
 }
 
@@ -101,7 +101,7 @@ TEST(Poseidon2, permuteTrunc_golden_W16)
 {
     Goldilocks::Element in[16], out[4];
     fillSequential<16>(in, 0, 16);
-    Poseidon2Goldilocks<16>::permuteTrunc(out, in, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<16, false>::permuteTrunc(out, in, Poseidon2Mode::Scalar);
     assertCapacityEq(out, PERMUTE_TRUNC_W16_GOLDEN);
 }
 
@@ -118,9 +118,9 @@ static void permuteModeEquiv()
         in[i] = Goldilocks::fromU64(i * 31 + 7);
 
     Goldilocks::Element out_scalar[W], out_avx[W], out_auto[W];
-    Poseidon2Goldilocks<W>::permute(out_scalar, in, Poseidon2Mode::Scalar);
-    Poseidon2Goldilocks<W>::permute(out_avx,    in, Poseidon2Mode::Avx);
-    Poseidon2Goldilocks<W>::permute(out_auto,   in, Poseidon2Mode::Auto);
+    Poseidon2Goldilocks<W, false>::permute(out_scalar, in, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<W, false>::permute(out_avx,    in, Poseidon2Mode::Avx);
+    Poseidon2Goldilocks<W, false>::permute(out_auto,   in, Poseidon2Mode::Auto);
 
     for (uint32_t i = 0; i < W; ++i) {
         ASSERT_EQ(Goldilocks::toU64(out_scalar[i]), Goldilocks::toU64(out_avx[i]))
@@ -144,15 +144,15 @@ TEST(Poseidon2, permute_mode_equiv_W16) { permuteModeEquiv<16>(); }
 template<uint32_t W>
 static void permuteTruncModeEquiv()
 {
-    constexpr uint32_t C = Poseidon2Goldilocks<W>::CAPACITY;
+    constexpr uint32_t C = Poseidon2Goldilocks<W, false>::CAPACITY;
     Goldilocks::Element in[W];
     for (uint32_t i = 0; i < W; ++i)
         in[i] = Goldilocks::fromU64(i * 37 + 1);
 
     Goldilocks::Element out_scalar[C], out_avx[C], out_auto[C];
-    Poseidon2Goldilocks<W>::permuteTrunc(out_scalar, in, Poseidon2Mode::Scalar);
-    Poseidon2Goldilocks<W>::permuteTrunc(out_avx,    in, Poseidon2Mode::Avx);
-    Poseidon2Goldilocks<W>::permuteTrunc(out_auto,   in, Poseidon2Mode::Auto);
+    Poseidon2Goldilocks<W, false>::permuteTrunc(out_scalar, in, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<W, false>::permuteTrunc(out_avx,    in, Poseidon2Mode::Avx);
+    Poseidon2Goldilocks<W, false>::permuteTrunc(out_auto,   in, Poseidon2Mode::Auto);
 
     for (uint32_t i = 0; i < C; ++i) {
         ASSERT_EQ(Goldilocks::toU64(out_scalar[i]), Goldilocks::toU64(out_avx[i]))
@@ -180,7 +180,7 @@ static void linearHashGolden(const uint64_t *golden)
     fillSequential<W>(in, 1, size);
 
     Goldilocks::Element out[HASH_SIZE];
-    Poseidon2Goldilocks<W>::linearHash(out, in, size, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<W, false>::linearHash(out, in, size, Poseidon2Mode::Scalar);
     assertCapacityEq(out, golden);
 }
 
@@ -202,9 +202,9 @@ static void linearHashModeEquiv()
         in[i] = Goldilocks::fromU64(i * 13 + 5);
 
     Goldilocks::Element out_scalar[HASH_SIZE], out_avx[HASH_SIZE], out_auto[HASH_SIZE];
-    Poseidon2Goldilocks<W>::linearHash(out_scalar, in.data(), size, Poseidon2Mode::Scalar);
-    Poseidon2Goldilocks<W>::linearHash(out_avx,    in.data(), size, Poseidon2Mode::Avx);
-    Poseidon2Goldilocks<W>::linearHash(out_auto,   in.data(), size, Poseidon2Mode::Auto);
+    Poseidon2Goldilocks<W, false>::linearHash(out_scalar, in.data(), size, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<W, false>::linearHash(out_avx,    in.data(), size, Poseidon2Mode::Avx);
+    Poseidon2Goldilocks<W, false>::linearHash(out_auto,   in.data(), size, Poseidon2Mode::Auto);
 
     for (int i = 0; i < HASH_SIZE; ++i) {
         ASSERT_EQ(Goldilocks::toU64(out_scalar[i]), Goldilocks::toU64(out_avx[i]))
@@ -234,7 +234,7 @@ static void merkletreeModeEquivalence(uint64_t arity, uint64_t nrows, uint64_t n
 
     auto rootOf = [&](Poseidon2Mode m, Goldilocks::Element out[4]) {
         std::vector<Goldilocks::Element> tree(numElems);
-        Poseidon2Goldilocks<W>::merkletree(tree.data(), input.data(), ncols, nrows, arity, m);
+        Poseidon2Goldilocks<W, false>::merkletree(tree.data(), input.data(), ncols, nrows, arity, m);
         std::memcpy(out, &tree[numElems - HASH_SIZE], HASH_SIZE * sizeof(Goldilocks::Element));
     };
 
@@ -290,7 +290,7 @@ TEST(Poseidon2, merkletreeReduce_golden_W12_ar3)
     fillSequential<12>(input, 1, 12);
 
     Goldilocks::Element root[4];
-    Poseidon2Goldilocks<12>::merkletreeReduce(root, input, 3, 3);
+    Poseidon2Goldilocks<12, false>::merkletreeReduce(root, input, 3, 3);
     assertCapacityEq(root, MERKLETREE_REDUCE_W12_AR3_GOLDEN);
 }
 
@@ -305,7 +305,7 @@ TEST(Poseidon2, merkletreeReduce_single_digest)
         input[i] = Goldilocks::fromU64(0xABCD0000ULL + i);
 
     Goldilocks::Element root[4];
-    Poseidon2Goldilocks<12>::merkletreeReduce(root, input, 1, 3);
+    Poseidon2Goldilocks<12, false>::merkletreeReduce(root, input, 1, 3);
 
     for (int i = 0; i < 4; ++i)
         ASSERT_EQ(Goldilocks::toU64(root[i]), Goldilocks::toU64(input[i]));
@@ -338,12 +338,12 @@ TEST(Poseidon2, grinding_cpu)
 template<uint32_t W>
 static void permuteTruncAllZero()
 {
-    constexpr uint32_t C = Poseidon2Goldilocks<W>::CAPACITY;
+    constexpr uint32_t C = Poseidon2Goldilocks<W, false>::CAPACITY;
     Goldilocks::Element in[W];
     memset(in, 0, sizeof(in));
 
     Goldilocks::Element out[C];
-    Poseidon2Goldilocks<W>::permuteTrunc(out, in, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<W, false>::permuteTrunc(out, in, Poseidon2Mode::Scalar);
 
     bool allZero = true;
     for (uint32_t i = 0; i < C; ++i) {
@@ -370,7 +370,7 @@ static void linearHashSizeZero()
     Goldilocks::Element out[HASH_SIZE];
     memset(out, 0xFF, sizeof(out));
     Goldilocks::Element dummy;
-    Poseidon2Goldilocks<W>::linearHash(out, &dummy, 0, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<W, false>::linearHash(out, &dummy, 0, Poseidon2Mode::Scalar);
 
     for (int i = 0; i < HASH_SIZE; ++i)
         ASSERT_EQ(Goldilocks::toU64(out[i]), 0ULL) << "linearHash(size=0) must return zeros (W=" << W << " i=" << i << ")";
@@ -390,8 +390,8 @@ static void linearHashSize1Equiv()
 {
     Goldilocks::Element in[1] = { Goldilocks::fromU64(42) };
     Goldilocks::Element out_scalar[HASH_SIZE], out_avx[HASH_SIZE];
-    Poseidon2Goldilocks<W>::linearHash(out_scalar, in, 1, Poseidon2Mode::Scalar);
-    Poseidon2Goldilocks<W>::linearHash(out_avx,    in, 1, Poseidon2Mode::Avx);
+    Poseidon2Goldilocks<W, false>::linearHash(out_scalar, in, 1, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<W, false>::linearHash(out_avx,    in, 1, Poseidon2Mode::Avx);
 
     for (int i = 0; i < HASH_SIZE; ++i)
         ASSERT_EQ(Goldilocks::toU64(out_scalar[i]), Goldilocks::toU64(out_avx[i]))
@@ -415,11 +415,11 @@ static void merkletreeNrows1(uint64_t arity, uint64_t ncols)
         input[i] = Goldilocks::fromU64(i * 7 + 3);
 
     Goldilocks::Element lh_out[HASH_SIZE];
-    Poseidon2Goldilocks<W>::linearHash(lh_out, input.data(), ncols, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<W, false>::linearHash(lh_out, input.data(), ncols, Poseidon2Mode::Scalar);
 
     uint64_t numElems = getTreeNumElements(1, arity);
     std::vector<Goldilocks::Element> tree(numElems);
-    Poseidon2Goldilocks<W>::merkletree(tree.data(), input.data(), ncols, 1, arity, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<W, false>::merkletree(tree.data(), input.data(), ncols, 1, arity, Poseidon2Mode::Scalar);
 
     Goldilocks::Element root[HASH_SIZE];
     std::memcpy(root, &tree[numElems - HASH_SIZE], HASH_SIZE * sizeof(Goldilocks::Element));
