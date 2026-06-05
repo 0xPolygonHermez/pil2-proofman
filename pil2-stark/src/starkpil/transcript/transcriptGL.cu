@@ -51,28 +51,63 @@ __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pe
         inputs[i + transcriptPendingSize] = state[i];
     }
 #ifdef STARK_POSEIDON1
-    switch(arity) {
-        case 2:
-            poseidon1PermuteReg<PoseidonGoldilocks<12>::SPONGE_WIDTH,
-                                PoseidonGoldilocks<12>::HALF_N_FULL_ROUNDS,
-                                PoseidonGoldilocks<12>::N_PARTIAL_ROUNDS,
-                                PoseidonGoldilocks<12>::DM>(
-                (gl64_t*)out, (gl64_t*)inputs,
-                (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
-                (const gl64_t*)POSEIDON1_GPU_M, (const gl64_t*)POSEIDON1_GPU_P);
-            break;
-        case 3:
-            poseidon1PermuteReg<PoseidonGoldilocks<16>::SPONGE_WIDTH,
-                                PoseidonGoldilocks<16>::HALF_N_FULL_ROUNDS,
-                                PoseidonGoldilocks<16>::N_PARTIAL_ROUNDS,
-                                PoseidonGoldilocks<16>::DM>(
-                (gl64_t*)out, (gl64_t*)inputs,
-                (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
-                (const gl64_t*)POSEIDON1_GPU_M, (const gl64_t*)POSEIDON1_GPU_P);
-            break;
-        default:
-            assert(false && "STARK_POSEIDON1 supports arity 2 or 3 only");
-            return;
+    if constexpr (USE_DM_HASH) {
+        switch(arity) {
+            case 2:
+                poseidon1PermuteReg<PoseidonGoldilocks<8>::SPONGE_WIDTH,
+                                    PoseidonGoldilocks<8>::HALF_N_FULL_ROUNDS,
+                                    PoseidonGoldilocks<8>::N_PARTIAL_ROUNDS,
+                                    PoseidonGoldilocks<8>::DM>(
+                    (gl64_t*)out, (gl64_t*)inputs,
+                    (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
+                    (const gl64_t*)POSEIDON1_GPU_M, (const gl64_t*)POSEIDON1_GPU_P);
+                break;
+            case 3:
+                poseidon1PermuteReg<PoseidonGoldilocks<12>::SPONGE_WIDTH,
+                                    PoseidonGoldilocks<12>::HALF_N_FULL_ROUNDS,
+                                    PoseidonGoldilocks<12>::N_PARTIAL_ROUNDS,
+                                    PoseidonGoldilocks<12>::DM>(
+                    (gl64_t*)out, (gl64_t*)inputs,
+                    (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
+                    (const gl64_t*)POSEIDON1_GPU_M, (const gl64_t*)POSEIDON1_GPU_P);
+                break;
+            case 4:
+                poseidon1PermuteReg<PoseidonGoldilocks<16>::SPONGE_WIDTH,
+                                    PoseidonGoldilocks<16>::HALF_N_FULL_ROUNDS,
+                                    PoseidonGoldilocks<16>::N_PARTIAL_ROUNDS,
+                                    PoseidonGoldilocks<16>::DM>(
+                    (gl64_t*)out, (gl64_t*)inputs,
+                    (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
+                    (const gl64_t*)POSEIDON1_GPU_M, (const gl64_t*)POSEIDON1_GPU_P);
+                break;
+            default:
+                assert(false && "STARK_POSEIDON1+DM supports arity 2, 3 or 4");
+                return;
+        }
+    } else {
+        switch(arity) {
+            case 2:
+                poseidon1PermuteReg<PoseidonGoldilocks<12>::SPONGE_WIDTH,
+                                    PoseidonGoldilocks<12>::HALF_N_FULL_ROUNDS,
+                                    PoseidonGoldilocks<12>::N_PARTIAL_ROUNDS,
+                                    PoseidonGoldilocks<12>::DM>(
+                    (gl64_t*)out, (gl64_t*)inputs,
+                    (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
+                    (const gl64_t*)POSEIDON1_GPU_M, (const gl64_t*)POSEIDON1_GPU_P);
+                break;
+            case 3:
+                poseidon1PermuteReg<PoseidonGoldilocks<16>::SPONGE_WIDTH,
+                                    PoseidonGoldilocks<16>::HALF_N_FULL_ROUNDS,
+                                    PoseidonGoldilocks<16>::N_PARTIAL_ROUNDS,
+                                    PoseidonGoldilocks<16>::DM>(
+                    (gl64_t*)out, (gl64_t*)inputs,
+                    (const gl64_t*)POSEIDON1_GPU_C, (const gl64_t*)POSEIDON1_GPU_S,
+                    (const gl64_t*)POSEIDON1_GPU_M, (const gl64_t*)POSEIDON1_GPU_P);
+                break;
+            default:
+                assert(false && "STARK_POSEIDON1 supports arity 2 or 3 only");
+                return;
+        }
     }
 #else
     switch(arity){

@@ -981,11 +981,25 @@ template class PoseidonGoldilocks<12, true>;
 // W=8 — grinding
 template void PoseidonGoldilocks<8, false>::permute_seq(
     Goldilocks::Element (&)[8], const Goldilocks::Element (&)[8]);
+template void PoseidonGoldilocks<8, false>::linear_hash_seq(
+    Goldilocks::Element *, Goldilocks::Element *, uint64_t);
+template void PoseidonGoldilocks<8, false>::merkletree_seq(
+    Goldilocks::Element *, Goldilocks::Element *,
+    uint64_t, uint64_t, uint64_t, int, uint64_t);
+template void PoseidonGoldilocks<8, false>::merkletreeReduce(
+    Goldilocks::Element *, Goldilocks::Element *, uint64_t, uint64_t);
 template void PoseidonGoldilocks<8, false>::grinding(
     uint64_t &, const uint64_t *, const uint32_t);
 template void PoseidonGoldilocks<8, false>::abortMode(const char *, PoseidonMode);
 template void PoseidonGoldilocks<8, true>::permute_seq(
     Goldilocks::Element (&)[8], const Goldilocks::Element (&)[8]);
+template void PoseidonGoldilocks<8, true>::linear_hash_seq(
+    Goldilocks::Element *, Goldilocks::Element *, uint64_t);
+template void PoseidonGoldilocks<8, true>::merkletree_seq(
+    Goldilocks::Element *, Goldilocks::Element *,
+    uint64_t, uint64_t, uint64_t, int, uint64_t);
+template void PoseidonGoldilocks<8, true>::merkletreeReduce(
+    Goldilocks::Element *, Goldilocks::Element *, uint64_t, uint64_t);
 template void PoseidonGoldilocks<8, true>::grinding(
     uint64_t &, const uint64_t *, const uint32_t);
 template void PoseidonGoldilocks<8, true>::abortMode(const char *, PoseidonMode);

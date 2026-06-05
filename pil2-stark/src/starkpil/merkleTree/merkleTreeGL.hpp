@@ -85,17 +85,35 @@ public:
         }
         Goldilocks::Element computedRoot[nFieldElements];
 #ifdef STARK_POSEIDON1
-        switch(arity) {
-            case 2:
-                PoseidonGoldilocks<12>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
-                break;
-            case 3:
-                PoseidonGoldilocks<16>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
-                break;
-            default:
-                zklog.error("MerkleTreeGL::verifyMerkleRoot: Unsupported arity (STARK_POSEIDON1 supports 2, 3)");
-                exitProcess();
-                exit(-1);
+        if constexpr (USE_DM_HASH) {
+            switch(arity) {
+                case 2:
+                    PoseidonGoldilocks<8>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+                    break;
+                case 3:
+                    PoseidonGoldilocks<12>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+                    break;
+                case 4:
+                    PoseidonGoldilocks<16>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+                    break;
+                default:
+                    zklog.error("MerkleTreeGL::verifyMerkleRoot: Unsupported arity (STARK_POSEIDON1+DM supports 2, 3, 4)");
+                    exitProcess();
+                    exit(-1);
+            }
+        } else {
+            switch(arity) {
+                case 2:
+                    PoseidonGoldilocks<12>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+                    break;
+                case 3:
+                    PoseidonGoldilocks<16>::merkletreeReduce(computedRoot, (Goldilocks::Element *)level, numNodesLevel, arity);
+                    break;
+                default:
+                    zklog.error("MerkleTreeGL::verifyMerkleRoot: Unsupported arity (STARK_POSEIDON1 supports 2, 3)");
+                    exitProcess();
+                    exit(-1);
+            }
         }
 #else
         switch(arity) {

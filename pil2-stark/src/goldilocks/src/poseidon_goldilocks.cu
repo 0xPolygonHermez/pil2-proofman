@@ -621,48 +621,43 @@ void PoseidonGoldilocksGPU<W, DM_T>::grinding(uint64_t *d_nonce, uint64_t *d_non
 
 // ---------------------------------------------------------------------------
 // Explicit instantiations.
-// W=12: full (compatibility with existing default Poseidon1 path).
-// W=8 / W=16: only the methods used by the new STARK_POSEIDON1 layout
-//   (W=8 = grinding only; W=16 = merkle + transcript + permute).
-// ---------------------------------------------------------------------------
-// Instantiate both DM=false (tests) and DM=true (production default) for
-// each width in use.
+// W=12: full (compatibility with existing default Poseidon1 path).---------------------------------------------------------------------------
+template class PoseidonGoldilocksGPU<8,  false>;
+template class PoseidonGoldilocksGPU<8,  true>;
 template class PoseidonGoldilocksGPU<12, false>;
 template class PoseidonGoldilocksGPU<12, true>;
-
-template void PoseidonGoldilocksGPU<8, false>::initConstants(uint32_t*, uint32_t);
-template void PoseidonGoldilocksGPU<8, false>::grinding(uint64_t*, uint64_t*, const uint64_t*, uint32_t, cudaStream_t);
-template void PoseidonGoldilocksGPU<8, false>::permute(uint64_t*, const uint64_t*, cudaStream_t);
-template void PoseidonGoldilocksGPU<8, true>::initConstants(uint32_t*, uint32_t);
-template void PoseidonGoldilocksGPU<8, true>::grinding(uint64_t*, uint64_t*, const uint64_t*, uint32_t, cudaStream_t);
-template void PoseidonGoldilocksGPU<8, true>::permute(uint64_t*, const uint64_t*, cudaStream_t);
-
-template void PoseidonGoldilocksGPU<16, false>::initConstants(uint32_t*, uint32_t);
-template void PoseidonGoldilocksGPU<16, false>::permute(uint64_t*, const uint64_t*, cudaStream_t);
-template void PoseidonGoldilocksGPU<16, false>::merkletree(uint32_t, uint64_t*, uint64_t*, uint64_t, uint64_t, Layout, cudaStream_t);
-template void PoseidonGoldilocksGPU<16, false>::permuteTrunc(uint64_t*, const uint64_t*, cudaStream_t);
-template void PoseidonGoldilocksGPU<16, false>::merkletreeReduce(uint64_t*, uint64_t*, uint64_t, uint64_t, cudaStream_t);
-template void PoseidonGoldilocksGPU<16, false>::grinding(uint64_t*, uint64_t*, const uint64_t*, uint32_t, cudaStream_t);
-template void PoseidonGoldilocksGPU<16, true>::initConstants(uint32_t*, uint32_t);
-template void PoseidonGoldilocksGPU<16, true>::permute(uint64_t*, const uint64_t*, cudaStream_t);
-template void PoseidonGoldilocksGPU<16, true>::merkletree(uint32_t, uint64_t*, uint64_t*, uint64_t, uint64_t, Layout, cudaStream_t);
-template void PoseidonGoldilocksGPU<16, true>::permuteTrunc(uint64_t*, const uint64_t*, cudaStream_t);
-template void PoseidonGoldilocksGPU<16, true>::merkletreeReduce(uint64_t*, uint64_t*, uint64_t, uint64_t, cudaStream_t);
-template void PoseidonGoldilocksGPU<16, true>::grinding(uint64_t*, uint64_t*, const uint64_t*, uint32_t, cudaStream_t);
+template class PoseidonGoldilocksGPU<16, false>;
+template class PoseidonGoldilocksGPU<16, true>;
 
 #ifdef STARK_POSEIDON1
 void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
                          uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream)
 {
-    switch (arity) {
-        case 2:
-            PoseidonGoldilocksGPU<12>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
-            break;
-        case 3:
-            PoseidonGoldilocksGPU<16>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
-            break;
-        default:
-            assert(false && "STARK_POSEIDON1 supports merkleTreeArity 2 or 3 only");
+    if constexpr (USE_DM_HASH) {
+        switch (arity) {
+            case 2:
+                PoseidonGoldilocksGPU<8>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
+                break;
+            case 3:
+                PoseidonGoldilocksGPU<12>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
+                break;
+            case 4:
+                PoseidonGoldilocksGPU<16>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
+                break;
+            default:
+                assert(false && "STARK_POSEIDON1 (DM) supports merkleTreeArity 2, 3 or 4");
+        }
+    } else {
+        switch (arity) {
+            case 2:
+                PoseidonGoldilocksGPU<12>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
+                break;
+            case 3:
+                PoseidonGoldilocksGPU<16>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
+                break;
+            default:
+                assert(false && "STARK_POSEIDON1 supports merkleTreeArity 2 or 3 only");
+        }
     }
 }
 

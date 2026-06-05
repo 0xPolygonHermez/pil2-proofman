@@ -18,23 +18,50 @@ void TranscriptGL::_updateState()
     std::memcpy(inputs, pending, transcriptPendingSize * sizeof(Goldilocks::Element));
     std::memcpy(&inputs[transcriptPendingSize], state, transcriptStateSize * sizeof(Goldilocks::Element));
 #ifdef STARK_POSEIDON1
-    switch(arity) {
-        case 2:
-            PoseidonGoldilocks<12>::permute(
-                (Goldilocks::Element(&)[12])*out,
-                (const Goldilocks::Element(&)[12])*inputs,
-                PoseidonMode::Scalar);
-            break;
-        case 3:
-            PoseidonGoldilocks<16>::permute(
-                (Goldilocks::Element(&)[16])*out,
-                (const Goldilocks::Element(&)[16])*inputs,
-                PoseidonMode::Scalar);
-            break;
-        default:
-            zklog.error("TranscriptGL::_updateState: STARK_POSEIDON1 supports arity 2 or 3 only");
-            exitProcess();
-            exit(-1);
+    if constexpr (USE_DM_HASH) {
+        switch(arity) {
+            case 2:
+                PoseidonGoldilocks<8>::permute(
+                    (Goldilocks::Element(&)[8])*out,
+                    (const Goldilocks::Element(&)[8])*inputs,
+                    PoseidonMode::Scalar);
+                break;
+            case 3:
+                PoseidonGoldilocks<12>::permute(
+                    (Goldilocks::Element(&)[12])*out,
+                    (const Goldilocks::Element(&)[12])*inputs,
+                    PoseidonMode::Scalar);
+                break;
+            case 4:
+                PoseidonGoldilocks<16>::permute(
+                    (Goldilocks::Element(&)[16])*out,
+                    (const Goldilocks::Element(&)[16])*inputs,
+                    PoseidonMode::Scalar);
+                break;
+            default:
+                zklog.error("TranscriptGL::_updateState: STARK_POSEIDON1+DM supports arity 2, 3 or 4");
+                exitProcess();
+                exit(-1);
+        }
+    } else {
+        switch(arity) {
+            case 2:
+                PoseidonGoldilocks<12>::permute(
+                    (Goldilocks::Element(&)[12])*out,
+                    (const Goldilocks::Element(&)[12])*inputs,
+                    PoseidonMode::Scalar);
+                break;
+            case 3:
+                PoseidonGoldilocks<16>::permute(
+                    (Goldilocks::Element(&)[16])*out,
+                    (const Goldilocks::Element(&)[16])*inputs,
+                    PoseidonMode::Scalar);
+                break;
+            default:
+                zklog.error("TranscriptGL::_updateState: STARK_POSEIDON1 supports arity 2 or 3 only");
+                exitProcess();
+                exit(-1);
+        }
     }
 #else
     switch(arity) {
