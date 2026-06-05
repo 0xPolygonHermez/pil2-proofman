@@ -869,7 +869,7 @@ mod tests {
         assert!(out.contains("include \"hash/poseidon1/pow.circom\";"));
         assert!(out.contains("include \"tree/treeselector8.circom\";"));
         assert!(!out.contains("hash/poseidon2/"));
-        assert!(!out.contains("treeselector4"));
+        assert!(!out.contains("treeselector8"));
     }
 
     #[test]

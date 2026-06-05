@@ -1,16 +1,17 @@
 #ifndef POSEIDON_GOLDILOCKS_WITNESS
 #define POSEIDON_GOLDILOCKS_WITNESS
 
-// im[11][16] layout produced by the Poseidon1 width-16 permutation. Used by
+// im[12][16] layout produced by the Poseidon1 width-16 permutation. Used by
 // both Poseidon1_16 (sponge / linear hash) and CustPoseidon1_16 (Davies-Meyer
 // Merkle compression) — only the output extraction differs at the end.
 //
-//   im[0..3]  : full state after each of 4 first full rounds (M, M, M, P)
-//   im[4]     : pre-pow7 state[0] for partial rounds  0..10 + 1 zero pad
-//   im[5]     : full state after partial round 10
-//   im[6]     : pre-pow7 state[0] for partial rounds 11..21 + 1 zero pad
-//   im[7]     : full state after partial round 21
-//   im[8..10] : full state after first 3 last full rounds
+//   im[0]     : R0 — the ordered initial state (before any round constant)
+//   im[1..4]  : full state after each of 4 first full rounds (M, M, M, P)
+//   im[5]     : pre-pow7 state[0] for partial rounds  0..10 (11 cells) + 5 zero pad
+//   im[6]     : full state after partial round 10
+//   im[7]     : pre-pow7 state[0] for partial rounds 11..21 (11 cells) + 5 zero pad
+//   im[8]     : full state after partial round 21
+//   im[9..11] : full state after first 3 last full rounds
 
 #include <vector>
 #include "poseidon_goldilocks_constants.hpp"
@@ -82,6 +83,11 @@ void Poseidon1_perm_seq(Goldilocks::Element *state, uint64_t *im)
     using PC = PoseidonGoldilocksConstants::Poseidon1Tables<WIDTH_POS1>;
     uint64_t index = 0;
 
+    // im[0] = R0 (the ordered initial state, before any round constant). Emitted
+    // so the trace mapping can wire R0 from a real circom signal — matches the
+    // PIL input-ordering check R0 === permuted(input, key) and Poseidon2's im[0].
+    snapshot_pos1(im, index, state);
+
     add_state_pos1(state, &PC::C[0]);
 
     for (int r = 0; r < HALF_FULL_ROUNDS_POS1 - 1; r++) {
@@ -108,7 +114,7 @@ void Poseidon1_perm_seq(Goldilocks::Element *state, uint64_t *im)
         state[0] = s0;
 
         if (r == 10 || r == 21) {
-            im[index++] = 0;
+            for (int i = 11; i < WIDTH_POS1; i++) im[index++] = 0;
             snapshot_pos1(im, index, state);
         }
     }
@@ -222,6 +228,11 @@ void Poseidon1_perm_avx(Goldilocks::Element *state, uint64_t *im)
     uint64_t index = 0;
     Goldilocks::Element scratch[WIDTH_POS1];
 
+    // im[0] = R0 (the ordered initial state, before any round constant). Emitted
+    // so the trace mapping can wire R0 from a real circom signal — matches the
+    // PIL input-ordering check R0 === permuted(input, key) and Poseidon2's im[0].
+    for (int i = 0; i < WIDTH_POS1; i++) im[index++] = Goldilocks::toU64(state[i]);
+
     __m256i st[N_AVX_VECS_POS1];
     for (int i = 0; i < N_AVX_VECS_POS1; i++) Goldilocks::load_avx(st[i], &state[4 * i]);
 
@@ -274,7 +285,7 @@ void Poseidon1_perm_avx(Goldilocks::Element *state, uint64_t *im)
         }
 
         if (r == 10 || r == 21) {
-            im[index++] = 0;
+            for (int i = 11; i < WIDTH_POS1; i++) im[index++] = 0;
             for (int i = 0; i < N_AVX_VECS_POS1; i++) {
                 Goldilocks::store_avx(&scratch[4 * i], st[i]);
             }
@@ -325,9 +336,14 @@ void Poseidon1_16(uint64_t *im, uint *size_im, uint64_t *out, uint *size_out,
                   uint64_t *in, uint *size_in)
 {
     Goldilocks::Element state[WIDTH_POS1];
-    for (int i = 0; i < WIDTH_POS1; i++) state[i] = Goldilocks::fromU64(in[i]);
+    Goldilocks::Element input_copy[WIDTH_POS1];
+    for (int i = 0; i < WIDTH_POS1; i++) {
+        state[i] = Goldilocks::fromU64(in[i]);
+        input_copy[i] = state[i];
+    }
     Poseidon1_perm(state, im);
-    for (int i = 0; i < WIDTH_POS1; i++) out[i] = Goldilocks::toU64(state[i]);
+    // Davies-Meyer (applied to every Poseidon permutation): out = P(in) + in.
+    for (int i = 0; i < WIDTH_POS1; i++) out[i] = Goldilocks::toU64(state[i] + input_copy[i]);
 }
 
 // Compression entry (Davies-Meyer): applies the Poseidon1 width-16 permutation

@@ -80,142 +80,102 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
 
     const int firstColP = 36;
 
-    // ── Poseidon1 (Hades-Goldilocks, width 16) — 9-row layout per gate ──────────
-    // One chain slot per row at cols 36..51. State is read uniformly from a[i+firstColP].
-    // R4 is NOT stored — the partial chain reads its input via prefix prime of
-    // fullRoundP (round-3 P-matrix expression evaluated at PR' row). State expressions
-    // inside the partial chain stay at degree 7 → anchor checks at degree 8, fits max=8.
-    //
-    //   Row 0 (INIT/R0):   a[0..15]=input  a[18..23]=im[16..21]   a[36..51]=input(dup, R0)
-    //   Row 1 (R1):                                                a[36..51]=R1
-    //   Row 2 (R2):                                                a[36..51]=R2
-    //   Row 3 (R3, PR'):                                           a[36..51]=R3
-    //                       (round-3 P-matrix on R3: pow7(R3) + C[round 3] → P → R4 expression)
-    //   Row 4 (PR):                                                a[36..51]=im[0..15]  (anchors fully fill chain slot)
-    //                       (single 22-round partial chain: reads 'fullRoundP (R4 expression),
-    //                        outputs R26 to row 5's chain slot)
-    //   Row 5 (R26):                                                a[36..51]=R26
-    //   Row 6 (R27):                                                a[36..51]=R27
-    //   Row 7 (R28):                                                a[36..51]=R28
-    //   Row 8 (R29, FINAL):a[0..15]=output                          a[36..51]=R29
-    //
-    // SBOX-sharing: at row 4 the main chain doesn't fire, so a[i+firstColP] there
-    // holds anchors. pow7Shared[r] at row 4 = pow7(anchor[r]) for r=0..15. The 6
-    // overflow anchors at row 0 cols 18..23 need 6 separate pow7 expressions.
-    //
-    // ARC convention (Hades): RC added BEFORE pow7 only at round 0 (INIT pre-ARC).
-    // All other rounds add their post-ARC OUTSIDE pow7.
-    //
-    // Davies-Meyer: at FINAL row 8, output += input only when COMPRESSION fired at INIT.
-    // (8)'POSEIDON1_COMPRESSION at row 8 = POSEIDON1_COMPRESSION at row 0.
+    // Poseidon1 (Hades-Goldilocks, width 16), 9-row layout. One chain slot per row at
+    // cols 36..51; the round-3 P-matrix transition (R4) is NOT stored and is recomputed
+    // via the prefix prime 'fullRoundP; the 22 partial anchors are 16 in the PR chain slot
+    // (a[36..51]) plus 6 overflow in the plonk band at row 0 (a[18..23]).
+    //   row 0 (INIT):  a[0..15]=input  a[18..23]=anchors[16..21]  a[36..51]=R0
+    //   rows 1..3:     a[36..51]=R1, R2, R3 (row 3 = PR')
+    //   row 4 (PR):    a[36..51]=anchors[0..15]
+    //   rows 5..7:     a[36..51]=R26, R27, R28
+    //   row 8 (FINAL): a[0..15]=output  a[36..51]=R29
 
     const expr pow7Input[POSEIDON_WIDTH_GL];
     const expr pow7Shared[POSEIDON_WIDTH_GL];
-
     for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
-        // INIT pre-ARC (round 0 only).
-        pow7Input[i] = a[i + firstColP] + POSEIDON1_INIT * POSEIDON_C_GL[i];
+        pow7Input[i] = a[i + firstColP] + POSEIDON1_INIT * POSEIDON_C_GL[i];  // INIT pre-ARC (round 0)
     }
     for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
         pow7Shared[i] = pow7(pow7Input[i]);
     }
 
-    // 6 SEPARATE pow7 expressions for the overflow anchors[16..21] at row 0 cols 18..23.
-    // Read from row 4 (PR fires) via prefix prime (4)'a[..].
+    // Separate pow7 for the 6 overflow anchors[16..21] (row 0 a[18..23], read from row 4).
     const expr pow7Overflow[6];
     for (int i = 0; i < 6; i++) {
         pow7Overflow[i] = pow7((4)'a[i + 18]);
     }
 
-    // Per-round post-S-box ARC (Hades: added OUTSIDE pow7).
     const expr ARC[POSEIDON_WIDTH_GL];
     const expr preMat[POSEIDON_WIDTH_GL];
     const expr outputF[POSEIDON_WIDTH_GL];
-
     for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
-        ARC[i] = POSEIDON1_R0       * POSEIDON_C_GL[i + 16]     // round 0
-               + POSEIDON1_R1       * POSEIDON_C_GL[i + 32]     // round 1
-               + POSEIDON1_R2       * POSEIDON_C_GL[i + 48]     // round 2
-               + POSEIDON1_PR_PRIME * POSEIDON_C_GL[i + 64]     // round 3 (P-matrix)
-               + POSEIDON1_R26      * POSEIDON_C_GL[i + 102]    // round 26
-               + POSEIDON1_R27      * POSEIDON_C_GL[i + 118]    // round 27
-               + POSEIDON1_R28      * POSEIDON_C_GL[i + 134];   // round 28
-               // R29 (round 29) has no ARC
+        // Post-S-box ARC (Hades). Rounds 0/1/2 + 3(P) + 26/27/28; round 29 has no ARC.
+        ARC[i] = POSEIDON1_R0       * POSEIDON_C_GL[i + 16]
+               + POSEIDON1_R1       * POSEIDON_C_GL[i + 32]
+               + POSEIDON1_R2       * POSEIDON_C_GL[i + 48]
+               + POSEIDON1_PR_PRIME * POSEIDON_C_GL[i + 64]
+               + POSEIDON1_R26      * POSEIDON_C_GL[i + 102]
+               + POSEIDON1_R27      * POSEIDON_C_GL[i + 118]
+               + POSEIDON1_R28      * POSEIDON_C_GL[i + 134];
 
         preMat[i] = pow7Shared[i] + ARC[i];
 
-        // Chain output destinations:
-        //   rounds 0, 1, 2: NEXT row's chain slot (R1, R2, R3 at rows 1, 2, 3)
-        //   rounds 26, 27, 28: NEXT row's chain slot (R27, R28, R29 at rows 6, 7, 8)
-        //   round 29 (FINAL): SAME row's a[i] (output cells, DM-summed if COMPRESSION)
-        //   round 3 (PR'): excluded — P-matrix output feeds the partial chain via 'fullRoundP
-        //   PR (row 4): excluded — chain slot holds anchors
-        // Davies-Meyer adds back the REORDERED (storage-order) input = R0
-        // (a[i+firstColP] @ INIT), not the raw input a[i], so it matches the
-        // prover, which hashes a node's children in fixed storage order and
-        // adds that same ordered vector. R0 differs from raw input when key != 00.
+        // Output → next-row chain slot for rounds 0..2/26..28; DM at FINAL adds back R0 = a[i+firstColP]@INIT.
         outputF[i] = (POSEIDON1_R0 + POSEIDON1_R1 + POSEIDON1_R2
                     + POSEIDON1_R26 + POSEIDON1_R27 + POSEIDON1_R28) * a[i + firstColP]'
-                   + POSEIDON1_FINAL * (a[i] - (8)'POSEIDON1_COMPRESSION * (8)'a[i + firstColP]);
+                   + POSEIDON1_FINAL * (a[i] - (8)'a[i + firstColP]);
     }
 
-    // INIT input-ordering: R0 (= a[i+firstColP] @ INIT) === permuted(input, key) for
-    // CustPoseidon1 (Davies-Meyer compression), or R0 === input for plain Poseidon1.
-    // Key bits at a[16], a[17] @ INIT row; helper also enforces binary check.
+    // INIT input-ordering: R0 === permuted(input, key) (compression) or R0 === input (sponge).
     const expr inputCells[POSEIDON_WIDTH_GL];
     const expr R0Cells[POSEIDON_WIDTH_GL];
     for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
         inputCells[i] = a[i];
         R0Cells[i]    = a[i + firstColP];
     }
-    const expr poseidon1Key[2] = [a[16], a[17]];
-    poseidon1InputOrderGl(inputCells, poseidon1Key, R0Cells, POSEIDON1_COMPRESSION, POSEIDON1_SPONGE);
+    poseidon1InputOrderGl(inputCells, [a[16], a[17]], R0Cells, POSEIDON1_COMPRESSION, POSEIDON1_SPONGE);
 
     const expr fullRound[POSEIDON_WIDTH_GL] = poseidonFullRoundGl(preMat);
     poseidonFullRoundCheckGl(fullRound, outputF,
         POSEIDON1_R0 + POSEIDON1_R1 + POSEIDON1_R2 + POSEIDON1_R26 + POSEIDON1_R27 + POSEIDON1_R28 + POSEIDON1_FINAL);
 
-    // ── Round 3 → R4 (P-matrix transition, not stored) ──────────────────────────
-    // fullRoundP[i] evaluated at row 3 = P × (pow7(R3) + C[i + 64]) = R4[i] expression.
-    // R4 is NOT stored; the partial chain reads it via prefix prime 'fullRoundP from
-    // row 4. The first anchor check enforces R4-consistency implicitly (degree 8).
-    const expr fullRoundP[POSEIDON_WIDTH_GL] = poseidonPmatrixGl(preMat);
+    // Round 3 → R4 (P-matrix), not stored. fullRoundP uses a DEDICATED preMatP (own pow7)
+    // rather than the shared preMat: it is consumed prefix-primed ('fullRoundP), and a prefix
+    // prime does not propagate into expression nodes shared with the unprimed fullRound check
+    // — an independent tree shifts every leaf to the PR' row (row 3) correctly.
+    const expr preMatP[POSEIDON_WIDTH_GL];
+    for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
+        preMatP[i] = pow7(a[i + firstColP]) + POSEIDON1_PR_PRIME * POSEIDON_C_GL[i + 64];
+    }
+    const expr fullRoundP[POSEIDON_WIDTH_GL] = poseidonPmatrixGl(preMatP);
 
-    // ── Single 22-round partial chain firing at PR (row 4) ──────────────────────
-    // Anchors:
-    //   row 4 a[36..51] = anchors[0..15]  (16 cells, chain slot — share pow7Shared)
-    //   row 0 a[18..23] = anchors[16..21] (6 cells, plonk band — separate pow7 exprs)
-    // Chain input  = 'fullRoundP[i] (degree-7 P-matrix expression from PR' row).
-    // Chain output = R26 at row 5 chain slot (postfix prime from row 4).
-    const expr st0Gl[22];
-    const expr intermediateValuesGl[22];
-
+    // 22-round partial chain at PR: 16 anchors a[36..51] reuse pow7Shared, 6 overflow anchors
+    // a[18..23]@row0 use pow7Overflow; input = R4 ('fullRoundP from PR'); output = R26 (next row).
+    const expr st0[22];
+    const expr intermediateValues[22];
     for (int r = 0; r < 16; r++) {
-        st0Gl[r] = a[r + firstColP];                                                 // row 4 chain slot
-        intermediateValuesGl[r] = pow7Shared[r] + POSEIDON_C_GL[80 + r];             // share pow7Shared
+        st0[r] = a[r + firstColP];
+        intermediateValues[r] = pow7Shared[r] + POSEIDON_C_GL[80 + r];
     }
     for (int r = 0; r < 6; r++) {
-        st0Gl[16 + r] = (4)'a[r + 18];                                               // row 0 cols 18..23
-        intermediateValuesGl[16 + r] = pow7Overflow[r] + POSEIDON_C_GL[96 + r];      // separate pow7
+        st0[16 + r] = (4)'a[r + 18];
+        intermediateValues[16 + r] = pow7Overflow[r] + POSEIDON_C_GL[96 + r];
     }
 
-    // Chain input/output:
-    //   input  = 'fullRoundP[i] (degree-7 P-matrix expression from PR' row)
-    //   output = R26 at row 5 chain slot (postfix prime from row 4)
-    const expr inputPGl[POSEIDON_WIDTH_GL];
-    const expr outputPGl[POSEIDON_WIDTH_GL];
+    const expr inputP[POSEIDON_WIDTH_GL];
+    const expr outputP[POSEIDON_WIDTH_GL];
     for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
-        inputPGl[i]  = 'fullRoundP[i];           // R4 expression (degree 7, from PR' row)
-        outputPGl[i] = a[i + firstColP]';        // R26 at row 5 chain slot
+        inputP[i]  = 'fullRoundP[i];
+        outputP[i] = a[i + firstColP]';
     }
 
-    const expr partialChainGl[22 + POSEIDON_WIDTH_GL] = poseidonPartialChainGl(22, 0, inputPGl, intermediateValuesGl);
+    const expr partialChain[22 + POSEIDON_WIDTH_GL] = poseidonPartialChainGl(22, 0, inputP, intermediateValues);
 
     for (int r = 0; r < 22; r++) {
-        POSEIDON1_PR * (st0Gl[r] - partialChainGl[r]) === 0;
+        POSEIDON1_PR * (st0[r] - partialChain[r]) === 0;
     }
     for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
-        POSEIDON1_PR * (outputPGl[i] - partialChainGl[22 + i]) === 0;
+        POSEIDON1_PR * (outputP[i] - partialChain[22 + i]) === 0;
     }
 
     // ── Remaining custom-gate circuits ──────────────────────────────────────────

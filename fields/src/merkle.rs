@@ -73,6 +73,8 @@ pub fn calculate_root_from_proof<F: PrimeField64, H: crate::Hash<F>>(
         }
     }
 
+    // H::hash already includes Davies-Meyer (out = P(in) + in) for every
+    // permutation, so node compression is just hash-then-truncate here.
     H::hash(&mut inputs);
     value.as_mut()[..4].copy_from_slice(&inputs.as_ref()[..4]);
     calculate_root_from_proof::<F, H>(value, mp, idx, offset + 1, arity);
@@ -128,6 +130,7 @@ pub fn partial_merkle_tree<F: PrimeField64, H: crate::Hash<F>>(input: &[F], num_
                 let slot = pol_input.as_mut();
                 slot[..(sponge_w as usize)].copy_from_slice(&cursor[child_start..child_start + sponge_w as usize]);
             }
+            // H::hash already includes Davies-Meyer; just truncate to CAPACITY.
             H::hash(&mut pol_input);
             let parent_start = (next_index + (pending + extra_zeros + i) * cap) as usize;
             cursor[parent_start..parent_start + H::CAPACITY].copy_from_slice(&pol_input.as_ref()[..H::CAPACITY]);
@@ -191,13 +194,13 @@ mod tests {
 
     #[test]
     fn partial_merkle_tree_single_parent_matches_full_compression() {
-        // 4 leaf digests of 4 cells each = 16 input cells; arity 4 → exactly one parent
-        // node whose hash is taken over ALL 16 child cells, so the root is the first 4
-        // cells of that hash. Regression guard for the per-node input width: it must
-        // read `arity * CAPACITY` (= 16) cells, not `RATE` (= 12).
+        // poseidon2_hash already includes Davies-Meyer (out = P(in) + in), and
+        // node compression is just hash-then-truncate, so the root is the first
+        // 4 cells of poseidon2_hash(input) directly.
         let input: [Goldilocks; 16] = core::array::from_fn(|i| Goldilocks::new(i as u64 + 1));
-        let expected = poseidon2_hash::<Goldilocks, Poseidon2_16, 16>(&input);
+        let h = poseidon2_hash::<Goldilocks, Poseidon2_16, 16>(&input);
+        let expected = [h[0], h[1], h[2], h[3]];
         let root = partial_merkle_tree::<Goldilocks, Poseidon2_16>(&input, 4, 4);
-        assert_eq!(root, [expected[0], expected[1], expected[2], expected[3]]);
+        assert_eq!(root, expected);
     }
 }

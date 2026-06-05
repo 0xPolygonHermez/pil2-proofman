@@ -36,12 +36,12 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     let n_poseidon_rows = n_poseidon * POSEIDON_ROWS;
     let n_fft4_rows = cgi.n(GateRole::Fft4);
     let n_ev_pol4_rows = cgi.n(GateRole::EvPol4);
-    let n_tree_sel4_rows = cgi.n(GateRole::TreeSelector);
+    let n_tree_sel8_rows = cgi.n(GateRole::TreeSelector);
     let n_sel_val1_rows = cgi.n(GateRole::SelectVal1);
 
     // Row-count tiers (used to pre-compute n_plonk_rows)
     let twelve_count = n_poseidon * 8;
-    let six_count = n_poseidon + n_tree_sel4_rows;
+    let six_count = n_poseidon;
     let five_count = n_ev_pol4_rows;
     let four_count = n_poseidon + n_sel_val1_rows;
 
@@ -88,7 +88,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         + n_poseidon_rows
         + n_fft4_rows
         + n_ev_pol4_rows
-        + n_tree_sel4_rows
+        + n_tree_sel8_rows
         + n_sel_val1_rows;
 
     let n_bits = if n_used <= 1 { 1 } else { log2((n_used - 1) as u32) as usize + 1 };
@@ -109,7 +109,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         n_cmul_rows,
         n_ev_pol4: cgi.n(GateRole::EvPol4),
         n_fft4: cgi.n(GateRole::Fft4),
-        n_tree_selector4: cgi.n(GateRole::TreeSelector),
+        n_tree_selector8: cgi.n(GateRole::TreeSelector),
         n_select_val1: cgi.n(GateRole::SelectVal1),
     });
 
@@ -129,7 +129,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     let cmul_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::CMul));
     let fft4_uses = filter_fft4_gate_uses(&r1cs.custom_gates_uses, &cgi.fft4_parameters);
     let ev_pol4_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::EvPol4));
-    let tree_sel4_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::TreeSelector));
+    let tree_sel8_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::TreeSelector));
     let sel_val1_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::SelectVal1));
 
     let mut r = 0usize;
@@ -302,17 +302,17 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         r += 1;
     }
 
-    // ── TreeSelector4 ─────────────────────────────────────────────────────────
-    tracing::info!("Processing {} treeSelector4 gates...", tree_sel4_uses.len());
-    for cgu in &tree_sel4_uses {
-        assert_eq!(cgu.signals.len(), 17);
-        for (i, item) in s_map.iter_mut().enumerate().take(17) {
+    // ── TreeSelector8 ─────────────────────────────────────────────────────────
+    // 30 signals occupy a[0..29] — no room for plonk piggyback.
+    tracing::info!("Processing {} treeSelector8 gates...", tree_sel8_uses.len());
+    for cgu in &tree_sel8_uses {
+        assert_eq!(cgu.signals.len(), 30);
+        for (i, item) in s_map.iter_mut().enumerate().take(30) {
             item[r] = cgu.signals[i] as u32;
         }
         for item in cv.iter_mut() {
             item[r] = 0;
         }
-        six_extra.push(r);
         r += 1;
     }
 

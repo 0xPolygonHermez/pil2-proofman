@@ -7,6 +7,14 @@ pub trait Hash<F: PrimeField64> {
     const WIDTH: usize;
     const RATE: usize;
     const CAPACITY: usize;
+
+    /// Davies-Meyer feedback mode for this family/width. Currently `true` for
+    /// every Poseidon width, and the feedback is applied INSIDE the permutation
+    /// (`poseidon{1,2}_hash` always returns `P(in) + in`), so callers need no
+    /// extra handling. Kept as a per-impl const for documentation / future
+    /// per-family control.
+    const DM: bool = true;
+
     type State: Default + Copy + AsRef<[F]> + AsMut<[F]>;
 
     /// Hash the state in-place. `state.as_ref().len()` is `WIDTH` by construction.

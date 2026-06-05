@@ -6,9 +6,9 @@ include "cinv.circom";
 include "bitify.circom";
 include "fft.circom";
 include "evalpol.circom";
+include "hash/poseidon1/pow.circom";
 include "tree/treeselector8.circom";
-include "hash/poseidon2/pow.circom";
-include "hash/poseidon2/merklehash.circom";
+include "hash/poseidon1/merklehash.circom";
 
 /* 
     Calculate FRI Queries
@@ -23,7 +23,7 @@ template calculateFRIQueries0() {
     VerifyPoW(16)(challengeFRIQueries, nonce, enable);
 
 
-    signal transcriptHash_friQueries_0[16] <== Poseidon2(4, 16)([challengeFRIQueries[0],challengeFRIQueries[1],challengeFRIQueries[2],nonce,0,0,0,0,0,0,0,0], [0,0,0,0]);
+    signal transcriptHash_friQueries_0[16] <== Poseidon(16)([challengeFRIQueries[0],challengeFRIQueries[1],challengeFRIQueries[2],nonce,0,0,0,0,0,0,0,0], [0,0,0,0]);
     signal {binary} transcriptN2b_0[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[0]);
     signal {binary} transcriptN2b_1[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[1]);
     signal {binary} transcriptN2b_2[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[2]);
@@ -41,7 +41,7 @@ template calculateFRIQueries0() {
     signal {binary} transcriptN2b_14[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[14]);
     signal {binary} transcriptN2b_15[64] <== Num2Bits_strict()(transcriptHash_friQueries_0[15]);
 
-    signal transcriptHash_friQueries_1[16] <== Poseidon2(4, 16)([0,0,0,0,0,0,0,0,0,0,0,0], [transcriptHash_friQueries_0[0],transcriptHash_friQueries_0[1],transcriptHash_friQueries_0[2],transcriptHash_friQueries_0[3]]);
+    signal transcriptHash_friQueries_1[16] <== Poseidon(16)([0,0,0,0,0,0,0,0,0,0,0,0], [transcriptHash_friQueries_0[0],transcriptHash_friQueries_0[1],transcriptHash_friQueries_0[2],transcriptHash_friQueries_0[3]]);
     signal {binary} transcriptN2b_16[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[0]);
     signal {binary} transcriptN2b_17[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[1]);
     signal {binary} transcriptN2b_18[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[2]);
@@ -59,7 +59,7 @@ template calculateFRIQueries0() {
     signal {binary} transcriptN2b_30[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[14]);
     signal {binary} transcriptN2b_31[64] <== Num2Bits_strict()(transcriptHash_friQueries_1[15]);
 
-    signal transcriptHash_friQueries_2[16] <== Poseidon2(4, 16)([0,0,0,0,0,0,0,0,0,0,0,0], [transcriptHash_friQueries_1[0],transcriptHash_friQueries_1[1],transcriptHash_friQueries_1[2],transcriptHash_friQueries_1[3]]);
+    signal transcriptHash_friQueries_2[16] <== Poseidon(16)([0,0,0,0,0,0,0,0,0,0,0,0], [transcriptHash_friQueries_1[0],transcriptHash_friQueries_1[1],transcriptHash_friQueries_1[2],transcriptHash_friQueries_1[3]]);
     signal {binary} transcriptN2b_32[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[0]);
     signal {binary} transcriptN2b_33[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[1]);
     signal {binary} transcriptN2b_34[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[2]);
@@ -77,7 +77,7 @@ template calculateFRIQueries0() {
     signal {binary} transcriptN2b_46[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[14]);
     signal {binary} transcriptN2b_47[64] <== Num2Bits_strict()(transcriptHash_friQueries_2[15]);
 
-    signal transcriptHash_friQueries_3[16] <== Poseidon2(4, 16)([0,0,0,0,0,0,0,0,0,0,0,0], [transcriptHash_friQueries_2[0],transcriptHash_friQueries_2[1],transcriptHash_friQueries_2[2],transcriptHash_friQueries_2[3]]);
+    signal transcriptHash_friQueries_3[16] <== Poseidon(16)([0,0,0,0,0,0,0,0,0,0,0,0], [transcriptHash_friQueries_2[0],transcriptHash_friQueries_2[1],transcriptHash_friQueries_2[2],transcriptHash_friQueries_2[3]]);
     signal {binary} transcriptN2b_48[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[0]);
     signal {binary} transcriptN2b_49[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[1]);
     signal {binary} transcriptN2b_50[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[2]);
@@ -95,7 +95,7 @@ template calculateFRIQueries0() {
     signal {binary} transcriptN2b_62[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[14]);
     signal {binary} transcriptN2b_63[64] <== Num2Bits_strict()(transcriptHash_friQueries_3[15]);
 
-    signal transcriptHash_friQueries_4[16] <== Poseidon2(4, 16)([0,0,0,0,0,0,0,0,0,0,0,0], [transcriptHash_friQueries_3[0],transcriptHash_friQueries_3[1],transcriptHash_friQueries_3[2],transcriptHash_friQueries_3[3]]);
+    signal transcriptHash_friQueries_4[16] <== Poseidon(16)([0,0,0,0,0,0,0,0,0,0,0,0], [transcriptHash_friQueries_3[0],transcriptHash_friQueries_3[1],transcriptHash_friQueries_3[2],transcriptHash_friQueries_3[3]]);
     signal {binary} transcriptN2b_64[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[0]);
     signal {binary} transcriptN2b_65[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[1]);
     signal {binary} transcriptN2b_66[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[2]);
@@ -113,7 +113,7 @@ template calculateFRIQueries0() {
     signal {binary} transcriptN2b_78[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[14]);
     signal {binary} transcriptN2b_79[64] <== Num2Bits_strict()(transcriptHash_friQueries_4[15]);
 
-    signal transcriptHash_friQueries_5[16] <== Poseidon2(4, 16)([0,0,0,0,0,0,0,0,0,0,0,0], [transcriptHash_friQueries_4[0],transcriptHash_friQueries_4[1],transcriptHash_friQueries_4[2],transcriptHash_friQueries_4[3]]);
+    signal transcriptHash_friQueries_5[16] <== Poseidon(16)([0,0,0,0,0,0,0,0,0,0,0,0], [transcriptHash_friQueries_4[0],transcriptHash_friQueries_4[1],transcriptHash_friQueries_4[2],transcriptHash_friQueries_4[3]]);
     signal {binary} transcriptN2b_80[64] <== Num2Bits_strict()(transcriptHash_friQueries_5[0]);
     signal {binary} transcriptN2b_81[64] <== Num2Bits_strict()(transcriptHash_friQueries_5[1]);
     signal {binary} transcriptN2b_82[64] <== Num2Bits_strict()(transcriptHash_friQueries_5[2]);
@@ -1003,54 +1003,54 @@ template Transcript0() {
 
 
 
-    signal transcriptHash_0[16] <== Poseidon2(4, 16)([globalChallenge[0],globalChallenge[1],globalChallenge[2],0,0,0,0,0,0,0,0,0], [0,0,0,0]);
+    signal transcriptHash_0[16] <== Poseidon(16)([globalChallenge[0],globalChallenge[1],globalChallenge[2],0,0,0,0,0,0,0,0,0], [0,0,0,0]);
     challengesStage2[0] <== [transcriptHash_0[0], transcriptHash_0[1], transcriptHash_0[2]];
     challengesStage2[1] <== [transcriptHash_0[3], transcriptHash_0[4], transcriptHash_0[5]];
     for(var i = 6; i < 16; i++){
         _ <== transcriptHash_0[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_1[16] <== Poseidon2(4, 16)([root2[0],root2[1],root2[2],root2[3],airValues[2][0],airValues[2][1],airValues[2][2],0,0,0,0,0], [transcriptHash_0[0],transcriptHash_0[1],transcriptHash_0[2],transcriptHash_0[3]]);
+    signal transcriptHash_1[16] <== Poseidon(16)([root2[0],root2[1],root2[2],root2[3],airValues[2][0],airValues[2][1],airValues[2][2],0,0,0,0,0], [transcriptHash_0[0],transcriptHash_0[1],transcriptHash_0[2],transcriptHash_0[3]]);
     challengeQ <== [transcriptHash_1[0], transcriptHash_1[1], transcriptHash_1[2]];
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_1[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_2[16] <== Poseidon2(4, 16)([root3[0],root3[1],root3[2],root3[3],0,0,0,0,0,0,0,0], [transcriptHash_1[0],transcriptHash_1[1],transcriptHash_1[2],transcriptHash_1[3]]);
+    signal transcriptHash_2[16] <== Poseidon(16)([root3[0],root3[1],root3[2],root3[3],0,0,0,0,0,0,0,0], [transcriptHash_1[0],transcriptHash_1[1],transcriptHash_1[2],transcriptHash_1[3]]);
     challengeXi <== [transcriptHash_2[0], transcriptHash_2[1], transcriptHash_2[2]];
 
-    signal transcriptHash_evals_0[16] <== Poseidon2(4, 16)([evals[0][0],evals[0][1],evals[0][2],evals[1][0],evals[1][1],evals[1][2],evals[2][0],evals[2][1],evals[2][2],evals[3][0],evals[3][1],evals[3][2]], [0,0,0,0]);
+    signal transcriptHash_evals_0[16] <== Poseidon(16)([evals[0][0],evals[0][1],evals[0][2],evals[1][0],evals[1][1],evals[1][2],evals[2][0],evals[2][1],evals[2][2],evals[3][0],evals[3][1],evals[3][2]], [0,0,0,0]);
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_evals_0[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_evals_1[16] <== Poseidon2(4, 16)([evals[4][0],evals[4][1],evals[4][2],evals[5][0],evals[5][1],evals[5][2],evals[6][0],evals[6][1],evals[6][2],evals[7][0],evals[7][1],evals[7][2]], [transcriptHash_evals_0[0],transcriptHash_evals_0[1],transcriptHash_evals_0[2],transcriptHash_evals_0[3]]);
+    signal transcriptHash_evals_1[16] <== Poseidon(16)([evals[4][0],evals[4][1],evals[4][2],evals[5][0],evals[5][1],evals[5][2],evals[6][0],evals[6][1],evals[6][2],evals[7][0],evals[7][1],evals[7][2]], [transcriptHash_evals_0[0],transcriptHash_evals_0[1],transcriptHash_evals_0[2],transcriptHash_evals_0[3]]);
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_evals_1[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_evals_2[16] <== Poseidon2(4, 16)([evals[8][0],evals[8][1],evals[8][2],evals[9][0],evals[9][1],evals[9][2],evals[10][0],evals[10][1],evals[10][2],evals[11][0],evals[11][1],evals[11][2]], [transcriptHash_evals_1[0],transcriptHash_evals_1[1],transcriptHash_evals_1[2],transcriptHash_evals_1[3]]);
+    signal transcriptHash_evals_2[16] <== Poseidon(16)([evals[8][0],evals[8][1],evals[8][2],evals[9][0],evals[9][1],evals[9][2],evals[10][0],evals[10][1],evals[10][2],evals[11][0],evals[11][1],evals[11][2]], [transcriptHash_evals_1[0],transcriptHash_evals_1[1],transcriptHash_evals_1[2],transcriptHash_evals_1[3]]);
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_evals_2[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_evals_3[16] <== Poseidon2(4, 16)([evals[12][0],evals[12][1],evals[12][2],evals[13][0],evals[13][1],evals[13][2],evals[14][0],evals[14][1],evals[14][2],evals[15][0],evals[15][1],evals[15][2]], [transcriptHash_evals_2[0],transcriptHash_evals_2[1],transcriptHash_evals_2[2],transcriptHash_evals_2[3]]);
+    signal transcriptHash_evals_3[16] <== Poseidon(16)([evals[12][0],evals[12][1],evals[12][2],evals[13][0],evals[13][1],evals[13][2],evals[14][0],evals[14][1],evals[14][2],evals[15][0],evals[15][1],evals[15][2]], [transcriptHash_evals_2[0],transcriptHash_evals_2[1],transcriptHash_evals_2[2],transcriptHash_evals_2[3]]);
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_evals_3[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_evals_4[16] <== Poseidon2(4, 16)([evals[16][0],evals[16][1],evals[16][2],evals[17][0],evals[17][1],evals[17][2],evals[18][0],evals[18][1],evals[18][2],evals[19][0],evals[19][1],evals[19][2]], [transcriptHash_evals_3[0],transcriptHash_evals_3[1],transcriptHash_evals_3[2],transcriptHash_evals_3[3]]);
+    signal transcriptHash_evals_4[16] <== Poseidon(16)([evals[16][0],evals[16][1],evals[16][2],evals[17][0],evals[17][1],evals[17][2],evals[18][0],evals[18][1],evals[18][2],evals[19][0],evals[19][1],evals[19][2]], [transcriptHash_evals_3[0],transcriptHash_evals_3[1],transcriptHash_evals_3[2],transcriptHash_evals_3[3]]);
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_evals_4[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_evals_5[16] <== Poseidon2(4, 16)([evals[20][0],evals[20][1],evals[20][2],evals[21][0],evals[21][1],evals[21][2],evals[22][0],evals[22][1],evals[22][2],0,0,0], [transcriptHash_evals_4[0],transcriptHash_evals_4[1],transcriptHash_evals_4[2],transcriptHash_evals_4[3]]);
+    signal transcriptHash_evals_5[16] <== Poseidon(16)([evals[20][0],evals[20][1],evals[20][2],evals[21][0],evals[21][1],evals[21][2],evals[22][0],evals[22][1],evals[22][2],0,0,0], [transcriptHash_evals_4[0],transcriptHash_evals_4[1],transcriptHash_evals_4[2],transcriptHash_evals_4[3]]);
     evalsHash <== [transcriptHash_evals_5[0], transcriptHash_evals_5[1], transcriptHash_evals_5[2], transcriptHash_evals_5[3]];
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_2[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_3[16] <== Poseidon2(4, 16)([evalsHash[0],evalsHash[1],evalsHash[2],evalsHash[3],0,0,0,0,0,0,0,0], [transcriptHash_2[0],transcriptHash_2[1],transcriptHash_2[2],transcriptHash_2[3]]);
+    signal transcriptHash_3[16] <== Poseidon(16)([evalsHash[0],evalsHash[1],evalsHash[2],evalsHash[3],0,0,0,0,0,0,0,0], [transcriptHash_2[0],transcriptHash_2[1],transcriptHash_2[2],transcriptHash_2[3]]);
     challengesFRI[0] <== [transcriptHash_3[0], transcriptHash_3[1], transcriptHash_3[2]];
     challengesFRI[1] <== [transcriptHash_3[3], transcriptHash_3[4], transcriptHash_3[5]];
     challengesFRISteps[0] <== [transcriptHash_3[6], transcriptHash_3[7], transcriptHash_3[8]];
@@ -1058,81 +1058,81 @@ template Transcript0() {
         _ <== transcriptHash_3[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_4[16] <== Poseidon2(4, 16)([s1_root[0],s1_root[1],s1_root[2],s1_root[3],0,0,0,0,0,0,0,0], [transcriptHash_3[0],transcriptHash_3[1],transcriptHash_3[2],transcriptHash_3[3]]);
+    signal transcriptHash_4[16] <== Poseidon(16)([s1_root[0],s1_root[1],s1_root[2],s1_root[3],0,0,0,0,0,0,0,0], [transcriptHash_3[0],transcriptHash_3[1],transcriptHash_3[2],transcriptHash_3[3]]);
     challengesFRISteps[1] <== [transcriptHash_4[0], transcriptHash_4[1], transcriptHash_4[2]];
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_4[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_5[16] <== Poseidon2(4, 16)([s2_root[0],s2_root[1],s2_root[2],s2_root[3],0,0,0,0,0,0,0,0], [transcriptHash_4[0],transcriptHash_4[1],transcriptHash_4[2],transcriptHash_4[3]]);
+    signal transcriptHash_5[16] <== Poseidon(16)([s2_root[0],s2_root[1],s2_root[2],s2_root[3],0,0,0,0,0,0,0,0], [transcriptHash_4[0],transcriptHash_4[1],transcriptHash_4[2],transcriptHash_4[3]]);
     challengesFRISteps[2] <== [transcriptHash_5[0], transcriptHash_5[1], transcriptHash_5[2]];
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_5[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_6[16] <== Poseidon2(4, 16)([s3_root[0],s3_root[1],s3_root[2],s3_root[3],0,0,0,0,0,0,0,0], [transcriptHash_5[0],transcriptHash_5[1],transcriptHash_5[2],transcriptHash_5[3]]);
+    signal transcriptHash_6[16] <== Poseidon(16)([s3_root[0],s3_root[1],s3_root[2],s3_root[3],0,0,0,0,0,0,0,0], [transcriptHash_5[0],transcriptHash_5[1],transcriptHash_5[2],transcriptHash_5[3]]);
     challengesFRISteps[3] <== [transcriptHash_6[0], transcriptHash_6[1], transcriptHash_6[2]];
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_6[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_7[16] <== Poseidon2(4, 16)([s4_root[0],s4_root[1],s4_root[2],s4_root[3],0,0,0,0,0,0,0,0], [transcriptHash_6[0],transcriptHash_6[1],transcriptHash_6[2],transcriptHash_6[3]]);
+    signal transcriptHash_7[16] <== Poseidon(16)([s4_root[0],s4_root[1],s4_root[2],s4_root[3],0,0,0,0,0,0,0,0], [transcriptHash_6[0],transcriptHash_6[1],transcriptHash_6[2],transcriptHash_6[3]]);
     challengesFRISteps[4] <== [transcriptHash_7[0], transcriptHash_7[1], transcriptHash_7[2]];
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_7[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_8[16] <== Poseidon2(4, 16)([s5_root[0],s5_root[1],s5_root[2],s5_root[3],0,0,0,0,0,0,0,0], [transcriptHash_7[0],transcriptHash_7[1],transcriptHash_7[2],transcriptHash_7[3]]);
+    signal transcriptHash_8[16] <== Poseidon(16)([s5_root[0],s5_root[1],s5_root[2],s5_root[3],0,0,0,0,0,0,0,0], [transcriptHash_7[0],transcriptHash_7[1],transcriptHash_7[2],transcriptHash_7[3]]);
     challengesFRISteps[5] <== [transcriptHash_8[0], transcriptHash_8[1], transcriptHash_8[2]];
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_8[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_9[16] <== Poseidon2(4, 16)([s6_root[0],s6_root[1],s6_root[2],s6_root[3],0,0,0,0,0,0,0,0], [transcriptHash_8[0],transcriptHash_8[1],transcriptHash_8[2],transcriptHash_8[3]]);
+    signal transcriptHash_9[16] <== Poseidon(16)([s6_root[0],s6_root[1],s6_root[2],s6_root[3],0,0,0,0,0,0,0,0], [transcriptHash_8[0],transcriptHash_8[1],transcriptHash_8[2],transcriptHash_8[3]]);
     challengesFRISteps[6] <== [transcriptHash_9[0], transcriptHash_9[1], transcriptHash_9[2]];
 
-    signal transcriptHash_lastPolFRI_0[16] <== Poseidon2(4, 16)([finalPol[0][0],finalPol[0][1],finalPol[0][2],finalPol[1][0],finalPol[1][1],finalPol[1][2],finalPol[2][0],finalPol[2][1],finalPol[2][2],finalPol[3][0],finalPol[3][1],finalPol[3][2]], [0,0,0,0]);
+    signal transcriptHash_lastPolFRI_0[16] <== Poseidon(16)([finalPol[0][0],finalPol[0][1],finalPol[0][2],finalPol[1][0],finalPol[1][1],finalPol[1][2],finalPol[2][0],finalPol[2][1],finalPol[2][2],finalPol[3][0],finalPol[3][1],finalPol[3][2]], [0,0,0,0]);
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_lastPolFRI_0[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_lastPolFRI_1[16] <== Poseidon2(4, 16)([finalPol[4][0],finalPol[4][1],finalPol[4][2],finalPol[5][0],finalPol[5][1],finalPol[5][2],finalPol[6][0],finalPol[6][1],finalPol[6][2],finalPol[7][0],finalPol[7][1],finalPol[7][2]], [transcriptHash_lastPolFRI_0[0],transcriptHash_lastPolFRI_0[1],transcriptHash_lastPolFRI_0[2],transcriptHash_lastPolFRI_0[3]]);
+    signal transcriptHash_lastPolFRI_1[16] <== Poseidon(16)([finalPol[4][0],finalPol[4][1],finalPol[4][2],finalPol[5][0],finalPol[5][1],finalPol[5][2],finalPol[6][0],finalPol[6][1],finalPol[6][2],finalPol[7][0],finalPol[7][1],finalPol[7][2]], [transcriptHash_lastPolFRI_0[0],transcriptHash_lastPolFRI_0[1],transcriptHash_lastPolFRI_0[2],transcriptHash_lastPolFRI_0[3]]);
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_lastPolFRI_1[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_lastPolFRI_2[16] <== Poseidon2(4, 16)([finalPol[8][0],finalPol[8][1],finalPol[8][2],finalPol[9][0],finalPol[9][1],finalPol[9][2],finalPol[10][0],finalPol[10][1],finalPol[10][2],finalPol[11][0],finalPol[11][1],finalPol[11][2]], [transcriptHash_lastPolFRI_1[0],transcriptHash_lastPolFRI_1[1],transcriptHash_lastPolFRI_1[2],transcriptHash_lastPolFRI_1[3]]);
+    signal transcriptHash_lastPolFRI_2[16] <== Poseidon(16)([finalPol[8][0],finalPol[8][1],finalPol[8][2],finalPol[9][0],finalPol[9][1],finalPol[9][2],finalPol[10][0],finalPol[10][1],finalPol[10][2],finalPol[11][0],finalPol[11][1],finalPol[11][2]], [transcriptHash_lastPolFRI_1[0],transcriptHash_lastPolFRI_1[1],transcriptHash_lastPolFRI_1[2],transcriptHash_lastPolFRI_1[3]]);
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_lastPolFRI_2[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_lastPolFRI_3[16] <== Poseidon2(4, 16)([finalPol[12][0],finalPol[12][1],finalPol[12][2],finalPol[13][0],finalPol[13][1],finalPol[13][2],finalPol[14][0],finalPol[14][1],finalPol[14][2],finalPol[15][0],finalPol[15][1],finalPol[15][2]], [transcriptHash_lastPolFRI_2[0],transcriptHash_lastPolFRI_2[1],transcriptHash_lastPolFRI_2[2],transcriptHash_lastPolFRI_2[3]]);
+    signal transcriptHash_lastPolFRI_3[16] <== Poseidon(16)([finalPol[12][0],finalPol[12][1],finalPol[12][2],finalPol[13][0],finalPol[13][1],finalPol[13][2],finalPol[14][0],finalPol[14][1],finalPol[14][2],finalPol[15][0],finalPol[15][1],finalPol[15][2]], [transcriptHash_lastPolFRI_2[0],transcriptHash_lastPolFRI_2[1],transcriptHash_lastPolFRI_2[2],transcriptHash_lastPolFRI_2[3]]);
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_lastPolFRI_3[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_lastPolFRI_4[16] <== Poseidon2(4, 16)([finalPol[16][0],finalPol[16][1],finalPol[16][2],finalPol[17][0],finalPol[17][1],finalPol[17][2],finalPol[18][0],finalPol[18][1],finalPol[18][2],finalPol[19][0],finalPol[19][1],finalPol[19][2]], [transcriptHash_lastPolFRI_3[0],transcriptHash_lastPolFRI_3[1],transcriptHash_lastPolFRI_3[2],transcriptHash_lastPolFRI_3[3]]);
+    signal transcriptHash_lastPolFRI_4[16] <== Poseidon(16)([finalPol[16][0],finalPol[16][1],finalPol[16][2],finalPol[17][0],finalPol[17][1],finalPol[17][2],finalPol[18][0],finalPol[18][1],finalPol[18][2],finalPol[19][0],finalPol[19][1],finalPol[19][2]], [transcriptHash_lastPolFRI_3[0],transcriptHash_lastPolFRI_3[1],transcriptHash_lastPolFRI_3[2],transcriptHash_lastPolFRI_3[3]]);
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_lastPolFRI_4[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_lastPolFRI_5[16] <== Poseidon2(4, 16)([finalPol[20][0],finalPol[20][1],finalPol[20][2],finalPol[21][0],finalPol[21][1],finalPol[21][2],finalPol[22][0],finalPol[22][1],finalPol[22][2],finalPol[23][0],finalPol[23][1],finalPol[23][2]], [transcriptHash_lastPolFRI_4[0],transcriptHash_lastPolFRI_4[1],transcriptHash_lastPolFRI_4[2],transcriptHash_lastPolFRI_4[3]]);
+    signal transcriptHash_lastPolFRI_5[16] <== Poseidon(16)([finalPol[20][0],finalPol[20][1],finalPol[20][2],finalPol[21][0],finalPol[21][1],finalPol[21][2],finalPol[22][0],finalPol[22][1],finalPol[22][2],finalPol[23][0],finalPol[23][1],finalPol[23][2]], [transcriptHash_lastPolFRI_4[0],transcriptHash_lastPolFRI_4[1],transcriptHash_lastPolFRI_4[2],transcriptHash_lastPolFRI_4[3]]);
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_lastPolFRI_5[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_lastPolFRI_6[16] <== Poseidon2(4, 16)([finalPol[24][0],finalPol[24][1],finalPol[24][2],finalPol[25][0],finalPol[25][1],finalPol[25][2],finalPol[26][0],finalPol[26][1],finalPol[26][2],finalPol[27][0],finalPol[27][1],finalPol[27][2]], [transcriptHash_lastPolFRI_5[0],transcriptHash_lastPolFRI_5[1],transcriptHash_lastPolFRI_5[2],transcriptHash_lastPolFRI_5[3]]);
+    signal transcriptHash_lastPolFRI_6[16] <== Poseidon(16)([finalPol[24][0],finalPol[24][1],finalPol[24][2],finalPol[25][0],finalPol[25][1],finalPol[25][2],finalPol[26][0],finalPol[26][1],finalPol[26][2],finalPol[27][0],finalPol[27][1],finalPol[27][2]], [transcriptHash_lastPolFRI_5[0],transcriptHash_lastPolFRI_5[1],transcriptHash_lastPolFRI_5[2],transcriptHash_lastPolFRI_5[3]]);
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_lastPolFRI_6[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_lastPolFRI_7[16] <== Poseidon2(4, 16)([finalPol[28][0],finalPol[28][1],finalPol[28][2],finalPol[29][0],finalPol[29][1],finalPol[29][2],finalPol[30][0],finalPol[30][1],finalPol[30][2],finalPol[31][0],finalPol[31][1],finalPol[31][2]], [transcriptHash_lastPolFRI_6[0],transcriptHash_lastPolFRI_6[1],transcriptHash_lastPolFRI_6[2],transcriptHash_lastPolFRI_6[3]]);
+    signal transcriptHash_lastPolFRI_7[16] <== Poseidon(16)([finalPol[28][0],finalPol[28][1],finalPol[28][2],finalPol[29][0],finalPol[29][1],finalPol[29][2],finalPol[30][0],finalPol[30][1],finalPol[30][2],finalPol[31][0],finalPol[31][1],finalPol[31][2]], [transcriptHash_lastPolFRI_6[0],transcriptHash_lastPolFRI_6[1],transcriptHash_lastPolFRI_6[2],transcriptHash_lastPolFRI_6[3]]);
     lastPolFRIHash <== [transcriptHash_lastPolFRI_7[0], transcriptHash_lastPolFRI_7[1], transcriptHash_lastPolFRI_7[2], transcriptHash_lastPolFRI_7[3]];
     for(var i = 4; i < 16; i++){
         _ <== transcriptHash_9[i]; // Unused transcript values 
     }
 
-    signal transcriptHash_10[16] <== Poseidon2(4, 16)([lastPolFRIHash[0],lastPolFRIHash[1],lastPolFRIHash[2],lastPolFRIHash[3],0,0,0,0,0,0,0,0], [transcriptHash_9[0],transcriptHash_9[1],transcriptHash_9[2],transcriptHash_9[3]]);
+    signal transcriptHash_10[16] <== Poseidon(16)([lastPolFRIHash[0],lastPolFRIHash[1],lastPolFRIHash[2],lastPolFRIHash[3],0,0,0,0,0,0,0,0], [transcriptHash_9[0],transcriptHash_9[1],transcriptHash_9[2],transcriptHash_9[3]]);
     challengesFRISteps[7] <== [transcriptHash_10[0], transcriptHash_10[1], transcriptHash_10[2]];
     queriesFRI <== calculateFRIQueries0()(challengesFRISteps[7], nonce, enable);
 }
@@ -1844,7 +1844,7 @@ template StarkVerifier0() {
     signal input root2[4]; // Merkle tree root of stage 2
     signal input root3[4]; // Merkle tree root of the evaluations of the quotient Q1 and Q2 polynomials
 
-    signal output rootC[4] <== [13234192089600675143,13573862244259379138,1697744813429069560,4482056999257450731 ]; // Merkle tree root of the evaluations of constant polynomials
+    signal output rootC[4] <== [916115257538537464,16334590022352458636,15877230843842256730,16776778906049730026 ]; // Merkle tree root of the evaluations of constant polynomials
 
     signal input evals[23][3]; // Evaluations of the set polynomials at a challenge value z and gz
 

@@ -226,10 +226,11 @@ function poseidonInputOrder(const expr a[], const expr b[], const expr out[], co
         }
     }
 
-    poseidonFullRound(input, out, POSEIDONSPONGE + POSEIDONCOMPRESSION);
+    poseidonFullRoundCheck(poseidonFullRoundCalc(input), out, POSEIDONSPONGE + POSEIDONCOMPRESSION);
 }
 
-function poseidonFullRound(const expr input[], const expr output[], const expr sel) {
+// Pure matrix computation — no constraints emitted.
+function poseidonFullRoundCalc(const expr input[]): const expr[] {
     const expr mat[POSEIDON2_WIDTH];
 
     const expr t0[POSEIDON2_WIDTH/POSEIDON2_HASH_SIZE], t1[POSEIDON2_WIDTH/POSEIDON2_HASH_SIZE], t2[POSEIDON2_WIDTH/POSEIDON2_HASH_SIZE], t3[POSEIDON2_WIDTH/POSEIDON2_HASH_SIZE];
@@ -238,12 +239,11 @@ function poseidonFullRound(const expr input[], const expr output[], const expr s
         t1[i] = input[4*i + 2] + input[4*i + 3];
         t2[i] = 2*input[4*i + 1] + t1[i];
         t3[i] = 2*input[4*i + 3] + t0[i];
-        
+
         mat[4*i + 3] = 4*t1[i] + t3[i];
         mat[4*i + 1] = 4*t0[i] + t2[i];
-        mat[4*i] = t3[i] + mat[4*i + 1];
+        mat[4*i]     = t3[i] + mat[4*i + 1];
         mat[4*i + 2] = t2[i] + mat[4*i + 3];
-       
     }
 
     const expr stored[POSEIDON2_HASH_SIZE];
@@ -251,8 +251,17 @@ function poseidonFullRound(const expr input[], const expr output[], const expr s
         stored[i] = mat[i] + mat[i+4] + mat[i+8] + mat[i+12];
     }
 
+    const expr res[POSEIDON2_WIDTH];
     for (int i = 0; i < POSEIDON2_WIDTH; i++) {
-        sel * (output[i] -  (mat[i] + stored[i%POSEIDON2_HASH_SIZE])) === 0;
+        res[i] = mat[i] + stored[i % POSEIDON2_HASH_SIZE];
+    }
+    return res;
+}
+
+// Constraint check — verifies output matches the full-round result.
+function poseidonFullRoundCheck(const expr res[], const expr output[], const expr sel) {
+    for (int i = 0; i < POSEIDON2_WIDTH; i++) {
+        sel * (output[i] - res[i]) === 0;
     }
 }
 

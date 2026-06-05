@@ -1,5 +1,19 @@
 ## Execute the Recursive Example
 
+This example recursively verifies a previously generated regular (inner) STARK
+proof. The inner-proof fixtures live in per-hash-family subfolders and are
+selected automatically by `--hash`:
+
+```
+examples/test-recursive/
+├── poseidon1/   test.circom  test.verifier.circom  proof.bin   (Poseidon1 / Hades)
+└── poseidon2/   test.circom  test.verifier.circom  proof.bin   (Poseidon2, default)
+```
+
+`setup-recursive-test -c .../test.circom --hash <H>` resolves the fixture to
+`.../<h>/test.circom` (lowercased family). The witness library reads the matching
+`<h>/proof.bin` at run time (from `pctx.global_info.hash`), so a single
+`libtest_recursive` works for both families.
 
 ## Platform Compatibility
 
@@ -8,58 +22,59 @@ Detect your platform and set the appropriate library extension:
 ```bash
 export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi)
 ```
-### Generate Setup
 
-After compiling the PIL files, generate the setup:
-
-```bash
-cargo run --bin proofman-setup -- setup-recursive-test \
-     -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t aggregation
-```
-
-To run the aggregated proof, need to add `-t aggregation` to the previous command
-
-### Build the Project
-
-Build the project with the following command:
-
-```bash
-cargo build --workspace
-```
-
-### Verify Constraints
-
-Verify the constraints by executing this command:
-
-```bash
-cargo run --bin proofman-cli verify-constraints \
-     --witness-lib ./target/debug/libtest_recursive${PIL2_PROOFMAN_EXT} \
-     --proving-key examples/test-recursive/build/provingKey/
-```
-
-### Generate Proof
-
-Finally, generate the proof using the following command:
-
-```bash
-     cargo run --bin proofman-cli prove \
-     --witness-lib ./target/debug/libtest_recursive${PIL2_PROOFMAN_EXT}\
-     --proving-key examples/test-recursive/build/provingKey/ \
-     --output-dir examples/test-recursive/build/proofs -y -vv
-```
-
-### All at once
+## Poseidon2 (default)
 
 ```bash
 export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi) \
 && cargo run --bin proofman-setup -- setup-recursive-test \
      -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t aggregation \
+     --hash Poseidon2 \
 && cargo build --workspace \
 && cargo run --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libtest_recursive${PIL2_PROOFMAN_EXT} \
      --proving-key examples/test-recursive/build/provingKey/ \
 && cargo run --bin proofman-cli prove \
-     --witness-lib ./target/debug/libtest_recursive${PIL2_PROOFMAN_EXT}\
+     --witness-lib ./target/debug/libtest_recursive${PIL2_PROOFMAN_EXT} \
      --proving-key examples/test-recursive/build/provingKey/ \
      --output-dir examples/test-recursive/build/proofs -y -vv
+```
+
+Use `-t compressor` instead of `-t aggregation` for the compressor variant.
+
+## Poseidon1 (Hades)
+
+Same flow, but pass `--hash Poseidon1` to the setup and build the prover with
+the `stark-poseidon1` feature so the C++ library is compiled for the matching
+hash family (otherwise the prover aborts at startup with a hash-family mismatch):
+
+```bash
+export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi) \
+&& cargo run --features stark-poseidon1 --bin proofman-setup -- setup-recursive-test \
+     -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t aggregation \
+     --hash Poseidon1 \
+&& cargo build --workspace --features stark-poseidon1 \
+&& cargo run --features stark-poseidon1 --bin proofman-cli verify-constraints \
+     --witness-lib ./target/debug/libtest_recursive${PIL2_PROOFMAN_EXT} \
+     --proving-key examples/test-recursive/build/provingKey/ \
+&& cargo run --features stark-poseidon1 --bin proofman-cli prove \
+     --witness-lib ./target/debug/libtest_recursive${PIL2_PROOFMAN_EXT} \
+     --proving-key examples/test-recursive/build/provingKey/ \
+     --output-dir examples/test-recursive/build/proofs -y -vv
+```
+
+## Regenerating the inner proof fixture (`<hash>/proof.bin`)
+
+The `<hash>/proof.bin` is a regular (inner) Fibonacci STARK proof captured from a
+`fibonacci-square` prove run. To regenerate it, run the fibonacci-square prove
+with the `DUMP_INNER_PROOF` env var set to the target subfolder; the first inner
+proof is written as `proof.bin`:
+
+```bash
+DUMP_INNER_PROOF=examples/test-recursive/poseidon1 \
+  cargo run --features stark-poseidon1 --bin proofman-cli prove \
+    --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
+    --proving-key examples/fibonacci-square/build/provingKey/ \
+    --public-inputs examples/fibonacci-square/src/inputs.json \
+    --aggregation --output-dir examples/fibonacci-square/build/proofs
 ```

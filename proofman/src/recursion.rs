@@ -145,6 +145,20 @@ pub fn gen_witness_recursive<F: PrimeField64>(
             add_publics_circom(&mut updated_proof, 0, pctx, &recursive2_verkey, true);
         }
 
+        if air_id == 0 {
+            println!("BOO");
+            // TEMP: dump the recursive1 zkin (publics_circom ++ basic proof) so it can
+            // be used as examples/test-recursive/<hash>/proof.bin. Set DUMP_INNER_PROOF
+            // to a directory; overwrites proof.bin on every call (the last instance wins).
+
+            let path = std::path::Path::new("examples/test-recursive").join("proof.bin");
+            let bytes: Vec<u8> = updated_proof.iter().flat_map(|v| v.to_le_bytes()).collect();
+            match std::fs::write(&path, &bytes) {
+                Ok(_) => tracing::info!("DUMP_INNER_PROOF: wrote {} ({} u64)", path.display(), updated_proof.len()),
+                Err(e) => tracing::warn!("DUMP_INNER_PROOF: failed to write {}: {e}", path.display()),
+            }
+        }
+
         let circom_witness =
             generate_witness::<F>(setup, memory_handler_recursive_witness, proof.global_idx.unwrap(), &updated_proof)?;
         timer_stop_and_log_debug!(

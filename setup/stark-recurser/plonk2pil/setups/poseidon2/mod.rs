@@ -16,7 +16,7 @@ pub struct PilTemplateParams<'a> {
     pub n_cmul_rows: usize,
     pub n_ev_pol4: usize,
     pub n_fft4: usize,
-    pub n_tree_selector4: usize,
+    pub n_tree_selector8: usize,
     pub n_select_val1: usize,
 }
 
@@ -28,7 +28,7 @@ pub fn gen_pil_str(p: &PilTemplateParams<'_>) -> String {
          public publics[{np}];\n\n\
          airgroup {ns}  {{\n    \
          {tn} (N: 2**{nb}, nPlonkRows: {npl}, nPoseidonCompressor: {npc}, nPoseidonSponge: {nps}, \
-         nCMulRows: {ncm}, nEvPol4: {nev}, nFFT4: {nf4}, nTreeSelector4: {nts}, \
+         nCMulRows: {ncm}, nEvPol4: {nev}, nFFT4: {nf4}, nTreeSelector8: {nts}, \
          nSelectVal1: {nsv}) alias {ns};\n\
          }}",
         tf = p.template_file,
@@ -43,7 +43,7 @@ pub fn gen_pil_str(p: &PilTemplateParams<'_>) -> String {
         ncm = p.n_cmul_rows,
         nev = p.n_ev_pol4,
         nf4 = p.n_fft4,
-        nts = p.n_tree_selector4,
+        nts = p.n_tree_selector8,
         nsv = p.n_select_val1,
     )
 }

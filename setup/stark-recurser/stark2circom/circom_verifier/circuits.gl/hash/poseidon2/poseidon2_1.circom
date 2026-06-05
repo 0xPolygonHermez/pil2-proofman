@@ -99,7 +99,7 @@ template Poseidon2_1(nOuts) {
     }
 
     for (var t=0; t < nOuts; t++) {
-        out[t] <== matmul[7].out[t];
+        out[t] <== matmul[7].out[t] + in[t];
     }
    
 }

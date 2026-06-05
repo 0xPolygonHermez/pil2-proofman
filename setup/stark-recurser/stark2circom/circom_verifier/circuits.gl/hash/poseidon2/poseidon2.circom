@@ -116,7 +116,9 @@ template custom extern_c Poseidon2_16() {
             im[row] <-- st;
             row++;
         } else {
-            out <-- st;
+            for(var t=0; t < 16; t++) {
+                out[t] <-- st[t] + in[t];
+            }
         }
     }
 }
@@ -247,7 +249,9 @@ template custom extern_c CustPoseidon2_16() {
             im[row] <-- st;
             row++;
         } else {
-            out <-- st;
+            for(var t=0; t < arity * 4; t++) {
+                out[t] <-- st[t] + initialSt[t];
+            }
         }
     }
 }

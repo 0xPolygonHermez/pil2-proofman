@@ -128,19 +128,6 @@ function poseidonPartialChainGl(const int rounds, const int sRoundOffset, const 
     return result;
 }
 
-// Emits the merged per-round and output checks for the two halves of a partial chain.
-// `chainH1` / `chainH2` are the flat arrays returned by `poseidonPartialChainGl` for each half.
-// `selH1` / `selH2` are mutually-exclusive selectors (e.g. PARTIAL_ROUND' and PARTIAL_ROUND);
-// at any row at most one is 1, so the merged constraint reduces to the corresponding half's
-// check at that row. Halves the constraint-identity count vs. two separate checks.
-function poseidonPartialMergedCheckGl(const int rounds, const expr st0[], const expr output[], const expr chainH1[], const expr chainH2[], const expr selH1, const expr selH2) {
-    for (int r = 0; r < rounds; r++) {
-        (selH1 * (st0[r] - chainH1[r]) + selH2 * (st0[r] - chainH2[r])) === 0;
-    }
-    for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
-        (selH1 * (output[i] - chainH1[rounds + i]) + selH2 * (output[i] - chainH2[rounds + i])) === 0;
-    }
-}
 
 // CustPoseidon1_16 input-permutation (mirrors the circom initialSt selection in
 // CustPoseidon1_16 — same 4-cell rotation pattern as Poseidon2's poseidonInputOrder):

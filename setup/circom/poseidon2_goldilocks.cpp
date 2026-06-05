@@ -356,13 +356,15 @@ void Poseidon2(Goldilocks::Element *state, uint64_t* im)
 void Poseidon2_16(uint64_t *im,uint *size_im,uint64_t *out, uint* size_out,uint64_t *in, uint *size_in)
 {
     Goldilocks::Element state[16];
+    Goldilocks::Element input_copy[16];
     for(uint64_t i = 0; i < 16; ++i) {
         state[i] = Goldilocks::fromU64(in[i]);
+        input_copy[i] = state[i];
     }
     Poseidon2(state, im);
 
     for(uint64_t i = 0; i < WIDTH; ++i) {
-        out[i] = Goldilocks::toU64(state[i]);
+        out[i] = Goldilocks::toU64(state[i] + input_copy[i]);
     }
 }
 
@@ -426,10 +428,13 @@ void CustPoseidon2_16(uint64_t *im,uint *size_im,uint64_t *out, uint* size_out,u
         state[15] = Goldilocks::fromU64(in[3]);
     }
 
+    Goldilocks::Element input_copy[WIDTH];
+    for (uint64_t i = 0; i < WIDTH; ++i) input_copy[i] = state[i];
+
     Poseidon2(state, im);
 
     for(uint64_t i = 0; i < WIDTH; ++i) {
-        out[i] = Goldilocks::toU64(state[i]);
+        out[i] = Goldilocks::toU64(state[i] + input_copy[i]);
     }
 }
 #endif

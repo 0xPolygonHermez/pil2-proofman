@@ -1,5 +1,5 @@
-//! Aggregation setup — direct port of aggregation_setup.js.
-//! 59 committed pols, 27 S cols, 5 rows/Poseidon, 3 CMul/row.
+//! Aggregation setup.
+//! 62 committed pols, 30 S cols, 5 rows/Poseidon, 3 CMul/row.
 
 use super::{gen_pil_str, PilTemplateParams};
 use super::super::super::r1cs::to_plonk::{
@@ -10,11 +10,11 @@ use super::super::super::utils::{build_fixed_pols, build_s_polynomials, log2, mu
 use proofman_common::hash_family::GateRole;
 use std::collections::HashMap;
 
-const COMMITTED_POLS: usize = 59;
-const N_COLS: usize = 27;
+const COMMITTED_POLS: usize = 62;
+const N_COLS: usize = 30;
 const POSEIDON_ROWS: usize = 5;
-const COL_P1: usize = 27;
-const COL_P2: usize = 43;
+const COL_P1: usize = 30;
+const COL_P2: usize = 46;
 const CMUL_PER_ROW: usize = 3;
 
 fn rand_hex() -> String {
@@ -36,19 +36,23 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     let n_poseidon_rows = n_poseidon * POSEIDON_ROWS;
     let n_fft4_rows = cgi.n(GateRole::Fft4);
     let n_ev_pol4_rows = cgi.n(GateRole::EvPol4);
-    let n_tree_sel4_rows = cgi.n(GateRole::TreeSelector);
+    let n_tree_sel8_rows = cgi.n(GateRole::TreeSelector);
     let n_sel_val1_rows = cgi.n(GateRole::SelectVal1);
 
-    // Tier counts: nine, three, two, one
-    let nine_count = n_poseidon * 3;
-    let three_count = n_poseidon + n_tree_sel4_rows;
-    let two_count = n_ev_pol4_rows;
-    let one_count = n_poseidon + n_sel_val1_rows;
+    // Tier counts (10-gate rows). TreeSelector8 uses all 30 cols → 0 extra plonk slots.
+    // ten:   Poseidon rows PR'/PR/FINAL' → all 10 gates available for plonk.
+    // four:  Poseidon FINAL rows → gates 6..9 piggybacked → 4 free slots (cols 18..29).
+    // three: EvPol4 rows → 21 signals = cols 0..20, leaving 3 free slots (cols 21..29).
+    // two:   Poseidon INIT rows + SelectVal1 rows → 2 free slots (cols 24..29).
+    let ten_count = n_poseidon * 3;
+    let four_count = n_poseidon;
+    let three_count = n_ev_pol4_rows;
+    let two_count = n_poseidon + n_sel_val1_rows;
 
     cgi.n_plonk_rows = {
         let mut partial: HashMap<String, (usize, usize)> = HashMap::new();
         let mut half: Vec<(usize, usize)> = Vec::new();
-        let (mut nine, mut three, mut two, mut one) = (nine_count, three_count, two_count, one_count);
+        let (mut ten, mut four, mut three, mut two) = (ten_count, four_count, three_count, two_count);
         let mut rows = 0usize;
         for c in &plonk_constraints {
             let k = ckey(c);
@@ -61,21 +65,22 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
                 let mut pr = half.remove(0);
                 pr.0 += 1;
                 partial.insert(k, pr);
-            } else if nine > 0 {
-                nine -= 1;
+            } else if ten > 0 {
+                ten -= 1;
                 partial.insert(k, (1, 2));
-                half.push((2, 9));
+                half.push((2, 10));
+            } else if four > 0 {
+                four -= 1;
+                partial.insert(k, (7, 10));
             } else if three > 0 {
                 three -= 1;
-                partial.insert(k, (7, 9));
+                partial.insert(k, (8, 10));
             } else if two > 0 {
                 two -= 1;
-                partial.insert(k, (8, 9));
-            } else if one > 0 {
-                one -= 1; // no partial, no half (oneExtraConstraint)
+                partial.insert(k, (9, 10));
             } else {
                 partial.insert(k.clone(), (1, 2));
-                half.push((2, 9));
+                half.push((2, 10));
                 rows += 1;
             }
         }
@@ -87,7 +92,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         + n_poseidon_rows
         + n_fft4_rows
         + n_ev_pol4_rows
-        + n_tree_sel4_rows
+        + n_tree_sel8_rows
         + n_sel_val1_rows;
 
     let n_bits = if n_used <= 1 { 1 } else { log2((n_used - 1) as u32) as usize + 1 };
@@ -109,7 +114,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         n_cmul_rows,
         n_ev_pol4: cgi.n(GateRole::EvPol4),
         n_fft4: cgi.n(GateRole::Fft4),
-        n_tree_selector4: cgi.n(GateRole::TreeSelector),
+        n_tree_selector8: cgi.n(GateRole::TreeSelector),
         n_select_val1: cgi.n(GateRole::SelectVal1),
     });
 
@@ -118,17 +123,17 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     let mut s_map: Vec<Vec<u32>> = (0..COMMITTED_POLS).map(|_| vec![0u32; n]).collect();
     let mut cv: Vec<Vec<u64>> = (0..10).map(|_| vec![0u64; n]).collect();
 
-    let mut nine_extra: Vec<usize> = Vec::new();
+    let mut ten_extra: Vec<usize> = Vec::new();
+    let mut four_extra: Vec<usize> = Vec::new();
     let mut three_extra: Vec<usize> = Vec::new();
     let mut two_extra: Vec<usize> = Vec::new();
-    let mut one_extra: Vec<usize> = Vec::new();
 
     let poseidon_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::PoseidonSponge));
     let poseidon_cust_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::PoseidonCompression));
     let cmul_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::CMul));
     let fft4_uses = filter_fft4_gate_uses(&r1cs.custom_gates_uses, &cgi.fft4_parameters);
     let ev_pol4_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::EvPol4));
-    let tree_sel4_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::TreeSelector));
+    let tree_sel8_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::TreeSelector));
     let sel_val1_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::SelectVal1));
 
     let mut r = 0usize;
@@ -159,7 +164,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         for i in 0..11 {
             s_map[i + COL_P2][r + 2] = im1[i] as u32;
             if i < 5 {
-                s_map[i + 54][r + 2] = im2[i] as u32;
+                s_map[i + COL_P2 + 11][r + 2] = im2[i] as u32;
             } else {
                 s_map[(i - 5) + 18][r] = im2[i] as u32;
             }
@@ -169,11 +174,11 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
                 item[r + off] = 0;
             }
         }
-        one_extra.push(r);
+        two_extra.push(r);
         for off in 1..=3 {
-            nine_extra.push(r + off);
+            ten_extra.push(r + off);
         }
-        three_extra.push(r + 4);
+        four_extra.push(r + 4);
         r += 5;
     }
     assert_eq!(r, 5 * poseidon_uses.len());
@@ -206,7 +211,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         for i in 0..11 {
             s_map[i + COL_P2][r + 2] = im1[i] as u32;
             if i < 5 {
-                s_map[i + 54][r + 2] = im2[i] as u32;
+                s_map[i + COL_P2 + 11][r + 2] = im2[i] as u32;
             } else {
                 s_map[(i - 5) + 18][r] = im2[i] as u32;
             }
@@ -216,11 +221,11 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
                 item[r + off] = 0;
             }
         }
-        one_extra.push(r);
+        two_extra.push(r);
         for off in 1..=3 {
-            nine_extra.push(r + off);
+            ten_extra.push(r + off);
         }
-        three_extra.push(r + 4);
+        four_extra.push(r + 4);
         r += 5;
     }
     assert_eq!(r, 5 * poseidon_uses.len() + 5 * poseidon_cust_uses.len());
@@ -264,7 +269,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         for item in cv.iter_mut() {
             item[r] = 0;
         }
-        two_extra.push(r);
+        three_extra.push(r);
         r += 1;
     }
 
@@ -301,17 +306,17 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         r += 1;
     }
 
-    // ── TreeSelector4 ─────────────────────────────────────────────────────────
-    tracing::info!("Processing {} treeSelector4 gates...", tree_sel4_uses.len());
-    for cgu in &tree_sel4_uses {
-        assert_eq!(cgu.signals.len(), 17);
-        for (i, item) in s_map.iter_mut().enumerate().take(17) {
+    // ── TreeSelector8 ─────────────────────────────────────────────────────────
+    // treeselector8 uses all 30 plonk-band cols (vals[8×3]=24 + key[3] + res[3]) → 0 extra.
+    tracing::info!("Processing {} treeSelector8 gates...", tree_sel8_uses.len());
+    for cgu in &tree_sel8_uses {
+        assert_eq!(cgu.signals.len(), 30);
+        for (i, item) in s_map.iter_mut().enumerate().take(30) {
             item[r] = cgu.signals[i] as u32;
         }
         for item in cv.iter_mut() {
             item[r] = 0;
         }
-        three_extra.push(r);
         r += 1;
     }
 
@@ -325,7 +330,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         for item in cv.iter_mut() {
             item[r] = 0;
         }
-        one_extra.push(r);
+        two_extra.push(r);
         r += 1;
     }
 
@@ -363,9 +368,9 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             }
             pr.1 += 1;
             partial.insert(k, pr);
-        } else if !nine_extra.is_empty() {
-            // nineExtraConstraints: fill cols 0-5 (2 slots), partial(1,2), half(2,9)
-            let row = nine_extra.remove(0);
+        } else if !ten_extra.is_empty() {
+            // 10 extra slots: fill cols 0..5 (2 slots), partial(1,2), half(2,10)
+            let row = ten_extra.remove(0);
             cv[0][row] = c[3];
             cv[1][row] = c[4];
             cv[2][row] = c[5];
@@ -378,53 +383,52 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             s_map[4][row] = c[1] as u32;
             s_map[5][row] = c[2] as u32;
             partial.insert(k.clone(), (row, 1, 2));
-            half.push((row, 2, 9));
+            half.push((row, 2, 10));
+        } else if !four_extra.is_empty() {
+            // 4 extra slots: cols 18..29, partial(7,10)
+            let row = four_extra.remove(0);
+            cv[5][row] = c[3];
+            cv[6][row] = c[4];
+            cv[7][row] = c[5];
+            cv[8][row] = c[6];
+            cv[9][row] = c[7];
+            for i in 0..4 {
+                s_map[18 + i * 3][row] = c[0] as u32;
+                s_map[18 + i * 3 + 1][row] = c[1] as u32;
+                s_map[18 + i * 3 + 2][row] = c[2] as u32;
+            }
+            partial.insert(k, (row, 7, 10));
         } else if !three_extra.is_empty() {
-            // threeExtraConstraints: fill cols 18-26 (3 slots), partial(7,9)
+            // 3 extra slots: cols 21..29, partial(8,10)
             let row = three_extra.remove(0);
             cv[5][row] = c[3];
             cv[6][row] = c[4];
             cv[7][row] = c[5];
             cv[8][row] = c[6];
             cv[9][row] = c[7];
-            s_map[18][row] = c[0] as u32;
-            s_map[19][row] = c[1] as u32;
-            s_map[20][row] = c[2] as u32;
-            s_map[21][row] = c[0] as u32;
-            s_map[22][row] = c[1] as u32;
-            s_map[23][row] = c[2] as u32;
-            s_map[24][row] = c[0] as u32;
-            s_map[25][row] = c[1] as u32;
-            s_map[26][row] = c[2] as u32;
-            partial.insert(k, (row, 7, 9));
+            for i in 0..3 {
+                s_map[21 + i * 3][row] = c[0] as u32;
+                s_map[21 + i * 3 + 1][row] = c[1] as u32;
+                s_map[21 + i * 3 + 2][row] = c[2] as u32;
+            }
+            partial.insert(k, (row, 8, 10));
         } else if !two_extra.is_empty() {
-            // twoExtraConstraints: fill cols 21-26 (2 slots), partial(8,9)
+            // 2 extra slots: cols 24..29, partial(9,10)
             let row = two_extra.remove(0);
             cv[5][row] = c[3];
             cv[6][row] = c[4];
             cv[7][row] = c[5];
             cv[8][row] = c[6];
             cv[9][row] = c[7];
-            s_map[21][row] = c[0] as u32;
-            s_map[22][row] = c[1] as u32;
-            s_map[23][row] = c[2] as u32;
             s_map[24][row] = c[0] as u32;
             s_map[25][row] = c[1] as u32;
             s_map[26][row] = c[2] as u32;
-            partial.insert(k, (row, 8, 9));
-        } else if !one_extra.is_empty() {
-            // oneExtraConstraint: fill cols 24-26 (1 slot), no partial
-            let row = one_extra.remove(0);
-            cv[5][row] = c[3];
-            cv[6][row] = c[4];
-            cv[7][row] = c[5];
-            cv[8][row] = c[6];
-            cv[9][row] = c[7];
-            s_map[24][row] = c[0] as u32;
-            s_map[25][row] = c[1] as u32;
-            s_map[26][row] = c[2] as u32;
+            s_map[27][row] = c[0] as u32;
+            s_map[28][row] = c[1] as u32;
+            s_map[29][row] = c[2] as u32;
+            partial.insert(k, (row, 9, 10));
         } else {
-            // New plonk row: fill cols 0-5 (2 slots first half), half(2,9)
+            // New plonk row: fill cols 0..5 (2 slots), half(2,10)
             cv[0][r] = c[3];
             cv[1][r] = c[4];
             cv[2][r] = c[5];
@@ -437,7 +441,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             s_map[4][r] = c[1] as u32;
             s_map[5][r] = c[2] as u32;
             partial.insert(k.clone(), (r, 1, 2));
-            half.push((r, 2, 9));
+            half.push((r, 2, 10));
             r += 1;
         }
     }

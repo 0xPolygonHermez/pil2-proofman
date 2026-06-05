@@ -20,10 +20,9 @@ pub const DEFAULT_HASH_ID: &str = "Poseidon2";
 const GATES: &[(&str, GateRole, Option<&str>)] = &[
     ("Poseidon1_16", GateRole::PoseidonSponge, Some("Poseidon1")),
     ("CustPoseidon1_16", GateRole::PoseidonCompression, Some("Poseidon1")),
-    ("TreeSelector8", GateRole::TreeSelector, Some("Poseidon1")),
     ("Poseidon2_16", GateRole::PoseidonSponge, Some("Poseidon2")),
     ("CustPoseidon2_16", GateRole::PoseidonCompression, Some("Poseidon2")),
-    ("TreeSelector4", GateRole::TreeSelector, Some("Poseidon2")),
+    ("TreeSelector8", GateRole::TreeSelector, None),
     ("CMul", GateRole::CMul, None),
     ("FFT4", GateRole::Fft4, None),
     ("EvPol4", GateRole::EvPol4, None),

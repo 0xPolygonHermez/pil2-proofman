@@ -3,7 +3,7 @@ pragma circom 2.1.0;
 include "poseidon8_constants.circom";
 
 // x^7 broken into quadratic steps (Hades S-box), matching Poseidon2's Sigma().
-template Sigma8() {
+template Sigma7() {
     signal input in;
     signal output out;
     signal in2 <== in * in;
@@ -25,19 +25,24 @@ template Poseidon1_8() {
 
     // ── 3 first full rounds (M) + transition full round (P) ──────────────────
     // Round index r in 0..3; matrix is M for r<3, P for r==3.
+    // Round constant is added AFTER the S-box (pow7), matching the prover's
+    // pow7add_ (= pow7(x) + C) and Poseidon1_16. The matrix then consumes
+    // (pow7(st) + C).
     component sigmaF1[4][8];
+    signal preF1[4][8];
     for (var r = 0; r < 4; r++) {
         for (var t = 0; t < 8; t++) {
-            sigmaF1[r][t] = Sigma8();
-            sigmaF1[r][t].in <== st[r][t] + CNST8((r + 1) * 8 + t);
+            sigmaF1[r][t] = Sigma7();
+            sigmaF1[r][t].in <== st[r][t];
+            preF1[r][t] <== sigmaF1[r][t].out + CNST8((r + 1) * 8 + t);
         }
         for (var t = 0; t < 8; t++) {
             var acc = 0;
             for (var j = 0; j < 8; j++) {
                 if (r < 3) {
-                    acc += M8(j, t) * sigmaF1[r][j].out;
+                    acc += M8(j, t) * preF1[r][j];
                 } else {
-                    acc += P8(j, t) * sigmaF1[r][j].out;
+                    acc += P8(j, t) * preF1[r][j];
                 }
             }
             st[r + 1][t] <== acc;
@@ -50,7 +55,7 @@ template Poseidon1_8() {
     // sboxed[r] = pow7(st[4+r][0]) + C[5*8+r]  (the post-S-box state[0])
     signal sboxed[22];
     for (var r = 0; r < 22; r++) {
-        sigmaP[r] = Sigma8();
+        sigmaP[r] = Sigma7();
         sigmaP[r].in <== st[4 + r][0];
         sboxed[r] <== sigmaP[r].out + CNST8(5 * 8 + r);
 
@@ -69,26 +74,30 @@ template Poseidon1_8() {
     // ── 3 last full rounds (M) + final full round (M, last has no ARC) ───────
     // After the 22 partials the latest state is st[26]. The 4 last-full rounds
     // read st[26 + r] and write st[27 + r], producing st[30] (the permutation).
+    // Constant added AFTER pow7 (pow7(x) + C), matching the prover; the final
+    // round (r==3) has no round constant.
     component sigmaF2[4][8];
+    signal preF2[4][8];
     for (var r = 0; r < 4; r++) {
         for (var t = 0; t < 8; t++) {
-            sigmaF2[r][t] = Sigma8();
+            sigmaF2[r][t] = Sigma7();
+            sigmaF2[r][t].in <== st[26 + r][t];
             if (r < 3) {
-                sigmaF2[r][t].in <== st[26 + r][t] + CNST8(5 * 8 + 22 + r * 8 + t);
+                preF2[r][t] <== sigmaF2[r][t].out + CNST8(5 * 8 + 22 + r * 8 + t);
             } else {
-                sigmaF2[r][t].in <== st[26 + r][t];
+                preF2[r][t] <== sigmaF2[r][t].out;
             }
         }
         for (var t = 0; t < 8; t++) {
             var acc = 0;
             for (var j = 0; j < 8; j++) {
-                acc += M8(j, t) * sigmaF2[r][j].out;
+                acc += M8(j, t) * preF2[r][j];
             }
             st[27 + r][t] <== acc;
         }
     }
 
     for (var t = 0; t < 8; t++) {
-        out[t] <== st[30][t];
+        out[t] <== st[30][t] + in[t];
     }
 }

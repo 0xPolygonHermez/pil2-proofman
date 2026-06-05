@@ -5,7 +5,7 @@ use super::super::super::r1cs::to_plonk::{
     ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info, r1cs2plonk,
 };
 use super::super::super::r1cs::types::{PlonkOptions, R1csFile, SetupResult};
-use super::super::super::utils::{build_fixed_pols, build_s_polynomials, cust_poseidon1_initial_state, log2, mulp};
+use super::super::super::utils::{build_fixed_pols, build_s_polynomials, log2, mulp};
 use super::{gen_pil_str, PilTemplateParams};
 use proofman_common::hash_family::GateRole;
 use std::collections::HashMap;
@@ -182,33 +182,29 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
                              four_extra: &mut Vec<usize>,
                              r: usize| {
         let key_off = if is_compression { 2 } else { 0 };
-        let expected = 16 + key_off + 11 * POSEIDON_WIDTH + POSEIDON_WIDTH;
+        let expected = 16 + key_off + 12 * POSEIDON_WIDTH + POSEIDON_WIDTH;
         assert_eq!(s.len(), expected, "unexpected Poseidon1 signal count");
 
         let input = &s[0..POSEIDON_WIDTH];
         let key = if is_compression { Some(&s[POSEIDON_WIDTH..POSEIDON_WIDTH + 2]) } else { None };
         let im_base = POSEIDON_WIDTH + key_off;
-        let r1 = &s[im_base..im_base + POSEIDON_WIDTH]; // im[0]
-        let r2 = &s[im_base + POSEIDON_WIDTH..im_base + 2 * POSEIDON_WIDTH]; // im[1]
-        let r3 = &s[im_base + 2 * POSEIDON_WIDTH..im_base + 3 * POSEIDON_WIDTH]; // im[2]
-                                                                                 // im[3] = R4 (post-P state) — not stored in the chain-1-anchors variant
-        let im1 = &s[im_base + 4 * POSEIDON_WIDTH..im_base + 5 * POSEIDON_WIDTH]; // im[4]: h1 anchors[0..10]
-                                                                                  // im[5] = midState (intermediate, not stored)
-        let im2 = &s[im_base + 6 * POSEIDON_WIDTH..im_base + 7 * POSEIDON_WIDTH]; // im[6]: h2 anchors[0..10]
-        let r26 = &s[im_base + 7 * POSEIDON_WIDTH..im_base + 8 * POSEIDON_WIDTH]; // im[7]
-        let r27 = &s[im_base + 8 * POSEIDON_WIDTH..im_base + 9 * POSEIDON_WIDTH]; // im[8]
-        let r28 = &s[im_base + 9 * POSEIDON_WIDTH..im_base + 10 * POSEIDON_WIDTH]; // im[9]
-        let r29 = &s[im_base + 10 * POSEIDON_WIDTH..im_base + 11 * POSEIDON_WIDTH]; // im[10]
-        let output = &s[im_base + 11 * POSEIDON_WIDTH..im_base + 12 * POSEIDON_WIDTH];
-
-        // R0 is the permuted initialSt for CustPoseidon1 (Davies-Meyer key-based reorder),
-        // or simply the raw input for plain Poseidon1 (sponge). The PIL helper
-        // poseidon1InputOrderGl enforces this constraint.
-        let initial_st = cust_poseidon1_initial_state(input, key);
+        let r0 = &s[im_base..im_base + POSEIDON_WIDTH]; // im[0]
+        let r1 = &s[im_base + POSEIDON_WIDTH..im_base + 2 * POSEIDON_WIDTH]; // im[1]
+        let r2 = &s[im_base + 2 * POSEIDON_WIDTH..im_base + 3 * POSEIDON_WIDTH]; // im[2]
+        let r3 = &s[im_base + 3 * POSEIDON_WIDTH..im_base + 4 * POSEIDON_WIDTH]; // im[3]
+                                                                                 // im[4] = R4 (post-P state) — not stored in the chain-1-anchors variant
+        let im1 = &s[im_base + 5 * POSEIDON_WIDTH..im_base + 6 * POSEIDON_WIDTH]; // im[5]: h1 anchors[0..10]
+                                                                                  // im[6] = midState (intermediate, not stored)
+        let im2 = &s[im_base + 7 * POSEIDON_WIDTH..im_base + 8 * POSEIDON_WIDTH]; // im[7]: h2 anchors[0..10]
+        let r26 = &s[im_base + 8 * POSEIDON_WIDTH..im_base + 9 * POSEIDON_WIDTH]; // im[8]
+        let r27 = &s[im_base + 9 * POSEIDON_WIDTH..im_base + 10 * POSEIDON_WIDTH]; // im[9]
+        let r28 = &s[im_base + 10 * POSEIDON_WIDTH..im_base + 11 * POSEIDON_WIDTH]; // im[10]
+        let r29 = &s[im_base + 11 * POSEIDON_WIDTH..im_base + 12 * POSEIDON_WIDTH]; // im[11]
+        let output = &s[im_base + 12 * POSEIDON_WIDTH..im_base + 13 * POSEIDON_WIDTH];
 
         for i in 0..POSEIDON_WIDTH {
             s_map[i][r] = input[i] as u32;
-            s_map[i + COL_P1][r] = initial_st[i] as u32; // row 0 chain 1 = R0 (permuted input for Cust)
+            s_map[i + COL_P1][r] = r0[i] as u32; // row 0 chain 1 = R0 (= circom im[0], permuted input signal)
             s_map[i + COL_P2][r] = r1[i] as u32; // row 0 chain 2 = R1
             s_map[i + COL_P1][r + 1] = r2[i] as u32; // row 1 chain 1 = R2
             s_map[i + COL_P2][r + 1] = r3[i] as u32; // row 1 chain 2 = R3
