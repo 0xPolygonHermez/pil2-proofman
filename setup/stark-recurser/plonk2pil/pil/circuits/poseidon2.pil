@@ -182,7 +182,7 @@ function pow7(const expr input): const expr {
 }
 
 
-function poseidonInputOrder(const expr a[], const expr b[], const expr out[], const expr POSEIDONSPONGE, const expr POSEIDONCOMPRESSION) {
+function poseidonInputOrder(const expr a[], const expr b[], const expr POSEIDONSPONGE, const expr POSEIDONCOMPRESSION): const expr[] {
     POSEIDONCOMPRESSION * b[0] * (b[0] - 1) === 0;
     POSEIDONCOMPRESSION * b[1] * (b[1] - 1) === 0;
     
@@ -226,7 +226,7 @@ function poseidonInputOrder(const expr a[], const expr b[], const expr out[], co
         }
     }
 
-    poseidonFullRoundCheck(poseidonFullRoundCalc(input), out, POSEIDONSPONGE + POSEIDONCOMPRESSION);
+    return input;
 }
 
 // Pure matrix computation — no constraints emitted.

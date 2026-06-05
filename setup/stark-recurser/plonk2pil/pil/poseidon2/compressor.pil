@@ -66,13 +66,18 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCo
 
     const int firstColP = 36;
 
+    const expr inpF[POSEIDON2_WIDTH];
     const expr inputO[POSEIDON2_WIDTH];
     const expr outputO[POSEIDON2_WIDTH];
     for (int i = 0; i < POSEIDON2_WIDTH; i++) {
+        inpF[i] = (9)'a[i];
         inputO[i] = a[i];
         outputO[i] = a[firstColP + i];
     }
-    poseidonInputOrder(inputO, [b0, b1], outputO, POSEIDONSPONGE, POSEIDONCOMPRESSION);
+    const expr input[POSEIDON2_WIDTH] = poseidonInputOrder(inputO, [b0, b1], POSEIDONSPONGE, POSEIDONCOMPRESSION);
+    poseidonFullRoundCheck(poseidonFullRoundCalc(input), outputO, POSEIDONSPONGE + POSEIDONCOMPRESSION);
+
+    const expr inputFinal[POSEIDON2_WIDTH] = poseidonInputOrder(inpF, [(9)'a[16], (9)'a[17]], (9)'POSEIDONSPONGE, (9)'POSEIDONCOMPRESSION);
 
     const expr inputP[POSEIDON2_WIDTH];
     const expr outputP[POSEIDON2_WIDTH];
@@ -98,7 +103,7 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCo
         constantsPoseidonF[i] = POSEIDON_R0 * POSEIDON2_RC[i] + POSEIDON_R1 * POSEIDON2_RC[i + 16] + POSEIDON_R2 * POSEIDON2_RC[i + 32] + POSEIDON_R3 * POSEIDON2_RC[i + 48] + POSEIDON_PARTIAL_ROUND * POSEIDON2_RC[i + 64] + POSEIDON_R26 * POSEIDON2_RC[i + 86] + POSEIDON_R27 * POSEIDON2_RC[i + 102] + POSEIDON_R28 * POSEIDON2_RC[i + 118] + POSEIDON_R29 * POSEIDON2_RC[i + 134];
  
         inputF_7[i] = pow7(a[i + firstColP] + constantsPoseidonF[i]);
-        outputF[i] = a[i + firstColP]';
+        outputF[i] = (1 - POSEIDON_FINAL) * a[i + firstColP]' + POSEIDON_FINAL * (a[i] - inputFinal[i]);
 
         intermediateValues[i] = inputF_7[i];
     }
