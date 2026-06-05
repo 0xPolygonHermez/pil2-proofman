@@ -1,0 +1,16 @@
+// Must fail to compile: a plain lookup must not reuse an opid the range check has
+// reserved (U8 table = 100) — the std opid-overlap check rejects it.
+
+require "std_lookup.pil"
+require "std_range_check.pil"
+
+airtemplate ReuseRangeCheckOpid(const int N = 2**4) {
+    col witness x, sx;
+
+    range_check(x, 0, 2**8 - 1, sx, predefined: 1);  // 'Range Check' consumes the U8 opid (100)
+    lookup_assumes(U8AIR_OPID, [x], sx);             // ERROR: 'Lookup' reuses opid 100
+}
+
+airgroup ReuseRangeCheckOpid {
+    ReuseRangeCheckOpid();
+}
