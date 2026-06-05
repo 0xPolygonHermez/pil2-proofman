@@ -208,16 +208,23 @@ void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32
 
     // Initialize small GPU constants (Poseidon and Transcript)
 #ifdef STARK_POSEIDON1
-    switch(arity){
-        case 2:
-            PoseidonGoldilocksGPU<12>::initConstants(my_gpu_ids, n_gpus);
-            break;
-        case 3:
-            PoseidonGoldilocksGPU<16>::initConstants(my_gpu_ids, n_gpus);
-            break;
-        default:
-            zklog.error("Unsupported merkle tree arity. Supported arities for Poseidon are 2 and 3.");
-            exit(1);
+    if constexpr (USE_DM_HASH) {
+        switch(arity){
+            case 2: PoseidonGoldilocksGPU<8>::initConstants(my_gpu_ids, n_gpus);  break;
+            case 3: PoseidonGoldilocksGPU<12>::initConstants(my_gpu_ids, n_gpus); break;
+            case 4: PoseidonGoldilocksGPU<16>::initConstants(my_gpu_ids, n_gpus); break;
+            default:
+                zklog.error("Unsupported merkle tree arity. STARK_POSEIDON1+DM supports 2, 3 or 4.");
+                exit(1);
+        }
+    } else {
+        switch(arity){
+            case 2: PoseidonGoldilocksGPU<12>::initConstants(my_gpu_ids, n_gpus); break;
+            case 3: PoseidonGoldilocksGPU<16>::initConstants(my_gpu_ids, n_gpus); break;
+            default:
+                zklog.error("Unsupported merkle tree arity. STARK_POSEIDON1 supports 2 or 3.");
+                exit(1);
+        }
     }
 
     PoseidonGoldilocksGPUGrinding::initConstants(my_gpu_ids, n_gpus);
@@ -1367,16 +1374,23 @@ void init_gpu_setup_gpu(uint64_t maxBitsExt, uint64_t arity) {
     uint32_t my_gpu_ids[1] = {(uint32_t)deviceId};
 
 #ifdef STARK_POSEIDON1
-    switch (arity) {
-        case 2:
-            PoseidonGoldilocksGPU<12>::initConstants(my_gpu_ids, 1);
-            break;
-        case 3:
-            PoseidonGoldilocksGPU<16>::initConstants(my_gpu_ids, 1);
-            break;
-        default:
-            zklog.error("init_gpu_setup_gpu: STARK_POSEIDON1 supports merkle tree arity 2 or 3 only");
-            exit(1);
+    if constexpr (USE_DM_HASH) {
+        switch (arity) {
+            case 2: PoseidonGoldilocksGPU<8>::initConstants(my_gpu_ids, 1);  break;
+            case 3: PoseidonGoldilocksGPU<12>::initConstants(my_gpu_ids, 1); break;
+            case 4: PoseidonGoldilocksGPU<16>::initConstants(my_gpu_ids, 1); break;
+            default:
+                zklog.error("init_gpu_setup_gpu: STARK_POSEIDON1+DM supports merkle tree arity 2, 3 or 4");
+                exit(1);
+        }
+    } else {
+        switch (arity) {
+            case 2: PoseidonGoldilocksGPU<12>::initConstants(my_gpu_ids, 1); break;
+            case 3: PoseidonGoldilocksGPU<16>::initConstants(my_gpu_ids, 1); break;
+            default:
+                zklog.error("init_gpu_setup_gpu: STARK_POSEIDON1 supports merkle tree arity 2 or 3 only");
+                exit(1);
+        }
     }
 #else
     switch (arity) {

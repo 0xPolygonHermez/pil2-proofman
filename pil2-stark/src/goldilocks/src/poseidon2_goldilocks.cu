@@ -302,6 +302,14 @@ __device__  void poseidon2PermuteSmem()
     const gl64_t *GPU_C_GL = Pos2ConstGPU<SPONGE_WIDTH_T>::C();
     const gl64_t *GPU_D_GL = Pos2ConstGPU<SPONGE_WIDTH_T>::D();
 
+    // Davies-Meyer: snapshot the scratchpad input into per-thread registers
+    gl64_t input_save[SPONGE_WIDTH_T];
+    if constexpr (DM_T) {
+        #pragma unroll
+        for (uint32_t i = 0; i < SPONGE_WIDTH_T; ++i)
+            input_save[i] = scratchpad[i * blockDim.x + threadIdx.x];
+    }
+
     mdsExternalSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>();
     for (int r = 0; r < (N_FULL_ROUNDS_TOTAL_T>>1); r++)
     {
@@ -323,6 +331,13 @@ __device__  void poseidon2PermuteSmem()
     {
         sboxFullSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>(&(GPU_C_GL[(N_FULL_ROUNDS_TOTAL_T>>1) * SPONGE_WIDTH_T + N_PARTIAL_ROUNDS_T + r * SPONGE_WIDTH_T]));
         mdsExternalSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>();
+    }
+
+    if constexpr (DM_T) {
+        #pragma unroll
+        for (uint32_t i = 0; i < SPONGE_WIDTH_T; ++i)
+            scratchpad[i * blockDim.x + threadIdx.x] =
+                scratchpad[i * blockDim.x + threadIdx.x] + input_save[i];
     }
 }
 
