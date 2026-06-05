@@ -143,8 +143,12 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nPoseidon1C
         //   FINAL          → same-row a[0..15] (output cells), DM-summed if COMPRESSION.
         //   PR' excluded — uses P-matrix; result is consumed directly by the partial
         //   chain via prefix prime 'fullRound2P (R4 not stored as witness).
+        // Davies-Meyer adds back the REORDERED (storage-order) input = R0
+        // (a[i+30] @ INIT), not the raw input a[i], so it matches the prover,
+        // which hashes a node's children in fixed storage order and adds that
+        // same ordered vector. R0 differs from the raw input whenever key != 00.
         outputF2[i] = (POSEIDON1_INIT + POSEIDON1_FINAL_PRIME) * a[i + 30]'
-                    + POSEIDON1_FINAL * (a[i] - (4)'POSEIDON1_COMPRESSION * (4)'a[i]);
+                    + POSEIDON1_FINAL * (a[i] - (4)'POSEIDON1_COMPRESSION * (4)'a[i + 30]);
     }
 
     // INIT input-ordering: R0 (= a[i+30] @ INIT) === permuted(input, key) for CustPoseidon1

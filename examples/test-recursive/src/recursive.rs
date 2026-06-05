@@ -51,8 +51,11 @@ impl<F: PrimeField64> WitnessComponent<F> for Compressor {
     ) -> ProofmanResult<()> {
         if stage == 1 {
             let setup = sctx.get_setup(0, 0)?;
-            let current_dir =
-                env::current_dir().expect("Failed to get current directory").join("examples/test-recursive");
+            let hash_family = pctx.global_info.hash.to_lowercase();
+            let current_dir = env::current_dir()
+                .expect("Failed to get current directory")
+                .join("examples/test-recursive")
+                .join(&hash_family);
             let proof_path = current_dir.join("proof.bin");
 
             let mut file = File::open(proof_path).unwrap();

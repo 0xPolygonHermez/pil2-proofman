@@ -334,39 +334,46 @@ extern "C" __attribute__((visibility("default"))) int getWitnessFinal(void *zkin
 
     Circom_CalcWit *ctx = new Circom_CalcWit(circuit, nMutexes);
 
-    if (!loadJsonImpl(ctx, *(json*) zkin)) {
+      if (!loadJsonImpl(ctx, *(json*) zkin)) {
+        delete ctx;
+        freeCircuit(circuit);
+        return -1;
+      }
+
+      if (ctx->getRemaingInputsToBeSet() != 0)
+      {
+        std::cerr << "getWitnessFinal: not all inputs have been set: only "
+                  << (get_main_input_signal_no() - ctx->getRemaingInputsToBeSet())
+                  << " out of " << get_main_input_signal_no() << std::endl;
+        delete ctx;
+        freeCircuit(circuit);
+        return -1;
+      }
+
+      for(uint64_t i = 0; i < get_main_input_signal_no(); ++i) {
+        cout << i << " " << ctx->signalValues[get_main_input_signal_start() + i] << endl;
+      }
+
+      if (ctx->errorOccurred) {
+        std::cerr << "getWitnessFinal: witness generation failed (assert failed)" << std::endl;
+        delete ctx;
+        freeCircuit(circuit);
+        return -1;
+      }
+
+      //-------------------------------------------
+      // Compute witness
+      //-------------------------------------------
+      uint64_t *witness = (uint64_t *)pWitness;
+      uint64_t sizeWitness = get_size_of_witness();
+      for (uint64_t i = 0; i < sizeWitness; i++)
+      {
+        ctx->getWitness(i, witness[i]);
+      }
+
       delete ctx;
       freeCircuit(circuit);
-      return -1;
-    }
-
-    if (ctx->getRemaingInputsToBeSet() != 0)
-    {
-      std::cerr << "getWitnessFinal: not all inputs have been set: only "
-                << (get_main_input_signal_no() - ctx->getRemaingInputsToBeSet())
-                << " out of " << get_main_input_signal_no() << std::endl;
-      delete ctx;
-      freeCircuit(circuit);
-      return -1;
-    }
-
-    for(uint64_t i = 0; i < get_main_input_signal_no(); ++i) {
-      cout << i << " " << ctx->signalValues[get_main_input_signal_start() + i] << endl;
-    }
-
-    //-------------------------------------------
-    // Compute witness
-    //-------------------------------------------
-    uint64_t *witness = (uint64_t *)pWitness;
-    uint64_t sizeWitness = get_size_of_witness();
-    for (uint64_t i = 0; i < sizeWitness; i++)
-    {
-      ctx->getWitness(i, witness[i]);
-    }
-
-    delete ctx;
-    freeCircuit(circuit);
-    return 0;
+      return 0;
 }
 
 extern "C" __attribute__((visibility("default"))) int getWitness(uint64_t *proof, void* circuit_, void* pWitness, uint64_t nMutexes) {
@@ -375,6 +382,12 @@ extern "C" __attribute__((visibility("default"))) int getWitness(uint64_t *proof
 
     memcpy(&ctx->signalValues[get_main_input_signal_start()], proof, get_main_input_signal_no() * sizeof(uint64_t));
     ctx->runCircuit();
+
+    if (ctx->errorOccurred) {
+        std::cerr << "getWitness: witness generation failed (assert failed)" << std::endl;
+        delete ctx;
+        return -1;
+    }
 
     uint64_t *witness = (uint64_t *)pWitness;
     uint64_t sizeWitness = get_size_of_witness();

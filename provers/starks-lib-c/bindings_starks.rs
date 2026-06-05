@@ -48,6 +48,8 @@ extern "C" {
         preallocate: bool,
     ) -> *mut ::std::os::raw::c_void;
     
+    pub fn get_stark_hash_family() -> *const ::std::os::raw::c_char;
+
     pub fn get_proof_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
     pub fn get_proof_pinned_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;

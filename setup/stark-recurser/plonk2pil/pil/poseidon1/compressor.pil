@@ -150,9 +150,13 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
         //   round 29 (FINAL): SAME row's a[i] (output cells, DM-summed if COMPRESSION)
         //   round 3 (PR'): excluded — P-matrix output feeds the partial chain via 'fullRoundP
         //   PR (row 4): excluded — chain slot holds anchors
+        // Davies-Meyer adds back the REORDERED (storage-order) input = R0
+        // (a[i+firstColP] @ INIT), not the raw input a[i], so it matches the
+        // prover, which hashes a node's children in fixed storage order and
+        // adds that same ordered vector. R0 differs from raw input when key != 00.
         outputF[i] = (POSEIDON1_R0 + POSEIDON1_R1 + POSEIDON1_R2
                     + POSEIDON1_R26 + POSEIDON1_R27 + POSEIDON1_R28) * a[i + firstColP]'
-                   + POSEIDON1_FINAL * (a[i] - (8)'POSEIDON1_COMPRESSION * (8)'a[i]);
+                   + POSEIDON1_FINAL * (a[i] - (8)'POSEIDON1_COMPRESSION * (8)'a[i + firstColP]);
     }
 
     // INIT input-ordering: R0 (= a[i+firstColP] @ INIT) === permuted(input, key) for

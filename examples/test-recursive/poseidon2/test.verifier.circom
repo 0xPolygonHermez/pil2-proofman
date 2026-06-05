@@ -6,13 +6,13 @@ pragma custom_templates;
 
 include "cmul.circom";
 include "cinv.circom";
-include "poseidon2.circom";
+include "hash/poseidon2/poseidon2.circom";
 include "bitify.circom";
 include "fft.circom";
 include "evalpol.circom";
-include "treeselector4.circom";
-include "pow.circom";
-include "merklehash.circom";
+include "tree/treeselector4.circom";
+include "hash/poseidon2/pow.circom";
+include "hash/poseidon2/merklehash.circom";
 
 
 /* 

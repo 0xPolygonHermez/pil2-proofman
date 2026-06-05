@@ -225,7 +225,7 @@ inline void PoseidonGoldilocks<W, DM_T>::permuteTrunc_seq(
 {
     Goldilocks::Element aux[SPONGE_WIDTH];
     permute_seq(aux, input);
-    std::memcpy(state, aux, CAPACITY * sizeof(Goldilocks::Element));
+    for (uint32_t i = 0; i < CAPACITY; i++) state[i] = aux[i];
 }
 
 // ---------------------------------------------------------------------------

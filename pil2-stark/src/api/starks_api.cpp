@@ -14,6 +14,7 @@
 #include "final_snark_proof.hpp"
 #include "starks_api_internal.hpp"
 #include "build_const_tree.hpp"
+#include "../goldilocks/src/goldilocks_hash_config.hpp"
 #include "../rapidsnark/fflonk_setup.hpp"
 #include "../rapidsnark/plonk_setup.hpp"
 #ifdef __USE_MPI_RMA__
@@ -39,6 +40,14 @@ ProofDoneCallback proof_done_callback = nullptr;
 MPI_Win win;
 int win_buff = -1;
 #endif
+
+const char *get_stark_hash_family() {
+#ifdef STARK_POSEIDON1
+    return "Poseidon1";
+#else
+    return "Poseidon2";
+#endif
+}
 
 void initialize_agg_readiness_tracker() {
 #ifdef __USE_MPI_RMA__    

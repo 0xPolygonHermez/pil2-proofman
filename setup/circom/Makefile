@@ -12,7 +12,9 @@ BUILD_DIR := ./build
 
 OPT_LEVEL := -O1
 
-INC_FLAGS := -I.
+GOLDILOCKS_SRC ?= ../../pil2-stark/src/goldilocks/src
+
+INC_FLAGS := -I. -I$(GOLDILOCKS_SRC)
 
 ifeq ($(UNAME_S),Darwin)
     HOMEBREW_PREFIX := $(shell brew --prefix)

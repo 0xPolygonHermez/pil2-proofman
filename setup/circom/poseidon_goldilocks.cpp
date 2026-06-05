@@ -79,7 +79,7 @@ inline void snapshot_pos1(uint64_t *im, uint64_t &index, const Goldilocks::Eleme
 
 void Poseidon1_perm_seq(Goldilocks::Element *state, uint64_t *im)
 {
-    namespace PC = PoseidonGoldilocksConstants;
+    using PC = PoseidonGoldilocksConstants::Poseidon1Tables<WIDTH_POS1>;
     uint64_t index = 0;
 
     add_state_pos1(state, &PC::C[0]);
@@ -218,7 +218,7 @@ inline void snapshot_avx_pos1(uint64_t *im, uint64_t &index, Goldilocks::Element
 
 void Poseidon1_perm_avx(Goldilocks::Element *state, uint64_t *im)
 {
-    namespace PC = PoseidonGoldilocksConstants;
+    using PC = PoseidonGoldilocksConstants::Poseidon1Tables<WIDTH_POS1>;
     uint64_t index = 0;
     Goldilocks::Element scratch[WIDTH_POS1];
 
@@ -337,14 +337,31 @@ void Poseidon1_16(uint64_t *im, uint *size_im, uint64_t *out, uint *size_out,
 // truncates the first 4. The DM feedback `out = P(in) + in` gives 2^128
 // collision resistance with the full state as input and no separate capacity.
 void CustPoseidon1_16(uint64_t *im, uint *size_im, uint64_t *out, uint *size_out,
-                      uint64_t *in, uint *size_in)
+                      uint64_t *in, uint *size_in, uint64_t *key, uint *size_key)
 {
+    // Order the inputs according to the two key bits before permuting — matches
+    // the circom CustPoseidon1_16 `initialSt` block and the PIL
+    // poseidon1InputOrderGl helper. key picks which 4-element child hash leads.
     Goldilocks::Element state[WIDTH_POS1];
-    Goldilocks::Element input_copy[WIDTH_POS1];
-    for (int i = 0; i < WIDTH_POS1; i++) {
-        state[i] = Goldilocks::fromU64(in[i]);
-        input_copy[i] = state[i];
+    if (key[0] == 0 && key[1] == 0) {
+        for (int i = 0; i < WIDTH_POS1; i++) state[i] = Goldilocks::fromU64(in[i]);
+    } else if (key[0] == 1 && key[1] == 0) {
+        for (int i = 0; i < 4; i++)  state[i]      = Goldilocks::fromU64(in[4 + i]);
+        for (int i = 0; i < 4; i++)  state[4 + i]  = Goldilocks::fromU64(in[i]);
+        for (int i = 8; i < 16; i++) state[i]      = Goldilocks::fromU64(in[i]);
+    } else if (key[0] == 0 && key[1] == 1) {
+        for (int i = 0; i < 4; i++)  state[i]      = Goldilocks::fromU64(in[4 + i]);
+        for (int i = 0; i < 4; i++)  state[4 + i]  = Goldilocks::fromU64(in[8 + i]);
+        for (int i = 0; i < 4; i++)  state[8 + i]  = Goldilocks::fromU64(in[i]);
+        for (int i = 12; i < 16; i++) state[i]     = Goldilocks::fromU64(in[i]);
+    } else {
+        for (int i = 0; i < 12; i++) state[i]      = Goldilocks::fromU64(in[4 + i]);
+        for (int i = 0; i < 4; i++)  state[12 + i] = Goldilocks::fromU64(in[i]);
     }
+
+    Goldilocks::Element input_copy[WIDTH_POS1];
+    for (int i = 0; i < WIDTH_POS1; i++) input_copy[i] = state[i];
+
     Poseidon1_perm(state, im);
     for (int i = 0; i < WIDTH_POS1; i++) {
         out[i] = Goldilocks::toU64(state[i] + input_copy[i]);

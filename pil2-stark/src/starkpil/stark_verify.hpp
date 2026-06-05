@@ -199,14 +199,14 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         Goldilocks::Element result[W];
         Goldilocks::Element x[W] = {};
         x[0] = challenge[0]; x[1] = challenge[1]; x[2] = challenge[2];
-        x[W - 1] = nonce;
+        x[3] = nonce;
         PoseidonGoldilocksGrinding::permute(result, x, PoseidonMode::Scalar);
 #else
         constexpr uint32_t W = Poseidon2GoldilocksGrinding::SPONGE_WIDTH;
         Goldilocks::Element result[W];
         Goldilocks::Element x[W] = {};
         x[0] = challenge[0]; x[1] = challenge[1]; x[2] = challenge[2];
-        x[W - 1] = nonce;
+        x[3] = nonce;
         Poseidon2GoldilocksGrinding::permute(result, x, Poseidon2Mode::Scalar);
 #endif
         if (Goldilocks::toU64(result[0]) >= (1ULL << (64 - starkInfo.starkStruct.powBits))) {

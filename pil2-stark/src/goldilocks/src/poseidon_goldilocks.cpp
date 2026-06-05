@@ -226,7 +226,7 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T, DM_T>::grinding(
 
             Goldilocks::Element state[SPONGE_WIDTH] = {};
             std::memcpy(state, in, 3 * sizeof(Goldilocks::Element));
-            state[SPONGE_WIDTH - 1] = Goldilocks::fromU64(offset + i);
+            state[3] = Goldilocks::fromU64(offset + i);
             permute_seq(state, state);
             if (state[0].fe < level) {
                 chunkIdxs[omp_get_thread_num()] = offset + i;

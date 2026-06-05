@@ -133,6 +133,17 @@ impl GlobalInfo {
                 hash_family::FAMILIES
             )));
         }
+
+        let compiled = proofman_starks_lib_c::get_stark_hash_family_c();
+        if compiled != global_info.hash {
+            return Err(ProofmanError::InvalidConfiguration(format!(
+                "hash family mismatch: proving key configured for {:?} but the C++ prover library \
+                 was compiled for {:?}. Rebuild with{} the `stark-poseidon1` feature to match.",
+                global_info.hash,
+                compiled,
+                if global_info.hash == "Poseidon1" { "" } else { "out" }
+            )));
+        }
         Ok(global_info)
     }
 

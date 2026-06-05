@@ -109,8 +109,7 @@ fn main() {
     // silently linked against the wrong hash family. Force clean on toggle.
     let hash_stamp_path = library_folder.join(".stark_hash_stamp");
     let hash_stamp_content = if stark_poseidon1 { "poseidon1" } else { "poseidon2" };
-    let hash_changed =
-        fs::read_to_string(&hash_stamp_path).map(|s| s.trim() != hash_stamp_content).unwrap_or(true);
+    let hash_changed = fs::read_to_string(&hash_stamp_path).map(|s| s.trim() != hash_stamp_content).unwrap_or(true);
 
     // Clean build when CUDA architecture flags change, the Makefile changes,
     // or the hash family toggles.
@@ -158,10 +157,7 @@ fn main() {
         }
     }
     if let Err(e) = fs::write(&hash_stamp_path, hash_stamp_content) {
-        eprintln!(
-            "Warning: failed to write hash family stamp {:?}: {e} — next build will recompile",
-            hash_stamp_path
-        );
+        eprintln!("Warning: failed to write hash family stamp {:?}: {e} — next build will recompile", hash_stamp_path);
     }
 
     // Absolute path to the library

@@ -150,6 +150,10 @@ pub fn get_proof_size_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_proof_size(p_stark_info) }
 }
 
+pub fn get_stark_hash_family_c() -> String {
+    unsafe { CStr::from_ptr(get_stark_hash_family()).to_string_lossy().into_owned() }
+}
+
 pub fn get_proof_pinned_size_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_proof_pinned_size(p_stark_info) }
 }

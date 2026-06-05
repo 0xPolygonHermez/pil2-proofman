@@ -17,7 +17,7 @@ pub struct VerifyStark {
     #[clap(short = 'k', long)]
     pub verkey: String,
 
-    #[arg(long, default_value = "Poseidon2")]
+    #[arg(long, default_value = "Poseidon1")]
     pub hash: String,
 
     /// Verbosity (-v, -vv)

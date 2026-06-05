@@ -236,7 +236,7 @@ template custom extern_c CustPoseidon1_16() {
             row++;
         } else {
             for(var t=0; t < 16; t++) {
-                out[t] <-- st[t] + in[t];
+                out[t] <-- st[t];
             }
         }
     }
@@ -272,8 +272,6 @@ template Poseidon(nOuts) {
     }
 }
 
-// Calculate Poseidon Hash of 2 inputs in GL field (each element has at most 63 bits)
-// -nOuts: Number of GL field elements that are being returned as output
 template CustPoseidon(arity, nOuts) {
     assert(arity == 4);
     signal input in[arity * 4];
@@ -290,7 +288,7 @@ template CustPoseidon(arity, nOuts) {
     }
 
     _ <== p.im;
-    
+
     for (var j=nOuts; j<arity*4; j++) {
         _ <== p.out[j];
     }
