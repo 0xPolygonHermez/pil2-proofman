@@ -253,18 +253,20 @@ inline void PoseidonGoldilocks<W, DM_T>::permute(
 {
     if (mode == PoseidonMode::Auto) {
 #ifdef __AVX2__
-        if constexpr (W == 12) mode = PoseidonMode::Avx;
-        else                   mode = PoseidonMode::Scalar;
+        mode = (W == 12) ? PoseidonMode::Avx : PoseidonMode::Scalar;
 #else
         mode = PoseidonMode::Scalar;
 #endif
     }
-    if (mode == PoseidonMode::Scalar) { permute_seq(output, input); return; }
+    switch (mode) {
+        case PoseidonMode::Scalar: permute_seq(output, input); return;
 #ifdef __AVX2__
-    if constexpr (W == 12) {
-        if (mode == PoseidonMode::Avx) { permute_avx(output, input); return; }
-    }
+        case PoseidonMode::Avx:
+            if constexpr (W == 12) { permute_avx(output, input); return; }
+            break; 
 #endif
+        default: break;
+    }
     abortMode("permute", mode);
 }
 
@@ -276,18 +278,20 @@ inline void PoseidonGoldilocks<W, DM_T>::permuteTrunc(
 {
     if (mode == PoseidonMode::Auto) {
 #ifdef __AVX2__
-        if constexpr (W == 12) mode = PoseidonMode::Avx;
-        else                   mode = PoseidonMode::Scalar;
+        mode = (W == 12) ? PoseidonMode::Avx : PoseidonMode::Scalar;
 #else
         mode = PoseidonMode::Scalar;
 #endif
     }
-    if (mode == PoseidonMode::Scalar) { permuteTrunc_seq(state, input); return; }
+    switch (mode) {
+        case PoseidonMode::Scalar: permuteTrunc_seq(state, input); return;
 #ifdef __AVX2__
-    if constexpr (W == 12) {
-        if (mode == PoseidonMode::Avx) { permuteTrunc_avx(state, input); return; }
-    }
+        case PoseidonMode::Avx:
+            if constexpr (W == 12) { permuteTrunc_avx(state, input); return; }
+            break;
 #endif
+        default: break;
+    }
     abortMode("permuteTrunc", mode);
 }
 
@@ -297,19 +301,20 @@ inline void PoseidonGoldilocks<W, DM_T>::linearHash(
 {
     if (mode == PoseidonMode::Auto) {
 #ifdef __AVX2__
-        if constexpr (W == 12) mode = PoseidonMode::Avx;
-        else                   mode = PoseidonMode::Scalar;
+        mode = (W == 12) ? PoseidonMode::Avx : PoseidonMode::Scalar;
 #else
         mode = PoseidonMode::Scalar;
 #endif
     }
-    if (mode == PoseidonMode::Scalar) { linear_hash_seq(output, input, size); return; }
+    switch (mode) {
+        case PoseidonMode::Scalar: linear_hash_seq(output, input, size); return;
 #ifdef __AVX2__
-    if constexpr (W == 12) {
-        if (mode == PoseidonMode::Avx) { linear_hash_avx(output, input, size); return; }
-    }
+        case PoseidonMode::Avx:
+            if constexpr (W == 12) { linear_hash_avx(output, input, size); return; }
+            break;
 #endif
-    // AvxBatch / Avx512Batch have a 4/8-row contract — reachable only via merkletree().
+        default: break;
+    }
     abortMode("linearHash", mode);
 }
 
@@ -321,35 +326,31 @@ inline void PoseidonGoldilocks<W, DM_T>::merkletree(
 {
     if (mode == PoseidonMode::Auto) {
 #ifdef __AVX512__
-        if constexpr (W == 12) mode = PoseidonMode::Avx512Batch;
-        else                   mode = PoseidonMode::Scalar;
+        mode = PoseidonMode::Avx512Batch;
 #elif defined(__AVX2__)
-        if constexpr (W == 12) mode = PoseidonMode::AvxBatch;
-        else                   mode = PoseidonMode::Scalar;
+        mode = PoseidonMode::AvxBatch;
 #else
         mode = PoseidonMode::Scalar;
 #endif
     }
-    if (mode == PoseidonMode::Scalar) {
-        merkletree_seq(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
-    }
+    switch (mode) {
+        case PoseidonMode::Scalar:
+            merkletree_seq(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
 #ifdef __AVX2__
-    if constexpr (W == 12) {
-        if (mode == PoseidonMode::Avx) {
-            merkletree_avx(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
-        }
-        if (mode == PoseidonMode::AvxBatch) {
+        case PoseidonMode::Avx:
+            if constexpr (W == 12) {
+                merkletree_avx(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
+            }
+            break;
+        case PoseidonMode::AvxBatch:
             merkletree_batch_avx(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
-        }
-    }
 #endif
 #ifdef __AVX512__
-    if constexpr (W == 12) {
-        if (mode == PoseidonMode::Avx512Batch) {
+        case PoseidonMode::Avx512Batch:
             merkletree_batch_avx512(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
-        }
-    }
 #endif
+        default: break;
+    }
     abortMode("merkletree", mode);
 }
 

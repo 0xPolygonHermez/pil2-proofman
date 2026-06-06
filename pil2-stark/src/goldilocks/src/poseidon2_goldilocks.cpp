@@ -1,5 +1,8 @@
 #include "poseidon2_goldilocks.hpp"
 #include <math.h> /* floor */
+#include <atomic>
+#include <cmath>
+#include <stdexcept>
 
 
     
@@ -181,54 +184,54 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::merkletree_seq(Goldilocks::Eleme
 template<uint32_t SPONGE_WIDTH_T, bool DM_T>
 void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::grinding(uint64_t &nonce, const uint64_t* in, const uint32_t n_bits)
 {
-    uint64_t checkChunk = omp_get_max_threads() * 512;
-    uint64_t level   = uint64_t(1) << (64 - n_bits);
-    uint64_t* chunkIdxs = new uint64_t[omp_get_max_threads()];
-    uint64_t offset = 0;
-    nonce = UINT64_MAX;
+    // Total hashes needed for S-bit security at n_bits target difficulty:
+    //   N = -S · ln(2) / ln(1 - 2^-n_bits).  Same formula as the GPU path;
+    // log1p/ldexp keep precision for small 2^-n_bits.
+    constexpr uint64_t security = 128;
+    const uint64_t level = uint64_t(1) << (64 - n_bits);
+    const double eps   = std::ldexp(1.0, -int(n_bits));
+    const double total = -double(security) * std::log(2.0) / std::log1p(-eps);
+    const uint64_t N   = (uint64_t)std::ceil(total);
 
-    for(int i = 0; i < omp_get_max_threads(); ++i)
+    // Smallest-found-nonce wins 
+    std::atomic<uint64_t> found{UINT64_MAX};
+
+    #pragma omp parallel
     {
-        chunkIdxs[i] = UINT64_MAX;
-    }
+        const int tid  = omp_get_thread_num();
+        const int nthr = omp_get_num_threads();
+        constexpr uint64_t POLL_MASK = 15;
+        uint64_t local_found = UINT64_MAX;
+        uint64_t poll = 0;
 
-    //we are trying (1 << n_bits) * 512 * num_threads possibilities maximum
-    for(int k = 0; k < (1 << n_bits); ++k)
-    {
+        Goldilocks::Element state[SPONGE_WIDTH];
+        Goldilocks::Element out[SPONGE_WIDTH];
+        std::memcpy(state, in, (SPONGE_WIDTH - 1) * sizeof(Goldilocks::Element));
 
-        #pragma omp parallel for
-        for (uint64_t i = 0; i < checkChunk; i++) {
-            if (chunkIdxs[omp_get_thread_num()] != UINT64_MAX)
-                continue;
-
-            Goldilocks::Element state[SPONGE_WIDTH];
-            std::memcpy(state, in, (SPONGE_WIDTH - 1) * sizeof(Goldilocks::Element));
-            state[SPONGE_WIDTH - 1] = Goldilocks::fromU64(offset + i);
-            permute_seq(state, state);
-            if (state[0].fe < level) {
-                chunkIdxs[omp_get_thread_num()] = offset + i;
-            }
-        }
-
-        for(int i = 0; i < omp_get_max_threads(); ++i)
+        for (uint64_t i = tid; i < N; i += nthr)
         {
-            if (chunkIdxs[i] != UINT64_MAX)
-            {
-                nonce = chunkIdxs[i];
+            if ((poll++ & POLL_MASK) == 0)
+                local_found = found.load(std::memory_order_relaxed);
+            if (i >= local_found) break;
+
+            state[SPONGE_WIDTH - 1] = Goldilocks::fromU64(i);
+            permute_seq(out, state);
+            if (out[0].fe < level) {
+                #pragma omp critical(grinding_update)
+                {
+                    if (i < found.load(std::memory_order_relaxed))
+                        found.store(i, std::memory_order_relaxed);
+                }
                 break;
             }
         }
-
-        if (nonce != UINT64_MAX)
-            break;
-
-        offset += checkChunk;
     }
-    if(nonce == UINT64_MAX)
+
+    nonce = found.load();
+    if (nonce == UINT64_MAX)
     {
         throw std::runtime_error("Poseidon2Goldilocks::grinding: could not find a valid nonce");
     }
-    delete[] chunkIdxs;
 }
 
 #ifdef __AVX2__

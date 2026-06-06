@@ -3,6 +3,8 @@
 #include <gtest/gtest.h>
 #include <cstring>
 #include <cstdio>
+#include <random>
+#include <vector>
 
 #include "../src/goldilocks_base_field.hpp"
 #include "../src/poseidon_goldilocks.hpp"
@@ -396,3 +398,104 @@ TEST(PoseidonV1, permute_W16_self_consistency)
         ASSERT_EQ(Goldilocks::toU64(out[i]), PERMUTE_W16_POSEIDON1_GOLDEN[i])
             << "lane " << i;
 }
+
+#ifdef __AVX2__
+TEST(PoseidonV1, merkletree_W8_arity2_scalar_vs_avxbatch)
+{
+    using Pos8 = PoseidonGoldilocks<8, false>;
+    constexpr uint32_t ARITY = 2;
+    const uint64_t ncols = 24;
+    const uint64_t nrows = 1ULL << 10;
+
+    std::vector<GL> cols(ncols * nrows);
+    std::mt19937_64 rng(0xc0ffee8abc8ULL);
+    for (uint64_t i = 0; i < cols.size(); ++i) cols[i] = Goldilocks::fromU64(rng());
+
+    uint64_t numTree = getTreeNumElements(nrows, ARITY);
+    std::vector<GL> tree_seq(numTree), tree_avxbatch(numTree);
+
+    Pos8::merkletree(tree_seq.data(),      cols.data(), ncols, nrows, ARITY, PoseidonMode::Scalar);
+    Pos8::merkletree(tree_avxbatch.data(), cols.data(), ncols, nrows, ARITY, PoseidonMode::AvxBatch);
+
+    for (uint64_t i = 0; i < numTree; ++i)
+        ASSERT_EQ(Goldilocks::toU64(tree_seq[i]), Goldilocks::toU64(tree_avxbatch[i]))
+            << "node " << i;
+}
+#endif
+
+#ifdef __AVX512__
+TEST(PoseidonV1, merkletree_W8_arity2_scalar_vs_avx512batch)
+{
+    using Pos8 = PoseidonGoldilocks<8, false>;
+    constexpr uint32_t ARITY = 2;
+    const uint64_t ncols = 24;
+    const uint64_t nrows = 1ULL << 10;
+
+    std::vector<GL> cols(ncols * nrows);
+    std::mt19937_64 rng(0xc0ffee8abc12ULL);
+    for (uint64_t i = 0; i < cols.size(); ++i) cols[i] = Goldilocks::fromU64(rng());
+
+    uint64_t numTree = getTreeNumElements(nrows, ARITY);
+    std::vector<GL> tree_seq(numTree), tree_avx512(numTree);
+
+    Pos8::merkletree(tree_seq.data(),    cols.data(), ncols, nrows, ARITY, PoseidonMode::Scalar);
+    Pos8::merkletree(tree_avx512.data(), cols.data(), ncols, nrows, ARITY, PoseidonMode::Avx512Batch);
+
+    for (uint64_t i = 0; i < numTree; ++i)
+        ASSERT_EQ(Goldilocks::toU64(tree_seq[i]), Goldilocks::toU64(tree_avx512[i]))
+            << "node " << i;
+}
+#endif
+
+// ---------------------------------------------------------------------------
+// W=16 mode parity — Scalar ≡ AvxBatch (≡ Avx512Batch when available).
+// Validates the W-generic batch_avx[512] paths produce the same merkle root
+// as merkletree_seq.
+// ---------------------------------------------------------------------------
+#ifdef __AVX2__
+TEST(PoseidonV1, merkletree_W16_arity3_scalar_vs_avxbatch)
+{
+    using Pos16 = PoseidonGoldilocks<16, false>;
+    constexpr uint32_t ARITY = 3;
+    const uint64_t ncols = 56;
+    const uint64_t nrows = 1ULL << 10;
+
+    std::vector<GL> cols(ncols * nrows);
+    std::mt19937_64 rng(0x517a2deadbeefULL);
+    for (uint64_t i = 0; i < cols.size(); ++i) cols[i] = Goldilocks::fromU64(rng());
+
+    uint64_t numTree = getTreeNumElements(nrows, ARITY);
+    std::vector<GL> tree_seq(numTree), tree_avxbatch(numTree);
+
+    Pos16::merkletree(tree_seq.data(),      cols.data(), ncols, nrows, ARITY, PoseidonMode::Scalar);
+    Pos16::merkletree(tree_avxbatch.data(), cols.data(), ncols, nrows, ARITY, PoseidonMode::AvxBatch);
+
+    for (uint64_t i = 0; i < numTree; ++i)
+        ASSERT_EQ(Goldilocks::toU64(tree_seq[i]), Goldilocks::toU64(tree_avxbatch[i]))
+            << "node " << i;
+}
+#endif
+
+#ifdef __AVX512__
+TEST(PoseidonV1, merkletree_W16_arity3_scalar_vs_avx512batch)
+{
+    using Pos16 = PoseidonGoldilocks<16, false>;
+    constexpr uint32_t ARITY = 3;
+    const uint64_t ncols = 56;
+    const uint64_t nrows = 1ULL << 10;
+
+    std::vector<GL> cols(ncols * nrows);
+    std::mt19937_64 rng(0xfeedface517aULL);
+    for (uint64_t i = 0; i < cols.size(); ++i) cols[i] = Goldilocks::fromU64(rng());
+
+    uint64_t numTree = getTreeNumElements(nrows, ARITY);
+    std::vector<GL> tree_seq(numTree), tree_avx512(numTree);
+
+    Pos16::merkletree(tree_seq.data(),    cols.data(), ncols, nrows, ARITY, PoseidonMode::Scalar);
+    Pos16::merkletree(tree_avx512.data(), cols.data(), ncols, nrows, ARITY, PoseidonMode::Avx512Batch);
+
+    for (uint64_t i = 0; i < numTree; ++i)
+        ASSERT_EQ(Goldilocks::toU64(tree_seq[i]), Goldilocks::toU64(tree_avx512[i]))
+            << "node " << i;
+}
+#endif

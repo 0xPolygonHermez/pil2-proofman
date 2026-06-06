@@ -593,8 +593,11 @@ void PoseidonGoldilocksGPU<W, DM_T>::grinding(uint64_t *d_nonce, uint64_t *d_non
     uint64_t N = 1ULL << log_N;
     uint64_t security = 128;
 
-    double totalHashesRequired = (double(-double(security))) * log(double(2.0)) /
-                                 log(double(1.0) - double(1.0) / double(1ULL << n_bits));
+    // Numerical notes:
+    //   eps    = 2^-n_bits is built with ldexp (exact; no integer shift).
+    //   log1p  = ln(1 + x) without the cancellation that hits `log(1.0 - eps)`
+    double eps                 = ldexp(1.0, -int(n_bits));
+    double totalHashesRequired = -double(security) * log(2.0) / log1p(-eps);
     uint64_t log_totalHashesRequired = (uint64_t)ceil(log2(totalHashesRequired));
     uint64_t log_hashesPerThread = (log_totalHashesRequired > log_launch_iters + log_N)
                                    ? log_totalHashesRequired - log_launch_iters - log_N : 0;
