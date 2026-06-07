@@ -1,11 +1,15 @@
 // ---------------------------------------------------------------------------
-// bench_poseidon_cpu.cpp -- CPU Poseidon v1 benchmarks (W=12 only).
+// bench_poseidon_cpu.cpp -- CPU Poseidon v1 benchmarks (W ∈ {8, 12, 16}).
 //
-// Parameters mirror bench_poseidon2_cpu.cpp so numbers can be compared
-// side-by-side with the Poseidon2 suite:
+// Parameters mirror bench_poseidon2_cpu.cpp for side-by-side comparison:
 //   BENCH_NROWS = 1 << 23 (8M rows)
 //   NUM_HASHES  = 1 << 21 (2M hashes) for per-element ops
-//   ARITY=2 used for merkletree (Poseidon v1's canonical binary tree).
+//   (W, arity) pairs benched: (8,2), (12,3), (16,4) — matches the production
+//   STARK_POSEIDON1 dispatch (W = arity * CAPACITY).
+//
+// Single-sponge AVX (`Avx` mode) is W=12-only — registrations are gated by
+// the `W == 12` constexpr inside the bench bodies; the W != 12 cases assert
+// out and aren't registered.
 // ---------------------------------------------------------------------------
 
 #include <benchmark/benchmark.h>
@@ -20,9 +24,6 @@
 
 static constexpr uint64_t BENCH_NROWS = 1ULL << 23;
 static constexpr uint64_t NUM_HASHES  = 1ULL << 21;
-static constexpr uint32_t W     = PoseidonGoldilocks<12>::SPONGE_WIDTH;
-static constexpr uint32_t CAP   = PoseidonGoldilocks<12>::CAPACITY;
-static constexpr uint64_t ARITY = 2;
 
 static void fillData(Goldilocks::Element *buf, uint64_t n)
 {
@@ -34,7 +35,8 @@ static void fillData(Goldilocks::Element *buf, uint64_t n)
 // permute / permuteTrunc — per-element throughput
 // ===========================================================================
 
-static void PERMUTE_W12_SCALAR_CPU_POS1_BENCH(benchmark::State &state)
+template<uint32_t W>
+static void PERMUTE_W_SCALAR_CPU_POS1_BENCH(benchmark::State &state)
 {
     const uint64_t total = (uint64_t)NUM_HASHES * W;
     Goldilocks::Element *x = new Goldilocks::Element[total];
@@ -45,7 +47,7 @@ static void PERMUTE_W12_SCALAR_CPU_POS1_BENCH(benchmark::State &state)
     for (auto _ : state) {
 #pragma omp parallel for num_threads(nT) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
-            PoseidonGoldilocks<12>::permute(
+            PoseidonGoldilocks<W>::permute(
                 (Goldilocks::Element(&)[W])r[i * W],
                 (const Goldilocks::Element(&)[W])x[i * W],
                 PoseidonMode::Scalar);
@@ -54,10 +56,10 @@ static void PERMUTE_W12_SCALAR_CPU_POS1_BENCH(benchmark::State &state)
     state.counters["hashes"] = NUM_HASHES;
     delete[] x; delete[] r;
 }
-BENCHMARK(PERMUTE_W12_SCALAR_CPU_POS1_BENCH)->Unit(benchmark::kMillisecond)->UseRealTime();
 
 #ifdef __AVX2__
-static void PERMUTE_W12_AVX_CPU_POS1_BENCH(benchmark::State &state)
+template<uint32_t W>
+static void PERMUTE_W_AVX_CPU_POS1_BENCH(benchmark::State &state)
 {
     const uint64_t total = (uint64_t)NUM_HASHES * W;
     Goldilocks::Element *x = new Goldilocks::Element[total];
@@ -68,7 +70,7 @@ static void PERMUTE_W12_AVX_CPU_POS1_BENCH(benchmark::State &state)
     for (auto _ : state) {
 #pragma omp parallel for num_threads(nT) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
-            PoseidonGoldilocks<12>::permute(
+            PoseidonGoldilocks<W>::permute(
                 (Goldilocks::Element(&)[W])r[i * W],
                 (const Goldilocks::Element(&)[W])x[i * W],
                 PoseidonMode::Avx);
@@ -77,15 +79,16 @@ static void PERMUTE_W12_AVX_CPU_POS1_BENCH(benchmark::State &state)
     state.counters["hashes"] = NUM_HASHES;
     delete[] x; delete[] r;
 }
-BENCHMARK(PERMUTE_W12_AVX_CPU_POS1_BENCH)->Unit(benchmark::kMillisecond)->UseRealTime();
 #endif
 
 // ===========================================================================
-// linearHash — size sweep over BENCH_NCOLS
+// linearHash — size sweep over nCols
 // ===========================================================================
 
-static void LINEAR_HASH_W12_SCALAR_CPU_POS1_BENCH(benchmark::State &state)
+template<uint32_t W>
+static void LINEAR_HASH_W_SCALAR_CPU_POS1_BENCH(benchmark::State &state)
 {
+    constexpr uint32_t CAP = PoseidonGoldilocks<W>::CAPACITY;
     const uint64_t nCols = state.range(0);
     Goldilocks::Element *cols = new Goldilocks::Element[nCols * BENCH_NROWS];
     Goldilocks::Element *res  = new Goldilocks::Element[CAP * BENCH_NROWS];
@@ -93,16 +96,17 @@ static void LINEAR_HASH_W12_SCALAR_CPU_POS1_BENCH(benchmark::State &state)
     for (auto _ : state) {
         #pragma omp parallel for num_threads(omp_get_max_threads())
         for (uint64_t i = 0; i < BENCH_NROWS; i++)
-            PoseidonGoldilocks<12>::linearHash(&res[i * CAP], &cols[i * nCols], nCols, PoseidonMode::Scalar);
+            PoseidonGoldilocks<W>::linearHash(&res[i * CAP], &cols[i * nCols], nCols, PoseidonMode::Scalar);
     }
     state.SetItemsProcessed(state.iterations() * BENCH_NROWS);
     delete[] cols; delete[] res;
 }
-BENCHMARK(LINEAR_HASH_W12_SCALAR_CPU_POS1_BENCH)->Unit(benchmark::kMillisecond)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
 
 #ifdef __AVX2__
-static void LINEAR_HASH_W12_AVX_CPU_POS1_BENCH(benchmark::State &state)
+template<uint32_t W>
+static void LINEAR_HASH_W_AVX_CPU_POS1_BENCH(benchmark::State &state)
 {
+    constexpr uint32_t CAP = PoseidonGoldilocks<W>::CAPACITY;
     const uint64_t nCols = state.range(0);
     Goldilocks::Element *cols = new Goldilocks::Element[nCols * BENCH_NROWS];
     Goldilocks::Element *res  = new Goldilocks::Element[CAP * BENCH_NROWS];
@@ -110,19 +114,19 @@ static void LINEAR_HASH_W12_AVX_CPU_POS1_BENCH(benchmark::State &state)
     for (auto _ : state) {
         #pragma omp parallel for num_threads(omp_get_max_threads())
         for (uint64_t i = 0; i < BENCH_NROWS; i++)
-            PoseidonGoldilocks<12>::linearHash(&res[i * CAP], &cols[i * nCols], nCols, PoseidonMode::Avx);
+            PoseidonGoldilocks<W>::linearHash(&res[i * CAP], &cols[i * nCols], nCols, PoseidonMode::Avx);
     }
     state.SetItemsProcessed(state.iterations() * BENCH_NROWS);
     delete[] cols; delete[] res;
 }
-BENCHMARK(LINEAR_HASH_W12_AVX_CPU_POS1_BENCH)->Unit(benchmark::kMillisecond)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
 #endif
 
 // ===========================================================================
-// merkletree — binary (arity=2), full tree over BENCH_NROWS leaves.
+// merkletree — (W, arity) ∈ {(8,2),(12,3),(16,4)}
 // ===========================================================================
 
-static void MERKLETREE_W12_SCALAR_CPU_POS1_BENCH(benchmark::State &state)
+template<uint32_t W, uint32_t ARITY>
+static void MERKLETREE_W_AR_SCALAR_CPU_POS1_BENCH(benchmark::State &state)
 {
     const uint64_t nCols = state.range(0);
     Goldilocks::Element *cols = new Goldilocks::Element[nCols * BENCH_NROWS];
@@ -130,15 +134,15 @@ static void MERKLETREE_W12_SCALAR_CPU_POS1_BENCH(benchmark::State &state)
     uint64_t numElems = getTreeNumElements(BENCH_NROWS, ARITY);
     Goldilocks::Element *tree = new Goldilocks::Element[numElems];
     for (auto _ : state) {
-        PoseidonGoldilocks<12>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, PoseidonMode::Scalar);
+        PoseidonGoldilocks<W>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, PoseidonMode::Scalar);
     }
     state.SetItemsProcessed(state.iterations() * BENCH_NROWS);
     delete[] cols; delete[] tree;
 }
-BENCHMARK(MERKLETREE_W12_SCALAR_CPU_POS1_BENCH)->Unit(benchmark::kMillisecond)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
 
 #ifdef __AVX2__
-static void MERKLETREE_W12_AVX_CPU_POS1_BENCH(benchmark::State &state)
+template<uint32_t W, uint32_t ARITY>
+static void MERKLETREE_W_AR_AVX_CPU_POS1_BENCH(benchmark::State &state)
 {
     const uint64_t nCols = state.range(0);
     Goldilocks::Element *cols = new Goldilocks::Element[nCols * BENCH_NROWS];
@@ -146,14 +150,14 @@ static void MERKLETREE_W12_AVX_CPU_POS1_BENCH(benchmark::State &state)
     uint64_t numElems = getTreeNumElements(BENCH_NROWS, ARITY);
     Goldilocks::Element *tree = new Goldilocks::Element[numElems];
     for (auto _ : state) {
-        PoseidonGoldilocks<12>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, PoseidonMode::Avx);
+        PoseidonGoldilocks<W>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, PoseidonMode::Avx);
     }
     state.SetItemsProcessed(state.iterations() * BENCH_NROWS);
     delete[] cols; delete[] tree;
 }
-BENCHMARK(MERKLETREE_W12_AVX_CPU_POS1_BENCH)->Unit(benchmark::kMillisecond)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
 
-static void MERKLETREE_W12_AVXBATCH_CPU_POS1_BENCH(benchmark::State &state)
+template<uint32_t W, uint32_t ARITY>
+static void MERKLETREE_W_AR_AVXBATCH_CPU_POS1_BENCH(benchmark::State &state)
 {
     const uint64_t nCols = state.range(0);
     Goldilocks::Element *cols = new Goldilocks::Element[nCols * BENCH_NROWS];
@@ -161,16 +165,16 @@ static void MERKLETREE_W12_AVXBATCH_CPU_POS1_BENCH(benchmark::State &state)
     uint64_t numElems = getTreeNumElements(BENCH_NROWS, ARITY);
     Goldilocks::Element *tree = new Goldilocks::Element[numElems];
     for (auto _ : state) {
-        PoseidonGoldilocks<12>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, PoseidonMode::AvxBatch);
+        PoseidonGoldilocks<W>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, PoseidonMode::AvxBatch);
     }
     state.SetItemsProcessed(state.iterations() * BENCH_NROWS);
     delete[] cols; delete[] tree;
 }
-BENCHMARK(MERKLETREE_W12_AVXBATCH_CPU_POS1_BENCH)->Unit(benchmark::kMillisecond)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
 #endif
 
 #ifdef __AVX512__
-static void MERKLETREE_W12_AVX512BATCH_CPU_POS1_BENCH(benchmark::State &state)
+template<uint32_t W, uint32_t ARITY>
+static void MERKLETREE_W_AR_AVX512BATCH_CPU_POS1_BENCH(benchmark::State &state)
 {
     const uint64_t nCols = state.range(0);
     Goldilocks::Element *cols = new Goldilocks::Element[nCols * BENCH_NROWS];
@@ -178,10 +182,68 @@ static void MERKLETREE_W12_AVX512BATCH_CPU_POS1_BENCH(benchmark::State &state)
     uint64_t numElems = getTreeNumElements(BENCH_NROWS, ARITY);
     Goldilocks::Element *tree = new Goldilocks::Element[numElems];
     for (auto _ : state) {
-        PoseidonGoldilocks<12>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, PoseidonMode::Avx512Batch);
+        PoseidonGoldilocks<W>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, PoseidonMode::Avx512Batch);
     }
     state.SetItemsProcessed(state.iterations() * BENCH_NROWS);
     delete[] cols; delete[] tree;
 }
-BENCHMARK(MERKLETREE_W12_AVX512BATCH_CPU_POS1_BENCH)->Unit(benchmark::kMillisecond)->Arg(24)->Arg(36)->Arg(56)->UseRealTime();
+#endif
+
+// ===========================================================================
+// Registration
+// ===========================================================================
+
+#define NCOLS_ARGS ->Arg(24)->Arg(36)->Arg(56)
+
+#define REG_PERMUTE(FN, W, LABEL)                                            \
+    BENCHMARK_TEMPLATE(FN, W)                                                \
+        ->Name(LABEL)->Unit(benchmark::kMillisecond)->UseRealTime();
+
+#define REG_NCOLS_AR(FN, W, AR, LABEL)                                       \
+    BENCHMARK_TEMPLATE(FN, W, AR)                                            \
+        ->Name(LABEL)->Unit(benchmark::kMillisecond) NCOLS_ARGS              \
+        ->UseRealTime();
+
+REG_PERMUTE(PERMUTE_W_SCALAR_CPU_POS1_BENCH,  8, "PERMUTE_W8_SCALAR_CPU_POS1_BENCH")
+REG_PERMUTE(PERMUTE_W_SCALAR_CPU_POS1_BENCH, 12, "PERMUTE_W12_SCALAR_CPU_POS1_BENCH")
+REG_PERMUTE(PERMUTE_W_SCALAR_CPU_POS1_BENCH, 16, "PERMUTE_W16_SCALAR_CPU_POS1_BENCH")
+
+#ifdef __AVX2__
+// single-sponge AVX is W=12-only (hand-tuned 12×12 kernels)
+REG_PERMUTE(PERMUTE_W_AVX_CPU_POS1_BENCH,    12, "PERMUTE_W12_AVX_CPU_POS1_BENCH")
+#endif
+
+// linearHash — Scalar across all widths, AVX only at W=12.
+#define REG_LH_NCOLS(FN, W, LABEL)                                           \
+    BENCHMARK_TEMPLATE(FN, W)                                                \
+        ->Name(LABEL)->Unit(benchmark::kMillisecond) NCOLS_ARGS              \
+        ->UseRealTime();
+
+REG_LH_NCOLS(LINEAR_HASH_W_SCALAR_CPU_POS1_BENCH,  8, "LINEAR_HASH_W8_SCALAR_CPU_POS1_BENCH")
+REG_LH_NCOLS(LINEAR_HASH_W_SCALAR_CPU_POS1_BENCH, 12, "LINEAR_HASH_W12_SCALAR_CPU_POS1_BENCH")
+REG_LH_NCOLS(LINEAR_HASH_W_SCALAR_CPU_POS1_BENCH, 16, "LINEAR_HASH_W16_SCALAR_CPU_POS1_BENCH")
+
+#ifdef __AVX2__
+REG_LH_NCOLS(LINEAR_HASH_W_AVX_CPU_POS1_BENCH,    12, "LINEAR_HASH_W12_AVX_CPU_POS1_BENCH")
+#endif
+
+// merkletree — (W,arity) ∈ {(8,2),(12,3),(16,4)} matches production dispatch.
+REG_NCOLS_AR(MERKLETREE_W_AR_SCALAR_CPU_POS1_BENCH,  8, 2, "MERKLETREE_W8_AR2_SCALAR_CPU_POS1_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_SCALAR_CPU_POS1_BENCH, 12, 3, "MERKLETREE_W12_AR3_SCALAR_CPU_POS1_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_SCALAR_CPU_POS1_BENCH, 16, 4, "MERKLETREE_W16_AR4_SCALAR_CPU_POS1_BENCH")
+
+#ifdef __AVX2__
+// Single-sponge AVX is W=12 only.
+REG_NCOLS_AR(MERKLETREE_W_AR_AVX_CPU_POS1_BENCH, 12, 3, "MERKLETREE_W12_AR3_AVX_CPU_POS1_BENCH")
+
+// AVX batch path is W-generic for {8,12,16}.
+REG_NCOLS_AR(MERKLETREE_W_AR_AVXBATCH_CPU_POS1_BENCH,  8, 2, "MERKLETREE_W8_AR2_AVXBATCH_CPU_POS1_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_AVXBATCH_CPU_POS1_BENCH, 12, 3, "MERKLETREE_W12_AR3_AVXBATCH_CPU_POS1_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_AVXBATCH_CPU_POS1_BENCH, 16, 4, "MERKLETREE_W16_AR4_AVXBATCH_CPU_POS1_BENCH")
+#endif
+
+#ifdef __AVX512__
+REG_NCOLS_AR(MERKLETREE_W_AR_AVX512BATCH_CPU_POS1_BENCH,  8, 2, "MERKLETREE_W8_AR2_AVX512BATCH_CPU_POS1_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_AVX512BATCH_CPU_POS1_BENCH, 12, 3, "MERKLETREE_W12_AR3_AVX512BATCH_CPU_POS1_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_AVX512BATCH_CPU_POS1_BENCH, 16, 4, "MERKLETREE_W16_AR4_AVX512BATCH_CPU_POS1_BENCH")
 #endif

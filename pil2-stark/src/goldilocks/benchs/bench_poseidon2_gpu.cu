@@ -278,3 +278,50 @@ static void GRINDING_GPU_BENCH(benchmark::State &state)
         NCOLS_ARGS                                                           \
         ->UseRealTime();
 
+// ---------------------------------------------------------------------------
+// permute — W in {8, 12, 16}
+// ---------------------------------------------------------------------------
+
+BENCHMARK_TEMPLATE(PERMUTE_W_GPU_BENCH, 8)
+    ->Name("PERMUTE_W8_GPU_BENCH")
+    ->Unit(benchmark::kMicrosecond)
+    ->UseRealTime();
+BENCHMARK_TEMPLATE(PERMUTE_W_GPU_BENCH, 12)
+    ->Name("PERMUTE_W12_GPU_BENCH")
+    ->Unit(benchmark::kMicrosecond)
+    ->UseRealTime();
+BENCHMARK_TEMPLATE(PERMUTE_W_GPU_BENCH, 16)
+    ->Name("PERMUTE_W16_GPU_BENCH")
+    ->Unit(benchmark::kMicrosecond)
+    ->UseRealTime();
+
+// ---------------------------------------------------------------------------
+// linearHash — W in {12, 16}, both Tiles and RowMajor layouts
+// ---------------------------------------------------------------------------
+
+REG_NCOLS(LINEAR_HASH_W_TILES_GPU_BENCH,    12, "LINEAR_HASH_W12_TILES_GPU_BENCH")
+REG_NCOLS(LINEAR_HASH_W_TILES_GPU_BENCH,    16, "LINEAR_HASH_W16_TILES_GPU_BENCH")
+REG_NCOLS(LINEAR_HASH_W_ROWMAJOR_GPU_BENCH, 12, "LINEAR_HASH_W12_ROWMAJOR_GPU_BENCH")
+REG_NCOLS(LINEAR_HASH_W_ROWMAJOR_GPU_BENCH, 16, "LINEAR_HASH_W16_ROWMAJOR_GPU_BENCH")
+
+// ---------------------------------------------------------------------------
+// merkletree — (W,arity) in {(12,3),(16,4)}, both layouts
+// ---------------------------------------------------------------------------
+
+REG_NCOLS_AR(MERKLETREE_W_AR_TILES_GPU_BENCH,    12, 3, "MERKLETREE_W12_AR3_TILES_GPU_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_TILES_GPU_BENCH,    16, 4, "MERKLETREE_W16_AR4_TILES_GPU_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_ROWMAJOR_GPU_BENCH, 12, 3, "MERKLETREE_W12_AR3_ROWMAJOR_GPU_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_ROWMAJOR_GPU_BENCH, 16, 4, "MERKLETREE_W16_AR4_ROWMAJOR_GPU_BENCH")
+
+// ---------------------------------------------------------------------------
+// grinding
+// ---------------------------------------------------------------------------
+
+BENCHMARK(GRINDING_GPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    ->Arg(16)->Arg(20)->Arg(23)->Arg(24)->Arg(25)
+    ->UseRealTime();
+
+#undef REG_NCOLS
+#undef REG_NCOLS_AR
+#undef NCOLS_ARGS
