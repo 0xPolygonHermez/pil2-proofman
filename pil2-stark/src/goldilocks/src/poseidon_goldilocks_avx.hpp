@@ -8,8 +8,8 @@
 
 // AVX2 single-sponge primitives for Poseidon v1 over Goldilocks (W=12).
 
-template<uint32_t W, bool DM_T>
-inline void PoseidonGoldilocks<W, DM_T>::pow7_avx(__m256i &st0, __m256i &st1, __m256i &st2)
+template<uint32_t W>
+inline void PoseidonGoldilocks<W>::pow7_avx(__m256i &st0, __m256i &st1, __m256i &st2)
 {
     __m256i pw2_0, pw2_1, pw2_2;
     Goldilocks::square_avx(pw2_0, st0);
@@ -29,8 +29,8 @@ inline void PoseidonGoldilocks<W, DM_T>::pow7_avx(__m256i &st0, __m256i &st1, __
     Goldilocks::mult_avx(st2, pw3_2, pw4_2);
 }
 
-template<uint32_t W, bool DM_T>
-inline void PoseidonGoldilocks<W, DM_T>::add_avx(__m256i &st0, __m256i &st1, __m256i &st2, const Goldilocks::Element C_[SPONGE_WIDTH])
+template<uint32_t W>
+inline void PoseidonGoldilocks<W>::add_avx(__m256i &st0, __m256i &st1, __m256i &st2, const Goldilocks::Element C_[SPONGE_WIDTH])
 {
     __m256i c0, c1, c2;
     Goldilocks::load_avx(c0, &(C_[0]));
@@ -42,8 +42,8 @@ inline void PoseidonGoldilocks<W, DM_T>::add_avx(__m256i &st0, __m256i &st1, __m
 }
 
 // Variant where the constant array is aligned (loaded via aligned path).
-template<uint32_t W, bool DM_T>
-inline void PoseidonGoldilocks<W, DM_T>::add_avx_a(__m256i &st0, __m256i &st1, __m256i &st2, const Goldilocks::Element C_a[SPONGE_WIDTH])
+template<uint32_t W>
+inline void PoseidonGoldilocks<W>::add_avx_a(__m256i &st0, __m256i &st1, __m256i &st2, const Goldilocks::Element C_a[SPONGE_WIDTH])
 {
     __m256i c0, c1, c2;
     Goldilocks::load_avx_a(c0, &(C_a[0]));
@@ -55,8 +55,8 @@ inline void PoseidonGoldilocks<W, DM_T>::add_avx_a(__m256i &st0, __m256i &st1, _
 }
 
 // Variant for values < 2^32: uses the fast small-add path.
-template<uint32_t W, bool DM_T>
-inline void PoseidonGoldilocks<W, DM_T>::add_avx_small(__m256i &st0, __m256i &st1, __m256i &st2, const Goldilocks::Element C_small[SPONGE_WIDTH])
+template<uint32_t W>
+inline void PoseidonGoldilocks<W>::add_avx_small(__m256i &st0, __m256i &st1, __m256i &st2, const Goldilocks::Element C_small[SPONGE_WIDTH])
 {
     __m256i c0, c1, c2;
     Goldilocks::load_avx(c0, &(C_small[0]));

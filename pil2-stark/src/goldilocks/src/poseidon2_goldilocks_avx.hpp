@@ -8,16 +8,16 @@
 
 const __m256i zero = _mm256_setzero_si256();
 
-template<uint32_t SPONGE_WIDTH_T, bool DM_T>
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::permuteTrunc_avx(Goldilocks::Element (&state)[CAPACITY], Goldilocks::Element const (&input)[SPONGE_WIDTH])
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::permuteTrunc_avx(Goldilocks::Element (&state)[CAPACITY], Goldilocks::Element const (&input)[SPONGE_WIDTH])
 {
     Goldilocks::Element aux[SPONGE_WIDTH];
     permute_avx(aux, input);
     std::memcpy(state, aux, CAPACITY * sizeof(Goldilocks::Element));
 }
 
-template<uint32_t SPONGE_WIDTH_T, bool DM_T>
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::permuteTrunc_batch_avx(Goldilocks::Element (&state)[4 * CAPACITY], Goldilocks::Element const (&input)[4 * SPONGE_WIDTH])
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::permuteTrunc_batch_avx(Goldilocks::Element (&state)[4 * CAPACITY], Goldilocks::Element const (&input)[4 * SPONGE_WIDTH])
 {
     Goldilocks::Element aux[4 * SPONGE_WIDTH];
     permute_batch_avx(aux, input);
@@ -27,8 +27,8 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::permuteTrunc_batch_avx(Go
     std::memcpy(&state[12], &aux[3*SPONGE_WIDTH], CAPACITY * sizeof(Goldilocks::Element));
 }
 
-template<uint32_t SPONGE_WIDTH_T, bool DM_T>
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::matmul_m4_batch_avx(__m256i &st0, __m256i &st1, __m256i &st2, __m256i &st3) {
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_m4_batch_avx(__m256i &st0, __m256i &st1, __m256i &st2, __m256i &st3) {
     __m256i t0, t0_2, t1, t1_2, t2, t3, t4, t5, t6, t7;
     Goldilocks::add_avx(t0, st0, st1);
     Goldilocks::add_avx(t1, st2, st3);
@@ -50,8 +50,8 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::matmul_m4_batch_avx(__m25
     Goldilocks::copy_avx(st3, t4);
 }
 
-template<uint32_t SPONGE_WIDTH_T, bool DM_T>   
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::matmul_external_batch_avx(__m256i *x) {
+template<uint32_t SPONGE_WIDTH_T>   
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_external_batch_avx(__m256i *x) {
     
     for(uint32_t i = 0; i < SPONGE_WIDTH; i +=4) {
         matmul_m4_batch_avx(x[i], x[i+1], x[i+2], x[i+3]);
@@ -75,8 +75,8 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::matmul_external_batch_avx
     }
 }
 
-template<uint32_t SPONGE_WIDTH_T, bool DM_T>
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::element_pow7_avx(__m256i &x) {
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::element_pow7_avx(__m256i &x) {
     __m256i x2, x3, x4;
     Goldilocks::square_avx(x2, x);
     Goldilocks::mult_avx(x3, x, x2);
@@ -84,8 +84,8 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::element_pow7_avx(__m256i 
     Goldilocks::mult_avx(x, x3, x4);
 }
 
-template<uint32_t SPONGE_WIDTH_T, bool DM_T>
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::pow7add_avx(__m256i *x, const Goldilocks::Element C_[SPONGE_WIDTH]) {
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::pow7add_avx(__m256i *x, const Goldilocks::Element C_[SPONGE_WIDTH]) {
     __m256i x2[SPONGE_WIDTH], x3[SPONGE_WIDTH], x4[SPONGE_WIDTH];
 
     __m256i c[SPONGE_WIDTH];
@@ -100,8 +100,8 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::pow7add_avx(__m256i *x, c
     }
 }
 
-template<uint32_t SPONGE_WIDTH_T, bool DM_T>
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::matmul_external_avx(__m256i st[(SPONGE_WIDTH >> 2)])
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::matmul_external_avx(__m256i st[(SPONGE_WIDTH >> 2)])
 {
 
     if(SPONGE_WIDTH == 4){
@@ -178,8 +178,8 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::matmul_external_avx(__m25
     
 };
 
-template<uint32_t SPONGE_WIDTH_T, bool DM_T>
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::pow7_avx(__m256i st[(SPONGE_WIDTH >> 2)])
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::pow7_avx(__m256i st[(SPONGE_WIDTH >> 2)])
 {
     for(uint32_t i = 0; i < (SPONGE_WIDTH >> 2); i++) {
         __m256i pw2, pw3, pw4;
@@ -190,8 +190,8 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::pow7_avx(__m256i st[(SPON
     }
 };
 
-template<uint32_t SPONGE_WIDTH_T, bool DM_T>    
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::add_avx(__m256i st[(SPONGE_WIDTH >> 2)], const Goldilocks::Element C_[SPONGE_WIDTH])
+template<uint32_t SPONGE_WIDTH_T>    
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::add_avx(__m256i st[(SPONGE_WIDTH >> 2)], const Goldilocks::Element C_[SPONGE_WIDTH])
 {
     for(uint32_t i = 0; i < (SPONGE_WIDTH >> 2); i++) {
         __m256i c;
@@ -200,8 +200,8 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::add_avx(__m256i st[(SPONG
     }
 }
 
-template<uint32_t SPONGE_WIDTH_T, bool DM_T>
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T, DM_T>::add_avx_small(__m256i st[(SPONGE_WIDTH >> 2)], const Goldilocks::Element C_small[SPONGE_WIDTH])
+template<uint32_t SPONGE_WIDTH_T>
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::add_avx_small(__m256i st[(SPONGE_WIDTH >> 2)], const Goldilocks::Element C_small[SPONGE_WIDTH])
 {
     for(uint32_t i = 0; i < (SPONGE_WIDTH >> 2); i++) {
         __m256i c;

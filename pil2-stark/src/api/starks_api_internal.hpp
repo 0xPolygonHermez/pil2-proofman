@@ -8,7 +8,13 @@
 #include <utility>
 
 
-#include "goldilocks_hash_config.hpp"
+#ifdef STARK_POSEIDON1
+#include "poseidon_goldilocks.hpp"
+using GoldilocksGrinding = PoseidonGoldilocks<8>;
+#else
+#include "poseidon2_goldilocks.hpp"
+using GoldilocksGrinding = Poseidon2GoldilocksGrinding;
+#endif
 
 extern ProofDoneCallback proof_done_callback;
 

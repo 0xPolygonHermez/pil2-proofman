@@ -10,7 +10,7 @@ TEST(GOLDILOCKS_TEST, poseidon2)
 {
     uint32_t gpu_id = 0;
     cudaGetDevice((int*)&gpu_id);
-    Poseidon2GoldilocksGPU<12, false>::initConstants(&gpu_id, 1);
+    Poseidon2GoldilocksGPU<12>::initConstants(&gpu_id, 1);
 
     Goldilocks::Element in[16], out[16];
     for (int i = 0; i < 16; i++)
@@ -23,14 +23,14 @@ TEST(GOLDILOCKS_TEST, poseidon2)
     cudaMemcpy(d_in, in, 16 * sizeof(gl64_t), cudaMemcpyHostToDevice);
     cudaMalloc((void **)&d_out, 16 * sizeof(gl64_t));
    
-    Poseidon2GoldilocksGPU<4, false>::permuteTrunc((uint64_t *)d_out, (uint64_t *)d_in);
+    Poseidon2GoldilocksGPU<4>::permuteTrunc((uint64_t *)d_out, (uint64_t *)d_in);
     cudaMemcpy(out, d_out, 4 * sizeof(gl64_t), cudaMemcpyDeviceToHost);
     ASSERT_EQ(out[0].fe, uint64_t(0x758085b0af0a16aa));   
     ASSERT_EQ(out[1].fe, uint64_t(0x85141acc29c479de));
     ASSERT_EQ(out[2].fe, uint64_t(0x50127371e2b77ae5));
     ASSERT_EQ(out[3].fe, uint64_t(0xefee3a8033630029));
 
-    Poseidon2GoldilocksGPU<8, false>::permute((uint64_t *)d_out, (uint64_t *)d_in);
+    Poseidon2GoldilocksGPU<8>::permute((uint64_t *)d_out, (uint64_t *)d_in);
     cudaMemcpy(out, d_out, 8 * sizeof(gl64_t), cudaMemcpyDeviceToHost);
     ASSERT_EQ(out[0].fe, uint64_t(0xc5fb1cfe0b4697bb));   
     ASSERT_EQ(out[1].fe, uint64_t(0x4a4a32ff849af473));
@@ -41,7 +41,7 @@ TEST(GOLDILOCKS_TEST, poseidon2)
     ASSERT_EQ(out[6].fe, uint64_t(0xe8c993aa10da6c90));
     ASSERT_EQ(out[7].fe, uint64_t(0xa73104a95b68031c));
 
-    Poseidon2GoldilocksGPU<12, false>::permute((uint64_t *)d_out, (uint64_t *)d_in);
+    Poseidon2GoldilocksGPU<12>::permute((uint64_t *)d_out, (uint64_t *)d_in);
     cudaMemcpy(out, d_out, 12 * sizeof(gl64_t), cudaMemcpyDeviceToHost);
     ASSERT_EQ(out[0].fe, uint64_t(0x01eaef96bdf1c0c1));   
     ASSERT_EQ(out[1].fe, uint64_t(0x1f0d2cc525b2540c));
@@ -56,7 +56,7 @@ TEST(GOLDILOCKS_TEST, poseidon2)
     ASSERT_EQ(out[10].fe, uint64_t(0xec467926508fbe67));
     ASSERT_EQ(out[11].fe, uint64_t(0x6a50450ddf85a6ed));
 
-    Poseidon2GoldilocksGPU<16, false>::permute((uint64_t *)d_out, (uint64_t *)d_in);
+    Poseidon2GoldilocksGPU<16>::permute((uint64_t *)d_out, (uint64_t *)d_in);
     cudaMemcpy(out, d_out, 16 * sizeof(gl64_t), cudaMemcpyDeviceToHost);
     ASSERT_EQ(out[0].fe,uint64_t(0x85c54702470d9756));
     ASSERT_EQ(out[1].fe,uint64_t(0xaa53c7a7d52d9898));
@@ -124,7 +124,7 @@ TEST(GOLDILOCKS_TEST, grinding)
     cudaMemcpy(d_test_in, test_in, 4 * sizeof(gl64_t), cudaMemcpyHostToDevice);
     cudaMalloc((void **)&d_hash_out, 4 * sizeof(gl64_t));
     
-    Poseidon2GoldilocksGPU<4, false>::permuteTrunc((uint64_t *)d_hash_out, (uint64_t *)d_test_in);
+    Poseidon2GoldilocksGPU<4>::permuteTrunc((uint64_t *)d_hash_out, (uint64_t *)d_test_in);
     cudaStreamSynchronize(stream);
     
     Goldilocks::Element hash_result[4];
@@ -146,11 +146,11 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_linear_hash)
 {
     constexpr uint64_t nRows = 256;
     constexpr uint64_t nCols = 12;
-    constexpr uint32_t CAPACITY = Poseidon2GoldilocksGPU<12, false>::CAPACITY;
+    constexpr uint32_t CAPACITY = Poseidon2GoldilocksGPU<12>::CAPACITY;
 
     uint32_t gpu_id = 0;
     cudaGetDevice((int*)&gpu_id);
-    Poseidon2GoldilocksGPU<12, false>::initConstants(&gpu_id, 1);
+    Poseidon2GoldilocksGPU<12>::initConstants(&gpu_id, 1);
     NTTGoldilocksGPU gpu_ntt(14, 1, &gpu_id);
 
     std::vector<Goldilocks::Element> h_trace(nRows * nCols);
@@ -160,7 +160,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_linear_hash)
     // CPU reference: one linear_hash_seq call per row
     std::vector<Goldilocks::Element> h_cpu_out(nRows * CAPACITY);
     for (uint64_t i = 0; i < nRows; i++)
-        Poseidon2Goldilocks<12, false>::linearHash(
+        Poseidon2Goldilocks<12>::linearHash(
             h_cpu_out.data() + i * CAPACITY,
             h_trace.data() + i * nCols,
             nCols,
@@ -179,7 +179,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_linear_hash)
     fromRowMajorToTiled(nRows, nCols, d_flat, d_tiled, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
-    Poseidon2GoldilocksGPU<12, false>::linearHash(
+    Poseidon2GoldilocksGPU<12>::linearHash(
         (uint64_t*)d_gpu_out, (uint64_t*)d_tiled, nCols, nRows, Layout::Tiles, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
@@ -208,7 +208,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_coalescedblocks)
 
     uint32_t gpu_id = 0;
     cudaGetDevice((int*)&gpu_id);
-    Poseidon2GoldilocksGPU<12, false>::initConstants(&gpu_id, 1);
+    Poseidon2GoldilocksGPU<12>::initConstants(&gpu_id, 1);
     NTTGoldilocksGPU gpu_ntt(14, 1, &gpu_id);
 
     std::vector<Goldilocks::Element> h_trace(nRows * nCols);
@@ -217,7 +217,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_coalescedblocks)
 
     // CPU reference
     std::vector<Goldilocks::Element> h_cpu_tree(tree_size);
-    Poseidon2Goldilocks<12, false>::merkletree(h_cpu_tree.data(), h_trace.data(), nCols, nRows, arity, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<12>::merkletree(h_cpu_tree.data(), h_trace.data(), nCols, nRows, arity, Poseidon2Mode::Scalar);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -233,7 +233,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_coalescedblocks)
     fromRowMajorToTiled(nRows, nCols, d_flat, d_tiled, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
-    Poseidon2GoldilocksGPU<12, false>::merkletree(
+    Poseidon2GoldilocksGPU<12>::merkletree(
         arity, (uint64_t*)d_tree, (uint64_t*)d_tiled, nCols, nRows, Layout::Tiles, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
@@ -263,7 +263,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_coalesced)
 
     uint32_t gpu_id = 0;
     cudaGetDevice((int*)&gpu_id);
-    Poseidon2GoldilocksGPU<12, false>::initConstants(&gpu_id, 1);
+    Poseidon2GoldilocksGPU<12>::initConstants(&gpu_id, 1);
 
     std::vector<Goldilocks::Element> h_trace(nRows * nCols);
     for (uint64_t i = 0; i < nRows * nCols; i++)
@@ -271,7 +271,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_coalesced)
 
     // CPU reference
     std::vector<Goldilocks::Element> h_cpu_tree(tree_size);
-    Poseidon2Goldilocks<12, false>::merkletree(h_cpu_tree.data(), h_trace.data(), nCols, nRows, arity, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<12>::merkletree(h_cpu_tree.data(), h_trace.data(), nCols, nRows, arity, Poseidon2Mode::Scalar);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -283,7 +283,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_coalesced)
 
     CHECKCUDAERR(cudaMemcpy(d_trace, h_trace.data(), nRows * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
 
-    Poseidon2GoldilocksGPU<12, false>::merkletree(
+    Poseidon2GoldilocksGPU<12>::merkletree(
         arity, (uint64_t*)d_tree, (uint64_t*)d_trace, nCols, nRows, Layout::RowMajor, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
@@ -306,11 +306,11 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_linear_hash_flat)
 {
     constexpr uint64_t nRows = 256;
     constexpr uint64_t nCols = 24;
-    constexpr uint32_t CAPACITY = Poseidon2GoldilocksGPU<12, false>::CAPACITY;
+    constexpr uint32_t CAPACITY = Poseidon2GoldilocksGPU<12>::CAPACITY;
 
     uint32_t gpu_id = 0;
     cudaGetDevice((int*)&gpu_id);
-    Poseidon2GoldilocksGPU<12, false>::initConstants(&gpu_id, 1);
+    Poseidon2GoldilocksGPU<12>::initConstants(&gpu_id, 1);
 
     std::vector<Goldilocks::Element> h_trace(nRows * nCols);
     for (uint64_t i = 0; i < nRows * nCols; i++)
@@ -319,7 +319,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_linear_hash_flat)
     // CPU reference: one linear_hash_seq call per row
     std::vector<Goldilocks::Element> h_cpu_out(nRows * CAPACITY);
     for (uint64_t i = 0; i < nRows; i++)
-        Poseidon2Goldilocks<12, false>::linearHash(
+        Poseidon2Goldilocks<12>::linearHash(
             h_cpu_out.data() + i * CAPACITY,
             h_trace.data() + i * nCols,
             nCols,
@@ -334,7 +334,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_linear_hash_flat)
 
     CHECKCUDAERR(cudaMemcpy(d_flat, h_trace.data(), nRows * nCols * sizeof(gl64_t), cudaMemcpyHostToDevice));
 
-    Poseidon2GoldilocksGPU<12, false>::linearHash(
+    Poseidon2GoldilocksGPU<12>::linearHash(
         (uint64_t*)d_gpu_out, (uint64_t*)d_flat, nCols, nRows, Layout::RowMajor, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
@@ -353,13 +353,13 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_linear_hash_flat)
 // merkletreeReduce: GPU root over N pre-hashed digests must match CPU merkletreeReduce.
 TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_reduce)
 {
-    constexpr uint32_t CAPACITY = Poseidon2GoldilocksGPU<12, false>::CAPACITY;
+    constexpr uint32_t CAPACITY = Poseidon2GoldilocksGPU<12>::CAPACITY;
     constexpr uint64_t arity    = 3;
     constexpr uint64_t nElems   = 10;
 
     uint32_t gpu_id = 0;
     cudaGetDevice((int*)&gpu_id);
-    Poseidon2GoldilocksGPU<12, false>::initConstants(&gpu_id, 1);
+    Poseidon2GoldilocksGPU<12>::initConstants(&gpu_id, 1);
 
     std::vector<Goldilocks::Element> h_input(nElems * CAPACITY);
     for (uint64_t i = 0; i < nElems * CAPACITY; i++)
@@ -367,7 +367,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_reduce)
 
     // CPU reference
     Goldilocks::Element h_cpu_root[CAPACITY];
-    Poseidon2Goldilocks<12, false>::merkletreeReduce(h_cpu_root, h_input.data(), nElems, arity);
+    Poseidon2Goldilocks<12>::merkletreeReduce(h_cpu_root, h_input.data(), nElems, arity);
 
     cudaStream_t stream;
     CHECKCUDAERR(cudaStreamCreate(&stream));
@@ -377,7 +377,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_reduce)
     CHECKCUDAERR(cudaMalloc((void**)&d_root,  CAPACITY * sizeof(uint64_t)));
     CHECKCUDAERR(cudaMemcpy(d_input, h_input.data(), nElems * CAPACITY * sizeof(uint64_t), cudaMemcpyHostToDevice));
 
-    Poseidon2GoldilocksGPU<12, false>::merkletreeReduce(d_root, d_input, nElems, arity, stream);
+    Poseidon2GoldilocksGPU<12>::merkletreeReduce(d_root, d_input, nElems, arity, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     Goldilocks::Element h_gpu_root[CAPACITY];
@@ -395,12 +395,12 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_reduce)
 // merkletreeReduce edge case: n=1 must pass the single digest through unchanged.
 TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_reduce_single)
 {
-    constexpr uint32_t CAPACITY = Poseidon2GoldilocksGPU<12, false>::CAPACITY;
+    constexpr uint32_t CAPACITY = Poseidon2GoldilocksGPU<12>::CAPACITY;
     constexpr uint64_t arity    = 3;
 
     uint32_t gpu_id = 0;
     cudaGetDevice((int*)&gpu_id);
-    Poseidon2GoldilocksGPU<12, false>::initConstants(&gpu_id, 1);
+    Poseidon2GoldilocksGPU<12>::initConstants(&gpu_id, 1);
 
     Goldilocks::Element h_input[CAPACITY];
     for (uint32_t i = 0; i < CAPACITY; i++)
@@ -414,7 +414,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_gpu_merkletree_reduce_single)
     CHECKCUDAERR(cudaMalloc((void**)&d_root,  CAPACITY * sizeof(uint64_t)));
     CHECKCUDAERR(cudaMemcpy(d_input, h_input, CAPACITY * sizeof(uint64_t), cudaMemcpyHostToDevice));
 
-    Poseidon2GoldilocksGPU<12, false>::merkletreeReduce(d_root, d_input, 1, arity, stream);
+    Poseidon2GoldilocksGPU<12>::merkletreeReduce(d_root, d_input, 1, arity, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     Goldilocks::Element h_gpu_root[CAPACITY];

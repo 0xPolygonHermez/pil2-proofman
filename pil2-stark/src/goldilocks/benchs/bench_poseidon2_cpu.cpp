@@ -40,10 +40,10 @@ static void fillData(Goldilocks::Element *buf, uint64_t n)
 // No GPU counterpart; kept for micro-level CPU profiling.
 // ===================================================================
 
-template<uint32_t W, bool DM>
+template<uint32_t W>
 static void PERMUTE_W_SCALAR_CPU_BENCH(benchmark::State &state)
 {
-    uint64_t total = (uint64_t)NUM_HASHES * Poseidon2Goldilocks<W, DM>::SPONGE_WIDTH;
+    uint64_t total = (uint64_t)NUM_HASHES * Poseidon2Goldilocks<W>::SPONGE_WIDTH;
     Goldilocks::Element *x = new Goldilocks::Element[total];
     Goldilocks::Element *r = new Goldilocks::Element[total];
     fillData(x, total);
@@ -52,9 +52,9 @@ static void PERMUTE_W_SCALAR_CPU_BENCH(benchmark::State &state)
     for (auto _ : state) {
 #pragma omp parallel for num_threads(nT) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
-            Poseidon2Goldilocks<W, DM>::permute(
-                (Goldilocks::Element(&)[Poseidon2Goldilocks<W, DM>::SPONGE_WIDTH])r[i * Poseidon2Goldilocks<W, DM>::SPONGE_WIDTH],
-                (const Goldilocks::Element(&)[Poseidon2Goldilocks<W, DM>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W, DM>::SPONGE_WIDTH],
+            Poseidon2Goldilocks<W>::permute(
+                (Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])r[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
+                (const Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
                 Poseidon2Mode::Scalar);
     }
     state.SetItemsProcessed(state.iterations() * NUM_HASHES);
@@ -63,10 +63,10 @@ static void PERMUTE_W_SCALAR_CPU_BENCH(benchmark::State &state)
 }
 
 #ifdef __AVX2__
-template<uint32_t W, bool DM>
+template<uint32_t W>
 static void PERMUTE_W_AVX_CPU_BENCH(benchmark::State &state)
 {
-    uint64_t total = (uint64_t)NUM_HASHES * Poseidon2Goldilocks<W, DM>::SPONGE_WIDTH;
+    uint64_t total = (uint64_t)NUM_HASHES * Poseidon2Goldilocks<W>::SPONGE_WIDTH;
     Goldilocks::Element *x = new Goldilocks::Element[total];
     Goldilocks::Element *r = new Goldilocks::Element[total];
     fillData(x, total);
@@ -75,9 +75,9 @@ static void PERMUTE_W_AVX_CPU_BENCH(benchmark::State &state)
     for (auto _ : state) {
 #pragma omp parallel for num_threads(nT) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
-            Poseidon2Goldilocks<W, DM>::permute(
-                (Goldilocks::Element(&)[Poseidon2Goldilocks<W, DM>::SPONGE_WIDTH])r[i * Poseidon2Goldilocks<W, DM>::SPONGE_WIDTH],
-                (const Goldilocks::Element(&)[Poseidon2Goldilocks<W, DM>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W, DM>::SPONGE_WIDTH],
+            Poseidon2Goldilocks<W>::permute(
+                (Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])r[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
+                (const Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
                 Poseidon2Mode::Avx);
     }
     state.SetItemsProcessed(state.iterations() * NUM_HASHES);
@@ -87,11 +87,11 @@ static void PERMUTE_W_AVX_CPU_BENCH(benchmark::State &state)
 
 #endif
 
-template<uint32_t W, bool DM>
+template<uint32_t W>
 static void PERMUTE_TRUNC_W_SCALAR_CPU_BENCH(benchmark::State &state)
 {
-    uint64_t in_total  = (uint64_t)NUM_HASHES * Poseidon2Goldilocks<W, DM>::SPONGE_WIDTH;
-    uint64_t out_total = (uint64_t)NUM_HASHES * Poseidon2Goldilocks<W, DM>::CAPACITY;
+    uint64_t in_total  = (uint64_t)NUM_HASHES * Poseidon2Goldilocks<W>::SPONGE_WIDTH;
+    uint64_t out_total = (uint64_t)NUM_HASHES * Poseidon2Goldilocks<W>::CAPACITY;
     Goldilocks::Element *x = new Goldilocks::Element[in_total];
     Goldilocks::Element *r = new Goldilocks::Element[out_total];
     fillData(x, in_total);
@@ -100,20 +100,20 @@ static void PERMUTE_TRUNC_W_SCALAR_CPU_BENCH(benchmark::State &state)
     for (auto _ : state) {
 #pragma omp parallel for num_threads(nT) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
-            Poseidon2Goldilocks<W, DM>::permuteTrunc(
-                (Goldilocks::Element(&)[Poseidon2Goldilocks<W, DM>::CAPACITY])r[i * Poseidon2Goldilocks<W, DM>::CAPACITY],
-                (Goldilocks::Element(&)[Poseidon2Goldilocks<W, DM>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W, DM>::SPONGE_WIDTH],
+            Poseidon2Goldilocks<W>::permuteTrunc(
+                (Goldilocks::Element(&)[Poseidon2Goldilocks<W>::CAPACITY])r[i * Poseidon2Goldilocks<W>::CAPACITY],
+                (Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
                 Poseidon2Mode::Scalar);
     }
     delete[] x; delete[] r;
 }
 
 #ifdef __AVX2__
-template<uint32_t W, bool DM>
+template<uint32_t W>
 static void PERMUTE_TRUNC_W_AVX_CPU_BENCH(benchmark::State &state)
 {
-    uint64_t in_total  = (uint64_t)NUM_HASHES * Poseidon2Goldilocks<W, DM>::SPONGE_WIDTH;
-    uint64_t out_total = (uint64_t)NUM_HASHES * Poseidon2Goldilocks<W, DM>::CAPACITY;
+    uint64_t in_total  = (uint64_t)NUM_HASHES * Poseidon2Goldilocks<W>::SPONGE_WIDTH;
+    uint64_t out_total = (uint64_t)NUM_HASHES * Poseidon2Goldilocks<W>::CAPACITY;
     Goldilocks::Element *x = new Goldilocks::Element[in_total];
     Goldilocks::Element *r = new Goldilocks::Element[out_total];
     fillData(x, in_total);
@@ -122,9 +122,9 @@ static void PERMUTE_TRUNC_W_AVX_CPU_BENCH(benchmark::State &state)
     for (auto _ : state) {
 #pragma omp parallel for num_threads(nT) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
-            Poseidon2Goldilocks<W, DM>::permuteTrunc(
-                (Goldilocks::Element(&)[Poseidon2Goldilocks<W, DM>::CAPACITY])r[i * Poseidon2Goldilocks<W, DM>::CAPACITY],
-                (Goldilocks::Element(&)[Poseidon2Goldilocks<W, DM>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W, DM>::SPONGE_WIDTH],
+            Poseidon2Goldilocks<W>::permuteTrunc(
+                (Goldilocks::Element(&)[Poseidon2Goldilocks<W>::CAPACITY])r[i * Poseidon2Goldilocks<W>::CAPACITY],
+                (Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
                 Poseidon2Mode::Avx);
     }
     delete[] x; delete[] r;
@@ -135,7 +135,7 @@ static void PERMUTE_TRUNC_W_AVX_CPU_BENCH(benchmark::State &state)
 // linearHash -- parameterized by nCols via ->Arg()
 // ===================================================================
 
-template<uint32_t W, bool DM>
+template<uint32_t W>
 static void LINEAR_HASH_W_SCALAR_CPU_BENCH(benchmark::State &state)
 {
     uint64_t nCols = state.range(0);
@@ -147,13 +147,13 @@ static void LINEAR_HASH_W_SCALAR_CPU_BENCH(benchmark::State &state)
     for (auto _ : state) {
 #pragma omp parallel for num_threads(nT) schedule(static)
         for (uint64_t i = 0; i < BENCH_NROWS; i++)
-            Poseidon2Goldilocks<W, DM>::linearHash(&result[i * HASH_SIZE], &cols[i * nCols], nCols, Poseidon2Mode::Scalar);
+            Poseidon2Goldilocks<W>::linearHash(&result[i * HASH_SIZE], &cols[i * nCols], nCols, Poseidon2Mode::Scalar);
     }
     delete[] cols; delete[] result;
 }
 
 #ifdef __AVX2__
-template<uint32_t W, bool DM>
+template<uint32_t W>
 static void LINEAR_HASH_W_AVX_CPU_BENCH(benchmark::State &state)
 {
     uint64_t nCols = state.range(0);
@@ -165,7 +165,7 @@ static void LINEAR_HASH_W_AVX_CPU_BENCH(benchmark::State &state)
     for (auto _ : state) {
 #pragma omp parallel for num_threads(nT) schedule(static)
         for (uint64_t i = 0; i < BENCH_NROWS; i++)
-            Poseidon2Goldilocks<W, DM>::linearHash(&result[i * HASH_SIZE], &cols[i * nCols], nCols, Poseidon2Mode::Avx);
+            Poseidon2Goldilocks<W>::linearHash(&result[i * HASH_SIZE], &cols[i * nCols], nCols, Poseidon2Mode::Avx);
     }
     delete[] cols; delete[] result;
 }
@@ -175,7 +175,7 @@ static void LINEAR_HASH_W_AVX_CPU_BENCH(benchmark::State &state)
 // merkletree -- parameterized by nCols via ->Arg()
 // ===================================================================
 
-template<uint32_t W, uint32_t ARITY, bool DM>
+template<uint32_t W, uint32_t ARITY>
 static void MERKLETREE_W_AR_SCALAR_CPU_BENCH(benchmark::State &state)
 {
     uint64_t nCols = state.range(0);
@@ -186,13 +186,13 @@ static void MERKLETREE_W_AR_SCALAR_CPU_BENCH(benchmark::State &state)
     Goldilocks::Element *tree = new Goldilocks::Element[numElems];
 
     for (auto _ : state)
-        Poseidon2Goldilocks<W, DM>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, Poseidon2Mode::Scalar);
+        Poseidon2Goldilocks<W>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, Poseidon2Mode::Scalar);
 
     delete[] cols; delete[] tree;
 }
 
 #ifdef __AVX2__
-template<uint32_t W, uint32_t ARITY, bool DM>
+template<uint32_t W, uint32_t ARITY>
 static void MERKLETREE_W_AR_AVX_CPU_BENCH(benchmark::State &state)
 {
     uint64_t nCols = state.range(0);
@@ -203,12 +203,12 @@ static void MERKLETREE_W_AR_AVX_CPU_BENCH(benchmark::State &state)
     Goldilocks::Element *tree = new Goldilocks::Element[numElems];
 
     for (auto _ : state)
-        Poseidon2Goldilocks<W, DM>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, Poseidon2Mode::Avx);
+        Poseidon2Goldilocks<W>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, Poseidon2Mode::Avx);
 
     delete[] cols; delete[] tree;
 }
 
-template<uint32_t W, uint32_t ARITY, bool DM>
+template<uint32_t W, uint32_t ARITY>
 static void MERKLETREE_W_AR_AVXBATCH_CPU_BENCH(benchmark::State &state)
 {
     uint64_t nCols = state.range(0);
@@ -219,14 +219,14 @@ static void MERKLETREE_W_AR_AVXBATCH_CPU_BENCH(benchmark::State &state)
     Goldilocks::Element *tree = new Goldilocks::Element[numElems];
 
     for (auto _ : state)
-        Poseidon2Goldilocks<W, DM>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, Poseidon2Mode::AvxBatch);
+        Poseidon2Goldilocks<W>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, Poseidon2Mode::AvxBatch);
 
     delete[] cols; delete[] tree;
 }
 #endif
 
 #ifdef __AVX512__
-template<uint32_t W, uint32_t ARITY, bool DM>
+template<uint32_t W, uint32_t ARITY>
 static void MERKLETREE_W_AR_AVX512BATCH_CPU_BENCH(benchmark::State &state)
 {
     uint64_t nCols = state.range(0);
@@ -237,7 +237,7 @@ static void MERKLETREE_W_AR_AVX512BATCH_CPU_BENCH(benchmark::State &state)
     Goldilocks::Element *tree = new Goldilocks::Element[numElems];
 
     for (auto _ : state)
-        Poseidon2Goldilocks<W, DM>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, Poseidon2Mode::Avx512Batch);
+        Poseidon2Goldilocks<W>::merkletree(tree, cols, nCols, BENCH_NROWS, ARITY, Poseidon2Mode::Avx512Batch);
 
     delete[] cols; delete[] tree;
 }
@@ -271,27 +271,22 @@ static void GRINDING_CPU_BENCH(benchmark::State &state)
 // nCols-parameterized benchmarks (linearHash, merkletree)
 #define NCOLS_ARGS ->Arg(24)->Arg(36)->Arg(56)
 
-// nCols-parameterized macros — explicitly take DM. linearHash and merkletree
-// benches now expose both NODM and DM variants.
-#define REG_NCOLS(FUNC, W, DMv, LABEL)                                       \
-    BENCHMARK_TEMPLATE(FUNC, W, DMv)                                         \
+#define REG_NCOLS(FUNC, W, LABEL)                                            \
+    BENCHMARK_TEMPLATE(FUNC, W)                                              \
         ->Name(LABEL)                                                        \
         ->Unit(benchmark::kMillisecond)                                      \
         NCOLS_ARGS                                                           \
         ->UseRealTime();
 
-#define REG_NCOLS_AR(FUNC, W, AR, DMv, LABEL)                                \
-    BENCHMARK_TEMPLATE(FUNC, W, AR, DMv)                                     \
+#define REG_NCOLS_AR(FUNC, W, AR, LABEL)                                     \
+    BENCHMARK_TEMPLATE(FUNC, W, AR)                                          \
         ->Name(LABEL)                                                        \
         ->Unit(benchmark::kMillisecond)                                      \
         NCOLS_ARGS                                                           \
         ->UseRealTime();
 
-// Per-element throughput benchmarks (permute, permuteTrunc) — registered for
-// both Davies-Meyer disabled (NODM) and enabled (DM) so the runtime cost of
-// the post-permute input-add can be compared.
-#define REG_ELEM(FUNC, W, DMv, LABEL)                                        \
-    BENCHMARK_TEMPLATE(FUNC, W, DMv)                                         \
+#define REG_ELEM(FUNC, W, LABEL)                                             \
+    BENCHMARK_TEMPLATE(FUNC, W)                                              \
         ->Name(LABEL)                                                        \
         ->Unit(benchmark::kMillisecond)                                      \
         ->UseRealTime();
@@ -300,101 +295,65 @@ static void GRINDING_CPU_BENCH(benchmark::State &state)
 // permute / permuteTrunc registrations (per-element throughput, no nCols param)
 // ---------------------------------------------------------------------------
 
-REG_ELEM(PERMUTE_W_SCALAR_CPU_BENCH, 8,  false, "PERMUTE_W8_NODM_SCALAR_CPU_BENCH")
-REG_ELEM(PERMUTE_W_SCALAR_CPU_BENCH, 12, false, "PERMUTE_W12_NODM_SCALAR_CPU_BENCH")
-REG_ELEM(PERMUTE_W_SCALAR_CPU_BENCH, 16, false, "PERMUTE_W16_NODM_SCALAR_CPU_BENCH")
-REG_ELEM(PERMUTE_W_SCALAR_CPU_BENCH, 8,  true,  "PERMUTE_W8_DM_SCALAR_CPU_BENCH")
-REG_ELEM(PERMUTE_W_SCALAR_CPU_BENCH, 12, true,  "PERMUTE_W12_DM_SCALAR_CPU_BENCH")
-REG_ELEM(PERMUTE_W_SCALAR_CPU_BENCH, 16, true,  "PERMUTE_W16_DM_SCALAR_CPU_BENCH")
+REG_ELEM(PERMUTE_W_SCALAR_CPU_BENCH, 8,  "PERMUTE_W8_SCALAR_CPU_BENCH")
+REG_ELEM(PERMUTE_W_SCALAR_CPU_BENCH, 12, "PERMUTE_W12_SCALAR_CPU_BENCH")
+REG_ELEM(PERMUTE_W_SCALAR_CPU_BENCH, 16, "PERMUTE_W16_SCALAR_CPU_BENCH")
 
 #ifdef __AVX2__
-REG_ELEM(PERMUTE_W_AVX_CPU_BENCH, 8,  false, "PERMUTE_W8_NODM_AVX_CPU_BENCH")
-REG_ELEM(PERMUTE_W_AVX_CPU_BENCH, 12, false, "PERMUTE_W12_NODM_AVX_CPU_BENCH")
-REG_ELEM(PERMUTE_W_AVX_CPU_BENCH, 16, false, "PERMUTE_W16_NODM_AVX_CPU_BENCH")
-REG_ELEM(PERMUTE_W_AVX_CPU_BENCH, 8,  true,  "PERMUTE_W8_DM_AVX_CPU_BENCH")
-REG_ELEM(PERMUTE_W_AVX_CPU_BENCH, 12, true,  "PERMUTE_W12_DM_AVX_CPU_BENCH")
-REG_ELEM(PERMUTE_W_AVX_CPU_BENCH, 16, true,  "PERMUTE_W16_DM_AVX_CPU_BENCH")
+REG_ELEM(PERMUTE_W_AVX_CPU_BENCH, 8,  "PERMUTE_W8_AVX_CPU_BENCH")
+REG_ELEM(PERMUTE_W_AVX_CPU_BENCH, 12, "PERMUTE_W12_AVX_CPU_BENCH")
+REG_ELEM(PERMUTE_W_AVX_CPU_BENCH, 16, "PERMUTE_W16_AVX_CPU_BENCH")
 #endif
 
-REG_ELEM(PERMUTE_TRUNC_W_SCALAR_CPU_BENCH, 4,  false, "PERMUTE_TRUNC_W4_NODM_SCALAR_CPU_BENCH")
-REG_ELEM(PERMUTE_TRUNC_W_SCALAR_CPU_BENCH, 8,  false, "PERMUTE_TRUNC_W8_NODM_SCALAR_CPU_BENCH")
-REG_ELEM(PERMUTE_TRUNC_W_SCALAR_CPU_BENCH, 12, false, "PERMUTE_TRUNC_W12_NODM_SCALAR_CPU_BENCH")
-REG_ELEM(PERMUTE_TRUNC_W_SCALAR_CPU_BENCH, 16, false, "PERMUTE_TRUNC_W16_NODM_SCALAR_CPU_BENCH")
-REG_ELEM(PERMUTE_TRUNC_W_SCALAR_CPU_BENCH, 4,  true,  "PERMUTE_TRUNC_W4_DM_SCALAR_CPU_BENCH")
-REG_ELEM(PERMUTE_TRUNC_W_SCALAR_CPU_BENCH, 8,  true,  "PERMUTE_TRUNC_W8_DM_SCALAR_CPU_BENCH")
-REG_ELEM(PERMUTE_TRUNC_W_SCALAR_CPU_BENCH, 12, true,  "PERMUTE_TRUNC_W12_DM_SCALAR_CPU_BENCH")
-REG_ELEM(PERMUTE_TRUNC_W_SCALAR_CPU_BENCH, 16, true,  "PERMUTE_TRUNC_W16_DM_SCALAR_CPU_BENCH")
+REG_ELEM(PERMUTE_TRUNC_W_SCALAR_CPU_BENCH, 4,  "PERMUTE_TRUNC_W4_SCALAR_CPU_BENCH")
+REG_ELEM(PERMUTE_TRUNC_W_SCALAR_CPU_BENCH, 8,  "PERMUTE_TRUNC_W8_SCALAR_CPU_BENCH")
+REG_ELEM(PERMUTE_TRUNC_W_SCALAR_CPU_BENCH, 12, "PERMUTE_TRUNC_W12_SCALAR_CPU_BENCH")
+REG_ELEM(PERMUTE_TRUNC_W_SCALAR_CPU_BENCH, 16, "PERMUTE_TRUNC_W16_SCALAR_CPU_BENCH")
 
 #ifdef __AVX2__
-REG_ELEM(PERMUTE_TRUNC_W_AVX_CPU_BENCH, 4,  false, "PERMUTE_TRUNC_W4_NODM_AVX_CPU_BENCH")
-REG_ELEM(PERMUTE_TRUNC_W_AVX_CPU_BENCH, 8,  false, "PERMUTE_TRUNC_W8_NODM_AVX_CPU_BENCH")
-REG_ELEM(PERMUTE_TRUNC_W_AVX_CPU_BENCH, 12, false, "PERMUTE_TRUNC_W12_NODM_AVX_CPU_BENCH")
-REG_ELEM(PERMUTE_TRUNC_W_AVX_CPU_BENCH, 16, false, "PERMUTE_TRUNC_W16_NODM_AVX_CPU_BENCH")
-REG_ELEM(PERMUTE_TRUNC_W_AVX_CPU_BENCH, 4,  true,  "PERMUTE_TRUNC_W4_DM_AVX_CPU_BENCH")
-REG_ELEM(PERMUTE_TRUNC_W_AVX_CPU_BENCH, 8,  true,  "PERMUTE_TRUNC_W8_DM_AVX_CPU_BENCH")
-REG_ELEM(PERMUTE_TRUNC_W_AVX_CPU_BENCH, 12, true,  "PERMUTE_TRUNC_W12_DM_AVX_CPU_BENCH")
-REG_ELEM(PERMUTE_TRUNC_W_AVX_CPU_BENCH, 16, true,  "PERMUTE_TRUNC_W16_DM_AVX_CPU_BENCH")
+REG_ELEM(PERMUTE_TRUNC_W_AVX_CPU_BENCH, 4,  "PERMUTE_TRUNC_W4_AVX_CPU_BENCH")
+REG_ELEM(PERMUTE_TRUNC_W_AVX_CPU_BENCH, 8,  "PERMUTE_TRUNC_W8_AVX_CPU_BENCH")
+REG_ELEM(PERMUTE_TRUNC_W_AVX_CPU_BENCH, 12, "PERMUTE_TRUNC_W12_AVX_CPU_BENCH")
+REG_ELEM(PERMUTE_TRUNC_W_AVX_CPU_BENCH, 16, "PERMUTE_TRUNC_W16_AVX_CPU_BENCH")
 #endif
 
 // ---------------------------------------------------------------------------
 // linearHash registrations -- W in {8,12,16}, modes: Scalar, Avx
 // ---------------------------------------------------------------------------
 
-// Each linearHash / merkletree bench is registered at both DM=false (NODM)
-// and DM=true (DM) so the runtime impact of the post-permute input-add can be
-// compared.
-REG_NCOLS(LINEAR_HASH_W_SCALAR_CPU_BENCH, 8,  false, "LINEAR_HASH_W8_NODM_SCALAR_CPU_BENCH")
-REG_NCOLS(LINEAR_HASH_W_SCALAR_CPU_BENCH, 12, false, "LINEAR_HASH_W12_NODM_SCALAR_CPU_BENCH")
-REG_NCOLS(LINEAR_HASH_W_SCALAR_CPU_BENCH, 16, false, "LINEAR_HASH_W16_NODM_SCALAR_CPU_BENCH")
-REG_NCOLS(LINEAR_HASH_W_SCALAR_CPU_BENCH, 8,  true,  "LINEAR_HASH_W8_DM_SCALAR_CPU_BENCH")
-REG_NCOLS(LINEAR_HASH_W_SCALAR_CPU_BENCH, 12, true,  "LINEAR_HASH_W12_DM_SCALAR_CPU_BENCH")
-REG_NCOLS(LINEAR_HASH_W_SCALAR_CPU_BENCH, 16, true,  "LINEAR_HASH_W16_DM_SCALAR_CPU_BENCH")
+REG_NCOLS(LINEAR_HASH_W_SCALAR_CPU_BENCH, 8,  "LINEAR_HASH_W8_SCALAR_CPU_BENCH")
+REG_NCOLS(LINEAR_HASH_W_SCALAR_CPU_BENCH, 12, "LINEAR_HASH_W12_SCALAR_CPU_BENCH")
+REG_NCOLS(LINEAR_HASH_W_SCALAR_CPU_BENCH, 16, "LINEAR_HASH_W16_SCALAR_CPU_BENCH")
 
 #ifdef __AVX2__
-REG_NCOLS(LINEAR_HASH_W_AVX_CPU_BENCH, 8,  false, "LINEAR_HASH_W8_NODM_AVX_CPU_BENCH")
-REG_NCOLS(LINEAR_HASH_W_AVX_CPU_BENCH, 12, false, "LINEAR_HASH_W12_NODM_AVX_CPU_BENCH")
-REG_NCOLS(LINEAR_HASH_W_AVX_CPU_BENCH, 16, false, "LINEAR_HASH_W16_NODM_AVX_CPU_BENCH")
-REG_NCOLS(LINEAR_HASH_W_AVX_CPU_BENCH, 8,  true,  "LINEAR_HASH_W8_DM_AVX_CPU_BENCH")
-REG_NCOLS(LINEAR_HASH_W_AVX_CPU_BENCH, 12, true,  "LINEAR_HASH_W12_DM_AVX_CPU_BENCH")
-REG_NCOLS(LINEAR_HASH_W_AVX_CPU_BENCH, 16, true,  "LINEAR_HASH_W16_DM_AVX_CPU_BENCH")
+REG_NCOLS(LINEAR_HASH_W_AVX_CPU_BENCH, 8,  "LINEAR_HASH_W8_AVX_CPU_BENCH")
+REG_NCOLS(LINEAR_HASH_W_AVX_CPU_BENCH, 12, "LINEAR_HASH_W12_AVX_CPU_BENCH")
+REG_NCOLS(LINEAR_HASH_W_AVX_CPU_BENCH, 16, "LINEAR_HASH_W16_AVX_CPU_BENCH")
 #endif
 
 // ---------------------------------------------------------------------------
 // merkletree registrations -- (W,arity) in {(8,2),(12,3),(16,4)}
-// modes: Scalar, Avx, AvxBatch, Avx512Batch — each registered at both
-// DM=false (NODM) and DM=true (DM).
+// modes: Scalar, Avx, AvxBatch, Avx512Batch
 // ---------------------------------------------------------------------------
 
-REG_NCOLS_AR(MERKLETREE_W_AR_SCALAR_CPU_BENCH, 8,  2, false, "MERKLETREE_W8_AR2_NODM_SCALAR_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_SCALAR_CPU_BENCH, 12, 3, false, "MERKLETREE_W12_AR3_NODM_SCALAR_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_SCALAR_CPU_BENCH, 16, 4, false, "MERKLETREE_W16_AR4_NODM_SCALAR_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_SCALAR_CPU_BENCH, 8,  2, true,  "MERKLETREE_W8_AR2_DM_SCALAR_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_SCALAR_CPU_BENCH, 12, 3, true,  "MERKLETREE_W12_AR3_DM_SCALAR_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_SCALAR_CPU_BENCH, 16, 4, true,  "MERKLETREE_W16_AR4_DM_SCALAR_CPU_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_SCALAR_CPU_BENCH, 8,  2, "MERKLETREE_W8_AR2_SCALAR_CPU_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_SCALAR_CPU_BENCH, 12, 3, "MERKLETREE_W12_AR3_SCALAR_CPU_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_SCALAR_CPU_BENCH, 16, 4, "MERKLETREE_W16_AR4_SCALAR_CPU_BENCH")
 
 #ifdef __AVX2__
-REG_NCOLS_AR(MERKLETREE_W_AR_AVX_CPU_BENCH, 8,  2, false, "MERKLETREE_W8_AR2_NODM_AVX_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_AVX_CPU_BENCH, 12, 3, false, "MERKLETREE_W12_AR3_NODM_AVX_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_AVX_CPU_BENCH, 16, 4, false, "MERKLETREE_W16_AR4_NODM_AVX_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_AVX_CPU_BENCH, 8,  2, true,  "MERKLETREE_W8_AR2_DM_AVX_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_AVX_CPU_BENCH, 12, 3, true,  "MERKLETREE_W12_AR3_DM_AVX_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_AVX_CPU_BENCH, 16, 4, true,  "MERKLETREE_W16_AR4_DM_AVX_CPU_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_AVX_CPU_BENCH, 8,  2, "MERKLETREE_W8_AR2_AVX_CPU_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_AVX_CPU_BENCH, 12, 3, "MERKLETREE_W12_AR3_AVX_CPU_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_AVX_CPU_BENCH, 16, 4, "MERKLETREE_W16_AR4_AVX_CPU_BENCH")
 
-REG_NCOLS_AR(MERKLETREE_W_AR_AVXBATCH_CPU_BENCH, 8,  2, false, "MERKLETREE_W8_AR2_NODM_AVXBATCH_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_AVXBATCH_CPU_BENCH, 12, 3, false, "MERKLETREE_W12_AR3_NODM_AVXBATCH_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_AVXBATCH_CPU_BENCH, 16, 4, false, "MERKLETREE_W16_AR4_NODM_AVXBATCH_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_AVXBATCH_CPU_BENCH, 8,  2, true,  "MERKLETREE_W8_AR2_DM_AVXBATCH_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_AVXBATCH_CPU_BENCH, 12, 3, true,  "MERKLETREE_W12_AR3_DM_AVXBATCH_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_AVXBATCH_CPU_BENCH, 16, 4, true,  "MERKLETREE_W16_AR4_DM_AVXBATCH_CPU_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_AVXBATCH_CPU_BENCH, 8,  2, "MERKLETREE_W8_AR2_AVXBATCH_CPU_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_AVXBATCH_CPU_BENCH, 12, 3, "MERKLETREE_W12_AR3_AVXBATCH_CPU_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_AVXBATCH_CPU_BENCH, 16, 4, "MERKLETREE_W16_AR4_AVXBATCH_CPU_BENCH")
 #endif
 
 #ifdef __AVX512__
-REG_NCOLS_AR(MERKLETREE_W_AR_AVX512BATCH_CPU_BENCH, 8,  2, false, "MERKLETREE_W8_AR2_NODM_AVX512BATCH_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_AVX512BATCH_CPU_BENCH, 12, 3, false, "MERKLETREE_W12_AR3_NODM_AVX512BATCH_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_AVX512BATCH_CPU_BENCH, 16, 4, false, "MERKLETREE_W16_AR4_NODM_AVX512BATCH_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_AVX512BATCH_CPU_BENCH, 8,  2, true,  "MERKLETREE_W8_AR2_DM_AVX512BATCH_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_AVX512BATCH_CPU_BENCH, 12, 3, true,  "MERKLETREE_W12_AR3_DM_AVX512BATCH_CPU_BENCH")
-REG_NCOLS_AR(MERKLETREE_W_AR_AVX512BATCH_CPU_BENCH, 16, 4, true,  "MERKLETREE_W16_AR4_DM_AVX512BATCH_CPU_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_AVX512BATCH_CPU_BENCH, 8,  2, "MERKLETREE_W8_AR2_AVX512BATCH_CPU_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_AVX512BATCH_CPU_BENCH, 12, 3, "MERKLETREE_W12_AR3_AVX512BATCH_CPU_BENCH")
+REG_NCOLS_AR(MERKLETREE_W_AR_AVX512BATCH_CPU_BENCH, 16, 4, "MERKLETREE_W16_AR4_AVX512BATCH_CPU_BENCH")
 #endif
 
 // ---------------------------------------------------------------------------

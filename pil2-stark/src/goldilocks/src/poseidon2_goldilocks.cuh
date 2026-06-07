@@ -17,19 +17,14 @@ enum class Layout : uint8_t {
 };
 
 
-// See goldilocks_hash_config.hpp for the canonical default
-#ifndef USE_DM_HASH
-#define USE_DM_HASH true
-#endif
 
-template<uint32_t SPONGE_WIDTH_T, bool DM_T = USE_DM_HASH>
+template<uint32_t SPONGE_WIDTH_T>
 class Poseidon2GoldilocksGPU  {
 public:
     
     static constexpr uint32_t RATE = SPONGE_WIDTH_T-4;
     static constexpr uint32_t CAPACITY = 4;
     static constexpr uint32_t SPONGE_WIDTH = SPONGE_WIDTH_T;
-    static constexpr bool     DM = DM_T;
     static constexpr uint32_t N_FULL_ROUNDS_TOTAL = 8;
     static constexpr uint32_t HALF_N_FULL_ROUNDS = N_FULL_ROUNDS_TOTAL / 2;
     static constexpr uint32_t N_PARTIAL_ROUNDS = SPONGE_WIDTH_T == 4 ? 21 : 22;
@@ -65,7 +60,7 @@ void runGrindingGPU(uint64_t *d_nonce, uint64_t *d_nonceBlock, const uint64_t *d
 
 // --- Forward declarations (defined in .cu) ---
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ void poseidon2PermuteSmem();
 
 // --- Leaf device helpers ---
@@ -118,7 +113,7 @@ __device__ __forceinline__ void mds4x4Smem(uint32_t offset)
 
 // --- Register-based Poseidon2 helpers ---
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void sumAll(gl64_t *x, const gl64_t C[SPONGE_WIDTH_T])
 {
 #pragma unroll
@@ -128,7 +123,7 @@ __device__ __forceinline__ void sumAll(gl64_t *x, const gl64_t C[SPONGE_WIDTH_T]
     }
 }
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void sboxFull(gl64_t *x, const gl64_t C[SPONGE_WIDTH_T])
 {
 
@@ -143,7 +138,7 @@ __device__ __forceinline__ void sboxFull(gl64_t *x, const gl64_t C[SPONGE_WIDTH_
     }
 }
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void mdsExternal(gl64_t *x)
 {
 #pragma unroll
@@ -166,7 +161,7 @@ __device__ __forceinline__ void mdsExternal(gl64_t *x)
     }
 }
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void partialRoundMul(gl64_t *x, const gl64_t D[SPONGE_WIDTH_T], const gl64_t &sum)
 {
 #pragma unroll
@@ -178,7 +173,7 @@ __device__ __forceinline__ void partialRoundMul(gl64_t *x, const gl64_t D[SPONGE
 
 // --- Shared-memory Poseidon2 helpers ---
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void sumAllSmem(gl64_t *x)
 {
 #pragma unroll
@@ -186,7 +181,7 @@ __device__ __forceinline__ void sumAllSmem(gl64_t *x)
        x[0]= x[0] + scratchpad[i * blockDim.x + threadIdx.x];
 }
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void mdsExternalSmem()
 {
 #pragma unroll
@@ -209,7 +204,7 @@ __device__ __forceinline__ void mdsExternalSmem()
     }
 }
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void sboxFullSmem(const gl64_t C[SPONGE_WIDTH_T])
 {
 
@@ -224,7 +219,7 @@ __device__ __forceinline__ void sboxFullSmem(const gl64_t C[SPONGE_WIDTH_T])
     }
 }
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void partialRoundMulSmem(const gl64_t D[SPONGE_WIDTH_T], const gl64_t &sum)
 {
 #pragma unroll
@@ -236,23 +231,18 @@ __device__ __forceinline__ void partialRoundMulSmem(const gl64_t D[SPONGE_WIDTH_
 
 // --- Poseidon2 permutation ---
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void poseidon2PermuteReg(gl64_t *state, const gl64_t *input, const gl64_t *GPU_C_GL, const gl64_t *GPU_D_GL)
 {
-    // Davies-Meyer: save the input in registers BEFORE the in-place copy.
-    gl64_t input_save[SPONGE_WIDTH_T];
-    if constexpr (DM_T) {
-        #pragma unroll
-        for (uint32_t i = 0; i < SPONGE_WIDTH_T; ++i) input_save[i] = input[i];
-    }
+
     mymemcpy((uint64_t *)state, (uint64_t *)input, SPONGE_WIDTH_T);
 
-    mdsExternal<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>(state);
+    mdsExternal<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(state);
 
     for (int r = 0; r < (N_FULL_ROUNDS_TOTAL_T>>1); r++)
     {
-        sboxFull<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>(state, &(GPU_C_GL[r * SPONGE_WIDTH_T]));
-        mdsExternal<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T> (state);
+        sboxFull<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(state, &(GPU_C_GL[r * SPONGE_WIDTH_T]));
+        mdsExternal<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T> (state);
     }
 
     for (int r = 0; r < N_PARTIAL_ROUNDS_T; r++)
@@ -261,38 +251,27 @@ __device__ __forceinline__ void poseidon2PermuteReg(gl64_t *state, const gl64_t 
         pow7(state[0]);
         gl64_t sum_;
         sum_ = gl64_t(uint64_t(0));
-        sumAll<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>(&sum_, state);
-        partialRoundMul<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>(state, GPU_D_GL, sum_);
+        sumAll<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(&sum_, state);
+        partialRoundMul<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(state, GPU_D_GL, sum_);
     }
 
     for (int r = 0; r < (N_FULL_ROUNDS_TOTAL_T>>1); r++)
     {
-        sboxFull<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>(state, &(GPU_C_GL[(N_FULL_ROUNDS_TOTAL_T>>1) * SPONGE_WIDTH_T + N_PARTIAL_ROUNDS_T + r * SPONGE_WIDTH_T]));
-        mdsExternal<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>(state);
+        sboxFull<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(state, &(GPU_C_GL[(N_FULL_ROUNDS_TOTAL_T>>1) * SPONGE_WIDTH_T + N_PARTIAL_ROUNDS_T + r * SPONGE_WIDTH_T]));
+        mdsExternal<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(state);
     }
 
-    if constexpr (DM_T) {
-        #pragma unroll
-        for (uint32_t i = 0; i < SPONGE_WIDTH_T; ++i) state[i] = state[i] + input_save[i];
-    }
 }
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void poseidon2PermuteSmem(const gl64_t *GPU_C_GL, const gl64_t *GPU_D_GL)
 {
-    // Davies-Meyer: snapshot the scratchpad input into per-thread registers
-    // BEFORE the in-place permutation starts.
-    gl64_t input_save[SPONGE_WIDTH_T];
-    if constexpr (DM_T) {
-        #pragma unroll
-        for (uint32_t i = 0; i < SPONGE_WIDTH_T; ++i)
-            input_save[i] = scratchpad[i * blockDim.x + threadIdx.x];
-    }
-    mdsExternalSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>();
+
+    mdsExternalSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
     for (int r = 0; r < (N_FULL_ROUNDS_TOTAL_T>>1); r++)
     {
-        sboxFullSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>(&(GPU_C_GL[r * SPONGE_WIDTH_T]));
-        mdsExternalSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>();
+        sboxFullSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(&(GPU_C_GL[r * SPONGE_WIDTH_T]));
+        mdsExternalSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
     }
 
     for(int r = 0; r < N_PARTIAL_ROUNDS_T; r++)
@@ -301,27 +280,21 @@ __device__ __forceinline__ void poseidon2PermuteSmem(const gl64_t *GPU_C_GL, con
         pow7(scratchpad[threadIdx.x]);
         gl64_t sum_;
         sum_ = gl64_t(uint64_t(0));
-        sumAllSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>(&sum_);
-        partialRoundMulSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>(GPU_D_GL, sum_);
+        sumAllSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(&sum_);
+        partialRoundMulSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(GPU_D_GL, sum_);
     }
 
     for (int r = 0; r < (N_FULL_ROUNDS_TOTAL_T>>1); r++)
     {
-        sboxFullSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>(&(GPU_C_GL[(N_FULL_ROUNDS_TOTAL_T>>1) * SPONGE_WIDTH_T + N_PARTIAL_ROUNDS_T + r * SPONGE_WIDTH_T]));
-        mdsExternalSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>();
+        sboxFullSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(&(GPU_C_GL[(N_FULL_ROUNDS_TOTAL_T>>1) * SPONGE_WIDTH_T + N_PARTIAL_ROUNDS_T + r * SPONGE_WIDTH_T]));
+        mdsExternalSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
     }
 
-    if constexpr (DM_T) {
-        #pragma unroll
-        for (uint32_t i = 0; i < SPONGE_WIDTH_T; ++i)
-            scratchpad[i * blockDim.x + threadIdx.x] =
-                scratchpad[i * blockDim.x + threadIdx.x] + input_save[i];
-    }
 }
 
 // --- Sponge I/O ---
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void spongeLoad(const uint64_t *in, uint32_t initial_col, uint32_t ncols,
                                                uint32_t col_stride, size_t row_stride = 1)
 {
@@ -344,7 +317,7 @@ __device__ __forceinline__ void spongeLoad(const uint64_t *in, uint32_t initial_
     __syncwarp();
 }
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ void spongeLoadTiled(const uint64_t *in, uint64_t num_rows, uint64_t num_cols, uint32_t initial_col, uint32_t ncols)
 {
     gl64_t r[RATE_T];
@@ -368,7 +341,7 @@ __device__ void spongeLoadTiled(const uint64_t *in, uint64_t num_rows, uint64_t 
     __syncwarp();
 }
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void spongeStore(uint64_t *__restrict__ out, uint32_t col_stride, size_t row_stride)
 {
     gl64_t r[CAPACITY_T];
@@ -391,13 +364,13 @@ __device__ __forceinline__ void spongeStore(uint64_t *__restrict__ out, uint32_t
 
 // --- Sponge absorb ---
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void spongeAbsorb(const uint64_t *__restrict__ in, uint32_t ncols)
 {
     for (uint32_t col = 0;;)
     {
         uint32_t delta = min(ncols - col, RATE_T);
-        spongeLoad<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>(in, col, delta, ncols);
+        spongeLoad<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(in, col, delta, ncols);
         if (delta < RATE_T)
         {
             for (uint32_t i = delta; i < RATE_T; i++)
@@ -406,7 +379,7 @@ __device__ __forceinline__ void spongeAbsorb(const uint64_t *__restrict__ in, ui
             }
         }
 
-        poseidon2PermuteSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>();
+        poseidon2PermuteSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
 
         if ((col += RATE_T) >= ncols)
             break;
@@ -426,13 +399,13 @@ __device__ __forceinline__ void spongeAbsorb(const uint64_t *__restrict__ in, ui
     }
 }
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void spongeAbsorbTiled(const uint64_t *__restrict__ in, uint32_t num_cols, uint32_t num_rows)
 {
     for (uint32_t col = 0;;)
     {
         uint32_t delta = min(num_cols - col, RATE_T);
-        spongeLoadTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T >(in, num_rows, num_cols, col, delta);
+        spongeLoadTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(in, num_rows, num_cols, col, delta);
         if (delta < RATE_T)
         {
             for (uint32_t i = delta; i < RATE_T; i++)
@@ -440,7 +413,7 @@ __device__ __forceinline__ void spongeAbsorbTiled(const uint64_t *__restrict__ i
                 scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
             }
         }
-        poseidon2PermuteSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>();
+        poseidon2PermuteSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
 
         if ((col += RATE_T) >= num_cols)
             break;
@@ -465,27 +438,27 @@ __device__ __forceinline__ void spongeAbsorbTiled(const uint64_t *__restrict__ i
 // permuteKernel / permuteTruncKernel: single-element permutation on contiguous state.
 // MUST be launched with <<<1, 1>>> 
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __global__ void permuteKernel(uint64_t * output, const uint64_t * input){
     assert(blockDim.x == 1 && gridDim.x == 1);
     for (uint32_t i = 0; i < SPONGE_WIDTH_T; i++)
         scratchpad[i] = input[i];
-    poseidon2PermuteSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>();
+    poseidon2PermuteSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
     for (uint32_t i = 0; i < SPONGE_WIDTH_T; i++)
         output[i] = scratchpad[i];
 }
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __global__ void permuteTruncKernel(uint64_t * output, const uint64_t * input){
     assert(blockDim.x == 1 && gridDim.x == 1);
     for (uint32_t i = 0; i < SPONGE_WIDTH_T; i++)
         scratchpad[i] = input[i];
-    poseidon2PermuteSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>();
+    poseidon2PermuteSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
     for (uint32_t i = 0; i < CAPACITY_T; i++)
         output[i] = scratchpad[i];
 }
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __global__ void linearHashKernel(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows)
 {
     if (num_cols == 0)
@@ -502,11 +475,11 @@ __global__ void linearHashKernel(uint64_t *__restrict__ output, uint64_t *__rest
     for (uint32_t i = 0; i < CAPACITY_T; i++)
         scratchpad[(i + RATE_T) * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
 
-    spongeAbsorb<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>(input, num_cols);
-    spongeStore<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>(output, CAPACITY_T, 1);
+    spongeAbsorb<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(input, num_cols);
+    spongeStore<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(output, CAPACITY_T, 1);
 }
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __global__ void linearHashTiledKernel(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows)
 {
     if (num_cols == 0)
@@ -523,8 +496,8 @@ __global__ void linearHashTiledKernel(uint64_t *__restrict__ output, uint64_t *_
     for (uint32_t i = 0; i < CAPACITY_T; i++)
         scratchpad[(i + RATE_T) * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
 
-    spongeAbsorbTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>(input, num_cols, num_rows);
-    spongeStore<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T, DM_T>(output, CAPACITY_T, 1);
+    spongeAbsorbTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(input, num_cols, num_rows);
+    spongeStore<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(output, CAPACITY_T, 1);
 }
 
 #endif

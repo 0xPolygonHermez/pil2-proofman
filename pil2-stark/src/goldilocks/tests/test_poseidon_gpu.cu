@@ -1,7 +1,7 @@
 // Poseidon v1 GPU tests: golden vectors (shared with test_poseidon_cpu.cpp)
 // plus a CPU-vs-GPU fuzz.
 //
-// Each test calls PoseidonGoldilocksGPU<12, false>::initConstants at the top; the
+// Each test calls PoseidonGoldilocksGPU<12>::initConstants at the top; the
 // __constant__ upload is a one-shot guarded by a static flag in the .cu, so
 // repeated calls are cheap.
 
@@ -18,8 +18,8 @@
 #include "../src/goldilocks_tooling.cuh"
 
 using GL = Goldilocks::Element;
-using PosCPU = PoseidonGoldilocks<12, false>;
-using PosGPU = PoseidonGoldilocksGPU<12, false>;
+using PosCPU = PoseidonGoldilocks<12>;
+using PosGPU = PoseidonGoldilocksGPU<12>;
 
 static constexpr uint32_t W        = PosGPU::SPONGE_WIDTH;   // 12
 static constexpr uint32_t CAP      = PosGPU::CAPACITY;        // 4
@@ -407,7 +407,7 @@ TEST(PoseidonV1Gpu, permute_W8_plonky3_golden)
 
     uint32_t gpu_id = 0;
     cudaGetDevice((int *)&gpu_id);
-    PoseidonGoldilocksGPU<W8, false>::initConstants(&gpu_id, 1);
+    PoseidonGoldilocksGPU<W8>::initConstants(&gpu_id, 1);
 
     GL in[W8], out[W8];
     for (uint32_t i = 0; i < W8; ++i) in[i] = Goldilocks::fromU64((uint64_t)i);
@@ -417,7 +417,7 @@ TEST(PoseidonV1Gpu, permute_W8_plonky3_golden)
     CHECKCUDAERR(cudaMalloc((void **)&d_out, W8 * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMemcpy(d_in, in, W8 * sizeof(gl64_t), cudaMemcpyHostToDevice));
 
-    PoseidonGoldilocksGPU<W8, false>::permute((uint64_t *)d_out, (uint64_t *)d_in);
+    PoseidonGoldilocksGPU<W8>::permute((uint64_t *)d_out, (uint64_t *)d_in);
     CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaMemcpy(out, d_out, W8 * sizeof(gl64_t), cudaMemcpyDeviceToHost));
 
@@ -436,7 +436,7 @@ TEST(PoseidonV1Gpu, permute_W8_parity_vs_cpu_scalar)
 
     uint32_t gpu_id = 0;
     cudaGetDevice((int *)&gpu_id);
-    PoseidonGoldilocksGPU<W8, false>::initConstants(&gpu_id, 1);
+    PoseidonGoldilocksGPU<W8>::initConstants(&gpu_id, 1);
 
     gl64_t *d_in, *d_out;
     CHECKCUDAERR(cudaMalloc((void **)&d_in,  W8 * sizeof(gl64_t)));
@@ -450,10 +450,10 @@ TEST(PoseidonV1Gpu, permute_W8_parity_vs_cpu_scalar)
         for (uint32_t j = 0; j < W8; ++j)
             inp[j] = rnd64(0xB6E91709FC5A6731ULL ^ (t * 1597334677u), j);
 
-        PoseidonGoldilocks<W8, false>::permute(cpu_out, inp, PoseidonMode::Scalar);
+        PoseidonGoldilocks<W8>::permute(cpu_out, inp, PoseidonMode::Scalar);
 
         CHECKCUDAERR(cudaMemcpy(d_in, inp, W8 * sizeof(gl64_t), cudaMemcpyHostToDevice));
-        PoseidonGoldilocksGPU<W8, false>::permute((uint64_t *)d_out, (uint64_t *)d_in);
+        PoseidonGoldilocksGPU<W8>::permute((uint64_t *)d_out, (uint64_t *)d_in);
         CHECKCUDAERR(cudaDeviceSynchronize());
         CHECKCUDAERR(cudaMemcpy(h_gpu.data(), d_out, W8 * sizeof(gl64_t), cudaMemcpyDeviceToHost));
 
@@ -482,7 +482,7 @@ TEST(PoseidonV1Gpu, permute_W16_self_consistency)
 
     uint32_t gpu_id = 0;
     cudaGetDevice((int *)&gpu_id);
-    PoseidonGoldilocksGPU<W16, false>::initConstants(&gpu_id, 1);
+    PoseidonGoldilocksGPU<W16>::initConstants(&gpu_id, 1);
 
     GL in[W16], out[W16];
     for (uint32_t i = 0; i < W16; ++i) in[i] = Goldilocks::fromU64((uint64_t)i);
@@ -492,7 +492,7 @@ TEST(PoseidonV1Gpu, permute_W16_self_consistency)
     CHECKCUDAERR(cudaMalloc((void **)&d_out, W16 * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMemcpy(d_in, in, W16 * sizeof(gl64_t), cudaMemcpyHostToDevice));
 
-    PoseidonGoldilocksGPU<W16, false>::permute((uint64_t *)d_out, (uint64_t *)d_in);
+    PoseidonGoldilocksGPU<W16>::permute((uint64_t *)d_out, (uint64_t *)d_in);
     CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaMemcpy(out, d_out, W16 * sizeof(gl64_t), cudaMemcpyDeviceToHost));
 
@@ -511,7 +511,7 @@ TEST(PoseidonV1Gpu, permute_W16_parity_vs_cpu_scalar)
 
     uint32_t gpu_id = 0;
     cudaGetDevice((int *)&gpu_id);
-    PoseidonGoldilocksGPU<W16, false>::initConstants(&gpu_id, 1);
+    PoseidonGoldilocksGPU<W16>::initConstants(&gpu_id, 1);
 
     gl64_t *d_in, *d_out;
     CHECKCUDAERR(cudaMalloc((void **)&d_in,  W16 * sizeof(gl64_t)));
@@ -525,10 +525,10 @@ TEST(PoseidonV1Gpu, permute_W16_parity_vs_cpu_scalar)
         for (uint32_t j = 0; j < W16; ++j)
             inp[j] = rnd64(0xC34F6A1DE9B25718ULL ^ (t * 2654435761u), j);
 
-        PoseidonGoldilocks<W16, false>::permute(cpu_out, inp, PoseidonMode::Scalar);
+        PoseidonGoldilocks<W16>::permute(cpu_out, inp, PoseidonMode::Scalar);
 
         CHECKCUDAERR(cudaMemcpy(d_in, inp, W16 * sizeof(gl64_t), cudaMemcpyHostToDevice));
-        PoseidonGoldilocksGPU<W16, false>::permute((uint64_t *)d_out, (uint64_t *)d_in);
+        PoseidonGoldilocksGPU<W16>::permute((uint64_t *)d_out, (uint64_t *)d_in);
         CHECKCUDAERR(cudaDeviceSynchronize());
         CHECKCUDAERR(cudaMemcpy(h_gpu.data(), d_out, W16 * sizeof(gl64_t), cudaMemcpyDeviceToHost));
 

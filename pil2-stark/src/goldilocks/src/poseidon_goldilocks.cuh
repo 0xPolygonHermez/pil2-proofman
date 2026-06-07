@@ -17,12 +17,8 @@
 // Public class (W=12).
 // ---------------------------------------------------------------------------
 
-// See goldilocks_hash_config.hpp for the canonical default
-#ifndef USE_DM_HASH
-#define USE_DM_HASH true
-#endif
 
-template<uint32_t SPONGE_WIDTH_T, bool DM_T = USE_DM_HASH>
+template<uint32_t SPONGE_WIDTH_T>
 class PoseidonGoldilocksGPU
 {
 public:
@@ -32,7 +28,6 @@ public:
     static constexpr uint32_t CAPACITY            = 4;
     static constexpr uint32_t RATE                = SPONGE_WIDTH_T - CAPACITY;
     static constexpr uint32_t SPONGE_WIDTH        = SPONGE_WIDTH_T;
-    static constexpr bool     DM                  = DM_T;
     static constexpr uint32_t N_FULL_ROUNDS_TOTAL = 8;
     static constexpr uint32_t HALF_N_FULL_ROUNDS  = 4;
     static constexpr uint32_t N_PARTIAL_ROUNDS    = PoseidonGoldilocksConstants::Poseidon1Tables<SPONGE_WIDTH_T>::N_PARTIAL_ROUNDS;
@@ -138,7 +133,7 @@ __device__ __forceinline__ void pos1_mvp_(gl64_t *state, const gl64_t *mat)
 // Full register-path permutation.
 // ---------------------------------------------------------------------------
 
-template<uint32_t W, uint32_t HALF_F, uint32_t N_PART, bool DM_T>
+template<uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __device__ void poseidon1PermuteReg(gl64_t *state,
                                     const gl64_t *input,
                                     const gl64_t *GPU_C_GL,
@@ -146,12 +141,7 @@ __device__ void poseidon1PermuteReg(gl64_t *state,
                                     const gl64_t *GPU_M_GL,
                                     const gl64_t *GPU_P_GL)
 {
-    // Davies-Meyer: save the original input in registers BEFORE the memcpy
-    gl64_t input_save[W];
-    if constexpr (DM_T) {
-        #pragma unroll
-        for (uint32_t i = 0; i < W; ++i) input_save[i] = input[i];
-    }
+
     mymemcpy((uint64_t *)state, (uint64_t *)input, W);
 
     // First half: ARK -> (pow7+ARK, MVP(M)) × (HALF_F - 1).
@@ -189,10 +179,6 @@ __device__ void poseidon1PermuteReg(gl64_t *state,
     pos1_pow7_<W>(state);
     pos1_mvp_<W>(state, GPU_M_GL);
 
-    if constexpr (DM_T) {
-        #pragma unroll
-        for (uint32_t i = 0; i < W; ++i) state[i] = state[i] + input_save[i];
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -263,19 +249,13 @@ __device__ __forceinline__ void pos1_mvp_smem_(const gl64_t *mat)
     }
 }
 
-template<uint32_t W, uint32_t HALF_F, uint32_t N_PART, bool DM_T>
+template<uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __device__ void poseidon1PermuteSmem(const gl64_t *GPU_C_GL,
                                      const gl64_t *GPU_S_GL,
                                      const gl64_t *GPU_M_GL,
                                      const gl64_t *GPU_P_GL)
 {
-    // Davies-Meyer: snapshot the scratchpad input into per-thread registers
-    gl64_t input_save[W];
-    if constexpr (DM_T) {
-        #pragma unroll
-        for (uint32_t i = 0; i < W; ++i)
-            input_save[i] = scratchpad[i * blockDim.x + threadIdx.x];
-    }
+
 
     // First half: initial ARK, then (HALF_F - 1) × (pow7+ARK fused + MVP(M)).
     pos1_add_smem_<W>(GPU_C_GL);
@@ -328,40 +308,34 @@ __device__ void poseidon1PermuteSmem(const gl64_t *GPU_C_GL,
     pos1_pow7_smem_<W>();
     pos1_mvp_smem_<W>(GPU_M_GL);
 
-    if constexpr (DM_T) {
-        #pragma unroll
-        for (uint32_t i = 0; i < W; ++i)
-            scratchpad[i * blockDim.x + threadIdx.x] =
-                scratchpad[i * blockDim.x + threadIdx.x] + input_save[i];
-    }
 }
 
 // ---------------------------------------------------------------------------
 // Kernels
 // ---------------------------------------------------------------------------
 
-template<uint32_t W, uint32_t HALF_F, uint32_t N_PART, bool DM_T>
+template<uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void permuteKernel_pos1(uint64_t *output, const uint64_t *input);
 
-template<uint32_t W, uint32_t HALF_F, uint32_t N_PART, uint32_t CAPACITY_T, bool DM_T>
+template<uint32_t W, uint32_t HALF_F, uint32_t N_PART, uint32_t CAPACITY_T>
 __global__ void permuteTruncKernel_pos1(uint64_t *output, const uint64_t *input);
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void linearHashKernel_pos1(uint64_t *__restrict__ output,
                                       uint64_t *__restrict__ input,
                                       uint32_t num_cols, uint32_t num_rows);
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
                                            uint64_t *__restrict__ input,
                                            uint32_t num_cols, uint32_t num_rows);
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART, bool DM_T>
+template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void merkleNodeKernel_pos1(uint64_t nextN, uint64_t nextIndex,
                                       uint64_t pending, uint32_t arity,
                                       uint64_t *cursor);
 
-template<uint32_t W, uint32_t HALF_F, uint32_t N_PART, bool DM_T>
+template<uint32_t W, uint32_t HALF_F, uint32_t N_PART>
 __global__ void grindingKernel_pos1(uint64_t *nonce, uint64_t *__restrict__ nonceBlock,
                                     uint64_t *__restrict__ input, uint64_t n_bits,
                                     uint64_t hashes_per_thread, uint64_t nonces_offset);
