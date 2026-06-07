@@ -317,17 +317,25 @@ TEST(Poseidon2, merkletreeReduce_single_digest)
 
 TEST(Poseidon2, grinding_cpu)
 {
+    using G = Poseidon2GoldilocksGrinding;
     constexpr uint8_t n_bits = 8;
+    constexpr uint32_t W = G::SPONGE_WIDTH;
     uint64_t in[3] = {0x1234567890abcdef, 0xfedcba0987654321, 0x0123456789abcdef};
     uint64_t result_index = UINT64_MAX;
 
-    Poseidon2GoldilocksGrinding::grinding(result_index, in, n_bits);
+    G::grinding(result_index, in, n_bits);
     ASSERT_NE(result_index, UINT64_MAX);
 
+    // Reconstruct: in[0..2] populate state[0..2]; state[3..W-2] = 0;
+    // state[W-1] = nonce. Same contract as Poseidon1 grinding.
+    Goldilocks::Element x[W] = {};
+    x[0] = Goldilocks::fromU64(in[0]);
+    x[1] = Goldilocks::fromU64(in[1]);
+    x[2] = Goldilocks::fromU64(in[2]);
+    x[W - 1] = Goldilocks::fromU64(result_index);
+    Goldilocks::Element result[W];
+    G::permute(result, x, Poseidon2Mode::Scalar);
     uint64_t level = (1ULL << (64 - n_bits));
-    Goldilocks::Element x[4] = {in[0], in[1], in[2], result_index};
-    Goldilocks::Element result[4];
-    Poseidon2GoldilocksGrinding::permute(result, x, Poseidon2Mode::Scalar);
     ASSERT_LT(Goldilocks::toU64(result[0]), level);
 }
 
@@ -439,15 +447,21 @@ TEST(Poseidon2, merkletree_nrows1_W16) { merkletreeNrows1<16>(4, 16); }
 
 TEST(Poseidon2, grinding_nbits1)
 {
+    using G = Poseidon2GoldilocksGrinding;
+    constexpr uint32_t W = G::SPONGE_WIDTH;
     uint64_t in[3] = {1, 2, 3};
     uint64_t nonce = UINT64_MAX;
 
-    Poseidon2GoldilocksGrinding::grinding(nonce, in, 1);
+    G::grinding(nonce, in, 1);
     ASSERT_NE(nonce, UINT64_MAX);
 
+    Goldilocks::Element x[W] = {};
+    x[0] = Goldilocks::fromU64(in[0]);
+    x[1] = Goldilocks::fromU64(in[1]);
+    x[2] = Goldilocks::fromU64(in[2]);
+    x[W - 1] = Goldilocks::fromU64(nonce);
+    Goldilocks::Element result[W];
+    G::permute(result, x, Poseidon2Mode::Scalar);
     uint64_t level = (1ULL << 63);
-    Goldilocks::Element x[4] = {in[0], in[1], in[2], nonce};
-    Goldilocks::Element result[4];
-    Poseidon2GoldilocksGrinding::permute(result, x, Poseidon2Mode::Scalar);
     ASSERT_LT(Goldilocks::toU64(result[0]), level);
 }

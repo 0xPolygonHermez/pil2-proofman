@@ -374,6 +374,6 @@ inline void Poseidon2Goldilocks<W>::merkletree(
  #include "poseidon2_goldilocks_avx512.hpp"
  #endif
 
-using Poseidon2GoldilocksGrinding = Poseidon2Goldilocks<4>;  // SPONGE_WIDTH = 4
+using Poseidon2GoldilocksGrinding = Poseidon2Goldilocks<8>;  // SPONGE_WIDTH = 8
 
 #endif

@@ -48,7 +48,7 @@ public:
 
 };
 
-using Poseidon2GoldilocksGPUGrinding = Poseidon2GoldilocksGPU<4>;  // SPONGE_WIDTH = 4
+using Poseidon2GoldilocksGPUGrinding = Poseidon2GoldilocksGPU<8>;  // SPONGE_WIDTH = 8
 
 // Dispatch merkletree by arity
 void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,

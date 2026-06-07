@@ -196,9 +196,10 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::grinding(uint64_t &nonce, const uint64
         uint64_t local_found = UINT64_MAX;
         uint64_t poll = 0;
 
-        Goldilocks::Element state[SPONGE_WIDTH];
+
+        Goldilocks::Element state[SPONGE_WIDTH] = {};
         Goldilocks::Element out[SPONGE_WIDTH];
-        std::memcpy(state, in, (SPONGE_WIDTH - 1) * sizeof(Goldilocks::Element));
+        std::memcpy(state, in, 3 * sizeof(Goldilocks::Element));
 
         for (uint64_t i = tid; i < N; i += nthr)
         {
