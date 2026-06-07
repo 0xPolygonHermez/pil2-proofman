@@ -326,13 +326,13 @@ TEST(Poseidon2, grinding_cpu)
     G::grinding(result_index, in, n_bits);
     ASSERT_NE(result_index, UINT64_MAX);
 
-    // Reconstruct: in[0..2] populate state[0..2]; state[3..W-2] = 0;
-    // state[W-1] = nonce. Same contract as Poseidon1 grinding.
+    // STARK grinding contract: state[0..2] = challenge, state[3] = nonce,
+    // state[4..W-1] = 0.
     Goldilocks::Element x[W] = {};
     x[0] = Goldilocks::fromU64(in[0]);
     x[1] = Goldilocks::fromU64(in[1]);
     x[2] = Goldilocks::fromU64(in[2]);
-    x[W - 1] = Goldilocks::fromU64(result_index);
+    x[3] = Goldilocks::fromU64(result_index);
     Goldilocks::Element result[W];
     G::permute(result, x, Poseidon2Mode::Scalar);
     uint64_t level = (1ULL << (64 - n_bits));
@@ -459,7 +459,7 @@ TEST(Poseidon2, grinding_nbits1)
     x[0] = Goldilocks::fromU64(in[0]);
     x[1] = Goldilocks::fromU64(in[1]);
     x[2] = Goldilocks::fromU64(in[2]);
-    x[W - 1] = Goldilocks::fromU64(nonce);
+    x[3] = Goldilocks::fromU64(nonce);
     Goldilocks::Element result[W];
     G::permute(result, x, Poseidon2Mode::Scalar);
     uint64_t level = (1ULL << 63);

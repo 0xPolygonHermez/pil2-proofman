@@ -335,23 +335,21 @@ TEST(PoseidonV1, merkletreeReduce_binary_smoke)
 
 TEST(PoseidonV1, grinding_determinism_low_bits)
 {
-    // STARK grinding contract: only the first 3 elements of `in` are used
-    // (= the FIELD_EXTENSION challenge); middle state slots are zero-padded;
-    // state[W-1] = nonce. The test reconstructs the SAME state grinding hashed.
+    // STARK grinding contract: state[0..2] = FIELD_EXTENSION challenge,
+    // state[3] = nonce, state[4..W-1] = 0. The test reconstructs the SAME
+    // state grinding hashed.
     // n_bits=8 gives level = 2^56 → high probability of quick nonce discovery.
     uint64_t in[W - 1];
     for (uint32_t i = 0; i < W - 1; ++i) in[i] = 0xDEADBEEF00000000ULL ^ i;
     uint64_t nonce = 0;
     Poseidon::grinding(nonce, in, /*n_bits=*/8);
 
-    // Reconstruct: only in[0..2] populate state[0..2]; state[3..W-2] = 0;
-    // state[W-1] = nonce. Then permute and check state[0] < 2^(64-8).
     GL state[W];
     for (uint32_t i = 0; i < W; ++i) state[i].fe = 0;
     state[0].fe = in[0];
     state[1].fe = in[1];
     state[2].fe = in[2];
-    state[W - 1] = Goldilocks::fromU64(nonce);
+    state[3] = Goldilocks::fromU64(nonce);
     GL out[W];
     Poseidon::permute(out, state, PoseidonMode::Scalar);
     uint64_t thresh = 1ULL << (64 - 8);

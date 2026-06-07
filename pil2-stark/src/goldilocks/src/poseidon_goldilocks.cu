@@ -332,10 +332,14 @@ __global__ void grindingKernel_pos1(uint64_t *nonce,
     for (uint64_t k = 0; k < hashes_per_thread; ++k)
     {
         uint64_t idx_k = idx + k;
+        // STARK grinding contract:
+        //   in_reg[0..2] = FIELD_EXTENSION challenge
+        //   in_reg[3]    = nonce
+        //   in_reg[4..W-1] = 0 (already zero from init above)
 #pragma unroll
         for (uint32_t i = 0; i < 3; ++i)
             in_reg[i] = input[i];
-        in_reg[W - 1] = idx_k;
+        in_reg[3] = (gl64_t)idx_k;
 
         poseidon1PermuteReg<W, HALF_F, N_PART>(
             state, in_reg,

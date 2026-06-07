@@ -220,6 +220,10 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::grinding(
         uint64_t local_found = UINT64_MAX;
         uint64_t poll = 0;
 
+        // STARK grinding contract:
+        //   state[0..2] = FIELD_EXTENSION challenge (in[0..2])
+        //   state[3]    = nonce (set per iteration below)
+        //   state[4..W-1] = 0 (zero-padding)
         Goldilocks::Element state[SPONGE_WIDTH] = {};
         Goldilocks::Element out[SPONGE_WIDTH];
         std::memcpy(state, in, 3 * sizeof(Goldilocks::Element));
@@ -230,7 +234,7 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::grinding(
                 local_found = found.load(std::memory_order_relaxed);
             if (i >= local_found) break;
 
-            state[SPONGE_WIDTH - 1] = Goldilocks::fromU64(i);
+            state[3] = Goldilocks::fromU64(i);
             permute_seq(out, state);
             if (out[0].fe < level) {
                 #pragma omp critical(grinding_update)

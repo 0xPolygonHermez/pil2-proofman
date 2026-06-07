@@ -111,12 +111,13 @@ TEST(GOLDILOCKS_TEST, grinding)
     cudaMemcpy(&result_index, d_out, sizeof(uint64_t), cudaMemcpyDeviceToHost);
     ASSERT_NE(result_index, UINT64_MAX);
 
-    // Reconstruct full-width state: [in[0..2], 0..., nonce] and permute.
+    // STARK grinding contract: test_in[0..2] = challenge, test_in[3] = nonce,
+    // test_in[4..W-1] = 0.
     Goldilocks::Element test_in[W] = {};
     test_in[0] = in[0];
     test_in[1] = in[1];
     test_in[2] = in[2];
-    test_in[W - 1] = Goldilocks::fromU64(result_index);
+    test_in[3] = Goldilocks::fromU64(result_index);
 
     gl64_t *d_test_in, *d_hash_out;
     cudaMalloc((void **)&d_test_in, W * sizeof(gl64_t));
