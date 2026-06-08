@@ -23,13 +23,8 @@ __device__ __constant__ gl64_t POSEIDON2_GPU_C[150];
 __device__ __constant__ gl64_t POSEIDON2_GPU_D[16]; 
 #endif
 
-#ifdef STARK_POSEIDON1
-#define TRX_PENDING_SIZE(a) ((uint32_t)(4 * (a)))
-#define TRX_OUT_SIZE(a)     ((uint32_t)(4 * ((a) + 1)))
-#else
 #define TRX_PENDING_SIZE(a) ((uint32_t)(4 * ((a) - 1)))
 #define TRX_OUT_SIZE(a)     ((uint32_t)(4 * (a)))
-#endif
 
 __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity)
 {

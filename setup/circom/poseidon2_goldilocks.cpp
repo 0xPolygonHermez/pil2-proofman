@@ -353,7 +353,7 @@ void Poseidon2(Goldilocks::Element *state, uint64_t* im)
 }
 
 
-void Poseidon16(uint64_t *im,uint *size_im,uint64_t *out, uint* size_out,uint64_t *in, uint *size_in)
+void Poseidon2_16(uint64_t *im,uint *size_im,uint64_t *out, uint* size_out,uint64_t *in, uint *size_in)
 {
     Goldilocks::Element state[16];
     for(uint64_t i = 0; i < 16; ++i) {
@@ -366,7 +366,7 @@ void Poseidon16(uint64_t *im,uint *size_im,uint64_t *out, uint* size_out,uint64_
     }
 }
 
-void CustPoseidon16(uint64_t *im,uint *size_im,uint64_t *out, uint* size_out,uint64_t *in, uint *size_in,uint64_t *key, uint *size_key)
+void CustPoseidon2_16(uint64_t *im,uint *size_im,uint64_t *out, uint* size_out,uint64_t *in, uint *size_in,uint64_t *key, uint *size_key)
 {   
     Goldilocks::Element state[16];
     if (key[0] == 0 && key[1] == 0) {

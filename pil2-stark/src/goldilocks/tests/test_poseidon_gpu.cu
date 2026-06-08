@@ -540,3 +540,58 @@ TEST(PoseidonV1Gpu, permute_W16_parity_vs_cpu_scalar)
     cudaFree(d_in);
     cudaFree(d_out);
 }
+
+// ---------------------------------------------------------------------------
+// GPU grinding → CPU re-verify (mirrors the prove+verify split where the
+// prover grinds on GPU and the verifier permutes on CPU). The bug shows up
+// here if `poseidon1PermuteReg<8>` running inside the grinding kernel
+// disagrees with `Poseidon::permute(_, _, Scalar)`.
+// ---------------------------------------------------------------------------
+
+TEST(PoseidonV1Gpu, grinding_W8_gpu_cpu_reverify)
+{
+    using G = PoseidonGoldilocksGPUGrinding;          // PoseidonGoldilocksGPU<8>
+    constexpr uint32_t W = G::SPONGE_WIDTH;
+
+    uint32_t gpu_id = 0;
+    cudaGetDevice((int *)&gpu_id);
+    G::initConstants(&gpu_id, 1);
+
+    Goldilocks::Element in[3];
+    for (int i = 0; i < 3; ++i) in[i] = Goldilocks::fromU64((uint64_t)(i * 7 + 1));
+
+    gl64_t *d_in, *d_nonce, *d_nonceBlock;
+    CHECKCUDAERR(cudaMalloc((void **)&d_in, 3 * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_nonce, sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_nonceBlock, NONCES_LAUNCH_GRID_SIZE * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMemcpy(d_in, in, 3 * sizeof(gl64_t), cudaMemcpyHostToDevice));
+
+    uint32_t n_bits = 8;
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
+    G::grinding((uint64_t *)d_nonce, (uint64_t *)d_nonceBlock, (uint64_t *)d_in, n_bits, stream);
+    cudaStreamSynchronize(stream);
+
+    uint64_t nonce_idx = 0;
+    CHECKCUDAERR(cudaMemcpy(&nonce_idx, d_nonce, sizeof(uint64_t), cudaMemcpyDeviceToHost));
+    ASSERT_NE(nonce_idx, UINT64_MAX) << "GPU grinding did not find a nonce";
+
+    // CPU re-verify: rebuild the same input shape (challenge | nonce | 0..0)
+    // and permute on CPU using the path the C++ verifier uses.
+    Goldilocks::Element x[W] = {};
+    x[0] = in[0]; x[1] = in[1]; x[2] = in[2];
+    x[3] = Goldilocks::fromU64(nonce_idx);
+    Goldilocks::Element result[W];
+    PoseidonGoldilocks<W>::permute(result, x, PoseidonMode::Scalar);
+
+    uint64_t threshold = 1ULL << (64 - n_bits);
+    EXPECT_LT(Goldilocks::toU64(result[0]), threshold)
+        << "GPU-found nonce " << nonce_idx
+        << " does NOT satisfy CPU permute check — algorithm divergence between "
+           "poseidon1PermuteReg<8> (GPU) and permute_seq<8> (CPU).";
+
+    cudaFree(d_in);
+    cudaFree(d_nonce);
+    cudaFree(d_nonceBlock);
+    cudaStreamDestroy(stream);
+}

@@ -40,6 +40,14 @@ MPI_Win win;
 int win_buff = -1;
 #endif
 
+const char *get_stark_hash_family() {
+#ifdef STARK_POSEIDON1
+    return "Poseidon1";
+#else
+    return "Poseidon2";
+#endif
+}
+
 void initialize_agg_readiness_tracker() {
 #ifdef __USE_MPI_RMA__    
     int initialized = 0;

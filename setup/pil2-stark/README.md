@@ -124,7 +124,7 @@ proofman-setup setup-recursive-test \
 | `-b, --build-dir` | Build directory |
 | `-c, --circom` | Path to the `.circom` source file |
 | `-n, --name` | Circuit name (used as the artifact basename) |
-| `-t, --type` | One of `compressor`, `aggregation` (default), `final_vadcop`, `light` |
+| `-t, --type` | One of `compressor`, `aggregation` (default) |
 
 ## `rebuild-witness-libs`
 

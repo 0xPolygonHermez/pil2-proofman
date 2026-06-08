@@ -10,7 +10,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use std::fs::File;
 use std::io::Read;
 use std::fs;
-use fields::{PrimeField64, Transcript, Poseidon16};
+use fields::{new_transcript, PrimeField64};
 use crate::{
     initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PolMap, SetupCtx, StdMode,
     PackedInfo, RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
@@ -711,7 +711,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         global_challenge_guard[1] = global_challenge[1];
         global_challenge_guard[2] = global_challenge[2];
 
-        let mut transcript: Transcript<F, Poseidon16, 16> = Transcript::new();
+        let mut transcript = new_transcript::<F>(&self.global_info.hash);
 
         transcript.put(global_challenge);
         let mut challenges_guard = self.challenges.values.write().unwrap();

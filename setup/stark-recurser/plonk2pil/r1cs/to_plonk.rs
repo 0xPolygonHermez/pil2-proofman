@@ -189,82 +189,75 @@ pub fn r1cs2plonk(r1cs: &R1csFile) -> (Vec<PlonkConstraint>, Vec<PlonkAddition>)
 
 // ─── Custom gates ─────────────────────────────────────────────────────────────
 
+use proofman_common::hash_family::{lookup_gate, GateRole};
+
 #[derive(Debug, Clone, Default)]
 pub struct CustomGatesInfo {
-    pub poseidon12_id: u32,
-    pub cust_poseidon12_id: u32,
-    pub cmul_id: u32,
+    pub gate_ids: HashMap<GateRole, u32>,
     pub fft4_parameters: HashMap<u32, Vec<u64>>,
-    pub ev_pol4_id: u32,
-    pub tree_selector4_id: u32,
-    pub select_val1_id: u32,
-    pub n_cmul: usize,
-    pub n_poseidon12: usize,
-    pub n_cust_poseidon12: usize,
-    pub n_fft4: usize,
-    pub n_ev_pol4: usize,
-    pub n_tree_selector4: usize,
-    pub n_select_val1: usize,
+    pub n_per_role: HashMap<GateRole, usize>,
     pub n_plonk_rows: usize,
+}
+
+impl CustomGatesInfo {
+    pub fn role_id(&self, role: GateRole) -> Option<u32> {
+        self.gate_ids.get(&role).copied()
+    }
+
+    pub fn n(&self, role: GateRole) -> usize {
+        self.n_per_role.get(&role).copied().unwrap_or(0)
+    }
 }
 
 pub fn get_custom_gates_info(r1cs: &R1csFile) -> CustomGatesInfo {
     let mut info = CustomGatesInfo::default();
+    let mut families_seen: Vec<&'static str> = Vec::new();
+
     for (i, gate) in r1cs.custom_gates.iter().enumerate() {
         let i = i as u32;
-        match gate.template_name.as_str() {
-            "CMul" => {
-                info.cmul_id = i;
-                assert!(gate.parameters.is_empty());
-            }
-            "Poseidon16" => {
-                info.poseidon12_id = i;
-            }
-            "CustPoseidon16" => {
-                info.cust_poseidon12_id = i;
-            }
-            "EvPol4" => {
-                info.ev_pol4_id = i;
-                assert!(gate.parameters.is_empty());
-            }
-            "TreeSelector4" => {
-                info.tree_selector4_id = i;
-                assert!(gate.parameters.is_empty());
-            }
-            "SelectValue1" => {
-                info.select_val1_id = i;
-                assert!(gate.parameters.is_empty());
-            }
-            "FFT4" => {
+        let name = gate.template_name.as_str();
+        let (role, owning_family) = lookup_gate(name).unwrap_or_else(|| panic!("Unknown custom gate: {name}"));
+        match role {
+            GateRole::Fft4 => {
                 info.fft4_parameters.insert(i, gate.parameters.clone());
             }
-            other => panic!("Unknown custom gate: {}", other),
+            _ => {
+                assert!(gate.parameters.is_empty(), "{name} expected to be parameter-less");
+                if let Some(prev) = info.gate_ids.insert(role, i) {
+                    panic!("duplicate role {role:?}: gates {prev} and {i}");
+                }
+            }
+        }
+        if let Some(fam_id) = owning_family {
+            if !families_seen.contains(&fam_id) {
+                families_seen.push(fam_id);
+            }
         }
     }
+
+    if families_seen.len() > 1 {
+        panic!("r1cs mixes multiple hash families: {families_seen:?}");
+    }
+
+    let id_to_role: HashMap<u32, GateRole> = info.gate_ids.iter().map(|(role, id)| (*id, *role)).collect();
     for cgu in &r1cs.custom_gates_uses {
-        if cgu.id == info.cmul_id {
-            info.n_cmul += 1;
-        } else if cgu.id == info.poseidon12_id {
-            info.n_poseidon12 += 1;
-        } else if cgu.id == info.cust_poseidon12_id {
-            info.n_cust_poseidon12 += 1;
+        let role = if let Some(role) = id_to_role.get(&cgu.id) {
+            *role
         } else if info.fft4_parameters.contains_key(&cgu.id) {
-            info.n_fft4 += 1;
-        } else if cgu.id == info.ev_pol4_id {
-            info.n_ev_pol4 += 1;
-        } else if cgu.id == info.tree_selector4_id {
-            info.n_tree_selector4 += 1;
-        } else if cgu.id == info.select_val1_id {
-            info.n_select_val1 += 1;
+            GateRole::Fft4
         } else {
             panic!("Custom gate not defined: {}", cgu.id);
-        }
+        };
+        *info.n_per_role.entry(role).or_insert(0) += 1;
     }
     info
 }
 
-pub fn filter_gate_uses(uses: &[CustomGateUse], id: u32) -> Vec<&CustomGateUse> {
-    uses.iter().filter(|cgu| cgu.id == id).collect()
+pub fn filter_gate_uses(uses: &[CustomGateUse], id: Option<u32>) -> Vec<&CustomGateUse> {
+    match id {
+        Some(id) => uses.iter().filter(|cgu| cgu.id == id).collect(),
+        None => Vec::new(),
+    }
 }
 
 pub fn filter_fft4_gate_uses<'a>(

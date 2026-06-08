@@ -23,6 +23,7 @@ pub(crate) fn build_global_info_json(
     pilout: &pb::PilOut,
     pilout_name: &str,
     settings_map: &IndexMap<String, StarkSettings>,
+    hash: &str,
 ) -> serde_json::Value {
     let mut airs = Vec::new();
     let mut air_groups = Vec::new();
@@ -73,6 +74,7 @@ pub(crate) fn build_global_info_json(
         "numProofValues": pilout.num_proof_values,
         "proofValuesMap": proof_values_map,
         "publicsMap": publics_map,
+        "hash": hash,
     })
 }
 
@@ -82,10 +84,11 @@ pub(crate) fn write_global_info_json(
     pilout_name: &str,
     build_dir: &str,
     settings_map: &IndexMap<String, StarkSettings>,
+    hash: &str,
 ) -> Result<()> {
     let proving_key_dir = Path::new(build_dir).join("provingKey");
     fs::create_dir_all(&proving_key_dir)?;
-    let global_info = build_global_info_json(pilout, pilout_name, settings_map);
+    let global_info = build_global_info_json(pilout, pilout_name, settings_map, hash);
     let global_info_str = crate::output::json::to_json_string(&global_info)?;
     fs::write(proving_key_dir.join("pilout.globalInfo.json"), &global_info_str)?;
     Ok(())
@@ -102,7 +105,9 @@ pub(crate) fn write_global_constraints(
     let proving_key_dir = Path::new(build_dir).join("provingKey");
     fs::create_dir_all(&proving_key_dir)?;
 
-    let global_info = build_global_info_json(pilout, pilout_name, settings_map);
+    // Only proofValuesMap/aggTypes are read below; hash is irrelevant here.
+    let global_info =
+        build_global_info_json(pilout, pilout_name, settings_map, proofman_common::hash_family::DEFAULT_HASH_ID);
 
     let global_constraints = build_global_constraints_json(pilout)?;
     let gc_str = crate::output::json::to_json_string(&global_constraints)?;
@@ -145,9 +150,10 @@ pub(crate) fn write_global_info(
     pilout_name: &str,
     build_dir: &str,
     settings_map: &IndexMap<String, StarkSettings>,
+    hash: &str,
 ) -> Result<()> {
     write_global_constraints(pilout, pilout_name, build_dir, settings_map)?;
-    write_global_info_json(pilout, pilout_name, build_dir, settings_map)?;
+    write_global_info_json(pilout, pilout_name, build_dir, settings_map, hash)?;
     tracing::info!("Global info and constraints written");
     Ok(())
 }
@@ -640,7 +646,7 @@ mod tests {
 
         let build_dir = "/tmp/r39_test_global_info";
         let _ = std::fs::remove_dir_all(build_dir);
-        write_global_info(&pilout, &pilout_name, build_dir, &settings_map).unwrap();
+        write_global_info(&pilout, &pilout_name, build_dir, &settings_map, "Poseidon2").unwrap();
 
         let gi_str = std::fs::read_to_string(format!("{}/provingKey/pilout.globalInfo.json", build_dir)).unwrap();
         let gi: serde_json::Value = serde_json::from_str(&gi_str).unwrap();

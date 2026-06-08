@@ -37,8 +37,14 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
     let air_values_len = air_values_map.len();
     let has_stage1_air_values = air_values_map.iter().any(|v| v["stage"].as_u64() == Some(1));
 
+    // The contribution hash must use the same family as the proof being recursed
+    // (carried in globalInfo.hash). Poseidon2 ⇒ `Poseidon2(4, …)`, else Poseidon1
+    // (`Poseidon(…)`). Defaults to Poseidon2 (the system default) when absent.
+    let poseidon2 = vadcop_info.get("hash").and_then(|v| v.as_str()).map(|s| s == "Poseidon2").unwrap_or(true);
+
     // ── Drive the transcript (this part must stay imperative) ─────────────────
     let mut transcript = Transcript::new(arity, None);
+    transcript.set_poseidon2(poseidon2);
     transcript.put("rootC", 4);
     transcript.put("root1", 4);
     for (j, av) in air_values_map.iter().enumerate() {
@@ -62,9 +68,10 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
             y_fields.push(transcript.get_fields1_pub());
         }
     } else {
+        // GL width 16 (Poseidon1 or Poseidon2 per `poseidon2`): 12 inputs + 4 capacity → 16 cells.
         let stage1_count = air_values_map.iter().filter(|v| v["stage"].as_u64() == Some(1)).count();
-        let input_w = 4 * (arity - 1);
-        out_w = 4 * arity;
+        let input_w = 12;
+        out_w = 16;
         let early_rounds = stage1_count.div_ceil(input_w) + 1;
         transcript.set_early_rounds_override(early_rounds, 4, out_w);
 
@@ -100,6 +107,7 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
     ctx.insert("lattice_size", &lattice_size);
     ctx.insert("transcript_code", &transcript_code);
     ctx.insert("unused_air_values", &unused_air_values);
+    ctx.insert("poseidon2", &poseidon2);
 
     if is_ec {
         let curve_constants = &vadcop_info["curveConstants"];
@@ -134,22 +142,40 @@ mod tests {
     }
 
     #[test]
-    fn lattice_no_air_values() {
+    fn lattice_no_air_values_poseidon2() {
         let stark = stark_info(2, json!([]));
         let vadcop = json!({
             "curve": "None",
             "latticeSize": 32,
+            "hash": "Poseidon2",
         });
         let out = gen_calculate_hashes(&stark, &vadcop);
 
         assert!(out.contains("template CalculateStage1Hash()"));
         assert!(out.contains("signal output values[32]"));
         assert!(!out.contains("signal input airValues"));
-        assert!(out.contains("Poseidon2("));
+        // Poseidon2 family must emit the Poseidon2 template, never the (undefined-here) Poseidon1 one.
+        assert!(out.contains("Poseidon2(4, 16)("), "out:\n{out}");
+        assert!(!out.contains("<== Poseidon(16)("), "must not emit Poseidon1 template:\n{out}");
         assert!(out.contains("values[0] <=="));
-        // arity=2 → out_w = 8 → first round fills values[0..8]
-        assert!(out.contains("values[7] <=="));
+        // out_w = 16 → first round fills values[0..16]
+        assert!(out.contains("values[15] <=="));
         assert!(!out.contains("HashToCurve"));
+    }
+
+    #[test]
+    fn lattice_no_air_values_poseidon1() {
+        let stark = stark_info(2, json!([]));
+        let vadcop = json!({
+            "curve": "None",
+            "latticeSize": 32,
+            "hash": "Poseidon1",
+        });
+        let out = gen_calculate_hashes(&stark, &vadcop);
+
+        // Poseidon1 family emits the bare `Poseidon(nOuts)` template.
+        assert!(out.contains("Poseidon(16)("), "out:\n{out}");
+        assert!(!out.contains("Poseidon2(4, 16)("), "must not emit Poseidon2 template:\n{out}");
     }
 
     #[test]

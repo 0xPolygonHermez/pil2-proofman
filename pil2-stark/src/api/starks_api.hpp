@@ -17,6 +17,12 @@ extern "C" {
         }
     };
     
+    // Build-time hash family. Returns "Poseidon1" or "Poseidon2" depending on the
+    // STARK_POSEIDON1 compile flag the library was built with. Used to assert the
+    // proving key's configured hash matches the compiled prover.
+    // ========================================================================================
+    const char *get_stark_hash_family();
+
     // SetupCtx
     // ========================================================================================
     uint64_t n_hints_by_name(void *p_expression_bin, char *hintName);

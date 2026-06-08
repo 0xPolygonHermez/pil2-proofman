@@ -1,6 +1,6 @@
 // extern crate env_logger;
 use clap::Parser;
-use proofman_verifier::{verify_vadcop_final_compressed, verify_vadcop_final, VadcopFinalProof};
+use proofman_verifier::{verifier, VadcopFinalProof};
 use proofman_common::initialize_logger;
 use std::fs::File;
 use std::io::Read;
@@ -16,6 +16,9 @@ pub struct VerifyStark {
 
     #[clap(short = 'k', long)]
     pub verkey: String,
+
+    #[arg(long, default_value = "Poseidon2")]
+    pub hash: String,
 
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
@@ -40,10 +43,11 @@ impl VerifyStark {
         let vk: Vec<u64> = vk_bytes.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
 
         timer_start_info!(VERIFY_STARK);
+        let v = verifier(&self.hash);
         let valid = if proof.compressed {
-            verify_vadcop_final_compressed(&proof, &vk)
+            v.verify_vadcop_final_compressed(&proof, &vk)
         } else {
-            verify_vadcop_final(&proof, &vk)
+            v.verify_vadcop_final(&proof, &vk)
         };
         timer_stop_and_log_info!(VERIFY_STARK);
 

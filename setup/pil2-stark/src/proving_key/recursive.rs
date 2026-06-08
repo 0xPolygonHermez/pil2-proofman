@@ -93,6 +93,7 @@ pub struct RecursiveSetupConfig<'a> {
     pub verifier_info: &'a Value,
     pub stark_struct: Option<&'a Value>,
     pub has_compressor: bool,
+    pub hash: &'a str,
 
     /// When `Some`, the path to the original air's `{air_name}.starkinfo.json` on disk.
     /// Used by the A2 nQueries adjustment: if the recursive1 circuit is smaller than
@@ -177,8 +178,13 @@ pub fn gen_recursive_setup(
     } else {
         config.const_root.clone()
     };
-    let pil2circom_opts =
-        crate::io::recurser::Pil2CircomOptions { skip_main: true, verkey_input, enable_input, input_challenges };
+    let pil2circom_opts = crate::io::recurser::Pil2CircomOptions {
+        skip_main: true,
+        verkey_input,
+        enable_input,
+        input_challenges,
+        hash: config.hash.to_string(),
+    };
     let verifier_path = circom_dir.join(&verifier_name);
     let verifier_filenames = vec![verifier_name.clone()];
     let circom_out_path = circom_dir.join(format!("{}.circom", name_filename));
@@ -193,7 +199,11 @@ pub fn gen_recursive_setup(
         RecursiveTemplate::Recursive2 => "Recursive2".to_string(),
         _ => airgroup_pil_name.clone(),
     };
-    let mut plonk_opts = PlonkOptions { airgroup_name: Some(plonk_airgroup_name), max_constraint_degree: None };
+    let mut plonk_opts = PlonkOptions {
+        airgroup_name: Some(plonk_airgroup_name),
+        max_constraint_degree: None,
+        hash_id: config.hash.to_string(),
+    };
     if template == RecursiveTemplate::Compressor {
         plonk_opts.max_constraint_degree = Some(5);
     }
@@ -672,6 +682,7 @@ pub fn gen_recursive_setup(
                 &si_loaded,
                 &vi_loaded,
                 true, // recursive2 uses VadcopFinalProof
+                config.hash,
             )?;
         }
     }

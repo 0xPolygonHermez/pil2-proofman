@@ -1,37 +1,60 @@
-// TREESELECTOR4 GATE - Check that given 4 values and a key, checks that the output is correct
-// The tree is created as follows: if key = 0, even values are pushed up the tree, if the key = 1 the odd ones are pushed.
-// Therefore, we need to check that 
-// key == [0,0] -> [value1, value2, value3, value4] -> [value1, value3] -> [value1]
-// key == [1,0] -> [value1, value2, value3, value4] -> [value2, value4] -> [value2]
-// key == [0,1] -> [value1, value2, value3, value4] -> [value1, value3] -> [value3]
-// key == [1,1] -> [value1, value2, value3, value4] -> [value2, value4] -> [value4]
-
-// The values are stored from a[0], a[1], a[2] // a[3], a[4], a[5] // a[6], a[7], a[8] // a[9], a[10], a[11] 
-// The key is stored in [a[12], a[13]]
-// The output is stored in [a[14], a[15], a[16]]
+// TREESELECTOR4 GATE - Given 4 values (each a 3-element vector) and a 2-bit key,
+// pick the value whose index equals the key (key[0] = LSB, key[1] = MSB).
 function treeselector4(const expr vals[][], const expr key[], const expr res[], const expr sel) {
 
-    const expr key00 = (1 - key[0]) * (1 - key[1]);
-    const expr key10 = key[0] * (1 - key[1]);
-    const expr key01 = (1 - key[0]) * key[1];
-    const expr key11 = key[0] * key[1];
+    const expr nk0 = 1 - key[0];
+    const expr nk1 = 1 - key[1];
 
-    sel * key00 * (vals[0][0] - res[0]) === 0;
-    sel * key00 * (vals[0][1] - res[1]) === 0;
-    sel * key00 * (vals[0][2] - res[2]) === 0;
+    const expr m[4];
+    m[0] = nk0   * nk1;    // 00
+    m[1] = key[0]* nk1;    // 10  (k0 = 1)
+    m[2] = nk0   * key[1]; // 01  (k1 = 1)
+    m[3] = key[0]* key[1]; // 11
 
-    sel * key10 * (vals[1][0] - res[0]) === 0;
-    sel * key10 * (vals[1][1] - res[1]) === 0;
-    sel * key10 * (vals[1][2] - res[2]) === 0;
+    for (int i = 0; i < 4; i++) {
+        sel * m[i] * (vals[i][0] - res[0]) === 0;
+        sel * m[i] * (vals[i][1] - res[1]) === 0;
+        sel * m[i] * (vals[i][2] - res[2]) === 0;
+    }
 
-    sel * key01 * (vals[2][0] - res[0]) === 0;
-    sel * key01 * (vals[2][1] - res[1]) === 0;
-    sel * key01 * (vals[2][2] - res[2]) === 0;
+    sel * (key[0] * (1 - key[0])) === 0;
+    sel * (key[1] * (1 - key[1])) === 0;
+}
 
-    sel * key11 * (vals[3][0] - res[0]) === 0;
-    sel * key11 * (vals[3][1] - res[1]) === 0;
-    sel * key11 * (vals[3][2] - res[2]) === 0;
+// TREESELECTOR8 GATE - Given 8 values (each a 3-element vector) and a 3-bit key,
+// pick the value whose index equals the key (key[0] = LSB, key[2] = MSB).
+//
+// The tree is created as follows: at every level, if key[i] = 0 we push the even
+// positions, if key[i] = 1 we push the odd ones. With key = [k0, k1, k2]:
+//   [v0..v7] → [v_{k0}, v_{k0+2}, v_{k0+4}, v_{k0+6}] → [v_{k0+2*k1}, v_{k0+2*k1+4}] → v_{k0+2*k1+4*k2}.
+//
+// Layout (30 cells = exact plonk-band width when 10 plonk gates × 3 cells):
+//   vals[0..7] × 3 cells  → a[0..23]
+//   key[3]                → a[24..26]
+//   res[3]                → a[27..29]
+function treeselector8(const expr vals[][], const expr key[], const expr res[], const expr sel) {
 
-    sel * (key[0]*(1 - key[0])) === 0;
-    sel * (key[1]*(1 - key[1])) === 0;
+    const expr nk0 = 1 - key[0];
+    const expr nk1 = 1 - key[1];
+    const expr nk2 = 1 - key[2];
+
+    const expr m[8];
+    m[0] = nk0   * nk1   * nk2;     // 000
+    m[1] = key[0]* nk1   * nk2;     // 100  (k0 = 1)
+    m[2] = nk0   * key[1]* nk2;     // 010  (k1 = 1)
+    m[3] = key[0]* key[1]* nk2;     // 110
+    m[4] = nk0   * nk1   * key[2];  // 001  (k2 = 1)
+    m[5] = key[0]* nk1   * key[2];  // 101
+    m[6] = nk0   * key[1]* key[2];  // 011
+    m[7] = key[0]* key[1]* key[2];  // 111
+
+    for (int i = 0; i < 8; i++) {
+        sel * m[i] * (vals[i][0] - res[0]) === 0;
+        sel * m[i] * (vals[i][1] - res[1]) === 0;
+        sel * m[i] * (vals[i][2] - res[2]) === 0;
+    }
+
+    sel * (key[0] * (1 - key[0])) === 0;
+    sel * (key[1] * (1 - key[1])) === 0;
+    sel * (key[2] * (1 - key[2])) === 0;
 }

@@ -271,54 +271,81 @@ jobs:
           sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev nasm libsodium-dev cmake
           sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
 
-      - name: Setup Recursive (Compressor)
+      # ---------------------------------------------------------------------
+      # Poseidon2 (default hash family — no feature flag).
+      # Both setup types (compressor + aggregation) reuse the same workspace
+      # build; only the setup-recursive-test step differs.
+      # ---------------------------------------------------------------------
+      - name: Setup Recursive Poseidon2 (Compressor)
         run: |
-          cargo run --bin proofman-setup -- setup-recursive-test -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t compressor
+          cargo run --bin proofman-setup -- setup-recursive-test -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t compressor --hash Poseidon2
 
-      - name: Cargo build (Compressor)
+      - name: Cargo build Poseidon2
         run: RUST_BACKTRACE=1 cargo build -v --workspace
-      
-      - name: Verify constraints Recursive (Compressor)
+
+      - name: Verify constraints Recursive Poseidon2 (Compressor)
         run: |
           cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libtest_recursive.so --proving-key examples/test-recursive/build/provingKey
 
-      - name: Generate proof Recursive (Compressor)
+      - name: Generate proof Recursive Poseidon2 (Compressor)
         run: |
           cargo run --bin proofman-cli prove --witness-lib ./target/debug/libtest_recursive.so --proving-key examples/test-recursive/build/provingKey/ --output-dir examples/test-recursive/build/proofs -y
 
-      - name: Setup Recursive (Aggregation)
-        run: |
-          cargo run --bin proofman-setup -- setup-recursive-test -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t aggregation
+      - name: Clean proof dir Poseidon2 (Compressor)
+        run: rm -rf examples/test-recursive/build/proofs
 
-      - name: Cargo build (Aggregation)
-        run: RUST_BACKTRACE=1 cargo build -v --workspace
-      
-      - name: Verify constraints Recursive (Aggregation)
+      - name: Setup Recursive Poseidon2 (Aggregation)
+        run: |
+          cargo run --bin proofman-setup -- setup-recursive-test -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t aggregation --hash Poseidon2
+
+      - name: Verify constraints Recursive Poseidon2 (Aggregation)
         run: |
           cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libtest_recursive.so --proving-key examples/test-recursive/build/provingKey
 
-      - name: Generate proof Recursive (Aggregation)
+      - name: Generate proof Recursive Poseidon2 (Aggregation)
         run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libtest_recursive.so --proving-key examples/test-recursive/build/provingKey/ --output-dir examples/test-recursive/build/proofs -y 
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libtest_recursive.so --proving-key examples/test-recursive/build/provingKey/ --output-dir examples/test-recursive/build/proofs -y
 
-      - name: Setup Recursive (Final)
-        run: |
-          cargo run --bin proofman-setup -- setup-recursive-test -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t final_vadcop
+      - name: Clean proof dir Poseidon2 (Aggregation)
+        run: rm -rf examples/test-recursive/build/proofs
 
-      - name: Cargo build (Final)
-        run: RUST_BACKTRACE=1 cargo build -v --workspace
-      
-      - name: Verify constraints Recursive (Final)
+      # ---------------------------------------------------------------------
+      # Poseidon1 (Hades). The stark-poseidon1 feature flips a compile-time
+      # C++ flag (-DSTARK_POSEIDON1), so EVERY cargo invocation must carry it
+      # and the workspace is rebuilt once for this family.
+      # ---------------------------------------------------------------------
+      - name: Setup Recursive Poseidon1 (Compressor)
         run: |
-          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libtest_recursive.so --proving-key examples/test-recursive/build/provingKey
+          cargo run --features stark-poseidon1 --bin proofman-setup -- setup-recursive-test -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t compressor --hash Poseidon1
 
-      - name: Generate proof Recursive (Final)
-        run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libtest_recursive.so --proving-key examples/test-recursive/build/provingKey/ --output-dir examples/test-recursive/build/proofs -y 
+      - name: Cargo build Poseidon1
+        run: RUST_BACKTRACE=1 cargo build -v --workspace --features stark-poseidon1
 
-      - name: Clean proof dir
+      - name: Verify constraints Recursive Poseidon1 (Compressor)
         run: |
-          rm -rf examples/test-recursive/build/proofs
+          cargo run --features stark-poseidon1 --bin proofman-cli verify-constraints --witness-lib ./target/debug/libtest_recursive.so --proving-key examples/test-recursive/build/provingKey
+
+      - name: Generate proof Recursive Poseidon1 (Compressor)
+        run: |
+          cargo run --features stark-poseidon1 --bin proofman-cli prove --witness-lib ./target/debug/libtest_recursive.so --proving-key examples/test-recursive/build/provingKey/ --output-dir examples/test-recursive/build/proofs -y
+
+      - name: Clean proof dir Poseidon1 (Compressor)
+        run: rm -rf examples/test-recursive/build/proofs
+
+      - name: Setup Recursive Poseidon1 (Aggregation)
+        run: |
+          cargo run --features stark-poseidon1 --bin proofman-setup -- setup-recursive-test -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t aggregation --hash Poseidon1
+
+      - name: Verify constraints Recursive Poseidon1 (Aggregation)
+        run: |
+          cargo run --features stark-poseidon1 --bin proofman-cli verify-constraints --witness-lib ./target/debug/libtest_recursive.so --proving-key examples/test-recursive/build/provingKey
+
+      - name: Generate proof Recursive Poseidon1 (Aggregation)
+        run: |
+          cargo run --features stark-poseidon1 --bin proofman-cli prove --witness-lib ./target/debug/libtest_recursive.so --proving-key examples/test-recursive/build/provingKey/ --output-dir examples/test-recursive/build/proofs -y
+
+      - name: Clean proof dir Poseidon1 (Aggregation)
+        run: rm -rf examples/test-recursive/build/proofs
   test-std:
     name: Test STD
     runs-on: ubuntu-latest

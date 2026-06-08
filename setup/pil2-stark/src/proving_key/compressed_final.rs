@@ -32,6 +32,7 @@ use crate::output::witness_gen::WitnessTracker;
 /// Configuration for the compressed final setup.
 pub struct CompressedFinalConfig<'a> {
     pub build_dir: &'a str,
+    pub hash: &'a str,
     pub name: &'a str,
     pub const_root: &'a [String; 4],
     pub verification_keys: &'a [Vec<Vec<String>>],
@@ -68,6 +69,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
     // Generate verifier circom via Rust gen_stark_verifier
     {
         let rust_opts = StarkVerifierOptions {
+            hash: config.hash.to_string(),
             skip_main: true,
             verkey_input: false,
             enable_input: false,
@@ -151,8 +153,11 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
     let r1cs_path = build_path.join(format!("{}.r1cs", template));
     let r1cs_data = fs::read(&r1cs_path).with_context(|| format!("Failed to read R1CS: {}", r1cs_path.display()))?;
 
-    let plonk_opts =
-        PlonkOptions { airgroup_name: Some("VadcopFinalCompressed".to_string()), max_constraint_degree: None };
+    let plonk_opts = PlonkOptions {
+        airgroup_name: Some("VadcopFinalCompressed".to_string()),
+        max_constraint_degree: None,
+        hash_id: config.hash.to_string(),
+    };
     let plonk_result: PlonkResult = plonk2pil::plonk2pil(&r1cs_data, "aggregation", &plonk_opts)
         .context("plonk2pil failed in compressed final setup")?;
 
@@ -335,6 +340,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
             &si_loaded,
             &ver_loaded,
             true,
+            config.hash,
         )?;
     }
 
