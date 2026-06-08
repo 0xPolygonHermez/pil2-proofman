@@ -1410,6 +1410,22 @@ pub fn get_unified_buffer_gpu_c(d_buffers: *mut ::std::os::raw::c_void) -> *mut 
     unsafe { get_unified_buffer_gpu(d_buffers) }
 }
 
+pub fn get_unified_buffer_gpu_size_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
+    unsafe { get_unified_buffer_gpu_size(d_buffers) }
+}
+
+pub fn unified_buffer_acquire_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { unified_buffer_acquire(d_buffers) }
+}
+
+pub fn unified_buffer_release_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { unified_buffer_release(d_buffers) }
+}
+
+pub fn unified_buffer_is_borrowed_c(d_buffers: *mut ::std::os::raw::c_void) -> bool {
+    unsafe { unified_buffer_is_borrowed(d_buffers) != 0 }
+}
+
 pub fn get_unified_buffer_gpu_for_recursivef_c(
     d_buffers: *mut ::std::os::raw::c_void,
     d_buffers_recursivef: *mut ::std::os::raw::c_void,
