@@ -359,12 +359,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "connection"
+name = "common"
 version = "1.0.0-beta"
 dependencies = [
  "fields",
+ "pil2-stark-setup",
+ "proofman",
+ "proofman-common",
+]
+
+[[package]]
+name = "connection"
+version = "1.0.0-beta"
+dependencies = [
+ "common",
+ "fields",
  "num-bigint",
  "pil-std-lib",
+ "pil2-stark-setup",
  "proofman",
  "proofman-cli",
  "proofman-common",
@@ -551,10 +563,12 @@ dependencies = [
 name = "direct-update"
 version = "1.0.0-beta"
 dependencies = [
+ "common",
  "fields",
  "num-bigint",
  "num-traits",
  "pil-std-lib",
+ "pil2-stark-setup",
  "proofman",
  "proofman-cli",
  "proofman-common",
@@ -993,9 +1007,11 @@ checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
 name = "lookup"
 version = "1.0.0-beta"
 dependencies = [
+ "common",
  "fields",
  "num-bigint",
  "pil-std-lib",
+ "pil2-stark-setup",
  "proofman",
  "proofman-cli",
  "proofman-common",
@@ -1185,9 +1201,11 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 name = "one-instance"
 version = "1.0.0-beta"
 dependencies = [
+ "common",
  "fields",
  "num-bigint",
  "pil-std-lib",
+ "pil2-stark-setup",
  "proofman",
  "proofman-cli",
  "proofman-common",
@@ -1255,9 +1273,11 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 name = "permutation"
 version = "1.0.0-beta"
 dependencies = [
+ "common",
  "fields",
  "num-bigint",
  "pil-std-lib",
+ "pil2-stark-setup",
  "proofman",
  "proofman-cli",
  "proofman-common",
@@ -1732,10 +1752,12 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 name = "range-check"
 version = "1.0.0-beta"
 dependencies = [
+ "common",
  "fields",
  "num-bigint",
  "num-traits",
  "pil-std-lib",
+ "pil2-stark-setup",
  "proofman",
  "proofman-cli",
  "proofman-common",
@@ -2001,9 +2023,11 @@ dependencies = [
 name = "simple"
 version = "1.0.0-beta"
 dependencies = [
+ "common",
  "fields",
  "num-bigint",
  "pil-std-lib",
+ "pil2-stark-setup",
  "pilout",
  "proofman",
  "proofman-cli",
@@ -2051,6 +2075,13 @@ checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "special"
+version = "1.0.0-beta"
+dependencies = [
+ "common",
 ]
 
 [[package]]
@@ -2448,9 +2479,11 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "virtual-tables"
 version = "1.0.0-beta"
 dependencies = [
+ "common",
  "fields",
  "num-bigint",
  "pil-std-lib",
+ "pil2-stark-setup",
  "proofman",
  "proofman-cli",
  "proofman-common",

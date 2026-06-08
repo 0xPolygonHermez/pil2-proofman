@@ -37,7 +37,9 @@ members = [
     "pil2-components/test/permutation/rs",
     "pil2-components/test/range_check/rs",
     "pil2-components/test/simple/rs",
+    "pil2-components/test/special/rs",
     "pil2-components/test/virtual_tables/rs",
+    "pil2-components/test/common/rs",
 
     # Examples
     "examples/fibonacci-square",

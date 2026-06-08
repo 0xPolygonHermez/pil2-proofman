@@ -1,0 +1,12 @@
+// Must fail to compile: multi_range_check does not support predefined: 1 (WIP).
+
+require "std_range_check.pil"
+
+airtemplate MultiRangeCheckPredefined(const int N = 2**4) {
+    col witness x, sx, rsel;
+    multi_range_check(x, 0, 2**7-1, 0, 2**8-1, rsel, sx, predefined: 1);  // ERROR: WIP
+}
+
+airgroup MultiRangeCheckPredefined {
+    MultiRangeCheckPredefined();
+}

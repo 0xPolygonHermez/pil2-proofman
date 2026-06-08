@@ -1,0 +1,12 @@
+// Must fail to compile: dynamic_range_check_id was called but the matching
+// dynamic_range_check never fired; check_dynamic_called errors at end of air.
+
+require "std_range_check.pil"
+
+airtemplate DynamicRangeCheckIdNotCalled(const int N = 2**4) {
+    int op = dynamic_range_check_id(100, 200);  // ERROR: no dynamic_range_check follows
+}
+
+airgroup DynamicRangeCheckIdNotCalled {
+    DynamicRangeCheckIdNotCalled();
+}

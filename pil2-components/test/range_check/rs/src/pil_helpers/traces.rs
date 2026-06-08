@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "82340f76128a3e3df658762de3378af60f37b39f201ad2a7f79ec47330f19552";
+pub const PILOUT_HASH: &str = "cb337299dd9502b938d16a1dbc3c3fe5b5bd4cc241dedec5928bd80fb2a8513e";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
