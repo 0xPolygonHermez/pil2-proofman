@@ -10,7 +10,7 @@ use fields::Goldilocks;
 use proofman::SnarkWrapper;
 use proofman::ProofMan;
 use proofman::ProvePhaseResult;
-use proofman_common::{ModeName, ProofOptions, ProofmanOptions};
+use proofman_common::{ProofOptions, ProofmanOptions};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -94,7 +94,7 @@ impl ProveCmd {
             Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone())?,
         };
 
-        let verify_constraints = debug_info.std_mode.name == ModeName::Debug;
+        let verify_constraints = debug_info.verify_constraints;
 
         let mut options = ProofmanOptions::new();
 
@@ -137,16 +137,23 @@ impl ProveCmd {
             self.verify_proofs,
             self.minimal_memory,
         );
-        if debug_info.std_mode.name == ModeName::Debug {
-            match self.field {
+        if debug_info.verify_constraints {
+            let report = match self.field {
                 Field::Goldilocks => proofman.verify_proof_constraints(
                     self.witness_lib.clone(),
                     self.public_inputs.clone(),
                     None,
-                    &debug_info.clone(),
+                    Some(&debug_info),
                     self.verbose.into(),
                 )?,
             };
+            if !report.all_ok {
+                return Err(format!(
+                    "Constraints were not verified: {} bus section(s) with mismatches",
+                    report.bus_sections.iter().filter(|s| s.mismatched).count()
+                )
+                .into());
+            }
         } else {
             proofman.set_barrier();
             let result = match self.field {

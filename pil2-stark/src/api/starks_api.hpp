@@ -32,7 +32,10 @@ extern "C" {
     uint64_t get_proof_size(void *pStarkInfo);
     uint64_t get_proof_pinned_size(void *pStarkInfo);
     void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3);
-    uint64_t get_map_total_n(void *pStarkInfo);
+    // Two parallel layouts: CPU consumers (host expression eval, host
+    // verify-constraints) read `mapTotalNCPU`; GPU consumers read `mapTotalNGPU`.
+    uint64_t get_map_total_n_cpu(void *pStarkInfo);
+    uint64_t get_map_total_n_gpu(void *pStarkInfo);
     uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
     uint64_t get_map_total_n_contributions(void *pStarkInfo);
     uint64_t get_tree_size(void *pStarkInfo);
@@ -80,8 +83,9 @@ extern "C" {
     // Starks
     // ========================================================================================
     void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsParams);
-    void calculate_witness_expr(void *pSetupCtx, void * stepsParams);
-    
+    void calculate_witness_expr(void *pSetupCtx, void *stepsParams, void *d_buffers_, uint64_t airgroupId, uint64_t airId);
+    void unpack_trace(void *pSetupCtx, void *stepsParams, void *d_buffers_, uint64_t airgroupId, uint64_t airId);
+
     uint64_t custom_commit_size(void *pSetup, uint64_t commitId);
     void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *customCommitFile);
     void write_custom_commit(void *root,  uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile);

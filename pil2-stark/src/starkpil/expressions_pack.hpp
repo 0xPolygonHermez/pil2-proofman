@@ -8,7 +8,7 @@
 #define NROWS_PACK 128
 class ExpressionsPack : public ExpressionsCtx {
 public:
-    ExpressionsPack(SetupCtx& setupCtx, ProverHelpers* proverHelpers, uint64_t nrowsPack = NROWS_PACK) : ExpressionsCtx(setupCtx, proverHelpers) {
+    ExpressionsPack(SetupCtx& setupCtx, ProverHelpers* proverHelpers, uint64_t nrowsPack = NROWS_PACK) : ExpressionsCtx(setupCtx, false, proverHelpers) {
         nrowsPack_ = std::min(nrowsPack, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits));
     };
 
@@ -345,9 +345,9 @@ public:
             }
         }
         
-        Goldilocks::Element *tmp1_ = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("tmp1", false)]];
-        Goldilocks::Element *tmp3_ = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("tmp3", false)]];
-        Goldilocks::Element *values_ = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("values", false)]];
+        Goldilocks::Element *tmp1_ = &params.aux_trace[setupCtx.starkInfo.mapOffsetsCPU[std::make_pair("tmp1", false)]];
+        Goldilocks::Element *tmp3_ = &params.aux_trace[setupCtx.starkInfo.mapOffsetsCPU[std::make_pair("tmp3", false)]];
+        Goldilocks::Element *values_ = &params.aux_trace[setupCtx.starkInfo.mapOffsetsCPU[std::make_pair("values", false)]];
     #pragma omp parallel for
         for (uint64_t i = 0; i < domainSize; i+= nrowsPack) {
             bool isCyclic = i < k_min || i >= k_max;

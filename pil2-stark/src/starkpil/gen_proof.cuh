@@ -107,7 +107,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
     Goldilocks::Element *pConstPolsExtendedTreeAddress = (Goldilocks::Element *)d_const_tree;
-    Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
+    Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("custom_fixed", false)];
     
     Starks<Goldilocks::Element> starks(setupCtx, nullptr, nullptr, false, false);
     starks.treesGL[setupCtx.starkInfo.nStages + 1]->setSource(pConstPolsExtendedTreeAddress);
@@ -120,21 +120,21 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
 
     uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
     
-    uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", false)];
-    uint64_t offsetPublicInputs = setupCtx.starkInfo.mapOffsets[std::make_pair("publics", false)];
-    uint64_t offsetAirgroupValues = setupCtx.starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
-    uint64_t offsetAirValues = setupCtx.starkInfo.mapOffsets[std::make_pair("airvalues", false)];
-    uint64_t offsetProofValues = setupCtx.starkInfo.mapOffsets[std::make_pair("proofvalues", false)];
-    uint64_t offsetEvals = setupCtx.starkInfo.mapOffsets[std::make_pair("evals", false)];
-    uint64_t offsetChallenges = setupCtx.starkInfo.mapOffsets[std::make_pair("challenges", false)];
-    uint64_t offsetXDivXSub = setupCtx.starkInfo.mapOffsets[std::make_pair("xdivxsub", false)];
-    uint64_t offsetFriQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("fri_queries", false)];
-    uint64_t offsetChallenge = setupCtx.starkInfo.mapOffsets[std::make_pair("challenge", false)];
-    uint64_t offsetNonce = setupCtx.starkInfo.mapOffsets[std::make_pair("nonce", false)];
-    uint64_t offsetNonceBlocks = setupCtx.starkInfo.mapOffsets[std::make_pair("nonce_blocks", false)];
-    uint64_t offsetInputHashNonce = setupCtx.starkInfo.mapOffsets[std::make_pair("input_hash_nonce", false)];
-    uint64_t offsetProofQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("proof_queries", false)];
-    uint64_t offsetConstPols = setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)];
+    uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("cm1", false)];
+    uint64_t offsetPublicInputs = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("publics", false)];
+    uint64_t offsetAirgroupValues = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("airgroupvalues", false)];
+    uint64_t offsetAirValues = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("airvalues", false)];
+    uint64_t offsetProofValues = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("proofvalues", false)];
+    uint64_t offsetEvals = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("evals", false)];
+    uint64_t offsetChallenges = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("challenges", false)];
+    uint64_t offsetXDivXSub = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("xdivxsub", false)];
+    uint64_t offsetFriQueries = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("fri_queries", false)];
+    uint64_t offsetChallenge = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("challenge", false)];
+    uint64_t offsetNonce = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("nonce", false)];
+    uint64_t offsetNonceBlocks = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("nonce_blocks", false)];
+    uint64_t offsetInputHashNonce = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("input_hash_nonce", false)];
+    uint64_t offsetProofQueries = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("proof_queries", false)];
+    uint64_t offsetConstPols = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("const", false)];
 
     Goldilocks::Element *packed_const_pols = (Goldilocks::Element *)d_const_pols;
     Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
@@ -195,7 +195,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     }
     
     if (!skipRecalculation) {
-        uint64_t offsetCm1Extended = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", true)];
+        uint64_t offsetCm1Extended = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("cm1", true)];
         if (d_buffers->packedTrace && air_instance_info->is_packed) {
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm1"];
             unpack_trace(air_instance_info, (uint64_t*)h_params.aux_trace + offsetCm1Extended, (uint64_t*)h_params.trace, nCols, N, stream, timer); 
@@ -248,7 +248,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
             d_transcript->getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION], stream);
         }
     }
-    uint64_t zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
+    uint64_t zi_offset = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("zi", true)];
     computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, stream);
 
     if (setupCtx.starkInfo.calculateFixedExtended && !reuse_constants) {
@@ -258,7 +258,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     }
 
     TimerStartGPU(timer, STARK_QUOTIENT_POLYNOMIAL);
-    calculateExpressionQ(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+    calculateExpressionQ(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("q", true)]), d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     TimerStopGPU(timer, STARK_QUOTIENT_POLYNOMIAL);
     commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, (gl64_t *)h_params.trace, (gl64_t *)h_params.aux_trace, d_transcript, false, timer, stream);
     TimerStopGPU(timer, STARK_STEP_Q);
@@ -274,7 +274,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     }
 
     Goldilocks::Element *d_xiChallenge = &h_params.challenges[xiChallengeIndex * FIELD_EXTENSION];
-    gl64_t * d_LEv = (gl64_t *) h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];
+    gl64_t * d_LEv = (gl64_t *) h_params.aux_trace +setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("lev", false)];
 
     CHECKCUDAERR(cudaMemsetAsync(h_params.evals, 0, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element), stream));
     uint64_t count = 0;
@@ -285,7 +285,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
                 openingPoints.push_back(setupCtx.starkInfo.openingPoints[i + j]);
             }
         }
-        uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_lev", false)];
+        uint64_t offset_helper = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("extra_helper_fft_lev", false)];
         computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), &air_instance_info->opening_points[i], d_aux_trace, offset_helper, d_LEv, timer, stream);
         evmap_inplace(setupCtx, h_params, count++, openingPoints.size(), openingPoints.data(), air_instance_info, (Goldilocks::Element*)d_LEv, offset_helper, timer, stream);
     }
@@ -310,7 +310,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     //--------------------------------
     TimerStartGPU(timer, STARK_STEP_FRI);
     calculateXis_inplace(setupCtx, h_params, air_instance_info->opening_points, d_xiChallenge, stream);    
-    uint64_t x_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)];
+    uint64_t x_offset = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("x", true)];
     dim3 threads(256);
     dim3 blocks((NExtended + threads.x - 1) / threads.x);
     computeX_kernel<<<blocks, threads, 0, stream>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));
@@ -320,16 +320,16 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStopCategoryGPU(timer, EXPRESSIONS);
     TimerStopGPU(timer, STARK_FRI_POLYNOMIAL);
     for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) { 
-        Goldilocks::Element *src = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)];
+        Goldilocks::Element *src = h_params.aux_trace + setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("fri_" + to_string(step + 1), true)];
         starks.treesFRI[step]->setSource(src);
 
         if(setupCtx.starkInfo.starkStruct.verificationHashType == "GL") {
-            Goldilocks::Element *pBuffNodesGL = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("mt_fri_" + to_string(step + 1), true)];
+            Goldilocks::Element *pBuffNodesGL = h_params.aux_trace + setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("mt_fri_" + to_string(step + 1), true)];
             starks.treesFRI[step]->setNodes(pBuffNodesGL);
         }
     }
-    uint64_t friPol_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
-    uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
+    uint64_t friPol_offset = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("f", true)];
+    uint64_t offset_helper = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("buff_helper", false)];
     gl64_t *d_friPol = (gl64_t *)(h_params.aux_trace + friPol_offset);
     
     uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.steps[0].nBits;

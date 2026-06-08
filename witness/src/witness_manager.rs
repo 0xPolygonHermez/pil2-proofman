@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock, Mutex};
 use std::path::PathBuf;
 
 use fields::PrimeField64;
-use proofman_common::{BufferPool, DebugInfo, RankInfo, ModeName, ProofCtx, ProofmanResult, SetupCtx};
+use proofman_common::{BufferPool, DebugInfo, RankInfo, ProofCtx, ProofmanResult, SetupCtx};
 use crate::WitnessComponent;
 use libloading::Library;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -107,7 +107,7 @@ impl<F: PrimeField64> WitnessManager<F> {
     }
 
     pub fn debug(&self, instance_ids: &[usize], debug_info: &DebugInfo) -> ProofmanResult<()> {
-        if debug_info.std_mode.name == ModeName::Debug {
+        if debug_info.verify_constraints {
             for (idx, component) in self.components.read().unwrap().iter().enumerate() {
                 let ids_hash_set: HashSet<usize> = instance_ids.iter().cloned().collect();
 
@@ -122,7 +122,7 @@ impl<F: PrimeField64> WitnessManager<F> {
                 }
             }
         }
-        if debug_info.std_mode.name == ModeName::Debug {
+        if debug_info.bus_mode.enabled {
             for component in self.components_std.read().unwrap().iter() {
                 component.debug(self.pctx.clone(), self.sctx.clone(), instance_ids)?;
             }

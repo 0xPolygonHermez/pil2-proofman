@@ -170,7 +170,7 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
     }
 
     Goldilocks::Element *xiChallenge = &challenges[xiChallengeIndex * FIELD_EXTENSION];
-    Goldilocks::Element* LEv = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("lev", false)]];
+    Goldilocks::Element* LEv = &params.aux_trace[setupCtx.starkInfo.mapOffsetsCPU[make_pair("lev", false)]];
 
     for(uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); i+= 4) {
         std::vector<int64_t> openingPoints;
@@ -211,7 +211,7 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
     TimerStopAndLog(COMPUTE_FRI_POLYNOMIAL);
 
     Goldilocks::Element challenge[FIELD_EXTENSION];
-    Goldilocks::Element *friPol = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]];
+    Goldilocks::Element *friPol = &params.aux_trace[setupCtx.starkInfo.mapOffsetsCPU[std::make_pair("f", true)]];
     
     TimerStart(STARK_FRI_FOLDING);
     uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.steps[0].nBits;

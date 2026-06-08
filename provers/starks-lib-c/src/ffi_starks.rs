@@ -134,8 +134,12 @@ pub fn stark_info_new_c(
     }
 }
 
-pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
-    unsafe { get_map_total_n(p_stark_info) }
+pub fn get_map_totaln_cpu_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_map_total_n_cpu(p_stark_info) }
+}
+
+pub fn get_map_totaln_gpu_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_map_total_n_gpu(p_stark_info) }
 }
 
 pub fn get_map_totaln_contributions_c(p_stark_info: *mut c_void) -> u64 {
@@ -605,9 +609,27 @@ pub fn calculate_impols_expressions_c(p_setup: *mut c_void, step: u64, p_steps_p
     }
 }
 
-pub fn calculate_witness_expressions_c(p_setup: *mut c_void, p_steps_params: *mut u8) {
+pub fn calculate_witness_expressions_c(
+    p_setup: *mut c_void,
+    p_steps_params: *mut u8,
+    d_buffers: *mut c_void,
+    airgroup_id: u64,
+    air_id: u64,
+) {
     unsafe {
-        calculate_witness_expr(p_setup, p_steps_params as *mut std::os::raw::c_void);
+        calculate_witness_expr(p_setup, p_steps_params as *mut std::os::raw::c_void, d_buffers, airgroup_id, air_id);
+    }
+}
+
+pub fn unpack_trace_c(
+    p_setup: *mut c_void,
+    p_steps_params: *mut u8,
+    d_buffers: *mut c_void,
+    airgroup_id: u64,
+    air_id: u64,
+) {
+    unsafe {
+        unpack_trace(p_setup, p_steps_params as *mut std::os::raw::c_void, d_buffers, airgroup_id, air_id);
     }
 }
 

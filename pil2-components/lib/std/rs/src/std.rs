@@ -1,8 +1,8 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use fields::PrimeField64;
 
-use proofman_common::{ProofCtx, ProofmanResult, SetupCtx, StdMode};
+use proofman_common::{ProofCtx, ProofmanResult, SetupCtx};
 
 use crate::{StdProd, StdRangeCheck, StdSum, StdVirtualTable};
 
@@ -48,9 +48,6 @@ const VIRTUAL_TABLE_MARKER: usize = 1 << 62;
 const ID_MASK: usize = !(RANGE_CHECK_MARKER | VIRTUAL_TABLE_MARKER);
 
 pub struct Std<F: PrimeField64> {
-    // STD mode
-    pub mode: RwLock<StdMode>,
-
     // STD components
     pub prod_bus: Arc<StdProd<F>>,
     pub sum_bus: Arc<StdSum<F>>,
@@ -60,16 +57,13 @@ pub struct Std<F: PrimeField64> {
 
 impl<F: PrimeField64> Std<F> {
     pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, shared_tables: bool) -> ProofmanResult<Arc<Self>> {
-        // Get the mode
-        let mode = RwLock::new(StdMode::default());
-
         // Instantiate the components
         let prod_bus = StdProd::new(&sctx)?;
         let sum_bus = StdSum::new(&sctx)?;
         let virtual_table = StdVirtualTable::new(&pctx, &sctx, shared_tables)?;
         let range_check = StdRangeCheck::new(pctx.clone(), &sctx, virtual_table.clone(), shared_tables)?;
 
-        Ok(Arc::new(Self { mode, prod_bus, sum_bus, range_check, virtual_table }))
+        Ok(Arc::new(Self { prod_bus, sum_bus, range_check, virtual_table }))
     }
 
     // ==================== Range Check API ====================

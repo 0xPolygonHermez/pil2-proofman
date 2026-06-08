@@ -272,9 +272,9 @@ void extendAndMerkelize_bn128_gpu(uint64_t step, SetupCtx& setupCtx, MerkleTreeB
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
 
     gl64_t *src = step == 1 ? (gl64_t*) d_trace : (gl64_t*) d_aux_trace;
-    uint64_t offset_src = step == 1 ? 0 : setupCtx.starkInfo.mapOffsets[make_pair(section, false)];
+    uint64_t offset_src = step == 1 ? 0 : setupCtx.starkInfo.mapOffsetsGPU[make_pair(section, false)];
     gl64_t *dst = (gl64_t*) d_aux_trace;
-    uint64_t offset_dst = setupCtx.starkInfo.mapOffsets[make_pair(section, true)];
+    uint64_t offset_dst = setupCtx.starkInfo.mapOffsetsGPU[make_pair(section, true)];
     
     Goldilocks::Element *pSource = d_aux_trace + offset_dst;
     treesGL[step - 1]->setSource(pSource);
@@ -305,8 +305,8 @@ void computeQ_bn128_gpu(uint64_t step, SetupCtx &setupCtx, MerkleTreeBN128 **tre
     std::string section = "cm" + to_string(step);
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
 
-    uint64_t offset_cmQ = setupCtx.starkInfo.mapOffsets[std::make_pair(section, true)];
-    uint64_t offset_q = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
+    uint64_t offset_cmQ = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair(section, true)];
+    uint64_t offset_q = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("q", true)];
     uint64_t qDeg = setupCtx.starkInfo.qDeg;
     uint64_t qDim = setupCtx.starkInfo.qDim;
 
@@ -321,7 +321,7 @@ void computeQ_bn128_gpu(uint64_t step, SetupCtx &setupCtx, MerkleTreeBN128 **tre
 
     if (nCols > 0)
     {
-        uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft", false)];
+        uint64_t offset_helper = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("extra_helper_fft", false)];
         NTTGoldilocksGPU nttExtended;
         nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, (gl64_t*)d_aux_trace, offset_helper, timer, stream);
         TimerStartCategoryGPU(timer, MERKLE_TREE);
@@ -343,7 +343,7 @@ void merkelizeFRI_bn128_gpu(SetupCtx& setupCtx, StepsParams &h_params, uint64_t 
     dim3 nThreads(32, 32);
     dim3 nBlocks((width + nThreads.x - 1) / nThreads.x, (height + nThreads.y - 1) / nThreads.y);
 
-    Goldilocks::Element *src = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)];
+    Goldilocks::Element *src = h_params.aux_trace + setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("fri_" + to_string(step + 1), true)];
     treeFRI->setSource(src); 
     transposeFRI<<<nBlocks, nThreads, 0, stream>>>((gl64_t *)treeFRI->source, (gl64_t *)pol, pol2N, width);
     
@@ -373,18 +373,18 @@ void setProof_bn128_gpu(
     MerkleTreeBN128 **treesFRI = starks.treesFRI;
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
     
-    Goldilocks::Element *d_evals = d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("evals", false)];
-    Goldilocks::Element *d_airgroupValues = d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
-    Goldilocks::Element *d_airValues = d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("airvalues", false)];
-    Goldilocks::Element *d_friPol = d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
-    uint64_t *d_nonce = (uint64_t *)(d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("nonce", false)]);
+    Goldilocks::Element *d_evals = d_aux_trace + setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("evals", false)];
+    Goldilocks::Element *d_airgroupValues = d_aux_trace + setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("airgroupvalues", false)];
+    Goldilocks::Element *d_airValues = d_aux_trace + setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("airvalues", false)];
+    Goldilocks::Element *d_friPol = d_aux_trace + setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("f", true)];
+    uint64_t *d_nonce = (uint64_t *)(d_aux_trace + setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("nonce", false)]);
     
     uint64_t nQueries = setupCtx.starkInfo.starkStruct.nQueries;
     uint64_t maxTreeWidth = setupCtx.starkInfo.maxTreeWidth;
     uint64_t nFRISteps = setupCtx.starkInfo.starkStruct.steps.size() - 1;
     uint64_t maxProofBuffSize = setupCtx.starkInfo.maxProofBuffSize;
     
-    uint64_t offsetProofQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("proof_queries", false)];
+    uint64_t offsetProofQueries = setupCtx.starkInfo.mapOffsetsGPU[std::make_pair("proof_queries", false)];
     gl64_t *d_queries_buff = (gl64_t *)d_aux_trace + offsetProofQueries;
 
     cudaStreamSynchronize(stream);

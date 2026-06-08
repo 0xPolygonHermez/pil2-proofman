@@ -47,9 +47,12 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub max_const_size: usize,
     pub max_const_tree_size: usize,
     pub max_prover_trace_size: usize,
-    pub max_prover_buffer_size: usize,
-    pub max_prover_recursive_buffer_size: usize,
-    pub max_prover_recursive2_buffer_size: usize,
+    pub max_prover_buffer_size_cpu: usize,
+    pub max_prover_buffer_size_gpu: usize,
+    pub max_prover_recursive_buffer_size_cpu: usize,
+    pub max_prover_recursive_buffer_size_gpu: usize,
+    pub max_prover_recursive2_buffer_size_cpu: usize,
+    pub max_prover_recursive2_buffer_size_gpu: usize,
     pub max_pinned_proof_size: usize,
     pub max_n_bits_ext: usize,
     pub total_const_pols_size: usize,
@@ -135,23 +138,41 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive1.max_prover_trace_size)
                 .max(sctx_recursive2.max_prover_trace_size)
                 .max(vadcop_final_trace_size as usize);
-            let max_prover_buffer_size = sctx_compressor
-                .max_prover_buffer_size
-                .max(sctx_recursive1.max_prover_buffer_size)
-                .max(sctx_recursive2.max_prover_buffer_size)
-                .max(setup_vadcop_final.prover_buffer_size as usize)
-                .max(setup_vadcop_final_compressed.prover_buffer_size as usize);
+            let max_prover_buffer_size_cpu = sctx_compressor
+                .max_prover_buffer_size_cpu
+                .max(sctx_recursive1.max_prover_buffer_size_cpu)
+                .max(sctx_recursive2.max_prover_buffer_size_cpu)
+                .max(setup_vadcop_final.prover_buffer_size_cpu as usize)
+                .max(setup_vadcop_final_compressed.prover_buffer_size_cpu as usize);
 
-            let max_prover_recursive2_buffer_size = (sctx_recursive2.max_prover_buffer_size
-                + sctx_recursive2.max_prover_trace_size)
-                .max(sctx_recursive1.max_prover_buffer_size + sctx_recursive1.max_prover_trace_size);
+            let max_prover_buffer_size_gpu = sctx_compressor
+                .max_prover_buffer_size_gpu
+                .max(sctx_recursive1.max_prover_buffer_size_gpu)
+                .max(sctx_recursive2.max_prover_buffer_size_gpu)
+                .max(setup_vadcop_final.prover_buffer_size_gpu as usize)
+                .max(setup_vadcop_final_compressed.prover_buffer_size_gpu as usize);
 
-            let max_prover_recursive_buffer_size = (sctx_recursive2.max_prover_buffer_size
+            let max_prover_recursive2_buffer_size_cpu = (sctx_recursive2.max_prover_buffer_size_cpu
                 + sctx_recursive2.max_prover_trace_size)
-                .max(sctx_recursive1.max_prover_buffer_size + sctx_recursive1.max_prover_trace_size)
-                .max(sctx_compressor.max_prover_buffer_size + sctx_compressor.max_prover_trace_size)
-                .max(setup_vadcop_final.prover_buffer_size as usize + vadcop_final_trace_size as usize)
-                .max(setup_vadcop_final_compressed.prover_buffer_size as usize + vadcop_final_trace_size as usize);
+                .max(sctx_recursive1.max_prover_buffer_size_cpu + sctx_recursive1.max_prover_trace_size);
+
+            let max_prover_recursive2_buffer_size_gpu = (sctx_recursive2.max_prover_buffer_size_gpu
+                + sctx_recursive2.max_prover_trace_size)
+                .max(sctx_recursive1.max_prover_buffer_size_gpu + sctx_recursive1.max_prover_trace_size);
+
+            let max_prover_recursive_buffer_size_cpu = (sctx_recursive2.max_prover_buffer_size_cpu
+                + sctx_recursive2.max_prover_trace_size)
+                .max(sctx_recursive1.max_prover_buffer_size_cpu + sctx_recursive1.max_prover_trace_size)
+                .max(sctx_compressor.max_prover_buffer_size_cpu + sctx_compressor.max_prover_trace_size)
+                .max(setup_vadcop_final.prover_buffer_size_cpu as usize + vadcop_final_trace_size as usize)
+                .max(setup_vadcop_final_compressed.prover_buffer_size_cpu as usize + vadcop_final_trace_size as usize);
+
+            let max_prover_recursive_buffer_size_gpu = (sctx_recursive2.max_prover_buffer_size_gpu
+                + sctx_recursive2.max_prover_trace_size)
+                .max(sctx_recursive1.max_prover_buffer_size_gpu + sctx_recursive1.max_prover_trace_size)
+                .max(sctx_compressor.max_prover_buffer_size_gpu + sctx_compressor.max_prover_trace_size)
+                .max(setup_vadcop_final.prover_buffer_size_gpu as usize + vadcop_final_trace_size as usize)
+                .max(setup_vadcop_final_compressed.prover_buffer_size_gpu as usize + vadcop_final_trace_size as usize);
 
             let max_pinned_proof_size = sctx_compressor
                 .max_pinned_proof_size
@@ -190,9 +211,12 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_const_tree_size,
                 max_const_size,
                 max_prover_trace_size,
-                max_prover_buffer_size,
-                max_prover_recursive_buffer_size,
-                max_prover_recursive2_buffer_size,
+                max_prover_buffer_size_cpu,
+                max_prover_recursive_buffer_size_cpu,
+                max_prover_recursive2_buffer_size_cpu,
+                max_prover_buffer_size_gpu,
+                max_prover_recursive_buffer_size_gpu,
+                max_prover_recursive2_buffer_size_gpu,
                 max_pinned_proof_size,
                 max_n_bits_ext,
                 max_witness_size,
@@ -214,9 +238,12 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_const_tree_size: 0,
                 max_const_size: 0,
                 max_prover_trace_size: 0,
-                max_prover_buffer_size: 0,
-                max_prover_recursive_buffer_size: 0,
-                max_prover_recursive2_buffer_size: 0,
+                max_prover_buffer_size_cpu: 0,
+                max_prover_recursive_buffer_size_cpu: 0,
+                max_prover_recursive2_buffer_size_cpu: 0,
+                max_prover_buffer_size_gpu: 0,
+                max_prover_recursive_buffer_size_gpu: 0,
+                max_prover_recursive2_buffer_size_gpu: 0,
                 max_pinned_proof_size: 0,
                 max_n_bits_ext: 0,
                 max_witness_size: 0,
@@ -244,7 +271,8 @@ pub struct SetupRepository<F: PrimeField64> {
     setups: HashMap<(usize, usize), Setup<F>>,
     max_const_tree_size: usize,
     max_const_size: usize,
-    max_prover_buffer_size: usize,
+    max_prover_buffer_size_cpu: usize,
+    max_prover_buffer_size_gpu: usize,
     max_prover_contributions_size: usize,
     max_prover_trace_size: usize,
     max_pinned_proof_size: usize,
@@ -294,7 +322,8 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut max_const_size = 0;
         let mut max_n_bits_ext = 0;
         let mut max_prover_contributions_size = 0;
-        let mut max_prover_buffer_size = 0;
+        let mut max_prover_buffer_size_cpu = 0;
+        let mut max_prover_buffer_size_gpu = 0;
         let mut max_prover_trace_size = 0;
         let mut max_pinned_proof_size = 0;
         let mut total_const_pols_size = 0;
@@ -335,8 +364,11 @@ impl<F: PrimeField64> SetupRepository<F> {
                     if max_const_size < setup.const_pols_size {
                         max_const_size = setup.const_pols_size;
                     }
-                    if max_prover_buffer_size < setup.prover_buffer_size {
-                        max_prover_buffer_size = setup.prover_buffer_size;
+                    if max_prover_buffer_size_gpu < setup.prover_buffer_size_gpu {
+                        max_prover_buffer_size_gpu = setup.prover_buffer_size_gpu;
+                    }
+                    if max_prover_buffer_size_cpu < setup.prover_buffer_size_cpu {
+                        max_prover_buffer_size_cpu = setup.prover_buffer_size_cpu;
                     }
                     if max_prover_contributions_size < setup.contributions_size {
                         max_prover_contributions_size = setup.contributions_size;
@@ -368,7 +400,8 @@ impl<F: PrimeField64> SetupRepository<F> {
             max_const_tree_size,
             max_const_size,
             max_prover_contributions_size: max_prover_contributions_size as usize,
-            max_prover_buffer_size: max_prover_buffer_size as usize,
+            max_prover_buffer_size_cpu: max_prover_buffer_size_cpu as usize,
+            max_prover_buffer_size_gpu: max_prover_buffer_size_gpu as usize,
             max_prover_trace_size,
             max_pinned_proof_size: max_pinned_proof_size as usize,
             total_const_pols_size,
@@ -387,7 +420,8 @@ pub struct SetupCtx<F: PrimeField64> {
     pub max_const_tree_size: usize,
     pub max_const_size: usize,
     pub max_prover_contributions_size: usize,
-    pub max_prover_buffer_size: usize,
+    pub max_prover_buffer_size_cpu: usize,
+    pub max_prover_buffer_size_gpu: usize,
     pub max_prover_trace_size: usize,
     pub max_pinned_proof_size: usize,
     pub max_witness_size: usize,
@@ -410,7 +444,8 @@ impl<F: PrimeField64> SetupCtx<F> {
         let max_const_tree_size = setup_repository.max_const_tree_size;
         let max_const_size = setup_repository.max_const_size;
         let max_prover_contributions_size = setup_repository.max_prover_contributions_size;
-        let max_prover_buffer_size = setup_repository.max_prover_buffer_size;
+        let max_prover_buffer_size_cpu = setup_repository.max_prover_buffer_size_cpu;
+        let max_prover_buffer_size_gpu = setup_repository.max_prover_buffer_size_gpu;
         let max_prover_trace_size = setup_repository.max_prover_trace_size;
         let max_pinned_proof_size = setup_repository.max_pinned_proof_size;
         let total_const_pols_size = setup_repository.total_const_pols_size;
@@ -423,7 +458,8 @@ impl<F: PrimeField64> SetupCtx<F> {
             max_const_tree_size,
             max_const_size,
             max_prover_contributions_size,
-            max_prover_buffer_size,
+            max_prover_buffer_size_cpu,
+            max_prover_buffer_size_gpu,
             max_witness_size,
             max_trace_size,
             max_prover_trace_size,

@@ -85,7 +85,7 @@ pub fn run_pipeline(dir: &str, pil_file: &str, lib: &str) -> Result<(), String> 
         .register_custom_commits(HashMap::<String, PathBuf>::new())
         .map_err(|e| format!("register_custom_commits: {e}"))?;
     proofman
-        .verify_proof_constraints(witness, None, None, &DebugInfo::default(), 0u8.into())
+        .verify_proof_constraints(witness, None, None, Some(&DebugInfo::default()), 0u8.into())
         .map_err(|e| format!("verify_proof_constraints: {e}"))?;
 
     Ok(())

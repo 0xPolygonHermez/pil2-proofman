@@ -11,7 +11,10 @@ use proofman_common::SetupCtx;
 
 use colored::Colorize;
 use fields::PrimeField64;
-use proofman_common::{ProofCtx, ProofmanResult};
+use proofman_common::{
+    find_bucket_rule, BucketRule, BusBucket, BusSection, BusValueGlobalOrigin, BusValueLocalOrigin, BusValueMismatch,
+    Classifier, ProofCtx, ProofmanResult,
+};
 use proofman_hints::{
     get_hint_ids_by_name, format_hint_field_output_vec, HintFieldOutput, HintFieldValue, HintFieldValuesVec,
     HintFieldOptions,
@@ -37,8 +40,8 @@ pub struct HintMetadata<F: PrimeField64> {
     pub deg_mul: F,
 }
 
-pub type DebugData = FxHashMap<u64, FxHashMap<u64, BusValue>>; // opid -> val -> SharedData
-pub type DebugDataInfo = FxHashMap<u64, FxHashMap<u64, BusValueInfo>>;
+pub type DebugData = FxHashMap<u64, FxHashMap<u64, FxHashMap<u64, BusValue>>>; // opid -> bucket_key -> val -> SharedData
+pub type DebugDataInfo = FxHashMap<u64, FxHashMap<u64, FxHashMap<u64, BusValueInfo>>>;
 
 #[derive(Debug)]
 pub struct BusValue {
@@ -115,6 +118,7 @@ pub fn update_global_debug_data<F: PrimeField64>(
     debug_data_info: &mut DebugDataInfo,
     hint_id: usize,
     opid: u64,
+    bucket_key: u64,
     norm_vals: &[HintFieldOutput<F>],
     hash: u64,
     airgroup_id: usize,
@@ -123,7 +127,8 @@ pub fn update_global_debug_data<F: PrimeField64>(
     is_prod: bool,
 ) -> ProofmanResult<()> {
     let bus_opid = debug_data.entry(opid).or_default();
-    let bus_val = bus_opid.entry(hash).or_insert_with(|| BusValue {
+    let bus_bucket = bus_opid.entry(bucket_key).or_default();
+    let bus_val = bus_bucket.entry(hash).or_insert_with(|| BusValue {
         shared_data: SharedData {
             vals: format_hint_field_output_vec(norm_vals).to_string(),
             num_proves: 0,
@@ -132,7 +137,8 @@ pub fn update_global_debug_data<F: PrimeField64>(
     });
 
     let bus_info_opid = debug_data_info.entry(opid).or_default();
-    let bus_info_val = bus_info_opid
+    let bus_info_bucket = bus_info_opid.entry(bucket_key).or_default();
+    let bus_info_val = bus_info_bucket
         .entry(hash)
         .or_insert_with(|| BusValueInfo { local_data: FxHashMap::default(), global_data: None });
 
@@ -161,6 +167,7 @@ pub fn update_local_debug_data<F: PrimeField64>(
     debug_data_info: &mut DebugDataInfo,
     hint_id: usize,
     opid: u64,
+    bucket_key: u64,
     norm_vals: &[HintFieldOutput<F>],
     hash: u64,
     airgroup_id: usize,
@@ -172,13 +179,14 @@ pub fn update_local_debug_data<F: PrimeField64>(
     is_prod: bool,
     store_row_info: bool,
 ) -> ProofmanResult<()> {
-    let bus_val = debug_data.entry(opid).or_default().entry(hash).or_insert_with(|| BusValue {
-        shared_data: SharedData {
-            vals: format_hint_field_output_vec(norm_vals).to_string(),
-            num_proves: 0,
-            num_assumes: 0,
-        },
-    });
+    let bus_val =
+        debug_data.entry(opid).or_default().entry(bucket_key).or_default().entry(hash).or_insert_with(|| BusValue {
+            shared_data: SharedData {
+                vals: format_hint_field_output_vec(norm_vals).to_string(),
+                num_proves: 0,
+                num_assumes: 0,
+            },
+        });
 
     if is_proves {
         bus_val.shared_data.num_proves += times;
@@ -190,7 +198,8 @@ pub fn update_local_debug_data<F: PrimeField64>(
         let key = LocalKey::new(airgroup_id as u8, air_id as u8, instance_id as u16, hint_id as u16, is_prod);
 
         let bus_info_opid = debug_data_info.entry(opid).or_default();
-        let bus_info_val = bus_info_opid
+        let bus_info_bucket = bus_info_opid.entry(bucket_key).or_default();
+        let bus_info_val = bus_info_bucket
             .entry(hash)
             .or_insert_with(|| BusValueInfo { local_data: FxHashMap::default(), global_data: None });
 
@@ -215,6 +224,7 @@ pub fn update_debug_data<F: PrimeField64>(
     debug_data_info: &mut DebugDataInfo,
     hint_id: usize,
     opid: u64,
+    bucket_key: u64,
     norm_vals: &[HintFieldOutput<F>],
     hash: u64,
     airgroup_id: usize,
@@ -240,6 +250,7 @@ pub fn update_debug_data<F: PrimeField64>(
             debug_data_info,
             hint_id,
             opid,
+            bucket_key,
             norm_vals,
             hash,
             airgroup_id,
@@ -253,6 +264,7 @@ pub fn update_debug_data<F: PrimeField64>(
             debug_data_info,
             hint_id,
             opid,
+            bucket_key,
             norm_vals,
             hash,
             airgroup_id,
@@ -267,24 +279,32 @@ pub fn update_debug_data<F: PrimeField64>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn print_debug_info<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     max_values_to_print: usize,
     print_to_file: bool,
+    output_file_path: &Path,
     debug_data: &mut DebugData,
     debug_data_info: &mut DebugDataInfo,
+    is_prod: bool,
 ) -> ProofmanResult<()> {
+    let label = if is_prod { "std_prod" } else { "std_sum" };
     timer_start_info!(PRINT_DEBUG_INFO);
     let mut file_path = PathBuf::new();
     let mut output: Box<dyn Write> = Box::new(io::stdout());
     let mut there_are_errors = false;
 
+    let group_by = pctx.debug_info.read().unwrap().bus_mode.group_by.clone();
+
     // Parallel pre-filtering: collect only mismatched opids
     let mismatched_opids: Vec<_> = debug_data
         .par_iter()
-        .filter_map(|(opid, bus)| {
-            let has_mismatch = bus.iter().any(|(_, v)| v.shared_data.num_proves != v.shared_data.num_assumes);
+        .filter_map(|(opid, buckets)| {
+            let has_mismatch = buckets
+                .iter()
+                .any(|(_, bus)| bus.iter().any(|(_, v)| v.shared_data.num_proves != v.shared_data.num_assumes));
             if has_mismatch {
                 Some(*opid)
             } else {
@@ -295,31 +315,33 @@ pub fn print_debug_info<F: PrimeField64>(
 
     // Early exit if no errors
     if mismatched_opids.is_empty() {
-        tracing::info!("··· {}", "\u{2713} All bus values match.".bright_green().bold());
+        tracing::info!("··· {}", format!("\u{2713} [{label}] All bus values match.").bright_green().bold());
         timer_stop_and_log_info!(PRINT_DEBUG_INFO);
         return Ok(());
     }
 
     // Process mismatched opids serially for ordered output, consuming entries as we go
     for opid in mismatched_opids {
-        let bus = debug_data.remove(&opid).unwrap();
-        let bus_info = debug_data_info.remove(&opid);
+        let opid_buckets = debug_data.remove(&opid).unwrap();
+        let opid_info_buckets = debug_data_info.remove(&opid);
+        let opid_rule = find_bucket_rule(&group_by, opid);
 
         if !there_are_errors {
             // Print to a file if requested
             if print_to_file {
-                let tmp_dir = Path::new("tmp");
-                if !tmp_dir.exists() {
-                    match fs::create_dir_all(tmp_dir) {
-                        Ok(_) => tracing::info!("Debug   : Created directory: {:?}", tmp_dir),
-                        Err(e) => {
-                            eprintln!("Failed to create directory {tmp_dir:?}: {e}");
-                            std::process::exit(1);
+                if let Some(parent) = output_file_path.parent() {
+                    if !parent.as_os_str().is_empty() && !parent.exists() {
+                        match fs::create_dir_all(parent) {
+                            Ok(_) => tracing::info!("Debug   : Created directory: {:?}", parent),
+                            Err(e) => {
+                                eprintln!("Failed to create directory {parent:?}: {e}");
+                                std::process::exit(1);
+                            }
                         }
                     }
                 }
 
-                file_path = tmp_dir.join("debug.log");
+                file_path = output_file_path.to_path_buf();
 
                 match File::create(&file_path) {
                     Ok(file) => {
@@ -332,178 +354,198 @@ pub fn print_debug_info<F: PrimeField64>(
                 }
             }
 
-            let file_msg =
-                if print_to_file { format!(" Check the {file_path:?} file for more details.") } else { "".to_string() };
-            tracing::error!("Some bus values do not match.{}", file_msg);
+            // Two-line format: header in bold red so it stands out at a glance,
+            // detail (file pointer) on its own line below.
+            tracing::error!("··· {}", format!("\u{2717} [{label}] Some bus values do not match.").bright_red().bold());
+            if print_to_file {
+                tracing::error!("··· {}", format!("Check the {file_path:?} file for more details.").bright_red());
+            }
 
             // Set the flag to avoid printing the error message multiple times
             there_are_errors = true;
         }
-        writeln!(output, "\t► Mismatched bus values for opid {opid}:").expect("Write error");
 
-        let (overassumed_values, overproven_values): (Vec<_>, Vec<_>) = bus
-            .into_par_iter()
-            .filter(|(_, v)| v.shared_data.num_proves != v.shared_data.num_assumes)
-            .partition(|(_, v)| v.shared_data.num_proves < v.shared_data.num_assumes);
+        // Build the per-opid body into a buffer for file/stdout AND assemble a structured
+        // BusSection for the in-memory report — both come from the same data, no double work.
+        let mut opid_buf: Vec<u8> = Vec::new();
+        let mut num_overassumed_total = 0usize;
+        let mut num_overproven_total = 0usize;
+        let mut section_buckets: Vec<BusBucket> = Vec::new();
 
-        let len_overassumed = overassumed_values.len();
-        let len_overproven = overproven_values.len();
+        writeln!(opid_buf, "\t► Mismatched bus values for opid {opid}:").expect("Write error");
 
-        if len_overassumed > 0 {
-            writeln!(output, "\t  ⁃ There are {len_overassumed} unmatching values thrown as 'assume':")
-                .expect("Write error");
-        }
+        // Iterate over buckets within the opid. For unbucketed opids, only key 0 is present.
+        let mut bucket_keys: Vec<u64> = opid_buckets.keys().copied().collect();
+        bucket_keys.sort_unstable();
 
-        for (i, (val, data)) in overassumed_values.iter().enumerate() {
-            if i == max_values_to_print {
-                writeln!(output, "\t      ...").expect("Write error");
-                break;
-            }
-            let shared_data = &data.shared_data;
-            let bus_data = bus_info.as_ref().and_then(|info| info.get(val));
-            print_diffs(pctx, sctx, max_values_to_print, shared_data, bus_data, false, *val, &mut output)?;
-        }
+        let mut opid_buckets = opid_buckets;
+        let mut opid_info_buckets = opid_info_buckets;
 
-        if len_overassumed > 0 {
-            writeln!(output).expect("Write error");
-        }
+        for bucket_key in bucket_keys {
+            let bus = opid_buckets.remove(&bucket_key).unwrap();
+            let bus_info = opid_info_buckets.as_mut().and_then(|m| m.remove(&bucket_key));
 
-        if len_overproven > 0 {
-            writeln!(output, "\t  ⁃ There are {len_overproven} unmatching values thrown as 'prove':")
-                .expect("Write error");
-        }
-
-        for (i, (val, data)) in overproven_values.iter().enumerate() {
-            if i == max_values_to_print {
-                writeln!(output, "\t      ...").expect("Write error");
-                break;
+            // Skip buckets with no mismatch.
+            let has_mismatch = bus.values().any(|v| v.shared_data.num_proves != v.shared_data.num_assumes);
+            if !has_mismatch {
+                continue;
             }
 
-            let shared_data = &data.shared_data;
-            let bus_data = bus_info.as_ref().and_then(|info| info.get(val));
-            print_diffs(pctx, sctx, max_values_to_print, shared_data, bus_data, true, *val, &mut output)?;
+            let bucket_label = opid_rule.map(|rule| format_bucket_desc(rule, bucket_key));
+            if let Some(label) = &bucket_label {
+                writeln!(opid_buf, "\t  ◆ Bucket: {}", label).expect("Write error");
+            }
+
+            let (overassumed_values, overproven_values): (Vec<_>, Vec<_>) = bus
+                .into_par_iter()
+                .filter(|(_, v)| v.shared_data.num_proves != v.shared_data.num_assumes)
+                .partition(|(_, v)| v.shared_data.num_proves < v.shared_data.num_assumes);
+
+            let len_overassumed = overassumed_values.len();
+            let len_overproven = overproven_values.len();
+            num_overassumed_total += len_overassumed;
+            num_overproven_total += len_overproven;
+
+            let mut bucket_overassumed: Vec<BusValueMismatch> = Vec::with_capacity(len_overassumed);
+            let mut bucket_overproven: Vec<BusValueMismatch> = Vec::with_capacity(len_overproven);
+
+            if len_overassumed > 0 {
+                writeln!(opid_buf, "\t  ⁃ There are {len_overassumed} unmatching values thrown as 'assume':")
+                    .expect("Write error");
+            }
+
+            for (i, (val, data)) in overassumed_values.iter().enumerate() {
+                let shared_data = &data.shared_data;
+                let bus_data = bus_info.as_ref().and_then(|info| info.get(val));
+                let mismatch = build_value_mismatch(pctx, sctx, shared_data, bus_data, false, *val)?;
+                if i < max_values_to_print {
+                    write_value_mismatch(&mismatch, false, max_values_to_print, &mut opid_buf);
+                } else if i == max_values_to_print {
+                    writeln!(opid_buf, "\t      ...").expect("Write error");
+                }
+                bucket_overassumed.push(mismatch);
+            }
+
+            if len_overassumed > 0 {
+                writeln!(opid_buf).expect("Write error");
+            }
+
+            if len_overproven > 0 {
+                writeln!(opid_buf, "\t  ⁃ There are {len_overproven} unmatching values thrown as 'prove':")
+                    .expect("Write error");
+            }
+
+            for (i, (val, data)) in overproven_values.iter().enumerate() {
+                let shared_data = &data.shared_data;
+                let bus_data = bus_info.as_ref().and_then(|info| info.get(val));
+                let mismatch = build_value_mismatch(pctx, sctx, shared_data, bus_data, true, *val)?;
+                if i < max_values_to_print {
+                    write_value_mismatch(&mismatch, true, max_values_to_print, &mut opid_buf);
+                } else if i == max_values_to_print {
+                    writeln!(opid_buf, "\t      ...").expect("Write error");
+                }
+                bucket_overproven.push(mismatch);
+            }
+
+            if len_overproven > 0 {
+                writeln!(opid_buf).expect("Write error");
+            }
+
+            section_buckets.push(BusBucket {
+                bucket_key,
+                bucket_label,
+                overassumed: bucket_overassumed,
+                overproven: bucket_overproven,
+            });
         }
 
-        if len_overproven > 0 {
-            writeln!(output).expect("Write error");
+        // Tee: write the assembled text to the file/stdout sink and push the structured
+        // section into the report. Same data, two consumers.
+        output.write_all(&opid_buf).expect("Write error");
+        pctx.debug_report.write().unwrap().push(BusSection {
+            opid,
+            mismatched: true,
+            num_overassumed: num_overassumed_total,
+            num_overproven: num_overproven_total,
+            buckets: section_buckets,
+        });
+    }
+
+    fn format_bucket_desc(rule: &BucketRule, bucket_key: u64) -> String {
+        match &rule.classifier {
+            Classifier::Value { .. } => format!("col[{}] = 0x{bucket_key:x}", rule.column),
+            Classifier::Range { ranges, .. } => {
+                let idx = bucket_key as usize;
+                let r = &ranges[idx];
+                let lo = r.min.map(|v| format!("0x{v:x}")).unwrap_or_else(|| "-∞".to_string());
+                let hi = r.max.map(|v| format!("0x{v:x}")).unwrap_or_else(|| "+∞".to_string());
+                format!("col[{}] in [{lo}, {hi})", rule.column)
+            }
+            Classifier::Prefix { prefixes, .. } => {
+                let idx = bucket_key as usize;
+                if idx < prefixes.len() {
+                    let p = &prefixes[idx];
+                    format!("col[{}] starts with 0x{:x} ({} bits)", rule.column, p.value, p.bits)
+                } else {
+                    format!("col[{}] matches no prefix", rule.column)
+                }
+            }
+            Classifier::Step { start, stop, step, .. } => {
+                let oor = crate::step_oor_index(*start, *stop, *step);
+                if bucket_key == oor {
+                    format!("col[{}] outside [0x{start:x}, 0x{stop:x})", rule.column)
+                } else {
+                    let lo = start + bucket_key * step;
+                    let hi = lo.saturating_add(*step).min(*stop);
+                    format!("col[{}] in [0x{lo:x}, 0x{hi:x})", rule.column)
+                }
+            }
         }
     }
 
-    /// Parses decimal value string and formats as hexadecimal and binary
-    /// Handles both simple values "1,2,3" and extended field format "[1,2,3]"
-    fn parse_and_format_values(val_str: &str) -> (String, String) {
-        let mut hex_parts = Vec::new();
-        let mut bin_parts = Vec::new();
-
-        // Check if it's an extended field (starts with '[')
-        if val_str.starts_with('[') && val_str.ends_with(']') {
-            // Extended field format: "[val1,val2,...]"
-            let inner = &val_str[1..val_str.len() - 1];
-            let parts: Vec<&str> = inner.split(',').collect();
-
-            for part in parts {
-                if let Ok(num) = part.trim().parse::<u64>() {
-                    hex_parts.push(format!("0x{:x}", num));
-                    bin_parts.push(format!("0b{:b}", num));
-                } else {
-                    // If parsing fails, keep the original
-                    hex_parts.push(part.to_string());
-                    bin_parts.push(part.to_string());
-                }
-            }
-
-            (format!("[{}]", hex_parts.join(",")), format!("[{}]", bin_parts.join(",")))
-        } else {
-            // Simple format: "val1,val2,..."
-            let parts: Vec<&str> = val_str.split(',').collect();
-
-            for part in parts {
-                if let Ok(num) = part.trim().parse::<u64>() {
-                    hex_parts.push(format!("0x{:x}", num));
-                    bin_parts.push(format!("0b{:b}", num));
-                } else {
-                    // If parsing fails, keep the original
-                    hex_parts.push(part.to_string());
-                    bin_parts.push(part.to_string());
-                }
-            }
-
-            (hex_parts.join(","), bin_parts.join(","))
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn print_diffs<F: PrimeField64>(
+    fn build_value_mismatch<F: PrimeField64>(
         pctx: &ProofCtx<F>,
         sctx: &SetupCtx<F>,
-        max_values_to_print: usize,
         shared_data: &SharedData,
         bus_data: Option<&BusValueInfo>,
         proves: bool,
         hash: u64,
-        output: &mut dyn Write,
-    ) -> ProofmanResult<()> {
-        let val = &shared_data.vals;
-        let num_assumes = shared_data.num_assumes;
-        let num_proves = shared_data.num_proves;
+    ) -> ProofmanResult<BusValueMismatch> {
+        // SharedData stores the value tuple as a comma-separated decimal String to keep
+        // its in-memory footprint small (one record per occurrence, many occurrences).
+        // Parse to Vec<u64> here, at the report boundary — once per mismatched value.
+        let vals: Vec<u64> = shared_data.vals.split(',').filter_map(|p| p.trim().parse::<u64>().ok()).collect();
 
-        let num = if proves { num_proves } else { num_assumes };
-        let num_str = if num != 1 { "times" } else { "time" };
+        let mut global_origin: Option<BusValueGlobalOrigin> = None;
+        let mut local_origins: Vec<BusValueLocalOrigin> = Vec::new();
 
-        // Parse and format values in different bases
-        let (vals_hex, _) = parse_and_format_values(val);
-
-        writeln!(output, "\t    ==================================================").expect("Write error");
-        writeln!(output, "\t    • Value (decimal): [{}]", val).expect("Write error");
-        writeln!(output, "\t      Value (hex):     [{}]", vals_hex).expect("Write error");
-        writeln!(output, "\t      Hash:            0x{:016x}", hash).expect("Write error");
-        writeln!(output, "\t      Appears {} {} across the following:", num, num_str).expect("Write error");
-
-        // Print global data first (if it exists)
         if let Some(bus_info) = bus_data {
             if let Some(global_data) = &bus_info.global_data {
                 let gprod_debug_data_global = get_hint_ids_by_name(sctx.get_global_bin(), "gprod_debug_data_global");
                 let gsum_debug_data_global = get_hint_ids_by_name(sctx.get_global_bin(), "gsum_debug_data_global");
 
                 let (airgroup_id, hint_id, is_prod) = global_data.unpack();
-                let airgroup_name = pctx.global_info.get_air_group_name(airgroup_id as usize);
-                writeln!(output, "\t        - Airgroup: {airgroup_name} (id: {airgroup_id})").expect("Write error");
+                let airgroup_name = pctx.global_info.get_air_group_name(airgroup_id as usize).to_string();
 
-                let name_piop = match is_prod {
-                    true => get_global_hint_field_constant_as_string(
-                        sctx,
-                        gprod_debug_data_global[1 + hint_id as usize],
-                        "name_piop",
-                    )?,
-                    false => get_global_hint_field_constant_as_string(
-                        sctx,
-                        gsum_debug_data_global[1 + hint_id as usize],
-                        "name_piop",
-                    )?,
+                let hint = if is_prod {
+                    gprod_debug_data_global[1 + hint_id as usize]
+                } else {
+                    gsum_debug_data_global[1 + hint_id as usize]
                 };
+                let piop_name = get_global_hint_field_constant_as_string(sctx, hint, "name_piop")?;
+                let expression_names = get_global_hint_field_constant_a_as_string(sctx, hint, "name_exprs")?;
 
-                let name_exprs = match is_prod {
-                    true => get_global_hint_field_constant_a_as_string(
-                        sctx,
-                        gprod_debug_data_global[1 + hint_id as usize],
-                        "name_exprs",
-                    )?,
-                    false => get_global_hint_field_constant_a_as_string(
-                        sctx,
-                        gsum_debug_data_global[1 + hint_id as usize],
-                        "name_exprs",
-                    )?,
-                };
-
-                writeln!(output, "\t          PIOP: {}", name_piop).expect("Write error");
-                writeln!(output, "\t          Expression: {:?}", name_exprs).expect("Write error");
-                writeln!(output, "\t          Num: 1").expect("Write error");
+                global_origin = Some(BusValueGlobalOrigin {
+                    airgroup_id: airgroup_id as usize,
+                    airgroup_name,
+                    piop_name,
+                    expression_names,
+                    is_prod,
+                });
             }
 
-            // Print local data
             if !bus_info.local_data.is_empty() {
-                // Parallel collection and organization of rows
-                let mut organized_rows: Vec<(usize, usize, usize, usize, bool, Vec<usize>)> = bus_info
+                let mut organized: Vec<(usize, usize, usize, usize, bool, Vec<usize>)> = bus_info
                     .local_data
                     .par_iter()
                     .filter_map(|(key, meta_data)| {
@@ -524,25 +566,18 @@ pub fn print_debug_info<F: PrimeField64>(
                     })
                     .collect();
 
-                // Sort rows by airgroup_id, air_id, and instance_id
-                organized_rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+                organized.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
 
-                // Print grouped rows
-                for (airgroup_id, air_id, instance_id, hint_id, is_prod, mut rows) in organized_rows {
-                    let airgroup_name = pctx.global_info.get_air_group_name(airgroup_id);
-                    let air_name = pctx.global_info.get_air_name(airgroup_id, air_id);
+                for (airgroup_id, air_id, instance_id, hint_id, is_prod, mut rows) in organized {
+                    let airgroup_name = pctx.global_info.get_air_group_name(airgroup_id).to_string();
+                    let air_name = pctx.global_info.get_air_name(airgroup_id, air_id).to_string();
 
                     let setup = sctx.get_setup(airgroup_id, air_id)?;
                     let p_expressions_bin = setup.p_setup.p_expressions_bin;
-
                     let debug_data_hints_prod = get_hint_ids_by_name(p_expressions_bin, "gprod_debug_data");
-
                     let debug_data_hints_sum = get_hint_ids_by_name(p_expressions_bin, "gsum_debug_data");
 
-                    let hint = match is_prod {
-                        true => debug_data_hints_prod[hint_id],
-                        false => debug_data_hints_sum[hint_id],
-                    };
+                    let hint = if is_prod { debug_data_hints_prod[hint_id] } else { debug_data_hints_sum[hint_id] };
 
                     let piop_name = get_hint_field_constant_as_string(
                         pctx,
@@ -553,8 +588,7 @@ pub fn print_debug_info<F: PrimeField64>(
                         "name_piop",
                         HintFieldOptions::default(),
                     )?;
-
-                    let expr_name = get_hint_field_constant_a_as_string(
+                    let expression_names = get_hint_field_constant_a_as_string(
                         pctx,
                         setup,
                         airgroup_id,
@@ -565,40 +599,90 @@ pub fn print_debug_info<F: PrimeField64>(
                     )?;
 
                     rows.sort_unstable();
-                    let rows_display =
-                        rows.iter().take(max_values_to_print).map(|x| x.to_string()).collect::<Vec<_>>().join(",");
-
-                    let truncated = rows.len() > max_values_to_print;
-                    writeln!(output, "\t        - Airgroup: {airgroup_name} (id: {airgroup_id})").expect("Write error");
-                    writeln!(output, "\t          Air: {air_name} (id: {air_id})").expect("Write error");
-
-                    writeln!(output, "\t          PIOP: {piop_name}").expect("Write error");
-                    writeln!(output, "\t          Expression: {expr_name:?}").expect("Write error");
-
-                    writeln!(
-                        output,
-                        "\t          Instance ID: {} | Hint ID: {} | Num: {} | Rows: [{}{}]",
+                    local_origins.push(BusValueLocalOrigin {
+                        airgroup_id,
+                        airgroup_name,
+                        air_id,
+                        air_name,
                         instance_id,
                         hint_id,
-                        rows.len(),
-                        rows_display,
-                        if truncated { ",..." } else { "" }
-                    )
-                    .expect("Write error");
+                        piop_name,
+                        expression_names,
+                        is_prod,
+                        rows,
+                    });
                 }
             }
         }
 
+        Ok(BusValueMismatch {
+            vals,
+            hash,
+            num_assumes: shared_data.num_assumes,
+            num_proves: shared_data.num_proves,
+            global_origin,
+            local_origins,
+        })
+    }
+
+    fn write_value_mismatch(
+        mismatch: &BusValueMismatch,
+        proves: bool,
+        max_values_to_print: usize,
+        output: &mut dyn Write,
+    ) {
+        let num = if proves { mismatch.num_proves } else { mismatch.num_assumes };
+        let num_str = if num != 1 { "times" } else { "time" };
+
+        let vals_decimal = mismatch.vals.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",");
+        let vals_hex = mismatch.vals.iter().map(|v| format!("0x{:x}", v)).collect::<Vec<_>>().join(",");
+        writeln!(output, "\t    ==================================================").expect("Write error");
+        writeln!(output, "\t    • Value (decimal): [{}]", vals_decimal).expect("Write error");
+        writeln!(output, "\t      Value (hex):     [{}]", vals_hex).expect("Write error");
+        writeln!(output, "\t      Hash:            0x{:016x}", mismatch.hash).expect("Write error");
+        writeln!(output, "\t      Appears {} {} across the following:", num, num_str).expect("Write error");
+
+        if let Some(g) = &mismatch.global_origin {
+            writeln!(output, "\t        - Airgroup: {} (id: {})", g.airgroup_name, g.airgroup_id).expect("Write error");
+            writeln!(output, "\t          PIOP: {}", g.piop_name).expect("Write error");
+            writeln!(output, "\t          Expression: {:?}", g.expression_names).expect("Write error");
+            writeln!(output, "\t          Num: 1").expect("Write error");
+        }
+
+        for origin in &mismatch.local_origins {
+            let rows_display =
+                origin.rows.iter().take(max_values_to_print).map(|x| x.to_string()).collect::<Vec<_>>().join(",");
+            let truncated = origin.rows.len() > max_values_to_print;
+            writeln!(output, "\t        - Airgroup: {} (id: {})", origin.airgroup_name, origin.airgroup_id)
+                .expect("Write error");
+            writeln!(output, "\t          Air: {} (id: {})", origin.air_name, origin.air_id).expect("Write error");
+            writeln!(output, "\t          PIOP: {}", origin.piop_name).expect("Write error");
+            writeln!(output, "\t          Expression: {:?}", origin.expression_names).expect("Write error");
+            writeln!(
+                output,
+                "\t          Instance ID: {} | Hint ID: {} | Num: {} | Rows: [{}{}]",
+                origin.instance_id,
+                origin.hint_id,
+                origin.rows.len(),
+                rows_display,
+                if truncated { ",..." } else { "" }
+            )
+            .expect("Write error");
+        }
+
         writeln!(output, "\t    --------------------------------------------------").expect("Write error");
-        let diff = if proves { num_proves - num_assumes } else { num_assumes - num_proves };
+        let diff = if proves {
+            mismatch.num_proves - mismatch.num_assumes
+        } else {
+            mismatch.num_assumes - mismatch.num_proves
+        };
         writeln!(
-        output,
-        "\t    Total Num Assumes: {num_assumes}.\n\t    Total Num Proves: {num_proves}.\n\t    Total Unmatched: {diff}."
-    )
+            output,
+            "\t    Total Num Assumes: {}.\n\t    Total Num Proves: {}.\n\t    Total Unmatched: {diff}.",
+            mismatch.num_assumes, mismatch.num_proves
+        )
         .expect("Write error");
         writeln!(output, "\t    ==================================================\n").expect("Write error");
-
-        Ok(())
     }
 
     timer_stop_and_log_info!(PRINT_DEBUG_INFO);

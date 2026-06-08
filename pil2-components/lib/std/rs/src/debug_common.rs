@@ -5,19 +5,52 @@ use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use fields::PrimeField64;
 
-use proofman_common::{DebugInfo, ProofCtx, ProofmanError, ProofmanResult, SetupCtx, store_rows_info_air};
+use proofman_common::{
+    find_bucket_rule, BucketRule, DebugInfo, ProofCtx, ProofmanError, ProofmanResult, SetupCtx, store_rows_info_air,
+};
 use proofman_hints::{
     get_hint_field, get_hint_field_a, get_hint_field_gc, get_hint_field_gc_a, get_hint_ids_by_name, HintFieldOptions,
-    HintFieldValue, HintFieldValuesVec,
+    HintFieldOutput, HintFieldValue, HintFieldValuesVec,
 };
 
 use crate::{
-    check_invalid_opids, get_global_hint_field, get_global_hint_field_constant_as, get_hint_field_constant_as,
-    get_hint_field_constant_as_string, get_hint_field_constant_a_as_string, get_hint_field_constant_as_field,
-    get_row_field_value, max_positive_multiplicity, print_debug_info, update_debug_data, update_debug_data_fast,
-    DebugData, DebugDataFast, DebugDataFastGlobal, DebugDataInfo, HintMetadata, hash_vals, normalize_vals,
-    PIOP_TYPE_ASSUMES, PIOP_TYPE_FREE, PIOP_TYPE_PROVES,
+    check_invalid_opids, evaluate_bucket, get_global_hint_field, get_global_hint_field_constant_as,
+    get_hint_field_constant_as, get_hint_field_constant_as_string, get_hint_field_constant_a_as_string,
+    get_hint_field_constant_as_field, get_row_field_value, max_positive_multiplicity, print_debug_info,
+    update_debug_data, update_debug_data_fast, DebugData, DebugDataFast, DebugDataFastGlobal, DebugDataInfo,
+    HintMetadata, hash_vals, normalize_vals, PIOP_TYPE_ASSUMES, PIOP_TYPE_FREE, PIOP_TYPE_PROVES,
 };
+
+/// Resolve the bucket disposition for a given opid and bus value.
+///
+/// Returns:
+/// - `BucketDisposition::Default` — no rule applies; track in the unbucketed default slot.
+/// - `BucketDisposition::Bucket(key)` — a rule applies and yields this bucket key.
+/// - `BucketDisposition::Drop` — a rule applies but filters this row out; caller skips.
+///
+/// In the common case `group_by` is empty and the loop in `find_bucket_rule` runs zero
+/// iterations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BucketDisposition {
+    Default,
+    Bucket(u64),
+    Drop,
+}
+
+#[inline]
+fn resolve_bucket<F: PrimeField64>(
+    group_by: &[BucketRule],
+    opid: u64,
+    bus_value: &[HintFieldOutput<F>],
+) -> BucketDisposition {
+    match find_bucket_rule(group_by, opid) {
+        Some(rule) => match evaluate_bucket(rule, bus_value) {
+            Some(key) => BucketDisposition::Bucket(key),
+            None => BucketDisposition::Drop,
+        },
+        None => BucketDisposition::Default,
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn extract_global_hint_fields<F: PrimeField64>(
@@ -36,6 +69,14 @@ pub fn extract_global_hint_fields<F: PrimeField64>(
     if !debug_data_hints.is_empty() {
         let num_global_hints =
             get_global_hint_field_constant_as::<usize, F>(sctx, debug_data_hints[0], "num_global_hints")?;
+
+        // Snapshot opids and group_by once under a single read lock — config doesn't change
+        // mid-loop, so per-iteration lock acquisition would be wasted work.
+        let (opids, group_by) = {
+            let guard = pctx.debug_info.read().unwrap();
+            (guard.bus_mode.opids.clone(), guard.bus_mode.group_by.clone())
+        };
+
         for i in 0..num_global_hints {
             let airgroup_id =
                 get_global_hint_field_constant_as::<usize, F>(sctx, debug_data_hints[1 + i], "airgroup_id")?;
@@ -48,9 +89,7 @@ pub fn extract_global_hint_fields<F: PrimeField64>(
             let opid = opid.as_canonical_u64();
 
             // If opids are specified, then only update the bus if the opid is in the list
-            if !pctx.debug_info.read().unwrap().std_mode.opids.is_empty()
-                && !pctx.debug_info.read().unwrap().std_mode.opids.contains(&opid)
-            {
+            if !opids.is_empty() && !opids.contains(&opid) {
                 continue;
             }
 
@@ -81,12 +120,24 @@ pub fn extract_global_hint_fields<F: PrimeField64>(
             let expr = expressions.get(0);
             let norm_vals = normalize_vals(&expr);
             let hash = hash_vals(norm_vals);
+
+            // Pass `&expr` (un-normalized) to bucket evaluator so column indexing references
+            // the full tuple. Using `norm_vals` would panic when trailing components are zero
+            // (normalize_vals trims them, shrinking the slice).
+            let (bucket_key, is_bucketed) = match resolve_bucket(&group_by, opid, &expr) {
+                BucketDisposition::Default => (0u64, false),
+                BucketDisposition::Bucket(k) => (k, true),
+                BucketDisposition::Drop => continue,
+            };
+
             if fast_mode {
                 update_debug_data_fast(
                     debug_data_fast,
                     debug_data_fast_global,
                     opid,
                     hash,
+                    bucket_key,
+                    is_bucketed,
                     is_proves,
                     num_reps.as_canonical_u64(),
                     true,
@@ -97,6 +148,7 @@ pub fn extract_global_hint_fields<F: PrimeField64>(
                     debug_data_info,
                     i,
                     opid,
+                    bucket_key,
                     norm_vals,
                     hash,
                     airgroup_id,
@@ -223,7 +275,11 @@ pub fn extract_hint_fields<F: PrimeField64>(
 
     let hint_metadatas = hint_metadatas?;
 
-    let opids = &pctx.debug_info.read().unwrap().std_mode.opids;
+    // Snapshot opids and group_by under a single read lock to avoid borrowing pctx across calls.
+    let (opids, group_by) = {
+        let guard = pctx.debug_info.read().unwrap();
+        (guard.bus_mode.opids.clone(), guard.bus_mode.group_by.clone())
+    };
 
     if fast_mode {
         // Process hints in chunks of to reuse pre-allocated HashMaps
@@ -235,7 +291,8 @@ pub fn extract_hint_fields<F: PrimeField64>(
             // If both the expression and the mul are of degree zero, then simply update the bus once
             if hint_metadata.deg_expr.is_zero() && hint_metadata.deg_mul.is_zero() {
                 update_bus_fast(
-                    opids,
+                    &opids,
+                    &group_by,
                     &hint_metadata.busid,
                     hint_metadata.type_piop,
                     &hint_metadata.num_reps,
@@ -250,7 +307,8 @@ pub fn extract_hint_fields<F: PrimeField64>(
             else {
                 for j in 0..num_rows {
                     update_bus_fast(
-                        opids,
+                        &opids,
+                        &group_by,
                         &hint_metadata.busid,
                         hint_metadata.type_piop,
                         &hint_metadata.num_reps,
@@ -277,7 +335,8 @@ pub fn extract_hint_fields<F: PrimeField64>(
             // If both the expresion and the mul are of degree zero, then simply update the bus once
             if hint_metadata.deg_expr.is_zero() && hint_metadata.deg_mul.is_zero() {
                 update_bus(
-                    opids,
+                    &opids,
+                    &group_by,
                     hint_metadata.hint_id,
                     airgroup_id,
                     air_id,
@@ -299,7 +358,8 @@ pub fn extract_hint_fields<F: PrimeField64>(
             else {
                 for j in 0..num_rows {
                     update_bus(
-                        opids,
+                        &opids,
+                        &group_by,
                         hint_metadata.hint_id,
                         airgroup_id,
                         air_id,
@@ -331,6 +391,7 @@ pub fn extract_hint_fields<F: PrimeField64>(
 #[inline]
 pub fn update_bus<F: PrimeField64>(
     op_ids: &[u64],
+    group_by: &[BucketRule],
     hint_id: usize,
     airgroup_id: usize,
     air_id: usize,
@@ -375,12 +436,19 @@ pub fn update_bus<F: PrimeField64>(
     let expr = expressions.get(row);
     let norm_vals = normalize_vals(&expr);
     let hash = hash_vals(norm_vals);
+    // Pass `&expr` (un-normalized) so column indexing references the full tuple position.
+    let bucket_key = match resolve_bucket(group_by, opid.as_canonical_u64(), &expr) {
+        BucketDisposition::Default => 0u64,
+        BucketDisposition::Bucket(k) => k,
+        BucketDisposition::Drop => return Ok(()),
+    };
 
     update_debug_data(
         debug_data,
         debug_data_info,
         hint_id,
         opid.as_canonical_u64(),
+        bucket_key,
         norm_vals,
         hash,
         airgroup_id,
@@ -399,6 +467,7 @@ pub fn update_bus<F: PrimeField64>(
 #[allow(clippy::too_many_arguments)]
 fn update_bus_fast<F: PrimeField64>(
     op_ids: &[u64],
+    group_by: &[BucketRule],
     busid: &HintFieldValue<F>,
     type_piop: u64,
     num_reps: &HintFieldValue<F>,
@@ -436,12 +505,20 @@ fn update_bus_fast<F: PrimeField64>(
     let expr = expressions.get(row);
     let norm_vals = normalize_vals(&expr);
     let hash = hash_vals(norm_vals);
+    // Pass `&expr` (un-normalized) so column indexing references the full tuple position.
+    let (bucket_key, is_bucketed) = match resolve_bucket(group_by, opid.as_canonical_u64(), &expr) {
+        BucketDisposition::Default => (0u64, false),
+        BucketDisposition::Bucket(k) => (k, true),
+        BucketDisposition::Drop => return Ok(()),
+    };
 
     update_debug_data_fast(
         debug_data_fast,
         debug_data_fast_global,
         opid.as_canonical_u64(),
         hash,
+        bucket_key,
+        is_bucketed,
         is_proves,
         num_reps.as_canonical_u64(),
         is_global,
@@ -460,7 +537,7 @@ pub fn print_std_debug_info<F: PrimeField64>(
     is_prod: bool,
     debug_hashes: &[u64],
 ) -> ProofmanResult<()> {
-    let fast_mode = debug_info.std_mode.fast_mode;
+    let fast_mode = debug_info.bus_mode.fast_mode;
 
     if fast_mode {
         let mut debug_data_fast = debug_data_fast.write().unwrap();
@@ -479,7 +556,7 @@ pub fn print_std_debug_info<F: PrimeField64>(
             debug_hashes,
         )?;
 
-        check_invalid_opids(pctx, std::mem::take(&mut *debug_data_fast));
+        check_invalid_opids(pctx, std::mem::take(&mut *debug_data_fast), is_prod);
     } else {
         let mut debug_data_t = debug_data.write().unwrap();
         let mut debug_data_info_t = debug_data_info.write().unwrap();
@@ -495,9 +572,19 @@ pub fn print_std_debug_info<F: PrimeField64>(
             debug_hashes,
         )?;
 
-        let max_values_to_print = debug_info.std_mode.n_vals;
-        let print_to_file = debug_info.std_mode.print_to_file;
-        print_debug_info(pctx, sctx, max_values_to_print, print_to_file, &mut debug_data_t, &mut debug_data_info_t)?;
+        let max_values_to_print = debug_info.bus_mode.n_vals;
+        let to_file = debug_info.output.to_file;
+        let file_path = debug_info.output.file_path.clone();
+        print_debug_info(
+            pctx,
+            sctx,
+            max_values_to_print,
+            to_file,
+            &file_path,
+            &mut debug_data_t,
+            &mut debug_data_info_t,
+            is_prod,
+        )?;
     }
 
     Ok(())

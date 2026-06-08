@@ -10,6 +10,7 @@
 #include <fstream>
 #include <filesystem>
 #include <cstdint>
+#include <cstdlib>
 
 using namespace std;
 using json = nlohmann::json;
@@ -42,8 +43,7 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
     ntt.LDE(pConstPolsExt, pConstPols, NExtended, N, nPols);
     TimerStopAndLog(EXTEND_CONST_POLS);
 
-    // pConstPols was mmap'd by loadFileParallel; unmap to avoid address-space waste.
-    munmap(pConstPols, constPolsSize);
+    free(pConstPols);
 
     if (verificationHashType == "GL") {
         TimerStart(MERKELIZE_CONST_TREE);

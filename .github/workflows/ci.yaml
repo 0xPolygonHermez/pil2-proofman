@@ -8,6 +8,13 @@ jobs:
     name: cargo test
     runs-on: ubuntu-latest
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          sudo docker image prune --all --force || true
+          df -h /
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -27,7 +34,15 @@ jobs:
       - name: Install Node dependencies (pil2-compiler)
         run: npm install
       - name: cargo test
-        run: cargo test --workspace
+        run: |
+          AVAIL_KB=$(df --output=avail / | tail -1)
+          echo "Disk available on /: $((AVAIL_KB / 1024)) MB"
+          if [ "$AVAIL_KB" -lt 5242880 ]; then
+            echo "::error::Less than 5 GB free before tests — likely to fail with ENOSPC (seen as SIGBUS/SIGSEGV in native prover)."
+            df -h /
+            exit 1
+          fi
+          cargo test --workspace
   cargo-check:
     name: cargo check
     runs-on: ubuntu-latest
@@ -117,7 +132,7 @@ jobs:
       - name: Install Node dependencies (pil2-compiler)
         run: npm install
       - name: cargo clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
   cargo-audit:
     name: cargo audit
     runs-on: ubuntu-latest

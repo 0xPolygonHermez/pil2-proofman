@@ -58,10 +58,14 @@ impl VerifyConstraintsCmd {
         println!("{} VerifyConstraints", format!("{: >12}", "Command").bright_green().bold());
         println!();
 
+        // `None` here = "no --debug flag" → forward as `None` to the library,
+        // which interprets that as "just verify constraints, defaults for the rest".
         let debug_info = match &self.debug {
-            None => DebugInfo::default(),
-            Some(None) => DebugInfo::new_debug(),
-            Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone())?,
+            None => None,
+            Some(None) => Some(DebugInfo::new_debug()),
+            Some(Some(debug_value)) => {
+                Some(json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone())?)
+            }
         };
 
         let mut options = ProofmanOptions::default();
@@ -83,15 +87,23 @@ impl VerifyConstraintsCmd {
         }
         proofman.register_custom_commits(custom_commits_map)?;
 
-        match self.field {
+        let report = match self.field {
             Field::Goldilocks => proofman.verify_proof_constraints(
                 self.witness_lib.clone(),
                 self.public_inputs.clone(),
                 self.input_data.clone(),
-                &debug_info,
+                debug_info.as_ref(),
                 self.verbose.into(),
             )?,
         };
+
+        if !report.all_ok {
+            return Err(format!(
+                "Constraints were not verified: {} bus section(s) with mismatches",
+                report.bus_sections.iter().filter(|s| s.mismatched).count()
+            )
+            .into());
+        }
 
         Ok(())
     }
