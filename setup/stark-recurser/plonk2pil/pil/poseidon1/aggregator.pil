@@ -9,6 +9,26 @@ require "circuits/selectval.pil";
 require "circuits/poseidon.pil";
 require "circuits/plonk.pil";
 
+// ============================================================================
+// Poseidon1 (Hades-Goldilocks) AGGREGATOR
+//
+// Recursive-proof aggregation AIR. Each row hosts at most one custom gate
+// (Poseidon1 round, CMul, FFT4, EvPol4, TreeSelector8, SelectVal1, Plonk),
+// selected by mutually-exclusive fixed columns; gates reuse witness cols a[].
+//
+// Poseidon1 (width 16) = 8 full + 22 partial = 30 rounds. Packed into a 5-ROW
+// gate with TWO full-round chains per row (see the per-row map below). Hades adds
+// ARC (round constants) AFTER the S-box (pow7), except round 0's pre-ARC which is
+// folded into pow7Input1.
+//
+// The round-3 P-matrix transition (R4) is stored in the chain-1 slot a[30..45] at
+// PR (pinned from PR'). The 22 partial-round anchors are 16 in the chain-2 slot
+// a[46..61] @ PR + 6 overflow in a[18..23] @ INIT.
+//
+// Columns:  a[0..15] = input @INIT / output @FINAL ; a[16..17] = compression key bits ;
+//           a[18..23] = plonk band / 6 partial overflow anchors @INIT ; a[24..29] = plonk band ;
+//           a[30..45]/a[46..61] = the two chain slots ; S[30] = connection band.
+// ============================================================================
 airtemplate Aggregator (const int N, const int nPlonkRows, const int nPoseidon1Compression, const int nPoseidon1Sponge, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector8, const int nSelectVal1) {
     col witness a[62];
 
@@ -43,7 +63,9 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nPoseidon1C
     const expr POSEIDON1_PR          = (2)'POSEIDON1_COMPRESSION + (2)'POSEIDON1_SPONGE;
     const expr POSEIDON1_FINAL_PRIME = POSEIDON1_FINAL';
 
-    // Plonk piggybacks on PR'/PR/FINAL' (plonk band cols 0..29 free there); INIT/FINAL add gates 6..9.
+    // Plonk piggybacks on PR'/PR/FINAL' (plonk band cols 0..29 free there). FINAL adds
+    // gates 6..9; INIT adds only gates 8,9 (a[24..29]) — gates 6,7 (a[18..23]) host the
+    // 6 partial-round overflow anchors at INIT, so INIT must NOT plonk-constrain them.
     const expr CHECK_PLONK = PLONK + POSEIDON1_PR_PRIME + POSEIDON1_PR + POSEIDON1_FINAL_PRIME;
 
     plonk([a[0], a[1], a[2]], q0, CHECK_PLONK);
@@ -52,18 +74,18 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nPoseidon1C
     plonk([a[9], a[10], a[11]], q1, CHECK_PLONK);
     plonk([a[12], a[13], a[14]], q1, CHECK_PLONK);
     plonk([a[15], a[16], a[17]], q1, CHECK_PLONK);
-    plonk([a[18], a[19], a[20]], q1, CHECK_PLONK + POSEIDON1_FINAL + POSEIDON1_INIT);
-    plonk([a[21], a[22], a[23]], q1, CHECK_PLONK + POSEIDON1_FINAL + POSEIDON1_INIT + EVPOL4);
+    plonk([a[18], a[19], a[20]], q1, CHECK_PLONK + POSEIDON1_FINAL);
+    plonk([a[21], a[22], a[23]], q1, CHECK_PLONK + POSEIDON1_FINAL + EVPOL4);
     plonk([a[24], a[25], a[26]], q1, CHECK_PLONK + POSEIDON1_FINAL + POSEIDON1_INIT + EVPOL4 + SELECTVAL1);
     plonk([a[27], a[28], a[29]], q1, CHECK_PLONK + POSEIDON1_FINAL + POSEIDON1_INIT + EVPOL4 + SELECTVAL1);
 
     // Poseidon1 (Hades-Goldilocks, width 16), 5-row layout. Two M-matrix full-round
-    // chains share each row; the round-3 P-matrix transition (R4) is NOT stored and is
-    // recomputed via the prefix prime 'fullRound2P; the 22 partial-round anchors are
-    // split 11+11 across both chain slots at PR (row 2).
-    //   row 0 (INIT):   a[0..15]=input   a[30..45]=R0   a[46..61]=R1
+    // chains share each row. The round-3 P-matrix transition (R4) is STORED in the
+    // chain-1 slot at PR (pinned from PR'); the 22 partial-round anchors are 16 in the
+    // chain-2 slot at PR plus 6 overflow in the plonk band a[18..23] @ INIT.
+    //   row 0 (INIT):   a[0..15]=input  a[18..23]=anchors[16..21]  a[30..45]=R0  a[46..61]=R1
     //   row 1 (PR'):                     a[30..45]=R2   a[46..61]=R3
-    //   row 2 (PR):                      a[30..40]=anchors[0..10]   a[46..56]=anchors[11..21]
+    //   row 2 (PR):                      a[30..45]=R4   a[46..61]=anchors[0..15]
     //   row 3 (FINAL'):                  a[30..45]=R26  a[46..61]=R27
     //   row 4 (FINAL):  a[0..15]=output  a[30..45]=R28  a[46..61]=R29
 
@@ -101,6 +123,9 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nPoseidon1C
         preMat1[i] = pow7Shared[i]  + ARC1[i];
         preMat2[i] = pow7Shared2[i] + ARC2[i];
 
+        // Chain-1 output → chain-2 slot of the same row (a[46..61]). Chain-2 output → next-row
+        // chain-1 slot for non-FINAL rounds; at FINAL the PLAIN permutation output (R29) lands
+        // in a[0..15]. No Davies-Meyer feed-forward — out = P(in).
         outputF1[i] = a[i + 46];
         outputF2[i] = POSEIDON1_FINAL * a[i] + (1 - POSEIDON1_FINAL) * a[i + 30]';
     }
@@ -120,33 +145,42 @@ airtemplate Aggregator (const int N, const int nPlonkRows, const int nPoseidon1C
     const expr fullRound2[POSEIDON_WIDTH_GL] = poseidonFullRoundGl(preMat2);
     poseidonFullRoundCheckGl(fullRound2, outputF2, POSEIDON1_INIT + POSEIDON1_FINAL_PRIME + POSEIDON1_FINAL);
 
-    // Round 3 → R4 (P-matrix), not stored. fullRound2P uses a DEDICATED preMat2P (own
-    // pow7) rather than the shared preMat2: it is consumed prefix-primed ('fullRound2P),
-    // and a prefix prime does not propagate into expression nodes shared with the unprimed
-    // fullRound2 check — an independent tree shifts every leaf to the PR' row correctly.
-    const expr preMat2P[POSEIDON_WIDTH_GL];
+    // R4 (round-3 P-matrix transition) is stored in the chain-1 slot a[30..45] at PR.
+    // Pinned from PR' as R4 === P-matrix( S-box(R3) + ARC ), where R3 is the chain-2
+    // slot a[46..61] @ PR'. The partial chain reads R4 as a stored degree-1 input.
+    const expr preMatR3[POSEIDON_WIDTH_GL];
     for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
-        preMat2P[i] = pow7(a[i + 46]) + POSEIDON1_PR_PRIME * POSEIDON_C_GL[i + 64];
+        preMatR3[i] = pow7Shared2[i] + ARC2[i];
     }
-    const expr fullRound2P[POSEIDON_WIDTH_GL] = poseidonPmatrixGl(preMat2P);
+    const expr fullRoundR4[POSEIDON_WIDTH_GL] = poseidonPmatrixGl(preMatR3);
+    for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
+        POSEIDON1_PR_PRIME * (a[i + 30]' - fullRoundR4[i]) === 0;
+    }
 
-    // 22-round partial chain at PR: anchors a[30..40]/a[46..56] reuse pow7Shared/pow7Shared2;
-    // input = R4 ('fullRound2P from PR'); output = R26 (a[30..45] at next row).
+    // 22-round partial chain at PR. Anchors: 16 in chain-2 slot a[46..61], 6 overflow in
+    // the plonk band a[18..23] @ INIT (read at PR via (2)'a[18..23]). The chain-2 anchor
+    // S-boxes are pow7Shared2 (= pow7(a[i+46])); the 6 overflow anchors have their own
+    // pow7 bank. Input = stored R4 (a[30..45] @ PR); output = R26 (a[30..45] at next row).
+    const expr pow7Overflow[6];
+    for (int i = 0; i < 6; i++) {
+        pow7Overflow[i] = pow7((2)'a[i + 18]);
+    }
+
     const expr st0[22];
     const expr intermediateValues[22];
-    for (int r = 0; r < 11; r++) {
-        st0[r] = a[r + 30];
-        intermediateValues[r] = pow7Shared[r] + POSEIDON_C_GL[80 + r];
+    for (int r = 0; r < 16; r++) {
+        st0[r] = a[r + 46];
+        intermediateValues[r] = pow7Shared2[r] + POSEIDON_C_GL[80 + r];
     }
-    for (int r = 0; r < 11; r++) {
-        st0[11 + r] = a[r + 46];
-        intermediateValues[11 + r] = pow7Shared2[r] + POSEIDON_C_GL[91 + r];
+    for (int r = 0; r < 6; r++) {
+        st0[16 + r] = (2)'a[r + 18];
+        intermediateValues[16 + r] = pow7Overflow[r] + POSEIDON_C_GL[96 + r];
     }
 
     const expr inputP[POSEIDON_WIDTH_GL];
     const expr outputP[POSEIDON_WIDTH_GL];
     for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
-        inputP[i]  = 'fullRound2P[i];
+        inputP[i]  = a[i + 30];
         outputP[i] = a[i + 30]';
     }
 

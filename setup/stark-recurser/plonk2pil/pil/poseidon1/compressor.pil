@@ -9,6 +9,27 @@ require "circuits/selectval.pil";
 require "circuits/poseidon.pil";
 require "circuits/plonk.pil";
 
+// ============================================================================
+// Poseidon1 (Hades-Goldilocks) COMPRESSOR
+//
+// Recursive-proof compression AIR. Each row hosts at most one custom gate
+// (Poseidon1 round, CMul, FFT4, EvPol4, TreeSelector8, SelectVal1, Plonk),
+// selected by mutually-exclusive fixed columns; gates reuse witness cols a[].
+//
+// Poseidon1 (width 16) = 8 full + 22 partial = 30 rounds. Packed into a 9-ROW
+// gate with ONE chain slot per row on cols a[36..51] (firstColP). Hades traits:
+//   * ARC added AFTER the S-box (pow7), except round 0's pre-ARC (in pow7Input).
+//   * The round-3 P-matrix transition (R4) is NOT stored; recomputed via a
+//     prefix-primed dedicated expression ('fullRoundP with its OWN pow7, see
+//     preMatP — load-bearing, not redundant).
+//   * The 22 partial anchors are 16 in the PR chain slot (a[36..51]) + 6 overflow
+//     in the plonk band at the INIT row (a[18..23], read back via (4)'a[18..23]).
+//
+// Per-row column map is documented inline at the Poseidon section below.
+// Columns:  a[0..15] = input @INIT / output @FINAL ; a[16..17] = compression key bits ;
+//           a[18..35] = plonk band (+ a[18..23] = 6 partial overflow anchors @INIT) ;
+//           a[36..51] = chain state ; S[36] = connection band.
+// ============================================================================
 airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1Compression, const int nPoseidon1Sponge, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector8, const int nSelectVal1) {
     col witness a[52];
 
@@ -120,7 +141,10 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
 
         preMat[i] = pow7Shared[i] + ARC[i];
 
-        // Output → next-row chain slot for rounds 0..2/26..28; DM at FINAL adds back R0 = a[i+firstColP]@INIT.
+        // Non-FINAL rounds (R0..R2, R26..R28) write the mixed state to the next-row chain
+        // slot a[i+firstColP]'; at FINAL the PLAIN permutation output (R29) is written to the
+        // output cells a[0..15]. No Davies-Meyer feed-forward — out = P(in), the +R0 add-back
+        // was eliminated.
         outputF[i] = POSEIDON1_FINAL * a[i] + (1 - POSEIDON1_FINAL) * a[i + firstColP]';
 
     }

@@ -60,5 +60,5 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
 && cargo run --features stark-poseidon1 --bin proofman-cli prove \
      --witness-lib ./target/debug/libtest_recursive${PIL2_PROOFMAN_EXT} \
      --proving-key examples/test-recursive/build/provingKey/ \
-     --output-dir examples/test-recursive/build/proofs -y -vv
+     --output-dir examples/test-recursive/build/proofs -y -vv --gpu
 ```

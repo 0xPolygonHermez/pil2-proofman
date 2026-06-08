@@ -229,6 +229,9 @@ function poseidonInputOrder(const expr a[], const expr b[], const expr out[], co
     poseidonFullRound(input, out, POSEIDONSPONGE + POSEIDONCOMPRESSION);
 }
 
+// DEGREE: at the ceiling. The caller passes input[] = pow7(...) (degree 7); `mat`/`stored`
+// are field-constant linear combinations of input[] (still degree 7); sel is a sum of
+// degree-1 fixed cols. sel*(output - (mat + stored)) = 1 + 7 = 8 = max. Zero headroom.
 function poseidonFullRound(const expr input[], const expr output[], const expr sel) {
     const expr mat[POSEIDON2_WIDTH];
 
@@ -256,6 +259,10 @@ function poseidonFullRound(const expr input[], const expr output[], const expr s
     }
 }
 
+// DEGREE: at the ceiling. intermediateValues are pow7 anchors (degree 7); the per-round
+// recurrence only adds/scales by the constant POSEIDON2_DIAG, so sR stays degree 7 (no
+// compounding). Both emitted checks — sel*(st0-sR[i][0]) and sel*(output-sR[rounds]) —
+// are 1 + 7 = 8 = max. Zero headroom.
 function poseidonPartialRound(const int rounds, const expr input[], const expr output[], const expr st0[], const expr intermediateValues[], const expr sel) {
     const expr sR[rounds + 1][POSEIDON2_WIDTH];
     const expr sum_partial[rounds];

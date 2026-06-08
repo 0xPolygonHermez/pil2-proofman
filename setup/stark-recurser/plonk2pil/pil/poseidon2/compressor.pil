@@ -9,6 +9,39 @@ require "circuits/selectval.pil";
 require "circuits/poseidon2.pil";
 require "circuits/plonk.pil";
 
+// ============================================================================
+// Poseidon2 COMPRESSOR
+//
+// Recursive-proof compression AIR. As in the Aggregator, each row hosts at most
+// one custom gate selected by mutually-exclusive fixed columns; gates reuse the
+// witness columns a[] on disjoint rows.
+//
+// Poseidon2 (Goldilocks, width 16) = 8 full + 22 partial = 30 rounds, packed
+// into a 10-ROW gate with ONE chain slot per row on cols a[36..51] (firstColP):
+//
+//   PIL row | round | selector alias         | chain slot a[36..51]
+//   --------+-------+------------------------+----------------------------------
+//    0 INIT |  R0   | POSEIDON_R0 (SP/COMP)  | full round 0 (+ input @a[0..15], key @a[16..17])
+//    1      |  R1   | POSEIDON_R1            | full round 1
+//    2      |  R2   | POSEIDON_R2            | full round 2
+//    3      |  R3   | POSEIDON_R3            | full round 3
+//    4      |  R4   | POSEIDON_R4            | full→partial P-matrix transition; feeds the chain ('a[36..51])
+//    5 PR   |  —    | POSEIDON_PARTIAL_ROUND | 22 partial rounds (anchors a[36..51] + (5)'a[18..23])
+//    6      |  R26  | POSEIDON_R26           | full round 26
+//    7      |  R27  | POSEIDON_R27           | full round 27
+//    8      |  R28  | POSEIDON_R28           | full round 28
+//    9 FINAL|  R29  | POSEIDON_R29           | full round 29 → output a[0..15]
+//
+// The R0..R29 aliases below resolve each round's row via primes off the INIT
+// (POSEIDONSPONGE/COMPRESSION, row 0), PARTIAL_ROUND (row 5) and FINAL (row 9)
+// anchors: prefix 'X = row r-1, postfix X' = row r+1, (k)'X = row r∓k.
+// (R4 is defined for the transition row; constantsPoseidonF below consumes the
+//  set {R0,R1,R2,R3, PARTIAL, R26,R27,R28,R29} — the 8 full rounds + the chain.)
+//
+// Columns:  a[0..15] = input @INIT / output @FINAL ; a[16..17] = compression key bits ;
+//           a[18..35] = plonk band / 6 partial overflow anchors @INIT (a[18..23]) ;
+//           a[36..51] = chain state ; S[36] = connection band.
+// ============================================================================
 airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCompressor, const int nPoseidonSponge, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector4, const int nSelectVal1) {
     col witness a[52];
 
@@ -94,6 +127,11 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidonCo
     const expr outputF[POSEIDON2_WIDTH];
     const expr intermediateValues[22];
 
+    // Round constants added INSIDE pow7's argument (Poseidon2 ARC-before-Sbox).
+    // POSEIDON2_RC[150]: each row picks its round's 16-lane block by selector.
+    //   row→offset: R0→0, R1→16, R2→32, R3→48, PARTIAL→64 (the 22 partial consts
+    //   occupy 64..85, one per round), R26→86, R27→102, R28→118, R29→134.
+    //   64+22=86 abuts the post-full block; 134+16=150 = end of array (no gap/overlap).
     for (int i = 0; i < POSEIDON2_WIDTH; i++) {
         constantsPoseidonF[i] = POSEIDON_R0 * POSEIDON2_RC[i] + POSEIDON_R1 * POSEIDON2_RC[i + 16] + POSEIDON_R2 * POSEIDON2_RC[i + 32] + POSEIDON_R3 * POSEIDON2_RC[i + 48] + POSEIDON_PARTIAL_ROUND * POSEIDON2_RC[i + 64] + POSEIDON_R26 * POSEIDON2_RC[i + 86] + POSEIDON_R27 * POSEIDON2_RC[i + 102] + POSEIDON_R28 * POSEIDON2_RC[i + 118] + POSEIDON_R29 * POSEIDON2_RC[i + 134];
  

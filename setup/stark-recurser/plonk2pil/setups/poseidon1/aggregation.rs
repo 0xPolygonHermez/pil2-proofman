@@ -40,15 +40,15 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     let n_tree_sel8_rows = cgi.n(GateRole::TreeSelector);
     let n_sel_val1_rows = cgi.n(GateRole::SelectVal1);
 
-    // Plonk piggyback tiers. CHECK_PLONK fires at PR', PR, and FINAL' — those rows
-    // expose all 10 plonk gates → ten_extra. With chain-1-anchors variant, anchors no
-    // longer overflow into row 0 cols 18..23, so INIT row also picks up gates 6, 7, 8, 9
-    // via POSEIDON1_INIT → four tier (same as FINAL). EvPol4 → three tier, SelectVal1
-    // → two tier. TreeSelector8 consumes the entire plonk band a[0..29] — no piggyback.
+    // Plonk piggyback tiers. CHECK_PLONK fires at PR', PR, FINAL' — those rows expose
+    // all 10 plonk gates → ten_extra. FINAL exposes gates 6,7,8,9 (a[18..29] free) →
+    // four tier. INIT exposes only gates 8,9 (a[24..29]; a[18..23] hold overflow anchors)
+    // → two tier, alongside SelectVal1. EvPol4 → three tier. TreeSelector8 consumes the
+    // entire plonk band a[0..29] — no piggyback.
     let ten_count = n_total_poseidon * 3; // PR' + PR + FINAL'
-    let four_count = n_total_poseidon * 2; // INIT + FINAL rows
+    let four_count = n_total_poseidon; // FINAL row
     let three_count = n_ev_pol4_rows;
-    let two_count = n_sel_val1_rows; // SelectVal1 only (INIT promoted to four tier)
+    let two_count = n_sel_val1_rows + n_total_poseidon; // SelectVal1 + INIT row
     let _ = n_tree_sel8_rows;
 
     cgi.n_plonk_rows = {
@@ -155,31 +155,28 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     // Poseidon1_16   (sponge)      signal layout: in[16]         + im[11][16] + out[16] = 208.
     //
     // im[] sub-layout (set by the circom Poseidon1_16 / CustPoseidon1_16 template):
-    //   im[0]=R1, im[1]=R2, im[2]=R3, im[3]=R4 (post-P state, NOT stored),
-    //   im[4]=h1 anchors (11 used + 5 pad), im[5]=midState (intermediate, unused),
-    //   im[6]=h2 anchors (11 used + 5 pad), im[7]=R26, im[8]=R27, im[9]=R28, im[10]=R29
+    //   im[0]=R0, im[1]=R1, im[2]=R2, im[3]=R3, im[4]=R4 (post-P transition state),
+    //   im[5]=h1 anchors (11 used + 1 pad), im[6]=midState (intermediate, unused),
+    //   im[7]=h2 anchors (11 used + pad), im[8]=R26, im[9]=R27, im[10]=R28, im[11]=R29
     //
-    // Witness layout per gate (5 rows, chain-1-anchors variant — anchors fit fully in
-    // the chain slots at PR, no plonk-band overflow, no R4 storage):
+    // Witness layout per gate (5 rows):
     //   row 0 (INIT):    a[0..15]=input, a[16..17]=key (compression only; 0 for sponge),
-    //                    a[30..45]=input(dup, R0), a[46..61]=R1
+    //                    a[18..23]=anchors[16..21], a[30..45]=R0, a[46..61]=R1
     //   row 1 (PR'):     a[30..45]=R2, a[46..61]=R3
-    //   row 2 (PR):      a[30..40]=anchors[0..10] (chain 1 slot, 11 cells; a[41..45] zero pad),
-    //                    a[46..56]=anchors[11..21] (chain 2 slot, 11 cells; a[57..61] zero pad)
+    //   row 2 (PR):      a[30..45]=R4, a[46..61]=anchors[0..15]
     //   row 3 (FINAL'):  a[30..45]=R26, a[46..61]=R27
     //   row 4 (FINAL):   a[0..15]=output, a[30..45]=R28, a[46..61]=R29
     //
-    // R4 (= circom im[3]) is NOT stored: the PIL computes it from R3 via the P-matrix
-    // expression `'fullRound2P[i]` and feeds it as the partial chain's degree-7 input.
-    // The partial chain runs all 22 rounds in a single firing at PR (row 2). Both chain
-    // slots at PR hold anchors (11 each); pow7Shared and pow7Shared2 cover the anchor
-    // pow7 evaluations, so no overflow pow7 bank is needed (32 pow7 polys vs 38).
+    // The 22 lane-0 partial anchors are circom im[5][0..10] (rounds 0..10) and
+    // im[7][0..10] (rounds 11..21), placed as anchors[0..15] → chain-2 a[46..61] @ PR
+    // and anchors[16..21] → a[18..23] @ INIT.
     let process_poseidon1 = |s: &[u64],
                              is_compression: bool,
                              s_map: &mut [Vec<u32>],
                              cv: &mut [Vec<u64>],
                              ten_extra: &mut Vec<usize>,
                              four_extra: &mut Vec<usize>,
+                             two_extra: &mut Vec<usize>,
                              r: usize| {
         let key_off = if is_compression { 2 } else { 0 };
         let expected = 16 + key_off + 12 * POSEIDON_WIDTH + POSEIDON_WIDTH;
@@ -192,10 +189,10 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         let r1 = &s[im_base + POSEIDON_WIDTH..im_base + 2 * POSEIDON_WIDTH]; // im[1]
         let r2 = &s[im_base + 2 * POSEIDON_WIDTH..im_base + 3 * POSEIDON_WIDTH]; // im[2]
         let r3 = &s[im_base + 3 * POSEIDON_WIDTH..im_base + 4 * POSEIDON_WIDTH]; // im[3]
-                                                                                 // im[4] = R4 (post-P state) — not stored in the chain-1-anchors variant
-        let im1 = &s[im_base + 5 * POSEIDON_WIDTH..im_base + 6 * POSEIDON_WIDTH]; // im[5]: h1 anchors[0..10]
-                                                                                  // im[6] = midState (intermediate, not stored)
-        let im2 = &s[im_base + 7 * POSEIDON_WIDTH..im_base + 8 * POSEIDON_WIDTH]; // im[7]: h2 anchors[0..10]
+        let r4 = &s[im_base + 4 * POSEIDON_WIDTH..im_base + 5 * POSEIDON_WIDTH]; // im[4]: post-P transition
+        let anchors_h1 = &s[im_base + 5 * POSEIDON_WIDTH..im_base + 6 * POSEIDON_WIDTH]; // im[5]: anchors rounds 0..10
+                                                                                         // im[6] = midState (intermediate, not stored)
+        let anchors_h2 = &s[im_base + 7 * POSEIDON_WIDTH..im_base + 8 * POSEIDON_WIDTH]; // im[7]: anchors rounds 11..21
         let r26 = &s[im_base + 8 * POSEIDON_WIDTH..im_base + 9 * POSEIDON_WIDTH]; // im[8]
         let r27 = &s[im_base + 9 * POSEIDON_WIDTH..im_base + 10 * POSEIDON_WIDTH]; // im[9]
         let r28 = &s[im_base + 10 * POSEIDON_WIDTH..im_base + 11 * POSEIDON_WIDTH]; // im[10]
@@ -208,7 +205,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             s_map[i + COL_P2][r] = r1[i] as u32; // row 0 chain 2 = R1
             s_map[i + COL_P1][r + 1] = r2[i] as u32; // row 1 chain 1 = R2
             s_map[i + COL_P2][r + 1] = r3[i] as u32; // row 1 chain 2 = R3
-                                                     // row 2 chain slots hold anchors only (filled below); no R4 storage
+            s_map[i + COL_P1][r + 2] = r4[i] as u32; // row 2 chain 1 = R4 (stored transition)
             s_map[i + COL_P1][r + 3] = r26[i] as u32; // row 3 chain 1 = R26
             s_map[i + COL_P2][r + 3] = r27[i] as u32; // row 3 chain 2 = R27
             s_map[i + COL_P1][r + 4] = r28[i] as u32; // row 4 chain 1 = R28
@@ -216,12 +213,21 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             s_map[i][r + 4] = output[i] as u32; // row 4 a[0..15] = output
         }
 
-        // Partial-chain anchors (chain-1-anchors variant, single 22-round chain):
-        //   anchors[0..10]  = im_h1[0..10] → row 2 chain 1 cols 30..40 (a[41..45] zero pad)
-        //   anchors[11..21] = im_h2[0..10] → row 2 chain 2 cols 46..56 (a[57..61] zero pad)
-        for i in 0..11 {
-            s_map[i + COL_P1][r + 2] = im1[i] as u32; // anchors[0..10]
-            s_map[i + COL_P2][r + 2] = im2[i] as u32; // anchors[11..21]
+        // 22 lane-0 partial anchors: rounds 0..10 = anchors_h1[0..10], rounds 11..21 =
+        // anchors_h2[0..10]. Placed as anchors[0..15] → chain-2 a[46..61] @ PR (row r+2)
+        // and anchors[16..21] → plonk band a[18..23] @ INIT (row r).
+        let anchor = |round: usize| -> u64 {
+            if round <= 10 {
+                anchors_h1[round]
+            } else {
+                anchors_h2[round - 11]
+            }
+        };
+        for round in 0..16 {
+            s_map[round + COL_P2][r + 2] = anchor(round) as u32; // anchors[0..15] → chain-2 @ PR
+        }
+        for round in 16..22 {
+            s_map[(round - 16) + 18][r] = anchor(round) as u32; // anchors[16..21] → a[18..23] @ INIT
         }
 
         // Key bits at INIT row cols 16..17 (compression only). At INIT, plonk gate 5
@@ -240,11 +246,12 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         }
 
         // Plonk piggyback queues. CHECK_PLONK fires at PR', PR, FINAL' — all 10 plonk
-        // gates active at those rows → ten_extra. With anchors out of a[18..23] at INIT,
-        // INIT also picks up gates 6, 7, 8, 9 via POSEIDON1_INIT → four tier (same as FINAL).
-        four_extra.push(r); // INIT row (gates 6,7,8,9 fire via POSEIDON1_INIT)
+        // gates active at those rows → ten_extra. INIT fires gates 8,9 only (a[24..29]):
+        // gates 6,7 (a[18..23]) host the 6 partial overflow anchors. FINAL fires gates
+        // 6,7,8,9 (a[18..29] free at FINAL).
+        two_extra.push(r); // INIT row (gates 8,9 via POSEIDON1_INIT)
         ten_extra.push(r + 1); // PR' row (CHECK_PLONK)
-        ten_extra.push(r + 2); // PR row  (CHECK_PLONK; chain slots hold anchors, plonk band fully free)
+        ten_extra.push(r + 2); // PR row  (CHECK_PLONK; chain-1 = R4, chain-2 = anchors, plonk band free)
         ten_extra.push(r + 3); // FINAL' row (CHECK_PLONK)
         four_extra.push(r + 4); // FINAL row (gates 6,7,8,9 fire via POSEIDON1_FINAL)
     };
@@ -258,6 +265,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             &mut cv,
             &mut ten_extra,
             &mut four_extra,
+            &mut two_extra,
             r,
         );
         r += POSEIDON_ROWS;
@@ -272,6 +280,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             &mut cv,
             &mut ten_extra,
             &mut four_extra,
+            &mut two_extra,
             r,
         );
         r += POSEIDON_ROWS;

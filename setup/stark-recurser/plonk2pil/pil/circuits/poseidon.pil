@@ -6,7 +6,9 @@
 //   Partial rounds: state ← S · ([S-box(state[0] + c_round)] || state[1..15])
 //   Round 3 uses the P-matrix (full→partial transition) instead of M.
 //
-// permutation by the call site: output = P(input) + input (truncated).
+// Output convention: call sites enforce output = P(input) — the PLAIN permutation,
+// with NO Davies-Meyer feed-forward (no `+ input` add-back). The sponge/compression
+// truncation to the hash digest is applied by the caller.
 
 require "circuits/poseidon_constants.pil";
 
@@ -19,6 +21,9 @@ function pow7(const expr input): const expr {
     return input6 * input;
 }
 
+// DEGREE: at the ceiling. res[] = M·(pow7(deg-1) + ARC) is degree 7; sel is a sum
+// of degree-1 fixed cols. sel*(output - res) = 1 + 7 = 8 = max. Zero headroom — any
+// change that makes `sel` degree>1, or lets a pow7 argument exceed degree 1, overflows.
 function poseidonFullRoundCheckGl(const expr res[], const expr output[], const expr sel) {
     for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
         sel * (output[i] - res[i]) === 0;
@@ -80,8 +85,13 @@ function poseidonPmatrixGl(const expr input[]): const expr[] {
 // state[0] values and the final state:
 //   result[0..rounds-1]                   = sR[r][0] for r = 0..rounds-1  (per-round witness checks)
 //   result[rounds..rounds + width - 1]    = sR[rounds][i]                 (final state, output check)
-// Splitting the chain into two halves and merging their checks at the call site halves the
-// constraint-identity count vs. a per-half in-function check (no degree cost).
+// `sRoundOffset` lets a caller compute a sub-range of rounds (it offsets into POSEIDON_S_GL);
+// both current callers pass offset 0 for a single full 22-round chain.
+//
+// DEGREE: the returned chain entries are degree 7 (intermediateValues are pow7 anchors;
+// the sparse-S recurrence only adds/scales by field constants, so degree does NOT compound
+// across rounds). The caller's check POSEIDON1_PR * (anchor - chain) is therefore 1 + 7 = 8
+// = max — at the ceiling, same caveat as the full-round check above.
 function poseidonPartialChainGl(const int rounds, const int sRoundOffset, const expr input[], const expr intermediateValues[]): const expr[] {
     const expr sR[rounds + 1][POSEIDON_WIDTH_GL];
     for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
