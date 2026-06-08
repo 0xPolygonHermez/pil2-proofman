@@ -159,21 +159,21 @@ mod tests {
         let output = poseidon2_hash::<Goldilocks, Poseidon2_16, 16>(&input);
 
         assert_eq!(output[0], Goldilocks::new(9639188652563994454));
-        assert_eq!(output[1], Goldilocks::new(12273372933164734617));
-        assert_eq!(output[2], Goldilocks::new(2905147255612444121));
-        assert_eq!(output[3], Goldilocks::new(17581461329934617291));
-        assert_eq!(output[4], Goldilocks::new(14390794100096760076));
-        assert_eq!(output[5], Goldilocks::new(5468485695976078062));
-        assert_eq!(output[6], Goldilocks::new(2832370985856357633));
-        assert_eq!(output[7], Goldilocks::new(1116111836864400819));
-        assert_eq!(output[8], Goldilocks::new(14997632823506024340));
-        assert_eq!(output[9], Goldilocks::new(3976503894892102378));
-        assert_eq!(output[10], Goldilocks::new(14874978986912301686));
-        assert_eq!(output[11], Goldilocks::new(12458748982184310714));
-        assert_eq!(output[12], Goldilocks::new(103345454961107943));
-        assert_eq!(output[13], Goldilocks::new(3354965064850558457));
-        assert_eq!(output[14], Goldilocks::new(14413825288474057231));
-        assert_eq!(output[15], Goldilocks::new(4214638127285300983));
+        assert_eq!(output[1], Goldilocks::new(12273372933164734616));
+        assert_eq!(output[2], Goldilocks::new(2905147255612444119));
+        assert_eq!(output[3], Goldilocks::new(17581461329934617288));
+        assert_eq!(output[4], Goldilocks::new(14390794100096760072));
+        assert_eq!(output[5], Goldilocks::new(5468485695976078057));
+        assert_eq!(output[6], Goldilocks::new(2832370985856357627));
+        assert_eq!(output[7], Goldilocks::new(1116111836864400812));
+        assert_eq!(output[8], Goldilocks::new(14997632823506024332));
+        assert_eq!(output[9], Goldilocks::new(3976503894892102369));
+        assert_eq!(output[10], Goldilocks::new(14874978986912301676));
+        assert_eq!(output[11], Goldilocks::new(12458748982184310703));
+        assert_eq!(output[12], Goldilocks::new(103345454961107931));
+        assert_eq!(output[13], Goldilocks::new(3354965064850558444));
+        assert_eq!(output[14], Goldilocks::new(14413825288474057217));
+        assert_eq!(output[15], Goldilocks::new(4214638127285300968));
     }
 
     #[test]
@@ -182,9 +182,9 @@ mod tests {
         let output = poseidon2_hash::<Goldilocks, Poseidon2_4, 4>(&input);
 
         assert_eq!(output[0], Goldilocks::new(8466914293353944746));
-        assert_eq!(output[1], Goldilocks::new(9589318970755021279));
-        assert_eq!(output[2], Goldilocks::new(5769801005587200743));
-        assert_eq!(output[3], Goldilocks::new(17288820341814263852));
+        assert_eq!(output[1], Goldilocks::new(9589318970755021278));
+        assert_eq!(output[2], Goldilocks::new(5769801005587200741));
+        assert_eq!(output[3], Goldilocks::new(17288820341814263849));
     }
 
     #[test]
@@ -202,13 +202,13 @@ mod tests {
         let output = poseidon2_hash::<Goldilocks, Poseidon2_8, 8>(&input);
 
         assert_eq!(output[0], Goldilocks::new(14266028122062624699));
-        assert_eq!(output[1], Goldilocks::new(5353147180106052724));
-        assert_eq!(output[2], Goldilocks::new(15203350112844181436));
-        assert_eq!(output[3], Goldilocks::new(17630919042639565168));
-        assert_eq!(output[4], Goldilocks::new(16601551015858213991));
-        assert_eq!(output[5], Goldilocks::new(10184091939013874073));
-        assert_eq!(output[6], Goldilocks::new(16774100645754596502));
-        assert_eq!(output[7], Goldilocks::new(12047415603622314787));
+        assert_eq!(output[1], Goldilocks::new(5353147180106052723));
+        assert_eq!(output[2], Goldilocks::new(15203350112844181434));
+        assert_eq!(output[3], Goldilocks::new(17630919042639565165));
+        assert_eq!(output[4], Goldilocks::new(16601551015858213987));
+        assert_eq!(output[5], Goldilocks::new(10184091939013874068));
+        assert_eq!(output[6], Goldilocks::new(16774100645754596496));
+        assert_eq!(output[7], Goldilocks::new(12047415603622314780));
     }
 
     #[test]
@@ -230,16 +230,16 @@ mod tests {
         let output = poseidon2_hash::<Goldilocks, Poseidon2_12, 12>(&input);
 
         assert_eq!(output[0], Goldilocks::new(138186169299091649));
-        assert_eq!(output[1], Goldilocks::new(2237493815125627917));
-        assert_eq!(output[2], Goldilocks::new(7098449130000758159));
-        assert_eq!(output[3], Goldilocks::new(16681569560651424233));
-        assert_eq!(output[4], Goldilocks::new(2885694034573886271));
-        assert_eq!(output[5], Goldilocks::new(1987263728465303216));
-        assert_eq!(output[6], Goldilocks::new(4895658260063552414));
-        assert_eq!(output[7], Goldilocks::new(16782691522897809452));
-        assert_eq!(output[8], Goldilocks::new(6250362358359317034));
-        assert_eq!(output[9], Goldilocks::new(8723968546836371214));
-        assert_eq!(output[10], Goldilocks::new(17025428646788054641));
-        assert_eq!(output[11], Goldilocks::new(7660698892044183288));
+        assert_eq!(output[1], Goldilocks::new(2237493815125627916));
+        assert_eq!(output[2], Goldilocks::new(7098449130000758157));
+        assert_eq!(output[3], Goldilocks::new(16681569560651424230));
+        assert_eq!(output[4], Goldilocks::new(2885694034573886267));
+        assert_eq!(output[5], Goldilocks::new(1987263728465303211));
+        assert_eq!(output[6], Goldilocks::new(4895658260063552408));
+        assert_eq!(output[7], Goldilocks::new(16782691522897809445));
+        assert_eq!(output[8], Goldilocks::new(6250362358359317026));
+        assert_eq!(output[9], Goldilocks::new(8723968546836371205));
+        assert_eq!(output[10], Goldilocks::new(17025428646788054631));
+        assert_eq!(output[11], Goldilocks::new(7660698892044183277));
     }
 }
