@@ -28,7 +28,7 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
 ```bash
 export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi) \
 && cargo run --bin proofman-setup -- setup-recursive-test \
-     -b ./examples/test-recursive/build2 -c ./examples/test-recursive/test.circom -n test -t aggregator \
+     -b ./examples/test-recursive/build2 -c ./examples/test-recursive/test.circom -n test -t aggregation \
      --hash Poseidon2 \
 && cargo build --workspace \
 && cargo run --bin proofman-cli verify-constraints \
@@ -37,7 +37,7 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libtest_recursive${PIL2_PROOFMAN_EXT} \
      --proving-key examples/test-recursive/build2/provingKey/ \
-     --output-dir examples/test-recursive/build2/proofs -y -vv --gpu
+     --output-dir examples/test-recursive/build2/proofs -y -vv
 ```
 
 Use `-t compressor` instead of `-t aggregation` for the compressor variant.
@@ -60,5 +60,5 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
 && cargo run --features stark-poseidon1 --bin proofman-cli prove \
      --witness-lib ./target/debug/libtest_recursive${PIL2_PROOFMAN_EXT} \
      --proving-key examples/test-recursive/build/provingKey/ \
-     --output-dir examples/test-recursive/build/proofs -y -vv --gpu
+     --output-dir examples/test-recursive/build/proofs -y -vv
 ```

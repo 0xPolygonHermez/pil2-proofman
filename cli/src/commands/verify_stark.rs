@@ -17,9 +17,6 @@ pub struct VerifyStark {
     #[clap(short = 'k', long)]
     pub verkey: String,
 
-    #[arg(long, default_value = "Poseidon2")]
-    pub hash: String,
-
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
     pub verbose: u8, // Using u8 to hold the number of `-v`
@@ -43,7 +40,9 @@ impl VerifyStark {
         let vk: Vec<u64> = vk_bytes.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
 
         timer_start_info!(VERIFY_STARK);
-        let v = verifier(&self.hash);
+        // The hash family travels inside the proof, so the verifier dispatches
+        // without an out-of-band flag or compile-time feature.
+        let v = verifier(&proof.hash);
         let valid = if proof.compressed {
             v.verify_vadcop_final_compressed(&proof, &vk)
         } else {

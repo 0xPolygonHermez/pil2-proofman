@@ -1688,7 +1688,7 @@ where
             &self.const_tree,
         )?;
 
-        VadcopFinalProof::new_from_proof(&vadcop_final_proof_compressed.proof, true)
+        VadcopFinalProof::new_from_proof(&vadcop_final_proof_compressed.proof, true, self.pctx.global_info.hash.clone())
             .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e)))
     }
 
@@ -2827,10 +2827,12 @@ where
 
                 let proof = vadcop_final.unwrap().into_iter().next().unwrap().proof;
 
-                vadcop_final_proof =
-                    Some(VadcopFinalProof::new_from_proof(&proof, options.compressed).map_err(|e| {
-                        ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e))
-                    })?);
+                vadcop_final_proof = Some(
+                    VadcopFinalProof::new_from_proof(&proof, options.compressed, self.pctx.global_info.hash.clone())
+                        .map_err(|e| {
+                            ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e))
+                        })?,
+                );
 
                 proof_id = Some(
                     blake3::hash(unsafe { std::slice::from_raw_parts(proof.as_ptr() as *const u8, proof.len() * 8) })
@@ -2974,9 +2976,11 @@ where
             recursive2_proof[1..1 + publics_extended.len()].copy_from_slice(&publics_extended);
             recursive2_proof[1 + publics_extended.len()..].copy_from_slice(rec_proof);
 
-            let vadcop_proof = VadcopFinalProof::new_from_proof(&recursive2_proof, false).map_err(|e| {
-                ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e))
-            })?;
+            let vadcop_proof =
+                VadcopFinalProof::new_from_proof(&recursive2_proof, false, self.pctx.global_info.hash.clone())
+                    .map_err(|e| {
+                        ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e))
+                    })?;
 
             let v = verifier(&self.pctx.global_info.hash);
 
