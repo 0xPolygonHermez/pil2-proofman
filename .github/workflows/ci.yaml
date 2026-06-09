@@ -195,7 +195,7 @@ jobs:
 
       - name: Generate setup Fibonacci Square
         run: |
-          cargo run --bin proofman-setup -- setup -a ./examples/fibonacci-square/pil/build.pilout -b ./examples/fibonacci-square/build -r -u ./examples/fibonacci-square/build/fixed
+          cargo run --bin proofman-setup -- setup -a ./examples/fibonacci-square/pil/build.pilout -b ./examples/fibonacci-square/build -r -u ./examples/fibonacci-square/build/fixed --hash Poseidon1
 
       - name: Generate PIL Helpers Fibonacci Square
         run: |
@@ -289,9 +289,10 @@ jobs:
           sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
 
       # ---------------------------------------------------------------------
-      # Poseidon2 (default hash family — no feature flag).
-      # Both setup types (compressor + aggregation) reuse the same workspace
-      # build; only the setup-recursive-test step differs.
+      # Poseidon2. The hash family is selected at runtime from the setup, so it
+      # is passed explicitly via --hash (no feature flag, no compile-time
+      # default). Both setup types (compressor + aggregation) reuse the same
+      # workspace build; only the setup-recursive-test step differs.
       # ---------------------------------------------------------------------
       - name: Setup Recursive Poseidon2 (Compressor)
         run: |

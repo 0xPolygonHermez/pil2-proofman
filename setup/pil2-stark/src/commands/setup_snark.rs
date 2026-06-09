@@ -37,7 +37,14 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
 
     let global_info: Value = serde_json::from_str(&fs::read_to_string(&global_info_path)?)?;
     let name = global_info.get("name").and_then(|v| v.as_str()).unwrap_or("pilout").to_string();
-    let hash = global_info.get("hash").and_then(|v| v.as_str()).unwrap_or("Poseidon2").to_string();
+    let hash = global_info
+        .get("hash")
+        .and_then(|v| v.as_str())
+        .with_context(|| format!("'hash' missing from {:?}; re-run the regular setup", global_info_path))?
+        .to_string();
+    if !proofman_common::hash_family::is_known_family(&hash) {
+        bail!("unknown hash family {:?} in {:?}; known: {:?}", hash, global_info_path, proofman_common::hash_family::FAMILIES);
+    }
 
     proofman_starks_lib_c::set_hash_family_c(&hash);
 

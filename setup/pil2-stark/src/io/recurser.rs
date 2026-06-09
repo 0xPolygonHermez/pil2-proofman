@@ -30,7 +30,7 @@ impl Default for Pil2CircomOptions {
             verkey_input: false,
             enable_input: false,
             input_challenges: false,
-            hash: "Poseidon2".to_string(),
+            hash: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
         }
     }
 }

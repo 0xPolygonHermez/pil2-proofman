@@ -40,7 +40,7 @@ impl Default for Pil2CircomOptions {
             input_challenges: false,
             fri_queries_batch_size: None,
             multi_fri: false,
-            hash: "Poseidon2".to_string(),
+            hash: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
         }
     }
 }
