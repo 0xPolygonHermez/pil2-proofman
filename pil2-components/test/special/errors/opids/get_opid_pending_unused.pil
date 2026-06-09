@@ -1,0 +1,14 @@
+// Must fail to compile: get_opid registers a pending range-check obligation that is
+// never satisfied (no range_check / multi_range_check / dynamic_range_check for the
+// same opid follows), so check_pending_range_checks errors at end of air.
+
+require "std_range_check.pil"
+
+airtemplate GetOpidPendingUnused(const int N = 2**4) {
+    int op = get_opid(0, 999);
+    // ERROR: no real range check for [0, 999] follows.
+}
+
+airgroup GetOpidPendingUnused {
+    GetOpidPendingUnused();
+}

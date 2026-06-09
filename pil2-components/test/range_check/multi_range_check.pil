@@ -6,9 +6,6 @@ airtemplate MultiRangeCheck1(const int N = 2**3) {
     col witness sel[3];
     col witness range_sel[3];
 
-    // Edge case: Same range (Error)
-    // multi_range_check(a[0], 0, 2**4-1, 0, 2**4-1, range_sel[0], sel[0]);
-
     multi_range_check(a[0], 0, 2**7-1, 0, 2**8-1, range_sel[0], sel[0]);
 
     multi_range_check(a[1], 0, 2**7-1, 0, 2**6-1, range_sel[1], sel[1]);
