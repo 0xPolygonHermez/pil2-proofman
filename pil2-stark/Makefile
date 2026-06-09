@@ -212,7 +212,7 @@ starks_lib: $(LIB_DIR)/$(TARGET_STARKS_LIB)
 starks_lib_gpu: LDFLAGS := $(LDFLAGS_GPU)
 starks_lib_gpu: $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
 
-binfile: $(BUILD_DIR)/$(TARGET_BINFILE)
+binfile: $(BUILD_DIR)/$(TARGET_BIN_FILE)
 
 bctree: $(BUILD_DIR)/$(TARGET_BCT)
 
@@ -246,43 +246,60 @@ $(BUILD_DIR)/$(TARGET_SETUP_PLONK): $(OBJS_SETUP_PLONK)
 $(BUILD_DIR)/$(TARGET_PROVE_PLONK): $(OBJS_PROVE_PLONK)
 	$(CXX) $(OBJS_PROVE_PLONK) $(CXXFLAGS) $(CXXFLAGS_EXT) -o $@ $(LDFLAGS) $(LDFLAGS_EXT) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) $(CXXFLAGS_EXT)
 
+# Order-only directory prerequisite: guarantees the output directory exists
+# before any object/dependency (.o/.d) is written. Without this, a parallel
+# `make -j` (especially right after `make clean` removed build-gpu/, when the
+# stale `.d` files re-included below force a makefile-remaking pass) can race
+# multiple compiler jobs against a freshly-deleted tree, producing intermittent
+# "nvcc fatal: Could not open output file" / "opening dependency file: No such
+# file or directory" errors. The per-recipe `$(MKDIR_P) $(dir $@)` below is kept
+# as a belt-and-suspenders no-op once the directory already exists.
+.SECONDEXPANSION:
+
+# Mark the directory targets precious so make never treats them as intermediate
+# files and auto-removes them mid-build.
+.PRECIOUS: %/
+
+%/:
+	$(MKDIR_P) $@
+
 # assembly
-$(BUILD_DIR)/%.asm.o: %.asm
+$(BUILD_DIR)/%.asm.o: %.asm | $$(@D)/
 	$(MKDIR_P) $(dir $@)
 	$(AS) $(ASFLAGS) $< -o $@
 
-$(BUILD_DIR_GPU)/%.asm.o: %.asm
+$(BUILD_DIR_GPU)/%.asm.o: %.asm | $$(@D)/
 	$(MKDIR_P) $(dir $@)
 	$(AS) $(ASFLAGS) $< -o $@
 
 # c++ source
-$(BUILD_DIR)/%.cpp.o: %.cpp
+$(BUILD_DIR)/%.cpp.o: %.cpp | $$(@D)/
 	$(MKDIR_P) $(dir $@)
 	$(CXX) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/%.cc.o: %.cc
+$(BUILD_DIR)/%.cc.o: %.cc | $$(@D)/
 	$(MKDIR_P) $(dir $@)
 	$(CXX) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD_DIR_GPU)/%.cpp.o: %.cpp
+$(BUILD_DIR_GPU)/%.cpp.o: %.cpp | $$(@D)/
 	$(MKDIR_P) $(dir $@)
 	$(CXX) -D__USE_CUDA__ $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD_DIR_GPU)/%.cc.o: %.cc
+$(BUILD_DIR_GPU)/%.cc.o: %.cc | $$(@D)/
 	$(MKDIR_P) $(dir $@)
 	$(CXX) -D__USE_CUDA__ $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 
-$(BUILD_DIR)/$(TARGET_BINFILE): $(OBJS_BINFILE)
+$(BUILD_DIR)/$(TARGET_BIN_FILE): $(OBJS_BINFILE)
 	$(CXX) $(OBJS_BINFILE) $(CXXFLAGS) -o $(BUILD_DIR)/$(TARGET_BIN_FILE) $(LDFLAGS) $(LDFLAGS_EXT) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) 
 
 # cuda source
-$(BUILD_DIR_GPU)/%.cu.o: %.cu
+$(BUILD_DIR_GPU)/%.cu.o: %.cu | $$(@D)/
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -c $< -o $@
 
 # sppark utility (compile as CUDA to get proper GPU support)
-$(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
+$(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp | $$(@D)/
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
 
@@ -292,11 +309,17 @@ clean:
 	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU)
 	$(RM) -r $(LIB_DIR) $(LIB_DIR_GPU)
 
+# Skip re-including the generated .d files when the only goal is `clean`: after
+# `make clean` removes build-gpu/, re-including now-deleted .d files forces make
+# into a makefile-remaking pass that recompiles objects just to regenerate them,
+# which is both wasteful and a source of the post-clean parallel race above.
+ifeq ($(filter clean,$(MAKECMDGOALS)),)
 -include $(DEPS_SETUP)
 -include $(DEPS_SETUP_PLONK)
 -include $(DEPS_PROVE_PLONK)
 -include $(DEPS_BCT)
 -include $(DEPS_STARKS_LIB)
 -include $(DEPS_STARKS_LIB_GPU)
+endif
 
 MKDIR_P ?= mkdir -p
