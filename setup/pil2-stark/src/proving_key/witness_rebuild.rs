@@ -199,10 +199,9 @@ pub fn discover_snark_witness_libs(
     }
 
     let mut libs = Vec::new();
-    for (subdir, template, helpers_dir) in [
-        ("recursivef", "recursivef", gl_helpers_dir),
-        ("final", "final", final_helpers_dir),
-    ] {
+    for (subdir, template, helpers_dir) in
+        [("recursivef", "recursivef", gl_helpers_dir), ("final", "final", final_helpers_dir)]
+    {
         if let Some(lib) = classify_lib(&proving_key_snark.join(subdir), template)? {
             libs.push(SnarkWitnessLib {
                 files_dir: lib.files_dir,
