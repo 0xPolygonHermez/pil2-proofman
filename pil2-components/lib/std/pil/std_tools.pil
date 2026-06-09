@@ -25,3 +25,26 @@ function get_L1(): expr {
     }
     return air.__L1__;
 }
+
+/**
+ * Enforces that a selector is binary, i.e. sel ∈ {0, 1}.
+ *
+ * A non-constant selector receives the constraint sel·(sel - 1) === 0.
+ * A constant selector is only allowed to be the literal 1 (select all rows),
+ * which is trivially binary and needs no constraint; any other constant is rejected.
+ *
+ * @param sel  The selector expression to constrain.
+ * @param opid The operation ID of the argument, used for error reporting.
+ */
+function constrain_binary_sel(const expr sel, const int opid) {
+    if (degree(sel) == 0) {
+        // Constant selector: only the literal 1 (all rows) is meaningful and binary.
+        const int sel_val = sel;
+        if (sel_val != 1) {
+            error(`The selector of the argument with opid #${opid} must be either a non-constant binary expression or the constant 1, but got the constant ${sel_val}`);
+        }
+        // sel == 1 is trivially binary; no constraint needed.
+    } else {
+        sel * (sel - 1) === 0;
+    }
+}

@@ -411,7 +411,7 @@ function range_check(const expr expression, const int min, const int max, const 
 
             airgroup.std.rc.u8_used = airgroup.std.rc.u8_used || is_u8;
             airgroup.std.rc.u16_used = airgroup.std.rc.u16_used || !is_u8;
-            lookup_assumes(opid, [expression], sel, PIOP_NAME_RANGE_CHECK);
+            lookup_assumes(opid, [expression], sel, sel_is_binary: 1, name: PIOP_NAME_RANGE_CHECK);
         } else {
             // Here, the range is of the form [a,b], with a >= 0 and b <= MASK_8/16, except for the range [0,MASK_8/16]
             const int is_u8 = (max <= MASK_8) ? 1 : 0;
@@ -424,15 +424,15 @@ function range_check(const expr expression, const int min, const int max, const 
             airgroup.std.rc.u16_used = airgroup.std.rc.u16_used || !is_u8;
 
             // expression is in [a,b] iff expression-min is in [0,MASK_8/16] and max-expression is in [0,MASK_8/16]
-            lookup_assumes(opid, [expression - min], sel, PIOP_NAME_RANGE_CHECK);
-            lookup_assumes(opid, [max - expression], sel, PIOP_NAME_RANGE_CHECK);
+            lookup_assumes(opid, [expression - min], sel, sel_is_binary: 1, name: PIOP_NAME_RANGE_CHECK);
+            lookup_assumes(opid, [max - expression], sel, sel_is_binary: 1, name: PIOP_NAME_RANGE_CHECK);
         }
     } else {
         @range_def{opid: opid, predefined: predefined, min: min, max: max, 
                    min_neg: (min < 0), max_neg: (max < 0), 
                    type: "Specified", is_virtual: SPECIFIED_TABLE_VIRTUAL};
 
-        lookup_assumes(opid, [expression], sel, PIOP_NAME_RANGE_CHECK);
+        lookup_assumes(opid, [expression], sel, sel_is_binary: 1, name: PIOP_NAME_RANGE_CHECK);
     }
 
     // Define the range check proves
