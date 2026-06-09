@@ -56,14 +56,6 @@ TARGET_STARKS_LIB_GPU := libstarksgpu.a
 TARGET_SETUP_PLONK := plonkSetup
 TARGET_PROVE_PLONK := plonkProve
 
-# Stock macOS ships GNU Make 3.81, which (unlike make 4.x) does not collapse the
-# embedded "/./" in object paths like ./build/./src/foo.cpp.o before matching the
-# $(BUILD_DIR)/%.cpp.o pattern rule, so no rule matches and the build fails. The
-# `find ./src ...` source lists are the source of the leading "./". Apply `norm`
-# to every OBJS_* list to strip it, yielding ./build/src/... which matches on both
-# make 3.81 and 4.x.
-norm = $(patsubst ./%,%,$(1))
-
 BUILD_DIR := ./build
 BUILD_DIR_GPU := ./build-gpu
 LIB_DIR := ./lib
@@ -162,8 +154,8 @@ SRCS_STARKS_LIB := $(filter-out %_gpu.cpp %_gpu.cc,$(SRCS_STARKS_LIB))
 SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/bn128/src/msm ./src/bn128/src/ntt ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc" -or -name "*.cu")
 # Sppark utility for GPU (provides gpu_props function)
 SPPARK_GPU_OBJ := $(BUILD_DIR_GPU)/external/sppark/util/all_gpus.o
-OBJS_STARKS_LIB := $(patsubst %,$(BUILD_DIR)/%.o,$(call norm,$(SRCS_STARKS_LIB)))
-OBJS_STARKS_LIB_GPU := $(patsubst %,$(BUILD_DIR_GPU)/%.o,$(call norm,$(SRCS_STARKS_LIB_GPU))) $(SPPARK_GPU_OBJ)
+OBJS_STARKS_LIB := $(SRCS_STARKS_LIB:%=$(BUILD_DIR)/%.o)
+OBJS_STARKS_LIB_GPU := $(SRCS_STARKS_LIB_GPU:%=$(BUILD_DIR_GPU)/%.o) $(SPPARK_GPU_OBJ)
 DEPS_STARKS_LIB := $(OBJS_STARKS_LIB:.o=.d)
 DEPS_STARKS_LIB_GPU := $(OBJS_STARKS_LIB_GPU:.o=.d)
 
@@ -175,11 +167,11 @@ else
     # Linux - include all files including assembly
     SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeBN128.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.*  ./src/bn128/src/poseidon/poseidon_bn128.cpp ./src/bn128/src/ffiasm ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
 endif
-OBJS_BCT := $(patsubst %,$(BUILD_DIR)/%.o,$(call norm,$(SRCS_BCT)))
+OBJS_BCT := $(SRCS_BCT:%=$(BUILD_DIR)/%.o)
 DEPS_BCT := $(OBJS_BCT:.o=.d)
 
 SRCS_BINFILE := $(shell find ./src/binfile/main.cpp ./src/goldilocks/src ./src/starkpil/expressions_bin.cpp ./src/starkpil/expressions_info.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/starkpil/stark_info.cpp ./src/rapidsnark/logger.* ./src/rapidsnark/binfile_utils.* ./src/rapidsnark/binfile_writer.* ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
-OBJS_BINFILE := $(patsubst %,$(BUILD_DIR)/%.o,$(call norm,$(SRCS_BINFILE)))
+OBJS_BINFILE := $(SRCS_BINFILE:%=$(BUILD_DIR)/%.o)
 DEPS_BINFILE := $(OBJS_BINFILE:.o=.d)
 
 SRCS_SETUP := $(shell find $(SETUP_DIRS) ! -path "./src/sm/*" ! -path "./src/main_sm/*" -name "*.cpp")
@@ -187,7 +179,7 @@ SRCS_SETUP += $(shell find src/XKCP -name "*.cpp")
 SRCS_SETUP += $(shell find src/fflonk_setup -name fflonk_setup.cpp)
 SRCS_SETUP += $(addprefix $(SETUP_DPNDS_DIR)/, alt_bn128.cpp fr.cpp fq.cpp fnec.cpp fec.cpp misc.cpp naf.cpp splitparstr.cpp)
 SRCS_SETUP += $(shell find $(SETUP_DPNDS_DIR) -name "*.asm")
-OBJS_SETUP := $(patsubst %,$(BUILD_DIR)/%.o,$(call norm,$(SRCS_SETUP)))
+OBJS_SETUP := $(patsubst %,$(BUILD_DIR)/%.o,$(SRCS_SETUP))
 OBJS_SETUP := $(filter-out $(BUILD_DIR)/src/main.cpp.o, $(OBJS_SETUP)) # Exclude main.cpp from test build
 OBJS_SETUP := $(filter-out $(BUILD_DIR)/src/main_test.cpp.o, $(OBJS_SETUP)) # Exclude main.cpp from test build
 DEPS_SETUP := $(OBJS_SETUP:.o=.d)
@@ -197,7 +189,7 @@ SRCS_SETUP_PLONK += $(shell find src/XKCP -name *.cpp)
 SRCS_SETUP_PLONK += $(shell find src/plonk_setup -name plonk_setup.cpp)
 SRCS_SETUP_PLONK += $(addprefix $(SETUP_DPNDS_DIR)/, alt_bn128.cpp fr.cpp fq.cpp fnec.cpp fec.cpp misc.cpp naf.cpp splitparstr.cpp)
 SRCS_SETUP_PLONK += $(shell find $(SETUP_DPNDS_DIR) -name *.asm)
-OBJS_SETUP_PLONK := $(patsubst %,$(BUILD_DIR)/%.o,$(call norm,$(SRCS_SETUP_PLONK)))
+OBJS_SETUP_PLONK := $(patsubst %,$(BUILD_DIR)/%.o,$(SRCS_SETUP_PLONK))
 OBJS_SETUP_PLONK := $(filter-out $(BUILD_DIR)/src/main.cpp.o, $(OBJS_SETUP_PLONK)) # Exclude main.cpp from test build
 OBJS_SETUP_PLONK := $(filter-out $(BUILD_DIR)/src/main_test.cpp.o, $(OBJS_SETUP_PLONK)) # Exclude main.cpp from test build
 DEPS_SETUP_PLONK := $(OBJS_SETUP_PLONK:.o=.d)
@@ -208,7 +200,7 @@ SRCS_PROVE_PLONK += $(shell find src/plonk_setup -name main_prover.cpp)
 SRCS_PROVE_PLONK += $(shell find src/utils -name *.cpp)
 SRCS_PROVE_PLONK += $(addprefix $(SETUP_DPNDS_DIR)/, alt_bn128.cpp fr.cpp fq.cpp fnec.cpp fec.cpp misc.cpp naf.cpp splitparstr.cpp)
 SRCS_PROVE_PLONK += $(shell find $(SETUP_DPNDS_DIR) -name *.asm)
-OBJS_PROVE_PLONK := $(patsubst %,$(BUILD_DIR)/%.o,$(call norm,$(SRCS_PROVE_PLONK)))
+OBJS_PROVE_PLONK := $(patsubst %,$(BUILD_DIR)/%.o,$(SRCS_PROVE_PLONK))
 OBJS_PROVE_PLONK := $(filter-out $(BUILD_DIR)/src/main.cpp.o, $(OBJS_PROVE_PLONK)) # Exclude main.cpp from test build
 OBJS_PROVE_PLONK := $(filter-out $(BUILD_DIR)/src/main_test.cpp.o, $(OBJS_PROVE_PLONK)) # Exclude main.cpp from test build
 DEPS_PROVE_PLONK := $(OBJS_PROVE_PLONK:.o=.d)
@@ -220,7 +212,7 @@ starks_lib: $(LIB_DIR)/$(TARGET_STARKS_LIB)
 starks_lib_gpu: LDFLAGS := $(LDFLAGS_GPU)
 starks_lib_gpu: $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
 
-binfile: $(BUILD_DIR)/$(TARGET_BIN_FILE)
+binfile: $(BUILD_DIR)/$(TARGET_BINFILE)
 
 bctree: $(BUILD_DIR)/$(TARGET_BCT)
 
@@ -254,60 +246,43 @@ $(BUILD_DIR)/$(TARGET_SETUP_PLONK): $(OBJS_SETUP_PLONK)
 $(BUILD_DIR)/$(TARGET_PROVE_PLONK): $(OBJS_PROVE_PLONK)
 	$(CXX) $(OBJS_PROVE_PLONK) $(CXXFLAGS) $(CXXFLAGS_EXT) -o $@ $(LDFLAGS) $(LDFLAGS_EXT) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) $(CXXFLAGS_EXT)
 
-# Order-only directory prerequisite: guarantees the output directory exists
-# before any object/dependency (.o/.d) is written. Without this, a parallel
-# `make -j` (especially right after `make clean` removed build-gpu/, when the
-# stale `.d` files re-included below force a makefile-remaking pass) can race
-# multiple compiler jobs against a freshly-deleted tree, producing intermittent
-# "nvcc fatal: Could not open output file" / "opening dependency file: No such
-# file or directory" errors. The per-recipe `$(MKDIR_P) $(dir $@)` below is kept
-# as a belt-and-suspenders no-op once the directory already exists.
-.SECONDEXPANSION:
-
-# Mark the directory targets precious so make never treats them as intermediate
-# files and auto-removes them mid-build.
-.PRECIOUS: %/
-
-%/:
-	$(MKDIR_P) $@
-
 # assembly
-$(BUILD_DIR)/%.asm.o: %.asm | $$(@D)/
+$(BUILD_DIR)/%.asm.o: %.asm
 	$(MKDIR_P) $(dir $@)
 	$(AS) $(ASFLAGS) $< -o $@
 
-$(BUILD_DIR_GPU)/%.asm.o: %.asm | $$(@D)/
+$(BUILD_DIR_GPU)/%.asm.o: %.asm
 	$(MKDIR_P) $(dir $@)
 	$(AS) $(ASFLAGS) $< -o $@
 
 # c++ source
-$(BUILD_DIR)/%.cpp.o: %.cpp | $$(@D)/
+$(BUILD_DIR)/%.cpp.o: %.cpp
 	$(MKDIR_P) $(dir $@)
 	$(CXX) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/%.cc.o: %.cc | $$(@D)/
+$(BUILD_DIR)/%.cc.o: %.cc
 	$(MKDIR_P) $(dir $@)
 	$(CXX) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD_DIR_GPU)/%.cpp.o: %.cpp | $$(@D)/
+$(BUILD_DIR_GPU)/%.cpp.o: %.cpp
 	$(MKDIR_P) $(dir $@)
 	$(CXX) -D__USE_CUDA__ $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD_DIR_GPU)/%.cc.o: %.cc | $$(@D)/
+$(BUILD_DIR_GPU)/%.cc.o: %.cc
 	$(MKDIR_P) $(dir $@)
 	$(CXX) -D__USE_CUDA__ $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 
-$(BUILD_DIR)/$(TARGET_BIN_FILE): $(OBJS_BINFILE)
+$(BUILD_DIR)/$(TARGET_BINFILE): $(OBJS_BINFILE)
 	$(CXX) $(OBJS_BINFILE) $(CXXFLAGS) -o $(BUILD_DIR)/$(TARGET_BIN_FILE) $(LDFLAGS) $(LDFLAGS_EXT) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) 
 
 # cuda source
-$(BUILD_DIR_GPU)/%.cu.o: %.cu | $$(@D)/
+$(BUILD_DIR_GPU)/%.cu.o: %.cu
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -c $< -o $@
 
 # sppark utility (compile as CUDA to get proper GPU support)
-$(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp | $$(@D)/
+$(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
 
@@ -317,17 +292,11 @@ clean:
 	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU)
 	$(RM) -r $(LIB_DIR) $(LIB_DIR_GPU)
 
-# Skip re-including the generated .d files when the only goal is `clean`: after
-# `make clean` removes build-gpu/, re-including now-deleted .d files forces make
-# into a makefile-remaking pass that recompiles objects just to regenerate them,
-# which is both wasteful and a source of the post-clean parallel race above.
-ifeq ($(filter clean,$(MAKECMDGOALS)),)
 -include $(DEPS_SETUP)
 -include $(DEPS_SETUP_PLONK)
 -include $(DEPS_PROVE_PLONK)
 -include $(DEPS_BCT)
 -include $(DEPS_STARKS_LIB)
 -include $(DEPS_STARKS_LIB_GPU)
-endif
 
 MKDIR_P ?= mkdir -p
