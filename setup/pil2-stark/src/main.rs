@@ -144,6 +144,11 @@ struct RebuildWitnessArgs {
     #[arg(short = 'p', long = "proving-key")]
     proving_key: String,
 
+    /// Optional path to the `provingKeySnark/` directory. When set, the snark
+    /// witness libraries (`recursivef`, `final`) are rebuilt too.
+    #[arg(short = 's', long = "proving-key-snark")]
+    proving_key_snark: Option<String>,
+
     /// Max number of witness libraries to compile concurrently. Each `make`
     /// build is g++-bound and uses ~1–2 GB RAM; defaults to the number of
     /// available CPUs. Lower it on memory-constrained machines.
@@ -303,9 +308,16 @@ fn main() -> anyhow::Result<()> {
         Commands::RebuildWitnessLibs(args) => {
             tracing::info!("proofman-setup rebuild-witness-libs: starting");
             tracing::info!("  proving_key: {}", args.proving_key);
+            if let Some(ref pks) = args.proving_key_snark {
+                tracing::info!("  proving_key_snark: {}", pks);
+            }
             let jobs = args.jobs.unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
             tracing::info!("  jobs: {} (override with --jobs or REBUILD_JOBS env)", jobs);
-            let opts = RebuildWitnessOptions { proving_key: args.proving_key, jobs };
+            let opts = RebuildWitnessOptions {
+                proving_key: args.proving_key,
+                proving_key_snark: args.proving_key_snark,
+                jobs,
+            };
             rebuild_witness_cmd::run_rebuild_witness(&opts)
         }
 

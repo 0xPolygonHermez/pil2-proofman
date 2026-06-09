@@ -59,6 +59,10 @@ void reset_device_streams_gpu(void *d_buffers_);
 uint64_t check_device_memory_gpu(uint32_t node_rank, uint32_t node_size);
 uint64_t get_num_gpus_gpu();
 void *get_unified_buffer_gpu_gpu(void *d_buffers_);
+uint64_t get_unified_buffer_gpu_size_gpu(void *d_buffers_);
+void acquire_first_gpu_buffer_gpu(void *d_buffers_);
+void release_first_gpu_buffer_gpu(void *d_buffers_);
+uint32_t is_first_gpu_buffer_borrowed_gpu(void *d_buffers_);
 void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffers_recursivef_);
 void alloc_fixed_pols_buffer_gpu_gpu(void *d_buffers_);
 void free_fixed_pols_buffer_gpu_gpu(void *d_buffers_);
@@ -106,6 +110,10 @@ StarksBackend cpu_backend = []() {
     backend.check_device_memory = nullptr;                // default: 0
     backend.get_num_gpus = nullptr;                       // default: 1
     backend.get_unified_buffer_gpu = nullptr;             // default: nullptr
+    backend.get_unified_buffer_gpu_size = nullptr;        // default: 0
+    backend.acquire_first_gpu_buffer = nullptr;           // default: no-op
+    backend.release_first_gpu_buffer = nullptr;           // default: no-op
+    backend.is_first_gpu_buffer_borrowed = nullptr;       // default: 0 (free)
     backend.get_unified_buffer_gpu_for_recursivef = nullptr;
     backend.alloc_fixed_pols_buffer_gpu = nullptr;
     backend.free_fixed_pols_buffer_gpu = nullptr;
@@ -150,6 +158,10 @@ StarksBackend gpu_backend = []() {
     backend.check_device_memory = check_device_memory_gpu;
     backend.get_num_gpus = get_num_gpus_gpu;
     backend.get_unified_buffer_gpu = get_unified_buffer_gpu_gpu;
+    backend.get_unified_buffer_gpu_size = get_unified_buffer_gpu_size_gpu;
+    backend.acquire_first_gpu_buffer = acquire_first_gpu_buffer_gpu;
+    backend.release_first_gpu_buffer = release_first_gpu_buffer_gpu;
+    backend.is_first_gpu_buffer_borrowed = is_first_gpu_buffer_borrowed_gpu;
     backend.get_unified_buffer_gpu_for_recursivef = get_unified_buffer_gpu_for_recursivef_gpu;
     backend.alloc_fixed_pols_buffer_gpu = alloc_fixed_pols_buffer_gpu_gpu;
     backend.free_fixed_pols_buffer_gpu = free_fixed_pols_buffer_gpu_gpu;
@@ -339,6 +351,26 @@ uint64_t get_num_gpus() {
 void *get_unified_buffer_gpu(void *d_buffers_) {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->get_unified_buffer_gpu ? backend->get_unified_buffer_gpu(d_buffers_) : nullptr;
+}
+
+uint64_t get_unified_buffer_gpu_size(void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->get_unified_buffer_gpu_size ? backend->get_unified_buffer_gpu_size(d_buffers_) : 0;
+}
+
+void acquire_first_gpu_buffer(void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->acquire_first_gpu_buffer) backend->acquire_first_gpu_buffer(d_buffers_);
+}
+
+void release_first_gpu_buffer(void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->release_first_gpu_buffer) backend->release_first_gpu_buffer(d_buffers_);
+}
+
+uint32_t is_first_gpu_buffer_borrowed(void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->is_first_gpu_buffer_borrowed ? backend->is_first_gpu_buffer_borrowed(d_buffers_) : 0;
 }
 
 void *get_unified_buffer_gpu_for_recursivef(void *d_buffers_, void *d_buffers_recursivef_) {
