@@ -43,7 +43,12 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
         .with_context(|| format!("'hash' missing from {:?}; re-run the regular setup", global_info_path))?
         .to_string();
     if !proofman_common::hash_family::is_known_family(&hash) {
-        bail!("unknown hash family {:?} in {:?}; known: {:?}", hash, global_info_path, proofman_common::hash_family::FAMILIES);
+        bail!(
+            "unknown hash family {:?} in {:?}; known: {:?}",
+            hash,
+            global_info_path,
+            proofman_common::hash_family::FAMILIES
+        );
     }
 
     proofman_starks_lib_c::set_hash_family_c(&hash);

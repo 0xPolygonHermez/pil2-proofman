@@ -35,7 +35,12 @@ pub fn run_setup_compressed_final(opts: &SetupCompressedFinalOptions) -> Result<
         .with_context(|| format!("'hash' missing from {:?}; re-run `setup --recursive`", global_info_path))?
         .to_string();
     if !proofman_common::hash_family::is_known_family(&hash) {
-        bail!("unknown hash family {:?} in {:?}; known: {:?}", hash, global_info_path, proofman_common::hash_family::FAMILIES);
+        bail!(
+            "unknown hash family {:?} in {:?}; known: {:?}",
+            hash,
+            global_info_path,
+            proofman_common::hash_family::FAMILIES
+        );
     }
 
     let vadcop_dir = PathBuf::from(build_dir).join("provingKey").join(&name).join("vadcop_final");
