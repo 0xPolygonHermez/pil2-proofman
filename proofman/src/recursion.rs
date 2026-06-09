@@ -816,6 +816,111 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     Ok(p_prove)
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
+    setup: &Setup<F>,
+    memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
+    proof_a: &[u64],
+    proof_b: &[u64],
+    private_inputs: &[u64],
+    root_c_recurser_agg: &[u64; 4],
+    prover_buffer: &[F],
+    const_pols: &[F],
+    const_tree: &[F],
+    d_buffers: *mut c_void,
+) -> ProofmanResult<Vec<u64>> {
+    timer_start_info!(GENERATE_RECURSER_AGGREGATOR);
+    let p_setup: *mut c_void = (&setup.p_setup).into();
+
+    let p_setup_addr = p_setup as usize;
+    let device_buffers_addr = d_buffers as usize;
+    let setup_type = setup.setup_type.clone();
+    let calc_handle = std::thread::spawn(move || {
+        calculate_const_tree_fixed_c(
+            p_setup_addr as *mut c_void,
+            0,
+            0,
+            setup_type.into(),
+            device_buffers_addr as *mut c_void,
+        );
+    });
+
+    let mut zkin: Vec<u64> = Vec::with_capacity(proof_a.len() + proof_b.len() + private_inputs.len() + 4);
+    zkin.extend_from_slice(proof_a);
+    zkin.extend_from_slice(proof_b);
+    zkin.extend_from_slice(private_inputs);
+    zkin.extend_from_slice(root_c_recurser_agg);
+
+    timer_start_debug!(GENERATE_RECURSER_AGGREGATOR_WITNESS);
+    let circom_witness = generate_witness::<F>(setup, memory_handler_recursive_witness, 0, &zkin)?;
+    timer_stop_and_log_debug!(GENERATE_RECURSER_AGGREGATOR_WITNESS);
+
+    let n_bits = setup.stark_info.stark_struct.n_bits;
+    let n_publics = setup.stark_info.n_publics;
+    let n_cols = setup.n_cols;
+    let mut publics = vec![F::ZERO; n_publics as usize];
+    let mut trace: Vec<F> = vec![F::ZERO; (1usize << n_bits) * n_cols as usize];
+    let exec_data_ptr = setup
+        .exec_data
+        .as_ref()
+        .map(|v| v.as_ptr() as *mut u64)
+        .ok_or_else(|| ProofmanError::InvalidSetup("recurser setup has no exec_data".into()))?;
+
+    get_committed_pols_c(
+        circom_witness.as_ptr() as *mut u8,
+        exec_data_ptr,
+        trace.as_mut_ptr() as *mut u8,
+        publics.as_mut_ptr() as *mut u8,
+        setup.size_witness.ok_or_else(|| ProofmanError::InvalidSetup("recurser setup has no size_witness".into()))?,
+        1 << n_bits,
+        n_publics,
+        n_cols,
+    );
+    memory_handler_recursive_witness.release_buffer_witness(circom_witness)?;
+
+    let mut final_proof: Vec<u64> = vec![0; (1 + n_publics + setup.proof_size) as usize];
+    final_proof[0] = n_publics;
+    for (i, p) in publics.iter().enumerate() {
+        final_proof[1 + i] = p.as_canonical_u64();
+    }
+    let stark_offset = (1 + n_publics) as usize;
+
+    let (const_pols_ptr, const_tree_ptr) = if setup.gpu {
+        (std::ptr::null_mut::<u8>(), std::ptr::null_mut::<u8>())
+    } else {
+        (const_pols.as_ptr() as *mut u8, const_tree.as_ptr() as *mut u8)
+    };
+
+    if let Err(e) = calc_handle.join() {
+        tracing::warn!("Recurser const tree calculation thread panicked: {:?}", e);
+    }
+
+    timer_start_debug!(GENERATE_RECURSER_AGGREGATOR_PROOF);
+    let _stream_id = gen_recursive_proof_c(
+        p_setup,
+        trace.as_ptr() as *mut u8,
+        prover_buffer.as_ptr() as *mut u8,
+        const_pols_ptr,
+        const_tree_ptr,
+        publics.as_ptr() as *mut u8,
+        final_proof[stark_offset..].as_mut_ptr(),
+        "",
+        0,
+        0,
+        0,
+        true,
+        d_buffers,
+        &setup.const_pols_path,
+        &setup.const_pols_tree_path,
+        setup.setup_type.clone().into(),
+        false,
+    );
+    timer_stop_and_log_debug!(GENERATE_RECURSER_AGGREGATOR_PROOF);
+
+    timer_stop_and_log_info!(GENERATE_RECURSER_AGGREGATOR);
+    Ok(final_proof)
+}
+
 pub fn generate_snark_proof(
     snark_prover: *mut c_void,
     setup_path: &Path,

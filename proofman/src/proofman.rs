@@ -3,8 +3,8 @@ use libloading::{Library, Symbol};
 use fields::{new_transcript, ExtensionField, GoldilocksQuinticExtension, PrimeField64};
 use proofman_common::{
     calculate_fixed_tree, configured_num_threads, initialize_logger, load_const_pols, skip_prover_instance, CurveType,
-    PolMap, RowInfo, DebugInfo, MemoryHandler, MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof, ProofCtx,
-    ProofOptions, ProofType, RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
+    GlobalInfoAir, PolMap, RowInfo, DebugInfo, MemoryHandler, MemoryHandlerRecursive, MpiCtx, ProofmanOptions, Proof,
+    ProofCtx, ProofOptions, ProofType, RankInfo, SetupCtx, SetupsVadcop, VerboseMode, MAX_INSTANCES, PreLoadedConst,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -37,7 +37,10 @@ use proofman_starks_lib_c::{
     calculate_trace_instance_c, wait_stream_commit_done_c,
 };
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
@@ -288,6 +291,7 @@ pub struct ProofMan<F: PrimeField64> {
     sctx: Arc<SetupCtx<F>>,
     mpi_ctx: Arc<MpiCtx>,
     setups: Arc<SetupsVadcop<F>>,
+    recurser_setups: RwLock<HashMap<String, Arc<Setup<F>>>>,
     wcm: Arc<WitnessManager<F>>,
     n_streams: usize,
     n_streams_non_recursive: usize,
@@ -1656,6 +1660,91 @@ where
         self._generate_proof(ProvePhaseInputs::Full(), proof_options, ProvePhase::Full)
     }
 
+    pub fn register_recurser_setup(&self, recurser_id: &str, recurser_path_stem: &Path) -> ProofmanResult<()> {
+        {
+            let cache = self.recurser_setups.read().unwrap();
+            if cache.contains_key(recurser_id) {
+                return Ok(());
+            }
+        }
+
+        let vadcop_final_stem = self.pctx.global_info.get_setup_path("vadcop_final");
+        let air_info = GlobalInfoAir::new(format!("recurser_aggregator_{recurser_id}"));
+        let setup = Setup::<F>::new(
+            recurser_path_stem,
+            0,
+            0,
+            &air_info,
+            &ProofType::RecurserAggregator,
+            false,
+            false,
+            self.options.gpu,
+            Some(&vadcop_final_stem),
+        )?;
+
+        tracing::info!(
+            "Preparing const-tree for recurser-aggregator setup '{recurser_id}' ({} mode)",
+            if self.options.gpu { "GPU" } else { "CPU" }
+        );
+        calculate_fixed_tree(&setup);
+
+        tracing::info!(
+            "Registered recurser-aggregator setup '{recurser_id}' (files at {:?}, starkinfo borrowed from {:?})",
+            recurser_path_stem,
+            vadcop_final_stem,
+        );
+
+        let mut cache = self.recurser_setups.write().unwrap();
+        cache.entry(recurser_id.to_string()).or_insert_with(|| Arc::new(setup));
+        Ok(())
+    }
+
+    pub fn prove_recurser_aggregator(
+        &self,
+        recurser_id: &str,
+        proof_a: &VadcopFinalProof,
+        proof_b: &VadcopFinalProof,
+        private_inputs: &[u64],
+        root_c_recurser_agg: &[u64; 4],
+    ) -> ProofmanResult<VadcopFinalProof> {
+        if proof_a.compressed || proof_b.compressed {
+            return Err(ProofmanError::InvalidConfiguration(
+                "prove_recurser_aggregator: compressed inputs are not supported".to_string(),
+            ));
+        }
+
+        let setup = {
+            let cache = self.recurser_setups.read().unwrap();
+            cache.get(recurser_id).cloned().ok_or_else(|| {
+                ProofmanError::InvalidParameters(format!(
+                    "Recurser id '{recurser_id}' not registered. Call register_recurser_setup first."
+                ))
+            })?
+        };
+
+        let a = proof_a.proof_with_publics();
+        let b = proof_b.proof_with_publics();
+        let a_body = a.get(1..).unwrap_or(&[]);
+        let b_body = b.get(1..).unwrap_or(&[]);
+
+        let raw_proof = crate::generate_recurser_aggregator_proof::<F>(
+            &setup,
+            &self.memory_handler_recursive_witness,
+            a_body,
+            b_body,
+            private_inputs,
+            root_c_recurser_agg,
+            &self.aux_trace,
+            &self.const_pols,
+            &self.const_tree,
+            self.pctx.get_device_buffers_ptr(),
+        )?;
+
+        VadcopFinalProof::new_from_proof(&raw_proof, false).map_err(|e| {
+            ProofmanError::InvalidConfiguration(format!("Failed to wrap recurser output as VadcopFinalProof: {e}"))
+        })
+    }
+
     #[allow(clippy::type_complexity)]
     pub fn generate_proof_from_lib(
         &self,
@@ -1853,6 +1942,7 @@ where
             mpi_ctx,
             wcm,
             setups: setups_vadcop,
+            recurser_setups: RwLock::new(HashMap::new()),
             n_streams,
             n_streams_non_recursive,
             max_num_threads,
