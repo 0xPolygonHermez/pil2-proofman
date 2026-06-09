@@ -44,20 +44,20 @@ Use `-t compressor` instead of `-t aggregation` for the compressor variant.
 
 ## Poseidon1 (Hades)
 
-Same flow, but pass `--hash Poseidon1` to the setup and build the prover with
-the `stark-poseidon1` feature so the C++ library is compiled for the matching
-hash family (otherwise the prover aborts at startup with a hash-family mismatch):
+Same flow, but pass `--hash Poseidon1` to the setup. The hash family is selected
+at runtime from the setup, so no feature flag or rebuild is needed — the prover
+picks up the correct hash family automatically:
 
 ```bash
 export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi) \
-&& cargo run --features stark-poseidon1 --bin proofman-setup -- setup-recursive-test \
+&& cargo run --bin proofman-setup -- setup-recursive-test \
      -b ./examples/test-recursive/build -c ./examples/test-recursive/test.circom -n test -t aggregation \
      --hash Poseidon1 \
-&& cargo build --workspace --features stark-poseidon1 \
-&& cargo run --features stark-poseidon1 --bin proofman-cli verify-constraints \
+&& cargo build --workspace \
+&& cargo run --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libtest_recursive${PIL2_PROOFMAN_EXT} \
      --proving-key examples/test-recursive/build/provingKey/ \
-&& cargo run --features stark-poseidon1 --bin proofman-cli prove \
+&& cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libtest_recursive${PIL2_PROOFMAN_EXT} \
      --proving-key examples/test-recursive/build/provingKey/ \
      --output-dir examples/test-recursive/build/proofs -y -vv --gpu
