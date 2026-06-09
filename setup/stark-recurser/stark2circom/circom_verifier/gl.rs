@@ -840,8 +840,8 @@ mod tests {
     fn header_includes_merklehash() {
         let si = minimal_stark_info(2, 10, 8);
         let vi = minimal_verifier_info();
-        // Default hash is Poseidon2 → emits hash/poseidon2/merklehash.circom.
-        let opts = Pil2CircomOptions::default();
+        // Poseidon2 → emits hash/poseidon2/merklehash.circom.
+        let opts = Pil2CircomOptions { hash: "Poseidon2".to_string(), ..Default::default() };
         let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
         assert!(out.contains("pragma circom 2.1.0;"));
         assert!(out.contains("include \"hash/poseidon2/merklehash.circom\";"));
@@ -854,7 +854,8 @@ mod tests {
         let mut si = minimal_stark_info(2, 10, 8);
         si["starkStruct"]["splitLinearHash"] = json!(true);
         let vi = minimal_verifier_info();
-        let opts = Pil2CircomOptions::default();
+        // splitLinearHash is only supported with Poseidon2.
+        let opts = Pil2CircomOptions { hash: "Poseidon2".to_string(), ..Default::default() };
         let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
         assert!(out.contains("include \"hash/poseidon2/merklehash_gpu.circom\";"));
     }
