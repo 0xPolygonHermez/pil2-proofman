@@ -101,6 +101,8 @@ struct DebugJson {
     #[serde(default)]
     constraints: Option<ConstraintsJson>,
     #[serde(default)]
+    global_constraints: Option<GlobalConstraintsJson>,
+    #[serde(default)]
     bus: Option<BusJson>,
     #[serde(default)]
     output: Option<OutputJson>,
@@ -133,9 +135,15 @@ struct ConstraintsJson {
     #[serde(default = "default_true")]
     enabled: bool,
     #[serde(default)]
-    global_ids: Option<Vec<usize>>,
-    #[serde(default)]
     max_print: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GlobalConstraintsJson {
+    #[serde(default = "default_true")]
+    enabled: bool,
+    #[serde(default)]
+    global_constraint_ids: Option<Vec<usize>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -422,6 +430,28 @@ fn build_bucket_rule(rule: BucketRuleJson) -> ProofmanResult<BucketRule> {
 // Top-level parser
 // ============================================================================
 
+/// Parse the `constraints` (per-air) and `global_constraints` sections into the
+/// four `DebugInfo` constraint fields. `max_print` lives on `constraints` and is
+/// inherited by the global pass; if `constraints` is absent it defaults to
+/// `DEFAULT_N_PRINT_CONSTRAINTS`.
+fn parse_constraint_sections(
+    constraints: Option<ConstraintsJson>,
+    global_constraints: Option<GlobalConstraintsJson>,
+) -> (bool, bool, Vec<usize>, usize) {
+    let (verify_constraints, n_print_constraints) = match constraints {
+        Some(c) if c.enabled => (true, c.max_print.unwrap_or(DEFAULT_N_PRINT_CONSTRAINTS)),
+        Some(_) => (false, DEFAULT_N_PRINT_CONSTRAINTS),
+        None => (false, DEFAULT_N_PRINT_CONSTRAINTS),
+    };
+
+    let (verify_global_constraints, global_constraint_ids) = match global_constraints {
+        Some(g) if g.enabled => (true, g.global_constraint_ids.unwrap_or_default()),
+        _ => (false, Vec::new()),
+    };
+
+    (verify_constraints, verify_global_constraints, global_constraint_ids, n_print_constraints)
+}
+
 pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String) -> ProofmanResult<DebugInfo> {
     if !proving_key_path.exists() {
         return Err(ProofmanError::InvalidConfiguration(format!(
@@ -522,16 +552,9 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
         }
     }
 
-    // ---- Constraints section ----
-    // Enable/disable is now driven by the required `enabled` field on the section
-    // rather than the section's mere presence. This makes intent explicit and lets
-    // users keep `global_ids` / `max_print` in the file across debug runs.
-    let (verify_constraints, global_constraints, n_print_constraints) = match json.constraints {
-        Some(c) if c.enabled => {
-            (true, c.global_ids.unwrap_or_default(), c.max_print.unwrap_or(DEFAULT_N_PRINT_CONSTRAINTS))
-        }
-        _ => (false, Vec::new(), DEFAULT_N_PRINT_CONSTRAINTS),
-    };
+    // ---- Constraints + Global constraints sections ----
+    let (verify_constraints, verify_global_constraints, global_constraint_ids, n_print_constraints) =
+        parse_constraint_sections(json.constraints, json.global_constraints);
 
     // ---- Bus section ----
     // Bus debug is enabled by the mere presence of the section. Omit the section
@@ -575,12 +598,64 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
 
     Ok(DebugInfo {
         verify_constraints,
+        verify_global_constraints,
+        global_constraint_ids,
         instances_mode,
         skip_tables,
         debug_instances: airgroup_map,
-        debug_global_instances: global_constraints,
         n_print_constraints,
         bus_mode,
         output,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(json: &str) -> (bool, bool, Vec<usize>, usize) {
+        let dj: DebugJson = serde_json::from_str(json).unwrap();
+        parse_constraint_sections(dj.constraints, dj.global_constraints)
+    }
+
+    #[test]
+    fn both_sections_present() {
+        let (vc, vgc, ids, max) = parse(
+            r#"{ "constraints": { "enabled": true, "max_print": 20 },
+                 "global_constraints": { "enabled": true, "global_constraint_ids": [0,1,5] } }"#,
+        );
+        assert!(vc);
+        assert!(vgc);
+        assert_eq!(ids, vec![0, 1, 5]);
+        assert_eq!(max, 20);
+    }
+
+    #[test]
+    fn global_present_constraints_absent_uses_default_max_print() {
+        let (vc, vgc, ids, max) = parse(r#"{ "global_constraints": { "enabled": true } }"#);
+        assert!(!vc);
+        assert!(vgc);
+        assert!(ids.is_empty());
+        assert_eq!(max, DEFAULT_N_PRINT_CONSTRAINTS);
+    }
+
+    #[test]
+    fn global_absent_skips_global_pass() {
+        let (vc, vgc, _ids, _max) = parse(r#"{ "constraints": { "enabled": true } }"#);
+        assert!(vc);
+        assert!(!vgc);
+    }
+
+    #[test]
+    fn global_enabled_no_ids_means_all() {
+        let (_vc, vgc, ids, _max) = parse(r#"{ "global_constraints": { "enabled": true } }"#);
+        assert!(vgc);
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn constraints_enabled_false_disables_per_air() {
+        let (vc, _vgc, _ids, _max) = parse(r#"{ "constraints": { "enabled": false } }"#);
+        assert!(!vc);
+    }
 }

@@ -1421,8 +1421,8 @@ where
 
         self.wcm.end(debug_info)?;
 
-        let check_global_constraints = debug_info.instances_mode == proofman_common::InstancesMode::All
-            && (debug_info.debug_instances.is_empty() || !debug_info.debug_global_instances.is_empty());
+        let check_global_constraints =
+            debug_info.verify_global_constraints && debug_info.instances_mode == proofman_common::InstancesMode::All;
 
         if check_global_constraints {
             let airgroup_values_air_instances = airgroup_values_air_instances.lock().unwrap();

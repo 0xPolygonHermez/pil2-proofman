@@ -7,7 +7,8 @@
 //! | `debug.json` section | [`DebugInfo`] field             |
 //! |----------------------|---------------------------------|
 //! | `instances`          | `instances_mode`, `debug_instances` |
-//! | `constraints`        | `verify_constraints`, `debug_global_instances`, `n_print_constraints` |
+//! | `constraints`        | `verify_constraints`, `n_print_constraints` |
+//! | `global_constraints` | `verify_global_constraints`, `global_constraint_ids` |
 //! | `bus`                | `bus_mode`                      |
 //! | `output`             | `output`                        |
 
@@ -26,8 +27,8 @@ pub const DEFAULT_OUTPUT_FILE_PATH: &str = "tmp/debug.log";
 /// subsystems through `pctx.debug_info`.
 #[derive(Debug, Clone)]
 pub struct DebugInfo {
-    /// Whether to run the constraint verification pass. Mirrors presence of the
-    /// `constraints` section in `debug.json`.
+    /// Whether to run the per-air constraint verification pass. Driven by
+    /// `constraints.enabled` in `debug.json`.
     pub verify_constraints: bool,
     /// Instance filtering mode. `OnlyListed` skips all instances not listed in
     /// `debug_instances`; `All` processes everything (with `debug_instances` only used
@@ -42,8 +43,12 @@ pub struct DebugInfo {
     pub skip_tables: bool,
     /// Hierarchical per-instance debug config: airgroup → air → (air_store_row_info, instances).
     pub debug_instances: AirGroupMap,
-    /// Global constraint indices to verify. Empty means all globals.
-    pub debug_global_instances: Vec<usize>,
+    /// Whether to run the global constraint verification pass. Mirrors presence
+    /// of the `global_constraints` section in `debug.json` (with `enabled: true`).
+    pub verify_global_constraints: bool,
+    /// Global constraint indices to verify. Empty means all globals. Driven by
+    /// `global_constraints.global_constraint_ids`.
+    pub global_constraint_ids: Vec<usize>,
     /// Maximum number of mismatched constraints to print per failure.
     pub n_print_constraints: usize,
     /// Bus / std-lookup debug config.
@@ -59,7 +64,8 @@ impl Default for DebugInfo {
             instances_mode: InstancesMode::All,
             skip_tables: false,
             debug_instances: Default::default(),
-            debug_global_instances: Default::default(),
+            verify_global_constraints: false,
+            global_constraint_ids: Default::default(),
             n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,
             bus_mode: BusMode::new_disabled(),
             output: OutputConfig::default(),
@@ -75,7 +81,8 @@ impl DebugInfo {
             instances_mode: InstancesMode::All,
             skip_tables: false,
             debug_instances: HashMap::new(),
-            debug_global_instances: Vec::new(),
+            verify_global_constraints: true,
+            global_constraint_ids: Vec::new(),
             n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,
             bus_mode: BusMode::new_default_debug(),
             output: OutputConfig::default(),
@@ -250,5 +257,28 @@ impl Default for OutputConfig {
         // millions), so writing to a file is the right default. Use `to_file: false`
         // explicitly to send it to stdout.
         Self { to_file: true, file_path: PathBuf::from(DEFAULT_OUTPUT_FILE_PATH) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_disables_both_constraint_passes() {
+        let d = DebugInfo::default();
+        assert!(!d.verify_constraints);
+        assert!(!d.verify_global_constraints);
+        assert!(d.global_constraint_ids.is_empty());
+    }
+
+    #[test]
+    fn new_debug_enables_both_constraint_passes_and_bus_fast_mode() {
+        let d = DebugInfo::new_debug();
+        assert!(d.verify_constraints);
+        assert!(d.verify_global_constraints);
+        assert!(d.bus_mode.enabled);
+        assert!(d.bus_mode.fast_mode);
+        assert!(d.global_constraint_ids.is_empty());
     }
 }

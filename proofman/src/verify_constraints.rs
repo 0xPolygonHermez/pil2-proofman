@@ -94,9 +94,9 @@ pub fn verify_global_constraints_proof<F: PrimeField64>(
     let n_global_constraints = get_n_global_constraints_c(sctx.get_global_bin());
     let mut global_constraints = vec![GlobalConstraintInfo::default(); n_global_constraints as usize];
 
-    if !debug_info.debug_global_instances.is_empty() {
+    if !debug_info.global_constraint_ids.is_empty() {
         global_constraints.iter_mut().for_each(|constraint| constraint.skip = true);
-        for constraint_id in &debug_info.debug_global_instances {
+        for constraint_id in &debug_info.global_constraint_ids {
             global_constraints[*constraint_id].skip = false;
         }
     }

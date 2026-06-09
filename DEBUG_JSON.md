@@ -5,17 +5,20 @@ by the PIL2 Proofman debugger.
 
 ## Overview
 
-`debug.json` controls three independent debug subsystems plus their output destination:
+`debug.json` controls several independent debug subsystems plus their output destination:
 
-| Section        | Purpose                                                        | Activation    |
-|----------------|----------------------------------------------------------------|---------------|
-| `instances`    | Which instances to process / per-instance debug config         | Section present (defaults: `mode = "all"`, empty list) |
-| `constraints`  | Algebraic constraint verification                              | Section present |
-| `bus`          | Bus (std-lookup) verification — "do assumes match proves?"     | Section present |
-| `output`       | Debug-output destination (stdout or file)                      | Section present |
+| Section              | Purpose                                                        | Activation    |
+|----------------------|----------------------------------------------------------------|---------------|
+| `instances`          | Which instances to process / per-instance debug config         | Section present (defaults: `mode = "all"`, empty list) |
+| `constraints`        | Per-air algebraic constraint verification                      | `enabled` (default `true`) |
+| `global_constraints` | Global constraint verification                                 | `enabled` (default `true`) |
+| `bus`                | Bus (std-lookup) verification — "do assumes match proves?"     | Section present |
+| `output`             | Debug-output destination (stdout or file)                      | Section present |
 
-**Activation is explicit.** Omit a section to disable its subsystem. There are no hidden
-side effects: presence of one section never silently changes the behavior of another.
+**Activation is explicit.** Omit a section to disable its subsystem; the `constraints`
+and `global_constraints` passes are additionally gated by their `enabled` field. There
+are no hidden side effects: presence of one section never silently changes the behavior
+of another.
 
 ## Root structure
 
@@ -23,12 +26,13 @@ side effects: presence of one section never silently changes the behavior of ano
 {
   "instances": { ... },
   "constraints": { ... },
+  "global_constraints": { ... },
   "bus": { ... },
   "output": { ... }
 }
 ```
 
-All four top-level fields are optional. An empty `debug.json` (`{}`) does nothing.
+All top-level fields are optional. An empty `debug.json` (`{}`) does nothing.
 
 ---
 
@@ -102,7 +106,7 @@ All four top-level fields are optional. An empty `debug.json` (`{}`) does nothin
 ```
 
 - `constraints` is consumed by the constraint-verification pass when the `constraints`
-  section is also present.
+  section is also enabled.
 - `store_row_info` at instance level overrides the air-level value if both are set.
 
 ### Row-info precedence
@@ -116,24 +120,41 @@ If *any* applicable level is `true`, row info is stored.
 
 ---
 
-## `constraints` — algebraic constraint verification
+## `constraints` — per-air algebraic constraint verification
 
 ```json
 "constraints": {
-  "global_ids": [0, 1, 2],
-  "max_print":  10
+  "enabled":   true,
+  "max_print": 10
 }
 ```
 
 ### Fields
 
-- **`global_ids`** _(optional)_ — array of global-constraint indices to verify.
-  Empty/omitted means **all** global constraints.
-- **`max_print`** _(optional, default 10)_ — maximum number of mismatched constraints to
-  print per failing instance.
+- **`enabled`** _(default `true`)_ — gates the per-air constraint verification pass.
+- **`max_print`** _(optional, default 10)_ — maximum number of mismatched constraints
+  to print per failing instance. Also inherited by the global pass (see below).
 
-Presence of this section (even `"constraints": {}`) enables the full constraint
-verification pass. Omit the section to skip constraint verification entirely.
+---
+
+## `global_constraints` — global constraint verification
+
+```json
+"global_constraints": {
+  "enabled":               true,
+  "global_constraint_ids": [0, 1, 5]
+}
+```
+
+### Fields
+
+- **`enabled`** _(default `true`)_ — gates the global constraint verification pass.
+  Omit the section to skip global verification entirely.
+- **`global_constraint_ids`** _(optional)_ — array of global-constraint indices to
+  verify. Empty/omitted means **all** global constraints.
+
+`max_print` for the global pass is inherited from the `constraints` section,
+falling back to the default (10) when `constraints` is absent.
 
 ---
 
@@ -377,8 +398,9 @@ without running constraint verification.
 
 ```json
 {
-  "constraints": { "global_ids": [0, 1, 5], "max_print": 20 },
-  "bus":         { "opids": [3, 7], "fast_mode": false, "max_print": 50 }
+  "constraints":        { "enabled": true, "max_print": 20 },
+  "global_constraints": { "enabled": true, "global_constraint_ids": [0, 1, 5] },
+  "bus":                { "opids": [3, 7], "fast_mode": false, "max_print": 50 }
 }
 ```
 
@@ -434,7 +456,8 @@ range bucket (opid 2) responsible.
 
 ## Behavior notes
 
-1. **Section presence is the activation switch.** Omit a section to disable its subsystem.
+1. **Activation is explicit.** Omit a section to disable its subsystem; `constraints` and
+   `global_constraints` are additionally gated by their `enabled` field (default `true`).
    This replaces the old implicit "presence of `std_mode` flips global mode to Debug"
    behavior.
 
@@ -509,8 +532,13 @@ a recommended config.
   },
 
   "constraints": {
-    "global_ids": [0, 1, 2],
+    "enabled": true,
     "max_print": 20
+  },
+
+  "global_constraints": {
+    "enabled": true,
+    "global_constraint_ids": [0, 1, 2]
   },
 
   "bus": {
@@ -599,7 +627,10 @@ a recommended config.
 | `instances.list[].airs[].instances[].instance_id` | u64 | `0` | |
 | `instances.list[].airs[].instances[].constraints` | [u64] | `[]` | constraint indices to verify on this instance |
 | `instances.list[].airs[].instances[].store_row_info` | bool | `false` | instance-level bus-debug detail |
-| `constraints.global_ids` | [u64] | `[]` (= all) | global constraint indices to verify |
+| `constraints.enabled` | bool | `true` | enable per-air constraint verification |
+| `constraints.max_print` | usize | `10` | max mismatched constraints printed per failure |
+| `global_constraints.enabled` | bool | `true` | enable global constraint verification |
+| `global_constraints.global_constraint_ids` | [usize] | `[]` (= all) | global constraint indices to verify |
 | `constraints.max_print` | u64 | `10` | max mismatched constraints to print |
 | `bus.opids` | [u64] | `[]` (= all) | which opids to track |
 | `bus.fast_mode` | bool | `true` | counts-only vs full per-value detail |

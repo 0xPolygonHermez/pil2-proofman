@@ -20,5 +20,8 @@
     "constraints": {
         "enabled": true,
         "max_print": 50
+    },
+    "global_constraints": {
+        "enabled": true
     }
 }
