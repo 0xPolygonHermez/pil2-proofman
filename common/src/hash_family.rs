@@ -14,7 +14,7 @@ pub enum GateRole {
 }
 
 pub const FAMILIES: &[&str] = &["Poseidon1", "Poseidon2"];
-pub const DEFAULT_HASH_ID: &str = "Poseidon2";
+pub const DEFAULT_HASH_ID: &str = "Poseidon1";
 
 // (gate template name, role, owning family). `None` for family-agnostic gates.
 const GATES: &[(&str, GateRole, Option<&str>)] = &[

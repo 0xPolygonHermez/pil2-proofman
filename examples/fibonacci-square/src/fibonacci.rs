@@ -80,7 +80,6 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
     }
 
     fn gen_custom_commits_fixed(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) -> ProofmanResult<()> {
-
         proofman_starks_lib_c::set_hash_family_c(&pctx.global_info.hash);
 
         let buffer = vec![F::ZERO; FibonacciSquareRomTrace::<F>::ROW_SIZE * FibonacciSquareRomTrace::<F>::NUM_ROWS];

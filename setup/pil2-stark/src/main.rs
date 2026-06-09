@@ -77,7 +77,7 @@ struct SetupArgs {
     #[arg(short = 'o', long)]
     output: Option<String>,
 
-    #[arg(long, default_value = "Poseidon2")]
+    #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
     hash: String,
 }
 
@@ -169,7 +169,7 @@ struct SetupRecursiveTestArgs {
     #[arg(short = 't', long, default_value = "aggregation")]
     r#type: String,
 
-    #[arg(long, default_value = "Poseidon2")]
+    #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
     hash: String,
 }
 

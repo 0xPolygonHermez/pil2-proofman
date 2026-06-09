@@ -40,7 +40,6 @@ pub struct SetupOptions {
 
 /// Run the non-recursive setup pipeline.
 pub fn run_setup(opts: &SetupOptions) -> Result<()> {
-
     proofman_starks_lib_c::set_hash_family_c(&opts.hash);
     let pilout_data = fs::read(&opts.airout_path)?;
     let pilout = pb::PilOut::decode(pilout_data.as_slice())?;
