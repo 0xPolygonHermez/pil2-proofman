@@ -286,7 +286,7 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceArea, uin
 
     d_buffers->constPolsSize = constPolsSize;
     d_buffers->unifiedBufferSize = totalGpuMemoryPerGpu;
-    d_buffers->unifiedBufferBorrowed.store(0, std::memory_order_relaxed);
+    d_buffers->firstGpuBufferBorrowed.store(0, std::memory_order_relaxed);
 
     // Allocate large GPU buffers with a single malloc per GPU
     for (int i = 0; i < d_buffers->n_gpus; i++) {
@@ -1606,23 +1606,52 @@ uint64_t get_unified_buffer_gpu_size_gpu(void *d_buffers_) {
     return d_buffers->unifiedBufferSize;
 }
 
-void unified_buffer_acquire_gpu(void *d_buffers_) {
+// Acquires exclusive use of the FIRST GPU's unified buffer (my_gpu_ids[0]) for the
+// caller.
+void acquire_first_gpu_buffer_gpu(void *d_buffers_) {
     if (d_buffers_ == nullptr) return;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    d_buffers->unifiedBufferBorrowed.store(1, std::memory_order_release);
+    const uint32_t firstGpuId = d_buffers->my_gpu_ids[0];
+
+    // Flip the flag atomically w.r.t. stream selection on the first GPU.
+    for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
+        if (d_buffers->streamsData[i].gpuId == firstGpuId)
+            d_buffers->streamsData[i].mutex_stream_selection.lock();
+    }
+    d_buffers->firstGpuBufferBorrowed.store(1, std::memory_order_release);
+    for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
+        if (d_buffers->streamsData[i].gpuId == firstGpuId)
+            d_buffers->streamsData[i].mutex_stream_selection.unlock();
+    }
+
+    // Drain: wait until no prover work is queued or running on the first GPU.
+    bool firstGpuIdle = false;
+    while (!firstGpuIdle) {
+        firstGpuIdle = true;
+        for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
+            if (d_buffers->streamsData[i].gpuId != firstGpuId) continue;
+            uint32_t st = d_buffers->streamsData[i].status;
+            bool idle = (st == 0 || st == 3 ||
+                         (st == 2 && cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess));
+            if (!idle) { firstGpuIdle = false; break; }
+        }
+        if (!firstGpuIdle) std::this_thread::sleep_for(std::chrono::microseconds(300));
+    }
 }
 
-void unified_buffer_release_gpu(void *d_buffers_) {
+
+void release_first_gpu_buffer_gpu(void *d_buffers_) {
     if (d_buffers_ == nullptr) return;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[0]));
     CHECKCUDAERR(cudaDeviceSynchronize());
-    d_buffers->unifiedBufferBorrowed.store(0, std::memory_order_release);
+    d_buffers->firstGpuBufferBorrowed.store(0, std::memory_order_release);
 }
 
-uint32_t unified_buffer_is_borrowed_gpu(void *d_buffers_) {
+uint32_t is_first_gpu_buffer_borrowed_gpu(void *d_buffers_) {
     if (d_buffers_ == nullptr) return 0;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    return d_buffers->unifiedBufferBorrowed.load(std::memory_order_acquire);
+    return d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire);
 }
 
 void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffers_recursivef_) {
@@ -1649,14 +1678,20 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint6
 
     std::vector<bool> streams_locked(d_buffers->n_total_streams, false);
 
+    const uint32_t firstGpuId = d_buffers->my_gpu_ids[0];
+
     while (!someFree){
-        if (d_buffers->unifiedBufferBorrowed.load(std::memory_order_acquire)) {
-            std::this_thread::sleep_for(std::chrono::microseconds(300));
-            continue;
-        }
+        // Re-read every iteration so a release by the borrower is picked up.
+        const bool firstGpuBorrowed = d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire);
         if (recursive) {
             for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
+                if (firstGpuBorrowed && d_buffers->streamsData[i].gpuId == firstGpuId) continue;
                 if (d_buffers->streamsData[i].recursive && d_buffers->streamsData[i].mutex_stream_selection.try_lock()) {
+                    // Re-check the borrow flag under the lock.
+                    if (d_buffers->streamsData[i].gpuId == firstGpuId && d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire)) {
+                        d_buffers->streamsData[i].mutex_stream_selection.unlock();
+                        continue;
+                    }
                     if (d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3 || (d_buffers->streamsData[i].status==2 &&  cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess)) {
 
                         countFreeStreamsGPU[d_buffers->gpus_g2l[d_buffers->streamsData[i].gpuId]]++;
@@ -1682,7 +1717,13 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint6
 
         if (!recursive || !force_recursive) {
             for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
+                if (firstGpuBorrowed && d_buffers->streamsData[i].gpuId == firstGpuId) continue;
                 if (!d_buffers->streamsData[i].recursive && d_buffers->streamsData[i].mutex_stream_selection.try_lock()) {
+                    // Re-check the borrow flag under the lock (see the recursive loop above).
+                    if (d_buffers->streamsData[i].gpuId == firstGpuId && d_buffers->firstGpuBufferBorrowed.load(std::memory_order_acquire)) {
+                        d_buffers->streamsData[i].mutex_stream_selection.unlock();
+                        continue;
+                    }
                     if (d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3 || (d_buffers->streamsData[i].status==2 &&  cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess)) {
                         countFreeStreamsGPU[d_buffers->gpus_g2l[d_buffers->streamsData[i].gpuId]]++;
                         if(d_buffers->streamsData[i].status==0){

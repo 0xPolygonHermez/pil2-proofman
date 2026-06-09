@@ -51,9 +51,9 @@ struct StarksBackend {
     uint64_t (*get_num_gpus)();
     void *(*get_unified_buffer_gpu)(void *d_buffers_);
     uint64_t (*get_unified_buffer_gpu_size)(void *d_buffers_);
-    void (*unified_buffer_acquire)(void *d_buffers_);
-    void (*unified_buffer_release)(void *d_buffers_);
-    uint32_t (*unified_buffer_is_borrowed)(void *d_buffers_);
+    void (*acquire_first_gpu_buffer)(void *d_buffers_);
+    void (*release_first_gpu_buffer)(void *d_buffers_);
+    uint32_t (*is_first_gpu_buffer_borrowed)(void *d_buffers_);
     void *(*get_unified_buffer_gpu_for_recursivef)(void *d_buffers_, void *d_buffers_recursivef_);
     void (*alloc_fixed_pols_buffer_gpu)(void *d_buffers_);
     void (*free_fixed_pols_buffer_gpu)(void *d_buffers_);
