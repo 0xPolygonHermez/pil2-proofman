@@ -1630,9 +1630,11 @@ void acquire_first_gpu_buffer_gpu(void *d_buffers_) {
         firstGpuIdle = true;
         for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
             if (d_buffers->streamsData[i].gpuId != firstGpuId) continue;
+            d_buffers->streamsData[i].mutex_stream_selection.lock();
             uint32_t st = d_buffers->streamsData[i].status;
             bool idle = (st == 0 || st == 3 ||
                          (st == 2 && cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess));
+            d_buffers->streamsData[i].mutex_stream_selection.unlock();
             if (!idle) { firstGpuIdle = false; break; }
         }
         if (!firstGpuIdle) std::this_thread::sleep_for(std::chrono::microseconds(300));
