@@ -11,7 +11,7 @@
 #include "cuda_utils.hpp"
 #include "poseidon_goldilocks.hpp"
 #include "goldilocks_trace_layout.cuh"
-#include "poseidon2_goldilocks.cuh"  // brings: Layout, pow7(gl64_t&), scratchpad
+#include "poseidon_gpu_common.cuh"  // Layout, pow7(gl64_t&), scratchpad
 
 // ---------------------------------------------------------------------------
 // Public class (W=12).

@@ -7,14 +7,7 @@
 #include "cuda_utils.hpp"
 #include "poseidon2_goldilocks.hpp"
 #include "goldilocks_trace_layout.cuh"
-
-extern __shared__ gl64_t scratchpad[];
-
-// GPU input layout selector.
-enum class Layout : uint8_t {
-    RowMajor,
-    Tiles,
-};
+#include "poseidon_gpu_common.cuh"  // Layout, pow7(gl64_t&), scratchpad
 
 
 
@@ -50,13 +43,7 @@ public:
 
 using Poseidon2GoldilocksGPUGrinding = Poseidon2GoldilocksGPU<8>;  // SPONGE_WIDTH = 8
 
-// Dispatch merkletree by arity
-void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
-                         uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream);
 
-// GPU grinding wrapper
-void runGrindingGPU(uint64_t *d_nonce, uint64_t *d_nonceBlock, const uint64_t *d_in,
-                    uint32_t n_bits, cudaStream_t stream);
 
 // --- Forward declarations (defined in .cu) ---
 
@@ -64,14 +51,6 @@ template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t
 __device__ void poseidon2PermuteSmem();
 
 // --- Leaf device helpers ---
-
-__device__ __forceinline__ void pow7(gl64_t &x)
-{
-    gl64_t x2 = x * x;
-    gl64_t x3 = x * x2;
-    gl64_t x4 = x2 * x2;
-    x = x3 * x4;
-}
 
 __device__ __forceinline__ void mds4x4(gl64_t *x)
 {

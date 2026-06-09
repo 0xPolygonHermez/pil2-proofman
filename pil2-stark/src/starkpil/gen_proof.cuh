@@ -2,6 +2,7 @@
 #define GEN_PROOF_CUH
 
 #include "starks.hpp"
+#include "starks_api_internal.cuh"
 #include "cuda_utils.cuh"
 #include "goldilocks_tooling.cuh"
 #include "expressions_gpu.cuh"

@@ -77,10 +77,6 @@ ifeq ($(CUDA_GRAPH), 1)
     NVCCFLAGS += -DUSE_CUDA_GRAPH
 endif
 
-# Hash family selector: passed in by Cargo's build.rs (=-DSTARK_POSEIDON1 when
-# the proofman-starks-lib-c stark-poseidon1 feature is on, empty otherwise).
-NVCCFLAGS += $(STARK_HASH_FLAGS)
-
 # Use the following flag to solve amxtileintrin.h incompatibility or use PROOFMAN_HOST_COMPILER_BIN variable to set the host compiler
 # NVCCFLAGS += --compiler-bindir=/usr/bin/g++-10
 
@@ -145,8 +141,6 @@ ifeq ($(dbg),1)
 else
     CXXFLAGS += -O3
 endif
-
-CXXFLAGS += $(STARK_HASH_FLAGS)
 
 # Define source files based on platform
 ifeq ($(UNAME_S),Darwin)

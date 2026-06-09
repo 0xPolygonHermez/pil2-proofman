@@ -16,4 +16,3 @@ tracing.workspace = true
 [features]
 default = []
 cpu-only = []
-stark-poseidon1 = []

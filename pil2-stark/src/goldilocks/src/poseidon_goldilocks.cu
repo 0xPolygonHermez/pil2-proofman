@@ -633,28 +633,3 @@ template class PoseidonGoldilocksGPU<8>;
 template class PoseidonGoldilocksGPU<12>;
 template class PoseidonGoldilocksGPU<16>;
 
-#ifdef STARK_POSEIDON1
-void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
-                         uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream)
-{
-    switch (arity) {
-        case 2:
-            PoseidonGoldilocksGPU<8>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
-            break;
-        case 3:
-            PoseidonGoldilocksGPU<12>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
-            break;
-        case 4:
-            PoseidonGoldilocksGPU<16>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
-            break;
-        default:
-            assert(false && "STARK_POSEIDON1 supports merkleTreeArity 2, 3 or 4");
-    }
-}
-
-void runGrindingGPU(uint64_t *d_nonce, uint64_t *d_nonceBlock, const uint64_t *d_in,
-                    uint32_t n_bits, cudaStream_t stream)
-{
-    PoseidonGoldilocksGPU<8>::grinding(d_nonce, d_nonceBlock, d_in, n_bits, stream);
-}
-#endif // STARK_POSEIDON1

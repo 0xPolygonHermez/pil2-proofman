@@ -615,6 +615,7 @@ dependencies = [
  "proofman",
  "proofman-common",
  "proofman-macros",
+ "proofman-starks-lib-c",
  "rayon",
  "serde",
  "serde_arrays",

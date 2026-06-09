@@ -1,4 +1,5 @@
 #include "starks.hpp"
+#include "starks_api_internal.cuh"
 #include "starks_gpu.cuh"
 #ifdef USE_CUDA_GRAPH
 #include "cuda_graph_cache.cuh"

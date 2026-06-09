@@ -8,13 +8,25 @@
 #include <utility>
 
 
-#ifdef STARK_POSEIDON1
+#include "hash_family.hpp"
 #include "poseidon_goldilocks.hpp"
-using GoldilocksGrinding = PoseidonGoldilocks<8>;
-#else
 #include "poseidon2_goldilocks.hpp"
-using GoldilocksGrinding = Poseidon2GoldilocksGrinding;
-#endif
+
+inline void runGrinding(uint64_t &nonce,
+                        const uint64_t *challenge, uint32_t powBits) {
+    switch (get_hash_family()) {
+        case HashFamily::Poseidon1: PoseidonGoldilocks<8>::grinding(nonce, challenge, powBits); break;
+        case HashFamily::Poseidon2: Poseidon2GoldilocksGrinding::grinding(nonce, challenge, powBits); break;
+    }
+}
+
+inline void runGrindingPermute(Goldilocks::Element (&out)[8],
+                               const Goldilocks::Element (&in)[8]) {
+    switch (get_hash_family()) {
+        case HashFamily::Poseidon1: PoseidonGoldilocks<8>::permute(out, in, PoseidonMode::Scalar);   break;
+        case HashFamily::Poseidon2: Poseidon2Goldilocks<8>::permute(out, in, Poseidon2Mode::Scalar); break;
+    }
+}
 
 extern ProofDoneCallback proof_done_callback;
 

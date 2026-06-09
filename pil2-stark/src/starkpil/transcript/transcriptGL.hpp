@@ -4,11 +4,8 @@
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_cubic_extension.hpp"
 #include "starks_api_internal.hpp"
-#ifdef STARK_POSEIDON1
 #include "poseidon_goldilocks.hpp"
-#else
 #include "poseidon2_goldilocks.hpp"
-#endif
 #include "zklog.hpp"
 
 

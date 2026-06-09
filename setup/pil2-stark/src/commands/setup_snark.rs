@@ -37,8 +37,11 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
 
     let global_info: Value = serde_json::from_str(&fs::read_to_string(&global_info_path)?)?;
     let name = global_info.get("name").and_then(|v| v.as_str()).unwrap_or("pilout").to_string();
+    let hash = global_info.get("hash").and_then(|v| v.as_str()).unwrap_or("Poseidon2").to_string();
 
-    tracing::info!("setup-snark: name='{}', build_dir='{}'", name, build_dir);
+    proofman_starks_lib_c::set_hash_family_c(&hash);
+
+    tracing::info!("setup-snark: name='{}', hash='{}', build_dir='{}'", name, hash, build_dir);
 
     // Read vadcop_final artifacts.
     let vadcop_dir = PathBuf::from(build_dir).join("provingKey").join(&name).join("vadcop_final");

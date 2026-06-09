@@ -36,4 +36,3 @@ toml = "0.9.8"
 [features]
 default = ["mpi"]
 mpi = ["proofman/mpi", "proofman-common/mpi"]
-stark-poseidon1 = ["proofman/stark-poseidon1", "proofman-common/stark-poseidon1", "proofman-starks-lib-c/stark-poseidon1"]

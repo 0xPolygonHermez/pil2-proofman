@@ -40,12 +40,8 @@ MPI_Win win;
 int win_buff = -1;
 #endif
 
-const char *get_stark_hash_family() {
-#ifdef STARK_POSEIDON1
-    return "Poseidon1";
-#else
-    return "Poseidon2";
-#endif
+void set_hash_family(uint8_t fam) {
+    define_hash_family(hashFamilyFromU8(fam));
 }
 
 void initialize_agg_readiness_tracker() {

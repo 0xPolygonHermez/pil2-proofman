@@ -5,11 +5,6 @@
 
 #include "poseidon2_goldilocks.hpp"
 #include "poseidon2_goldilocks.cuh"
-// Pull in the STARK_POSEIDON1 toggle from the API-internal header when reachable
-// (full pil2-stark build). 
-#if __has_include("starks_api_internal.hpp")
-#include "starks_api_internal.hpp"
-#endif
 
 #ifdef GPU_TIMING
 #include "timer_gl.hpp"
@@ -20,7 +15,6 @@ typedef uint64_t u64;
 
 // CUDA Threads per Block
 #define TPB 128
-#ifndef STARK_POSEIDON1
 
 __device__ __constant__ uint64_t GPU_C_4[53];
 __device__ __constant__ uint64_t GPU_D_4[4];
@@ -390,35 +384,6 @@ void Poseidon2GoldilocksGPU<SPONGE_WIDTH_T>::merkletree(
     CHECKCUDAERR(cudaGetLastError());
 }
 
-#ifndef STARK_POSEIDON1
-void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
-                         uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream)
-{
-    switch (arity)
-    {
-    case 2:
-        Poseidon2GoldilocksGPU<8>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
-        break;
-    case 3:
-        Poseidon2GoldilocksGPU<12>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
-        break;
-    case 4:
-        Poseidon2GoldilocksGPU<16>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);
-        break;
-    default:
-#ifndef __GOLDILOCKS_ENV__
-        zklog.error("buildMerkleTreeGPU: Unsupported arity");
-        exitProcess();
-#endif
-        exit(-1);
-    }
-}
-void runGrindingGPU(uint64_t *d_nonce, uint64_t *d_nonceBlock, const uint64_t *d_in,
-                    uint32_t n_bits, cudaStream_t stream)
-{
-    Poseidon2GoldilocksGPUGrinding::grinding(d_nonce, d_nonceBlock, d_in, n_bits, stream);
-}
-#endif // !STARK_POSEIDON1
 
 // Explicit instantiations
 template void Poseidon2GoldilocksGPU<4>::initConstants(uint32_t*, uint32_t);
@@ -433,5 +398,3 @@ template class Poseidon2GoldilocksGPU<16>;
 template void Poseidon2GoldilocksGPU<4>::permute(uint64_t*, const uint64_t*, cudaStream_t);
 template void Poseidon2GoldilocksGPU<4>::permuteTrunc(uint64_t*, const uint64_t*, cudaStream_t);
 #endif
-
-#endif // !STARK_POSEIDON1

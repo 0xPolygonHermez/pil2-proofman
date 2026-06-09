@@ -4,6 +4,7 @@
 #include "starks.hpp"
 #include "omp.h"
 #include "starks_api.hpp"
+#include "starks_api_internal.cuh"
 #include "starks_api_internal.hpp"
 #include <cstring>
 #include <thread>
@@ -19,11 +20,8 @@ extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 #ifdef __USE_CUDA__
 #include "verify_constraints.cuh"
 #include "gen_proof.cuh"
-#ifdef STARK_POSEIDON1
 #include "poseidon_goldilocks.cuh"
-#else
 #include "poseidon2_goldilocks.cuh"
-#endif
 #include "hints.cuh"
 #include "gen_recursivef_proof.cuh"
 #include "poseidon_bn128.cuh"
@@ -39,6 +37,41 @@ void closeStreamTimer(TimerGPU &timer, uint64_t instanceId, uint64_t airgroupId,
 void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 
+void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
+                         uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream)
+{
+    if (get_hash_family() == HashFamily::Poseidon1) {
+        switch (arity) {
+        case 2: PoseidonGoldilocksGPU<8>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);  break;
+        case 3: PoseidonGoldilocksGPU<12>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream); break;
+        case 4: PoseidonGoldilocksGPU<16>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream); break;
+        default:
+            zklog.error("buildMerkleTreeGPU: Poseidon1 supports arity 2, 3 or 4");
+            exitProcess();
+            exit(-1);
+        }
+    } else {
+        switch (arity) {
+        case 2: Poseidon2GoldilocksGPU<8>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream);  break;
+        case 3: Poseidon2GoldilocksGPU<12>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream); break;
+        case 4: Poseidon2GoldilocksGPU<16>::merkletree(arity, d_tree, d_input, nCols, nRows, layout, stream); break;
+        default:
+            zklog.error("buildMerkleTreeGPU: Poseidon2 supports arity 2, 3 or 4");
+            exitProcess();
+            exit(-1);
+        }
+    }
+}
+
+void runGrindingGPU(uint64_t *d_nonce, uint64_t *d_nonceBlock, const uint64_t *d_in,
+                    uint32_t n_bits, cudaStream_t stream)
+{
+    if (get_hash_family() == HashFamily::Poseidon1) {
+        PoseidonGoldilocksGPU<8>::grinding(d_nonce, d_nonceBlock, d_in, n_bits, stream);
+    } else {
+        Poseidon2GoldilocksGPUGrinding::grinding(d_nonce, d_nonceBlock, d_in, n_bits, stream);
+    }
+}
 
 void get_instances_ready_gpu(void *d_buffers_, int64_t* instances_ready) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
@@ -206,37 +239,26 @@ void *gen_device_buffers_gpu(uint32_t node_rank, uint32_t node_size, const int32
     }
     cudaSetDevice(my_gpu_ids[0]);
 
-    // Initialize small GPU constants (Poseidon and Transcript)
-#ifdef STARK_POSEIDON1
-    switch(arity){
-        case 2: PoseidonGoldilocksGPU<8>::initConstants(my_gpu_ids, n_gpus);  break;
-        case 3: PoseidonGoldilocksGPU<12>::initConstants(my_gpu_ids, n_gpus); break;
-        case 4: PoseidonGoldilocksGPU<16>::initConstants(my_gpu_ids, n_gpus); break;
-        default:
-            zklog.error("Unsupported merkle tree arity. STARK_POSEIDON1 supports 2, 3 or 4.");
-            exit(1);
-    }
-
-    PoseidonGoldilocksGPUGrinding::initConstants(my_gpu_ids, n_gpus);
-
-    #else
+    // Initialize small GPU constants for BOTH Poseidon families unconditionally.
     switch(arity){
         case 2:
+            PoseidonGoldilocksGPU<8>::initConstants(my_gpu_ids, n_gpus);
             Poseidon2GoldilocksGPU<8>::initConstants(my_gpu_ids, n_gpus);
             break;
         case 3:
+            PoseidonGoldilocksGPU<12>::initConstants(my_gpu_ids, n_gpus);
             Poseidon2GoldilocksGPU<12>::initConstants(my_gpu_ids, n_gpus);
             break;
         case 4:
+            PoseidonGoldilocksGPU<16>::initConstants(my_gpu_ids, n_gpus);
             Poseidon2GoldilocksGPU<16>::initConstants(my_gpu_ids, n_gpus);
             break;
         default:
             zklog.error("Unsupported merkle tree arity. Supported arities are 2, 3 and 4.");
             exit(1);
     }
-
+    PoseidonGoldilocksGPUGrinding::initConstants(my_gpu_ids, n_gpus);
     Poseidon2GoldilocksGPUGrinding::initConstants(my_gpu_ids, n_gpus);
-#endif
     TranscriptGL_GPU::init_const(my_gpu_ids, n_gpus, arity);
 
     //Generate static twiddles for the NTT
@@ -1365,31 +1387,24 @@ void init_gpu_setup_gpu(uint64_t maxBitsExt, uint64_t arity) {
     cudaSetDevice(deviceId);
     uint32_t my_gpu_ids[1] = {(uint32_t)deviceId};
 
-#ifdef STARK_POSEIDON1
-    switch (arity) {
-        case 2: PoseidonGoldilocksGPU<8>::initConstants(my_gpu_ids, 1);  break;
-        case 3: PoseidonGoldilocksGPU<12>::initConstants(my_gpu_ids, 1); break;
-        case 4: PoseidonGoldilocksGPU<16>::initConstants(my_gpu_ids, 1); break;
-        default:
-            zklog.error("init_gpu_setup_gpu: STARK_POSEIDON1 supports merkle tree arity 2, 3 or 4");
-            exit(1);
-    }
-#else
+    // Initialize Poseidon1 + Poseidon2 GPU constants unconditionally.
     switch (arity) {
         case 2:
+            PoseidonGoldilocksGPU<8>::initConstants(my_gpu_ids, 1);
             Poseidon2GoldilocksGPU<8>::initConstants(my_gpu_ids, 1);
             break;
         case 3:
+            PoseidonGoldilocksGPU<12>::initConstants(my_gpu_ids, 1);
             Poseidon2GoldilocksGPU<12>::initConstants(my_gpu_ids, 1);
             break;
         case 4:
+            PoseidonGoldilocksGPU<16>::initConstants(my_gpu_ids, 1);
             Poseidon2GoldilocksGPU<16>::initConstants(my_gpu_ids, 1);
             break;
         default:
-            zklog.error("init_gpu_setup_gpu: Poseidon2 supports merkle tree arity 2, 3 or 4");
+            zklog.error("init_gpu_setup_gpu: supports merkle tree arity 2, 3 or 4");
             exit(1);
     }
-#endif
     NTTGoldilocksGPU::initConstants(maxBitsExt, 1, my_gpu_ids);
 }
 

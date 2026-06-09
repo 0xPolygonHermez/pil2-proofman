@@ -150,8 +150,13 @@ pub fn get_proof_size_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_proof_size(p_stark_info) }
 }
 
-pub fn get_stark_hash_family_c() -> String {
-    unsafe { CStr::from_ptr(get_stark_hash_family()).to_string_lossy().into_owned() }
+pub fn set_hash_family_c(family: &str) {
+    let fam: u8 = match family {
+        "Poseidon1" => 1,
+        "Poseidon2" => 2,
+        other => panic!("set_hash_family_c: unknown hash family {other:?} (expected \"Poseidon1\" or \"Poseidon2\")"),
+    };
+    unsafe { set_hash_family(fam) }
 }
 
 pub fn get_proof_pinned_size_c(p_stark_info: *mut c_void) -> u64 {
