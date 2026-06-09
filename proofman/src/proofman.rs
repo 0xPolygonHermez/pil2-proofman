@@ -1259,7 +1259,8 @@ where
         let debug_info: &DebugInfo = match debug_info {
             Some(di) => di,
             None => {
-                default_debug = DebugInfo { verify_constraints: true, ..DebugInfo::default() };
+                default_debug =
+                    DebugInfo { verify_constraints: true, verify_global_constraints: true, ..DebugInfo::default() };
                 &default_debug
             }
         };
