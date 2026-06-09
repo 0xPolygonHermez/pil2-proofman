@@ -44,15 +44,19 @@ pub fn compute_const_tree_c(
     let c_verkey = CString::new(verkey_path).unwrap();
 
     let mut root = [0u64; 4];
-    unsafe {
+    let status = unsafe {
         build_const_tree_c(
             c_const.as_ptr(),
             c_stark_info.as_ptr(),
             c_tree.as_ptr(),
             c_verkey.as_ptr(),
             root.as_mut_ptr(),
-        );
-    }
+        )
+    };
+    assert_eq!(
+        status, 0,
+        "build_const_tree_c failed (status {status}) for const {const_path}, starkinfo {stark_info_path}, verkey {verkey_path}"
+    );
     root
 }
 

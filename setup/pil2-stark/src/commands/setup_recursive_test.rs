@@ -39,6 +39,8 @@ fn resolve_hash_circom_path(circom_path: &str, hash: &str) -> String {
 ///
 /// Ports `main_setup_recursive.js` behaviour for the test-recursive CI job.
 pub fn run_setup_recursive_test(opts: &SetupRecursiveTestOptions) -> Result<()> {
+    proofman_starks_lib_c::set_hash_family_c(&opts.hash);
+
     let circuits_gl_path =
         resolve_path_env("CIRCUITS_GL_PATH", "setup/stark-recurser/stark2circom/circom_verifier/circuits.gl");
     let recurser_circuits_path =

@@ -225,7 +225,9 @@ impl<F: PrimeField64> Setup<F> {
             let verkey = if setup_type == &ProofType::RecursiveF {
                 vec![]
             } else {
-                let mut file = File::open(&verkey_file).expect("Unable to open file");
+                let mut file = File::open(&verkey_file).unwrap_or_else(|e| {
+                    panic!("Unable to open verkey file {verkey_file} (setup_type {setup_type:?}): {e}")
+                });
                 let mut json_str = String::new();
                 file.read_to_string(&mut json_str).expect("Unable to read file");
                 let vk: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
