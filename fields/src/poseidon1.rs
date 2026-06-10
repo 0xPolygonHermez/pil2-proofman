@@ -27,6 +27,24 @@ fn matmul<F: PrimeField64, const W: usize>(mat: &[u64], state: &mut [F; W]) {
 }
 
 pub fn poseidon1_hash<F: PrimeField64, P: Poseidon1Constants<W>, const W: usize>(input: &[F; W]) -> [F; W] {
+    cfg_if::cfg_if! {
+        if #[cfg(all(target_os = "zkvm", target_vendor = "zisk"))] {
+            if W == 16 {
+                let mut state_u64 = [0u64; 16];
+                for i in 0..16 {
+                    state_u64[i] = input[i].as_canonical_u64();
+                }
+                poseidon1_hash_syscall(&mut state_u64);
+                let mut result = [F::ZERO; W];
+                for i in 0..16 {
+                    result[i] = F::from_u64(state_u64[i]);
+                }
+                return result;
+            }
+        }
+    }
+
+    // Native implementation
     let mut state = *input;
 
     // Initial ARC: state += C[0..W]
