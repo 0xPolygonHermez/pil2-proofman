@@ -8,7 +8,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use indexmap::IndexMap;
 use pilout::pilout_proxy::PilOutProxy;
 use stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
 use stark_recurser::plonk2pil;
@@ -303,7 +302,7 @@ pub fn gen_recursive_test_setup(
     // compiled pilout already has "Compressor" as the airgroup/air names.
     // We pass pilout_name = "build" to match JS airout.name = "build".
     // -------------------------------------------------------------------------
-    let empty_settings: IndexMap<String, crate::types::stark_struct::StarkSettings> = IndexMap::new();
+    let empty_settings = crate::types::stark_struct::StarkStructsConfig::default();
     crate::output::global_info::write_global_info(pilout, "build", build_dir, &empty_settings)?;
 
     println!("files Generated Correctly");

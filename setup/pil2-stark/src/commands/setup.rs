@@ -7,14 +7,13 @@ use std::sync::Arc;
 use anyhow::Result;
 use rayon::prelude::*;
 
-use indexmap::IndexMap;
 use pilout::pilout::{self as pb};
 use prost::Message;
 use crate::output::global_info::{build_global_info_json, write_global_constraints, write_global_info_json};
 use crate::pil::prepare::PrepareOptions;
 use crate::commands::recursive_setup::run_recursive_setup;
 use crate::types::security::{self, FRISecurityParams};
-use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
+use crate::types::stark_struct::{generate_stark_struct, StarkStructsConfig};
 use crate::output::stark_info::{build_starkinfo_output, collect_opening_points, compute_folding_factors};
 
 /// Setup options parsed from CLI args.
@@ -43,11 +42,11 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     let pilout = pb::PilOut::decode(pilout_data.as_slice())?;
     let pilout_name = pilout.name.clone().unwrap_or_else(|| "pilout".to_string());
 
-    let settings_map: IndexMap<String, StarkSettings> = if let Some(ref settings_path) = opts.stark_structs_path {
+    let settings_map: StarkStructsConfig = if let Some(ref settings_path) = opts.stark_structs_path {
         let data = fs::read_to_string(settings_path)?;
-        serde_json::from_str(&data)?
+        StarkStructsConfig::from_json_str(&data)?
     } else {
-        IndexMap::new()
+        StarkStructsConfig::default()
     };
 
     struct AirWorkItem {
@@ -103,17 +102,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                 let n_bits = log2_usize(item.num_rows);
                 tracing::info!("Computing setup for air '{}'", item.air_name);
 
-                let air_settings = {
-                    let mut s = settings_map
-                        .get(&item.air_name)
-                        .or_else(|| settings_map.get("default"))
-                        .cloned()
-                        .unwrap_or_default();
-                    if s.pow_bits.is_none() {
-                        s.pow_bits = Some(16);
-                    }
-                    s
-                };
+                let air_settings = settings_map.resolve(&item.airgroup_name, &item.air_name);
 
                 let stark_struct = generate_stark_struct(&air_settings, n_bits);
 
@@ -301,9 +290,9 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
         // Build final settings map: start from user-supplied settings and overlay any
         // hasCompressor flags auto-detected at runtime via NeedsCompressorError.
         // Then write globalInfo.json exactly once with the complete information.
-        let mut final_settings: IndexMap<String, StarkSettings> = (*settings_map).clone();
+        let mut final_settings: StarkStructsConfig = (*settings_map).clone();
         for air_name in &airs_with_compressor {
-            final_settings.entry(air_name.clone()).or_default().has_compressor = Some(true);
+            final_settings.set_has_compressor(air_name);
         }
         write_global_info_json(&pilout, &pilout_name, &opts.build_dir, &final_settings)?;
         tracing::info!("Wrote globalInfo.json with hasCompressor flags");

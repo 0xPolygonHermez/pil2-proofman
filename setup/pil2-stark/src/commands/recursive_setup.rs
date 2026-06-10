@@ -6,12 +6,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use indexmap::IndexMap;
 use pilout::pilout as pb;
 
 use crate::proving_key::recursive::{RecursiveSetupConfig, RecursiveTemplate};
 use crate::commands::setup::SetupOptions;
-use crate::types::stark_struct::StarkSettings;
+use crate::types::stark_struct::StarkStructsConfig;
 use crate::output::witness_gen::WitnessTracker;
 
 /// Run the recursive setup pipeline after non-recursive AIR setup.
@@ -29,7 +28,7 @@ pub(crate) fn run_recursive_setup(
     pilout: &pb::PilOut,
     pilout_name: &str,
     opts: &SetupOptions,
-    settings_map: &IndexMap<String, StarkSettings>,
+    settings_map: &StarkStructsConfig,
     global_info: serde_json::Value,
 ) -> Result<std::collections::HashSet<String>> {
     use crate::proving_key::compressed_final;
@@ -137,9 +136,7 @@ pub(crate) fn run_recursive_setup(
             let const_root_strings =
                 parse_verkey_json(&vk_path).with_context(|| format!("Failed to load verkey for air '{}'", air_name))?;
 
-            let air_settings =
-                settings_map.get(&air_name).or_else(|| settings_map.get("default")).cloned().unwrap_or_default();
-            let has_compressor = air_settings.has_compressor == Some(true);
+            let has_compressor = settings_map.has_compressor(&airgroup_name, &air_name);
             if has_compressor {
                 tracing::info!("Air '{}': hasCompressor=true from settings", air_name);
             }
@@ -653,7 +650,7 @@ mod tests {
             setup_jobs: 1,
             stats_output_path: None,
         };
-        let result = run_recursive_setup(&pilout, "zisk", &opts, &IndexMap::new(), serde_json::json!({}));
+        let result = run_recursive_setup(&pilout, "zisk", &opts, &StarkStructsConfig::default(), serde_json::json!({}));
         assert!(result.is_err());
         assert!(format!("{:#}", result.unwrap_err()).contains("globalConstraints.json not found"));
         let _ = std::fs::remove_dir_all(&tmp);
@@ -692,7 +689,7 @@ mod tests {
             setup_jobs: 1,
             stats_output_path: None,
         };
-        let result = run_recursive_setup(&pilout, "zisk", &opts, &IndexMap::new(), serde_json::json!({}));
+        let result = run_recursive_setup(&pilout, "zisk", &opts, &StarkStructsConfig::default(), serde_json::json!({}));
         assert!(result.is_err());
         let msg = format!("{:#}", result.unwrap_err());
         assert!(msg.contains("verkey") || msg.contains("not found"));
@@ -733,7 +730,7 @@ mod tests {
             setup_jobs: 1,
             stats_output_path: None,
         };
-        let result = run_recursive_setup(&pilout, "test", &opts, &IndexMap::new(), serde_json::json!({}));
+        let result = run_recursive_setup(&pilout, "test", &opts, &StarkStructsConfig::default(), serde_json::json!({}));
         assert!(result.is_err());
         let msg = format!("{:#}", result.unwrap_err());
         assert!(msg.contains("starkinfo/verifierinfo not found"), "unexpected error: {}", msg);

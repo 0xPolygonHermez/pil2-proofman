@@ -10,18 +10,17 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::Result;
-use indexmap::IndexMap;
 use pilout::pilout::{self as pb, SymbolType};
 use serde_json::json;
 
-use crate::types::stark_struct::StarkSettings;
+use crate::types::stark_struct::StarkStructsConfig;
 use crate::output::stark_info::{code_entries_to_json, hint_value_to_json};
 
 /// Build the `globalInfo` JSON value in memory (does not write to disk).
 pub(crate) fn build_global_info_json(
     pilout: &pb::PilOut,
     pilout_name: &str,
-    settings_map: &IndexMap<String, StarkSettings>,
+    settings_map: &StarkStructsConfig,
 ) -> serde_json::Value {
     let mut airs = Vec::new();
     let mut air_groups = Vec::new();
@@ -29,7 +28,7 @@ pub(crate) fn build_global_info_json(
 
     for airgroup in &pilout.air_groups {
         let ag_name = airgroup.name.clone().unwrap_or_else(|| "unnamed".to_string());
-        air_groups.push(ag_name);
+        air_groups.push(ag_name.clone());
 
         let agv: Vec<serde_json::Value> =
             airgroup.air_group_values.iter().map(|v| json!({"aggType": v.agg_type, "stage": v.stage})).collect();
@@ -38,7 +37,7 @@ pub(crate) fn build_global_info_json(
         let mut air_list = Vec::new();
         for air in &airgroup.airs {
             let a_name = air.name.clone().unwrap_or_else(|| "unnamed".to_string());
-            let has_compressor = settings_map.get(&a_name).and_then(|s| s.has_compressor).unwrap_or(false);
+            let has_compressor = settings_map.has_compressor(&ag_name, &a_name);
             let mut entry = json!({
                 "name": a_name,
                 "num_rows": air.num_rows.unwrap_or(0),
@@ -78,7 +77,7 @@ pub(crate) fn write_global_info_json(
     pilout: &pb::PilOut,
     pilout_name: &str,
     build_dir: &str,
-    settings_map: &IndexMap<String, StarkSettings>,
+    settings_map: &StarkStructsConfig,
 ) -> Result<()> {
     let proving_key_dir = Path::new(build_dir).join("provingKey");
     fs::create_dir_all(&proving_key_dir)?;
@@ -94,7 +93,7 @@ pub(crate) fn write_global_constraints(
     pilout: &pb::PilOut,
     pilout_name: &str,
     build_dir: &str,
-    settings_map: &IndexMap<String, StarkSettings>,
+    settings_map: &StarkStructsConfig,
 ) -> Result<()> {
     let proving_key_dir = Path::new(build_dir).join("provingKey");
     fs::create_dir_all(&proving_key_dir)?;
@@ -141,7 +140,7 @@ pub(crate) fn write_global_info(
     pilout: &pb::PilOut,
     pilout_name: &str,
     build_dir: &str,
-    settings_map: &IndexMap<String, StarkSettings>,
+    settings_map: &StarkStructsConfig,
 ) -> Result<()> {
     write_global_constraints(pilout, pilout_name, build_dir, settings_map)?;
     write_global_info_json(pilout, pilout_name, build_dir, settings_map)?;
@@ -611,8 +610,6 @@ pub(crate) fn write_bin_files_native(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::stark_struct::StarkSettings;
-    use indexmap::IndexMap;
     use prost::Message;
 
     #[test]
@@ -628,11 +625,11 @@ mod tests {
         let pilout_name = pilout.name.clone().unwrap_or_else(|| "pilout".to_string());
 
         let settings_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../state-machines/starkstructs.json");
-        let settings_map: IndexMap<String, StarkSettings> = if std::path::Path::new(settings_path).exists() {
+        let settings_map: StarkStructsConfig = if std::path::Path::new(settings_path).exists() {
             let data = std::fs::read_to_string(settings_path).unwrap();
-            serde_json::from_str(&data).unwrap()
+            StarkStructsConfig::from_json_str(&data).unwrap()
         } else {
-            IndexMap::new()
+            StarkStructsConfig::default()
         };
 
         let build_dir = "/tmp/r39_test_global_info";
