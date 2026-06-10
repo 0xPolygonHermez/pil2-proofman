@@ -61,19 +61,15 @@ pub fn extract_global_hint_fields<F: PrimeField64>(
                 continue;
             }
 
-            // If the type_piop is free and the num_reps is minus_one, simply flip the num_reps
-            if type_piop == 2 {
-                if num_reps == F::NEG_ONE {
-                    num_reps = -num_reps;
-                } else if num_reps != F::ONE {
-                    return Err(ProofmanError::StdError(format!(
-                        "The number of repetitions in a free piop can only be {{-1, 0, 1}}, received: {num_reps}"
-                    )));
-                }
+            // Field elements have no intrinsic sign, so we use the canonical-half convention:
+            // values in (p-1)/2 < x < p are treated as negative (assumes), the rest as positive (proves).
+            let is_free_proves = type_piop == 2 && num_reps.as_canonical_u64() <= (F::ORDER_U64 - 1) / 2;
+            if type_piop == 2 && !is_free_proves {
+                num_reps = -num_reps;
             }
 
             let expressions = get_hint_field_gc_a(pctx, sctx, debug_data_hints[1 + i], "expressions", false)?;
-            let is_proves = type_piop == 1;
+            let is_proves = type_piop == 1 || is_free_proves;
             let expr = expressions.get(0);
             let norm_vals = normalize_vals(&expr);
             let hash = hash_vals(norm_vals);
@@ -357,16 +353,13 @@ pub fn update_bus<F: PrimeField64>(
         0 => false,
         1 => true,
         2 => {
-            if num_reps == F::NEG_ONE {
-                // If the type is free and the num_reps is minus_one, simply flip the num_reps
+            // Field elements have no intrinsic sign, so we use the canonical-half convention:
+            // values in (p-1)/2 < x < p are treated as negative (assumes), the rest as positive (proves).
+            if num_reps.as_canonical_u64() > (F::ORDER_U64 - 1) / 2 {
                 num_reps = -num_reps;
                 false
-            } else if num_reps == F::ONE {
-                true
             } else {
-                return Err(ProofmanError::StdError(format!(
-                    "The number of repetitions in a free piop can only be {{-1, 0, 1}}, received: {num_reps}"
-                )));
+                true
             }
         }
         _ => unreachable!(),
@@ -422,16 +415,13 @@ fn update_bus_fast<F: PrimeField64>(
         0 => false,
         1 => true,
         2 => {
-            if num_reps == F::NEG_ONE {
-                // If the type is free and the num_reps is minus_one, simply flip the num_reps
+            // Field elements have no intrinsic sign, so we use the canonical-half convention:
+            // values in (p-1)/2 < x < p are treated as negative (assumes), the rest as positive (proves).
+            if num_reps.as_canonical_u64() > (F::ORDER_U64 - 1) / 2 {
                 num_reps = -num_reps;
                 false
-            } else if num_reps == F::ONE {
-                true
             } else {
-                return Err(ProofmanError::StdError(format!(
-                    "The number of repetitions in a free piop can only be {{-1, 0, 1}}, received: {num_reps}"
-                )));
+                true
             }
         }
         _ => unreachable!(),
