@@ -4,12 +4,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use indexmap::IndexMap;
 use pilout::pilout as pb;
 use prost::Message;
 
 use crate::pil::prepare::PrepareOptions;
-use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
+use crate::types::stark_struct::{generate_stark_struct, StarkStructsConfig};
 
 /// Options for the stats subcommand.
 pub struct StatsOptions {
@@ -32,11 +31,11 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
     let pilout_data = fs::read(&opts.airout_path)?;
     let pilout = pb::PilOut::decode(pilout_data.as_slice())?;
 
-    let settings_map: IndexMap<String, StarkSettings> = if let Some(ref settings_path) = opts.stark_structs_path {
+    let settings_map: StarkStructsConfig = if let Some(ref settings_path) = opts.stark_structs_path {
         let data = fs::read_to_string(settings_path)?;
-        serde_json::from_str(&data)?
+        StarkStructsConfig::from_json_str(&data)?
     } else {
-        IndexMap::new()
+        StarkStructsConfig::default()
     };
 
     let output_path = opts.output_path.clone().unwrap_or_else(|| "tmp/stats.txt".to_string());
@@ -72,14 +71,7 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
 
             let n_bits = log2_usize(num_rows);
 
-            let air_settings = {
-                let mut s =
-                    settings_map.get(&air_name).or_else(|| settings_map.get("default")).cloned().unwrap_or_default();
-                if s.pow_bits.is_none() {
-                    s.pow_bits = Some(16);
-                }
-                s
-            };
+            let air_settings = settings_map.resolve(&airgroup_name, &air_name);
 
             let stark_struct = generate_stark_struct(&air_settings, n_bits);
 
