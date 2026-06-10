@@ -224,10 +224,12 @@ private function initial_checks_prod(const int name, const int surname, const in
         error(`The number of expressions of ${name} ${surname} #${opid} must be ${expected_exprs} but was ${exprs_num}`);
     }
 
-    // Overlap check: each opid identifies a single logical channel on the bus, so all
-    // of its consumers (assumes/free) must belong to the same argument
-    // Sharing an opid between two different arguments silently merges their channels,
-    // which is unsound.
+    // Overlap check: range checks allocate their opids internally, hidden from the user.
+    // If a user-chosen opid (e.g. for a lookup or permutation) collides with one of those
+    // hidden opids, their channels silently merge, which is unsound. Other arguments
+    // (lookups, permutations, ...) are free to share an opid with each other, so the check
+    // only fires when a range check sits on one side of the conflict and a different
+    // argument on the other.
     //
     // Only consumers claim ownership: proves merely feed the channel
     // and may legitimately be emitted under a generic name.
@@ -239,10 +241,10 @@ private function initial_checks_prod(const int name, const int surname, const in
         const int owner = proof.std.gprod.`id${opid}`.owner_name;
         if (owner == -1) {
             proof.std.gprod.`id${opid}`.owner_name = name;
-        } else if (owner != name) {
+        } else if (owner != name && (owner == PIOP_NAME_RANGE_CHECK || name == PIOP_NAME_RANGE_CHECK)) {
             const string owner_str = get_piop_name(owner);
             const string name_str = get_piop_name(name);
-            error(`opid #${opid} on the product bus is shared by two different arguments ('${owner_str}' and '${name_str}'). Each opid must belong to a single argument; assign them distinct opids.`);
+            error(`opid #${opid} on the product bus is shared by a range check and a different argument ('${owner_str}' and '${name_str}'). Range checks allocate their opids internally; assign a distinct opid to avoid the collision.`);
         }
     }
 

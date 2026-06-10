@@ -1,4 +1,5 @@
 require "std_constants.pil"
+require "std_tools.pil"
 require "std_sum.pil"
 require "std_prod.pil"
 
@@ -41,18 +42,24 @@ function set_permutation_bus_type(const int bus_type) {
 /**
  * Performs the "assumes" part of a permutation check.
  *
- * @param opid        The operation ID that uniquely identifies this permutation operation.
- * @param expressions The vector of expressions to be assumed in the permutation check.
- * @param sel         A selector specifying which rows are subject to the permutation check.
- *                    Defaults to `1`, meaning all rows are included.
- * @param bus_type    The bus type to use for the permutation check.
- * @param name        An optional name for the PIOP consuming the permutation check. 
- *                    This is useful for debugging and tracing operations.
+ * @param opid          The operation ID that uniquely identifies this permutation operation.
+ * @param expressions   The vector of expressions to be assumed in the permutation check.
+ * @param sel           A selector specifying which rows are subject to the permutation check.
+ *                      Defaults to `1`, meaning all rows are included.
+ * @param sel_is_binary When 0 the library enforces that `sel` is binary by adding the constraint
+ *                      sel·(sel - 1) === 0. Set to 1 to take responsibility for ensuring
+ *                      `sel` is binary yourself and skip the added constraint.
+ * @param bus_type      The bus type to use for the permutation check.
+ * @param name          An optional name for the PIOP consuming the permutation check.
+ *                      This is useful for debugging and tracing operations.
  */
-function permutation_assumes(const int opid, const expr expressions[], const expr sel = 1, int bus_type = PIOP_BUS_DEFAULT, int name = PIOP_NAME_DEFAULT, int surname = PIOP_SURNAME_DEFAULT) {
+function permutation_assumes(const int opid, const expr expressions[], const expr sel = 1, const int sel_is_binary = 0, int bus_type = PIOP_BUS_DEFAULT, int name = PIOP_NAME_DEFAULT, int surname = PIOP_SURNAME_DEFAULT) {
     if (name == PIOP_NAME_DEFAULT) name = DEFAULT_PERMUTATION_NAME;
     if (surname == PIOP_SURNAME_DEFAULT) surname = DEFAULT_PERMUTATION_SURNAME;
     if (bus_type == PIOP_BUS_DEFAULT) bus_type = DEFAULT_PERMUTATION_BUS_TYPE;
+
+    // Unless the caller guarantees it, enforce that the selector is binary
+    if (sel_is_binary == 0) constrain_binary_sel(sel, opid);
 
     switch (bus_type) {
         case PIOP_BUS_SUM:
@@ -67,18 +74,24 @@ function permutation_assumes(const int opid, const expr expressions[], const exp
 /**
  * Performs the "proves" part of a permutation check.
  *
- * @param opid        The operation ID that uniquely identifies this permutation operation.
- * @param expressions The vector of expressions to be proven in the permutation check.
- * @param sel         A selector specifying which rows are subject to the permutation check.
- *                    Defaults to `1`, meaning all rows are included.
- * @param bus_type    The bus type to use for the permutation check.
- * @param name        An optional name for the PIOP consuming the permutation check. 
- *                    This is useful for debugging and tracing operations.
+ * @param opid          The operation ID that uniquely identifies this permutation operation.
+ * @param expressions   The vector of expressions to be proven in the permutation check.
+ * @param sel           A selector specifying which rows are subject to the permutation check.
+ *                      Defaults to `1`, meaning all rows are included.
+ * @param sel_is_binary When 0 the library enforces that `sel` is binary by adding the constraint
+ *                      sel·(sel - 1) === 0. Set to 1 to take responsibility for ensuring
+ *                      `sel` is binary yourself and skip the added constraint.
+ * @param bus_type      The bus type to use for the permutation check.
+ * @param name          An optional name for the PIOP consuming the permutation check.
+ *                      This is useful for debugging and tracing operations.
  */
-function permutation_proves(const int opid, const expr expressions[], const expr sel = 1, int bus_type = PIOP_BUS_DEFAULT, int name = PIOP_NAME_DEFAULT, int surname = PIOP_SURNAME_DEFAULT) {
+function permutation_proves(const int opid, const expr expressions[], const expr sel = 1, const int sel_is_binary = 0, int bus_type = PIOP_BUS_DEFAULT, int name = PIOP_NAME_DEFAULT, int surname = PIOP_SURNAME_DEFAULT) {
     if (name == PIOP_NAME_DEFAULT) name = DEFAULT_PERMUTATION_NAME;
     if (surname == PIOP_SURNAME_DEFAULT) surname = DEFAULT_PERMUTATION_SURNAME;
     if (bus_type == PIOP_BUS_DEFAULT) bus_type = DEFAULT_PERMUTATION_BUS_TYPE;
+
+    // Unless the caller guarantees it, enforce that the selector is binary
+    if (sel_is_binary == 0) constrain_binary_sel(sel, opid);
 
     switch (bus_type) {
         case PIOP_BUS_SUM:
@@ -93,18 +106,24 @@ function permutation_proves(const int opid, const expr expressions[], const expr
 /**
  * Performs a raw permutation check.
  *
- * @param opid        The operation ID that uniquely identifies this permutation operation.
- * @param expressions The vector of expressions.
- * @param sel         A selector specifying which rows are subject to the permutation check.
- *                    Defaults to `1`, meaning all rows are included.
- * @param bus_type    The bus type to use for the permutation check.
- * @param name        An optional name for the PIOP consuming the permutation check. 
- *                    This is useful for debugging and tracing operations.
+ * @param opid           The operation ID that uniquely identifies this permutation operation.
+ * @param expressions    The vector of expressions.
+ * @param sel            A selector specifying the role of each row: `-1` assumes, `1` proves, `0` is inactive.
+ *                       Defaults to `1`, meaning all rows are proven.
+ * @param sel_is_ternary When 0 the library enforces that `sel` is ternary by adding the constraint
+ *                       sel·(sel - 1)·(sel + 1) === 0. Set to 1 to take responsibility for ensuring
+ *                       `sel` is ternary yourself and skip the added constraint.
+ * @param bus_type       The bus type to use for the permutation check.
+ * @param name           An optional name for the PIOP consuming the permutation check.
+ *                       This is useful for debugging and tracing operations.
  */
-function permutation(const int opid, const expr expressions[], const expr sel = 1, int bus_type = PIOP_BUS_DEFAULT, int name = PIOP_NAME_DEFAULT, int surname = PIOP_SURNAME_DEFAULT) {
+function permutation(const int opid, const expr expressions[], const expr sel = 1, const int sel_is_ternary = 0, int bus_type = PIOP_BUS_DEFAULT, int name = PIOP_NAME_DEFAULT, int surname = PIOP_SURNAME_DEFAULT) {
     if (name == PIOP_NAME_DEFAULT) name = DEFAULT_PERMUTATION_NAME;
     if (surname == PIOP_SURNAME_DEFAULT) surname = DEFAULT_PERMUTATION_SURNAME;
     if (bus_type == PIOP_BUS_DEFAULT) bus_type = DEFAULT_PERMUTATION_BUS_TYPE;
+
+    // Unless the caller guarantees it, enforce that the selector is ternary
+    if (sel_is_ternary == 0) constrain_ternary_sel(sel, opid);
 
     switch (bus_type) {
         case PIOP_BUS_SUM:
