@@ -1740,7 +1740,7 @@ where
             self.pctx.get_device_buffers_ptr(),
         )?;
 
-        VadcopFinalProof::new_from_proof(&raw_proof, false).map_err(|e| {
+        VadcopFinalProof::new_from_proof(&raw_proof, false, self.pctx.global_info.hash.clone()).map_err(|e| {
             ProofmanError::InvalidConfiguration(format!("Failed to wrap recurser output as VadcopFinalProof: {e}"))
         })
     }
