@@ -273,6 +273,7 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         initialize_logger(verbose_mode, None);
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path)?;
+        tracing::info!("Using hash function: {}", global_info.hash);
         let n_publics = global_info.n_publics;
         let n_proof_values = global_info
             .proof_values_map
