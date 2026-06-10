@@ -111,6 +111,7 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
     let snark_config = SnarkSetupConfig {
         build_dir,
         name: &name,
+        hash: &hash,
         circom_exec: &circom_exec,
         circuits_gl_path: &circuits_gl_path,
         circuits_bn128_path: &circuits_bn128_path,

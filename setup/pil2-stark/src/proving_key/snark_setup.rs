@@ -24,6 +24,10 @@ pub struct SnarkSetupConfig<'a> {
     pub build_dir: &'a str,
     /// Circuit name (from globalInfo.name).
     pub name: &'a str,
+    /// Hash family (from globalInfo.hash, e.g. "Poseidon1"/"Poseidon2"). The
+    /// recursivef plonk2pil and circom verifier must use the same family the
+    /// proving key was set up with — never a hardcoded default.
+    pub hash: &'a str,
     /// Tool paths (same sources as recursive setup).
     pub circom_exec: &'a str,
     pub circuits_gl_path: &'a str,
@@ -88,6 +92,7 @@ pub fn gen_snark_setup(
         verkey_input: true,
         enable_input: false,
         input_challenges: false,
+        hash: config.hash.to_string(),
         ..Default::default()
     };
     let verifier_circom_rf = pil2circom(&const_root_str, stark_info, verifier_info, &pil2circom_opts)
@@ -159,7 +164,7 @@ pub fn gen_snark_setup(
     let plonk_opts_rf = PlonkOptions {
         airgroup_name: Some("Recursivef".to_string()),
         max_constraint_degree: None,
-        ..Default::default()
+        hash_id: config.hash.to_string(),
     };
     let plonk_rf = plonk2pil::plonk2pil(&r1cs_data_rf, "aggregation", &plonk_opts_rf)
         .context("plonk2pil failed for recursivef")?;
@@ -367,6 +372,7 @@ pub fn gen_snark_setup(
         verkey_input: false,
         enable_input: false,
         input_challenges: false,
+        hash: config.hash.to_string(),
         ..Default::default()
     };
     let verifier_circom_final =

@@ -70,7 +70,11 @@ pub struct PlonkOptions {
 
 impl Default for PlonkOptions {
     fn default() -> Self {
-        Self { airgroup_name: None, max_constraint_degree: None, hash_id: "Poseidon2".to_string() }
+        Self {
+            airgroup_name: None,
+            max_constraint_degree: None,
+            hash_id: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
+        }
     }
 }
 
