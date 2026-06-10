@@ -216,7 +216,7 @@ pub fn gen_snark_setup(
         merkle_tree_arity: Some(4),
         merkle_tree_custom: Some(false),
         last_level_verification: Some(0),
-        pow_bits: Some(17),
+        pow_bits: Some(19),
         ..Default::default()
     };
     let stark_struct_rf = generate_stark_struct(&bn128_settings, n_bits_rf);
