@@ -134,23 +134,3 @@ function permutation(const int opid, const expr expressions[], const expr sel = 
             error(`Unknown bus type: ${bus_type}`);
     }
 }
-
-/**
- * Enforces that a free-permutation selector is ternary, i.e. sel ∈ {-1, 0, 1},
- * where -1 assumes, 1 proves and 0 is inactive.
- *
- * @param sel  The selector expression to constrain.
- * @param opid The operation ID of the permutation, used for error reporting.
- */
-private function constrain_ternary_sel(const expr sel, const int opid) {
-    if (degree(sel) == 0) {
-        // Constant selector: only the literals 1 (all proves) and -1 (all assumes) are meaningful.
-        const int sel_val = sel;
-        if (sel_val != 1 && sel_val != -1) {
-            error(`The selector of permutation #${opid} must be either a non-constant ternary expression or one of the constants 1 (all proves) or -1 (all assumes), but got the constant ${sel_val}`);
-        }
-        // sel == 1 or sel == -1 is trivially ternary; no constraint needed.
-    } else {
-        sel * (sel - 1) * (sel + 1) === 0;
-    }
-}
