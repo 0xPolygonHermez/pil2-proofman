@@ -93,7 +93,6 @@ pub fn gen_snark_setup(
         enable_input: false,
         input_challenges: false,
         hash: config.hash.to_string(),
-        ..Default::default()
     };
     let verifier_circom_rf = pil2circom(&const_root_str, stark_info, verifier_info, &pil2circom_opts)
         .context("pil2circom failed for recursivef")?;
@@ -373,7 +372,6 @@ pub fn gen_snark_setup(
         enable_input: false,
         input_challenges: false,
         hash: config.hash.to_string(),
-        ..Default::default()
     };
     let verifier_circom_final =
         pil2circom(&rf_const_root_str, &starkinfo_rf_val, &verifierinfo_rf_val, &pil2circom_opts_final)

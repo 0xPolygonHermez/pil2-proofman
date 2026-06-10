@@ -1,5 +1,10 @@
 #[cfg(test)]
 mod tests {
+    // `int_plus_one` fires on `trace_row!`-generated code, not on this file.
+    // `needless_range_loop`: indices are passed to per-element getters/setters
+    // (e.g. `get_flags(i)`, `get_nibbles(i, j)`), so the range index is intrinsic.
+    #![allow(clippy::int_plus_one, clippy::needless_range_loop)]
+
     use proofman_common::GenericTrace;
     use proofman_macros::trace_row;
     use fields::{Goldilocks, PrimeField64};
@@ -32,17 +37,17 @@ mod tests {
 
     // ROW_SIZE == PACKED_WORDS because BitRow has no generic F fields
     const _: () = assert!(<BitRowPacked<Goldilocks> as proofman_common::trace::TraceRow>::ROW_SIZE == 6);
-    const _: () = assert!(<BitRowPacked<Goldilocks> as proofman_common::trace::TraceRow>::IS_PACKED == true);
+    const _: () = assert!(<BitRowPacked<Goldilocks> as proofman_common::trace::TraceRow>::IS_PACKED);
 
     // Unpacked counterpart must report IS_PACKED = false
-    const _: () = assert!(<BitRow<Goldilocks> as proofman_common::trace::TraceRow>::IS_PACKED == false);
+    const _: () = assert!(!<BitRow<Goldilocks> as proofman_common::trace::TraceRow>::IS_PACKED);
 
     // MainRowPacked: field1(8) + field3(3×2×4×16=384) + field2(3×2×32=192) = 584 bits
     // PACKED_WORDS = ceil(584/64) = 10, + 1 generic field (field0:F) → ROW_SIZE = 11
     const _: () = assert!(MainRowPacked::<Goldilocks>::PACKED_BITS == 584);
     const _: () = assert!(MainRowPacked::<Goldilocks>::PACKED_WORDS == 10);
     const _: () = assert!(<MainRowPacked<Goldilocks> as proofman_common::trace::TraceRow>::ROW_SIZE == 11);
-    const _: () = assert!(<MainRowPacked<Goldilocks> as proofman_common::trace::TraceRow>::IS_PACKED == true);
+    const _: () = assert!(<MainRowPacked<Goldilocks> as proofman_common::trace::TraceRow>::IS_PACKED);
 
     // This will generate MainRowPacked and MainRowUnpacked structs
     pub type MainTrace<F> = GenericTrace<MainRow<F>, 128, 0, 0>;
@@ -469,7 +474,7 @@ mod tests {
 
         // Now set_all on field3, which starts at bit 8 of the same packed[0].
         let vals: [[[u16; 4]; 2]; 3] =
-            std::array::from_fn(|i| std::array::from_fn(|j| std::array::from_fn(|k| ((i * 8 + j * 4 + k + 1) as u16))));
+            std::array::from_fn(|i| std::array::from_fn(|j| std::array::from_fn(|k| (i * 8 + j * 4 + k + 1) as u16)));
         row.set_all_field3(&vals);
 
         // field1 must still have the original value.
