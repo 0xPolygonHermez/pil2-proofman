@@ -64,7 +64,8 @@ pub fn setup(pilout: &Path, build: &Path) -> Result<(), String> {
 /// Call from that test crate's own `tests/*.rs` so it runs in its own process (see the
 /// module docs on the MPI single-init constraint).
 pub fn run_pipeline(dir: &str, pil_file: &str, lib: &str) -> Result<(), String> {
-    let build = std::env::current_dir().map_err(|e| format!("current_dir: {e}"))?.join("build");
+    // Generate the build folder alongside the test's `rs` crate (i.e. `test/<dir>/build`)
+    let build = PathBuf::from(format!("{TESTS_DIR}/{dir}/build"));
 
     let pilout = compile(&format!("{TESTS_DIR}/{dir}/{pil_file}"), &build)?;
     setup(&pilout, &build)?;

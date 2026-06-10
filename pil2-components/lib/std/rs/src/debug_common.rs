@@ -14,8 +14,9 @@ use proofman_hints::{
 use crate::{
     check_invalid_opids, get_global_hint_field, get_global_hint_field_constant_as, get_hint_field_constant_as,
     get_hint_field_constant_as_string, get_hint_field_constant_a_as_string, get_hint_field_constant_as_field,
-    get_row_field_value, print_debug_info, update_debug_data, update_debug_data_fast, DebugData, DebugDataFast,
-    DebugDataFastGlobal, DebugDataInfo, HintMetadata, hash_vals, normalize_vals,
+    get_row_field_value, max_positive_multiplicity, print_debug_info, update_debug_data, update_debug_data_fast,
+    DebugData, DebugDataFast, DebugDataFastGlobal, DebugDataInfo, HintMetadata, hash_vals, normalize_vals,
+    PIOP_TYPE_ASSUMES, PIOP_TYPE_FREE, PIOP_TYPE_PROVES,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -39,7 +40,7 @@ pub fn extract_global_hint_fields<F: PrimeField64>(
             let airgroup_id =
                 get_global_hint_field_constant_as::<usize, F>(sctx, debug_data_hints[1 + i], "airgroup_id")?;
             let type_piop = get_global_hint_field_constant_as::<u64, F>(sctx, debug_data_hints[1 + i], "type_piop")?;
-            if ![0, 1, 2].contains(&type_piop) {
+            if ![PIOP_TYPE_ASSUMES, PIOP_TYPE_PROVES, PIOP_TYPE_FREE].contains(&type_piop) {
                 return Err(ProofmanError::StdError(format!("Invalid type_piop: {type_piop}")));
             }
 
@@ -61,19 +62,22 @@ pub fn extract_global_hint_fields<F: PrimeField64>(
                 continue;
             }
 
-            // If the type_piop is free and the num_reps is minus_one, simply flip the num_reps
-            if type_piop == 2 {
-                if num_reps == F::NEG_ONE {
-                    num_reps = -num_reps;
-                } else if num_reps != F::ONE {
-                    return Err(ProofmanError::StdError(format!(
-                        "The number of repetitions in a free piop can only be {{-1, 0, 1}}, received: {num_reps}"
-                    )));
+            // Determine whether this is a prove or an assume
+            let is_proves = match type_piop {
+                PIOP_TYPE_ASSUMES => false,
+                PIOP_TYPE_PROVES => true,
+                PIOP_TYPE_FREE => {
+                    if num_reps.as_canonical_u64() > max_positive_multiplicity::<F>() {
+                        num_reps = -num_reps;
+                        false
+                    } else {
+                        true
+                    }
                 }
-            }
+                _ => unreachable!(),
+            };
 
             let expressions = get_hint_field_gc_a(pctx, sctx, debug_data_hints[1 + i], "expressions", false)?;
-            let is_proves = type_piop == 1;
             let expr = expressions.get(0);
             let norm_vals = normalize_vals(&expr);
             let hash = hash_vals(norm_vals);
@@ -152,7 +156,7 @@ pub fn extract_hint_fields<F: PrimeField64>(
                 "type_piop",
                 HintFieldOptions::default(),
             )?;
-            if ![0, 1, 2].contains(&type_piop) {
+            if ![PIOP_TYPE_ASSUMES, PIOP_TYPE_PROVES, PIOP_TYPE_FREE].contains(&type_piop) {
                 return Err(ProofmanError::StdError(format!("Invalid type_piop: {type_piop}")));
             }
 
@@ -353,20 +357,16 @@ pub fn update_bus<F: PrimeField64>(
         return Ok(());
     }
 
+    // Determine whether this is a prove or an assume
     let is_proves = match type_piop {
-        0 => false,
-        1 => true,
-        2 => {
-            if num_reps == F::NEG_ONE {
-                // If the type is free and the num_reps is minus_one, simply flip the num_reps
+        PIOP_TYPE_ASSUMES => false,
+        PIOP_TYPE_PROVES => true,
+        PIOP_TYPE_FREE => {
+            if num_reps.as_canonical_u64() > max_positive_multiplicity::<F>() {
                 num_reps = -num_reps;
                 false
-            } else if num_reps == F::ONE {
-                true
             } else {
-                return Err(ProofmanError::StdError(format!(
-                    "The number of repetitions in a free piop can only be {{-1, 0, 1}}, received: {num_reps}"
-                )));
+                true
             }
         }
         _ => unreachable!(),
@@ -418,20 +418,16 @@ fn update_bus_fast<F: PrimeField64>(
         return Ok(());
     }
 
+    // Determine whether this is a prove or an assume
     let is_proves = match type_piop {
-        0 => false,
-        1 => true,
-        2 => {
-            if num_reps == F::NEG_ONE {
-                // If the type is free and the num_reps is minus_one, simply flip the num_reps
+        PIOP_TYPE_ASSUMES => false,
+        PIOP_TYPE_PROVES => true,
+        PIOP_TYPE_FREE => {
+            if num_reps.as_canonical_u64() > max_positive_multiplicity::<F>() {
                 num_reps = -num_reps;
                 false
-            } else if num_reps == F::ONE {
-                true
             } else {
-                return Err(ProofmanError::StdError(format!(
-                    "The number of repetitions in a free piop can only be {{-1, 0, 1}}, received: {num_reps}"
-                )));
+                true
             }
         }
         _ => unreachable!(),
