@@ -55,6 +55,20 @@ fn main() {
     let library_name = if use_gpu { "starksgpu" } else { "starks" };
     let lib_file = library_folder.join(format!("lib{library_name}.a"));
 
+    // The CPU and GPU variants of this script can run concurrently against the
+    // same checkout (one cargo build graph may contain both, and a second cargo
+    // process or rust-analyzer can overlap with either). All staleness probes,
+    // cleans and make invocations below mutate shared in-tree state, so they
+    // must be serialized; the lock is held until this process exits.
+    let lock_path = pil2_stark_path.join(".build_lock");
+    let build_lock = fs::File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .unwrap_or_else(|e| panic!("Failed to open build lock {}: {e}", lock_path.display()));
+    build_lock.lock().unwrap_or_else(|e| panic!("Failed to acquire build lock {}: {e}", lock_path.display()));
+
     // For GPU builds, ensure submodules (blst, sppark) are initialized and blst is compiled
     if use_gpu {
         ensure_gpu_submodules_initialized(&pil2_stark_path);
@@ -128,7 +142,10 @@ fn main() {
         // changes are reconciled by the Makefile's own stamps)
         if makefile_changed {
             eprintln!("Makefile changed — running clean rebuild...");
-            run_command("make", &["clean"], &pil2_stark_path);
+            // Variant-scoped: a full `make clean` would delete the other
+            // variant's build dirs, which may belong to a build that just
+            // finished or (without the lock) one still in flight.
+            run_command("make", &[if use_gpu { "clean_gpu" } else { "clean_cpu" }], &pil2_stark_path);
         }
         eprintln!("Running make -j {target} ({reason})...");
         run_command("make", &["-j", target], &pil2_stark_path);
@@ -309,7 +326,7 @@ fn find_tracked_files(dir: &Path) -> Vec<PathBuf> {
                     continue;
                 }
                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if matches!(name, ".simd_stamp" | ".cuda_arch_stamp") {
+                if matches!(name, ".simd_stamp" | ".cuda_arch_stamp" | ".build_lock") {
                     continue;
                 }
                 files.push(path);
