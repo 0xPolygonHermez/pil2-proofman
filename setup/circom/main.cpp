@@ -354,6 +354,13 @@ extern "C" __attribute__((visibility("default"))) int64_t getWitnessFinal(void *
       cout << i << " " << ctx->signalValues[get_main_input_signal_start() + i] << endl;
     }
 
+    if (ctx->errorOccurred) {
+      std::cerr << "getWitnessFinal: witness generation failed (assert failed)" << std::endl;
+      delete ctx;
+      freeCircuit(circuit);
+      return -1;
+    }
+
     //-------------------------------------------
     // Compute witness
     //-------------------------------------------
@@ -375,6 +382,12 @@ extern "C" __attribute__((visibility("default"))) int64_t getWitness(uint64_t *p
 
     memcpy(&ctx->signalValues[get_main_input_signal_start()], proof, get_main_input_signal_no() * sizeof(uint64_t));
     ctx->runCircuit();
+
+    if (ctx->errorOccurred) {
+        std::cerr << "getWitness: witness generation failed (assert failed)" << std::endl;
+        delete ctx;
+        return -1;
+    }
 
     uint64_t *witness = (uint64_t *)pWitness;
     uint64_t sizeWitness = get_size_of_witness();
