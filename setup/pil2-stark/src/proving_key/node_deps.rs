@@ -185,7 +185,7 @@ mod tests {
         std::fs::write(cache.join("node_modules/.bin/pil2com"), "").unwrap();
         std::fs::write(cache.join("package.json"), "{\"v\":1}").unwrap();
         std::fs::write(cache.join("package-lock.json"), "{}").unwrap();
-        let npm = fake_npm(tmp.path(), "");
+        let npm = fake_npm(tmp.path(), "mkdir -p node_modules/.bin && touch node_modules/.bin/pil2com");
 
         let got = ensure_cache_deps(&cache, "{\"v\":2}", &npm, ".bin/pil2com").unwrap();
         assert_eq!(got, cache);
