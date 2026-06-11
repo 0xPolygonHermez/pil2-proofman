@@ -77,14 +77,14 @@ fn main() {
     let makefile_changed = current_makefile.is_some() && current_makefile != stored_makefile;
 
     // Staleness gate: probe everything that could invalidate the library and
-    // invoke make only when one of the probes fires. 
+    // invoke make only when one of the probes fires.
     let simd_changed = cfg!(target_os = "linux")
         && fs::read_to_string(pil2_stark_path.join(".simd_stamp"))
             .map(|s| s.trim() != host_simd_level())
             .unwrap_or(true);
 
     // Raw CUDA env vars consumed by the Makefile's arch resolution; any change
-    // must reach make, 
+    // must reach make,
     let cuda_env = format!(
         "CUDA_ARCHS={};CUDA_ARCH={};CUDA_GENCODE_FLAGS={}",
         env::var("CUDA_ARCHS").unwrap_or_default(),
@@ -92,11 +92,11 @@ fn main() {
         env::var("CUDA_GENCODE_FLAGS").unwrap_or_default()
     );
     let cuda_env_stamp_path = library_folder.join(".cuda_env_stamp");
-    let cuda_env_changed = use_gpu
-        && fs::read_to_string(&cuda_env_stamp_path).map(|s| s.trim() != cuda_env).unwrap_or(true);
+    let cuda_env_changed =
+        use_gpu && fs::read_to_string(&cuda_env_stamp_path).map(|s| s.trim() != cuda_env).unwrap_or(true);
 
     // Under auto-detect (no CUDA env set), check that the GPU visible on this
-    // machine matches an arch the last build was compiled for. 
+    // machine matches an arch the last build was compiled for.
     let auto_detect = cuda_env == "CUDA_ARCHS=;CUDA_ARCH=;CUDA_GENCODE_FLAGS=";
     let gpu_changed = use_gpu && auto_detect && {
         let stamp = fs::read_to_string(pil2_stark_path.join(".cuda_arch_stamp")).unwrap_or_default();
@@ -239,8 +239,7 @@ fn host_simd_level() -> &'static str {
 
 /// Compute capability of the first visible GPU as an sm number (e.g. "120"),
 fn host_gpu_arch() -> Option<String> {
-    let out =
-        Command::new("nvidia-smi").args(["--query-gpu=compute_cap", "--format=csv,noheader"]).output().ok()?;
+    let out = Command::new("nvidia-smi").args(["--query-gpu=compute_cap", "--format=csv,noheader"]).output().ok()?;
     if !out.status.success() {
         return None;
     }
