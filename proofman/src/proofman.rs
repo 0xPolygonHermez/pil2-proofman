@@ -1780,7 +1780,8 @@ where
         recurser_id: &str,
         proof_a: &VadcopFinalProof,
         proof_b: &VadcopFinalProof,
-        private_inputs: &[u64],
+        free_inputs_a: &[u64],
+        free_inputs_b: &[u64],
         root_c_recurser_agg: &[u64; 4],
     ) -> ProofmanResult<VadcopFinalProof> {
         if proof_a.compressed || proof_b.compressed {
@@ -1830,7 +1831,8 @@ where
             &self.memory_handler_recursive_witness,
             a_body,
             b_body,
-            private_inputs,
+            free_inputs_a,
+            free_inputs_b,
             root_c_recurser_agg,
             &self.aux_trace,
             &self.const_pols,

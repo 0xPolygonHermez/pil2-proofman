@@ -822,7 +822,8 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
     memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
     proof_a: &[u64],
     proof_b: &[u64],
-    private_inputs: &[u64],
+    free_inputs_a: &[u64],
+    free_inputs_b: &[u64],
     root_c_recurser_agg: &[u64; 4],
     prover_buffer: &[F],
     const_pols: &[F],
@@ -845,10 +846,12 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
         );
     });
 
-    let mut zkin: Vec<u64> = Vec::with_capacity(proof_a.len() + proof_b.len() + private_inputs.len() + 4);
+    let mut zkin: Vec<u64> =
+        Vec::with_capacity(proof_a.len() + proof_b.len() + free_inputs_a.len() + free_inputs_b.len() + 4);
     zkin.extend_from_slice(proof_a);
     zkin.extend_from_slice(proof_b);
-    zkin.extend_from_slice(private_inputs);
+    zkin.extend_from_slice(free_inputs_a);
+    zkin.extend_from_slice(free_inputs_b);
     zkin.extend_from_slice(root_c_recurser_agg);
 
     timer_start_debug!(GENERATE_RECURSER_AGGREGATOR_WITNESS);
