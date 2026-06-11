@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::SystemTime;
 
 /// Detects whether GPU (CUDA) support is available.
 /// Returns false if the cpu-only feature is set or if no CUDA toolkit is found.
@@ -16,7 +17,15 @@ fn detect_gpu() -> bool {
 }
 
 fn main() {
+    // CUDA arch resolution lives entirely in pil2-stark/Makefile
     println!("cargo:rerun-if-env-changed=CUDA_ARCHS");
+
+    // Force this script to run on every cargo build: the bump file is
+    // rewritten on each run, so its mtime always post-dates the previous
+    // fingerprint.
+    let bump = Path::new(&env::var("OUT_DIR").unwrap()).join("always-rerun");
+    fs::write(&bump, format!("{:?}", SystemTime::now())).ok();
+    println!("cargo:rerun-if-changed={}", bump.display());
 
     // Determine if GPU support should be used:
     // - If cpu-only feature is set, always use CPU
@@ -52,33 +61,6 @@ fn main() {
         ensure_blst_compiled(&pil2_stark_path);
     }
 
-    // gencode_flags: None = auto-detect (delegate to Makefile configure.sh), Some = explicit archs
-    let gencode_flags: Option<String> = if use_gpu {
-        match parse_cuda_archs() {
-            None => {
-                eprintln!("CUDA_ARCHS not set — auto-detecting GPU arch from host");
-                None
-            }
-            Some(archs) => {
-                let flags = cuda_gencode_flags(&archs);
-                eprintln!("CUDA gencode flags: {}", flags);
-                Some(flags)
-            }
-        }
-    } else {
-        None
-    };
-
-    // Detect if CUDA_ARCHS changed since last build.
-    // Stamp stores "auto" for host-detected builds, or the gencode flags string for explicit builds.
-    let archs_stamp_path = library_folder.join(".cuda_archs_stamp");
-    let stamp_content = gencode_flags.as_deref().unwrap_or("auto");
-    let archs_changed = if use_gpu {
-        fs::read_to_string(&archs_stamp_path).map(|s| s.trim() != stamp_content).unwrap_or(true)
-    } else {
-        false
-    };
-
     let tracked_files = find_tracked_files(&pil2_stark_path);
     for file in &tracked_files {
         println!("cargo:rerun-if-changed={}", file.display());
@@ -94,43 +76,82 @@ fn main() {
     let stored_makefile = fs::read(&makefile_stamp_path).ok();
     let makefile_changed = current_makefile.is_some() && current_makefile != stored_makefile;
 
-    // Clean build when CUDA architecture flags change or the Makefile changes.
-    if archs_changed {
-        eprintln!("CUDA_ARCHS changed — running clean rebuild...");
-        run_command("make", &["clean"], &pil2_stark_path);
+    // Staleness gate: probe everything that could invalidate the library and
+    // invoke make only when one of the probes fires.
+    let simd_changed = cfg!(target_os = "linux")
+        && fs::read_to_string(pil2_stark_path.join(".simd_stamp"))
+            .map(|s| s.trim() != host_simd_level())
+            .unwrap_or(true);
+
+    // Raw CUDA env vars consumed by the Makefile's arch resolution; any change
+    // must reach make,
+    let cuda_env = format!(
+        "CUDA_ARCHS={};CUDA_ARCH={};CUDA_GENCODE_FLAGS={}",
+        env::var("CUDA_ARCHS").unwrap_or_default(),
+        env::var("CUDA_ARCH").unwrap_or_default(),
+        env::var("CUDA_GENCODE_FLAGS").unwrap_or_default()
+    );
+    let cuda_env_stamp_path = library_folder.join(".cuda_env_stamp");
+    let cuda_env_changed =
+        use_gpu && fs::read_to_string(&cuda_env_stamp_path).map(|s| s.trim() != cuda_env).unwrap_or(true);
+
+    // Under auto-detect (no CUDA env set), check that the GPU visible on this
+    // machine matches an arch the last build was compiled for.
+    let auto_detect = cuda_env == "CUDA_ARCHS=;CUDA_ARCH=;CUDA_GENCODE_FLAGS=";
+    let gpu_changed = use_gpu && auto_detect && {
+        let stamp = fs::read_to_string(pil2_stark_path.join(".cuda_arch_stamp")).unwrap_or_default();
+        host_gpu_arch(&pil2_stark_path).is_none_or(|arch| !stamp.contains(&format!("code=sm_{arch}")))
+    };
+
+    let lib_mtime = fs::metadata(&lib_file).and_then(|m| m.modified()).ok();
+    let sources_newer = lib_mtime.is_none_or(|lib| newest_mtime(&tracked_files) > lib);
+
+    let make_reason = if !lib_file.exists() {
+        Some("library missing")
     } else if makefile_changed {
-        eprintln!("Makefile changed — running clean rebuild...");
-        run_command("make", &["clean"], &pil2_stark_path);
-    }
+        Some("Makefile changed")
+    } else if simd_changed {
+        Some("host SIMD level changed")
+    } else if cuda_env_changed {
+        Some("CUDA_ARCHS/CUDA_ARCH/CUDA_GENCODE_FLAGS changed")
+    } else if gpu_changed {
+        Some("host GPU arch changed or unknown")
+    } else if sources_newer {
+        Some("sources newer than library")
+    } else {
+        None
+    };
 
-    // Call make to build the library, passing per-flag options (gencode) as
-    // KEY=value overrides.
     let target = if use_gpu { "starks_lib_gpu" } else { "starks_lib" };
-    eprintln!("Running make -j {target}...");
-    let mut make_args: Vec<String> = vec!["-j".into()];
-    if let Some(flags) = &gencode_flags {
-        make_args.push(format!("CUDA_GENCODE_FLAGS={}", flags));
-    }
-    make_args.push(target.into());
-    let make_args_ref: Vec<&str> = make_args.iter().map(String::as_str).collect();
-    run_command("make", &make_args_ref, &pil2_stark_path);
+    if let Some(reason) = make_reason {
+        // Clean build when the Makefile itself changes (CUDA arch / SIMD
+        // changes are reconciled by the Makefile's own stamps)
+        if makefile_changed {
+            eprintln!("Makefile changed — running clean rebuild...");
+            run_command("make", &["clean"], &pil2_stark_path);
+        }
+        eprintln!("Running make -j {target} ({reason})...");
+        run_command("make", &["-j", target], &pil2_stark_path);
 
-    // Write stamps after make succeeds (make creates the output directory).
-    if use_gpu {
-        if let Err(e) = fs::write(&archs_stamp_path, stamp_content) {
-            eprintln!(
-                "Warning: failed to write CUDA arch stamp {:?}: {e} — next build will recompile",
-                archs_stamp_path
-            );
+        // Write stamps after make succeeds (make creates the output directory).
+        if let Some(content) = &current_makefile {
+            if let Err(e) = fs::write(&makefile_stamp_path, content) {
+                eprintln!(
+                    "Warning: failed to write Makefile stamp {:?}: {e} — next build will recompile",
+                    makefile_stamp_path
+                );
+            }
         }
-    }
-    if let Some(content) = &current_makefile {
-        if let Err(e) = fs::write(&makefile_stamp_path, content) {
-            eprintln!(
-                "Warning: failed to write Makefile stamp {:?}: {e} — next build will recompile",
-                makefile_stamp_path
-            );
+        if use_gpu {
+            if let Err(e) = fs::write(&cuda_env_stamp_path, &cuda_env) {
+                eprintln!(
+                    "Warning: failed to write CUDA env stamp {:?}: {e} — next build will recompile",
+                    cuda_env_stamp_path
+                );
+            }
         }
+    } else {
+        eprintln!("starks library up to date — skipping make");
     }
     // Absolute path to the library
     let abs_lib_path = library_folder.canonicalize().unwrap_or_else(|_| library_folder.clone());
@@ -203,57 +224,55 @@ fn main() {
     }
 }
 
-fn parse_cuda_archs() -> Option<Vec<u32>> {
-    match env::var("CUDA_ARCHS") {
-        Err(_) => None, // Not set → auto-detect via Makefile configure.sh
-        Ok(val) if val.trim().eq_ignore_ascii_case("major") => {
-            // All major architectures since Ampere: Ampere/Ada/Hopper/Blackwell-DC/Blackwell-consumer
-            // Note: sm_100 = B100/B200/GB200 (datacenter Blackwell); sm_120 = RTX 5090/5080/5070/5060 (consumer Blackwell)
-            // Note: sm_100 and sm_120 are NOT cross-compatible (sm_100 has TMEM hardware sm_120 lacks)
-            Some(vec![80, 86, 89, 90, 100, 120])
-        }
-        Ok(val) => {
-            let mut archs = Vec::new();
-            for token in val.split(',') {
-                let s = token.trim();
-                match s.parse::<u32>() {
-                    Ok(n) => archs.push(n),
-                    Err(_) => panic!(
-                        "CUDA_ARCHS contains invalid entry {:?} — expected integers (e.g. '89', '89,90', or 'major')",
-                        s
-                    ),
-                }
-            }
-            if archs.is_empty() {
-                panic!("CUDA_ARCHS is set but empty — expected integers (e.g. '89', '89,90', or 'major')");
-            }
-            // Normalize: sort + dedup so stamp comparison is order/duplicate-independent
-            archs.sort_unstable();
-            archs.dedup();
-            Some(archs)
-        }
+/// SIMD level of the host CPU, mirroring the Makefile's AVX detection
+fn host_simd_level() -> &'static str {
+    let cpuinfo = fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
+    if cpuinfo.contains("avx512") {
+        "avx512"
+    } else if cpuinfo.contains("avx2") {
+        "avx2"
+    } else {
+        "none"
     }
 }
 
-fn cuda_gencode_flags(archs: &[u32]) -> String {
-    let mut flags = Vec::new();
-    for &arch in archs {
-        flags.push(format!("-gencode arch=compute_{arch},code=sm_{arch}"));
-    }
-    // sm_100-119 are separate, incompatible lineages — embed PTX for the highest arch in each lineage present.
-    let max_dc_blackwell = archs.iter().filter(|&&a| (100..120).contains(&a)).max().copied();
-    let max_other = archs.iter().filter(|&&a| !(100..120).contains(&a)).max().copied();
-    match (max_dc_blackwell, max_other) {
-        (Some(dc), Some(other)) => {
-            flags.push(format!("-gencode arch=compute_{dc},code=compute_{dc}"));
-            flags.push(format!("-gencode arch=compute_{other},code=compute_{other}"));
+/// Compute capability of the first visible GPU as an sm number (e.g. "120"),
+/// or None when no probe can see a GPU.
+fn host_gpu_arch(pil2_stark_path: &Path) -> Option<String> {
+    let device_query = pil2_stark_path.join("src/goldilocks/utils/deviceQuery");
+    if let Ok(out) = Command::new(&device_query).output() {
+        if out.status.success() {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            // e.g. "  CUDA Capability Major/Minor version number:    12.0"
+            let arch: String = stdout
+                .lines()
+                .find(|l| l.contains("CUDA Capability"))
+                .and_then(|l| l.split(':').nth(1))
+                .unwrap_or("")
+                .chars()
+                .filter(char::is_ascii_digit)
+                .collect();
+            if !arch.is_empty() {
+                return Some(arch);
+            }
         }
-        _ => {
-            let max_arch = *archs.iter().max().expect("archs list is empty");
-            flags.push(format!("-gencode arch=compute_{max_arch},code=compute_{max_arch}"));
-        }
     }
-    flags.join(" ")
+    let out = Command::new("nvidia-smi").args(["--query-gpu=compute_cap", "--format=csv,noheader"]).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let arch: String = stdout.lines().next()?.chars().filter(char::is_ascii_digit).collect();
+    (!arch.is_empty()).then_some(arch)
+}
+
+/// Newest modification time among the given files (UNIX_EPOCH if none readable).
+fn newest_mtime(files: &[PathBuf]) -> SystemTime {
+    files
+        .iter()
+        .filter_map(|f| fs::metadata(f).ok().and_then(|m| m.modified().ok()))
+        .max()
+        .unwrap_or(SystemTime::UNIX_EPOCH)
 }
 
 /// Runs an external command and checks for errors
@@ -283,9 +302,14 @@ fn find_tracked_files(dir: &Path) -> Vec<PathBuf> {
             if path.is_dir() {
                 files.extend(find_tracked_files(&path));
             } else {
-                // Skip build-generated files: .mk (make includes), .d (dependency files)
+                // Skip build-generated files: .mk (make includes), .d (dependency
+                // files), and the Makefile's staleness stamps
                 let ext = path.extension().and_then(|e| e.to_str());
                 if matches!(ext, Some("mk" | "d")) {
+                    continue;
+                }
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if matches!(name, ".simd_stamp" | ".cuda_arch_stamp") {
                     continue;
                 }
                 files.push(path);
