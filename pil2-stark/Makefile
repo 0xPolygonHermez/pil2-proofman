@@ -11,7 +11,7 @@ ifneq ($(UNAME_S),Darwin)
     ifdef CUDA_GENCODE_FLAGS
         $(info CUDA_GENCODE_FLAGS defined externally: $(CUDA_GENCODE_FLAGS))
     else ifneq ($(strip $(CUDA_ARCHS)),)
-        ifeq ($(shell echo $(CUDA_ARCHS) | tr A-Z a-z),major)
+        ifeq ($(shell echo $(strip $(CUDA_ARCHS)) | tr A-Z a-z),major)
             CUDA_ARCH_LIST := $(CUDA_MAJOR_ARCHS)
         else
             CUDA_ARCH_LIST := $(shell echo $(CUDA_ARCHS) | tr ',' ' ')

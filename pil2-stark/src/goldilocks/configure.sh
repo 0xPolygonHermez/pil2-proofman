@@ -7,12 +7,25 @@ touch CudaArch.mk
 cd utils
 make
 cd ..
-if ! [ -e utils/deviceQuery ]; then
-    echo "Error building CUDA deviceQuery!"
-    exit 1
-fi
 
-CAP=`./utils/deviceQuery | grep "CUDA Capability" | head -n 1 | tr -d ' ' | cut -d ':' -f 2 | tr -d '.'`
+# Probe the GPU's compute capability: deviceQuery first, nvidia-smi as a
+# fallback 
+CAP=""
+if [ -e utils/deviceQuery ]; then
+    CAP=`./utils/deviceQuery | grep "CUDA Capability" | head -n 1 | tr -d ' ' | cut -d ':' -f 2 | tr -d '.'`
+else
+    echo "Error building CUDA deviceQuery!"
+fi
+if [ -z "$CAP" ] && command -v nvidia-smi >/dev/null 2>&1; then
+    SMI_CAP=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -n 1 | tr -d ' .')
+    case "$SMI_CAP" in
+        ''|*[!0-9]*) ;; # empty or non-numeric (e.g. driver up but no GPU) — ignore
+        *)
+            echo "deviceQuery unavailable, using nvidia-smi: compute capability $SMI_CAP"
+            CAP=$SMI_CAP
+            ;;
+    esac
+fi
 if [ -z "$CAP" ]; then
     echo "Unable to get CUDA capability on this system!"
     exit 1

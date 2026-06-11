@@ -131,12 +131,10 @@ pub fn set_stage_info_symbols(res: &mut SetupResult) {
         // Get the relevant pols map to compute stagePos
         let pols_map: &Vec<SymbolInfo> = if sym_type == "witness" {
             &res.cm_pols_map
+        } else if commit_id < res.custom_commits_map.len() {
+            &res.custom_commits_map[commit_id]
         } else {
-            if commit_id < res.custom_commits_map.len() {
-                &res.custom_commits_map[commit_id]
-            } else {
-                continue;
-            }
+            continue;
         };
 
         // Sum dims of all earlier entries in the same stage

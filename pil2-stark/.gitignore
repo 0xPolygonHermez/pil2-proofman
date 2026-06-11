@@ -4,8 +4,8 @@ build
 runtime/*
 !runtime/README.md
 MyLogFile.log
-lib/libstarks.a
-lib/include/
+lib/
+lib-gpu/
 src/goldilocks/build/
 src/goldilocks/build_gpu/
 src/goldilocks/testscpu

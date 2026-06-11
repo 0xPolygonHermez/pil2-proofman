@@ -100,7 +100,7 @@ fn main() {
     let auto_detect = cuda_env == "CUDA_ARCHS=;CUDA_ARCH=;CUDA_GENCODE_FLAGS=";
     let gpu_changed = use_gpu && auto_detect && {
         let stamp = fs::read_to_string(pil2_stark_path.join(".cuda_arch_stamp")).unwrap_or_default();
-        host_gpu_arch().is_none_or(|arch| !stamp.contains(&format!("code=sm_{arch}")))
+        host_gpu_arch(&pil2_stark_path).is_none_or(|arch| !stamp.contains(&format!("code=sm_{arch}")))
     };
 
     let lib_mtime = fs::metadata(&lib_file).and_then(|m| m.modified()).ok();
@@ -238,7 +238,26 @@ fn host_simd_level() -> &'static str {
 }
 
 /// Compute capability of the first visible GPU as an sm number (e.g. "120"),
-fn host_gpu_arch() -> Option<String> {
+/// or None when no probe can see a GPU.
+fn host_gpu_arch(pil2_stark_path: &Path) -> Option<String> {
+    let device_query = pil2_stark_path.join("src/goldilocks/utils/deviceQuery");
+    if let Ok(out) = Command::new(&device_query).output() {
+        if out.status.success() {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            // e.g. "  CUDA Capability Major/Minor version number:    12.0"
+            let arch: String = stdout
+                .lines()
+                .find(|l| l.contains("CUDA Capability"))
+                .and_then(|l| l.split(':').nth(1))
+                .unwrap_or("")
+                .chars()
+                .filter(char::is_ascii_digit)
+                .collect();
+            if !arch.is_empty() {
+                return Some(arch);
+            }
+        }
+    }
     let out = Command::new("nvidia-smi").args(["--query-gpu=compute_cap", "--format=csv,noheader"]).output().ok()?;
     if !out.status.success() {
         return None;
@@ -284,9 +303,14 @@ fn find_tracked_files(dir: &Path) -> Vec<PathBuf> {
             if path.is_dir() {
                 files.extend(find_tracked_files(&path));
             } else {
-                // Skip build-generated files: .mk (make includes), .d (dependency files)
+                // Skip build-generated files: .mk (make includes), .d (dependency
+                // files), and the Makefile's staleness stamps
                 let ext = path.extension().and_then(|e| e.to_str());
                 if matches!(ext, Some("mk" | "d")) {
+                    continue;
+                }
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if matches!(name, ".simd_stamp" | ".cuda_arch_stamp") {
                     continue;
                 }
                 files.push(path);
