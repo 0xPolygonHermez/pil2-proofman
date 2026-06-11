@@ -16,7 +16,8 @@ airtemplate SimpleLeft(const int N = 2**3) {
 
     permutation_assumes(2, [e, f]);
 
-    lookup(3, [g, h], mul: -1);
+    col witness mul;
+    lookup(3, [g, h], mul);
 
     col witness k[7];
     range_check(k[0], 0, 2**8-1, predefined: 1);
