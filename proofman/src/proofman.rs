@@ -9,6 +9,7 @@ use proofman_common::{
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{get_num_gpus_c, init_gpu_setup_c, set_gpu_mode_c, GOLDILOCKS_MERKLE_TREE_ARITY};
+use proofman_starks_lib_c::{load_device_const_pols_c, load_device_setup_c};
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c, reset_device_streams_c,
     get_instances_ready_c, free_device_buffers_c, use_packed_trace_c,
@@ -55,6 +56,8 @@ use crate::{
     generate_vadcop_final_proof, generate_vadcop_final_compressed_proof,
 };
 use crate::total_recursive_proofs;
+use crate::check_const_pols_gpu;
+use crate::check_const_tree;
 use crate::check_tree_paths;
 use crate::Counter;
 use crate::{AggProofs, AggProofsRegister};
@@ -292,6 +295,11 @@ pub struct ProofMan<F: PrimeField64> {
     mpi_ctx: Arc<MpiCtx>,
     setups: Arc<SetupsVadcop<F>>,
     recurser_setups: RwLock<HashMap<String, Arc<Setup<F>>>>,
+    recurser_const_offset: u64,
+    recurser_device_registered: Mutex<Option<String>>,
+    /// Folds write the instance-shared scratch buffers (`aux_trace`, const
+    /// slices) through FFI, so they must be single-flight per instance.
+    recurser_fold_lock: Mutex<()>,
     wcm: Arc<WitnessManager<F>>,
     n_streams: usize,
     n_streams_non_recursive: usize,
@@ -1668,6 +1676,14 @@ where
             }
         }
 
+        let mut device_slot = self.recurser_device_registered.lock().unwrap();
+        {
+            let cache = self.recurser_setups.read().unwrap();
+            if cache.contains_key(recurser_id) {
+                return Ok(());
+            }
+        }
+
         let vadcop_final_stem = self.pctx.global_info.get_setup_path("vadcop_final");
         let air_info = GlobalInfoAir::new(format!("recurser_aggregator_{recurser_id}"));
         let setup = Setup::<F>::new(
@@ -1686,7 +1702,65 @@ where
             "Preparing const-tree for recurser-aggregator setup '{recurser_id}' ({} mode)",
             if self.options.gpu { "GPU" } else { "CPU" }
         );
-        calculate_fixed_tree(&setup);
+
+        let d_buffers = if self.options.gpu { Some(self.pctx.get_device_buffers_ptr()) } else { None };
+        check_const_pols_gpu(&setup)?;
+        check_const_tree(&setup, &d_buffers)?;
+
+        let setup = Arc::new(setup);
+
+        if self.options.gpu {
+            match device_slot.as_deref() {
+                Some(existing) if existing != recurser_id => {
+                    return Err(ProofmanError::InvalidConfiguration(format!(
+                        "recurser '{existing}' already occupies this prover's GPU const slot; \
+                         only one recurser setup per prover instance is supported (got '{recurser_id}')"
+                    )));
+                }
+                Some(_) => {}
+                None => {
+                    let packed_len_bytes = std::fs::metadata(&setup.const_pols_path)
+                        .map_err(|e| {
+                            ProofmanError::InvalidSetup(format!(
+                                "recurser packed const pols missing at {}: {e}",
+                                setup.const_pols_path
+                            ))
+                        })?
+                        .len();
+                    let packed_len = packed_len_bytes / 8;
+                    let slot = self.setups.recurser_const_slot_size as u64;
+                    if packed_len > slot {
+                        return Err(ProofmanError::InvalidSetup(format!(
+                            "recurser packed const pols ({packed_len} elements) exceed the reserved GPU slot ({slot})"
+                        )));
+                    }
+                    let proof_type: &str = setup.setup_type.clone().into();
+                    let d_buffers_ptr = self.pctx.get_device_buffers_ptr();
+                    load_device_setup_c(
+                        0,
+                        0,
+                        proof_type,
+                        (&setup.p_setup).into(),
+                        d_buffers_ptr,
+                        setup.verkey.as_ptr() as *mut u8,
+                        std::ptr::null_mut(),
+                    );
+                    load_device_const_pols_c(
+                        0,
+                        0,
+                        self.recurser_const_offset,
+                        d_buffers_ptr,
+                        &setup.const_pols_path,
+                        packed_len,
+                        "",
+                        setup.const_tree_size as u64,
+                        proof_type,
+                        false,
+                    );
+                    *device_slot = Some(recurser_id.to_string());
+                }
+            }
+        }
 
         tracing::info!(
             "Registered recurser-aggregator setup '{recurser_id}' (files at {:?}, starkinfo borrowed from {:?})",
@@ -1695,7 +1769,9 @@ where
         );
 
         let mut cache = self.recurser_setups.write().unwrap();
-        cache.entry(recurser_id.to_string()).or_insert_with(|| Arc::new(setup));
+        cache.entry(recurser_id.to_string()).or_insert_with(|| setup);
+        drop(cache);
+        drop(device_slot);
         Ok(())
     }
 
@@ -1713,6 +1789,14 @@ where
             ));
         }
 
+        if proof_a.hash != self.pctx.global_info.hash || proof_b.hash != self.pctx.global_info.hash {
+            return Err(ProofmanError::InvalidConfiguration(format!(
+                "prove_recurser_aggregator: hash family mismatch: proofs are ({}, {}) but this \
+                 prover's proving key uses {}",
+                proof_a.hash, proof_b.hash, self.pctx.global_info.hash
+            )));
+        }
+
         let setup = {
             let cache = self.recurser_setups.read().unwrap();
             cache.get(recurser_id).cloned().ok_or_else(|| {
@@ -1726,6 +1810,20 @@ where
         let b = proof_b.proof_with_publics();
         let a_body = a.get(1..).unwrap_or(&[]);
         let b_body = b.get(1..).unwrap_or(&[]);
+
+        let expected_body = (setup.stark_info.n_publics + setup.proof_size) as usize;
+        for (side, body) in [('a', a_body), ('b', b_body)] {
+            if body.len() != expected_body {
+                return Err(ProofmanError::InvalidParameters(format!(
+                    "prove_recurser_aggregator: proof_{side} body has {} words, expected \
+                     {expected_body} (vadcop_final n_publics + proof_size); the proof blob is \
+                     malformed or truncated",
+                    body.len()
+                )));
+            }
+        }
+
+        let _fold_guard = self.recurser_fold_lock.lock().unwrap();
 
         let raw_proof = crate::generate_recurser_aggregator_proof::<F>(
             &setup,
@@ -1813,7 +1911,7 @@ where
             RankInfo { world_rank: mpi_ctx.rank, local_rank: mpi_ctx.node_rank, n_processes: mpi_ctx.n_processes };
         initialize_logger(options.verbose_mode, Some(&rank_info));
 
-        let (pctx, sctx, setups_vadcop, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus) =
+        let (pctx, sctx, setups_vadcop, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus, recurser_const_offset) =
             Self::initialize_proofman(mpi_ctx.clone(), proving_key_path, &options)?;
 
         timer_start_info!(INIT_PROOFMAN);
@@ -1943,6 +2041,9 @@ where
             wcm,
             setups: setups_vadcop,
             recurser_setups: RwLock::new(HashMap::new()),
+            recurser_const_offset,
+            recurser_device_registered: Mutex::new(None),
+            recurser_fold_lock: Mutex::new(()),
             n_streams,
             n_streams_non_recursive,
             max_num_threads,
@@ -3517,7 +3618,7 @@ where
 
         if self.pctx.gpu && self.reload_fixed_pols_gpu.load(Ordering::SeqCst) {
             timer_start_info!(RELOAD_FIXED_POLS);
-            load_device_const_pols(
+            let _ = load_device_const_pols(
                 &self.pctx,
                 &self.sctx,
                 &self.setups,
@@ -4123,7 +4224,7 @@ where
         mpi_ctx: Arc<MpiCtx>,
         proving_key_path: PathBuf,
         options: &ProofmanOptions,
-    ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64)> {
+    ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64, u64)> {
         if !set_gpu_mode_c(options.gpu) {
             return Err(ProofmanError::InvalidConfiguration(
                 "GPU mode requested but library was built without CUDA support".into(),
@@ -4214,14 +4315,23 @@ where
         mpi_ctx.barrier();
 
         timer_start_info!(LOADING_FIXED_POLS);
-        load_device_const_pols(&pctx, &sctx, &setups_vadcop, options.verify_constraints, options.aggregation, false)?;
+        // End of the init-time aggregation const-pols uploads = start of the
+        // reserved recurser slot (see register_recurser_setup).
+        let aggregation_const_end = load_device_const_pols(
+            &pctx,
+            &sctx,
+            &setups_vadcop,
+            options.verify_constraints,
+            options.aggregation,
+            false,
+        )?;
         timer_stop_and_log_info!(LOADING_FIXED_POLS);
 
         let pctx = Arc::new(pctx);
 
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN);
 
-        Ok((pctx, sctx, setups_vadcop, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus))
+        Ok((pctx, sctx, setups_vadcop, n_streams_per_gpu, n_recursive_streams_per_gpu, n_gpus, aggregation_const_end))
     }
 
     #[allow(dead_code)]

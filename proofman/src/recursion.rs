@@ -852,7 +852,16 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
     zkin.extend_from_slice(root_c_recurser_agg);
 
     timer_start_debug!(GENERATE_RECURSER_AGGREGATOR_WITNESS);
-    let circom_witness = generate_witness::<F>(setup, memory_handler_recursive_witness, 0, &zkin)?;
+    let circom_witness = match generate_witness::<F>(setup, memory_handler_recursive_witness, 0, &zkin) {
+        Ok(witness) => witness,
+        Err(e) => {
+            if let Err(p) = calc_handle.join() {
+                tracing::warn!("Recurser const tree calculation thread panicked: {:?}", p);
+            }
+            timer_stop_and_log_info!(GENERATE_RECURSER_AGGREGATOR);
+            return Err(e);
+        }
+    };
     timer_stop_and_log_debug!(GENERATE_RECURSER_AGGREGATOR_WITNESS);
 
     let n_bits = setup.stark_info.stark_struct.n_bits;
@@ -896,7 +905,7 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
     }
 
     timer_start_debug!(GENERATE_RECURSER_AGGREGATOR_PROOF);
-    let _stream_id = gen_recursive_proof_c(
+    let stream_id = gen_recursive_proof_c(
         p_setup,
         trace.as_ptr() as *mut u8,
         prover_buffer.as_ptr() as *mut u8,
@@ -915,6 +924,7 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
         setup.setup_type.clone().into(),
         false,
     );
+    get_stream_id_proof_c(d_buffers, stream_id);
     timer_stop_and_log_debug!(GENERATE_RECURSER_AGGREGATOR_PROOF);
 
     timer_stop_and_log_info!(GENERATE_RECURSER_AGGREGATOR);
@@ -998,11 +1008,6 @@ fn generate_witness<F: PrimeField64>(
     instance_id: usize,
     zkin: &[u64],
 ) -> ProofmanResult<Vec<F>> {
-    let mut witness: Vec<F> = match setup.setup_type {
-        ProofType::Compressor => memory_handler_recursive_witness.take_buffer_witness_compressor(),
-        _ => memory_handler_recursive_witness.take_buffer_witness(),
-    };
-
     let state = setup.circom_state.read().unwrap();
     let circom_circuit_ptr = match state.circuit {
         Some(ptr) => ptr,
@@ -1013,6 +1018,11 @@ fn generate_witness<F: PrimeField64>(
         state.get_witness_fn.ok_or(ProofmanError::InvalidSetup("GetWitness function not loaded".to_string()))?;
 
     let nmutex = std::cmp::min(8, rayon::current_num_threads());
+
+    let mut witness: Vec<F> = match setup.setup_type {
+        ProofType::Compressor => memory_handler_recursive_witness.take_buffer_witness_compressor(),
+        _ => memory_handler_recursive_witness.take_buffer_witness(),
+    };
 
     let res: i64 = unsafe {
         get_witness_fn(
@@ -1025,6 +1035,14 @@ fn generate_witness<F: PrimeField64>(
     drop(state);
 
     if res != 0 {
+        let released = match setup.setup_type {
+            ProofType::Compressor => memory_handler_recursive_witness.release_buffer_witness_compressor(witness),
+            _ => memory_handler_recursive_witness.release_buffer_witness(witness),
+        };
+        if let Err(e) = released {
+            tracing::warn!("Failed to return witness buffer to pool: {e}");
+        }
+
         let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
         let debug_file_path = std::path::Path::new("/tmp").join(format!(
             "proof_{instance_id}_ag{}_air{}_t{:?}_{}.bin",

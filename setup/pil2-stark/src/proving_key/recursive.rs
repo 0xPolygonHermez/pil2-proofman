@@ -848,19 +848,34 @@ pub(crate) fn resolve_pil2com_exec() -> Option<String> {
 }
 
 /// [`resolve_pil2com_exec`], but self-bootstrapping: when pil2com is missing,
-/// bootstrap the Node deps (see [`crate::proving_key::node_deps`]) and resolve
-/// again. Setup owns making its own tooling available — callers (SDK, worker,
-/// CLI, tests) shouldn't each carry an npm bootstrap.
+/// run `npm install` in the proofman repo root (where `package.json` lives)
+/// and resolve again. Setup owns making its own tooling available — callers
+/// (SDK, worker, CLI, tests) shouldn't each carry an npm bootstrap.
 pub(crate) fn ensure_pil2com_exec() -> Option<String> {
     if let Some(path) = resolve_pil2com_exec() {
         return Some(path);
     }
-    let root = crate::proving_key::node_deps::ensure_node_deps(".bin/pil2com")?;
-    let exec = root.join("node_modules/.bin/pil2com");
-    exec.canonicalize().ok().and_then(|p| p.to_str().map(String::from))
+    const PROOFMAN_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let root = Path::new(PROOFMAN_ROOT);
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    if !root.join("package.json").is_file() {
+        return None;
+    }
+    tracing::info!("pil2com not found; running `npm install` in {}", root.display());
+    match std::process::Command::new("npm").arg("install").current_dir(&root).status() {
+        Ok(status) if status.success() => resolve_pil2com_exec(),
+        Ok(status) => {
+            tracing::warn!("`npm install` in {} exited with {status}", root.display());
+            None
+        }
+        Err(e) => {
+            tracing::warn!("failed to run `npm install` in {}: {e}", root.display());
+            None
+        }
+    }
 }
 
-/// Find a path inside `node_modules/<package>/<sub_path>`, with an env-var override.
+/// Resolve a path inside `node_modules/<package>/<sub_path>`, with an env-var override.
 /// Search order:
 ///   1. Env var override
 ///   2. `<proofman-repo-root>/node_modules/<package>/<sub_path>` (compile-time baked)

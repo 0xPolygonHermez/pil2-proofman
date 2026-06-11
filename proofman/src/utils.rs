@@ -518,7 +518,7 @@ pub fn needs_const_pols_gpu_regeneration<F: PrimeField64>(setup: &Setup<F>) -> P
     Ok(false)
 }
 
-fn check_const_pols_gpu<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<()> {
+pub fn check_const_pols_gpu<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<()> {
     if !setup.gpu {
         return Ok(());
     }
@@ -960,7 +960,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
     verify_constraints: bool,
     aggregation: bool,
     only_first_gpu: bool,
-) -> ProofmanResult<()> {
+) -> ProofmanResult<u64> {
     let d_buffers = pctx.get_device_buffers_ptr();
 
     // Phase 2: Load all constant polynomials
@@ -1152,7 +1152,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
             }
         }
     }
-    Ok(())
+    Ok(_offset_aggregation)
 }
 
 pub fn add_publics_circom<F: PrimeField64>(
