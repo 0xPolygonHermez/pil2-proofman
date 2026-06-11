@@ -12,12 +12,27 @@ ifneq ($(UNAME_S),Darwin)
     else
         # Auto-detect from host GPU (single arch, existing behavior)
         ROOT_DIR := $(dir $(realpath $(firstword $(MAKEFILE_LIST))))
-        INFO := $(shell cd $(ROOT_DIR)/src/goldilocks && ./configure.sh && sleep 2)
-        include $(ROOT_DIR)/src/goldilocks/CudaArch.mk
-        CUDA_ARCH_NUM := $(subst sm_,,$(CUDA_ARCH))
-        CUDA_GENCODE_FLAGS := -gencode arch=compute_$(CUDA_ARCH_NUM),code=$(CUDA_ARCH) \
-                              -gencode arch=compute_$(CUDA_ARCH_NUM),code=compute_$(CUDA_ARCH_NUM)
-        $(info Auto-detected $(CUDA_ARCH), gencode flags set)
+        CONFIGURE_STATUS := $(shell cd $(ROOT_DIR)/src/goldilocks && ./configure.sh >&2 && sleep 2; echo $$?)
+        ifeq ($(CONFIGURE_STATUS),0)
+            include $(ROOT_DIR)/src/goldilocks/CudaArch.mk
+            CUDA_ARCH_NUM := $(subst sm_,,$(CUDA_ARCH))
+            CUDA_GENCODE_FLAGS := -gencode arch=compute_$(CUDA_ARCH_NUM),code=$(CUDA_ARCH) \
+                                  -gencode arch=compute_$(CUDA_ARCH_NUM),code=compute_$(CUDA_ARCH_NUM)
+            $(info Auto-detected $(CUDA_ARCH), gencode flags set)
+        else
+            # Fallback: build for the canonical "major" arch set, same as
+            # CUDA_ARCHS="major" in provers/starks-lib-c/build.rs. The arch list
+            # is shared via cuda-major-archs.txt (single source of truth); sed
+            # strips comment lines. SASS for each arch + PTX for the highest
+            # arch of each Blackwell lineage (10x/11x datacenter vs the rest) —
+            # this mirrors cuda_gencode_flags() in build.rs and assumes the
+            # list is in ascending order.
+            MAJOR_ARCHS := $(shell sed 's/\#.*//' $(ROOT_DIR)/cuda-major-archs.txt)
+            MAJOR_PTX := $(lastword $(filter 10% 11%,$(MAJOR_ARCHS))) $(lastword $(filter-out 10% 11%,$(MAJOR_ARCHS)))
+            CUDA_GENCODE_FLAGS := $(foreach a,$(MAJOR_ARCHS),-gencode arch=compute_$(a),code=sm_$(a)) \
+                                  $(foreach p,$(MAJOR_PTX),-gencode arch=compute_$(p),code=compute_$(p))
+            $(warning CUDA arch auto-detection failed (no GPU visible?), falling back to major archs: $(MAJOR_ARCHS))
+        endif
     endif
 endif
 

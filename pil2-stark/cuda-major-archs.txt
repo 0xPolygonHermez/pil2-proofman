@@ -1,0 +1,9 @@
+# Canonical CUDA architecture set for "major" builds — single source of truth.
+# Consumed by:
+#   - provers/starks-lib-c/build.rs  (CUDA_ARCHS=major)
+#   - pil2-stark/Makefile            (fallback when GPU auto-detection fails)
+# SASS is built for every arch listed; PTX is embedded for the highest arch of
+# each Blackwell lineage (sm_100-119 datacenter vs sm_120+ consumer), which are
+# NOT cross-compatible (sm_100 has TMEM hardware that sm_120 lacks).
+# Keep the list in ascending order — the Makefile relies on it.
+80 86 89 90 100 120

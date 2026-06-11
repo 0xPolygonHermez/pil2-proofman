@@ -53,8 +53,9 @@ fn main() {
     }
 
     // gencode_flags: None = auto-detect (delegate to Makefile configure.sh), Some = explicit archs
+    println!("cargo:rerun-if-changed={}", pil2_stark_path.join("cuda-major-archs.txt").display());
     let gencode_flags: Option<String> = if use_gpu {
-        match parse_cuda_archs() {
+        match parse_cuda_archs(&pil2_stark_path) {
             None => {
                 eprintln!("CUDA_ARCHS not set — auto-detecting GPU arch from host");
                 None
@@ -207,14 +208,34 @@ fn main() {
     }
 }
 
-fn parse_cuda_archs() -> Option<Vec<u32>> {
+fn parse_cuda_archs(pil2_stark_path: &Path) -> Option<Vec<u32>> {
     match env::var("CUDA_ARCHS") {
         Err(_) => None, // Not set → auto-detect via Makefile configure.sh
         Ok(val) if val.trim().eq_ignore_ascii_case("major") => {
             // All major architectures since Ampere: Ampere/Ada/Hopper/Blackwell-DC/Blackwell-consumer
             // Note: sm_100 = B100/B200/GB200 (datacenter Blackwell); sm_120 = RTX 5090/5080/5070/5060 (consumer Blackwell)
             // Note: sm_100 and sm_120 are NOT cross-compatible (sm_100 has TMEM hardware sm_120 lacks)
-            Some(vec![80, 86, 89, 90, 100, 120])
+            // Canonical list lives in pil2-stark/cuda-major-archs.txt — single source
+            // of truth shared with the Makefile's auto-detect fallback.
+            let path = pil2_stark_path.join("cuda-major-archs.txt");
+            let content = fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("CUDA_ARCHS=major: cannot read {}: {e}", path.display()));
+            let mut archs: Vec<u32> = content
+                .lines()
+                .map(|line| line.split('#').next().unwrap_or(""))
+                .flat_map(str::split_whitespace)
+                .map(|s| {
+                    s.parse::<u32>().unwrap_or_else(|_| {
+                        panic!("invalid arch {:?} in {} — expected integers", s, path.display())
+                    })
+                })
+                .collect();
+            if archs.is_empty() {
+                panic!("{} contains no architectures", path.display());
+            }
+            archs.sort_unstable();
+            archs.dedup();
+            Some(archs)
         }
         Ok(val) => {
             let mut archs = Vec::new();
