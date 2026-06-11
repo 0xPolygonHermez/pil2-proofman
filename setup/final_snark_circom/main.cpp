@@ -292,7 +292,7 @@ extern "C" __attribute__((visibility("default"))) uint64_t getSizeWitness()  {
   return get_size_of_witness();
 }
 
-extern "C" __attribute__((visibility("default"))) int getWitness(void *zkin, char* datFile, void* pWitness, uint64_t nMutexes)  {
+extern "C" __attribute__((visibility("default"))) int64_t getWitness(void *zkin, char* datFile, void* pWitness, uint64_t nMutexes)  {
     //-------------------------------------------
     // Verifier stark proof
     //-------------------------------------------
@@ -314,6 +314,13 @@ extern "C" __attribute__((visibility("default"))) int getWitness(void *zkin, cha
       std::cerr << "getWitness: not all inputs have been set: only "
                 << (get_main_input_signal_no() - ctx->getRemaingInputsToBeSet())
                 << " out of " << get_main_input_signal_no() << std::endl;
+      delete ctx;
+      freeCircuit(circuit);
+      return -1;
+    }
+
+    if (ctx->errorOccurred) {
+      std::cerr << "getWitness: witness generation failed (assert failed)" << std::endl;
       delete ctx;
       freeCircuit(circuit);
       return -1;

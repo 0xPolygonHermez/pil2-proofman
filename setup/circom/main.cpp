@@ -323,7 +323,7 @@ extern "C" __attribute__((visibility("default"))) void freeCircuit(void* circuit
     freeCircuit(circuit);
 }
 
-extern "C" __attribute__((visibility("default"))) int getWitnessFinal(void *zkin, char* datFile, void* pWitness, uint64_t nMutexes)  {
+extern "C" __attribute__((visibility("default"))) int64_t getWitnessFinal(void *zkin, char* datFile, void* pWitness, uint64_t nMutexes)  {
     //-------------------------------------------
     // Verifier stark proof
     //-------------------------------------------
@@ -369,7 +369,7 @@ extern "C" __attribute__((visibility("default"))) int getWitnessFinal(void *zkin
     return 0;
 }
 
-extern "C" __attribute__((visibility("default"))) int getWitness(uint64_t *proof, void* circuit_, void* pWitness, uint64_t nMutexes) {
+extern "C" __attribute__((visibility("default"))) int64_t getWitness(uint64_t *proof, void* circuit_, void* pWitness, uint64_t nMutexes) {
     Circom_Circuit *circuit = (Circom_Circuit *)circuit_;
     Circom_CalcWit *ctx = new Circom_CalcWit(circuit, nMutexes);
 

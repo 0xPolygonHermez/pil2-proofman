@@ -791,15 +791,25 @@ pub fn compile_pil(pil_path: &str, output_path: &str, std_pil_path: &str, recurs
 
 /// Find the `pil2com` JS binary, checking (in order):
 ///   1. `PIL2C_EXEC` environment variable
-///   2. Local npm install: `node_modules/.bin/pil2com` (relative to cwd)
-///   3. Walk up from the executable's location to find `node_modules/.bin/pil2com`
-///   4. Global install: `pil2com` on PATH
+///   2. npm install in the proofman repo itself (compile-time baked root) — covers
+///      consumers that use proofman as a path/git dependency from another workspace
+///   3. Local npm install: `node_modules/.bin/pil2com` (relative to cwd)
+///   4. Walk up from the executable's location to find `node_modules/.bin/pil2com`
+///   5. Global install: `pil2com` on PATH
 ///
 /// Install via: `npm install`  (reads package.json in the repo root)
 pub(crate) fn resolve_pil2com_exec() -> Option<String> {
     if let Ok(path) = std::env::var("PIL2C_EXEC") {
         if Path::new(&path).is_file() {
             return Some(path);
+        }
+    }
+    // npm install in the proofman repo root (this crate sits at <root>/setup/pil2-stark)
+    const PROOFMAN_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let baked = Path::new(PROOFMAN_ROOT).join("node_modules/.bin/pil2com");
+    if baked.is_file() {
+        if let Ok(abs) = baked.canonicalize() {
+            return abs.to_str().map(|s| s.to_string());
         }
     }
     // Local npm install (preferred)
@@ -826,17 +836,29 @@ pub(crate) fn resolve_pil2com_exec() -> Option<String> {
     which::which("pil2com").ok().map(|p| p.to_string_lossy().into_owned())
 }
 
-/// Resolve a path inside `node_modules/<package>/<sub_path>`, with an env-var override.
+/// [`resolve_pil2com_exec`], but self-bootstrapping: when pil2com is missing,
+/// bootstrap the Node deps (see [`crate::proving_key::node_deps`]) and resolve
+/// again. Setup owns making its own tooling available — callers (SDK, worker,
+/// CLI, tests) shouldn't each carry an npm bootstrap.
+pub(crate) fn ensure_pil2com_exec() -> Option<String> {
+    if let Some(path) = resolve_pil2com_exec() {
+        return Some(path);
+    }
+    let root = crate::proving_key::node_deps::ensure_node_deps(".bin/pil2com")?;
+    let exec = root.join("node_modules/.bin/pil2com");
+    exec.canonicalize().ok().and_then(|p| p.to_str().map(String::from))
+}
+
+/// Find a path inside `node_modules/<package>/<sub_path>`, with an env-var override.
 /// Search order:
 ///   1. Env var override
 ///   2. `<proofman-repo-root>/node_modules/<package>/<sub_path>` (compile-time baked)
 ///   3. CWD-relative `node_modules/<package>/<sub_path>`
 ///   4. Walk up from the running executable
-///   5. Literal `node_modules/<package>/<sub_path>` (last-resort fallback)
-pub(crate) fn resolve_node_module_subpath(env_var: &str, package: &str, sub_path: &str) -> String {
+fn find_node_module_subpath(env_var: &str, package: &str, sub_path: &str) -> Option<String> {
     if let Ok(v) = std::env::var(env_var) {
         if !v.is_empty() {
-            return v;
+            return Some(v);
         }
     }
     // Compile-time path to the proofman repo root.
@@ -844,13 +866,13 @@ pub(crate) fn resolve_node_module_subpath(env_var: &str, package: &str, sub_path
     let baked = std::path::Path::new(PROOFMAN_ROOT).join("node_modules").join(package).join(sub_path);
     if baked.is_dir() {
         if let Ok(abs) = baked.canonicalize() {
-            return abs.to_string_lossy().into_owned();
+            return Some(abs.to_string_lossy().into_owned());
         }
     }
     let rel = PathBuf::from("node_modules").join(package).join(sub_path);
     if rel.is_dir() {
         if let Ok(abs) = rel.canonicalize() {
-            return abs.to_string_lossy().into_owned();
+            return Some(abs.to_string_lossy().into_owned());
         }
     }
     if let Ok(exe) = std::env::current_exe() {
@@ -859,10 +881,28 @@ pub(crate) fn resolve_node_module_subpath(env_var: &str, package: &str, sub_path
             let candidate = d.join("node_modules").join(package).join(sub_path);
             if candidate.is_dir() {
                 if let Ok(abs) = candidate.canonicalize() {
-                    return abs.to_string_lossy().into_owned();
+                    return Some(abs.to_string_lossy().into_owned());
                 }
             }
             dir = d.parent();
+        }
+    }
+    None
+}
+
+/// [`find_node_module_subpath`], but self-bootstrapping: when the package is
+/// missing, install the Node deps (see [`crate::proving_key::node_deps`]) and
+/// look again. Falls back to the literal relative path so callers keep getting
+/// a usable-for-error-messages string even when bootstrap is impossible.
+pub(crate) fn ensure_node_module_subpath(env_var: &str, package: &str, sub_path: &str) -> String {
+    if let Some(p) = find_node_module_subpath(env_var, package, sub_path) {
+        return p;
+    }
+    let probe = format!("{package}/{sub_path}");
+    if let Some(root) = crate::proving_key::node_deps::ensure_node_deps(&probe) {
+        let candidate = root.join("node_modules").join(package).join(sub_path);
+        if let Ok(abs) = candidate.canonicalize() {
+            return abs.to_string_lossy().into_owned();
         }
     }
     format!("node_modules/{package}/{sub_path}")
