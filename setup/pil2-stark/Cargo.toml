@@ -1,5 +1,6 @@
 [package]
 name = "pil2-stark-setup"
+rust-version = "1.89"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }

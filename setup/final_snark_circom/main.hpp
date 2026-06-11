@@ -29,6 +29,6 @@ bool loadJsonImpl(Circom_CalcWit *ctx, json &j);
 bool check_valid_number(std::string &s, uint base);
 
 extern "C" __attribute__((visibility("default"))) uint64_t getSizeWitness();
-extern "C" __attribute__((visibility("default"))) int getWitness(void *zkin, char* datFile, void* pWitness, uint64_t nMutexes = NMUTEXES);
+extern "C" __attribute__((visibility("default"))) int64_t getWitness(void *zkin, char* datFile, void* pWitness, uint64_t nMutexes = NMUTEXES);
 
 #endif
