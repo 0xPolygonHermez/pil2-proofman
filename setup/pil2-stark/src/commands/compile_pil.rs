@@ -8,7 +8,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
-use crate::proving_key::recursive::resolve_pil2com_exec;
+use crate::proving_key::recursive::ensure_pil2com_exec;
 
 /// Options for the `compile-pil` subcommand.
 pub struct CompilePilOptions {
@@ -32,7 +32,10 @@ pub struct CompilePilOptions {
 pub fn run_compile_pil(opts: &CompilePilOptions) -> Result<()> {
     tracing::info!("Compiling PIL: {}", opts.pil_path);
 
-    let pil2com_exec = resolve_pil2com_exec().context("Cannot find pil2com. Run: npm install")?;
+    let pil2com_exec = ensure_pil2com_exec().context(
+        "Cannot find pil2com and automatic `npm install` did not produce it. Install Node.js/npm \
+         and run `npm install` in the pil2-proofman repo root",
+    )?;
     tracing::info!("Using pil2com: {}", pil2com_exec);
 
     if opts.include_paths.is_empty() {

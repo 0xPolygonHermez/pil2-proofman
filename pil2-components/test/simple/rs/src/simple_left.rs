@@ -51,6 +51,8 @@ impl<F: PrimeField64> WitnessComponent<F> for SimpleLeft<F> {
                 trace[i].g = F::from_usize(i);
                 trace[i].h = F::from_usize(num_rows - i - 1);
 
+                trace[i].mul = F::from_isize(-(i as isize));
+
                 let val = [
                     rng.random_range(0..=(1 << 8) - 1),
                     rng.random_range(0..=(1 << 16) - 1),

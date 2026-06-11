@@ -100,7 +100,7 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
     let circuits_bn128_path =
         resolve_path_env("CIRCUITS_BN128_PATH", "setup/stark-recurser/stark2circom/circom_verifier/circuits.bn128");
     let circomlib_path =
-        crate::proving_key::recursive::resolve_node_module_subpath("CIRCOMLIB_PATH", "circomlib", "circuits");
+        crate::proving_key::recursive::ensure_node_module_subpath("CIRCOMLIB_PATH", "circomlib", "circuits");
 
     // Create provingKeySnark directory.
     let snark_dir = PathBuf::from(build_dir).join("provingKeySnark");

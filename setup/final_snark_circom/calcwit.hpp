@@ -37,6 +37,8 @@ public:
 
   int maxThread;
 
+  std::atomic<bool> errorOccurred{false};
+
   // Functions called by the circuit
   Circom_CalcWit(Circom_Circuit *aCircuit, uint numTh = NMUTEXES);
   ~Circom_CalcWit();

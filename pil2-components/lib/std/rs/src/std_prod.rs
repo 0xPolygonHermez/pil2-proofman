@@ -104,17 +104,12 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                         continue;
                     }
 
-                    // Get the air associated with the air_instance
-                    let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
-
                     let setup = sctx.get_setup(airgroup_id, air_id)?;
                     let p_expressions_bin = setup.p_setup.p_expressions_bin;
 
                     let im_hints = get_hint_ids_by_name(p_expressions_bin, "im_col");
-                    let gprod_hints = get_hint_ids_by_name(p_expressions_bin, "gprod_col");
 
                     let n_im_hints = im_hints.len();
-
                     if !im_hints.is_empty() {
                         mul_hint_fields(
                             &sctx,
@@ -130,13 +125,23 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                         )?;
                     }
 
-                    // We know that at most one product hint exists
-                    let gprod_hint = if gprod_hints.len() > 1 {
-                        return Err(ProofmanError::StdError(format!(
-                            "Multiple gprod hints found for AIR '{air_name}'"
-                        )));
-                    } else {
-                        gprod_hints[0] as usize
+                    // We know that exactly one gprod hint must exist
+                    let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
+                    let gprod_hints = get_hint_ids_by_name(p_expressions_bin, "gprod_col");
+
+                    let gprod_hint = match gprod_hints.as_slice() {
+                        [] => {
+                            return Err(ProofmanError::StdError(format!(
+                                "No 'gprod_col' hint found for air: {}",
+                                air_name
+                            )))
+                        }
+                        [single] => *single as usize,
+                        _ => {
+                            return Err(ProofmanError::StdError(format!(
+                                "Multiple gprod hints found for AIR '{air_name}'"
+                            )))
+                        }
                     };
 
                     let std_mode = self.std_mode[i];

@@ -536,6 +536,16 @@ fn resolve_snarkjs_root() -> Option<PathBuf> {
     None
 }
 
+/// [`resolve_snarkjs_root`], but self-bootstrapping: when snarkjs is missing,
+/// install the Node deps (see [`crate::proving_key::node_deps`]) and look again.
+fn ensure_snarkjs_root() -> Option<PathBuf> {
+    if let Some(root) = resolve_snarkjs_root() {
+        return Some(root);
+    }
+    let root = crate::proving_key::node_deps::ensure_node_deps("snarkjs")?;
+    root.join("node_modules/snarkjs").canonicalize().ok()
+}
+
 /// Make a path absolute against the current working directory. Required before
 /// passing paths into the inline node scripts below — those run with cwd set to
 /// the snarkjs package's parent dir (so `require('snarkjs')` resolves), which
@@ -549,7 +559,8 @@ fn absolutize(p: &str) -> Result<String> {
 
 /// Export snarkjs verification key by spawning a small Node.js inline script.
 fn run_snarkjs_export_vk(zkey_path: &str, output_path: &str) -> Result<()> {
-    let snarkjs_root = resolve_snarkjs_root().context("Cannot find snarkjs. Run: npm install")?;
+    let snarkjs_root = ensure_snarkjs_root()
+        .context("Cannot find snarkjs and automatic `npm install` did not produce it. Install Node.js/npm")?;
     let cwd = snarkjs_root.parent().unwrap_or(&snarkjs_root).to_path_buf();
     let zkey_abs = absolutize(zkey_path)?;
     let out_abs = absolutize(output_path)?;
@@ -570,7 +581,8 @@ const fs = require('fs');
 
 /// Export snarkjs Solidity verifier by spawning a small Node.js inline script.
 fn run_snarkjs_export_solidity(zkey_path: &str, output_path: &str, snark_type: &str) -> Result<()> {
-    let snarkjs_root = resolve_snarkjs_root().context("Cannot find snarkjs. Run: npm install")?;
+    let snarkjs_root = ensure_snarkjs_root()
+        .context("Cannot find snarkjs and automatic `npm install` did not produce it. Install Node.js/npm")?;
     let cwd = snarkjs_root.parent().unwrap_or(&snarkjs_root).to_path_buf();
     let zkey_abs = absolutize(zkey_path)?;
     let out_abs = absolutize(output_path)?;
