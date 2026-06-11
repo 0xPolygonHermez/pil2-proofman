@@ -68,16 +68,16 @@ When building via Cargo (pil2-proofman), use the `CUDA_ARCHS` environment variab
 
 ```sh
 # Default: auto-detects host GPU architecture (same as direct make)
-cargo build --release --features gpu
+cargo build --release
 
 # All major architectures (distribution build): sm_80, sm_86, sm_89, sm_90, sm_100 + PTX, sm_120 + PTX
-CUDA_ARCHS="major" cargo build --release --features gpu
+CUDA_ARCHS="major" cargo build --release
 
 # Single architecture
-CUDA_ARCHS="89" cargo build --release --features gpu
+CUDA_ARCHS="89" cargo build --release
 
 # Multiple architectures
-CUDA_ARCHS="89,90" cargo build --release --features gpu
+CUDA_ARCHS="89,90" cargo build --release
 ```
 
 To inspect which architectures are embedded in the compiled library:
