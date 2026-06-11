@@ -100,11 +100,11 @@ fn main() {
     let auto_detect = cuda_env == "CUDA_ARCHS=;CUDA_ARCH=;CUDA_GENCODE_FLAGS=";
     let gpu_changed = use_gpu && auto_detect && {
         let stamp = fs::read_to_string(pil2_stark_path.join(".cuda_arch_stamp")).unwrap_or_default();
-        host_gpu_arch().map_or(true, |arch| !stamp.contains(&format!("code=sm_{arch}")))
+        host_gpu_arch().is_none_or(|arch| !stamp.contains(&format!("code=sm_{arch}")))
     };
 
     let lib_mtime = fs::metadata(&lib_file).and_then(|m| m.modified()).ok();
-    let sources_newer = lib_mtime.map_or(true, |lib| newest_mtime(&tracked_files) > lib);
+    let sources_newer = lib_mtime.is_none_or(|lib| newest_mtime(&tracked_files) > lib);
 
     let make_reason = if !lib_file.exists() {
         Some("library missing")
