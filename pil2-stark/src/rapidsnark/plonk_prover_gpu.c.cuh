@@ -863,6 +863,54 @@ namespace PlonkGPU
         return E.fr.zero();
     }
 
+    template <typename Engine>
+    uint64_t PlonkProverGPU<Engine>::computeUnifiedBufferSize()
+    {
+        uint64_t ptauBytes = (N + 6) * sizeof(G1PointAffine);
+        uint32_t numBlocks4N = (uint32_t)(NExt / 256);
+        uint32_t numBlocksN = (uint32_t)(N / 256);
+        uint64_t scanWorkElems = N / 1024 + N / (1024 * 1024) + 1; // mulScan workspace (round2): recursive blocks of 1024
+
+        // d_aux peak usage per round:
+        //   Round 1-3 (NTT): NExt + 4 FrElements (4N evals + Z wrap-around)
+        //   Round 2 (prefix scan): 4N + scanWorkElems
+        //   Round 5 (divByZerofier): (N+6) + 2*(N+5) + affineScanWork FrElements (~3N)
+        uint64_t auxElemsR3 = NExt + 4 + scanWorkElems;  // Round 1-3: NTT + Z wrap-around + scan workspace
+        uint64_t affineScanPairs = N + 5;  // numPairs for Wxi (largest case)
+        uint64_t affineScanWork = 0;
+        for (uint64_t n = affineScanPairs; n > 1; n = (n + 1023) / 1024)
+            affineScanWork += n;
+        uint64_t auxElemsR5 = (N + 6) + affineScanWork * 2;
+        uint64_t auxElems = std::max(auxElemsR3, auxElemsR5);
+        uint32_t nDirect = zkey->nVars - zkey->nAdditions;
+
+        uint64_t unifiedBufferSize = 0;
+        unifiedBufferSize += 9 * NExtBytes;                       // 9 static eval arrays (S1,S2,S3,L1,QL,QR,QM,QO,QC)
+        unifiedBufferSize += NExtBytes;                           // PI / T buffer
+        unifiedBufferSize += NExtBytes;                           // Lag / Tz buffer
+        unifiedBufferSize += 4 * NBytes;                          // PolCoefA/B/C/Z
+        unifiedBufferSize += ptauBytes;                           // PTau
+        unifiedBufferSize = (unifiedBufferSize + 255) & ~255ULL;  // align Aux to 256 bytes
+        unifiedBufferSize += auxElems * sizeof(FrElement);        // Aux scratch: max(round3 NTT, round5 affineScan)
+        unifiedBufferSize += numBlocks4N * sizeof(FrElement);     // omega_4x bases for 4N gate kernels
+        unifiedBufferSize += 256 * sizeof(FrElement);             // omega_4x tid table (0..255)
+        unifiedBufferSize += numBlocksN * sizeof(FrElement);      // omega bases for N z_ratios kernel
+        unifiedBufferSize += 256 * sizeof(FrElement);             // omega tid table (0..255)
+        unifiedBufferSize += (BLINDINGFACTORSLENGTH_PLONK_GPU + 1) * sizeof(FrElement); // blinding factors b_0..b_11
+        unifiedBufferSize += 12 * sizeof(FrElement);                                    // Z1[4], Z2[4], Z3[4] for QM+perm+L1
+
+        // GPU additions data - grouped by type for proper alignment (uint32_t at the end)
+        unifiedBufferSize += nDirect * sizeof(FrElement);          // primary witnesses
+        unifiedBufferSize += zkey->nAdditions * sizeof(FrElement); // internal witnesses
+        unifiedBufferSize += zkey->nAdditions * sizeof(FrElement); // addFactor1
+        unifiedBufferSize += zkey->nAdditions * sizeof(FrElement); // addFactor2
+        unifiedBufferSize += zkey->nAdditions * sizeof(uint32_t);  // addSignalId1
+        unifiedBufferSize += zkey->nAdditions * sizeof(uint32_t);  // addSignalId2
+        unifiedBufferSize += zkey->nAdditions;                     // additionLevels (uint8_t per addition)
+
+        return unifiedBufferSize;
+    }
+
     // ROUND 0 — Populate static eval arrays (file I/O or NTT from coefficients)
     template <typename Engine>
     void PlonkProverGPU<Engine>::round0()
@@ -886,32 +934,8 @@ namespace PlonkGPU
         uint32_t nDirect = zkey->nVars - zkey->nAdditions;
 
         if (!d_unifiedBuffer) {
-
-            uint64_t unifiedBufferSize = 0;
-            unifiedBufferSize += 9 * NExtBytes;                       // 9 static eval arrays (S1,S2,S3,L1,QL,QR,QM,QO,QC)
-            unifiedBufferSize += NExtBytes;                           // PI / T buffer
-            unifiedBufferSize += NExtBytes;                           // Lag / Tz buffer
-            unifiedBufferSize += 4 * NBytes;                          // PolCoefA/B/C/Z
-            unifiedBufferSize += ptauBytes;                           // PTau
-            unifiedBufferSize = (unifiedBufferSize + 255) & ~255ULL;  // align Aux to 256 bytes
-            unifiedBufferSize += auxElems * sizeof(FrElement);        // Aux scratch: max(round3 NTT, round5 affineScan)
-            unifiedBufferSize += numBlocks4N * sizeof(FrElement);     // omega_4x bases for 4N gate kernels
-            unifiedBufferSize += 256 * sizeof(FrElement);             // omega_4x tid table (0..255)
-            unifiedBufferSize += numBlocksN * sizeof(FrElement);      // omega bases for N z_ratios kernel
-            unifiedBufferSize += 256 * sizeof(FrElement);             // omega tid table (0..255)
-            unifiedBufferSize += (BLINDINGFACTORSLENGTH_PLONK_GPU + 1) * sizeof(FrElement); // blinding factors b_0..b_11
-            unifiedBufferSize += 12 * sizeof(FrElement);                                    // Z1[4], Z2[4], Z3[4] for QM+perm+L1
-
-            // GPU additions data - grouped by type for proper alignment (uint32_t at the end)
-            unifiedBufferSize += nDirect * sizeof(FrElement);          // primary witnesses
-            unifiedBufferSize += zkey->nAdditions * sizeof(FrElement); // internal witnesses
-            unifiedBufferSize += zkey->nAdditions * sizeof(FrElement); // addFactor1
-            unifiedBufferSize += zkey->nAdditions * sizeof(FrElement); // addFactor2
-            unifiedBufferSize += zkey->nAdditions * sizeof(uint32_t);  // addSignalId1
-            unifiedBufferSize += zkey->nAdditions * sizeof(uint32_t);  // addSignalId2
-            unifiedBufferSize += zkey->nAdditions;                     // additionLevels (uint8_t per addition)
-
             isMyDeviceBuffer = true;
+            unifiedBufferSize = computeUnifiedBufferSize();
             gpu_plonk_cuda_malloc(&d_unifiedBuffer, unifiedBufferSize);
             //std::cout << "[round0] Unified GPU buffer: " << unifiedBufferSize / (1024.0*1024*1024) << " GiB" << std::endl;
         }

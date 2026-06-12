@@ -1712,51 +1712,14 @@ where
         if self.options.gpu {
             match device_slot.as_deref() {
                 Some(existing) if existing != recurser_id => {
-                    return Err(ProofmanError::InvalidConfiguration(format!(
-                        "recurser '{existing}' already occupies this prover's GPU const slot; \
-                         only one recurser setup per prover instance is supported (got '{recurser_id}')"
-                    )));
+                    tracing::info!(
+                        "recurser '{existing}' currently occupies the GPU const slot; \
+                         '{recurser_id}' will be swapped in on demand at prove time"
+                    );
                 }
                 Some(_) => {}
                 None => {
-                    let packed_len_bytes = std::fs::metadata(&setup.const_pols_path)
-                        .map_err(|e| {
-                            ProofmanError::InvalidSetup(format!(
-                                "recurser packed const pols missing at {}: {e}",
-                                setup.const_pols_path
-                            ))
-                        })?
-                        .len();
-                    let packed_len = packed_len_bytes / 8;
-                    let slot = self.setups.recurser_const_slot_size as u64;
-                    if packed_len > slot {
-                        return Err(ProofmanError::InvalidSetup(format!(
-                            "recurser packed const pols ({packed_len} elements) exceed the reserved GPU slot ({slot})"
-                        )));
-                    }
-                    let proof_type: &str = setup.setup_type.clone().into();
-                    let d_buffers_ptr = self.pctx.get_device_buffers_ptr();
-                    load_device_setup_c(
-                        0,
-                        0,
-                        proof_type,
-                        (&setup.p_setup).into(),
-                        d_buffers_ptr,
-                        setup.verkey.as_ptr() as *mut u8,
-                        std::ptr::null_mut(),
-                    );
-                    load_device_const_pols_c(
-                        0,
-                        0,
-                        self.recurser_const_offset,
-                        d_buffers_ptr,
-                        &setup.const_pols_path,
-                        packed_len,
-                        "",
-                        setup.const_tree_size as u64,
-                        proof_type,
-                        false,
-                    );
+                    self.load_recurser_setup_on_device(&setup)?;
                     *device_slot = Some(recurser_id.to_string());
                 }
             }
@@ -1772,6 +1735,48 @@ where
         cache.entry(recurser_id.to_string()).or_insert_with(|| setup);
         drop(cache);
         drop(device_slot);
+        Ok(())
+    }
+
+    fn load_recurser_setup_on_device(&self, setup: &Setup<F>) -> ProofmanResult<()> {
+        let packed_len_bytes = std::fs::metadata(&setup.const_pols_path)
+            .map_err(|e| {
+                ProofmanError::InvalidSetup(format!(
+                    "recurser packed const pols missing at {}: {e}",
+                    setup.const_pols_path
+                ))
+            })?
+            .len();
+        let packed_len = packed_len_bytes / 8;
+        let slot = self.setups.recurser_const_slot_size as u64;
+        if packed_len > slot {
+            return Err(ProofmanError::InvalidSetup(format!(
+                "recurser packed const pols ({packed_len} elements) exceed the reserved GPU slot ({slot})"
+            )));
+        }
+        let proof_type: &str = setup.setup_type.clone().into();
+        let d_buffers_ptr = self.pctx.get_device_buffers_ptr();
+        load_device_setup_c(
+            0,
+            0,
+            proof_type,
+            (&setup.p_setup).into(),
+            d_buffers_ptr,
+            setup.verkey.as_ptr() as *mut u8,
+            std::ptr::null_mut(),
+        );
+        load_device_const_pols_c(
+            0,
+            0,
+            self.recurser_const_offset,
+            d_buffers_ptr,
+            &setup.const_pols_path,
+            packed_len,
+            "",
+            setup.const_tree_size as u64,
+            proof_type,
+            false,
+        );
         Ok(())
     }
 
@@ -1825,6 +1830,22 @@ where
         }
 
         let _fold_guard = self.recurser_fold_lock.lock().unwrap();
+
+        // The GPU const slot holds one recurser at a time; swap this one in if
+        // another is resident. Folds of the same recurser back-to-back (the
+        // common case — a whole tree) pay nothing. Safe under the fold lock:
+        // nothing reads the slot while we overwrite it.
+        if self.options.gpu {
+            let mut device_slot = self.recurser_device_registered.lock().unwrap();
+            if device_slot.as_deref() != Some(recurser_id) {
+                tracing::info!(
+                    "Swapping recurser '{recurser_id}' into the GPU const slot (was {:?})",
+                    device_slot.as_deref()
+                );
+                self.load_recurser_setup_on_device(&setup)?;
+                *device_slot = Some(recurser_id.to_string());
+            }
+        }
 
         let raw_proof = crate::generate_recurser_aggregator_proof::<F>(
             &setup,

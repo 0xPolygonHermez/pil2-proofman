@@ -18,6 +18,9 @@ struct IFinalSnarkProverGPU {
     virtual uint32_t nPublics() const = 0;
 
     virtual void preAllocate(void * unified_buffer_gpu) {}
+
+    // Device bytes preAllocate needs when given an external buffer (0 = none).
+    virtual uint64_t requiredUnifiedBufferSize() { return 0; }
 };
 
 // GPU Prover classes
@@ -38,6 +41,8 @@ public:
     uint32_t nPublics() const override { return nPublics_; }
 
     void preAllocate(void * unified_buffer_gpu) override { prover_.preAllocate(unified_buffer_gpu); }
+
+    uint64_t requiredUnifiedBufferSize() override { return prover_.computeUnifiedBufferSize(); }
 };
 
 class FflonkFinalProverGPU : public IFinalSnarkProverGPU {
@@ -68,5 +73,6 @@ int getProtocolIdFromBinFileGPU(BinFileUtils::BinFile *fdZkey);
 std::unique_ptr<IFinalSnarkProverGPU> initFinalSnarkProverGPU(BinFileUtils::BinFile *fdZkey, int gpuId = 0);
 void genFinalSnarkProofGPU(void *proverSnark, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark);
 void preAllocateFinalSnarkProverGPU(void *snark_prover, void* unified_buffer_gpu);
+uint64_t getFinalSnarkProverRequiredGpuSizeGPU(void *snark_prover);
 
 #endif // FINAL_SNARK_PROOF_GPU_CUH

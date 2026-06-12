@@ -1184,3 +1184,16 @@ int plonk_setup_c(const char *r1cs_file, const char *ptau_file, const char *zkey
     }
 }
 
+int plonk_circuit_stats_c(const char *r1cs_file, uint64_t *n_constraints, uint64_t *n_additions)
+{
+    try {
+        auto plonkSetup = new Plonk::PlonkSetup(AltBn128::Engine::engine);
+        plonkSetup->computeConstraintCounts(std::string(r1cs_file), *n_constraints, *n_additions);
+        delete plonkSetup;
+        return 0;
+    } catch (const std::exception &e) {
+        zklog.error(std::string("plonk_circuit_stats_c exception: ") + e.what());
+        return -1;
+    }
+}
+
