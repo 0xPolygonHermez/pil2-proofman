@@ -251,6 +251,7 @@ fn host_simd_level() -> &'static str {
 /// Compute capability of the first visible GPU as an sm number (e.g. "120"),
 /// or None when nvidia-smi can't see a GPU. Mirrors configure.sh's probe.
 fn host_gpu_arch() -> Option<String> {
+    // nvidia-smi is the same probe configure.sh uses — gate and authority agree.
     let out = Command::new("nvidia-smi").args(["--query-gpu=compute_cap", "--format=csv,noheader"]).output().ok()?;
     if !out.status.success() {
         return None;
