@@ -2,7 +2,8 @@
 
 # sudo apt-get -y install libgtest-dev libomp-dev libgmp-dev libbenchmark-dev
 
-touch CudaArch.mk
+# Remove any previous detection result up front
+rm -f CudaArch.mk
 
 cd utils
 make
