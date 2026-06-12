@@ -7,6 +7,7 @@ runtime/*
 MyLogFile.log
 lib/
 lib-gpu/
+src/goldilocks/CudaArch.mk
 src/goldilocks/build/
 src/goldilocks/build_gpu/
 src/goldilocks/testscpu
