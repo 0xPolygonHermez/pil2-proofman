@@ -98,9 +98,20 @@ fn main() {
     // Under auto-detect (no CUDA env set), check that the GPU visible on this
     // machine matches an arch the last build was compiled for.
     let auto_detect = cuda_env == "CUDA_ARCHS=;CUDA_ARCH=;CUDA_GENCODE_FLAGS=";
+    let host_arch = if use_gpu && auto_detect { host_gpu_arch() } else { None };
+
+    // The Makefile's auto-detect fallback only warns on make's stderr, which
+    // cargo hides on success — surface the multi-arch fallback as a cargo
+    // warning so it is visible in the console.
+    if use_gpu && auto_detect && host_arch.is_none() {
+        println!(
+            "cargo:warning=[BUILD INFO] no GPU visible (nvidia-smi probe failed) — building for all major CUDA archs; set CUDA_ARCHS explicitly to suppress this warning"
+        );
+    }
+
     let gpu_changed = use_gpu && auto_detect && {
         let stamp = fs::read_to_string(pil2_stark_path.join(".cuda_arch_stamp")).unwrap_or_default();
-        host_gpu_arch(&pil2_stark_path).is_none_or(|arch| !stamp.contains(&format!("code=sm_{arch}")))
+        host_arch.as_ref().is_none_or(|arch| !stamp.contains(&format!("code=sm_{arch}")))
     };
 
     let lib_mtime = fs::metadata(&lib_file).and_then(|m| m.modified()).ok();
@@ -238,26 +249,8 @@ fn host_simd_level() -> &'static str {
 }
 
 /// Compute capability of the first visible GPU as an sm number (e.g. "120"),
-/// or None when no probe can see a GPU.
-fn host_gpu_arch(pil2_stark_path: &Path) -> Option<String> {
-    let device_query = pil2_stark_path.join("src/goldilocks/utils/deviceQuery");
-    if let Ok(out) = Command::new(&device_query).output() {
-        if out.status.success() {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            // e.g. "  CUDA Capability Major/Minor version number:    12.0"
-            let arch: String = stdout
-                .lines()
-                .find(|l| l.contains("CUDA Capability"))
-                .and_then(|l| l.split(':').nth(1))
-                .unwrap_or("")
-                .chars()
-                .filter(char::is_ascii_digit)
-                .collect();
-            if !arch.is_empty() {
-                return Some(arch);
-            }
-        }
-    }
+/// or None when nvidia-smi can't see a GPU. Mirrors configure.sh's probe.
+fn host_gpu_arch() -> Option<String> {
     let out = Command::new("nvidia-smi").args(["--query-gpu=compute_cap", "--format=csv,noheader"]).output().ok()?;
     if !out.status.success() {
         return None;

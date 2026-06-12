@@ -1,5 +1,14 @@
 # Platform detection for compiler and library paths
 UNAME_S := $(shell uname -s)
+
+# CUDA arch resolution and its staleness stamp run at parse time (GPU
+# probing, stamp writes, stale-object wipes) — skip all of it when every
+# requested goal is `clean`, where no flags are needed.
+ifeq ($(MAKECMDGOALS),)
+    NEED_CUDA_ARCH := 1
+else ifneq ($(filter-out clean,$(MAKECMDGOALS)),)
+    NEED_CUDA_ARCH := 1
+endif
 ifneq ($(UNAME_S),Darwin)
     
     ROOT_DIR := $(dir $(realpath $(firstword $(MAKEFILE_LIST))))
@@ -8,6 +17,7 @@ ifneq ($(UNAME_S),Darwin)
     # sm_100 = B100/B200/GB200 (datacenter Blackwell); sm_120 = RTX 50xx
     # (consumer Blackwell).
     CUDA_MAJOR_ARCHS := 80 86 89 90 100 120
+    ifdef NEED_CUDA_ARCH
     ifdef CUDA_GENCODE_FLAGS
         $(info CUDA_GENCODE_FLAGS defined externally: $(CUDA_GENCODE_FLAGS))
     else ifneq ($(strip $(CUDA_ARCHS)),)
@@ -56,6 +66,7 @@ ifneq ($(UNAME_S),Darwin)
                               $(foreach p,$(CUDA_PTX_ARCHS),-gencode arch=compute_$(p),code=compute_$(p))
         $(info CUDA archs $(CUDA_ARCH_LIST), gencode flags set)
     endif
+    endif # NEED_CUDA_ARCH
 endif
 
 # CUDA detection - check multiple possible locations
@@ -189,6 +200,7 @@ else ifeq ($(UNAME_S),Linux)
     endif
 
     # CUDA arch staleness check (same rationale as the SIMD check above)
+    ifdef NEED_CUDA_ARCH
     CUDA_ARCH_STAMP := .cuda_arch_stamp
     LAST_CUDA_FLAGS := $(shell cat $(CUDA_ARCH_STAMP) 2>/dev/null)
     ifneq ($(LAST_CUDA_FLAGS),$(strip $(CUDA_GENCODE_FLAGS)))
@@ -199,6 +211,7 @@ else ifeq ($(UNAME_S),Linux)
         endif
         CUDA_ARCH_WRITE := $(shell echo '$(strip $(CUDA_GENCODE_FLAGS))' > $(CUDA_ARCH_STAMP))
     endif
+    endif # NEED_CUDA_ARCH
 
     GPU_TARGETS := $(BUILD_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
 else
