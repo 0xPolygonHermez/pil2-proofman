@@ -58,6 +58,50 @@ pub struct GlobalConstraintInfo {
     pub value: [u64; 3usize],
 }
 
+#[derive(Debug, Clone)]
+pub struct FailedConstraint {
+    pub constraint_id: u64,
+    pub stage: u64,
+    pub im_pol: bool,
+    pub n_invalid_rows: u64,
+    pub line: String,
+    pub rows: Vec<ConstraintRowInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InstanceConstraintsResult {
+    pub instance_id: usize,
+    pub airgroup_id: usize,
+    pub air_id: usize,
+    pub air_instance_id: usize,
+    pub air_name: String,
+    pub failed_constraints: Vec<FailedConstraint>,
+}
+
+impl InstanceConstraintsResult {
+    pub fn valid(&self) -> bool {
+        self.failed_constraints.is_empty()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GlobalConstraintFailure {
+    pub id: u64,
+    pub dim: u64,
+    pub value: [u64; 3usize],
+    /// PIL source line of the global constraint.
+    pub line: String,
+}
+
+#[derive(Default, Debug, Clone)]
+#[must_use = "verification failures are reported in this result, not as an error"]
+pub struct ConstraintsVerificationResult {
+    pub valid: bool,
+    pub instances: Vec<InstanceConstraintsResult>,
+    pub global_constraints_checked: bool,
+    pub failed_global_constraints: Vec<GlobalConstraintFailure>,
+}
+
 pub fn get_constraints_lines_str<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     airgroup_id: usize,

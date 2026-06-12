@@ -27,7 +27,7 @@ use csv::Writer;
 use tokio_util::sync::CancellationToken;
 
 use crate::deterministic_shuffle;
-use proofman_common::{ProofmanResult, ProofmanError, Setup};
+use proofman_common::{ConstraintsVerificationResult, InstanceConstraintsResult, ProofmanResult, ProofmanError, Setup};
 use proofman_verifier::VadcopFinalProof;
 use crate::{check_const_paths, check_const_paths_vadcop, needs_regeneration_fixed, needs_regeneration_vadcop_fixed};
 
@@ -1247,7 +1247,7 @@ where
         input_data_path: Option<PathBuf>,
         debug_info: &DebugInfo,
         verbose_mode: VerboseMode,
-    ) -> ProofmanResult<()> {
+    ) -> ProofmanResult<ConstraintsVerificationResult> {
         // Check witness_lib path exists
         if !witness_lib_path.exists() {
             return Err(ProofmanError::InvalidParameters(format!(
@@ -1286,11 +1286,14 @@ where
         self._verify_proof_constraints(debug_info)
     }
 
-    pub fn verify_proof_constraints_from_lib(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
+    pub fn verify_proof_constraints_from_lib(
+        &self,
+        debug_info: &DebugInfo,
+    ) -> ProofmanResult<ConstraintsVerificationResult> {
         self._verify_proof_constraints(debug_info)
     }
 
-    fn _verify_proof_constraints(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
+    fn _verify_proof_constraints(&self, debug_info: &DebugInfo) -> ProofmanResult<ConstraintsVerificationResult> {
         timer_start_info!(VERIFYING_PROOF_CONSTRAINTS);
 
         let _computing = self.acquire_computing("_verify_proof_constraints");
@@ -1322,6 +1325,8 @@ where
         let my_instances = self.pctx.dctx_get_process_instances();
         let airgroup_values_air_instances = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
         let valid_constraints = Arc::new(AtomicBool::new(true));
+        let constraints_results: Arc<Mutex<Vec<Option<InstanceConstraintsResult>>>> =
+            Arc::new(Mutex::new(vec![None; my_instances.len()]));
 
         let _contributions_guard = WorkerPoolGuard {
             sentinel: usize::MAX,
@@ -1337,6 +1342,7 @@ where
             let contributions_rx_clone = self.contributions_rx.clone();
             let cancellation_info_clone = self.cancellation_info.clone();
             let valid_constraints = valid_constraints.clone();
+            let constraints_results = constraints_results.clone();
             let airgroup_values_air_instances = airgroup_values_air_instances.clone();
             let wcm_clone = self.wcm.clone();
             let debug_info_clone = debug_info.clone();
@@ -1362,6 +1368,7 @@ where
                             instance_id,
                             &debug_info_clone,
                             valid_constraints.clone(),
+                            constraints_results.clone(),
                             airgroup_values_air_instances.clone(),
                             &const_pols_arc,
                             &aux_trace_arc,
@@ -1457,31 +1464,34 @@ where
             && debug_info.std_mode.debug_values.is_empty()
             && (debug_info.debug_instances.is_empty() || !debug_info.debug_global_instances.is_empty());
 
+        let instances: Vec<InstanceConstraintsResult> =
+            constraints_results.lock().unwrap().iter().flatten().filter(|r| !r.valid()).cloned().collect();
+
+        let mut result = ConstraintsVerificationResult {
+            valid: valid_constraints.load(Ordering::Relaxed),
+            instances,
+            global_constraints_checked: false,
+            failed_global_constraints: Vec::new(),
+        };
+
         if check_global_constraints {
             let airgroup_values_air_instances = airgroup_values_air_instances.lock().unwrap();
             let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances)?;
             let airgroupvalues = self.mpi_ctx.distribute_airgroupvalues(airgroupvalues_u64, &self.pctx.global_info);
 
             if self.mpi_ctx.rank == 0 {
-                let valid_global_constraints =
-                    verify_global_constraints_proof(&self.pctx, &self.sctx, debug_info, airgroupvalues);
+                let failed_global_constraints =
+                    verify_global_constraints_proof(&self.pctx, &self.sctx, debug_info, airgroupvalues)?;
 
-                timer_stop_and_log_info!(VERIFYING_PROOF_CONSTRAINTS);
-                if valid_constraints.load(Ordering::Relaxed) && valid_global_constraints.is_ok() {
-                    return Ok(());
-                } else {
-                    return Err(ProofmanError::InvalidProof("Constraints were not verified".into()));
-                }
+                result.global_constraints_checked = true;
+                result.valid = result.valid && failed_global_constraints.is_empty();
+                result.failed_global_constraints = failed_global_constraints;
             }
         }
 
         timer_stop_and_log_info!(VERIFYING_PROOF_CONSTRAINTS);
 
-        if !valid_constraints.load(Ordering::Relaxed) {
-            return Err(ProofmanError::InvalidProof("Constraints were not verified".into()));
-        }
-
-        Ok(())
+        Ok(result)
     }
 
     fn calculate_instance_witness(&self, instance_id: usize) -> ProofmanResult<()> {
@@ -1515,6 +1525,7 @@ where
         instance_id: usize,
         debug_info: &DebugInfo,
         valid_constraints: Arc<AtomicBool>,
+        constraints_results: Arc<Mutex<Vec<Option<InstanceConstraintsResult>>>>,
         airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
         const_pols: &Arc<Vec<F>>,
         aux_trace: &Arc<Vec<F>>,
@@ -1572,12 +1583,13 @@ where
 
         wcm.debug(&[instance_id], debug_info)?;
 
-        let valid =
+        let constraints_result =
             verify_constraints_proof(pctx, sctx, instance_id, debug_info.n_print_constraints as u64, stream_id)?;
 
-        if !valid {
-            valid_constraints.fetch_and(valid, Ordering::Relaxed);
+        if !constraints_result.valid() {
+            valid_constraints.store(false, Ordering::Relaxed);
         }
+        constraints_results.lock().unwrap()[pctx.dctx_get_instance_local_idx(instance_id)?] = Some(constraints_result);
 
         let (is_shared_buffer, witness_buffer) = pctx.free_instance(instance_id);
         if is_shared_buffer {
@@ -3380,7 +3392,7 @@ where
         if self.mpi_ctx.rank == 0 {
             let valid_global_constraints =
                 verify_global_constraints_proof(&self.pctx, &self.sctx, &DebugInfo::default(), airgroupvalues);
-            if valid_global_constraints.is_err() {
+            if !valid_global_constraints.map(|failed| failed.is_empty()).unwrap_or(false) {
                 valid_proofs = false;
             }
         }

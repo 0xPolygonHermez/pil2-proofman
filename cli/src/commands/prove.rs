@@ -138,7 +138,7 @@ impl ProveCmd {
             self.minimal_memory,
         );
         if debug_info.std_mode.name == ModeName::Debug {
-            match self.field {
+            let result = match self.field {
                 Field::Goldilocks => proofman.verify_proof_constraints(
                     self.witness_lib.clone(),
                     self.public_inputs.clone(),
@@ -147,6 +147,9 @@ impl ProveCmd {
                     self.verbose.into(),
                 )?,
             };
+            if !result.valid {
+                return Err("Constraints were not verified".into());
+            }
         } else {
             proofman.set_barrier();
             let result = match self.field {

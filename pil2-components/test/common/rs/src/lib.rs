@@ -84,9 +84,27 @@ pub fn run_pipeline(dir: &str, pil_file: &str, lib: &str) -> Result<(), String> 
     proofman
         .register_custom_commits(HashMap::<String, PathBuf>::new())
         .map_err(|e| format!("register_custom_commits: {e}"))?;
-    proofman
+    let result = proofman
         .verify_proof_constraints(witness, None, None, &DebugInfo::default(), 0u8.into())
         .map_err(|e| format!("verify_proof_constraints: {e}"))?;
+
+    if !result.valid {
+        let failed = result
+            .instances
+            .iter()
+            .map(|i| {
+                format!(
+                    "{} (instance #{}): {} failed constraints",
+                    i.air_name,
+                    i.air_instance_id,
+                    i.failed_constraints.len()
+                )
+            })
+            .chain(result.failed_global_constraints.iter().map(|g| format!("global constraint #{}", g.id)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!("constraints were not verified: {failed}"));
+    }
 
     Ok(())
 }

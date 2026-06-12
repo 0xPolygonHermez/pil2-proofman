@@ -5,7 +5,8 @@ use proofman_starks_lib_c::{
 use std::cmp;
 use proofman_common::{
     get_constraints_lines_str, get_global_constraints_lines_str, skip_prover_instance, ConstraintInfo, ConstraintInfoC,
-    DebugInfo, GlobalConstraintInfo, ProofCtx, ProofmanError, ProofmanResult, SetupCtx,
+    DebugInfo, FailedConstraint, GlobalConstraintFailure, GlobalConstraintInfo, InstanceConstraintsResult, ProofCtx,
+    ProofmanResult, SetupCtx,
 };
 
 use std::os::raw::c_void;
@@ -83,7 +84,7 @@ pub fn verify_global_constraints_proof<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     debug_info: &DebugInfo,
     airgroupvalues: Vec<Vec<F>>,
-) -> ProofmanResult<()> {
+) -> ProofmanResult<Vec<GlobalConstraintFailure>> {
     tracing::info!("--> Checking global constraints");
 
     let mut airgroup_values_ptrs: Vec<*mut F> = airgroupvalues
@@ -111,7 +112,7 @@ pub fn verify_global_constraints_proof<F: PrimeField64>(
         global_constraints.as_mut_ptr() as *mut c_void,
     );
 
-    let mut valid_global_constraints = true;
+    let mut failed_global_constraints = Vec::new();
 
     let global_constraints_lines = get_global_constraints_lines_str(sctx);
 
@@ -131,7 +132,6 @@ pub fn verify_global_constraints_proof<F: PrimeField64>(
             tracing::info!("    · Global Constraint #{} {} -> {}", constraint.id, valid, line_str);
         }
         if !constraint.valid {
-            valid_global_constraints = false;
             if constraint.dim == 1 {
                 tracing::info!("···        \u{2717} Failed with value: {}", constraint.value[0]);
             } else {
@@ -142,17 +142,22 @@ pub fn verify_global_constraints_proof<F: PrimeField64>(
                     constraint.value[2]
                 );
             }
+            failed_global_constraints.push(GlobalConstraintFailure {
+                id: constraint.id,
+                dim: constraint.dim,
+                value: constraint.value,
+                line: global_constraints_lines[idx].clone(),
+            });
         }
     }
 
-    if valid_global_constraints {
+    if failed_global_constraints.is_empty() {
         tracing::info!("··· {}", "\u{2713} All global constraints were successfully verified".bright_green().bold());
-        Ok(())
     } else {
         tracing::info!("··· {}", "\u{2717} Not all global constraints were verified".bright_red().bold());
-
-        Err(ProofmanError::InvalidProof("Not all global constraints were verified.".to_string()))
     }
+
+    Ok(failed_global_constraints)
 }
 
 pub fn verify_constraints_proof<F: PrimeField64>(
@@ -161,7 +166,7 @@ pub fn verify_constraints_proof<F: PrimeField64>(
     instance_id: usize,
     n_print_constraints: u64,
     stream_id: u64,
-) -> ProofmanResult<bool> {
+) -> ProofmanResult<InstanceConstraintsResult> {
     let constraints = verify_constraints(pctx, sctx, instance_id, n_print_constraints, stream_id)?;
 
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
@@ -171,7 +176,7 @@ pub fn verify_constraints_proof<F: PrimeField64>(
 
     let constraints_lines = get_constraints_lines_str(sctx, airgroup_id, air_id)?;
 
-    let mut valid_constraints_instance = true;
+    let mut failed_constraints = Vec::new();
     let skipping = "is skipped".bright_yellow();
 
     tracing::info!("    ► Instance #{} of {} [{}:{}]", air_instance_id, air_name, airgroup_id, air_id,);
@@ -225,9 +230,6 @@ pub fn verify_constraints_proof<F: PrimeField64>(
                 constraints_lines[constraint.id as usize]
             );
         }
-        if constraint.n_rows > 0 {
-            valid_constraints_instance = false;
-        }
         let n_rows = cmp::min(constraint.n_rows, constraint.n_print_constraints);
         for i in 0..n_rows {
             let row = constraint.rows[i as usize];
@@ -243,8 +245,19 @@ pub fn verify_constraints_proof<F: PrimeField64>(
                 );
             }
         }
+        if constraint.n_rows > 0 {
+            failed_constraints.push(FailedConstraint {
+                constraint_id: constraint.id,
+                stage: constraint.stage,
+                im_pol: constraint.im_pol,
+                n_invalid_rows: constraint.n_rows,
+                line: constraints_lines[constraint.id as usize].clone(),
+                rows: constraint.rows[..n_rows as usize].to_vec(),
+            });
+        }
     }
 
+    let valid_constraints_instance = failed_constraints.is_empty();
     if !valid_constraints_instance {
         tracing::info!(
             "··· {}",
@@ -261,5 +274,12 @@ pub fn verify_constraints_proof<F: PrimeField64>(
         );
     }
 
-    Ok(valid_constraints_instance)
+    Ok(InstanceConstraintsResult {
+        instance_id,
+        airgroup_id,
+        air_id,
+        air_instance_id,
+        air_name: air_name.clone(),
+        failed_constraints,
+    })
 }

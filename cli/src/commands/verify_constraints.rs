@@ -83,7 +83,7 @@ impl VerifyConstraintsCmd {
         }
         proofman.register_custom_commits(custom_commits_map)?;
 
-        match self.field {
+        let result = match self.field {
             Field::Goldilocks => proofman.verify_proof_constraints(
                 self.witness_lib.clone(),
                 self.public_inputs.clone(),
@@ -92,6 +92,10 @@ impl VerifyConstraintsCmd {
                 self.verbose.into(),
             )?,
         };
+
+        if !result.valid {
+            return Err("Constraints were not verified".into());
+        }
 
         Ok(())
     }
