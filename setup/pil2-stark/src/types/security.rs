@@ -472,6 +472,35 @@ pub fn goldilocks_cube_field_size() -> Float {
 mod tests {
     use super::*;
 
+    /// recursivef (GL→BN128 bridge) query count as a function of grinding bits.
+    /// Real recursivef params from a generated recursivef.starkinfo.json:
+    /// nBits=15, blowup=6 (rate 2^-6), 4 opening points, evMap len 145,
+    /// FRI steps [21,18,15,12,9,7] (folding bit-drops [3,3,3,3,2]), arity 4, 128-bit target.
+    /// The production setup pins powBits=19 (snark_setup.rs), giving 37 queries.
+    #[test]
+    fn test_recursivef_queries_vs_grinding_bits() {
+        let queries = |max_grinding_bits: u64| {
+            let p = FRISecurityParams {
+                field_size: goldilocks_cube_field_size(),
+                dimension: 1u64 << 15,
+                rate: 1.0 / (1u64 << 6) as f64,
+                n_opening_points: 4,
+                n_functions: 145,
+                folding_factors: vec![3, 3, 3, 3, 2],
+                max_grinding_bits,
+                use_max_grinding_bits: true,
+                tree_arity: 4,
+                target_security_bits: 128,
+            };
+            get_optimal_fri_query_params("JBR", &p).n_queries
+        };
+
+        // 19 is the production value (pinned in snark_setup.rs).
+        assert_eq!(queries(17), 38);
+        assert_eq!(queries(19), 37);
+        assert_eq!(queries(20), 37);
+    }
+
     /// Golden reference from running the JS security.js example with
     /// `getOptimalFRIQueryParams("JBR", params)`.
     #[test]

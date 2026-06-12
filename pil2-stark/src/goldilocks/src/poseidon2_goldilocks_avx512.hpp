@@ -7,7 +7,7 @@
 
 
 template<uint32_t SPONGE_WIDTH_T>
-inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::compress_batch_avx512(Goldilocks::Element (&state)[8 * CAPACITY], Goldilocks::Element const (&input)[8 * SPONGE_WIDTH])
+inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::permuteTrunc_batch_avx512(Goldilocks::Element (&state)[8 * CAPACITY], Goldilocks::Element const (&input)[8 * SPONGE_WIDTH])
 {
     Goldilocks::Element aux[8 * SPONGE_WIDTH];
     permute_batch_avx512(aux, input);

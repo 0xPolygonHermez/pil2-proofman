@@ -3,7 +3,7 @@
 //!
 //! Architecture
 //! ============
-//! All "hard" computation (GL field arithmetic, Poseidon2 transcript state-machine,
+//! All "hard" computation (GL field arithmetic, Poseidon1 transcript state-machine,
 //! expression chunking and unrolling) is done in Rust.  The results are collected
 //! into a flat, serialisable [`TeraCtx`] struct which is passed to a Tera template
 //! (`circuits.gl/stark_verifier.circom.tera`) that handles all structural loops,
@@ -20,20 +20,29 @@ use super::unroll_code::{unroll_code, UnrollCtx};
 
 // ── Public API re-exported from pil2-stark ────────────────────────────────────
 
-/// Options mirroring the JS `--skipMain / --verkeyInput / --enableInput /
-/// --inputChallenges` flags.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct Pil2CircomOptions {
     pub skip_main: bool,
     pub verkey_input: bool,
     pub enable_input: bool,
     pub input_challenges: bool,
-    /// Maximum number of queries per `VerifyQueriesBatch` call.
-    /// If `None` the JS default `ceil(nQueries / 8)` is used.
     pub fri_queries_batch_size: Option<usize>,
-    /// Emit `queryVals` as a `signal output` instead of a plain `signal`
-    /// (enables multi-STARK FRI aggregation).
     pub multi_fri: bool,
+    pub hash: String,
+}
+
+impl Default for Pil2CircomOptions {
+    fn default() -> Self {
+        Self {
+            skip_main: false,
+            verkey_input: false,
+            enable_input: false,
+            input_challenges: false,
+            fri_queries_batch_size: None,
+            multi_fri: false,
+            hash: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
+        }
+    }
 }
 
 // ── Top-level entry-point ─────────────────────────────────────────────────────
@@ -83,6 +92,12 @@ fn build_tera_context(
     let pow_bits = ss["powBits"].as_u64().unwrap_or(0);
     let q_deg = si["qDeg"].as_u64().unwrap_or(1) as usize;
     let split_linear_hash = ss["splitLinearHash"].as_bool().unwrap_or(false);
+    if split_linear_hash && opts.hash == "Poseidon1" {
+        bail!(
+            "gen_stark_verifier_gl: Poseidon1 + splitLinearHash is not supported \
+             (no hash/poseidon1/merklehash_gpu.circom / linearhash_gpu.circom exist)"
+        );
+    }
     let hash_commits = ss["hashCommits"].as_bool().unwrap_or(false);
     let last_level_verification = ss["lastLevelVerification"].as_u64().unwrap_or(0);
     let multi_fri = opts.multi_fri;
@@ -468,8 +483,12 @@ fn build_tera_context(
     let const_root_str = const_root.map(|r| r.join(",")).unwrap_or_else(|| "0,0,0,0".to_string());
 
     // ── Transcript code strings ───────────────────────────────────────────────
+    // Select the transcript hash family: a Poseidon2 proof verifies with the
+    // Poseidon2 sponge, otherwise (Poseidon1 recursion) with the Poseidon1 sponge.
+    let transcript_poseidon2 = opts.hash == "Poseidon2";
     let mut t_fri = Transcript::new(arity, Some("friQueries".into()));
     t_fri.set_drain_in_update_state(true);
+    t_fri.set_poseidon2(transcript_poseidon2);
     t_fri.put("challengeFRIQueries", 3);
     if pow_bits > 0 {
         t_fri.put_single("nonce");
@@ -479,6 +498,7 @@ fn build_tera_context(
 
     let mut t = Transcript::new(arity, None);
     t.set_drain_in_update_state(true);
+    t.set_poseidon2(transcript_poseidon2);
     let mut transcript_publics_code = String::new();
     let mut transcript_evals_code = String::new();
     let mut transcript_last_pol_fri_code = String::new();
@@ -491,6 +511,7 @@ fn build_tera_context(
             } else {
                 let mut t_pub = Transcript::new(arity, Some("publics".into()));
                 t_pub.set_drain_in_update_state(true);
+                t_pub.set_poseidon2(transcript_poseidon2);
                 t_pub.put("publics", n_publics as usize);
                 t_pub.get_state("publicsHash");
                 transcript_publics_code = t_pub.get_code();
@@ -529,6 +550,7 @@ fn build_tera_context(
         transcript_code_stage = t.get_code();
         let mut t_evals = Transcript::new(arity, Some("evals".into()));
         t_evals.set_drain_in_update_state(true);
+        t_evals.set_poseidon2(transcript_poseidon2);
         for i in 0..ev_map_len {
             t_evals.put(&format!("evals[{i}]"), 3);
         }
@@ -563,6 +585,7 @@ fn build_tera_context(
             transcript_code_fri_mid = t.get_code();
             let mut t_fp = Transcript::new(arity, Some("lastPolFRI".into()));
             t_fp.set_drain_in_update_state(true);
+            t_fp.set_poseidon2(transcript_poseidon2);
             for j in 0..final_pol_size {
                 t_fp.put(&format!("finalPol[{j}]"), 3);
             }
@@ -671,6 +694,7 @@ fn build_tera_context(
     ctx.insert("verkey_input", &opts.verkey_input);
     ctx.insert("enable_input", &opts.enable_input);
     ctx.insert("input_challenges", &opts.input_challenges);
+    ctx.insert("hash", &opts.hash);
     ctx.insert("n_publics", &n_publics);
     ctx.insert("n_constants", &n_constants);
     ctx.insert("ev_map_len", &ev_map_len);
@@ -816,10 +840,12 @@ mod tests {
     fn header_includes_merklehash() {
         let si = minimal_stark_info(2, 10, 8);
         let vi = minimal_verifier_info();
-        let opts = Pil2CircomOptions::default();
+        // Poseidon2 → emits hash/poseidon2/merklehash.circom.
+        let opts = Pil2CircomOptions { hash: "Poseidon2".to_string(), ..Default::default() };
         let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
         assert!(out.contains("pragma circom 2.1.0;"));
-        assert!(out.contains("include \"merklehash.circom\";"));
+        assert!(out.contains("include \"hash/poseidon2/merklehash.circom\";"));
+        assert!(out.contains("include \"hash/poseidon2/pow.circom\";"));
         assert!(!out.contains("merklehash_gpu"));
     }
 
@@ -828,9 +854,23 @@ mod tests {
         let mut si = minimal_stark_info(2, 10, 8);
         si["starkStruct"]["splitLinearHash"] = json!(true);
         let vi = minimal_verifier_info();
-        let opts = Pil2CircomOptions::default();
+        // splitLinearHash is only supported with Poseidon2.
+        let opts = Pil2CircomOptions { hash: "Poseidon2".to_string(), ..Default::default() };
         let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
-        assert!(out.contains("include \"merklehash_gpu.circom\";"));
+        assert!(out.contains("include \"hash/poseidon2/merklehash_gpu.circom\";"));
+    }
+
+    #[test]
+    fn header_includes_poseidon1_when_hash_is_poseidon1() {
+        let si = minimal_stark_info(2, 10, 8);
+        let vi = minimal_verifier_info();
+        let opts = Pil2CircomOptions { hash: "Poseidon1".to_string(), ..Default::default() };
+        let out = gen_stark_verifier_gl(None, &si, &vi, &opts).unwrap();
+        assert!(out.contains("include \"hash/poseidon1/merklehash.circom\";"));
+        assert!(out.contains("include \"hash/poseidon1/pow.circom\";"));
+        assert!(out.contains("include \"tree/treeselector8.circom\";"));
+        assert!(!out.contains("hash/poseidon2/"));
+        assert!(!out.contains("treeselector4"));
     }
 
     #[test]

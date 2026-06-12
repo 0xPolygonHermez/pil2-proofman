@@ -1,22 +1,20 @@
 use anyhow::Result;
 use std::fs;
 
+use proofman_common::hash_family;
 use crate::io::parser_args::get_parser_args;
 use crate::types::stark_info::{StarkInfo, VerifierInfo};
 
-/// Generates a Rust source file containing `q_verify()`, `query_verify()`,
-/// `verifier_info()`, and `verify()` functions for the STARK verifier.
-///
-/// Port of `writeVerifierRustFile` from binFile.js.
 pub fn write_verifier_rust_file(
     path: &str,
     stark_info: &StarkInfo,
     verifier_info: &VerifierInfo,
     vadcop_final_proof: bool,
+    hash_id: &str,
 ) -> Result<()> {
     println!("> Writing rust verifier file");
 
-    let rust_verifier = prepare_verifier_rust(stark_info, verifier_info, vadcop_final_proof)?;
+    let rust_verifier = prepare_verifier_rust(stark_info, verifier_info, vadcop_final_proof, hash_id)?;
     fs::write(path, rust_verifier)?;
 
     Ok(())
@@ -26,7 +24,15 @@ fn prepare_verifier_rust(
     stark_info: &StarkInfo,
     verifier_info: &VerifierInfo,
     vadcop_final_proof: bool,
+    hash_id: &str,
 ) -> Result<String> {
+    // Leaf + compression hashes follow the Merkle tree arity; the transcript hash
+    // follows the (fixed, arity-4) transcript arity; grinding is a fixed-width hash.
+    let merkle_arity = stark_info.stark_struct.merkle_tree_arity;
+    let transcript_arity = stark_info.stark_struct.transcript_arity;
+    let merkle_hash_type = hash_family::rust_hash_type(hash_id, merkle_arity as u64);
+    let transcript_hash_type = hash_family::rust_hash_type(hash_id, transcript_arity as u64);
+    let grinding_type = hash_family::rust_grinding_type(hash_id);
     let mut numbers_q = Vec::new();
     let q_result =
         get_parser_args(stark_info, &verifier_info.q_verifier.code, &mut numbers_q, false, true, None, "q_verify")?;
@@ -46,16 +52,18 @@ fn prepare_verifier_rust(
     let verify_fri_rust = fri_result.verify_rust;
     let verify_fri_helpers = fri_result.verify_rust_helpers;
 
-    let arity = stark_info.stark_struct.merkle_tree_arity;
-    let poseidon_width = arity * 4;
-
     let mut lines: Vec<String> = Vec::new();
 
-    // Imports
     lines.push("use alloc::vec;".to_string());
     lines.push("use alloc::vec::Vec;".to_string());
     lines.push("use alloc::string::ToString;".to_string());
-    lines.push(format!("use fields::{{Goldilocks, CubicExtensionField, Field, Poseidon{}}};", poseidon_width));
+    let mut hash_imports: Vec<&str> = Vec::new();
+    for ht in [merkle_hash_type, transcript_hash_type, grinding_type] {
+        if !hash_imports.contains(&ht) {
+            hash_imports.push(ht);
+        }
+    }
+    lines.push(format!("use fields::{{Goldilocks, CubicExtensionField, Field, {}}};", hash_imports.join(", ")));
     lines.push("use crate::{stark_verify, Boundary, VerifierInfo};".to_string());
     if vadcop_final_proof {
         lines.push("use crate::VadcopFinalProof;".to_string());
@@ -101,7 +109,7 @@ fn prepare_verifier_rust(
     lines.push(format!("        n_evals: {},", stark_info.ev_map.len()));
     lines.push(format!("        n_bits: {},", stark_info.stark_struct.n_bits));
     lines.push(format!("        n_bits_ext: {},", stark_info.stark_struct.n_bits_ext));
-    lines.push(format!("        arity: {},", arity));
+    lines.push(format!("        arity: {},", merkle_arity));
     lines.push(format!("        n_fri_queries: {},", stark_info.stark_struct.n_queries));
     lines.push(format!("        n_fri_steps: {},", stark_info.stark_struct.steps.len()));
     lines.push(format!("        n_challenges: {},", stark_info.challenges_map.len()));
@@ -159,26 +167,20 @@ fn prepare_verifier_rust(
     lines.push("    }".to_string());
     lines.push("}\n".to_string());
 
-    // verify function
+    // verify function. Generics: leaf, compression, transcript, grinding hashes.
+    let generics = format!("{merkle_hash_type}, {merkle_hash_type}, {transcript_hash_type}, {grinding_type}");
     if vadcop_final_proof {
         lines.push("pub fn verify(proof: &VadcopFinalProof, vk: &[u64]) -> bool {".to_string());
         lines.push(format!(
-            "    stark_verify::<Poseidon{}, {}>(&proof.proof_with_publics(), vk, &verifier_info(), q_verify, query_verify)",
-            poseidon_width, poseidon_width
+            "    stark_verify::<{generics}>(&proof.proof_with_publics(), vk, &verifier_info(), q_verify, query_verify)"
         ));
         lines.push("}\n".to_string());
         lines.push("pub fn verify_u64(proof: &[u64], vk: &[u64]) -> bool {".to_string());
-        lines.push(format!(
-            "    stark_verify::<Poseidon{}, {}>(proof, vk, &verifier_info(), q_verify, query_verify)",
-            poseidon_width, poseidon_width
-        ));
+        lines.push(format!("    stark_verify::<{generics}>(proof, vk, &verifier_info(), q_verify, query_verify)"));
         lines.push("}\n".to_string());
     } else {
         lines.push("pub fn verify(proof: &[u64], vk: &[u64]) -> bool {".to_string());
-        lines.push(format!(
-            "    stark_verify::<Poseidon{}, {}>(proof, vk, &verifier_info(), q_verify, query_verify)",
-            poseidon_width, poseidon_width
-        ));
+        lines.push(format!("    stark_verify::<{generics}>(proof, vk, &verifier_info(), q_verify, query_verify)"));
         lines.push("}\n".to_string());
     }
 

@@ -26,6 +26,22 @@ pub fn run_setup_compressed_final(opts: &SetupCompressedFinalOptions) -> Result<
     }
     let global_info: Value = serde_json::from_str(&fs::read_to_string(&global_info_path)?)?;
     let name = global_info.get("name").and_then(|v| v.as_str()).unwrap_or("pilout").to_string();
+    // The hash family must come from the setup that produced this provingKey; a
+    // silent default would let the compressed_final stage disagree with the rest
+    // of the proof chain and surface only at verification time. Fail loud instead.
+    let hash = global_info
+        .get("hash")
+        .and_then(|v| v.as_str())
+        .with_context(|| format!("'hash' missing from {:?}; re-run `setup --recursive`", global_info_path))?
+        .to_string();
+    if !proofman_common::hash_family::is_known_family(&hash) {
+        bail!(
+            "unknown hash family {:?} in {:?}; known: {:?}",
+            hash,
+            global_info_path,
+            proofman_common::hash_family::FAMILIES
+        );
+    }
 
     let vadcop_dir = PathBuf::from(build_dir).join("provingKey").join(&name).join("vadcop_final");
     let const_root_path = vadcop_dir.join("vadcop_final.verkey.json");
@@ -64,6 +80,7 @@ pub fn run_setup_compressed_final(opts: &SetupCompressedFinalOptions) -> Result<
 
     let config = CompressedFinalConfig {
         build_dir,
+        hash: &hash,
         name: &name,
         const_root: &const_root,
         verification_keys: &[],

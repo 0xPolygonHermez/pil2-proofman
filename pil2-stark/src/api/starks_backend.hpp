@@ -10,7 +10,7 @@
 // Shared functions (hints, goldilocks arithmetic, etc.) are called directly.
 struct StarksBackend {
     // Const Pols
-    void (*init_gpu_setup)(uint64_t maxBitsExt);
+    void (*init_gpu_setup)(uint64_t maxBitsExt, uint64_t arity);
     void (*tile_const_pols)(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu);
     void (*prepare_blocks)(uint64_t* pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu);
     void (*calculate_const_tree)(void *pStarkInfo, void *pConstPolsAddress, void *pConstTree, void *unified_buffer_gpu);

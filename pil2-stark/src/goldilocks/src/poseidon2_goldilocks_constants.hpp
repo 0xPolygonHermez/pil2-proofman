@@ -481,6 +481,37 @@ namespace Poseidon2GoldilocksConstants
         {0xb5101e303fce9cb7},
         {0x774487b8c40089bb},
     };
-    
+
+// -------------------------------------------------------------------------
+// Per-W trait: gives template code a uniform handle to the right C/D tables
+// and partial-round count.
+// -------------------------------------------------------------------------
+
+template<uint32_t W> struct Poseidon2Tables;
+
+template<> struct Poseidon2Tables<4> {
+    static constexpr uint32_t N_PARTIAL_ROUNDS = ROUNDS_P_4;
+    static constexpr auto &C = C4;
+    static constexpr auto &D = D4;
+};
+
+template<> struct Poseidon2Tables<8> {
+    static constexpr uint32_t N_PARTIAL_ROUNDS = ROUNDS_P_8;
+    static constexpr auto &C = C8;
+    static constexpr auto &D = D8;
+};
+
+template<> struct Poseidon2Tables<12> {
+    static constexpr uint32_t N_PARTIAL_ROUNDS = ROUNDS_P_12;
+    static constexpr auto &C = C12;
+    static constexpr auto &D = D12;
+};
+
+template<> struct Poseidon2Tables<16> {
+    static constexpr uint32_t N_PARTIAL_ROUNDS = ROUNDS_P_16;
+    static constexpr auto &C = C16;
+    static constexpr auto &D = D16;
+};
+
 }
 #endif // POSEIDON2_GOLDILOCKS_CONSTANTS

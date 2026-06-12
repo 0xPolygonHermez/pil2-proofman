@@ -10,7 +10,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use std::fs::File;
 use std::io::Read;
 use std::fs;
-use fields::{PrimeField64, Transcript, Poseidon16};
+use fields::{new_transcript, PrimeField64};
 use crate::{
     initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PolMap, SetupCtx, StdMode,
     PackedInfo, RowInfo, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
@@ -19,7 +19,8 @@ use crate::{
 use std::ffi::c_void;
 use proofman_starks_lib_c::{
     check_device_memory_c, custom_commit_size_c, get_num_gpus_c, gen_device_buffers_c, gen_device_streams_c,
-    alloc_device_large_buffers_c,
+    alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c, get_unified_buffer_gpu_c,
+    get_unified_buffer_gpu_size_c,
 };
 use proofman_util::DeviceBuffer;
 
@@ -273,6 +274,7 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         initialize_logger(verbose_mode, None);
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path)?;
+        tracing::info!("Using hash function: {}", global_info.hash);
         let n_publics = global_info.n_publics;
         let n_proof_values = global_info
             .proof_values_map
@@ -711,7 +713,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         global_challenge_guard[1] = global_challenge[1];
         global_challenge_guard[2] = global_challenge[2];
 
-        let mut transcript: Transcript<F, Poseidon16, 16> = Transcript::new();
+        let mut transcript = new_transcript::<F>(&self.global_info.hash);
 
         transcript.put(global_challenge);
         let mut challenges_guard = self.challenges.values.write().unwrap();
@@ -1025,5 +1027,24 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn get_device_buffers_ptr(&self) -> *mut c_void {
         self.d_buffers.get_ptr()
+    }
+
+    pub fn acquire_first_gpu_buffer(&self) {
+        if self.gpu {
+            acquire_first_gpu_buffer_c(self.d_buffers.get_ptr());
+        }
+    }
+
+    pub fn release_first_gpu_buffer(&self) {
+        if self.gpu {
+            release_first_gpu_buffer_c(self.d_buffers.get_ptr());
+        }
+    }
+
+    pub fn get_gpu_buffer(&self) -> (usize, u64) {
+        let device_buffers_ptr = self.d_buffers.get_ptr();
+        let gpu_buf_ptr = get_unified_buffer_gpu_c(device_buffers_ptr) as usize;
+        let gpu_buf_size = get_unified_buffer_gpu_size_c(device_buffers_ptr);
+        (gpu_buf_ptr, gpu_buf_size)
     }
 }

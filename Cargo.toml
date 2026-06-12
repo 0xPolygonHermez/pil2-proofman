@@ -71,6 +71,7 @@ resolver = "2"
 proofman-macros = { path = "macros" }
 proofman = { path = "proofman" }
 proofman-common = { path = "common" }
+proofman-starks-lib-c = { path = "provers/starks-lib-c" }
 proofman-hints = { path = "hints" }
 proofman-soundness = { path = "soundness" }
 proofman-verifier = { path = "verifier" }

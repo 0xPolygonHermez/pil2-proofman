@@ -17,6 +17,10 @@ extern "C" {
         }
     };
     
+    // Hash family selector
+    // ========================================================================================
+    void set_hash_family(uint8_t fam);
+
     // SetupCtx
     // ========================================================================================
     uint64_t n_hints_by_name(void *p_expression_bin, char *hintName);
@@ -36,7 +40,7 @@ extern "C" {
 
     // Const Pols
     // ========================================================================================
-    void init_gpu_setup(uint64_t maxBitsExt);
+    void init_gpu_setup(uint64_t maxBitsExt, uint64_t arity);
     void pack_const_pols(void *pStarkinfo, void *pConstPols, char *constFile);
     void tile_const_pols(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu);
     void prepare_blocks(uint64_t* pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu);

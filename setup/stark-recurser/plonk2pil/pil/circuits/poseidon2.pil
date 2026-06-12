@@ -1,7 +1,7 @@
-const int POSEIDON_WIDTH = 16;
-const int HASH_SIZE = 4;
+const int POSEIDON2_WIDTH = 16;
+const int POSEIDON2_HASH_SIZE = 4;
 
-const int POSEIDON_DIAG[POSEIDON_WIDTH] = [
+const int POSEIDON2_DIAG[POSEIDON2_WIDTH] = [
     0xde9b91a467d6afc0,
     0xc5f16b9c76a9be17,
     0x0ab0fef2d540ac55,
@@ -20,7 +20,7 @@ const int POSEIDON_DIAG[POSEIDON_WIDTH] = [
     0x774487b8c40089bb
 ];
 
-const int POSEIDON_RC[150] = [
+const int POSEIDON2_RC[150] = [
     0x15ebea3fc73397c3,
     0xd73cd9fbfe8e275c,
     0x8c096bfce77f6c26,
@@ -191,14 +191,14 @@ function poseidonInputOrder(const expr a[], const expr b[], const expr out[], co
     const expr mask01 = (1 - b[0]) * b[1];
     const expr mask11 = b[0] * b[1];
 
-    const expr input[POSEIDON_WIDTH];
+    const expr input[POSEIDON2_WIDTH];
 
     // CASE b[0] = 0, b[1] = 0: input = [a0, a1, a2, a3, a4, a5, a6,  a7,  a8,  a9,  a10, a11, a12, a13, a14, a15]
     // CASE b[0] = 1, b[1] = 0: input = [a4, a5, a6, a7, a0, a1, a2,  a3,  a8,  a9,  a10, a11, a12, a13, a14, a15]
     // CASE b[0] = 0, b[1] = 1: input = [a4, a5, a6, a7, a8, a9, a10, a11, a0,  a1,  a2,  a3,  a12, a13, a14, a15]
     // CASE b[0] = 1, b[1] = 1: input = [a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a0,  a1,  a2,  a3]
 
-    for (int i = 0; i < POSEIDON_WIDTH; i++) {
+    for (int i = 0; i < POSEIDON2_WIDTH; i++) {
         if(i < 4) {
             // 00 -> a[i]
             // 10 -> a[i + 4]
@@ -229,11 +229,14 @@ function poseidonInputOrder(const expr a[], const expr b[], const expr out[], co
     poseidonFullRound(input, out, POSEIDONSPONGE + POSEIDONCOMPRESSION);
 }
 
+// DEGREE: at the ceiling. The caller passes input[] = pow7(...) (degree 7); `mat`/`stored`
+// are field-constant linear combinations of input[] (still degree 7); sel is a sum of
+// degree-1 fixed cols. sel*(output - (mat + stored)) = 1 + 7 = 8 = max. Zero headroom.
 function poseidonFullRound(const expr input[], const expr output[], const expr sel) {
-    const expr mat[POSEIDON_WIDTH];
+    const expr mat[POSEIDON2_WIDTH];
 
-    const expr t0[POSEIDON_WIDTH/HASH_SIZE], t1[POSEIDON_WIDTH/HASH_SIZE], t2[POSEIDON_WIDTH/HASH_SIZE], t3[POSEIDON_WIDTH/HASH_SIZE];
-    for (int i = 0; i < POSEIDON_WIDTH/HASH_SIZE; i++) {
+    const expr t0[POSEIDON2_WIDTH/POSEIDON2_HASH_SIZE], t1[POSEIDON2_WIDTH/POSEIDON2_HASH_SIZE], t2[POSEIDON2_WIDTH/POSEIDON2_HASH_SIZE], t3[POSEIDON2_WIDTH/POSEIDON2_HASH_SIZE];
+    for (int i = 0; i < POSEIDON2_WIDTH/POSEIDON2_HASH_SIZE; i++) {
         t0[i] = input[4*i] + input[4*i + 1];
         t1[i] = input[4*i + 2] + input[4*i + 3];
         t2[i] = 2*input[4*i + 1] + t1[i];
@@ -246,20 +249,24 @@ function poseidonFullRound(const expr input[], const expr output[], const expr s
        
     }
 
-    const expr stored[HASH_SIZE];
-    for (int i = 0; i < HASH_SIZE; i++) {
+    const expr stored[POSEIDON2_HASH_SIZE];
+    for (int i = 0; i < POSEIDON2_HASH_SIZE; i++) {
         stored[i] = mat[i] + mat[i+4] + mat[i+8] + mat[i+12];
     }
 
-    for (int i = 0; i < POSEIDON_WIDTH; i++) {
-        sel * (output[i] -  (mat[i] + stored[i%HASH_SIZE])) === 0;
+    for (int i = 0; i < POSEIDON2_WIDTH; i++) {
+        sel * (output[i] -  (mat[i] + stored[i%POSEIDON2_HASH_SIZE])) === 0;
     }
 }
 
+// DEGREE: at the ceiling. intermediateValues are pow7 anchors (degree 7); the per-round
+// recurrence only adds/scales by the constant POSEIDON2_DIAG, so sR stays degree 7 (no
+// compounding). Both emitted checks — sel*(st0-sR[i][0]) and sel*(output-sR[rounds]) —
+// are 1 + 7 = 8 = max. Zero headroom.
 function poseidonPartialRound(const int rounds, const expr input[], const expr output[], const expr st0[], const expr intermediateValues[], const expr sel) {
-    const expr sR[rounds + 1][POSEIDON_WIDTH];
+    const expr sR[rounds + 1][POSEIDON2_WIDTH];
     const expr sum_partial[rounds];
-    for (int i = 0; i < POSEIDON_WIDTH; ++i) {
+    for (int i = 0; i < POSEIDON2_WIDTH; ++i) {
         sR[0][i] = input[i];
     }
 
@@ -267,25 +274,25 @@ function poseidonPartialRound(const int rounds, const expr input[], const expr o
         sel * (st0[i] - sR[i][0]) === 0;
         sum_partial[i] = intermediateValues[i] + sR[i][1] + sR[i][2] + sR[i][3] + sR[i][4] + sR[i][5] + sR[i][6] + sR[i][7] + sR[i][8] + sR[i][9] + sR[i][10] + sR[i][11] + sR[i][12] + sR[i][13] + sR[i][14] + sR[i][15];
         
-        sR[i+1][0] = intermediateValues[i] * POSEIDON_DIAG[0] + sum_partial[i];
-        sR[i+1][1] = sR[i][1] * POSEIDON_DIAG[1] + sum_partial[i];
-        sR[i+1][2]  = sR[i][2] * POSEIDON_DIAG[2] + sum_partial[i];
-        sR[i+1][3]  = sR[i][3] * POSEIDON_DIAG[3] + sum_partial[i];
-        sR[i+1][4]  = sR[i][4] * POSEIDON_DIAG[4] + sum_partial[i];
-        sR[i+1][5]  = sR[i][5] * POSEIDON_DIAG[5] + sum_partial[i];
-        sR[i+1][6]  = sR[i][6] * POSEIDON_DIAG[6] + sum_partial[i];
-        sR[i+1][7]  = sR[i][7] * POSEIDON_DIAG[7] + sum_partial[i];
-        sR[i+1][8]  = sR[i][8] * POSEIDON_DIAG[8] + sum_partial[i];
-        sR[i+1][9]  = sR[i][9] * POSEIDON_DIAG[9] + sum_partial[i];
-        sR[i+1][10]  = sR[i][10] * POSEIDON_DIAG[10] + sum_partial[i];
-        sR[i+1][11]  = sR[i][11] * POSEIDON_DIAG[11] + sum_partial[i];
-        sR[i+1][12]  = sR[i][12] * POSEIDON_DIAG[12] + sum_partial[i];
-        sR[i+1][13]  = sR[i][13] * POSEIDON_DIAG[13] + sum_partial[i];
-        sR[i+1][14]  = sR[i][14] * POSEIDON_DIAG[14] + sum_partial[i];
-        sR[i+1][15]  = sR[i][15] * POSEIDON_DIAG[15] + sum_partial[i];
+        sR[i+1][0] = intermediateValues[i] * POSEIDON2_DIAG[0] + sum_partial[i];
+        sR[i+1][1] = sR[i][1] * POSEIDON2_DIAG[1] + sum_partial[i];
+        sR[i+1][2]  = sR[i][2] * POSEIDON2_DIAG[2] + sum_partial[i];
+        sR[i+1][3]  = sR[i][3] * POSEIDON2_DIAG[3] + sum_partial[i];
+        sR[i+1][4]  = sR[i][4] * POSEIDON2_DIAG[4] + sum_partial[i];
+        sR[i+1][5]  = sR[i][5] * POSEIDON2_DIAG[5] + sum_partial[i];
+        sR[i+1][6]  = sR[i][6] * POSEIDON2_DIAG[6] + sum_partial[i];
+        sR[i+1][7]  = sR[i][7] * POSEIDON2_DIAG[7] + sum_partial[i];
+        sR[i+1][8]  = sR[i][8] * POSEIDON2_DIAG[8] + sum_partial[i];
+        sR[i+1][9]  = sR[i][9] * POSEIDON2_DIAG[9] + sum_partial[i];
+        sR[i+1][10]  = sR[i][10] * POSEIDON2_DIAG[10] + sum_partial[i];
+        sR[i+1][11]  = sR[i][11] * POSEIDON2_DIAG[11] + sum_partial[i];
+        sR[i+1][12]  = sR[i][12] * POSEIDON2_DIAG[12] + sum_partial[i];
+        sR[i+1][13]  = sR[i][13] * POSEIDON2_DIAG[13] + sum_partial[i];
+        sR[i+1][14]  = sR[i][14] * POSEIDON2_DIAG[14] + sum_partial[i];
+        sR[i+1][15]  = sR[i][15] * POSEIDON2_DIAG[15] + sum_partial[i];
     }
 
-    for (int i = 0; i < POSEIDON_WIDTH; i++) {
+    for (int i = 0; i < POSEIDON2_WIDTH; i++) {
        sel * (output[i] - sR[rounds][i]) === 0;
     }
 }

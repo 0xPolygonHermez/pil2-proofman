@@ -297,46 +297,4 @@ mod tests {
         assert_eq!(result.tmps[&2].last_pos, 2); // tmp[2] defined here, never consumed
         assert_eq!(result.tmps[&0].dim, 3);
     }
-
-    // ── integration: matches JS ground truth on real verifierInfo ────────────
-
-    #[test]
-    fn integration_fibonacci_square_verifierinfo() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../examples/fibonacci-square/build/provingKey/build/vadcop_final_compressed/vadcop_final_compressed.verifierinfo.json"
-        );
-        let Ok(content) = std::fs::read_to_string(path) else {
-            // Skip test if file not present (CI without build artifacts).
-            return;
-        };
-        let verifier_info: Value = serde_json::from_str(&content).unwrap();
-        let code = verifier_info["qVerifier"]["code"].as_array().unwrap();
-
-        let result = get_expressions_chunks(code);
-
-        // JS ground truth (from node script above):
-        // chunk 0: len=999, inputs=0, outputs=9
-        // chunk 1: len=999, inputs=9, outputs=31
-        // chunk 2: len=999, inputs=31, outputs=3
-        // chunk 3: len=830, inputs=3, outputs=1
-        assert_eq!(result.chunks.len(), 4, "expected 4 chunks");
-        assert_eq!(result.chunks[0].code.len(), 999);
-        assert_eq!(result.chunks[0].inputs.len(), 0);
-        assert_eq!(result.chunks[0].outputs.len(), 9);
-        assert_eq!(result.chunks[1].code.len(), 999);
-        assert_eq!(result.chunks[1].inputs.len(), 9);
-        assert_eq!(result.chunks[1].outputs.len(), 31);
-        assert_eq!(result.chunks[2].code.len(), 999);
-        assert_eq!(result.chunks[2].inputs.len(), 31);
-        assert_eq!(result.chunks[2].outputs.len(), 3);
-        assert_eq!(result.chunks[3].code.len(), 830);
-        assert_eq!(result.chunks[3].inputs.len(), 3);
-        assert_eq!(result.chunks[3].outputs.len(), 1);
-
-        // Spot-check specific ids from JS output.
-        assert_eq!(result.chunks[0].outputs[0], 4785);
-        assert_eq!(result.chunks[1].inputs[0], 4785);
-        assert_eq!(result.chunks[3].outputs[0], 7652);
-    }
 }

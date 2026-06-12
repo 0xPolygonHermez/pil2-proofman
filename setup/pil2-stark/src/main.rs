@@ -76,6 +76,9 @@ struct SetupArgs {
     /// If omitted, no stats file is written.
     #[arg(short = 'o', long)]
     output: Option<String>,
+
+    #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
+    hash: String,
 }
 
 #[derive(Parser)]
@@ -167,9 +170,12 @@ struct SetupRecursiveTestArgs {
     #[arg(short = 'n', long = "name")]
     circom_name: String,
 
-    /// Setup type: compressor, aggregation, final_vadcop, or light
+    /// Setup type: compressor, aggregation
     #[arg(short = 't', long, default_value = "aggregation")]
     r#type: String,
+
+    #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
+    hash: String,
 }
 
 #[derive(Parser)]
@@ -229,6 +235,10 @@ fn main() -> anyhow::Result<()> {
                 recursive_jobs
             );
 
+            if !proofman_common::hash_family::is_known_family(&args.hash) {
+                anyhow::bail!("unknown --hash {:?}; known: {:?}", args.hash, proofman_common::hash_family::FAMILIES);
+            }
+
             let opts = SetupOptions {
                 airout_path: args.airout,
                 build_dir: args.build_dir,
@@ -238,6 +248,7 @@ fn main() -> anyhow::Result<()> {
                 recursive_jobs,
                 setup_jobs,
                 stats_output_path: args.output,
+                hash: args.hash,
             };
 
             let result = setup::run_setup(&opts);
@@ -316,11 +327,15 @@ fn main() -> anyhow::Result<()> {
             tracing::info!("  circom: {}", args.circom_path);
             tracing::info!("  name: {}", args.circom_name);
             tracing::info!("  type: {}", args.r#type);
+            if !proofman_common::hash_family::is_known_family(&args.hash) {
+                anyhow::bail!("unknown --hash {:?}; known: {:?}", args.hash, proofman_common::hash_family::FAMILIES);
+            }
             let opts = SetupRecursiveTestOptions {
                 build_dir: args.build_dir,
                 circom_path: args.circom_path,
                 circom_name: args.circom_name,
                 setup_type: args.r#type,
+                hash: args.hash,
             };
             recursive_test_cmd::run_setup_recursive_test(&opts)
         }

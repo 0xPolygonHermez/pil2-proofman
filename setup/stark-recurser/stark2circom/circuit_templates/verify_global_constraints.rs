@@ -347,8 +347,11 @@ pub fn gen_verify_global_constraints(stark_info: &Value, vadcop_info: &Value) ->
     out.push_str("\n    signal input globalChallenge[3];\n\n");
     out.push_str(&format!("    signal challenges[{num_challenges_1}][3];\n"));
 
+    let poseidon2 = vadcop_info.get("hash").and_then(|v| v.as_str()).map(|s| s == "Poseidon2").unwrap_or(true);
+
     // Transcript to derive challenges from globalChallenge
     let mut transcript = Transcript::new(arity, None);
+    transcript.set_poseidon2(poseidon2);
     transcript.put("globalChallenge", 3);
     for i in 0..num_challenges_1 {
         transcript.get_field(&format!("challenges[{i}]"));

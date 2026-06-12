@@ -356,11 +356,17 @@ $(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
 
-.PHONY: clean
+.PHONY: clean clean_cpu clean_gpu
 
 clean:
 	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU)
 	$(RM) -r $(LIB_DIR) $(LIB_DIR_GPU)
+
+clean_cpu:
+	$(RM) -r $(BUILD_DIR) $(LIB_DIR)
+
+clean_gpu:
+	$(RM) -r $(BUILD_DIR_GPU) $(LIB_DIR_GPU)
 
 -include $(DEPS_SETUP)
 -include $(DEPS_SETUP_PLONK)

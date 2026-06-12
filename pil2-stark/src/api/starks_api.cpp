@@ -40,6 +40,10 @@ MPI_Win win;
 int win_buff = -1;
 #endif
 
+void set_hash_family(uint8_t fam) {
+    define_hash_family(hashFamilyFromU8(fam));
+}
+
 void initialize_agg_readiness_tracker() {
 #ifdef __USE_MPI_RMA__    
     int initialized = 0;

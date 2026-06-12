@@ -56,6 +56,7 @@ pub fn setup(pilout: &Path, build: &Path) -> Result<(), String> {
         recursive_jobs: 1,
         setup_jobs: 1,
         stats_output_path: None,
+        hash: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
     })
     .map_err(|e| format!("setup: {e}"))
 }

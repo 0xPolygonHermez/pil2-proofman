@@ -232,3 +232,44 @@ export PIL2_PROOFMAN_EXT=$(if [[  "$(uname -s)" == "Darwin" ]]; then echo ".dyli
      --proof ./examples/fibonacci-square/build/proofs/vadcop_final_proof.bin \
      --verkey ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.verkey.bin
 ```
+
+**With recursion (Poseidon1):**
+
+Same flow, but using the Poseidon1 (Hades) hash family instead of the default
+Poseidon2. The hash family is selected at runtime from the setup, so only the
+setup needs `--hash Poseidon1` — no feature flag or rebuild is required:
+
+```bash
+export PIL2_PROOFMAN_EXT=$(if [[  "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi) \
+&& cargo run --bin proofman-setup -- compile-pil --pil ./examples/fibonacci-square/pil/build.pil \
+     -I ./pil2-components/lib/std/pil \
+     -o ./examples/fibonacci-square/pil/build.pilout \
+&& cargo run --bin proofman-setup -- setup \
+     -a ./examples/fibonacci-square/pil/build.pilout \
+     -b ./examples/fibonacci-square/build -r \
+     --hash Poseidon1 \
+&& cargo run --bin proofman-cli pil-helpers \
+     --pilout ./examples/fibonacci-square/pil/build.pilout \
+     --path ./examples/fibonacci-square/src -o \
+&& cargo build --workspace \
+&& cargo run --bin proofman-cli gen-custom-commits-fixed \
+     --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
+     --proving-key examples/fibonacci-square/build/provingKey/ \
+     --custom-commits rom=examples/fibonacci-square/build/rom.bin \
+&& cargo run --bin proofman-cli stats \
+     --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
+     --proving-key examples/fibonacci-square/build/provingKey/ \
+     --public-inputs examples/fibonacci-square/src/inputs.json \
+     --custom-commits rom=examples/fibonacci-square/build/rom.bin \
+&& cargo run --bin proofman-cli prove \
+     --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
+     --proving-key examples/fibonacci-square/build/provingKey/ \
+     --public-inputs examples/fibonacci-square/src/inputs.json \
+     --custom-commits rom=examples/fibonacci-square/build/rom.bin \
+     --verify-proofs \
+     --aggregation \
+     --output-dir examples/fibonacci-square/build/proofs \
+&& cargo run --bin proofman-cli verify-stark \
+     --proof ./examples/fibonacci-square/build/proofs/vadcop_final_proof.bin \
+     --verkey ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.verkey.bin
+```

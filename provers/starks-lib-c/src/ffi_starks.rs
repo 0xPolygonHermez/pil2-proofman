@@ -44,15 +44,19 @@ pub fn compute_const_tree_c(
     let c_verkey = CString::new(verkey_path).unwrap();
 
     let mut root = [0u64; 4];
-    unsafe {
+    let status = unsafe {
         build_const_tree_c(
             c_const.as_ptr(),
             c_stark_info.as_ptr(),
             c_tree.as_ptr(),
             c_verkey.as_ptr(),
             root.as_mut_ptr(),
-        );
-    }
+        )
+    };
+    assert_eq!(
+        status, 0,
+        "build_const_tree_c failed (status {status}) for const {const_path}, starkinfo {stark_info_path}, verkey {verkey_path}"
+    );
     root
 }
 
@@ -150,6 +154,15 @@ pub fn get_proof_size_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_proof_size(p_stark_info) }
 }
 
+pub fn set_hash_family_c(family: &str) {
+    let fam: u8 = match family {
+        "Poseidon1" => 1,
+        "Poseidon2" => 2,
+        other => panic!("set_hash_family_c: unknown hash family {other:?} (expected \"Poseidon1\" or \"Poseidon2\")"),
+    };
+    unsafe { set_hash_family(fam) }
+}
+
 pub fn get_proof_pinned_size_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_proof_pinned_size(p_stark_info) }
 }
@@ -214,9 +227,9 @@ pub fn load_const_tree_c(
     }
 }
 
-pub fn init_gpu_setup_c(maxBitsExt: u64) {
+pub fn init_gpu_setup_c(maxBitsExt: u64, arity: u64) {
     unsafe {
-        init_gpu_setup(maxBitsExt);
+        init_gpu_setup(maxBitsExt, arity);
     }
 }
 

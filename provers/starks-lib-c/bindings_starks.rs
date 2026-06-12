@@ -48,6 +48,8 @@ extern "C" {
         preallocate: bool,
     ) -> *mut ::std::os::raw::c_void;
     
+    pub fn set_hash_family(fam: u8);
+
     pub fn get_proof_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
     pub fn get_proof_pinned_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
@@ -89,7 +91,7 @@ extern "C" {
         constPolsPath: *mut ::std::os::raw::c_char,
     ) -> u64;
 
-    pub fn init_gpu_setup(maxBitsExt: u64);
+    pub fn init_gpu_setup(maxBitsExt: u64, arity: u64);
 
     pub fn pack_const_pols(
         pStarkinfo: *mut ::std::os::raw::c_void,

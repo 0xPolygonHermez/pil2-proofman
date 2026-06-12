@@ -1,6 +1,7 @@
 build
 .simd_stamp
 .cuda_arch_stamp
+.build_lock
 runtime/*
 !runtime/README.md
 MyLogFile.log

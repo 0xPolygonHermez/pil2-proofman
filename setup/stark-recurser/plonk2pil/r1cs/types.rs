@@ -61,11 +61,21 @@ pub struct R1csFile {
 
 // ─── Setup result types (shared by all four setup variants) ─────────────────
 
-/// Options passed to each setup function.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PlonkOptions {
     pub airgroup_name: Option<String>,
     pub max_constraint_degree: Option<usize>,
+    pub hash_id: String,
+}
+
+impl Default for PlonkOptions {
+    fn default() -> Self {
+        Self {
+            airgroup_name: None,
+            max_constraint_degree: None,
+            hash_id: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
+        }
+    }
 }
 
 /// A single fixed polynomial column.

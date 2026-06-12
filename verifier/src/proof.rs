@@ -14,14 +14,15 @@ pub struct VadcopFinalProof {
     pub proof: Vec<u64>,
     pub public_values: Vec<u64>,
     pub compressed: bool,
+    pub hash: String,
 }
 
 impl VadcopFinalProof {
-    pub fn new(proof: Vec<u64>, public_values: Vec<u64>, compressed: bool) -> Self {
-        Self { proof, public_values, compressed }
+    pub fn new(proof: Vec<u64>, public_values: Vec<u64>, compressed: bool, hash: String) -> Self {
+        Self { proof, public_values, compressed, hash }
     }
 
-    pub fn new_from_proof(proof: &[u64], compressed: bool) -> Result<Self, String> {
+    pub fn new_from_proof(proof: &[u64], compressed: bool, hash: String) -> Result<Self, String> {
         if proof.is_empty() {
             return Err("Proof slice is empty, cannot extract public count".to_string());
         }
@@ -40,7 +41,7 @@ impl VadcopFinalProof {
         let rest = &proof[1..];
         let (publics, proof_u64) = rest.split_at(n_publics);
 
-        Ok(Self { public_values: publics.to_vec(), proof: proof_u64.to_vec(), compressed })
+        Ok(Self { public_values: publics.to_vec(), proof: proof_u64.to_vec(), compressed, hash })
     }
 
     #[cfg(feature = "std")]

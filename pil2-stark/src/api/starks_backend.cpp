@@ -29,7 +29,7 @@ void gen_final_snark_proof_cpu(void *snark_prover, void *circomWitnessFinal, uin
 // ============================================================================
 
 #ifdef __USE_CUDA__
-void init_gpu_setup_gpu(uint64_t maxBitsExt);
+void init_gpu_setup_gpu(uint64_t maxBitsExt, uint64_t arity);
 void tile_const_pols_gpu(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu);
 void prepare_blocks_gpu(uint64_t* pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu);
 void calculate_const_tree_gpu(void *pStarkInfo, void *pConstPolsAddress, void *pConstTree, void *unified_buffer_gpu);
@@ -199,9 +199,9 @@ bool set_gpu_mode(bool use_gpu) {
 // ============================================================================
 
 // Const Pols
-void init_gpu_setup(uint64_t maxBitsExt) {
+void init_gpu_setup(uint64_t maxBitsExt, uint64_t arity) {
     auto backend = active_backend.load(std::memory_order_acquire);
-    if (backend->init_gpu_setup) backend->init_gpu_setup(maxBitsExt);
+    if (backend->init_gpu_setup) backend->init_gpu_setup(maxBitsExt, arity);
 }
 
 void tile_const_pols(void *pStarkInfo, void *pConstPols, char *constFile, void *pConstTree, char *constTreeFile, void *unified_buffer_gpu) {

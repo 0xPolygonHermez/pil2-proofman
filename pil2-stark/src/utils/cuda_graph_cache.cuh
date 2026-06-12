@@ -41,6 +41,10 @@ public:
     CudaGraphCache(const CudaGraphCache&) = delete;
     CudaGraphCache& operator=(const CudaGraphCache&) = delete;
 
+    bool contains(uint64_t key) const {
+        return cache_.find(key) != cache_.end();
+    }
+
     bool tryLaunch(uint64_t key, cudaStream_t stream) {
         auto it = cache_.find(key);
         if (it == cache_.end()) return false;

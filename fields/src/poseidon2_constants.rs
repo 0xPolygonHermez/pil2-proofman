@@ -8,12 +8,12 @@ pub trait Poseidon2Constants<const W: usize> {
     const SPONGE_WIDTH: usize;
 }
 
-pub struct Poseidon4;
-pub struct Poseidon8;
-pub struct Poseidon12;
-pub struct Poseidon16;
+pub struct Poseidon2_4;
+pub struct Poseidon2_8;
+pub struct Poseidon2_12;
+pub struct Poseidon2_16;
 
-impl Poseidon2Constants<12> for Poseidon12 {
+impl Poseidon2Constants<12> for Poseidon2_12 {
     const DIAG: &'static [u64] = &[
         0xc3b6c08e23ba9300,
         0xd84b5de94a324fb6,
@@ -156,7 +156,7 @@ impl Poseidon2Constants<12> for Poseidon12 {
     const CAPACITY: usize = 4;
 }
 
-impl Poseidon2Constants<16> for Poseidon16 {
+impl Poseidon2Constants<16> for Poseidon2_16 {
     const DIAG: &'static [u64] = &[
         0xde9b91a467d6afc0,
         0xc5f16b9c76a9be17,
@@ -335,7 +335,7 @@ impl Poseidon2Constants<16> for Poseidon16 {
     const CAPACITY: usize = 4;
 }
 
-impl Poseidon2Constants<4> for Poseidon4 {
+impl Poseidon2Constants<4> for Poseidon2_4 {
     const DIAG: &'static [u64] = &[0xf0ce126fe8a83094, 0x60f87e0b59fb4ee6, 0xa8106c221cd6d882, 0x5529eddc46e372e7];
 
     const RC: &'static [u64] = &[
@@ -400,7 +400,7 @@ impl Poseidon2Constants<4> for Poseidon4 {
     const CAPACITY: usize = 4;
 }
 
-impl Poseidon2Constants<8> for Poseidon8 {
+impl Poseidon2Constants<8> for Poseidon2_8 {
     const DIAG: &'static [u64] = &[
         0xa98811a1fed4e3a5,
         0x1cc48b54f377e2a0,

@@ -7,6 +7,7 @@
 //! The main entry point is [`plonk2pil`], which dispatches to the appropriate
 //! setup variant based on the `setup_type` argument.
 
+pub mod packers;
 pub mod r1cs;
 pub mod setups;
 pub mod utils;
@@ -15,10 +16,8 @@ pub mod utils;
 pub use r1cs::reader as r1cs_reader;
 pub use r1cs::to_plonk as r1cs2plonk;
 pub use r1cs::types as r1cs_types;
-pub use setups::aggregation as aggregation_setup;
-pub use setups::compressor as compressor_setup;
-pub use setups::compressor_light as compressor_light_setup;
-pub use setups::final_vadcop as final_vadcop_setup;
+pub use setups::poseidon1::aggregation as aggregation_setup;
+pub use setups::poseidon1::compressor as compressor_setup;
 
 use anyhow::{bail, Result};
 
@@ -85,23 +84,21 @@ fn write_exec_file(adds: &[r1cs::to_plonk::PlonkAddition], s_map: &[Vec<u32>]) -
 ///
 /// # Arguments
 /// * `r1cs_data` - Raw bytes of the R1CS binary file.
-/// * `setup_type` - One of `"compressor"`, `"light"`, `"aggregation"`, or `"final_vadcop"`.
+/// * `setup_type` - One of `"compressor"`, `"aggregation"`.
 /// * `options` - Optional configuration (airgroup name, max constraint degree).
 ///
 /// # Returns
 /// A [`PlonkResult`] containing the exec buffer, PIL source, and fixed polynomials.
 pub fn plonk2pil(r1cs_data: &[u8], setup_type: &str, options: &PlonkOptions) -> Result<PlonkResult> {
-    if !["compressor", "light", "aggregation", "final_vadcop"].contains(&setup_type) {
-        bail!("Invalid setup type: '{}'. Must be one of: compressor, light, aggregation, final_vadcop", setup_type);
+    if !["compressor", "aggregation"].contains(&setup_type) {
+        bail!("Invalid setup type: '{}'. Must be one of: compressor, aggregation", setup_type);
     }
 
     let r1cs = read_r1cs_from_bytes(r1cs_data)?;
 
     let res: SetupResult = match setup_type {
-        "compressor" => setups::compressor::compressor(&r1cs, options),
-        "light" => setups::compressor_light::light_compressor(&r1cs, options),
-        "aggregation" => setups::aggregation::aggregation_compressor(&r1cs, options),
-        "final_vadcop" => setups::final_vadcop::final_vadcop_compressor(&r1cs, options),
+        "compressor" => packers::pack_compressor(&r1cs, options),
+        "aggregation" => packers::pack_aggregation(&r1cs, options),
         _ => unreachable!(),
     };
 

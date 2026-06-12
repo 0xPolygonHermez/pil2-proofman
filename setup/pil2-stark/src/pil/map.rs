@@ -1,5 +1,55 @@
-use crate::types::pilout_info::{SetupResult, SymbolInfo};
+use crate::expr::expression::{ExprChild, Expression};
 use crate::expr::print::PrintCtx;
+use crate::types::pilout_info::{SetupResult, SymbolInfo};
+
+const PRINT_NODE_BUDGET: usize = 50_000;
+
+fn fits_print_budget(expressions: &[Expression], idx: usize, budget: &mut usize) -> bool {
+    if *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+    let exp = &expressions[idx];
+    if exp.op == "exp" {
+        if let Some(rid) = exp.id {
+            return fits_print_budget(expressions, rid, budget);
+        }
+        return true;
+    }
+    for child in &exp.values {
+        let ok = match child {
+            ExprChild::Id(id) => fits_print_budget(expressions, *id, budget),
+            ExprChild::Inline(e) => fits_print_budget_inline(e, expressions, budget),
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
+
+fn fits_print_budget_inline(expr: &Expression, expressions: &[Expression], budget: &mut usize) -> bool {
+    if *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+    if expr.op == "exp" {
+        if let Some(rid) = expr.id {
+            return fits_print_budget(expressions, rid, budget);
+        }
+        return true;
+    }
+    for child in &expr.values {
+        let ok = match child {
+            ExprChild::Id(id) => fits_print_budget(expressions, *id, budget),
+            ExprChild::Inline(e) => fits_print_budget_inline(e, expressions, budget),
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
 
 // ---------------------------------------------------------------------------
 // map_symbols
@@ -211,8 +261,8 @@ pub fn map(res: &mut SetupResult, recursion: bool) {
     }
 
     // Use printExpressions for ImPol constraint lines in non-recursion mode.
-    // We temporarily take expressions out to allow mutable access while also
-    // reading the maps.
+    // Skip prints for expressions that exceed PRINT_NODE_BUDGET — they're for
+    // human-readable stats output only, and a runaway walk stalls setup.
     if !recursion && !im_pol_constraints.is_empty() && !res.expressions.is_empty() {
         let mut expressions = std::mem::take(&mut res.expressions);
         {
@@ -227,7 +277,12 @@ pub fn map(res: &mut SetupResult, recursion: bool) {
                 proof_values_map: &res.proof_values_map,
             };
             for &(ci, exp_id) in &im_pol_constraints {
-                let line = crate::expr::print::print_expression_no_cache(&ctx, &mut expressions, exp_id, true);
+                let mut budget = PRINT_NODE_BUDGET;
+                let line = if fits_print_budget(&expressions, exp_id, &mut budget) {
+                    crate::expr::print::print_expression_no_cache(&ctx, &mut expressions, exp_id, true)
+                } else {
+                    format!("<im_pol constraint expression too large to print: >{} nodes>", PRINT_NODE_BUDGET)
+                };
                 res.constraints[ci].line = Some(line);
             }
         }
@@ -270,7 +325,12 @@ pub fn map(res: &mut SetupResult, recursion: bool) {
                 proof_values_map: &res.proof_values_map,
             };
             for &(dim, exp_id) in &im_pols {
-                let im_pol_expr = crate::expr::print::print_expression_no_cache(&ctx, &mut expressions, exp_id, false);
+                let mut budget = PRINT_NODE_BUDGET;
+                let im_pol_expr = if fits_print_budget(&expressions, exp_id, &mut budget) {
+                    crate::expr::print::print_expression_no_cache(&ctx, &mut expressions, exp_id, false)
+                } else {
+                    format!("<im_pol expression too large to print: >{} nodes>", PRINT_NODE_BUDGET)
+                };
                 if dim == 1 {
                     base_field_info.push(im_pol_expr);
                 } else {

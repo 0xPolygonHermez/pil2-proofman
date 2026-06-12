@@ -8,7 +8,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use indexmap::IndexMap;
 use pilout::pilout_proxy::PilOutProxy;
 use stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
 use stark_recurser::plonk2pil;
@@ -35,7 +34,7 @@ use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
 /// * `circom_path` - Path to the circom source file.
 /// * `circom_name` - Circuit name (e.g. "test").
 /// * `std_pil_path` - Standard PIL library path (for compiling the generated PIL).
-/// * `setup_type` - One of "compressor", "aggregation", "final_vadcop", "light".
+/// * `setup_type` - One of "compressor", "aggregation".
 /// * `circom_exec` - Path to the circom binary.
 /// * `circuits_gl_path` - Path to circuits.gl (for circom -l).
 /// * `recurser_circuits_path` - Path to vadcop helpers/circuits (for circom -l).
@@ -48,6 +47,7 @@ pub fn gen_recursive_test_setup(
     circom_path: &str,
     circom_name: &str,
     setup_type: &str,
+    hash: &str,
     circom_exec: &str,
     circuits_gl_path: &str,
     recurser_circuits_path: &str,
@@ -55,8 +55,8 @@ pub fn gen_recursive_test_setup(
     circom_helpers_dir: &str,
     witness_tracker: &WitnessTracker,
 ) -> Result<()> {
-    if !["compressor", "aggregation", "final_vadcop", "light"].contains(&setup_type) {
-        bail!("Invalid setup type '{}'. Must be one of: compressor, aggregation, final_vadcop, light", setup_type);
+    if !["compressor", "aggregation"].contains(&setup_type) {
+        bail!("Invalid setup type '{}'. Must be one of: compressor, aggregation", setup_type);
     }
 
     // JS nameFile is always "Compressor" regardless of the setup type.
@@ -128,7 +128,8 @@ pub fn gen_recursive_test_setup(
     // Use airgroup_name = "Compressor" (deterministic, avoids random hex suffix).
     // -------------------------------------------------------------------------
     let max_constraint_degree = if setup_type == "compressor" { Some(5) } else { None };
-    let plonk_opts = PlonkOptions { airgroup_name: Some(NAME_FILE.to_string()), max_constraint_degree };
+    let plonk_opts =
+        PlonkOptions { airgroup_name: Some(NAME_FILE.to_string()), max_constraint_degree, hash_id: hash.to_string() };
     let r1cs_path = build_inner.join(format!("{}.r1cs", circom_name));
     let r1cs_data =
         fs::read(&r1cs_path).with_context(|| format!("Failed to read R1CS file: {}", r1cs_path.display()))?;
@@ -303,8 +304,8 @@ pub fn gen_recursive_test_setup(
     // compiled pilout already has "Compressor" as the airgroup/air names.
     // We pass pilout_name = "build" to match JS airout.name = "build".
     // -------------------------------------------------------------------------
-    let empty_settings: IndexMap<String, crate::types::stark_struct::StarkSettings> = IndexMap::new();
-    crate::output::global_info::write_global_info(pilout, "build", build_dir, &empty_settings)?;
+    let empty_settings = crate::types::stark_struct::StarkStructsConfig::default();
+    crate::output::global_info::write_global_info(pilout, "build", build_dir, &empty_settings, hash)?;
 
     println!("files Generated Correctly");
     Ok(())

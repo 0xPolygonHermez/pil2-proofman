@@ -24,6 +24,10 @@ pub struct SnarkSetupConfig<'a> {
     pub build_dir: &'a str,
     /// Circuit name (from globalInfo.name).
     pub name: &'a str,
+    /// Hash family (from globalInfo.hash, e.g. "Poseidon1"/"Poseidon2"). The
+    /// recursivef plonk2pil and circom verifier must use the same family the
+    /// proving key was set up with — never a hardcoded default.
+    pub hash: &'a str,
     /// Tool paths (same sources as recursive setup).
     pub circom_exec: &'a str,
     pub circuits_gl_path: &'a str,
@@ -83,8 +87,13 @@ pub fn gen_snark_setup(
 
     // pil2circom: generate vadcop_final.verifier.circom
     let verifier_name_rf = "vadcop_final.verifier.circom";
-    let pil2circom_opts =
-        Pil2CircomOptions { skip_main: true, verkey_input: true, enable_input: false, input_challenges: false };
+    let pil2circom_opts = Pil2CircomOptions {
+        skip_main: true,
+        verkey_input: true,
+        enable_input: false,
+        input_challenges: false,
+        hash: config.hash.to_string(),
+    };
     let verifier_circom_rf = pil2circom(&const_root_str, stark_info, verifier_info, &pil2circom_opts)
         .context("pil2circom failed for recursivef")?;
     fs::write(circom_dir.join(verifier_name_rf), &verifier_circom_rf)?;
@@ -151,7 +160,11 @@ pub fn gen_snark_setup(
     let r1cs_rf = build_path.join("recursivef.r1cs");
     let r1cs_data_rf =
         fs::read(&r1cs_rf).with_context(|| format!("Failed to read recursivef.r1cs: {}", r1cs_rf.display()))?;
-    let plonk_opts_rf = PlonkOptions { airgroup_name: Some("Recursivef".to_string()), max_constraint_degree: None };
+    let plonk_opts_rf = PlonkOptions {
+        airgroup_name: Some("Recursivef".to_string()),
+        max_constraint_degree: None,
+        hash_id: config.hash.to_string(),
+    };
     let plonk_rf = plonk2pil::plonk2pil(&r1cs_data_rf, "aggregation", &plonk_opts_rf)
         .context("plonk2pil failed for recursivef")?;
 
@@ -202,7 +215,7 @@ pub fn gen_snark_setup(
         merkle_tree_arity: Some(4),
         merkle_tree_custom: Some(false),
         last_level_verification: Some(0),
-        pow_bits: Some(17),
+        pow_bits: Some(19),
         ..Default::default()
     };
     let stark_struct_rf = generate_stark_struct(&bn128_settings, n_bits_rf);
@@ -353,8 +366,13 @@ pub fn gen_snark_setup(
 
     // pil2circom: generate recursivef.verifier.circom (verkeyInput=false for final).
     let verifier_name_final = "recursivef.verifier.circom";
-    let pil2circom_opts_final =
-        Pil2CircomOptions { skip_main: true, verkey_input: false, enable_input: false, input_challenges: false };
+    let pil2circom_opts_final = Pil2CircomOptions {
+        skip_main: true,
+        verkey_input: false,
+        enable_input: false,
+        input_challenges: false,
+        hash: config.hash.to_string(),
+    };
     let verifier_circom_final =
         pil2circom(&rf_const_root_str, &starkinfo_rf_val, &verifierinfo_rf_val, &pil2circom_opts_final)
             .context("pil2circom failed for final")?;

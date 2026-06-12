@@ -17,29 +17,23 @@ void TranscriptGL::_updateState()
     }
     std::memcpy(inputs, pending, transcriptPendingSize * sizeof(Goldilocks::Element));
     std::memcpy(&inputs[transcriptPendingSize], state, transcriptStateSize * sizeof(Goldilocks::Element));
-    switch(arity) {
-        case 2:
-            Poseidon2Goldilocks<8>::permute(
-                (Goldilocks::Element(&)[8])*out,
-                (const Goldilocks::Element(&)[8])*inputs,
-                Poseidon2Mode::Scalar);
-            break;
-        case 3:
-            Poseidon2Goldilocks<12>::permute(
-                (Goldilocks::Element(&)[12])*out,
-                (const Goldilocks::Element(&)[12])*inputs,
-                Poseidon2Mode::Scalar);
-            break;
-        case 4:
-            Poseidon2Goldilocks<16>::permute(
-                (Goldilocks::Element(&)[16])*out,
-                (const Goldilocks::Element(&)[16])*inputs,
-                Poseidon2Mode::Scalar);
-            break;
-        default:
-            zklog.error("TranscriptGL::_updateState: Unsupported arity");
-            exitProcess();
-            exit(-1);
+    switch (get_hash_family()) {
+    case HashFamily::Poseidon1:
+        switch(arity) {
+            case 2: PoseidonGoldilocks<8>::permute((Goldilocks::Element(&)[8])*out, (const Goldilocks::Element(&)[8])*inputs, PoseidonMode::Scalar);   break;
+            case 3: PoseidonGoldilocks<12>::permute((Goldilocks::Element(&)[12])*out, (const Goldilocks::Element(&)[12])*inputs, PoseidonMode::Scalar); break;
+            case 4: PoseidonGoldilocks<16>::permute((Goldilocks::Element(&)[16])*out, (const Goldilocks::Element(&)[16])*inputs, PoseidonMode::Scalar); break;
+            default: zklog.error("TranscriptGL::_updateState: Poseidon1 supports arity 2, 3 or 4"); exitProcess(); exit(-1);
+        }
+        break;
+    case HashFamily::Poseidon2:
+        switch(arity) {
+            case 2: Poseidon2Goldilocks<8>::permute((Goldilocks::Element(&)[8])*out, (const Goldilocks::Element(&)[8])*inputs, Poseidon2Mode::Scalar);   break;
+            case 3: Poseidon2Goldilocks<12>::permute((Goldilocks::Element(&)[12])*out, (const Goldilocks::Element(&)[12])*inputs, Poseidon2Mode::Scalar); break;
+            case 4: Poseidon2Goldilocks<16>::permute((Goldilocks::Element(&)[16])*out, (const Goldilocks::Element(&)[16])*inputs, Poseidon2Mode::Scalar); break;
+            default: zklog.error("TranscriptGL::_updateState: Poseidon2 supports arity 2, 3 or 4"); exitProcess(); exit(-1);
+        }
+        break;
     }
     out_cursor = transcriptOutSize;
     std::memset(pending, 0, transcriptPendingSize * sizeof(Goldilocks::Element));

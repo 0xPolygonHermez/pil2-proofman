@@ -8,7 +8,7 @@
 //!
 //! Entry points:
 //! - [`gen_stark_verifier`]         — dispatches by `verificationHashType`
-//! - [`gen_stark_verifier_gl`]      — GL Poseidon2 hash
+//! - [`gen_stark_verifier_gl`]      — Goldilocks (Poseidon1 or Poseidon2, selected by `opts.hash`)
 //! - [`gen_stark_verifier_bn128`]   — BN128 hash
 
 pub(crate) mod gl_field;

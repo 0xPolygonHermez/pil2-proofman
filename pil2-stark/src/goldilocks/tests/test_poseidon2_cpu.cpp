@@ -70,39 +70,39 @@ TEST(Poseidon2, permute_golden_W16)
 }
 
 // ---------------------------------------------------------------------------
-// 2. compress golden
+// 2. permuteTrunc golden
 // ---------------------------------------------------------------------------
 
-TEST(Poseidon2, compress_golden_W4)
+TEST(Poseidon2, permuteTrunc_golden_W4)
 {
     Goldilocks::Element in[4], out[4];
     fillSequential<4>(in, 0, 4);
-    Poseidon2Goldilocks<4>::compress(out, in, Poseidon2Mode::Scalar);
-    assertCapacityEq(out, COMPRESS_W4_GOLDEN);
+    Poseidon2Goldilocks<4>::permuteTrunc(out, in, Poseidon2Mode::Scalar);
+    assertCapacityEq(out, PERMUTE_TRUNC_W4_GOLDEN);
 }
 
-TEST(Poseidon2, compress_golden_W8)
+TEST(Poseidon2, permuteTrunc_golden_W8)
 {
     Goldilocks::Element in[8], out[4];
     fillSequential<8>(in, 0, 8);
-    Poseidon2Goldilocks<8>::compress(out, in, Poseidon2Mode::Scalar);
-    assertCapacityEq(out, COMPRESS_W8_GOLDEN);
+    Poseidon2Goldilocks<8>::permuteTrunc(out, in, Poseidon2Mode::Scalar);
+    assertCapacityEq(out, PERMUTE_TRUNC_W8_GOLDEN);
 }
 
-TEST(Poseidon2, compress_golden_W12)
+TEST(Poseidon2, permuteTrunc_golden_W12)
 {
     Goldilocks::Element in[12], out[4];
     fillSequential<12>(in, 0, 12);
-    Poseidon2Goldilocks<12>::compress(out, in, Poseidon2Mode::Scalar);
-    assertCapacityEq(out, COMPRESS_W12_GOLDEN);
+    Poseidon2Goldilocks<12>::permuteTrunc(out, in, Poseidon2Mode::Scalar);
+    assertCapacityEq(out, PERMUTE_TRUNC_W12_GOLDEN);
 }
 
-TEST(Poseidon2, compress_golden_W16)
+TEST(Poseidon2, permuteTrunc_golden_W16)
 {
     Goldilocks::Element in[16], out[4];
     fillSequential<16>(in, 0, 16);
-    Poseidon2Goldilocks<16>::compress(out, in, Poseidon2Mode::Scalar);
-    assertCapacityEq(out, COMPRESS_W16_GOLDEN);
+    Poseidon2Goldilocks<16>::permuteTrunc(out, in, Poseidon2Mode::Scalar);
+    assertCapacityEq(out, PERMUTE_TRUNC_W16_GOLDEN);
 }
 
 // ---------------------------------------------------------------------------
@@ -137,12 +137,12 @@ TEST(Poseidon2, permute_mode_equiv_W16) { permuteModeEquiv<16>(); }
 #endif
 
 // ---------------------------------------------------------------------------
-// 4. compress mode equivalence
+// 4. permuteTrunc mode equivalence
 // ---------------------------------------------------------------------------
 
 #ifdef __AVX2__
 template<uint32_t W>
-static void compressModeEquiv()
+static void permuteTruncModeEquiv()
 {
     constexpr uint32_t C = Poseidon2Goldilocks<W>::CAPACITY;
     Goldilocks::Element in[W];
@@ -150,9 +150,9 @@ static void compressModeEquiv()
         in[i] = Goldilocks::fromU64(i * 37 + 1);
 
     Goldilocks::Element out_scalar[C], out_avx[C], out_auto[C];
-    Poseidon2Goldilocks<W>::compress(out_scalar, in, Poseidon2Mode::Scalar);
-    Poseidon2Goldilocks<W>::compress(out_avx,    in, Poseidon2Mode::Avx);
-    Poseidon2Goldilocks<W>::compress(out_auto,   in, Poseidon2Mode::Auto);
+    Poseidon2Goldilocks<W>::permuteTrunc(out_scalar, in, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<W>::permuteTrunc(out_avx,    in, Poseidon2Mode::Avx);
+    Poseidon2Goldilocks<W>::permuteTrunc(out_auto,   in, Poseidon2Mode::Auto);
 
     for (uint32_t i = 0; i < C; ++i) {
         ASSERT_EQ(Goldilocks::toU64(out_scalar[i]), Goldilocks::toU64(out_avx[i]))
@@ -162,10 +162,10 @@ static void compressModeEquiv()
     }
 }
 
-TEST(Poseidon2, compress_mode_equiv_W4)  { compressModeEquiv<4>();  }
-TEST(Poseidon2, compress_mode_equiv_W8)  { compressModeEquiv<8>();  }
-TEST(Poseidon2, compress_mode_equiv_W12) { compressModeEquiv<12>(); }
-TEST(Poseidon2, compress_mode_equiv_W16) { compressModeEquiv<16>(); }
+TEST(Poseidon2, permuteTrunc_mode_equiv_W4)  { permuteTruncModeEquiv<4>();  }
+TEST(Poseidon2, permuteTrunc_mode_equiv_W8)  { permuteTruncModeEquiv<8>();  }
+TEST(Poseidon2, permuteTrunc_mode_equiv_W12) { permuteTruncModeEquiv<12>(); }
+TEST(Poseidon2, permuteTrunc_mode_equiv_W16) { permuteTruncModeEquiv<16>(); }
 #endif
 
 // ---------------------------------------------------------------------------
@@ -317,33 +317,41 @@ TEST(Poseidon2, merkletreeReduce_single_digest)
 
 TEST(Poseidon2, grinding_cpu)
 {
+    using G = Poseidon2GoldilocksGrinding;
     constexpr uint8_t n_bits = 8;
+    constexpr uint32_t W = G::SPONGE_WIDTH;
     uint64_t in[3] = {0x1234567890abcdef, 0xfedcba0987654321, 0x0123456789abcdef};
     uint64_t result_index = UINT64_MAX;
 
-    Poseidon2GoldilocksGrinding::grinding(result_index, in, n_bits);
+    G::grinding(result_index, in, n_bits);
     ASSERT_NE(result_index, UINT64_MAX);
 
+    // STARK grinding contract: state[0..2] = challenge, state[3] = nonce,
+    // state[4..W-1] = 0.
+    Goldilocks::Element x[W] = {};
+    x[0] = Goldilocks::fromU64(in[0]);
+    x[1] = Goldilocks::fromU64(in[1]);
+    x[2] = Goldilocks::fromU64(in[2]);
+    x[3] = Goldilocks::fromU64(result_index);
+    Goldilocks::Element result[W];
+    G::permute(result, x, Poseidon2Mode::Scalar);
     uint64_t level = (1ULL << (64 - n_bits));
-    Goldilocks::Element x[4] = {in[0], in[1], in[2], result_index};
-    Goldilocks::Element result[4];
-    Poseidon2GoldilocksGrinding::permute(result, x, Poseidon2Mode::Scalar);
     ASSERT_LT(Goldilocks::toU64(result[0]), level);
 }
 
 // ---------------------------------------------------------------------------
-// 11. Edge: compress all-zero input
+// 11. Edge: permuteTrunc all-zero input
 // ---------------------------------------------------------------------------
 
 template<uint32_t W>
-static void compressAllZero()
+static void permuteTruncAllZero()
 {
     constexpr uint32_t C = Poseidon2Goldilocks<W>::CAPACITY;
     Goldilocks::Element in[W];
     memset(in, 0, sizeof(in));
 
     Goldilocks::Element out[C];
-    Poseidon2Goldilocks<W>::compress(out, in, Poseidon2Mode::Scalar);
+    Poseidon2Goldilocks<W>::permuteTrunc(out, in, Poseidon2Mode::Scalar);
 
     bool allZero = true;
     for (uint32_t i = 0; i < C; ++i) {
@@ -352,13 +360,13 @@ static void compressAllZero()
             break;
         }
     }
-    ASSERT_FALSE(allZero) << "compress(zeros) should not produce all-zero output (W=" << W << ")";
+    ASSERT_FALSE(allZero) << "permuteTrunc(zeros) should not produce all-zero output (W=" << W << ")";
 }
 
-TEST(Poseidon2, compress_allzero_W4)  { compressAllZero<4>();  }
-TEST(Poseidon2, compress_allzero_W8)  { compressAllZero<8>();  }
-TEST(Poseidon2, compress_allzero_W12) { compressAllZero<12>(); }
-TEST(Poseidon2, compress_allzero_W16) { compressAllZero<16>(); }
+TEST(Poseidon2, permuteTrunc_allzero_W4)  { permuteTruncAllZero<4>();  }
+TEST(Poseidon2, permuteTrunc_allzero_W8)  { permuteTruncAllZero<8>();  }
+TEST(Poseidon2, permuteTrunc_allzero_W12) { permuteTruncAllZero<12>(); }
+TEST(Poseidon2, permuteTrunc_allzero_W16) { permuteTruncAllZero<16>(); }
 
 // ---------------------------------------------------------------------------
 // 12. Edge: linearHash size=0
@@ -439,15 +447,21 @@ TEST(Poseidon2, merkletree_nrows1_W16) { merkletreeNrows1<16>(4, 16); }
 
 TEST(Poseidon2, grinding_nbits1)
 {
+    using G = Poseidon2GoldilocksGrinding;
+    constexpr uint32_t W = G::SPONGE_WIDTH;
     uint64_t in[3] = {1, 2, 3};
     uint64_t nonce = UINT64_MAX;
 
-    Poseidon2GoldilocksGrinding::grinding(nonce, in, 1);
+    G::grinding(nonce, in, 1);
     ASSERT_NE(nonce, UINT64_MAX);
 
+    Goldilocks::Element x[W] = {};
+    x[0] = Goldilocks::fromU64(in[0]);
+    x[1] = Goldilocks::fromU64(in[1]);
+    x[2] = Goldilocks::fromU64(in[2]);
+    x[3] = Goldilocks::fromU64(nonce);
+    Goldilocks::Element result[W];
+    G::permute(result, x, Poseidon2Mode::Scalar);
     uint64_t level = (1ULL << 63);
-    Goldilocks::Element x[4] = {in[0], in[1], in[2], nonce};
-    Goldilocks::Element result[4];
-    Poseidon2GoldilocksGrinding::permute(result, x, Poseidon2Mode::Scalar);
     ASSERT_LT(Goldilocks::toU64(result[0]), level);
 }

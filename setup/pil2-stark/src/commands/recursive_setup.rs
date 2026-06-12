@@ -6,12 +6,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use indexmap::IndexMap;
 use pilout::pilout as pb;
 
 use crate::proving_key::recursive::{RecursiveSetupConfig, RecursiveTemplate};
 use crate::commands::setup::SetupOptions;
-use crate::types::stark_struct::StarkSettings;
+use crate::types::stark_struct::StarkStructsConfig;
 use crate::output::witness_gen::WitnessTracker;
 
 /// Run the recursive setup pipeline after non-recursive AIR setup.
@@ -29,7 +28,7 @@ pub(crate) fn run_recursive_setup(
     pilout: &pb::PilOut,
     pilout_name: &str,
     opts: &SetupOptions,
-    settings_map: &IndexMap<String, StarkSettings>,
+    settings_map: &StarkStructsConfig,
     global_info: serde_json::Value,
 ) -> Result<std::collections::HashSet<String>> {
     use crate::proving_key::compressed_final;
@@ -137,9 +136,7 @@ pub(crate) fn run_recursive_setup(
             let const_root_strings =
                 parse_verkey_json(&vk_path).with_context(|| format!("Failed to load verkey for air '{}'", air_name))?;
 
-            let air_settings =
-                settings_map.get(&air_name).or_else(|| settings_map.get("default")).cloned().unwrap_or_default();
-            let has_compressor = air_settings.has_compressor == Some(true);
+            let has_compressor = settings_map.has_compressor(&airgroup_name, &air_name);
             if has_compressor {
                 tracing::info!("Air '{}': hasCompressor=true from settings", air_name);
             }
@@ -161,9 +158,11 @@ pub(crate) fn run_recursive_setup(
         }
 
         // Helper closure: runs compressor (if needed) then recursive1 for one air.
-        // Returns (air_idx, vk_strings, Option<existing_pil_info>, has_compressor).
+        // Returns (air_idx, vk_strings, Option<existing_pil_info>, has_compressor, r1_n_bits).
         // existing_pil_info is Some only when the input `existing` was None (first air).
         // has_compressor may be upgraded to true if NeedsCompressorError fires at runtime.
+        // r1_n_bits is the recursive1 circuit size; the caller compares it against
+        // recursive2's n_bits to catch starkStruct mismatches.
         #[allow(clippy::type_complexity)]
         let run_one_air = |item: &AirItem,
                            existing: Option<(serde_json::Value, serde_json::Value, serde_json::Value)>|
@@ -172,6 +171,7 @@ pub(crate) fn run_recursive_setup(
             Vec<String>,
             Option<(serde_json::Value, serde_json::Value, serde_json::Value)>,
             bool,
+            usize,
         )> {
             let mut has_compressor = item.has_compressor;
             let mut compressor_result: Option<crate::proving_key::recursive::RecursiveSetupResult> = None;
@@ -180,6 +180,7 @@ pub(crate) fn run_recursive_setup(
                 tracing::info!("Running compressor setup for air '{}'", item.air_name);
                 let cfg = RecursiveSetupConfig {
                     build_dir,
+                    hash: &opts.hash,
                     template: RecursiveTemplate::Compressor,
                     airgroup_name: &airgroup_name,
                     airgroup_id: ag_idx,
@@ -221,6 +222,7 @@ pub(crate) fn run_recursive_setup(
 
             let r1_cfg = RecursiveSetupConfig {
                 build_dir,
+                hash: &opts.hash,
                 template: RecursiveTemplate::Recursive1,
                 airgroup_name: &airgroup_name,
                 airgroup_id: ag_idx,
@@ -271,6 +273,7 @@ pub(crate) fn run_recursive_setup(
                     tracing::info!("Running compressor setup (auto-retry) for air '{}'", item.air_name);
                     let retry_cfg = RecursiveSetupConfig {
                         build_dir,
+                        hash: &opts.hash,
                         template: RecursiveTemplate::Compressor,
                         airgroup_name: &airgroup_name,
                         airgroup_id: ag_idx,
@@ -307,6 +310,7 @@ pub(crate) fn run_recursive_setup(
 
                     let r1_retry_cfg = RecursiveSetupConfig {
                         build_dir,
+                        hash: &opts.hash,
                         template: RecursiveTemplate::Recursive1,
                         airgroup_name: &airgroup_name,
                         airgroup_id: ag_idx,
@@ -352,11 +356,12 @@ pub(crate) fn run_recursive_setup(
                 None
             };
 
-            Ok((item.air_idx, vk_str, produced_pil_info, has_compressor))
+            Ok((item.air_idx, vk_str, produced_pil_info, has_compressor, r1_result.n_bits))
         };
 
         // --- air[0]: run serially to produce existing_pil_info ---
-        let (_, first_vk, first_pil_info, first_hc) = run_one_air(&air_items[0], ag_existing_pil_info[ag_idx].clone())?;
+        let (_, first_vk, first_pil_info, first_hc, first_air_r1_n_bits) =
+            run_one_air(&air_items[0], ag_existing_pil_info[ag_idx].clone())?;
         if first_hc {
             airs_with_compressor.insert(air_items[0].air_name.clone());
         }
@@ -381,7 +386,7 @@ pub(crate) fn run_recursive_setup(
                 air_items[1..]
                     .par_iter()
                     .map(|item| {
-                        let (air_idx, vk, _, hc) = run_one_air(item, existing_for_rest.clone())?;
+                        let (air_idx, vk, _, hc, _) = run_one_air(item, existing_for_rest.clone())?;
                         Ok((air_idx, item.air_name.clone(), vk, hc))
                     })
                     .collect()
@@ -425,6 +430,7 @@ pub(crate) fn run_recursive_setup(
             tracing::info!("Running recursive2 for airgroup '{}'", airgroup_name);
             let r2_config = RecursiveSetupConfig {
                 build_dir,
+                hash: &opts.hash,
                 template: RecursiveTemplate::Recursive2,
                 airgroup_name: &airgroup_name,
                 airgroup_id: ag_idx,
@@ -447,9 +453,23 @@ pub(crate) fn run_recursive_setup(
                 circom_helpers_dir: &circom_helpers_dir,
             };
 
-            crate::proving_key::recursive::gen_recursive_setup(&r2_config, &witness_tracker)
+            let r2_result = crate::proving_key::recursive::gen_recursive_setup(&r2_config, &witness_tracker)
                 .with_context(|| format!("Recursive2 setup failed for airgroup '{}'", airgroup_name))?;
-            tracing::info!("Recursive2 setup complete for airgroup '{}'", airgroup_name);
+
+            if r2_result.n_bits != first_air_r1_n_bits {
+                anyhow::bail!(
+                    "Recursive2 n_bits ({}) does not match recursive1 n_bits ({}) for airgroup '{}' \
+                     (first air '{}'). The recursive2 circuit must be sized identically to recursive1; \
+                     a mismatch usually means the recursive2 starkStruct is inconsistent with recursive1's, \
+                     or recursive2's circom expands to a different row count than expected.",
+                    r2_result.n_bits,
+                    first_air_r1_n_bits,
+                    airgroup_name,
+                    first_air_name,
+                );
+            }
+
+            tracing::info!("Recursive2 setup complete for airgroup '{}' (n_bits={})", airgroup_name, r2_result.n_bits);
         }
     }
 
@@ -457,6 +477,7 @@ pub(crate) fn run_recursive_setup(
     tracing::info!("Running final setup...");
     let final_config = final_setup::FinalSetupConfig {
         build_dir,
+        hash: &opts.hash,
         global_info: &global_info,
         global_constraints: &global_constraints,
         circom_exec: &circom_exec,
@@ -483,6 +504,7 @@ pub(crate) fn run_recursive_setup(
 
         let compressed_config = compressed_final::CompressedFinalConfig {
             build_dir,
+            hash: &opts.hash,
             name: pilout_name,
             const_root: &const_root_str,
             verification_keys: &[],
@@ -640,7 +662,8 @@ mod tests {
         let build_dir = tmp.join("build");
         let pk_dir = build_dir.join("provingKey");
         std::fs::create_dir_all(&pk_dir).unwrap();
-        std::fs::write(pk_dir.join("pilout.globalInfo.json"), r#"{"name":"zisk","nPublics":68}"#).unwrap();
+        std::fs::write(pk_dir.join("pilout.globalInfo.json"), r#"{"name":"zisk","nPublics":68,"hash":"Poseidon2"}"#)
+            .unwrap();
 
         let pilout = pb::PilOut::decode(std::fs::read(&pilout_path).unwrap().as_slice()).unwrap();
         let opts = SetupOptions {
@@ -652,8 +675,9 @@ mod tests {
             recursive_jobs: 1,
             setup_jobs: 1,
             stats_output_path: None,
+            hash: "Poseidon2".to_string(),
         };
-        let result = run_recursive_setup(&pilout, "zisk", &opts, &IndexMap::new(), serde_json::json!({}));
+        let result = run_recursive_setup(&pilout, "zisk", &opts, &StarkStructsConfig::default(), serde_json::json!({}));
         assert!(result.is_err());
         assert!(format!("{:#}", result.unwrap_err()).contains("globalConstraints.json not found"));
         let _ = std::fs::remove_dir_all(&tmp);
@@ -675,7 +699,7 @@ mod tests {
         std::fs::create_dir_all(&pk_dir).unwrap();
         let ginfo = build_dir.join("provingKey");
         std::fs::write(ginfo.join("pilout.globalInfo.json"),
-            r#"{"name":"zisk","nPublics":68,"numProofValues":[8],"proofValuesMap":[],"publicsMap":[],"airGroupsInfo":[{"airGroupId":0,"nAirs":35}],"aggTypes":[[]]}"#
+            r#"{"name":"zisk","nPublics":68,"numProofValues":[8],"proofValuesMap":[],"publicsMap":[],"airGroupsInfo":[{"airGroupId":0,"nAirs":35}],"aggTypes":[[]],"hash":"Poseidon2"}"#
         ).unwrap();
         std::fs::write(ginfo.join("pilout.globalConstraints.json"), r#"{"constraints":[],"hints":[]}"#).unwrap();
         std::fs::write(pk_dir.join("Dma.starkinfo.json"), r#"{"nStages":2}"#).unwrap();
@@ -691,8 +715,9 @@ mod tests {
             recursive_jobs: 1,
             setup_jobs: 1,
             stats_output_path: None,
+            hash: "Poseidon2".to_string(),
         };
-        let result = run_recursive_setup(&pilout, "zisk", &opts, &IndexMap::new(), serde_json::json!({}));
+        let result = run_recursive_setup(&pilout, "zisk", &opts, &StarkStructsConfig::default(), serde_json::json!({}));
         assert!(result.is_err());
         let msg = format!("{:#}", result.unwrap_err());
         assert!(msg.contains("verkey") || msg.contains("not found"));
@@ -715,7 +740,8 @@ mod tests {
         let build_dir = tmp.join("build");
         let pk_dir = build_dir.join("provingKey");
         std::fs::create_dir_all(&pk_dir).unwrap();
-        std::fs::write(pk_dir.join("pilout.globalInfo.json"), r#"{"name":"test","nPublics":0}"#).unwrap();
+        std::fs::write(pk_dir.join("pilout.globalInfo.json"), r#"{"name":"test","nPublics":0,"hash":"Poseidon2"}"#)
+            .unwrap();
         std::fs::write(pk_dir.join("pilout.globalConstraints.json"), r#"{"constraints":[],"hints":[]}"#).unwrap();
 
         let pilout_path = tmp.join("test.pilout");
@@ -732,8 +758,9 @@ mod tests {
             recursive_jobs: 1,
             setup_jobs: 1,
             stats_output_path: None,
+            hash: "Poseidon2".to_string(),
         };
-        let result = run_recursive_setup(&pilout, "test", &opts, &IndexMap::new(), serde_json::json!({}));
+        let result = run_recursive_setup(&pilout, "test", &opts, &StarkStructsConfig::default(), serde_json::json!({}));
         assert!(result.is_err());
         let msg = format!("{:#}", result.unwrap_err());
         assert!(msg.contains("starkinfo/verifierinfo not found"), "unexpected error: {}", msg);

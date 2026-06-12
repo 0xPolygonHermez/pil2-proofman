@@ -14,16 +14,25 @@ use stark_recurser::stark2circom::{
 
 // ── pil2circom ───────────────────────────────────────────────────────────────
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone)]
 pub struct Pil2CircomOptions {
-    /// Omit the `component main` line so the file can be `include`d.
     pub skip_main: bool,
-    /// Pass the constant root as a public input instead of embedding it.
     pub verkey_input: bool,
-    /// Emit an `enable` input signal.
     pub enable_input: bool,
-    /// Pass challenges as public inputs.
     pub input_challenges: bool,
+    pub hash: String,
+}
+
+impl Default for Pil2CircomOptions {
+    fn default() -> Self {
+        Self {
+            skip_main: false,
+            verkey_input: false,
+            enable_input: false,
+            input_challenges: false,
+            hash: proofman_common::hash_family::DEFAULT_HASH_ID.to_string(),
+        }
+    }
 }
 
 /// Generate a stark verifier circom using the in-process Rust implementation.
@@ -40,6 +49,7 @@ pub fn pil2circom(
         input_challenges: opts.input_challenges,
         fri_queries_batch_size: None,
         multi_fri: false,
+        hash: opts.hash.clone(),
     };
     let root: Option<&[String; 4]> = if opts.verkey_input { None } else { Some(const_root) };
     gen_stark_verifier(root, stark_info, verifier_info, &rust_opts).context("gen_stark_verifier failed")
