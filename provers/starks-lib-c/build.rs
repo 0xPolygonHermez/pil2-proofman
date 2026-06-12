@@ -19,6 +19,8 @@ fn detect_gpu() -> bool {
 fn main() {
     // CUDA arch resolution lives entirely in pil2-stark/Makefile
     println!("cargo:rerun-if-env-changed=CUDA_ARCHS");
+    println!("cargo:rerun-if-env-changed=CUDA_ARCH");
+    println!("cargo:rerun-if-env-changed=CUDA_GENCODE_FLAGS");
 
     // Force this script to run on every cargo build: the bump file is
     // rewritten on each run, so its mtime always post-dates the previous
@@ -100,18 +102,16 @@ fn main() {
     let auto_detect = cuda_env == "CUDA_ARCHS=;CUDA_ARCH=;CUDA_GENCODE_FLAGS=";
     let host_arch = if use_gpu && auto_detect { host_gpu_arch() } else { None };
 
-    // The Makefile's auto-detect fallback only warns on make's stderr, which
-    // cargo hides on success — surface the multi-arch fallback as a cargo
-    // warning so it is visible in the console.
-    if use_gpu && auto_detect && host_arch.is_none() {
-        println!(
-            "cargo:warning=[BUILD INFO] no GPU visible (nvidia-smi probe failed) — building for all major CUDA archs; set CUDA_ARCHS explicitly to suppress this warning"
-        );
-    }
-
     let gpu_changed = use_gpu && auto_detect && {
         let stamp = fs::read_to_string(pil2_stark_path.join(".cuda_arch_stamp")).unwrap_or_default();
-        host_arch.as_ref().is_none_or(|arch| !stamp.contains(&format!("code=sm_{arch}")))
+        match &host_arch {
+            // Concrete arch detected: rebuild iff the last build doesn't cover it.
+            Some(arch) => !stamp.contains(&format!("code=sm_{arch}")),
+            // No arch detected: the Makefile falls back to the multi-arch build.
+            // Rebuild only if the previous build was single-arch (or absent), so
+            // GPU-less hosts settle on the fallback instead of rebuilding forever.
+            None => stamp.matches("code=sm_").count() <= 1,
+        }
     };
 
     let lib_mtime = fs::metadata(&lib_file).and_then(|m| m.modified()).ok();

@@ -9,6 +9,14 @@ ifeq ($(MAKECMDGOALS),)
 else ifneq ($(filter-out clean,$(MAKECMDGOALS)),)
     NEED_CUDA_ARCH := 1
 endif
+
+comma := ,
+
+# GNU make carries 'n' in the first word of MAKEFLAGS under --dry-run;
+# parse-time $(shell) side effects (stamp write, object wipe) must not fire.
+ifneq ($(findstring n,$(filter-out --%,$(firstword -$(MAKEFLAGS)))),)
+    MAKE_DRY_RUN := 1
+endif
 ifneq ($(UNAME_S),Darwin)
     
     ROOT_DIR := $(dir $(realpath $(firstword $(MAKEFILE_LIST))))
@@ -21,11 +29,12 @@ ifneq ($(UNAME_S),Darwin)
     ifdef CUDA_GENCODE_FLAGS
         $(info CUDA_GENCODE_FLAGS defined externally: $(CUDA_GENCODE_FLAGS))
     else ifneq ($(strip $(CUDA_ARCHS)),)
-        ifeq ($(shell echo $(strip $(CUDA_ARCHS)) | tr A-Z a-z),major)
+        CUDA_ARCHS_LC := $(subst M,m,$(subst A,a,$(subst J,j,$(subst O,o,$(subst R,r,$(strip $(CUDA_ARCHS)))))))
+        ifeq ($(CUDA_ARCHS_LC),major)
             CUDA_ARCH_LIST := $(CUDA_MAJOR_ARCHS)
         else
-            CUDA_ARCH_LIST := $(shell echo $(CUDA_ARCHS) | tr ',' ' ')
-            ifeq ($(strip $(CUDA_ARCH_LIST)),)
+            CUDA_ARCH_LIST := $(strip $(subst $(comma), ,$(CUDA_ARCHS)))
+            ifeq ($(CUDA_ARCH_LIST),)
                 $(error CUDA_ARCHS is set but contains no architectures — expected integers (e.g. '89', '89,120') or 'major')
             endif
         endif
@@ -46,7 +55,7 @@ ifneq ($(UNAME_S),Darwin)
             $(info Auto-detected $(CUDA_ARCH), gencode flags set)
         else
             CUDA_ARCH_LIST := $(CUDA_MAJOR_ARCHS)
-            $(warning CUDA arch auto-detection failed (no GPU visible?), falling back to major archs: $(CUDA_ARCH_LIST))
+            $(warning CUDA arch auto-detection failed — building for all major archs: $(CUDA_ARCH_LIST))
         endif
     endif
 
@@ -56,10 +65,14 @@ ifneq ($(UNAME_S),Darwin)
     # the lineages are NOT cross-compatible, so each needs its own PTX for
     # forward compatibility with future GPUs.
     ifneq ($(strip $(CUDA_ARCH_LIST)),)
-        CUDA_BAD_ARCH := $(firstword $(shell printf '%s\n' $(CUDA_ARCH_LIST) | grep -vE '^[0-9]+$$'))
+        # Validate with make text functions before anything reaches the shell:
+        # a token is numeric iff stripping all digits leaves nothing.
+        strip-digits = $(subst 0,,$(subst 1,,$(subst 2,,$(subst 3,,$(subst 4,,$(subst 5,,$(subst 6,,$(subst 7,,$(subst 8,,$(subst 9,,$(1)))))))))))
+        CUDA_BAD_ARCH := $(strip $(foreach a,$(CUDA_ARCH_LIST),$(if $(call strip-digits,$(a)),$(a))))
         ifneq ($(CUDA_BAD_ARCH),)
-            $(error CUDA_ARCHS contains invalid entry '$(CUDA_BAD_ARCH)' — expected integers (e.g. '89', '89,120') or 'major')
+            $(error CUDA_ARCHS contains invalid entry '$(firstword $(CUDA_BAD_ARCH))' — expected integers (e.g. '89', '89,120') or 'major')
         endif
+        # Numeric sort + dedup; safe to shell out now, the list is digits-only.
         CUDA_ARCH_LIST := $(shell printf '%s\n' $(CUDA_ARCH_LIST) | sort -n -u)
         CUDA_PTX_ARCHS := $(lastword $(filter 10% 11%,$(CUDA_ARCH_LIST))) $(lastword $(filter-out 10% 11%,$(CUDA_ARCH_LIST)))
         CUDA_GENCODE_FLAGS := $(foreach a,$(CUDA_ARCH_LIST),-gencode arch=compute_$(a),code=sm_$(a)) \
@@ -204,12 +217,14 @@ else ifeq ($(UNAME_S),Linux)
     CUDA_ARCH_STAMP := .cuda_arch_stamp
     LAST_CUDA_FLAGS := $(shell cat $(CUDA_ARCH_STAMP) 2>/dev/null)
     ifneq ($(LAST_CUDA_FLAGS),$(strip $(CUDA_GENCODE_FLAGS)))
-        HAVE_GPU_OBJS := $(shell find $(BUILD_DIR_GPU) -name '*.o' -print -quit 2>/dev/null)
-        ifneq ($(HAVE_GPU_OBJS),)
-            $(warning CUDA gencode flags changed — removing stale GPU objects ($(BUILD_DIR_GPU), $(LIB_DIR_GPU)))
-            CUDA_ARCH_CLEAN := $(shell rm -rf $(BUILD_DIR_GPU) $(LIB_DIR_GPU))
+        ifndef MAKE_DRY_RUN
+            HAVE_GPU_OBJS := $(shell find $(BUILD_DIR_GPU) -name '*.o' -print -quit 2>/dev/null)
+            ifneq ($(HAVE_GPU_OBJS),)
+                $(warning CUDA gencode flags changed — removing stale GPU objects ($(BUILD_DIR_GPU), $(LIB_DIR_GPU)))
+                CUDA_ARCH_CLEAN := $(shell rm -rf $(BUILD_DIR_GPU) $(LIB_DIR_GPU))
+            endif
+            CUDA_ARCH_WRITE := $(shell echo '$(strip $(CUDA_GENCODE_FLAGS))' > $(CUDA_ARCH_STAMP))
         endif
-        CUDA_ARCH_WRITE := $(shell echo '$(strip $(CUDA_GENCODE_FLAGS))' > $(CUDA_ARCH_STAMP))
     endif
     endif # NEED_CUDA_ARCH
 
