@@ -390,20 +390,24 @@ impl<F: PrimeField64> ProofCtx<F> {
                                 return Err(ProofmanError::ProofmanError(error_message));
                             }
 
-                            let error_message = format!(
-                                "Error: The custom commit file for {} at '{}' exists but is invalid or corrupted.\n\
-                                Please regenerate it by running:\n\
-                                \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
-                                custom_commit.name,
-                                custom_file_path.display(),
-                            );
-
                             let size = custom_commit_size_c((&setup.p_setup).into(), commit_id as u64) as usize;
+                            let expected_size = (size + 4) * 8;
 
                             match fs::metadata(custom_file_path) {
                                 Ok(metadata) => {
                                     let actual_size = metadata.len() as usize;
-                                    if actual_size != (size + 4) * 8 {
+                                    if actual_size != expected_size {
+                                        let error_message = format!(
+                                            "Error: The custom commit file for {} at '{}' has the wrong size for the current proving key \
+                                            (expected {} bytes, found {} bytes). It was most likely generated with different setup \
+                                            parameters (blowup factor, merkle tree arity, hash mode) or is stale/corrupted.\n\
+                                            Please regenerate it by running:\n\
+                                            \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
+                                            custom_commit.name,
+                                            custom_file_path.display(),
+                                            expected_size,
+                                            actual_size,
+                                        );
                                         tracing::warn!("{}", error_message);
                                         return Err(ProofmanError::ProofmanError(error_message));
                                     }
