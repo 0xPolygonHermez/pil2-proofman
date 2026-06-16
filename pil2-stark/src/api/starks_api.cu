@@ -433,9 +433,12 @@ uint64_t gen_device_streams_gpu(void *d_buffers_, uint64_t n_streams, uint64_t n
 
 void reset_device_streams_gpu(void *d_buffers_) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-   
+
     for(uint64_t i=0; i< d_buffers->n_total_streams; ++i){
         d_buffers->streamsData[i].instanceId = -1;
+        d_buffers->streamsData[i].airgroupId = (uint64_t)-1;
+        d_buffers->streamsData[i].airId = (uint64_t)-1;
+        d_buffers->streamsData[i].proofType = "";
         d_buffers->streamsData[i].reset(true);
     }
 }
