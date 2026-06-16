@@ -8,6 +8,8 @@
 #include "goldilocks_cubic_extension.hpp"
 #include "goldilocks_cubic_extension.cuh"
 #include "proof2zkinStark.hpp"
+#include <cstdlib>
+#include <cstdio>
 
 Goldilocks::Element omegas_inv_[33] = {
     0x1,
@@ -1249,8 +1251,51 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, ui
         }
     }
 
+    // ── DEBUG PROBE (always on) ────────────────────────────────────────────────
+    // The constant-poly query openings and the evals are deterministic functions
+    // of (air, query indices). The query indices are derived from the transcript,
+    // which is identical across proofs of the same statement. So for a FIXED air,
+    // the const openings must be identical whenever the query rows match.
+    //
+    // Under the multi-worker corruption we are chasing, the same air produces
+    // DIFFERENT const-opening / eval checksums across instances. This probe logs a
+    // checksum of the const-tree opening block and the evals block, with air +
+    // instance identity, so we can see (a) whether they vary for the same air and
+    // (b) which instances were in flight together.
+    {
+        auto fnv = [](const Goldilocks::Element *p, uint64_t n) -> uint64_t {
+            uint64_t h = 0xcbf29ce484222325ULL;
+            for (uint64_t i = 0; i < n; i++) { h ^= Goldilocks::toU64(p[i]); h *= 0x100000001b3ULL; }
+            return h;
+        };
+        // Const-tree openings live at tree index nStages+1 in the query buffer.
+        // Each tree occupies nQueries * maxProofBuffSize elements; the leaf values
+        // (width = nConstants) sit at the start of each per-query slot.
+        uint64_t constTreeIdx = setupCtx.starkInfo.nStages + 1;
+        uint64_t maxBuff = setupCtx.starkInfo.maxProofBuffSize;
+        uint64_t nQ = setupCtx.starkInfo.starkStruct.nQueries;
+        uint64_t cw = setupCtx.starkInfo.nConstants;
+        Goldilocks::Element *constQ = &queries[constTreeIdx * nQ * maxBuff];
+        // checksum only the leaf-value columns of every query (the s0_valsC region)
+        uint64_t hConst = 0xcbf29ce484222325ULL;
+        for (uint64_t q = 0; q < nQ; q++) {
+            uint64_t hq = fnv(&constQ[q * maxBuff], cw);
+            hConst ^= hq; hConst *= 0x100000001b3ULL;
+        }
+        uint64_t hEvals = fnv(evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
+        // committed const root (verkey) for cross-check — last_levels[nStages+1] top
+        printf("[PROOF_PROBE] air=(%lu,%lu) inst=%lu nQ=%lu constW=%lu "
+               "constOpeningsChk=0x%016lx evalsChk=0x%016lx root1=0x%016lx\n",
+               (unsigned long)airgroupId, (unsigned long)airId, (unsigned long)instanceId,
+               (unsigned long)nQ, (unsigned long)cw,
+               (unsigned long)hConst, (unsigned long)hEvals,
+               (unsigned long)Goldilocks::toU64(proof.proof.roots[0][0]));
+        fflush(stdout);
+    }
+    // ───────────────────────────────────────────────────────────────────────────
+
     proof.proof.setEvals(evals);
-    proof.proof.setAirgroupValues(airgroupValues); 
+    proof.proof.setAirgroupValues(airgroupValues);
     proof.proof.setAirValues(airValues);
     proof.proof.fri.setPol(finalPol, finalPolDegree);
     proof.proof.setNonce(nonce.fe);

@@ -8,6 +8,9 @@
 #include "starks_api_internal.hpp"
 #include <cstring>
 #include <thread>
+#include <atomic>
+#include <cstdlib>
+#include <cstdio>
 #include <util/gpu_t.cuh>
 
 
@@ -33,6 +36,56 @@ extern uint64_t getFinalSnarkProtocolIdGPU(void *snark_prover);
 
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive = false, bool force_recursive = false);
 void reserveStream(DeviceCommitBuffers* d_buffers, uint32_t streamId);
+
+// ── DEBUG PROBE (always on) ────────────────────────────────────────────────────
+// Logs, at every proof launch, everything needed to reconstruct the multi-worker
+// corruption OFFLINE from a single deploy:
+//  - which (air, instance) and proofType
+//  - streamId / localStreamId / recursive flag / gpuId  (who shares what)
+//  - the d_aux_trace, d_const_tree, d_const_pols buffer ADDRESSES  (detect two
+//    concurrent proofs landing on the SAME buffer => aliasing)
+//  - the reuse_constants / stored_tree decisions  (detect a skipped const load)
+//  - a monotonically increasing launch sequence number  (order/overlap)
+//  - which OTHER streams are currently in-flight (status==1/2) at launch time
+// Pair this with the writeProof probe (const-openings + evals checksums) to see
+// whether the SAME air produced DIFFERENT openings, and which launches overlapped.
+static std::atomic<uint64_t> g_probe_seq{0};
+static inline void proofLaunchProbe(const char *tag, DeviceCommitBuffers *d_buffers, uint32_t streamId,
+                                    uint64_t airgroupId, uint64_t airId, uint64_t instanceId,
+                                    const char *proofType, bool reuse_constants, bool stored_tree,
+                                    const void *d_aux_trace, const void *d_const_tree, const void *d_const_pols,
+                                    uint64_t prevAirgroupId, uint64_t prevAirId) {
+    uint64_t seq = g_probe_seq.fetch_add(1);
+    // prevAir* = the air that previously occupied this stream's buffer. If reuse_const=1 the
+    // const tree load is SKIPPED, trusting the prev occupant's const tree is still resident.
+    // A reuse_const=1 where prevAir != current air would be a smoking gun for stale-const reuse.
+    bool reuse_mismatch = reuse_constants && (prevAirgroupId != airgroupId || prevAirId != airId);
+    // snapshot which streams are busy right now (best-effort, lock-free read)
+    char busy[512]; int bp = 0;
+    for (uint64_t i = 0; i < d_buffers->n_total_streams && bp < 480; i++) {
+        int st = d_buffers->streamsData[i].status;
+        if (st == 1 || st == 2) {
+            bp += snprintf(busy + bp, sizeof(busy) - bp, "%lu(a%lu/%lu,s%d) ",
+                           (unsigned long)i,
+                           (unsigned long)d_buffers->streamsData[i].airgroupId,
+                           (unsigned long)d_buffers->streamsData[i].airId, st);
+        }
+    }
+    busy[bp] = '\0';
+    printf("[PROOF_PROBE LAUNCH seq=%lu] %s air=(%lu,%lu) inst=%lu type=%s "
+           "stream=%u local=%u rec=%d gpu=%u reuse_const=%d stored_tree=%d prev_air=(%lu,%lu)%s "
+           "aux_trace=%p const_tree=%p const_pols=%p | inflight: %s\n",
+           (unsigned long)seq, tag,
+           (unsigned long)airgroupId, (unsigned long)airId, (unsigned long)instanceId, proofType,
+           streamId, d_buffers->streamsData[streamId].localStreamId,
+           (int)d_buffers->streamsData[streamId].recursive, d_buffers->streamsData[streamId].gpuId,
+           (int)reuse_constants, (int)stored_tree,
+           (unsigned long)prevAirgroupId, (unsigned long)prevAirId,
+           reuse_mismatch ? " <<< REUSE_MISMATCH" : "",
+           d_aux_trace, d_const_tree, d_const_pols, busy);
+    fflush(stdout);
+}
+// ───────────────────────────────────────────────────────────────────────────────
 void closeStreamTimer(TimerGPU &timer, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, bool isProve);
 void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId);
@@ -609,6 +662,8 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][proofType][gpuLocalId];
 
     bool reuse_constants = !air_instance_info->stored_tree && d_buffers->streamsData[streamId].airgroupId == airgroupId && d_buffers->streamsData[streamId].airId == airId && d_buffers->streamsData[streamId].proofType == string("basic");
+    uint64_t probePrevAg = d_buffers->streamsData[streamId].airgroupId;  // PROBE: capture prev occupant before overwrite
+    uint64_t probePrevAir = d_buffers->streamsData[streamId].airId;
 
     d_buffers->streamsData[streamId].pSetupCtx = pSetupCtx_;
     d_buffers->streamsData[streamId].proofBuffer = proofBuffer;
@@ -676,6 +731,9 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     }
 
 
+    proofLaunchProbe("basic", d_buffers, streamId, airgroupId, airId, instanceId, "basic",
+                     reuse_constants, air_instance_info->stored_tree, d_aux_trace, d_const_tree, d_const_pols,
+                     probePrevAg, probePrevAir);
     genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, skipRecalculation, timer, stream, false, reuse_constants);
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
@@ -916,6 +974,8 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][string(proofType)][gpuLocalId];
 
     bool reuse_constants = !air_instance_info->stored_tree && d_buffers->streamsData[streamId].airgroupId == airgroupId && d_buffers->streamsData[streamId].airId == airId && d_buffers->streamsData[streamId].proofType == string(proofType);
+    uint64_t probePrevAg = d_buffers->streamsData[streamId].airgroupId;  // PROBE: capture prev occupant before overwrite
+    uint64_t probePrevAir = d_buffers->streamsData[streamId].airId;
 
     d_buffers->streamsData[streamId].pSetupCtx = pSetupCtx_;
     d_buffers->streamsData[streamId].proofBuffer = proofBuffer;
@@ -944,6 +1004,9 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
         }
     }
 
+    proofLaunchProbe(proofType, d_buffers, streamId, airgroupId, airId, instanceId, proofType,
+                     reuse_constants, air_instance_info->stored_tree, d_aux_trace, d_const_tree, d_const_pols,
+                     probePrevAg, probePrevAir);
     genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, constTreePath, streamId, instanceId, d_buffers, air_instance_info, false, timer, stream, true, reuse_constants);
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
