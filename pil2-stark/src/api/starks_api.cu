@@ -849,6 +849,16 @@ void calculate_trace_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_
 
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
 
+    // PROBE: contributions trace-calc writes this basic-pool buffer WITHOUT setting proofType.
+    // Static analysis shows its writes overlap a compressor's const-tree region [0..240M).
+    // Log the buffer so we can see it clobber a stream a compressor later reuses with reuse_const=1.
+    printf("[PROOF_PROBE BUFWRITE seq=%lu] fn=calc_trace_instance air=(%lu,%lu) stream=%lu local=%lu gpu=%u "
+           "aux_trace=%p stream_proofType_label_unchanged\n",
+           (unsigned long)g_probe_seq.fetch_add(1), (unsigned long)airgroupId, (unsigned long)airId,
+           (unsigned long)streamId, (unsigned long)d_buffers->streamsData[streamId].localStreamId,
+           d_buffers->streamsData[streamId].gpuId, (void*)d_aux_trace);
+    fflush(stdout);
+
     calculateTraceInstance(*setupCtx, d_aux_trace, streamId, d_buffers, air_instance_info, params->airgroupValues, timer, stream);
 }
 
@@ -870,6 +880,14 @@ void verify_constraints_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airI
     TimerGPU &timer = d_buffers->streamsData[streamId].timer;
 
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+
+    // PROBE: verify_constraints also writes a basic-pool buffer without setting proofType.
+    printf("[PROOF_PROBE BUFWRITE seq=%lu] fn=verify_constraints air=(%lu,%lu) stream=%lu local=%lu gpu=%u "
+           "aux_trace=%p stream_proofType_label_unchanged\n",
+           (unsigned long)g_probe_seq.fetch_add(1), (unsigned long)airgroupId, (unsigned long)airId,
+           (unsigned long)streamId, (unsigned long)d_buffers->streamsData[streamId].localStreamId,
+           d_buffers->streamsData[streamId].gpuId, (void*)d_aux_trace);
+    fflush(stdout);
 
     verifyConstraintsGPU(*setupCtx, d_aux_trace, streamId, d_buffers, air_instance_info, (ConstraintInfo *)constraintsInfo, timer, stream);
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
@@ -1318,6 +1336,13 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     TimerStartGPU(timer, STARK_GPU_COMMIT);
 
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId][d_buffers->streamsData[streamId].localStreamId];
+    // PROBE: commit_witness sets proofType="witness" (above) and writes this basic-pool buffer.
+    printf("[PROOF_PROBE BUFWRITE seq=%lu] fn=commit_witness air=(%lu,%lu) stream=%u local=%lu gpu=%u "
+           "aux_trace=%p set_proofType=witness\n",
+           (unsigned long)g_probe_seq.fetch_add(1), (unsigned long)airgroupId, (unsigned long)airId,
+           streamId, (unsigned long)d_buffers->streamsData[streamId].localStreamId,
+           d_buffers->streamsData[streamId].gpuId, (void*)d_aux_trace);
+    fflush(stdout);
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
     uint64_t total_size = (d_buffers->packedTrace && air_instance_info->is_packed) ? air_instance_info->num_packed_words * N * sizeof(Goldilocks::Element) : sizeTrace;
@@ -1416,6 +1441,26 @@ uint64_t commit_witness_gpu(void *pSetupCtx_, void *params_, uint64_t instanceId
         Goldilocks::Element *pinned_exps_args = d_buffers->streamsData[streamId].pinned_buffer_exps_args;
         
         calculateWitnessExpr_gpu(*setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+    }
+
+    // PROBE: the contributions/commit phase writes cm1(true) + mt1 + const-pols-unpack into this
+    // stream's d_aux_trace. If this buffer is later REUSED by a compressor/recursive proof that
+    // skips its const load (reuse_const=1), this write is the suspected corrupting writer. Log the
+    // buffer address + the byte RANGE this commit dirties so we can compare against the const-tree
+    // region [0, get_const_tree_size) of any proof that later reuses the same buffer.
+    {
+        uint64_t dirtyLo = std::min(offset_src, std::min(offset_dst, offset_mt));
+        uint64_t dirtyHi = offset_mt + tree_size;  // through the Merkle nodes
+        printf("[PROOF_PROBE COMMIT seq=%lu] air=(%lu,%lu) inst=%lu stream=%u local=%lu gpu=%u "
+               "aux_trace=%p dirties_offsets=[%lu..%lu] (cm1t=%lu mt1=%lu constUnpack=%lu)\n",
+               (unsigned long)g_probe_seq.fetch_add(1),
+               (unsigned long)airgroupId, (unsigned long)airId, (unsigned long)instanceId,
+               streamId, (unsigned long)d_buffers->streamsData[streamId].localStreamId,
+               d_buffers->streamsData[streamId].gpuId, (void*)d_aux_trace,
+               (unsigned long)dirtyLo, (unsigned long)dirtyHi,
+               (unsigned long)offset_dst, (unsigned long)offset_mt,
+               (unsigned long)setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)]);
+        fflush(stdout);
     }
 
     ntt.LDE(d_aux_trace, offset_dst, d_aux_trace, offset_src, nBits, nBitsExt, nCols, timer, stream);

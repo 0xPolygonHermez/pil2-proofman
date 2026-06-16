@@ -1283,13 +1283,30 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, ui
             hConst ^= hq; hConst *= 0x100000001b3ULL;
         }
         uint64_t hEvals = fnv(evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
-        // committed const root (verkey) for cross-check — last_levels[nStages+1] top
+        // Also checksum the STAGE trace openings (cm1/cm2/cm3 trees, indices 0..nStages) and the
+        // committed roots. This distinguishes 3 models in ONE log:
+        //   - const tree corrupted   -> hConst differs, hStageOpen + roots SAME
+        //   - transcript/challenge z differs -> hEvals differs AND query selection differs (hStageOpen differs)
+        //   - query indices differ   -> hStageOpen differs (openings of correct trees at different rows)
+        uint64_t hStageOpen = 0xcbf29ce484222325ULL;
+        for (uint64_t k = 0; k < setupCtx.starkInfo.nStages + 1; k++) {
+            Goldilocks::Element *stQ = &queries[k * nQ * maxBuff];
+            uint64_t wk = setupCtx.starkInfo.mapSectionsN["cm" + std::to_string(k + 1)];
+            for (uint64_t q = 0; q < nQ; q++) {
+                uint64_t hq = fnv(&stQ[q * maxBuff], wk);
+                hStageOpen ^= hq; hStageOpen *= 0x100000001b3ULL;
+            }
+        }
+        uint64_t r2 = Goldilocks::toU64(proof.proof.roots[1][0]);
+        uint64_t r3 = Goldilocks::toU64(proof.proof.roots[setupCtx.starkInfo.nStages][0]);
         printf("[PROOF_PROBE] air=(%lu,%lu) inst=%lu nQ=%lu constW=%lu "
-               "constOpeningsChk=0x%016lx evalsChk=0x%016lx root1=0x%016lx\n",
+               "constOpeningsChk=0x%016lx stageOpenChk=0x%016lx evalsChk=0x%016lx "
+               "root1=0x%016lx root2=0x%016lx rootQ=0x%016lx\n",
                (unsigned long)airgroupId, (unsigned long)airId, (unsigned long)instanceId,
                (unsigned long)nQ, (unsigned long)cw,
-               (unsigned long)hConst, (unsigned long)hEvals,
-               (unsigned long)Goldilocks::toU64(proof.proof.roots[0][0]));
+               (unsigned long)hConst, (unsigned long)hStageOpen, (unsigned long)hEvals,
+               (unsigned long)Goldilocks::toU64(proof.proof.roots[0][0]),
+               (unsigned long)r2, (unsigned long)r3);
         fflush(stdout);
     }
     // ───────────────────────────────────────────────────────────────────────────
