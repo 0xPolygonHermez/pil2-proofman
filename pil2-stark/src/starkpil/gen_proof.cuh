@@ -86,6 +86,12 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStartGPU(timer, STARK_STEP_0);
 
 #ifdef USE_CUDA_GRAPH
+    zklog.info("CUDA_GRAPH: enabled");
+#else
+    zklog.info("CUDA_GRAPH: disabled");
+#endif
+
+#ifdef USE_CUDA_GRAPH
     cudagraph::current() = d_buffers->streamsData[stream_id].graph_cache.get();
     cudagraph::aggressive() = recursive;
     cudaGetLastError();
