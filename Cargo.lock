@@ -919,6 +919,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "keccakf"
+version = "1.0.0-beta"
+dependencies = [
+ "fields",
+ "pil-std-lib",
+ "proofman",
+ "proofman-common",
+ "proofman-macros",
+ "rayon",
+ "tracing",
+ "witness",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
