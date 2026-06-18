@@ -596,6 +596,8 @@ void StarkInfo::setMapOffsets() {
     mapOffsets[std::make_pair("q", true)] = mapTotalN;
     mapTotalN += NExtended * FIELD_EXTENSION;
 
+    mapOffsets[std::make_pair("constraints", false)] = mapOffsets[std::make_pair("q", true)];
+
     uint64_t maxSizeHelper = 0;
     if(gpu) {
         maxSizeHelper += boundaries.size() * NExtended;

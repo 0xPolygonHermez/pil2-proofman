@@ -48,7 +48,7 @@ namespace Plonk
         auto fdPtau = std::unique_ptr<BinFile>(new BinFile(pTauFilename, "ptau", 1, true));
         if (!fdPtau->sectionExists(12))
         {
-            throw new runtime_error("Powers of Tau file is not well prepared. Section 12 missing.");
+            throw runtime_error("Powers of Tau file is not well prepared. Section 12 missing.");
         }
 
         // STEP 2. Read r1cs file
@@ -75,17 +75,10 @@ namespace Plonk
         settings.cirPower = max(FF_T_POL_DEG_MIN, log2((plonkConstraints.size() + 2) - 1) + 1);
         settings.domainSize = 1 << settings.cirPower;
 
-        fft = new FFT<AltBn128::Engine::Fr>(settings.domainSize * 4);
-
-        if (fdPtau->getSectionSize(2) < (settings.domainSize + 6) * sG1)
-        { // TODO! CHECK
-            throw new runtime_error("Powers of Tau is not big enough for this circuit size. Section 2 too small.");
-        }
-        if (fdPtau->getSectionSize(3) < 2 * sG2)
-        {
-            throw new runtime_error("Powers of Tau is not well prepared. Section 3 too small (requires at least 2 G2 points).");
-        }
-
+        // Log the circuit settings before the FFT allocation and the Powers-of-Tau
+        // size checks below: if the circuit is too big for the ptau (or the FFT
+        // allocation fails), the operator still sees the circuit power / domain
+        // size / constraint count instead of a bare abort with no context.
         ostringstream ss;
         LOG_INFO("----------------------------");
         LOG_INFO("  PLONK SETUP SETTINGS");
@@ -111,6 +104,17 @@ namespace Plonk
         ss.str("");
         LOG_INFO("----------------------------");
 
+        fft = new FFT<AltBn128::Engine::Fr>(settings.domainSize * 4);
+
+        if (fdPtau->getSectionSize(2) < (settings.domainSize + 6) * sG1)
+        { // TODO! CHECK
+            throw runtime_error("Powers of Tau is not big enough for this circuit size. Section 2 too small.");
+        }
+        if (fdPtau->getSectionSize(3) < 2 * sG2)
+        {
+            throw runtime_error("Powers of Tau is not well prepared. Section 3 too small (requires at least 2 G2 points).");
+        }
+
         // Compute k1 and k2 to be used in the permutation checks
         LOG_INFO("> computing k1 and k2");
         computeK1K2();
@@ -134,7 +138,7 @@ namespace Plonk
 
         if (!r1cs.sectionExists(R1CS_CONSTRAINTS_SECTION))
         {
-            throw new runtime_error("R1CS file is not well prepared. Section 2 missing.");
+            throw runtime_error("R1CS file is not well prepared. Section 2 missing.");
         }
         // Start reading r1cs constraints section
         r1cs.startReadSection(R1CS_CONSTRAINTS_SECTION);
@@ -324,7 +328,7 @@ namespace Plonk
     {
         if (posConstraint > 2)
         {
-            throw new runtime_error("Invalid constraint position during writing witness map");
+            throw runtime_error("Invalid constraint position during writing witness map");
         }
 
         zkeyFile.startWriteSection(sectionNum);
@@ -344,7 +348,7 @@ namespace Plonk
     {
         if (posConstraint < 3 || posConstraint > 7)
         {
-            throw new runtime_error("Invalid constraint position during writing witness map");
+            throw runtime_error("Invalid constraint position during writing witness map");
         }
 
         auto name = posConstraint == 3 ? "QL" : posConstraint == 4 ? "QR"

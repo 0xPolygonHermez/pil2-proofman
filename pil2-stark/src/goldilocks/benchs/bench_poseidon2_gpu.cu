@@ -36,6 +36,47 @@ static __global__ void initTraceKernel(gl64_t *d_trace, uint64_t nRows, uint64_t
 }
 
 // ===================================================================
+// permute — single-sponge public API (<<<1,1>>> kernel). Mirrors the
+// CPU PERMUTE_W_*_CPU_BENCH pattern: one permute per iteration, with
+// per-iteration stream sync.
+// ===================================================================
+
+template<uint32_t W>
+static void PERMUTE_W_GPU_BENCH(benchmark::State &state)
+{
+    uint32_t gpu_id = 0;
+    cudaGetDevice((int *)&gpu_id);
+    Poseidon2GoldilocksGPU<W>::initConstants(&gpu_id, 1);
+
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+
+    gl64_t *d_in, *d_out;
+    CHECKCUDAERR(cudaMalloc((void **)&d_in,  Poseidon2GoldilocksGPU<W>::SPONGE_WIDTH * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_out, Poseidon2GoldilocksGPU<W>::SPONGE_WIDTH * sizeof(gl64_t)));
+
+    Goldilocks::Element h_in[Poseidon2GoldilocksGPU<W>::SPONGE_WIDTH];
+    for (uint32_t i = 0; i < Poseidon2GoldilocksGPU<W>::SPONGE_WIDTH; i++)
+        h_in[i] = Goldilocks::fromU64(i + 1);
+    CHECKCUDAERR(cudaMemcpy(d_in, h_in,
+                            Poseidon2GoldilocksGPU<W>::SPONGE_WIDTH * sizeof(gl64_t),
+                            cudaMemcpyHostToDevice));
+
+    // Warm up
+    Poseidon2GoldilocksGPU<W>::permute((uint64_t *)d_out, (uint64_t *)d_in, stream);
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    for (auto _ : state) {
+        Poseidon2GoldilocksGPU<W>::permute((uint64_t *)d_out, (uint64_t *)d_in, stream);
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
+    }
+
+    CHECKCUDAERR(cudaFree(d_in));
+    CHECKCUDAERR(cudaFree(d_out));
+    CHECKCUDAERR(cudaStreamDestroy(stream));
+}
+
+// ===================================================================
 // linearHash -- parameterized by nCols, one bench per (W, layout)
 // ===================================================================
 
@@ -221,24 +262,41 @@ static void GRINDING_GPU_BENCH(benchmark::State &state)
 // Registration
 // ===================================================================
 
-#define NCOLS_ARGS ->Arg(24)->Arg(36)->Arg(56)
+#define NCOLS_ARGS ->Arg(9)->Arg(18)->Arg(24)->Arg(36)->Arg(56)
 
-#define REG_NCOLS(FUNC, W, LABEL)                                            \
-    BENCHMARK_TEMPLATE(FUNC, W)                                              \
+#define REG_NCOLS(FUNC, W, LABEL)                                       \
+    BENCHMARK_TEMPLATE(FUNC, W)                                         \
         ->Name(LABEL)                                                        \
         ->Unit(benchmark::kMillisecond)                                      \
         NCOLS_ARGS                                                           \
         ->UseRealTime();
 
-#define REG_NCOLS_AR(FUNC, W, AR, LABEL)                                     \
-    BENCHMARK_TEMPLATE(FUNC, W, AR)                                          \
+#define REG_NCOLS_AR(FUNC, W, AR, LABEL)                                \
+    BENCHMARK_TEMPLATE(FUNC, W, AR)                                     \
         ->Name(LABEL)                                                        \
         ->Unit(benchmark::kMillisecond)                                      \
         NCOLS_ARGS                                                           \
         ->UseRealTime();
 
 // ---------------------------------------------------------------------------
-// linearHash -- W in {12,16}, layouts: Tiles, RowMajor
+// permute — W in {8, 12, 16}
+// ---------------------------------------------------------------------------
+
+BENCHMARK_TEMPLATE(PERMUTE_W_GPU_BENCH, 8)
+    ->Name("PERMUTE_W8_GPU_BENCH")
+    ->Unit(benchmark::kMicrosecond)
+    ->UseRealTime();
+BENCHMARK_TEMPLATE(PERMUTE_W_GPU_BENCH, 12)
+    ->Name("PERMUTE_W12_GPU_BENCH")
+    ->Unit(benchmark::kMicrosecond)
+    ->UseRealTime();
+BENCHMARK_TEMPLATE(PERMUTE_W_GPU_BENCH, 16)
+    ->Name("PERMUTE_W16_GPU_BENCH")
+    ->Unit(benchmark::kMicrosecond)
+    ->UseRealTime();
+
+// ---------------------------------------------------------------------------
+// linearHash — W in {12, 16}, both Tiles and RowMajor layouts
 // ---------------------------------------------------------------------------
 
 REG_NCOLS(LINEAR_HASH_W_TILES_GPU_BENCH,    12, "LINEAR_HASH_W12_TILES_GPU_BENCH")
@@ -247,7 +305,7 @@ REG_NCOLS(LINEAR_HASH_W_ROWMAJOR_GPU_BENCH, 12, "LINEAR_HASH_W12_ROWMAJOR_GPU_BE
 REG_NCOLS(LINEAR_HASH_W_ROWMAJOR_GPU_BENCH, 16, "LINEAR_HASH_W16_ROWMAJOR_GPU_BENCH")
 
 // ---------------------------------------------------------------------------
-// merkletree -- (W,arity) in {(12,3),(16,4)}, layouts: Tiles, RowMajor
+// merkletree — (W,arity) in {(12,3),(16,4)}, both layouts
 // ---------------------------------------------------------------------------
 
 REG_NCOLS_AR(MERKLETREE_W_AR_TILES_GPU_BENCH,    12, 3, "MERKLETREE_W12_AR3_TILES_GPU_BENCH")

@@ -1,0 +1,92 @@
+require "std_range_check.pil"
+
+enable_range_stats();
+
+airtemplate GetOpid1(const int N = 2**6) {
+
+    col witness a1,a2,a3,a4,a5,a6,a7;
+    col witness sel;
+
+    // 1. query_only on a never-registered range returns -1.
+    int missing = get_opid(100, 1000, query_only: 1);
+    assert(missing == -1);
+
+    // 2. Register, then query_only — same opid.
+    int reg = get_opid(100, 1000);
+    assert(reg != -1);
+    int found = get_opid(100, 1000, query_only: 1);
+    assert(found == reg);
+
+    // 3. range_check after get_opid satisfies the pending check; opids match.
+    range_check(a1, 100, 1000, sel);
+    int after = get_opid(100, 1000, query_only: 1);
+    assert(after == reg);
+
+    // 4. get_opid is idempotent for the same range.
+    int twice_1 = get_opid(50, 999);
+    int twice_2 = get_opid(50, 999);
+    assert(twice_1 == twice_2);
+    range_check(a2, 50, 999, sel);
+
+    // 5. range_check first, then get_opid(query_only=1) finds the registered opid
+    //    without arming the pending check.
+    range_check(a3, 200, 600, sel);
+    int post_rc = get_opid(200, 600, query_only: 1);
+    assert(post_rc != -1);
+
+    // 6. Predefined ranges resolve to U8AIR_OPID / U16AIR_OPID, including ranges that
+    //    get absorbed.
+    int u8_op = get_opid(0, 2**8-1, predefined: 1);
+    assert(u8_op == U8AIR_OPID);
+    range_check(a4, 0, 2**8-1, sel, predefined: 1);
+
+    int u16_op = get_opid(0, 2**16-1, predefined: 1);
+    assert(u16_op == U16AIR_OPID);
+    range_check(a5, 0, 2**16-1, sel, predefined: 1);
+
+    int missing_pred = get_opid(0, 2**5-1, predefined: 1, query_only: 1);
+    assert(missing_pred == -1);
+    int absorbed_u8 = get_opid(0, 2**5-1, predefined: 1);
+    assert(absorbed_u8 == U8AIR_OPID);
+    range_check(a6, 0, 2**5-1, sel, predefined: 1);
+
+    // 7. Non-predefined ranges receive fresh opids distinct from U8/U16.
+    int spec = get_opid(7000, 8000);
+    assert(spec != U8AIR_OPID);
+    assert(spec != U16AIR_OPID);
+    range_check(a7, 7000, 8000, sel);
+}
+
+airtemplate GetOpid2(const int N = 2**6) {
+
+    col witness m, d;
+    col witness range_sel, sel_a, sel_b;
+
+    // 8. multi_range_check satisfies the pending check for both opids.
+    int o_m1 = get_opid(1, 2**7-1);
+    int o_m2 = get_opid(2, 2**4);
+    assert(o_m1 != -1);
+    assert(o_m2 != -1);
+    assert(o_m1 != o_m2);
+    multi_range_check(m, 1, 2**7-1, 2, 2**4, range_sel);
+
+    // 9. dynamic_range_check_id registers an opid that get_opid(query_only=1) can find;
+    //    dynamic_range_check then satisfies any pending obligation.
+    int id_a = dynamic_range_check_id(1000, 5000);
+    int id_b = dynamic_range_check_id(6000, 9000);
+
+    int q_a = get_opid(1000, 5000, query_only: 1);
+    int q_b = get_opid(6000, 9000, query_only: 1);
+    assert(q_a == id_a);
+    assert(q_b == id_b);
+
+    dynamic_range_check(d, id_a * sel_a + id_b * sel_b);
+}
+
+airgroup GetOpid1 {
+    GetOpid1();
+}
+
+airgroup GetOpid2 {
+    GetOpid2();
+}

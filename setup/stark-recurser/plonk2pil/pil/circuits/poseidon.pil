@@ -1,0 +1,185 @@
+// Goldilocks Poseidon1, width 16, Hades-Goldilocks: 8 full + 22 partial rounds.
+// Sparse-matrix decomposition for partial rounds (eprint 2024/047 style).
+//
+// Round structure:
+//   Full rounds:    state ← M · S-box(state + C_round)
+//   Partial rounds: state ← S · ([S-box(state[0] + c_round)] || state[1..15])
+//   Round 3 uses the P-matrix (full→partial transition) instead of M.
+//
+// Output convention: call sites enforce output = P(input) — the PLAIN permutation,
+// with NO Davies-Meyer feed-forward (no `+ input` add-back). The sponge/compression
+// truncation to the hash digest is applied by the caller.
+
+require "circuits/poseidon_constants.pil";
+
+const int POSEIDON_WIDTH_GL = 16;
+
+function pow7(const expr input): const expr {
+    const expr input2 = input * input;
+    const expr input4 = input2 * input2;
+    const expr input6 = input4 * input2;
+    return input6 * input;
+}
+
+// DEGREE: at the ceiling. res[] = M·(pow7(deg-1) + ARC) is degree 7; sel is a sum
+// of degree-1 fixed cols. sel*(output - res) = 1 + 7 = 8 = max. Zero headroom — any
+// change that makes `sel` degree>1, or lets a pow7 argument exceed degree 1, overflows.
+function poseidonFullRoundCheckGl(const expr res[], const expr output[], const expr sel) {
+    for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
+        sel * (output[i] - res[i]) === 0;
+    }
+}
+
+// input[i] must already be S-boxed and round-constant-added by the caller.
+// Applies the full-round mix M to all 16 state lanes.
+function poseidonFullRoundGl(const expr input[]): const expr[] {
+    const expr res[POSEIDON_WIDTH_GL];
+    for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
+        res[i] = POSEIDON_M_GL[0  * POSEIDON_WIDTH_GL + i] * input[0]
+               + POSEIDON_M_GL[1  * POSEIDON_WIDTH_GL + i] * input[1]
+               + POSEIDON_M_GL[2  * POSEIDON_WIDTH_GL + i] * input[2]
+               + POSEIDON_M_GL[3  * POSEIDON_WIDTH_GL + i] * input[3]
+               + POSEIDON_M_GL[4  * POSEIDON_WIDTH_GL + i] * input[4]
+               + POSEIDON_M_GL[5  * POSEIDON_WIDTH_GL + i] * input[5]
+               + POSEIDON_M_GL[6  * POSEIDON_WIDTH_GL + i] * input[6]
+               + POSEIDON_M_GL[7  * POSEIDON_WIDTH_GL + i] * input[7]
+               + POSEIDON_M_GL[8  * POSEIDON_WIDTH_GL + i] * input[8]
+               + POSEIDON_M_GL[9  * POSEIDON_WIDTH_GL + i] * input[9]
+               + POSEIDON_M_GL[10 * POSEIDON_WIDTH_GL + i] * input[10]
+               + POSEIDON_M_GL[11 * POSEIDON_WIDTH_GL + i] * input[11]
+               + POSEIDON_M_GL[12 * POSEIDON_WIDTH_GL + i] * input[12]
+               + POSEIDON_M_GL[13 * POSEIDON_WIDTH_GL + i] * input[13]
+               + POSEIDON_M_GL[14 * POSEIDON_WIDTH_GL + i] * input[14]
+               + POSEIDON_M_GL[15 * POSEIDON_WIDTH_GL + i] * input[15];
+    }
+    return res;
+}
+
+// Full-to-partial transition layer. input[i] must already be S-boxed and round-constant-added.
+function poseidonPmatrixGl(const expr input[]): const expr[] {
+    const expr res[POSEIDON_WIDTH_GL];
+    for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
+        res[i] = POSEIDON_P_GL[0  * POSEIDON_WIDTH_GL + i] * input[0]
+               + POSEIDON_P_GL[1  * POSEIDON_WIDTH_GL + i] * input[1]
+               + POSEIDON_P_GL[2  * POSEIDON_WIDTH_GL + i] * input[2]
+               + POSEIDON_P_GL[3  * POSEIDON_WIDTH_GL + i] * input[3]
+               + POSEIDON_P_GL[4  * POSEIDON_WIDTH_GL + i] * input[4]
+               + POSEIDON_P_GL[5  * POSEIDON_WIDTH_GL + i] * input[5]
+               + POSEIDON_P_GL[6  * POSEIDON_WIDTH_GL + i] * input[6]
+               + POSEIDON_P_GL[7  * POSEIDON_WIDTH_GL + i] * input[7]
+               + POSEIDON_P_GL[8  * POSEIDON_WIDTH_GL + i] * input[8]
+               + POSEIDON_P_GL[9  * POSEIDON_WIDTH_GL + i] * input[9]
+               + POSEIDON_P_GL[10 * POSEIDON_WIDTH_GL + i] * input[10]
+               + POSEIDON_P_GL[11 * POSEIDON_WIDTH_GL + i] * input[11]
+               + POSEIDON_P_GL[12 * POSEIDON_WIDTH_GL + i] * input[12]
+               + POSEIDON_P_GL[13 * POSEIDON_WIDTH_GL + i] * input[13]
+               + POSEIDON_P_GL[14 * POSEIDON_WIDTH_GL + i] * input[14]
+               + POSEIDON_P_GL[15 * POSEIDON_WIDTH_GL + i] * input[15];
+    }
+    return res;
+}
+
+// Computes the `rounds`-step partial-chain state without emitting any constraints.
+// `sRoundOffset` indexes POSEIDON_S_GL (0 for first half, `rounds` for the second) because
+// the sparse matrix varies per round. Returns a flat array packing the chain's per-round
+// state[0] values and the final state:
+//   result[0..rounds-1]                   = sR[r][0] for r = 0..rounds-1  (per-round witness checks)
+//   result[rounds..rounds + width - 1]    = sR[rounds][i]                 (final state, output check)
+// `sRoundOffset` lets a caller compute a sub-range of rounds (it offsets into POSEIDON_S_GL);
+// both current callers pass offset 0 for a single full 22-round chain.
+//
+// DEGREE: the returned chain entries are degree 7 (intermediateValues are pow7 anchors;
+// the sparse-S recurrence only adds/scales by field constants, so degree does NOT compound
+// across rounds). The caller's check POSEIDON1_PR * (anchor - chain) is therefore 1 + 7 = 8
+// = max — at the ceiling, same caveat as the full-round check above.
+function poseidonPartialChainGl(const int rounds, const int sRoundOffset, const expr input[], const expr intermediateValues[]): const expr[] {
+    const expr sR[rounds + 1][POSEIDON_WIDTH_GL];
+    for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
+        sR[0][i] = input[i];
+    }
+
+    const int STRIDE = 2 * POSEIDON_WIDTH_GL - 1;
+
+    for (int r = 0; r < rounds; r++) {
+        const int sBase = STRIDE * (sRoundOffset + r);
+
+        // sR[r+1][0] = S[sBase] * iv[r] + sum_{j=1..15} S[sBase + j] * sR[r][j].
+        // Assigned as a single closed-form expression — const expr cannot be re-assigned.
+        sR[r + 1][0] = POSEIDON_S_GL[sBase] * intermediateValues[r]
+                     + POSEIDON_S_GL[sBase + 1]  * sR[r][1]
+                     + POSEIDON_S_GL[sBase + 2]  * sR[r][2]
+                     + POSEIDON_S_GL[sBase + 3]  * sR[r][3]
+                     + POSEIDON_S_GL[sBase + 4]  * sR[r][4]
+                     + POSEIDON_S_GL[sBase + 5]  * sR[r][5]
+                     + POSEIDON_S_GL[sBase + 6]  * sR[r][6]
+                     + POSEIDON_S_GL[sBase + 7]  * sR[r][7]
+                     + POSEIDON_S_GL[sBase + 8]  * sR[r][8]
+                     + POSEIDON_S_GL[sBase + 9]  * sR[r][9]
+                     + POSEIDON_S_GL[sBase + 10] * sR[r][10]
+                     + POSEIDON_S_GL[sBase + 11] * sR[r][11]
+                     + POSEIDON_S_GL[sBase + 12] * sR[r][12]
+                     + POSEIDON_S_GL[sBase + 13] * sR[r][13]
+                     + POSEIDON_S_GL[sBase + 14] * sR[r][14]
+                     + POSEIDON_S_GL[sBase + 15] * sR[r][15];
+
+        for (int k = 1; k < POSEIDON_WIDTH_GL; k++) {
+            sR[r + 1][k] = sR[r][k] + intermediateValues[r] * POSEIDON_S_GL[sBase + POSEIDON_WIDTH_GL + k - 1];
+        }
+    }
+
+    const expr result[rounds + POSEIDON_WIDTH_GL];
+    for (int r = 0; r < rounds; r++) {
+        result[r] = sR[r][0];
+    }
+    for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
+        result[rounds + i] = sR[rounds][i];
+    }
+    return result;
+}
+
+
+// CustPoseidon1_16 input-permutation (mirrors the circom initialSt selection in
+// CustPoseidon1_16 — same 4-cell rotation pattern as Poseidon2's poseidonInputOrder):
+//   key=00 → initialSt = in
+//   key=10 → initialSt[0..3]=in[4..7],   initialSt[4..7]=in[0..3],   rest=in
+//   key=01 → initialSt[0..3]=in[4..7],   initialSt[4..7]=in[8..11],  initialSt[8..11]=in[0..3], rest=in
+//   key=11 → initialSt[0..3]=in[4..7],   initialSt[4..7]=in[8..11],  initialSt[8..11]=in[12..15], initialSt[12..15]=in[0..3]
+//
+// Constraints emitted (all guarded by mutually-exclusive COMPRESSION / SPONGE selectors):
+//   - COMPRESSION: key bits binary, R0 = permuted(in, key)
+//   - SPONGE:      R0 = in (no permutation)
+//
+// Degrees: mask = degree 2 (product of 2 key bits); permuted = degree 3; constraint
+// = SEL * (R0 - permuted) = degree 4. Comfortably under max=8.
+function poseidon1InputOrderGl(const expr a[], const expr key[], const expr R0[], const expr SEL_COMPRESSION, const expr SEL_SPONGE) {
+    // Binary key bits (COMPRESSION only — SPONGE has key cells zero by Rust packer convention).
+    SEL_COMPRESSION * key[0] * (key[0] - 1) === 0;
+    SEL_COMPRESSION * key[1] * (key[1] - 1) === 0;
+
+    const expr mask00 = (1 - key[0]) * (1 - key[1]);
+    const expr mask10 = key[0]       * (1 - key[1]);
+    const expr mask01 = (1 - key[0]) * key[1];
+    const expr mask11 = key[0]       * key[1];
+
+    const expr permuted[POSEIDON_WIDTH_GL];
+    for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
+        if (i < 4) {
+            // 00 → a[i]; 10/01/11 → a[i+4]
+            permuted[i] = mask00 * a[i] + (mask10 + mask01 + mask11) * a[i + 4];
+        } else if (i < 8) {
+            // 00 → a[i]; 10 → a[i-4]; 01/11 → a[i+4]
+            permuted[i] = mask00 * a[i] + mask10 * a[i - 4] + (mask01 + mask11) * a[i + 4];
+        } else if (i < 12) {
+            // 00/10 → a[i]; 01 → a[i-8]; 11 → a[i+4]
+            permuted[i] = (mask00 + mask10) * a[i] + mask01 * a[i - 8] + mask11 * a[i + 4];
+        } else {
+            // 00/10/01 → a[i]; 11 → a[i-12]
+            permuted[i] = (mask00 + mask10 + mask01) * a[i] + mask11 * a[i - 12];
+        }
+    }
+
+    for (int i = 0; i < POSEIDON_WIDTH_GL; i++) {
+        SEL_COMPRESSION * (R0[i] - permuted[i]) === 0;
+        SEL_SPONGE      * (R0[i] - a[i]) === 0;
+    }
+}

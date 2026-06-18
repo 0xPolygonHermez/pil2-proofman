@@ -31,6 +31,10 @@ ifeq ($(UNAME_S),Linux)
 
 	  CXXFLAGS += -D__AVX2__
   	CXXFLAGS += -D__USE_ASSEMBLY__
+
+    # Standalone tests/benches always exercise the Poseidon2 path. Force-undef
+    # STARK_POSEIDON1 in case the environment inherited it from the outer build, like this both paths are reached
+    CXXFLAGS += -U STARK_POSEIDON1
     # Auto-enable AVX512 if the host CPU supports it
     AVX512_SUPPORTED := $(shell grep -m1 avx512f /proc/cpuinfo)
     ifneq ($(AVX512_SUPPORTED),)
@@ -43,7 +47,7 @@ ifeq ($(UNAME_S),Linux)
     BUILD_DIR_GPU := ./build_gpu
     CUDA_SRC_DIRS := ./src ../utils ./utils
     CUDA_INC_FLAGS := $(addprefix -I,$(CUDA_SRC_DIRS))
-    NVCCFLAGS := -D__USE_CUDA__ -D__GOLDILOCKS_ENV__ $(CUDA_INC_FLAGS) -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 -arch=$(CUDA_ARCH) -I./../../external/sppark/ff
+    NVCCFLAGS := -D__USE_CUDA__ -D__GOLDILOCKS_ENV__ $(CUDA_INC_FLAGS) -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 -arch=$(CUDA_ARCH) -I./../../external/sppark/ff -U STARK_POSEIDON1
 endif
 
 # Debug build flags
@@ -79,6 +83,8 @@ GPU_SRC_OBJS := $(BUILD_DIR_GPU)/src/goldilocks_base_field.cpp.o \
                 $(BUILD_DIR_GPU)/src/ntt_goldilocks.cpp.o \
                 $(BUILD_DIR_GPU)/src/poseidon2_goldilocks.cu.o \
                 $(BUILD_DIR_GPU)/src/poseidon2_goldilocks.cpp.o \
+                $(BUILD_DIR_GPU)/src/poseidon_goldilocks.cu.o \
+                $(BUILD_DIR_GPU)/src/poseidon_goldilocks.cpp.o \
                 $(BUILD_DIR_GPU)/src/goldilocks_tooling.cu.o
 
 GPU_TEST_SRCS := $(wildcard $(TEST_DIR)/*_gpu.cu)

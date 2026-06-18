@@ -32,6 +32,48 @@ pub fn register_proof_done_callback_c(tx: crossbeam_channel::Sender<(u64, String
     }
 }
 
+pub fn compute_const_tree_c(
+    const_path: &str,
+    stark_info_path: &str,
+    const_tree_path: &str,
+    verkey_path: &str,
+) -> [u64; 4] {
+    let c_const = CString::new(const_path).unwrap();
+    let c_stark_info = CString::new(stark_info_path).unwrap();
+    let c_tree = CString::new(const_tree_path).unwrap();
+    let c_verkey = CString::new(verkey_path).unwrap();
+
+    let mut root = [0u64; 4];
+    let status = unsafe {
+        build_const_tree_c(
+            c_const.as_ptr(),
+            c_stark_info.as_ptr(),
+            c_tree.as_ptr(),
+            c_verkey.as_ptr(),
+            root.as_mut_ptr(),
+        )
+    };
+    assert_eq!(
+        status, 0,
+        "build_const_tree_c failed (status {status}) for const {const_path}, starkinfo {stark_info_path}, verkey {verkey_path}"
+    );
+    root
+}
+
+pub fn generate_fflonk_zkey_c(r1cs_file: &str, ptau_file: &str, zkey_file: &str) -> i32 {
+    let c_r1cs = CString::new(r1cs_file).unwrap();
+    let c_ptau = CString::new(ptau_file).unwrap();
+    let c_zkey = CString::new(zkey_file).unwrap();
+    unsafe { fflonk_setup_c(c_r1cs.as_ptr(), c_ptau.as_ptr(), c_zkey.as_ptr()) }
+}
+
+pub fn generate_plonk_zkey_c(r1cs_file: &str, ptau_file: &str, zkey_file: &str) -> i32 {
+    let c_r1cs = CString::new(r1cs_file).unwrap();
+    let c_ptau = CString::new(ptau_file).unwrap();
+    let c_zkey = CString::new(zkey_file).unwrap();
+    unsafe { plonk_setup_c(c_r1cs.as_ptr(), c_ptau.as_ptr(), c_zkey.as_ptr()) }
+}
+
 pub fn initialize_agg_readiness_tracker_c() {
     unsafe {
         initialize_agg_readiness_tracker();
@@ -112,6 +154,15 @@ pub fn get_proof_size_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_proof_size(p_stark_info) }
 }
 
+pub fn set_hash_family_c(family: &str) {
+    let fam: u8 = match family {
+        "Poseidon1" => 1,
+        "Poseidon2" => 2,
+        other => panic!("set_hash_family_c: unknown hash family {other:?} (expected \"Poseidon1\" or \"Poseidon2\")"),
+    };
+    unsafe { set_hash_family(fam) }
+}
+
 pub fn get_proof_pinned_size_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_proof_pinned_size(p_stark_info) }
 }
@@ -176,9 +227,9 @@ pub fn load_const_tree_c(
     }
 }
 
-pub fn init_gpu_setup_c(maxBitsExt: u64) {
+pub fn init_gpu_setup_c(maxBitsExt: u64, arity: u64) {
     unsafe {
-        init_gpu_setup(maxBitsExt);
+        init_gpu_setup(maxBitsExt, arity);
     }
 }
 
@@ -611,7 +662,10 @@ pub fn commit_witness_c(
     air_id: u64,
     root: *mut u8,
     d_buffers: *mut c_void,
+    custom_commits_fixed_path: &str,
 ) -> u64 {
+    let custom_commits_path_name = CString::new(custom_commits_fixed_path).unwrap();
+    let custom_commits_path_ptr = custom_commits_path_name.as_ptr() as *mut std::os::raw::c_char;
     unsafe {
         commit_witness(
             p_setup,
@@ -621,6 +675,7 @@ pub fn commit_witness_c(
             air_id,
             root as *mut std::os::raw::c_void,
             d_buffers,
+            custom_commits_path_ptr,
         )
     }
 }
@@ -648,7 +703,10 @@ pub fn initialize_instance_c(
     instance_id: u64,
     p_steps_params: *mut u8,
     d_buffers: *mut c_void,
+    custom_commits_fixed_path: &str,
 ) -> u64 {
+    let custom_commits_path_name = CString::new(custom_commits_fixed_path).unwrap();
+    let custom_commits_path_ptr = custom_commits_path_name.as_ptr() as *mut std::os::raw::c_char;
     unsafe {
         initialize_instance(
             p_setup,
@@ -657,6 +715,7 @@ pub fn initialize_instance_c(
             instance_id,
             p_steps_params as *mut std::os::raw::c_void,
             d_buffers,
+            custom_commits_path_ptr,
         )
     }
 }
@@ -858,6 +917,7 @@ pub fn gen_proof_c(
     stream_id: u64,
     const_pols_path: &str,
     const_tree_path: &str,
+    custom_commits_fixed_path: &str,
 ) -> u64 {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -867,6 +927,9 @@ pub fn gen_proof_c(
 
     let const_tree_filename_name = CString::new(const_tree_path).unwrap();
     let const_tree_filename_ptr = const_tree_filename_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let custom_commits_path_name = CString::new(custom_commits_fixed_path).unwrap();
+    let custom_commits_path_ptr = custom_commits_path_name.as_ptr() as *mut std::os::raw::c_char;
 
     unsafe {
         gen_proof(
@@ -883,6 +946,7 @@ pub fn gen_proof_c(
             stream_id,
             const_filename_ptr,
             const_tree_filename_ptr,
+            custom_commits_path_ptr,
         )
     }
 }
@@ -1357,6 +1421,22 @@ pub fn set_gpu_mode_c(use_gpu: bool) -> bool {
 
 pub fn get_unified_buffer_gpu_c(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
     unsafe { get_unified_buffer_gpu(d_buffers) }
+}
+
+pub fn get_unified_buffer_gpu_size_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
+    unsafe { get_unified_buffer_gpu_size(d_buffers) }
+}
+
+pub fn acquire_first_gpu_buffer_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { acquire_first_gpu_buffer(d_buffers) }
+}
+
+pub fn release_first_gpu_buffer_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { release_first_gpu_buffer(d_buffers) }
+}
+
+pub fn is_first_gpu_buffer_borrowed_c(d_buffers: *mut ::std::os::raw::c_void) -> bool {
+    unsafe { is_first_gpu_buffer_borrowed(d_buffers) != 0 }
 }
 
 pub fn get_unified_buffer_gpu_for_recursivef_c(

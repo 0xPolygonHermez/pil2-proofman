@@ -30,6 +30,10 @@ rayon.workspace = true
 
 [build-dependencies]
 proofman-cli.workspace = true
+pil2-stark-setup = { path = "../../../../setup/pil2-stark" }
+
+[dev-dependencies]
+common = { path = "../../common/rs" }
 
 [features]
 default = []

@@ -36,3 +36,25 @@ pub fn write_custom_commit_trace<F: PrimeField64>(
 
     Ok(root)
 }
+
+fn num_nodes_mt(height: u64, arity: u64) -> u64 {
+    const HASH_SIZE: u64 = 4;
+    let mut num_nodes = height;
+    let mut nodes_level = height;
+    while nodes_level > 1 {
+        let extra_zeros = (arity - (nodes_level % arity)) % arity;
+        num_nodes += extra_zeros;
+        let next_n = nodes_level.div_ceil(arity);
+        num_nodes += next_n;
+        nodes_level = next_n;
+    }
+    num_nodes * HASH_SIZE
+}
+
+pub fn custom_commit_num_elements(n: u64, n_extended: u64, n_cols: u64, arity: u64) -> u64 {
+    (n + n_extended) * n_cols + num_nodes_mt(n_extended, arity)
+}
+
+pub fn custom_commit_file_size_bytes(n: u64, n_extended: u64, n_cols: u64, arity: u64) -> u64 {
+    (custom_commit_num_elements(n, n_extended, n_cols, arity) + 4) * 8
+}

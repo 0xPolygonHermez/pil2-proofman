@@ -1,0 +1,194 @@
+require "std_constants.pil";
+require "std_connection.pil";
+
+require "circuits/cmul.pil";
+require "circuits/fft.pil";
+require "circuits/evpol.pil";
+require "circuits/treeselector.pil";
+require "circuits/selectval.pil";
+require "circuits/poseidon2.pil";
+require "circuits/plonk.pil";
+
+// ============================================================================
+// Poseidon2 AGGREGATOR
+//
+// Recursive-proof aggregation AIR. A single row hosts at most one "custom gate"
+// (Poseidon2 round, CMul, FFT4, EvPol4, TreeSelector4, SelectVal1, or a Plonk
+// gate), selected by mutually-exclusive fixed columns. Custom gates reuse the
+// same witness columns a[] on disjoint rows.
+//
+// Poseidon2 (Goldilocks, width 16) = 8 full rounds (4 initial + 4 final) + 22
+// partial rounds = 30 rounds. They are packed into a 5-ROW gate with TWO
+// full-round chains per row (chain F on cols a[27..42], chain F2 on a[43..58]),
+// plus 6 partial-round "overflow" anchors on a[18..23]:
+//
+//   PIL row | selector              | chain F (a[27..42]) | chain F2 (a[43..58])
+//   --------+-----------------------+---------------------+----------------------
+//    0 INIT | POSEIDONSPONGE/COMPR. | full round 0        | full round 1
+//    1      | (PARTIAL_ROUND')      | full round 2        | full round 3
+//    2 PR   | POSEIDON_PARTIAL_ROUND| 22 partial rounds (single chain; anchors a[43..58] + (2)'a[18..23])
+//    3      | (POSEIDON_FINAL')     | full round 26       | full round 27
+//    4 FINAL| POSEIDON_FINAL        | full round 28       | full round 29 → output a[0..15]
+//
+// Selectors address inner rows via primes: prefix 'X = row r-1, postfix X' = row r+1,
+// (k)'X = row r∓k. INIT also drives the input-ordering (compression key permutation).
+//
+// Columns:  a[0..15] = input @INIT / output @FINAL ; a[16..17] = compression key bits ;
+//           a[18..26] = plonk band / 6 partial overflow anchors @row2 (a[18..23]) ;
+//           a[27..42] = chain-F state ; a[43..58] = chain-F2 state ; S[27] = connection band.
+// ============================================================================
+airtemplate Aggregator (const int N, const int nPlonkRows, const int nPoseidonCompressor, const int nPoseidonSponge, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector4, const int nSelectVal1) {
+    col witness a[59];
+
+    #pragma fixed_external
+    col fixed S[27];
+    
+    #pragma fixed_external
+    col fixed C[10];
+    
+    const int nPoseidon = nPoseidonCompressor + nPoseidonSponge;
+
+    col fixed POSEIDONSPONGE = [[1,0:4]:nPoseidonSponge,0...];
+    col fixed POSEIDONCOMPRESSION = [[0:5]:nPoseidonSponge,[1,0:4]:nPoseidonCompressor,0...]; 
+    col fixed POSEIDON_PARTIAL_ROUND = [[0:2,1,0:2]:nPoseidon,0...];
+    col fixed POSEIDON_FINAL = [[0:4,1]:nPoseidon,0...];
+   
+    col fixed CMUL = [0:(5*nPoseidon),1:nCMulRows, 0...];
+    col fixed EVPOL4 = [0:(5*nPoseidon + nCMulRows), 1:nEvPol4, 0...];
+    col fixed FFT4 = [0:(5*nPoseidon + nCMulRows + nEvPol4), 1:nFFT4, 0...];
+    col fixed TREESELECTOR4 = [0:(5*nPoseidon + nCMulRows + nEvPol4 + nFFT4), 1:nTreeSelector4, 0...];
+    col fixed SELECTVAL1 = [0:(5*nPoseidon + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector4), 1:nSelectVal1, 0...];
+
+    col fixed PLONK = [0:(5*nPoseidon + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector4 + nSelectVal1),1:nPlonkRows, 0...];
+
+    const expr q0[5] = [C[0], C[1], C[2], C[3], C[4]];
+    const expr q1[5] = [C[5], C[6], C[7], C[8], C[9]];
+
+    const expr CHECK_PLONK = PLONK + POSEIDON_PARTIAL_ROUND' + POSEIDON_PARTIAL_ROUND + POSEIDON_FINAL';
+
+    plonk([a[0], a[1], a[2]], q0, CHECK_PLONK);
+    plonk([a[3], a[4], a[5]], q0, CHECK_PLONK);
+    plonk([a[6], a[7], a[8]], q1, CHECK_PLONK);
+    plonk([a[9], a[10], a[11]], q1, CHECK_PLONK);
+    plonk([a[12], a[13], a[14]], q1, CHECK_PLONK);
+    plonk([a[15], a[16], a[17]], q1, CHECK_PLONK);
+    plonk([a[18], a[19], a[20]], q1, CHECK_PLONK + POSEIDON_FINAL + TREESELECTOR4);
+    plonk([a[21], a[22], a[23]], q1, CHECK_PLONK + POSEIDON_FINAL + TREESELECTOR4 + EVPOL4);
+    plonk([a[24], a[25], a[26]], q1, CHECK_PLONK + POSEIDON_FINAL + TREESELECTOR4 + EVPOL4 + POSEIDONSPONGE + POSEIDONCOMPRESSION + SELECTVAL1);
+
+    const expr b0 = a[16];
+    const expr b1 = a[17];
+
+    const expr inputO[POSEIDON2_WIDTH];
+    const expr outputO[POSEIDON2_WIDTH];
+    for (int i = 0; i < POSEIDON2_WIDTH; i++) {
+        inputO[i] = a[i];
+        outputO[i] = a[27 + i];
+    }
+    poseidonInputOrder(inputO, [b0, b1], outputO, POSEIDONSPONGE, POSEIDONCOMPRESSION);
+    
+    const expr inputP[POSEIDON2_WIDTH];
+    const expr outputP[POSEIDON2_WIDTH];
+    for (int i = 0; i < POSEIDON2_WIDTH; i++) {
+        inputP[i] = a[i + 27];
+        outputP[i] = a[i + 27]';
+    }
+
+    const expr st0[22];
+    for (int i = 0; i < 16; i++) {
+        st0[i] = a[i + 43];
+    }
+    for (int i = 0; i < 6; i++) {
+        st0[16 + i] = (2)'a[i + 18];
+    }
+    
+    const expr inputF_7[POSEIDON2_WIDTH];
+    const expr constantsPoseidonF[POSEIDON2_WIDTH];
+    const expr outputF[POSEIDON2_WIDTH];
+    const expr inputF2_7[POSEIDON2_WIDTH];
+    const expr constantsPoseidonF2[POSEIDON2_WIDTH];
+    const expr outputF2[POSEIDON2_WIDTH];
+    const expr intermediateValues[22];
+
+    // Round constants are added INSIDE pow7's argument (Poseidon2 ARC-before-Sbox).
+    // POSEIDON2_RC[150] layout: 8 full rounds × 16 lanes = 128 constants at block
+    // offsets {0,16, 32,48, 86,102, 118,134} for rounds {0,1, 2,3, 26,27, 28,29},
+    // then 22 partial-round constants at offsets 64..85 (one per round). Each chain
+    // selects the block for the round it carries on the active row:
+    //   chain F  → rounds 0 / 2 / 26 / 28   (offsets 0  / 32 / 86  / 118)
+    //   chain F2 → rounds 1 / 3 / 27 / 29   (offsets 16 / 48 / 102 / 134) + partial (offset 64)
+    for (int i = 0; i < POSEIDON2_WIDTH; i++) {
+        constantsPoseidonF[i] = (POSEIDONSPONGE + POSEIDONCOMPRESSION) * POSEIDON2_RC[i] + POSEIDON_PARTIAL_ROUND' * POSEIDON2_RC[i + 32] + POSEIDON_FINAL' * POSEIDON2_RC[i + 86] + POSEIDON_FINAL * POSEIDON2_RC[i + 118];
+
+        constantsPoseidonF2[i] = (POSEIDONSPONGE + POSEIDONCOMPRESSION) * POSEIDON2_RC[i + 16] + POSEIDON_PARTIAL_ROUND' * POSEIDON2_RC[i + 48] + POSEIDON_FINAL' * POSEIDON2_RC[i + 102] + POSEIDON_FINAL * POSEIDON2_RC[i + 134] + POSEIDON_PARTIAL_ROUND * POSEIDON2_RC[i + 64];
+
+        inputF_7[i] = pow7(a[i + 27] + constantsPoseidonF[i]);
+        outputF[i] = a[i + 43];
+        inputF2_7[i] = pow7(a[i + 43] + constantsPoseidonF2[i]);
+        outputF2[i] = POSEIDON_FINAL * a[i] + (1 - POSEIDON_FINAL) * a[i + 27]';
+
+        intermediateValues[i] = inputF2_7[i];
+    }
+
+    for (int i = 0; i < 6; i++) {
+        intermediateValues[16 + i] = pow7((2)'a[i + 18] + POSEIDON2_RC[80 + i]);
+    }
+    
+    poseidonFullRound(inputF_7, outputF, POSEIDONSPONGE + POSEIDONCOMPRESSION + POSEIDON_PARTIAL_ROUND' + POSEIDON_FINAL' + POSEIDON_FINAL);
+    poseidonFullRound(inputF2_7, outputF2, POSEIDONSPONGE + POSEIDONCOMPRESSION + POSEIDON_PARTIAL_ROUND' + POSEIDON_FINAL' + POSEIDON_FINAL);
+    poseidonPartialRound(22, inputP, outputP, st0, intermediateValues, POSEIDON_PARTIAL_ROUND);
+
+    const expr inA1[3] = [a[0], a[1], a[2]];
+    const expr inB1[3] = [a[3], a[4], a[5]];
+    const expr res[3] = [a[6], a[7], a[8]];
+    cmul(inA1, inB1, res, CMUL);
+
+    const expr inA2[3] = [a[9], a[10], a[11]];
+    const expr inB2[3] = [a[12], a[13], a[14]];
+    const expr res2[3] = [a[15], a[16], a[17]];
+    cmul(inA2, inB2, res2, CMUL);
+
+    const expr inA3[3] = [a[18], a[19], a[20]];
+    const expr inB3[3] = [a[21], a[22], a[23]];
+    const expr res3[3] = [a[24], a[25], a[26]];
+    cmul(inA3, inB3, res3, CMUL);
+
+    const expr inpFFT[12] = [a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11]];
+    const expr outFFT[12] = [a[12], a[13], a[14], a[15], a[16], a[17], a[18], a[19], a[20], a[21], a[22], a[23]];
+    const expr constFFT[9] = [C[0], C[1], C[2], C[3], C[4], C[5], C[6], C[7], C[8]];
+    fft4(inpFFT, constFFT, outFFT, FFT4);
+
+    const expr coefs[5][3];
+    coefs[0] = [a[12], a[13], a[14]];
+    coefs[1] = [a[9], a[10], a[11]];
+    coefs[2] = [a[6], a[7], a[8]];
+    coefs[3] = [a[3], a[4], a[5]];
+    coefs[4] = [a[0], a[1], a[2]];
+    const expr x[3] = [a[15], a[16], a[17]];
+    const expr resEVPOL[3] = [a[18], a[19], a[20]];
+    evpol4(coefs, x, resEVPOL, EVPOL4);
+   
+    const expr treevals[4][3];
+    treevals[0] = [a[0], a[1], a[2]];
+    treevals[1] = [a[3], a[4], a[5]];
+    treevals[2] = [a[6], a[7], a[8]];
+    treevals[3] = [a[9], a[10], a[11]];
+    const expr key[2] = [a[12], a[13]];
+    const expr resTREE[3] = [a[14], a[15], a[16]];
+    treeselector4(treevals, key, resTREE, TREESELECTOR4);
+
+    const expr selectvals[4][4];
+    selectvals[0] = [a[0], a[1], a[2], a[3]];
+    selectvals[1] = [a[4], a[5], a[6], a[7]];
+    selectvals[2] = [a[8], a[9], a[10], a[11]];
+    selectvals[3] = [a[12], a[13], a[14], a[15]];
+    const expr selectvals_key[2] = [a[16], a[17]];
+    const expr selected[4] = [a[18], a[19], a[20], a[21]];
+    selectval1(selectvals, selectvals_key, selected, SELECTVAL1);
+
+    const expr A[27];
+    for (int i = 0; i < 27; i++) {
+        A[i] = a[i];
+    }
+    connection(1, A, S, PIOP_BUS_PROD);
+}

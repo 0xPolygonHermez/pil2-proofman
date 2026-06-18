@@ -4,8 +4,13 @@ use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use std::fs;
 
+use crate::hash_family::{self, DEFAULT_HASH_ID};
 use crate::ProofType;
 use crate::{ProofmanResult, ProofmanError};
+
+fn default_hash_id() -> String {
+    DEFAULT_HASH_ID.to_string()
+}
 
 #[derive(Clone, Deserialize)]
 pub struct ProofValueMap {
@@ -61,6 +66,9 @@ pub struct GlobalInfo {
 
     #[serde(rename = "transcriptArity")]
     pub transcript_arity: usize,
+
+    #[serde(default = "default_hash_id")]
+    pub hash: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -118,6 +126,16 @@ impl GlobalInfo {
         let updated_global_info_json = serde_json::to_string(&global_info_value)?;
         // Deserialize into GlobalInfo
         let global_info: GlobalInfo = serde_json::from_str(&updated_global_info_json)?;
+        if !hash_family::is_known_family(&global_info.hash) {
+            return Err(ProofmanError::InvalidConfiguration(format!(
+                "unknown hash family {:?}; known: {:?}",
+                global_info.hash,
+                hash_family::FAMILIES
+            )));
+        }
+
+        proofman_starks_lib_c::set_hash_family_c(&global_info.hash);
+
         Ok(global_info)
     }
 

@@ -63,9 +63,9 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheck4<F> {
                         F::from_u8(val3 as u8)
                     };
 
-                    self.std_lib.range_check(range1, val1 as i64, 1);
-                    self.std_lib.range_check(range6, val2 as i64, 1);
-                    self.std_lib.range_check(range7, val3 as i64, 1);
+                    self.std_lib.range_check_one(range1, val1);
+                    self.std_lib.range_check_one(range6, val2);
+                    self.std_lib.range_check_one(range7, val3);
                 }
                 if selected2 {
                     trace[i].a5 = F::ZERO;
@@ -80,10 +80,10 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheck4<F> {
                     trace[i].a3 = F::from_u16(val3);
                     trace[i].a4 = F::from_u32(val4);
 
-                    self.std_lib.range_check(range2, val1 as i64, 1);
-                    self.std_lib.range_check(range3, val2 as i64, 1);
-                    self.std_lib.range_check(range4, val3 as i64, 1);
-                    self.std_lib.range_check(range5, val4 as i64, 1);
+                    self.std_lib.range_check_one(range2, val1);
+                    self.std_lib.range_check_one(range3, val2);
+                    self.std_lib.range_check_one(range4, val3);
+                    self.std_lib.range_check_one(range5, val4);
                 }
 
                 if !selected1 && !selected2 {
@@ -97,11 +97,11 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheck4<F> {
 
                 let val7: i16 = rng.random_range(-(1 << 7) + 1..=-50);
                 trace[i].a7 = F::from_u64((val7 as i128 + F::ORDER_U64 as i128) as u64);
-                self.std_lib.range_check(range8, val7 as i64, 1);
+                self.std_lib.range_check_one(range8, val7);
 
                 let val8: i16 = rng.random_range(-(1 << 8) + 1..=-127);
                 trace[i].a8 = F::from_u64((val8 as i128 + F::ORDER_U64 as i128) as u64);
-                self.std_lib.range_check(range9, val8 as i64, 1);
+                self.std_lib.range_check_one(range9, val8);
             }
 
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));

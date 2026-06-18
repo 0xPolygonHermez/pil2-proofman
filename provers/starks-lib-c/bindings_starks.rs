@@ -3,6 +3,26 @@
 
 #[allow(dead_code)]
 extern "C" {
+    pub fn build_const_tree_c(
+        const_file: *const ::std::os::raw::c_char,
+        stark_info_file: *const ::std::os::raw::c_char,
+        const_tree_file: *const ::std::os::raw::c_char,
+        ver_key_file: *const ::std::os::raw::c_char,
+        out_root: *mut u64,
+    ) -> ::std::os::raw::c_int;
+
+    pub fn fflonk_setup_c(
+        r1cs_file: *const ::std::os::raw::c_char,
+        ptau_file: *const ::std::os::raw::c_char,
+        zkey_file: *const ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+
+    pub fn plonk_setup_c(
+        r1cs_file: *const ::std::os::raw::c_char,
+        ptau_file: *const ::std::os::raw::c_char,
+        zkey_file: *const ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+
     // SetupCtx
     // ========================================================================================
     pub fn n_hints_by_name(
@@ -28,6 +48,8 @@ extern "C" {
         preallocate: bool,
     ) -> *mut ::std::os::raw::c_void;
     
+    pub fn set_hash_family(fam: u8);
+
     pub fn get_proof_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 
     pub fn get_proof_pinned_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
@@ -69,7 +91,7 @@ extern "C" {
         constPolsPath: *mut ::std::os::raw::c_char,
     ) -> u64;
 
-    pub fn init_gpu_setup(maxBitsExt: u64);
+    pub fn init_gpu_setup(maxBitsExt: u64, arity: u64);
 
     pub fn pack_const_pols(
         pStarkinfo: *mut ::std::os::raw::c_void,
@@ -252,7 +274,7 @@ extern "C" {
         buffer: *mut ::std::os::raw::c_void,
         customCommitFile: *mut ::std::os::raw::c_char,
     );
-    
+
     pub fn write_custom_commit(
         root: *mut ::std::os::raw::c_void,
         arity: u64,
@@ -274,6 +296,7 @@ extern "C" {
         airId: u64,
         root: *mut ::std::os::raw::c_void,
         d_buffers: *mut ::std::os::raw::c_void,
+        customCommitsFixedPath: *mut ::std::os::raw::c_char,
     ) -> u64;
 
     // Constraints Verification
@@ -291,6 +314,7 @@ extern "C" {
         instanceId: u64,
         stepsParams: *mut ::std::os::raw::c_void,
         d_buffers: *mut ::std::os::raw::c_void,
+        customCommitsFixedPath: *mut ::std::os::raw::c_char,
     ) -> u64;
 
     pub fn calculate_trace_instance(
@@ -386,6 +410,7 @@ extern "C" {
         streamId: u64,
         constPolsPath: *mut ::std::os::raw::c_char,
         constTreePath: *mut ::std::os::raw::c_char,
+        customCommitsFixedPath: *mut ::std::os::raw::c_char,
     ) -> u64;
     
     pub fn gen_recursive_proof(
@@ -415,7 +440,7 @@ extern "C" {
         proofType: *mut ::std::os::raw::c_char,
         d_buffers_: *mut ::std::os::raw::c_void
     );
-
+    
     pub fn read_exec_file(exec_data: *mut u64, exec_file: *mut ::std::os::raw::c_char, nCommitedPols: u64);
     
     pub fn get_committed_pols(
@@ -628,6 +653,10 @@ extern "C" {
     pub fn set_gpu_mode(use_gpu: bool) -> bool;
 
     pub fn get_unified_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
+    pub fn get_unified_buffer_gpu_size(d_buffers: *mut ::std::os::raw::c_void) -> u64;
+    pub fn acquire_first_gpu_buffer(d_buffers: *mut ::std::os::raw::c_void);
+    pub fn release_first_gpu_buffer(d_buffers: *mut ::std::os::raw::c_void);
+    pub fn is_first_gpu_buffer_borrowed(d_buffers: *mut ::std::os::raw::c_void) -> u32;
     pub fn get_unified_buffer_gpu_for_recursivef(d_buffers: *mut ::std::os::raw::c_void, d_buffers_recursivef: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 
     pub fn alloc_fixed_pols_buffer_gpu(d_buffers: *mut ::std::os::raw::c_void);

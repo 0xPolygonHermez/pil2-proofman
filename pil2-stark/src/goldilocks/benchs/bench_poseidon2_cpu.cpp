@@ -36,7 +36,7 @@ static void fillData(Goldilocks::Element *buf, uint64_t n)
 }
 
 // ===================================================================
-// permute / compress -- per-element throughput (thread-count sweep)
+// permute / permuteTrunc -- per-element throughput (thread-count sweep)
 // No GPU counterpart; kept for micro-level CPU profiling.
 // ===================================================================
 
@@ -57,6 +57,8 @@ static void PERMUTE_W_SCALAR_CPU_BENCH(benchmark::State &state)
                 (const Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
                 Poseidon2Mode::Scalar);
     }
+    state.SetItemsProcessed(state.iterations() * NUM_HASHES);
+    state.counters["hashes"] = NUM_HASHES;
     delete[] x; delete[] r;
 }
 
@@ -78,12 +80,15 @@ static void PERMUTE_W_AVX_CPU_BENCH(benchmark::State &state)
                 (const Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
                 Poseidon2Mode::Avx);
     }
+    state.SetItemsProcessed(state.iterations() * NUM_HASHES);
+    state.counters["hashes"] = NUM_HASHES;
     delete[] x; delete[] r;
 }
+
 #endif
 
 template<uint32_t W>
-static void COMPRESS_W_SCALAR_CPU_BENCH(benchmark::State &state)
+static void PERMUTE_TRUNC_W_SCALAR_CPU_BENCH(benchmark::State &state)
 {
     uint64_t in_total  = (uint64_t)NUM_HASHES * Poseidon2Goldilocks<W>::SPONGE_WIDTH;
     uint64_t out_total = (uint64_t)NUM_HASHES * Poseidon2Goldilocks<W>::CAPACITY;
@@ -95,7 +100,7 @@ static void COMPRESS_W_SCALAR_CPU_BENCH(benchmark::State &state)
     for (auto _ : state) {
 #pragma omp parallel for num_threads(nT) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
-            Poseidon2Goldilocks<W>::compress(
+            Poseidon2Goldilocks<W>::permuteTrunc(
                 (Goldilocks::Element(&)[Poseidon2Goldilocks<W>::CAPACITY])r[i * Poseidon2Goldilocks<W>::CAPACITY],
                 (Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
                 Poseidon2Mode::Scalar);
@@ -105,7 +110,7 @@ static void COMPRESS_W_SCALAR_CPU_BENCH(benchmark::State &state)
 
 #ifdef __AVX2__
 template<uint32_t W>
-static void COMPRESS_W_AVX_CPU_BENCH(benchmark::State &state)
+static void PERMUTE_TRUNC_W_AVX_CPU_BENCH(benchmark::State &state)
 {
     uint64_t in_total  = (uint64_t)NUM_HASHES * Poseidon2Goldilocks<W>::SPONGE_WIDTH;
     uint64_t out_total = (uint64_t)NUM_HASHES * Poseidon2Goldilocks<W>::CAPACITY;
@@ -117,7 +122,7 @@ static void COMPRESS_W_AVX_CPU_BENCH(benchmark::State &state)
     for (auto _ : state) {
 #pragma omp parallel for num_threads(nT) schedule(static)
         for (uint64_t i = 0; i < NUM_HASHES; i++)
-            Poseidon2Goldilocks<W>::compress(
+            Poseidon2Goldilocks<W>::permuteTrunc(
                 (Goldilocks::Element(&)[Poseidon2Goldilocks<W>::CAPACITY])r[i * Poseidon2Goldilocks<W>::CAPACITY],
                 (Goldilocks::Element(&)[Poseidon2Goldilocks<W>::SPONGE_WIDTH])x[i * Poseidon2Goldilocks<W>::SPONGE_WIDTH],
                 Poseidon2Mode::Avx);
@@ -280,7 +285,6 @@ static void GRINDING_CPU_BENCH(benchmark::State &state)
         NCOLS_ARGS                                                           \
         ->UseRealTime();
 
-// Per-element throughput benchmarks (permute, compress)
 #define REG_ELEM(FUNC, W, LABEL)                                             \
     BENCHMARK_TEMPLATE(FUNC, W)                                              \
         ->Name(LABEL)                                                        \
@@ -288,7 +292,7 @@ static void GRINDING_CPU_BENCH(benchmark::State &state)
         ->UseRealTime();
 
 // ---------------------------------------------------------------------------
-// permute / compress registrations (per-element throughput, no nCols param)
+// permute / permuteTrunc registrations (per-element throughput, no nCols param)
 // ---------------------------------------------------------------------------
 
 REG_ELEM(PERMUTE_W_SCALAR_CPU_BENCH, 8,  "PERMUTE_W8_SCALAR_CPU_BENCH")
@@ -301,16 +305,16 @@ REG_ELEM(PERMUTE_W_AVX_CPU_BENCH, 12, "PERMUTE_W12_AVX_CPU_BENCH")
 REG_ELEM(PERMUTE_W_AVX_CPU_BENCH, 16, "PERMUTE_W16_AVX_CPU_BENCH")
 #endif
 
-REG_ELEM(COMPRESS_W_SCALAR_CPU_BENCH, 4,  "COMPRESS_W4_SCALAR_CPU_BENCH")
-REG_ELEM(COMPRESS_W_SCALAR_CPU_BENCH, 8,  "COMPRESS_W8_SCALAR_CPU_BENCH")
-REG_ELEM(COMPRESS_W_SCALAR_CPU_BENCH, 12, "COMPRESS_W12_SCALAR_CPU_BENCH")
-REG_ELEM(COMPRESS_W_SCALAR_CPU_BENCH, 16, "COMPRESS_W16_SCALAR_CPU_BENCH")
+REG_ELEM(PERMUTE_TRUNC_W_SCALAR_CPU_BENCH, 4,  "PERMUTE_TRUNC_W4_SCALAR_CPU_BENCH")
+REG_ELEM(PERMUTE_TRUNC_W_SCALAR_CPU_BENCH, 8,  "PERMUTE_TRUNC_W8_SCALAR_CPU_BENCH")
+REG_ELEM(PERMUTE_TRUNC_W_SCALAR_CPU_BENCH, 12, "PERMUTE_TRUNC_W12_SCALAR_CPU_BENCH")
+REG_ELEM(PERMUTE_TRUNC_W_SCALAR_CPU_BENCH, 16, "PERMUTE_TRUNC_W16_SCALAR_CPU_BENCH")
 
 #ifdef __AVX2__
-REG_ELEM(COMPRESS_W_AVX_CPU_BENCH, 4,  "COMPRESS_W4_AVX_CPU_BENCH")
-REG_ELEM(COMPRESS_W_AVX_CPU_BENCH, 8,  "COMPRESS_W8_AVX_CPU_BENCH")
-REG_ELEM(COMPRESS_W_AVX_CPU_BENCH, 12, "COMPRESS_W12_AVX_CPU_BENCH")
-REG_ELEM(COMPRESS_W_AVX_CPU_BENCH, 16, "COMPRESS_W16_AVX_CPU_BENCH")
+REG_ELEM(PERMUTE_TRUNC_W_AVX_CPU_BENCH, 4,  "PERMUTE_TRUNC_W4_AVX_CPU_BENCH")
+REG_ELEM(PERMUTE_TRUNC_W_AVX_CPU_BENCH, 8,  "PERMUTE_TRUNC_W8_AVX_CPU_BENCH")
+REG_ELEM(PERMUTE_TRUNC_W_AVX_CPU_BENCH, 12, "PERMUTE_TRUNC_W12_AVX_CPU_BENCH")
+REG_ELEM(PERMUTE_TRUNC_W_AVX_CPU_BENCH, 16, "PERMUTE_TRUNC_W16_AVX_CPU_BENCH")
 #endif
 
 // ---------------------------------------------------------------------------

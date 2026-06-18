@@ -55,12 +55,12 @@ impl<F: PrimeField64> WitnessComponent<F> for MultiRangeCheck2<F> {
                         let val = rng.random_range((1 << 5)..=(1 << 8) - 1);
                         trace[i].a[0] = F::from_u16(val);
 
-                        self.std_lib.range_check(range1, val as i64, 1);
+                        self.std_lib.range_check_one(range1, val);
                     } else {
                         let val = rng.random_range((1 << 8)..=(1 << 9) - 1);
                         trace[i].a[0] = F::from_u16(val);
 
-                        self.std_lib.range_check(range2, val as i64, 1);
+                        self.std_lib.range_check_one(range2, val);
                     }
                 }
 
@@ -69,12 +69,12 @@ impl<F: PrimeField64> WitnessComponent<F> for MultiRangeCheck2<F> {
                         let val = rng.random_range(0..=(1 << 7) - 1);
                         trace[i].a[1] = F::from_u16(val);
 
-                        self.std_lib.range_check(range3, val as i64, 1);
+                        self.std_lib.range_check_one(range3, val);
                     } else {
                         let val = rng.random_range(0..=(1 << 4) - 1);
                         trace[i].a[1] = F::from_u16(val);
 
-                        self.std_lib.range_check(range4, val as i64, 1);
+                        self.std_lib.range_check_one(range4, val);
                     }
                 }
             }

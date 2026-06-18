@@ -1,0 +1,10 @@
+// CMUL GATE - Check that a * b in Fp³ using (X³ - X - 1) as a generator is performed correctly
+
+// Since the modulo is known (X³ - X - 1) we can calculate the coefficients in general form by calculating 
+// (a0 + a1*x + a2*x²)*(b0 + b1*x + b2*x²) and then using long division to get the residue when dividing by the modulo
+// We get the following result: (a0*b0 + a1*b2 + a2*b1) + (a0*b1 + a1*b0 + a1*b2 + a2*b1 + a2*b2)x + (a0*b2 + a2*b2 + a2*b0 + a1*b1)x²
+function cmul(const expr a[], const expr b[], const expr res[], const expr sel) {
+    sel * (res[0] - (a[0]*b[0] + a[1]*b[2] + a[2]*b[1])) === 0;
+    sel * (res[1] - (a[0]*b[1] + a[1]*b[0] + a[1]*b[2] + a[2]*b[1] + a[2]*b[2])) === 0;
+    sel * (res[2] - (a[0]*b[2] + a[2]*b[2] + a[2]*b[0] + a[1]*b[1])) === 0;
+}

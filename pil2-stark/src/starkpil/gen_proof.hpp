@@ -1,4 +1,5 @@
 #include "starks.hpp"
+#include "starks_api_internal.hpp"
 
 void calculateWitnessExpr(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx &expressionsCtx) {
     uint64_t nWitnessHints = setupCtx.expressionsBin.getNumberHintIdsByName("witness_calc");
@@ -263,7 +264,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     uint64_t friQueries[setupCtx.starkInfo.starkStruct.nQueries];
 
     uint64_t nonce;
-    Poseidon2GoldilocksGrinding::grinding(nonce, (uint64_t *)challenge, setupCtx.starkInfo.starkStruct.powBits);
+    runGrinding(nonce, (uint64_t *)challenge, setupCtx.starkInfo.starkStruct.powBits);
 
     TranscriptGL transcriptPermutation(setupCtx.starkInfo.starkStruct.transcriptArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
     starks.addTranscriptGL(transcriptPermutation, challenge, FIELD_EXTENSION);

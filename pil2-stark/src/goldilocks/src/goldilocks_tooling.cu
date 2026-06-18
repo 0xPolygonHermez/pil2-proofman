@@ -52,8 +52,9 @@ void copy_to_device_in_chunks(
     std::lock_guard<std::mutex> lock(d_buffers->mutex_pinned[gpuLocalId]);
 
     uint64_t block_size = d_buffers->pinned_size;
-    
+
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
+    TimerStartCategoryGPU(timer, H2D_COPY);
     Goldilocks::Element *pinned_buffer = d_buffers->pinned_buffer[gpuLocalId];
     Goldilocks::Element *pinned_buffer_extra = d_buffers->pinned_buffer_extra[gpuLocalId];
 
@@ -97,6 +98,7 @@ void copy_to_device_in_chunks(
     ));
 
     CHECKCUDAERR(cudaStreamSynchronize(stream));
+    TimerStopCategoryGPU(timer, H2D_COPY);
 }
 
 void copy_to_device_in_chunks(
@@ -160,18 +162,19 @@ void load_and_copy_to_device_in_chunks(
     const char* bufferPath,
     void* dst,
     uint64_t total_size,
-    uint64_t streamId
+    uint64_t streamId,
+    uint64_t header_skip_bytes
     ){
 
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
-    
+
     cudaSetDevice(gpuId);
 
     uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
     std::lock_guard<std::mutex> lock(d_buffers->mutex_pinned[gpuLocalId]);
-    
+
     uint64_t block_size = d_buffers->pinned_size;
-    
+
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
     Goldilocks::Element *pinned_buffer = d_buffers->pinned_buffer[gpuLocalId];
     Goldilocks::Element *pinned_buffer_extra = d_buffers->pinned_buffer_extra[gpuLocalId];
@@ -180,7 +183,7 @@ void load_and_copy_to_device_in_chunks(
 
     Goldilocks::Element *pinned_buffer_temp;
 
-    loadFileParallel_block(pinned_buffer_extra, bufferPath, block_size, true, 0);
+    loadFileParallel_block(pinned_buffer_extra, bufferPath, block_size, true, 0, header_skip_bytes);
 
     for (uint64_t i = 1; i < nBlocks; ++i) {
         CHECKCUDAERR(cudaStreamSynchronize(stream));
@@ -196,8 +199,8 @@ void load_and_copy_to_device_in_chunks(
             copySizeBlockPrev,
             cudaMemcpyHostToDevice,
             stream));
-        
-        loadFileParallel_block(pinned_buffer_extra, bufferPath, block_size, true, i);
+
+        loadFileParallel_block(pinned_buffer_extra, bufferPath, block_size, true, i, header_skip_bytes);
     }
 
     CHECKCUDAERR(cudaStreamSynchronize(stream));

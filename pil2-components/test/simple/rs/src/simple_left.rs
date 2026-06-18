@@ -51,6 +51,8 @@ impl<F: PrimeField64> WitnessComponent<F> for SimpleLeft<F> {
                 trace[i].g = F::from_usize(i);
                 trace[i].h = F::from_usize(num_rows - i - 1);
 
+                trace[i].mul = F::from_isize(-(i as isize));
+
                 let val = [
                     rng.random_range(0..=(1 << 8) - 1),
                     rng.random_range(0..=(1 << 16) - 1),
@@ -67,66 +69,66 @@ impl<F: PrimeField64> WitnessComponent<F> for SimpleLeft<F> {
                         if i == 0 {
                             let val = 0;
                             trace[i].k[j] = F::from_u32(val);
-                            self.std_lib.range_check(range[j], val as i64, 1);
+                            self.std_lib.range_check_one(range[j], val);
                             continue;
                         } else if i == 1 {
                             let val = 1 << 4;
                             trace[i].k[j] = F::from_u32(val);
-                            self.std_lib.range_check(range[j], val as i64, 1);
+                            self.std_lib.range_check_one(range[j], val);
                             continue;
                         } else if i == 2 {
                             let val = (1 << 8) - 1;
                             trace[i].k[j] = F::from_u32(val);
-                            self.std_lib.range_check(range[j], val as i64, 1);
+                            self.std_lib.range_check_one(range[j], val);
                             continue;
                         }
                     } else if j == 5 {
                         if i == 0 {
                             let val = -(1 << 7);
                             trace[i].k[j] = F::from_u64((val as i128 + F::ORDER_U64 as i128) as u64);
-                            self.std_lib.range_check(range[j], val as i64, 1);
+                            self.std_lib.range_check_one(range[j], val);
                             continue;
                         } else if i == 1 {
                             let val = -(1 << 2);
                             trace[i].k[j] = F::from_u64((val as i128 + F::ORDER_U64 as i128) as u64);
-                            self.std_lib.range_check(range[j], val as i64, 1);
+                            self.std_lib.range_check_one(range[j], val);
                             continue;
                         } else if i == 2 {
                             let val = -1;
                             trace[i].k[j] = F::from_u64((val as i128 + F::ORDER_U64 as i128) as u64);
-                            self.std_lib.range_check(range[j], val as i64, 1);
+                            self.std_lib.range_check_one(range[j], val);
                             continue;
                         }
                     } else if j == 6 {
                         if i == 0 {
                             let val = -(1 << 7) - 1;
                             trace[i].k[j] = F::from_u64((val as i128 + F::ORDER_U64 as i128) as u64);
-                            self.std_lib.range_check(range[j], val as i64, 1);
+                            self.std_lib.range_check_one(range[j], val);
                             continue;
                         } else if i == 1 {
                             let val = -(1 << 2);
                             trace[i].k[j] = F::from_u64((val as i128 + F::ORDER_U64 as i128) as u64);
-                            self.std_lib.range_check(range[j], val as i64, 1);
+                            self.std_lib.range_check_one(range[j], val);
                             continue;
                         } else if i == 2 {
                             let val = -1;
                             trace[i].k[j] = F::from_u64((val as i128 + F::ORDER_U64 as i128) as u64);
-                            self.std_lib.range_check(range[j], val as i64, 1);
+                            self.std_lib.range_check_one(range[j], val);
                             continue;
                         } else if i == 3 {
                             let val = 0;
                             trace[i].k[j] = F::from_u32(val);
-                            self.std_lib.range_check(range[j], val as i64, 1);
+                            self.std_lib.range_check_one(range[j], val);
                             continue;
                         } else if i == 4 {
                             let val = (1 << 7) - 1;
                             trace[i].k[j] = F::from_u32(val);
-                            self.std_lib.range_check(range[j], val as i64, 1);
+                            self.std_lib.range_check_one(range[j], val);
                             continue;
                         } else if i == 5 {
                             let val = 10;
                             trace[i].k[j] = F::from_u32(val);
-                            self.std_lib.range_check(range[j], val as i64, 1);
+                            self.std_lib.range_check_one(range[j], val);
                             continue;
                         }
                     }
@@ -136,7 +138,7 @@ impl<F: PrimeField64> WitnessComponent<F> for SimpleLeft<F> {
                     } else {
                         F::from_u32(val[j] as u32)
                     };
-                    self.std_lib.range_check(range[j], val[j] as i64, 1);
+                    self.std_lib.range_check_one(range[j], val[j]);
                 }
             }
 

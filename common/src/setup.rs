@@ -6,9 +6,7 @@ use std::fs;
 use std::io::Read;
 use libloading::{Library, Symbol};
 use std::ffi::CString;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::RwLock;
-use crate::RowInfo;
+use std::sync::{Arc, RwLock};
 
 pub type GetWitnessFunc =
     unsafe extern "C" fn(zkin: *mut u64, circom_circuit: *mut c_void, witness: *mut c_void, n_mutexes: u64) -> i64;
@@ -27,10 +25,9 @@ use proofman_starks_lib_c::set_memory_expressions_c;
 use proofman_starks_lib_c::{
     expressions_bin_new_c, stark_info_new_c, stark_info_free_c, expressions_bin_free_c, get_map_totaln_c,
     get_map_totaln_custom_commits_fixed_c, get_map_totaln_contributions_c, get_proof_size_c, get_max_n_tmp1_c,
-    get_max_n_tmp3_c, get_const_tree_size_c, load_const_pols_c, load_const_tree_c, read_exec_file_c,
-    get_proof_pinned_size_c, get_operations_quotient_c, calculate_words_per_row_c,
+    get_max_n_tmp3_c, get_const_tree_size_c, get_proof_pinned_size_c, get_operations_quotient_c,
+    calculate_words_per_row_c,
 };
-use proofman_util::create_buffer_fast;
 
 use crate::{GlobalInfoAir, ProofmanError};
 use crate::ProofType;
@@ -79,8 +76,6 @@ pub struct Setup<F: PrimeField64> {
     pub const_tree_size: usize,
     pub const_pols_path: String,
     pub const_pols_tree_path: String,
-    pub const_pols: Vec<F>,
-    pub const_pols_tree: Vec<F>,
     pub prover_buffer_size: u64,
     pub contributions_size: u64,
     pub custom_commits_fixed_buffer_size: u64,
@@ -90,7 +85,9 @@ pub struct Setup<F: PrimeField64> {
     pub setup_type: ProofType,
     pub size_witness: Option<u64>,
     pub circom_state: RwLock<CircomState>,
-    pub exec_data: Option<Vec<u64>>,
+    pub exec_data_path: Option<String>,
+    pub exec_data: Option<Arc<Vec<u64>>>,
+    pub n_adds: Option<u64>,
     pub air_name: String,
     pub verkey: Vec<F>,
     pub verkey_file: String,
@@ -98,7 +95,6 @@ pub struct Setup<F: PrimeField64> {
     pub n_operations_quotient: u64,
     pub preallocate: bool,
     pub gpu: bool,
-    pub const_pols_loaded: AtomicBool,
 }
 
 impl<F: PrimeField64> Drop for Setup<F> {
@@ -161,8 +157,6 @@ impl<F: PrimeField64> Setup<F> {
             stark_info,
             p_stark_info,
             p_expressions_bin,
-            const_pols,
-            const_pols_tree,
             verkey,
             verkey_file,
             const_pols_size,
@@ -181,8 +175,6 @@ impl<F: PrimeField64> Setup<F> {
                 StarkInfo::default(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                Vec::new(),
-                Vec::new(),
                 Vec::new(),
                 String::new(),
                 0,
@@ -233,7 +225,9 @@ impl<F: PrimeField64> Setup<F> {
             let verkey = if setup_type == &ProofType::RecursiveF {
                 vec![]
             } else {
-                let mut file = File::open(&verkey_file).expect("Unable to open file");
+                let mut file = File::open(&verkey_file).unwrap_or_else(|e| {
+                    panic!("Unable to open verkey file {verkey_file} (setup_type {setup_type:?}): {e}")
+                });
                 let mut json_str = String::new();
                 file.read_to_string(&mut json_str).expect("Unable to read file");
                 let vk: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
@@ -243,13 +237,10 @@ impl<F: PrimeField64> Setup<F> {
             let n_cols = stark_info.map_sections_n["cm1"];
 
             if verify_constraints && !gpu {
-                let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
                 (
                     stark_info,
                     p_stark_info,
                     expressions_bin,
-                    const_pols,
-                    Vec::new(),
                     verkey,
                     verkey_file,
                     const_pols_size,
@@ -264,8 +255,6 @@ impl<F: PrimeField64> Setup<F> {
                     n_operations_quotient,
                 )
             } else {
-                let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
-                let const_pols_tree: Vec<F> = create_buffer_fast(const_tree_size);
                 let mut const_pols_size_packed = 0;
                 if gpu && setup_type != &ProofType::RecursiveF {
                     let words_per_row: u64 = if Path::new(&const_pols_path).exists() {
@@ -285,8 +274,6 @@ impl<F: PrimeField64> Setup<F> {
                     stark_info,
                     p_stark_info,
                     expressions_bin,
-                    const_pols,
-                    const_pols_tree,
                     verkey,
                     verkey_file,
                     const_pols_size,
@@ -310,59 +297,82 @@ impl<F: PrimeField64> Setup<F> {
             _ => setup_type != &ProofType::Basic,
         };
 
-        let (circom_library, circom_circuit, get_witness_fn, size_witness, exec_data) = if needs_circom {
-            let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
-            let rust_lib_filename = setup_path.display().to_string() + lib_extension;
-            let rust_lib_path = Path::new(rust_lib_filename.as_str());
+        let (circom_library, circom_circuit, get_witness_fn, size_witness, exec_data_path, exec_data, n_adds) =
+            if needs_circom {
+                let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
+                let rust_lib_filename = setup_path.display().to_string() + lib_extension;
+                let rust_lib_path = Path::new(rust_lib_filename.as_str());
 
-            if !rust_lib_path.exists() {
-                return Err(ProofmanError::InvalidSetup(format!(
-                    "Rust lib dynamic library not found at path: {rust_lib_path:?}"
-                )));
-            }
+                if !rust_lib_path.exists() {
+                    return Err(ProofmanError::InvalidSetup(format!(
+                        "Rust lib dynamic library not found at path: {rust_lib_path:?}"
+                    )));
+                }
 
-            let library: Library = unsafe { Library::new(rust_lib_path)? };
+                let library: Library = unsafe { Library::new(rust_lib_path)? };
 
-            let dat_filename = setup_path.display().to_string() + ".dat";
-            let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
-            let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
+                let dat_filename = setup_path.display().to_string() + ".dat";
+                let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
+                let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
 
-            let circom_circuit_ptr = unsafe {
-                let init_circom_circuit: Symbol<GetCircomCircuitFunc> = library.get(b"initCircuit\0")?;
-                init_circom_circuit(dat_filename_ptr)
+                let circom_circuit_ptr = unsafe {
+                    let init_circom_circuit: Symbol<GetCircomCircuitFunc> = library.get(b"initCircuit\0")?;
+                    init_circom_circuit(dat_filename_ptr)
+                };
+
+                let witness_size = unsafe {
+                    let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
+                    get_size_witness()
+                };
+
+                // Load the getWitness function pointer for later use
+                let get_witness_fn = unsafe {
+                    let get_witness_symbol: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
+                    Some(*get_witness_symbol)
+                };
+
+                // Pre-load the entire .exec file into memory. Header is the first two u64s
+                // (n_adds, n_smap); the rest is read sequentially. Pre-loading gives RAM-speed
+                // access during every `get_committed_pols_c` call — no on-demand page faults.
+                let exec_filename = setup_path.display().to_string() + ".exec";
+                let mut file = File::open(&exec_filename)?;
+                let mut bytes = [0u8; 8];
+                file.read_exact(&mut bytes)?;
+                let n_adds = u64::from_le_bytes(bytes);
+                file.read_exact(&mut bytes)?;
+                let n_smap = u64::from_le_bytes(bytes);
+                let exec_data_size_elements: usize = (|| -> Option<usize> {
+                    let adds_terms = n_adds.checked_mul(4)?;
+                    let smap_terms = n_smap.checked_mul(n_cols)?;
+                    let elements = 2u64.checked_add(adds_terms)?.checked_add(smap_terms)?;
+                    usize::try_from(elements).ok()
+                })()
+                .ok_or_else(|| {
+                    ProofmanError::InvalidSetup(format!(
+                        "exec header for {exec_filename}: size overflow (n_adds={n_adds}, n_smap={n_smap}, n_cols={n_cols})"
+                    ))
+                })?;
+                // Header already consumed; read the remaining (size - 2) u64s.
+                let mut exec_data: Vec<u64> = vec![0; exec_data_size_elements];
+                exec_data[0] = n_adds;
+                exec_data[1] = n_smap;
+                let body_bytes = (exec_data_size_elements - 2) * 8;
+                let body_slice =
+                    unsafe { std::slice::from_raw_parts_mut(exec_data[2..].as_mut_ptr() as *mut u8, body_bytes) };
+                file.read_exact(body_slice)?;
+
+                (
+                    Some(library),
+                    Some(circom_circuit_ptr),
+                    get_witness_fn,
+                    Some(witness_size),
+                    Some(exec_filename),
+                    Some(Arc::new(exec_data)),
+                    Some(n_adds),
+                )
+            } else {
+                (None, None, None, None, None, None, None)
             };
-
-            let witness_size = unsafe {
-                let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
-                get_size_witness()
-            };
-
-            // Load the getWitness function pointer for later use
-            let get_witness_fn = unsafe {
-                let get_witness_symbol: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-                Some(*get_witness_symbol)
-            };
-
-            // Read exec file data
-            let exec_filename = setup_path.display().to_string() + ".exec";
-
-            let mut file = File::open(&exec_filename)?;
-            let mut bytes = [0u8; 8];
-
-            file.read_exact(&mut bytes)?;
-            let n_adds = u64::from_le_bytes(bytes);
-
-            file.read_exact(&mut bytes)?;
-            let n_smap = u64::from_le_bytes(bytes);
-
-            let exec_data_size = 2 + n_adds * 4 + n_smap * n_cols;
-            let mut exec_file_data: Vec<u64> = vec![0; exec_data_size as usize];
-            read_exec_file_c(exec_file_data.as_mut_ptr(), exec_filename.as_str(), n_cols);
-
-            (Some(library), Some(circom_circuit_ptr), get_witness_fn, Some(witness_size), Some(exec_file_data))
-        } else {
-            (None, None, None, None, None)
-        };
 
         Ok(Self {
             air_id,
@@ -372,8 +382,6 @@ impl<F: PrimeField64> Setup<F> {
             const_pols_size,
             const_pols_size_packed,
             const_tree_size,
-            const_pols,
-            const_pols_tree,
             verkey,
             verkey_file,
             prover_buffer_size,
@@ -383,7 +391,9 @@ impl<F: PrimeField64> Setup<F> {
             pinned_proof_size,
             size_witness,
             circom_state: RwLock::new(CircomState { library: circom_library, circuit: circom_circuit, get_witness_fn }),
+            exec_data_path,
             exec_data,
+            n_adds,
             setup_path: setup_path.to_path_buf().clone(),
             setup_type: setup_type.clone(),
             air_name: air_info.name.clone(),
@@ -393,56 +403,7 @@ impl<F: PrimeField64> Setup<F> {
             n_operations_quotient,
             preallocate,
             gpu,
-            const_pols_loaded: AtomicBool::new(false),
         })
-    }
-
-    pub fn load_const_pols(&self) {
-        if self.const_pols_loaded.load(Ordering::Acquire) {
-            return;
-        }
-        load_const_pols_c(
-            self.const_pols.as_ptr() as *mut u8,
-            self.const_pols_path.as_str(),
-            self.const_pols_size as u64 * 8,
-        );
-        self.const_pols_loaded.store(true, Ordering::Release);
-    }
-
-    pub fn load_const_pols_tree(&self) {
-        let const_pols_tree_size = self.const_tree_size;
-
-        load_const_tree_c(
-            self.p_setup.p_stark_info,
-            self.const_pols_tree.as_ptr() as *mut u8,
-            self.const_pols_tree_path.as_str(),
-            (const_pols_tree_size * 8) as u64,
-            &(self.setup_path.display().to_string() + ".verkey.json"),
-        );
-    }
-
-    pub fn get_const_pols(&self, first_row: usize, num_rows: usize, offset: Option<usize>) -> Vec<RowInfo> {
-        let offset = offset.unwrap_or(1);
-        let num_rows_available = self.const_pols.len() / self.stark_info.n_constants as usize;
-
-        (0..num_rows)
-            .map(|i| first_row + i * offset)
-            .take_while(|&row| row < num_rows_available)
-            .map(|row| {
-                let start = row * self.stark_info.n_constants as usize;
-                let end = start + self.stark_info.n_constants as usize;
-                let values = self.const_pols[start..end].iter().map(|v| F::as_canonical_u64(v)).collect();
-                RowInfo { row, values }
-            })
-            .collect()
-    }
-
-    pub fn get_const_ptr(&self) -> *mut u8 {
-        self.const_pols.as_ptr() as *mut u8
-    }
-
-    pub fn get_const_tree_ptr(&self) -> *mut u8 {
-        self.const_pols_tree.as_ptr() as *mut u8
     }
 
     pub fn get_vk(&self) -> Vec<u64> {
@@ -451,7 +412,7 @@ impl<F: PrimeField64> Setup<F> {
 
     pub fn get_circom_witness_size(&self) -> usize {
         let base_size = self.size_witness.unwrap_or(0) as usize;
-        let exec_offset = self.exec_data.as_ref().and_then(|v| v.first()).copied().unwrap_or(0) as usize;
+        let exec_offset = self.n_adds.unwrap_or(0) as usize;
         base_size + exec_offset
     }
 }

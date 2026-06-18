@@ -1,1 +1,0 @@
-CUDA_ARCH = sm_120

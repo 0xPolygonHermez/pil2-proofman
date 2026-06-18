@@ -35,7 +35,7 @@ impl<F: PrimeField64> WitnessComponent<F> for SimpleRight {
                 trace[i].c = F::from_usize(i);
                 trace[i].d = F::from_usize(num_rows - i - 1);
 
-                trace[i].mul = F::from_usize(1);
+                trace[i].mul = F::from_usize(i);
             }
 
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));

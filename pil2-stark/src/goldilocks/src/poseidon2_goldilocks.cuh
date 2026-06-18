@@ -7,14 +7,8 @@
 #include "cuda_utils.hpp"
 #include "poseidon2_goldilocks.hpp"
 #include "goldilocks_trace_layout.cuh"
+#include "poseidon_gpu_common.cuh"  // Layout, pow7(gl64_t&), scratchpad
 
-extern __shared__ gl64_t scratchpad[];
-
-// GPU input layout selector.
-enum class Layout : uint8_t {
-    RowMajor,
-    Tiles,
-};
 
 
 template<uint32_t SPONGE_WIDTH_T>
@@ -35,7 +29,7 @@ public:
 
     void static permute(uint64_t * output, const uint64_t * input, cudaStream_t stream = 0);
 
-    void static compress(uint64_t * output, const uint64_t * input, cudaStream_t stream = 0);
+    void static permuteTrunc(uint64_t * output, const uint64_t * input, cudaStream_t stream = 0);
 
     void static linearHash(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, Layout layout, cudaStream_t stream);
 
@@ -47,11 +41,9 @@ public:
 
 };
 
-using Poseidon2GoldilocksGPUGrinding = Poseidon2GoldilocksGPU<4>;  // SPONGE_WIDTH = 4
+using Poseidon2GoldilocksGPUGrinding = Poseidon2GoldilocksGPU<8>;  // SPONGE_WIDTH = 8
 
-// Dispatch merkletree by arity
-void buildMerkleTreeGPU(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
-                         uint64_t nCols, uint64_t nRows, Layout layout, cudaStream_t stream);
+
 
 // --- Forward declarations (defined in .cu) ---
 
@@ -59,14 +51,6 @@ template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t
 __device__ void poseidon2PermuteSmem();
 
 // --- Leaf device helpers ---
-
-__device__ __forceinline__ void pow7(gl64_t &x)
-{
-    gl64_t x2 = x * x;
-    gl64_t x3 = x * x2;
-    gl64_t x4 = x2 * x2;
-    x = x3 * x4;
-}
 
 __device__ __forceinline__ void mds4x4(gl64_t *x)
 {
@@ -229,6 +213,7 @@ __device__ __forceinline__ void partialRoundMulSmem(const gl64_t D[SPONGE_WIDTH_
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void poseidon2PermuteReg(gl64_t *state, const gl64_t *input, const gl64_t *GPU_C_GL, const gl64_t *GPU_D_GL)
 {
+
     mymemcpy((uint64_t *)state, (uint64_t *)input, SPONGE_WIDTH_T);
 
     mdsExternal<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(state);
@@ -254,11 +239,13 @@ __device__ __forceinline__ void poseidon2PermuteReg(gl64_t *state, const gl64_t 
         sboxFull<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(state, &(GPU_C_GL[(N_FULL_ROUNDS_TOTAL_T>>1) * SPONGE_WIDTH_T + N_PARTIAL_ROUNDS_T + r * SPONGE_WIDTH_T]));
         mdsExternal<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(state);
     }
+
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __device__ __forceinline__ void poseidon2PermuteSmem(const gl64_t *GPU_C_GL, const gl64_t *GPU_D_GL)
 {
+
     mdsExternalSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
     for (int r = 0; r < (N_FULL_ROUNDS_TOTAL_T>>1); r++)
     {
@@ -281,20 +268,7 @@ __device__ __forceinline__ void poseidon2PermuteSmem(const gl64_t *GPU_C_GL, con
         sboxFullSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(&(GPU_C_GL[(N_FULL_ROUNDS_TOTAL_T>>1) * SPONGE_WIDTH_T + N_PARTIAL_ROUNDS_T + r * SPONGE_WIDTH_T]));
         mdsExternalSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>();
     }
-}
 
-template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__device__ __forceinline__ void poseidon2PermuteSmem(gl64_t *out, const gl64_t *in, const gl64_t *GPU_C_GL, const gl64_t *GPU_D_GL)
-{
-    for (int i = 0; i < SPONGE_WIDTH_T; i++) {
-        scratchpad[i * blockDim.x + threadIdx.x] = in[i];
-    }
-
-    poseidon2PermuteSmem<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(GPU_C_GL, GPU_D_GL);
-
-    for (int i = 0; i < SPONGE_WIDTH_T; i++) {
-        out[i] = scratchpad[i * blockDim.x + threadIdx.x];
-    }
 }
 
 // --- Sponge I/O ---
@@ -410,7 +384,7 @@ __device__ __forceinline__ void spongeAbsorbTiled(const uint64_t *__restrict__ i
     for (uint32_t col = 0;;)
     {
         uint32_t delta = min(num_cols - col, RATE_T);
-        spongeLoadTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T >(in, num_rows, num_cols, col, delta);
+        spongeLoadTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(in, num_rows, num_cols, col, delta);
         if (delta < RATE_T)
         {
             for (uint32_t i = delta; i < RATE_T; i++)
@@ -440,7 +414,7 @@ __device__ __forceinline__ void spongeAbsorbTiled(const uint64_t *__restrict__ i
 
 // --- Kernel definitions ---
 
-// permuteKernel / compressKernel: single-element permutation on contiguous state.
+// permuteKernel / permuteTruncKernel: single-element permutation on contiguous state.
 // MUST be launched with <<<1, 1>>> 
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
@@ -454,7 +428,7 @@ __global__ void permuteKernel(uint64_t * output, const uint64_t * input){
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__global__ void compressKernel(uint64_t * output, const uint64_t * input){
+__global__ void permuteTruncKernel(uint64_t * output, const uint64_t * input){
     assert(blockDim.x == 1 && gridDim.x == 1);
     for (uint32_t i = 0; i < SPONGE_WIDTH_T; i++)
         scratchpad[i] = input[i];
@@ -466,6 +440,16 @@ __global__ void compressKernel(uint64_t * output, const uint64_t * input){
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __global__ void linearHashKernel(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows)
 {
+    if (num_cols == 0)
+    {
+        const size_t tid = threadIdx.x + blockDim.x * (size_t)blockIdx.x;
+        uint64_t *out = output + tid * CAPACITY_T;
+#pragma unroll
+        for (uint32_t i = 0; i < CAPACITY_T; i++)
+            out[i] = 0;
+        return;
+    }
+
 #pragma unroll
     for (uint32_t i = 0; i < CAPACITY_T; i++)
         scratchpad[(i + RATE_T) * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
@@ -477,6 +461,16 @@ __global__ void linearHashKernel(uint64_t *__restrict__ output, uint64_t *__rest
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
 __global__ void linearHashTiledKernel(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows)
 {
+    if (num_cols == 0)
+    {
+        const size_t tid = threadIdx.x + blockDim.x * (size_t)blockIdx.x;
+        uint64_t *out = output + tid * CAPACITY_T;
+#pragma unroll
+        for (uint32_t i = 0; i < CAPACITY_T; i++)
+            out[i] = 0;
+        return;
+    }
+
 #pragma unroll
     for (uint32_t i = 0; i < CAPACITY_T; i++)
         scratchpad[(i + RATE_T) * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));

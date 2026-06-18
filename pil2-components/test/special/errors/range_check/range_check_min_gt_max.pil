@@ -1,0 +1,12 @@
+// Must fail to compile: range_validator rejects min > max.
+
+require "std_range_check.pil"
+
+airtemplate RangeCheckMinGtMax(const int N = 2**4) {
+    col witness x, sx;
+    range_check(x, 1, 0, sx);  // ERROR: min > max
+}
+
+airgroup RangeCheckMinGtMax {
+    RangeCheckMinGtMax();
+}

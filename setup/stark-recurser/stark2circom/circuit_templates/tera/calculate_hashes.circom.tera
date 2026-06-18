@@ -1,0 +1,38 @@
+template CalculateStage1Hash() {
+    signal input rootC[4];
+    signal input root1[4];
+{%- if has_stage1_air_values %}
+    signal input airValues[{{ air_values_len }}][3];
+{%- endif %}
+{%- if is_ec %}
+    signal output P[2][5];
+{%- else %}
+    signal output values[{{ lattice_size }}];
+{%- endif %}
+{{ transcript_code }}
+{%- for j in unused_air_values %}
+    _ <== airValues[{{ j }}]; // Unused air values at stage 1
+{%- endfor %}
+{%- if is_ec %}
+    signal x[5] <== [{{ x_fields | join(sep=", ") }}];
+    signal y[5] <== [{{ y_fields | join(sep=", ") }}];
+
+    // Constants for the {{ curve_name }} curve
+    var A[5] = [{{ curve_a }}];
+    var B[5] = [{{ curve_b }}];
+    var Z[5] = [{{ curve_z }}];
+    var C1[5] = [{{ curve_c1 }}];
+    var C2[5] = [{{ curve_c2 }}];
+    P <== HashToCurve(A, B, Z, C1, C2)(x,y);
+{%- else %}
+{%- for f in initial_fields %}
+    values[{{ loop.index0 }}] <== {{ f }};
+{%- endfor %}
+{% for r in chain %}
+    signal {{ r.sig }}[{{ out_w }}] <== {% if poseidon2 %}Poseidon2(4, {{ out_w }}){% else %}Poseidon({{ out_w }}){% endif %}([{{ r.inputs | join(sep=", ") }}], [{{ r.state | join(sep=", ") }}]);
+    for (var j = 0; j < {{ out_w }}; j++) {
+        values[{{ r.base_next }} + j] <== {{ r.sig }}[j];
+    }
+{% endfor %}
+{%- endif %}
+}

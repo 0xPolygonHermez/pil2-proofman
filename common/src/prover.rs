@@ -58,7 +58,7 @@ impl FromStr for ProofType {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Proof<F: PrimeField64> {
     pub proof_type: ProofType,
     pub airgroup_id: usize,

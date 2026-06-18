@@ -454,6 +454,10 @@ struct DeviceCommitBuffers
     uint64_t max_size_proof;
 
     uint64_t constPolsSize;
+    uint64_t unifiedBufferSize = 0;
+    // Borrow flag for the FIRST GPU's unified buffer only (my_gpu_ids[0]).
+    // 0 = free (proofman owns it), 1 = borrowed 
+    std::atomic<uint32_t> firstGpuBufferBorrowed{0};
     uint64_t pinned_size = 128 * 1024 * 1024; //256MB
 
     uint32_t  n_gpus;
@@ -492,7 +496,8 @@ void load_and_copy_to_device_in_chunks(
     const char* bufferPath,
     void* dst,
     uint64_t total_size,
-    uint64_t streamId
+    uint64_t streamId,
+    uint64_t header_skip_bytes = 0
     );
 
 #endif

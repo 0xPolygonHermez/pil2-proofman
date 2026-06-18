@@ -1,6 +1,8 @@
 #include <sys/stat.h>
 #include "build_const_tree.hpp"
 
+Goldilocks fr;
+
 #define BCTREE_VERSION "0.1.0.0"
 
 using namespace std;

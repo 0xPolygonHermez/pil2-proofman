@@ -1,0 +1,52 @@
+pragma circom 2.1.0;
+pragma custom_templates;
+
+{% for vf in verifier_filenames %}include "{{ vf }}";
+{% endfor %}include "iszero.circom";
+include "select_vk.circom";
+include "agg_values.circom";
+
+{{ verify_global_challenge }}
+
+{{ verify_global_constraints }}
+
+template Final() {
+
+{% if has_publics %}    signal input publics[{{ n_publics }}];
+{% endif %}
+{% if has_proof_values %}    signal input proofValues[{{ num_proof_values }}][3];
+{% endif %}
+    signal input globalChallenge[3];
+
+{% for section in define_sections %}{{ section }}
+{% endfor %}
+{% for section in assign_sections %}{{ section }}
+{% endfor %}
+    // Calculate transcript and check that matches with the global challenges
+    component verifyChallenges = VerifyGlobalChallenges();
+{% if has_publics %}    verifyChallenges.publics <== publics;
+{% endif %}
+{% if has_proof_values %}    verifyChallenges.proofValues <== proofValues;
+{% endif %}
+{% for i in stage1hash_indices %}    verifyChallenges.stage1Hash[{{ i }}] <== s{{ i }}_sv_stage1Hash;
+{% endfor %}    verifyChallenges.globalChallenge <== globalChallenge;
+
+    // Verify global constraints
+    component verifyGlobalConstraints = VerifyGlobalConstraints();
+{% if has_publics %}    verifyGlobalConstraints.publics <== publics;
+{% endif %}
+{% if has_proof_values %}    verifyGlobalConstraints.proofValues <== proofValues;
+{% endif %}    verifyGlobalConstraints.globalChallenge <== globalChallenge;
+{% for name in airgroupvalues_names %}    verifyGlobalConstraints.{{ name | replace(from="_sv_airgroupvalues", to="_airgroupvalues") }} <== {{ name }};
+{% endfor %}
+    signal {binary} isNull[{{ n_airgroups }}];
+    signal nAggregatedProofs[{{ n_airgroups }}];
+{% for i in stage1hash_indices %}    isNull[{{ i }}] <== IsZero()(s{{ i }}_sv_circuitType);
+    nAggregatedProofs[{{ i }}] <== s{{ i }}_sv_aggregatedProofs;
+{% endfor %}    _ <== AggregateProofsNull({{ n_airgroups }})(nAggregatedProofs, isNull);
+
+}
+
+{% if has_publics %}component main {public [publics]} = Final();
+{% else %}component main = Final();
+{% endif %}

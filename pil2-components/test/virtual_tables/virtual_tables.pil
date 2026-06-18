@@ -5,7 +5,7 @@ require "std_range_check.pil"
     To audit and generate stats:
     node ../pil2-compiler/src/pil.js ./pil2-components/test/virtual_tables/virtual_tables.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/virtual_tables/build/build.pilout
     node --max-old-space-size=131072 ../pil2-compiler/tools/audit.js pil2-components/test/virtual_tables/build/build.pilout
-    node --max-old-space-size=131072 ../pil2-proofman-js/src/main_stats.js -a pil2-components/test/virtual_tables/build/build.pilout -o pil2-components/test/virtual_tables/build/virtual_tables.stats
+    cargo run --bin proofman-setup -- stats -a pil2-components/test/virtual_tables/build/build.pilout -o pil2-components/test/virtual_tables/build/virtual_tables.stats
 */
 
 airtemplate Component(const int N, const int t, const int opid) {
@@ -66,10 +66,11 @@ airgroup VirtualTables {
     // Virtual Tables Configuration
     set_u8_table_virtual(); // Enable virtual tables for U8
     set_u16_table_virtual(); // Enable virtual tables for U16
-    set_max_num_rows_virtual(1 << 16); // Set the maximum num rows for virtual tables
-    set_max_num_virtual_tables(3); // Set the maximum number of virtual tables
+    set_max_bits_virtual_tables(16); // Set the maximum bits for virtual tables
+    set_num_virtual_tables(3); // Set the number of virtual tables
     set_group_virtual_tables(table_ids: [4, 5, 3, 8/*, 6*/]); // Set groups for virtual tables
-    set_group_virtual_tables(table_ids: [1, 60, 61, 62]);
+    set_group_virtual_tables(table_ids: [1, 60, 61]);
+    set_group_virtual_tables(table_ids: [62]);
 
     // Virtual tables
     Component(N: 2**5, t: 5, opid: 1) alias Component1;

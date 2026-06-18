@@ -1,4 +1,5 @@
 require "std_constants.pil"
+require "std_tools.pil"
 require "std_sum.pil"
 require "std_virtual_table.pil"
 
@@ -37,15 +38,21 @@ const int DEFAULT_LOOKUP_SURNAME = PIOP_SURNAME_DEFAULT;
 /**
  * Performs the "assumes" part of a lookup check.
  *
- * @param opid        The operation ID that uniquely identifies this lookup operation.
- * @param expressions The vector of expressions to be assumed in the lookup check.
- * @param sel         A selector specifying which rows are subject to the lookup check.
- * @param name        An optional name for the PIOP consuming the lookup check. 
- *                    This is useful for debugging and tracing operations.
+ * @param opid          The operation ID that uniquely identifies this lookup operation.
+ * @param expressions   The vector of expressions to be assumed in the lookup check.
+ * @param sel           A selector specifying which rows are subject to the lookup check.
+ * @param sel_is_binary When 0 the library enforces that `sel` is binary by adding the constraint
+ *                      sel·(sel - 1) === 0. Set to 1 to take responsibility for ensuring
+ *                      `sel` is binary yourself and skip the added constraint.
+ * @param name          An optional name for the PIOP consuming the lookup check.
+ *                      This is useful for debugging and tracing operations.
  */
-function lookup_assumes(const int opid, const expr expressions[], const expr sel = 1, int name = PIOP_NAME_DEFAULT, int surname = PIOP_SURNAME_DEFAULT) {
+function lookup_assumes(const int opid, const expr expressions[], const expr sel = 1, const int sel_is_binary = 0, int name = PIOP_NAME_DEFAULT, int surname = PIOP_SURNAME_DEFAULT) {
     if (name == PIOP_NAME_DEFAULT) name = DEFAULT_LOOKUP_NAME;
     if (surname == PIOP_SURNAME_DEFAULT) surname = DEFAULT_LOOKUP_SURNAME;
+
+    // Unless the caller guarantees it, enforce that the selector is binary
+    if (sel_is_binary == 0) constrain_binary_sel(sel, opid);
 
     sum(name, surname, SUM_TYPE_ASSUMES, [opid], opid, expressions, sel);
 }

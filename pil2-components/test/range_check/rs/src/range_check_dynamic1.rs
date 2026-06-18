@@ -48,7 +48,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic1<F> {
                         let val = rng.random_range(0..=(1 << 7) - 1);
                         trace[i].colu = F::from_u16(val);
 
-                        self.std_lib.range_check(range7, val as i64, 1);
+                        self.std_lib.range_check_one(range7, val);
                     }
                     1 => {
                         trace[i].sel_7 = F::ZERO;
@@ -58,7 +58,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic1<F> {
                         let val = rng.random_range(0..=(1 << 8) - 1);
                         trace[i].colu = F::from_u16(val);
 
-                        self.std_lib.range_check(range8, val as i64, 1);
+                        self.std_lib.range_check_one(range8, val);
                     }
                     2 => {
                         trace[i].sel_7 = F::ZERO;
@@ -68,7 +68,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic1<F> {
                         let val = rng.random_range(0..=(1 << 16) - 1);
                         trace[i].colu = F::from_u32(val);
 
-                        self.std_lib.range_check(range16, val as i64, 1);
+                        self.std_lib.range_check_one(range16, val);
                     }
                     3 => {
                         trace[i].sel_7 = F::ZERO;
@@ -78,7 +78,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic1<F> {
                         let val = rng.random_range(0..=(1 << 17) - 1);
                         trace[i].colu = F::from_u32(val);
 
-                        self.std_lib.range_check(range17, val as i64, 1);
+                        self.std_lib.range_check_one(range17, val);
                     }
                     _ => return Err(ProofmanError::StdError("Invalid range".to_string())),
                 }

@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "82340f76128a3e3df658762de3378af60f37b39f201ad2a7f79ec47330f19552";
+pub const PILOUT_HASH: &str = "73bfd9d5e3e65b5ced185b50a1ed4160b748f00e634164509a7211b1c459f7a0";
 
 pub const MERKLE_TREE_ARITY: u64 = 4;
 
@@ -79,8 +79,8 @@ pub type RangeCheck3Fixed<F> = GenericTrace<RangeCheck3FixedRow<F>, 32, 0, 0>;
 trace_row!(RangeCheck3TraceRow<F> {
  c1:F, c2:F,
 });
-pub type RangeCheck3Trace<F> = GenericTrace<RangeCheck3TraceRow<F>, 32, 0, 0>;
 
+pub type RangeCheck3Trace<F> = GenericTrace<RangeCheck3TraceRow<F>, 32, 0, 0>;
 
 trace_row!(RangeCheck2FixedRow<F> {
  __L1__: F,
@@ -90,8 +90,8 @@ pub type RangeCheck2Fixed<F> = GenericTrace<RangeCheck2FixedRow<F>, 16, 1, 0>;
 trace_row!(RangeCheck2TraceRow<F> {
  b1:F, b2:F, b3:F,
 });
-pub type RangeCheck2Trace<F> = GenericTrace<RangeCheck2TraceRow<F>, 16, 1, 0>;
 
+pub type RangeCheck2Trace<F> = GenericTrace<RangeCheck2TraceRow<F>, 16, 1, 0>;
 
 trace_row!(RangeCheck1FixedRow<F> {
  __L1__: F,
@@ -101,8 +101,8 @@ pub type RangeCheck1Fixed<F> = GenericTrace<RangeCheck1FixedRow<F>, 8, 2, 0>;
 trace_row!(RangeCheck1TraceRow<F> {
  a1:F, a2:F, a3:F, a4:F, a5:F, sel1:F, sel2:F, sel3:F,
 });
-pub type RangeCheck1Trace<F> = GenericTrace<RangeCheck1TraceRow<F>, 8, 2, 0>;
 
+pub type RangeCheck1Trace<F> = GenericTrace<RangeCheck1TraceRow<F>, 8, 2, 0>;
 
 trace_row!(RangeCheck4FixedRow<F> {
  __L1__: F,
@@ -112,8 +112,8 @@ pub type RangeCheck4Fixed<F> = GenericTrace<RangeCheck4FixedRow<F>, 64, 3, 0>;
 trace_row!(RangeCheck4TraceRow<F> {
  a1:F, a2:F, a3:F, a4:F, a5:F, a6:F, a7:F, a8:F, sel1:F, sel2:F,
 });
-pub type RangeCheck4Trace<F> = GenericTrace<RangeCheck4TraceRow<F>, 64, 3, 0>;
 
+pub type RangeCheck4Trace<F> = GenericTrace<RangeCheck4TraceRow<F>, 64, 3, 0>;
 
 trace_row!(U16AirFixedRow<F> {
  RANGE: [F; 1], __L1__: F,
@@ -123,8 +123,8 @@ pub type U16AirFixed<F> = GenericTrace<U16AirFixedRow<F>, 65536, 3, 1>;
 trace_row!(U16AirTraceRow<F> {
  mul:[F; 1],
 });
-pub type U16AirTrace<F> = GenericTrace<U16AirTraceRow<F>, 65536, 3, 1>;
 
+pub type U16AirTrace<F> = GenericTrace<U16AirTraceRow<F>, 65536, 3, 1>;
 
 trace_row!(MultiRangeCheck1FixedRow<F> {
  __L1__: F,
@@ -134,8 +134,8 @@ pub type MultiRangeCheck1Fixed<F> = GenericTrace<MultiRangeCheck1FixedRow<F>, 8,
 trace_row!(MultiRangeCheck1TraceRow<F> {
  a:[F; 3], sel:[F; 3], range_sel:[F; 3],
 });
-pub type MultiRangeCheck1Trace<F> = GenericTrace<MultiRangeCheck1TraceRow<F>, 8, 4, 0>;
 
+pub type MultiRangeCheck1Trace<F> = GenericTrace<MultiRangeCheck1TraceRow<F>, 8, 4, 0>;
 
 trace_row!(MultiRangeCheck2FixedRow<F> {
  __L1__: F,
@@ -145,8 +145,8 @@ pub type MultiRangeCheck2Fixed<F> = GenericTrace<MultiRangeCheck2FixedRow<F>, 16
 trace_row!(MultiRangeCheck2TraceRow<F> {
  a:[F; 2], sel:[F; 2], range_sel:[F; 2],
 });
-pub type MultiRangeCheck2Trace<F> = GenericTrace<MultiRangeCheck2TraceRow<F>, 16, 5, 0>;
 
+pub type MultiRangeCheck2Trace<F> = GenericTrace<MultiRangeCheck2TraceRow<F>, 16, 5, 0>;
 
 trace_row!(RangeCheckDynamic1FixedRow<F> {
  __L1__: F,
@@ -156,8 +156,8 @@ pub type RangeCheckDynamic1Fixed<F> = GenericTrace<RangeCheckDynamic1FixedRow<F>
 trace_row!(RangeCheckDynamic1TraceRow<F> {
  colu:F, sel_7:F, sel_8:F, sel_16:F, sel_17:F,
 });
-pub type RangeCheckDynamic1Trace<F> = GenericTrace<RangeCheckDynamic1TraceRow<F>, 256, 6, 0>;
 
+pub type RangeCheckDynamic1Trace<F> = GenericTrace<RangeCheckDynamic1TraceRow<F>, 256, 6, 0>;
 
 trace_row!(RangeCheckDynamic2FixedRow<F> {
  __L1__: F,
@@ -167,8 +167,8 @@ pub type RangeCheckDynamic2Fixed<F> = GenericTrace<RangeCheckDynamic2FixedRow<F>
 trace_row!(RangeCheckDynamic2TraceRow<F> {
  colu:F, sel_1:F, sel_2:F, sel_3:F, sel_4:F, sel_5:F,
 });
-pub type RangeCheckDynamic2Trace<F> = GenericTrace<RangeCheckDynamic2TraceRow<F>, 64, 7, 0>;
 
+pub type RangeCheckDynamic2Trace<F> = GenericTrace<RangeCheckDynamic2TraceRow<F>, 64, 7, 0>;
 
 trace_row!(RangeCheckMixFixedRow<F> {
  __L1__: F,
@@ -178,8 +178,8 @@ pub type RangeCheckMixFixed<F> = GenericTrace<RangeCheckMixFixedRow<F>, 64, 8, 0
 trace_row!(RangeCheckMixTraceRow<F> {
  a:[F; 4], b:[F; 2], c:[F; 1], range_sel:[F; 5],
 });
-pub type RangeCheckMixTrace<F> = GenericTrace<RangeCheckMixTraceRow<F>, 64, 8, 0>;
 
+pub type RangeCheckMixTrace<F> = GenericTrace<RangeCheckMixTraceRow<F>, 64, 8, 0>;
 
 trace_row!(U8AirFixedRow<F> {
  RANGE: [F; 1], __L1__: F,
@@ -189,8 +189,8 @@ pub type U8AirFixed<F> = GenericTrace<U8AirFixedRow<F>, 256, 9, 0>;
 trace_row!(U8AirTraceRow<F> {
  mul:[F; 1],
 });
-pub type U8AirTrace<F> = GenericTrace<U8AirTraceRow<F>, 256, 9, 0>;
 
+pub type U8AirTrace<F> = GenericTrace<U8AirTraceRow<F>, 256, 9, 0>;
 
 trace_row!(SpecifiedRangesFixedRow<F> {
  OPID: [F; 14], VALS: [F; 14], __L1__: F,
@@ -200,8 +200,8 @@ pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 3276
 trace_row!(SpecifiedRangesTraceRow<F> {
  mul:[F; 14],
 });
-pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 32768, 10, 0>;
 
+pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 32768, 10, 0>;
 
 values!(RangeCheck3AirGroupValues<F> {
  gsum_result: FieldExtension<F>,

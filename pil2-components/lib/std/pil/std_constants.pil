@@ -179,6 +179,13 @@ function enable_range_stats() {
     PRINT_RANGE_STATS = 1;
 }
 
+// Controls debug print
+int DEBUG_MODE_PRINT = 0;
+
+function enable_debug_mode_prints() {
+    DEBUG_MODE_PRINT = 1;
+}
+
 // Powers of 2
 const int P2_1 = 2**1;
 const int P2_2 = 2**2;

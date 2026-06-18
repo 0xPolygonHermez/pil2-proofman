@@ -1,0 +1,14 @@
+pragma circom 2.1.0;
+pragma custom_templates;
+
+{% for vf in verifier_filenames %}include "{{ vf }}";
+{% endfor %}
+template Main() {
+    signal input rootC[4];
+
+{{ stark_signals }}
+{{ stark_assign }}
+    sV.rootC <== rootC;
+}
+
+component main {public [ rootC{% if has_publics %}, publics{% endif %} ]}= Main();

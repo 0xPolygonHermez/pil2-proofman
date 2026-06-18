@@ -9,7 +9,6 @@ use std::ffi::c_void;
 
 use fields::{CubicExtensionField, PrimeField64};
 use proofman_common::{ProofCtx, ProofmanError, ProofmanResult, SetupCtx, Setup, StepsParams};
-use proofman_util::create_buffer_fast;
 
 use std::ops::{Add, Div, Mul, Sub, AddAssign, DivAssign, MulAssign, SubAssign};
 
@@ -109,19 +108,19 @@ impl<F: PrimeField64> Default for HintFieldInfo<F> {
 impl<F: PrimeField64> HintFieldInfo<F> {
     pub fn init_buffers(&mut self) {
         if self.size > 0 {
-            self.values = create_buffer_fast(self.size as usize);
+            self.values = vec![F::ZERO; self.size as usize];
         }
 
         if self.matrix_size > 0 {
-            self.pos = create_buffer_fast(self.matrix_size as usize);
+            self.pos = vec![0u64; self.matrix_size as usize];
         }
 
         if self.string_size > 0 {
-            self.string_value = create_buffer_fast(self.string_size as usize);
+            self.string_value = vec![0u8; self.string_size as usize];
         }
 
         if self.expression_line_size > 0 {
-            self.expression_line = create_buffer_fast(self.expression_line_size as usize);
+            self.expression_line = vec![0u8; self.expression_line_size as usize];
         }
     }
 }

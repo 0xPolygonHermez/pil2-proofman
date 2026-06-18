@@ -1,4 +1,5 @@
 #include "starks.hpp"
+#include "starks_api_internal.cuh"
 #include "starks_gpu.cuh"
 #ifdef USE_CUDA_GRAPH
 #include "cuda_graph_cache.cuh"
@@ -248,19 +249,25 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
         uint64_t arity = setupCtx.starkInfo.starkStruct.merkleTreeArity;
         uint64_t ctxId = (uint64_t)(uintptr_t)&setupCtx;
         uint64_t key = CudaGraphCache::makeKey(0x4C4445ULL ^ ctxId, nBits, nBitsExt, nCols, arity, step);
-        if (graphCache->tryLaunch(key, stream)) {
-            if (d_transcript != nullptr) {
-                uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
-                d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
+        if (graphCache->contains(key)) {
+            TimerStartCategoryGPU(timer, MERKLE_TREE);
+            bool launched = graphCache->tryLaunch(key, stream);
+            TimerStopCategoryGPU(timer, MERKLE_TREE);
+            if (launched) {
+                if (d_transcript != nullptr) {
+                    uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
+                    d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
+                }
+                return;
             }
-            return;
         }
         if (graphCache->shouldCapture(key)) {
             if (graphCache->beginCapture(key, stream)) {
                 NTTGoldilocksGPU ntt;
                 ntt.LDE(dst, offset_dst, src, offset_src, nBits, nBitsExt, nCols, timer, stream);
                 buildMerkleTreeGPU(arity, (uint64_t*)pNodes, (uint64_t*)(dst + offset_dst), nCols, NExtended, Layout::Tiles, stream);
-                if (graphCache->endCaptureAndLaunch(stream)) {
+                bool launched = graphCache->endCaptureAndLaunch(stream);
+                if (launched) {
                     if (d_transcript != nullptr) {
                         uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
                         d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE, stream);
@@ -1187,6 +1194,14 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, ui
 
     uint64_t numSiblings = (uint64_t)ceil(setupCtx.starkInfo.starkStruct.nBitsExt / std::log2(arity)) - lastLevelVerification;
     uint64_t numSiblingsLevel = (arity - 1) * HASH_SIZE;
+
+    uint64_t pushes_per_polQuery = setupCtx.starkInfo.nStages + 2;
+    if (nTrees > setupCtx.starkInfo.nStages + 2) {
+        pushes_per_polQuery += 1;
+    }
+    for (uint64_t i = 0; i < setupCtx.starkInfo.starkStruct.nQueries; i++) {
+        proof.proof.fri.trees.polQueries[i].reserve(pushes_per_polQuery);
+    }
 
     int count = 0;
     for (uint k = 0; k < setupCtx.starkInfo.nStages + 1; k++)

@@ -1,0 +1,13 @@
+// Must fail to compile: range_validator rejects max >= PRIME.
+// range_size = 8 keeps us past the small-range warning branch.
+
+require "std_range_check.pil"
+
+airtemplate RangeCheckMaxGePrime(const int N = 2**4) {
+    col witness x, sx;
+    range_check(x, PRIME - 7, PRIME, sx);  // ERROR: max >= PRIME
+}
+
+airgroup RangeCheckMaxGePrime {
+    RangeCheckMaxGePrime();
+}

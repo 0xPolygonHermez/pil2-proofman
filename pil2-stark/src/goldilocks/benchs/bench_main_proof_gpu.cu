@@ -254,6 +254,99 @@ static void MAIN_MERKLE_STAGE2_GPU_BENCH(benchmark::State &state)
 }
 
 // ===========================================================================
+// MAIN_LDE_SWEEP_GPU_BENCH -- LDE N->N_ext, nCols swept via ->Arg().
+// Same kernel path as the production stage-1/2 commit LDE.
+// ===========================================================================
+static void MAIN_LDE_SWEEP_GPU_BENCH(benchmark::State &state)
+{
+    uint64_t nCols = state.range(0);
+
+    uint32_t gpu_id = 0;
+    CHECKCUDAERR(cudaGetDevice((int *)&gpu_id));
+    NTTGoldilocksGPU gpu_ntt(MAX_LOG_DOMAIN, 1, &gpu_id);
+
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+    TimerGPU timer(stream);
+
+    gl64_t *d_flat, *d_src, *d_dst;
+    CHECKCUDAERR(cudaMalloc((void **)&d_flat, MAIN_N     * nCols * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_src,  MAIN_N     * nCols * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_dst,  MAIN_N_EXT * nCols * sizeof(gl64_t)));
+
+    dim3 thr(128), blk((MAIN_N + 127) / 128);
+    initTraceKernel<<<blk, thr, 0, stream>>>(d_flat, MAIN_N, nCols);
+    fromRowMajorToTiled(MAIN_N, nCols, d_flat, d_src, stream);
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    // Warm up
+    gpu_ntt.LDE(d_dst, 0, d_src, 0, MAIN_NBITS, MAIN_NBITS_EXT, nCols, timer, stream);
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    for (auto _ : state) {
+        gpu_ntt.LDE(d_dst, 0, d_src, 0, MAIN_NBITS, MAIN_NBITS_EXT, nCols, timer, stream);
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
+    }
+
+    CHECKCUDAERR(cudaFree(d_flat));
+    CHECKCUDAERR(cudaFree(d_src));
+    CHECKCUDAERR(cudaFree(d_dst));
+    CHECKCUDAERR(cudaStreamDestroy(stream));
+    NTTGoldilocksGPU::freeConstants();
+}
+
+// ===========================================================================
+// MAIN_MERKLE_SWEEP_GPU_BENCH -- Poseidon2 Merkle over N_ext rows, W=16
+// arity=4, Tiles layout; nCols swept via ->Arg(). Tree is built over the
+// extended (LDE'd) domain, matching production stage commits.
+// ===========================================================================
+static void MAIN_MERKLE_SWEEP_GPU_BENCH(benchmark::State &state)
+{
+    uint64_t nCols = state.range(0);
+
+    uint32_t gpu_id = 0;
+    CHECKCUDAERR(cudaGetDevice((int *)&gpu_id));
+    Poseidon2GoldilocksGPU<MAIN_MERKLE_W>::initConstants(&gpu_id, 1);
+
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+
+    uint64_t tree_size = getTreeNumElements(MAIN_N_EXT, MAIN_MERKLE_ARITY);
+
+    gl64_t *d_trace;
+    Goldilocks::Element *d_tree;
+    CHECKCUDAERR(cudaMalloc((void **)&d_trace, MAIN_N_EXT * nCols * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_tree,  tree_size * sizeof(Goldilocks::Element)));
+
+    dim3 thr(128), blk((MAIN_N_EXT + 127) / 128);
+    initTraceKernel<<<blk, thr, 0, stream>>>(d_trace, MAIN_N_EXT, nCols);
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    // Warm up
+    Poseidon2GoldilocksGPU<MAIN_MERKLE_W>::merkletree(
+        MAIN_MERKLE_ARITY,
+        (uint64_t *)d_tree,
+        (uint64_t *)d_trace,
+        nCols, MAIN_N_EXT,
+        Layout::Tiles, stream);
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    for (auto _ : state) {
+        Poseidon2GoldilocksGPU<MAIN_MERKLE_W>::merkletree(
+            MAIN_MERKLE_ARITY,
+            (uint64_t *)d_tree,
+            (uint64_t *)d_trace,
+            nCols, MAIN_N_EXT,
+            Layout::Tiles, stream);
+        CHECKCUDAERR(cudaStreamSynchronize(stream));
+    }
+
+    CHECKCUDAERR(cudaFree(d_trace));
+    CHECKCUDAERR(cudaFree(d_tree));
+    CHECKCUDAERR(cudaStreamDestroy(stream));
+}
+
+// ===========================================================================
 // expressionMimicKernel -- heavy-arithmetic pattern over TILED trace data.
 //
 // Not the production bytecode interpreter (that would require copying
@@ -430,5 +523,23 @@ BENCHMARK(MAIN_MERKLE_STAGE2_GPU_BENCH)
 BENCHMARK(MAIN_EXPR_PATTERN_GPU_BENCH)
     ->Unit(benchmark::kMillisecond)
     ->UseRealTime();
+
+// ---------------------------------------------------------------------------
+// Column sweep: nCols in {5,10,22,38,44} at N=2^22 -> N_ext=2^23 (blowup x2).
+// LDE timed over N->N_ext; merkle timed over the extended N_ext domain.
+// ---------------------------------------------------------------------------
+#define MAIN_NCOLS_ARGS ->Arg(5)->Arg(10)->Arg(22)->Arg(38)->Arg(44)
+
+BENCHMARK(MAIN_LDE_SWEEP_GPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    MAIN_NCOLS_ARGS
+    ->UseRealTime();
+
+BENCHMARK(MAIN_MERKLE_SWEEP_GPU_BENCH)
+    ->Unit(benchmark::kMillisecond)
+    MAIN_NCOLS_ARGS
+    ->UseRealTime();
+
+#undef MAIN_NCOLS_ARGS
 
 // No BENCHMARK_MAIN() here -- bench_ntt_gpu.cu defines it for the whole binary.
